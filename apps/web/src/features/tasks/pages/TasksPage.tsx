@@ -126,6 +126,10 @@ function WorkspaceTasksPage() {
   const relationsQuery = useTaskRelations(workspace.id, taskId)
   const detailPending = detailQuery.isPending || activityQuery.isPending || commentsQuery.isPending || attachmentsQuery.isPending
     || commentAttachments.isPending || githubLinksQuery.isPending || relationsQuery.isPending
+  // wait only for the first paint: a new comment adds a pending attachments query, which must not blank the open task
+  const [shownTaskId, setShownTaskId] = useState<string>()
+  if (taskId && !detailPending && shownTaskId !== taskId) setShownTaskId(taskId)
+  const detailLoading = detailPending && shownTaskId !== taskId
 
   const records = useMemo(() => tasksQuery.data?.pages.flatMap((page) => page.items) ?? [], [tasksQuery.data])
   const tasks = useMemo(() => records.map((record) => taskFromRecord(record, projects.find((project) => project.id === record.project_id))), [projects, records])
@@ -244,7 +248,7 @@ function WorkspaceTasksPage() {
 
   const pending = projectsQuery.isPending || statusesQuery.isPending || membersQuery.isPending || labelsQuery.isPending || tasksQuery.isPending
   // a task opens straight from a blank canvas: a loading message in between reads as a flicker
-  if (taskId && (pending || detailPending)) return <div className="flex-1 bg-background" />
+  if (taskId && (pending || detailLoading)) return <div className="flex-1 bg-background" />
   if (pending) {
     return <TaskBoundary title="Loading tasks" description="Loading persisted workspace tasks." />
   }
