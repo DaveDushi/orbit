@@ -163,6 +163,16 @@ export type CommentUpdateBody = {
     expected_version: number;
 };
 
+export type Condition = {
+    field: FilterField;
+    operator: FilterOperator;
+    /**
+     * An array of strings, a date value, a pair of date values, or a string, depending on
+     * `field` and `operator`. Omitted for `is_empty` and `is_not_empty`.
+     */
+    value?: unknown;
+};
+
 export type ConflictMetadata = {
     current_version: number;
     refresh?: string | null;
@@ -265,12 +275,40 @@ export type DiscordEventResponse = {
     task: TaskRecord;
 };
 
+export type DisplayOptions = {
+    group_by: GroupBy;
+    layout: Layout;
+    order_by: OrderBy;
+    order_direction: OrderDirection;
+    properties: Array<TaskProperty>;
+    show_completed: ShowCompleted;
+    show_empty_groups: boolean;
+    sub_group_by: GroupBy;
+};
+
 export type DuplicatePageBody = {
     /**
      * Also copy the page's live sub-pages (the whole subtree, in order). Defaults to `false`.
      */
     include_children?: boolean;
 };
+
+export type FilterField = 'status' | 'status_category' | 'assignee' | 'creator' | 'label' | 'priority' | 'project' | 'due_date' | 'created_at' | 'updated_at' | 'text';
+
+/**
+ * An AND/OR group. An empty group matches every task.
+ */
+export type FilterGroup = {
+    children: Array<FilterNode>;
+    op: GroupOp;
+};
+
+/**
+ * A nested group or a condition; groups carry `op` and `children`.
+ */
+export type FilterNode = FilterGroup | Condition;
+
+export type FilterOperator = 'is' | 'is_not' | 'is_empty' | 'is_not_empty' | 'includes_any' | 'includes_all' | 'excludes' | 'before' | 'after' | 'between' | 'contains';
 
 export type GithubLink = {
     kind: string;
@@ -317,6 +355,10 @@ export type GithubWorkspaceSettings = {
     key_configured: boolean;
     repositories: Array<GithubRepositoryOption>;
 };
+
+export type GroupBy = 'status' | 'assignee' | 'priority' | 'project' | 'label' | 'none';
+
+export type GroupOp = 'and' | 'or';
 
 export type InvitationBody = {
     delivery: DeliveryBody;
@@ -367,6 +409,8 @@ export type LabelUpdateBody = {
     expected_version: number;
     name: string;
 };
+
+export type Layout = 'list' | 'board' | 'timeline';
 
 export type LoginBody = {
     email: string;
@@ -647,6 +691,10 @@ export type NotionImportTree = {
      */
     truncated: boolean;
 };
+
+export type OrderBy = 'manual' | 'priority' | 'created' | 'updated' | 'title' | 'due_date';
+
+export type OrderDirection = 'asc' | 'desc';
 
 /**
  * A page with its content.
@@ -1278,6 +1326,40 @@ export type RoleChangeBody = {
     role: RoleBody;
 };
 
+export type SavedViewRecord = {
+    /**
+     * Whether the caller may PATCH/DELETE this view.
+     */
+    can_edit: boolean;
+    /**
+     * `#rrggbb`.
+     */
+    color: string | null;
+    created_at: string;
+    description: string;
+    /**
+     * The caller's sidebar position for this view; null when not a favorite.
+     */
+    favorite_position: number | null;
+    /**
+     * Icon name from the web app's icon set.
+     */
+    icon: string | null;
+    id: string;
+    /**
+     * Whether the caller has favorited this view.
+     */
+    is_favorite: boolean;
+    name: string;
+    owner: ViewOwner;
+    state: null | ViewState;
+    state_error: string | null;
+    updated_at: string;
+    version: number;
+    visibility: Visibility;
+    workspace_id: string;
+};
+
 export type SessionRecord = {
     absolute_expires_at: string;
     created_at: string;
@@ -1307,6 +1389,11 @@ export type SetupResponse = {
 export type SetupStatus = {
     complete: boolean;
 };
+
+/**
+ * Which tasks in a done category (completed, cancelled, duplicate) stay visible.
+ */
+export type ShowCompleted = 'all' | 'past_week' | 'past_month' | 'none';
 
 export type StartNotionImportBody = {
     destination?: NotionImportDestinationBody;
@@ -1358,10 +1445,35 @@ export type TaskProblem = {
     conflict?: null | TaskConflict;
     detail: string;
     instance: string;
+    /**
+     * JSON path of the first invalid filter node, e.g. `filter.children[2].value`. Only set
+     * for `invalid_filter`.
+     */
+    path?: string | null;
     request_id: string;
     status: number;
     title: string;
     type: string;
+};
+
+export type TaskProperty = 'id' | 'status' | 'assignee' | 'priority' | 'project' | 'due_date' | 'labels' | 'created' | 'updated';
+
+export type TaskQueryBody = {
+    cursor?: string | null;
+    /**
+     * The complete filter tree, including any preset and project scope.
+     */
+    filter: FilterGroup;
+    /**
+     * Page size, 1–100 (default 50).
+     */
+    limit?: number | null;
+    order_by: OrderBy;
+    /**
+     * Ignored when `order_by` is `manual`.
+     */
+    order_direction: OrderDirection;
+    show_completed: ShowCompleted;
 };
 
 export type TaskRecord = {
@@ -1511,6 +1623,79 @@ export type TrashedPage = {
 export type UpdateMeBody = {
     display_name: string;
 };
+
+export type ViewCreateBody = {
+    /**
+     * `#rrggbb`.
+     */
+    color?: string | null;
+    /**
+     * Up to 500 characters.
+     */
+    description?: string;
+    /**
+     * Icon name: ASCII letters, digits, `-` or `_`, up to 64 bytes.
+     */
+    icon?: string | null;
+    /**
+     * 1–80 characters after trimming.
+     */
+    name: string;
+    state: ViewState;
+    visibility: Visibility;
+};
+
+export type ViewFavoritesOrderBody = {
+    /**
+     * Every view the caller has favorited in this workspace, in the new order.
+     */
+    view_ids: Array<string>;
+};
+
+export type ViewOwner = {
+    display_name: string;
+    user_id: string;
+};
+
+export type ViewPreferenceBody = {
+    state: ViewState;
+};
+
+export type ViewPreferenceRecord = {
+    /**
+     * `all`, `project:<id>` or `preset:<name>`.
+     */
+    page_key: string;
+    state: null | ViewState;
+    state_error: string | null;
+    updated_at: string;
+};
+
+/**
+ * Filter and display options shared by saved views and per-page preferences.
+ */
+export type ViewState = {
+    display: DisplayOptions;
+    filter: FilterGroup;
+};
+
+export type ViewUpdateBody = {
+    /**
+     * Absent: unchanged. `null`: clear.
+     */
+    color?: string | null;
+    description?: string | null;
+    expected_version: number;
+    /**
+     * Absent: unchanged. `null`: clear.
+     */
+    icon?: string | null;
+    name?: string | null;
+    state?: null | ViewState;
+    visibility?: null | Visibility;
+};
+
+export type Visibility = 'personal' | 'workspace';
 
 export type WorkspaceConflict = {
     current_version: number;
@@ -7505,6 +7690,68 @@ export type BulkTasksResponses = {
 
 export type BulkTasksResponse = BulkTasksResponses[keyof BulkTasksResponses];
 
+export type QueryTasksData = {
+    body: TaskQueryBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/tasks/query';
+};
+
+export type QueryTasksErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request, invalid_cursor
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * invalid_filter
+     */
+    422: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type QueryTasksError = QueryTasksErrors[keyof QueryTasksErrors];
+
+export type QueryTasksResponses = {
+    200: PageTaskRecord;
+};
+
+export type QueryTasksResponse = QueryTasksResponses[keyof QueryTasksResponses];
+
 export type ReorderTasksData = {
     body: ReorderBody;
     headers?: {
@@ -9301,3 +9548,604 @@ export type TransferOwnershipResponses = {
 };
 
 export type TransferOwnershipResponse = TransferOwnershipResponses[keyof TransferOwnershipResponses];
+
+export type ReorderViewFavoritesData = {
+    body: ViewFavoritesOrderBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/view-favorites/order';
+};
+
+export type ReorderViewFavoritesErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * validation_failed
+     */
+    422: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type ReorderViewFavoritesError = ReorderViewFavoritesErrors[keyof ReorderViewFavoritesErrors];
+
+export type ReorderViewFavoritesResponses = {
+    204: void;
+};
+
+export type ReorderViewFavoritesResponse = ReorderViewFavoritesResponses[keyof ReorderViewFavoritesResponses];
+
+export type GetViewPreferenceData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        /**
+         * `all`, `project:<project_id>` or `preset:<mine|overdue|due_soon|current_week|my_week>`
+         */
+        page_key: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/view-preferences/{page_key}';
+};
+
+export type GetViewPreferenceErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * validation_failed
+     */
+    422: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type GetViewPreferenceError = GetViewPreferenceErrors[keyof GetViewPreferenceErrors];
+
+export type GetViewPreferenceResponses = {
+    200: ViewPreferenceRecord;
+};
+
+export type GetViewPreferenceResponse = GetViewPreferenceResponses[keyof GetViewPreferenceResponses];
+
+export type PutViewPreferenceData = {
+    body: ViewPreferenceBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        /**
+         * `all`, `project:<project_id>` or `preset:<mine|overdue|due_soon|current_week|my_week>`
+         */
+        page_key: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/view-preferences/{page_key}';
+};
+
+export type PutViewPreferenceErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * validation_failed, invalid_filter
+     */
+    422: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type PutViewPreferenceError = PutViewPreferenceErrors[keyof PutViewPreferenceErrors];
+
+export type PutViewPreferenceResponses = {
+    200: ViewPreferenceRecord;
+};
+
+export type PutViewPreferenceResponse = PutViewPreferenceResponses[keyof PutViewPreferenceResponses];
+
+export type ListViewsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/views';
+};
+
+export type ListViewsErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type ListViewsError = ListViewsErrors[keyof ListViewsErrors];
+
+export type ListViewsResponses = {
+    200: Array<SavedViewRecord>;
+};
+
+export type ListViewsResponse = ListViewsResponses[keyof ListViewsResponses];
+
+export type CreateViewData = {
+    body: ViewCreateBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/views';
+};
+
+export type CreateViewErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * validation_failed, invalid_filter
+     */
+    422: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type CreateViewError = CreateViewErrors[keyof CreateViewErrors];
+
+export type CreateViewResponses = {
+    201: SavedViewRecord;
+};
+
+export type CreateViewResponse = CreateViewResponses[keyof CreateViewResponses];
+
+export type DeleteViewData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        view_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/views/{view_id}';
+};
+
+export type DeleteViewErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden, task_action_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type DeleteViewError = DeleteViewErrors[keyof DeleteViewErrors];
+
+export type DeleteViewResponses = {
+    204: void;
+};
+
+export type DeleteViewResponse = DeleteViewResponses[keyof DeleteViewResponses];
+
+export type GetViewData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        view_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/views/{view_id}';
+};
+
+export type GetViewErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type GetViewError = GetViewErrors[keyof GetViewErrors];
+
+export type GetViewResponses = {
+    200: SavedViewRecord;
+};
+
+export type GetViewResponse = GetViewResponses[keyof GetViewResponses];
+
+export type UpdateViewData = {
+    body: ViewUpdateBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        view_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/views/{view_id}';
+};
+
+export type UpdateViewErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden, task_action_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * validation_failed, invalid_filter
+     */
+    422: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type UpdateViewError = UpdateViewErrors[keyof UpdateViewErrors];
+
+export type UpdateViewResponses = {
+    200: SavedViewRecord;
+};
+
+export type UpdateViewResponse = UpdateViewResponses[keyof UpdateViewResponses];
+
+export type UnfavoriteViewData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        view_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/views/{view_id}/favorite';
+};
+
+export type UnfavoriteViewErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type UnfavoriteViewError = UnfavoriteViewErrors[keyof UnfavoriteViewErrors];
+
+export type UnfavoriteViewResponses = {
+    204: void;
+};
+
+export type UnfavoriteViewResponse = UnfavoriteViewResponses[keyof UnfavoriteViewResponses];
+
+export type FavoriteViewData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        view_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/views/{view_id}/favorite';
+};
+
+export type FavoriteViewErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type FavoriteViewError = FavoriteViewErrors[keyof FavoriteViewErrors];
+
+export type FavoriteViewResponses = {
+    204: void;
+};
+
+export type FavoriteViewResponse = FavoriteViewResponses[keyof FavoriteViewResponses];

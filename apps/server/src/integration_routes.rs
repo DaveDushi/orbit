@@ -1427,6 +1427,8 @@ fn task_problem(error: TaskError, request_id: Option<&RequestId>) -> ApiError {
         | TaskError::RestoreConflict { .. }
         | TaskError::VersionConflict { .. }
         | TaskError::InvalidCursor
+        | TaskError::InvalidFilter { .. }
+        | TaskError::Forbidden
         | TaskError::Unavailable(_) => ApiError::internal(request_id),
     }
 }

@@ -15,7 +15,8 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         orbit_platform::ConflictMetadata,
         crate::task_routes::ProblemBody,
         crate::workspace_routes::ProblemBody,
-        crate::attachment_routes::AttachmentProblem
+        crate::attachment_routes::AttachmentProblem,
+        crate::repositories::task_filter::FilterGroup
     )),
     modifiers(&ProblemDetails),
     paths(
@@ -78,6 +79,7 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::task_routes::update_label,
         crate::task_routes::delete_label,
         crate::task_routes::list_tasks,
+        crate::task_routes::query_tasks,
         crate::task_routes::get_task,
         crate::task_routes::list_task_relations,
         crate::task_routes::create_task_relation,
@@ -98,6 +100,16 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::task_routes::list_notifications,
         crate::task_routes::read_notification,
         crate::task_routes::read_all_notifications,
+        crate::view_routes::list_views,
+        crate::view_routes::create_view,
+        crate::view_routes::get_view,
+        crate::view_routes::update_view,
+        crate::view_routes::delete_view,
+        crate::view_routes::favorite_view,
+        crate::view_routes::unfavorite_view,
+        crate::view_routes::reorder_view_favorites,
+        crate::view_routes::get_view_preference,
+        crate::view_routes::put_view_preference,
         crate::attachment_routes::list_task_attachments,
         crate::attachment_routes::list_comment_attachments,
         crate::attachment_routes::upload_task_attachments,
@@ -243,6 +255,8 @@ fn problem_schema(route: &str) -> &'static str {
     } else if route.contains("/tasks")
         || route.contains("/projects")
         || route.contains("/labels")
+        || route.contains("/views")
+        || route.contains("/view-")
         || route.contains("/pages")
         || route.contains("/teamspaces")
         || route.contains("/imports/")
@@ -405,6 +419,7 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
         id if attachment_operation(id) => {
             add_code(&mut responses, "404", "attachment_not_found");
         }
+        id if view_operation(id) => view_errors(id, &mut responses),
         "upload_page_file" => {
             add_code(&mut responses, "400", "invalid_multipart");
             add_code(&mut responses, "404", "page_file_not_found");
@@ -497,6 +512,7 @@ fn invalid_request_operation(operation_id: &str) -> bool {
             | "update_label"
             | "delete_label"
             | "list_tasks"
+            | "query_tasks"
             | "create_task"
             | "update_task"
             | "create_task_relation"
@@ -511,6 +527,10 @@ fn invalid_request_operation(operation_id: &str) -> bool {
             | "delete_comment"
             | "list_task_attachments"
             | "list_comment_attachments"
+            | "create_view"
+            | "update_view"
+            | "reorder_view_favorites"
+            | "put_view_preference"
             | "create_page"
             | "update_page"
             | "move_page"
@@ -615,6 +635,7 @@ fn task_operation(operation_id: &str) -> bool {
             | "update_label"
             | "delete_label"
             | "list_tasks"
+            | "query_tasks"
             | "get_task"
             | "list_task_relations"
             | "create_task_relation"
@@ -642,6 +663,7 @@ fn task_errors(operation_id: &str, responses: &mut BTreeMap<&'static str, Vec<&'
             | "list_statuses"
             | "list_labels"
             | "list_tasks"
+            | "query_tasks"
             | "list_task_trash"
             | "list_comments"
     ) {
@@ -668,6 +690,9 @@ fn task_errors(operation_id: &str, responses: &mut BTreeMap<&'static str, Vec<&'
     ) || operation_id == "list_tasks"
     {
         add_code(responses, "422", "validation_failed");
+    }
+    if operation_id == "query_tasks" {
+        add_code(responses, "422", "invalid_filter");
     }
     if matches!(
         operation_id,
@@ -706,6 +731,48 @@ fn task_errors(operation_id: &str, responses: &mut BTreeMap<&'static str, Vec<&'
     }
     if matches!(operation_id, "update_task" | "bulk_tasks") {
         add_code(responses, "409", "github_content_read_only");
+    }
+}
+
+fn view_operation(operation_id: &str) -> bool {
+    matches!(
+        operation_id,
+        "list_views"
+            | "create_view"
+            | "get_view"
+            | "update_view"
+            | "delete_view"
+            | "favorite_view"
+            | "unfavorite_view"
+            | "reorder_view_favorites"
+            | "get_view_preference"
+            | "put_view_preference"
+    )
+}
+
+fn view_errors(operation_id: &str, responses: &mut BTreeMap<&'static str, Vec<&'static str>>) {
+    add_code(responses, "404", "task_resource_not_found");
+    if matches!(
+        operation_id,
+        "create_view"
+            | "update_view"
+            | "reorder_view_favorites"
+            | "get_view_preference"
+            | "put_view_preference"
+    ) {
+        add_code(responses, "422", "validation_failed");
+    }
+    if matches!(
+        operation_id,
+        "create_view" | "update_view" | "put_view_preference"
+    ) {
+        add_code(responses, "422", "invalid_filter");
+    }
+    if matches!(operation_id, "update_view" | "delete_view") {
+        add_code(responses, "403", "task_action_forbidden");
+    }
+    if operation_id == "update_view" {
+        add_code(responses, "409", "conflict");
     }
 }
 

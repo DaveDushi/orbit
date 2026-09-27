@@ -19,6 +19,7 @@ mod secret_box;
 pub mod static_assets;
 pub mod task_routes;
 pub mod teamspace_routes;
+pub mod view_routes;
 pub mod workspace_routes;
 
 pub mod realtime;

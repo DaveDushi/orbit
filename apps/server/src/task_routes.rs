@@ -16,24 +16,32 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::auth_routes::CookieMode;
 use crate::repositories::identity::{AuthenticatedSession, IdentityRepository};
+use crate::repositories::task_filter::{
+    self, Condition, FilterField, FilterGroup, FilterNode, FilterOperator, GroupOp, OrderBy,
+    OrderDirection, ShowCompleted,
+};
 use crate::repositories::task_relations::{NewTaskRelationType, TaskRelationRecord};
 use crate::repositories::tasks::{
     CreateTask, NotificationRecord, Page, SortOrder, TaskChanges, TaskError, TaskFilter,
     TaskRecord, TaskRepository, TaskSort, TaskUpdate,
 };
+use crate::repositories::views::ViewRepository;
 
 #[derive(Clone)]
 pub struct TaskState {
     pub(crate) identity: Arc<IdentityRepository>,
     tasks: Arc<TaskRepository>,
+    pub(crate) views: Arc<ViewRepository>,
     pub(crate) cookie_mode: CookieMode,
 }
 
 impl TaskState {
     #[must_use]
     pub fn new(identity: Arc<IdentityRepository>, cookie_mode: CookieMode) -> Self {
+        let database = identity.database().clone();
         Self {
-            tasks: Arc::new(TaskRepository::new(identity.database().clone())),
+            tasks: Arc::new(TaskRepository::new(database.clone())),
+            views: Arc::new(ViewRepository::new(database)),
             identity,
             cookie_mode,
         }
@@ -46,6 +54,7 @@ impl TaskState {
         cookie_mode: CookieMode,
     ) -> Self {
         Self {
+            views: Arc::new(ViewRepository::new(tasks.database().clone())),
             identity,
             tasks,
             cookie_mode,
@@ -94,6 +103,10 @@ pub fn task_router(state: TaskState) -> Router {
         .route(
             "/api/v1/workspaces/{workspace_id}/tasks",
             get(list_tasks).post(create_task),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/tasks/query",
+            post(query_tasks),
         )
         .route(
             "/api/v1/workspaces/{workspace_id}/tasks/trash",
@@ -810,6 +823,21 @@ struct TaskQuery {
 
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
+struct TaskQueryBody {
+    /// The complete filter tree, including any preset and project scope.
+    #[schema(value_type = crate::repositories::task_filter::FilterGroup)]
+    filter: Value,
+    order_by: OrderBy,
+    /// Ignored when `order_by` is `manual`.
+    order_direction: OrderDirection,
+    show_completed: ShowCompleted,
+    cursor: Option<String>,
+    /// Page size, 1–100 (default 50).
+    limit: Option<usize>,
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 struct CreateTaskBody {
     project_id: String,
     status_id: String,
@@ -898,39 +926,104 @@ async fn list_tasks(
     let instance = format!("/api/v1/workspaces/{workspace}/tasks");
     let (workspace_id, actor_id) =
         scope(&state, &headers, &workspace, &instance, request_id.as_ref()).await?;
+    // Validate in the historical order so the same bad request keeps the same error.
+    let project_id = optional_id(query.project_id, &instance, request_id.as_ref())?;
+    let status_id = optional_id(query.status_id, &instance, request_id.as_ref())?;
+    let assignee_id = optional_id(query.assignee_id, &instance, request_id.as_ref())?;
+    let label_id = optional_id(query.label_id, &instance, request_id.as_ref())?;
+    let priority_value = query
+        .priority
+        .map(|value| priority(value, &instance, request_id.as_ref()))
+        .transpose()?;
+    let search = query
+        .search
+        .map(|value| bounded(value, 200, 200, "search", &instance, request_id.as_ref()))
+        .transpose()?;
+    let preset = match query.view.as_deref() {
+        None | Some("") => None,
+        Some(view) => Some(
+            task_filter::preset_filter(view)
+                .ok_or_else(|| validation("view", &instance, request_id.as_ref()))?,
+        ),
+    };
+    let sort = match query.sort.as_str() {
+        "position" => TaskSort::Position,
+        "priority" => TaskSort::Priority,
+        "title" => TaskSort::Title,
+        "created_at" => TaskSort::CreatedAt,
+        "updated_at" => TaskSort::UpdatedAt,
+        "due_date" => TaskSort::DueDate,
+        _ => return Err(validation("sort", &instance, request_id.as_ref())),
+    };
+    let order = match query.order.as_str() {
+        "asc" => SortOrder::Asc,
+        "desc" => SortOrder::Desc,
+        _ => return Err(validation("order", &instance, request_id.as_ref())),
+    };
+    // view=mine|my_week always meant the caller; an explicit assignee_id was ignored with them.
+    let personal_view = matches!(query.view.as_deref(), Some("mine" | "my_week"));
+    let mut children = Vec::new();
+    if let Some(id) = project_id {
+        children.push(legacy_condition(
+            FilterField::Project,
+            FilterOperator::Is,
+            serde_json::json!([id.to_string()]),
+        ));
+    }
+    if let Some(id) = status_id {
+        // A bare id keeps the exact-status meaning (see task_filter::push_status).
+        children.push(legacy_condition(
+            FilterField::Status,
+            FilterOperator::Is,
+            serde_json::json!([id.to_string()]),
+        ));
+    }
+    if let Some(value) = priority_value {
+        children.push(legacy_condition(
+            FilterField::Priority,
+            FilterOperator::Is,
+            serde_json::json!([value]),
+        ));
+    }
+    if let Some(id) = assignee_id.filter(|_| !personal_view) {
+        children.push(legacy_condition(
+            FilterField::Assignee,
+            FilterOperator::Is,
+            serde_json::json!([id.to_string()]),
+        ));
+    }
+    if query.unassigned {
+        children.push(legacy_condition(
+            FilterField::Assignee,
+            FilterOperator::IsEmpty,
+            Value::Null,
+        ));
+    }
+    if let Some(id) = label_id {
+        children.push(legacy_condition(
+            FilterField::Label,
+            FilterOperator::IncludesAny,
+            serde_json::json!([id.to_string()]),
+        ));
+    }
+    // An empty search matched everything, so it adds no condition.
+    if let Some(text) = search.filter(|text| !text.is_empty()) {
+        children.push(legacy_condition(
+            FilterField::Text,
+            FilterOperator::Contains,
+            Value::String(text),
+        ));
+    }
+    let mut groups: Vec<FilterGroup> = preset.into_iter().collect();
+    groups.push(FilterGroup {
+        op: GroupOp::And,
+        children,
+    });
     let filter = TaskFilter {
-        project_id: optional_id(query.project_id, &instance, request_id.as_ref())?,
-        status_id: optional_id(query.status_id, &instance, request_id.as_ref())?,
-        assignee_id: optional_id(query.assignee_id, &instance, request_id.as_ref())?,
-        unassigned: query.unassigned,
-        label_id: optional_id(query.label_id, &instance, request_id.as_ref())?,
-        priority: query
-            .priority
-            .map(|value| priority(value, &instance, request_id.as_ref()))
-            .transpose()?,
-        search: query
-            .search
-            .map(|value| bounded(value, 200, 200, "search", &instance, request_id.as_ref()))
-            .transpose()?,
-        view: match query.view.as_deref() {
-            None | Some("") => None,
-            Some("mine") | Some("overdue") | Some("due_soon") | Some("current_week")
-            | Some("my_week") => query.view,
-            _ => return Err(validation("view", &instance, request_id.as_ref())),
-        },
-        sort: match query.sort.as_str() {
-            "position" => TaskSort::Position,
-            "priority" => TaskSort::Priority,
-            "title" => TaskSort::Title,
-            "created_at" => TaskSort::CreatedAt,
-            "updated_at" => TaskSort::UpdatedAt,
-            _ => return Err(validation("sort", &instance, request_id.as_ref())),
-        },
-        order: match query.order.as_str() {
-            "asc" => SortOrder::Asc,
-            "desc" => SortOrder::Desc,
-            _ => return Err(validation("order", &instance, request_id.as_ref())),
-        },
+        tree: task_filter::and_groups(groups),
+        show_completed: ShowCompleted::All,
+        sort,
+        order,
     };
     state
         .tasks
@@ -940,10 +1033,72 @@ async fn list_tasks(
             &filter,
             query.cursor.as_deref(),
             query.limit,
+            TimestampMillis::now(),
         )
         .await
         .map(Json)
         .map_err(|error| task_problem(error, instance, request_id.as_ref()))
+}
+
+fn legacy_condition(field: FilterField, operator: FilterOperator, value: Value) -> FilterNode {
+    FilterNode::Condition(Condition {
+        field,
+        operator,
+        value,
+    })
+}
+
+#[utoipa::path(post, path = "/api/v1/workspaces/{workspace_id}/tasks/query", params(("workspace_id" = String, Path)), request_body = TaskQueryBody, responses((status = 200, body = Page<crate::repositories::tasks::TaskRecord>)))]
+async fn query_tasks(
+    State(state): State<TaskState>,
+    Path(workspace): Path<String>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+    ApiJson(body): ApiJson<TaskQueryBody>,
+) -> Result<Json<Page<TaskRecord>>, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace}/tasks/query");
+    let (workspace_id, actor_id) =
+        scope(&state, &headers, &workspace, &instance, request_id.as_ref()).await?;
+    let tree = task_filter::parse_filter(&body.filter)
+        .map_err(|error| task_problem(error.into(), instance.clone(), request_id.as_ref()))?;
+    let (sort, order) = task_order(body.order_by, body.order_direction);
+    let filter = TaskFilter {
+        tree,
+        show_completed: body.show_completed,
+        sort,
+        order,
+    };
+    state
+        .tasks
+        .tasks(
+            workspace_id,
+            actor_id,
+            &filter,
+            body.cursor.as_deref(),
+            body.limit.unwrap_or_else(default_limit),
+            TimestampMillis::now(),
+        )
+        .await
+        .map(Json)
+        .map_err(|error| task_problem(error, instance, request_id.as_ref()))
+}
+
+/// Maps display ordering onto the list sort. Manual order has no direction; priority
+/// ascending means urgent first, like `GET /tasks?sort=priority&order=asc`.
+fn task_order(order_by: OrderBy, direction: OrderDirection) -> (TaskSort, SortOrder) {
+    let sort = match order_by {
+        OrderBy::Manual => TaskSort::Position,
+        OrderBy::Priority => TaskSort::Priority,
+        OrderBy::Created => TaskSort::CreatedAt,
+        OrderBy::Updated => TaskSort::UpdatedAt,
+        OrderBy::Title => TaskSort::Title,
+        OrderBy::DueDate => TaskSort::DueDate,
+    };
+    let order = match (order_by, direction) {
+        (OrderBy::Manual, _) | (_, OrderDirection::Asc) => SortOrder::Asc,
+        (_, OrderDirection::Desc) => SortOrder::Desc,
+    };
+    (sort, order)
 }
 
 #[utoipa::path(get, path = "/api/v1/workspaces/{workspace_id}/tasks/{task_id}", params(("workspace_id" = String, Path), ("task_id" = String, Path)), responses((status = 200, body = crate::repositories::tasks::TaskRecord)))]
@@ -1736,7 +1891,7 @@ fn reject_duplicate_ids(
     }
 }
 
-async fn scope(
+pub(crate) async fn scope(
     state: &TaskState,
     headers: &HeaderMap,
     workspace: &str,
@@ -1805,7 +1960,7 @@ fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
         .find_map(|pair| pair.strip_prefix(&format!("{name}=")).map(str::to_owned))
 }
 
-fn parse_id(
+pub(crate) fn parse_id(
     value: &str,
     instance: &str,
     request_id: Option<&Extension<RequestId>>,
@@ -1967,7 +2122,7 @@ pub(crate) fn validation(
     )
 }
 
-fn task_problem(
+pub(crate) fn task_problem(
     error: TaskError,
     instance: impl Into<String>,
     request_id: Option<&Extension<RequestId>>,
@@ -2013,6 +2168,17 @@ fn task_problem(
         TaskError::VersionConflict { current } => {
             ApiError::version_conflict(*current, instance, request_id)
         }
+        TaskError::InvalidFilter { path, message } => {
+            ApiError::invalid_filter(path, message, instance, request_id)
+        }
+        TaskError::Forbidden => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "task_action_forbidden",
+            "Action forbidden",
+            "You do not have permission to change this resource.",
+            instance,
+            request_id,
+        ),
         TaskError::Unavailable(_) => ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal_error",
@@ -2053,6 +2219,10 @@ pub(crate) struct ProblemBody {
     request_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     conflict: Option<ConflictBody>,
+    /// JSON path of the first invalid filter node, e.g. `filter.children[2].value`. Only set
+    /// for `invalid_filter`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -2095,6 +2265,7 @@ impl ApiError {
                     .map(|Extension(value)| value.as_str().to_owned())
                     .unwrap_or_else(|| "unknown".to_owned()),
                 conflict: None,
+                path: None,
             }),
         }
     }
@@ -2144,11 +2315,32 @@ impl ApiError {
         });
         error
     }
+
+    fn invalid_filter(
+        path: String,
+        detail: &'static str,
+        instance: String,
+        request_id: Option<&Extension<RequestId>>,
+    ) -> Self {
+        let mut error = Self::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_filter",
+            "Invalid filter",
+            detail,
+            instance,
+            request_id,
+        );
+        error.body.path = Some(path);
+        error
+    }
 }
 
 fn refresh_for_current(current: &Value) -> Option<String> {
     let workspace = current.get("workspace_id")?.as_str()?;
     let id = current.get("id")?.as_str()?;
+    if current.get("visibility").is_some() {
+        return Some(format!("/api/v1/workspaces/{workspace}/views/{id}"));
+    }
     if current.get("cover_url").is_some() {
         if current
             .get("deleted_at")

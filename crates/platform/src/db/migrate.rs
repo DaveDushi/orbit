@@ -253,6 +253,11 @@ impl MigrationRunner {
                     include_str!("../../../../apps/server/migrations/0032_page_mentions.sql"),
                     false,
                 ),
+                Migration::new(
+                    33,
+                    include_str!("../../../../apps/server/migrations/0033_views.sql"),
+                    false,
+                ),
             ],
         )
     }

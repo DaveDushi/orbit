@@ -2,7 +2,7 @@
 
 import { type Client, type ClientMeta, formDataBodySerializer, type Options as Options2, type RequestResult, type TDataShape } from './client';
 import { client } from './client.gen';
-import type { AcceptInvitationData, AcceptInvitationErrors, AcceptInvitationResponses, AddPageFavoriteData, AddPageFavoriteErrors, AddPageFavoriteResponses, BulkTasksData, BulkTasksErrors, BulkTasksResponses, CancelNotionImportData, CancelNotionImportErrors, CancelNotionImportResponses, ChangeMemberRoleData, ChangeMemberRoleErrors, ChangeMemberRoleResponses, ChangePasswordData, ChangePasswordErrors, ChangePasswordResponses, CreateApiTokenData, CreateApiTokenErrors, CreateApiTokenResponses, CreateAttachmentCommentData, CreateAttachmentCommentErrors, CreateAttachmentCommentResponses, CreateBackupData, CreateBackupErrors, CreateBackupResponses, CreateCommentData, CreateCommentErrors, CreateCommentResponses, CreateDiscordEventData, CreateDiscordEventErrors, CreateDiscordEventResponses, CreateInvitationData, CreateInvitationErrors, CreateInvitationResponses, CreateLabelData, CreateLabelErrors, CreateLabelResponses, CreateNotionImportData, CreateNotionImportErrors, CreateNotionImportResponses, CreatePageCommentData, CreatePageCommentErrors, CreatePageCommentResponses, CreatePageData, CreatePageErrors, CreatePageResponses, CreatePageThreadData, CreatePageThreadErrors, CreatePageThreadResponses, CreateProjectData, CreateProjectErrors, CreateProjectResponses, CreateStatusData, CreateStatusErrors, CreateStatusResponses, CreateTaskData, CreateTaskErrors, CreateTaskRelationData, CreateTaskRelationErrors, CreateTaskRelationResponses, CreateTaskResponses, CreateTeamspaceData, CreateTeamspaceErrors, CreateTeamspaceResponses, CreateWorkspaceData, CreateWorkspaceErrors, CreateWorkspaceResponses, DeleteCommentAttachmentData, DeleteCommentAttachmentErrors, DeleteCommentAttachmentResponses, DeleteCommentData, DeleteCommentErrors, DeleteCommentResponses, DeleteGithubProjectConnectionData, DeleteGithubProjectConnectionErrors, DeleteGithubProjectConnectionResponses, DeleteLabelData, DeleteLabelErrors, DeleteLabelResponses, DeletePageCommentData, DeletePageCommentErrors, DeletePageCommentResponses, DeletePageData, DeletePageErrors, DeletePageResponses, DeletePageThreadData, DeletePageThreadErrors, DeletePageThreadResponses, DeleteProjectData, DeleteProjectErrors, DeleteProjectResponses, DeleteStatusData, DeleteStatusErrors, DeleteStatusResponses, DeleteTaskAttachmentData, DeleteTaskAttachmentErrors, DeleteTaskAttachmentResponses, DeleteTaskData, DeleteTaskErrors, DeleteTaskRelationData, DeleteTaskRelationErrors, DeleteTaskRelationResponses, DeleteTaskResponses, DeleteTeamspaceData, DeleteTeamspaceErrors, DeleteTeamspaceResponses, DeleteWorkspaceData, DeleteWorkspaceErrors, DeleteWorkspaceResponses, DownloadCommentAttachmentData, DownloadCommentAttachmentErrors, DownloadCommentAttachmentResponses, DownloadPageFileData, DownloadPageFileErrors, DownloadPageFileResponses, DownloadTaskAttachmentData, DownloadTaskAttachmentErrors, DownloadTaskAttachmentResponses, DuplicatePageData, DuplicatePageErrors, DuplicatePageResponses, EmptyPageTrashData, EmptyPageTrashErrors, EmptyPageTrashResponses, ExportGlobalAuditData, ExportGlobalAuditErrors, ExportGlobalAuditResponses, ExportPageData, ExportPageErrors, ExportPageResponses, GetNotionImportData, GetNotionImportErrors, GetNotionImportResponses, GetPageData, GetPageErrors, GetPageResponses, GetPageVersionData, GetPageVersionErrors, GetPageVersionResponses, GetTaskData, GetTaskErrors, GetTaskResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, GithubManifestCallbackData, GithubManifestCallbackErrors, GithubManifestCallbackResponses, GithubProjectSettingsData, GithubProjectSettingsErrors, GithubProjectSettingsResponses, GithubWebhookData, GithubWebhookErrors, GithubWebhookResponses, GithubWorkspaceSettingsData, GithubWorkspaceSettingsErrors, GithubWorkspaceSettingsResponses, ListApiTokensData, ListApiTokensErrors, ListApiTokensResponses, ListAuditData, ListAuditErrors, ListAuditResponses, ListCommentAttachmentsData, ListCommentAttachmentsErrors, ListCommentAttachmentsResponses, ListCommentsData, ListCommentsErrors, ListCommentsResponses, ListGithubLinksData, ListGithubLinksErrors, ListGithubLinksResponses, ListGlobalAuditData, ListGlobalAuditErrors, ListGlobalAuditResponses, ListInvitationsData, ListInvitationsErrors, ListInvitationsResponses, ListLabelsData, ListLabelsErrors, ListLabelsResponses, ListMembersData, ListMembersErrors, ListMembersResponses, ListNotificationsData, ListNotificationsErrors, ListNotificationsResponses, ListNotionImportsData, ListNotionImportsErrors, ListNotionImportsResponses, ListPageFavoritesData, ListPageFavoritesErrors, ListPageFavoritesResponses, ListPagesData, ListPagesErrors, ListPagesResponses, ListPageThreadsData, ListPageThreadsErrors, ListPageThreadsResponses, ListPageTrashData, ListPageTrashErrors, ListPageTrashResponses, ListPageVersionsData, ListPageVersionsErrors, ListPageVersionsResponses, ListProjectsData, ListProjectsErrors, ListProjectsResponses, ListProjectTrashData, ListProjectTrashErrors, ListProjectTrashResponses, ListRecentPagesData, ListRecentPagesErrors, ListRecentPagesResponses, ListSessionsData, ListSessionsErrors, ListSessionsResponses, ListStatusesData, ListStatusesErrors, ListStatusesResponses, ListTaskActivityData, ListTaskActivityErrors, ListTaskActivityResponses, ListTaskAttachmentsData, ListTaskAttachmentsErrors, ListTaskAttachmentsResponses, ListTaskRelationsData, ListTaskRelationsErrors, ListTaskRelationsResponses, ListTasksData, ListTasksErrors, ListTasksResponses, ListTaskTrashData, ListTaskTrashErrors, ListTaskTrashResponses, ListTeamspacesData, ListTeamspacesErrors, ListTeamspacesResponses, ListTrashData, ListTrashErrors, ListTrashResponses, ListWorkspacesData, ListWorkspacesErrors, ListWorkspacesResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutErrors, LogoutResponses, MeData, MeErrors, MeResponses, MovePageData, MovePageErrors, MovePageFavoriteData, MovePageFavoriteErrors, MovePageFavoriteResponses, MovePageResponses, MoveTeamspaceData, MoveTeamspaceErrors, MoveTeamspaceResponses, PreviewInvitationData, PreviewInvitationErrors, PreviewInvitationResponses, PurgePageData, PurgePageErrors, PurgePageResponses, ReadAllNotificationsData, ReadAllNotificationsErrors, ReadAllNotificationsResponses, ReadNotificationData, ReadNotificationErrors, ReadNotificationResponses, RecordPageVisitData, RecordPageVisitErrors, RecordPageVisitResponses, RecoveryCompleteData, RecoveryCompleteErrors, RecoveryCompleteResponses, RecoveryRequestData, RecoveryRequestErrors, RecoveryRequestResponses, RemoveMemberData, RemoveMemberErrors, RemoveMemberResponses, RemovePageFavoriteData, RemovePageFavoriteErrors, RemovePageFavoriteResponses, RenameWorkspaceData, RenameWorkspaceErrors, RenameWorkspaceResponses, ReopenPageThreadData, ReopenPageThreadErrors, ReopenPageThreadResponses, ReorderStatusesData, ReorderStatusesErrors, ReorderStatusesResponses, ReorderTasksData, ReorderTasksErrors, ReorderTasksResponses, ResolvePageThreadData, ResolvePageThreadErrors, ResolvePageThreadResponses, RestorePageData, RestorePageErrors, RestorePageResponses, RestorePageVersionData, RestorePageVersionErrors, RestorePageVersionResponses, RestoreProjectData, RestoreProjectErrors, RestoreProjectResponses, RestoreTaskData, RestoreTaskErrors, RestoreTaskResponses, RestoreWorkspaceData, RestoreWorkspaceErrors, RestoreWorkspaceResponses, RevokeApiTokenData, RevokeApiTokenErrors, RevokeApiTokenResponses, RevokeInvitationData, RevokeInvitationErrors, RevokeInvitationResponses, RevokeSessionData, RevokeSessionErrors, RevokeSessionResponses, SaveGithubProjectConnectionData, SaveGithubProjectConnectionErrors, SaveGithubProjectConnectionResponses, SearchPagesData, SearchPagesErrors, SearchPagesResponses, SetAccountSuspensionData, SetAccountSuspensionErrors, SetAccountSuspensionResponses, SetPageLockData, SetPageLockErrors, SetPageLockResponses, SetupCompleteData, SetupCompleteErrors, SetupCompleteResponses, SetupStatusData, SetupStatusErrors, SetupStatusResponses, StartGithubManifestData, StartGithubManifestErrors, StartGithubManifestResponses, StartNotionImportData, StartNotionImportErrors, StartNotionImportResponses, TransferOwnershipData, TransferOwnershipErrors, TransferOwnershipResponses, UpdateCommentData, UpdateCommentErrors, UpdateCommentResponses, UpdateLabelData, UpdateLabelErrors, UpdateLabelResponses, UpdateMeData, UpdateMeErrors, UpdateMeResponses, UpdatePageCommentData, UpdatePageCommentErrors, UpdatePageCommentResponses, UpdatePageData, UpdatePageErrors, UpdatePageResponses, UpdateProjectData, UpdateProjectErrors, UpdateProjectResponses, UpdateStatusData, UpdateStatusErrors, UpdateStatusResponses, UpdateTaskData, UpdateTaskErrors, UpdateTaskResponses, UpdateTeamspaceData, UpdateTeamspaceErrors, UpdateTeamspaceResponses, UploadCommentAttachmentsData, UploadCommentAttachmentsErrors, UploadCommentAttachmentsResponses, UploadPageFileData, UploadPageFileErrors, UploadPageFileResponses, UploadTaskAttachmentsData, UploadTaskAttachmentsErrors, UploadTaskAttachmentsResponses } from './types.gen';
+import type { AcceptInvitationData, AcceptInvitationErrors, AcceptInvitationResponses, AddPageFavoriteData, AddPageFavoriteErrors, AddPageFavoriteResponses, BulkTasksData, BulkTasksErrors, BulkTasksResponses, CancelNotionImportData, CancelNotionImportErrors, CancelNotionImportResponses, ChangeMemberRoleData, ChangeMemberRoleErrors, ChangeMemberRoleResponses, ChangePasswordData, ChangePasswordErrors, ChangePasswordResponses, CreateApiTokenData, CreateApiTokenErrors, CreateApiTokenResponses, CreateAttachmentCommentData, CreateAttachmentCommentErrors, CreateAttachmentCommentResponses, CreateBackupData, CreateBackupErrors, CreateBackupResponses, CreateCommentData, CreateCommentErrors, CreateCommentResponses, CreateDiscordEventData, CreateDiscordEventErrors, CreateDiscordEventResponses, CreateInvitationData, CreateInvitationErrors, CreateInvitationResponses, CreateLabelData, CreateLabelErrors, CreateLabelResponses, CreateNotionImportData, CreateNotionImportErrors, CreateNotionImportResponses, CreatePageCommentData, CreatePageCommentErrors, CreatePageCommentResponses, CreatePageData, CreatePageErrors, CreatePageResponses, CreatePageThreadData, CreatePageThreadErrors, CreatePageThreadResponses, CreateProjectData, CreateProjectErrors, CreateProjectResponses, CreateStatusData, CreateStatusErrors, CreateStatusResponses, CreateTaskData, CreateTaskErrors, CreateTaskRelationData, CreateTaskRelationErrors, CreateTaskRelationResponses, CreateTaskResponses, CreateTeamspaceData, CreateTeamspaceErrors, CreateTeamspaceResponses, CreateViewData, CreateViewErrors, CreateViewResponses, CreateWorkspaceData, CreateWorkspaceErrors, CreateWorkspaceResponses, DeleteCommentAttachmentData, DeleteCommentAttachmentErrors, DeleteCommentAttachmentResponses, DeleteCommentData, DeleteCommentErrors, DeleteCommentResponses, DeleteGithubProjectConnectionData, DeleteGithubProjectConnectionErrors, DeleteGithubProjectConnectionResponses, DeleteLabelData, DeleteLabelErrors, DeleteLabelResponses, DeletePageCommentData, DeletePageCommentErrors, DeletePageCommentResponses, DeletePageData, DeletePageErrors, DeletePageResponses, DeletePageThreadData, DeletePageThreadErrors, DeletePageThreadResponses, DeleteProjectData, DeleteProjectErrors, DeleteProjectResponses, DeleteStatusData, DeleteStatusErrors, DeleteStatusResponses, DeleteTaskAttachmentData, DeleteTaskAttachmentErrors, DeleteTaskAttachmentResponses, DeleteTaskData, DeleteTaskErrors, DeleteTaskRelationData, DeleteTaskRelationErrors, DeleteTaskRelationResponses, DeleteTaskResponses, DeleteTeamspaceData, DeleteTeamspaceErrors, DeleteTeamspaceResponses, DeleteViewData, DeleteViewErrors, DeleteViewResponses, DeleteWorkspaceData, DeleteWorkspaceErrors, DeleteWorkspaceResponses, DownloadCommentAttachmentData, DownloadCommentAttachmentErrors, DownloadCommentAttachmentResponses, DownloadPageFileData, DownloadPageFileErrors, DownloadPageFileResponses, DownloadTaskAttachmentData, DownloadTaskAttachmentErrors, DownloadTaskAttachmentResponses, DuplicatePageData, DuplicatePageErrors, DuplicatePageResponses, EmptyPageTrashData, EmptyPageTrashErrors, EmptyPageTrashResponses, ExportGlobalAuditData, ExportGlobalAuditErrors, ExportGlobalAuditResponses, ExportPageData, ExportPageErrors, ExportPageResponses, FavoriteViewData, FavoriteViewErrors, FavoriteViewResponses, GetNotionImportData, GetNotionImportErrors, GetNotionImportResponses, GetPageData, GetPageErrors, GetPageResponses, GetPageVersionData, GetPageVersionErrors, GetPageVersionResponses, GetTaskData, GetTaskErrors, GetTaskResponses, GetViewData, GetViewErrors, GetViewPreferenceData, GetViewPreferenceErrors, GetViewPreferenceResponses, GetViewResponses, GetWorkspaceData, GetWorkspaceErrors, GetWorkspaceResponses, GithubManifestCallbackData, GithubManifestCallbackErrors, GithubManifestCallbackResponses, GithubProjectSettingsData, GithubProjectSettingsErrors, GithubProjectSettingsResponses, GithubWebhookData, GithubWebhookErrors, GithubWebhookResponses, GithubWorkspaceSettingsData, GithubWorkspaceSettingsErrors, GithubWorkspaceSettingsResponses, ListApiTokensData, ListApiTokensErrors, ListApiTokensResponses, ListAuditData, ListAuditErrors, ListAuditResponses, ListCommentAttachmentsData, ListCommentAttachmentsErrors, ListCommentAttachmentsResponses, ListCommentsData, ListCommentsErrors, ListCommentsResponses, ListGithubLinksData, ListGithubLinksErrors, ListGithubLinksResponses, ListGlobalAuditData, ListGlobalAuditErrors, ListGlobalAuditResponses, ListInvitationsData, ListInvitationsErrors, ListInvitationsResponses, ListLabelsData, ListLabelsErrors, ListLabelsResponses, ListMembersData, ListMembersErrors, ListMembersResponses, ListNotificationsData, ListNotificationsErrors, ListNotificationsResponses, ListNotionImportsData, ListNotionImportsErrors, ListNotionImportsResponses, ListPageFavoritesData, ListPageFavoritesErrors, ListPageFavoritesResponses, ListPagesData, ListPagesErrors, ListPagesResponses, ListPageThreadsData, ListPageThreadsErrors, ListPageThreadsResponses, ListPageTrashData, ListPageTrashErrors, ListPageTrashResponses, ListPageVersionsData, ListPageVersionsErrors, ListPageVersionsResponses, ListProjectsData, ListProjectsErrors, ListProjectsResponses, ListProjectTrashData, ListProjectTrashErrors, ListProjectTrashResponses, ListRecentPagesData, ListRecentPagesErrors, ListRecentPagesResponses, ListSessionsData, ListSessionsErrors, ListSessionsResponses, ListStatusesData, ListStatusesErrors, ListStatusesResponses, ListTaskActivityData, ListTaskActivityErrors, ListTaskActivityResponses, ListTaskAttachmentsData, ListTaskAttachmentsErrors, ListTaskAttachmentsResponses, ListTaskRelationsData, ListTaskRelationsErrors, ListTaskRelationsResponses, ListTasksData, ListTasksErrors, ListTasksResponses, ListTaskTrashData, ListTaskTrashErrors, ListTaskTrashResponses, ListTeamspacesData, ListTeamspacesErrors, ListTeamspacesResponses, ListTrashData, ListTrashErrors, ListTrashResponses, ListViewsData, ListViewsErrors, ListViewsResponses, ListWorkspacesData, ListWorkspacesErrors, ListWorkspacesResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutErrors, LogoutResponses, MeData, MeErrors, MeResponses, MovePageData, MovePageErrors, MovePageFavoriteData, MovePageFavoriteErrors, MovePageFavoriteResponses, MovePageResponses, MoveTeamspaceData, MoveTeamspaceErrors, MoveTeamspaceResponses, PreviewInvitationData, PreviewInvitationErrors, PreviewInvitationResponses, PurgePageData, PurgePageErrors, PurgePageResponses, PutViewPreferenceData, PutViewPreferenceErrors, PutViewPreferenceResponses, QueryTasksData, QueryTasksErrors, QueryTasksResponses, ReadAllNotificationsData, ReadAllNotificationsErrors, ReadAllNotificationsResponses, ReadNotificationData, ReadNotificationErrors, ReadNotificationResponses, RecordPageVisitData, RecordPageVisitErrors, RecordPageVisitResponses, RecoveryCompleteData, RecoveryCompleteErrors, RecoveryCompleteResponses, RecoveryRequestData, RecoveryRequestErrors, RecoveryRequestResponses, RemoveMemberData, RemoveMemberErrors, RemoveMemberResponses, RemovePageFavoriteData, RemovePageFavoriteErrors, RemovePageFavoriteResponses, RenameWorkspaceData, RenameWorkspaceErrors, RenameWorkspaceResponses, ReopenPageThreadData, ReopenPageThreadErrors, ReopenPageThreadResponses, ReorderStatusesData, ReorderStatusesErrors, ReorderStatusesResponses, ReorderTasksData, ReorderTasksErrors, ReorderTasksResponses, ReorderViewFavoritesData, ReorderViewFavoritesErrors, ReorderViewFavoritesResponses, ResolvePageThreadData, ResolvePageThreadErrors, ResolvePageThreadResponses, RestorePageData, RestorePageErrors, RestorePageResponses, RestorePageVersionData, RestorePageVersionErrors, RestorePageVersionResponses, RestoreProjectData, RestoreProjectErrors, RestoreProjectResponses, RestoreTaskData, RestoreTaskErrors, RestoreTaskResponses, RestoreWorkspaceData, RestoreWorkspaceErrors, RestoreWorkspaceResponses, RevokeApiTokenData, RevokeApiTokenErrors, RevokeApiTokenResponses, RevokeInvitationData, RevokeInvitationErrors, RevokeInvitationResponses, RevokeSessionData, RevokeSessionErrors, RevokeSessionResponses, SaveGithubProjectConnectionData, SaveGithubProjectConnectionErrors, SaveGithubProjectConnectionResponses, SearchPagesData, SearchPagesErrors, SearchPagesResponses, SetAccountSuspensionData, SetAccountSuspensionErrors, SetAccountSuspensionResponses, SetPageLockData, SetPageLockErrors, SetPageLockResponses, SetupCompleteData, SetupCompleteErrors, SetupCompleteResponses, SetupStatusData, SetupStatusErrors, SetupStatusResponses, StartGithubManifestData, StartGithubManifestErrors, StartGithubManifestResponses, StartNotionImportData, StartNotionImportErrors, StartNotionImportResponses, TransferOwnershipData, TransferOwnershipErrors, TransferOwnershipResponses, UnfavoriteViewData, UnfavoriteViewErrors, UnfavoriteViewResponses, UpdateCommentData, UpdateCommentErrors, UpdateCommentResponses, UpdateLabelData, UpdateLabelErrors, UpdateLabelResponses, UpdateMeData, UpdateMeErrors, UpdateMeResponses, UpdatePageCommentData, UpdatePageCommentErrors, UpdatePageCommentResponses, UpdatePageData, UpdatePageErrors, UpdatePageResponses, UpdateProjectData, UpdateProjectErrors, UpdateProjectResponses, UpdateStatusData, UpdateStatusErrors, UpdateStatusResponses, UpdateTaskData, UpdateTaskErrors, UpdateTaskResponses, UpdateTeamspaceData, UpdateTeamspaceErrors, UpdateTeamspaceResponses, UpdateViewData, UpdateViewErrors, UpdateViewResponses, UploadCommentAttachmentsData, UploadCommentAttachmentsErrors, UploadCommentAttachmentsResponses, UploadPageFileData, UploadPageFileErrors, UploadPageFileResponses, UploadTaskAttachmentsData, UploadTaskAttachmentsErrors, UploadTaskAttachmentsResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -1208,6 +1208,20 @@ export const bulkTasks = <ThrowOnError extends boolean = false>(options: Options
     }
 });
 
+export const queryTasks = <ThrowOnError extends boolean = false>(options: Options<QueryTasksData, ThrowOnError>): RequestResult<QueryTasksResponses, QueryTasksErrors, ThrowOnError> => (options.client ?? client).post<QueryTasksResponses, QueryTasksErrors, ThrowOnError>({
+    security: [{
+            in: 'cookie',
+            name: '__Host-orbit_session',
+            type: 'apiKey'
+        }],
+    url: '/api/v1/workspaces/{workspace_id}/tasks/query',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
 export const reorderTasks = <ThrowOnError extends boolean = false>(options: Options<ReorderTasksData, ThrowOnError>): RequestResult<ReorderTasksResponses, ReorderTasksErrors, ThrowOnError> => (options.client ?? client).post<ReorderTasksResponses, ReorderTasksErrors, ThrowOnError>({
     security: [{
             in: 'cookie',
@@ -1561,4 +1575,120 @@ export const transferOwnership = <ThrowOnError extends boolean = false>(options:
         'Content-Type': 'application/json',
         ...options.headers
     }
+});
+
+export const reorderViewFavorites = <ThrowOnError extends boolean = false>(options: Options<ReorderViewFavoritesData, ThrowOnError>): RequestResult<ReorderViewFavoritesResponses, ReorderViewFavoritesErrors, ThrowOnError> => (options.client ?? client).put<ReorderViewFavoritesResponses, ReorderViewFavoritesErrors, ThrowOnError>({
+    security: [{
+            in: 'cookie',
+            name: '__Host-orbit_session',
+            type: 'apiKey'
+        }],
+    url: '/api/v1/workspaces/{workspace_id}/view-favorites/order',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const getViewPreference = <ThrowOnError extends boolean = false>(options: Options<GetViewPreferenceData, ThrowOnError>): RequestResult<GetViewPreferenceResponses, GetViewPreferenceErrors, ThrowOnError> => (options.client ?? client).get<GetViewPreferenceResponses, GetViewPreferenceErrors, ThrowOnError>({
+    security: [{
+            in: 'cookie',
+            name: '__Host-orbit_session',
+            type: 'apiKey'
+        }],
+    url: '/api/v1/workspaces/{workspace_id}/view-preferences/{page_key}',
+    ...options
+});
+
+export const putViewPreference = <ThrowOnError extends boolean = false>(options: Options<PutViewPreferenceData, ThrowOnError>): RequestResult<PutViewPreferenceResponses, PutViewPreferenceErrors, ThrowOnError> => (options.client ?? client).put<PutViewPreferenceResponses, PutViewPreferenceErrors, ThrowOnError>({
+    security: [{
+            in: 'cookie',
+            name: '__Host-orbit_session',
+            type: 'apiKey'
+        }],
+    url: '/api/v1/workspaces/{workspace_id}/view-preferences/{page_key}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const listViews = <ThrowOnError extends boolean = false>(options: Options<ListViewsData, ThrowOnError>): RequestResult<ListViewsResponses, ListViewsErrors, ThrowOnError> => (options.client ?? client).get<ListViewsResponses, ListViewsErrors, ThrowOnError>({
+    security: [{
+            in: 'cookie',
+            name: '__Host-orbit_session',
+            type: 'apiKey'
+        }],
+    url: '/api/v1/workspaces/{workspace_id}/views',
+    ...options
+});
+
+export const createView = <ThrowOnError extends boolean = false>(options: Options<CreateViewData, ThrowOnError>): RequestResult<CreateViewResponses, CreateViewErrors, ThrowOnError> => (options.client ?? client).post<CreateViewResponses, CreateViewErrors, ThrowOnError>({
+    security: [{
+            in: 'cookie',
+            name: '__Host-orbit_session',
+            type: 'apiKey'
+        }],
+    url: '/api/v1/workspaces/{workspace_id}/views',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const deleteView = <ThrowOnError extends boolean = false>(options: Options<DeleteViewData, ThrowOnError>): RequestResult<DeleteViewResponses, DeleteViewErrors, ThrowOnError> => (options.client ?? client).delete<DeleteViewResponses, DeleteViewErrors, ThrowOnError>({
+    security: [{
+            in: 'cookie',
+            name: '__Host-orbit_session',
+            type: 'apiKey'
+        }],
+    url: '/api/v1/workspaces/{workspace_id}/views/{view_id}',
+    ...options
+});
+
+export const getView = <ThrowOnError extends boolean = false>(options: Options<GetViewData, ThrowOnError>): RequestResult<GetViewResponses, GetViewErrors, ThrowOnError> => (options.client ?? client).get<GetViewResponses, GetViewErrors, ThrowOnError>({
+    security: [{
+            in: 'cookie',
+            name: '__Host-orbit_session',
+            type: 'apiKey'
+        }],
+    url: '/api/v1/workspaces/{workspace_id}/views/{view_id}',
+    ...options
+});
+
+export const updateView = <ThrowOnError extends boolean = false>(options: Options<UpdateViewData, ThrowOnError>): RequestResult<UpdateViewResponses, UpdateViewErrors, ThrowOnError> => (options.client ?? client).patch<UpdateViewResponses, UpdateViewErrors, ThrowOnError>({
+    security: [{
+            in: 'cookie',
+            name: '__Host-orbit_session',
+            type: 'apiKey'
+        }],
+    url: '/api/v1/workspaces/{workspace_id}/views/{view_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+export const unfavoriteView = <ThrowOnError extends boolean = false>(options: Options<UnfavoriteViewData, ThrowOnError>): RequestResult<UnfavoriteViewResponses, UnfavoriteViewErrors, ThrowOnError> => (options.client ?? client).delete<UnfavoriteViewResponses, UnfavoriteViewErrors, ThrowOnError>({
+    security: [{
+            in: 'cookie',
+            name: '__Host-orbit_session',
+            type: 'apiKey'
+        }],
+    url: '/api/v1/workspaces/{workspace_id}/views/{view_id}/favorite',
+    ...options
+});
+
+export const favoriteView = <ThrowOnError extends boolean = false>(options: Options<FavoriteViewData, ThrowOnError>): RequestResult<FavoriteViewResponses, FavoriteViewErrors, ThrowOnError> => (options.client ?? client).put<FavoriteViewResponses, FavoriteViewErrors, ThrowOnError>({
+    security: [{
+            in: 'cookie',
+            name: '__Host-orbit_session',
+            type: 'apiKey'
+        }],
+    url: '/api/v1/workspaces/{workspace_id}/views/{view_id}/favorite',
+    ...options
 });

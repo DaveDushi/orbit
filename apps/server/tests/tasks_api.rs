@@ -5,7 +5,12 @@ use axum::http::{Request, StatusCode, header};
 use orbit_platform::{AuthenticatedUser, Id, PasswordService, TestDatabase, TimestampMillis};
 use orbit_server::auth_routes::CookieMode;
 use orbit_server::repositories::identity::{IdentityRepository, SetupRequest};
-use orbit_server::repositories::tasks::{GithubWorkItem, TaskRepository};
+use orbit_server::repositories::task_filter::{
+    FilterGroup, ShowCompleted, parse_filter, preset_filter,
+};
+use orbit_server::repositories::tasks::{
+    CreateTask, GithubWorkItem, SortOrder, TaskError, TaskFilter, TaskRepository, TaskSort,
+};
 use orbit_server::repositories::workspaces::WorkspaceRepository;
 use orbit_server::task_routes::{TaskState, task_router};
 use serde_json::{Value, json};
@@ -768,6 +773,46 @@ async fn task_lists_filter_sort_and_reject_cursor_query_mismatches() {
     let searched = response_json(searched).await;
     assert_eq!(searched["items"].as_array().unwrap().len(), 1);
     assert_eq!(searched["items"][0]["title"], "Alpha");
+}
+
+#[tokio::test]
+async fn title_sort_ignores_case_across_pages() {
+    let fixture = Fixture::new().await;
+    for title in ["Zebra", "apple", "Banana"] {
+        fixture.create_task(title).await;
+    }
+    let mut titles = Vec::new();
+    let mut cursor = String::new();
+    loop {
+        let page = response_json(
+            fixture
+                .app
+                .clone()
+                .oneshot(cookie_request(
+                    "GET",
+                    &format!(
+                        "/api/v1/workspaces/{}/tasks?sort=title&order=asc&limit=1{cursor}",
+                        fixture.workspace_id
+                    ),
+                    &fixture.owner_cookie,
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        titles.extend(
+            page["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|task| task["title"].clone()),
+        );
+        match page["next_cursor"].as_str() {
+            Some(next) => cursor = format!("&cursor={next}"),
+            None => break,
+        }
+    }
+    assert_eq!(titles, [json!("apple"), json!("Banana"), json!("Zebra")]);
 }
 
 #[tokio::test]
@@ -3693,4 +3738,1103 @@ async fn create_project(fixture: &Fixture, key: &str) -> String {
 
 fn relations_uri(fixture: &Fixture, task_id: &str) -> String {
     format!("{}/relations", task_uri(fixture, task_id))
+}
+
+#[tokio::test]
+async fn completed_at_is_set_and_cleared_by_status_changes() {
+    let fixture = Fixture::new().await;
+    let done = status_id_by_category(&fixture, &fixture.project_id, "completed").await;
+    let cancelled = status_id_by_category(&fixture, &fixture.project_id, "cancelled").await;
+    let task = fixture.create_task("Finish me").await;
+    let id = id_of(&task).to_owned();
+    assert_eq!(task_timestamps(&fixture, &id).await.0, None);
+
+    let (status, task) = call(
+        &fixture,
+        "PATCH",
+        &task_uri(&fixture, &id),
+        Some(json!({"expected_version": task["version"], "status_id": done})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (completed_at, updated_at) = task_timestamps(&fixture, &id).await;
+    assert_eq!(completed_at, Some(updated_at));
+
+    // Every PATCH rewrites status_id; an unrelated edit must keep completed_at.
+    let (status, task) = call(
+        &fixture,
+        "PATCH",
+        &task_uri(&fixture, &id),
+        Some(json!({"expected_version": task["version"], "title": "Finished"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(task_timestamps(&fixture, &id).await.0, completed_at);
+
+    // Done -> Cancelled stays in a done category, so completed_at is kept.
+    let (status, task) = call(
+        &fixture,
+        "PATCH",
+        &task_uri(&fixture, &id),
+        Some(json!({"expected_version": task["version"], "status_id": cancelled})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(task_timestamps(&fixture, &id).await.0, completed_at);
+
+    // Back to an open status clears it.
+    let (status, _) = call(
+        &fixture,
+        "PATCH",
+        &task_uri(&fixture, &id),
+        Some(json!({"expected_version": task["version"], "status_id": fixture.status_id})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(task_timestamps(&fixture, &id).await.0, None);
+
+    // A task created directly in a done status gets completed_at on insert.
+    let (status, born_done) = call(
+        &fixture,
+        "POST",
+        &format!("/api/v1/workspaces/{}/tasks", fixture.workspace_id),
+        Some(json!({"project_id": fixture.project_id, "status_id": done, "title": "Born done"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (completed_at, updated_at) = task_timestamps(&fixture, id_of(&born_done)).await;
+    assert_eq!(completed_at, Some(updated_at));
+}
+
+#[tokio::test]
+async fn completed_at_follows_status_category_edits() {
+    let fixture = Fixture::new().await;
+    let task = fixture.create_task("Shipped").await;
+    let id = id_of(&task).to_owned();
+    async fn edit_category(fixture: &Fixture, category: &str, version: i64) -> (StatusCode, Value) {
+        let uri = format!(
+            "/api/v1/workspaces/{}/projects/{}/statuses/{}",
+            fixture.workspace_id, fixture.project_id, fixture.status_id
+        );
+        let body = json!({"name": "Shipped", "color": "#123456", "category": category,
+                          "position": 0, "expected_version": version});
+        call(fixture, "PATCH", &uri, Some(body)).await
+    }
+
+    let (status, body) = edit_category(&fixture, "completed", 0).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(task_timestamps(&fixture, &id).await.0.is_some());
+
+    // done -> done keeps the time; done -> open clears it
+    let completed_at = task_timestamps(&fixture, &id).await.0;
+    let (status, _) = edit_category(&fixture, "cancelled", 1).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(task_timestamps(&fixture, &id).await.0, completed_at);
+    let (status, _) = edit_category(&fixture, "started", 2).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(task_timestamps(&fixture, &id).await.0, None);
+}
+
+async fn task_timestamps(fixture: &Fixture, task_id: &str) -> (Option<i64>, i64) {
+    sqlx::query_as("SELECT completed_at, updated_at FROM tasks WHERE id = ?")
+        .bind(task_id)
+        .fetch_one(fixture.database.pool())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn legacy_list_parameters_keep_their_results() {
+    let fixture = Fixture::new().await;
+    let (member_id, member_cookie) = add_member(&fixture, "legacy@example.com").await;
+    let started = status_id_by_category(&fixture, &fixture.project_id, "started").await;
+    let done = status_id_by_category(&fixture, &fixture.project_id, "completed").await;
+    let other_project = create_project(&fixture, "LEGACY").await;
+    let other_status = status_id_by_category(&fixture, &other_project, "unstarted").await;
+    let (status, label) = call(
+        &fixture,
+        "POST",
+        &format!("/api/v1/workspaces/{}/labels", fixture.workspace_id),
+        Some(json!({"name": "bug", "color": "#ff0000"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let bug = id_of(&label).to_owned();
+    let yesterday = TimestampMillis::from_millis(TimestampMillis::now().as_millis() - 86_400_000);
+    let tomorrow = TimestampMillis::from_millis(TimestampMillis::now().as_millis() + 86_400_000);
+    for body in [
+        json!({"project_id": fixture.project_id, "status_id": started, "title": "Alpha 100%", "priority": "urgent",
+               "assignee_ids": [fixture.owner_id.to_string()], "label_ids": [bug], "due_at": yesterday}),
+        json!({"project_id": fixture.project_id, "status_id": done, "title": "Bravo", "priority": "high",
+               "assignee_ids": [member_id.to_string()], "due_at": yesterday}),
+        json!({"project_id": other_project, "status_id": other_status, "title": "Charlie",
+               "description": "find the needle"}),
+        json!({"project_id": fixture.project_id, "status_id": fixture.status_id, "title": "Delta", "priority": "urgent",
+               "assignee_ids": [member_id.to_string()], "label_ids": [bug], "due_at": tomorrow}),
+    ] {
+        let (status, _) = call(
+            &fixture,
+            "POST",
+            &format!("/api/v1/workspaces/{}/tasks", fixture.workspace_id),
+            Some(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+    }
+
+    let main = fixture.project_id.clone();
+    let member = member_id.to_string();
+    let unknown = Id::new_v7().to_string();
+    for (query, expected) in [
+        (
+            "search=".to_owned(),
+            vec!["Alpha 100%", "Bravo", "Charlie", "Delta"],
+        ),
+        (
+            format!("project_id={main}"),
+            vec!["Alpha 100%", "Bravo", "Delta"],
+        ),
+        (format!("project_id={other_project}"), vec!["Charlie"]),
+        (format!("status_id={started}"), vec!["Alpha 100%"]),
+        (format!("status_id={unknown}"), vec![]),
+        (format!("assignee_id={member}"), vec!["Bravo", "Delta"]),
+        ("unassigned=true".to_owned(), vec!["Charlie"]),
+        (format!("unassigned=true&project_id={main}"), vec![]),
+        (format!("label_id={bug}"), vec!["Alpha 100%", "Delta"]),
+        ("priority=urgent".to_owned(), vec!["Alpha 100%", "Delta"]),
+        ("search=needle".to_owned(), vec!["Charlie"]),
+        ("search=100%25".to_owned(), vec!["Alpha 100%"]),
+        ("search=ALPHA".to_owned(), vec!["Alpha 100%"]),
+        ("view=overdue".to_owned(), vec!["Alpha 100%"]),
+        // view=mine always meant the caller; assignee_id was ignored with it.
+        (
+            format!("view=mine&assignee_id={member}"),
+            vec!["Alpha 100%"],
+        ),
+        (
+            format!("priority=urgent&label_id={bug}&assignee_id={member}"),
+            vec!["Delta"],
+        ),
+    ] {
+        assert_eq!(
+            legacy_titles(&fixture, &fixture.owner_cookie, &query).await,
+            expected,
+            "{query}"
+        );
+    }
+    assert_eq!(
+        legacy_titles(&fixture, &member_cookie, "view=mine").await,
+        ["Bravo", "Delta"]
+    );
+
+    for (query, status, code) in [
+        (
+            "view=bogus",
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation_failed",
+        ),
+        (
+            "priority=critical",
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation_failed",
+        ),
+        (
+            "sort=estimate",
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation_failed",
+        ),
+        (
+            "status_id=not-a-uuid",
+            StatusCode::NOT_FOUND,
+            "task_resource_not_found",
+        ),
+    ] {
+        let (actual, problem) = call(
+            &fixture,
+            "GET",
+            &format!("/api/v1/workspaces/{}/tasks?{query}", fixture.workspace_id),
+            None,
+        )
+        .await;
+        assert_eq!(actual, status, "{query}");
+        assert_eq!(problem["code"], code, "{query}");
+    }
+}
+
+async fn legacy_titles(fixture: &Fixture, cookie: &str, query: &str) -> Vec<String> {
+    let response = fixture
+        .app
+        .clone()
+        .oneshot(cookie_request(
+            "GET",
+            &format!(
+                "/api/v1/workspaces/{}/tasks?sort=title&order=asc&{query}",
+                fixture.workspace_id
+            ),
+            cookie,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK, "{query}");
+    response_json(response).await["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|task| task["title"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+const FILTER_DAY: i64 = 86_400_000;
+const FILTER_HOUR: i64 = 3_600_000;
+/// 2026-09-24T12:00:00Z, a Thursday (day 20_720 since the Unix epoch).
+const FILTER_NOW: i64 = 20_720 * FILTER_DAY + 12 * FILTER_HOUR;
+
+struct FilterData {
+    fixture: Fixture,
+    repo: TaskRepository,
+    workspace: Id,
+    project: Id,
+    member: Id,
+    bug: Id,
+    ui: Id,
+    done: Id,
+}
+
+fn filter_task(project: Id, status: Id, title: &str) -> CreateTask {
+    CreateTask {
+        project_id: project,
+        status_id: status,
+        title: title.to_owned(),
+        description: String::new(),
+        source_url: None,
+        priority: "none".to_owned(),
+        position: None,
+        assignee_ids: Vec::new(),
+        label_ids: Vec::new(),
+        due_start_at: None,
+        due_at: None,
+    }
+}
+
+async fn status_named(fixture: &Fixture, name: &str) -> Id {
+    let id: String =
+        sqlx::query_scalar("SELECT id FROM task_statuses WHERE project_id = ? AND name = ?")
+            .bind(&fixture.project_id)
+            .bind(name)
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap();
+    id.parse().unwrap()
+}
+
+/// Five tasks in the default project, created by the owner:
+///
+/// | title   | status      | priority | assignees      | labels  | due (UTC)                     | created   |
+/// |---------|-------------|----------|----------------|---------|-------------------------------|-----------|
+/// | Alpha   | Backlog     | urgent   | owner          | bug     | Wed 2026-09-23 10:00          | now − 10d |
+/// | Bravo   | In Progress | high     | member         | bug, ui | Thu 2026-09-24 02:00 (today)  | now − 3d  |
+/// | Charlie | Done        | none     | —              | —       | —                             | now − 1d  |
+/// | Delta   | Todo        | low      | member         | ui      | Mon 2026-09-28 01:00          | now       |
+/// | Echo    | Cancelled   | medium   | owner, member  | —       | Sun 2026-09-27 23:59:59.999   | now − 2d  |
+///
+/// Delta's description is "Ship 100% of the done_ish work"; every other description is empty.
+async fn filter_data() -> FilterData {
+    let fixture = Fixture::new().await;
+    let repo = TaskRepository::new((*fixture.database).clone());
+    let workspace: Id = fixture.workspace_id.parse().unwrap();
+    let project: Id = fixture.project_id.parse().unwrap();
+    let owner = fixture.owner_id;
+    let (member, _) = add_member(&fixture, "filters@example.com").await;
+    let at = TimestampMillis::from_millis;
+    let now = at(FILTER_NOW);
+    let bug = repo
+        .create_label(
+            workspace,
+            owner,
+            "bug".to_owned(),
+            "#ff0000".to_owned(),
+            "test",
+            now,
+        )
+        .await
+        .unwrap()
+        .id;
+    let ui = repo
+        .create_label(
+            workspace,
+            owner,
+            "ui".to_owned(),
+            "#00ff00".to_owned(),
+            "test",
+            now,
+        )
+        .await
+        .unwrap()
+        .id;
+    let backlog = status_named(&fixture, "Backlog").await;
+    let todo = status_named(&fixture, "Todo").await;
+    let in_progress = status_named(&fixture, "In Progress").await;
+    let done = status_named(&fixture, "Done").await;
+    let cancelled = status_named(&fixture, "Cancelled").await;
+    let tasks = [
+        (
+            CreateTask {
+                priority: "urgent".to_owned(),
+                assignee_ids: vec![owner],
+                label_ids: vec![bug],
+                due_at: Some(at(20_719 * FILTER_DAY + 10 * FILTER_HOUR)),
+                ..filter_task(project, backlog, "Alpha")
+            },
+            FILTER_NOW - 10 * FILTER_DAY,
+        ),
+        (
+            CreateTask {
+                priority: "high".to_owned(),
+                assignee_ids: vec![member],
+                label_ids: vec![bug, ui],
+                due_at: Some(at(20_720 * FILTER_DAY + 2 * FILTER_HOUR)),
+                ..filter_task(project, in_progress, "Bravo")
+            },
+            FILTER_NOW - 3 * FILTER_DAY,
+        ),
+        (
+            filter_task(project, done, "Charlie"),
+            FILTER_NOW - FILTER_DAY,
+        ),
+        (
+            CreateTask {
+                priority: "low".to_owned(),
+                description: "Ship 100% of the done_ish work".to_owned(),
+                assignee_ids: vec![member],
+                label_ids: vec![ui],
+                due_at: Some(at(20_724 * FILTER_DAY + FILTER_HOUR)),
+                ..filter_task(project, todo, "Delta")
+            },
+            FILTER_NOW,
+        ),
+        (
+            CreateTask {
+                priority: "medium".to_owned(),
+                assignee_ids: vec![owner, member],
+                due_at: Some(at(20_724 * FILTER_DAY - 1)),
+                ..filter_task(project, cancelled, "Echo")
+            },
+            FILTER_NOW - 2 * FILTER_DAY,
+        ),
+    ];
+    for (input, created_at) in tasks {
+        repo.create_task(workspace, owner, input, "test", at(created_at))
+            .await
+            .unwrap();
+    }
+    FilterData {
+        fixture,
+        repo,
+        workspace,
+        project,
+        member,
+        bug,
+        ui,
+        done,
+    }
+}
+
+async fn page_titles(
+    repo: &TaskRepository,
+    workspace: Id,
+    actor: Id,
+    filter: &TaskFilter,
+    limit: usize,
+    now: i64,
+) -> Vec<String> {
+    let mut titles = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let page = repo
+            .tasks(
+                workspace,
+                actor,
+                filter,
+                cursor.as_deref(),
+                limit,
+                TimestampMillis::from_millis(now),
+            )
+            .await
+            .unwrap();
+        titles.extend(page.items.into_iter().map(|task| task.title));
+        match page.next_cursor {
+            Some(next) => cursor = Some(next),
+            None => return titles,
+        }
+    }
+}
+
+async fn filtered(data: &FilterData, actor: Id, tree: &Value, now: i64) -> Vec<String> {
+    let filter = TaskFilter {
+        tree: parse_filter(tree).unwrap(),
+        show_completed: ShowCompleted::All,
+        sort: TaskSort::Title,
+        order: SortOrder::Asc,
+    };
+    page_titles(&data.repo, data.workspace, actor, &filter, 100, now).await
+}
+
+fn only(field: &str, operator: &str, value: Value) -> Value {
+    json!({ "op": "and", "children": [{ "field": field, "operator": operator, "value": value }] })
+}
+
+#[tokio::test]
+async fn filter_trees_match_every_field_and_operator() {
+    let data = filter_data().await;
+    let owner = data.fixture.owner_id;
+    let member = data.member.to_string();
+    let bug = data.bug.to_string();
+    let ui = data.ui.to_string();
+    let done = data.done.to_string();
+    let project = data.project.to_string();
+    let unknown = Id::new_v7().to_string();
+    let all = vec!["Alpha", "Bravo", "Charlie", "Delta", "Echo"];
+    let urgent = json!({ "field": "priority", "operator": "is", "value": ["urgent"] });
+    let not_done = json!({ "field": "status_category", "operator": "is_not", "value": ["completed", "cancelled", "duplicate"] });
+    let cases: Vec<(Value, Vec<&str>)> = vec![
+        // status
+        (
+            only("status", "is", json!(["started:in progress"])),
+            vec!["Bravo"],
+        ),
+        (
+            only("status", "is", json!(["started:In Progress"])),
+            vec!["Bravo"],
+        ),
+        (
+            only(
+                "status",
+                "is_not",
+                json!(["unstarted:backlog", "unstarted:todo"]),
+            ),
+            vec!["Bravo", "Charlie", "Echo"],
+        ),
+        (only("status", "is", json!([done])), vec!["Charlie"]),
+        (only("status", "is", json!([unknown])), vec![]),
+        // status_category
+        (
+            only("status_category", "is", json!(["completed", "cancelled"])),
+            vec!["Charlie", "Echo"],
+        ),
+        (
+            only(
+                "status_category",
+                "is_not",
+                json!(["completed", "cancelled", "duplicate"]),
+            ),
+            vec!["Alpha", "Bravo", "Delta"],
+        ),
+        // assignee (active members only; "me" is the caller)
+        (only("assignee", "is", json!(["me"])), vec!["Alpha", "Echo"]),
+        (
+            only("assignee", "is", json!([member])),
+            vec!["Bravo", "Delta", "Echo"],
+        ),
+        (
+            only("assignee", "is_not", json!(["me"])),
+            vec!["Bravo", "Charlie", "Delta"],
+        ),
+        (only("assignee", "is_empty", Value::Null), vec!["Charlie"]),
+        (
+            only("assignee", "is_not_empty", Value::Null),
+            vec!["Alpha", "Bravo", "Delta", "Echo"],
+        ),
+        (only("assignee", "is", json!([unknown])), vec![]),
+        // creator
+        (only("creator", "is", json!(["me"])), all.clone()),
+        (only("creator", "is", json!([member])), vec![]),
+        (only("creator", "is_not", json!(["me"])), vec![]),
+        // label
+        (
+            only("label", "includes_any", json!([bug])),
+            vec!["Alpha", "Bravo"],
+        ),
+        (
+            only("label", "includes_all", json!([bug, ui])),
+            vec!["Bravo"],
+        ),
+        (only("label", "includes_all", json!([bug, unknown])), vec![]),
+        (
+            only("label", "excludes", json!([bug])),
+            vec!["Charlie", "Delta", "Echo"],
+        ),
+        (
+            only("label", "is_empty", Value::Null),
+            vec!["Charlie", "Echo"],
+        ),
+        (
+            only("label", "is_not_empty", Value::Null),
+            vec!["Alpha", "Bravo", "Delta"],
+        ),
+        (only("label", "includes_any", json!([unknown])), vec![]),
+        // priority
+        (
+            only("priority", "is", json!(["urgent", "high"])),
+            vec!["Alpha", "Bravo"],
+        ),
+        (
+            only("priority", "is_not", json!(["none"])),
+            vec!["Alpha", "Bravo", "Delta", "Echo"],
+        ),
+        // project
+        (only("project", "is", json!([project])), all.clone()),
+        (only("project", "is_not", json!([project])), vec![]),
+        (only("project", "is", json!([unknown])), vec![]),
+        // due_date: before is exclusive, after D means >= D + 1 day, between is inclusive of both days
+        (
+            only("due_date", "before", json!({ "relative": "today" })),
+            vec!["Alpha"],
+        ),
+        (
+            only("due_date", "after", json!({ "relative": "today" })),
+            vec!["Delta", "Echo"],
+        ),
+        (
+            only(
+                "due_date",
+                "between",
+                json!([{ "relative": "today" }, { "relative": "today" }]),
+            ),
+            vec!["Bravo"],
+        ),
+        (
+            only(
+                "due_date",
+                "between",
+                json!([{ "relative": "start_of_week" }, { "relative": "end_of_week" }]),
+            ),
+            vec!["Alpha", "Bravo", "Echo"],
+        ),
+        (
+            only("due_date", "before", json!({ "absolute": "2026-09-24" })),
+            vec!["Alpha"],
+        ),
+        (
+            only(
+                "due_date",
+                "after",
+                json!({ "relative": "today", "offset_days": 3 }),
+            ),
+            vec!["Delta"],
+        ),
+        (only("due_date", "is_empty", Value::Null), vec!["Charlie"]),
+        (
+            only("due_date", "is_not_empty", Value::Null),
+            vec!["Alpha", "Bravo", "Delta", "Echo"],
+        ),
+        // created_at / updated_at
+        (
+            only(
+                "created_at",
+                "before",
+                json!({ "relative": "today", "offset_days": -2 }),
+            ),
+            vec!["Alpha", "Bravo"],
+        ),
+        (
+            only(
+                "created_at",
+                "after",
+                json!({ "relative": "today", "offset_days": -1 }),
+            ),
+            vec!["Delta"],
+        ),
+        (
+            only("updated_at", "after", json!({ "absolute": "2026-09-23" })),
+            vec!["Delta"],
+        ),
+        // text: case-insensitive, LIKE wildcards are literal
+        (only("text", "contains", json!("ALPHA")), vec!["Alpha"]),
+        (only("text", "contains", json!("100%")), vec!["Delta"]),
+        (only("text", "contains", json!("%")), vec!["Delta"]),
+        (only("text", "contains", json!("_ish")), vec!["Delta"]),
+        // groups
+        (
+            json!({ "op": "or", "children": [urgent.clone(), { "field": "label", "operator": "includes_any", "value": [ui] }] }),
+            vec!["Alpha", "Bravo", "Delta"],
+        ),
+        (
+            json!({ "op": "and", "children": [
+                not_done.clone(),
+                { "op": "or", "children": [
+                    { "field": "assignee", "operator": "is_empty" },
+                    { "op": "and", "children": [{ "field": "priority", "operator": "is", "value": ["low"] }] }
+                ] }
+            ] }),
+            vec!["Delta"],
+        ),
+        (json!({ "op": "and", "children": [] }), all.clone()),
+        (
+            json!({ "op": "and", "children": [{ "op": "or", "children": [] }, urgent.clone()] }),
+            vec!["Alpha"],
+        ),
+        (
+            json!({ "op": "or", "children": [{ "op": "and", "children": [] }, urgent.clone()] }),
+            all.clone(),
+        ),
+    ];
+    for (tree, expected) in cases {
+        assert_eq!(
+            filtered(&data, owner, &tree, FILTER_NOW).await,
+            expected,
+            "{tree}"
+        );
+    }
+    assert_eq!(
+        filtered(
+            &data,
+            data.member,
+            &only("assignee", "is", json!(["me"])),
+            FILTER_NOW
+        )
+        .await,
+        ["Bravo", "Delta", "Echo"]
+    );
+}
+
+#[tokio::test]
+async fn presets_resolve_days_and_weeks_in_utc() {
+    let data = filter_data().await;
+    let owner = data.fixture.owner_id;
+    let preset = |name: &str| serde_json::to_value(preset_filter(name).unwrap()).unwrap();
+    let sunday_last_ms = 20_724 * FILTER_DAY - 1;
+    let monday_first_ms = 20_724 * FILTER_DAY;
+    for (name, actor, now, expected) in [
+        ("overdue", owner, FILTER_NOW, vec!["Alpha"]),
+        ("due_soon", owner, FILTER_NOW, vec!["Bravo", "Delta"]),
+        ("current_week", owner, FILTER_NOW, vec!["Alpha", "Bravo"]),
+        ("mine", owner, FILTER_NOW, vec!["Alpha", "Echo"]),
+        (
+            "mine",
+            data.member,
+            FILTER_NOW,
+            vec!["Bravo", "Delta", "Echo"],
+        ),
+        ("my_week", owner, FILTER_NOW, vec!["Alpha"]),
+        ("my_week", data.member, FILTER_NOW, vec!["Bravo"]),
+        ("overdue", owner, sunday_last_ms, vec!["Alpha", "Bravo"]),
+        (
+            "current_week",
+            owner,
+            sunday_last_ms,
+            vec!["Alpha", "Bravo"],
+        ),
+        ("current_week", owner, monday_first_ms, vec!["Delta"]),
+        ("overdue", owner, monday_first_ms, vec!["Alpha", "Bravo"]),
+    ] {
+        assert_eq!(
+            filtered(&data, actor, &preset(name), now).await,
+            expected,
+            "{name} at {now}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn show_completed_windows_use_completed_at() {
+    let fixture = Fixture::new().await;
+    let repo = TaskRepository::new((*fixture.database).clone());
+    let workspace: Id = fixture.workspace_id.parse().unwrap();
+    let project: Id = fixture.project_id.parse().unwrap();
+    let backlog: Id = fixture.status_id.parse().unwrap();
+    let done = status_named(&fixture, "Done").await;
+    let cancelled = status_named(&fixture, "Cancelled").await;
+    for (title, status, age_days) in [
+        ("Open", backlog, 0),
+        ("Done recently", done, 2),
+        ("Cancelled recently", cancelled, 1),
+        ("Done last month", done, 20),
+        ("Done long ago", done, 40),
+    ] {
+        repo.create_task(
+            workspace,
+            fixture.owner_id,
+            filter_task(project, status, title),
+            "test",
+            TimestampMillis::from_millis(FILTER_NOW - age_days * FILTER_DAY),
+        )
+        .await
+        .unwrap();
+    }
+    for (show, expected) in [
+        (
+            ShowCompleted::All,
+            vec![
+                "Cancelled recently",
+                "Done last month",
+                "Done long ago",
+                "Done recently",
+                "Open",
+            ],
+        ),
+        (
+            ShowCompleted::PastMonth,
+            vec![
+                "Cancelled recently",
+                "Done last month",
+                "Done recently",
+                "Open",
+            ],
+        ),
+        (
+            ShowCompleted::PastWeek,
+            vec!["Cancelled recently", "Done recently", "Open"],
+        ),
+        (ShowCompleted::None, vec!["Open"]),
+    ] {
+        let filter = TaskFilter {
+            tree: FilterGroup::default(),
+            show_completed: show,
+            sort: TaskSort::Title,
+            order: SortOrder::Asc,
+        };
+        assert_eq!(
+            page_titles(&repo, workspace, fixture.owner_id, &filter, 100, FILTER_NOW).await,
+            expected,
+            "{show:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn due_date_order_keeps_empty_dates_last_across_pages() {
+    let fixture = Fixture::new().await;
+    let repo = TaskRepository::new((*fixture.database).clone());
+    let workspace: Id = fixture.workspace_id.parse().unwrap();
+    let project: Id = fixture.project_id.parse().unwrap();
+    let backlog: Id = fixture.status_id.parse().unwrap();
+    let mut undated = Vec::new();
+    for (title, due_day) in [
+        ("d2", Some(20_722)),
+        ("n1", None),
+        ("d1", Some(20_721)),
+        ("n2", None),
+        ("d3", Some(20_723)),
+    ] {
+        let mut input = filter_task(project, backlog, title);
+        input.due_at = due_day.map(|day: i64| TimestampMillis::from_millis(day * FILTER_DAY));
+        let task = repo
+            .create_task(
+                workspace,
+                fixture.owner_id,
+                input,
+                "test",
+                TimestampMillis::from_millis(FILTER_NOW),
+            )
+            .await
+            .unwrap();
+        if due_day.is_none() {
+            undated.push((task.id, title));
+        }
+    }
+    // Ties (both undated) fall back to the id, in the same direction as the sort.
+    undated.sort();
+    let ascending: Vec<&str> = ["d1", "d2", "d3"]
+        .into_iter()
+        .chain(undated.iter().map(|(_, title)| *title))
+        .collect();
+    let descending: Vec<&str> = ["d3", "d2", "d1"]
+        .into_iter()
+        .chain(undated.iter().rev().map(|(_, title)| *title))
+        .collect();
+    for (order, expected) in [(SortOrder::Asc, ascending), (SortOrder::Desc, descending)] {
+        let filter = TaskFilter {
+            tree: FilterGroup::default(),
+            show_completed: ShowCompleted::All,
+            sort: TaskSort::DueDate,
+            order,
+        };
+        assert_eq!(
+            page_titles(&repo, workspace, fixture.owner_id, &filter, 2, FILTER_NOW).await,
+            expected
+        );
+    }
+
+    // A cursor only continues the query that produced it.
+    let by_due = TaskFilter {
+        tree: FilterGroup::default(),
+        show_completed: ShowCompleted::All,
+        sort: TaskSort::DueDate,
+        order: SortOrder::Asc,
+    };
+    let now = TimestampMillis::from_millis(FILTER_NOW);
+    let first = repo
+        .tasks(workspace, fixture.owner_id, &by_due, None, 2, now)
+        .await
+        .unwrap();
+    let mine = TaskFilter {
+        tree: preset_filter("mine").unwrap(),
+        ..by_due.clone()
+    };
+    assert!(matches!(
+        repo.tasks(
+            workspace,
+            fixture.owner_id,
+            &mine,
+            first.next_cursor.as_deref(),
+            2,
+            now
+        )
+        .await,
+        Err(TaskError::InvalidCursor)
+    ));
+}
+
+fn query_uri(fixture: &Fixture) -> String {
+    format!("/api/v1/workspaces/{}/tasks/query", fixture.workspace_id)
+}
+
+fn query_body(filter: Value, order_by: &str, direction: &str, show_completed: &str) -> Value {
+    json!({
+        "filter": filter,
+        "order_by": order_by,
+        "order_direction": direction,
+        "show_completed": show_completed
+    })
+}
+
+fn query_titles(page: &Value) -> Vec<String> {
+    page["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|task| task["title"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn task_query_filters_orders_and_pages() {
+    let fixture = Fixture::new().await;
+    let done = status_id_by_category(&fixture, &fixture.project_id, "completed").await;
+    let now = TimestampMillis::now().as_millis();
+    let tomorrow = TimestampMillis::from_millis(now + 86_400_000);
+    let tomorrow_later = TimestampMillis::from_millis(now + 86_400_000 + 3_600_000);
+    let next_week = TimestampMillis::from_millis(now + 7 * 86_400_000);
+    for body in [
+        json!({"project_id": fixture.project_id, "status_id": fixture.status_id, "title": "Alpha", "priority": "urgent", "due_at": next_week}),
+        json!({"project_id": fixture.project_id, "status_id": fixture.status_id, "title": "Beta", "priority": "urgent"}),
+        json!({"project_id": fixture.project_id, "status_id": done, "title": "Gamma", "priority": "urgent", "due_at": tomorrow}),
+        json!({"project_id": fixture.project_id, "status_id": fixture.status_id, "title": "Delta", "priority": "low", "due_at": tomorrow_later}),
+    ] {
+        let (status, _) = call(
+            &fixture,
+            "POST",
+            &format!("/api/v1/workspaces/{}/tasks", fixture.workspace_id),
+            Some(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+    }
+
+    let urgent = json!({"op": "and", "children": [{"field": "priority", "operator": "is", "value": ["urgent"]}]});
+    let mut body = query_body(urgent.clone(), "title", "asc", "all");
+    body["limit"] = json!(2);
+    let (status, first) = call(&fixture, "POST", &query_uri(&fixture), Some(body.clone())).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(query_titles(&first), ["Alpha", "Beta"]);
+    body["cursor"] = first["next_cursor"].clone();
+    let (status, second) = call(&fixture, "POST", &query_uri(&fixture), Some(body)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(query_titles(&second), ["Gamma"]);
+    assert!(second["next_cursor"].is_null());
+
+    let (_, open) = call(
+        &fixture,
+        "POST",
+        &query_uri(&fixture),
+        Some(query_body(urgent, "title", "asc", "none")),
+    )
+    .await;
+    assert_eq!(query_titles(&open), ["Alpha", "Beta"]);
+
+    let everything = json!({"op": "and", "children": []});
+    let (_, ascending) = call(
+        &fixture,
+        "POST",
+        &query_uri(&fixture),
+        Some(query_body(everything.clone(), "due_date", "asc", "all")),
+    )
+    .await;
+    assert_eq!(
+        query_titles(&ascending),
+        ["Gamma", "Delta", "Alpha", "Beta"]
+    );
+    let (_, descending) = call(
+        &fixture,
+        "POST",
+        &query_uri(&fixture),
+        Some(query_body(everything.clone(), "due_date", "desc", "all")),
+    )
+    .await;
+    assert_eq!(
+        query_titles(&descending),
+        ["Alpha", "Delta", "Gamma", "Beta"]
+    );
+
+    // Manual order has no direction.
+    let (_, manual_asc) = call(
+        &fixture,
+        "POST",
+        &query_uri(&fixture),
+        Some(query_body(everything.clone(), "manual", "asc", "all")),
+    )
+    .await;
+    let (_, manual_desc) = call(
+        &fixture,
+        "POST",
+        &query_uri(&fixture),
+        Some(query_body(everything.clone(), "manual", "desc", "all")),
+    )
+    .await;
+    assert_eq!(query_titles(&manual_asc), query_titles(&manual_desc));
+
+    // A cursor only continues the query that produced it.
+    let mut other = query_body(everything, "title", "asc", "all");
+    other["cursor"] = first["next_cursor"].clone();
+    let (status, problem) = call(&fixture, "POST", &query_uri(&fixture), Some(other)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(problem["code"], "invalid_cursor");
+}
+
+#[tokio::test]
+async fn task_query_rejects_invalid_filters_with_a_json_path() {
+    let fixture = Fixture::new().await;
+    let ok = json!({"field": "priority", "operator": "is", "value": ["high"]});
+    let too_deep = json!({"op": "and", "children": [
+        {"op": "and", "children": [
+            {"op": "and", "children": [
+                {"op": "and", "children": [
+                    {"op": "and", "children": []}
+                ]}
+            ]}
+        ]}
+    ]});
+    for (filter, path) in [
+        (
+            json!({"op": "and", "children": [ok.clone(), ok.clone(), {"field": "priority", "operator": "is", "value": ["critical"]}]}),
+            "filter.children[2].value[0]",
+        ),
+        (
+            json!({"op": "and", "children": [{"field": "priority", "operator": "contains", "value": "x"}]}),
+            "filter.children[0].operator",
+        ),
+        (
+            json!({"op": "and", "children": [{"field": "estimate", "operator": "is", "value": ["1"]}]}),
+            "filter.children[0].field",
+        ),
+        (
+            json!({"op": "and", "children": [], "mode": "all"}),
+            "filter.mode",
+        ),
+        (
+            too_deep,
+            "filter.children[0].children[0].children[0].children[0]",
+        ),
+        (
+            json!({"op": "and", "children": [{"field": "text", "operator": "contains", "value": "x".repeat(201)}]}),
+            "filter.children[0].value",
+        ),
+    ] {
+        let response = fixture
+            .app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &query_uri(&fixture),
+                &fixture.owner_cookie,
+                query_body(filter, "manual", "asc", "all"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{path}"
+        );
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "application/problem+json"
+        );
+        let problem = response_json(response).await;
+        assert_eq!(problem["code"], "invalid_filter", "{path}");
+        assert_eq!(problem["path"], path);
+        assert!(
+            problem["detail"]
+                .as_str()
+                .is_some_and(|detail| !detail.is_empty())
+        );
+    }
+
+    let (status, problem) = call(
+        &fixture,
+        "POST",
+        &query_uri(&fixture),
+        Some(json!({"filter": {"op": "and", "children": []}, "order_by": "title", "order_direction": "asc"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(problem["code"], "invalid_request");
+}
+
+#[tokio::test]
+async fn task_query_resolves_me_for_the_caller_and_hides_foreign_workspaces() {
+    let fixture = Fixture::new().await;
+    let (member_id, member_cookie) = add_member(&fixture, "query-member@example.com").await;
+    for (title, assignee) in [("Mine", member_id), ("Theirs", fixture.owner_id)] {
+        let (status, _) = call(
+            &fixture,
+            "POST",
+            &format!("/api/v1/workspaces/{}/tasks", fixture.workspace_id),
+            Some(
+                json!({"project_id": fixture.project_id, "status_id": fixture.status_id,
+                        "title": title, "assignee_ids": [assignee.to_string()]}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+    }
+    let mine = query_body(
+        json!({"op": "and", "children": [{"field": "assignee", "operator": "is", "value": ["me"]}]}),
+        "title",
+        "asc",
+        "all",
+    );
+    let response = fixture
+        .app
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            &query_uri(&fixture),
+            &member_cookie,
+            mine.clone(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(query_titles(&response_json(response).await), ["Mine"]);
+    let (_, owner_page) = call(&fixture, "POST", &query_uri(&fixture), Some(mine.clone())).await;
+    assert_eq!(query_titles(&owner_page), ["Theirs"]);
+
+    let foreign = create_workspace(&fixture, "Elsewhere").await;
+    let response = fixture
+        .app
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            &format!("/api/v1/workspaces/{foreign}/tasks/query"),
+            &member_cookie,
+            mine,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        response_json(response).await["code"],
+        "task_resource_not_found"
+    );
 }

@@ -13,14 +13,19 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { EmptyState } from '@/components/common/EmptyState'
 import { PriorityIcon } from './PriorityIcon'
-import { TaskStatusIcon } from './TaskStatusIcon'
 import { PRIORITY_LABEL, PRIORITY_ORDER } from '@/features/tasks/taskMeta'
-import type { Task, TaskStatusDef } from '@/features/tasks/api/models'
+import type { Project, Task, TaskStatusDef } from '@/features/tasks/api/models'
 import type { User } from '@/features/workspaces/models'
 import type { LabelRecord } from '@/api/generated/types.gen'
-import { BulkTaskLimitError, MAX_BULK_TASK_UPDATES, useBulkTasks, useUpdateTask } from '@/features/tasks/api/tasks'
+import { BulkTaskLimitError, MAX_BULK_TASK_UPDATES, useBulkTasks } from '@/features/tasks/api/tasks'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
-import { groupTasksByStatus, resolveStatusId, type SortKey, type StatusGroup } from '@/features/tasks/tasksLib'
+import { resolveStatusId } from '@/features/tasks/tasksLib'
+import { CHEVRON, GroupIcon } from '@/features/views/components/GroupIcon'
+import { groupTasks, type GroupContext, type TaskGroup } from '@/features/views/grouping'
+import { canDrag, listSections, valuesOf, zoneIdOf, type GroupValues } from '@/features/views/layoutGroups'
+import { useCollapsedGroups } from '@/features/views/useCollapsedGroups'
+import { useGroupDrop } from '@/features/views/useGroupDrop'
+import type { DisplayOptions } from '@/features/views/viewState'
 import { TaskRow } from './TaskRow'
 import { pickerTitle } from '@/features/tasks/relationsLib'
 import { useDuplicateActions } from '@/features/tasks/useDuplicateActions'
@@ -39,57 +44,64 @@ const BULK_ICON = 'size-3.5 opacity-80'
 /** Below 640px the actions collapse to icons; the label stays as the accessible name. */
 const BULK_LABEL = 'max-sm:sr-only'
 
-interface TaskListProps {
+/** Drop zones: the innermost group section. The ring marks the zone under the pointer. */
+const ZONE = 'data-[drop-over]:ring-1 data-[drop-over]:ring-primary/30 data-[drop-over]:ring-inset'
+const GROUP_HEADER =
+  'group/hdr sticky top-0 z-[5] flex h-9 items-center gap-2 border-b border-border bg-card pr-2 pl-1.5 text-xs font-semibold text-muted-foreground transition-colors duration-150 group-data-[drop-over]/section:bg-primary/10 group-data-[drop-over]/section:text-primary'
+/** Sub-group headers stick right under their group header and sit one indent step in. */
+const SUB_HEADER =
+  'group/hdr sticky top-9 z-[4] flex h-8 items-center gap-2 border-b border-border/60 bg-background pr-2 pl-6 text-xs font-medium text-muted-foreground transition-colors duration-150 group-data-[drop-over]/sub:bg-primary/10 group-data-[drop-over]/sub:text-primary'
+/** Header buttons: hover only under a fine pointer; a press scales to 0.97 instead of the default 1px nudge. */
+const PRESS = 'duration-150 ease-out active:not-aria-[haspopup]:translate-y-0 active:scale-[0.97] motion-reduce:active:scale-100'
+const TOGGLE = `size-5 rounded-md border-0 text-muted-foreground/70 transition-[color,background-color,scale] hover-fine:hover:bg-accent hover-fine:hover:text-foreground dark:hover-fine:hover:bg-accent ${PRESS}`
+/** Revealed on hover only where hover is real (fine pointer); touch always shows it. */
+const ADD =
+  `size-6 rounded-md border-0 text-muted-foreground/70 transition-[opacity,background-color,color,scale] hover-fine:opacity-0 hover-fine:group-hover/hdr:opacity-100 hover-fine:hover:bg-accent hover-fine:hover:text-foreground focus-visible:opacity-100 dark:hover-fine:hover:bg-accent ${PRESS}`
+
+export interface TaskListProps {
   tasks: Task[]
   users: User[]
   labels: LabelRecord[]
   statuses: TaskStatusDef[]
-  groups: StatusGroup[]
-  sort: SortKey
+  projects: Project[]
+  display: DisplayOptions
+  groupContext: GroupContext
+  /** Page scope for collapsed groups: `all`, `project:<id>`, `preset:<name>`, `view:<id>`. Key the list by it. */
+  collapseScope: string
   onOpen: (taskId: string) => void
-  onAdd: (statusKey: string) => void
+  /** + in a group header: the group (and sub-group) values the new task takes. */
+  onAdd: (values: GroupValues) => void
 }
 
-const collapsedStorageKey = (workspaceId: string) => `orbit:task_list_collapsed:${workspaceId}`
-
-function storedCollapsedGroups(workspaceId: string): string[] {
-  try {
-    const value = JSON.parse(window.localStorage.getItem(collapsedStorageKey(workspaceId)) ?? '[]')
-    return Array.isArray(value) ? value.filter((key): key is string => typeof key === 'string') : []
-  } catch {
-    return []
-  }
-}
-
-/** Status groups: collapsible headers that also accept dropped rows (moves the task to that status). */
-export function TaskList({ tasks, users, labels, statuses, groups, sort, onOpen, onAdd }: TaskListProps) {
+/** Grouped task list: collapsible group and sub-group headers; rows move between groups by drag and drop. */
+export function TaskList({ tasks, users, labels, statuses, projects, display, groupContext, collapseScope, onOpen, onAdd }: TaskListProps) {
   const { workspace } = useWorkspace()
-  const updateTask = useUpdateTask(workspace.id)
-  const taskGroups = groupTasksByStatus(tasks, groups, sort)
-  const [collapsed, setCollapsed] = useState<string[]>(() => storedCollapsedGroups(workspace.id))
+  const [collapsed, toggle] = useCollapsedGroups(`orbit:task_list_collapsed:${workspace.id}:${collapseScope}`)
   const [selected, setSelected] = useState<string[]>([])
-  const [draggingId, setDraggingId] = useState<string | null>(null)
-  const [dropKey, setDropKey] = useState<string | null>(null)
   const duplicates = useDuplicateActions(workspace.id)
   // tasks waiting for a canonical task: one (row menu, drop on the Duplicate group) or the bulk selection
   const [duplicatePicker, setDuplicatePicker] = useState<Task[] | null>(null)
-
-  const toggle = (key: string) => setCollapsed((prev) => {
-    const next = prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key]
-    window.localStorage.setItem(collapsedStorageKey(workspace.id), JSON.stringify(next))
-    return next
+  const { drag, drop, startDrag, endDrag, zoneProps } = useGroupDrop({
+    tasks,
+    manual: display.order_by === 'manual',
+    groupContext,
+    itemSelector: '[data-task-row]',
+    onDuplicate: (task) => setDuplicatePicker([task]),
   })
+
+  const dragEnabled = canDrag(display)
+  const sections = listSections(tasks, display, groupContext)
+  const projectById = new Map(projects.map((project) => [project.id, project]))
+  const statusOptions = groupTasks([], 'status', { ...groupContext, showEmpty: true })
+    .filter((group) => !group.value?.startsWith('duplicate:'))
+
   const toggleSelect = (taskId: string) =>
     setSelected((prev) => (prev.includes(taskId) ? prev.filter((id) => id !== taskId) : [...prev, taskId]))
 
-  const endDrag = () => {
-    setDraggingId(null)
-    setDropKey(null)
-  }
-
   const selectedTasks = tasks.filter((t) => selected.includes(t.id))
 
-  if (taskGroups.length === 0) {
+  // with "Show empty groups" the empty group headers stay, so a task can still be added to a group
+  if (tasks.length === 0 && sections.every((section) => section.group.field === 'none')) {
     return (
       <EmptyState
         icon={SquareCheck}
@@ -99,88 +111,109 @@ export function TaskList({ tasks, users, labels, statuses, groups, sort, onOpen,
     )
   }
 
+  const renderRows = (zone: string, values: GroupValues, zoneTasks: Task[]) => {
+    // the dragged row stays mounted (faded): unmounting the drag source cancels the browser drag
+    const others = drag ? zoneTasks.filter((task) => task.id !== drag.taskId) : zoneTasks
+    const index = drop?.zone === zone ? drop.index : null
+    return zoneTasks.map((task) => {
+      const slot = others.indexOf(task)
+      const dropEdge = index === null || slot === -1
+        ? null
+        : slot === index ? 'top' : index === others.length && slot === others.length - 1 ? 'bottom' : null
+      return (
+        <TaskRow
+          key={task.id}
+          task={task}
+          labels={labels}
+          statuses={statuses}
+          users={users}
+          assignees={users.filter((u) => task.assigneeIds.includes(u.id))}
+          project={projectById.get(task.projectId)}
+          properties={display.properties}
+          selected={selected.includes(task.id)}
+          dragging={task.id === drag?.taskId}
+          draggable={dragEnabled}
+          dropEdge={dropEdge}
+          onOpen={onOpen}
+          onToggleSelect={toggleSelect}
+          onDragStart={(taskId) => startDrag(taskId, values)}
+          onDragEnd={endDrag}
+          onRequestDuplicate={(rowTask) => setDuplicatePicker([rowTask])}
+        />
+      )
+    })
+  }
+
+  const renderHeader = (group: TaskGroup, zone: string, values: GroupValues, level: 'group' | 'sub') => {
+    const isCollapsed = collapsed.includes(zone)
+    // inside the Duplicate status (group or sub-group) a new task would need a canonical task first
+    const canAdd = !values.some((value) => value.field === 'status' && value.value?.startsWith('duplicate:'))
+    return (
+      <div className={level === 'group' ? GROUP_HEADER : SUB_HEADER}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className={TOGGLE}
+          aria-expanded={!isCollapsed}
+          aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${group.label}`}
+          onClick={() => toggle(zone)}
+        >
+          <ChevronRight className={cn(CHEVRON, !isCollapsed && 'rotate-90')} />
+        </Button>
+        <GroupIcon group={group} context={groupContext} />
+        <span className="truncate">{group.label}</span>
+        <span className="font-normal text-muted-foreground/70 tabular-nums">{group.tasks.length}</span>
+        <div className="flex-1" />
+        {canAdd ? (
+          <Button type="button" variant="ghost" size="icon-xs" className={ADD} aria-label={`New task in ${group.label}`} title="New task" onClick={() => onAdd(values)}>
+            <Plus className="size-3.5" />
+          </Button>
+        ) : null}
+      </div>
+    )
+  }
+
   return (
     <>
-      {taskGroups.map((group) => {
-        const isCollapsed = collapsed.includes(group.key)
+      {sections.map(({ group, subGroups }) => {
+        const values = valuesOf(group)
+        const zone = zoneIdOf(values)
+        if (group.field === 'none') {
+          return <section key={zone} className={ZONE} {...zoneProps({ id: zone, values, tasks: group.tasks, itemsShown: true })}>{renderRows(zone, values, group.tasks)}</section>
+        }
+        const isCollapsed = collapsed.includes(zone)
+        if (!subGroups) {
+          return (
+            <section key={group.key} className={cn('group/section', ZONE)} {...zoneProps({ id: zone, values, tasks: group.tasks, itemsShown: !isCollapsed })}>
+              {renderHeader(group, zone, values, 'group')}
+              {isCollapsed ? null : renderRows(zone, values, group.tasks)}
+            </section>
+          )
+        }
+        if (isCollapsed) {
+          // the sub-groups are hidden, so the collapsed group itself takes drops: only the group field changes
+          // (a hidden sub-group value must never be written) and the task goes to the group's end
+          return (
+            <section key={group.key} className={cn('group/section', ZONE)} {...zoneProps({ id: zone, values, tasks: group.tasks, itemsShown: false })}>
+              {renderHeader(group, zone, values, 'group')}
+            </section>
+          )
+        }
         return (
-          <section
-            key={group.key}
-            className="group/section data-[drop-over]:ring-1 data-[drop-over]:ring-primary/30 data-[drop-over]:ring-inset"
-            data-drop-over={dropKey === group.key || undefined}
-            onDragOver={(e) => {
-              if (!draggingId) return
-              e.preventDefault()
-              e.dataTransfer.dropEffect = 'move'
-              if (dropKey !== group.key) setDropKey(group.key)
-            }}
-            onDragLeave={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropKey(null)
-            }}
-            onDrop={(e) => {
-              e.preventDefault()
-              const taskId = e.dataTransfer.getData('text/task-id') || draggingId
-              const task = taskId ? tasks.find((t) => t.id === taskId) : undefined
-              if (task) {
-                // the dropped task moves to the status of its own project that matches this group
-                const statusId = resolveStatusId(statuses, task.projectId, group.key)
-                if (statusId && statusId !== task.statusId) {
-                  if (statuses.find((status) => status.id === statusId)?.category === 'duplicate') setDuplicatePicker([task])
-                  else updateTask.mutate({ taskId: task.id, body: { expected_version: task.version, status_id: statusId } })
-                }
-              }
-              endDrag()
-            }}
-          >
-            <div className="group/hdr sticky top-0 z-[5] flex h-9 items-center gap-2 border-b border-border bg-card pr-2 pl-1.5 text-xs font-semibold text-muted-foreground transition-colors group-data-[drop-over]/section:bg-primary/10 group-data-[drop-over]/section:text-primary">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                className="size-5 rounded-md border-0 text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground dark:hover:bg-accent"
-                aria-expanded={!isCollapsed}
-                aria-label={isCollapsed ? `Expand ${group.name}` : `Collapse ${group.name}`}
-                onClick={() => toggle(group.key)}
-              >
-                <ChevronRight className={cn('size-3 transition-transform', !isCollapsed && 'rotate-90')} />
-              </Button>
-              <TaskStatusIcon status={group.status} />
-              <span>{group.name}</span>
-              <span className="font-normal text-muted-foreground/70 tabular-nums">{group.tasks.length}</span>
-              <div className="flex-1" />
-              {group.category === 'duplicate' ? null : (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="size-6 rounded-md border-0 text-muted-foreground/70 opacity-0 transition hover:bg-accent hover:text-foreground group-hover/hdr:opacity-100 focus-visible:opacity-100 dark:hover:bg-accent"
-                  aria-label={`New task in ${group.name}`}
-                  title="New task"
-                  onClick={() => onAdd(group.key)}
-                >
-                  <Plus className="size-3.5" />
-                </Button>
-              )}
-            </div>
-            {!isCollapsed
-              ? group.tasks.map((task) => (
-                  <TaskRow
-                    key={task.id}
-                    task={task}
-                    labels={labels}
-                    statuses={statuses}
-                    users={users}
-                    assignees={users.filter((u) => task.assigneeIds.includes(u.id))}
-                    selected={selected.includes(task.id)}
-                    dragging={task.id === draggingId}
-                    onOpen={onOpen}
-                    onToggleSelect={toggleSelect}
-                    onDragStart={setDraggingId}
-                    onDragEnd={endDrag}
-                    onRequestDuplicate={(rowTask) => setDuplicatePicker([rowTask])}
-                  />
-                ))
-              : null}
+          <section key={group.key} className="group/section">
+            {renderHeader(group, zone, values, 'group')}
+            {subGroups.map((sub) => {
+              const subValues = valuesOf(group, sub)
+              const subZone = zoneIdOf(subValues)
+              const subCollapsed = collapsed.includes(subZone)
+              return (
+                <section key={sub.key} className={cn('group/sub', ZONE)} {...zoneProps({ id: subZone, values: subValues, tasks: sub.tasks, itemsShown: !subCollapsed })}>
+                  {renderHeader(sub, subZone, subValues, 'sub')}
+                  {subCollapsed ? null : renderRows(subZone, subValues, sub.tasks)}
+                </section>
+              )
+            })}
           </section>
         )
       })}
@@ -189,7 +222,8 @@ export function TaskList({ tasks, users, labels, statuses, groups, sort, onOpen,
           tasks={selectedTasks}
           users={users}
           statuses={statuses}
-          groups={groups}
+          statusOptions={statusOptions}
+          groupContext={groupContext}
           labels={labels}
           onClear={() => setSelected([])}
           onMarkDuplicate={() => setDuplicatePicker(selectedTasks)}
@@ -222,7 +256,8 @@ function BulkBar({
   tasks,
   users,
   statuses,
-  groups,
+  statusOptions,
+  groupContext,
   labels,
   onClear,
   onMarkDuplicate,
@@ -230,7 +265,9 @@ function BulkBar({
   tasks: Task[]
   users: User[]
   statuses: TaskStatusDef[]
-  groups: StatusGroup[]
+  /** Status groups (every key, Duplicate excluded) from `groupTasks`. */
+  statusOptions: TaskGroup[]
+  groupContext: GroupContext
   labels: LabelRecord[]
   onClear: () => void
   onMarkDuplicate: () => void
@@ -253,7 +290,7 @@ function BulkBar({
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [onClear])
 
-  const bulkStatus = (key: string) => {
+  const bulkStatus = (key: string | null) => {
     const updates = tasks.flatMap((task) => {
       const statusId = resolveStatusId(statuses, task.projectId, key)
       return statusId && statusId !== task.statusId
@@ -309,10 +346,10 @@ function BulkBar({
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button variant="ghost" className={BULK_BTN}><RecordCircle aria-hidden className={BULK_ICON} /><span className={BULK_LABEL}>Status</span></Button>} />
           <DropdownMenuContent side="top" className={MENU}>
-            {groups.filter((group) => group.category !== 'duplicate').map((group) => (
-              <DropdownMenuItem key={group.key} className={OPTION} onClick={() => bulkStatus(group.key)}>
-                <TaskStatusIcon status={group.status} />
-                {group.name}
+            {statusOptions.map((group) => (
+              <DropdownMenuItem key={group.key} className={OPTION} onClick={() => bulkStatus(group.value)}>
+                <GroupIcon group={group} context={groupContext} />
+                {group.label}
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>

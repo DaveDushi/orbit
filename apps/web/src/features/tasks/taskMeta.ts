@@ -1,32 +1,4 @@
-import type { CreateTaskBody } from '@/api/generated'
 import type { StatusCategory, TaskPriority, TaskStatusDef } from '@/features/tasks/api/models'
-
-export type TaskView = 'mine' | 'overdue' | 'due_soon' | 'current_week' | 'my_week'
-
-/** Defaults that keep a newly created task in the personal view it came from. */
-export function taskViewCreateDefaults(view: TaskView | undefined, currentUserId: string, now = new Date()): Partial<CreateTaskBody> {
-  if (view === 'mine') return currentUserId ? { assignee_ids: [currentUserId] } : {}
-  if (!view) return {}
-
-  const startOfToday = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
-  if (view === 'current_week' || view === 'my_week') {
-    const start = new Date(now)
-    start.setHours(0, 0, 0, 0)
-    start.setDate(start.getDate() - (start.getDay() + 6) % 7)
-    const end = new Date(start)
-    end.setDate(end.getDate() + 6)
-    end.setHours(12, 0, 0, 0)
-    return {
-      due_start_at: start.toISOString(),
-      due_at: end.toISOString(),
-      ...(view === 'my_week' && currentUserId ? { assignee_ids: [currentUserId] } : {}),
-    }
-  }
-  const dueAt = view === 'overdue'
-    ? new Date(startOfToday - 1).toISOString()
-    : new Date(startOfToday + 12 * 60 * 60 * 1_000).toISOString()
-  return { due_at: dueAt }
-}
 
 /** Status categories (workflow stages). Every status belongs to one; the glyph shape comes from it. */
 export const CATEGORY_ORDER: StatusCategory[] = ['unstarted', 'started', 'completed', 'cancelled', 'duplicate']
@@ -73,9 +45,12 @@ export function defaultStatusOf(statuses: TaskStatusDef[], projectId: string): T
   return own.find((s) => s.category === 'unstarted') ?? own[0]
 }
 
-/** Same-named statuses of different projects share a key, so cross-project views can merge them. */
+/**
+ * Same-named statuses of different projects share a key, so cross-project views can merge them.
+ * ASCII-only lowercase, like SQLite `lower()` in the server's status filter: "Überprüfung" keeps its "Ü".
+ */
 export function statusKeyOf(status: TaskStatusDef): string {
-  return `${status.category}:${status.name.trim().toLowerCase()}`
+  return `${status.category}:${status.name.trim().replace(/[A-Z]+/g, (letters) => letters.toLowerCase())}`
 }
 
 export const PRIORITY_LABEL: Record<TaskPriority, string> = {

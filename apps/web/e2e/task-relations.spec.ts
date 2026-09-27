@@ -48,7 +48,10 @@ async function mockApi(page: Page, tasks: TaskMock[], writes: Write[]) {
       await route.fulfill({ json: { items: body.updates.map((update) => applyDuplicate(tasks, update.id, update.duplicate_of_id)), next_cursor: null } })
       return
     }
+    // the shell's favorites sidebar lists saved views on every page
+    if (/\/views\/[^/]+\/favorite$|\/view-favorites\/order$/.test(path)) { await route.fulfill({ status: 204 }); return }
     let body: unknown = { items: [], next_cursor: null }
+    if (path.endsWith('/views')) body = []
     if (path.endsWith('/setup/status')) body = { complete: true }
     if (path.endsWith('/auth/me')) body = { id: 'user-1', display_name: 'Test User', email: 'test@example.com' }
     if (path === '/api/v1/workspaces') body = [{ id: 'alpha', name: 'Alpha', role: 'owner', version: 1 }]
@@ -59,7 +62,7 @@ async function mockApi(page: Page, tasks: TaskMock[], writes: Write[]) {
         { id: 'duplicate', project_id: 'project-1', name: 'Duplicate', description: '', category: 'duplicate', color: '#8b8f98', position: 1, version: 1 },
       ], next_cursor: null }
     }
-    if (path.endsWith('/tasks')) body = { items: tasks, next_cursor: null }
+    if (path.endsWith('/tasks') || path.endsWith('/tasks/query')) body = { items: tasks, next_cursor: null }
     const detail = path.match(/\/tasks\/([^/]+)$/)
     if (detail) body = tasks.find((task) => task.id === detail[1]) ?? body
     const relations = path.match(/\/tasks\/([^/]+)\/relations$/)

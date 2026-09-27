@@ -20,6 +20,7 @@ use crate::page_routes::{PageState, page_router};
 use crate::static_assets::StaticAssets;
 use crate::task_routes::{TaskState, task_router};
 use crate::teamspace_routes::{TeamspaceState, teamspace_router};
+use crate::view_routes::view_router;
 use crate::workspace_routes::{WorkspaceState, workspace_router};
 
 pub struct ApiRoutes {
@@ -47,10 +48,12 @@ pub fn production_router(
 ) -> Router {
     let csp_script_hash = assets.csp_script_hash().to_owned();
     let realtime = crate::realtime::router(api.tasks.clone());
+    let views = view_router(api.tasks.clone());
     auth_router(api.auth)
         .merge(realtime)
         .merge(workspace_router(api.workspaces))
         .merge(task_router(api.tasks))
+        .merge(views)
         .merge(page_router(api.pages))
         .merge(page_file_router(api.page_files))
         .merge(page_comment_router(api.page_comments))

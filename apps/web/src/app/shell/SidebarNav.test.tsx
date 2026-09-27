@@ -60,6 +60,41 @@ test('settings pages are not duplicated in the main sidebar', () => {
   expect(view.queryByRole('link', { name: 'Sessions' })).toBeNull()
 })
 
+test('task views nest under Tasks, not beside the other apps', () => {
+  const view = render(
+    <MemoryRouter initialEntries={['/tasks']}>
+      <SidebarNav />
+      <Location />
+    </MemoryRouter>,
+  )
+  const links = view.getAllByRole('link').map((link) => link.getAttribute('aria-label'))
+  expect(links.indexOf('Task views')).toBe(links.indexOf('Tasks') + 1)
+  expect(view.queryByRole('link', { name: 'Views' })).toBeNull()
+  fireEvent.click(view.getByRole('link', { name: 'Task views' }))
+  expect(view.getByTestId('location').textContent).toBe('/views')
+  expect(view.getByRole('link', { name: 'Task views' }).classList.contains('bg-sidebar-accent')).toBe(true)
+  expect(view.getByRole('link', { name: 'Tasks' }).classList.contains('bg-sidebar-accent')).toBe(false)
+})
+
+test('the views entry shows only while the user is in Tasks', () => {
+  const view = render(
+    <MemoryRouter initialEntries={['/settings']}>
+      <SidebarNav />
+    </MemoryRouter>,
+  )
+  expect(view.queryByRole('link', { name: 'Task views' })).toBeNull()
+  view.unmount()
+  for (const path of ['/views', '/views/view-1', '/tasks/task-1', '/tasks-trash']) {
+    const inside = render(
+      <MemoryRouter initialEntries={[path]}>
+        <SidebarNav />
+      </MemoryRouter>,
+    )
+    expect(inside.getAllByRole('link', { name: 'Task views' })).toHaveLength(1)
+    inside.unmount()
+  }
+})
+
 test('docs are enabled in the sidebar and highlight on page routes', () => {
   const view = render(
     <MemoryRouter initialEntries={['/tasks']}>

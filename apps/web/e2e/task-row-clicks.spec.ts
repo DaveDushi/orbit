@@ -13,13 +13,16 @@ for (const touch of [false, true]) {
       }))
       await page.route('**/api/v1/**', async (route) => {
         const path = new URL(route.request().url()).pathname
+        // the shell's favorites sidebar lists saved views on every page
+        if (/\/views\/[^/]+\/favorite$|\/view-favorites\/order$/.test(path)) { await route.fulfill({ status: 204 }); return }
         let body: unknown = { items: [], next_cursor: null }
+        if (path.endsWith('/views')) body = []
         if (path.endsWith('/setup/status')) body = { complete: true }
         if (path.endsWith('/auth/me')) body = { id: 'user-1', display_name: 'Test User', email: 'test@example.com' }
         if (path === '/api/v1/workspaces') body = [{ id: 'alpha', name: 'Alpha', role: 'owner', version: 1 }]
         if (path.endsWith('/projects')) body = { items: [{ id: 'project-1', name: 'Launch', key: 'TEST', color: '#123456', version: 1 }], next_cursor: null }
         if (path.endsWith('/statuses')) body = { items: [{ id: 'todo', project_id: 'project-1', name: 'Todo', category: 'unstarted', color: '#123456', position: 0, version: 1 }], next_cursor: null }
-        if (path.endsWith('/tasks')) body = { items: tasks, next_cursor: null }
+        if (path.endsWith('/tasks') || path.endsWith('/tasks/query')) body = { items: tasks, next_cursor: null }
         if (path.endsWith('/tasks/task-1')) body = tasks[0]
         await route.fulfill({ json: body })
       })

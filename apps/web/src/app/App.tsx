@@ -23,6 +23,7 @@ import { LoginPage } from '@/features/auth/pages/LoginPage'
 import { RecoveryPage } from '@/features/auth/pages/RecoveryPage'
 import { SetupPage } from '@/features/auth/pages/SetupPage'
 import { WorkspaceProvider } from '@/features/workspaces/WorkspaceProvider'
+import { ViewsPage } from '@/features/views/ViewsPage'
 
 /** Hands the router's navigate function to non-component code (markdown links). */
 function NavigateBridge() {
@@ -52,6 +53,9 @@ export default function App() {
               <Route path="tasks/projects/:projectId/settings" element={<ProjectSettingsPage />} />
               <Route path="tasks/:taskId" element={<TasksPage />} />
               <Route path="tasks-trash" element={<TaskTrashPage />} />
+              <Route path="views" element={<ViewsPage />} />
+              <Route path="views/:viewId" element={<TasksPage />} />
+              <Route path="views/:viewId/:taskId" element={<TasksPage />} />
               <Route path="docs/trash" element={<DocsPage view="trash" />} />
               <Route path="docs/import/:importId?" element={<DocsPage view="import" />} />
               <Route path="docs/:pageId?" element={<DocsPage />} />

@@ -1,6 +1,9 @@
 import { ChevronDown, Gps } from 'reicon-react'
+import { cn } from 'cn'
 import { UserAvatar } from '@/components/common/UserAvatar'
 import type { TaskStatusDef } from '@/features/tasks/api/models'
+import { CHEVRON, GroupIcon } from '@/features/views/components/GroupIcon'
+import type { GroupContext } from '@/features/views/grouping'
 import type { User } from '@/features/workspaces/models'
 import { TaskStatusIcon } from '../components/TaskStatusIcon'
 import type { TimelineRow } from './timelineLib'
@@ -17,11 +20,12 @@ const INNER =
 const ROW_FILL = 'bg-background group-hover/row:bg-[color-mix(in_oklch,var(--foreground)_3%,var(--background))]'
 const GROUP_FILL = 'bg-[color-mix(in_oklch,var(--muted)_45%,var(--background))]'
 
-/** Left-pane cell for a timeline row: project header, "No dates" toggle, or task. */
-export function TimelineRowLabel({ row, status, assignee, onToggle, onOpen, onReveal }: {
+/** Left-pane cell for a timeline row: group header, "No dates" toggle, or task. */
+export function TimelineRowLabel({ row, status, assignee, groupContext, onToggle, onOpen, onReveal }: {
   row: TimelineRow
   status?: TaskStatusDef
   assignee?: User
+  groupContext: GroupContext
   onToggle: (key: string, open: boolean) => void
   onOpen: (taskId: string) => void
   /** Scrolls the timeline to this task's bar; only for tasks with dates. */
@@ -31,9 +35,9 @@ export function TimelineRowLabel({ row, status, assignee, onToggle, onOpen, onRe
     return (
       <div className={`${CELL} ${GROUP_FILL}`}>
         <button type="button" className={`${INNER} px-3 font-semibold text-foreground`} aria-expanded={row.open} onClick={() => onToggle(row.key, !row.open)}>
-          <ChevronDown aria-hidden="true" className={`size-3.5 text-muted-foreground transition-transform duration-150 ${row.open ? '' : '-rotate-90'}`} />
-          <span className="size-2 shrink-0 rounded-full" style={{ background: row.project.color }} />
-          <span className="min-w-0 flex-1 truncate">{row.project.name}</span>
+          <ChevronDown aria-hidden="true" className={cn(CHEVRON, 'size-3.5 text-muted-foreground', row.open ? '' : '-rotate-90')} />
+          <GroupIcon group={row.group} context={groupContext} />
+          <span className="min-w-0 flex-1 truncate">{row.group.label}</span>
           <span className="text-xs font-normal text-muted-foreground tabular-nums">{row.done}/{row.total}</span>
         </button>
       </div>
@@ -43,7 +47,7 @@ export function TimelineRowLabel({ row, status, assignee, onToggle, onOpen, onRe
     return (
       <div className={`${CELL} ${ROW_FILL}`}>
         <button type="button" className={`${INNER} pr-3 pl-6 text-xs text-muted-foreground hover:text-foreground`} aria-expanded={row.open} onClick={() => onToggle(row.key, !row.open)}>
-          <ChevronDown aria-hidden="true" className={`size-3 transition-transform duration-150 ${row.open ? '' : '-rotate-90'}`} />
+          <ChevronDown aria-hidden="true" className={cn(CHEVRON, row.open ? '' : '-rotate-90')} />
           No dates ({row.count})
         </button>
       </div>
