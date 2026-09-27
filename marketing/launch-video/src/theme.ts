@@ -20,6 +20,7 @@ export const color = {
   faint: 'rgba(255,255,255,0.08)',
   pink: '#f2458f',
   pinkDeep: '#b3125a',
+  pinkShadow: '#742f4d',
   violet: '#8b5cf6',
   green: '#4cb782',
   // Sampled from the dark-theme screenshots.

@@ -1,46 +1,41 @@
 import { interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion'
 import { color, display } from '../theme'
 
-/** Orbit mark: a planet with a tilted ring that draws itself in, and a moon travelling on the ring. */
+// The pixel "O" from apps/web/public/logo.svg: four bars on an 11x11 grid, each with a shadow 1 unit down-right.
+const BARS = [
+  { x: 2, y: 0, w: 6, h: 2 },
+  { x: 8, y: 2, w: 2, h: 6 },
+  { x: 2, y: 8, w: 6, h: 2 },
+  { x: 0, y: 2, w: 2, h: 6 },
+]
+
+/** Orbit mark: the pixel "O". Its bars drop into place one by one, clockwise from the top. */
 export function OrbitMark({ size = 160, from = 0 }: { size?: number; from?: number }) {
   const frame = useCurrentFrame() - from
   const { fps } = useVideoConfig()
-  const pop = spring({ frame, fps, config: { damping: 14, stiffness: 120 } })
-  const draw = interpolate(frame, [4, 34], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' })
-  const angle = frame * 0.06 + 2.2
-  const rx = 46
-  const ry = 16
-  const mx = 50 + rx * Math.cos(angle)
-  const my = 50 + ry * Math.sin(angle)
-  const behind = Math.sin(angle) < 0
-  const circumference = 2 * Math.PI * Math.sqrt((rx * rx + ry * ry) / 2)
-  const moon = <circle cx={mx} cy={my} r={4.2} fill="#fff" opacity={draw} style={{ filter: 'drop-shadow(0 0 4px #fff)' }} />
+  const pops = BARS.map((_, index) => spring({ frame: frame - index * 4, fps, config: { damping: 12, stiffness: 160 } }))
   return (
-    <svg width={size} height={size} viewBox="0 0 100 100" style={{ overflow: 'visible', transform: `scale(${pop})` }}>
-      <defs>
-        <linearGradient id="planet" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#ff8ac0" />
-          <stop offset="55%" stopColor={color.pink} />
-          <stop offset="100%" stopColor={color.violet} />
-        </linearGradient>
-      </defs>
-      <g transform="rotate(-18 50 50)">
-        {behind ? moon : null}
-        <circle cx="50" cy="50" r="24" fill="url(#planet)" style={{ filter: 'drop-shadow(0 0 18px rgba(242,69,143,0.6))' }} />
-        <ellipse
-          cx="50"
-          cy="50"
-          rx={rx}
-          ry={ry}
-          fill="none"
-          stroke="rgba(255,255,255,0.85)"
-          strokeWidth="3"
-          strokeDasharray={circumference}
-          strokeDashoffset={circumference * (1 - draw)}
-          strokeLinecap="round"
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 11 11"
+      shapeRendering="crispEdges"
+      style={{ overflow: 'visible', filter: 'drop-shadow(0 0 18px rgba(242,69,143,0.45))' }}
+    >
+      {BARS.map((bar, index) => (
+        <rect key={index} x={bar.x + 1} y={bar.y + 1} width={bar.w} height={bar.h} fill={color.pinkShadow} opacity={Math.min(pops[index], 1)} />
+      ))}
+      {BARS.map((bar, index) => (
+        <rect
+          key={index}
+          x={bar.x}
+          y={bar.y - (1 - pops[index]) * 2}
+          width={bar.w}
+          height={bar.h}
+          fill={color.pink}
+          opacity={Math.min(pops[index], 1)}
         />
-        {behind ? null : moon}
-      </g>
+      ))}
     </svg>
   )
 }
