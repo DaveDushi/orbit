@@ -10,6 +10,7 @@ import {
   DocumentText as FileText,
   Lock,
   Import,
+  Menu,
   Edit as Pencil,
   Add as Plus,
   Star,
@@ -498,12 +499,15 @@ export function DocTree({
 
   return (
     <section className="flex h-full min-h-0 w-[260px] min-w-0 shrink-0 flex-col border-r border-border bg-background max-[899px]:w-full max-[899px]:border-r-0 max-[899px]:group-data-[view=doc]/docs:hidden">
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3 max-[899px]:border-b-0">
+      <div className="flex min-h-12 shrink-0 items-center gap-2 border-b border-border px-3 py-2 max-[899px]:min-h-11 max-[899px]:border-b-0 max-[899px]:px-2 max-[899px]:py-1.5">
+        <Button type="button" variant="ghost" size="icon-sm" className="hidden shrink-0 text-muted-foreground/70 max-[899px]:inline-flex" aria-label="Menu" onClick={() => window.dispatchEvent(new CustomEvent('open-sidebar'))}>
+          <Menu className="size-[18px]" />
+        </Button>
         <span className="truncate text-[13px] font-semibold text-foreground">Documents</span>
         <span className="flex-1" />
         <DropdownMenu>
           <DropdownMenuTrigger
-            render={<Button type="button" variant="ghost" size="icon-sm" className="text-muted-foreground/70" aria-label="Documents options" />}
+            render={<Button type="button" variant="ghost" size="icon-sm" aria-label="Documents options" />}
           >
             <Ellipsis className="size-4" />
           </DropdownMenuTrigger>
@@ -514,15 +518,7 @@ export function DocTree({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className="text-muted-foreground/70"
-          aria-label="New page"
-          disabled={createPage.isPending}
-          onClick={() => handleCreate(null)}
-        >
+        <Button type="button" size="icon" aria-label="New page" disabled={createPage.isPending} onClick={() => handleCreate(null)}>
           <Plus className="size-4" />
         </Button>
       </div>

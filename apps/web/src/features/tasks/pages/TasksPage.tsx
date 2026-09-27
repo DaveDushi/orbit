@@ -275,9 +275,9 @@ function WorkspaceTasksPage() {
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
-                  <Button type="button" variant="ghost" className="h-auto min-w-0 gap-[7px] rounded-md border-0 px-[7px] py-[5px] font-normal text-muted-foreground transition-colors hover:bg-accent hover:text-foreground aria-expanded:bg-accent aria-expanded:text-foreground dark:hover:bg-accent" aria-label="Select project">
+                  <Button type="button" variant="ghost" className="h-auto min-w-0 gap-[7px] rounded-md border-0 px-[7px] py-[5px] font-normal text-muted-foreground transition-colors hover:bg-accent hover:text-foreground aria-expanded:bg-accent aria-expanded:text-foreground max-[899px]:max-w-[30vw] dark:hover:bg-accent" aria-label="Select project">
                     {activeProject ? <span className="size-1.5 shrink-0 rounded-full" style={{ background: activeProject.color }} /> : null}
-                    <span>{activeProject?.name ?? 'All projects'}</span><ChevronDown className="size-3.5" />
+                    <span className="truncate">{activeProject?.name ?? 'All projects'}</span><ChevronDown className="size-3.5 shrink-0" />
                   </Button>
                 }
               />
@@ -294,8 +294,8 @@ function WorkspaceTasksPage() {
                 <DropdownMenuItem className={OPTION} onClick={() => setShowNewProject(true)}><Plus className="size-3.5" />New project</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            <span className="truncate text-[13px] font-semibold text-foreground">{viewTitle}</span>
-            <div className="flex-1" />
+            <span className="truncate text-[13px] font-semibold text-foreground max-[899px]:min-w-0 max-[899px]:flex-1 max-[899px]:basis-0">{viewTitle}</span>
+            <div className="flex-1 max-[899px]:hidden" />
             {layout === 'timeline' ? <TimelineControls pxPerDay={pxPerDay} onZoomChange={setPxPerDay} onToday={() => timelineRef.current?.scrollToToday()} /> : null}
             <TaskFilters users={users} labels={labelsQuery.data ?? []} groups={groups} statusKey={statusFilter} assigneeId={assigneeFilter} unassigned={unassignedFilter} labelId={labelFilter} priority={priorityFilter} sort={sort} layout={layout} search={searchFilter} onSearchChange={(value) => setPreference('searchFilter', value)} onStatusChange={(value) => setPreference('statusFilter', value)} onAssigneeChange={(value) => setPreference('assigneeFilter', value)} onUnassignedChange={(value) => setPreference('unassignedFilter', value)} onLabelChange={(value) => setPreference('labelFilter', value)} onPriorityChange={(value) => setPreference('priorityFilter', value)} onSortChange={(value) => setPreference('sort', value)} onLayoutChange={setLayout} />
             <Button aria-label="New task" className="max-[899px]:w-8 max-[899px]:px-0" disabled={createTask.isPending} onClick={() => void startNewTask()}><Plus className="size-4" /><span className="max-[899px]:hidden">New task</span></Button>
