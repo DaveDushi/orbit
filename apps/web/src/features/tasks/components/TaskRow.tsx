@@ -147,10 +147,11 @@ export function TaskRow({ task, statuses, labels, users, assignees, project, pro
           })}
         </span>
       ) : null}
-      {has('project') ? <ProjectChip project={project} className="text-xs max-[1099px]:hidden" /> : null}
-      {has('due_date') ? <DueDatePicker task={task} status={status} className="text-xs max-[640px]:hidden" /> : null}
+      {/* fixed-width project, due date and assignee slots keep the columns aligned across rows */}
+      {has('project') ? <span className="flex w-[4.5rem] shrink-0 max-[1099px]:hidden"><ProjectChip project={project} className="max-w-full text-xs" /></span> : null}
+      {has('due_date') ? <DueDatePicker task={task} status={status} className="w-[4.25rem] shrink-0 text-xs max-[640px]:hidden" /> : null}
       {has('assignee') ? (
-        <div className="flex" onClick={(e) => e.stopPropagation()}>
+        <div className="flex w-7 shrink-0 justify-end" onClick={(e) => e.stopPropagation()}>
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
@@ -160,7 +161,8 @@ export function TaskRow({ task, statuses, labels, users, assignees, project, pro
                   className="inline-flex h-auto cursor-pointer rounded-none border-0 bg-transparent p-0 hover:bg-transparent aria-expanded:bg-transparent dark:hover:bg-transparent"
                   aria-label={assignees.length > 0 ? `Assignees: ${assignees.map((user) => user.name).join(', ')}` : 'Assign task'}
                 >
-                  <UserAvatarStack users={assignees} size={18} />
+                  {/* at most two circles (28px) so the slot stays narrow */}
+                  <UserAvatarStack users={assignees} size={18} max={assignees.length > 2 ? 1 : 2} />
                 </Button>
               }
             />

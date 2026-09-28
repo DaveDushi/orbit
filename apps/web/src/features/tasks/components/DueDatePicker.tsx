@@ -11,7 +11,7 @@ import { DueDateChip } from './TaskPropertyChips'
 
 /**
  * Due-date chip that opens the date picker in place (list rows and board cards). Without a date it shows a
- * calendar icon only while the surrounding `group/row` is hovered. Font size comes from `className`.
+ * quiet "No date" placeholder. Font size comes from `className`.
  */
 export function DueDatePicker({ task, status, className }: { task: Task; status: TaskStatusDef | undefined; className?: string }) {
   const { workspace } = useWorkspace()
@@ -35,8 +35,12 @@ export function DueDatePicker({ task, status, className }: { task: Task; status:
             >
               {task.dueAt
                 ? <DueDateChip task={task} status={status} className="hover:text-foreground" />
-                // no date yet: a quiet icon that shows on row hover, keyboard focus, or while the picker is open
-                : <Calendar aria-hidden className="size-3.5 text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-visible/button:opacity-100 group-aria-expanded/button:opacity-100 hover:text-foreground" />}
+                : (
+                  <span className="inline-flex items-center gap-1 whitespace-nowrap text-muted-foreground/50 transition-colors group-hover/row:text-muted-foreground hover:text-foreground">
+                    <Calendar aria-hidden className="size-[1.1em]" />
+                    No date
+                  </span>
+                )}
             </Button>
           }
         />
