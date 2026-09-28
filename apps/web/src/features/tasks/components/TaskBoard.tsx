@@ -12,12 +12,16 @@ import type { GroupContext, TaskGroup } from '@/features/views/grouping'
 import { boardGrid, canDrag, cellTasks, valuesOf, zoneIdOf, type GroupValues } from '@/features/views/layoutGroups'
 import { useCollapsedGroups } from '@/features/views/useCollapsedGroups'
 import { useGroupDrop } from '@/features/views/useGroupDrop'
+import { useNestDrop } from '@/features/views/useNestDrop'
+import { useParentActions } from '@/features/tasks/useParentActions'
 import type { DisplayOptions, TaskProperty } from '@/features/views/viewState'
 import type { User } from '@/features/workspaces/models'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import { BlockedIndicator } from './BlockedIndicator'
 import { PriorityPicker } from './PriorityPicker'
+import { SubIssueProgress, completedStatusColor } from './SubIssueProgress'
 import { LabelPill } from './TaskLabels'
+import { NestChip } from './NestChip'
 import { TaskPickerDialog } from './TaskPickerDialog'
 import { DateStamp, ProjectChip } from './TaskPropertyChips'
 import { DueDatePicker } from './DueDatePicker'
@@ -39,10 +43,15 @@ export interface TaskBoardProps {
 
 const COLUMN_WIDTH = 320
 const ZONE_RING = 'data-[drop-over]:ring-1 data-[drop-over]:ring-primary/40 data-[drop-over]:ring-inset'
-const PLACEHOLDER = 'min-h-11 rounded-md border border-dashed border-primary/40 bg-primary/10'
-/** Lift only where hover is real and motion is welcome; transition named properties, never `all`. */
+/** Held (a card owns the hover): hidden but keeps its space, so the cards under the pointer do not shift. */
+const PLACEHOLDER = 'min-h-11 rounded-md border border-dashed border-primary/40 bg-primary/10 data-[held]:invisible'
+/**
+ * Lift only where hover is real and motion is welcome; transition named properties, never `all`. While a drop would
+ * nest into the card: tint + inset ring (the chip names the action). The hover styles skip a nest target: `hover-fine`
+ * is emitted after `data-*` at equal specificity, so they must be mutually exclusive (.ai/lessons.md).
+ */
 const CARD =
-  'flex cursor-pointer flex-col gap-[7px] rounded-md border border-border bg-card p-2.5 transition-[translate,background-color,border-color,box-shadow,opacity] duration-150 ease-out hover-fine:hover:border-foreground/20 hover-fine:hover:bg-accent hover-fine:hover:shadow-md motion-safe:hover-fine:hover:-translate-y-px data-[dragging]:border-dashed data-[dragging]:opacity-35 data-[active]:border-primary/40 focus-visible:ring-1 focus-visible:ring-primary focus-visible:outline-none'
+  'relative flex cursor-pointer flex-col gap-[7px] rounded-md border border-border bg-card p-2.5 transition-[translate,background-color,border-color,box-shadow,opacity] duration-150 ease-out not-data-[nest=inside]:hover-fine:hover:border-foreground/20 not-data-[nest=inside]:hover-fine:hover:bg-accent not-data-[nest=inside]:hover-fine:hover:shadow-md motion-safe:not-data-[nest=inside]:hover-fine:hover:-translate-y-px data-[dragging]:border-dashed data-[dragging]:opacity-35 data-[active]:border-primary/40 focus-visible:ring-1 focus-visible:ring-primary focus-visible:outline-none data-[nest=inside]:border-primary/40 data-[nest=inside]:bg-primary/10 data-[nest=inside]:ring-1 data-[nest=inside]:ring-primary/40 data-[nest=inside]:ring-inset'
 /**
  * Column headers are 12px padding + 38px tall; lane headers stick right under them. A collapsed lane is a
  * drop zone itself, tinted like a list group header while a card is over it.
@@ -63,12 +72,29 @@ export function TaskBoard({ tasks, users, labels, statuses, projects, display, g
   const [duplicateTask, setDuplicateTask] = useState<Task | null>(null)
   const [collapsed, toggle] = useCollapsedGroups(`orbit:task_board_lanes_collapsed:${workspace.id}:${collapseScope}`)
   const manual = display.order_by === 'manual'
-  const { drag, drop, startDrag, endDrag, zoneProps, saving } = useGroupDrop({
+  const { drag, drop, startDrag, endDrag, holdDrop, zoneProps, saving } = useGroupDrop({
     tasks,
     manual,
     groupContext,
     itemSelector: '[data-board-card]',
     onDuplicate: setDuplicateTask,
+  })
+  const parentActions = useParentActions(workspace.id)
+  // the board renders nested as flat: a card's middle nests, its edges keep the column/lane drop
+  const nest = useNestDrop({
+    tasks,
+    tree: null,
+    manual,
+    dragId: drag?.taskId ?? null,
+    // hold, not clear: removing the in-flow placeholder would shift the cards under the pointer (flicker)
+    onTakeOver: holdDrop,
+    endDrag,
+    onNest: (plan, dragId) => {
+      const moving = tasks.find((task) => task.id === dragId)
+      const parent = tasks.find((task) => task.id === plan.parentId)
+      if (!moving || !parent) return
+      void parentActions.setParent([moving], { id: parent.id, identifier: parent.identifier }, { placement: plan.placement })
+    },
   })
   // the placeholder takes the dragged card's height
   const [dragHeight, setDragHeight] = useState(0)
@@ -85,7 +111,8 @@ export function TaskBoard({ tasks, users, labels, statuses, projects, display, g
     const status = statusById.get(task.statusId)
     const cardLabels = has('labels') ? task.labels.flatMap((id) => labelById.get(id) ?? []) : []
     const showTop = has('status') || has('id') || Boolean(task.blocked) || (has('assignee') && assignees.length > 0) || has('priority')
-    const showMeta = has('project') || (has('due_date') && Boolean(task.dueAt)) || has('created') || has('updated')
+    const showProgress = has('sub_issue_progress') && (task.subIssueCount ?? 0) > 0
+    const showMeta = showProgress || has('project') || (has('due_date') && Boolean(task.dueAt)) || has('created') || has('updated')
     return (
       <article
         data-board-card
@@ -105,6 +132,7 @@ export function TaskBoard({ tasks, users, labels, statuses, projects, display, g
         onKeyDown={(event) => {
           if (event.key === 'Enter' && event.target === event.currentTarget) onOpen(task.id)
         }}
+        {...nest.rowProps(task)}
       >
         {/* status · id · blocked … assignees · priority (priority changes in place) */}
         {showTop ? (
@@ -120,6 +148,20 @@ export function TaskBoard({ tasks, users, labels, statuses, projects, display, g
             </span>
           </div>
         ) : null}
+        {/* the board always renders Nested as Flat: a sub-issue names its parent above its title */}
+        {task.parent ? (
+          <button
+            type="button"
+            className="-mb-1 flex max-w-full min-w-0 cursor-pointer items-center gap-1 self-start rounded-sm text-left text-[11px] text-muted-foreground/70 outline-none transition-colors duration-150 hover-fine:hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+            onClick={(event) => {
+              event.stopPropagation()
+              onOpen(task.parent!.id)
+            }}
+          >
+            <span className="truncate">{task.parent.title || 'Untitled'}</span>
+            <span aria-hidden className="shrink-0 text-muted-foreground/50">›</span>
+          </button>
+        ) : null}
         <h3 className="text-[13px] leading-[18px] font-medium text-foreground">{task.title || 'Untitled'}</h3>
         {cardLabels.length > 0 ? (
           <div className="flex flex-wrap gap-1">
@@ -128,12 +170,15 @@ export function TaskBoard({ tasks, users, labels, statuses, projects, display, g
         ) : null}
         {showMeta ? (
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground/70">
+            {showProgress ? <SubIssueProgress closed={task.subIssueClosedCount ?? 0} total={task.subIssueCount ?? 0} color={completedStatusColor(statuses, task.projectId)} /> : null}
             {has('project') ? <ProjectChip project={projectById.get(task.projectId)} /> : null}
             {has('due_date') && task.dueAt ? <DueDatePicker task={task} status={status} /> : null}
             {has('created') ? <DateStamp property="created" iso={task.createdAt} /> : null}
             {has('updated') ? <DateStamp property="updated" iso={task.updatedAt} /> : null}
           </div>
         ) : null}
+        {/* bottom-right, clear of the header's assignee and priority that identify the drop target */}
+        {nest.nestAt?.id === task.id && nest.nestAt.zone === 'inside' ? <NestChip className="right-2 bottom-2" /> : null}
       </article>
     )
   }
@@ -142,7 +187,7 @@ export function TaskBoard({ tasks, users, labels, statuses, projects, display, g
     const placeholderIndex = drop?.zone === zone ? drop.index : null
     // the dragged card stays mounted (faded): unmounting the drag source cancels the browser drag
     const others = drag ? cell.filter((task) => task.id !== drag.taskId) : cell
-    const placeholder = <div className={PLACEHOLDER} style={{ height: dragHeight }} />
+    const placeholder = <div data-board-placeholder data-held={(drop?.zone === zone && drop.held) || undefined} className={PLACEHOLDER} style={{ height: dragHeight }} />
     return (
       <>
         {cell.map((task) => {

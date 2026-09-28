@@ -12,6 +12,7 @@ import { DEFAULT_DISPLAY, type DisplayOptions } from '@/features/views/viewState
 import type { User } from '@/features/workspaces/models'
 import { WorkspaceContext } from '@/features/workspaces/workspaceContext'
 import { TaskList } from './TaskList'
+import { UNDO_TOAST_DURATION, keepIdentifiersTogether } from '@/lib/toast'
 
 const originalFetch = globalThis.fetch
 afterEach(() => {
@@ -131,7 +132,8 @@ test('bulk toolbar rejects more than 100 selected tasks without a server request
   expect((await view.findByRole('alert', {}, { timeout: 5000 })).textContent).toContain('Select 100 or fewer')
   expect(requests).toBe(0)
   expect(view.queryByRole('button', { name: 'Retry' })).toBeNull()
-}, 20000)
+  // each of the 101 checkbox clicks re-renders every row (~170ms apiece under happy-dom)
+}, 30000)
 
 test('bulk due date picker schedules the selected tasks for this week', async () => {
   const writes = captureWrites()
@@ -549,6 +551,255 @@ test('the bulk bar hides the Duplicate status and marks the selection in one cal
     { id: 'task-2', expected_version: 1, duplicate_of_id: 'task-91c0' },
   ] } })
   await waitFor(() => expect(success).toHaveBeenCalledTimes(1))
-  expect(success.mock.calls[0]![0]).toBe('Marked 2 tasks as duplicate of ORB-91C0')
+  expect(success.mock.calls[0]![0]).toBe(keepIdentifiersTogether('Marked 2 tasks as duplicate of ORB-91C0'))
   success.mockRestore()
 }, 20000)
+
+const childOf = (child: Task, parent: Task): Task => ({
+  ...child, parentTaskId: parent.id, parent: { id: parent.id, title: parent.title, projectKey: 'ORB' },
+})
+
+test('nested: sub-issues sit under their parent with a chevron; an orphan shows its parent before the title', () => {
+  const opened: string[] = []
+  const orphan = { ...task(3), parentTaskId: 'task-99', parent: { id: 'task-99', title: 'Launch plan', projectKey: 'ORB' } }
+  const view = renderList([task(1), childOf(task(2), task(1)), orphan], { onOpen: (id) => opened.push(id) })
+  const rows = Array.from(view.container.querySelectorAll<HTMLElement>('[data-task-row]'))
+  expect(rows.map((row) => row.getAttribute('data-depth'))).toEqual(['0', '1', '0'])
+  expect(within(rows[0]!).getByRole('button', { name: 'Collapse sub-issues of ORB-1' }).getAttribute('aria-expanded')).toBe('true')
+  expect(within(rows[1]!).queryAllByRole('button', { name: 'Task 1' })).toHaveLength(0)
+  fireEvent.click(within(rows[2]!).getByRole('button', { name: 'Launch plan' }))
+  expect(opened).toEqual(['task-99'])
+})
+
+test('nested: a sub-issue stays in its root\'s group and the group count includes it', () => {
+  const view = renderList([task(1), { ...childOf(task(2), task(1)), statusId: 'doing' }], { statuses: [status, doingStatus] })
+  const header = view.getByRole('button', { name: 'Collapse Todo' }).parentElement!
+  expect(header.querySelector('.tabular-nums')!.textContent).toBe('2')
+  expect(view.queryAllByRole('button', { name: 'Collapse Doing' })).toHaveLength(0)
+  expect(within(zoneOf(view, 'Todo')).getByText('Task 2')).toBeTruthy()
+})
+
+test('collapsing a parent hides its sub-issues and is remembered for the workspace', () => {
+  const tasks = [task(1), childOf(task(2), task(1))]
+  const view = renderList(tasks)
+  fireEvent.click(view.getByRole('button', { name: 'Collapse sub-issues of ORB-1' }))
+  expect(view.queryAllByText('Task 2')).toHaveLength(0)
+  expect(window.localStorage.getItem('orbit:task_tree_collapsed:workspace-1')).toBe('["task-1"]')
+  view.unmount()
+  const again = renderList(tasks, { scope: 'project:project-1' })
+  expect(again.getByRole('button', { name: 'Expand sub-issues of ORB-1' }).getAttribute('aria-expanded')).toBe('false')
+})
+
+test('flat: every sub-issue shows its parent before the title and no row has a chevron', () => {
+  const view = renderList([task(1), childOf(task(2), task(1))], { display: { sub_issues: 'flat' } })
+  expect(within(rowOf(view, 'Task 2') as HTMLElement).getByRole('button', { name: 'Task 1' })).toBeTruthy()
+  expect(view.queryAllByRole('button', { name: /sub-issues of/ })).toHaveLength(0)
+})
+
+test('a parent row shows sub-issue progress while the property is on', () => {
+  const parent = { ...task(1), subIssueCount: 5, subIssueClosedCount: 2 }
+  const view = renderList([parent])
+  expect(view.getByRole('img', { name: '2 of 5 sub-issues closed' }).textContent).toBe('2/5')
+  view.unmount()
+  const off = renderList([parent], { display: { properties: ['id', 'status'] } })
+  expect(off.queryAllByRole('img', { name: /sub-issues closed/ })).toHaveLength(0)
+})
+
+function overAt(target: Element, clientY: number) {
+  const event = createEvent.dragOver(target, { dataTransfer })
+  Object.defineProperty(event, 'clientY', { value: clientY })
+  fireEvent(target, event)
+}
+
+test('dropping a row on the middle of another row makes it a sub-issue, with Undo', async () => {
+  const calls: Call[] = []
+  relationsApi(calls)
+  const success = spyOn(toast, 'success').mockImplementation(() => 0)
+  const view = renderList([task(1), task(2)], { display: { order_by: 'created' } })
+  fireEvent.dragStart(rowOf(view, 'Task 2'), { dataTransfer })
+  overAt(rowOf(view, 'Task 1'), 0)
+  expect(rowOf(view, 'Task 1').getAttribute('data-nest')).toBe('inside')
+  expect(within(rowOf(view, 'Task 1') as HTMLElement).getByText('Add as sub-issue')).toBeTruthy()
+  dropAt(rowOf(view, 'Task 1'), 0)
+  await waitFor(() => expect(writes(calls)).toHaveLength(1))
+  expect(writes(calls)[0]).toEqual({ method: 'PATCH', path: '/api/v1/workspaces/workspace-1/tasks/task-2', body: { expected_version: 1, parent_task_id: 'task-1' } })
+  await waitFor(() => expect(success).toHaveBeenCalledTimes(1))
+  expect(success.mock.calls[0]![0]).toBe(keepIdentifiersTogether('ORB-2 is now a sub-issue of ORB-1'))
+  expect((success.mock.calls[0]![1] as { duration?: number }).duration).toBe(UNDO_TOAST_DURATION)
+  ;(success.mock.calls[0]![1] as unknown as { action: { onClick: () => void } }).action.onClick()
+  await waitFor(() => expect(writes(calls)).toHaveLength(2))
+  expect(writes(calls)[1]!.body).toEqual({ expected_version: 2, parent_task_id: null })
+  success.mockRestore()
+}, 20000)
+
+test('a row cannot be nested into itself or its own sub-issue', async () => {
+  const calls: Call[] = []
+  relationsApi(calls)
+  const view = renderList([task(1), { ...task(2), parentTaskId: 'task-1' }], { display: { order_by: 'created' } })
+  fireEvent.dragStart(rowOf(view, 'Task 1'), { dataTransfer })
+  overAt(rowOf(view, 'Task 2'), 0)
+  expect(rowOf(view, 'Task 2').hasAttribute('data-nest')).toBe(false)
+  dropAt(rowOf(view, 'Task 2'), 0)
+  await staysTrue(() => expect(writes(calls)).toEqual([]))
+})
+
+test('nested: dropping on the edge of a sub-issue makes the task its sibling', async () => {
+  const calls: Call[] = []
+  relationsApi(calls)
+  const success = spyOn(toast, 'success').mockImplementation(() => 0)
+  const view = renderList([task(1), { ...task(2), parentTaskId: 'task-1' }, task(3)], { display: { order_by: 'created' } })
+  fireEvent.dragStart(rowOf(view, 'Task 3'), { dataTransfer })
+  dropAt(rowOf(view, 'Task 2'), -1)
+  await waitFor(() => expect(writes(calls)).toHaveLength(1))
+  expect(writes(calls)[0]!.body).toEqual({ expected_version: 1, parent_task_id: 'task-1' })
+  success.mockRestore()
+})
+
+test('nested: dropping a sub-issue between root rows detaches it', async () => {
+  const calls: Call[] = []
+  relationsApi(calls)
+  const view = renderList([task(1), { ...task(2), parentTaskId: 'task-1' }], { display: { order_by: 'created' } })
+  fireEvent.dragStart(rowOf(view, 'Task 2'), { dataTransfer })
+  dropAt(zoneOf(view, 'Todo'), 0)
+  await waitFor(() => expect(writes(calls)).toHaveLength(1))
+  expect(writes(calls)[0]).toEqual({ method: 'PATCH', path: '/api/v1/workspaces/workspace-1/tasks/task-2', body: { expected_version: 1, parent_task_id: null } })
+})
+
+test('nested: dropping a sub-issue on another group detaches it there, in one write', async () => {
+  const calls: Call[] = []
+  relationsApi(calls)
+  const view = renderList(
+    [task(1), { ...task(2), parentTaskId: 'task-1' }, { ...task(3), statusId: 'doing' }],
+    { statuses: [status, doingStatus], display: { order_by: 'created' } },
+  )
+  fireEvent.dragStart(rowOf(view, 'Task 2'), { dataTransfer })
+  dropAt(zoneOf(view, 'Doing'), 0)
+  await waitFor(() => expect(writes(calls)).toHaveLength(1))
+  expect(writes(calls)[0]).toEqual({ method: 'PATCH', path: '/api/v1/workspaces/workspace-1/tasks/task-2', body: { expected_version: 1, status_id: 'doing', parent_task_id: null } })
+})
+
+test('nested: a sub-issue dropped into its root\'s group moves from its own group there', async () => {
+  const calls: Call[] = []
+  relationsApi(calls)
+  const success = spyOn(toast, 'success').mockImplementation(() => 0)
+  const view = renderList(
+    [task(1), { ...task(2), parentTaskId: 'task-1', statusId: 'doing' }],
+    { statuses: [status, doingStatus], display: { order_by: 'created' } },
+  )
+  fireEvent.dragStart(rowOf(view, 'Task 2'), { dataTransfer })
+  dropAt(zoneOf(view, 'Todo'), 0)
+  await waitFor(() => expect(writes(calls)).toHaveLength(1))
+  expect(writes(calls)[0]).toEqual({ method: 'PATCH', path: '/api/v1/workspaces/workspace-1/tasks/task-2', body: { expected_version: 1, status_id: 'todo', parent_task_id: null } })
+  success.mockRestore()
+})
+
+test('nested: a root-level detach drop shows a toast whose Undo restores the parent', async () => {
+  const calls: Call[] = []
+  relationsApi(calls)
+  const success = spyOn(toast, 'success').mockImplementation(() => 0)
+  const view = renderList([task(1), { ...task(2), parentTaskId: 'task-1' }], { display: { order_by: 'created' } })
+  fireEvent.dragStart(rowOf(view, 'Task 2'), { dataTransfer })
+  dropAt(zoneOf(view, 'Todo'), 0)
+  await waitFor(() => expect(success).toHaveBeenCalledTimes(1))
+  expect(success.mock.calls[0]![0]).toBe(keepIdentifiersTogether('ORB-2 is no longer a sub-issue'))
+  ;(success.mock.calls[0]![1] as unknown as { action: { onClick: () => void } }).action.onClick()
+  await waitFor(() => expect(writes(calls)).toHaveLength(2))
+  expect(writes(calls)[1]).toEqual({ method: 'PATCH', path: '/api/v1/workspaces/workspace-1/tasks/task-2', body: { expected_version: 2, parent_task_id: 'task-1' } })
+  success.mockRestore()
+}, 20000)
+
+test('nested, manual order: a drop below a sub-issue places the task after it among the siblings', async () => {
+  const calls: Call[] = []
+  relationsApi(calls)
+  const success = spyOn(toast, 'success').mockImplementation(() => 0)
+  const view = renderList([task(1), { ...task(2), parentTaskId: 'task-1' }, { ...task(3), parentTaskId: 'task-1' }, task(4)])
+  fireEvent.dragStart(rowOf(view, 'Task 4'), { dataTransfer })
+  overAt(rowOf(view, 'Task 3'), 1)
+  expect(rowOf(view, 'Task 3').getAttribute('data-drop-edge')).toBe('bottom')
+  dropAt(rowOf(view, 'Task 3'), 1)
+  await waitFor(() => expect(writes(calls)).toHaveLength(1))
+  expect(writes(calls)[0]).toEqual({ method: 'PATCH', path: '/api/v1/workspaces/workspace-1/tasks/task-4', body: { expected_version: 1, position: 4, parent_task_id: 'task-1' } })
+  await waitFor(() => expect(success).toHaveBeenCalledTimes(1))
+  success.mockRestore()
+}, 20000)
+
+test('nested, manual order: reordering among the same siblings writes positions only, with no toast', async () => {
+  const calls: Call[] = []
+  relationsApi(calls)
+  const success = spyOn(toast, 'success').mockImplementation(() => 0)
+  const view = renderList([task(1), { ...task(2), parentTaskId: 'task-1' }, { ...task(3), parentTaskId: 'task-1' }])
+  fireEvent.dragStart(rowOf(view, 'Task 3'), { dataTransfer })
+  dropAt(rowOf(view, 'Task 2'), -1)
+  await waitFor(() => expect(writes(calls)).toHaveLength(1))
+  expect(writes(calls)[0]).toEqual({ method: 'POST', path: '/api/v1/workspaces/workspace-1/tasks/bulk', body: { updates: [
+    { id: 'task-3', expected_version: 1, position: 2 },
+    { id: 'task-2', expected_version: 1, position: 3 },
+  ] } })
+  await staysTrue(() => expect(success).toHaveBeenCalledTimes(0))
+  success.mockRestore()
+})
+
+test('flat: a drop on a row edge keeps the group behaviour and never touches the parent', async () => {
+  const calls: Call[] = []
+  relationsApi(calls)
+  const view = renderList([task(1), task(2)], { display: { sub_issues: 'flat' } })
+  fireEvent.dragStart(rowOf(view, 'Task 2'), { dataTransfer })
+  dropAt(rowOf(view, 'Task 1'), -1)
+  await waitFor(() => expect(writes(calls)).toHaveLength(1))
+  expect(writes(calls)[0]!.path).toBe('/api/v1/workspaces/workspace-1/tasks/bulk')
+  expect(JSON.stringify(writes(calls)[0]!.body)).not.toContain('parent_task_id')
+})
+
+test('the bulk bar sets one parent for the whole selection in one call', async () => {
+  const calls: Call[] = []
+  relationsApi(calls)
+  const success = spyOn(toast, 'success').mockImplementation(() => 0)
+  const view = renderList([task(1), task(2)])
+  for (const checkbox of view.getAllByRole('checkbox')) fireEvent.click(checkbox)
+  const toolbar = view.getByRole('toolbar', { name: 'Selected tasks' })
+  expect(within(toolbar).queryAllByRole('button', { name: 'Remove parent' })).toHaveLength(0)
+  fireEvent.click(within(toolbar).getByRole('button', { name: 'Set parent…' }))
+  const picker = await view.findByRole('dialog', { name: 'Set parent of 2 tasks…' })
+  fireEvent.click(await within(picker).findByRole('option', { name: /Login fails on Safari/ }))
+  await waitFor(() => expect(writes(calls)).toHaveLength(1))
+  expect(writes(calls)[0]).toEqual({ method: 'POST', path: '/api/v1/workspaces/workspace-1/tasks/bulk', body: { updates: [
+    { id: 'task-1', expected_version: 1, parent_task_id: 'task-91c0' },
+    { id: 'task-2', expected_version: 1, parent_task_id: 'task-91c0' },
+  ] } })
+  await waitFor(() => expect(success).toHaveBeenCalledTimes(1))
+  expect(success.mock.calls[0]![0]).toBe(keepIdentifiersTogether('2 tasks are now sub-issues of ORB-91C0'))
+  success.mockRestore()
+}, 20000)
+
+test('Remove parent detaches only the selected tasks that have one', async () => {
+  const calls: Call[] = []
+  relationsApi(calls)
+  const success = spyOn(toast, 'success').mockImplementation(() => 0)
+  const view = renderList([task(1), { ...task(2), parentTaskId: 'task-1' }, { ...task(3), parentTaskId: 'task-1' }], { display: { sub_issues: 'flat' } })
+  for (const checkbox of view.getAllByRole('checkbox')) fireEvent.click(checkbox)
+  fireEvent.click(within(view.getByRole('toolbar', { name: 'Selected tasks' })).getByRole('button', { name: 'Remove parent' }))
+  await waitFor(() => expect(writes(calls)).toHaveLength(1))
+  expect(writes(calls)[0]!.body).toEqual({ updates: [
+    { id: 'task-2', expected_version: 1, parent_task_id: null },
+    { id: 'task-3', expected_version: 1, parent_task_id: null },
+  ] })
+  await waitFor(() => expect(success.mock.calls[0]?.[0]).toBe('2 tasks are no longer sub-issues'))
+  success.mockRestore()
+}, 20000)
+
+test('nested, manual order: beside a root row only the insertion line shows, not the group outline', () => {
+  const view = renderList([task(1), { ...task(2), parentTaskId: 'task-1' }, task(3)], { statuses: [status, doingStatus] })
+  fireEvent.dragStart(rowOf(view, 'Task 3'), { dataTransfer })
+  // a root row's edge is not the row's own drop: it bubbles to the group zone, which draws the insertion line
+  overAt(rowOf(view, 'Task 1'), 1)
+  expect(view.container.querySelectorAll('[data-drop-edge]')).toHaveLength(1)
+  expect(zoneOf(view, 'Todo').hasAttribute('data-drop-over')).toBe(false)
+})
+
+test('a drop into another group with no insertion line keeps the group outline', () => {
+  const view = renderList([task(1), { ...task(2), statusId: 'doing' }], { statuses: [status, doingStatus], display: { order_by: 'created' } })
+  fireEvent.dragStart(rowOf(view, 'Task 1'), { dataTransfer })
+  overAt(zoneOf(view, 'Doing'), 0)
+  expect(view.container.querySelectorAll('[data-drop-edge]')).toHaveLength(0)
+  expect(zoneOf(view, 'Doing').hasAttribute('data-drop-over')).toBe(true)
+})

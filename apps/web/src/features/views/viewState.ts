@@ -4,7 +4,7 @@
  */
 
 export type GroupOp = 'and' | 'or'
-export type FilterField = 'status' | 'status_category' | 'assignee' | 'creator' | 'label' | 'priority' | 'project' | 'due_date' | 'created_at' | 'updated_at' | 'text'
+export type FilterField = 'status' | 'status_category' | 'assignee' | 'creator' | 'label' | 'priority' | 'project' | 'parent' | 'sub_issues' | 'due_date' | 'created_at' | 'updated_at' | 'text'
 export type FilterOperator = 'is' | 'is_not' | 'is_empty' | 'is_not_empty' | 'includes_any' | 'includes_all' | 'excludes' | 'before' | 'after' | 'between' | 'contains'
 export type DateValue = { absolute: string } | { relative: 'today' | 'start_of_week' | 'end_of_week'; offset_days?: number }
 export type Condition = { field: FilterField; operator: FilterOperator; value?: unknown }
@@ -13,16 +13,17 @@ export type FilterNode = FilterGroup | Condition
 export type Layout = 'list' | 'board' | 'timeline'
 export type GroupBy = 'status' | 'assignee' | 'priority' | 'project' | 'label' | 'none'
 export type OrderBy = 'manual' | 'priority' | 'created' | 'updated' | 'title' | 'due_date'
-export type TaskProperty = 'id' | 'status' | 'assignee' | 'priority' | 'project' | 'due_date' | 'labels' | 'created' | 'updated'
+export type TaskProperty = 'id' | 'status' | 'assignee' | 'priority' | 'project' | 'due_date' | 'labels' | 'created' | 'updated' | 'sub_issue_progress'
 export type ShowCompleted = 'all' | 'past_week' | 'past_month' | 'none'
-export type DisplayOptions = { layout: Layout; group_by: GroupBy; sub_group_by: GroupBy; order_by: OrderBy; order_direction: 'asc' | 'desc'; properties: TaskProperty[]; show_completed: ShowCompleted; show_empty_groups: boolean }
+export type SubIssuesMode = 'nested' | 'flat' | 'hidden'
+export type DisplayOptions = { layout: Layout; group_by: GroupBy; sub_group_by: GroupBy; order_by: OrderBy; order_direction: 'asc' | 'desc'; properties: TaskProperty[]; show_completed: ShowCompleted; show_empty_groups: boolean; sub_issues: SubIssuesMode }
 export type ViewState = { filter: FilterGroup; display: DisplayOptions }
 export type TaskPreset = 'mine' | 'overdue' | 'due_soon' | 'current_week' | 'my_week'
 export type PageKey = 'all' | `project:${string}` | `preset:${TaskPreset}`
 
 export const TASK_PRESETS: readonly TaskPreset[] = ['mine', 'overdue', 'due_soon', 'current_week', 'my_week']
 /** Canonical property order; `normalizeDisplay` sorts `display.properties` into it. */
-export const TASK_PROPERTIES: readonly TaskProperty[] = ['id', 'status', 'assignee', 'priority', 'project', 'due_date', 'labels', 'created', 'updated']
+export const TASK_PROPERTIES: readonly TaskProperty[] = ['id', 'status', 'assignee', 'priority', 'project', 'due_date', 'labels', 'created', 'updated', 'sub_issue_progress']
 
 export const DEFAULT_DISPLAY: DisplayOptions = {
   layout: 'list',
@@ -30,9 +31,10 @@ export const DEFAULT_DISPLAY: DisplayOptions = {
   sub_group_by: 'none',
   order_by: 'manual',
   order_direction: 'asc',
-  properties: ['id', 'status', 'assignee', 'priority', 'project', 'due_date', 'labels'],
+  properties: ['id', 'status', 'assignee', 'priority', 'project', 'due_date', 'labels', 'sub_issue_progress'],
   show_completed: 'all',
   show_empty_groups: false,
+  sub_issues: 'nested',
 }
 
 export function emptyFilter(): FilterGroup {

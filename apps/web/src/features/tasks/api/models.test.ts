@@ -1,10 +1,11 @@
 import { expect, test } from 'bun:test'
 import type { AttachmentRecord, AuditEvent, CommentRecord, ProjectRecord, TaskRecord } from '@/api/generated/types.gen'
-import { taskFromRecord, taskIdentifier } from './models'
+import { refIdentifier, taskFromRecord, taskIdentifier } from './models'
 
 const project: ProjectRecord = {
   id: 'project-1', workspace_id: 'workspace-1', name: 'Launch', key: 'LCH', color: '#123456',
   created_at: '2026-09-04T09:00:00Z', updated_at: '2026-09-04T09:00:00Z', version: 2,
+  auto_close_parent: true, auto_close_sub_issues: true,
 }
 const record: TaskRecord = {
   id: '01HZYTASK000000000000001', workspace_id: 'workspace-1', project_id: project.id,
@@ -12,6 +13,7 @@ const record: TaskRecord = {
   assignee_ids: ['user-1'], creator_id: 'user-1', label_ids: ['label-1'],
   due_at: '2030-01-02T12:30:00.000Z',
   created_at: '2026-09-04T10:00:00Z', updated_at: '2026-09-04T11:00:00Z', duplicate_of: null, blocked: false, version: 7,
+  parent: null, parent_task_id: null, sub_issue_count: 0, sub_issue_closed_count: 0,
 }
 const comment: CommentRecord = {
   id: 'comment-1', workspace_id: 'workspace-1', task_id: record.id, author_id: 'user-1',
@@ -67,7 +69,7 @@ test('service account audit metadata becomes the task activity actor', () => {
 test('duplicate target and blocked flag reach the task view model', () => {
   const duplicate = taskFromRecord({
     ...record,
-    duplicate_of: { id: 'task-91c0', project_id: project.id, title: 'Login fails on Safari' },
+    duplicate_of: { id: 'task-91c0', project_id: project.id, project_key: 'LCH', title: 'Login fails on Safari' },
     blocked: true,
   }, project)
   expect(duplicate.duplicateOf).toEqual({ id: 'task-91c0', projectId: project.id, title: 'Login fails on Safari' })
@@ -116,4 +118,51 @@ test('cross-project relation events use the other project key; missing metadata 
     relationEvent('task.updated', {}),
   ], [project, api])
   expect(task.activity.map((item) => item.text)).toEqual(['Added blocker API-91C0', 'Added relation', 'Updated task'])
+})
+
+test('parent, ancestors and sub-issue counts reach the task view model', () => {
+  const task = taskFromRecord({
+    ...record,
+    parent_task_id: '01HZYPARENT0000000000012',
+    parent: { id: '01HZYPARENT0000000000012', title: 'Checkout redesign', project_key: 'ORB' },
+    sub_issue_count: 5,
+    sub_issue_closed_count: 2,
+    ancestors: [
+      { id: '01HZYROOT00000000000009A', title: 'Q4 launch', project_key: 'ORB' },
+      { id: '01HZYPARENT0000000000012', title: 'Checkout redesign', project_key: 'ORB' },
+    ],
+  } as TaskRecord, project)
+  expect(task).toMatchObject({
+    parentTaskId: '01HZYPARENT0000000000012',
+    parent: { id: '01HZYPARENT0000000000012', title: 'Checkout redesign', projectKey: 'ORB' },
+    subIssueCount: 5,
+    subIssueClosedCount: 2,
+  })
+  expect(task.ancestors!.map((ref) => refIdentifier(ref))).toEqual(['ORB-009A', 'ORB-0012'])
+})
+
+test('records without sub-issue fields have no parent, no ancestors and no sub-issues', () => {
+  expect(taskFromRecord(record, project)).toMatchObject({ parentTaskId: null, parent: null, subIssueCount: 0, subIssueClosedCount: 0, ancestors: [] })
+})
+
+test('parent changes and automatic closes read as sentences that link the other task', () => {
+  const event = (action: string, metadata: Record<string, unknown>): AuditEvent => ({ ...activity, id: action, action, metadata })
+  const task = taskFromRecord({
+    ...record,
+    parent_task_id: '01HZYPARENT0000000000012',
+    parent: { id: '01HZYPARENT0000000000012', title: 'Checkout redesign', project_key: 'ORB' },
+  } as TaskRecord, project, [], [], [
+    event('task.parent_changed', { from: null, to: '01HZYPARENT0000000000012' }),
+    event('task.parent_changed', { from: '01HZYOTHER00000000000099', to: null }),
+    event('task.auto_closed', { source_task_id: '01HZYPARENT0000000000012', from_status_id: 'status-1', to_status_id: 'status-done', reason: 'parent_closed' }),
+    event('task.auto_closed', { source_task_id: '01HZYCHILD00000000000031', from_status_id: 'status-1', to_status_id: 'status-done', reason: 'sub_issues_done' }),
+  ])
+  expect(task.activity.map((item) => item.text)).toEqual([
+    'Set parent to ORB-0012',
+    'Removed parent LCH-0099',
+    'Closed automatically because ORB-0012 was closed',
+    'Closed automatically because all sub-issues were done',
+  ])
+  expect(task.activity[0]!.related).toEqual({ taskId: '01HZYPARENT0000000000012', identifier: 'ORB-0012' })
+  expect(task.activity[2]!.statusId).toBe('status-done')
 })

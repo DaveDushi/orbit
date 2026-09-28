@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { shouldIgnoreShortcut } from '../shortcuts'
-import { emptyFilter, viewStatesEqual, type DisplayOptions, type GroupBy, type Layout, type OrderBy, type ShowCompleted, type TaskProperty } from '../viewState'
+import { emptyFilter, viewStatesEqual, type DisplayOptions, type GroupBy, type Layout, type OrderBy, type ShowCompleted, type SubIssuesMode, type TaskProperty } from '../viewState'
 import { GROUP_LABEL, LAYOUTS } from '../displayMeta'
 import { POPOVER_MOTION } from './motion'
 
@@ -43,8 +43,12 @@ const PROPERTY_LABEL: Record<TaskProperty, string> = {
   labels: 'Labels',
   created: 'Created',
   updated: 'Updated',
+  sub_issue_progress: 'Sub-issue progress',
 }
-const PROPERTY_ORDER: TaskProperty[] = ['id', 'status', 'assignee', 'priority', 'project', 'due_date', 'labels', 'created', 'updated']
+const PROPERTY_ORDER: TaskProperty[] = ['id', 'status', 'assignee', 'priority', 'project', 'due_date', 'labels', 'created', 'updated', 'sub_issue_progress']
+
+const SUB_ISSUE_LABEL: Record<SubIssuesMode, string> = { nested: 'Nested', flat: 'Flat', hidden: 'Hidden' }
+const SUB_ISSUE_OPTIONS: SubIssuesMode[] = ['nested', 'flat', 'hidden']
 
 /**
  * Pressed chips take the pink accent as a tint. `aria-pressed:` (not `data-[pressed]:`) so tailwind-merge replaces the
@@ -67,7 +71,7 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-function OptionSelect<T extends string>({ label, value, items, onChange }: { label: string; value: T; items: Array<{ value: T; label: string }>; onChange: (value: T) => void }) {
+function OptionSelect<T extends string>({ label, value, items, onChange, describedBy }: { label: string; value: T; items: Array<{ value: T; label: string }>; onChange: (value: T) => void; describedBy?: string }) {
   return (
     <Select
       items={items}
@@ -76,7 +80,7 @@ function OptionSelect<T extends string>({ label, value, items, onChange }: { lab
         if (typeof next === 'string') onChange(next as T)
       }}
     >
-      <SelectTrigger size="sm" className="w-40" aria-label={label}>
+      <SelectTrigger size="sm" className="w-40" aria-label={label} aria-describedby={describedBy}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -115,6 +119,7 @@ export function DisplayPopover({ display, defaultDisplay, onChange }: DisplayPop
     label: group === 'none' ? 'No sub-grouping' : GROUP_LABEL[group],
   }))
   const timeline = display.layout === 'timeline'
+  const flatOnly = display.layout !== 'list' && display.sub_issues === 'nested'
   const manual = display.order_by === 'manual'
   const ascending = display.order_direction === 'asc'
 
@@ -189,6 +194,21 @@ export function DisplayPopover({ display, defaultDisplay, onChange }: DisplayPop
                 </div>
               </Row>
             )}
+            <Row label="Sub-issues">
+              <OptionSelect
+                label="Sub-issues"
+                value={display.sub_issues}
+                items={SUB_ISSUE_OPTIONS.map((mode) => ({ value: mode, label: SUB_ISSUE_LABEL[mode] }))}
+                onChange={(sub_issues) => onChange({ sub_issues })}
+                describedBy={flatOnly ? 'display-sub-issues-hint' : undefined}
+              />
+            </Row>
+            {/* Board and timeline render Nested as Flat (spec §7.1): the value stays (it is saved with the view for the list) */}
+            {flatOnly ? (
+              <p id="display-sub-issues-hint" className="-mt-1 mb-1 w-40 self-end text-xs text-muted-foreground">
+                {timeline ? 'Timeline' : 'Board'} shows sub-issues flat
+              </p>
+            ) : null}
             <Row label="Completed tasks">
               <OptionSelect
                 label="Completed tasks"

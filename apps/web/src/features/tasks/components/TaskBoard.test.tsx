@@ -41,7 +41,7 @@ function captureWrites(writes: Write[]) {
   }) as unknown as typeof fetch
 }
 
-function renderBoard(tasks: Task[], options: { statuses?: TaskStatusDef[]; display?: Partial<DisplayOptions>; scope?: string } = {}) {
+function renderBoard(tasks: Task[], options: { statuses?: TaskStatusDef[]; display?: Partial<DisplayOptions>; scope?: string; onOpen?: (taskId: string) => void } = {}) {
   const statuses = options.statuses ?? [todo, doing]
   const groupContext: GroupContext = { statuses, members: [], labels: [], projects: [launch, docs], currentUserId: 'user-1', showEmpty: false }
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
@@ -54,7 +54,7 @@ function renderBoard(tasks: Task[], options: { statuses?: TaskStatusDef[]; displ
     <TaskBoard
       tasks={tasks} users={[]} labels={[]} statuses={statuses} projects={[launch, docs]}
       display={{ ...DEFAULT_DISPLAY, layout: 'board', ...options.display }} groupContext={groupContext}
-      collapseScope={options.scope ?? 'all'} activeTaskId={null} onOpen={() => {}}
+      collapseScope={options.scope ?? 'all'} activeTaskId={null} onOpen={options.onOpen ?? (() => {})}
     />,
     { wrapper },
   )
@@ -242,4 +242,69 @@ test('the dragged card stays mounted while dragging', () => {
   fireEvent.dragStart(card, { dataTransfer })
   expect(card.isConnected).toBe(true)
   expect(card.getAttribute('data-dragging')).toBe('true')
+})
+
+test('cards show the parent above the title and sub-issue progress', () => {
+  const opened: string[] = []
+  const view = renderBoard([
+    { ...task('child', 'todo', 1), parentTaskId: 'parent', parent: { id: 'parent', title: 'Checkout redesign', projectKey: 'ORB' } },
+    { ...task('parent', 'todo', 2), subIssueCount: 3, subIssueClosedCount: 1 },
+  ], { onOpen: (id) => opened.push(id) })
+  fireEvent.click(within(cardOf(view, 'child')).getByRole('button', { name: 'Checkout redesign' }))
+  expect(opened).toEqual(['parent'])
+  expect(within(cardOf(view, 'parent')).getByRole('img', { name: '1 of 3 sub-issues closed' })).toBeTruthy()
+})
+
+test('dropping a card on the middle of another card makes it a sub-issue', async () => {
+  const writes: Write[] = []
+  captureWrites(writes)
+  const view = renderBoard([task('moving', 'todo', 1), task('other', 'doing', 2)])
+  fireEvent.dragStart(cardOf(view, 'Moving'), { dataTransfer })
+  dropAt(cardOf(view, 'other'), 0)
+  await waitFor(() => expect(writes).toHaveLength(1))
+  expect(writes[0]).toEqual({ method: 'PATCH', body: { expected_version: 1, parent_task_id: 'other' } })
+})
+
+function overAt(target: Element, clientY: number) {
+  const event = createEvent.dragOver(target, { dataTransfer })
+  Object.defineProperty(event, 'clientY', { value: clientY })
+  fireEvent(target, event)
+}
+const placeholders = (view: ReturnType<typeof render>) => Array.from(view.container.querySelectorAll('[data-board-placeholder]'))
+
+test('manual order: a card taking the hover over holds the placeholder in place (hidden) instead of removing it', async () => {
+  const writes: Write[] = []
+  captureWrites(writes)
+  const view = renderBoard([task('moving', 'todo', 1), task('other', 'doing', 2), task('third', 'doing', 3)])
+  fireEvent.dragStart(cardOf(view, 'Moving'), { dataTransfer })
+  overAt(columnOf(view, 'Doing'), 0)
+  expect(placeholders(view)).toHaveLength(1)
+  expect(placeholders(view)[0]!.hasAttribute('data-held')).toBe(false)
+  expect(columnOf(view, 'Doing').hasAttribute('data-drop-over')).toBe(true)
+
+  // the pointer moves into the middle of a card: the slot stays (no layout shift under the pointer), hidden
+  overAt(cardOf(view, 'other'), 0)
+  expect(cardOf(view, 'other').getAttribute('data-nest')).toBe('inside')
+  expect(placeholders(view)).toHaveLength(1)
+  expect(placeholders(view)[0]!.hasAttribute('data-held')).toBe(true)
+  expect(placeholders(view)[0]!.className).toContain('data-[held]:invisible')
+  expect(placeholders(view)[0]!.previousElementSibling!.contains(cardOf(view, 'third'))).toBe(true)
+  expect(columnOf(view, 'Doing').hasAttribute('data-drop-over')).toBe(false)
+
+  // back over the column: the slot shows again
+  overAt(columnOf(view, 'Doing'), 0)
+  expect(placeholders(view)[0]!.hasAttribute('data-held')).toBe(false)
+
+  overAt(cardOf(view, 'other'), 0)
+  dropAt(cardOf(view, 'other'), 0)
+  await waitFor(() => expect(writes).toHaveLength(1))
+  expect(writes[0]).toEqual({ method: 'PATCH', body: { expected_version: 1, parent_task_id: 'other' } })
+  expect(placeholders(view)).toHaveLength(0)
+})
+
+test('nest-target cards skip the hover styles, so the tint always wins', () => {
+  const view = renderBoard([task('moving', 'todo', 1)])
+  const hoverClasses = cardOf(view, 'Moving').className.split(' ').filter((name) => name.includes('hover:'))
+  expect(hoverClasses.length).toBeGreaterThan(0)
+  expect(hoverClasses.filter((name) => !name.includes('not-data-[nest=inside]:'))).toHaveLength(0)
 })
