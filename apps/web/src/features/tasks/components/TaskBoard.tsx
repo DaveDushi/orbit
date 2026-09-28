@@ -19,7 +19,8 @@ import { BlockedIndicator } from './BlockedIndicator'
 import { PriorityPicker } from './PriorityPicker'
 import { LabelPill } from './TaskLabels'
 import { TaskPickerDialog } from './TaskPickerDialog'
-import { DateStamp, DueDateChip, ProjectChip } from './TaskPropertyChips'
+import { DateStamp, ProjectChip } from './TaskPropertyChips'
+import { DueDatePicker } from './DueDatePicker'
 import { TaskStatusIcon } from './TaskStatusIcon'
 
 export interface TaskBoardProps {
@@ -128,7 +129,7 @@ export function TaskBoard({ tasks, users, labels, statuses, projects, display, g
         {showMeta ? (
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground/70">
             {has('project') ? <ProjectChip project={projectById.get(task.projectId)} /> : null}
-            {has('due_date') ? <DueDateChip task={task} status={status} /> : null}
+            {has('due_date') && task.dueAt ? <DueDatePicker task={task} status={status} /> : null}
             {has('created') ? <DateStamp property="created" iso={task.createdAt} /> : null}
             {has('updated') ? <DateStamp property="updated" iso={task.updatedAt} /> : null}
           </div>

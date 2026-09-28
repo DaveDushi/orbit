@@ -23,7 +23,8 @@ import { useUpdateTask } from '@/features/tasks/api/tasks'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import { PriorityPicker } from './PriorityPicker'
 import { LinkifiedText } from './LinkifiedText'
-import { DateStamp, DueDateChip, ProjectChip } from './TaskPropertyChips'
+import { DateStamp, ProjectChip } from './TaskPropertyChips'
+import { DueDatePicker } from './DueDatePicker'
 
 const PILL = 'inline-flex h-[22px] items-center gap-1.5 overflow-visible rounded-full border border-border bg-muted px-2.5 text-xs font-medium leading-none whitespace-nowrap text-foreground'
 const MENU = 'flex w-auto min-w-[180px] flex-col gap-px p-1'
@@ -147,7 +148,7 @@ export function TaskRow({ task, statuses, labels, users, assignees, project, pro
         </span>
       ) : null}
       {has('project') ? <ProjectChip project={project} className="text-xs max-[1099px]:hidden" /> : null}
-      {has('due_date') ? <DueDateChip task={task} status={status} className="text-xs max-[640px]:hidden" /> : null}
+      {has('due_date') ? <DueDatePicker task={task} status={status} className="text-xs max-[640px]:hidden" /> : null}
       {has('assignee') ? (
         <div className="flex" onClick={(e) => e.stopPropagation()}>
           <DropdownMenu>
