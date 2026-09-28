@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { ArrowLeft, Check, Lock, MoreH as MoreHorizontal, Edit as Pencil, Add as Plus, TaskSquare as SquareCheck, Trash as Trash2 } from 'reicon-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
+import { Switch } from '@/components/ui/switch'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -252,6 +253,8 @@ export function ProjectSettingsPage() {
 
               <ProjectGithubCard workspaceId={workspace.id} projectId={project.id} onPendingChange={setGithubPending} />
 
+              <SubIssueSettingsCard project={project} />
+
               <SettingsCard title="Danger zone" description="Deleting a project moves the project and all of its tasks to trash.">
                 <Button variant="destructive" onClick={() => setConfirmDelete(true)}>
                   Delete project
@@ -371,6 +374,89 @@ function ProjectGeneralCard({ project, onPendingChange }: { project: Project; on
       </SettingsCard>
       {updateProject.isError ? <p role="alert" className="text-destructive">Project update failed. <Button variant="ghost" onClick={() => updateProject.variables && updateProject.mutate(updateProject.variables)}>Retry</Button></p> : null}
     </>
+  )
+}
+
+const SUB_ISSUE_SETTINGS = [
+  { field: 'auto_close_parent', label: 'Close parent when all sub-issues are done', description: 'When every sub-issue is closed and at least one is done, the parent moves to its first done status.' },
+  { field: 'auto_close_sub_issues', label: 'Close open sub-issues when parent is closed', description: 'Open sub-issues at every level move to done, or to cancelled when the parent is cancelled.' },
+] as const
+
+type SubIssueSettingField = (typeof SUB_ISSUE_SETTINGS)[number]['field']
+type SubIssueSettingValues = Record<SubIssueSettingField, boolean>
+
+const savedSubIssueSettings = (record: Project): SubIssueSettingValues => ({
+  auto_close_parent: record.auto_close_parent ?? true,
+  auto_close_sub_issues: record.auto_close_sub_issues ?? true,
+})
+
+/**
+ * Saves on toggle (no draft): each switch is one decision. The body repeats name/key/color, which the PATCH requires.
+ * The switches stay enabled while a save is in flight: a toggle updates the desired values, and saves run one at a
+ * time, each carrying the version the previous PATCH returned, so a quick second toggle is queued, not lost.
+ */
+function SubIssueSettingsCard({ project }: { project: Project }) {
+  const { workspace } = useWorkspace()
+  const updateProject = useUpdateProject(workspace.id, project.id)
+  const saveProject = updateProject.mutateAsync
+  const [desired, setDesired] = useState<SubIssueSettingValues | null>(null)
+  const desiredRef = useRef<SubIssueSettingValues | null>(null)
+  const savingRef = useRef(false)
+  const projectRef = useRef(project)
+  useEffect(() => { projectRef.current = project }, [project])
+  const value = (field: SubIssueSettingField) => (desired ?? savedSubIssueSettings(project))[field]
+
+  const flush = async () => {
+    if (savingRef.current) return
+    savingRef.current = true
+    let base = projectRef.current
+    try {
+      while (desiredRef.current) {
+        const want = desiredRef.current
+        const current = savedSubIssueSettings(base)
+        if (want.auto_close_parent === current.auto_close_parent && want.auto_close_sub_issues === current.auto_close_sub_issues) break
+        // The PATCH response is the freshest record (useUpdateProject also writes it into the cache).
+        base = await saveProject({ name: base.name, key: base.key, color: base.color, expected_version: base.version, ...want })
+      }
+    } catch {
+      // The alert below offers Retry; the switches fall back to the saved values meanwhile.
+    } finally {
+      savingRef.current = false
+      desiredRef.current = null
+      setDesired(null)
+    }
+  }
+  const request = (values: SubIssueSettingValues) => {
+    desiredRef.current = values
+    setDesired(values)
+    void flush()
+  }
+  const save = (field: SubIssueSettingField, checked: boolean) =>
+    request({ ...(desiredRef.current ?? savedSubIssueSettings(projectRef.current)), [field]: checked })
+  const retry = () => {
+    const failed = updateProject.variables
+    if (failed) request({ auto_close_parent: failed.auto_close_parent ?? true, auto_close_sub_issues: failed.auto_close_sub_issues ?? true })
+  }
+  return (
+    <SettingsCard title="Sub-issues" description="Automations that run when a task or its sub-issues close.">
+      <div className="flex flex-col divide-y divide-border">
+        {SUB_ISSUE_SETTINGS.map((setting) => (
+          <div key={setting.field} className="flex items-start justify-between gap-4 py-3 first:pt-0 last:pb-0">
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-sm font-medium text-foreground">{setting.label}</span>
+              <span className="text-xs text-muted-foreground">{setting.description}</span>
+            </div>
+            <Switch aria-label={setting.label} checked={value(setting.field)} onCheckedChange={(checked: boolean) => save(setting.field, checked)} />
+          </div>
+        ))}
+      </div>
+      {updateProject.isError && !desired ? (
+        <p role="alert" className="mt-2 text-xs text-destructive">
+          {/* Retry goes through the queue, so it carries the current project version, not the failed attempt's (e.g. after a 409). */}
+          Couldn’t save the sub-issue settings. <Button variant="ghost" size="xs" onClick={retry}>Retry</Button>
+        </p>
+      ) : null}
+    </SettingsCard>
   )
 }
 

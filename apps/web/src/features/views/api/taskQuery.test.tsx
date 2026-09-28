@@ -16,6 +16,7 @@ const task = (id: string): TaskRecord => ({
   id, workspace_id: 'workspace-1', project_id: 'project-1', status_id: 'todo', title: id,
   description: '', position: 0, priority: 'none', assignee_ids: [], creator_id: 'user-1', label_ids: [],
   created_at: '2026-09-05T10:00:00Z', updated_at: '2026-09-05T10:00:00Z', duplicate_of: null, blocked: false, version: 1,
+  parent: null, parent_task_id: null, sub_issue_count: 0, sub_issue_closed_count: 0,
 })
 
 function withClient(client: QueryClient) {
@@ -27,6 +28,14 @@ test('the query body carries the effective filter and the display ordering', () 
   expect(taskQueryBody(PRESET_FILTERS.mine, { ...DEFAULT_DISPLAY, order_by: 'due_date', order_direction: 'desc', show_completed: 'past_week' })).toEqual({
     filter: PRESET_FILTERS.mine, order_by: 'due_date', order_direction: 'desc', show_completed: 'past_week',
   })
+})
+
+test('nested and flat sub-issues share one query body, so switching them does not refetch', () => {
+  expect(taskQueryBody(emptyFilter(), { ...DEFAULT_DISPLAY, sub_issues: 'flat' })).toEqual(taskQueryBody(emptyFilter(), { ...DEFAULT_DISPLAY, sub_issues: 'nested' }))
+})
+
+test('hidden sub-issues travel in the query body', () => {
+  expect(taskQueryBody(emptyFilter(), { ...DEFAULT_DISPLAY, sub_issues: 'hidden' }).sub_issues).toBe('hidden')
 })
 
 test('task queries POST every page until the cursor runs out', async () => {

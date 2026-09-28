@@ -43,9 +43,10 @@ import type {
   CommentRecord,
 } from '@/api/generated/types.gen'
 import { queryKeys } from '@/api/queryKeys'
+import { announceAutoClosed } from './autoClosed'
 import { isTaskVersionConflict } from './conflicts'
 import { commentUploadMode } from './commentUpload'
-import { patchWorkspaceTask, reconcileWorkspaceTask, restoreWorkspaceTasks, type WorkspaceTaskSnapshot } from './optimistic'
+import { patchWorkspaceTask, reconcileWorkspaceTask, restoreWorkspaceTasks, snapshotTasks, type WorkspaceTaskSnapshot } from './optimistic'
 import { PartialUploadError, uploadFiles } from './uploadQueue'
 
 type ApiClient = ReturnType<typeof createApiClient>
@@ -175,6 +176,12 @@ function taskDetailQueries(workspaceId: string, taskId: string | undefined) {
         return required(data, 'Task relations response was empty.')
       },
     }),
+    subIssues: queryOptions({
+      // under tasks.all: every task mutation's invalidation and optimistic patch reaches it
+      queryKey: [...queryKeys.tasks.all(workspaceId), 'sub-issues', id],
+      enabled,
+      queryFn: () => taskListAllPages(apiClient, workspaceId, { parent_task_id: id, sort: 'created_at', order: 'asc', limit: 100 }),
+    }),
   }
 }
 
@@ -200,6 +207,7 @@ export async function prefetchTaskDetail(queryClient: QueryClient, workspaceId: 
     queryClient.prefetchQuery(queries.activity),
     queryClient.prefetchQuery(queries.attachments),
     queryClient.prefetchQuery(queries.relations),
+    queryClient.prefetchQuery(queries.subIssues),
     queryClient.fetchQuery(queries.comments)
       .then((comments) => Promise.all(comments.map((comment) => queryClient.prefetchQuery(commentAttachmentsQuery(workspaceId, taskId, comment.id)))))
       .catch(() => undefined),
@@ -208,6 +216,21 @@ export async function prefetchTaskDetail(queryClient: QueryClient, workspaceId: 
 
 export function useTask(workspaceId: string, taskId: string | undefined) {
   return useQuery(taskDetailQueries(workspaceId, taskId).task)
+}
+
+/** The detail task `queryOptions`, same cache as `useTask` — used to load a task by id without mounting the detail view. */
+export function taskRecordQuery(workspaceId: string, taskId: string) {
+  return taskDetailQueries(workspaceId, taskId).task
+}
+
+/** Direct sub-issues of a task, oldest first (the detail's Sub-issues section; each nested level asks for its own). */
+export function useSubIssues(workspaceId: string, parentId: string | undefined) {
+  return useQuery(taskDetailQueries(workspaceId, parentId).subIssues)
+}
+
+/** The sub-issues `queryOptions` of one parent: the composer appends a created sub-issue to it at once. */
+export function subIssuesQuery(workspaceId: string, parentId: string) {
+  return taskDetailQueries(workspaceId, parentId).subIssues
 }
 
 export function useTaskGithubLinks(workspaceId: string, taskId: string | undefined) {
@@ -256,7 +279,7 @@ async function promptForConflict(error: Error, refresh: () => void) {
 
 /** Cache patch for an optimistic update. `duplicate_of_id` is not a task field; the server response reconciles it. */
 /** Fields where `null` clears the value, so the optimistic patch must apply it. */
-const CLEARABLE_FIELDS = new Set(['due_at', 'due_start_at', 'source_url'])
+const CLEARABLE_FIELDS = new Set(['due_at', 'due_start_at', 'source_url', 'parent_task_id'])
 
 export function optimisticTaskPatch(body: Omit<TaskUpdateBody, 'expected_version'>): Partial<TaskRecord> {
   const { duplicate_of_id: _duplicateOf, ...fields } = body
@@ -272,6 +295,8 @@ export function useCreateTask(workspaceId: string) {
     },
     onSuccess: (record) => {
       queryClient.setQueryData(queryKeys.tasks.detail(workspaceId, record.id), record)
+      // a sub-issue created in a closed status can close its parent
+      announceAutoClosed(queryClient, workspaceId, [record], record)
       void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.all(workspaceId) })
     },
   })
@@ -293,7 +318,11 @@ export function useUpdateTask(workspaceId: string) {
       if (snapshot) restoreWorkspaceTasks(queryClient, snapshot)
       return promptForConflict(error, () => void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.all(workspaceId) }))
     },
-    onSuccess: (record) => reconcileWorkspaceTask(queryClient, workspaceId, record),
+    onSuccess: (record, _input, snapshot) => {
+      reconcileWorkspaceTask(queryClient, workspaceId, record)
+      // the pre-patch record too: a drag to root level clears parent_task_id, and a closed old parent is still a parent
+      announceAutoClosed(queryClient, workspaceId, [record, ...snapshotTasks(snapshot, [record.id])], record)
+    },
     onSettled: () => void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.all(workspaceId) }),
   })
 }
@@ -327,7 +356,10 @@ export function useBulkTasks(workspaceId: string) {
       if (snapshot) restoreWorkspaceTasks(queryClient, snapshot)
       return promptForConflict(error, () => void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.all(workspaceId) }))
     },
-    onSuccess: (page) => page.items.forEach((record) => reconcileWorkspaceTask(queryClient, workspaceId, record)),
+    onSuccess: (page, _updates, snapshot) => {
+      page.items.forEach((record) => reconcileWorkspaceTask(queryClient, workspaceId, record))
+      announceAutoClosed(queryClient, workspaceId, [...page.items, ...snapshotTasks(snapshot, page.items.map((record) => record.id))], page)
+    },
     onSettled: () => void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.all(workspaceId) }),
   })
   return {

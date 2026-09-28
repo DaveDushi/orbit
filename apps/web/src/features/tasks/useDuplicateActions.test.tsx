@@ -5,6 +5,7 @@ import type { ReactNode } from 'react'
 import { toast } from 'sonner'
 import type { TaskRecord } from '@/api/generated/types.gen'
 import { useDuplicateActions } from './useDuplicateActions'
+import { UNDO_TOAST_DURATION, keepIdentifiersTogether } from '@/lib/toast'
 
 const originalFetch = globalThis.fetch
 afterEach(() => { globalThis.fetch = originalFetch })
@@ -13,11 +14,12 @@ const record = (id: string, version: number, duplicateOf: string | null): TaskRe
   id, workspace_id: 'workspace-1', project_id: 'project-1', status_id: duplicateOf ? 'dup' : 'todo', title: id,
   description: '', position: 0, priority: 'none', assignee_ids: [], creator_id: 'user-1', label_ids: [],
   created_at: '2026-09-23T10:00:00Z', updated_at: '2026-09-23T10:00:00Z', version,
-  duplicate_of: duplicateOf ? { id: duplicateOf, project_id: 'project-1', title: 'Canonical' } : null, blocked: false,
+  duplicate_of: duplicateOf ? { id: duplicateOf, project_id: 'project-1', project_key: 'ORB', title: 'Canonical' } : null, blocked: false,
+  parent: null, parent_task_id: null, sub_issue_count: 0, sub_issue_closed_count: 0,
 })
 
 type Call = { method: string; path: string; body: Record<string, unknown> }
-type ToastOptions = { action: { label: string; onClick: () => void } }
+type ToastOptions = { duration?: number; action: { label: string; onClick: () => void } }
 
 function captureApi(calls: Call[], respond?: (call: Call) => Response) {
   globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -50,8 +52,9 @@ test('marking one task shows an Undo toast that still unmarks after the view unm
   await act(async () => { await view.result.current.markOne({ id: 'task-3f2a', version: 1 }, target) })
 
   expect(calls[0]).toEqual({ method: 'PATCH', path: '/api/v1/workspaces/workspace-1/tasks/task-3f2a', body: { expected_version: 1, duplicate_of_id: 'task-91c0' } })
-  expect(success.mock.calls[0]![0]).toBe('Marked as duplicate of ORB-91C0')
+  expect(success.mock.calls[0]![0]).toBe(keepIdentifiersTogether('Marked as duplicate of ORB-91C0'))
   const options = success.mock.calls[0]![1] as unknown as ToastOptions
+  expect(options.duration).toBe(UNDO_TOAST_DURATION)
   expect(options.action.label).toBe('Undo')
 
   // the row re-mounts in the Duplicate group / the detail page closes before Undo is clicked
@@ -73,7 +76,7 @@ test('bulk marking is one atomic call and Undo reverts every task with its new v
     { id: 'task-1', expected_version: 1, duplicate_of_id: 'task-91c0' },
     { id: 'task-2', expected_version: 4, duplicate_of_id: 'task-91c0' },
   ] } })
-  expect(success.mock.calls[0]![0]).toBe('Marked 2 tasks as duplicate of ORB-91C0')
+  expect(success.mock.calls[0]![0]).toBe(keepIdentifiersTogether('Marked 2 tasks as duplicate of ORB-91C0'))
   ;(success.mock.calls[0]![1] as unknown as ToastOptions).action.onClick()
   await waitFor(() => expect(calls).toHaveLength(2))
   expect(calls[1]!.body).toEqual({ updates: [
@@ -129,4 +132,35 @@ test('bulk Undo gives each task back its own earlier state, unmarking canonicals
     { id: 'task-1', expected_version: 2, duplicate_of_id: 'task-2' },
   ] })
   success.mockRestore()
+})
+
+/** The marked task is the last open sub-issue of ORB-0012: the server closes the parent in the same request. */
+const closedParent = [{ id: 'task-0012', status_id: 'done' }]
+const child = (id: string, version: number, duplicateOf: string | null) =>
+  ({ ...record(id, version, duplicateOf), parent_task_id: 'task-0012', parent: { id: 'task-0012', title: 'Checkout redesign', project_key: 'ORB' } })
+
+test('marking the last open sub-issue as a duplicate announces the parent the server closed', async () => {
+  const calls: Call[] = []
+  captureApi(calls, (call) => Response.json({ ...child(call.path.split('/').at(-1)!, 2, 'task-91c0'), auto_closed: closedParent }))
+  const success = spyOn(toast, 'success').mockImplementation(() => 0)
+  try {
+    const view = renderActions()
+    await act(async () => { await view.result.current.markOne({ id: 'task-0031', version: 1 }, target) })
+    expect(success.mock.calls.map((call) => call[0])).toEqual([keepIdentifiersTogether('Closed parent ORB-0012'), keepIdentifiersTogether('Marked as duplicate of ORB-91C0')])
+  } finally {
+    success.mockRestore()
+  }
+})
+
+test('bulk marking announces the parent the server closed', async () => {
+  const calls: Call[] = []
+  captureApi(calls, () => Response.json({ items: [child('task-0031', 2, 'task-91c0'), child('task-0032', 2, 'task-91c0')], next_cursor: null, auto_closed: closedParent }))
+  const success = spyOn(toast, 'success').mockImplementation(() => 0)
+  try {
+    const view = renderActions()
+    await act(async () => { await view.result.current.markMany([{ id: 'task-0031', version: 1 }, { id: 'task-0032', version: 1 }], target) })
+    expect(success.mock.calls.map((call) => call[0])).toEqual([keepIdentifiersTogether('Closed parent ORB-0012'), keepIdentifiersTogether('Marked 2 tasks as duplicate of ORB-91C0')])
+  } finally {
+    success.mockRestore()
+  }
 })

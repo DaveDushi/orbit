@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Calendar, ChevronRight, Copy, Danger, Flag, Loader, Add as Plus, RecordCircle, TaskSquare as SquareCheck, Tag, UserAdd, Xmark as X } from 'reicon-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Calendar, ChevronRight, Copy, Danger, Flag, Hierarchy2, LinkBroken, Loader, Add as Plus, RecordCircle, TaskSquare as SquareCheck, Tag, UserAdd, Xmark as X } from 'reicon-react'
 import { cn } from 'cn'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -24,13 +24,18 @@ import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import { resolveStatusId } from '@/features/tasks/tasksLib'
 import { CHEVRON, GroupIcon } from '@/features/views/components/GroupIcon'
 import { groupTasks, type GroupContext, type TaskGroup } from '@/features/views/grouping'
-import { canDrag, listSections, valuesOf, zoneIdOf, type GroupValues } from '@/features/views/layoutGroups'
+import { canDrag, listSections, ownGroupValues, valuesOf, zoneIdOf, type GroupValues } from '@/features/views/layoutGroups'
 import { useCollapsedGroups } from '@/features/views/useCollapsedGroups'
+import { useCollapsedTasks } from '@/features/views/useCollapsedTasks'
+import { buildTaskTree, descendantIds, flattenTree, subtreeSize, type TreeRow } from '@/features/views/taskTree'
 import { useGroupDrop } from '@/features/views/useGroupDrop'
+import { useNestDrop } from '@/features/views/useNestDrop'
 import type { DisplayOptions } from '@/features/views/viewState'
 import { TaskRow } from './TaskRow'
 import { pickerTitle } from '@/features/tasks/relationsLib'
 import { useDuplicateActions } from '@/features/tasks/useDuplicateActions'
+import { useParentActions } from '@/features/tasks/useParentActions'
+import { parentPickerTitle } from '@/features/tasks/subIssuesLib'
 import { TaskPickerDialog } from './TaskPickerDialog'
 import { useSlowPending } from '@/lib/useDebouncedValue'
 
@@ -83,16 +88,47 @@ export function TaskList({ tasks, users, labels, statuses, projects, display, gr
   const duplicates = useDuplicateActions(workspace.id)
   // tasks waiting for a canonical task: one (row menu, drop on the Duplicate group) or the bulk selection
   const [duplicatePicker, setDuplicatePicker] = useState<Task[] | null>(null)
-  const { drag, drop, startDrag, endDrag, zoneProps } = useGroupDrop({
+  const parentActions = useParentActions(workspace.id)
+  // tasks waiting for a parent: the bulk selection
+  const [parentPicker, setParentPicker] = useState<Task[] | null>(null)
+  const manual = display.order_by === 'manual'
+
+  const nested = display.sub_issues === 'nested'
+  // built in every mode: the bulk "Set parent…" picker excludes descendants from it
+  const tree = useMemo(() => buildTaskTree(tasks), [tasks])
+  const taskTree = useCollapsedTasks(workspace.id)
+  const { drag, drop, startDrag, endDrag, clearDrop, zoneProps } = useGroupDrop({
     tasks,
-    manual: display.order_by === 'manual',
+    manual,
     groupContext,
-    itemSelector: '[data-task-row]',
+    // the insertion slot counts root rows only: a subtree moves with its root
+    itemSelector: '[data-task-row][data-depth="0"]',
     onDuplicate: (task) => setDuplicatePicker([task]),
+    // nested: a group zone is the root level, so a sub-issue dropped there leaves its parent
+    detach: nested ? (task) => tree.nested.has(task.id) : undefined,
+    onDetached: (task, records, response) => parentActions.announce([task], null, records, response),
   })
+  const nest = useNestDrop({
+    tasks,
+    tree: nested ? tree : null,
+    manual,
+    dragId: drag?.taskId ?? null,
+    onTakeOver: clearDrop,
+    endDrag,
+    onNest: (plan, dragId) => {
+      const moving = tasks.find((task) => task.id === dragId)
+      const parent = tasks.find((task) => task.id === plan.parentId)
+      if (!moving || !parent) return
+      // the new sub-issue stays in view under its parent
+      taskTree.expand(parent.id)
+      void parentActions.setParent([moving], { id: parent.id, identifier: parent.identifier }, { placement: plan.placement })
+    },
+  })
+  // a subtree stays in its root's group (spec §7.2), so only roots are grouped; counts include nested rows
+  const rowCount = (zoneTasks: Task[]) => nested ? zoneTasks.reduce((total, task) => total + 1 + subtreeSize(tree, task.id), 0) : zoneTasks.length
 
   const dragEnabled = canDrag(display)
-  const sections = listSections(tasks, display, groupContext)
+  const sections = listSections(nested ? tree.roots : tasks, display, groupContext)
   const projectById = new Map(projects.map((project) => [project.id, project]))
   const statusOptions = groupTasks([], 'status', { ...groupContext, showEmpty: true })
     .filter((group) => !group.value?.startsWith('duplicate:'))
@@ -113,15 +149,33 @@ export function TaskList({ tasks, users, labels, statuses, projects, display, gr
     )
   }
 
+  /**
+   * Group zone props with one drop indicator at a time: while an insertion line marks the slot (manual order, rows in
+   * view), the group shows no outline or header tint, as in Linear. Drops with no line (another group without manual
+   * order, a collapsed or empty group) keep the outline.
+   */
+  const dropZoneProps = (zone: Parameters<typeof zoneProps>[0]) => {
+    const props = zoneProps(zone)
+    const lineShown = drop?.zone === zone.id && drop.index !== null && zone.itemsShown && zone.tasks.some((task) => task.id !== drag?.taskId)
+    return lineShown ? { ...props, 'data-drop-over': undefined } : props
+  }
+
   const renderRows = (zone: string, values: GroupValues, zoneTasks: Task[]) => {
     // the dragged row stays mounted (faded): unmounting the drag source cancels the browser drag
     const others = drag ? zoneTasks.filter((task) => task.id !== drag.taskId) : zoneTasks
     const index = drop?.zone === zone ? drop.index : null
-    return zoneTasks.map((task) => {
-      const slot = others.indexOf(task)
-      const dropEdge = index === null || slot === -1
-        ? null
-        : slot === index ? 'top' : index === others.length && slot === others.length - 1 ? 'bottom' : null
+    const rows: TreeRow[] = nested
+      ? flattenTree(tree, zoneTasks, taskTree.collapsed)
+      : zoneTasks.map((task) => ({ task, depth: 0, indent: 0, hasChildren: false }))
+    // the end-of-zone line sits under the zone's last row, which may be a sub-issue of the last root
+    const lastRowId = rows.filter((row) => row.task.id !== drag?.taskId).at(-1)?.task.id
+    return rows.map(({ task, depth, hasChildren }) => {
+      const slot = depth === 0 ? others.indexOf(task) : -1
+      const dropEdge = index === null ? null
+        : slot !== -1 && slot === index ? 'top'
+          : index === others.length && task.id === lastRowId ? 'bottom' : null
+      // the edge of a sub-issue: the task becomes its sibling, shown with the same line
+      const nestEdge = nest.nestAt?.id === task.id && nest.nestAt.zone !== 'inside' ? (nest.nestAt.zone === 'before' ? 'top' : 'bottom') : null
       return (
         <TaskRow
           key={task.id}
@@ -135,12 +189,16 @@ export function TaskList({ tasks, users, labels, statuses, projects, display, gr
           selected={selected.includes(task.id)}
           dragging={task.id === drag?.taskId}
           draggable={dragEnabled}
-          dropEdge={dropEdge}
+          dropEdge={nestEdge ?? dropEdge}
           onOpen={onOpen}
           onToggleSelect={toggleSelect}
-          onDragStart={(taskId) => startDrag(taskId, values)}
+          // a nested row shows in its root's group but moves from its own (status, label, assignee…)
+          onDragStart={(taskId) => startDrag(taskId, depth > 0 ? ownGroupValues(task, values, groupContext) : values)}
           onDragEnd={endDrag}
           onRequestDuplicate={(rowTask) => setDuplicatePicker([rowTask])}
+          tree={nested ? { depth, hasChildren, expanded: !taskTree.collapsed.has(task.id), onToggle: () => taskTree.toggle(task.id) } : null}
+          showParent={!nested || !tree.nested.has(task.id)}
+          nest={nest.rowProps(task)}
         />
       )
     })
@@ -165,7 +223,7 @@ export function TaskList({ tasks, users, labels, statuses, projects, display, gr
         </Button>
         <GroupIcon group={group} context={groupContext} />
         <span className="truncate">{group.label}</span>
-        <span className="font-normal text-muted-foreground/70 tabular-nums">{group.tasks.length}</span>
+        <span className="font-normal text-muted-foreground/70 tabular-nums">{rowCount(group.tasks)}</span>
         <div className="flex-1" />
         {canAdd ? (
           <Button type="button" variant="ghost" size="icon-xs" className={ADD} aria-label={`New task in ${group.label}`} title="New task" onClick={() => onAdd(values)}>
@@ -182,12 +240,12 @@ export function TaskList({ tasks, users, labels, statuses, projects, display, gr
         const values = valuesOf(group)
         const zone = zoneIdOf(values)
         if (group.field === 'none') {
-          return <section key={zone} className={ZONE} {...zoneProps({ id: zone, values, tasks: group.tasks, itemsShown: true })}>{renderRows(zone, values, group.tasks)}</section>
+          return <section key={zone} className={ZONE} {...dropZoneProps({ id: zone, values, tasks: group.tasks, itemsShown: true })}>{renderRows(zone, values, group.tasks)}</section>
         }
         const isCollapsed = collapsed.includes(zone)
         if (!subGroups) {
           return (
-            <section key={group.key} className={cn('group/section', ZONE)} {...zoneProps({ id: zone, values, tasks: group.tasks, itemsShown: !isCollapsed })}>
+            <section key={group.key} className={cn('group/section', ZONE)} {...dropZoneProps({ id: zone, values, tasks: group.tasks, itemsShown: !isCollapsed })}>
               {renderHeader(group, zone, values, 'group')}
               {isCollapsed ? null : renderRows(zone, values, group.tasks)}
             </section>
@@ -197,7 +255,7 @@ export function TaskList({ tasks, users, labels, statuses, projects, display, gr
           // the sub-groups are hidden, so the collapsed group itself takes drops: only the group field changes
           // (a hidden sub-group value must never be written) and the task goes to the group's end
           return (
-            <section key={group.key} className={cn('group/section', ZONE)} {...zoneProps({ id: zone, values, tasks: group.tasks, itemsShown: false })}>
+            <section key={group.key} className={cn('group/section', ZONE)} {...dropZoneProps({ id: zone, values, tasks: group.tasks, itemsShown: false })}>
               {renderHeader(group, zone, values, 'group')}
             </section>
           )
@@ -210,7 +268,7 @@ export function TaskList({ tasks, users, labels, statuses, projects, display, gr
               const subZone = zoneIdOf(subValues)
               const subCollapsed = collapsed.includes(subZone)
               return (
-                <section key={sub.key} className={cn('group/sub', ZONE)} {...zoneProps({ id: subZone, values: subValues, tasks: sub.tasks, itemsShown: !subCollapsed })}>
+                <section key={sub.key} className={cn('group/sub', ZONE)} {...dropZoneProps({ id: subZone, values: subValues, tasks: sub.tasks, itemsShown: !subCollapsed })}>
                   {renderHeader(sub, subZone, subValues, 'sub')}
                   {subCollapsed ? null : renderRows(subZone, subValues, sub.tasks)}
                 </section>
@@ -229,6 +287,11 @@ export function TaskList({ tasks, users, labels, statuses, projects, display, gr
           labels={labels}
           onClear={() => setSelected([])}
           onMarkDuplicate={() => setDuplicatePicker(selectedTasks)}
+          onSetParent={() => setParentPicker(selectedTasks)}
+          onRemoveParent={() => {
+            void parentActions.setParent(selectedTasks, null)
+            setSelected([])
+          }}
         />
       ) : null}
       {duplicatePicker ? (
@@ -249,6 +312,20 @@ export function TaskList({ tasks, users, labels, statuses, projects, display, gr
           }}
         />
       ) : null}
+      {parentPicker ? (
+        <TaskPickerDialog
+          open
+          onOpenChange={(open) => { if (!open) setParentPicker(null) }}
+          title={parentPickerTitle(parentPicker.length === 1 ? parentPicker[0]!.identifier : parentPicker.length)}
+          statuses={statuses}
+          // loaded descendants only; a deeper one is refused by the server (parent_cycle) and explained in a toast
+          excludeIds={parentPicker.flatMap((item) => [item.id, ...descendantIds(tree, item.id)])}
+          onSelect={(target) => {
+            void parentActions.setParent(parentPicker, { id: target.id, identifier: target.identifier })
+            setSelected([])
+          }}
+        />
+      ) : null}
     </>
   )
 }
@@ -263,6 +340,8 @@ function BulkBar({
   labels,
   onClear,
   onMarkDuplicate,
+  onSetParent,
+  onRemoveParent,
 }: {
   tasks: Task[]
   users: User[]
@@ -273,6 +352,9 @@ function BulkBar({
   labels: LabelRecord[]
   onClear: () => void
   onMarkDuplicate: () => void
+  onSetParent: () => void
+  /** Shown only while a selected task has a parent. */
+  onRemoveParent: () => void
 }) {
   const { workspace } = useWorkspace()
   const bulkTasks = useBulkTasks(workspace.id)
@@ -423,6 +505,16 @@ function BulkBar({
           <Copy aria-hidden className={BULK_ICON} />
           <span className={BULK_LABEL}>Duplicate</span>
         </Button>
+        <Button variant="ghost" className={BULK_BTN} aria-label="Set parent…" title="Set parent…" onClick={onSetParent}>
+          <Hierarchy2 aria-hidden className={BULK_ICON} />
+          <span className={BULK_LABEL}>Set parent</span>
+        </Button>
+        {tasks.some((task) => task.parentTaskId) ? (
+          <Button variant="ghost" className={BULK_BTN} aria-label="Remove parent" title="Remove parent" onClick={onRemoveParent}>
+            <LinkBroken aria-hidden className={BULK_ICON} />
+            <span className={BULK_LABEL}>Remove parent</span>
+          </Button>
+        ) : null}
         {bulkSlow ? (
           <span role="status" className="flex shrink-0 items-center gap-1.5 px-2 text-xs whitespace-nowrap text-muted-foreground">
             <Loader aria-hidden className="size-3.5 animate-spin" />

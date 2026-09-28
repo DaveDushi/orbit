@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { keepIdentifiersTogether } from '../src/lib/toast'
 
 test.use({ viewport: { width: 1280, height: 800 } })
 
@@ -35,7 +36,8 @@ async function mockApi(page: Page, tasks: TaskMock[], writes: Write[]) {
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request()
     const method = request.method()
-    const path = new URL(request.url()).pathname
+    const url = new URL(request.url())
+    const path = url.pathname
     if (method === 'PATCH' && /\/tasks\/[^/]+$/.test(path)) {
       const body = request.postDataJSON() as { duplicate_of_id?: string | null }
       writes.push({ method, path, body })
@@ -62,7 +64,11 @@ async function mockApi(page: Page, tasks: TaskMock[], writes: Write[]) {
         { id: 'duplicate', project_id: 'project-1', name: 'Duplicate', description: '', category: 'duplicate', color: '#8b8f98', position: 1, version: 1 },
       ], next_cursor: null }
     }
-    if (path.endsWith('/tasks') || path.endsWith('/tasks/query')) body = { items: tasks, next_cursor: null }
+    if (path.endsWith('/tasks') || path.endsWith('/tasks/query')) {
+      // the detail page's Sub-issues section asks for direct children: none of this fixture's tasks have a parent
+      const parentId = url.searchParams.get('parent_task_id')
+      body = { items: parentId ? [] : tasks, next_cursor: null }
+    }
     const detail = path.match(/\/tasks\/([^/]+)$/)
     if (detail) body = tasks.find((task) => task.id === detail[1]) ?? body
     const relations = path.match(/\/tasks\/([^/]+)\/relations$/)
@@ -95,7 +101,7 @@ test('mark a task as duplicate from its detail page, see the banner, then undo',
   await expect(banner).toContainText('Login fails on Safari')
   expect(writes[0]).toMatchObject({ method: 'PATCH', body: { expected_version: 1, duplicate_of_id: 'task-91c0' } })
 
-  await expect(page.getByText('Marked as duplicate of TEST-91C0')).toBeVisible()
+  await expect(page.getByText(keepIdentifiersTogether('Marked as duplicate of TEST-91C0'))).toBeVisible()
   await page.getByRole('button', { name: 'Undo' }).click()
   await expect.poll(() => writes.length).toBe(2)
   expect(writes[1]).toMatchObject({ method: 'PATCH', body: { expected_version: 2, duplicate_of_id: null } })
@@ -123,7 +129,7 @@ test('bulk mark two tasks as duplicates of a third, then undo both', async ({ pa
   ] } })
   await expect(page.getByRole('button', { name: 'Collapse Duplicate' })).toBeVisible()
 
-  await expect(page.getByText('Marked 2 tasks as duplicate of TEST-91C0')).toBeVisible()
+  await expect(page.getByText(keepIdentifiersTogether('Marked 2 tasks as duplicate of TEST-91C0'))).toBeVisible()
   await page.getByRole('button', { name: 'Undo' }).click()
   await expect.poll(() => writes.length).toBe(2)
   expect(writes[1]).toMatchObject({ method: 'POST', body: { updates: [

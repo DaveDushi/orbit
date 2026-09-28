@@ -12,7 +12,7 @@ const originalFetch = globalThis.fetch
 afterEach(() => { globalThis.fetch = originalFetch })
 
 const workspace = { id: 'workspace-1', name: 'Orbit', role: 'owner' as const, version: 1 }
-const project = { id: 'project-1', workspace_id: 'workspace-1', name: 'Launch', key: 'ORB', color: '#e0457b', created_at: '', updated_at: '', version: 1 }
+const project = { id: 'project-1', workspace_id: 'workspace-1', name: 'Launch', key: 'ORB', color: '#e0457b', created_at: '', updated_at: '', version: 1, auto_close_parent: true, auto_close_sub_issues: true }
 const todo: TaskStatusDef = { id: 'todo', projectId: 'project-1', name: 'Todo', description: '', color: '#888', category: 'unstarted', position: 0, version: 1 }
 const duplicateStatus: TaskStatusDef = { id: 'dup', projectId: 'project-1', name: 'Duplicate', description: '', color: '#8b8f98', category: 'duplicate', position: 1, version: 1 }
 const task: Task = {
@@ -45,7 +45,8 @@ function api(calls: Call[], relations: unknown[] = []) {
     if (request.method === 'DELETE') return new Response(null, { status: 204 })
     if (path.endsWith('/github-links')) return Response.json([])
     if (path.endsWith('/projects')) return Response.json({ items: [project], next_cursor: null })
-    if (path.endsWith('/tasks')) return Response.json({ items: [record('task-3f2a', "Can't log in on iPad"), record('task-77aa', 'Auth token refresh')], next_cursor: null })
+    // the picker's task list; the detail's sub-issues list (parent_task_id) stays empty
+    if (path.endsWith('/tasks') && !new URL(request.url).searchParams.has('parent_task_id')) return Response.json({ items: [record('task-3f2a', "Can't log in on iPad"), record('task-77aa', 'Auth token refresh')], next_cursor: null })
     if (request.method === 'PATCH') return Response.json({ ...record('task-3f2a', "Can't log in on iPad"), version: 2 })
     return Response.json({ items: [], next_cursor: null })
   }) as unknown as typeof fetch

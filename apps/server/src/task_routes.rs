@@ -16,14 +16,15 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::auth_routes::CookieMode;
 use crate::repositories::identity::{AuthenticatedSession, IdentityRepository};
+use crate::repositories::sub_issues::AutoClosed;
 use crate::repositories::task_filter::{
     self, Condition, FilterField, FilterGroup, FilterNode, FilterOperator, GroupOp, OrderBy,
-    OrderDirection, ShowCompleted,
+    OrderDirection, ShowCompleted, SubIssuesDisplay,
 };
 use crate::repositories::task_relations::{NewTaskRelationType, TaskRelationRecord};
 use crate::repositories::tasks::{
-    CreateTask, NotificationRecord, Page, SortOrder, TaskChanges, TaskError, TaskFilter,
-    TaskRecord, TaskRepository, TaskSort, TaskUpdate,
+    CreateTask, NotificationRecord, Page, ProjectAutomationPatch, SortOrder, TaskChanges,
+    TaskError, TaskFilter, TaskRecord, TaskRepository, TaskSort, TaskUpdate,
 };
 use crate::repositories::views::ViewRepository;
 
@@ -266,6 +267,10 @@ struct ProjectUpdateBody {
     key: String,
     color: String,
     expected_version: u64,
+    /// Absent: unchanged.
+    auto_close_parent: Option<bool>,
+    /// Absent: unchanged.
+    auto_close_sub_issues: Option<bool>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -347,6 +352,10 @@ async fn update_project(
             name,
             key,
             color,
+            ProjectAutomationPatch {
+                auto_close_parent: body.auto_close_parent,
+                auto_close_sub_issues: body.auto_close_sub_issues,
+            },
             body.expected_version,
             request_id_value(request_id.as_ref()),
             TimestampMillis::now(),
@@ -809,6 +818,7 @@ struct TaskQuery {
     priority: Option<String>,
     search: Option<String>,
     view: Option<String>,
+    parent_task_id: Option<String>,
     #[serde(default = "default_task_sort")]
     #[param(required = false)]
     sort: String,
@@ -834,6 +844,11 @@ struct TaskQueryBody {
     cursor: Option<String>,
     /// Page size, 1–100 (default 50).
     limit: Option<usize>,
+    /// Only direct children of this task.
+    parent_task_id: Option<String>,
+    /// The view's sub-issue display; `hidden` returns top-level tasks only (default `nested`).
+    #[serde(default)]
+    sub_issues: SubIssuesDisplay,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -856,6 +871,8 @@ struct CreateTaskBody {
     due_start_at: Option<TimestampMillis>,
     #[schema(value_type = Option<String>, format = DateTime)]
     due_at: Option<TimestampMillis>,
+    /// Create the task as a sub-issue of this task.
+    parent_task_id: Option<String>,
 }
 
 #[derive(Clone, Deserialize, ToSchema)]
@@ -881,6 +898,9 @@ struct TaskUpdateBody {
     /// Absent: unchanged. A task id: mark this task as a duplicate of it. `null`: unmark.
     #[serde(default, deserialize_with = "deserialize_source_patch")]
     duplicate_of_id: Option<Option<String>>,
+    /// Absent: unchanged. A task id: make this task its sub-issue. `null`: detach.
+    #[serde(default, deserialize_with = "deserialize_source_patch")]
+    parent_task_id: Option<Option<String>>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -913,6 +933,9 @@ struct BulkItem {
     /// Absent: unchanged. A task id: mark this task as a duplicate of it. `null`: unmark.
     #[serde(default, deserialize_with = "deserialize_source_patch")]
     duplicate_of_id: Option<Option<String>>,
+    /// Absent: unchanged. A task id: make this task its sub-issue. `null`: detach.
+    #[serde(default, deserialize_with = "deserialize_source_patch")]
+    parent_task_id: Option<Option<String>>,
 }
 
 #[utoipa::path(get, path = "/api/v1/workspaces/{workspace_id}/tasks", params(TaskQuery, ("workspace_id" = String, Path)), responses((status = 200, body = Page<crate::repositories::tasks::TaskRecord>)))]
@@ -931,6 +954,7 @@ async fn list_tasks(
     let status_id = optional_id(query.status_id, &instance, request_id.as_ref())?;
     let assignee_id = optional_id(query.assignee_id, &instance, request_id.as_ref())?;
     let label_id = optional_id(query.label_id, &instance, request_id.as_ref())?;
+    let parent_task_id = optional_id(query.parent_task_id, &instance, request_id.as_ref())?;
     let priority_value = query
         .priority
         .map(|value| priority(value, &instance, request_id.as_ref()))
@@ -1024,6 +1048,8 @@ async fn list_tasks(
         show_completed: ShowCompleted::All,
         sort,
         order,
+        parent_task_id,
+        sub_issues: SubIssuesDisplay::Nested,
     };
     state
         .tasks
@@ -1062,11 +1088,14 @@ async fn query_tasks(
     let tree = task_filter::parse_filter(&body.filter)
         .map_err(|error| task_problem(error.into(), instance.clone(), request_id.as_ref()))?;
     let (sort, order) = task_order(body.order_by, body.order_direction);
+    let parent_task_id = optional_id(body.parent_task_id, &instance, request_id.as_ref())?;
     let filter = TaskFilter {
         tree,
         show_completed: body.show_completed,
         sort,
         order,
+        parent_task_id,
+        sub_issues: body.sub_issues,
     };
     state
         .tasks
@@ -1118,6 +1147,23 @@ async fn get_task(
         .await
         .map(Json)
         .map_err(|error| task_problem(error, instance, request_id.as_ref()))
+}
+
+/// `POST /tasks` and `PATCH /tasks/{id}`: the task plus the tasks the sub-issue automation
+/// changed.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct TaskUpdateResponse {
+    #[serde(flatten)]
+    task: TaskRecord,
+    auto_closed: Vec<AutoClosed>,
+}
+
+/// `POST /tasks/bulk`: the updated tasks (no further pages) plus the automation's changes.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct TaskBulkResponse {
+    items: Vec<TaskRecord>,
+    next_cursor: Option<String>,
+    auto_closed: Vec<AutoClosed>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -1272,7 +1318,7 @@ async fn delete_task_relation(
         .map_err(|error| task_problem(error, instance, request_id.as_ref()))
 }
 
-#[utoipa::path(post, path = "/api/v1/workspaces/{workspace_id}/tasks", params(("workspace_id" = String, Path)), request_body = CreateTaskBody, responses((status = 201, body = crate::repositories::tasks::TaskRecord)))]
+#[utoipa::path(post, path = "/api/v1/workspaces/{workspace_id}/tasks", params(("workspace_id" = String, Path)), request_body = CreateTaskBody, responses((status = 201, body = TaskUpdateResponse)))]
 async fn create_task(
     State(state): State<TaskState>,
     Path(workspace): Path<String>,
@@ -1309,6 +1355,7 @@ async fn create_task(
         label_ids: parse_ids(body.label_ids, &instance, request_id.as_ref())?,
         due_start_at: body.due_start_at,
         due_at: body.due_at,
+        parent_task_id: optional_id(body.parent_task_id, &instance, request_id.as_ref())?,
     };
     state
         .tasks
@@ -1320,18 +1367,24 @@ async fn create_task(
             TimestampMillis::now(),
         )
         .await
-        .map(|record| (StatusCode::CREATED, Json(record)).into_response())
+        .map(|outcome| {
+            let body = TaskUpdateResponse {
+                task: outcome.task,
+                auto_closed: outcome.auto_closed,
+            };
+            (StatusCode::CREATED, Json(body)).into_response()
+        })
         .map_err(|error| task_problem(error, instance, request_id.as_ref()))
 }
 
-#[utoipa::path(patch, path = "/api/v1/workspaces/{workspace_id}/tasks/{task_id}", params(("workspace_id" = String, Path), ("task_id" = String, Path)), request_body = TaskUpdateBody, responses((status = 200, body = crate::repositories::tasks::TaskRecord)))]
+#[utoipa::path(patch, path = "/api/v1/workspaces/{workspace_id}/tasks/{task_id}", params(("workspace_id" = String, Path), ("task_id" = String, Path)), request_body = TaskUpdateBody, responses((status = 200, body = TaskUpdateResponse)))]
 async fn update_task(
     State(state): State<TaskState>,
     Path((workspace, task)): Path<(String, String)>,
     headers: HeaderMap,
     request_id: Option<Extension<RequestId>>,
     ApiJson(body): ApiJson<TaskUpdateBody>,
-) -> Result<Json<TaskRecord>, ApiError> {
+) -> Result<Json<TaskUpdateResponse>, ApiError> {
     let instance = format!("/api/v1/workspaces/{workspace}/tasks/{task}");
     let (workspace_id, actor_id) =
         scope(&state, &headers, &workspace, &instance, request_id.as_ref()).await?;
@@ -1346,18 +1399,23 @@ async fn update_task(
             TimestampMillis::now(),
         )
         .await
-        .map(Json)
+        .map(|outcome| {
+            Json(TaskUpdateResponse {
+                task: outcome.task,
+                auto_closed: outcome.auto_closed,
+            })
+        })
         .map_err(|error| task_problem(error, instance, request_id.as_ref()))
 }
 
-#[utoipa::path(post, path = "/api/v1/workspaces/{workspace_id}/tasks/bulk", params(("workspace_id" = String, Path)), request_body = BulkBody, responses((status = 200, body = Page<crate::repositories::tasks::TaskRecord>)))]
+#[utoipa::path(post, path = "/api/v1/workspaces/{workspace_id}/tasks/bulk", params(("workspace_id" = String, Path)), request_body = BulkBody, responses((status = 200, body = TaskBulkResponse)))]
 async fn bulk_tasks(
     State(state): State<TaskState>,
     Path(workspace): Path<String>,
     headers: HeaderMap,
     request_id: Option<Extension<RequestId>>,
     ApiJson(body): ApiJson<BulkBody>,
-) -> Result<Json<Page<TaskRecord>>, ApiError> {
+) -> Result<Json<TaskBulkResponse>, ApiError> {
     let instance = format!("/api/v1/workspaces/{workspace}/tasks/bulk");
     let (workspace_id, actor_id) =
         scope(&state, &headers, &workspace, &instance, request_id.as_ref()).await?;
@@ -1384,6 +1442,7 @@ async fn bulk_tasks(
                     due_start_at: item.due_start_at,
                     due_at: item.due_at,
                     duplicate_of_id: item.duplicate_of_id,
+                    parent_task_id: item.parent_task_id,
                 },
                 &instance,
                 request_id.as_ref(),
@@ -1406,10 +1465,11 @@ async fn bulk_tasks(
             TimestampMillis::now(),
         )
         .await
-        .map(|items| {
-            Json(Page {
-                items,
+        .map(|outcome| {
+            Json(TaskBulkResponse {
+                items: outcome.tasks,
                 next_cursor: None,
+                auto_closed: outcome.auto_closed,
             })
         })
         .map_err(|error| task_problem(error, instance, request_id.as_ref()))
@@ -1800,6 +1860,10 @@ fn task_update(
                 .duplicate_of_id
                 .map(|value| optional_id(value, instance, request_id))
                 .transpose()?,
+            parent_task_id: body
+                .parent_task_id
+                .map(|value| optional_id(value, instance, request_id))
+                .transpose()?,
         },
     })
 }
@@ -2176,6 +2240,22 @@ pub(crate) fn task_problem(
             "task_action_forbidden",
             "Action forbidden",
             "You do not have permission to change this resource.",
+            instance,
+            request_id,
+        ),
+        TaskError::ParentCycle => ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "parent_cycle",
+            "Invalid parent",
+            "A task cannot be its own parent or a sub-issue of its own sub-issues.",
+            instance,
+            request_id,
+        ),
+        TaskError::ParentInvalid => ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "parent_invalid",
+            "Invalid parent",
+            "The parent task does not exist, is in the trash, or is not in this workspace.",
             instance,
             request_id,
         ),

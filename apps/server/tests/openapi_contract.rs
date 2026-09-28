@@ -125,6 +125,7 @@ fn openapi_generation_is_byte_stable_and_covers_public_routes() {
             "priority",
             "search",
             "view",
+            "parent_task_id",
             "sort",
             "order",
             "cursor",
@@ -340,7 +341,7 @@ fn openapi_generation_is_byte_stable_and_covers_public_routes() {
         (
             "/api/v1/workspaces/{workspace_id}/tasks/bulk",
             "post",
-            "Page_TaskRecord",
+            "TaskBulkResponse",
         ),
     ] {
         assert_eq!(
@@ -547,7 +548,7 @@ fn task_records_document_duplicate_and_blocked_fields() {
     assert_eq!(record["properties"]["blocked"]["type"], "boolean");
     assert_eq!(
         document["components"]["schemas"]["TaskRef"]["required"],
-        serde_json::json!(["id", "project_id", "title"])
+        serde_json::json!(["id", "project_id", "project_key", "title"])
     );
 }
 
@@ -1214,5 +1215,132 @@ fn view_preference_routes_are_documented() {
         .unwrap();
     for field in ["page_key", "state", "state_error", "updated_at"] {
         assert!(required.contains(&serde_json::json!(field)), "{field}");
+    }
+}
+
+#[test]
+fn sub_issue_contract_is_documented() {
+    let document: Value = serde_json::from_str(&openapi_json().unwrap()).unwrap();
+    let schemas = &document["components"]["schemas"];
+    let record = &schemas["TaskRecord"];
+    let required = record["required"].as_array().unwrap();
+    for field in [
+        "parent_task_id",
+        "parent",
+        "sub_issue_count",
+        "sub_issue_closed_count",
+    ] {
+        assert!(required.contains(&serde_json::json!(field)), "{field}");
+    }
+    for field in ["ancestors", "trashed_descendant_count"] {
+        assert!(record["properties"][field].is_object(), "{field}");
+        assert!(!required.contains(&serde_json::json!(field)), "{field}");
+    }
+    assert_eq!(
+        schemas["TaskRef"]["required"],
+        serde_json::json!(["id", "project_id", "project_key", "title"])
+    );
+    for schema in [
+        "CreateTaskBody",
+        "TaskUpdateBody",
+        "BulkItem",
+        "TaskQueryBody",
+    ] {
+        assert!(
+            schemas[schema]["properties"]["parent_task_id"].is_object(),
+            "{schema}"
+        );
+        assert!(
+            !schemas[schema]["required"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("parent_task_id")),
+            "{schema}"
+        );
+    }
+    assert!(
+        schemas["TaskQueryBody"]["properties"]["sub_issues"]
+            .to_string()
+            .contains("SubIssuesDisplay")
+    );
+    assert!(
+        schemas["DisplayOptions"]["properties"]["sub_issues"]
+            .to_string()
+            .contains("SubIssuesDisplay")
+    );
+    assert_eq!(
+        schemas["SubIssuesDisplay"]["enum"],
+        serde_json::json!(["nested", "flat", "hidden"])
+    );
+    let fields = schemas["FilterField"]["enum"].as_array().unwrap();
+    assert!(fields.contains(&serde_json::json!("parent")));
+    assert!(fields.contains(&serde_json::json!("sub_issues")));
+    assert!(
+        schemas["TaskProperty"]["enum"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("sub_issue_progress"))
+    );
+
+    let list = operation(&document, "/api/v1/workspaces/{workspace_id}/tasks", "get");
+    assert!(parameter_names(list, "query").contains(&"parent_task_id".to_owned()));
+
+    let task_path = "/api/v1/workspaces/{workspace_id}/tasks/{task_id}";
+    assert_eq!(
+        operation(&document, task_path, "patch")["responses"]["200"]["content"]["application/json"]
+            ["schema"]["$ref"],
+        "#/components/schemas/TaskUpdateResponse"
+    );
+    assert_eq!(
+        operation(&document, "/api/v1/workspaces/{workspace_id}/tasks", "post")["responses"]["201"]
+            ["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/TaskUpdateResponse"
+    );
+    let update = &schemas["TaskUpdateResponse"]["allOf"];
+    assert_eq!(update[0]["$ref"], "#/components/schemas/TaskRecord");
+    assert_eq!(update[1]["required"], serde_json::json!(["auto_closed"]));
+    assert_eq!(
+        update[1]["properties"]["auto_closed"]["items"]["$ref"],
+        "#/components/schemas/AutoClosed"
+    );
+    let bulk_required = schemas["TaskBulkResponse"]["required"].as_array().unwrap();
+    assert!(bulk_required.contains(&serde_json::json!("items")));
+    assert!(bulk_required.contains(&serde_json::json!("auto_closed")));
+    assert_eq!(
+        schemas["AutoClosed"]["required"],
+        serde_json::json!(["id", "status_id"])
+    );
+
+    let project_required = schemas["ProjectRecord"]["required"].as_array().unwrap();
+    for field in ["auto_close_parent", "auto_close_sub_issues"] {
+        assert!(
+            project_required.contains(&serde_json::json!(field)),
+            "{field}"
+        );
+        assert!(
+            schemas["ProjectUpdateBody"]["properties"][field].is_object(),
+            "{field}"
+        );
+        assert!(
+            !schemas["ProjectUpdateBody"]["required"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!(field)),
+            "{field}"
+        );
+    }
+
+    for (path, method) in [
+        ("/api/v1/workspaces/{workspace_id}/tasks", "post"),
+        (task_path, "patch"),
+        ("/api/v1/workspaces/{workspace_id}/tasks/bulk", "post"),
+    ] {
+        let codes = codes(operation(&document, path, method), "422");
+        for code in ["validation_failed", "parent_cycle", "parent_invalid"] {
+            assert!(
+                codes.contains(&code.to_owned()),
+                "{method} {path} lacks {code}"
+            );
+        }
     }
 }

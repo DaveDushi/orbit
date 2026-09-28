@@ -7,7 +7,8 @@ use sqlx::{QueryBuilder, Row, Sqlite, Transaction};
 use thiserror::Error;
 use utoipa::ToSchema;
 
-use super::task_filter::{self, FilterError, FilterGroup, ShowCompleted};
+use super::sub_issues::{self, AutoClosed};
+use super::task_filter::{self, FilterError, FilterGroup, ShowCompleted, SubIssuesDisplay};
 use super::task_relations::{self, RelationActor};
 use crate::audit::{self, AuditOutcome};
 
@@ -22,6 +23,10 @@ pub struct ProjectRecord {
     pub name: String,
     pub key: String,
     pub color: String,
+    /// Close a task automatically when all its sub-issues are done (rule A).
+    pub auto_close_parent: bool,
+    /// Close open sub-issues when their parent closes (rule B).
+    pub auto_close_sub_issues: bool,
     pub version: u64,
     #[schema(value_type = Option<String>, format = DateTime)]
     pub deleted_at: Option<TimestampMillis>,
@@ -98,6 +103,22 @@ pub struct TaskRecord {
     pub duplicate_of: Option<TaskRef>,
     /// True while at least one live task that is not completed, cancelled or a duplicate blocks it.
     pub blocked: bool,
+    /// The direct parent; null for top-level tasks.
+    #[schema(value_type = Option<String>, required = true)]
+    pub parent_task_id: Option<Id>,
+    /// The parent while it is visible (live, in a live project); null otherwise.
+    #[schema(required = true)]
+    pub parent: Option<TaskRef>,
+    /// Direct live children (sub-issues).
+    pub sub_issue_count: i64,
+    /// Direct live children in a completed, cancelled or duplicate status.
+    pub sub_issue_closed_count: i64,
+    /// `GET /tasks/{id}` only: visible ancestors, root first.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ancestors: Option<Vec<TaskRef>>,
+    /// Task trash only: descendants trashed together with this task (restored with it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trashed_descendant_count: Option<i64>,
 }
 
 /// A task reference small enough to embed; clients build the display identifier themselves.
@@ -107,6 +128,8 @@ pub struct TaskRef {
     pub id: Id,
     #[schema(value_type = String)]
     pub project_id: Id,
+    /// The key of the task's (live) project, e.g. `ORB`.
+    pub project_key: String,
     pub title: String,
 }
 
@@ -165,6 +188,13 @@ pub struct NotificationRecord {
     pub created_at: TimestampMillis,
 }
 
+/// Project PATCH switches; `None` keeps the stored value.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ProjectAutomationPatch {
+    pub auto_close_parent: Option<bool>,
+    pub auto_close_sub_issues: Option<bool>,
+}
+
 #[derive(Clone, Debug)]
 pub struct CreateTask {
     pub project_id: Id,
@@ -178,6 +208,7 @@ pub struct CreateTask {
     pub label_ids: Vec<Id>,
     pub due_start_at: Option<TimestampMillis>,
     pub due_at: Option<TimestampMillis>,
+    pub parent_task_id: Option<Id>,
 }
 
 #[derive(Clone, Debug)]
@@ -217,6 +248,8 @@ pub struct TaskChanges {
     pub due_at: Option<Option<TimestampMillis>>,
     /// `Some(Some(id))` marks the task as a duplicate of `id`; `Some(None)` unmarks it.
     pub duplicate_of_id: Option<Option<Id>>,
+    /// `Some(Some(id))` makes the task a sub-issue of `id`; `Some(None)` detaches it.
+    pub parent_task_id: Option<Option<Id>>,
 }
 
 #[derive(Clone, Debug)]
@@ -224,6 +257,21 @@ pub struct TaskUpdate {
     pub id: Id,
     pub expected_version: u64,
     pub changes: TaskChanges,
+}
+
+/// A create or PATCH result: the task as stored after the request, plus what the automation
+/// changed.
+#[derive(Clone, Debug)]
+pub struct TaskUpdateOutcome {
+    pub task: TaskRecord,
+    pub auto_closed: Vec<AutoClosed>,
+}
+
+/// A bulk result: the updated tasks in request order, plus what the automation changed.
+#[derive(Clone, Debug)]
+pub struct BulkUpdateOutcome {
+    pub tasks: Vec<TaskRecord>,
+    pub auto_closed: Vec<AutoClosed>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -251,6 +299,10 @@ pub struct TaskFilter {
     pub show_completed: ShowCompleted,
     pub sort: TaskSort,
     pub order: SortOrder,
+    /// Only direct children of this task (`GET /tasks?parent_task_id=`, `POST /tasks/query`).
+    pub parent_task_id: Option<Id>,
+    /// `hidden` lists top-level tasks only.
+    pub sub_issues: SubIssuesDisplay,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -281,6 +333,10 @@ pub enum TaskError {
     InvalidFilter { path: String, message: &'static str },
     #[error("the caller may not change this resource")]
     Forbidden,
+    #[error("the parent would create a cycle")]
+    ParentCycle,
+    #[error("the parent task is not available")]
+    ParentInvalid,
     #[error("task repository is unavailable")]
     Unavailable(#[from] sqlx::Error),
 }
@@ -381,7 +437,7 @@ impl TaskRepository {
         let fingerprint = format!("projects:{workspace_id}");
         let after = cursor_pair(cursor, &fingerprint)?;
         let mut query = QueryBuilder::<Sqlite>::new(
-            "SELECT id, workspace_id, name, project_key, color, version, deleted_at, created_at, updated_at \
+            "SELECT id, workspace_id, name, project_key, color, auto_close_parent, auto_close_sub_issues, version, deleted_at, created_at, updated_at \
              FROM projects WHERE workspace_id = ",
         );
         query
@@ -463,6 +519,8 @@ impl TaskRepository {
             name,
             key,
             color,
+            auto_close_parent: true,
+            auto_close_sub_issues: true,
             version: 0,
             deleted_at: None,
             created_at: now,
@@ -479,6 +537,7 @@ impl TaskRepository {
         name: String,
         key: String,
         color: String,
+        automation: ProjectAutomationPatch,
         expected_version: u64,
         request_id: &str,
         now: TimestampMillis,
@@ -488,12 +547,17 @@ impl TaskRepository {
         let current = project_in_tx(&mut tx, workspace_id, project_id, false).await?;
         check_version(expected_version, current.version, &current)?;
         let updated = sqlx::query(
-            "UPDATE projects SET name = ?, project_key = ?, color = ?, version = version + 1, updated_at = ? \
+            "UPDATE projects SET name = ?, project_key = ?, color = ?, \
+             auto_close_parent = COALESCE(?, auto_close_parent), \
+             auto_close_sub_issues = COALESCE(?, auto_close_sub_issues), \
+             version = version + 1, updated_at = ? \
              WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL AND version = ?",
         )
         .bind(&name)
         .bind(&key)
         .bind(&color)
+        .bind(automation.auto_close_parent)
+        .bind(automation.auto_close_sub_issues)
         .bind(now.as_millis())
         .bind(project_id.to_string())
         .bind(workspace_id.to_string())
@@ -522,6 +586,12 @@ impl TaskRepository {
             name,
             key,
             color,
+            auto_close_parent: automation
+                .auto_close_parent
+                .unwrap_or(current.auto_close_parent),
+            auto_close_sub_issues: automation
+                .auto_close_sub_issues
+                .unwrap_or(current.auto_close_sub_issues),
             version: current.version + 1,
             updated_at: now,
             ..current
@@ -651,7 +721,7 @@ impl TaskRepository {
         let fingerprint = format!("project-trash:{workspace_id}");
         let after = cursor_i64_pair(cursor, &fingerprint)?;
         let mut query = QueryBuilder::<Sqlite>::new(
-            "SELECT id, workspace_id, name, COALESCE(restore_project_key, project_key) AS project_key, color, version, deleted_at, created_at, updated_at \
+            "SELECT id, workspace_id, name, COALESCE(restore_project_key, project_key) AS project_key, color, auto_close_parent, auto_close_sub_issues, version, deleted_at, created_at, updated_at \
              FROM projects WHERE workspace_id = ",
         );
         query
@@ -1114,6 +1184,17 @@ impl TaskRepository {
             &task_filter::FilterContext { actor_id, now },
         );
         task_filter::push_show_completed(&mut query, filter.show_completed, now);
+        if let Some(parent_id) = filter.parent_task_id {
+            query
+                .push(" AND tasks.parent_task_id = ")
+                .push_bind(parent_id.to_string());
+        }
+        if filter.sub_issues == SubIssuesDisplay::Hidden {
+            // A sub-issue whose parent is hidden shows no parent, so it lists as top-level.
+            query
+                .push(" AND NOT ")
+                .push(sub_issues::has_visible_parent_sql("tasks.parent_task_id"));
+        }
         let column = task_sort_column(&filter.sort, &filter.order);
         let (operator, direction) = if filter.order == SortOrder::Asc {
             (">", " ASC")
@@ -1173,7 +1254,9 @@ impl TaskRepository {
             .fetch_optional(self.database.pool())
             .await?
             .ok_or(TaskError::NotFound)?;
-        task_from_row(self.database.pool(), row).await
+        let mut task = task_from_row(self.database.pool(), row).await?;
+        task.ancestors = Some(sub_issues::ancestors(self.database.pool(), task_id).await?);
+        Ok(task)
     }
 
     pub async fn create_task(
@@ -1183,7 +1266,7 @@ impl TaskRepository {
         input: CreateTask,
         request_id: &str,
         now: TimestampMillis,
-    ) -> Result<TaskRecord, TaskError> {
+    ) -> Result<TaskUpdateOutcome, TaskError> {
         let id = Id::new_v7();
         if input
             .due_start_at
@@ -1203,6 +1286,9 @@ impl TaskRepository {
         }
         validate_assignees(&mut tx, workspace_id, &input.assignee_ids).await?;
         validate_labels(&mut tx, workspace_id, &input.label_ids).await?;
+        if let Some(parent_id) = input.parent_task_id {
+            sub_issues::validate_parent_in_tx(&mut tx, workspace_id, None, parent_id).await?;
+        }
         let position = match input.position {
             Some(position) => position,
             None => sqlx::query_scalar::<_, i64>(
@@ -1215,8 +1301,8 @@ impl TaskRepository {
             .await?,
         };
         sqlx::query(
-            "INSERT INTO tasks (id, workspace_id, project_id, status_id, title, description, source_url, priority, position, creator_id, due_start_at, due_at, version, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
+            "INSERT INTO tasks (id, workspace_id, project_id, status_id, title, description, source_url, priority, position, creator_id, due_start_at, due_at, parent_task_id, version, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
         )
         .bind(id.to_string())
         .bind(workspace_id.to_string())
@@ -1230,6 +1316,7 @@ impl TaskRepository {
         .bind(actor_id.to_string())
         .bind(input.due_start_at.map(TimestampMillis::as_millis))
         .bind(input.due_at.map(TimestampMillis::as_millis))
+        .bind(input.parent_task_id.map(|id| id.to_string()))
         .bind(now.as_millis())
         .bind(now.as_millis())
         .execute(&mut *tx)
@@ -1260,31 +1347,22 @@ impl TaskRepository {
             now,
         )
         .await?;
+        // Rule A: a sub-issue created closed can complete its parent (an open one never does).
+        let mut auto_closed = Vec::new();
+        if let Some(parent_id) = input.parent_task_id {
+            let actor = sub_issues::AutomationActor {
+                workspace_id,
+                actor_id,
+                service_account: None,
+                request_id,
+                now,
+            };
+            sub_issues::close_ancestors_in_tx(&mut tx, actor, parent_id, id, &mut auto_closed)
+                .await?;
+        }
+        let task = task_in_tx(&mut tx, workspace_id, id, false).await?;
         tx.commit().await?;
-        Ok(TaskRecord {
-            id,
-            workspace_id,
-            project_id: input.project_id,
-            status_id: input.status_id,
-            title: input.title,
-            description: input.description,
-            source_url: input.source_url,
-            priority: input.priority,
-            position,
-            creator_id: Some(actor_id),
-            creator_service_account_id: None,
-            creator_service_account_name: None,
-            assignee_ids: input.assignee_ids,
-            label_ids: input.label_ids,
-            due_start_at: input.due_start_at,
-            due_at: input.due_at,
-            version: 0,
-            deleted_at: None,
-            created_at: now,
-            updated_at: now,
-            duplicate_of: None,
-            blocked: false,
-        })
+        Ok(TaskUpdateOutcome { task, auto_closed })
     }
 
     pub async fn sync_github_work_item(
@@ -1348,11 +1426,52 @@ impl TaskRepository {
                 )
                 .await?
                     == task_relations::DUPLICATE;
+            let before = sub_issues::snapshot_in_tx(&mut tx, task_id).await?;
+            // Spec §5: a task un-trashed while its parent is still in the trash comes back
+            // top-level, as in `restore_task`.
+            let orphaned_from = match before.as_ref().and_then(|before| before.parent_task_id) {
+                Some(parent_id)
+                    if was_deleted
+                        && !sub_issues::task_is_live_in_tx(&mut tx, parent_id).await? =>
+                {
+                    Some(parent_id)
+                }
+                _ => None,
+            };
             let changed = sqlx::query(
                     "UPDATE tasks SET title = ?, description = ?, source_url = ?, status_id = ?, deleted_at = NULL, version = version + 1, updated_at = ? WHERE id = ? AND workspace_id = ? AND (deleted_at IS NOT NULL OR title != ? OR description != ? OR source_url IS NOT ? OR status_id != ?)",
                 ).bind(&issue.title).bind(&issue.description).bind(&issue_url).bind(&status_id).bind(now.as_millis())
                     .bind(task_id.to_string()).bind(workspace_id.to_string())
                     .bind(&issue.title).bind(&issue.description).bind(&issue_url).bind(&status_id).execute(&mut *tx).await?;
+            if let Some(parent_id) = orphaned_from {
+                // The UPDATE above always ran (the task was in the trash) and bumped the version.
+                sqlx::query("UPDATE tasks SET parent_task_id = NULL WHERE id = ?")
+                    .bind(task_id.to_string())
+                    .execute(&mut *tx)
+                    .await?;
+                let from_project_id =
+                    sub_issues::project_id_of_in_tx(&mut tx, Some(parent_id)).await?;
+                audit::record(
+                    &mut tx,
+                    workspace_id,
+                    None,
+                    "task.parent_changed",
+                    AuditOutcome::Success,
+                    "task",
+                    Some(task_id),
+                    request_id,
+                    json!({
+                        "from": parent_id,
+                        "to": Value::Null,
+                        "from_project_id": from_project_id,
+                        "to_project_id": Value::Null,
+                        "actor_service_account_id": service_account_id,
+                        "actor_service_account_name": service_account_name,
+                    }),
+                    now,
+                )
+                .await?;
+            }
             if leaves_duplicate {
                 task_relations::delete_duplicate_relation_in_tx(
                     &mut tx,
@@ -1382,6 +1501,27 @@ impl TaskRepository {
                     task_id,
                     request_id,
                     now,
+                )
+                .await?;
+            }
+            // Spec §4: the automation follows every write path, GitHub's included.
+            let after = sub_issues::snapshot_in_tx(&mut tx, task_id).await?;
+            if let (Some(before), Some(after)) = (before, after) {
+                let actor = sub_issues::AutomationActor {
+                    workspace_id,
+                    actor_id,
+                    service_account: Some((service_account_id, &service_account_name)),
+                    request_id,
+                    now,
+                };
+                let mut auto_closed = Vec::new();
+                sub_issues::run_automation_in_tx(
+                    &mut tx,
+                    actor,
+                    task_id,
+                    &before,
+                    &after,
+                    &mut auto_closed,
                 )
                 .await?;
             }
@@ -1590,11 +1730,12 @@ impl TaskRepository {
         update: &TaskUpdate,
         request_id: &str,
         now: TimestampMillis,
-    ) -> Result<TaskRecord, TaskError> {
+    ) -> Result<TaskUpdateOutcome, TaskError> {
         let mut tx = self.database.immediate_transaction().await?;
         require_access_tx(&mut tx, workspace_id, actor_id).await?;
-        let task =
-            update_task_in_tx(&mut tx, workspace_id, actor_id, update, request_id, now).await?;
+        let before = sub_issues::snapshot_in_tx(&mut tx, update.id).await?;
+        update_task_in_tx(&mut tx, workspace_id, actor_id, update, request_id, now).await?;
+        let after = sub_issues::snapshot_in_tx(&mut tx, update.id).await?;
         record_mutation(
             &mut tx,
             workspace_id,
@@ -1606,8 +1747,29 @@ impl TaskRepository {
             now,
         )
         .await?;
+        let mut auto_closed = Vec::new();
+        if let (Some(before), Some(after)) = (before, after) {
+            let actor = sub_issues::AutomationActor {
+                workspace_id,
+                actor_id,
+                service_account: None,
+                request_id,
+                now,
+            };
+            sub_issues::run_automation_in_tx(
+                &mut tx,
+                actor,
+                update.id,
+                &before,
+                &after,
+                &mut auto_closed,
+            )
+            .await?;
+        }
+        // Re-read: the automation may have changed this task's sub-issue counts.
+        let task = task_in_tx(&mut tx, workspace_id, update.id, false).await?;
         tx.commit().await?;
-        Ok(task)
+        Ok(TaskUpdateOutcome { task, auto_closed })
     }
 
     pub async fn bulk_update_tasks(
@@ -1617,7 +1779,7 @@ impl TaskRepository {
         updates: &[TaskUpdate],
         request_id: &str,
         now: TimestampMillis,
-    ) -> Result<Vec<TaskRecord>, TaskError> {
+    ) -> Result<BulkUpdateOutcome, TaskError> {
         self.update_many_tasks(
             workspace_id,
             actor_id,
@@ -1637,14 +1799,17 @@ impl TaskRepository {
         action: &str,
         request_id: &str,
         now: TimestampMillis,
-    ) -> Result<Vec<TaskRecord>, TaskError> {
+    ) -> Result<BulkUpdateOutcome, TaskError> {
         let mut tx = self.database.immediate_transaction().await?;
         require_access_tx(&mut tx, workspace_id, actor_id).await?;
-        let mut records = Vec::with_capacity(updates.len());
+        // Each item's before/after pair brackets its own write only; the automation runs after
+        // every write, so its result never depends on the order of the items.
+        let mut snapshots = Vec::with_capacity(updates.len());
         for update in updates {
-            records.push(
-                update_task_in_tx(&mut tx, workspace_id, actor_id, update, request_id, now).await?,
-            );
+            let before = sub_issues::snapshot_in_tx(&mut tx, update.id).await?;
+            update_task_in_tx(&mut tx, workspace_id, actor_id, update, request_id, now).await?;
+            let after = sub_issues::snapshot_in_tx(&mut tx, update.id).await?;
+            snapshots.push(before.zip(after));
         }
         record_mutation(
             &mut tx,
@@ -1657,8 +1822,35 @@ impl TaskRepository {
             now,
         )
         .await?;
+        // Every item is written before the automation runs, so closing a parent together with
+        // its children never leaves a later item with a stale version.
+        let actor = sub_issues::AutomationActor {
+            workspace_id,
+            actor_id,
+            service_account: None,
+            request_id,
+            now,
+        };
+        let mut auto_closed = Vec::new();
+        for (update, snapshot) in updates.iter().zip(&snapshots) {
+            if let Some((before, after)) = snapshot {
+                sub_issues::run_automation_in_tx(
+                    &mut tx,
+                    actor,
+                    update.id,
+                    before,
+                    after,
+                    &mut auto_closed,
+                )
+                .await?;
+            }
+        }
+        let mut tasks = Vec::with_capacity(updates.len());
+        for update in updates {
+            tasks.push(task_in_tx(&mut tx, workspace_id, update.id, false).await?);
+        }
         tx.commit().await?;
-        Ok(records)
+        Ok(BulkUpdateOutcome { tasks, auto_closed })
     }
 
     pub async fn reorder_tasks(
@@ -1689,6 +1881,7 @@ impl TaskRepository {
             now,
         )
         .await
+        .map(|outcome| outcome.tasks)
     }
 
     pub async fn delete_task(
@@ -1704,19 +1897,44 @@ impl TaskRepository {
         require_access_tx(&mut tx, workspace_id, actor_id).await?;
         let current = task_in_tx(&mut tx, workspace_id, task_id, false).await?;
         check_version(expected_version, current.version, &current)?;
+        let descendants = sub_issues::live_descendants(&mut *tx, task_id).await?;
         sqlx::query("UPDATE tasks SET deleted_at = ?, version = version + 1, updated_at = ? WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL AND version = ?")
             .bind(now.as_millis()).bind(now.as_millis()).bind(task_id.to_string()).bind(workspace_id.to_string()).bind(expected_version as i64).execute(&mut *tx).await?;
-        record_mutation(
-            &mut tx,
-            workspace_id,
-            actor_id,
-            "task.deleted",
-            "task",
-            task_id,
-            request_id,
-            now,
-        )
-        .await?;
+        for id in &descendants {
+            sqlx::query("UPDATE tasks SET deleted_at = ?, version = version + 1, updated_at = ? WHERE id = ? AND deleted_at IS NULL")
+                .bind(now.as_millis())
+                .bind(now.as_millis())
+                .bind(id.to_string())
+                .execute(&mut *tx)
+                .await?;
+        }
+        for id in std::iter::once(task_id).chain(descendants.iter().copied()) {
+            record_mutation(
+                &mut tx,
+                workspace_id,
+                actor_id,
+                "task.deleted",
+                "task",
+                id,
+                request_id,
+                now,
+            )
+            .await?;
+        }
+        // Rule A: trashing the last open child may complete the parent. DELETE answers 204, so
+        // the auto-closed list is not returned.
+        if let Some(parent_id) = current.parent_task_id {
+            let actor = sub_issues::AutomationActor {
+                workspace_id,
+                actor_id,
+                service_account: None,
+                request_id,
+                now,
+            };
+            let mut auto_closed = Vec::new();
+            sub_issues::close_ancestors_in_tx(&mut tx, actor, parent_id, task_id, &mut auto_closed)
+                .await?;
+        }
         tx.commit().await?;
         Ok(())
     }
@@ -1741,26 +1959,68 @@ impl TaskRepository {
         check_version(expected_version, current.version, &current)?;
         validate_project_status(&mut tx, workspace_id, current.project_id, current.status_id)
             .await?;
-        sqlx::query("UPDATE tasks SET deleted_at = NULL, version = version + 1, updated_at = ? WHERE id = ? AND workspace_id = ? AND deleted_at IS NOT NULL AND version = ?")
-            .bind(now.as_millis()).bind(task_id.to_string()).bind(workspace_id.to_string()).bind(expected_version as i64).execute(&mut *tx).await?;
-        record_mutation(
-            &mut tx,
-            workspace_id,
-            actor_id,
-            "task.restored",
-            "task",
-            task_id,
-            request_id,
-            now,
-        )
-        .await?;
+        let deleted_at = current
+            .deleted_at
+            .map(TimestampMillis::as_millis)
+            .ok_or(TaskError::NotFound)?;
+        let descendants = sub_issues::trashed_with(&mut *tx, task_id, deleted_at).await?;
+        // A task restored while its parent is still in the trash comes back top-level.
+        let parent_task_id = match current.parent_task_id {
+            Some(parent_id) => sub_issues::task_is_live_in_tx(&mut tx, parent_id)
+                .await?
+                .then_some(parent_id),
+            None => None,
+        };
+        sqlx::query("UPDATE tasks SET deleted_at = NULL, parent_task_id = ?, version = version + 1, updated_at = ? WHERE id = ? AND workspace_id = ? AND deleted_at IS NOT NULL AND version = ?")
+            .bind(parent_task_id.map(|id| id.to_string())).bind(now.as_millis()).bind(task_id.to_string()).bind(workspace_id.to_string()).bind(expected_version as i64).execute(&mut *tx).await?;
+        for id in &descendants {
+            sqlx::query("UPDATE tasks SET deleted_at = NULL, version = version + 1, updated_at = ? WHERE id = ? AND deleted_at = ?")
+                .bind(now.as_millis())
+                .bind(id.to_string())
+                .bind(deleted_at)
+                .execute(&mut *tx)
+                .await?;
+        }
+        for id in std::iter::once(task_id).chain(descendants.iter().copied()) {
+            record_mutation(
+                &mut tx,
+                workspace_id,
+                actor_id,
+                "task.restored",
+                "task",
+                id,
+                request_id,
+                now,
+            )
+            .await?;
+        }
+        if parent_task_id != current.parent_task_id {
+            // The trashed parent's project, so the activity feed can build its identifier even
+            // though the parent itself is not visible.
+            let from_project_id =
+                sub_issues::project_id_of_in_tx(&mut tx, current.parent_task_id).await?;
+            audit::record(
+                &mut tx,
+                workspace_id,
+                Some(actor_id),
+                "task.parent_changed",
+                AuditOutcome::Success,
+                "task",
+                Some(task_id),
+                request_id,
+                json!({
+                    "from": current.parent_task_id,
+                    "to": Value::Null,
+                    "from_project_id": from_project_id,
+                    "to_project_id": Value::Null,
+                }),
+                now,
+            )
+            .await?;
+        }
+        let task = task_in_tx(&mut tx, workspace_id, task_id, false).await?;
         tx.commit().await?;
-        Ok(TaskRecord {
-            version: current.version + 1,
-            deleted_at: None,
-            updated_at: now,
-            ..current
-        })
+        Ok(task)
     }
 
     pub async fn task_trash(
@@ -1802,14 +2062,20 @@ impl TaskRepository {
         for row in rows {
             items.push(task_from_row(self.database.pool(), row).await?);
         }
-        finish_page(items, limit, &fingerprint, |task| {
+        let mut page = finish_page(items, limit, &fingerprint, |task| {
             vec![
                 task.deleted_at
                     .map_or(0, TimestampMillis::as_millis)
                     .to_string(),
                 task.id.to_string(),
             ]
-        })
+        })?;
+        let ids: Vec<Id> = page.items.iter().map(|task| task.id).collect();
+        let counts = sub_issues::trashed_with_counts(self.database.pool(), &ids).await?;
+        for task in &mut page.items {
+            task.trashed_descendant_count = Some(counts.get(&task.id).copied().unwrap_or(0));
+        }
+        Ok(page)
     }
 
     pub async fn comments(
@@ -2108,7 +2374,7 @@ pub(super) async fn update_task_in_tx(
     update: &TaskUpdate,
     request_id: &str,
     now: TimestampMillis,
-) -> Result<TaskRecord, TaskError> {
+) -> Result<(), TaskError> {
     let current = task_in_tx(tx, workspace_id, update.id, false).await?;
     check_version(update.expected_version, current.version, &current)?;
     if update.changes.duplicate_of_id.is_some() && update.changes.status_id.is_some() {
@@ -2166,6 +2432,14 @@ pub(super) async fn update_task_in_tx(
     if let Some(labels) = &update.changes.label_ids {
         validate_labels(tx, workspace_id, labels).await?;
     }
+    let parent_task_id = match update.changes.parent_task_id {
+        Some(Some(parent_id)) if Some(parent_id) != current.parent_task_id => {
+            sub_issues::validate_parent_in_tx(tx, workspace_id, Some(update.id), parent_id).await?;
+            Some(parent_id)
+        }
+        Some(requested) => requested,
+        None => current.parent_task_id,
+    };
     let title = update
         .changes
         .title
@@ -2199,8 +2473,37 @@ pub(super) async fn update_task_in_tx(
             field: "due_start_at",
         });
     }
-    sqlx::query("UPDATE tasks SET project_id = ?, status_id = ?, title = ?, description = ?, source_url = ?, priority = ?, position = ?, due_start_at = ?, due_at = ?, version = version + 1, updated_at = ? WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL AND version = ?")
-        .bind(project_id.to_string()).bind(status_id.to_string()).bind(&title).bind(&description).bind(&source_url).bind(&priority).bind(position).bind(due_start_at.map(TimestampMillis::as_millis)).bind(due_at.map(TimestampMillis::as_millis)).bind(now.as_millis()).bind(update.id.to_string()).bind(workspace_id.to_string()).bind(update.expected_version as i64).execute(&mut **tx).await?;
+    sqlx::query("UPDATE tasks SET project_id = ?, status_id = ?, title = ?, description = ?, source_url = ?, priority = ?, position = ?, due_start_at = ?, due_at = ?, parent_task_id = ?, version = version + 1, updated_at = ? WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL AND version = ?")
+        .bind(project_id.to_string()).bind(status_id.to_string()).bind(&title).bind(&description).bind(&source_url).bind(&priority).bind(position).bind(due_start_at.map(TimestampMillis::as_millis)).bind(due_at.map(TimestampMillis::as_millis)).bind(parent_task_id.map(|id| id.to_string())).bind(now.as_millis()).bind(update.id.to_string()).bind(workspace_id.to_string()).bind(update.expected_version as i64).execute(&mut **tx).await?;
+    if parent_task_id != current.parent_task_id {
+        // Project ids let the activity feed build cross-project identifiers (ORB-91C0). A hidden
+        // old parent (trashed, or in a trashed project) has no `current.parent`, so read its
+        // project straight from `tasks`.
+        let from_project_id = match &current.parent {
+            Some(parent) => Some(parent.project_id),
+            None => sub_issues::project_id_of_in_tx(tx, current.parent_task_id).await?,
+        };
+        // A new parent passed `validate_parent_in_tx`, so it is visible.
+        let to_project_id = sub_issues::project_id_of_in_tx(tx, parent_task_id).await?;
+        audit::record(
+            tx,
+            workspace_id,
+            Some(actor_id),
+            "task.parent_changed",
+            AuditOutcome::Success,
+            "task",
+            Some(update.id),
+            request_id,
+            json!({
+                "from": current.parent_task_id,
+                "to": parent_task_id,
+                "from_project_id": from_project_id,
+                "to_project_id": to_project_id,
+            }),
+            now,
+        )
+        .await?;
+    }
     let actor = RelationActor {
         user_id: actor_id,
         service_account: None,
@@ -2270,36 +2573,7 @@ pub(super) async fn update_task_in_tx(
     if let Some(labels) = &update.changes.label_ids {
         replace_labels(tx, update.id, labels).await?;
     }
-    let duplicate_of = if duplicate_may_change {
-        duplicate_of_in_tx(tx, update.id).await?
-    } else {
-        current.duplicate_of.clone()
-    };
-    Ok(TaskRecord {
-        project_id,
-        status_id,
-        title,
-        description,
-        source_url,
-        priority,
-        position,
-        due_start_at,
-        due_at,
-        assignee_ids: update
-            .changes
-            .assignee_ids
-            .clone()
-            .unwrap_or(current.assignee_ids.clone()),
-        label_ids: update
-            .changes
-            .label_ids
-            .clone()
-            .unwrap_or(current.label_ids.clone()),
-        version: current.version + 1,
-        updated_at: now,
-        duplicate_of,
-        ..current
-    })
+    Ok(())
 }
 
 #[derive(Deserialize, Serialize)]
@@ -2398,8 +2672,12 @@ fn task_fingerprint(workspace_id: Id, filter: &TaskFilter) -> String {
         .map(|byte| format!("{byte:02x}"))
         .collect();
     format!(
-        "tasks:w={workspace_id}:f={digest}:c={:?}:sort={:?}:order={:?}",
-        filter.show_completed, filter.sort, filter.order,
+        "tasks:w={workspace_id}:f={digest}:c={:?}:sort={:?}:order={:?}:p={:?}:s={:?}",
+        filter.show_completed,
+        filter.sort,
+        filter.order,
+        filter.parent_task_id.map(|id| id.to_string()),
+        filter.sub_issues,
     )
 }
 
@@ -2877,7 +3155,7 @@ async fn project_in_tx(
     deleted: bool,
 ) -> Result<ProjectRecord, TaskError> {
     let row = sqlx::query(
-        "SELECT id, workspace_id, name, COALESCE(restore_project_key, project_key) AS project_key, color, version, deleted_at, created_at, updated_at \
+        "SELECT id, workspace_id, name, COALESCE(restore_project_key, project_key) AS project_key, color, auto_close_parent, auto_close_sub_issues, version, deleted_at, created_at, updated_at \
          FROM projects WHERE id = ? AND workspace_id = ? AND ((? = 1 AND deleted_at IS NOT NULL) OR (? = 0 AND deleted_at IS NULL))",
     )
     .bind(project_id.to_string()).bind(workspace_id.to_string()).bind(i64::from(deleted)).bind(i64::from(deleted))
@@ -2947,6 +3225,8 @@ fn project_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ProjectRecord, TaskE
         name: row.get("name"),
         key: row.get("project_key"),
         color: row.get("color"),
+        auto_close_parent: row.get("auto_close_parent"),
+        auto_close_sub_issues: row.get("auto_close_sub_issues"),
         version: parse_version(row.get("version"))?,
         deleted_at: row
             .get::<Option<i64>, _>("deleted_at")
@@ -3048,7 +3328,7 @@ async fn task_from_row_tx(
 /// or NULL when the task is not a duplicate or its target (or target's project) is in the trash.
 fn duplicate_of_subquery(task_id_sql: &str) -> String {
     format!(
-        "(SELECT json_object('id', canonical.id, 'project_id', canonical.project_id, 'title', canonical.title) \
+        "(SELECT json_object('id', canonical.id, 'project_id', canonical.project_id, 'project_key', canonical_project.project_key, 'title', canonical.title) \
          FROM task_relations AS duplicate_relation \
          JOIN tasks AS canonical ON canonical.id = duplicate_relation.related_task_id \
          JOIN projects AS canonical_project ON canonical_project.id = canonical.project_id \
@@ -3072,27 +3352,27 @@ fn task_columns() -> String {
                  JOIN task_statuses AS blocker_status ON blocker_status.id = blocker.status_id \
                  WHERE blocker_relation.related_task_id = tasks.id AND blocker_relation.type = 'blocks' \
                  AND blocker.deleted_at IS NULL AND blocker_project.deleted_at IS NULL \
-                 AND blocker_status.category NOT IN ('completed', 'cancelled', 'duplicate')) AS blocked",
-        duplicate_of_subquery("tasks.id")
+                 AND blocker_status.category NOT IN ('completed', 'cancelled', 'duplicate')) AS blocked, \
+         tasks.parent_task_id, {} AS parent_json, \
+         (SELECT COUNT(*) FROM tasks AS child \
+          JOIN projects AS child_project ON child_project.id = child.project_id \
+          WHERE child.parent_task_id = tasks.id AND child.deleted_at IS NULL \
+          AND child_project.deleted_at IS NULL) AS sub_issue_count, \
+         (SELECT COUNT(*) FROM tasks AS child \
+          JOIN projects AS child_project ON child_project.id = child.project_id \
+          JOIN task_statuses AS child_status ON child_status.id = child.status_id \
+          WHERE child.parent_task_id = tasks.id AND child.deleted_at IS NULL \
+          AND child_project.deleted_at IS NULL \
+          AND child_status.category IN ('completed', 'cancelled', 'duplicate')) AS sub_issue_closed_count",
+        duplicate_of_subquery("tasks.id"),
+        sub_issues::parent_subquery("tasks.parent_task_id")
     )
 }
 
-fn parse_task_ref(value: Option<String>) -> Result<Option<TaskRef>, TaskError> {
+pub(super) fn parse_task_ref(value: Option<String>) -> Result<Option<TaskRef>, TaskError> {
     value
         .map(|json| serde_json::from_str(&json).map_err(|_| TaskError::Conflict))
         .transpose()
-}
-
-async fn duplicate_of_in_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    task_id: Id,
-) -> Result<Option<TaskRef>, TaskError> {
-    let sql = format!("SELECT {}", duplicate_of_subquery("?"));
-    let value: Option<String> = sqlx::query_scalar(&sql)
-        .bind(task_id.to_string())
-        .fetch_one(&mut **tx)
-        .await?;
-    parse_task_ref(value)
 }
 
 fn task_record_from_row(
@@ -3138,6 +3418,12 @@ fn task_record_from_row(
         updated_at: TimestampMillis::from_millis(row.get("updated_at")),
         duplicate_of: parse_task_ref(row.get("duplicate_of_json"))?,
         blocked: row.get::<bool, _>("blocked"),
+        parent_task_id: optional_id(row.get("parent_task_id"))?,
+        parent: parse_task_ref(row.get("parent_json"))?,
+        sub_issue_count: row.get("sub_issue_count"),
+        sub_issue_closed_count: row.get("sub_issue_closed_count"),
+        ancestors: None,
+        trashed_descendant_count: None,
     })
 }
 

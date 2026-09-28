@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
+import { UNDO_TOAST_DURATION } from '@/lib/toast'
 import { Bookmark, ChevronDown, Menu, Add as Plus, Setting2 as Settings, TaskSquare as SquareCheck } from 'reicon-react'
 import { cn } from 'cn'
 import { ApiProblem } from '@/api/problem'
@@ -30,6 +31,7 @@ import {
   useTaskComments,
   useTaskGithubLinks,
   useTaskRelations,
+  useSubIssues,
 } from '@/features/tasks/api/tasks'
 import { TaskBoard } from '@/features/tasks/components/TaskBoard'
 import { TaskDetail } from '@/features/tasks/components/TaskDetail'
@@ -44,6 +46,7 @@ import { useTimelineZoom } from '@/features/tasks/timeline/useTimelineZoom'
 import { taskRedirect } from '@/features/tasks/taskNavigation'
 import { useTaskQuery } from '@/features/views/api/taskQuery'
 import { useSavedView, useViewPreference } from '@/features/views/api/views'
+import { useFilterTaskRefs } from '@/features/views/useFilterTaskRefs'
 import { createDefaultsFromFilter, type GroupContext } from '@/features/views/grouping'
 import { groupCreateFields, type GroupValues } from '@/features/views/layoutGroups'
 import { AdvancedFilterDialog } from '@/features/views/components/AdvancedFilterDialog'
@@ -116,6 +119,7 @@ function WorkspaceTasksPage() {
   const { display } = viewState.state
   const layout = display.layout
   const tasksQuery = useTaskQuery(workspace.id, viewState.effective, display, !viewState.isLoading && !viewUnavailable)
+  const taskRefs = useFilterTaskRefs(workspace.id, viewState.state.filter)
 
   // Quick search is local and never saved (spec §3); another preset or view starts with an empty box.
   const [search, setSearch] = useState('')
@@ -150,8 +154,9 @@ function WorkspaceTasksPage() {
   // (GitHub links decide whether the title and description are editable)
   const githubLinksQuery = useTaskGithubLinks(workspace.id, taskId)
   const relationsQuery = useTaskRelations(workspace.id, taskId)
+  const subIssuesQuery = useSubIssues(workspace.id, taskId)
   const detailPending = detailQuery.isPending || activityQuery.isPending || commentsQuery.isPending || attachmentsQuery.isPending
-    || commentAttachments.isPending || githubLinksQuery.isPending || relationsQuery.isPending
+    || commentAttachments.isPending || githubLinksQuery.isPending || relationsQuery.isPending || subIssuesQuery.isPending
   // wait only for the first paint: a new comment adds a pending attachments query, which must not blank the open task
   const [shownTaskId, setShownTaskId] = useState<string>()
   if (taskId && !detailPending && shownTaskId !== taskId) setShownTaskId(taskId)
@@ -170,6 +175,7 @@ function WorkspaceTasksPage() {
     labels: labelsQuery.data ?? [],
     projects,
     currentUserId: currentUser.data?.id ?? '',
+    taskRefs,
   }
   const presetLabel = source.kind === 'page' && source.preset ? PRESET_LABEL[source.preset] : null
   const state = {
@@ -294,7 +300,7 @@ function WorkspaceTasksPage() {
   const clearFilters = () => {
     const previous = viewState.state.filter
     viewState.setFilter(emptyFilter())
-    toast('Filters cleared', { action: { label: 'Undo', onClick: () => viewState.setFilter(previous) } })
+    toast('Filters cleared', { duration: UNDO_TOAST_DURATION, action: { label: 'Undo', onClick: () => viewState.setFilter(previous) } })
   }
   const viewTitle = preset ? PRESET_TITLE[preset] : 'All tasks'
 
