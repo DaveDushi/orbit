@@ -313,3 +313,10 @@ img.ProseMirror-separator {
 .orbit-page-editor[data-color-scheme='dark'] .bn-thread-mark-selected {
   background: rgb(251 191 36 / 0.32);
 }
+
+/* Copy button of a code block (codeBlock.tsx): top-right corner, shown on hover. */
+.orbit-page-editor .bn-block-content[data-content-type='codeBlock'] > .orbit-code-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}

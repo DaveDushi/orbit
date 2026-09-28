@@ -1,5 +1,6 @@
 import { BlockNoteSchema, defaultBlockSpecs, defaultInlineContentSpecs, type BlockNoteEditor } from '@blocknote/core'
 import { createReactBlockSpec } from '@blocknote/react'
+import { codeBlockSpec } from './codeBlock'
 import { CALLOUT_DEFAULT_BACKGROUND, CALLOUT_DEFAULT_EMOJI, CalloutExternalView, CalloutView } from './CalloutBlock'
 import { pageMentionSpec } from './MentionInline'
 import { PageBlockExternalView, PageBlockView } from './PageBlockCard'
@@ -53,6 +54,7 @@ export const calloutBlockSpec = createReactBlockSpec(
 export const pageEditorSchema = BlockNoteSchema.create({
   blockSpecs: {
     ...baseBlockSpecs,
+    codeBlock: codeBlockSpec,
     page: pageBlockSpec(),
     callout: calloutBlockSpec(),
   },

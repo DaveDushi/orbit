@@ -1,8 +1,6 @@
 // the chat reference CodeBlock + highlightCode (MessageItem.tsx): fenced code with copy button and
 // hand-rolled JS/Rust token colors.
-import { useState } from 'react'
-import { Copy } from 'reicon-react'
-import { Button } from '@/components/ui/button'
+import { CopyCodeButton } from './CopyCodeButton'
 
 /* ---------- code block (the chat reference CodeBlock + highlightCode) ---------- */
 
@@ -55,56 +53,13 @@ function highlightCode(code: string, language: string): React.ReactNode[] {
   return parts.length > 0 ? parts : [code]
 }
 
-function copyTextFallback(text: string) {
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.setAttribute('readonly', '')
-  textarea.style.position = 'fixed'
-  textarea.style.top = '-9999px'
-  textarea.style.left = '-9999px'
-  document.body.appendChild(textarea)
-  textarea.select()
-  textarea.setSelectionRange(0, textarea.value.length)
-  const copied = document.execCommand('copy')
-  document.body.removeChild(textarea)
-  if (!copied) throw new Error('Copy failed')
-}
-
 export function CodeBlock({ code, language = '' }: { code: string; language?: string }) {
-  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
-
-  async function copyCode() {
-    try {
-      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(code)
-      else copyTextFallback(code)
-      setCopyState('copied')
-    } catch {
-      try {
-        copyTextFallback(code)
-        setCopyState('copied')
-      } catch {
-        setCopyState('failed')
-      }
-    }
-    setTimeout(() => setCopyState('idle'), 1600)
-  }
-
   return (
     <div className="group relative my-1 w-fit max-w-full min-[900px]:max-w-[80%]">
       <pre className="w-full rounded-lg border border-border bg-muted/20 py-3 pr-12 pl-3 font-mono text-[13px] leading-5 font-semibold whitespace-pre-wrap text-foreground/85 [overflow-wrap:anywhere]">
         <code className="font-[inherit] whitespace-pre-wrap [overflow-wrap:anywhere]">{highlightCode(code, language)}</code>
       </pre>
-      <Button
-        type="button"
-        variant="outline"
-        className="absolute top-2 right-2 inline-flex h-7 items-center gap-1 rounded-md border border-border bg-background/90 px-2 text-[11px] font-semibold text-muted-foreground opacity-0 shadow-sm transition-[opacity,background-color,color,transform] hover:bg-muted hover:text-foreground focus:opacity-100 active:scale-95 active:not-aria-[haspopup]:translate-y-0 group-hover:opacity-100 data-[state=copied]:bg-primary/10 data-[state=copied]:text-primary data-[state=failed]:bg-destructive/10 data-[state=failed]:text-destructive dark:border-border dark:bg-background/90 dark:hover:bg-muted dark:data-[state=copied]:bg-primary/10 dark:data-[state=failed]:bg-destructive/10"
-        data-state={copyState}
-        title="Copy code"
-        onClick={copyCode}
-      >
-        <Copy className="size-3.5" />
-        {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Failed' : 'Copy'}
-      </Button>
+      <CopyCodeButton getText={() => code} className="absolute top-2 right-2" />
     </div>
   )
 }
