@@ -55,6 +55,8 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::workspace_routes::list_global_audit,
         crate::workspace_routes::export_global_audit,
         crate::workspace_routes::create_backup,
+        crate::workspace_routes::list_backups,
+        crate::workspace_routes::download_backup,
         crate::integration_routes::create_discord_event,
         crate::integration_routes::github_webhook,
         crate::integration_routes::github_manifest_callback,
@@ -405,6 +407,13 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
         }
         "list_global_audit" | "export_global_audit" => {
             add_code(&mut responses, "403", "installation_admin_required");
+        }
+        "create_backup" | "list_backups" => {
+            add_code(&mut responses, "403", "installation_admin_required");
+        }
+        "download_backup" => {
+            add_code(&mut responses, "403", "installation_admin_required");
+            add_code(&mut responses, "404", "backup_not_found");
         }
         id if attachment_list_operation(id) => {
             add_code(&mut responses, "400", "invalid_cursor");

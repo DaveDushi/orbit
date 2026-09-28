@@ -107,9 +107,36 @@ export type AuthenticatedUser = {
     id: string;
 };
 
+/**
+ * A backup snapshot as a ZIP archive: `{id}/manifest.json`, `{id}/database.sqlite` and `{id}/attachments/…`.
+ */
+export type BackupArchive = Blob | File;
+
 export type BackupCreated = {
     id: string;
 };
+
+export type BackupList = {
+    items: Array<BackupSummary>;
+};
+
+export type BackupSummary = {
+    application_version: string;
+    /**
+     * Total size of the database and attachment files in the snapshot.
+     */
+    byte_size: number;
+    /**
+     * Unix milliseconds.
+     */
+    created_at: number;
+    file_count: number;
+    id: string;
+    kind: BackupSummaryKind;
+    schema_version: number;
+};
+
+export type BackupSummaryKind = 'snapshot' | 'pre_migration';
 
 export type BulkBody = {
     updates: Array<BulkItem>;
@@ -1835,6 +1862,58 @@ export type ExportGlobalAuditResponses = {
 
 export type ExportGlobalAuditResponse = ExportGlobalAuditResponses[keyof ExportGlobalAuditResponses];
 
+export type ListBackupsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/backups';
+};
+
+export type ListBackupsErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * installation_admin_required
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type ListBackupsError = ListBackupsErrors[keyof ListBackupsErrors];
+
+export type ListBackupsResponses = {
+    200: BackupList;
+};
+
+export type ListBackupsResponse = ListBackupsResponses[keyof ListBackupsResponses];
+
 export type CreateBackupData = {
     body?: never;
     headers?: {
@@ -1858,7 +1937,7 @@ export type CreateBackupErrors = {
      */
     401: WorkspaceProblem;
     /**
-     * origin_forbidden
+     * origin_forbidden, installation_admin_required
      */
     403: WorkspaceProblem;
     /**
@@ -1886,6 +1965,64 @@ export type CreateBackupResponses = {
 };
 
 export type CreateBackupResponse = CreateBackupResponses[keyof CreateBackupResponses];
+
+export type DownloadBackupData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        backup_id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/backups/{backup_id}/download';
+};
+
+export type DownloadBackupErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * installation_admin_required
+     */
+    403: WorkspaceProblem;
+    /**
+     * backup_not_found
+     */
+    404: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type DownloadBackupError = DownloadBackupErrors[keyof DownloadBackupErrors];
+
+export type DownloadBackupResponses = {
+    200: BackupArchive;
+};
+
+export type DownloadBackupResponse = DownloadBackupResponses[keyof DownloadBackupResponses];
 
 export type SetAccountSuspensionData = {
     body: SuspensionBody;

@@ -289,6 +289,111 @@
       }
     },
     "/api/v1/admin/backups": {
+      "get": {
+        "tags": [
+          "crate::workspace_routes"
+        ],
+        "summary": "Snapshots and pre-migration backups, newest first.",
+        "operationId": "list_backups",
+        "parameters": [
+          {
+            "name": "X-Orbit-Contract",
+            "in": "header",
+            "description": "Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_proxy_headers",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "installation_admin_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "contract_mismatch",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "internal_error or another documented stable code",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ]
+      },
       "post": {
         "tags": [
           "crate::workspace_routes"
@@ -337,7 +442,132 @@
             }
           },
           "403": {
-            "description": "origin_forbidden",
+            "description": "origin_forbidden, installation_admin_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "contract_mismatch",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "internal_error or another documented stable code",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/backups/{backup_id}/download": {
+      "get": {
+        "tags": [
+          "crate::workspace_routes"
+        ],
+        "summary": "Verifies the snapshot's checksums, then streams it as a ZIP archive.",
+        "operationId": "download_backup",
+        "parameters": [
+          {
+            "name": "backup_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Orbit-Contract",
+            "in": "header",
+            "description": "Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupArchive"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_proxy_headers",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "installation_admin_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "backup_not_found",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -19681,6 +19911,11 @@
           }
         }
       },
+      "BackupArchive": {
+        "type": "string",
+        "format": "binary",
+        "description": "A backup snapshot as a ZIP archive: `{id}/manifest.json`, `{id}/database.sqlite` and `{id}/attachments/…`."
+      },
       "BackupCreated": {
         "type": "object",
         "required": [
@@ -19691,6 +19926,69 @@
             "type": "string"
           }
         }
+      },
+      "BackupList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BackupSummary"
+            }
+          }
+        }
+      },
+      "BackupSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "created_at",
+          "byte_size",
+          "file_count",
+          "schema_version",
+          "application_version"
+        ],
+        "properties": {
+          "application_version": {
+            "type": "string"
+          },
+          "byte_size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total size of the database and attachment files in the snapshot.",
+            "minimum": 0
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix milliseconds."
+          },
+          "file_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/BackupSummaryKind"
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "BackupSummaryKind": {
+        "type": "string",
+        "enum": [
+          "snapshot",
+          "pre_migration"
+        ]
       },
       "BulkBody": {
         "type": "object",

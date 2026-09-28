@@ -425,7 +425,7 @@ async fn installation_admin_can_create_an_online_backup() {
         .oneshot(
             Request::post("/api/v1/admin/backups")
                 .header(header::ORIGIN, "http://127.0.0.1:8080")
-                .header(header::COOKIE, cookie)
+                .header(header::COOKIE, &cookie)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -441,6 +441,61 @@ async fn installation_admin_can_create_an_online_backup() {
         root.path().join("data/attachments"),
     );
     backups.verify(id).await.unwrap();
+
+    let list = app
+        .router()
+        .oneshot(
+            Request::get("/api/v1/admin/backups")
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list.status(), StatusCode::OK);
+    let list: serde_json::Value =
+        serde_json::from_slice(&list.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let items = list["items"].as_array().unwrap();
+    let listed = items.iter().find(|item| item["id"] == id).unwrap();
+    assert_eq!(listed["kind"], "snapshot");
+    assert!(listed["byte_size"].as_u64().unwrap() > 0);
+
+    let download = app
+        .router()
+        .oneshot(
+            Request::get(format!("/api/v1/admin/backups/{id}/download"))
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(download.status(), StatusCode::OK);
+    assert_eq!(download.headers()[header::CONTENT_TYPE], "application/zip");
+    let bytes = download.into_body().collect().await.unwrap().to_bytes();
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+    assert!(names.contains(&format!("{id}/manifest.json")));
+    assert!(names.contains(&format!("{id}/database.sqlite")));
+    let mut database = Vec::new();
+    std::io::Read::read_to_end(
+        &mut archive.by_name(&format!("{id}/database.sqlite")).unwrap(),
+        &mut database,
+    )
+    .unwrap();
+    assert!(database.starts_with(b"SQLite format 3\0"));
+
+    let missing = app
+        .router()
+        .oneshot(
+            Request::get("/api/v1/admin/backups/01900000-0000-7000-8000-000000000000/download")
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

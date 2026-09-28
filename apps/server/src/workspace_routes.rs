@@ -3,7 +3,9 @@ use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
 use axum::extract::{Extension, FromRequest, FromRequestParts, Path, Query, Request, State};
-use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, COOKIE, RETRY_AFTER};
+use axum::http::header::{
+    CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE, COOKIE, RETRY_AFTER,
+};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -11,7 +13,7 @@ use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use orbit_domain::WorkspaceRole;
 use orbit_platform::{
-    BackupService, ClientIp, Id, LoginThrottler, PasswordError, PasswordExecutor, PasswordService,
+    BackupError, BackupKind, BackupService, BackupSnapshot, ClientIp, Id, LoginThrottler, PasswordError, PasswordExecutor, PasswordService,
     RequestId, ThrottleDecision, TimestampMillis,
 };
 use serde::de::DeserializeOwned;
@@ -140,7 +142,14 @@ pub fn workspace_router(state: WorkspaceState) -> Router {
         )
         .route("/api/v1/admin/audit", get(list_global_audit))
         .route("/api/v1/admin/audit/export", get(export_global_audit))
-        .route("/api/v1/admin/backups", post(create_backup))
+        .route(
+            "/api/v1/admin/backups",
+            get(list_backups).post(create_backup),
+        )
+        .route(
+            "/api/v1/admin/backups/{backup_id}/download",
+            get(download_backup),
+        )
         .with_state(state)
 }
 
@@ -1058,6 +1067,72 @@ struct BackupCreated {
     id: String,
 }
 
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum BackupSummaryKind {
+    Snapshot,
+    PreMigration,
+}
+
+#[derive(Serialize, ToSchema)]
+struct BackupSummary {
+    id: String,
+    kind: BackupSummaryKind,
+    /// Unix milliseconds.
+    created_at: i64,
+    /// Total size of the database and attachment files in the snapshot.
+    byte_size: u64,
+    file_count: usize,
+    schema_version: i64,
+    application_version: String,
+}
+
+impl From<BackupSnapshot> for BackupSummary {
+    fn from(snapshot: BackupSnapshot) -> Self {
+        let manifest = snapshot.manifest;
+        Self {
+            id: snapshot.id,
+            kind: match manifest.kind {
+                BackupKind::Snapshot => BackupSummaryKind::Snapshot,
+                BackupKind::PreMigration => BackupSummaryKind::PreMigration,
+            },
+            created_at: manifest.created_at,
+            byte_size: manifest.files.iter().map(|file| file.byte_size).sum(),
+            file_count: manifest.files.len(),
+            schema_version: manifest.schema_version,
+            application_version: manifest.application_version,
+        }
+    }
+}
+
+#[derive(Serialize, ToSchema)]
+struct BackupList {
+    items: Vec<BackupSummary>,
+}
+
+/// A backup snapshot as a ZIP archive: `{id}/manifest.json`, `{id}/database.sqlite` and `{id}/attachments/…`.
+#[derive(ToSchema)]
+#[schema(value_type = String, format = Binary)]
+#[allow(dead_code)]
+struct BackupArchive(Vec<u8>);
+
+fn backup_service<'a>(
+    state: &'a WorkspaceState,
+    instance: &str,
+    request_id: Option<&Extension<RequestId>>,
+) -> Result<&'a BackupService, ApiError> {
+    state.backups.as_ref().ok_or_else(|| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "backup_unavailable",
+            "Backup unavailable",
+            "The backup service is not available.",
+            instance,
+            request_id,
+        )
+    })
+}
+
 #[utoipa::path(post, path = "/api/v1/admin/backups", responses((status = 201, body = BackupCreated)))]
 async fn create_backup(
     State(state): State<WorkspaceState>,
@@ -1067,16 +1142,7 @@ async fn create_backup(
     let instance = "/api/v1/admin/backups";
     let session = authenticate(&state, &headers, instance, request_id.as_ref()).await?;
     require_installation_admin(&state, session.user.id, instance, request_id.as_ref()).await?;
-    let backups = state.backups.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "backup_unavailable",
-            "Backup unavailable",
-            "The backup service is not available.",
-            instance,
-            request_id.as_ref(),
-        )
-    })?;
+    let backups = backup_service(&state, instance, request_id.as_ref())?;
     let snapshot = backups
         .create(state.identity.database())
         .await
@@ -1091,6 +1157,133 @@ async fn create_backup(
             )
         })?;
     Ok((StatusCode::CREATED, Json(BackupCreated { id: snapshot.id })))
+}
+
+/// Snapshots and pre-migration backups, newest first.
+#[utoipa::path(get, path = "/api/v1/admin/backups", responses((status = 200, body = BackupList)))]
+async fn list_backups(
+    State(state): State<WorkspaceState>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<BackupList>, ApiError> {
+    let instance = "/api/v1/admin/backups";
+    let session = authenticate(&state, &headers, instance, request_id.as_ref()).await?;
+    require_installation_admin(&state, session.user.id, instance, request_id.as_ref()).await?;
+    let backups = backup_service(&state, instance, request_id.as_ref())?;
+    let fail = |_| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "backup_list_failed",
+            "Backup list failed",
+            "Orbit could not read the stored backups.",
+            instance,
+            request_id.as_ref(),
+        )
+    };
+    let mut items = backups.list().await.map_err(fail)?;
+    items.extend(backups.list_pre_migration().await.map_err(fail)?);
+    items.sort_by(|left, right| {
+        right
+            .manifest
+            .created_at
+            .cmp(&left.manifest.created_at)
+            .then_with(|| right.id.cmp(&left.id))
+    });
+    Ok(Json(BackupList {
+        items: items.into_iter().map(BackupSummary::from).collect(),
+    }))
+}
+
+/// Verifies the snapshot's checksums, then streams it as a ZIP archive.
+#[utoipa::path(get, path = "/api/v1/admin/backups/{backup_id}/download", params(("backup_id" = String, Path)), responses((status = 200, body = BackupArchive, content_type = "application/zip")))]
+async fn download_backup(
+    State(state): State<WorkspaceState>,
+    Path(backup_id): Path<String>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Response, ApiError> {
+    let instance = format!("/api/v1/admin/backups/{backup_id}/download");
+    let session = authenticate(&state, &headers, &instance, request_id.as_ref()).await?;
+    require_installation_admin(&state, session.user.id, &instance, request_id.as_ref()).await?;
+    let backups = backup_service(&state, &instance, request_id.as_ref())?;
+    let failed = || {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "backup_download_failed",
+            "Backup download failed",
+            "Orbit could not verify or package this backup.",
+            &instance,
+            request_id.as_ref(),
+        )
+    };
+    let snapshot = backups
+        .verify(&backup_id)
+        .await
+        .map_err(|error| match error {
+            BackupError::NotFound { .. } => ApiError::new(
+                StatusCode::NOT_FOUND,
+                "backup_not_found",
+                "Backup not found",
+                "The backup does not exist.",
+                &instance,
+                request_id.as_ref(),
+            ),
+            _ => failed(),
+        })?;
+    let name = format!("orbit-backup-{}.zip", snapshot.id);
+    let file = tokio::task::spawn_blocking(move || write_backup_archive(&snapshot))
+        .await
+        .map_err(|_| failed())?
+        .map_err(|_| failed())?;
+    let length = file.metadata().map(|metadata| metadata.len()).ok();
+    let mut response = Response::new(Body::from_stream(tokio_util::io::ReaderStream::new(
+        tokio::fs::File::from_std(file),
+    )));
+    let headers = response.headers_mut();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/zip"));
+    if let Ok(value) = HeaderValue::from_str(&format!("attachment; filename=\"{name}\"")) {
+        headers.insert(CONTENT_DISPOSITION, value);
+    }
+    if let Some(length) = length {
+        headers.insert(CONTENT_LENGTH, HeaderValue::from(length));
+    }
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+
+/// Writes the snapshot to an anonymous temporary file, rewound for reading. Entries sit under a `{id}/` folder, so
+/// extracting the archive into the backup `snapshots` directory makes it restorable with `orbit backup restore`.
+fn write_backup_archive(snapshot: &BackupSnapshot) -> std::io::Result<std::fs::File> {
+    use std::io::{Seek, SeekFrom};
+    use zip::write::SimpleFileOptions;
+    use zip::{CompressionMethod, ZipWriter};
+
+    let mut zip = ZipWriter::new(tempfile::tempfile()?);
+    let manifest = std::iter::once(("manifest.json", u64::MAX));
+    let files = snapshot
+        .manifest
+        .files
+        .iter()
+        .map(|file| (file.path.as_str(), file.byte_size));
+    for (path, byte_size) in manifest.chain(files) {
+        // Attachments are mostly compressed media already; the database and manifest compress well.
+        let method = if path.starts_with("attachments/") {
+            CompressionMethod::Stored
+        } else {
+            CompressionMethod::Deflated
+        };
+        let options = SimpleFileOptions::default()
+            .compression_method(method)
+            .large_file(byte_size >= u64::from(u32::MAX))
+            .unix_permissions(0o600);
+        zip.start_file(format!("{}/{path}", snapshot.id), options)
+            .map_err(std::io::Error::other)?;
+        let mut source = std::fs::File::open(snapshot.path.join(path))?;
+        std::io::copy(&mut source, &mut zip)?;
+    }
+    let mut file = zip.finish().map_err(std::io::Error::other)?;
+    file.seek(SeekFrom::Start(0))?;
+    Ok(file)
 }
 
 #[derive(Deserialize, IntoParams, ToSchema)]
