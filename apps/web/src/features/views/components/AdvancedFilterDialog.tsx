@@ -19,11 +19,10 @@ import {
   type FilterIssue,
   type NodePath,
 } from '../filterTree'
+import { useOpenKey } from '../useOpenKey'
 import { countConditions, emptyFilter, isGroup, type Condition, type FilterField, type FilterGroup, type FilterNode, type FilterOperator } from '../viewState'
 import { FilterValuePicker } from './FilterValuePicker'
-import { DIALOG_MOTION, POPOVER_MOTION } from './motion'
 
-const OPERATOR_ITEM = 'h-6 px-2 text-xs text-muted-foreground aria-pressed:bg-muted aria-pressed:text-foreground'
 
 export interface AdvancedFilterDialogProps {
   open: boolean
@@ -53,18 +52,18 @@ function useKeyboardInput(): boolean {
 
 export function AdvancedFilterDialog({ open, onOpenChange, filter, options, onApply, validate }: AdvancedFilterDialogProps) {
   const keyboard = useKeyboardInput()
+  const openKey = useOpenKey(open)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {open ? (
-        <DialogContent data-instant={keyboard || undefined} className={cn('gap-0 p-0 sm:max-w-2xl', DIALOG_MOTION)}>
-          <TreeEditor filter={filter} options={options} onApply={onApply} validate={validate} onClose={() => onOpenChange(false)} />
-        </DialogContent>
-      ) : null}
+      <DialogContent instant={keyboard} className="gap-0 p-0 sm:max-w-2xl">
+        <TreeEditor key={openKey} open={open} filter={filter} options={options} onApply={onApply} validate={validate} onClose={() => onOpenChange(false)} />
+      </DialogContent>
     </Dialog>
   )
 }
 
 interface TreeEditorProps {
+  open: boolean
   filter: FilterGroup
   options: FilterOptions
   onApply: (filter: FilterGroup) => void
@@ -78,18 +77,19 @@ function nodeAt(root: FilterGroup, path: NodePath): FilterNode | undefined {
   return node
 }
 
-function TreeEditor({ filter, options, onApply, validate, onClose }: TreeEditorProps) {
+function TreeEditor({ open, filter, options, onApply, validate, onClose }: TreeEditorProps) {
   const [draft, setDraft] = useState<FilterGroup>(() => structuredClone(filter))
   const [issue, setIssue] = useState<FilterIssue | null>(null)
   const [checking, setChecking] = useState(false)
-  // closing the dialog (Cancel, Escape, backdrop) mid-check unmounts the editor: the pending check must then do nothing
-  const mounted = useRef(true)
+  // closing the dialog (Cancel, Escape, backdrop) mid-check must make the pending check do nothing; the editor stays
+  // mounted through the exit animation, so this follows `open` as well as unmount
+  const active = useRef(open)
   useEffect(() => {
-    mounted.current = true
+    active.current = open
     return () => {
-      mounted.current = false
+      active.current = false
     }
-  }, [])
+  }, [open])
   const parsed = issue ? parseIssuePath(issue.path) : null
   // an issue that names no node in the tree shows above it, so Apply never fails silently
   const issueNode = parsed && parsed.length > 0 && nodeAt(draft, parsed) ? parsed : null
@@ -113,7 +113,7 @@ function TreeEditor({ filter, options, onApply, validate, onClose }: TreeEditorP
       } catch {
         serverIssue = { path: 'filter', message: "Orbit couldn't check this filter. Try again." }
       }
-      if (!mounted.current) return
+      if (!active.current) return
       setChecking(false)
       if (serverIssue) {
         setIssue(serverIssue)
@@ -126,7 +126,7 @@ function TreeEditor({ filter, options, onApply, validate, onClose }: TreeEditorP
 
   return (
     <>
-      <DialogHeader className="gap-1 border-b border-border px-4 py-3 pr-10">
+      <DialogHeader className="gap-1 border-b px-4 py-3 pr-10">
         <DialogTitle>Advanced filter</DialogTitle>
         <DialogDescription className="text-xs">Combine conditions with and/or groups, up to three levels deep.</DialogDescription>
       </DialogHeader>
@@ -170,7 +170,7 @@ function GroupEditor({ group, path, root, options, issue, issueNode, onChange }:
   const error = path.length > 0 && issue && samePath(issueNode, path) ? issue.message : null
   const setOp = (op: FilterGroup['op']) => onChange(updateNode(root, path, (node) => (isGroup(node) ? { ...node, op } : node)))
   return (
-    <div role="group" aria-label={label} className={cn('flex flex-col gap-2', path.length > 0 && 'border-l-2 border-border py-1 pl-3', error && 'border-destructive/60')}>
+    <div role="group" aria-label={label} className={cn('flex flex-col gap-2', path.length > 0 && 'border-l-2 py-1 pl-3', error && 'border-destructive/60')}>
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <span>Match</span>
         <ToggleGroup
@@ -184,10 +184,10 @@ function GroupEditor({ group, path, root, options, issue, issueNode, onChange }:
             if (next === 'and' || next === 'or') setOp(next)
           }}
         >
-          <ToggleGroupItem value="and" className={OPERATOR_ITEM}>
+          <ToggleGroupItem value="and" className="h-6 text-xs text-muted-foreground aria-pressed:text-foreground">
             And
           </ToggleGroupItem>
-          <ToggleGroupItem value="or" className={OPERATOR_ITEM}>
+          <ToggleGroupItem value="or" className="h-6 text-xs text-muted-foreground aria-pressed:text-foreground">
             Or
           </ToggleGroupItem>
         </ToggleGroup>
@@ -312,7 +312,7 @@ function ConditionRow({ condition, path, root, options, issue, issueNode, onChan
               }
             />
             {picking ? (
-              <PopoverContent align="start" className={cn('w-auto gap-0 p-0', POPOVER_MOTION)}>
+              <PopoverContent align="start" className="w-auto gap-0 p-0">
                 <FilterValuePicker condition={condition} options={options} onChange={replace} onDone={() => setPicking(false)} />
               </PopoverContent>
             ) : null}

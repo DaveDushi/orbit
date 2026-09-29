@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
 import { EmptyState } from '@/components/common/EmptyState'
+import { Pane, PaneTitle } from '@/components/common/Pane'
 import { confirmAction } from '@/components/common/confirmAction'
 import { relativeTime } from '@/lib/format'
 import {
@@ -35,7 +36,7 @@ import { useQueryClient } from '@tanstack/react-query'
 
 const TOKEN_URL = 'https://www.notion.so/developers/tokens'
 
-function PaneHeader({ title, detail, actions }: { title: string; detail?: string | null; actions?: ReactNode }) {
+function ImportHeader({ title, detail, actions }: { title: string; detail?: string | null; actions?: ReactNode }) {
   const navigate = useNavigate()
   return (
     <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
@@ -49,7 +50,7 @@ function PaneHeader({ title, detail, actions }: { title: string; detail?: string
       >
         <ArrowLeft className="size-4" />
       </Button>
-      <h1 className="truncate text-[13px] font-semibold text-foreground">{title}</h1>
+      <PaneTitle render={<h1 />}>{title}</PaneTitle>
       {detail ? <span className="truncate text-[13px] text-muted-foreground">{detail}</span> : null}
       <span className="flex-1" />
       {actions}
@@ -103,7 +104,7 @@ function ConnectStep({ workspaceId }: { workspaceId: string }) {
 
   return (
     <>
-      <PaneHeader title="Import from Notion" />
+      <ImportHeader title="Import from Notion" />
       <Body>
         <section className="flex flex-col gap-4 rounded-lg border border-border p-5">
           <div className="flex flex-col gap-1">
@@ -167,7 +168,7 @@ function RecentImports({ imports, isPending }: { imports: NotionImport[] | undef
           <Link
             key={item.id}
             to={`/docs/import/${item.id}`}
-            className="flex min-h-10 min-w-0 items-center gap-3 border-b border-border px-1 py-1.5 text-[13px] hover:bg-sidebar-accent/50"
+            className="flex min-h-10 min-w-0 items-center gap-3 border-b border-border px-1 py-1.5 text-[13px] transition-colors duration-150 ease-out hover:bg-sidebar-accent/50"
           >
             <span className="min-w-0 flex-1 truncate text-foreground">{item.notion_workspace_name || 'Notion'}</span>
             {item.progress.total > 0 ? (
@@ -228,7 +229,7 @@ function ScanningStep({ workspaceId, item }: { workspaceId: string; item: Notion
   const cancel = useCancel(workspaceId, item)
   return (
     <>
-      <PaneHeader title="Import from Notion" detail={item.notion_workspace_name} />
+      <ImportHeader title="Import from Notion" detail={item.notion_workspace_name} />
       <Body>
         <div className="flex flex-col items-center gap-3 py-16 text-center" role="status">
           <Spinner className="size-6 text-muted-foreground" />
@@ -251,7 +252,7 @@ function ImportingStep({ workspaceId, item }: { workspaceId: string; item: Notio
   const { done, total, failed } = item.progress
   return (
     <>
-      <PaneHeader title="Import from Notion" detail={item.notion_workspace_name} />
+      <ImportHeader title="Import from Notion" detail={item.notion_workspace_name} />
       <Body>
         <section className="flex flex-col gap-4 py-10" role="status" aria-live="polite">
           <div className="flex items-center gap-2">
@@ -328,7 +329,7 @@ function ResultStep({ workspaceId, item }: { workspaceId: string; item: NotionIm
 
   return (
     <>
-      <PaneHeader title="Import from Notion" detail={item.notion_workspace_name} />
+      <ImportHeader title="Import from Notion" detail={item.notion_workspace_name} />
       <Body>
         <section className="flex flex-col gap-3">
           <div className="flex items-center gap-2">
@@ -361,7 +362,7 @@ function ResultStep({ workspaceId, item }: { workspaceId: string; item: NotionIm
             <ul className="flex flex-col border-t border-border">
               {roots.slice(0, 50).map((id) => (
                 <li key={id} className="border-b border-border">
-                  <Link to={`/docs/${id}`} className="flex h-9 items-center gap-2 px-1 text-[13px] text-foreground hover:bg-sidebar-accent/50">
+                  <Link to={`/docs/${id}`} className="flex h-9 items-center gap-2 px-1 text-[13px] text-foreground transition-colors duration-150 ease-out hover:bg-sidebar-accent/50">
                     <FileText className="size-[15px] shrink-0 text-muted-foreground/70" />
                     <span className="truncate">{titles.has(id) ? pageTitle(titles.get(id)) : 'Imported page'}</span>
                   </Link>
@@ -425,7 +426,7 @@ function ChooseStep({ workspaceId, item }: { workspaceId: string; item: NotionIm
   const teamspaces = useTeamspaces(workspaceId)
   return (
     <>
-      <PaneHeader
+      <ImportHeader
         title="Choose pages"
         detail={item.notion_workspace_name}
         actions={
@@ -474,7 +475,7 @@ export function NotionImportPane({ workspaceId, importId }: { workspaceId: strin
     const missing = isPageNotFound(query.error)
     content = (
       <>
-        <PaneHeader title="Import from Notion" />
+        <ImportHeader title="Import from Notion" />
         <div className="flex flex-1 flex-col p-6">
           <EmptyState
             icon={Import}
@@ -499,12 +500,12 @@ export function NotionImportPane({ workspaceId, importId }: { workspaceId: strin
   } else {
     content = (
       <>
-        <PaneHeader title="Import from Notion" />
+        <ImportHeader title="Import from Notion" />
         <div className="flex flex-1 items-center justify-center">
           <Spinner className="text-muted-foreground" />
         </div>
       </>
     )
   }
-  return <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background">{content}</section>
+  return <Pane>{content}</Pane>
 }

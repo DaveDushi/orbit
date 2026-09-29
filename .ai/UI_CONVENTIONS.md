@@ -4,8 +4,9 @@
 
 - Flat panes on a shared canvas, separated by 1px hairline borders.
 - Cards are for settings sections and contained summaries, not page-sized wrappers.
-- Purple is the accent in both themes.
-- Use semantic tokens from `tokens.css`; avoid raw theme colors.
+- Pink (`--primary`) is the accent in both themes.
+- Use the shadcn semantic tokens from `apps/web/src/index.css` (`bg-background`, `text-muted-foreground`, …); avoid raw theme colors.
+- Styling rules (inline Tailwind, components, `data-slot`, no class variables or app CSS classes) are in `apps/web/README.md`.
 - Header alignment matters: first/second sidebars and pane headers use a 48px rhythm.
 - Navigation rows are compact (32px) with restrained 6–10px spacing.
 - Inputs inside composite controls must suppress their own ring; the outer container receives `:focus-within`.
@@ -21,8 +22,7 @@
 
 ## Menus, modals, and stacking
 
-- Reuse `Dropdown`, `Listbox`, and `Modal`.
-- Popovers use the elevated shell, line border, 12px-ish radius, and shared shadow.
+- Reuse shadcn `DropdownMenu`, `Select`, `Popover`, and `Modal` (a `Dialog` wrapper) with their default look.
 - Emoji panels must use the same `EmojiPicker`, not separately styled lookalikes.
 - Emoji popovers in modals are allowed to paint outside modal scroll containers.
 - Modals stay centered on both axes at every viewport size; do not switch mobile dialogs to top alignment.
@@ -36,6 +36,10 @@
 - Do not animate the entire multi-pane Chat/DM page; it caused screen shake. Animate internal rows/panels instead.
 - Do not apply transforms that permanently create containing blocks for fixed overlays.
 - `prefers-reduced-motion` must disable practical motion.
+- Curves: `ease-out` (enter/exit, strong curve from `index.css`), `ease-in-out` (on-screen movement), `ease-drawer` (sheets). Popovers/menus 150ms in / 100ms out, dialogs 200ms / 150ms, tooltips 400ms first delay then instant.
+- Keyboard-opened, Escape-closed and shortcut-opened popups do not animate: Base UI sets `data-instant`; set it yourself only when true (`{...(instant && { 'data-instant': '' })}`), and use `DialogContent instant` for keyboard dialogs such as the command palette.
+- Keep popups mounted through their exit: never wrap `*Content` in `{open ? … : null}`; Cancel buttons are `DialogClose`, so `Modal` plays its exit before `onClose`.
+- Name transition properties (`transition-[color,background-color]`, `transition-opacity`), never `transition-all`. Hover-revealed controls use `hover-fine:opacity-0 hover-fine:group-hover:opacity-100` so touch devices still see them.
 
 ## Chat conventions
 
