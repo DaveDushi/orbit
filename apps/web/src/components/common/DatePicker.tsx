@@ -73,7 +73,7 @@ export function DatePicker({ startValue, value, clearable = !!value, onClear, on
   }
 
   return (
-    <div className="flex flex-col gap-3 p-3">
+    <div className="flex max-h-(--available-height) flex-col gap-3 overflow-y-auto overscroll-contain p-3">
       <div className="grid grid-cols-2 gap-2">
         <Button type="button" variant="secondary" onClick={() => selectWeek(0)}>This week</Button>
         <Button type="button" variant="secondary" onClick={() => selectWeek(1)}>Next week</Button>
