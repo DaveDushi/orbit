@@ -1,7 +1,7 @@
 import '@blocknote/shadcn/style.css'
 import './PageEditor.css'
 
-import { use, useEffect, useImperativeHandle, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent, type Ref } from 'react'
+import { use, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent, type Ref } from 'react'
 import { createPortal } from 'react-dom'
 import { QueryClientContext, type QueryClient } from '@tanstack/react-query'
 import { CommentsExtension } from '@blocknote/core/comments'
@@ -11,14 +11,20 @@ import {
   ComponentsContext,
   FloatingComposerController,
   FloatingThreadController,
+  FormattingToolbar,
+  FormattingToolbarController,
+  getFormattingToolbarItems,
   SuggestionMenuController,
   useCreateBlockNote,
 } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/shadcn'
 import type { Awareness } from 'y-protocols/awareness'
 import type * as Y from 'yjs'
+import { ImageViewer } from '@/components/common/ImageViewer'
 import { Spinner } from '@/components/ui/spinner'
+import type { Attachment } from '@/mock/types'
 import { useTheme } from '@/lib/themeContext'
+import { ImageZoomButton } from './ImageZoomButton'
 import { internalPageLinkId, isSafeLinkHref, toEditorContent, toStoredContent } from './content'
 import { insertPageBlock } from './pageBlockCommands'
 import { PageEditorContext, type PageEditorContextValue, type PageRef } from './pageEditorContext'
@@ -140,6 +146,14 @@ function PageEditorInner({
   // Optional: read-only previews render without a query client (and without comments).
   const queryClient = use(QueryClientContext)
   const [latest] = useState(() => new Latest(comments))
+  // Lives here, not in the toolbar: the toolbar unmounts when the viewer takes focus from the editor.
+  const [zoomImage, setZoomImage] = useState<Attachment | null>(null)
+  const formattingToolbar = useCallback(() => {
+    const items = getFormattingToolbarItems()
+    const at = items.findIndex((item) => item.key === 'fileDownloadButton') + 1
+    items.splice(at, 0, <ImageZoomButton key="imageZoomButton" onZoom={setZoomImage} />)
+    return <FormattingToolbar>{items}</FormattingToolbar>
+  }, [])
   useEffect(() => {
     latest.setComments(comments)
   })
@@ -312,6 +326,7 @@ function PageEditorInner({
           theme={theme}
           className={className ? `orbit-page-editor ${className}` : 'orbit-page-editor'}
           slashMenu={false}
+          formattingToolbar={false}
           comments={false}
           onChange={onChange ? (changed) => onChange(toStoredContent(changed.document)) : undefined}
         >
@@ -319,6 +334,7 @@ function PageEditorInner({
             triggerCharacter="/"
             getItems={async (query) => getPageSlashMenuItems(editor, slashActions, query)}
           />
+          <FormattingToolbarController formattingToolbar={formattingToolbar} />
           <PageMentionMenu editor={editor} options={() => mentionsRef.current} />
           {collab ? (
             <MentionNamesContext value={names}>
@@ -343,6 +359,7 @@ function PageEditorInner({
             </MentionNamesContext>
           ) : null}
         </BlockNoteView>
+        {zoomImage ? <ImageViewer attachment={zoomImage} onClose={() => setZoomImage(null)} /> : null}
       </div>
       </PageMentionNamesContext>
     </PageEditorContext>

@@ -320,3 +320,22 @@ img.ProseMirror-separator {
   top: 8px;
   right: 8px;
 }
+
+/*
+ * Formatting toolbar on narrow screens: BlockNote caps it at 100vw, so it ran off the right edge of a phone. Keep it
+ * inside the viewport with a margin, scroll the rest sideways, and use slightly smaller buttons so more fit.
+ */
+@media (max-width: 899px) {
+  .bn-root.orbit-page-editor .bn-formatting-toolbar {
+    max-width: calc(100vw - 16px);
+    gap: 0;
+    scrollbar-width: none;
+    overscroll-behavior-x: contain;
+  }
+  .bn-root.orbit-page-editor .bn-formatting-toolbar > button {
+    flex-shrink: 0;
+    height: 32px;
+    min-width: 32px;
+    padding-inline: 0;
+  }
+}

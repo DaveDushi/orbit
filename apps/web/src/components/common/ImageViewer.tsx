@@ -1,17 +1,73 @@
 // Port of the chat reference ImageViewer: full-screen overlay with filename, zoom %, download, ± / reset / close.
-import { useState, type KeyboardEvent } from 'react'
+import { useRef, useState, type KeyboardEvent, type TouchEvent } from 'react'
 import { Download, Xmark as X } from 'reicon-react'
 import type { Attachment } from '@/mock/types'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 
+const MIN_ZOOM = 0.5
+const MAX_ZOOM = 4
+
+type Point = { x: number; y: number }
+/** The touch gesture in progress: where it started, with the zoom and pan it started from. */
+type Gesture = { distance: number; center: Point; zoom: number; pan: Point }
+
+const clampZoom = (value: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value))
+
+function touchCenter(touches: TouchEvent['touches']): Point {
+  const [a, b = a] = [touches[0], touches[1]]
+  return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 }
+}
+
+function touchDistance(touches: TouchEvent['touches']): number {
+  return touches.length < 2 ? 0 : Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY)
+}
+
 export function ImageViewer({ attachment, onClose }: { attachment: Attachment; onClose: () => void }) {
-  const [zoom, setZoom] = useState(1)
+  const [zoom, setZoomState] = useState(1)
+  const [pan, setPan] = useState<Point>({ x: 0, y: 0 })
+  const [gesturing, setGesturing] = useState(false)
+  const gesture = useRef<Gesture | null>(null)
+
+  // Back at 100% or less there is nothing to pan to, so the image goes back to the center.
+  function setZoom(value: number, nextPan: Point = pan) {
+    const next = clampZoom(value)
+    setZoomState(next)
+    setPan(next <= 1 ? { x: 0, y: 0 } : nextPan)
+  }
+
+  // Two fingers pinch to zoom (and move the image with them); one finger pans a zoomed image.
+  function startGesture(event: TouchEvent) {
+    gesture.current = { distance: touchDistance(event.touches), center: touchCenter(event.touches), zoom, pan }
+    setGesturing(true)
+  }
+
+  function moveGesture(event: TouchEvent) {
+    const start = gesture.current
+    if (!start) return
+    const center = touchCenter(event.touches)
+    const distance = touchDistance(event.touches)
+    const pinching = event.touches.length >= 2 && start.distance > 0
+    if (!pinching && start.zoom <= 1) return
+    setZoom(pinching ? (start.zoom * distance) / start.distance : start.zoom, {
+      x: start.pan.x + center.x - start.center.x,
+      y: start.pan.y + center.y - start.center.y,
+    })
+  }
+
+  function endGesture(event: TouchEvent) {
+    // Lifting one of two fingers goes on as a pan from where the image is now.
+    if (event.touches.length > 0) startGesture(event)
+    else {
+      gesture.current = null
+      setGesturing(false)
+    }
+  }
 
   // Escape, focus trap and scroll lock come from the Dialog; focus stays inside it, so zoom keys bubble here.
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === '+' || event.key === '=') setZoom((value) => Math.min(3, value + 0.25))
-    if (event.key === '-' || event.key === '_') setZoom((value) => Math.max(0.5, value - 0.25))
+    if (event.key === '+' || event.key === '=') setZoom(zoom + 0.25)
+    if (event.key === '-' || event.key === '_') setZoom(zoom - 0.25)
     if (event.key === '0') setZoom(1)
   }
 
@@ -40,13 +96,13 @@ export function ImageViewer({ attachment, onClose }: { attachment: Attachment; o
             <a href={attachment.url} download={attachment.fileName} className={barButton} title="Download image" aria-label="Download image" onClick={(e) => e.stopPropagation()}>
               <Download className="size-4" />
             </a>
-            <Button type="button" variant="ghost" size="icon-lg" className={`${barButtonClass} text-lg font-bold`} title="Zoom out" aria-label="Zoom out" onClick={() => setZoom((v) => Math.max(0.5, v - 0.25))}>
+            <Button type="button" variant="ghost" size="icon-lg" className={`${barButtonClass} text-lg font-bold`} title="Zoom out" aria-label="Zoom out" onClick={() => setZoom(zoom - 0.25)}>
               −
             </Button>
             <Button type="button" variant="ghost" size="lg" className="h-9 rounded-md border-0 bg-white/10 px-3 text-xs font-bold text-white transition-colors hover:bg-white/15 hover:text-white dark:hover:bg-white/15" title="Reset zoom" onClick={() => setZoom(1)}>
               Reset
             </Button>
-            <Button type="button" variant="ghost" size="icon-lg" className={`${barButtonClass} text-lg font-bold`} title="Zoom in" aria-label="Zoom in" onClick={() => setZoom((v) => Math.min(3, v + 0.25))}>
+            <Button type="button" variant="ghost" size="icon-lg" className={`${barButtonClass} text-lg font-bold`} title="Zoom in" aria-label="Zoom in" onClick={() => setZoom(zoom + 0.25)}>
               +
             </Button>
             <Button type="button" variant="ghost" size="icon-lg" className={barButtonClass} title="Close image viewer" aria-label="Close image viewer" onClick={onClose}>
@@ -54,13 +110,21 @@ export function ImageViewer({ attachment, onClose }: { attachment: Attachment; o
             </Button>
           </div>
         </div>
-        <Button type="button" variant="ghost" className="flex h-auto min-h-0 w-full flex-1 shrink! cursor-zoom-out items-center justify-center overflow-auto rounded-none border-0 p-2 font-normal whitespace-normal select-auto hover:bg-transparent sm:p-6 dark:hover:bg-transparent active:not-aria-[haspopup]:translate-y-0" title="Close image viewer" onClick={onClose}>
+        <Button type="button" variant="ghost" className="flex h-auto min-h-0 w-full flex-1 shrink! cursor-zoom-out items-center justify-center overflow-auto rounded-none border-0 p-2 font-normal whitespace-normal select-auto hover:bg-transparent touch-none sm:p-6 dark:hover:bg-transparent active:not-aria-[haspopup]:translate-y-0"
+          title="Close image viewer"
+          onClick={onClose}
+          onTouchStart={startGesture}
+          onTouchMove={moveGesture}
+          onTouchEnd={endGesture}
+          onTouchCancel={endGesture}
+        >
           <img
             src={attachment.url}
             alt={attachment.fileName}
             draggable={false}
-            className="max-h-full max-w-full origin-center rounded-md object-contain shadow-[0_25px_50px_-12px_rgba(0,0,0,0.6)] transition-transform select-none duration-200 animate-in fade-in zoom-in-95 motion-reduce:animate-none"
-            style={{ transform: `scale(${zoom})` }}
+            className="max-h-full max-w-full origin-center rounded-md object-contain shadow-[0_25px_50px_-12px_rgba(0,0,0,0.6)] select-none duration-200 animate-in fade-in zoom-in-95 motion-reduce:animate-none"
+            // No transition while a finger moves the image: it must follow the finger without lag.
+            style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transition: gesturing ? 'none' : 'transform 200ms' }}
             onClick={(e) => e.stopPropagation()}
           />
         </Button>

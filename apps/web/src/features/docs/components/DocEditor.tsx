@@ -613,7 +613,7 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
             <ArrowLeft className="size-4" />
           </Button>
           <nav className="flex min-w-0 items-center gap-1.5 overflow-hidden text-[13px] text-muted-foreground/70" aria-label="Page path">
-            <span className="flex min-w-0 shrink-0 items-center gap-1.5" data-space-crumb={space}>
+            <span className="flex min-w-0 shrink-0 items-center gap-1.5 max-[899px]:hidden" data-space-crumb={space}>
               <span className="flex max-w-40 min-w-0 items-center gap-1">
                 {space === PRIVATE_SPACE ? <Lock className="size-3.5 shrink-0" aria-hidden="true" /> : null}
                 <span className="truncate">{spaceLabel(space, teamspaces)}</span>
@@ -621,7 +621,7 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
               <span className="shrink-0">/</span>
             </span>
             {ancestors.map((ancestor) => (
-              <span key={ancestor.id} className="flex min-w-0 items-center gap-1.5">
+              <span key={ancestor.id} className="flex min-w-0 items-center gap-1.5 max-[899px]:hidden">
                 <Link
                   className="block min-w-0 truncate rounded-[4px] text-muted-foreground/70 no-underline hover:text-foreground"
                   to={`/docs/${ancestor.id}`}
