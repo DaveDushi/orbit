@@ -2,6 +2,8 @@
 set -uo pipefail
 
 api_port=${ORBIT_DEV_API_PORT:-8080}
+web_port=${ORBIT_DEV_WEB_PORT:-8888}
+public_origin=${ORBIT__HTTP__PUBLIC_ORIGIN:-http://127.0.0.1:${web_port}}
 marker=$(mktemp)
 backend_pid=""
 
@@ -39,7 +41,7 @@ start_backend() {
         wait "$child_pid" || exit $?
         child_pid=""
 
-        ORBIT__ENVIRONMENT=development cargo run -p orbit-server -- serve --listen "127.0.0.1:${api_port}" &
+        ORBIT__ENVIRONMENT=development cargo run -p orbit-server -- serve --listen "127.0.0.1:${api_port}" --origin "$public_origin" &
         child_pid=$!
         wait "$child_pid"
     ) &

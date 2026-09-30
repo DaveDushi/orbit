@@ -246,8 +246,22 @@ impl App {
             origin_policy = origin_policy.trust_proxy(*proxy);
         }
         let metrics = Metrics::default();
+        let oauth = crate::oauth::OAuthState::new(
+            Arc::clone(&identity),
+            cookie_mode,
+            &config.http.public_origin,
+        );
         let router = metrics.instrument(production_router(
             ApiRoutes {
+                mcp: crate::mcp::router(
+                    crate::mcp::McpState::new(
+                        Arc::new(ApiTokenRepository::new(database.clone())),
+                        Arc::new(TaskRepository::new(database.clone())),
+                    )
+                    .with_oauth(oauth.clone()),
+                    &config.http.public_origin,
+                ),
+                oauth: crate::oauth::router(oauth),
                 auth,
                 workspaces: WorkspaceState::with_repository(
                     Arc::clone(&identity),

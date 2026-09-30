@@ -83,7 +83,11 @@ impl OriginPolicy {
     pub(crate) fn permits(&self, method: &Method, uri: &Uri, headers: &HeaderMap) -> bool {
         if matches!(
             uri.path(),
-            "/api/v1/integrations/discord/events" | "/api/v1/integrations/github/webhook"
+            "/api/v1/integrations/discord/events"
+                | "/api/v1/integrations/github/webhook"
+                | "/oauth/register"
+                | "/oauth/token"
+                | "/oauth/revoke"
         ) {
             return true;
         }
@@ -97,7 +101,9 @@ impl OriginPolicy {
 
         let mut origins = headers.get_all(axum::http::header::ORIGIN).iter();
         let Some(origin) = origins.next() else {
-            return false;
+            // MCP clients use bearer credentials, not browser session cookies.
+            // Present Origins still follow the normal policy and SDK validation.
+            return uri.path() == "/mcp";
         };
         origins.next().is_none()
             && origin.to_str().ok().is_some_and(|origin| {

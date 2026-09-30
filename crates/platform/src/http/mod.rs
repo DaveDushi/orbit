@@ -487,6 +487,15 @@ fn rate_limit_ip(ip: IpAddr) -> IpAddr {
 }
 
 fn endpoint_class(path: &str) -> Option<EndpointClass> {
+    if matches!(
+        path,
+        "/oauth/register" | "/oauth/authorize" | "/oauth/token" | "/oauth/revoke"
+    ) {
+        return Some(EndpointClass::Authentication);
+    }
+    if path == "/mcp" || path.starts_with("/.well-known/oauth-") {
+        return Some(EndpointClass::General);
+    }
     if path != "/api" && !path.starts_with("/api/") {
         return None;
     }

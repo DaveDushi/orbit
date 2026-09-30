@@ -152,6 +152,29 @@ async fn every_unsafe_request_requires_an_origin() {
 }
 
 #[tokio::test]
+async fn mcp_origin_exception_is_exact_and_still_rejects_foreign_origins() {
+    let app = Router::new()
+        .route("/mcp", post(|| async { StatusCode::NO_CONTENT }))
+        .route("/mcp/other", post(|| async { StatusCode::NO_CONTENT }))
+        .layer(HttpPlatformLayer::new(OriginPolicy::new(
+            "https://orbit.test",
+        )));
+    let response = app.clone().oneshot(request("POST", "/mcp")).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let response = app
+        .clone()
+        .oneshot(request("POST", "/mcp/other"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let mut req = request("POST", "/mcp");
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://evil.test"));
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn same_origin_unsafe_request_reaches_the_handler() {
     let app = test_app(OriginPolicy::new("https://orbit.test"));
     let mut request = request("POST", "/probe");
@@ -811,4 +834,49 @@ async fn websocket_upgrade_requires_an_allowed_origin_even_for_get() {
             expected
         );
     }
+}
+
+#[tokio::test]
+async fn oauth_protocol_and_mcp_requests_are_rate_limited_without_session_origins() {
+    let limits = RateLimitConfig {
+        authentication_per_minute: 1,
+        general_per_minute: 1,
+        ..Default::default()
+    };
+    let app = Router::new()
+        .route("/oauth/register", post(|| async { StatusCode::NO_CONTENT }))
+        .route("/oauth/token", post(|| async { StatusCode::NO_CONTENT }))
+        .route("/mcp", post(|| async { StatusCode::NO_CONTENT }))
+        .layer(
+            HttpPlatformLayer::new(OriginPolicy::new("https://orbit.test"))
+                .with_rate_limits(limits),
+        );
+    assert_eq!(
+        app.clone()
+            .oneshot(request("POST", "/oauth/register"))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        app.clone()
+            .oneshot(request("POST", "/oauth/token"))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        app.clone()
+            .oneshot(request("POST", "/mcp"))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        app.oneshot(request("POST", "/mcp")).await.unwrap().status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
 }

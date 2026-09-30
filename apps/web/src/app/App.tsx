@@ -20,6 +20,7 @@ import { ProfilePage } from '@/features/profile/pages/ProfilePage'
 import { InboxPage } from '@/features/inbox/pages/InboxPage'
 import { AuthGate } from '@/features/auth/AuthGate'
 import { AcceptInvitationPage } from '@/features/auth/pages/AcceptInvitationPage'
+import { OAuthConsentPage } from '@/features/auth/pages/OAuthConsentPage'
 import { LoginPage } from '@/features/auth/pages/LoginPage'
 import { RecoveryPage } from '@/features/auth/pages/RecoveryPage'
 import { SetupPage } from '@/features/auth/pages/SetupPage'
@@ -43,6 +44,7 @@ export default function App() {
       <Toaster />
       <Routes>
         <Route path="setup" element={<SetupPage />} />
+        <Route path="oauth/consent" element={<OAuthConsentPage />} />
         <Route path="login" element={<LoginPage />} />
         <Route path="recovery" element={<RecoveryPage />} />
         <Route path="accept-invitation" element={<AcceptInvitationPage />} />

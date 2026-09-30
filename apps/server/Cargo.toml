@@ -20,8 +20,12 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 http-body-util = "0.1"
 include_dir = "0.7"
 mime_guess = "2"
+oxide-auth = "=0.6.1"
+url = "2"
 orbit-domain = { path = "../../crates/orbit" }
 orbit-platform = { path = "../../crates/platform" }
+rmcp = { version = "=3.5.0", default-features = false, features = ["server", "transport-streamable-http-server"] }
+schemars = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

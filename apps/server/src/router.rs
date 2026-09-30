@@ -24,6 +24,8 @@ use crate::view_routes::view_router;
 use crate::workspace_routes::{WorkspaceState, workspace_router};
 
 pub struct ApiRoutes {
+    pub mcp: Router,
+    pub oauth: Router,
     pub auth: AuthState,
     pub workspaces: WorkspaceState,
     pub tasks: TaskState,
@@ -50,6 +52,8 @@ pub fn production_router(
     let realtime = crate::realtime::router(api.tasks.clone());
     let views = view_router(api.tasks.clone());
     auth_router(api.auth)
+        .merge(api.mcp)
+        .merge(api.oauth)
         .merge(realtime)
         .merge(workspace_router(api.workspaces))
         .merge(task_router(api.tasks))

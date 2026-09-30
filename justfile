@@ -29,7 +29,7 @@ dev:
     }
     trap cleanup EXIT
     trap 'exit 0' INT TERM
-    ORBIT_DEV_API_PORT="${api_port}" scripts/dev-server-watch.sh &
+    ORBIT_DEV_API_PORT="${api_port}" ORBIT_DEV_WEB_PORT="${web_port}" scripts/dev-server-watch.sh &
     server_pid=$!
     (cd apps/web && VITE_API_PROXY="http://127.0.0.1:${api_port}" bun run dev -- --host 127.0.0.1 --port "${web_port}" --strictPort) &
     web_pid=$!

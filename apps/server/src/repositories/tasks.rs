@@ -426,6 +426,37 @@ impl TaskRepository {
         &self.database
     }
 
+    /// MCP project discovery: filter the grant before returning any records.
+    pub async fn approved_projects(
+        &self,
+        workspace_id: Id,
+        actor_id: Id,
+        project_ids: &[Id],
+    ) -> Result<Vec<ProjectRecord>, TaskError> {
+        require_access(self.database.pool(), workspace_id, actor_id).await?;
+        if project_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT id, workspace_id, name, project_key, color, auto_close_parent, auto_close_sub_issues, version, deleted_at, created_at, updated_at FROM projects WHERE deleted_at IS NULL AND workspace_id = ",
+        );
+        query
+            .push_bind(workspace_id.to_string())
+            .push(" AND id IN (");
+        let mut ids = query.separated(", ");
+        for id in project_ids {
+            ids.push_bind(id.to_string());
+        }
+        ids.push_unseparated(") ORDER BY name, id");
+        query
+            .build()
+            .fetch_all(self.database.pool())
+            .await?
+            .into_iter()
+            .map(project_from_row)
+            .collect()
+    }
+
     pub async fn projects(
         &self,
         workspace_id: Id,

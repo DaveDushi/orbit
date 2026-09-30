@@ -263,6 +263,11 @@ impl MigrationRunner {
                     include_str!("../../../../apps/server/migrations/0034_sub_issues.sql"),
                     false,
                 ),
+                Migration::new(
+                    35,
+                    include_str!("../../../../apps/server/migrations/0035_mcp_oauth.sql"),
+                    false,
+                ),
             ],
         )
     }
