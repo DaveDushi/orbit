@@ -7,7 +7,6 @@ import type { Page, PageSummary } from '@/api/generated/types.gen'
 import { ApiProblem } from '@/api/problem'
 import { queryKeys } from '@/api/queryKeys'
 import {
-  canPurgePage,
   conflictCurrentPage,
   conflictCurrentVersion,
   isPageNotFound,
@@ -275,19 +274,11 @@ test('upload failures map to short messages', async () => {
   expect(pageUploadErrorMessage(new Error('offline'))).toBe('Could not upload the file. Try again.')
 })
 
-test('only own private pages, or any page for owners and admins, can be deleted forever', () => {
-  expect(canPurgePage({ private: true }, 'member')).toBeTrue()
-  expect(canPurgePage({ private: false }, 'member')).toBeFalse()
-  expect(canPurgePage({ private: false }, undefined)).toBeFalse()
-  expect(canPurgePage({ private: false }, 'admin')).toBeTrue()
-  expect(canPurgePage({ private: false }, 'owner')).toBeTrue()
-})
-
 test('deleting forever sends expected_version to /permanent and drops the row from the trash cache', async () => {
   const calls = mockFetch((call) => (call.method === 'DELETE' ? new Response(null, { status: 204 }) : new Promise<Response>(() => {})))
   const { client, wrapper } = setupClient()
   const trashKey = queryKeys.pages.trash('workspace-1')
-  const row = (id: string) => ({ ...summary(id, null, 0), deleted_at: '2026-09-25T10:00:00Z' })
+  const row = (id: string) => ({ ...summary(id, null, 0), can_purge: true, deleted_at: '2026-09-25T10:00:00Z' })
   client.setQueryData(trashKey, [row('a'), row('b')])
   const view = renderHook(() => usePurgePage('workspace-1'), { wrapper })
 

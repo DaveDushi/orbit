@@ -3,19 +3,20 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { MemoryRouter } from 'react-router'
-import type { WorkspaceRecord } from '@/api/generated/types.gen'
 import { WorkspaceContext } from '@/features/workspaces/workspaceContext'
 import type { TaskComment, TaskViewState } from '@/features/tasks/api/models'
 import type { User } from '@/features/workspaces/models'
 import { CommentItem } from './CommentItem'
+import { testWorkspace } from '@/test/workspace'
+import { NO_MEMBER_ABILITIES } from '@/features/workspaces/models'
 
-const workspace: WorkspaceRecord = { id: 'workspace-1', name: 'Orbit', role: 'owner', version: 1 }
 const author: User = {
   id: 'user-1', membershipId: 'm1', name: 'Orbit Developers', handle: 'orbit', email: 'dev@orbit.test',
-  role: 'Owner', color: '#4ade80', online: true, title: '', roleIds: [], version: 1,
+  role: 'Owner', color: '#4ade80', online: true, title: '', roleIds: [], can: NO_MEMBER_ABILITIES, version: 1,
 }
 
 function wrapper() {
+  const workspace = testWorkspace()
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   return ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>
@@ -29,7 +30,7 @@ function wrapper() {
 }
 
 function comment(overrides: Partial<TaskComment> = {}): TaskComment {
-  return { id: 'c1', authorId: 'user-1', body: 'hello', createdAt: new Date().toISOString(), version: 1, ...overrides }
+  return { id: 'c1', authorId: 'user-1', body: 'hello', canEdit: true, canDelete: true, createdAt: new Date().toISOString(), version: 1, ...overrides }
 }
 
 function state(overrides: Partial<TaskViewState> = {}): TaskViewState {
@@ -52,9 +53,19 @@ test('author comments expose compact copy, edit, and delete actions', () => {
   expect(view.getByRole('button', { name: 'Delete comment' })).toBeTruthy()
 })
 
-test('other people can copy a comment but cannot edit or delete it', () => {
+test('a comment the server marks as delete-only shows Delete without Edit', () => {
   const view = render(
-    <CommentItem state={state({ currentUserId: 'user-2' })} taskId="task-1" comment={comment()} mentionTokens={[]} />,
+    <CommentItem state={state({ currentUserId: 'user-2' })} taskId="task-1" comment={comment({ canEdit: false })} mentionTokens={[]} />,
+    { wrapper: wrapper() },
+  )
+
+  expect(view.queryAllByRole('button', { name: 'Edit comment' })).toHaveLength(0)
+  expect(view.getByRole('button', { name: 'Delete comment' })).toBeTruthy()
+})
+
+test('a comment the caller may not change offers only Copy', () => {
+  const view = render(
+    <CommentItem state={state({ currentUserId: 'user-2' })} taskId="task-1" comment={comment({ canEdit: false, canDelete: false })} mentionTokens={[]} />,
     { wrapper: wrapper() },
   )
 

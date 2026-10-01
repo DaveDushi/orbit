@@ -31,7 +31,6 @@ export function CommentItem({ state, taskId, comment, mentionTokens, reply }: Co
   const [editText, setEditText] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
   const author = state.users.find((u) => u.id === comment.authorId)
-  const isAuthor = comment.authorId === state.currentUserId
   const name = author?.name ?? 'Someone'
 
   const commitEdit = () => {
@@ -63,25 +62,25 @@ export function CommentItem({ state, taskId, comment, mentionTokens, reply }: Co
                 <Button variant="ghost" size="icon-sm" className="size-6 text-muted-foreground/70" aria-label="Copy text" title="Copy text" onClick={() => void navigator.clipboard.writeText(comment.body)}>
                   <Copy className="size-3.5" />
                 </Button>
-                {isAuthor ? (
-                  <>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      className="size-6 text-muted-foreground/70"
-                      aria-label="Edit comment"
-                      title="Edit comment"
-                      onClick={() => {
-                        setEditText(comment.body)
-                        setEditing(true)
-                      }}
-                    >
-                      <Pencil className="size-3.5" />
-                    </Button>
-                    <Button variant="ghost" size="icon-sm" className="size-6 text-muted-foreground/70 hover:bg-destructive/10 hover:text-destructive" aria-label="Delete comment" title="Delete comment" onClick={() => setConfirmDelete(true)}>
-                      <Trash2 className="size-3.5" />
-                    </Button>
-                  </>
+                {comment.canEdit ? (
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="size-6 text-muted-foreground/70"
+                    aria-label="Edit comment"
+                    title="Edit comment"
+                    onClick={() => {
+                      setEditText(comment.body)
+                      setEditing(true)
+                    }}
+                  >
+                    <Pencil className="size-3.5" />
+                  </Button>
+                ) : null}
+                {comment.canDelete ? (
+                  <Button variant="ghost" size="icon-sm" className="size-6 text-muted-foreground/70 hover:bg-destructive/10 hover:text-destructive" aria-label="Delete comment" title="Delete comment" onClick={() => setConfirmDelete(true)}>
+                    <Trash2 className="size-3.5" />
+                  </Button>
                 ) : null}
               </div>
             ) : null}

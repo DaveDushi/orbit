@@ -1,4 +1,6 @@
+use orbit_domain::{Policy, WorkspaceRole};
 use std::collections::BTreeMap;
+use utoipa::openapi::extensions::ExtensionsBuilder;
 use utoipa::openapi::path::{ParameterBuilder, ParameterIn};
 use utoipa::openapi::schema::{ObjectBuilder, Type};
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityRequirement, SecurityScheme};
@@ -174,6 +176,25 @@ struct ProblemDetails;
 
 impl Modify for ProblemDetails {
     fn modify(&self, openapi: &mut OpenApiDocument) {
+        // The role table, published so generated test fixtures cannot drift from `Policy`.
+        let role_permissions: serde_json::Map<String, serde_json::Value> = [
+            WorkspaceRole::Owner,
+            WorkspaceRole::Admin,
+            WorkspaceRole::Member,
+        ]
+        .into_iter()
+        .map(|role| {
+            (
+                role.as_str().to_owned(),
+                serde_json::json!(Policy::permissions(role)),
+            )
+        })
+        .collect();
+        openapi.extensions = Some(
+            ExtensionsBuilder::new()
+                .add("x-role-permissions", role_permissions)
+                .build(),
+        );
         openapi
             .components
             .as_mut()
@@ -424,11 +445,17 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
         }
         id if attachment_upload_operation(id) => {
             add_code(&mut responses, "400", "invalid_multipart");
+            if id == "upload_comment_attachments" {
+                add_code(&mut responses, "403", "task_action_forbidden");
+            }
             add_code(&mut responses, "404", "attachment_not_found");
             add_code(&mut responses, "413", "upload_too_large");
             add_code(&mut responses, "422", "validation_failed");
         }
         id if attachment_operation(id) => {
+            if id == "delete_comment_attachment" {
+                add_code(&mut responses, "403", "task_action_forbidden");
+            }
             add_code(&mut responses, "404", "attachment_not_found");
         }
         id if view_operation(id) => view_errors(id, &mut responses),
@@ -748,6 +775,9 @@ fn task_errors(operation_id: &str, responses: &mut BTreeMap<&'static str, Vec<&'
     }
     if matches!(operation_id, "update_task" | "bulk_tasks") {
         add_code(responses, "409", "github_content_read_only");
+    }
+    if matches!(operation_id, "update_comment" | "delete_comment") {
+        add_code(responses, "403", "task_action_forbidden");
     }
 }
 

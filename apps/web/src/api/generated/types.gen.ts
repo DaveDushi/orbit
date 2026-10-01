@@ -99,6 +99,10 @@ export type AuthUserResponse = {
     display_name: string;
     email: string;
     id: string;
+    /**
+     * May manage backups, the global audit log and account suspension.
+     */
+    installation_admin: boolean;
 };
 
 export type AuthenticatedUser = {
@@ -188,6 +192,14 @@ export type CommentBody = {
 export type CommentRecord = {
     author_id: string;
     body: string;
+    /**
+     * Whether the caller may delete this comment.
+     */
+    can_delete: boolean;
+    /**
+     * Whether the caller may edit this comment.
+     */
+    can_edit: boolean;
     created_at: string;
     id: string;
     parent_id?: string | null;
@@ -470,11 +482,23 @@ export type LoginResponse = {
 };
 
 export type MemberRecord = {
+    /**
+     * Whether the caller may change this member's role.
+     */
+    can_change_role: boolean;
+    /**
+     * Whether the caller may remove this member (for the caller's own row: leave).
+     */
+    can_remove: boolean;
+    /**
+     * Whether the caller may hand the workspace over to this member.
+     */
+    can_transfer_ownership: boolean;
     created_at: string;
     display_name: string;
     email: string;
     id: string;
-    role: string;
+    role: WorkspaceRole;
     /**
      * Set while the user's account is suspended (they cannot sign in or be notified).
      */
@@ -1095,6 +1119,14 @@ export type PageCommentRecord = {
     items: Array<{
         author_id: string;
         body: string;
+        /**
+         * Whether the caller may delete this comment.
+         */
+        can_delete: boolean;
+        /**
+         * Whether the caller may edit this comment.
+         */
+        can_edit: boolean;
         created_at: string;
         id: string;
         parent_id?: string | null;
@@ -1133,11 +1165,23 @@ export type PageLabelRecord = {
 
 export type PageMemberRecord = {
     items: Array<{
+        /**
+         * Whether the caller may change this member's role.
+         */
+        can_change_role: boolean;
+        /**
+         * Whether the caller may remove this member (for the caller's own row: leave).
+         */
+        can_remove: boolean;
+        /**
+         * Whether the caller may hand the workspace over to this member.
+         */
+        can_transfer_ownership: boolean;
         created_at: string;
         display_name: string;
         email: string;
         id: string;
-        role: string;
+        role: WorkspaceRole;
         /**
          * Set while the user's account is suspended (they cannot sign in or be notified).
          */
@@ -1273,6 +1317,12 @@ export type PageTaskRecord = {
     }>;
     next_cursor?: string | null;
 };
+
+/**
+ * A workspace capability that depends on the member's role. Actions open to
+ * every member (tasks, projects, attachments, docs) are not listed here.
+ */
+export type Permission = 'workspace.update' | 'workspace.delete' | 'workspace.transfer' | 'members.manage' | 'audit.view' | 'api_tokens.manage' | 'integrations.manage' | 'teamspaces.delete' | 'pages.purge' | 'views.manage_shared' | 'comments.moderate';
 
 export type PreviewInvitationBody = {
     token: string;
@@ -1419,6 +1469,10 @@ export type RoleChangeBody = {
 };
 
 export type SavedViewRecord = {
+    /**
+     * Whether the caller may change who sees this view.
+     */
+    can_change_visibility: boolean;
     /**
      * Whether the caller may PATCH/DELETE this view.
      */
@@ -1764,6 +1818,10 @@ export type TransferBody = {
  * A page trashed directly; its descendants trashed with it are restored together.
  */
 export type TrashedPage = {
+    /**
+     * Whether the caller may delete this page forever.
+     */
+    can_purge: boolean;
     deleted_at: string;
     icon: string | null;
     id: string;
@@ -1879,9 +1937,15 @@ export type WorkspaceRecord = {
     deleted_at?: string | null;
     id: string;
     name: string;
-    role: string;
+    /**
+     * What the caller's role may do in this workspace.
+     */
+    permissions: Array<Permission>;
+    role: WorkspaceRole;
     version: number;
 };
+
+export type WorkspaceRole = 'owner' | 'admin' | 'member';
 
 export type ListGlobalAuditData = {
     body?: never;
@@ -8931,7 +8995,7 @@ export type DeleteCommentErrors = {
      */
     401: TaskProblem;
     /**
-     * origin_forbidden
+     * origin_forbidden, task_action_forbidden
      */
     403: TaskProblem;
     /**
@@ -8991,7 +9055,7 @@ export type UpdateCommentErrors = {
      */
     401: TaskProblem;
     /**
-     * origin_forbidden
+     * origin_forbidden, task_action_forbidden
      */
     403: TaskProblem;
     /**
@@ -9114,7 +9178,7 @@ export type UploadCommentAttachmentsErrors = {
      */
     401: AttachmentProblem;
     /**
-     * origin_forbidden
+     * origin_forbidden, task_action_forbidden
      */
     403: AttachmentProblem;
     /**
@@ -9179,7 +9243,7 @@ export type DeleteCommentAttachmentErrors = {
      */
     401: AttachmentProblem;
     /**
-     * origin_forbidden
+     * origin_forbidden, task_action_forbidden
      */
     403: AttachmentProblem;
     /**

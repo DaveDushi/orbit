@@ -8,7 +8,7 @@ use axum::extract::{
     DefaultBodyLimit, Extension, FromRequest, FromRequestParts, Multipart, Path, Query, Request,
     State,
 };
-use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE, COOKIE};
+use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -22,7 +22,7 @@ use tokio_util::io::{ReaderStream, StreamReader};
 use tokio_util::sync::CancellationToken;
 use utoipa::{IntoParams, ToSchema};
 
-use crate::auth_routes::CookieMode;
+use crate::auth_routes::{CookieMode, request_session};
 use crate::repositories::attachments::{
     AttachmentList, AttachmentRepository, AttachmentRepositoryError, CreatedAttachment,
 };
@@ -359,16 +359,11 @@ async fn upload_comment_attachments(
     )
     .await?;
     let comment_id = parse_id(&comment, &instance, request_id.as_ref())?;
-    require_comment(
-        &state,
-        &session,
-        workspace_id,
-        task_id,
-        comment_id,
-        &instance,
-        request_id.as_ref(),
-    )
-    .await?;
+    state
+        .attachments
+        .require_comment_editor(&session, workspace_id, task_id, comment_id)
+        .await
+        .map_err(|error| AttachmentApiError::repository(error, &instance, request_id.as_ref()))?;
     let records = upload_fields(
         &state,
         request,
@@ -823,13 +818,9 @@ async fn authorize_task(
     request_id: Option<&Extension<RequestId>>,
 ) -> Result<(Id, Id, AuthenticatedSession), AttachmentApiError> {
     // This function intentionally runs before Multipart is constructed or polled.
-    let token = cookie_value(headers, state.cookie_mode.session_cookie_name())
-        .ok_or_else(|| AttachmentApiError::unauthorized(instance, request_id))?;
-    let session = state
-        .identity
-        .authenticate_session(&token, TimestampMillis::now())
+    let session = request_session(&state.identity, state.cookie_mode, headers)
         .await
-        .map_err(|_| AttachmentApiError::unauthorized(instance, request_id))?;
+        .ok_or_else(|| AttachmentApiError::unauthorized(instance, request_id))?;
     let workspace_id = parse_id(workspace, instance, request_id)?;
     let task_id = parse_id(task, instance, request_id)?;
     state
@@ -854,16 +845,6 @@ async fn require_comment(
         .require_comment(session, workspace_id, task_id, comment_id)
         .await
         .map_err(|error| AttachmentApiError::repository(error, instance, request_id))
-}
-
-fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
-    headers
-        .get(COOKIE)?
-        .to_str()
-        .ok()?
-        .split(';')
-        .map(str::trim)
-        .find_map(|pair| pair.strip_prefix(&format!("{name}=")).map(str::to_owned))
 }
 
 fn parse_id(
@@ -1042,6 +1023,14 @@ impl AttachmentApiError {
     ) -> Self {
         match error {
             AttachmentRepositoryError::NotFound => Self::not_found(instance, request_id),
+            AttachmentRepositoryError::Forbidden => Self::new(
+                StatusCode::FORBIDDEN,
+                "task_action_forbidden",
+                "Action forbidden",
+                "You do not have permission to change this resource.",
+                instance,
+                request_id,
+            ),
             AttachmentRepositoryError::InvalidCursor => Self::invalid_cursor(instance, request_id),
             AttachmentRepositoryError::Upload(error) => Self::upload(error, instance, request_id),
             AttachmentRepositoryError::Database(_) | AttachmentRepositoryError::InvalidRecord => {

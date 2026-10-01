@@ -14,9 +14,9 @@ import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useCurrentUser } from '@/features/auth/api'
 import { useChangeMemberRole, useCreateInvitation, useInvitations, useMembers, useRemoveMember, useRevokeInvitation, useTransferOwnership } from '@/features/workspaces/api'
+import { useCan } from '@/features/workspaces/permissions'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import type { User } from '@/features/workspaces/models'
-import { INVITABLE_ROLES, canManageMember, canTransferOwnership } from '@/features/settings/memberPermissions'
 import { SettingsCard } from '@/components/common/SettingsCard'
 import { FieldGrid, RequiredMark } from '@/features/settings/components/SettingsParts'
 import { useSlowPending } from '@/lib/useDebouncedValue'
@@ -26,6 +26,8 @@ type Sort = 'name_asc' | 'name_desc' | 'email_asc' | 'role'
 
 const ROLES: Role[] = ['Owner', 'Admin', 'Member']
 const PAGE_SIZES = [10, 25, 50, 100]
+// Owner is never a choice: that role only moves through an ownership transfer.
+const INVITABLE_ROLES = ['Admin', 'Member'] as const
 // `items` lets Select.Value render the option label instead of the raw value.
 const ROLE_FILTER_OPTIONS = [{ value: 'all', label: 'All roles' }, ...ROLES.map((role) => ({ value: role, label: role }))]
 const SORT_OPTIONS: { value: Sort; label: string }[] = [
@@ -44,7 +46,7 @@ function initial(user: User) {
 
 export function MembersPage() {
   const { workspace } = useWorkspace()
-  const canManage = workspace.role === 'owner' || workspace.role === 'admin'
+  const canManage = useCan('members.manage')
   const currentUser = useCurrentUser()
   const membersQuery = useMembers(workspace.id)
   const createInvitation = useCreateInvitation(workspace.id)
@@ -214,7 +216,8 @@ export function MembersPage() {
                     <Badge variant="secondary">{user.role}</Badge>
                   </div>
                   <div className="flex justify-end">
-                    {canManage && canManageMember(workspace.role, currentUser.data?.id, user) ? (
+                    {/* Your own row has no menu; the abilities themselves come from the server. */}
+                    {currentUser.data && user.id !== currentUser.data.id && (user.can.changeRole || user.can.remove) ? (
                       <DropdownMenu>
                         <DropdownMenuTrigger
                           render={<Button variant="outline" size="sm" className="text-[11px]" />}
@@ -222,7 +225,7 @@ export function MembersPage() {
                           Manage
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-auto min-w-52">
-                          {INVITABLE_ROLES.filter((role) => role !== user.role).map((role) => (
+                          {(user.can.changeRole ? INVITABLE_ROLES : []).filter((role) => role !== user.role).map((role) => (
                             <DropdownMenuItem
                               key={role}
                               onClick={() => changeRole.mutate({ membershipId: user.membershipId, version: user.version, role: role.toLowerCase() as 'admin' | 'member' })}
@@ -230,22 +233,26 @@ export function MembersPage() {
                               Make {role.toLowerCase()}
                             </DropdownMenuItem>
                           ))}
-                          {canTransferOwnership(workspace.role, currentUser.data?.id, user) ? (
+                          {user.can.transferOwnership ? (
                             <DropdownMenuItem onClick={async () => {
                               if (await confirmAction({ title: `Transfer ownership of ${workspace.name} to ${user.name}?`, confirmLabel: 'Transfer ownership', danger: true })) {
                                 transferOwnership.mutate({ membershipId: user.membershipId, membershipVersion: user.version, workspaceVersion: workspace.version })
                               }
                             }}>Transfer ownership</DropdownMenuItem>
                           ) : null}
-                          <DropdownMenuSeparator />
-                          {/* data-danger (not variant="destructive"): the menu popup forces destructive items to the accent colour */}
-                          <DropdownMenuItem
-                            className="text-destructive focus:bg-destructive/10 focus:text-destructive focus:**:text-destructive"
-                            data-danger="true"
-                            onClick={() => removeMember.mutate({ membershipId: user.membershipId, version: user.version })}
-                          >
-                            Remove member
-                          </DropdownMenuItem>
+                          {user.can.remove ? (
+                            <>
+                              <DropdownMenuSeparator />
+                              {/* data-danger (not variant="destructive"): the menu popup forces destructive items to the accent colour */}
+                              <DropdownMenuItem
+                                className="text-destructive focus:bg-destructive/10 focus:text-destructive focus:**:text-destructive"
+                                data-danger="true"
+                                onClick={() => removeMember.mutate({ membershipId: user.membershipId, version: user.version })}
+                              >
+                                Remove member
+                              </DropdownMenuItem>
+                            </>
+                          ) : null}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     ) : null}

@@ -294,14 +294,6 @@ export function useRestorePage(workspaceId: string) {
   })
 }
 
-/**
- * Whether the caller may delete a trashed page forever: their own private pages (the only private pages they
- * can see), and teamspace pages for workspace owners and admins. Mirrors the server's rule.
- */
-export function canPurgePage(page: Pick<TrashedPage, 'private'>, role: string | null | undefined): boolean {
-  return page.private || role === 'owner' || role === 'admin'
-}
-
 /** Deletes a trashed page (and the sub-pages trashed with it) forever. */
 export function usePurgePage(workspaceId: string) {
   const queryClient = useQueryClient()
