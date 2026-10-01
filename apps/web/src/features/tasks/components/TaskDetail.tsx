@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from
 import { cn } from 'cn'
 import { useQueryClient } from '@tanstack/react-query'
 import { confirmAction } from '@/components/common/confirmAction'
-import { ArrowLeft, Calendar, Hierarchy2, Link2, Paperclip2 as Paperclip, TaskSquare as SquareCheck, Xmark as X } from 'reicon-react'
+import { ArrowLeft, Calendar, Hierarchy2, Link2, Paperclip2 as Paperclip, TaskSquare as SquareCheck, User as UserIcon, Xmark as X } from 'reicon-react'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -22,7 +22,7 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { Pane, PaneHeader } from '@/components/common/Pane'
 import { PriorityIcon } from './PriorityIcon'
 import { TaskStatusIcon } from './TaskStatusIcon'
-import { PRIORITY_LABEL, PRIORITY_ORDER, projectStatuses } from '@/features/tasks/taskMeta'
+import { dueDateLabel, PRIORITY_LABEL, PRIORITY_ORDER, projectStatuses } from '@/features/tasks/taskMeta'
 import { refIdentifier, type Project, type Task, type TaskViewState } from '@/features/tasks/api/models'
 import { cachedDescendantIds, type PageTaskRecord } from '@/features/tasks/api/optimistic'
 import { useProjects } from '@/features/tasks/api/projects'
@@ -44,21 +44,6 @@ import { ActivityFeed } from './ActivityFeed'
 import { TaskCommentComposer } from './TaskCommentComposer'
 import { LabelPill, TaskLabels } from './TaskLabels'
 import { TaskTextFields } from './TaskTextFields'
-
-function dueDateLabel(value: string | null, startValue?: string | null) {
-  if (!value) return 'Set due date'
-  if (startValue) {
-    const format = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
-    return `${format.format(new Date(startValue))} – ${format.format(new Date(value))}`
-  }
-  return new Date(value).toLocaleString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
 
 interface TaskDetailProps {
   task: Task | undefined
@@ -168,8 +153,10 @@ export function TaskDetail({ task, project, state, onBack, onOpenTask }: TaskDet
           />
         </div>
       ) : (
-        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,760px)_240px] content-start items-start gap-x-12 overflow-y-auto px-10 pt-8 pb-12 max-[899px]:grid-cols-1 max-[899px]:gap-[14px] max-[899px]:px-3.5 max-[899px]:pt-4 max-[899px]:pb-7">
-          <div className="min-w-0 max-w-[760px]">
+        // the content sits centered in the space left of the properties column, which runs down the right edge;
+        // the first row is as tall as its content, so a short task leaves no gap above the activity
+        <div className="grid min-h-0 flex-1 overflow-y-auto min-[900px]:grid-cols-[minmax(0,1fr)_280px] min-[900px]:grid-rows-[auto_1fr] max-[899px]:grid-cols-1 max-[899px]:content-start max-[899px]:gap-[14px] max-[899px]:px-3.5 max-[899px]:pt-4 max-[899px]:pb-7">
+          <div className="min-w-0 min-[900px]:mx-auto min-[900px]:w-full min-[900px]:max-w-[840px] min-[900px]:px-10 min-[900px]:pt-8">
             {task.duplicateOf ? (
               <DuplicateBanner
                 duplicateOf={task.duplicateOf}
@@ -254,7 +241,7 @@ export function TaskDetail({ task, project, state, onBack, onOpenTask }: TaskDet
 
           </div>
 
-          <aside className="col-start-2 w-60 shrink-0 pt-1.5 [grid-row:1/span_2] max-[899px]:col-start-1 max-[899px]:row-auto max-[899px]:grid max-[899px]:w-full max-[899px]:grid-cols-2 max-[899px]:gap-x-3 max-[899px]:gap-y-3.5 max-[899px]:border-y max-[899px]:py-3.5">
+          <aside className="min-[900px]:col-start-2 min-[900px]:[grid-row:1/span_2] min-[900px]:border-l min-[900px]:px-5 min-[900px]:pt-8 min-[900px]:pb-6 max-[899px]:grid max-[899px]:w-full max-[899px]:grid-cols-2 max-[899px]:gap-x-3 max-[899px]:gap-y-3.5 max-[899px]:border-y max-[899px]:py-3.5">
             <PropertyGroup title="Properties" className="max-[899px]:col-span-full max-[899px]:flex-row max-[899px]:flex-wrap max-[899px]:items-center max-[899px]:gap-1 max-[899px]:*:data-[slot=property-heading]:w-full">
               <DropdownMenu>
                 <DropdownMenuTrigger
@@ -316,7 +303,7 @@ export function TaskDetail({ task, project, state, onBack, onOpenTask }: TaskDet
                         </>
                       ) : (
                         <>
-                          <UserAvatar user={undefined} size={16} name="—" />
+                          <UserIcon aria-hidden="true" className="text-muted-foreground" />
                           Assign
                         </>
                       )}
@@ -440,7 +427,7 @@ export function TaskDetail({ task, project, state, onBack, onOpenTask }: TaskDet
             </PropertyGroup>
           </aside>
 
-          <div className="col-start-1 min-w-0 max-w-[760px] max-[899px]:w-full max-[899px]:max-w-none">
+          <div className="col-start-1 min-w-0 min-[900px]:mx-auto min-[900px]:w-full min-[900px]:max-w-[840px] min-[900px]:px-10 min-[900px]:pb-12">
             <ActivityFeed task={task} state={state} onOpenTask={onOpenTask} />
 
             {/* the chat composer: markdown, @mentions, emoji, attachments (paste / drop / pick) */}
