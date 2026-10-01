@@ -1,6 +1,8 @@
+import { NewTaskProvider } from '@/features/tasks/newTask'
 import { afterEach, expect, test } from 'bun:test'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, cleanup, fireEvent, render, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, waitFor, within } from '@testing-library/react'
+import { render } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { queryKeys } from '@/api/queryKeys'
@@ -83,6 +85,7 @@ function renderAt(url: string, goTo?: string | string[]) {
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[url]}>
         <WorkspaceProvider>
+          <NewTaskProvider>
           <Routes>
             <Route path="tasks" element={<TasksPage />} />
             <Route path="tasks/:taskId" element={<TasksPage />} />
@@ -92,6 +95,7 @@ function renderAt(url: string, goTo?: string | string[]) {
           </Routes>
           <Location />
           {[goTo ?? []].flat().map((to) => <GoTo key={to} to={to} />)}
+          </NewTaskProvider>
         </WorkspaceProvider>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -217,6 +221,31 @@ test('closing a task returns to the page it was opened from', async () => {
   await project.findByRole('button', { name: 'Close task' })
   fireEvent.keyDown(document, { key: 'Escape' })
   await waitFor(() => expect(project.getByTestId('location').textContent).toBe('/tasks?workspace=workspace-1&project=project-1'))
+})
+
+test('Escape does not close the task while typing or while a menu is open', async () => {
+  serve()
+  const page = renderAt('/tasks?workspace=workspace-1')
+  fireEvent.click(await page.findByText('Ship release'))
+  await page.findByRole('button', { name: 'Close task' })
+  const opened = page.getByTestId('location').textContent
+
+  const field = document.createElement('input')
+  document.body.append(field)
+  field.focus()
+  fireEvent.keyDown(field, { key: 'Escape', code: 'Escape' })
+  field.remove()
+
+  const menu = document.createElement('div')
+  menu.setAttribute('role', 'menu')
+  document.body.append(menu)
+  fireEvent.keyDown(document.body, { key: 'Escape', code: 'Escape' })
+  await settle(50)
+  expect(page.getByTestId('location').textContent).toBe(opened)
+
+  menu.remove()
+  fireEvent.keyDown(document.body, { key: 'Escape', code: 'Escape' })
+  await waitFor(() => expect(page.getByTestId('location').textContent).toBe('/tasks?workspace=workspace-1'))
 })
 
 test('a saved view opens and closes tasks under its own path', async () => {
@@ -493,9 +522,9 @@ test('pressing Cmd+S twice during a slow save sends one save and no conflict', a
   expect(await page.findByText('Ship release')).toBeTruthy()
   await toggleEmptyGroups(page)
 
-  fireEvent.keyDown(document, { key: 's', metaKey: true })
+  fireEvent.keyDown(document, { key: 's', code: 'KeyS', ctrlKey: true })
   await waitFor(() => expect(releases).toHaveLength(1))
-  fireEvent.keyDown(document, { key: 's', metaKey: true })
+  fireEvent.keyDown(document, { key: 's', code: 'KeyS', ctrlKey: true })
   await settle(50)
   releases[0]?.()
 
@@ -510,7 +539,7 @@ test('Cmd+S on a view the user cannot edit opens Save as new view without animat
   expect(await page.findByText('Ship release')).toBeTruthy()
   await toggleEmptyGroups(page)
 
-  fireEvent.keyDown(document, { key: 's', ctrlKey: true })
+  fireEvent.keyDown(document, { key: 's', code: 'KeyS', ctrlKey: true })
 
   expect(await page.findByRole('heading', { name: 'Save as new view' })).toBeTruthy()
   expect(document.querySelector('[data-slot="dialog-content"]')?.hasAttribute('data-instant')).toBe(true)

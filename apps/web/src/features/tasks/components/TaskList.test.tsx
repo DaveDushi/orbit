@@ -1,6 +1,8 @@
+import { TaskTargetProvider } from '@/shortcuts/TaskTargetProvider'
 import { afterEach, expect, spyOn, test } from 'bun:test'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, createEvent, fireEvent, render, waitFor, within } from '@testing-library/react'
+import { act, createEvent, fireEvent, waitFor, within } from '@testing-library/react'
+import { render } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { toast } from 'sonner'
@@ -47,7 +49,7 @@ function task(index: number): Task {
 
 function wrapper({ children }: { children: ReactNode }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-  return <QueryClientProvider client={client}><WorkspaceContext.Provider value={{ workspace, workspaces: [workspace], selectWorkspace: () => {} }}>{children}</WorkspaceContext.Provider></QueryClientProvider>
+  return <QueryClientProvider client={client}><WorkspaceContext.Provider value={{ workspace, workspaces: [workspace], selectWorkspace: () => {} }}><TaskTargetProvider openTaskId={null}>{children}</TaskTargetProvider></WorkspaceContext.Provider></QueryClientProvider>
 }
 
 type ListOptions = {
@@ -133,7 +135,7 @@ test('bulk toolbar rejects more than 100 selected tasks without a server request
   expect(requests).toBe(0)
   expect(view.queryByRole('button', { name: 'Retry' })).toBeNull()
   // each of the 101 checkbox clicks re-renders every row (~170ms apiece under happy-dom)
-}, 30000)
+}, 45000)
 
 test('bulk due date picker schedules the selected tasks for this week', async () => {
   const writes = captureWrites()

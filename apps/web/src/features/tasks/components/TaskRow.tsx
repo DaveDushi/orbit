@@ -1,3 +1,4 @@
+import { taskRowTarget } from '@/shortcuts/taskTarget'
 import { cn } from 'cn'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -84,6 +85,7 @@ export function TaskRow({ task, statuses, labels, users, assignees, project, pro
         'data-[nest=inside]:bg-primary/10 data-[nest=inside]:ring-1 data-[nest=inside]:ring-primary/40 data-[nest=inside]:ring-inset',
       )}
       data-task-row
+      {...taskRowTarget(task.id)}
       data-depth={tree?.depth ?? 0}
       data-selected={selected || undefined}
       data-dragging={dragging || undefined}

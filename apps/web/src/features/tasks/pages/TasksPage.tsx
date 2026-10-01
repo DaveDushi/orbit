@@ -1,3 +1,7 @@
+import { useShortcutTitle } from '@/shortcuts/shortcutText'
+import { TaskCommands } from '@/features/tasks/TaskCommands'
+import { useListNavigation, useTaskTarget, visibleTaskIds } from '@/shortcuts/taskTarget'
+import { TaskTargetProvider } from '@/shortcuts/TaskTargetProvider'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
@@ -38,7 +42,6 @@ import { TaskDetail } from '@/features/tasks/components/TaskDetail'
 import { TaskList } from '@/features/tasks/components/TaskList'
 import { TaskSearchBox } from '@/features/tasks/components/TaskSearchBox'
 import { NewProjectModal } from '@/features/tasks/components/NewProjectModal'
-import { NewTaskDialog } from '@/features/tasks/components/NewTaskDialog'
 import { ColorDot } from '@/components/common/ColorDot'
 import { taskUnavailableDescription } from '@/features/tasks/taskAvailability'
 import { quickSearchTasks, resolveStatusId } from '@/features/tasks/tasksLib'
@@ -58,7 +61,8 @@ import { SaveViewDialog, type SaveViewMode } from '@/features/views/components/S
 import { ViewChanges } from '@/features/views/components/ViewChanges'
 import { ViewHeader, ViewNotFound, ViewStateBanner } from '@/features/views/components/ViewHeader'
 import { PRESET_LABEL, type FilterOptions } from '@/features/views/filterFields'
-import { shouldIgnoreShortcut } from '@/features/views/shortcuts'
+import { useCommand } from '@/shortcuts/useCommand'
+import { useCreateTaskDefaults, useOpenNewTask } from '@/features/tasks/newTask'
 import { rebaseViewSessionEdit, useViewState, type ViewSource } from '@/features/views/useViewState'
 import { validateFilterOnServer } from '@/features/views/validateFilter'
 import { countConditions, DEFAULT_DISPLAY, emptyFilter, isTaskPreset, normalizeViewState, pageKeyFor, type TaskPreset } from '@/features/views/viewState'
@@ -79,7 +83,12 @@ const PRESET_TITLE: Record<TaskPreset, string> = {
 
 export function TasksPage() {
   const { workspace } = useWorkspace()
-  return <WorkspaceTasksPage key={workspace.id} />
+  const { taskId } = useParams()
+  return (
+    <TaskTargetProvider key={workspace.id} openTaskId={taskId ?? null}>
+      <WorkspaceTasksPage />
+    </TaskTargetProvider>
+  )
 }
 
 function WorkspaceTasksPage() {
@@ -220,8 +229,12 @@ function WorkspaceTasksPage() {
   }
   // keep the current view on screen until the task can render complete (at most OPEN_WAIT_MS)
   const opening = useRef<string | null>(null)
+  const { order } = useTaskTarget()
   const openTask = (id: string) => {
     opening.current = id
+    // the rows as shown now: next and previous in task detail follow this order
+    const shown = visibleTaskIds()
+    if (shown.length > 0) order.current = shown
     const wait = new Promise((resolve) => setTimeout(resolve, OPEN_WAIT_MS))
     void Promise.race([prefetchTaskDetail(queryClient, workspace.id, id), wait]).then(() => {
       if (opening.current === id) navigate(`${basePath}/${id}${detailSearchSuffix}`, { state: originState })
@@ -234,17 +247,18 @@ function WorkspaceTasksPage() {
     navigate(`${basePath}/${taskId}${detailSearchSuffix}`, { replace: true, state: { originProject: viewId ? null : searchParams.get('project') } satisfies TaskOrigin })
   }, [basePath, detailSearchSuffix, navigate, searchParams, taskId, viewId])
 
-  useEffect(() => {
-    if (!taskId) return
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') navigate(redirect ?? `${basePath}${closeSearchSuffix}`)
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [basePath, closeSearchSuffix, navigate, redirect, taskId])
+  // Esc closes the task, unless it belongs to a field, an open menu or a dialog
+  useCommand('detail.close', taskId ? closeTask : null)
+  const stepTask = (step: 1 | -1) => {
+    const ids = order.current.length > 0 ? order.current : visibleTasks.map((task) => task.id)
+    const next = taskId ? ids[ids.indexOf(taskId) + step] : undefined
+    if (taskId && ids.includes(taskId) && next) openTask(next)
+  }
+  useCommand('detail.next', taskId ? () => stepTask(1) : null)
+  useCommand('detail.prev', taskId ? () => stepTask(-1) : null)
+  // list keys work in every layout; rows can be selected in the list only (it has the bulk toolbar)
+  useListNavigation(taskId ? null : openTask, { selectable: layout === 'list' })
 
-  // The new-task dialog: `values` = the group (and sub-group) whose + was pressed; `instant` = opened with the C key.
-  const [newTask, setNewTask] = useState<{ values: GroupValues; instant: boolean } | null>(null)
   /** Starting properties of a new task; each group value wins over the filter default for its field. */
   const newTaskDefaults = (values: GroupValues) => {
     const fromGroup = groupCreateFields(values)
@@ -262,16 +276,9 @@ function WorkspaceTasksPage() {
     return { ...fromFilter, ...fromGroup.body, project_id: projectId, status_id: statusId }
   }
 
-  useEffect(() => {
-    if (taskId) return
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'c' || shouldIgnoreShortcut(event)) return
-      event.preventDefault()
-      setNewTask({ values: [], instant: true })
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [taskId])
+  useCreateTaskDefaults({ defaults: newTaskDefaults, onOpenTask: (task) => openTask(task.id) })
+  const openNewTask = useOpenNewTask()
+  const newTaskTitle = useShortcutTitle('task.create', 'New task')
 
   const activeProject = projects.find((project) => project.id === projectFilter)
   // the user's own conditions (a preset page's chip is not one): only then can they be cleared or saved as a view.
@@ -314,6 +321,7 @@ function WorkspaceTasksPage() {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background" data-view={taskId ? 'detail' : 'list'}>
+      <TaskCommands tasks={taskId ? (activeTask ? [activeTask] : []) : visibleTasks} users={users} labels={labelsQuery.data ?? []} statuses={statusesQuery.data} groupContext={groupContext} currentUserId={currentUser.data?.id ?? ''} />
       {taskId ? (
         <TaskDetail key={taskId} task={activeTask} project={projects.find((project) => project.id === activeTask?.projectId)} state={state} onBack={closeTask} onOpenTask={openTask} />
       ) : (
@@ -367,7 +375,7 @@ function WorkspaceTasksPage() {
               defaultDisplay={viewState.view?.state ? normalizeViewState(viewState.view.state).display : DEFAULT_DISPLAY}
               onChange={viewState.setDisplay}
             />
-            <Button aria-label="New task" title="New task (C)" className="max-[899px]:w-8 max-[899px]:px-0" onClick={() => setNewTask({ values: [], instant: false })}><Plus className="size-4" /><span className="max-[899px]:hidden">New task</span></Button>
+            <Button aria-label="New task" title={newTaskTitle} className="max-[899px]:w-8 max-[899px]:px-0" onClick={() => openNewTask()}><Plus className="size-4" /><span className="max-[899px]:hidden">New task</span></Button>
           </PaneHeader>
           {viewState.stateError ? <ViewStateBanner /> : null}
           <FilterBar
@@ -420,7 +428,6 @@ function WorkspaceTasksPage() {
               if (saveDialog?.mode !== 'edit') navigate(`/views/${saved.id}`)
             }}
           />
-          {newTask ? <NewTaskDialog defaults={newTaskDefaults(newTask.values)} instant={newTask.instant} onClose={() => setNewTask(null)} onOpenTask={(task) => openTask(task.id)} /> : null}
           {showNewProject ? <NewProjectModal onClose={() => setShowNewProject(false)} onCreated={(project) => { setProjectFilter(project.id); setShowNewProject(false) }} /> : null}
           <div className={cn('min-h-0 flex-1', layout === 'timeline' ? 'overflow-hidden' : 'overflow-y-auto')}>
             {tasksQuery.error || tasksQuery.isLoading ? (
@@ -433,7 +440,7 @@ function WorkspaceTasksPage() {
               ? <TaskTimeline ref={timelineRef} key={workspace.id} tasks={visibleTasks} projects={projects} statuses={statusesQuery.data} users={users} groupBy={display.group_by} properties={display.properties} groupContext={groupContext} pxPerDay={pxPerDay} onZoomChange={setPxPerDay} onOpen={openTask} />
               : layout === 'board'
                 ? <TaskBoard key={`${workspace.id}:${collapseScope}`} tasks={visibleTasks} users={users} labels={labelsQuery.data ?? []} statuses={statusesQuery.data} projects={projects} display={display} groupContext={groupContext} collapseScope={collapseScope} activeTaskId={null} onOpen={openTask} />
-                : <TaskList key={`${workspace.id}:${collapseScope}`} tasks={visibleTasks} users={users} labels={labelsQuery.data ?? []} statuses={statusesQuery.data} projects={projects} display={display} groupContext={groupContext} collapseScope={collapseScope} onOpen={openTask} onAdd={(values) => setNewTask({ values, instant: false })} />}
+                : <TaskList key={`${workspace.id}:${collapseScope}`} tasks={visibleTasks} users={users} labels={labelsQuery.data ?? []} statuses={statusesQuery.data} projects={projects} display={display} groupContext={groupContext} collapseScope={collapseScope} onOpen={openTask} onAdd={(values) => openNewTask({ values })} />}
           </div>
         </Pane>
       )}

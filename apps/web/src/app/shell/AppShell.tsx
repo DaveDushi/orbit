@@ -1,3 +1,10 @@
+import { ShortcutProvider } from '@/shortcuts/ShortcutProvider'
+import { useShortcutBindings } from '@/shortcuts/useShortcutBindings'
+import { SequenceHint } from '@/shortcuts/SequenceHint'
+import { ShortcutHelpDialog } from '@/shortcuts/ShortcutHelpDialog'
+import { NavigationCommands, useGlobalCommands } from './globalCommands'
+import { NewTaskProvider } from '@/features/tasks/newTask'
+import { useCommand } from '@/shortcuts/useCommand'
 import { useEffect, useLayoutEffect, useState } from 'react'
 import { useWorkspaceEvents } from '@/features/realtime/useWorkspaceEvents'
 import { Outlet } from 'react-router'
@@ -13,7 +20,17 @@ import { Topbar } from './Topbar'
 import { UserMenu } from './UserMenu'
 import { MobileDock } from './MobileDock'
 
+/** The signed-in app. Shortcuts exist only here, with the user's own keys; the sign-in pages have none. */
 export function AppShell() {
+  const { overrides } = useShortcutBindings()
+  return (
+    <ShortcutProvider overrides={overrides}>
+      <Shell />
+    </ShortcutProvider>
+  )
+}
+
+function Shell() {
   const { workspace } = useWorkspace()
   const live = useWorkspaceEvents(workspace.id)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -43,20 +60,16 @@ export function AppShell() {
     }
   }, [])
 
+  useCommand('palette.open', () => setPaletteOpen((open) => !open))
+  const [helpOpen, setHelpOpen] = useState(false)
+  useGlobalCommands({ openPalette: () => setPaletteOpen(true), openHelp: () => setHelpOpen(true) })
+
   useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault()
-        setPaletteOpen((o) => !o)
-      }
-    }
     const onOpen = () => setPaletteOpen(true)
     const onOpenSidebar = () => setDrawerOpen(true)
-    document.addEventListener('keydown', onKeyDown)
     window.addEventListener('open-command-palette', onOpen)
     window.addEventListener('open-sidebar', onOpenSidebar)
     return () => {
-      document.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('open-command-palette', onOpen)
       window.removeEventListener('open-sidebar', onOpenSidebar)
     }
@@ -67,6 +80,7 @@ export function AppShell() {
   }, [sidebarCollapsed])
 
   return (
+    <NewTaskProvider>
     <div className="flex h-[var(--app-height,100svh)] w-full overflow-hidden bg-background pt-[env(safe-area-inset-top,0px)] pl-[env(safe-area-inset-left,0px)] pr-[env(safe-area-inset-right,0px)]">
       {!live ? (
         <div
@@ -137,6 +151,10 @@ export function AppShell() {
       </SideSheet>
 
       {paletteOpen ? <CommandPalette onClose={() => setPaletteOpen(false)} /> : null}
+      {helpOpen ? <ShortcutHelpDialog onClose={() => setHelpOpen(false)} /> : null}
+      <NavigationCommands />
+      <SequenceHint />
     </div>
+    </NewTaskProvider>
   )
 }

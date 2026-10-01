@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from 'react'
+import { Shortcut } from '@/shortcuts/Shortcut'
+import type { ReactNode } from 'react'
 import { useRender } from '@base-ui/react/use-render'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router'
 import { Lock, Add as Plus, Menu, Moon, SearchNormal as Search, Setting2 as Settings, Sun } from 'reicon-react'
@@ -11,9 +12,9 @@ import { useAllStatuses, useProjects } from '@/features/tasks/api/projects'
 import { taskFromRecord, type Project, type Task, type TaskStatusDef } from '@/features/tasks/api/models'
 import { useTasks } from '@/features/tasks/api/tasks'
 import { threadTitleOf } from '@/lib/messagePreview'
-import { NewTaskDialog } from '@/features/tasks/components/NewTaskDialog'
+import { useOpenNewTask } from '@/features/tasks/newTask'
 import { TaskStatusIcon } from '@/features/tasks/components/TaskStatusIcon'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuShortcut, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import type { AppState } from '@/mock/types'
 import type { PageSummary, Teamspace } from '@/api/generated/types.gen'
 import { useCreatePage, usePageTree } from '@/features/docs/api/pages'
@@ -148,7 +149,7 @@ export function Topbar({ onOpenDrawer, onOpenPalette }: { onOpenDrawer: () => vo
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const { theme, toggleTheme } = useTheme()
-  const [newTask, setNewTask] = useState(false)
+  const openNewTask = useOpenNewTask()
 
   const taskNavigation = {
     projects: projects.data ?? [],
@@ -209,8 +210,9 @@ export function Topbar({ onOpenDrawer, onOpenPalette }: { onOpenDrawer: () => vo
               New
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-40">
-              <DropdownMenuItem onClick={() => setNewTask(true)}>
+              <DropdownMenuItem onClick={() => openNewTask()}>
                 Task
+                <DropdownMenuShortcut className="tracking-normal"><Shortcut id="task.create" /></DropdownMenuShortcut>
               </DropdownMenuItem>
               {!docsHidden ? (
                 <DropdownMenuItem
@@ -225,13 +227,6 @@ export function Topbar({ onOpenDrawer, onOpenPalette }: { onOpenDrawer: () => vo
               <DropdownMenuItem disabled>Chat message</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-        ) : null}
-        {newTask ? (
-          <NewTaskDialog
-            defaults={{ project_id: routeRoot === 'tasks' ? searchParams.get('project') ?? undefined : undefined }}
-            onClose={() => setNewTask(false)}
-            onOpenTask={(task) => navigate(`/tasks/${task.id}`)}
-          />
         ) : null}
       </div>
     </header>

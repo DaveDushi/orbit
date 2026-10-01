@@ -1,3 +1,5 @@
+import { useTaskTarget } from '@/shortcuts/taskTarget'
+import { useCommand } from '@/shortcuts/useCommand'
 import { useEffect, useMemo, useState } from 'react'
 import { Calendar, Copy, Danger, Flag, Hierarchy2, LinkBroken, Loader, Add as Plus, RecordCircle, TaskSquare as SquareCheck, Tag, UserAdd, Xmark as X } from 'reicon-react'
 import { cn } from 'cn'
@@ -17,10 +19,10 @@ import { PriorityIcon } from './PriorityIcon'
 import { PRIORITY_LABEL, PRIORITY_ORDER } from '@/features/tasks/taskMeta'
 import type { Project, Task, TaskStatusDef } from '@/features/tasks/api/models'
 import type { User } from '@/features/workspaces/models'
-import type { LabelRecord } from '@/api/generated/types.gen'
+import type { BulkItem, LabelRecord } from '@/api/generated/types.gen'
+import { assigneeToggleUpdates, dueUpdates, labelToggleUpdates, priorityUpdates, statusUpdates } from '@/features/tasks/bulkUpdates'
 import { BulkTaskLimitError, MAX_BULK_TASK_UPDATES, useBulkTasks } from '@/features/tasks/api/tasks'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
-import { resolveStatusId } from '@/features/tasks/tasksLib'
 import { DisclosureChevron, GroupIcon } from '@/features/views/components/GroupIcon'
 import { groupTasks, type GroupContext, type TaskGroup } from '@/features/views/grouping'
 import { canDrag, listSections, ownGroupValues, valuesOf, zoneIdOf, type GroupValues } from '@/features/views/layoutGroups'
@@ -58,7 +60,10 @@ export interface TaskListProps {
 export function TaskList({ tasks, users, labels, statuses, projects, display, groupContext, collapseScope, onOpen, onAdd }: TaskListProps) {
   const { workspace } = useWorkspace()
   const [collapsed, toggle] = useCollapsedGroups(`orbit:task_list_collapsed:${workspace.id}:${collapseScope}`)
-  const [selected, setSelected] = useState<string[]>([])
+  // shared with the keyboard: X selects the focused row and task commands act on the selection
+  const { selectedIds: selected, setSelected } = useTaskTarget()
+  // a list for another page starts without a selection
+  useEffect(() => () => setSelected([]), [setSelected])
   const duplicates = useDuplicateActions(workspace.id)
   // tasks waiting for a canonical task: one (row menu, drop on the Duplicate group) or the bulk selection
   const [duplicatePicker, setDuplicatePicker] = useState<Task[] | null>(null)
@@ -355,58 +360,22 @@ function BulkBar({
   const limitError = bulkTasks.error instanceof BulkTaskLimitError ? bulkTasks.error : null
 
   // Esc clears the selection, unless it belongs to a field, an open menu or a dialog
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return
-      if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"]')) return
-      // closed Base UI popups stay mounted with data-closed until their exit animation ends
-      if (document.querySelector(['menu', 'dialog', 'alertdialog', 'listbox'].map((role) => `[role="${role}"]:not([data-closed])`).join())) return
-      onClear()
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [onClear])
+  useCommand('list.clearSelection', onClear)
 
-  const bulkStatus = (key: string | null) => {
-    const updates = tasks.flatMap((task) => {
-      const statusId = resolveStatusId(statuses, task.projectId, key)
-      return statusId && statusId !== task.statusId
-        ? [{ id: task.id, expected_version: task.version, status_id: statusId }]
-        : []
-    })
+  const mutate = (updates: BulkItem[]) => {
     if (updates.length > 0) bulkTasks.mutate(updates)
   }
-  const bulkPriority = (priority: Task['priority']) => {
-    const updates = tasks.filter((task) => task.priority !== priority).map((task) => ({ id: task.id, expected_version: task.version, priority }))
-    if (updates.length > 0) bulkTasks.mutate(updates)
-  }
-  // everyone has it → remove from all; otherwise add to the tasks that miss it
-  const bulkAssign = (userId: string) => {
-    const everyone = tasks.every((t) => t.assigneeIds.includes(userId))
-    bulkTasks.mutate(tasks.map((task) => ({
-      id: task.id,
-      expected_version: task.version,
-      assignee_ids: everyone ? task.assigneeIds.filter((id) => id !== userId) : Array.from(new Set([...task.assigneeIds, userId])),
-    })))
-  }
-  const bulkLabel = (labelId: string) => {
-    const everyone = tasks.every((t) => t.labels.includes(labelId))
-    bulkTasks.mutate(tasks.map((task) => ({
-      id: task.id,
-      expected_version: task.version,
-      label_ids: everyone ? task.labels.filter((item) => item !== labelId) : Array.from(new Set([...task.labels, labelId])),
-    })))
-  }
+  const bulkStatus = (key: string | null) => mutate(statusUpdates(tasks, statuses, key))
+  const bulkPriority = (priority: Task['priority']) => mutate(priorityUpdates(tasks, priority))
+  const bulkAssign = (userId: string) => mutate(assigneeToggleUpdates(tasks, userId))
+  const bulkLabel = (labelId: string) => mutate(labelToggleUpdates(tasks, labelId))
 
   // the picker starts from the shared due range, or empty when the selection disagrees
   const [first] = tasks
   const sameDue = tasks.every((task) => task.dueAt === first.dueAt && (task.dueStartAt ?? null) === (first.dueStartAt ?? null))
   const [dueOpen, setDueOpen] = useState(false)
   const bulkDue = (start: string | null, end: string | null) => {
-    const updates = tasks
-      .filter((task) => (task.dueStartAt ?? null) !== start || task.dueAt !== end)
-      .map((task) => ({ id: task.id, expected_version: task.version, due_start_at: start, due_at: end }))
-    if (updates.length > 0) bulkTasks.mutate(updates)
+    mutate(dueUpdates(tasks, start, end))
     setDueOpen(false)
   }
 
