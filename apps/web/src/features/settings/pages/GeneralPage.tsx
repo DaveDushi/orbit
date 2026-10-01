@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Download } from 'reicon-react'
 import { apiClient } from '@/api/client'
+import { ApiProblem } from '@/api/problem'
 import { createBackup, listBackups } from '@/api/generated/sdk.gen'
 import type { BackupSummary } from '@/api/generated/types.gen'
 import { queryKeys } from '@/api/queryKeys'
@@ -38,6 +39,8 @@ export function GeneralPage() {
       return data.items
     },
   })
+  // Backups are for installation administrators: the card stays hidden until the list loads, and for a 403.
+  const backupsAllowed = !backups.isPending && !(backups.error instanceof ApiProblem && backups.error.status === 403)
   const backup = useMutation({
     mutationFn: async () => {
       const { data } = await createBackup({ client: apiClient, throwOnError: true })
@@ -116,7 +119,7 @@ export function GeneralPage() {
           </Field>
         </FieldGrid>
       </SettingsCard>
-      <SettingsCard
+      {backupsAllowed ? <SettingsCard
         title="Backup"
         description="Create a verified snapshot of the database and attachments without stopping Orbit."
         actions={
@@ -127,13 +130,12 @@ export function GeneralPage() {
         flush
       >
         <div className="flex flex-col divide-y text-[13px]">
-          {backup.isError ? <SettingsRow role="alert"><span className="text-destructive">Backup failed. Installation administrator access is required.</span></SettingsRow> : null}
-          {backups.isPending ? <SettingsRow>Loading backups…</SettingsRow> : null}
-          {backups.isError ? <SettingsRow role="alert">Backups could not be loaded. Installation administrator access is required. <Button variant="ghost" onClick={() => void backups.refetch()}>Retry</Button></SettingsRow> : null}
+          {backup.isError ? <SettingsRow role="alert"><span className="text-destructive">Backup failed.</span></SettingsRow> : null}
+          {backups.isError ? <SettingsRow role="alert">Backups could not be loaded. <Button variant="ghost" onClick={() => void backups.refetch()}>Retry</Button></SettingsRow> : null}
           {backups.data?.length === 0 ? <SettingsRow className="text-muted-foreground">No backups yet.</SettingsRow> : null}
           {backups.data?.map((item) => <BackupRow key={item.id} backup={item} />)}
         </div>
-      </SettingsCard>
+      </SettingsCard> : null}
       {dirty ? (
         <UnsavedBar
           onReset={() => { if (renameWorkspace.isPending) return; setNameDraft(null); renameWorkspace.reset() }}

@@ -60,3 +60,15 @@ test('creating a backup refreshes the list with a download link', async () => {
   expect(link.getAttribute('href')).toBe('/api/v1/admin/backups/backup-1/download')
   expect(view.getByText('2.0 KB · 3 files · Orbit 0.1.0')).toBeTruthy()
 })
+
+test('a user who is not an installation administrator does not see the Backup card', async () => {
+  globalThis.fetch = (async () => Response.json(
+    { type: 'about:blank', title: 'Installation administrator required', status: 403, code: 'installation_admin_required', detail: 'Denied.' },
+    { status: 403, headers: { 'content-type': 'application/problem+json' } },
+  )) as unknown as typeof fetch
+  const view = renderPage()
+  await view.findByLabelText('Version')
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  expect(view.queryAllByText('Backup')).toHaveLength(0)
+  expect(view.queryAllByRole('alert')).toHaveLength(0)
+})

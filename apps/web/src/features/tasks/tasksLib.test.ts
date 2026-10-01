@@ -28,12 +28,12 @@ test('activity sentences name the changed values', () => {
     statuses: [{ id: 's1', name: 'Backlog' }, { id: 's2', name: 'Done' }],
     labels: [{ id: 'l1', name: 'bug' }],
   } as unknown as Parameters<typeof activityChangeText>[1]
-  expect(activityChangeText({ field: 'status', from: 's1', to: 's2' }, state)).toBe('Changed status from Backlog to Done')
-  expect(activityChangeText({ field: 'status', from: 'gone', to: 's2' }, state)).toBe('Changed status to Done')
-  expect(activityChangeText({ field: 'priority', from: 'none', to: 'high' }, state)).toBe('Set priority to High')
-  expect(activityChangeText({ field: 'priority', from: 'high', to: 'none' }, state)).toBe('Removed priority')
-  expect(activityChangeText({ field: 'assignees', added: ['u1'], removed: ['u2'] }, state)).toBe('Assigned Ada and unassigned Bo')
-  expect(activityChangeText({ field: 'labels', added: [], removed: ['l1', 'gone'] }, state)).toBe('Removed labels bug, a deleted label')
-  expect(activityChangeText({ field: 'due', start: null, end: null }, state)).toBe('Removed due date')
-  expect(activityChangeText({ field: 'title', from: 'A', to: 'B' }, state)).toBe('Changed title from "A" to "B"')
+  expect(activityChangeText({ field: 'status', from: 's1', to: 's2' }, state)).toBe('changed status from Backlog to Done')
+  expect(activityChangeText({ field: 'status', from: 'gone', to: 's2' }, state)).toBe('changed status to Done')
+  expect(activityChangeText({ field: 'priority', from: 'none', to: 'high' }, state)).toBe('set priority to High')
+  expect(activityChangeText({ field: 'priority', from: 'high', to: 'none' }, state)).toBe('removed priority')
+  expect(activityChangeText({ field: 'assignees', added: ['u1'], removed: ['u2'] }, state)).toBe('assigned Ada and unassigned Bo')
+  expect(activityChangeText({ field: 'labels', added: [], removed: ['l1', 'gone'] }, state)).toBe('removed labels bug, a deleted label')
+  expect(activityChangeText({ field: 'due', start: null, end: null }, state)).toBe('removed due date')
+  expect(activityChangeText({ field: 'title', from: 'A', to: 'B' }, state)).toBe('changed title from "A" to "B"')
 })

@@ -115,14 +115,14 @@ export interface TaskViewState {
 }
 
 const RELATION_FALLBACK: Record<string, string> = {
-  'task.marked_duplicate': 'Marked as duplicate',
-  'task.unmarked_duplicate': 'Unmarked as duplicate',
-  'task.relation_added': 'Added relation',
-  'task.relation_removed': 'Removed relation',
+  'task.marked_duplicate': 'marked as duplicate',
+  'task.unmarked_duplicate': 'unmarked as duplicate',
+  'task.relation_added': 'added relation',
+  'task.relation_removed': 'removed relation',
 }
 
 function genericActivityText(action: string): string {
-  return action.split('.').reverse().join(' ').replace(/^./, (letter) => letter.toUpperCase())
+  return action.split('.').reverse().join(' ')
 }
 
 /**
@@ -146,13 +146,13 @@ function relationActivity(
   const related = { taskId, identifier }
   switch (action) {
     case 'task.marked_duplicate':
-      return { related, text: incoming ? `Marked ${identifier} as duplicate` : `Marked as duplicate of ${identifier}${title ? ` · ${title}` : ''}` }
+      return { related, text: incoming ? `marked ${identifier} as duplicate` : `marked as duplicate of ${identifier}${title ? ` · ${title}` : ''}` }
     case 'task.unmarked_duplicate':
-      return incoming ? { related, text: `Unmarked ${identifier} as duplicate` } : { text: fallback }
+      return incoming ? { related, text: `unmarked ${identifier} as duplicate` } : { text: fallback }
     case 'task.relation_added':
-      return { related, text: blocks ? (incoming ? `Added blocker ${identifier}` : `Blocks ${identifier}`) : `Added related ${identifier}` }
+      return { related, text: blocks ? (incoming ? `added blocker ${identifier}` : `blocks ${identifier}`) : `added related ${identifier}` }
     default:
-      return { related, text: blocks ? (incoming ? `Removed blocker ${identifier}` : `No longer blocks ${identifier}`) : `Removed related ${identifier}` }
+      return { related, text: blocks ? (incoming ? `removed blocker ${identifier}` : `no longer blocks ${identifier}`) : `removed related ${identifier}` }
   }
 }
 
@@ -173,15 +173,15 @@ function subIssueActivity(
   }
   if (action === 'task.parent_changed') {
     const to = link('to')
-    if (to) return { text: `Set parent to ${to.identifier}`, related: to }
+    if (to) return { text: `set parent to ${to.identifier}`, related: to }
     const from = link('from')
-    return from ? { text: `Removed parent ${from.identifier}`, related: from } : { text: 'Changed parent' }
+    return from ? { text: `removed parent ${from.identifier}`, related: from } : { text: 'changed parent' }
   }
   if (action === 'task.auto_closed') {
     const statusId = text('to_status_id')
     const source = link('source_task_id')
-    if (metadata.reason === 'parent_closed' && source) return { text: `Closed automatically because ${source.identifier} was closed`, related: source, statusId }
-    return { text: 'Closed automatically because all sub-issues were done', statusId }
+    if (metadata.reason === 'parent_closed' && source) return { text: `closed automatically because ${source.identifier} was closed`, related: source, statusId }
+    return { text: 'closed automatically because all sub-issues were done', statusId }
   }
   return null
 }

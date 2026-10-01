@@ -86,36 +86,36 @@ export function buildFeed(task: Task): FeedEntry[] {
 export function activityChangeText(change: TaskChange, state: Pick<TaskViewState, 'users' | 'statuses' | 'labels'>): string {
   const names = (ids: string[], all: Array<{ id: string; name: string }>, unknown: string) =>
     ids.map((id) => all.find((item) => item.id === id)?.name ?? unknown).join(', ')
-  // "Assigned Ada and unassigned Bo"
-  const both = (added: string, removed: string) => [added, removed && (added ? removed.replace(/^./, (letter) => letter.toLowerCase()) : removed)].filter(Boolean).join(' and ')
+  // "assigned Ada and unassigned Bo"
+  const both = (added: string, removed: string) => [added, removed].filter(Boolean).join(' and ')
   switch (change.field) {
     case 'status': {
       const from = state.statuses.find((status) => status.id === change.from)?.name
       const to = state.statuses.find((status) => status.id === change.to)?.name ?? 'another status'
-      return from ? `Changed status from ${from} to ${to}` : `Changed status to ${to}`
+      return from ? `changed status from ${from} to ${to}` : `changed status to ${to}`
     }
     case 'priority':
-      return change.to === 'none' ? 'Removed priority' : `Set priority to ${PRIORITY_LABEL[change.to as TaskPriority] ?? change.to}`
+      return change.to === 'none' ? 'removed priority' : `set priority to ${PRIORITY_LABEL[change.to as TaskPriority] ?? change.to}`
     case 'assignees':
       return both(
-        change.added.length > 0 ? `Assigned ${names(change.added, state.users, 'someone')}` : '',
-        change.removed.length > 0 ? `Unassigned ${names(change.removed, state.users, 'someone')}` : '',
+        change.added.length > 0 ? `assigned ${names(change.added, state.users, 'someone')}` : '',
+        change.removed.length > 0 ? `unassigned ${names(change.removed, state.users, 'someone')}` : '',
       )
     case 'labels':
       return both(
-        change.added.length > 0 ? `Added label${change.added.length > 1 ? 's' : ''} ${names(change.added, state.labels, 'a deleted label')}` : '',
-        change.removed.length > 0 ? `Removed label${change.removed.length > 1 ? 's' : ''} ${names(change.removed, state.labels, 'a deleted label')}` : '',
+        change.added.length > 0 ? `added label${change.added.length > 1 ? 's' : ''} ${names(change.added, state.labels, 'a deleted label')}` : '',
+        change.removed.length > 0 ? `removed label${change.removed.length > 1 ? 's' : ''} ${names(change.removed, state.labels, 'a deleted label')}` : '',
       )
     case 'due':
-      if (!change.end) return 'Removed due date'
-      return `Set due date to ${change.start ? `${shortDate(change.start)} – ` : ''}${shortDate(change.end)}`
+      if (!change.end) return 'removed due date'
+      return `set due date to ${change.start ? `${shortDate(change.start)} – ` : ''}${shortDate(change.end)}`
     case 'title':
-      return `Changed title from "${change.from}" to "${change.to}"`
+      return `changed title from "${change.from}" to "${change.to}"`
     case 'project':
-      return `Moved from ${change.from} to ${change.to}`
+      return `moved from ${change.from} to ${change.to}`
     case 'description':
-      return 'Updated the description'
+      return 'updated the description'
     case 'source_url':
-      return 'Updated the source link'
+      return 'updated the source link'
   }
 }

@@ -42,7 +42,7 @@ test('generated task records become the existing task view model without mock fa
     dueAt: '2030-01-02T12:30:00.000Z',
     comments: [{ id: 'comment-1', body: 'Looks good', version: 3 }],
     attachments: [{ id: 'attachment-1', fileName: 'brief.pdf', fileSize: 42 }],
-    activity: [{ id: 'activity-1', actorId: 'user-1', text: 'Updated task' }],
+    activity: [{ id: 'activity-1', actorId: 'user-1', text: 'updated task' }],
     version: 7,
   })
   expect(task.attachments[0]?.url).toBe(
@@ -97,14 +97,14 @@ test('relation audit events read as sentences and link the other task', () => {
     relationEvent('task.marked_duplicate', { ...other, type: 'duplicate', direction: 'incoming' }),
   ])
   expect(task.activity.map((item) => item.text)).toEqual([
-    'Marked as duplicate of LCH-91C0 · Login fails on Safari',
-    'Unmarked as duplicate',
-    'Added blocker LCH-91C0',
-    'Blocks LCH-91C0',
-    'Added related LCH-91C0',
-    'Removed related LCH-91C0',
-    'Removed blocker LCH-91C0',
-    'Marked LCH-91C0 as duplicate',
+    'marked as duplicate of LCH-91C0 · Login fails on Safari',
+    'unmarked as duplicate',
+    'added blocker LCH-91C0',
+    'blocks LCH-91C0',
+    'added related LCH-91C0',
+    'removed related LCH-91C0',
+    'removed blocker LCH-91C0',
+    'marked LCH-91C0 as duplicate',
   ])
   expect(task.activity[0]!.related).toEqual({ taskId: 'task-91c0', identifier: 'LCH-91C0' })
   expect(task.activity[1]!.related).toBeUndefined()
@@ -117,7 +117,7 @@ test('cross-project relation events use the other project key; missing metadata 
     relationEvent('task.relation_added', {}),
     relationEvent('task.updated', {}),
   ], [project, api])
-  expect(task.activity.map((item) => item.text)).toEqual(['Added blocker API-91C0', 'Added relation', 'Updated task'])
+  expect(task.activity.map((item) => item.text)).toEqual(['added blocker API-91C0', 'added relation', 'updated task'])
 })
 
 test('parent, ancestors and sub-issue counts reach the task view model', () => {
@@ -158,10 +158,10 @@ test('parent changes and automatic closes read as sentences that link the other 
     event('task.auto_closed', { source_task_id: '01HZYCHILD00000000000031', from_status_id: 'status-1', to_status_id: 'status-done', reason: 'sub_issues_done' }),
   ])
   expect(task.activity.map((item) => item.text)).toEqual([
-    'Set parent to ORB-0012',
-    'Removed parent LCH-0099',
-    'Closed automatically because ORB-0012 was closed',
-    'Closed automatically because all sub-issues were done',
+    'set parent to ORB-0012',
+    'removed parent LCH-0099',
+    'closed automatically because ORB-0012 was closed',
+    'closed automatically because all sub-issues were done',
   ])
   expect(task.activity[0]!.related).toEqual({ taskId: '01HZYPARENT0000000000012', identifier: 'ORB-0012' })
   expect(task.activity[2]!.statusId).toBe('status-done')
