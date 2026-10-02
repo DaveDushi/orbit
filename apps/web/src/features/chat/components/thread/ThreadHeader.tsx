@@ -26,7 +26,7 @@ function FollowButton({ rootId, following }: { rootId: string; following: boolea
         )
       }
     >
-      {following ? <Bell weight="Filled" className="size-5 text-primary" /> : <BellOff weight="Filled" className="size-5" />}
+      {following ? <Bell className="size-5 text-primary" /> : <BellOff className="size-5" />}
     </Button>
   )
 }
@@ -78,12 +78,12 @@ export function ThreadHeader({
               expandThread(rootId)
             }}
           >
-            <Maximize4 weight="Filled" className="size-5" />
+            <Maximize4 className="size-5" />
           </Button>
         ) : null}
         <FollowButton rootId={rootId} following={following} />
         <Button variant="ghost" size="icon" aria-label="Close thread" title="Close thread" onClick={onClose}>
-          <Xmark weight="Filled" className="size-5" />
+          <Xmark className="size-5" />
         </Button>
       </PaneHeader>
     )
@@ -92,7 +92,7 @@ export function ThreadHeader({
   return (
     <PaneHeader data-slot="thread-header" className="gap-1">
       <Button variant="ghost" size="icon" className="min-[900px]:hidden" aria-label="Back" onClick={onClose}>
-        <ArrowLeft weight="Filled" className="size-5" />
+        <ArrowLeft className="size-5" />
       </Button>
       <Breadcrumb className="min-w-0 flex-1">
         <BreadcrumbList className="flex-nowrap text-[13px]">
@@ -126,13 +126,13 @@ export function ThreadHeader({
             collapseThread(rootId)
           }}
         >
-          <Minimize weight="Filled" className="size-5" />
+          <Minimize className="size-5" />
         </Button>
       ) : null}
       <FollowButton rootId={rootId} following={following} />
       <DropdownMenu>
         <DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label="Thread actions" title="Thread actions" />}>
-          <MoreH weight="Filled" className="size-5" />
+          <MoreH className="size-5" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-auto min-w-44">
           <DropdownMenuItem

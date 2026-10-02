@@ -63,7 +63,7 @@ export function FilesPane({ conversationId }: { conversationId: string }) {
                         title="Go to message"
                         onClick={() => jump(message)}
                       >
-                        <MessageIcon weight="Filled" />
+                        <MessageIcon />
                       </Button>
                     </li>
                   ))}
@@ -76,7 +76,7 @@ export function FilesPane({ conversationId }: { conversationId: string }) {
                 <ul className="flex flex-col">
                   {others.map(({ attachment, message }) => (
                     <li key={attachment.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover-fine:hover:bg-muted/50">
-                      <DocumentText weight="Filled" aria-hidden className="size-5 shrink-0 text-muted-foreground" />
+                      <DocumentText aria-hidden className="size-5 shrink-0 text-muted-foreground" />
                       <span className="flex min-w-0 flex-1 flex-col">
                         <span className="truncate text-sm font-medium" title={attachment.fileName}>
                           {attachment.fileName}
@@ -86,7 +86,7 @@ export function FilesPane({ conversationId }: { conversationId: string }) {
                         </span>
                       </span>
                       <Button variant="ghost" size="icon-sm" aria-label={`Go to the message with ${attachment.fileName}`} title="Go to message" onClick={() => jump(message)}>
-                        <MessageIcon weight="Filled" />
+                        <MessageIcon />
                       </Button>
                       <a
                         href={attachment.url}
@@ -95,7 +95,7 @@ export function FilesPane({ conversationId }: { conversationId: string }) {
                         aria-label={`Download ${attachment.fileName}`}
                         title="Download"
                       >
-                        <Download weight="Filled" />
+                        <Download />
                       </a>
                     </li>
                   ))}

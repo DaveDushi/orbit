@@ -216,7 +216,7 @@ export function Composer({ ref, conversation, threadRootId = null, autoFocus = f
         ) : null}
         <div
           data-slot="composer-box"
-          className="flex max-h-[50cqh] flex-col rounded-lg border border-input bg-background transition-[border-color,box-shadow] dark:bg-input/30 focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
+          className="flex max-h-[50cqh] flex-col rounded-lg border border-input bg-background dark:bg-input/30"
         >
           <ComposerInput
             ref={input}
@@ -255,11 +255,11 @@ export function Composer({ ref, conversation, threadRootId = null, autoFocus = f
               }}
             />
             <Button variant="ghost" size="icon" aria-label="Attach files" title="Attach files" onClick={() => filePicker.current?.click()}>
-              <Paperclip2 weight="Filled" className="size-5" />
+              <Paperclip2 className="size-5" />
             </Button>
             <Popover open={emojiOpen} onOpenChange={setEmojiOpen} modal={false}>
               <PopoverTrigger render={<Button variant="ghost" size="icon" aria-label="Add emoji" title="Add emoji" />}>
-                <SmileCircle weight="Filled" className="size-5" />
+                <SmileCircle className="size-5" />
               </PopoverTrigger>
               <PopoverContent side="top" align="start" finalFocus={input} className="w-auto gap-0 p-0">
                 <EmojiPicker
@@ -271,7 +271,7 @@ export function Composer({ ref, conversation, threadRootId = null, autoFocus = f
               </PopoverContent>
             </Popover>
             <Button variant="ghost" size="icon" aria-label="Mention someone" title="Mention someone" onClick={mentionSomeone}>
-              <At weight="Filled" className="size-5" />
+              <At className="size-5" />
             </Button>
             <span className="flex-1" />
             {remaining <= COUNTER_FROM ? (
@@ -292,7 +292,7 @@ export function Composer({ ref, conversation, threadRootId = null, autoFocus = f
               disabled={!canSend}
               onClick={() => void submit()}
             >
-              <Send2 weight="Filled" className="size-5" />
+              <Send2 className="size-5" />
             </Button>
           </div>
         </div>

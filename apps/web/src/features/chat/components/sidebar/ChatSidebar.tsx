@@ -1,7 +1,6 @@
 import { useState, type ComponentType, type PointerEvent } from 'react'
 import { toast } from 'sonner'
-import { Add, Brush, ChevronDown, ChevronRight, DirectInbox, Edit, MoreH, Trash } from 'reicon-react'
-import { ThreadIcon } from '@/components/common/icons/ThreadIcon'
+import { Add, Brush, ChevronDown, ChevronRight, DirectInbox, Edit, Layer, MoreH, Trash } from 'reicon-react'
 import { confirmAction } from '@/components/common/confirmAction'
 import { PaneHeader, PaneTitle } from '@/components/common/Pane'
 import { Button } from '@/components/ui/button'
@@ -263,11 +262,11 @@ export function ChatSidebar() {
           Chat
         </PaneTitle>
         <Button type="button" variant="ghost" size="icon" className="text-muted-foreground" aria-label="Chat theme" onClick={() => show({ kind: 'theme' })}>
-          <Brush size={20} weight="Filled" />
+          <Brush size={20} />
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button type="button" variant="ghost" size="icon" className="text-muted-foreground" aria-label="New" />}>
-            <Add size={20} weight="Filled" />
+            <Add size={20} />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-auto min-w-44">
             <DropdownMenuItem onClick={() => show({ kind: 'message' })}>New message</DropdownMenuItem>
@@ -285,7 +284,7 @@ export function ChatSidebar() {
 
       <div className="flex shrink-0 flex-col gap-px px-2 pt-2">
         <PinnedRow to={UNREADS_PATH} icon={DirectInbox} label="Unreads" count={badges.unreads} active={location.view === 'unreads'} />
-        <PinnedRow to={THREADS_PATH} icon={ThreadIcon} label="Threads" count={badges.threads} active={location.view === 'threads'} />
+        <PinnedRow to={THREADS_PATH} icon={Layer} label="Threads" count={badges.threads} active={location.view === 'threads'} />
       </div>
 
       <nav aria-label="Conversations" className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-2 pt-3">

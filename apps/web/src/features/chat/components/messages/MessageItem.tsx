@@ -1,5 +1,5 @@
 import { useEffect, useRef, type MouseEvent, type TouchEvent } from 'react'
-import { Pin } from 'reicon-react'
+import { PinTack } from 'reicon-react'
 import { UserAvatar } from '@/components/common/UserAvatar'
 import { Button } from '@/components/ui/button'
 import type { Message } from '../../api/types'
@@ -162,7 +162,7 @@ export function MessageItem({ message, groupStart, editing, active, tone, menuOp
           ) : null}
           {message.pinned && !message.deleted ? (
             <div data-slot="message-pinned" className="flex items-center gap-1 text-xs text-muted-foreground">
-              <Pin weight="Filled" className="size-3" />
+              <PinTack className="size-3" />
               Pinned
             </div>
           ) : null}

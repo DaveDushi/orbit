@@ -1,8 +1,6 @@
 import { useRef, useState, type ReactNode } from 'react'
-import { MoreH, Paperclip2, People, SearchNormal, Xmark } from 'reicon-react'
+import { Layer, MoreH, Paperclip2, People, PinTack, SearchNormal, Xmark } from 'reicon-react'
 import { cn } from 'cn'
-import { PinIcon } from '@/components/common/icons/PinIcon'
-import { ThreadIcon } from '@/components/common/icons/ThreadIcon'
 import { PaneHeader, PaneTitle } from '@/components/common/Pane'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -121,31 +119,31 @@ export function ConversationHeader({ conversation }: { conversation: Conversatio
             requestAnimationFrame(() => searchInput.current?.focus())
           }}
         >
-          <SearchNormal size={20} weight="Filled" />
+          <SearchNormal size={20} />
         </Button>
         <PaneToggle label="Threads" pressed={openPane === 'threads'} className="max-[899px]:hidden" onToggle={toggle('threads')}>
-          <ThreadIcon size={20} />
+          <Layer size={20} />
         </PaneToggle>
         <PaneToggle label="Pinned messages" pressed={openPane === 'pins'} className="max-[899px]:hidden" onToggle={toggle('pins')}>
-          <PinIcon size={20} />
+          <PinTack size={20} />
         </PaneToggle>
         <PaneToggle label="Files" pressed={openPane === 'files'} className="max-[899px]:hidden" onToggle={toggle('files')}>
-          <Paperclip2 size={20} weight="Filled" />
+          <Paperclip2 size={20} />
         </PaneToggle>
         <PaneToggle label="Members" pressed={openPane === 'members'} onToggle={toggle('members')}>
-          <People size={20} weight="Filled" />
+          <People size={20} />
         </PaneToggle>
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button type="button" variant="ghost" size="icon" className="text-muted-foreground" aria-label={`Options for ${title}`} />}>
-            <MoreH size={20} weight="Filled" />
+            <MoreH size={20} />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-auto min-w-48">
             <DropdownMenuItem className="min-[900px]:hidden" onClick={toggle('threads')}>
-              <ThreadIcon size={16} />
+              <Layer size={16} />
               Threads
             </DropdownMenuItem>
             <DropdownMenuItem className="min-[900px]:hidden" onClick={toggle('pins')}>
-              <PinIcon size={16} />
+              <PinTack size={16} />
               Pinned messages
             </DropdownMenuItem>
             <DropdownMenuItem className="min-[900px]:hidden" onClick={toggle('files')}>

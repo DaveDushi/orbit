@@ -32,11 +32,11 @@ export function MessageToolbar({ message }: { message: Message }) {
         aria-haspopup="dialog"
         onClick={(event) => openPicker(message, event.currentTarget, 'end')}
       >
-        <SmileCircle weight="Filled" className="size-5" />
+        <SmileCircle className="size-5" />
       </Button>
       {inThread ? null : (
         <Button variant="ghost" size="icon" aria-label="Reply in thread" title="Reply in thread" onClick={() => openThread(message)}>
-          <MessageIcon weight="Filled" className="size-5" />
+          <MessageIcon className="size-5" />
         </Button>
       )}
       <Button
@@ -47,7 +47,7 @@ export function MessageToolbar({ message }: { message: Message }) {
         aria-haspopup="menu"
         onClick={(event) => openMenu(message, event.currentTarget, 'end')}
       >
-        <MoreH weight="Filled" className="size-5" />
+        <MoreH className="size-5" />
       </Button>
     </div>
   )

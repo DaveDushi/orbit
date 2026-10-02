@@ -1,5 +1,5 @@
 import { useHref } from 'react-router'
-import { ThreadIcon } from '@/components/common/icons/ThreadIcon'
+import { Layer } from 'reicon-react'
 import { EmptyState } from '@/components/common/EmptyState'
 import { Pane, PaneHeader, PaneTitle } from '@/components/common/Pane'
 import { Button } from '@/components/ui/button'
@@ -91,7 +91,7 @@ export function ThreadsView() {
         <div className="flex-1" />
       ) : rows.length === 0 ? (
         <div className="flex flex-1 flex-col p-6">
-          <EmptyState icon={ThreadIcon} title="Threads you follow appear here" description="Reply to a message or follow its thread, and new replies show up in this list." />
+          <EmptyState icon={Layer} title="Threads you follow appear here" description="Reply to a message or follow its thread, and new replies show up in this list." />
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">

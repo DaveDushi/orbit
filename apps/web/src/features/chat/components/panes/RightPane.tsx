@@ -35,7 +35,7 @@ function RightPane({ title, actions, children }: RightPaneProps) {
         <div className="ml-auto flex items-center gap-2">
           {actions}
           <Button variant="ghost" size="icon" aria-label={`Close ${title.toLowerCase()}`} title="Close" onClick={closePane}>
-            <Xmark weight="Filled" className="size-5" />
+            <Xmark className="size-5" />
           </Button>
         </div>
       </PaneHeader>
@@ -94,7 +94,7 @@ function RightPaneEmpty({ icon: Icon, title, description, action }: RightPaneEmp
     <Empty>
       <EmptyHeader>
         <EmptyMedia variant="icon">
-          <Icon weight="Filled" />
+          <Icon />
         </EmptyMedia>
         <EmptyTitle>{title}</EmptyTitle>
         {description ? <EmptyDescription>{description}</EmptyDescription> : null}

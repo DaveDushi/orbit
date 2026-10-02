@@ -105,7 +105,7 @@ export function MessageActionSheet({
                 action.run()
               }}
             >
-              <action.icon weight="Filled" className="size-5" />
+              <action.icon className="size-5" />
               {action.label}
             </Button>
           ))}

@@ -156,7 +156,7 @@ function AddPeople({ conversation, people }: { conversation: Conversation; peopl
       <PopoverTrigger
         render={
           <Button variant="ghost" size="icon" aria-label="Add people" title="Add people">
-            <UserAdd weight="Filled" className="size-5" />
+            <UserAdd className="size-5" />
           </Button>
         }
       />

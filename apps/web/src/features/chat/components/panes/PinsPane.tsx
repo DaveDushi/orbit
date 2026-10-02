@@ -1,5 +1,5 @@
 import { toast } from 'sonner'
-import { Pin } from 'reicon-react'
+import { PinTack } from 'reicon-react'
 import { Button } from '@/components/ui/button'
 import { useChatContext } from '@/features/chat/api/chatContext'
 import { useSetPinned } from '@/features/chat/api/mutations'
@@ -38,7 +38,7 @@ export function PinsPane({ conversationId }: { conversationId: string }) {
         ) : pins.isError ? (
           <RightPaneError title="The pinned messages could not be loaded." onRetry={() => void pins.refetch()} />
         ) : pins.data.length === 0 ? (
-          <RightPaneEmpty icon={Pin} title="No pinned messages" description="Pin a message to keep it here." />
+          <RightPaneEmpty icon={PinTack} title="No pinned messages" description="Pin a message to keep it here." />
         ) : (
           <ul aria-label="Pinned messages" className="flex flex-col gap-1">
             {pins.data.map((message) => (

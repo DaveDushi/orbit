@@ -53,7 +53,7 @@ export function MessageEditor({ message }: { message: Message }) {
         rows={1}
         aria-label="Edit message"
         aria-invalid={tooLong || undefined}
-        className="max-h-[40cqh] min-h-9 resize-none bg-background"
+        className="max-h-[40cqh] min-h-9 resize-none bg-background focus-visible:border-input focus-visible:ring-0"
         onChange={(event) => setText(event.target.value)}
         onKeyDown={onKeyDown}
       />

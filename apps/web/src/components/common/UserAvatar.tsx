@@ -66,12 +66,12 @@ export function UserAvatarStack({ users, size = 18, max = 3 }: { users: Array<Av
   const shown = users.slice(0, max)
   const rest = users.length - shown.length
   return (
-    <AvatarGroup title={users.map((u) => u.name).join(', ')}>
+    <AvatarGroup className="*:data-[slot=avatar]:ring-1 *:data-[slot=avatar]:ring-card" title={users.map((u) => u.name).join(', ')}>
       {shown.map((u) => (
         <UserAvatar key={u.id} user={u} size={size} />
       ))}
       {rest > 0 ? (
-        <AvatarGroupCount style={{ width: size, height: size, fontSize: Math.max(9, Math.round(size * 0.38)) }}>
+        <AvatarGroupCount className="ring-1 ring-card" style={{ width: size, height: size, fontSize: Math.max(9, Math.round(size * 0.38)) }}>
           +{rest}
         </AvatarGroupCount>
       ) : null}
