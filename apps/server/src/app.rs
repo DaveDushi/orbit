@@ -21,6 +21,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::attachment_routes::AttachmentState;
 use crate::auth_routes::{CookieMode, initialize_auth};
+use crate::chat_routes::ChatState;
 use crate::export_routes::ExportState;
 use crate::import_routes::ImportState;
 use crate::integration_routes::IntegrationState;
@@ -298,6 +299,11 @@ impl App {
                     app_key,
                 ),
                 imports: ImportState::new(Arc::clone(&identity), notion_imports, cookie_mode),
+                chat: ChatState::new(
+                    Arc::clone(&identity),
+                    attachment_state.uploads.clone(),
+                    cookie_mode,
+                ),
             },
             health,
             assets,

@@ -2,9 +2,9 @@
 // block parser (fenced code, headings, quotes, lists) -> inline markdown ->
 // mentionify -> linkify. Custom regex parser, zero dependencies. Shared by
 // message content and embed cards.
-import { getState } from '@/mock/store'
 import { appNavigate } from './navigateBridge'
 import { CodeBlock } from '@/components/common/CodeBlock'
+import { EmojiText } from '@/components/common/Emoji'
 import { Checkbox } from '@/components/ui/checkbox'
 import { cn } from './utils'
 import { isMentionBoundary, type MentionToken } from './mentions'
@@ -50,13 +50,19 @@ function internalPath(url: string): string | null {
   return url.startsWith(`${origin}/`) ? url.slice(origin.length) : null
 }
 
-function linkifyText(text: string): React.ReactNode[] {
+/** Plain text with its emoji as Twemoji images. */
+function emojify(text: string, key: string): React.ReactNode {
+  return <EmojiText key={key} text={text} />
+}
+
+/** `keyPrefix` keeps the keys apart when a caller puts the parts of more than one run of text in one list. */
+function linkifyText(text: string, keyPrefix: string): React.ReactNode[] {
   const urlRegex = /https?:\/\/[^\s<]+/g
   const parts: React.ReactNode[] = []
   let lastIndex = 0
   let match: RegExpExecArray | null
   while ((match = urlRegex.exec(text)) !== null) {
-    if (match.index > lastIndex) parts.push(text.slice(lastIndex, match.index))
+    if (match.index > lastIndex) parts.push(emojify(text.slice(lastIndex, match.index), `${keyPrefix}-text-${lastIndex}`))
     const url = match[0].replace(/[.,!?;:)}\]]+$/, '')
     if (!url) {
       parts.push(match[0])
@@ -68,7 +74,7 @@ function linkifyText(text: string): React.ReactNode[] {
     parts.push(
       github ? (
         <a
-          key={`link-${match.index}`}
+          key={`${keyPrefix}-link-${match.index}`}
           href={safeHref(url)}
           target="_blank"
           rel="noopener noreferrer"
@@ -80,7 +86,7 @@ function linkifyText(text: string): React.ReactNode[] {
         </a>
       ) : path ? (
         <a
-          key={`link-${match.index}`}
+          key={`${keyPrefix}-link-${match.index}`}
           href={path}
           className="text-primary hover:underline"
           onClick={(e) => {
@@ -92,7 +98,7 @@ function linkifyText(text: string): React.ReactNode[] {
         </a>
       ) : (
         <a
-          key={`link-${match.index}`}
+          key={`${keyPrefix}-link-${match.index}`}
           href={safeHref(url)}
           target="_blank"
           rel="noopener noreferrer"
@@ -105,12 +111,12 @@ function linkifyText(text: string): React.ReactNode[] {
     if (url.length < match[0].length) parts.push(match[0].slice(url.length))
     lastIndex = match.index + match[0].length
   }
-  if (lastIndex < text.length) parts.push(text.slice(lastIndex))
-  return parts.length > 0 ? parts : [text]
+  if (lastIndex < text.length) parts.push(emojify(text.slice(lastIndex), `${keyPrefix}-text-${lastIndex}`))
+  return parts.length > 0 ? parts : [emojify(text, `${keyPrefix}-text-0`)]
 }
 
 export function mentionifyText(text: string, keyPrefix: string, mentionTokens: MentionToken[]): React.ReactNode[] {
-  if (mentionTokens.length === 0) return linkifyText(text)
+  if (mentionTokens.length === 0) return linkifyText(text, keyPrefix)
 
   const sortedTokens = [...mentionTokens]
     .filter(
@@ -133,7 +139,7 @@ export function mentionifyText(text: string, keyPrefix: string, mentionTokens: M
       const nextHash = text.indexOf('#', cursor + 1)
       const candidates = [nextAt, nextHash].filter((index) => index !== -1)
       const end = candidates.length > 0 ? Math.min(...candidates) : text.length
-      parts.push(...linkifyText(text.slice(cursor, end)))
+      parts.push(...linkifyText(text.slice(cursor, end), `${keyPrefix}-${cursor}`))
       cursor = end
       continue
     }
@@ -145,8 +151,7 @@ export function mentionifyText(text: string, keyPrefix: string, mentionTokens: M
         <a
           key={key}
           href={matched.href}
-          className="cursor-pointer rounded-sm bg-[#5865f2]/15 px-0.5 font-bold no-underline hover:underline dark:bg-[#5865f2]/30"
-          style={{ color: matched.color }}
+          className="cursor-pointer rounded-sm bg-primary/10 px-0.5 font-medium text-primary no-underline hover:underline dark:bg-primary/20"
           onClick={(e) => {
             e.preventDefault()
             e.stopPropagation()
@@ -156,7 +161,7 @@ export function mentionifyText(text: string, keyPrefix: string, mentionTokens: M
           {value}
         </a>
       ) : (
-        <span key={key} className="rounded-sm bg-[#5865f2]/15 px-0.5 font-bold dark:bg-[#5865f2]/30" style={{ color: matched.color }}>
+        <span key={key} className="rounded-sm bg-primary/10 px-0.5 font-medium text-primary dark:bg-primary/20">
           {value}
         </span>
       ),
@@ -221,13 +226,7 @@ export function renderMarkdownText(text: string, keyPrefix: string, mentionToken
         </code>,
       )
     } else if (token.startsWith(':')) {
-      const shortcode = token.slice(1, -1)
-      const custom = getState().customEmojis.find((e) => e.name === shortcode)
-      if (custom) {
-        parts.push(<img key={key} className="inline-block size-5 rounded-[3px] object-contain align-[-4px]" src={custom.url} alt={token} title={token} />)
-      } else {
-        parts.push(EMOJI_SHORTCODES[shortcode] || token)
-      }
+      parts.push(EMOJI_SHORTCODES[token.slice(1, -1)] || token)
     } else if (token.startsWith('**') || token.startsWith('__')) {
       parts.push(<strong key={key}>{renderMarkdownText(token.slice(2, -2), `${key}-strong`, mentionTokens)}</strong>)
     } else if (token.startsWith('~~')) {
