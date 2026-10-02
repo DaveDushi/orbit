@@ -33,6 +33,9 @@ const emojiAssets = [
 
 // https://vite.dev/config/
 export default defineConfig({
+  define: {
+    __ORBIT_BUILD_REVISION__: JSON.stringify(buildRevision),
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
