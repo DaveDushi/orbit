@@ -6,13 +6,18 @@ import type { Message } from './api/types'
  * (a route component) supplies these.
  */
 export interface ChatHost {
-  /** A card for an Orbit task or page URL in a message; `null` for any other URL. */
+  /** A card for an Orbit task, page or view URL in a message; `null` for any other URL. */
   renderLinkCard: (url: string) => ReactNode
+  /**
+   * A bare Orbit URL in the text of a message: a chip that names the task, page or view, or nothing when `hidden` (the card
+   * stands in for the URL). `plain` is the default link, for every other URL and for what the reader cannot see.
+   */
+  renderLink: (url: string, plain: ReactNode, hidden: boolean) => ReactNode
   /** Opens the new task dialog, filled in from this message. */
   createTask: (message: Message) => void
 }
 
-export const ChatHostContext = createContext<ChatHost>({ renderLinkCard: () => null, createTask: () => {} })
+export const ChatHostContext = createContext<ChatHost>({ renderLinkCard: () => null, renderLink: (_url, plain) => plain, createTask: () => {} })
 
 export function useChatHost(): ChatHost {
   return useContext(ChatHostContext)

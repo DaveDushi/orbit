@@ -386,9 +386,11 @@ export function TaskDetail({ task, project, state, onBack, onOpenTask, onOpenPro
                 <DropdownMenu>
                   <DropdownMenuTrigger
                     render={
-                      <PropertyButton aria-label={`Project: ${project?.name ?? 'none'}`}>
-                        {project ? <LabelPill label={project} /> : <span className="text-muted-foreground">Set project</span>}
-                      </PropertyButton>
+                      // the pill is the trigger, like "Add label": a ghost button around a badge reads as two controls
+                      <Button variant="outline" size="xs" className="h-5 max-w-full rounded-full font-medium" aria-label={`Project: ${project?.name ?? 'none'}`}>
+                        {project ? <ColorDot color={project.color} /> : null}
+                        <span className="truncate">{project?.name ?? 'Set project'}</span>
+                      </Button>
                     }
                   />
                   <DropdownMenuContent className="w-auto min-w-52">

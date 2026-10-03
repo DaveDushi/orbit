@@ -8,6 +8,7 @@ import {
   isLongMessage,
   messagesAfter,
   quickReactions,
+  standaloneLinkUrls,
   typingLabel,
 } from './messageText'
 
@@ -75,4 +76,18 @@ test('new messages are the ones of other members after the last known message', 
   // The last known message was removed, or nothing was known: nothing counts as new.
   expect(messagesAfter(messages, 'gone', messageKey, 'me')).toEqual([])
   expect(messagesAfter(messages, null, messageKey, 'me')).toEqual([])
+})
+
+test('only a card URL that is a whole line is standalone', () => {
+  const task = 'https://orbit.test/tasks/ENG-1'
+  const page = 'https://orbit.test/docs/p1'
+  expect(standaloneLinkUrls(task)).toEqual([task])
+  expect(standaloneLinkUrls(`Look at this:\n${task}\nand ${page} too`)).toEqual([task])
+  expect(standaloneLinkUrls(`- ${task}\n> ${page}\n${task}.`)).toEqual([])
+  expect(standaloneLinkUrls(`\`\`\`\n${task}\n\`\`\``)).toEqual([])
+  // the same URL in a sentence too: both stay, or the sentence would lose it
+  expect(standaloneLinkUrls(`see ${task} now\n${task}`)).toEqual([])
+  // past the card limit a URL has no card to stand in for it
+  const many = [1, 2, 3, 4].map((number) => `https://orbit.test/tasks/ENG-${number}`)
+  expect(standaloneLinkUrls(many.join('\n'))).toEqual(many.slice(0, 3))
 })

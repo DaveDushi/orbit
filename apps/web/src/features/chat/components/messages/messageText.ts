@@ -34,6 +34,16 @@ export function extractLinkUrls(body: string, limit = 3): string[] {
   return urls
 }
 
+/**
+ * Of the URLs that can become link cards, the ones that are a whole line of the body and are nowhere else in it. The
+ * card stands in for such a URL, so the text can leave it out; a URL inside a sentence stays where it is.
+ */
+export function standaloneLinkUrls(body: string): string[] {
+  const text = body.replace(CODE, ' ')
+  const lines = new Set(text.split('\n'))
+  return extractLinkUrls(body).filter((url) => lines.has(url) && text.split(url).length === 2)
+}
+
 /** The first line with text, cut to `max` characters: the thread breadcrumb and announcements. */
 export function firstLine(text: string, max = 80): string {
   const line = text.split('\n').find((candidate) => candidate.trim() !== '')?.trim() ?? ''

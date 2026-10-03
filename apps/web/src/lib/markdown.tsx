@@ -5,6 +5,7 @@
 import { appNavigate } from './navigateBridge'
 import { CodeBlock } from '@/components/common/CodeBlock'
 import { EmojiText } from '@/components/common/Emoji'
+import { InternalLink } from '@/components/common/InternalLink'
 import { Checkbox } from '@/components/ui/checkbox'
 import { cn } from './utils'
 import { isMentionBoundary, type MentionToken } from './mentions'
@@ -85,17 +86,7 @@ function linkifyText(text: string, keyPrefix: string): React.ReactNode[] {
           {github.label}
         </a>
       ) : path ? (
-        <a
-          key={`${keyPrefix}-link-${match.index}`}
-          href={path}
-          className="text-primary hover:underline"
-          onClick={(e) => {
-            e.preventDefault()
-            appNavigate(path)
-          }}
-        >
-          {url}
-        </a>
+        <InternalLink key={`${keyPrefix}-link-${match.index}`} url={url} path={path} />
       ) : (
         <a
           key={`${keyPrefix}-link-${match.index}`}

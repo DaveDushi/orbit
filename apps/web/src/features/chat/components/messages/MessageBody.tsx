@@ -1,11 +1,12 @@
 import { Fragment, useState } from 'react'
 import { Attachments } from '@/components/common/Attachments'
 import { Button } from '@/components/ui/button'
+import { InternalLinkContext } from '@/lib/internalLinkContext'
 import { renderMarkdownBlocks } from '@/lib/markdown'
 import type { Message } from '../../api/types'
 import { useChatHost } from '../../chatHost'
 import { decodeMentions } from '../../lib/mentionTokens'
-import { extractLinkUrls, isLongMessage } from './messageText'
+import { extractLinkUrls, isLongMessage, standaloneLinkUrls } from './messageText'
 import { useChatPeople } from './people'
 
 /** Cards for the Orbit task and page URLs in a message; other URLs give nothing. */
@@ -28,9 +29,11 @@ function LinkCards({ body }: { body: string }) {
 /**
  * What a message says: its markdown with mentions shown as names, "(edited)", attachments and link cards. A long
  * message collapses behind "Show more". No list or toolbar concerns, so previews (pins, search, unreads) can use it.
+ * An Orbit URL the reader can see shows as a chip; one that is a whole line shows only as its card.
  */
 export function MessageBody({ message }: { message: Message }) {
   const people = useChatPeople()
+  const { renderLink } = useChatHost()
   const [expanded, setExpanded] = useState(false)
 
   if (message.deleted) {
@@ -42,6 +45,7 @@ export function MessageBody({ message }: { message: Message }) {
   }
 
   const text = decodeMentions(message.body, people.members, people.channels)
+  const standalone = standaloneLinkUrls(message.body)
   const long = isLongMessage(text)
 
   return (
@@ -52,9 +56,12 @@ export function MessageBody({ message }: { message: Message }) {
           data-collapsed={long && !expanded ? '' : undefined}
           data-edited={message.editedAt ? '' : undefined}
           // Code scrolls sideways instead of wrapping; with "(edited)" the last paragraph is inline so the mark follows it.
-          className="leading-[1.5] wrap-anywhere text-foreground/85 data-collapsed:max-h-[30em] data-collapsed:overflow-hidden data-edited:[&>p:nth-last-child(2)]:inline [&_pre]:overflow-x-auto [&_pre]:whitespace-pre [&_pre_code]:whitespace-pre"
+          // A paragraph whose only content was a link that its card replaced is empty: it takes no line.
+          className="leading-[1.5] wrap-anywhere text-foreground/85 data-collapsed:max-h-[30em] data-collapsed:overflow-hidden data-edited:[&>p:nth-last-child(2)]:inline [&_pre]:overflow-x-auto [&_pre]:whitespace-pre [&_pre_code]:whitespace-pre [&>p:empty]:hidden"
         >
-          {renderMarkdownBlocks(text, message.id, people.tokens)}
+          <InternalLinkContext value={(url, plain) => renderLink(url, plain, standalone.includes(url))}>
+            {renderMarkdownBlocks(text, message.id, people.tokens)}
+          </InternalLinkContext>
           {message.editedAt ? (
             <span data-slot="message-edited" className="ml-1 text-xs text-muted-foreground">
               (edited)

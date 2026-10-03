@@ -33,7 +33,8 @@ test('only same-origin task and page URLs are link card targets', () => {
   // task URLs name a task by identifier too, also inside a saved view
   expect(orbitLinkTarget('https://orbit.test/tasks/ENG-12', origin)).toEqual({ kind: 'task', id: 'ENG-12' })
   expect(orbitLinkTarget('/views/v1/ENG-12?x=1', origin)).toEqual({ kind: 'task', id: 'ENG-12' })
-  expect(orbitLinkTarget('/views/v1', origin)).toBeNull()
+  expect(orbitLinkTarget('/views/v1?x=1', origin)).toEqual({ kind: 'view', id: 'v1' })
+  expect(orbitLinkTarget('/views', origin)).toBeNull()
   expect(orbitLinkTarget('/views/v1/ENG-12/more', origin)).toBeNull()
 })
 

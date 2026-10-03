@@ -34,7 +34,7 @@ import { useChatLocation, useChatNavigation, useOpenPane } from '@/features/chat
 import { useOpenNewTask } from '@/features/tasks/newTask'
 import { useMembers } from '@/features/workspaces/api'
 import { useBindings, useCommand, useRunCommand } from '@/shortcuts/useCommand'
-import { ChatLinkCard } from './ChatLinkCard'
+import { ChatLinkCard, ChatLinkChip } from './ChatLinkCard'
 import { homeConversation, orbitLinkTarget, PANE_WIDTH, paneLayout, rightPaneOf, taskTitleFromMessage, type RightPane } from './chatPageLib'
 import { openedByPointer, useElementWidth, useInputModality, useIsPhone } from './useChatViewport'
 
@@ -190,6 +190,10 @@ export function ChatPage() {
     renderLinkCard: (url) => {
       const target = orbitLinkTarget(url, window.location.origin)
       return target ? <ChatLinkCard kind={target.kind} id={target.id} /> : null
+    },
+    renderLink: (url, plain, hidden) => {
+      const target = orbitLinkTarget(url, window.location.origin)
+      return target ? <ChatLinkChip kind={target.kind} id={target.id} hidden={hidden}>{plain}</ChatLinkChip> : plain
     },
     createTask: (message: ChatMessage) => {
       const source = conversations.data?.find((candidate) => candidate.id === message.conversationId)
