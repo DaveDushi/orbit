@@ -283,6 +283,11 @@ impl MigrationRunner {
                     include_str!("../../../../apps/server/migrations/0038_user_avatars.sql"),
                     false,
                 ),
+                Migration::new(
+                    39,
+                    include_str!("../../../../apps/server/migrations/0039_task_numbers.sql"),
+                    false,
+                ),
             ],
         )
     }

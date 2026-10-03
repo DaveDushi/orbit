@@ -19772,7 +19772,7 @@
             }
           },
           "409": {
-            "description": "contract_mismatch, task_conflict, conflict, github_content_read_only",
+            "description": "contract_mismatch, task_conflict, conflict, github_content_read_only, github_linked_move",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -20253,6 +20253,7 @@
         "tags": [
           "crate::task_routes"
         ],
+        "summary": "`task_id` is the task UUID or its identifier, e.g. `ENG-12` (case-insensitive).",
         "operationId": "get_task",
         "parameters": [
           {
@@ -20266,6 +20267,7 @@
           {
             "name": "task_id",
             "in": "path",
+            "description": "Task UUID or identifier such as `ENG-12`",
             "required": true,
             "schema": {
               "type": "string"
@@ -20596,7 +20598,7 @@
             }
           },
           "409": {
-            "description": "contract_mismatch, task_conflict, conflict, github_content_read_only",
+            "description": "contract_mismatch, task_conflict, conflict, github_content_read_only, github_linked_move",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -26856,6 +26858,7 @@
               "position",
               "member_ids",
               "is_default",
+              "self_dm",
               "archived",
               "created_by",
               "created_at",
@@ -26909,6 +26912,10 @@
                 "type": "integer",
                 "format": "int64",
                 "description": "Order inside its category."
+              },
+              "self_dm": {
+                "type": "boolean",
+                "description": "A DM that was opened with its creator alone: their own place for notes. A DM whose other\nmembers left the workspace is not one."
               },
               "topic": {
                 "type": "string"
@@ -27388,6 +27395,7 @@
           "position",
           "member_ids",
           "is_default",
+          "self_dm",
           "archived",
           "created_by",
           "created_at",
@@ -27441,6 +27449,10 @@
             "type": "integer",
             "format": "int64",
             "description": "Order inside its category."
+          },
+          "self_dm": {
+            "type": "boolean",
+            "description": "A DM that was opened with its creator alone: their own place for notes. A DM whose other\nmembers left the workspace is not one."
           },
           "topic": {
             "type": "string"
@@ -30580,6 +30592,7 @@
                 "workspace_id",
                 "project_id",
                 "status_id",
+                "number",
                 "title",
                 "description",
                 "priority",
@@ -30682,6 +30695,11 @@
                   "items": {
                     "type": "string"
                   }
+                },
+                "number": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Per-project sequence number: the task's identifier is `{project key}-{number}`, e.g.\n`ENG-12`. Reassigned when the task moves to another project; never reused."
                 },
                 "parent": {
                   "oneOf": [
@@ -31139,12 +31157,19 @@
         "required": [
           "id",
           "project_id",
+          "number",
           "title",
-          "status_id"
+          "status_id",
+          "version"
         ],
         "properties": {
           "id": {
             "type": "string"
+          },
+          "number": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The task's number in its project; with the project key it makes the identifier (`ENG-12`)."
           },
           "project_id": {
             "type": "string"
@@ -31154,6 +31179,12 @@
           },
           "title": {
             "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The other task's version, so it can be updated in place (e.g. its status) from the relation row.",
+            "minimum": 0
           }
         }
       },
@@ -31893,6 +31924,7 @@
           "workspace_id",
           "project_id",
           "status_id",
+          "number",
           "title",
           "description",
           "priority",
@@ -31996,6 +32028,11 @@
               "type": "string"
             }
           },
+          "number": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Per-project sequence number: the task's identifier is `{project key}-{number}`, e.g.\n`ENG-12`. Reassigned when the task moves to another project; never reused."
+          },
           "parent": {
             "oneOf": [
               {
@@ -32070,16 +32107,22 @@
       },
       "TaskRef": {
         "type": "object",
-        "description": "A task reference small enough to embed; clients build the display identifier themselves.",
+        "description": "A task reference small enough to embed; clients build the display identifier\n(`{project_key}-{number}`) themselves.",
         "required": [
           "id",
           "project_id",
           "project_key",
+          "number",
           "title"
         ],
         "properties": {
           "id": {
             "type": "string"
+          },
+          "number": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The task's number in that project."
           },
           "project_id": {
             "type": "string"

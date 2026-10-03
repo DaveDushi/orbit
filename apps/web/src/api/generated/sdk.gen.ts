@@ -1845,6 +1845,9 @@ export const deleteTask = <ThrowOnError extends boolean = false>(options: Option
     ...options
 });
 
+/**
+ * `task_id` is the task UUID or its identifier, e.g. `ENG-12` (case-insensitive).
+ */
 export const getTask = <ThrowOnError extends boolean = false>(options: Options<GetTaskData, ThrowOnError>): RequestResult<GetTaskResponses, GetTaskErrors, ThrowOnError> => (options.client ?? client).get<GetTaskResponses, GetTaskErrors, ThrowOnError>({
     security: [{
             in: 'cookie',

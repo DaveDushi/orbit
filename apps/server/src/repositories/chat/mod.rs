@@ -157,6 +157,9 @@ pub struct ConversationRecord {
     pub member_ids: Vec<Id>,
     /// `#general`: every member is in it and it cannot be left, archived or made private.
     pub is_default: bool,
+    /// A DM that was opened with its creator alone: their own place for notes. A DM whose other
+    /// members left the workspace is not one.
+    pub self_dm: bool,
     pub archived: bool,
     #[schema(value_type = String)]
     pub created_by: Id,
@@ -541,6 +544,7 @@ struct Conversation {
     category_id: Option<Id>,
     position: i64,
     is_default: bool,
+    self_dm: bool,
     archived_at: Option<i64>,
     created_by: Id,
     created_at: i64,
@@ -550,7 +554,7 @@ struct Conversation {
 
 const CONVERSATION_COLUMNS: &str = "c.id, c.workspace_id, c.kind, c.name, c.topic, c.category_id, \
      c.position, c.is_default, c.archived_at, c.created_by, c.created_at, c.last_message_at, \
-     c.message_count";
+     c.message_count, (c.kind = 'dm' AND instr(c.dm_key, ',') = 0) AS self_dm";
 
 fn conversation_from_row(row: &SqliteRow) -> Result<Conversation, ChatError> {
     Ok(Conversation {
@@ -562,6 +566,7 @@ fn conversation_from_row(row: &SqliteRow) -> Result<Conversation, ChatError> {
         category_id: parse_optional_id(row.get("category_id"))?,
         position: row.get("position"),
         is_default: row.get("is_default"),
+        self_dm: row.get("self_dm"),
         archived_at: row.get("archived_at"),
         created_by: parse_id(row.get("created_by"))?,
         created_at: row.get("created_at"),
@@ -733,6 +738,50 @@ async fn member_ids(
     .collect()
 }
 
+/// Puts a new workspace member into every live public channel, with everything read, the way
+/// the `chat_default_channel_for_member` trigger does for `#general`. Every insert into
+/// `memberships` calls this in the same transaction, so a public channel always has every
+/// workspace member. Channels the member is in already stay as they are.
+pub async fn join_public_channels(
+    conn: &mut SqliteConnection,
+    workspace_id: Id,
+    user_id: Id,
+    now: TimestampMillis,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO chat_members (conversation_id, user_id, workspace_id, notify, \
+         last_read_message_id, read_count, joined_at) \
+         SELECT c.id, ?, c.workspace_id, 'mentions', \
+                (SELECT id FROM chat_messages WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1), \
+                c.message_count, ? \
+         FROM chat_conversations c \
+         WHERE c.workspace_id = ? AND c.kind = 'public' AND c.archived_at IS NULL \
+         ON CONFLICT (conversation_id, user_id) DO NOTHING",
+    )
+    .bind(user_id.to_string())
+    .bind(now.as_millis())
+    .bind(workspace_id.to_string())
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// Every member of the workspace.
+async fn workspace_member_ids(
+    conn: &mut SqliteConnection,
+    workspace_id: Id,
+) -> Result<Vec<Id>, ChatError> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT user_id FROM memberships WHERE workspace_id = ? ORDER BY created_at, user_id",
+    )
+    .bind(workspace_id.to_string())
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .map(parse_id)
+    .collect()
+}
+
 fn conversation_record(conversation: &Conversation, member_ids: Vec<Id>) -> ConversationRecord {
     ConversationRecord {
         id: conversation.id,
@@ -743,6 +792,7 @@ fn conversation_record(conversation: &Conversation, member_ids: Vec<Id>) -> Conv
         position: conversation.position,
         member_ids,
         is_default: conversation.is_default,
+        self_dm: conversation.self_dm,
         archived: conversation.archived_at.is_some(),
         created_by: conversation.created_by,
         created_at: TimestampMillis::from_millis(conversation.created_at),

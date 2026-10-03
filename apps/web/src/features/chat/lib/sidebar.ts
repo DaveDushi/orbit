@@ -72,16 +72,23 @@ export interface ChatPerson {
   name: string
 }
 
-/** The members of a DM other than the current user. Empty for a DM with yourself. */
+/** The members of a DM other than the current user. Empty for the user's own notes, or when the others left the workspace. */
 export function dmPeerIds(conversation: Conversation, currentUserId: string): string[] {
   return conversation.memberIds.filter((id) => id !== currentUserId)
+}
+
+/** The DM the user opened with themselves alone: their own place for notes, drafts and links. */
+export function isSelfDm(conversation: Conversation): boolean {
+  return conversation.kind === 'dm' && conversation.selfDm
 }
 
 /** A DM has no name: its title is the other members' names. */
 export function dmTitle(conversation: Conversation, people: readonly ChatPerson[], currentUserId: string): string {
   const nameOf = (id: string) => people.find((person) => person.id === id)?.name ?? 'Unknown'
+  if (isSelfDm(conversation)) return `${nameOf(currentUserId)} (you)`
   const peers = dmPeerIds(conversation, currentUserId)
-  if (peers.length === 0) return `${nameOf(currentUserId)} (you)`
+  // the other members left the workspace
+  if (peers.length === 0) return 'Former member'
   return peers.map(nameOf).join(', ')
 }
 
@@ -102,10 +109,16 @@ const lastActivity = (conversation: Conversation) => conversation.lastMessageAt 
 const byPosition = (a: Conversation, b: Conversation) => a.position - b.position || a.name.localeCompare(b.name)
 const byActivity = (a: Conversation, b: Conversation) => lastActivity(b) - lastActivity(a) || (a.id < b.id ? -1 : 1)
 
+/** How many public channels the user can join but has not: the sidebar points at them, since it lists joined ones only. */
+export function unjoinedChannelCount(conversations: readonly Conversation[]): number {
+  return conversations.filter((conversation) => conversation.kind === 'public' && !conversation.isMember && !conversation.archived).length
+}
+
 /**
  * The scrolling list of the chat sidebar: Favorites (hidden when empty; a favorite leaves its own group), each shared
  * category by position (kept when empty, so admins can fill it), "Channels" for channels without a category (hidden
- * when empty), then Direct messages by last activity. Only joined, unarchived conversations show.
+ * when empty), then Direct messages by last activity, the DM with yourself first. Only joined, unarchived
+ * conversations show.
  */
 export function buildSidebarSections(
   conversations: readonly Conversation[],
@@ -156,7 +169,9 @@ export function buildSidebarSections(
     kind: 'dms',
     title: 'Direct messages',
     category: null,
-    conversations: rest.filter((conversation) => conversation.kind === 'dm').sort(byActivity),
+    conversations: rest
+      .filter((conversation) => conversation.kind === 'dm')
+      .sort((a, b) => Number(isSelfDm(b)) - Number(isSelfDm(a)) || byActivity(a, b)),
   })
   return sections
 }
