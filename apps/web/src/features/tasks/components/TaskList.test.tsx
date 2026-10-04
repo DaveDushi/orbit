@@ -392,6 +392,21 @@ test('manual order: dropping a row above its group\'s first row writes only the 
   ] })
 })
 
+test('manual order: the insertion slot comes from the line positions, not from the rows in the DOM', async () => {
+  const writes = captureWrites()
+  const view = renderList([task(1), task(2), task(3)])
+  fireEvent.dragStart(rowOf(view, 'Task 3'), { dataTransfer })
+  // test lines are 1px high (src/test/dom.ts): the header is at 0, Task 1 at 1, Task 2 at 2. The pointer is below
+  // the middle of Task 1 and above the middle of Task 2
+  dropAt(zoneOf(view, 'Todo'), 2)
+
+  await waitFor(() => expect(writes).toHaveLength(1))
+  expect(writes[0]!.body).toEqual({ updates: [
+    { id: 'task-3', expected_version: 1, position: 2 },
+    { id: 'task-2', expected_version: 1, position: 3 },
+  ] })
+})
+
 test('with a non-manual order, dropping inside the same group changes nothing', async () => {
   const writes = captureWrites()
   const view = renderList([task(1), task(2)], { display: { order_by: 'created' } })

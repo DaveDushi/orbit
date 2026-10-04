@@ -247,11 +247,11 @@ function WorkspaceTasksPage() {
   }
   // keep the current view on screen until the task can render complete (at most OPEN_WAIT_MS)
   const opening = useRef<string | null>(null)
-  const { order } = useTaskTarget()
+  const { order, pointer } = useTaskTarget()
   const openTask = (id: string) => {
     opening.current = id
     // the rows as shown now: next and previous in task detail follow this order
-    const shown = visibleTaskIds()
+    const shown = visibleTaskIds(pointer)
     if (shown.length > 0) order.current = shown
     const wait = new Promise((resolve) => setTimeout(resolve, OPEN_WAIT_MS))
     void Promise.race([prefetchTaskDetail(queryClient, workspace.id, id), wait]).then(() => {

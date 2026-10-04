@@ -1,5 +1,7 @@
+import { useVirtualTaskRows } from '@/shortcuts/taskTarget'
 import { useCommand } from '@/shortcuts/useCommand'
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from 'react'
+import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual'
 import { cn } from 'cn'
 import { differenceInCalendarDays } from 'date-fns'
 import { TaskSquare as SquareCheck } from 'reicon-react'
@@ -136,6 +138,25 @@ export function TaskTimeline({ tasks, projects, statuses, users, groupBy, proper
     },
   })
 
+  // only the rows near the view are in the DOM (TanStack Virtual); the keyboard still gets every task with a bar
+  const { keepId, onFocus } = useVirtualTaskRows(rows.flatMap((row) => (row.kind === 'task' && row.span ? [row.task.id] : [])))
+  // rows that stay in the DOM out of view: the row with the focus, and the row of the bar that is dragged
+  const kept = rows.flatMap((row, index) => (row.kind === 'task' && (row.task.id === keepId || row.task.id === drag?.taskId) ? [index] : []))
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    getItemKey: (index) => rows[index].key,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 10,
+    // the rows start below the sticky date header
+    scrollMargin: HEADER_HEIGHT,
+    rangeExtractor: (range) => {
+      const indexes = defaultRangeExtractor(range)
+      const outside = kept.filter((index) => index < indexes[0] || index > indexes[indexes.length - 1])
+      return outside.length > 0 ? [...new Set([...indexes, ...outside])].sort((a, b) => a - b) : indexes
+    },
+  })
+
   // restore the last position (coming back from a task), else centre on today; again when
   // the scroller remounts after an empty result
   useLayoutEffect(() => {
@@ -219,6 +240,8 @@ export function TaskTimeline({ tasks, projects, statuses, users, groupBy, proper
     <div
       ref={scrollRef}
       data-timeline-scroller
+      data-virtual-scroller
+      onFocus={onFocus}
       className="relative h-full overflow-auto overscroll-x-contain [--timeline-left:280px] max-[899px]:[--timeline-left:0px]"
       onScroll={(event) => {
         const { scrollLeft, scrollTop } = event.currentTarget
@@ -244,7 +267,9 @@ export function TaskTimeline({ tasks, projects, statuses, users, groupBy, proper
           <TimelineHeader range={range} pxPerDay={pxPerDay} today={today} />
         </div>
 
-        {rows.map((row) => {
+        <div className="relative shrink-0" style={{ height: virtualizer.getTotalSize() }}>
+        {virtualizer.getVirtualItems().map((item) => {
+          const row = rows[item.index]
           const status = row.kind === 'task' ? statusById.get(row.task.statusId) : undefined
           const assignee = row.kind === 'task' ? userById.get(row.task.assigneeIds[0] ?? '') : undefined
           const undated = row.kind === 'task' && !row.span
@@ -259,7 +284,8 @@ export function TaskTimeline({ tasks, projects, statuses, users, groupBy, proper
               // a right-click anywhere on a task row opens the task menu (TaskContextMenu)
               data-task-menu={row.kind === 'task' ? row.task.id : undefined}
               // the group band is opaque so the sticky left cell (TimelineRowLabel) matches it
-              className={cn('group/row relative flex h-8 transition-colors duration-150 ease-out', row.kind === 'group' ? 'bg-[color-mix(in_oklch,var(--muted)_45%,var(--background))]' : 'hover:bg-foreground/[0.03]')}
+              style={{ top: item.start - HEADER_HEIGHT }}
+              className={cn('group/row absolute inset-x-0 flex h-8 transition-colors duration-150 ease-out', row.kind === 'group' ? 'bg-[color-mix(in_oklch,var(--muted)_45%,var(--background))]' : 'hover:bg-foreground/[0.03]')}
             >
               <TimelineRowLabel
                 row={row}
@@ -327,6 +353,7 @@ export function TaskTimeline({ tasks, projects, statuses, users, groupBy, proper
             </div>
           )
         })}
+        </div>
         {/* keeps the left pane solid below the last row, so the grid never shows through it */}
         <div className="flex flex-1">
           <div className="sticky left-0 z-10 w-[280px] shrink-0 border-r bg-background max-[899px]:hidden" />

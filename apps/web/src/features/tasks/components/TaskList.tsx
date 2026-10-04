@@ -1,6 +1,7 @@
-import { useTaskTarget } from '@/shortcuts/taskTarget'
+import { useTaskTarget, useVirtualTaskRows } from '@/shortcuts/taskTarget'
 import { useCommand } from '@/shortcuts/useCommand'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { defaultRangeExtractor, useVirtualizer, type VirtualItem } from '@tanstack/react-virtual'
 import { Calendar, Copy, Danger, Flag, Hierarchy2, LinkBroken, Loader, Add as Plus, RecordCircle, TaskSquare as SquareCheck, Tag, UserAdd, Xmark as X } from 'reicon-react'
 import { cn } from 'cn'
 import { Button } from '@/components/ui/button'
@@ -56,7 +57,22 @@ export interface TaskListProps {
   onAdd: (values: GroupValues) => void
 }
 
-/** Grouped task list: collapsible group and sub-group headers; rows move between groups by drag and drop. */
+/** The height of a line before it is measured. */
+const LINE_HEIGHT = { group: 36, sub: 32, row: 40 }
+
+/** A group or sub-group: its header's data, and a drop zone when it holds the rows itself. */
+type Zone = { id: string; values: GroupValues; tasks: Task[]; itemsShown: boolean }
+/** One line of the virtual list. `keep`: the headers above it, which stay mounted while it is the first line in view (they stick). */
+type Line = { key: string; zone: Zone; keep: number[] } & (
+  | { kind: 'group' | 'sub'; group: TaskGroup }
+  | { kind: 'row'; row: TreeRow })
+/** A `<section>` over the lines `first`…`last`: a header (unless ungrouped), then rows or sub-group sections. */
+type Block = { key: string; first: number; last: number; zone: Zone; drop: boolean; className?: string; blocks?: Block[] }
+
+/**
+ * Grouped task list: collapsible group and sub-group headers; rows move between groups by drag and drop.
+ * Only the lines near the view are in the DOM (TanStack Virtual); the list has its own scroll.
+ */
 export function TaskList({ tasks, users, labels, statuses, projects, display, groupContext, collapseScope, onOpen, onAdd }: TaskListProps) {
   const { workspace } = useWorkspace()
   const [collapsed, toggle] = useCollapsedGroups(`orbit:task_list_collapsed:${workspace.id}:${collapseScope}`)
@@ -80,8 +96,6 @@ export function TaskList({ tasks, users, labels, statuses, projects, display, gr
     tasks,
     manual,
     groupContext,
-    // the insertion slot counts root rows only: a subtree moves with its root
-    itemSelector: '[data-task-row][data-depth="0"]',
     onDuplicate: (task) => setDuplicatePicker([task]),
     // nested: a group zone is the root level, so a sub-issue dropped there leaves its parent
     detach: nested ? (task) => tree.nested.has(task.id) : undefined,
@@ -112,6 +126,74 @@ export function TaskList({ tasks, users, labels, statuses, projects, display, gr
   const statusOptions = groupTasks([], 'status', { ...groupContext, showEmpty: true })
     .filter((group) => !group.value?.startsWith('duplicate:'))
 
+  const lines: Line[] = []
+  const addRows = (zone: Zone, keep: number[]) => {
+    const rows: TreeRow[] = nested
+      ? flattenTree(tree, zone.tasks, taskTree.collapsed)
+      : zone.tasks.map((task) => ({ task, depth: 0, indent: 0, hasChildren: false }))
+    // a task with several labels or assignees has a row in each of their groups
+    for (const row of rows) lines.push({ kind: 'row', key: `${zone.id}:${row.task.id}`, zone, keep, row })
+  }
+  const blocks = sections.map(({ group, subGroups }): Block => {
+    const values = valuesOf(group)
+    const id = zoneIdOf(values)
+    const first = lines.length
+    if (group.field === 'none') {
+      const zone = { id, values, tasks: group.tasks, itemsShown: true }
+      addRows(zone, [])
+      return { key: id, first, last: lines.length - 1, zone, drop: true }
+    }
+    const open = !collapsed.includes(id)
+    const zone = { id, values, tasks: group.tasks, itemsShown: open }
+    lines.push({ kind: 'group', key: `group:${id}`, zone, keep: [], group })
+    // a collapsed group hides its sub-groups, so the group itself takes drops: only the group field changes
+    // (a hidden sub-group value must never be written) and the task goes to the group's end
+    const subBlocks = open ? subGroups?.map((sub): Block => {
+      const subValues = valuesOf(group, sub)
+      const subId = zoneIdOf(subValues)
+      const subFirst = lines.length
+      const subZone = { id: subId, values: subValues, tasks: sub.tasks, itemsShown: !collapsed.includes(subId) }
+      lines.push({ kind: 'sub', key: `sub:${subId}`, zone: subZone, keep: [first], group: sub })
+      if (subZone.itemsShown) addRows(subZone, [first, subFirst])
+      return { key: sub.key, first: subFirst, last: lines.length - 1, zone: subZone, drop: true, className: 'group/sub' }
+    }) : undefined
+    if (open && !subGroups) addRows(zone, [first])
+    return { key: group.key, first, last: lines.length - 1, zone, drop: !subBlocks, className: 'group/section', blocks: subBlocks }
+  })
+
+  const scroller = useRef<HTMLDivElement>(null)
+  const content = useRef<HTMLDivElement>(null)
+  const { keepId, onFocus } = useVirtualTaskRows(lines.flatMap((line) => (line.kind === 'row' ? [line.row.task.id] : [])))
+  // rows that stay in the DOM out of view: the dragged row (see `renderRow`) and the row with the focus
+  const kept = lines.flatMap((line, index) => (line.kind === 'row' && (line.row.task.id === keepId || line.row.task.id === drag?.taskId) ? [index] : []))
+  const virtualizer = useVirtualizer({
+    count: lines.length,
+    getScrollElement: () => scroller.current,
+    getItemKey: (index) => lines[index].key,
+    estimateSize: (index) => LINE_HEIGHT[lines[index].kind],
+    overscan: 10,
+    rangeExtractor: (range) => {
+      const indexes = defaultRangeExtractor(range)
+      const outside = [...(lines[range.startIndex]?.keep ?? []), ...kept].filter((index) => index < indexes[0] || index > indexes[indexes.length - 1])
+      return outside.length > 0 ? [...new Set([...indexes, ...outside])].sort((a, b) => a - b) : indexes
+    },
+  })
+  const mounted = virtualizer.getVirtualItems()
+  const measurements = virtualizer.measurementsCache
+
+  /** The insertion slot among a zone's root rows (a subtree moves with its root) at the pointer, by row midpoints. */
+  const slotAt = (block: Block, clientY: number) => {
+    const y = clientY - (content.current?.getBoundingClientRect().top ?? 0)
+    let slot = 0
+    for (let index = block.first; index <= block.last; index += 1) {
+      const line = lines[index]
+      if (line.kind !== 'row' || line.row.depth > 0 || line.row.task.id === drag?.taskId) continue
+      if (y < measurements[index].start + measurements[index].size / 2) break
+      slot += 1
+    }
+    return slot
+  }
+
   const toggleSelect = (taskId: string) =>
     setSelected((prev) => (prev.includes(taskId) ? prev.filter((id) => id !== taskId) : [...prev, taskId]))
 
@@ -139,25 +221,21 @@ export function TaskList({ tasks, users, labels, statuses, projects, display, gr
     return lineShown ? { ...props, 'data-drop-over': undefined } : props
   }
 
-  const renderRows = (zone: string, values: GroupValues, zoneTasks: Task[]) => {
+  const renderRow = (line: Extract<Line, { kind: 'row' }>, item: VirtualItem, origin: number, lastRowId: string | undefined) => {
+    const { task, depth, hasChildren } = line.row
+    const { zone } = line
+    const index = drop?.zone === zone.id ? drop.index : null
     // the dragged row stays mounted (faded): unmounting the drag source cancels the browser drag
-    const others = drag ? zoneTasks.filter((task) => task.id !== drag.taskId) : zoneTasks
-    const index = drop?.zone === zone ? drop.index : null
-    const rows: TreeRow[] = nested
-      ? flattenTree(tree, zoneTasks, taskTree.collapsed)
-      : zoneTasks.map((task) => ({ task, depth: 0, indent: 0, hasChildren: false }))
-    // the end-of-zone line sits under the zone's last row, which may be a sub-issue of the last root
-    const lastRowId = rows.filter((row) => row.task.id !== drag?.taskId).at(-1)?.task.id
-    return rows.map(({ task, depth, hasChildren }) => {
-      const slot = depth === 0 ? others.indexOf(task) : -1
-      const dropEdge = index === null ? null
-        : slot !== -1 && slot === index ? 'top'
-          : index === others.length && task.id === lastRowId ? 'bottom' : null
-      // the edge of a sub-issue: the task becomes its sibling, shown with the same line
-      const nestEdge = nest.nestAt?.id === task.id && nest.nestAt.zone !== 'inside' ? (nest.nestAt.zone === 'before' ? 'top' : 'bottom') : null
-      return (
+    const others = index === null ? [] : zone.tasks.filter((other) => other.id !== drag?.taskId)
+    const slot = depth === 0 ? others.indexOf(task) : -1
+    const dropEdge = index === null ? null
+      : slot !== -1 && slot === index ? 'top'
+        : index === others.length && task.id === lastRowId ? 'bottom' : null
+    // the edge of a sub-issue: the task becomes its sibling, shown with the same line
+    const nestEdge = nest.nestAt?.id === task.id && nest.nestAt.zone !== 'inside' ? (nest.nestAt.zone === 'before' ? 'top' : 'bottom') : null
+    return (
+      <div key={line.key} ref={virtualizer.measureElement} data-index={item.index} className="absolute inset-x-0" style={{ top: item.start - origin }}>
         <TaskRow
-          key={task.id}
           task={task}
           labels={labels}
           statuses={statuses}
@@ -172,29 +250,33 @@ export function TaskList({ tasks, users, labels, statuses, projects, display, gr
           onOpen={onOpen}
           onToggleSelect={toggleSelect}
           // a nested row shows in its root's group but moves from its own (status, label, assignee…)
-          onDragStart={(taskId) => startDrag(taskId, depth > 0 ? ownGroupValues(task, values, groupContext) : values)}
+          onDragStart={(taskId) => startDrag(taskId, depth > 0 ? ownGroupValues(task, zone.values, groupContext) : zone.values)}
           onDragEnd={endDrag}
           onRequestDuplicate={(rowTask) => setDuplicatePicker([rowTask])}
           tree={nested ? { depth, hasChildren, expanded: !taskTree.collapsed.has(task.id), onToggle: () => taskTree.toggle(task.id) } : null}
           showParent={!nested || !tree.nested.has(task.id)}
           nest={nest.rowProps(task)}
         />
-      )
-    })
+      </div>
+    )
   }
 
-  const renderHeader = (group: TaskGroup, zone: string, values: GroupValues, level: 'group' | 'sub') => {
+  const renderHeader = (line: Extract<Line, { kind: 'group' | 'sub' }>, index: number) => {
+    const { group, kind } = line
+    const { id: zone, values } = line.zone
     const isCollapsed = collapsed.includes(zone)
     // inside the Duplicate status (group or sub-group) a new task would need a canonical task first
     const canAdd = !values.some((value) => value.field === 'status' && value.value?.startsWith('duplicate:'))
     return (
       <div
+        ref={virtualizer.measureElement}
+        data-index={index}
         data-slot="group-header"
-        data-level={level}
+        data-level={kind}
         className={cn(
           'group/hdr sticky flex items-center gap-2 border-b pr-2 text-xs text-muted-foreground transition-colors duration-150',
           // sub-group headers stick right under their group header and sit one indent step in
-          level === 'group'
+          kind === 'group'
             ? 'top-0 z-[5] h-9 bg-card pl-1.5 font-semibold group-data-drop-over/section:bg-primary/10 group-data-drop-over/section:text-primary'
             : 'top-9 z-[4] h-8 border-border/60 bg-background pl-6 font-medium group-data-drop-over/sub:bg-primary/10 group-data-drop-over/sub:text-primary',
         )}
@@ -232,49 +314,50 @@ export function TaskList({ tasks, users, labels, statuses, projects, display, gr
     )
   }
 
+  /**
+   * A section at its place in the list, with its mounted lines. The header is in the flow and sticks inside the
+   * section; rows and sub-group sections are placed from the measurements (`origin` = the top of the parent).
+   */
+  const renderBlock = (block: Block, origin: number): ReactNode => {
+    const shown = mounted.filter((item) => item.index >= block.first && item.index <= block.last)
+    if (shown.length === 0) return null
+    const top = measurements[block.first].start
+    const header = lines[block.first]
+    // the end-of-zone line sits under the zone's last row, which may be a sub-issue of the last root
+    const lastRow = drop?.zone === block.zone.id && block.drop ? lines.slice(block.first, block.last + 1).findLast((line) => line.kind === 'row' && line.row.task.id !== drag?.taskId) : undefined
+    const lastRowId = lastRow?.kind === 'row' ? lastRow.row.task.id : undefined
+    const Section = block.drop ? DropZone : 'section'
+    return (
+      <Section
+        key={block.key}
+        className={cn('absolute inset-x-0', block.className)}
+        style={{ top: top - origin, height: measurements[block.last].end - top }}
+        {...(block.drop ? dropZoneProps({ ...block.zone, slotAt: (clientY) => slotAt(block, clientY) }) : null)}
+      >
+        {header.kind !== 'row' && shown[0].index === block.first ? renderHeader(header, block.first) : null}
+        {block.blocks
+          ? block.blocks.map((child) => renderBlock(child, top))
+          : shown.map((item) => {
+            const line = lines[item.index]
+            return line.kind === 'row' ? renderRow(line, item, top, lastRowId) : null
+          })}
+      </Section>
+    )
+  }
+
   return (
     <>
-      {sections.map(({ group, subGroups }) => {
-        const values = valuesOf(group)
-        const zone = zoneIdOf(values)
-        if (group.field === 'none') {
-          return <DropZone key={zone} {...dropZoneProps({ id: zone, values, tasks: group.tasks, itemsShown: true })}>{renderRows(zone, values, group.tasks)}</DropZone>
-        }
-        const isCollapsed = collapsed.includes(zone)
-        if (!subGroups) {
-          return (
-            <DropZone key={group.key} className="group/section" {...dropZoneProps({ id: zone, values, tasks: group.tasks, itemsShown: !isCollapsed })}>
-              {renderHeader(group, zone, values, 'group')}
-              {isCollapsed ? null : renderRows(zone, values, group.tasks)}
-            </DropZone>
-          )
-        }
-        if (isCollapsed) {
-          // the sub-groups are hidden, so the collapsed group itself takes drops: only the group field changes
-          // (a hidden sub-group value must never be written) and the task goes to the group's end
-          return (
-            <DropZone key={group.key} className="group/section" {...dropZoneProps({ id: zone, values, tasks: group.tasks, itemsShown: false })}>
-              {renderHeader(group, zone, values, 'group')}
-            </DropZone>
-          )
-        }
-        return (
-          <section key={group.key} className="group/section">
-            {renderHeader(group, zone, values, 'group')}
-            {subGroups.map((sub) => {
-              const subValues = valuesOf(group, sub)
-              const subZone = zoneIdOf(subValues)
-              const subCollapsed = collapsed.includes(subZone)
-              return (
-                <DropZone key={sub.key} className="group/sub" {...dropZoneProps({ id: subZone, values: subValues, tasks: sub.tasks, itemsShown: !subCollapsed })}>
-                  {renderHeader(sub, subZone, subValues, 'sub')}
-                  {subCollapsed ? null : renderRows(subZone, subValues, sub.tasks)}
-                </DropZone>
-              )
-            })}
-          </section>
-        )
-      })}
+      <div
+        ref={scroller}
+        data-slot="task-list"
+        data-virtual-scroller
+        className="h-full overflow-y-auto"
+        onFocus={onFocus}
+      >
+        <div ref={content} className="relative" style={{ height: virtualizer.getTotalSize() }}>
+          {blocks.map((block) => renderBlock(block, 0))}
+        </div>
+      </div>
       {selectedTasks.length > 0 ? (
         <BulkBar
           tasks={selectedTasks}

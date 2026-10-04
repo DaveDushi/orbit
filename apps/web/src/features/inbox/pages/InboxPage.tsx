@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { relativeTime } from '@/lib/format'
 import { EmptyState } from '@/components/common/EmptyState'
+import { VirtualList } from '@/components/common/VirtualList'
 import { Pane, PaneHeader, PaneTitle } from '@/components/common/Pane'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import { useMembers } from '@/features/workspaces/api'
@@ -76,24 +77,29 @@ export function InboxPage() {
             ))}
           </TabsList>
         </Tabs>
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {allQuery.isPending ? (
-            <EmptyState icon={Inbox} title="Loading inbox" description="Loading your notifications." />
-          ) : allQuery.isError ? (
-            <div className="flex h-full flex-col items-center justify-center">
-              <EmptyState icon={Inbox} title="Inbox unavailable" description="Notifications could not be loaded." />
-              <Button variant="outline" type="button" onClick={() => void allQuery.refetch()}>Retry</Button>
-            </div>
-          ) : items.length === 0 ? (
-            <EmptyState icon={Inbox} title="You're all caught up" description="Assignments and mentions appear here." />
-          ) : (
-            items.map((notification) => {
+        {allQuery.isPending || allQuery.isError || items.length === 0 ? (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {allQuery.isPending ? (
+              <EmptyState icon={Inbox} title="Loading inbox" description="Loading your notifications." />
+            ) : allQuery.isError ? (
+              <div className="flex h-full flex-col items-center justify-center">
+                <EmptyState icon={Inbox} title="Inbox unavailable" description="Notifications could not be loaded." />
+                <Button variant="outline" type="button" onClick={() => void allQuery.refetch()}>Retry</Button>
+              </div>
+            ) : (
+              <EmptyState icon={Inbox} title="You're all caught up" description="Assignments and mentions appear here." />
+            )}
+          </div>
+        ) : (
+          <VirtualList className="min-h-0 flex-1" count={items.length} rowHeight={56} rowKey={(index) => items[index].id}>
+            {(index) => {
+              const notification = items[index]
               const actor = members.data?.find((member) => member.id === notification.actor_user_id)
               const page = notification.page_id ? pageTree.data?.find((item) => item.id === notification.page_id) : undefined
               const copy = notificationCopy(notification, page?.title, actor?.name)
               return (
                 // the actor's avatar is beside the row button, not inside it: a button cannot hold another one
-                <div key={notification.id} className="relative">
+                <div className="relative">
                 <Button
                   variant="ghost"
                   className="h-auto min-h-14 w-full min-w-0 justify-start gap-2.5 rounded-none border-x-0 border-t-0 border-b-border px-3 py-1.5 text-left font-normal"
@@ -131,9 +137,9 @@ export function InboxPage() {
                 </ProfileTrigger>
                 </div>
               )
-            })
-          )}
-        </div>
+            }}
+          </VirtualList>
+        )}
       </Pane>
     </div>
   )

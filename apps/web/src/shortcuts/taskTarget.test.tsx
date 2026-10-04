@@ -2,7 +2,7 @@ import { afterEach, expect, test } from 'bun:test'
 import { fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { render } from '@/test/render'
-import { resolveTarget, taskRowTarget, useListNavigation, useTaskTarget } from './taskTarget'
+import { resolveTarget, taskRowTarget, useListNavigation, useTaskTarget, useVirtualTaskRows } from './taskTarget'
 import { TaskTargetProvider } from './TaskTargetProvider'
 
 afterEach(() => {
@@ -59,6 +59,27 @@ test('J and K move the focus and stop at the ends', async () => {
   expect(focused()).toBe('b')
   await userEvent.keyboard('{ArrowUp}{ArrowUp}')
   expect(focused()).toBe('a')
+})
+
+/** A list like the virtual task list: it has the rows a, b and c, and c is in the DOM only when it must stay there. */
+function VirtualList() {
+  useListNavigation(() => {}, { selectable: true })
+  const target = useTaskTarget()
+  const { keepId, onFocus } = useVirtualTaskRows(['a', 'b', 'c'])
+  return (
+    <>
+      <div onFocus={onFocus}>{['a', 'b', 'c'].filter((id) => id !== 'c' || keepId === 'c').map((id) => <Row key={id} id={id} />)}</div>
+      <output data-testid="selected">{target.selectedIds.join(',')}</output>
+    </>
+  )
+}
+
+test('a virtual list: J reaches a row that is not in the DOM and Mod+A selects every row', async () => {
+  const view = render(<TaskTargetProvider openTaskId={null}><VirtualList /></TaskTargetProvider>)
+  await userEvent.keyboard('{Control>}a{/Control}')
+  expect(selected(view)).toBe('a,b,c')
+  await userEvent.keyboard('jjj')
+  expect(focused()).toBe('c')
 })
 
 test('X selects the focused row, Shift+J extends, Mod+A selects all', async () => {

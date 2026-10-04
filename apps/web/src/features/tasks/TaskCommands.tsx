@@ -40,7 +40,7 @@ interface TaskCommandsProps {
  *  row, the row under the pointer, or the open task. A property command opens one list of options for all of them. */
 export function TaskCommands({ tasks, users, labels, statuses, groupContext, currentUserId }: TaskCommandsProps) {
   const { workspace } = useWorkspace()
-  const { getTargetIds, openTaskId, setSelected } = useTaskTarget()
+  const { getTargetIds, openTaskId, setSelected, pointer } = useTaskTarget()
   const bulkTasks = useBulkTasks(workspace.id)
   const trashTasks = useTrashTasks(workspace.id)
   const moveToProject = useMoveToProject(workspace.id)
@@ -84,7 +84,7 @@ export function TaskCommands({ tasks, users, labels, statuses, groupContext, cur
     // a change can move the row to another group, which mounts it again: the keyboard stays on the task
     const row = menu.focused
     if (row) setTimeout(() => {
-      if (focusedTaskId() !== row) focusTaskRow(row)
+      if (focusedTaskId() !== row) focusTaskRow(row, pointer)
     }, 50)
   }
   const scope = menuTasks.length === 1 ? menuTasks[0].identifier : `${menuTasks.length} tasks`

@@ -19,7 +19,14 @@ type GroupDrop = { zone: string; index: number | null; held?: boolean }
  * A collapsed zone carries its own values only (a hidden value must never be written). `itemsShown` is
  * false when the zone's items are not on screen: the task then goes to the zone's end.
  */
-type DropZone = { id: string; values: GroupValues; tasks: Task[]; itemsShown: boolean }
+type DropZone = {
+  id: string
+  values: GroupValues
+  tasks: Task[]
+  itemsShown: boolean
+  /** The insertion slot at the pointer, for a zone whose items are not all in the DOM (the virtual list). */
+  slotAt?: (clientY: number) => number
+}
 
 /** Slot among the zone's items (not counting the dragged one) at the pointer, by item midpoints. */
 function indexAt(zone: HTMLElement, itemSelector: string, clientY: number) {
@@ -40,8 +47,8 @@ export function useGroupDrop({ tasks, manual, groupContext, itemSelector, onDupl
   tasks: Task[]
   manual: boolean
   groupContext: GroupContext
-  /** The draggable items inside a zone (list rows, board cards), for the insertion slot. */
-  itemSelector: string
+  /** The draggable items inside a zone (board cards), for the insertion slot. A zone with `slotAt` does not use it. */
+  itemSelector?: string
   /** A drop on the Duplicate status: the caller asks for the canonical task. */
   onDuplicate: (task: Task) => void
   /** Nested list: a drop at root level (a group zone) detaches a nested row. */
@@ -104,7 +111,7 @@ export function useGroupDrop({ tasks, manual, groupContext, itemSelector, onDupl
       if (!manual) return null
       // no items to aim at: the task goes to the zone's end
       if (!zone.itemsShown) return zone.tasks.filter((task) => task.id !== drag?.taskId).length
-      return indexAt(element, itemSelector, clientY)
+      return zone.slotAt ? zone.slotAt(clientY) : itemSelector ? indexAt(element, itemSelector, clientY) : null
     }
     return {
       'data-drop-over': (drop?.zone === zone.id && !drop.held) || undefined,

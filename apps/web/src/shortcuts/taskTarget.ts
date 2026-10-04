@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, type Dispatch, type SetStateAction } from 'react'
+import { createContext, useCallback, useContext, useLayoutEffect, useState, type Dispatch, type FocusEvent, type SetStateAction } from 'react'
+import { flushSync } from 'react-dom'
 import { useCommand } from './useCommand'
 
 /** The tasks a task command acts on. An open task wins; in a list it is the selection, else the row with the
@@ -14,7 +15,11 @@ export function resolveTarget({ selectedIds, focusedId, hoveredId, openTaskId, v
 
 /** The row under the pointer and where the pointer was, kept out of React state: it changes on every move.
  *  `focusedId` is the row with the keyboard focus, remembered while the focus is in a dialog or a menu. */
-export interface TaskPointer { hoveredId: string | null; x: number; y: number; focusedId: string | null }
+export interface TaskPointer { hoveredId: string | null; x: number; y: number; focusedId: string | null; list: TaskRows | null }
+
+/** The rows of a virtual list, which keeps only the rows near the view in the DOM: every row id in order, and
+ *  `mount` puts a row in the DOM so that it can take the focus. Null while no such list shows. */
+export interface TaskRows { ids: string[]; mount: (id: string) => void }
 
 export interface TaskTargetState {
   selectedIds: string[]
@@ -26,12 +31,13 @@ export interface TaskTargetState {
 
 export const TaskTargetContext = createContext<TaskTargetState>({ selectedIds: [], setSelected: () => {}, openTaskId: null, order: { current: [] } })
 /** Apart from the selection, so that a row does not render again each time the selection changes. */
-export const TaskPointerContext = createContext<TaskPointer>({ hoveredId: null, x: -1, y: -1, focusedId: null })
+export const TaskPointerContext = createContext<TaskPointer>({ hoveredId: null, x: -1, y: -1, focusedId: null, list: null })
 
 const rowOf = (element: Element | null) => element?.closest('[data-task-id]')?.getAttribute('data-task-id') ?? null
 
 /** The ids of the task rows in view, in document order. */
-export function visibleTaskIds(): string[] {
+export function visibleTaskIds(pointer: TaskPointer): string[] {
+  if (pointer.list) return [...new Set(pointer.list.ids)]
   return [...new Set([...document.querySelectorAll('[data-task-id]')].map((element) => element.getAttribute('data-task-id') ?? ''))]
 }
 
@@ -39,7 +45,8 @@ export function visibleTaskIds(): string[] {
 export const focusedTaskId = () => rowOf(document.activeElement)
 
 /** Gives a task row the keyboard focus and brings it into view. */
-export function focusTaskRow(id: string) {
+export function focusTaskRow(id: string, pointer: TaskPointer) {
+  pointer.list?.mount(id)
   const row = document.querySelector<HTMLElement>(`[data-task-id="${CSS.escape(id)}"]`)
   row?.focus({ preventScroll: true })
   // keyboard movement never animates: the row is in view at once
@@ -55,9 +62,28 @@ export function useTaskTarget() {
     // The menu reads the target when it opens, which is when the row is remembered.
     const focused = focusedTaskId()
     if (focused || !inOverlay(document.activeElement)) pointer.focusedId = focused
-    return resolveTarget({ selectedIds, focusedId: pointer.focusedId, hoveredId: pointer.hoveredId, openTaskId, visible: new Set(visibleTaskIds()) })
+    return resolveTarget({ selectedIds, focusedId: pointer.focusedId, hoveredId: pointer.hoveredId, openTaskId, visible: new Set(visibleTaskIds(pointer)) })
   }, [openTaskId, pointer, selectedIds])
   return { ...state, pointer, getTargetIds }
+}
+
+/**
+ * For a virtual list of task rows. It gives the keyboard and task commands every row id (`ids`, in order), and
+ * returns the row that must stay in the DOM out of view: the one with the focus, so the keyboard continues from it.
+ * Put `onFocus` on the list.
+ */
+export function useVirtualTaskRows(ids: string[]) {
+  const pointer = useContext(TaskPointerContext)
+  const [keepId, setKeepId] = useState<string | null>(null)
+  useLayoutEffect(() => {
+    pointer.list = { ids, mount: (id) => flushSync(() => setKeepId(id)) }
+    return () => { pointer.list = null }
+  })
+  const onFocus = (event: FocusEvent) => {
+    const id = rowOf(event.target)
+    if (id) setKeepId(id)
+  }
+  return { keepId, onFocus }
 }
 
 /** Marks an element as a task row: the keyboard can focus it and the pointer can target it. */
@@ -123,7 +149,7 @@ export function useListNavigation(onOpen: ((id: string) => void) | null, options
   const enabled = onOpen !== null
 
   const current = () => {
-    const visible = visibleTaskIds()
+    const visible = visibleTaskIds(pointer)
     const focused = focusedTaskId()
     return { visible, focused, index: focused ? visible.indexOf(focused) : -1 }
   }
@@ -132,7 +158,7 @@ export function useListNavigation(onOpen: ((id: string) => void) | null, options
     const { visible, focused, index } = current()
     if (visible.length === 0) return null
     const next = index === -1 ? visible[0] : visible[Math.min(visible.length - 1, Math.max(0, index + step))]
-    focusTaskRow(next)
+    focusTaskRow(next, pointer)
     return { from: index === -1 ? null : focused, to: next }
   }
   const extend = (step: 1 | -1) => {
@@ -161,5 +187,5 @@ export function useListNavigation(onOpen: ((id: string) => void) | null, options
   } : null)
   useCommand('list.extendDown', selectable ? () => extend(1) : null)
   useCommand('list.extendUp', selectable ? () => extend(-1) : null)
-  useCommand('list.selectAll', selectable ? () => setSelected(visibleTaskIds()) : null)
+  useCommand('list.selectAll', selectable ? () => setSelected(visibleTaskIds(pointer)) : null)
 }
