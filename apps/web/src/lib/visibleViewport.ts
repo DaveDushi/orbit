@@ -27,9 +27,13 @@ export function shellHeight(input: {
 }) {
   const visual = input.visual ?? input.inner
   if (!input.standalone) return Math.max(0, Math.round(visual))
-  const full = Math.max(input.inner, input.large, 0)
-  if (full - visual > KEYBOARD_SHORTFALL) return Math.max(0, Math.round(visual))
-  return Math.round(full)
+  if (keyboardOpen(input)) return Math.max(0, Math.round(visual))
+  return Math.round(Math.max(input.inner, input.large, 0))
+}
+
+/** The on-screen keyboard covers the page: the visual viewport is much shorter than the window. */
+export function keyboardOpen(input: { visual: number | null; inner: number; large: number }) {
+  return Math.max(input.inner, input.large, 0) - (input.visual ?? input.inner) > KEYBOARD_SHORTFALL
 }
 
 /** Height of the actually visible viewport, excluding iOS Safari chrome. */
@@ -55,20 +59,32 @@ function largeViewportProbe() {
   return probe
 }
 
-/** Keep --app-height in sync when Safari shows or hides its toolbars. */
+/**
+ * Keep --app-height in sync when Safari shows or hides its toolbars or the keyboard.
+ * `data-keyboard` on the root marks an open keyboard. When the shell gets shorter, the
+ * focused field scrolls back into its pane; Safari only pans the outer document to it.
+ */
 export function bindVisibleViewport(
   root: HTMLElement = document.documentElement,
   viewport: VisualViewport | null = window.visualViewport,
 ) {
   const probe = largeViewportProbe()
+  let previous = 0
   const apply = () => {
-    const large = probe.getBoundingClientRect().height || window.innerHeight
-    applyVisibleViewport(root, shellHeight({
+    const input = {
       standalone: isStandaloneDisplay(),
       visual: viewport?.height ?? null,
       inner: window.innerHeight,
-      large,
-    }))
+      large: probe.getBoundingClientRect().height || window.innerHeight,
+    }
+    const height = shellHeight(input)
+    applyVisibleViewport(root, height)
+    root.toggleAttribute('data-keyboard', keyboardOpen(input))
+    const field = document.activeElement
+    if (height < previous && field instanceof HTMLElement && field.matches('input, textarea, [contenteditable="true"]')) {
+      field.scrollIntoView({ block: 'nearest' })
+    }
+    previous = height
   }
   apply()
   viewport?.addEventListener('resize', apply)

@@ -49,14 +49,17 @@ function MobileDockItem({ to, label, icon: Icon, enabled, badge = 0 }: { to: str
   })
 }
 
-/** The phone's bottom navigation. A chat conversation is a full screen, so the dock is not shown there. */
+/**
+ * The phone's bottom navigation. A chat conversation is a full screen, so the dock is not shown there.
+ * It also hides while the keyboard is open, so the field being typed in keeps the space.
+ */
 export function MobileDock({ chatEnabled: chat = chatEnabled, chatBadge = 0 }: { chatEnabled?: boolean; /** Unread count on the Chat item. */ chatBadge?: number }) {
   const { pathname } = useLocation()
   if (isChatConversationPath(pathname)) return null
   const paths = mobileDockPathsFor(chat)
   return (
     <nav
-      className="hidden h-auto min-h-14 shrink-0 items-stretch bg-background pt-3 [@media(display-mode:standalone)]:pb-[env(safe-area-inset-bottom,0px)] max-[899px]:flex"
+      className="hidden h-auto min-h-14 shrink-0 items-stretch bg-background pt-3 [@media(display-mode:standalone)]:pb-[env(safe-area-inset-bottom,0px)] max-[899px]:not-in-data-keyboard:flex"
       aria-label="Mobile navigation"
     >
       {DOCK_LINKS.map((link) => (

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { applyVisibleViewport, shellHeight, visibleViewportHeight } from './visibleViewport'
+import { applyVisibleViewport, keyboardOpen, shellHeight, visibleViewportHeight } from './visibleViewport'
 
 test('visible height prefers the visual viewport so Safari chrome is excluded', () => {
   expect(visibleViewportHeight({ height: 612.4 }, 844)).toBe(612)
@@ -22,4 +22,10 @@ test('the app height CSS variable is the visible viewport in pixels', () => {
     612,
   )
   expect(properties.get('--app-height')).toBe('612px')
+})
+
+test('the keyboard counts as open only when it covers much more than Safari toolbars', () => {
+  expect(keyboardOpen({ visual: 430, inner: 812, large: 874 })).toBe(true)
+  expect(keyboardOpen({ visual: 664, inner: 664, large: 745 })).toBe(false)
+  expect(keyboardOpen({ visual: null, inner: 812, large: 812 })).toBe(false)
 })
