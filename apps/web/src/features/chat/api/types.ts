@@ -45,6 +45,33 @@ export interface Attachment {
   height?: number
 }
 
+/** What an external URL shows as a card. Image URLs are always `https`. */
+export interface LinkPreview {
+  url: string
+  /** `x`: a post on X. `youtube`: `videoId` plays it. `image`: the URL is an image. */
+  kind: 'link' | 'x' | 'youtube' | 'image'
+  siteName?: string
+  title?: string
+  description?: string
+  imageUrl?: string
+  /** The page asks for a wide image. */
+  largeImage: boolean
+  iconUrl?: string
+  authorName?: string
+  authorHandle?: string
+  authorAvatarUrl?: string
+  videoId?: string
+  /** The video of a post on X (an `mp4`); `imageUrl` is its poster. */
+  videoUrl?: string
+  videoWidth?: number
+  videoHeight?: number
+  /** Milliseconds. */
+  createdAt?: number
+  replies?: number
+  reposts?: number
+  likes?: number
+}
+
 export interface Reaction {
   emoji: string
   userIds: string[]

@@ -3,6 +3,7 @@
 
 pub(crate) mod conversations;
 pub(crate) mod files;
+pub(crate) mod links;
 pub(crate) mod messages;
 pub(crate) mod state;
 
@@ -20,6 +21,7 @@ use tracing::Instrument;
 use utoipa::ToSchema;
 
 use crate::auth_routes::CookieMode;
+use crate::link_preview::LinkPreviewer;
 use crate::live::{LiveHub, Recipients};
 use crate::repositories::chat::{ChatError, ChatEvent, ChatRepository, Written};
 use crate::repositories::identity::IdentityRepository;
@@ -31,6 +33,7 @@ pub struct ChatState {
     pub(crate) chat: Arc<ChatRepository>,
     pub(crate) hub: LiveHub,
     pub(crate) cookie_mode: CookieMode,
+    pub(crate) link_previews: Arc<LinkPreviewer>,
 }
 
 impl ChatState {
@@ -45,7 +48,15 @@ impl ChatState {
             hub: LiveHub::of(identity.database()),
             identity,
             cookie_mode,
+            link_previews: Arc::new(LinkPreviewer::default()),
         }
+    }
+
+    /// Reads link previews with `previewer` (tests name local services).
+    #[must_use]
+    pub fn with_link_previews(mut self, previewer: LinkPreviewer) -> Self {
+        self.link_previews = Arc::new(previewer);
+        self
     }
 
     /// Runs a write and sends its events to the live sockets. The hub's write lock is held
@@ -213,6 +224,10 @@ fn json_router(state: ChatState) -> Router {
         .route(
             "/api/v1/workspaces/{workspace_id}/chat/states",
             get(state::list_chat_states),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/chat/link-preview",
+            get(links::get_chat_link_preview),
         )
         .route(
             "/api/v1/workspaces/{workspace_id}/chat/conversations/{conversation_id}/state",

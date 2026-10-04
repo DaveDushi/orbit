@@ -17,6 +17,7 @@ import {
   listChatFiles,
   listChatMessages,
   listChatPins,
+  getChatLinkPreview,
   listChatSearch,
   listChatStates,
   listChatThreads,
@@ -49,6 +50,7 @@ import {
   toConversation,
   toEvent,
   toFollowedThread,
+  toLinkPreview,
   toMessage,
   toMessagePage,
   toState,
@@ -245,6 +247,10 @@ export function createHttpChatClient(options: HttpChatClientOptions): ChatClient
     },
     async listFiles(conversationId) {
       return (await call(listChatFiles(at({ conversation_id: conversationId })))).map(toMessage)
+    },
+    async getLinkPreview(url) {
+      const { preview } = await call(getChatLinkPreview({ ...at({}), query: { url } }))
+      return preview ? toLinkPreview(preview) : null
     },
     async searchMessages(input) {
       const query = {

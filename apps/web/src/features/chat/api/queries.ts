@@ -201,6 +201,18 @@ export function useFiles(conversationId: string | null | undefined) {
   })
 }
 
+/** The card of an external URL; `null` while it loads and when the URL has nothing to show. Not live: read once. */
+export function useLinkPreview(url: string, enabled = true) {
+  const { client, workspaceId } = useChatContext()
+  return useQuery({
+    queryKey: chatKeys.linkPreview(workspaceId, url),
+    queryFn: () => requireClient(client).getLinkPreview(url),
+    enabled: client !== null && enabled,
+    staleTime: Infinity,
+    gcTime: 30 * 60_000,
+  }).data ?? null
+}
+
 /** Search, paged by cursor (`fetchNextPage`). Runs once there is a query or a filter. Results are not live. */
 export function useSearchMessages(input: Omit<SearchInput, 'cursor'>) {
   const { client, workspaceId } = useChatContext()

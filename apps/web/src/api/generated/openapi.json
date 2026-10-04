@@ -8573,6 +8573,140 @@
         ]
       }
     },
+    "/api/v1/workspaces/{workspace_id}/chat/link-preview": {
+      "get": {
+        "tags": [
+          "crate::chat_routes::links"
+        ],
+        "summary": "What the URL of a message shows as a card. The server reads the page; the answer is kept for a while.",
+        "operationId": "get_chat_link_preview",
+        "parameters": [
+          {
+            "name": "url",
+            "in": "query",
+            "description": "An absolute `http(s)` URL.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Orbit-Contract",
+            "in": "header",
+            "description": "Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatLinkPreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_proxy_headers",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "chat_not_found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "contract_mismatch",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "validation_failed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "internal_error or another documented stable code",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/chat/messages/{message_id}": {
       "delete": {
         "tags": [
@@ -27772,6 +27906,22 @@
         },
         "additionalProperties": false
       },
+      "ChatLinkPreview": {
+        "type": "object",
+        "properties": {
+          "preview": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LinkPreview",
+                "description": "`null`: the URL has nothing to show, or the server may not or cannot read it."
+              }
+            ]
+          }
+        }
+      },
       "ChatMoveBody": {
         "type": "object",
         "required": [
@@ -29439,6 +29589,145 @@
           "list",
           "board",
           "timeline"
+        ]
+      },
+      "LinkPreview": {
+        "type": "object",
+        "description": "What a URL shows as a card. Image URLs are always `https`.",
+        "required": [
+          "url",
+          "kind",
+          "large_image"
+        ],
+        "properties": {
+          "author_avatar_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "author_handle": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "author_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Unix seconds."
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "icon_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "image_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/LinkPreviewKind"
+          },
+          "large_image": {
+            "type": "boolean",
+            "description": "The page asks for a wide image (`summary_large_image`)."
+          },
+          "likes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "replies": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "reposts": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "site_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": "string"
+          },
+          "video_height": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "video_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "video_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The video of a post, as an `mp4` on X's video host. `image_url` is its poster."
+          },
+          "video_width": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "LinkPreviewKind": {
+        "type": "string",
+        "enum": [
+          "link",
+          "x",
+          "youtube",
+          "image"
         ]
       },
       "LoginBody": {

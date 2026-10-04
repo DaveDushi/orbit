@@ -7,6 +7,7 @@ import type {
   ConversationKind,
   ConversationState,
   FollowedThread,
+  LinkPreview,
   Message,
   MessagePage,
   NotifyLevel,
@@ -76,6 +77,8 @@ export interface ChatClient {
   /** Messages that have attachments, newest first. */
   listFiles(conversationId: string): Promise<Message[]>
   searchMessages(input: SearchInput): Promise<SearchPage>
+  /** The card of an external URL. `null`: the URL has nothing to show. */
+  getLinkPreview(url: string): Promise<LinkPreview | null>
   /** Every member who does not show as offline, with their status. */
   getPresence(): Promise<PresenceMap>
 

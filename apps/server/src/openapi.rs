@@ -219,6 +219,7 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::chat_routes::files::download_chat_file,
         crate::chat_routes::files::list_chat_files,
         crate::chat_routes::messages::list_chat_search,
+        crate::chat_routes::links::get_chat_link_preview,
     )
 )]
 struct ApiDocument;

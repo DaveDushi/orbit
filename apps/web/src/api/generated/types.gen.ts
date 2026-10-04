@@ -323,6 +323,10 @@ export type ChatFollowBody = {
     following: boolean;
 };
 
+export type ChatLinkPreview = {
+    preview?: null | LinkPreview;
+};
+
 export type ChatMoveBody = {
     /**
      * The category to put it before; null for the end.
@@ -911,6 +915,42 @@ export type LabelUpdateBody = {
 };
 
 export type Layout = 'list' | 'board' | 'timeline';
+
+/**
+ * What a URL shows as a card. Image URLs are always `https`.
+ */
+export type LinkPreview = {
+    author_avatar_url?: string | null;
+    author_handle?: string | null;
+    author_name?: string | null;
+    /**
+     * Unix seconds.
+     */
+    created_at?: number | null;
+    description?: string | null;
+    icon_url?: string | null;
+    image_url?: string | null;
+    kind: LinkPreviewKind;
+    /**
+     * The page asks for a wide image (`summary_large_image`).
+     */
+    large_image: boolean;
+    likes?: number | null;
+    replies?: number | null;
+    reposts?: number | null;
+    site_name?: string | null;
+    title?: string | null;
+    url: string;
+    video_height?: number | null;
+    video_id?: string | null;
+    /**
+     * The video of a post, as an `mp4` on X's video host. `image_url` is its poster.
+     */
+    video_url?: string | null;
+    video_width?: number | null;
+};
+
+export type LinkPreviewKind = 'link' | 'x' | 'youtube' | 'image';
 
 export type LoginBody = {
     email: string;
@@ -6576,6 +6616,69 @@ export type DownloadChatFileResponses = {
 };
 
 export type DownloadChatFileResponse = DownloadChatFileResponses[keyof DownloadChatFileResponses];
+
+export type GetChatLinkPreviewData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query: {
+        /**
+         * An absolute `http(s)` URL.
+         */
+        url: string;
+    };
+    url: '/api/v1/workspaces/{workspace_id}/chat/link-preview';
+};
+
+export type GetChatLinkPreviewErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * chat_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * validation_failed
+     */
+    422: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type GetChatLinkPreviewError = GetChatLinkPreviewErrors[keyof GetChatLinkPreviewErrors];
+
+export type GetChatLinkPreviewResponses = {
+    200: ChatLinkPreview;
+};
+
+export type GetChatLinkPreviewResponse = GetChatLinkPreviewResponses[keyof GetChatLinkPreviewResponses];
 
 export type DeleteChatMessageData = {
     body?: never;

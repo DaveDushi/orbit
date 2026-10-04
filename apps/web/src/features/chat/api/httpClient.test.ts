@@ -176,3 +176,14 @@ test('a notify signal goes to the notify callback only, not to the chat subscrib
   expect(inbox).toBe(0)
   expect(events).toEqual([])
 })
+
+test('a link preview comes in chat form, and a URL with nothing to show gives null', async () => {
+  const post = { url: 'https://x.com/jack/status/20', kind: 'x', description: 'just setting up my twttr', author_handle: 'jack', large_image: false, video_url: 'https://video.twimg.com/v.mp4', created_at: 1142974214, likes: 3 }
+  const { client, requests } = setup(() => Response.json({ preview: post }))
+  const preview = await client.getLinkPreview('https://x.com/jack/status/20')
+  expect(requests).toEqual(['GET /api/v1/workspaces/w1/chat/link-preview'])
+  expect(preview).toMatchObject({ kind: 'x', authorHandle: 'jack', videoUrl: 'https://video.twimg.com/v.mp4', createdAt: 1142974214000, likes: 3 })
+  expect(preview?.title).toBeUndefined()
+
+  expect(await setup(() => Response.json({ preview: null })).client.getLinkPreview('https://example.com')).toBeNull()
+})

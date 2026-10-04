@@ -4,6 +4,7 @@ import type {
   ConversationRecord,
   ConversationStateRecord,
   FollowedThreadRecord,
+  LinkPreview as WireLinkPreview,
   MessagePage as WireMessagePage,
   MessageRecord,
   ThreadPage as WireThreadPage,
@@ -18,6 +19,7 @@ import {
   type Conversation,
   type ConversationState,
   type FollowedThread,
+  type LinkPreview,
   type Message,
   type MessagePage,
   type ThreadPage,
@@ -55,6 +57,30 @@ export function toAttachment(record: ChatFileRecord): Attachment {
     fileSize: record.size_bytes,
     url: record.url,
     ...(record.width !== null && record.height !== null ? { width: record.width, height: record.height } : {}),
+  }
+}
+
+export function toLinkPreview(record: WireLinkPreview): LinkPreview {
+  return {
+    url: record.url,
+    kind: record.kind,
+    siteName: record.site_name ?? undefined,
+    title: record.title ?? undefined,
+    description: record.description ?? undefined,
+    imageUrl: record.image_url ?? undefined,
+    largeImage: record.large_image,
+    iconUrl: record.icon_url ?? undefined,
+    authorName: record.author_name ?? undefined,
+    authorHandle: record.author_handle ?? undefined,
+    authorAvatarUrl: record.author_avatar_url ?? undefined,
+    videoId: record.video_id ?? undefined,
+    videoUrl: record.video_url ?? undefined,
+    videoWidth: record.video_width ?? undefined,
+    videoHeight: record.video_height ?? undefined,
+    createdAt: typeof record.created_at === 'number' ? record.created_at * 1000 : undefined,
+    replies: record.replies ?? undefined,
+    reposts: record.reposts ?? undefined,
+    likes: record.likes ?? undefined,
   }
 }
 

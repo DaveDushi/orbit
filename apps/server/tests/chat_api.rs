@@ -10,6 +10,7 @@ use orbit_platform::{
 };
 use orbit_server::auth_routes::CookieMode;
 use orbit_server::chat_routes::{ChatState, chat_router};
+use orbit_server::link_preview::{LinkPreviewConfig, LinkPreviewer};
 use orbit_server::repositories::identity::{IdentityRepository, SetupRequest};
 use orbit_server::repositories::workspaces::{InvitationDelivery, WorkspaceRepository};
 use serde_json::{Value, json};
@@ -37,6 +38,10 @@ struct Member {
 
 impl Fixture {
     async fn new() -> Self {
+        Self::with_link_previews(LinkPreviewConfig::default()).await
+    }
+
+    async fn with_link_previews(link_previews: LinkPreviewConfig) -> Self {
         let database = TestDatabase::new().await.unwrap();
         let identity = Arc::new(IdentityRepository::new((*database).clone()));
         let now = TimestampMillis::now();
@@ -70,11 +75,10 @@ impl Fixture {
             AttachmentMutationCoordinator::default(),
             UploadLimits::default(),
         );
-        let app = chat_router(ChatState::new(
-            Arc::clone(&identity),
-            uploads,
-            CookieMode::secure(),
-        ));
+        let app = chat_router(
+            ChatState::new(Arc::clone(&identity), uploads, CookieMode::secure())
+                .with_link_previews(LinkPreviewer::new(link_previews)),
+        );
         Self {
             _root: root,
             database,
@@ -2241,4 +2245,124 @@ async fn a_message_is_pushed_to_the_members_it_is_for() {
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].0, endpoint(&ada));
     assert_eq!(sent[0].1["url"], format!("/chat/{general}?thread={root}"));
+}
+
+/// A local site, FxTwitter API and YouTube oEmbed service. Answers its base URL.
+async fn serve_link_sites() -> String {
+    use axum::Json;
+    use axum::response::{Html, Redirect};
+    use axum::routing::get;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let router = axum::Router::new()
+        .route(
+            "/article",
+            get(|| async {
+                Html(
+                    r#"<html><head><title>Fallback</title>
+                    <meta property="og:title" content="An article">
+                    <meta property="og:description" content="What it is about.">
+                    <meta property="og:image" content="https://cdn.example.com/card.png">
+                    </head><body></body></html>"#,
+                )
+            }),
+        )
+        .route("/moved", get(|| async { Redirect::temporary("/article") }))
+        .route("/data", get(|| async { Json(json!({ "title": "Not a page" })) }))
+        .route(
+            "/jack/status/20",
+            get(|| async {
+                Json(json!({ "code": 200, "tweet": {
+                    "text": "just setting up my twttr",
+                    "author": { "name": "jack", "screen_name": "jack", "avatar_url": "https://pbs.twimg.com/a.jpg" },
+                    "likes": 3,
+                } }))
+            }),
+        )
+        .route(
+            "/oembed",
+            get(|| async { Json(json!({ "title": "A video", "author_name": "A channel" })) }),
+        );
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    base
+}
+
+#[tokio::test]
+async fn a_url_in_a_message_has_a_preview_for_members() {
+    let base = serve_link_sites().await;
+    let fixture = Fixture::with_link_previews(LinkPreviewConfig {
+        x_api: base.clone(),
+        youtube_oembed: format!("{base}/oembed"),
+        allow_local: true,
+    })
+    .await;
+    let preview = async |url: &str| {
+        let url: String = url::form_urlencoded::byte_serialize(url.as_bytes()).collect();
+        let path = format!("/link-preview?url={url}");
+        fixture.ok(&fixture.owner, "GET", &path, None).await["preview"].clone()
+    };
+
+    // A page: its Open Graph tags, also behind a redirect.
+    let article = preview(&format!("{base}/article")).await;
+    assert_eq!(article["kind"], "link");
+    assert_eq!(article["title"], "An article");
+    assert_eq!(article["description"], "What it is about.");
+    assert_eq!(article["image_url"], "https://cdn.example.com/card.png");
+    assert_eq!(
+        preview(&format!("{base}/moved")).await["title"],
+        "An article"
+    );
+
+    // A post on X comes from the FxTwitter API, a YouTube video from oEmbed.
+    let post = preview("https://x.com/jack/status/20").await;
+    assert_eq!(post["kind"], "x");
+    assert_eq!(post["description"], "just setting up my twttr");
+    assert_eq!(post["author_handle"], "jack");
+    assert_eq!(post["likes"], 3);
+    let video = preview("https://youtu.be/dQw4w9WgXcQ").await;
+    assert_eq!(video["kind"], "youtube");
+    assert_eq!(video["title"], "A video");
+    assert_eq!(video["video_id"], "dQw4w9WgXcQ");
+    assert_eq!(
+        video["image_url"],
+        "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"
+    );
+
+    // Nothing to show is an answer, not an error.
+    assert_eq!(preview(&format!("{base}/data")).await, Value::Null);
+    assert_eq!(preview(&format!("{base}/missing")).await, Value::Null);
+    assert_eq!(preview("javascript:alert(1)").await, Value::Null);
+
+    // Only members of the workspace can ask.
+    let (id, email) = fixture.add_user("outsider").await;
+    let outsider = fixture.session(id, email, "outsider").await;
+    let (status, _) = fixture
+        .call(
+            &outsider,
+            "GET",
+            "/link-preview?url=https%3A%2F%2Fexample.com",
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = fixture
+        .call(&fixture.owner, "GET", "/link-preview", None)
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn the_server_does_not_read_a_local_address_for_a_preview() {
+    let base = serve_link_sites().await;
+    let fixture = Fixture::new().await;
+    for url in [
+        format!("{base}/article"),
+        "http://localhost/article".to_owned(),
+    ] {
+        let url: String = url::form_urlencoded::byte_serialize(url.as_bytes()).collect();
+        let path = format!("/link-preview?url={url}");
+        let answer = fixture.ok(&fixture.owner, "GET", &path, None).await;
+        assert_eq!(answer["preview"], Value::Null, "{path}");
+    }
 }

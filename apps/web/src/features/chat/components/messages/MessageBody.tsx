@@ -6,21 +6,20 @@ import { renderMarkdownBlocks } from '@/lib/markdown'
 import type { Message } from '../../api/types'
 import { useChatHost } from '../../chatHost'
 import { decodeMentions } from '../../lib/mentionTokens'
+import { LinkEmbed } from './LinkEmbed'
 import { extractLinkUrls, isLongMessage, standaloneLinkUrls } from './messageText'
 import { useChatPeople } from './people'
 
-/** Cards for the Orbit task and page URLs in a message; other URLs give nothing. */
+/** Cards for the URLs in a message: the host's card for an Orbit task, page or view, a preview for another site. */
 function LinkCards({ body }: { body: string }) {
   const { renderLinkCard } = useChatHost()
-  const cards = extractLinkUrls(body).flatMap((url) => {
-    const card = renderLinkCard(url)
-    return card ? [{ url, card }] : []
-  })
-  if (cards.length === 0) return null
+  const urls = extractLinkUrls(body)
+  if (urls.length === 0) return null
   return (
-    <div data-slot="message-link-cards" className="mt-1.5 flex max-w-md flex-col gap-1.5">
-      {cards.map(({ url, card }) => (
-        <Fragment key={url}>{card}</Fragment>
+    // a card shows nothing while it loads and when its URL has nothing to show
+    <div data-slot="message-link-cards" className="mt-1.5 flex max-w-md flex-col gap-1.5 empty:hidden">
+      {urls.map((url) => (
+        <Fragment key={url}>{renderLinkCard(url) ?? <LinkEmbed url={url} />}</Fragment>
       ))}
     </div>
   )

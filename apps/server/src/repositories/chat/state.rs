@@ -46,6 +46,13 @@ pub struct ThreadCursor {
 }
 
 impl ChatRepository {
+    /// `NotFound` unless the caller is a member of the workspace.
+    pub async fn require_member(&self, workspace_id: Id, actor_id: Id) -> Result<(), ChatError> {
+        let mut conn = self.database.pool().acquire().await?;
+        load_actor(&mut conn, workspace_id, actor_id).await?;
+        Ok(())
+    }
+
     /// The caller's state in every conversation it is a member of. Read from the counters: no
     /// message is counted here.
     pub async fn list_states(
