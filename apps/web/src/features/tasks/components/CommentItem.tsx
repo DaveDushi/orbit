@@ -1,3 +1,4 @@
+import { toast } from 'sonner'
 import { useEffect, useRef, useState } from 'react'
 import { Copy, Edit as Pencil, Trash as Trash2 } from 'reicon-react'
 import { cn } from 'cn'
@@ -64,7 +65,7 @@ export function CommentItem({ state, taskId, comment, mentionTokens, reply }: Co
             </time>
             {!editing ? (
               <div className="ml-auto flex shrink-0 items-center gap-px opacity-0 transition-opacity group-hover/comment:opacity-100 group-focus-within/comment:opacity-100 max-[899px]:opacity-100">
-                <Button variant="ghost" size="icon-sm" className="size-6 text-muted-foreground/70" aria-label="Copy text" title="Copy text" onClick={() => void navigator.clipboard.writeText(comment.body)}>
+                <Button variant="ghost" size="icon-sm" className="size-6 text-muted-foreground/70" aria-label="Copy text" title="Copy text" onClick={() => void navigator.clipboard.writeText(comment.body).then(() => toast('Text copied'), () => toast.error('Could not copy to the clipboard.'))}>
                   <Copy className="size-3.5" />
                 </Button>
                 {comment.canEdit ? (

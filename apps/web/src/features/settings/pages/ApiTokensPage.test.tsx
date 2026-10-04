@@ -1,14 +1,19 @@
 import { afterEach, expect, mock, test } from 'bun:test'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, waitFor } from '@testing-library/react'
+import { fireEvent, render, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { WorkspaceContext } from '@/features/workspaces/workspaceContext'
 import { ApiTokensPage } from './ApiTokensPage'
 import { testWorkspace } from '@/test/workspace'
 
 const originalFetch = globalThis.fetch
+const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
 
-afterEach(() => { globalThis.fetch = originalFetch })
+afterEach(() => {
+  globalThis.fetch = originalFetch
+  if (originalClipboard) Object.defineProperty(navigator, 'clipboard', originalClipboard)
+  else Reflect.deleteProperty(navigator, 'clipboard')
+})
 
 function renderPage(role: 'owner' | 'admin' | 'member') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
@@ -52,4 +57,24 @@ test('admins can create a token and see its secret once', async () => {
   expect(request).toBeTruthy()
   expect(await request!.json()).toEqual({ name: 'Discord bot', project_ids: ['project-1', 'project-2'], scopes: ['read', 'write'], service_account: true, expires_in_days: 30 })
   expect(view.getByText('Copy this token now. You cannot see it again.')).toBeTruthy()
+
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+    writeText: async () => { throw new Error('Permission denied') },
+  } })
+  fireEvent.click(view.getByRole('button', { name: 'Copy' }))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(view.queryByRole('button', { name: 'Copied' })).toBeNull()
+
+  let finishWrite!: () => void
+  let clipboardText = ''
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+    writeText: (text: string) => new Promise<void>((resolve) => {
+      finishWrite = () => { clipboardText = text; resolve() }
+    }),
+  } })
+  fireEvent.click(view.getByRole('button', { name: 'Copy' }))
+  expect(view.queryByRole('button', { name: 'Copied' })).toBeNull()
+  finishWrite()
+  await waitFor(() => expect(view.getByRole('button', { name: 'Copied' })).toBeTruthy())
+  expect(clipboardText).toBe('orb_123456789-secret')
 })

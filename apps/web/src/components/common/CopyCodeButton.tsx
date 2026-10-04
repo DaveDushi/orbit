@@ -1,5 +1,6 @@
 // Copy button for code blocks (chat messages, docs editor). With a mouse it is hidden until the parent `group` is
 // hovered or the button has keyboard focus; on touch it is always visible.
+import { toast } from 'sonner'
 import { useState } from 'react'
 import { Copy } from 'reicon-react'
 import { Button } from '@/components/ui/button'
@@ -29,12 +30,15 @@ export function CopyCodeButton({ getText, className }: { getText: () => string; 
       if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text)
       else copyTextFallback(text)
       setCopyState('copied')
+      toast('Code copied')
     } catch {
       try {
         copyTextFallback(text)
         setCopyState('copied')
+        toast('Code copied')
       } catch {
         setCopyState('failed')
+        toast.error('Could not copy the code.')
       }
     }
     setTimeout(() => setCopyState('idle'), 1600)

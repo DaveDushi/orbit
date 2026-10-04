@@ -1,7 +1,9 @@
 // Port of the chat reference ImageViewer: full-screen overlay with filename, zoom %, download, ± / reset / close.
 import { useRef, useState, type ComponentProps, type KeyboardEvent, type TouchEvent } from 'react'
-import { Download, Xmark as X } from 'reicon-react'
+import { Copy, Download, Xmark as X } from 'reicon-react'
 import { cn } from 'cn'
+import { toast } from 'sonner'
+import { copyImage } from '@/lib/copyImage'
 import type { Attachment } from '@/lib/attachmentLib'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
@@ -110,6 +112,14 @@ export function ImageViewer({ attachment, onClose }: { attachment: Attachment; o
             <div className="text-xs font-semibold text-white/55 tabular-nums">{Math.round(zoom * 100)}%</div>
           </div>
           <div className="flex items-center gap-2">
+            <ViewerBarButton title="Copy image" aria-label="Copy image" onClick={() => {
+              void copyImage(attachment.url).then(
+                () => toast('Image copied'),
+                () => toast.error('Could not copy the image. Try downloading it instead.'),
+              )
+            }}>
+              <Copy className="size-4" />
+            </ViewerBarButton>
             <a
               data-slot="image-viewer-button"
               href={attachment.url}

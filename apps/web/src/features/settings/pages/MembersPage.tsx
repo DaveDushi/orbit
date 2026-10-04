@@ -1,3 +1,4 @@
+import { toast } from 'sonner'
 import { useMemo, useState, type ComponentProps } from 'react'
 import { cva, type VariantProps } from 'class-variance-authority'
 import { confirmAction } from '@/components/common/confirmAction'
@@ -119,8 +120,11 @@ export function MembersPage() {
       await navigator.clipboard.writeText(inviteLink)
       setCopied(true)
       setCopyError(false)
+      toast('Invitation link copied')
     } catch {
+      setCopied(false)
       setCopyError(true)
+      toast.error('Could not copy the invitation link.')
     }
   }
 
