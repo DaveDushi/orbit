@@ -44,8 +44,8 @@ function Shell() {
   const live = useWorkspaceEvents(workspace.id)
   const chatBadge = useChatBadgeCount()
   // The tab icon gets a dot while chat or the Inbox has something unread.
-  const inboxUnread = useHasUnreadNotifications(workspace.id).data ? 1 : 0
-  useUnreadFavicon(chatBadge + inboxUnread)
+  const inboxUnread = useHasUnreadNotifications(workspace.id).data === true
+  useUnreadFavicon(chatBadge + (inboxUnread ? 1 : 0))
   // Signed in: the worker that shows notifications may run. This asks for no permission.
   useEffect(() => startPushWorker(), [])
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -128,7 +128,7 @@ function Shell() {
         >
           <WorkspaceSwitcher collapsed={sidebarCollapsed} />
         </div>
-        <SidebarNav collapsed={sidebarCollapsed} chatBadge={chatBadge} />
+        <SidebarNav collapsed={sidebarCollapsed} chatBadge={chatBadge} inboxUnread={inboxUnread} />
         <div
           className={cn(
             'flex shrink-0 items-center gap-2 border-t border-border pt-2',
@@ -166,7 +166,7 @@ function Shell() {
           <div className="mb-2 flex h-12 shrink-0 items-center justify-start gap-2 px-1.5">
             <WorkspaceSwitcher onSelect={() => setDrawerOpen(false)} />
           </div>
-          <SidebarNav onNavigate={() => setDrawerOpen(false)} chatBadge={chatBadge} />
+          <SidebarNav onNavigate={() => setDrawerOpen(false)} chatBadge={chatBadge} inboxUnread={inboxUnread} />
           <div className="flex shrink-0 items-center gap-2 border-t border-border pt-2">
             <UserMenu />
           </div>

@@ -158,3 +158,20 @@ test('the chat count shows on the Chat item, is in its name, stops at 99+ and hi
   expect(badgeOf(0)).toEqual({ name: 'Chat', badge: null })
   expect(badgeOf(undefined)).toEqual({ name: 'Chat', badge: null })
 })
+
+test('the Inbox shows a dot while a notification is unread', () => {
+  const view = render(
+    <MemoryRouter initialEntries={['/tasks']}>
+      <SidebarNav inboxUnread />
+    </MemoryRouter>,
+  )
+  const inbox = view.getByRole('link', { name: 'Inbox, unread' })
+  expect(inbox.querySelectorAll('[data-slot="sidebar-nav-dot"]').length).toBe(1)
+
+  view.rerender(
+    <MemoryRouter initialEntries={['/tasks']}>
+      <SidebarNav />
+    </MemoryRouter>,
+  )
+  expect(view.getByRole('link', { name: 'Inbox' }).querySelectorAll('[data-slot="sidebar-nav-dot"]').length).toBe(0)
+})

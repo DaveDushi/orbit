@@ -32,7 +32,8 @@ export function ComposerInput({ ref, value, people, conversations, className, on
         ref={mirror}
         aria-hidden="true"
         data-slot="composer-mirror"
-        className={cn('pointer-events-none absolute inset-0 overflow-hidden wrap-break-word whitespace-pre-wrap text-foreground', className)}
+        // below md the base styles hold every textarea at 16px (no iOS zoom on focus); the copy must have that size too
+        className={cn('pointer-events-none absolute inset-0 overflow-hidden wrap-break-word whitespace-pre-wrap text-foreground', className, 'max-md:text-[16px]!')}
       >
         {composerSegments(value, people, conversations).map((segment, index) =>
           segment.kind === 'mention' ? (

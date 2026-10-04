@@ -47,6 +47,7 @@ function SidebarNavItem({
   'aria-label': ariaLabel = label,
   active,
   badge = 0,
+  unread = false,
   size,
   className,
   ...props
@@ -58,11 +59,13 @@ function SidebarNavItem({
   active?: boolean
   /** A count of things that wait for the user. Nothing shows for 0. */
   badge?: number
+  /** Something waits for the user, but there is no count: a dot shows. */
+  unread?: boolean
 }) {
   const collapsed = useContext(SidebarNavCollapsed)
   const match = useMatch({ path: useResolvedPath(to).pathname, end })
   const isActive = active ?? match !== null
-  const name = badge > 0 ? `${ariaLabel}, ${badge} unread` : ariaLabel
+  const name = badge > 0 ? `${ariaLabel}, ${badge} unread` : unread ? `${ariaLabel}, unread` : ariaLabel
   return (
     <Link
       data-slot="sidebar-nav-item"
@@ -84,6 +87,12 @@ function SidebarNavItem({
         >
           {badge > 99 ? '99+' : badge}
         </span>
+      ) : unread ? (
+        <span
+          data-slot="sidebar-nav-dot"
+          aria-hidden="true"
+          className="mr-1 size-2 shrink-0 rounded-full bg-primary group-data-[collapsed=true]/sidebar-nav:absolute group-data-[collapsed=true]/sidebar-nav:top-1 group-data-[collapsed=true]/sidebar-nav:right-1 group-data-[collapsed=true]/sidebar-nav:mr-0"
+        />
       ) : null}
     </Link>
   )
@@ -124,12 +133,15 @@ export function SidebarNav({
   onNavigate,
   collapsed = false,
   chatBadge,
+  inboxUnread,
   chatEnabled: chat = chatEnabled,
 }: {
   onNavigate?: () => void
   collapsed?: boolean
   /** Unread count on the Chat item. */
   chatBadge?: number
+  /** The Inbox has an unread notification. */
+  inboxUnread?: boolean
   /** Chat is a link instead of "Coming soon". Defaults to the build's setting. */
   chatEnabled?: boolean
 }) {
@@ -198,7 +210,7 @@ export function SidebarNav({
             <SidebarNavComingSoon key={link.to} icon={link.icon} label={link.label} />
           ))}
           <SidebarSection label="Personal" collapsed={collapsed} />
-          <SidebarNavItem to={inboxPath} icon={Inbox} label="Inbox" onClick={onNavigate} />
+          <SidebarNavItem to={inboxPath} icon={Inbox} label="Inbox" unread={inboxUnread} onClick={onNavigate} />
           <SidebarNavItem to={taskViewPath('mine')} active={taskViewActive('mine')} icon={SquareCheck} label="My tasks" onClick={onNavigate} />
           <SidebarNavItem to={taskViewPath('current_week')} active={taskViewActive('current_week')} icon={Calendar} label="This week" onClick={onNavigate} />
           <SidebarNavItem to={taskViewPath('my_week')} active={taskViewActive('my_week')} icon={Calendar} label="My week" onClick={onNavigate} />
