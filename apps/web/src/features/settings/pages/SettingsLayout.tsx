@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from 'react-router'
-import { Key, Keyboard, Link2, Notification as Bell, Tag, Setting2 as Settings, ShieldTick as ShieldCheck, Danger as TriangleAlert, Trash as Trash2, User, People as Users } from 'reicon-react'
+import { Driver, Key, Keyboard, Link2, Notification as Bell, Tag, Setting2 as Settings, ShieldTick as ShieldCheck, Danger as TriangleAlert, Trash as Trash2, User, People as Users } from 'reicon-react'
 import { cn } from 'cn'
 import { buttonVariants } from '@/components/ui/button'
 import { Pane, PaneHeader, PaneTitle } from '@/components/common/Pane'
@@ -47,6 +47,7 @@ const ACCOUNT_SECTIONS: { label: string; items: NavItem[] }[] = [
       { to: '/profile/notifications', label: 'Notifications', icon: Bell },
       { to: '/profile/sessions', label: 'Sessions', icon: ShieldCheck },
       { to: '/profile/shortcuts', label: 'Keyboard shortcuts', icon: Keyboard },
+      { to: '/profile/storage', label: 'Storage', icon: Driver },
     ],
   },
 ]

@@ -1,6 +1,6 @@
 import { type QueryClient, useQueryClient } from '@tanstack/react-query'
 import { queryKeys } from '@/api/queryKeys'
-import { type ReactNode, useEffect } from 'react'
+import { type ReactNode, useEffect, useState } from 'react'
 import { useCurrentUser } from '@/features/auth/api'
 import { useAwayMinutes, watchAway, watchIdle } from '@/features/realtime/idle'
 import { handleNotice } from '@/features/realtime/notify'
@@ -10,6 +10,8 @@ import { ChatContext } from './chatContext'
 import type { ChatClient } from './client'
 import { applyChatEvent } from './events'
 import { createHttpChatClient } from './httpClient'
+import { claimLocalCache, trimMedia, withinTime } from '@/lib/localCache'
+import { forgetConversation, persistChatCache, restoreChatCache } from './persist'
 import { clearTyping, noteTyping, resetLiveStore, setConnectionStatus } from './liveStore'
 
 /** One client for each workspace and user, kept for the page lifetime so chat state survives navigation. */
@@ -40,7 +42,21 @@ export function ChatProvider({ enabled = true, children }: { enabled?: boolean; 
   const queryClient = useQueryClient()
   const workspaceId = useWorkspace().workspace.id
   const currentUserId = useCurrentUser().data?.id ?? null
-  const client = enabled && currentUserId ? clientFor(workspaceId, currentUserId, queryClient) : null
+  // The copy of chat on this device goes into the query cache before the first query reads the server.
+  const copy = enabled && currentUserId ? `${workspaceId}:${currentUserId}` : null
+  const [restored, setRestored] = useState<string | null>(null)
+  useEffect(() => {
+    if (!copy || !currentUserId) return
+    let active = true
+    void withinTime(claimLocalCache(currentUserId).then(() => restoreChatCache(queryClient, workspaceId))).then(() => active && setRestored(copy))
+    void trimMedia().catch(() => {})
+    const stop = persistChatCache(queryClient, workspaceId)
+    return () => {
+      active = false
+      stop()
+    }
+  }, [copy, currentUserId, queryClient, workspaceId])
+  const client = enabled && currentUserId && restored === copy ? clientFor(workspaceId, currentUserId, queryClient) : null
 
   useEffect(() => {
     if (!client) return
@@ -64,6 +80,10 @@ export function ChatProvider({ enabled = true, children }: { enabled?: boolean; 
           break
         case 'connection':
           setConnectionStatus(event.status)
+          break
+        case 'conversation.removed':
+          forgetConversation(workspaceId, event.conversationId)
+          applyChatEvent(queryClient, workspaceId, event)
           break
         case 'message.created':
           clearTyping(event.message.conversationId, event.message.threadRootId, event.message.authorId)

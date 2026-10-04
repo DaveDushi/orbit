@@ -1,5 +1,6 @@
-// Orbit's service worker: shows pushed notifications and opens Orbit when one is clicked. It caches nothing and has
-// no fetch handler, so every request goes to the network as if the worker were not there.
+// Orbit's service worker: shows pushed notifications, opens Orbit when one is clicked, and keeps the images of chat
+// messages so a reload does not read them from the server again. Every other request goes to the network as if the
+// worker were not there.
 
 self.addEventListener('install', () => self.skipWaiting())
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()))
@@ -63,5 +64,50 @@ self.addEventListener('notificationclick', (event) => {
         // Some browsers refuse the focus; the page has the message and navigates anyway.
       }
     }),
+  )
+})
+
+// The same name and header as in `src/lib/localCache.ts`, which limits and clears this cache.
+const MEDIA_CACHE = 'orbit-media-v1'
+const SIZE_HEADER = 'x-orbit-size'
+const MAX_CACHED_FILE_BYTES = 10_000_000
+// A chat file has an id of its own and never changes, so a copy of it never goes out of date.
+const CHAT_FILE = /^\/api\/v1\/workspaces\/[^/]+\/chat\/files\/[^/]+$/
+
+/** An image that may be kept. Other files (video, documents) are not: they are large and read in ranges. */
+function keepable(response) {
+  if (response.status !== 200 || !(response.headers.get('content-type') || '').startsWith('image/')) return false
+  // Without a length the size is known only after the read (`keepImage` checks it again).
+  return Number(response.headers.get('content-length') || 0) <= MAX_CACHED_FILE_BYTES
+}
+
+async function keepImage(request, response) {
+  const blob = await response.blob()
+  if (blob.size > MAX_CACHED_FILE_BYTES) return
+  const headers = new Headers(response.headers)
+  headers.set(SIZE_HEADER, String(blob.size))
+  const cache = await caches.open(MEDIA_CACHE)
+  await cache.put(request.url, new Response(blob, { status: 200, headers }))
+}
+
+self.addEventListener('fetch', (event) => {
+  const { request } = event
+  if (request.method !== 'GET' || request.headers.has('range')) return
+  const url = new URL(request.url)
+  if (url.origin !== self.location.origin || !CHAT_FILE.test(url.pathname)) return
+  event.respondWith(
+    caches
+      .open(MEDIA_CACHE)
+      .then((cache) => cache.match(request.url))
+      .catch(() => undefined)
+      .then((cached) => {
+        if (cached) return cached
+        return fetch(request).then((response) => {
+          // A full cache or a blocked one must not break the image: the copy is a bonus.
+          // Only a response that is kept is read a second time: a clone of a large download would fill the memory.
+          if (keepable(response)) event.waitUntil(keepImage(request, response.clone()).catch(() => {}))
+          return response
+        })
+      }),
   )
 })

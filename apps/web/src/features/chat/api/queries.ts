@@ -3,10 +3,14 @@ import { type ChatBadges, chatBadges, type UnreadConversation, unreadConversatio
 import { useChatContext } from './chatContext'
 import type { ChatClient, MessageCursor, SearchInput } from './client'
 import { chatKeys } from './keys'
+import { liveStaleTime } from './persist'
 import { ChatError, type Conversation, type ConversationState, type FollowedThread, type Message, type MessagePage } from './types'
 
-/** Chat queries never go stale on their own: `applyChatEvent` keeps them current. `resync` invalidates them. */
-const LIVE = { staleTime: Infinity } as const
+/**
+ * Chat queries never go stale on their own: `applyChatEvent` keeps them current. `resync` invalidates them. A list
+ * from the copy on this device is stale until the server confirms it.
+ */
+const LIVE = { staleTime: liveStaleTime } as const
 
 /** Queries are disabled until the client exists; this guards the direct calls. */
 export function requireClient(client: ChatClient | null): ChatClient {

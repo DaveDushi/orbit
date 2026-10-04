@@ -408,6 +408,15 @@ turns its routes, navigation and shortcuts off.
   (`GET /api/v1/workspaces/{id}/live`).
 - A mention in a channel makes an Inbox item; reading the channel reads it.
 - `features/chat/api/client.ts` is the contract and `httpClient.ts` is its implementation.
+- URLs in a message get a card (`components/messages/LinkEmbed.tsx`). The server reads the page
+  (`GET …/chat/link-preview`, `apps/server/src/link_preview.rs`): an X post through the FxTwitter API
+  (its video plays in the card), a YouTube video through oEmbed (player on click), any other page
+  through its Open Graph tags. Only public addresses are read (SSRF). The CSP names the two media
+  hosts (`frame-src` YouTube, `media-src` `video.twimg.com`).
+- A copy of chat stays on the device (`lib/localCache.ts`, `features/chat/api/persist.ts`): lists and
+  the newest messages in IndexedDB (shown at once, then confirmed by the server), images of messages in
+  the service worker's cache (`public/sw.js`). Account settings > Storage shows it, limits the images
+  and clears it; sign-out clears it.
 
 ## Notifications, profile, and settings
 

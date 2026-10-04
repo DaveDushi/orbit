@@ -1,4 +1,5 @@
 import type { QueryClient } from '@tanstack/react-query'
+import { clearLocalCache } from '@/lib/localCache'
 
 export async function clearExpiredSession(
   queryClient: QueryClient,
@@ -6,5 +7,7 @@ export async function clearExpiredSession(
 ) {
   await queryClient.cancelQueries({ queryKey: ['current-user'] })
   queryClient.removeQueries({ queryKey: ['current-user'] })
+  // Whoever signs in next may be another user.
+  void clearLocalCache()
   navigate('/login')
 }

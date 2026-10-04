@@ -4,6 +4,7 @@ import { apiClient, type createApiClient } from '@/api/client'
 import { queryKeys } from '@/api/queryKeys'
 import { disablePushForSignOut } from '@/features/realtime/push'
 import { clearViewSessionEdits } from '@/features/views/useViewState'
+import { clearLocalCache, withinTime } from '@/lib/localCache'
 import {
   changePassword,
   login,
@@ -88,9 +89,11 @@ export function useLogout() {
       await disablePushForSignOut()
       await logout({ client: apiClient, throwOnError: true })
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.clear()
       clearViewSessionEdits()
+      // What this user's chat left on the device does not stay for the next person.
+      await withinTime(clearLocalCache())
     },
   })
 }

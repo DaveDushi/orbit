@@ -19,6 +19,7 @@ import { DangerZonePage } from '@/features/settings/pages/DangerZonePage'
 import { MembersPage } from '@/features/settings/pages/MembersPage'
 import { SessionsPage } from '@/features/settings/pages/SessionsPage'
 import { ShortcutsPage } from '@/features/settings/pages/ShortcutsPage'
+import { StoragePage } from '@/features/settings/pages/StoragePage'
 import { NotificationsPage } from '@/features/settings/pages/NotificationsPage'
 import { ApiTokensPage } from '@/features/settings/pages/ApiTokensPage'
 import { ProfilePage } from '@/features/profile/pages/ProfilePage'
@@ -93,6 +94,7 @@ export default function App() {
                 <Route path="notifications" element={<NotificationsPage />} />
                 <Route path="sessions" element={<SessionsPage />} />
                 <Route path="shortcuts" element={<ShortcutsPage />} />
+                <Route path="storage" element={<StoragePage />} />
               </Route>
               <Route path="settings" element={<SettingsLayout />}>
                 <Route index element={<GeneralPage />} />
