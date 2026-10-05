@@ -13,7 +13,7 @@ import { useHasUnreadNotifications } from '@/features/inbox/api'
 import { startPushWorker } from '@/features/realtime/push'
 import { useUnreadFavicon } from '@/lib/favicon'
 import { chatEnabled } from './productNavigation'
-import { Outlet, useLocation } from 'react-router'
+import { Outlet } from 'react-router'
 import { SidebarLeft as PanelLeft } from 'reicon-react'
 import { cn } from 'cn'
 import { SideSheet, SideSheetContent } from '@/components/common/SideSheet'
@@ -50,14 +50,9 @@ function Shell() {
   useEffect(() => startPushWorker(), [])
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
-  const [collapsedPreference, setCollapsedPreference] = useState(() => window.localStorage.getItem('orbit:sidebar_collapsed') === 'true')
-  // Chat has its own sidebar, so the app sidebar collapses there. Expanding it in chat lasts for the visit and does not
-  // change the saved preference of the other pages.
-  const { pathname } = useLocation()
-  const inChat = pathname === '/chat' || pathname.startsWith('/chat/')
-  const [chatExpanded, setChatExpanded] = useState(false)
-  const sidebarCollapsed = inChat ? !chatExpanded : collapsedPreference
-  const toggleSidebar = () => (inChat ? setChatExpanded((expanded) => !expanded) : setCollapsedPreference((collapsed) => !collapsed))
+  // One saved preference for every page, so collapsing the sidebar in chat keeps it collapsed in tasks too.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem('orbit:sidebar_collapsed') === 'true')
+  const toggleSidebar = () => setSidebarCollapsed((collapsed) => !collapsed)
 
   useLayoutEffect(() => {
     const viewport = window.visualViewport
@@ -98,8 +93,8 @@ function Shell() {
   }, [])
 
   useEffect(() => {
-    window.localStorage.setItem('orbit:sidebar_collapsed', String(collapsedPreference))
-  }, [collapsedPreference])
+    window.localStorage.setItem('orbit:sidebar_collapsed', String(sidebarCollapsed))
+  }, [sidebarCollapsed])
 
   return (
     <ProfilePopoverProvider>
