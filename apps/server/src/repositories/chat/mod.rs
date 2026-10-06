@@ -12,10 +12,12 @@
 //! and for the live socket.
 
 mod conversations;
+mod emoji;
 mod files;
 mod messages;
 mod search;
 mod state;
+mod stickers;
 
 use std::collections::HashMap;
 
@@ -31,9 +33,11 @@ use super::membership;
 pub use crate::live::Recipients;
 
 pub use conversations::{ChannelCreate, ChannelUpdate};
-pub use messages::{MessageCursor, SendInput};
+pub use emoji::{CustomEmojiImage, CustomEmojiRecord, EMOJI_MAX_BYTES};
+pub use messages::{ForwardInput, MessageCursor, SendInput};
 pub use search::{SearchHitRecord, SearchInput, SearchPage};
 pub use state::{ConversationCursor, ReadSnapshot, StateUpdate, ThreadCursor};
+pub use stickers::{CustomStickerImage, CustomStickerRecord, STICKER_MAX_BYTES, StickerRecord};
 
 /// Characters in one message body.
 pub const MESSAGE_MAX_CHARS: usize = 4000;
@@ -50,6 +54,14 @@ pub enum ChatError {
     Invalid { field: &'static str },
     #[error("the message is too long")]
     TooLong,
+    #[error("an emoji with this name exists")]
+    EmojiNameTaken,
+    #[error("the workspace has its full number of emoji")]
+    EmojiLimit,
+    #[error("a sticker with this name exists")]
+    StickerNameTaken,
+    #[error("the workspace has its full number of stickers")]
+    StickerLimit,
     #[error(transparent)]
     Upload(#[from] UploadError),
     #[error("chat repository is unavailable")]
@@ -217,6 +229,51 @@ pub struct ReplyPreviewRecord {
     #[schema(value_type = String)]
     pub author_id: Id,
     pub body: String,
+    /// The reply has a sticker: a preview with no text says so.
+    pub sticker: bool,
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: TimestampMillis,
+}
+
+/// The message that a message quotes, shown above it.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct ReplyToRecord {
+    #[schema(value_type = String)]
+    pub id: Id,
+    #[schema(value_type = String)]
+    pub author_id: Id,
+    /// The first 200 characters of the quoted body.
+    pub body: String,
+    /// The quoted message has a sticker: a quote with no text says so.
+    pub sticker: bool,
+}
+
+/// Characters of the quoted body in a [`ReplyToRecord`].
+const REPLY_TO_BODY_CHARS: usize = 200;
+
+impl ReplyToRecord {
+    /// `None` for a deleted root: its body is gone.
+    fn of(target: &MessageRecord) -> Option<Self> {
+        (!target.deleted).then(|| Self {
+            id: target.id,
+            author_id: target.author_id,
+            body: target.body.chars().take(REPLY_TO_BODY_CHARS).collect(),
+            sticker: target.sticker_id.is_some(),
+        })
+    }
+}
+
+/// Where a forwarded message came from: the original message as it was when it was forwarded.
+/// The original may be gone, or in a conversation that the reader cannot open.
+#[derive(Clone, Copy, Debug, Serialize, ToSchema)]
+pub struct ForwardedRecord {
+    #[schema(value_type = String)]
+    pub message_id: Id,
+    #[schema(value_type = String)]
+    pub conversation_id: Id,
+    #[schema(value_type = String)]
+    pub author_id: Id,
+    /// When the original message was sent.
     #[schema(value_type = String, format = DateTime)]
     pub created_at: TimestampMillis,
 }
@@ -261,6 +318,24 @@ pub struct MessageRecord {
     pub reply_user_ids: Vec<Id>,
     #[schema(required = true)]
     pub last_reply: Option<ReplyPreviewRecord>,
+    /// The message this one quotes (an inline reply, not a thread reply). The id stays when the
+    /// quoted message is deleted.
+    #[schema(value_type = Option<String>, required = true)]
+    pub reply_to_id: Option<Id>,
+    /// Null when the message quotes nothing, or the quoted message is deleted.
+    #[schema(required = true)]
+    pub reply_to: Option<ReplyToRecord>,
+    /// Set on a forward: a copy of another message's body and files. It mentions nobody
+    /// (`mentions` is empty whatever the body says) and cannot be edited.
+    #[schema(required = true)]
+    pub forwarded: Option<ForwardedRecord>,
+    /// The sticker the message was sent with; its body may be empty. The id stays when the
+    /// sticker is deleted.
+    #[schema(value_type = Option<String>, required = true)]
+    pub sticker_id: Option<Id>,
+    /// Null when the message has no sticker, or the sticker is deleted.
+    #[schema(required = true)]
+    pub sticker: Option<StickerRecord>,
     #[serde(skip)]
     pub(crate) last_reply_id: Option<Id>,
 }
@@ -366,6 +441,12 @@ pub enum ChatEvent {
     StateChanged { state: ConversationStateRecord },
     #[serde(rename = "thread.changed")]
     ThreadChanged { state: ThreadStateRecord },
+    /// A custom emoji was added or deleted: read the list again.
+    #[serde(rename = "emoji.changed")]
+    EmojiChanged,
+    /// A custom sticker was added or deleted: read the list again.
+    #[serde(rename = "stickers.changed")]
+    StickersChanged,
 }
 
 /// Who an event is for, as the write that made it sees it.
@@ -833,8 +914,14 @@ async fn current_state(
 const MESSAGE_SELECT: &str = "SELECT m.id, m.conversation_id, m.thread_root_id, m.kind, m.author_id, \
      m.body, m.mention_channel, m.mention_here, m.also_in_channel, m.nonce, m.pinned_at, \
      m.edited_at, m.deleted_at, m.created_at, m.reply_count, m.reply_user_ids, m.last_reply_id, \
-     l.author_id AS last_author_id, l.body AS last_body, l.created_at AS last_created_at \
-     FROM chat_messages m LEFT JOIN chat_messages l ON l.id = m.last_reply_id";
+     l.author_id AS last_author_id, l.body AS last_body, l.created_at AS last_created_at, \
+     l.sticker_id IS NOT NULL AS last_sticker, q.sticker_id IS NOT NULL AS quoted_sticker, \
+     m.reply_to_id, q.author_id AS quoted_author_id, substr(q.body, 1, 200) AS quoted_body, \
+     m.forward_of_id, m.forward_conversation_id, m.forward_author_id, m.forward_created_at, \
+     m.sticker_id, s.workspace_id AS sticker_workspace_id, s.name AS sticker_name \
+     FROM chat_messages m LEFT JOIN chat_messages l ON l.id = m.last_reply_id \
+     LEFT JOIN chat_messages q ON q.id = m.reply_to_id AND q.deleted_at IS NULL \
+     LEFT JOIN custom_stickers s ON s.id = m.sticker_id";
 
 fn message_from_row(row: &SqliteRow) -> Result<MessageRecord, ChatError> {
     let body: String = row.get("body");
@@ -845,9 +932,58 @@ fn message_from_row(row: &SqliteRow) -> Result<MessageRecord, ChatError> {
         Some(author_id) => Some(ReplyPreviewRecord {
             author_id: parse_id(author_id)?,
             body: row.get("last_body"),
+            sticker: row.get("last_sticker"),
             created_at: TimestampMillis::from_millis(row.get("last_created_at")),
         }),
         None => None,
+    };
+    let reply_to_id = parse_optional_id(row.get("reply_to_id"))?;
+    // A deleted root stays empty: it quotes nothing, is no forward and shows no sticker.
+    let deleted = row.get::<Option<i64>, _>("deleted_at").is_some();
+    // No quoted author: the quoted message is deleted.
+    let reply_to = match (
+        reply_to_id,
+        row.get::<Option<String>, _>("quoted_author_id"),
+    ) {
+        _ if deleted => None,
+        (Some(id), Some(author_id)) => Some(ReplyToRecord {
+            id,
+            author_id: parse_id(author_id)?,
+            body: row.get("quoted_body"),
+            sticker: row.get("quoted_sticker"),
+        }),
+        _ => None,
+    };
+    let forwarded = match (
+        parse_optional_id(row.get("forward_of_id"))?,
+        parse_optional_id(row.get("forward_conversation_id"))?,
+        parse_optional_id(row.get("forward_author_id"))?,
+        row.get::<Option<i64>, _>("forward_created_at"),
+    ) {
+        _ if deleted => None,
+        (Some(message_id), Some(conversation_id), Some(author_id), Some(created_at)) => {
+            Some(ForwardedRecord {
+                message_id,
+                conversation_id,
+                author_id,
+                created_at: TimestampMillis::from_millis(created_at),
+            })
+        }
+        _ => None,
+    };
+    let sticker_id = parse_optional_id(row.get("sticker_id"))?;
+    // No workspace: the sticker is deleted.
+    let sticker = match (
+        sticker_id,
+        parse_optional_id(row.get("sticker_workspace_id"))?,
+    ) {
+        _ if deleted => None,
+        (Some(id), Some(workspace_id)) => Some(StickerRecord {
+            id,
+            name: row.get("sticker_name"),
+            url: stickers::image_url(workspace_id, id),
+        }),
+        _ => None,
     };
     Ok(MessageRecord {
         id: parse_id(row.get("id"))?,
@@ -856,7 +992,12 @@ fn message_from_row(row: &SqliteRow) -> Result<MessageRecord, ChatError> {
         kind: MessageKind::from_db(row.get::<String, _>("kind").as_str())?,
         author_id: parse_id(row.get("author_id"))?,
         mentions: MentionsRecord {
-            user_ids: mentioned_user_ids(&body),
+            // The tokens in a forward's body are the original's: they mention nobody here.
+            user_ids: if forwarded.is_some() {
+                Vec::new()
+            } else {
+                mentioned_user_ids(&body)
+            },
             channel: row.get("mention_channel"),
             here: row.get("mention_here"),
         },
@@ -865,7 +1006,7 @@ fn message_from_row(row: &SqliteRow) -> Result<MessageRecord, ChatError> {
         edited_at: row
             .get::<Option<i64>, _>("edited_at")
             .map(TimestampMillis::from_millis),
-        deleted: row.get::<Option<i64>, _>("deleted_at").is_some(),
+        deleted,
         attachments: Vec::new(),
         reactions: Vec::new(),
         pinned: row.get::<Option<i64>, _>("pinned_at").is_some(),
@@ -878,6 +1019,11 @@ fn message_from_row(row: &SqliteRow) -> Result<MessageRecord, ChatError> {
             .map(parse_id)
             .collect::<Result<_, _>>()?,
         last_reply,
+        reply_to_id,
+        reply_to,
+        forwarded,
+        sticker_id,
+        sticker,
         last_reply_id: parse_optional_id(row.get("last_reply_id"))?,
     })
 }

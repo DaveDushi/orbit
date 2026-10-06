@@ -8,6 +8,11 @@ const message: MessageRecord = {
   id: 'm2',
   conversation_id: 'c1',
   thread_root_id: 'm1',
+  reply_to_id: 'm0',
+  reply_to: { id: 'm0', author_id: 'u1', body: 'Is it <@u2>?', sticker: false },
+  forwarded: null,
+  sticker_id: null,
+  sticker: null,
   kind: 'message',
   author_id: 'u2',
   body: '<@u1> done',
@@ -26,7 +31,7 @@ const message: MessageRecord = {
   reply_count: 2,
   last_reply_at: '2026-10-02T08:02:00.000Z',
   reply_user_ids: ['u1'],
-  last_reply: { author_id: 'u1', body: 'Thanks', created_at: '2026-10-02T08:02:00.000Z' },
+  last_reply: { author_id: 'u1', body: 'Thanks', sticker: false, created_at: '2026-10-02T08:02:00.000Z' },
 }
 
 const conversation: ConversationRecord = {
@@ -52,6 +57,11 @@ test('a wire message becomes a chat message with millisecond times', () => {
       id: 'm2',
       conversationId: 'c1',
       threadRootId: 'm1',
+      replyToId: 'm0',
+      replyTo: { id: 'm0', authorId: 'u1', body: 'Is it <@u2>?', sticker: false },
+      forwarded: null,
+      stickerId: null,
+      sticker: null,
       kind: 'message',
       authorId: 'u2',
       body: '<@u1> done',
@@ -70,7 +80,7 @@ test('a wire message becomes a chat message with millisecond times', () => {
       replyCount: 2,
       lastReplyAt: Date.UTC(2026, 9, 2, 8, 2),
       replyUserIds: ['u1'],
-      lastReply: { authorId: 'u1', body: 'Thanks', createdAt: Date.UTC(2026, 9, 2, 8, 2) },
+      lastReply: { authorId: 'u1', body: 'Thanks', sticker: false, createdAt: Date.UTC(2026, 9, 2, 8, 2) },
     },
   })
 })
@@ -111,4 +121,29 @@ test('a failed request becomes the chat error the UI knows', () => {
   expect(toChatError(new TypeError('Failed to fetch')).code).toBe('offline')
   const known = new ChatError('upload_failed', 'x')
   expect(toChatError(known)).toBe(known)
+})
+
+test('a reply whose message was deleted keeps the id and has no quote', () => {
+  const event = toEvent({ type: 'message.updated', message: { ...message, reply_to: null } }, 'u1')
+  expect(event).toMatchObject({ message: { replyToId: 'm0', replyTo: null } })
+})
+
+test('a forward carries where the original came from', () => {
+  const forwarded = { message_id: 'm0', conversation_id: 'c9', author_id: 'u3', created_at: '2026-10-01T09:30:00.000Z' }
+  const event = toEvent({ type: 'message.created', message: { ...message, forwarded } }, 'u1')
+  expect(event).toMatchObject({
+    message: { forwarded: { messageId: 'm0', conversationId: 'c9', authorId: 'u3', createdAt: Date.UTC(2026, 9, 1, 9, 30) } },
+  })
+})
+
+test('a message carries its sticker, and only the id once the sticker was deleted', () => {
+  const sticker = { id: 's1', name: 'Party Parrot', url: '/api/v1/workspaces/w1/chat/stickers/s1/image' }
+  const sent = toEvent({ type: 'message.created', message: { ...message, body: '', sticker_id: 's1', sticker } }, 'u1')
+  expect(sent).toMatchObject({ message: { body: '', stickerId: 's1', sticker } })
+  const deleted = toEvent({ type: 'message.updated', message: { ...message, sticker_id: 's1', sticker: null } }, 'u1')
+  expect(deleted).toMatchObject({ message: { stickerId: 's1', sticker: null } })
+})
+
+test('stickers.changed has no payload', () => {
+  expect(toEvent({ type: 'stickers.changed' }, 'u1')).toEqual({ type: 'stickers.changed' })
 })

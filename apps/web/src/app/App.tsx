@@ -1,3 +1,4 @@
+import { ConnectionScreen } from './ConnectionScreen'
 import { useEffect } from 'react'
 import { ConfirmationModalHost } from '@/components/common/ConfirmationModal'
 import { Toaster } from '@/components/ui/sonner'
@@ -14,11 +15,13 @@ import { DocsPage } from '@/features/docs/pages/DocsPage'
 import { AccountLayout, SettingsLayout } from '@/features/settings/pages/SettingsLayout'
 import { GeneralPage } from '@/features/settings/pages/GeneralPage'
 import { GithubPage } from '@/features/settings/pages/GithubPage'
+import { EmojiPage } from '@/features/settings/pages/EmojiPage'
 import { LabelsPage } from '@/features/settings/pages/LabelsPage'
 import { DangerZonePage } from '@/features/settings/pages/DangerZonePage'
 import { MembersPage } from '@/features/settings/pages/MembersPage'
 import { SessionsPage } from '@/features/settings/pages/SessionsPage'
 import { ShortcutsPage } from '@/features/settings/pages/ShortcutsPage'
+import { StickersPage } from '@/features/settings/pages/StickersPage'
 import { StoragePage } from '@/features/settings/pages/StoragePage'
 import { NotificationsPage } from '@/features/settings/pages/NotificationsPage'
 import { ApiTokensPage } from '@/features/settings/pages/ApiTokensPage'
@@ -55,6 +58,7 @@ export default function App() {
       <ConfirmationModalHost />
       <Toaster />
       <NewVersionNotice />
+      <ConnectionScreen />
       <Routes>
         <Route path="setup" element={<SetupPage />} />
         <Route path="oauth/consent" element={<OAuthConsentPage />} />
@@ -99,6 +103,8 @@ export default function App() {
               <Route path="settings" element={<SettingsLayout />}>
                 <Route index element={<GeneralPage />} />
                 <Route path="labels" element={<LabelsPage />} />
+                <Route path="emoji" element={<EmojiPage />} />
+                <Route path="stickers" element={<StickersPage />} />
                 <Route path="github" element={<GithubPage />} />
                 <Route path="danger-zone" element={<DangerZonePage />} />
                 <Route path="members" element={<MembersPage />} />

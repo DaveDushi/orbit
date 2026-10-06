@@ -5,11 +5,14 @@ import { useCurrentUser } from '@/features/auth/api'
 import { useAwayMinutes, watchAway, watchIdle } from '@/features/realtime/idle'
 import { handleNotice } from '@/features/realtime/notify'
 import { replacePresence, resetPresence, setPresence } from '@/features/realtime/presence'
+import { useCustomEmojiByName } from '@/features/workspaces/customEmoji'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import { ChatContext } from './chatContext'
 import type { ChatClient } from './client'
 import { applyChatEvent } from './events'
 import { createHttpChatClient } from './httpClient'
+import { reportConnection } from '@/lib/connection'
+import { CustomEmojiContext, NO_CUSTOM_EMOJI } from '@/lib/customEmojiContext'
 import { claimLocalCache, trimMedia, withinTime } from '@/lib/localCache'
 import { forgetConversation, persistChatCache, restoreChatCache } from './persist'
 import { clearTyping, noteTyping, resetLiveStore, setConnectionStatus } from './liveStore'
@@ -36,12 +39,14 @@ function clientFor(workspaceId: string, currentUserId: string, queryClient: Quer
 
 /**
  * Provides the chat client and keeps the query cache and the live stores current from its events. Mount once.
- * With `enabled` false there is no client: chat queries stay idle and the badge counts are zero.
+ * With `enabled` false there is no client: chat queries stay idle and the badge counts are zero. It also supplies the
+ * workspace's custom emoji to everything below it (`CustomEmojiContext`).
  */
 export function ChatProvider({ enabled = true, children }: { enabled?: boolean; children: ReactNode }) {
   const queryClient = useQueryClient()
   const workspaceId = useWorkspace().workspace.id
   const currentUserId = useCurrentUser().data?.id ?? null
+  const customEmoji = useCustomEmojiByName(workspaceId, enabled).data ?? NO_CUSTOM_EMOJI
   // The copy of chat on this device goes into the query cache before the first query reads the server.
   const copy = enabled && currentUserId ? `${workspaceId}:${currentUserId}` : null
   const [restored, setRestored] = useState<string | null>(null)
@@ -96,6 +101,8 @@ export function ChatProvider({ enabled = true, children }: { enabled?: boolean; 
     return () => {
       active = false
       unsubscribe()
+      // Logout or a workspace switch: nothing reports this socket as back, so the banner must not wait for it.
+      reportConnection('chat', false)
     }
   }, [client, currentUserId, queryClient, workspaceId])
 
@@ -105,5 +112,9 @@ export function ChatProvider({ enabled = true, children }: { enabled?: boolean; 
   const [awayMinutes] = useAwayMinutes()
   useEffect(() => (client ? watchAway((away) => client.setAway(away), awayMinutes * 60_000) : undefined), [client, awayMinutes])
 
-  return <ChatContext.Provider value={{ client, workspaceId, currentUserId }}>{children}</ChatContext.Provider>
+  return (
+    <CustomEmojiContext value={customEmoji}>
+      <ChatContext.Provider value={{ client, workspaceId, currentUserId }}>{children}</ChatContext.Provider>
+    </CustomEmojiContext>
+  )
 }

@@ -50,6 +50,7 @@ import { commentUploadMode } from './commentUpload'
 import { findCachedTask, patchWorkspaceTask, reconcileWorkspaceTask, restoreWorkspaceTasks, snapshotTasks, type WorkspaceTaskSnapshot } from './optimistic'
 import { PartialUploadError, uploadFiles } from './uploadQueue'
 import { isTaskUuid, normalizeTaskParam, taskSlug } from '@/lib/taskLinks'
+import { loadFailed } from '@/lib/connection'
 
 type ApiClient = ReturnType<typeof createApiClient>
 export type TaskFilters = NonNullable<ListTasksData['query']>
@@ -303,7 +304,8 @@ export function useCommentAttachments(workspaceId: string, taskId: string | unde
   return {
     data: results.flatMap((result) => result.data ?? []),
     isPending: results.some((result) => result.isPending),
-    isError: results.some((result) => result.isError),
+    // A failed refetch of attachments that are already here is not an error for the page.
+    isError: results.some(loadFailed),
   }
 }
 

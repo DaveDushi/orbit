@@ -4,7 +4,9 @@ import type { WorkspaceRecord } from '@/api/generated/types.gen'
 import { useWorkspaces } from './api'
 import { selectedWorkspaceId, switchWorkspaceHref } from './navigation'
 import { WorkspaceContext } from './workspaceContext'
+import { OrbitUnavailable } from '@/components/common/OrbitUnavailable'
 import { LoadingScreen } from '@/components/common/LoadingScreen'
+import { firstLoadFailed } from '@/lib/connection'
 const preferenceKey = 'orbit:selected_workspace'
 const emptyWorkspaces: WorkspaceRecord[] = []
 
@@ -30,8 +32,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     selectWorkspace: (id: string) => navigate(switchWorkspaceHref(location.pathname, location.search, id)),
   } : null, [location.pathname, location.search, navigate, workspace, workspaces])
 
-  if (query.isPending) return <LoadingScreen />
-  if (query.isError) return <WorkspaceMessage title="Orbit is unavailable" detail="Your workspaces could not be loaded." />
+  // With workspaces from before, a refetch that lost the connection keeps the app on screen (the banner in the shell
+  // tells the user); one the server refused does not.
+  if (firstLoadFailed(query)) return <OrbitUnavailable detail="Your workspaces could not be loaded." onRetry={() => void query.refetch()} />
+  if (query.data === undefined) return <LoadingScreen />
   if (!value) return <WorkspaceMessage title="No workspace access" detail="Ask an owner for an invitation to a workspace." />
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>
 }

@@ -295,6 +295,13 @@ impl MigrationRunner {
                     ),
                     false,
                 ),
+                Migration::new(
+                    41,
+                    include_str!(
+                        "../../../../apps/server/migrations/0041_chat_replies_forwards_custom_emoji.sql"
+                    ),
+                    false,
+                ),
             ],
         )
     }

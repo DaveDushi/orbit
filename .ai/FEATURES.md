@@ -417,6 +417,20 @@ turns its routes, navigation and shortcuts off.
   the newest messages in IndexedDB (shown at once, then confirmed by the server), images of messages in
   the service worker's cache (`public/sw.js`). Account settings > Storage shows it, limits the images
   and clears it; sign-out clears it.
+- Messages: an inline reply quotes a message of the same conversation (`reply_to_id`); a forward is a
+  copy of the text and files in another conversation (`POST …/messages/{id}/forward`) and cannot be
+  edited. Emoticons (`:D`) become emoji, a typed task ID (`GEN-1`) of a real project shows as a chip
+  and a card, a message of only emoji (1 to 30) shows them large, and `<https://…>` is a link with no
+  card. A backslash keeps `\:D`, `\:name:` and `\GEN-1` as text.
+- Custom emoji belong to the workspace (Workspace Settings > Emoji, owners and admins): `:name:` stays
+  text in the body and in reactions and becomes the image when it is shown.
+- Stickers belong to the workspace too (Workspace Settings > Stickers, owners and admins; 512 KiB, 100 for
+  each workspace). The sticker button of the composer sends one at once as its own message
+  (`chat_messages.sticker_id`); a deleted sticker shows "Sticker was deleted".
+- A lost connection keeps the app on screen (`lib/connection.ts`, `app/shell/ConnectionBanner.tsx`):
+  a banner shows while the sockets and core queries reconnect; after a minute "Orbit is unavailable" covers
+  the app (`app/ConnectionScreen.tsx`, the animated logo and Retry) until the connection is back. A page
+  shows its error state only with no data or on an answer that is not a connection failure.
 
 ## Notifications, profile, and settings
 

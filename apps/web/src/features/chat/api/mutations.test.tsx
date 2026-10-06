@@ -34,6 +34,11 @@ function message(id: string, authorId: string, body: string, nonce: string | nul
     id,
     conversationId: general.id,
     threadRootId: null,
+    replyToId: null,
+    replyTo: null,
+    forwarded: null,
+    stickerId: null,
+    sticker: null,
     kind: 'message',
     authorId,
     body,
@@ -194,4 +199,54 @@ test('a failed reaction does not come back when the server’s message came mean
     await tick()
   })
   expect(messages()[0].reactions).toEqual(message.reactions)
+})
+
+test('a reply shows its quote while it waits, and a retry sends the reply again', async () => {
+  const sent: SendMessageInput[] = []
+  const { wrapper, general, messages } = await setup({
+    sendMessage: async (input) => {
+      sent.push(input)
+      throw new ChatError('offline', 'No connection.')
+    },
+  })
+  const replyTo = { id: 'm0', authorId: 'u2', body: 'Welcome' }
+  const view = renderHook(() => useSendMessage(), { wrapper })
+
+  await act(async () => {
+    view.result.current.send({ conversationId: general.id, body: 'thanks', replyTo })
+    await tick()
+  })
+  expect(messages().at(-1)).toMatchObject({ body: 'thanks', replyToId: 'm0', replyTo, sendState: 'failed' })
+
+  await act(async () => {
+    view.result.current.retry(messages().at(-1)!)
+    await tick()
+  })
+  expect(sent.map((input) => input.replyTo)).toEqual([replyTo, replyTo])
+  expect(messages().at(-1)).toMatchObject({ replyToId: 'm0', replyTo })
+})
+
+test('a sticker shows on the row that waits, and a retry sends it again', async () => {
+  const sent: SendMessageInput[] = []
+  const { wrapper, messages } = await setup({
+    sendMessage: async (input) => {
+      sent.push(input)
+      throw new ChatError('offline', 'No connection.')
+    },
+  })
+  const sticker = { id: 's1', name: 'Party Parrot', url: '/stickers/s1' }
+  const view = renderHook(() => useSendMessage(), { wrapper })
+
+  await act(async () => {
+    view.result.current.send({ conversationId: general.id, body: '', sticker })
+    await tick()
+  })
+  expect(messages().at(-1)).toMatchObject({ body: '', stickerId: 's1', sticker, sendState: 'failed' })
+
+  await act(async () => {
+    view.result.current.retry(messages().at(-1)!)
+    await tick()
+  })
+  expect(sent.map((input) => input.sticker)).toEqual([sticker, sticker])
+  expect(messages().at(-1)).toMatchObject({ stickerId: 's1', sticker })
 })

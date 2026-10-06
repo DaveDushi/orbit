@@ -5,6 +5,11 @@ export function testMessage(overrides: Partial<Message> & { id: string }): Messa
   return {
     conversationId: 'c1',
     threadRootId: null,
+    replyToId: null,
+    replyTo: null,
+    forwarded: null,
+    stickerId: null,
+    sticker: null,
     kind: 'message',
     authorId: 'u1',
     body: 'text',

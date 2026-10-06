@@ -1,3 +1,4 @@
+import { watchReconnect } from '@/lib/connection'
 import type { ConnectionStatus } from './types'
 
 /** The part of `WebSocket` the live socket uses, so a test can put its own in. */
@@ -65,6 +66,8 @@ export function openLiveSocket(options: LiveSocketOptions): LiveSocket {
   let lastSeq: number | null = null
   let attempt = 0
   let retry: ReturnType<typeof setTimeout> | undefined
+  /** Between a drop and the next try. Not set after a terminal code, so nothing reconnects then. */
+  let waitingToRetry = false
   let silence: ReturnType<typeof setTimeout> | undefined
   let waiting: (() => void)[] = []
 
@@ -78,11 +81,13 @@ export function openLiveSocket(options: LiveSocketOptions): LiveSocket {
     socket = null
     if (closed) return
     open = false
-    options.onStatus('reconnecting')
-    if (TERMINAL_CODES.has(code)) return
+    const ended = TERMINAL_CODES.has(code)
+    options.onStatus(ended ? 'ended' : 'reconnecting')
+    if (ended) return
     // 1x, 2x, 4x … 30x the base delay, with up to half of it added at random so tabs do not reconnect together.
     const delay = Math.min(retryMs * 2 ** attempt, retryMs * 30)
     attempt += 1
+    waitingToRetry = true
     retry = setTimeout(connect, delay * (1 + Math.random() / 2))
   }
 
@@ -116,6 +121,7 @@ export function openLiveSocket(options: LiveSocketOptions): LiveSocket {
 
   function connect() {
     if (closed) return
+    waitingToRetry = false
     const query = epoch !== null && lastSeq !== null ? `?epoch=${encodeURIComponent(epoch)}&after=${lastSeq}` : ''
     const current = createSocket(options.url + query)
     socket = current
@@ -127,6 +133,12 @@ export function openLiveSocket(options: LiveSocketOptions): LiveSocket {
   }
 
   connect()
+  // Back online, the tab is visible again, or the user pressed Retry: skip the rest of the backoff wait.
+  const stopWatching = watchReconnect(() => {
+    if (!waitingToRetry) return
+    clearTimeout(retry)
+    connect()
+  })
   return {
     send(frame) {
       if (open) socket?.send(JSON.stringify(frame))
@@ -143,6 +155,7 @@ export function openLiveSocket(options: LiveSocketOptions): LiveSocket {
     },
     close() {
       closed = true
+      stopWatching()
       clearTimeout(retry)
       clearTimeout(silence)
       waiting = []

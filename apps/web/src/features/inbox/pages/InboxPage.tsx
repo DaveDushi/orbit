@@ -15,6 +15,7 @@ import { isMention, notificationCopy, notificationTarget, useMarkAllNotification
 import { usePageTree } from '@/features/docs/api/pages'
 import { useSlowPending } from '@/lib/useDebouncedValue'
 import { ProfileTrigger } from '@/components/common/ProfileTrigger'
+import { loadFailed } from '@/lib/connection'
 
 type InboxTab = 'all' | 'unread' | 'mentions'
 
@@ -77,11 +78,11 @@ export function InboxPage() {
             ))}
           </TabsList>
         </Tabs>
-        {allQuery.isPending || allQuery.isError || items.length === 0 ? (
+        {allQuery.isPending || items.length === 0 ? (
           <div className="min-h-0 flex-1 overflow-y-auto">
             {allQuery.isPending ? (
               <EmptyState icon={Inbox} title="Loading inbox" description="Loading your notifications." />
-            ) : allQuery.isError ? (
+            ) : loadFailed(allQuery) ? (
               <div className="flex h-full flex-col items-center justify-center">
                 <EmptyState icon={Inbox} title="Inbox unavailable" description="Notifications could not be loaded." />
                 <Button variant="outline" type="button" onClick={() => void allQuery.refetch()}>Retry</Button>
