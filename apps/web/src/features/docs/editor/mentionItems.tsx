@@ -1,7 +1,7 @@
 // Entries and rules of the page body's "@" picker (see `MentionMenu`).
 import type { Transaction } from '@tiptap/pm/state'
 import type { DefaultReactSuggestionItem } from '@blocknote/react'
-import { MentionAvatar } from './PageMentionChip'
+import { UserAvatar } from '@/components/common/UserAvatar'
 import { filterPageMentionCandidates, PRIVATE_PAGE_HINT, type PageMentionMember, type PageMentionOptions } from './pageMentions'
 import type { PageEditorInstance } from './schema'
 
@@ -14,7 +14,7 @@ export function pageMentionItems(
   return filterPageMentionCandidates(options.candidates, query).map((member) => ({
     title: member.name,
     subtext: member.handle ?? member.email,
-    icon: <MentionAvatar member={member} />,
+    icon: <UserAvatar user={{ name: member.name, color: member.color ?? 'var(--muted-foreground)', avatarUrl: member.avatarUrl }} size={24} />,
     group: options.privatePage ? PRIVATE_PAGE_HINT : undefined,
     onItemClick: () => insert(member),
   }))

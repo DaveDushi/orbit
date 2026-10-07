@@ -10,6 +10,7 @@ export interface PageMentionMember {
   handle?: string
   email?: string
   color?: string
+  avatarUrl?: string | null
   /** Suspended members cannot see anything and are never offered. */
   suspended?: boolean
 }

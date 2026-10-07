@@ -5,6 +5,7 @@ import { cn } from 'cn'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tip } from '@/components/common/Tip'
+import { UserAvatar } from '@/components/common/UserAvatar'
 import { Textarea } from '@/components/ui/textarea'
 import type { User } from '@/features/workspaces/models'
 
@@ -53,6 +54,10 @@ export function TaskCommentComposer({ placeholder, pending, progress, error, mem
         <div className="absolute bottom-full right-0 left-0 z-[5] mb-1.5 flex max-h-[200px] flex-col gap-px overflow-auto overscroll-contain rounded-lg border bg-popover p-1 shadow-lg" role="listbox" aria-label="Mention member">
           {suggestions.map((member) => (
             <Button variant="ghost" key={member.id} type="button" className="w-full justify-start font-normal" onMouseDown={(event) => { event.preventDefault(); insertMention(member) }}>
+              {/* decorative: the initials must not go into the button's name */}
+              <span className="flex" aria-hidden>
+                <UserAvatar user={member} size={20} />
+              </span>
               @{member.name}
             </Button>
           ))}

@@ -5,6 +5,9 @@ export interface MentionPerson {
   id: string
   name: string
   handle: string
+  /** With a color the pickers show the avatar; the "@channel" / "@here" entries have none. */
+  color?: string
+  avatarUrl?: string | null
 }
 
 /** What a "#channel" mention needs of a channel. */

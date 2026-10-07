@@ -3,6 +3,7 @@ import { createElement } from 'react'
 // the members who can see the page after typing "@". The server reads mentions from the body and notifies them.
 import { BlockNoteSchema, createParagraphBlockSpec, defaultInlineContentSpecs, defaultStyleSpecs } from '@blocknote/core'
 import { createReactInlineContentSpec, type DefaultReactSuggestionItem } from '@blocknote/react'
+import { UserAvatar } from '@/components/common/UserAvatar'
 import type { MentionCandidate } from './mentionable'
 import { MentionChip } from './MentionChip'
 
@@ -47,6 +48,10 @@ export function mentionItems(
     .map((candidate) => ({
       title: candidate.name,
       subtext: candidate.handle,
+      icon: createElement(UserAvatar, {
+        user: { name: candidate.name, color: candidate.color ?? 'var(--muted-foreground)', avatarUrl: candidate.avatarUrl },
+        size: 24,
+      }),
       onItemClick: () => insert(candidate),
     }))
 }

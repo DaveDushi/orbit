@@ -3,6 +3,7 @@
 // Enter/Tab insert "@Name " / "#channel ", Escape closes. suppressRef stops the just-inserted
 // label from reopening the popup.
 import { useCallback, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
+import type { AvatarPerson } from '@/components/common/UserAvatar'
 import type { MentionChannel, MentionPerson } from './mentions'
 
 export interface MentionState {
@@ -17,6 +18,8 @@ export interface MentionSuggestion {
   label: string
   username: string
   color?: string
+  /** The member behind a `user` suggestion; absent for "@channel" / "@here". */
+  avatar?: AvatarPerson
   kind: 'user' | 'channel'
 }
 
@@ -43,6 +46,7 @@ export function useMentionAutocomplete<Person extends MentionPerson>(
           label: user.name,
           username: user.handle,
           color: colorOf ? colorOf(user) : undefined,
+          avatar: user.color ? { name: user.name, color: user.color, avatarUrl: user.avatarUrl } : undefined,
           kind: 'user' as const,
         }))
   const query = mentionState?.query.trim().toLowerCase() ?? ''

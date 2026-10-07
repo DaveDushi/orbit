@@ -6,6 +6,7 @@ export interface MentionCandidate {
   handle?: string
   /** Avatar color (workspace members carry one). */
   color?: string
+  avatarUrl?: string | null
 }
 
 /**

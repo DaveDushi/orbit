@@ -1,6 +1,7 @@
 import { Hashtag as Hash, User } from 'reicon-react'
 import type { MentionSuggestion } from '@/lib/useMentionAutocomplete'
 import { Button } from '@/components/ui/button'
+import { UserAvatar } from './UserAvatar'
 import { cn } from 'cn'
 
 /** the chat reference mention popup: avatar, @label, handle; onMouseDown keeps the textarea focused. */
@@ -44,9 +45,13 @@ export function MentionPopover({
           }}
           onMouseEnter={() => onHover(index)}
         >
-          <span className="grid size-7 shrink-0 place-items-center rounded-full bg-muted text-xs font-bold text-muted-foreground">
-            {suggestion.kind === 'channel' ? <Hash className="size-[13px]" /> : suggestion.label.charAt(0).toUpperCase()}
-          </span>
+          {suggestion.avatar ? (
+            <UserAvatar user={suggestion.avatar} size={28} className="shrink-0" />
+          ) : (
+            <span className="grid size-7 shrink-0 place-items-center rounded-full bg-muted text-xs font-bold text-muted-foreground">
+              {suggestion.kind === 'channel' ? <Hash className="size-[13px]" /> : suggestion.label.charAt(0).toUpperCase()}
+            </span>
+          )}
           <span className="min-w-0 flex-1 truncate text-sm font-semibold" style={suggestion.color ? { color: suggestion.color } : undefined}>
             {suggestion.kind === 'channel' ? suggestion.label : `@${suggestion.label}`}
           </span>
