@@ -53,7 +53,7 @@ export function EmojiPicker({ onPick, onRemove, custom = false }: { onPick: (emo
       onEmojiSelect={({ emoji }) => onPick(normalizeEmoji(emoji))}
     >
       <div className="flex items-center gap-2 p-2 pb-0">
-        <label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md bg-secondary/60 px-2.5 text-muted-foreground focus-within:ring-3 focus-within:ring-ring/50">
+        <label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md bg-secondary/60 px-2.5 text-muted-foreground ring-ring/50 ring-inset focus-within:ring-1">
           <Search className="size-3.5 shrink-0" aria-hidden="true" />
           <Frimousse.Search autoFocus placeholder="Search emoji" aria-label="Search emoji" onChange={(event) => setSearch(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground" />
         </label>

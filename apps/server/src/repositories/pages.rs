@@ -14,7 +14,9 @@ use utoipa::ToSchema;
 
 use super::page_files::{page_file_url, page_has_file, parse_page_file_url};
 use super::page_mentions::notify_new_mentions;
-use super::page_versions::{PageVersionKind, SaveOrigin, snapshot_before_edit, store_version};
+use super::page_versions::{
+    PageVersionKind, SaveOrigin, project_collab_content, snapshot_before_edit, store_version,
+};
 use super::tasks::{TaskError, record_mutation, require_access, require_access_tx};
 use super::teamspaces::{default_teamspace, teamspace_exists};
 use super::workspaces::WorkspaceError;
@@ -909,6 +911,69 @@ impl PageRepository {
         .await?;
         tx.commit().await?;
         CollabHub::revalidate_database(&self.database, Some(workspace_id));
+        // The trash already committed: a failed cleanup only leaves "Missing page" cards behind.
+        if let Err(error) = self
+            .unlink_trashed(workspace_id, page_id, actor_id, request_id, now)
+            .await
+        {
+            tracing::warn!(error = %error, "removing links to a trashed page");
+        }
+        Ok(())
+    }
+
+    /// Removes the `page` blocks that link to the batch trashed with `page_id` from every live
+    /// page of the workspace, in storage and in open editors.
+    async fn unlink_trashed(
+        &self,
+        workspace_id: Id,
+        page_id: Id,
+        actor_id: Id,
+        request_id: &str,
+        now: TimestampMillis,
+    ) -> Result<(), PageError> {
+        let trashed: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM pages WHERE workspace_id = ? AND trashed_with = ? AND deleted_at = ?",
+        )
+        .bind(workspace_id.to_string())
+        .bind(page_id.to_string())
+        .bind(now.as_millis())
+        .fetch_all(self.database.pool())
+        .await?;
+        let hub = CollabHub::of(&self.database);
+        // Pending edits are projected first, so `content_json` shows links added seconds ago.
+        hub.flush_workspace(workspace_id).await;
+        let mut linking = std::collections::BTreeSet::new();
+        for id in &trashed {
+            let rows: Vec<String> = sqlx::query_scalar(
+                "SELECT id FROM pages WHERE workspace_id = ? AND deleted_at IS NULL \
+                 AND instr(content_json, ?) > 0",
+            )
+            .bind(workspace_id.to_string())
+            .bind(format!("\"pageId\":\"{id}\""))
+            .fetch_all(self.database.pool())
+            .await?;
+            linking.extend(rows);
+        }
+        for id in linking {
+            let Ok(linking_id) = id.parse::<Id>() else {
+                continue;
+            };
+            // The room is taken before the transaction (see `CollabHub`).
+            let mut collab = hub.write(linking_id).await?;
+            let mut tx = self.database.immediate_transaction().await?;
+            let Some(current) = page_by_id_in_tx(&mut tx, linking_id).await? else {
+                continue;
+            };
+            let content = without_page_blocks(&current.content, &trashed);
+            if content == current.content {
+                continue;
+            }
+            project_collab_content(&mut tx, linking_id, &content, None, false, request_id, now)
+                .await?;
+            collab.replace(&mut tx, &content, actor_id, now).await?;
+            tx.commit().await?;
+            collab.commit();
+        }
         Ok(())
     }
 
@@ -1944,6 +2009,27 @@ impl Remap<'_> {
         let id = url.strip_prefix("/docs/")?.parse::<Id>().ok()?;
         self.pages.get(&id).map(|copy| format!("/docs/{copy}"))
     }
+}
+
+/// `content` without the `page` blocks (at any depth) that link to one of `page_ids`.
+fn without_page_blocks(content: &[Value], page_ids: &[String]) -> Vec<Value> {
+    content
+        .iter()
+        .filter(|block| {
+            let links = block["type"] == "page"
+                && block["props"]["pageId"]
+                    .as_str()
+                    .is_some_and(|id| page_ids.iter().any(|trashed| trashed == id));
+            !links
+        })
+        .map(|block| {
+            let mut block = block.clone();
+            if let Some(children) = block.get_mut("children").and_then(Value::as_array_mut) {
+                *children = without_page_blocks(children, page_ids);
+            }
+            block
+        })
+        .collect()
 }
 
 fn insert_index(position: Option<i64>, len: usize) -> usize {

@@ -642,6 +642,43 @@ async fn trash_takes_the_live_subtree_and_restore_brings_back_that_batch() {
 }
 
 #[tokio::test]
+async fn trash_removes_page_blocks_linking_to_the_trashed_batch() {
+    let fixture = Fixture::new().await;
+    let target = fixture.create(json!({"title": "Target"})).await;
+    let child = fixture
+        .create(json!({"parent_id": id_of(&target), "title": "Child"}))
+        .await;
+    let kept = fixture.create(json!({"title": "Kept"})).await;
+    let linker = fixture.create(json!({"title": "Linker"})).await;
+    let content = json!([
+        {"id": "p", "type": "paragraph", "content": [{"type": "text", "text": "Links", "styles": {}}], "children": [
+            {"id": "c", "type": "page", "props": {"pageId": id_of(&child)}, "children": []}
+        ]},
+        {"id": "t", "type": "page", "props": {"pageId": id_of(&target)}, "children": []},
+        {"id": "k", "type": "page", "props": {"pageId": id_of(&kept)}, "children": []}
+    ]);
+    let (status, updated) = fixture
+        .call(
+            "PATCH",
+            &fixture.page_uri(id_of(&linker)),
+            Some(json!({"expected_version": 0, "content": content})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+
+    fixture.trash(id_of(&target)).await;
+    let content = &fixture.get(id_of(&linker)).await["content"];
+    let ids: Vec<&str> = content
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|block| block["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["p", "k"]);
+    assert_eq!(content[0]["children"], json!([]));
+}
+
+#[tokio::test]
 async fn search_matches_titles_and_body_text() {
     let fixture = Fixture::new().await;
     let titled = fixture.create(json!({"title": "Roadmap 2027"})).await;
@@ -974,6 +1011,7 @@ async fn delete_forever_purges_a_trashed_batch_by_permission() {
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(!fixture.trash_ids().await.contains(&id_of(&diary).to_owned()));
     let (status, problem) = fixture.call("DELETE", &purge_uri(&diary, 1), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(problem["code"], "page_not_found");
