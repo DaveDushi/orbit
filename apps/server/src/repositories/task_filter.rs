@@ -1242,7 +1242,7 @@ fn push_text(query: &mut QueryBuilder<'_, Sqlite>, value: &Value) {
     }
 }
 
-fn escape_like(value: &str) -> String {
+pub(crate) fn escape_like(value: &str) -> String {
     value
         .replace('\\', "\\\\")
         .replace('%', "\\%")

@@ -192,7 +192,7 @@ async fn app_build_migrates_checks_readiness_and_returns_first_run_setup_url() {
             .scalar::<i64>("SELECT MAX(version) FROM schema_migrations")
             .await
             .unwrap(),
-        41
+        43
     );
 
     let readiness = app
@@ -328,9 +328,7 @@ async fn trusted_https_proxy_produces_a_secure_host_only_session_cookie() {
                 "token": token,
                 "email": "owner@example.com",
                 "display_name": "Owner",
-                "password": "a long unique launch password 9347",
-                "workspace_name": "Orbit",
-                "project_name": "Tasks"
+                "password": "a long unique launch password 9347"
             })
             .to_string(),
         ))
@@ -401,9 +399,7 @@ async fn installation_admin_can_create_an_online_backup() {
                         "token": token,
                         "email": "owner@example.com",
                         "display_name": "Owner",
-                        "password": "a long unique launch password 9347",
-                        "workspace_name": "Orbit",
-                        "project_name": "Tasks"
+                        "password": "a long unique launch password 9347"
                     })
                     .to_string(),
                 ))

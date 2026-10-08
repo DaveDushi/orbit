@@ -27,6 +27,11 @@ export const DEFAULT_STATUS_TEMPLATES: { key: string; name: string; category: St
 /** Preset colors offered in the status editor. */
 export const STATUS_COLORS = ['#8b8f98', '#5e6ad2', '#26b5ce', '#4cb782', '#f2c94c', '#f2994a', '#f7c8c1', '#eb5757', '#a78bfa']
 
+export const PROJECT_COLORS = [
+  '#8b5cf6', '#6366f1', '#0ea5e9', '#06b6d4', '#10b981', '#22c55e', '#84cc16', '#eab308', '#f59e0b', '#f97316', '#ef4444',
+  '#ec4899', '#d946ef', '#64748b', '#78716c',
+]
+
 /** Category order first, then the position inside the category. */
 export function sortStatuses(statuses: TaskStatusDef[]): TaskStatusDef[] {
   return [...statuses].sort(

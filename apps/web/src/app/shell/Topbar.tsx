@@ -91,6 +91,14 @@ function crumbsFor(pathname: string, folderParam: string | null, state: AppState
       return { crumbs: [{ label: 'Inbox' }] }
     case 'profile':
       return { crumbs: [{ label: 'Profile' }] }
+    case 'admin': {
+      const crumbs: Crumb[] = [{ label: 'Admin', to: '/admin' }]
+      if (id === 'audit') crumbs.push({ label: 'Audit log' })
+      else if (id === 'backups') crumbs.push({ label: 'Backups' })
+      else if (id === 'users') crumbs.push({ label: 'Users' })
+      else crumbs.push({ label: 'General' })
+      return { crumbs }
+    }
     case 'settings': {
       const crumbs: Crumb[] = [{ label: 'Settings', to: '/settings' }]
       if (id === 'members') crumbs.push({ label: 'Members' })

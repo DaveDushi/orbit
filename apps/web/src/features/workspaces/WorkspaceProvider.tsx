@@ -1,5 +1,5 @@
 import { useEffect, useMemo, type ReactNode } from 'react'
-import { useLocation, useNavigate } from 'react-router'
+import { Navigate, useLocation, useNavigate } from 'react-router'
 import type { WorkspaceRecord } from '@/api/generated/types.gen'
 import { useWorkspaces } from './api'
 import { selectedWorkspaceId, switchWorkspaceHref } from './navigation'
@@ -36,10 +36,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   // tells the user); one the server refused does not.
   if (firstLoadFailed(query)) return <OrbitUnavailable detail="Your workspaces could not be loaded." onRetry={() => void query.refetch()} />
   if (query.data === undefined) return <LoadingScreen />
-  if (!value) return <WorkspaceMessage title="No workspace access" detail="Ask an owner for an invitation to a workspace." />
+  // No workspace yet (the root user right after setup, or someone whose last workspace is gone): create one.
+  if (!value) return <Navigate to="/onboarding" replace />
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>
-}
-
-function WorkspaceMessage({ title, detail }: { title: string; detail: string }) {
-  return <main className="auth-boundary-page"><section className="auth-boundary-card"><h1>{title}</h1><p>{detail}</p></section></main>
 }

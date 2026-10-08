@@ -302,6 +302,18 @@ impl MigrationRunner {
                     ),
                     false,
                 ),
+                Migration::new(
+                    42,
+                    include_str!(
+                        "../../../../apps/server/migrations/0042_instance_settings_email.sql"
+                    ),
+                    false,
+                ),
+                Migration::new(
+                    43,
+                    include_str!("../../../../apps/server/migrations/0043_root_user.sql"),
+                    false,
+                ),
             ],
         )
     }

@@ -12,7 +12,11 @@ import { ProjectSettingsPage } from '@/features/tasks/pages/ProjectSettingsPage'
 import { TasksPage } from '@/features/tasks/pages/TasksPage'
 import { TaskTrashPage } from '@/features/tasks/pages/TaskTrashPage'
 import { DocsPage } from '@/features/docs/pages/DocsPage'
-import { AccountLayout, SettingsLayout } from '@/features/settings/pages/SettingsLayout'
+import { AccountLayout, AdminLayout, SettingsLayout } from '@/features/settings/pages/SettingsLayout'
+import { AdminAuditPage } from '@/features/admin/pages/AdminAuditPage'
+import { AdminBackupsPage } from '@/features/admin/pages/AdminBackupsPage'
+import { AdminSettingsPage } from '@/features/admin/pages/AdminSettingsPage'
+import { AdminUsersPage } from '@/features/admin/pages/AdminUsersPage'
 import { GeneralPage } from '@/features/settings/pages/GeneralPage'
 import { GithubPage } from '@/features/settings/pages/GithubPage'
 import { EmojiPage } from '@/features/settings/pages/EmojiPage'
@@ -27,12 +31,14 @@ import { NotificationsPage } from '@/features/settings/pages/NotificationsPage'
 import { ApiTokensPage } from '@/features/settings/pages/ApiTokensPage'
 import { ProfilePage } from '@/features/profile/pages/ProfilePage'
 import { InboxPage } from '@/features/inbox/pages/InboxPage'
-import { AuthGate } from '@/features/auth/AuthGate'
+import { AuthGate, GuestGate } from '@/features/auth/AuthGate'
 import { AcceptInvitationPage } from '@/features/auth/pages/AcceptInvitationPage'
 import { OAuthConsentPage } from '@/features/auth/pages/OAuthConsentPage'
 import { LoginPage } from '@/features/auth/pages/LoginPage'
 import { RecoveryPage } from '@/features/auth/pages/RecoveryPage'
+import { RegisterPage } from '@/features/auth/pages/RegisterPage'
 import { SetupPage } from '@/features/auth/pages/SetupPage'
+import { OnboardingPage } from '@/features/onboarding/OnboardingPage'
 import { WorkspaceProvider } from '@/features/workspaces/WorkspaceProvider'
 import { ViewsPage } from '@/features/views/ViewsPage'
 
@@ -60,12 +66,16 @@ export default function App() {
       <NewVersionNotice />
       <ConnectionScreen />
       <Routes>
-        <Route path="setup" element={<SetupPage />} />
+        <Route element={<GuestGate />}>
+          <Route path="setup" element={<SetupPage />} />
+          <Route path="login" element={<LoginPage />} />
+          <Route path="recovery" element={<RecoveryPage />} />
+          <Route path="register" element={<RegisterPage />} />
+        </Route>
         <Route path="oauth/consent" element={<OAuthConsentPage />} />
-        <Route path="login" element={<LoginPage />} />
-        <Route path="recovery" element={<RecoveryPage />} />
         <Route path="accept-invitation" element={<AcceptInvitationPage />} />
         <Route element={<AuthGate />}>
+          <Route path="onboarding" element={<OnboardingPage />} />
           <Route element={<WorkspaceProvider><Outlet /></WorkspaceProvider>}>
             <Route element={<AppShell />}>
               <Route index element={<Navigate to="/tasks" replace />} />
@@ -99,6 +109,12 @@ export default function App() {
                 <Route path="sessions" element={<SessionsPage />} />
                 <Route path="shortcuts" element={<ShortcutsPage />} />
                 <Route path="storage" element={<StoragePage />} />
+              </Route>
+              <Route path="admin" element={<AdminLayout />}>
+                <Route index element={<AdminSettingsPage />} />
+                <Route path="users" element={<AdminUsersPage />} />
+                <Route path="audit" element={<AdminAuditPage />} />
+                <Route path="backups" element={<AdminBackupsPage />} />
               </Route>
               <Route path="settings" element={<SettingsLayout />}>
                 <Route index element={<GeneralPage />} />

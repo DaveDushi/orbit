@@ -1,8 +1,11 @@
-import { Navigate, Outlet } from 'react-router'
+import { useQuery } from '@tanstack/react-query'
+import { Navigate, Outlet, useSearchParams } from 'react-router'
+import { createApiClient } from '@/api/client'
 import { LoadingScreen } from '@/components/common/LoadingScreen'
 import { firstLoadFailed } from '@/lib/connection'
 import { authGateState } from './authState'
-import { useCurrentUser, useSetupStatus } from './api'
+import { currentUserQueryOptions, useCurrentUser, useSetupStatus } from './api'
+import { oauthLoginDestination } from './oauth'
 import { OrbitUnavailable } from '@/components/common/OrbitUnavailable'
 
 export function AuthGate() {
@@ -21,4 +24,16 @@ export function AuthGate() {
   if (state === 'login') return <Navigate to="/login" replace />
   if (state === 'authenticated') return <Outlet />
   return <LoadingScreen />
+}
+
+// Signed-out visitors are expected here; a 401 must not trigger the global login redirect.
+const guestSessionClient = createApiClient()
+
+/** Sends a signed-in user away from the sign-in pages (login, register, recovery, setup) into the app. */
+export function GuestGate() {
+  const [params] = useSearchParams()
+  const user = useQuery({ ...currentUserQueryOptions(guestSessionClient), retry: false })
+  if (user.data) return <Navigate to={oauthLoginDestination(params.get('return_to'))} replace />
+  if (user.isPending) return <LoadingScreen />
+  return <Outlet />
 }

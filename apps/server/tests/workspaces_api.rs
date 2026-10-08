@@ -1539,6 +1539,271 @@ async fn failed_security_actions_are_audited_and_global_audit_is_admin_only() {
 }
 
 #[tokio::test]
+async fn only_the_root_user_chooses_admins_and_admins_cannot_touch_root_or_each_other() {
+    let database = TestDatabase::new().await.unwrap();
+    let identity = Arc::new(IdentityRepository::new((*database).clone()));
+    let setup = setup_owner(&identity).await;
+    let root_cookie = format!("__Host-orbit_session={}", setup.1);
+    let admin = create_user(&database, &identity, "admin@example.com", "Admin").await;
+    let second = create_user(&database, &identity, "second@example.com", "Second").await;
+    let member = create_user(&database, &identity, "member@example.com", "Member").await;
+    let app = workspace_router(WorkspaceState::new(
+        Arc::clone(&identity),
+        "https://orbit.test".to_owned(),
+        CookieMode::secure(),
+    ));
+    let send = |method: &str, uri: String, cookie: &str, body: Value| {
+        let app = app.clone();
+        let request = json_request(method, &uri, cookie, body);
+        async move {
+            let response = app.oneshot(request).await.unwrap();
+            let status = response.status();
+            let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            (
+                status,
+                serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null),
+            )
+        }
+    };
+    let make_admin = |id: &str, admin: bool| {
+        (
+            format!("/api/v1/admin/users/{id}/admin"),
+            json!({"admin": admin}),
+        )
+    };
+    let suspend = |id: &str| {
+        (
+            format!("/api/v1/admin/users/{id}/suspension"),
+            json!({"suspended": true}),
+        )
+    };
+    let (admin_id, second_id, member_id) = (
+        admin.0.to_string(),
+        second.0.to_string(),
+        member.0.to_string(),
+    );
+    let users = send(
+        "GET",
+        "/api/v1/admin/users".to_owned(),
+        &root_cookie,
+        json!(null),
+    )
+    .await
+    .1;
+    let root_id = users["items"][0]["id"].as_str().unwrap().to_owned();
+    assert_eq!(users["items"][0]["root"], true);
+    assert_eq!(users["items"][0]["admin"], true);
+
+    // Members cannot choose admins; the root user can.
+    let (uri, body) = make_admin(&admin_id, true);
+    assert_eq!(
+        send("PUT", uri.clone(), &member.1, body.clone()).await.0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        send("PUT", uri, &root_cookie, body).await.0,
+        StatusCode::NO_CONTENT
+    );
+    let (uri, body) = make_admin(&second_id, true);
+    assert_eq!(
+        send("PUT", uri, &root_cookie, body).await.0,
+        StatusCode::NO_CONTENT
+    );
+    let users = send(
+        "GET",
+        "/api/v1/admin/users".to_owned(),
+        &admin.1,
+        json!(null),
+    )
+    .await;
+    assert_eq!(users.0, StatusCode::OK);
+    assert_eq!(users.1["items"][1]["admin"], true);
+    assert_eq!(users.1["items"][1]["root"], false);
+
+    // An admin cannot choose admins, nor suspend or reset root or another admin, but manages members.
+    let (uri, body) = make_admin(&member_id, true);
+    let (status, problem) = send("PUT", uri, &admin.1, body).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(problem["code"], "root_required");
+    let (uri, body) = suspend(&root_id);
+    assert_eq!(
+        send("POST", uri, &admin.1, body).await.1["code"],
+        "root_account"
+    );
+    let (uri, body) = suspend(&second_id);
+    assert_eq!(
+        send("POST", uri, &admin.1, body).await.1["code"],
+        "root_account"
+    );
+    let link = format!("/api/v1/admin/users/{second_id}/recovery-link");
+    assert_eq!(
+        send("POST", link, &admin.1, json!({})).await.1["code"],
+        "root_account"
+    );
+    let link = format!("/api/v1/admin/users/{member_id}/recovery-link");
+    assert_eq!(
+        send("POST", link, &admin.1, json!({})).await.0,
+        StatusCode::CREATED
+    );
+    let (uri, body) = suspend(&member_id);
+    assert_eq!(
+        send("POST", uri, &admin.1, body).await.0,
+        StatusCode::NO_CONTENT
+    );
+
+    // Root cannot be demoted; a removed admin loses Admin at once.
+    let (uri, body) = make_admin(&root_id, false);
+    assert_eq!(
+        send("PUT", uri, &root_cookie, body).await.1["code"],
+        "root_account"
+    );
+    let (uri, body) = make_admin(&second_id, false);
+    assert_eq!(
+        send("PUT", uri, &root_cookie, body).await.0,
+        StatusCode::NO_CONTENT
+    );
+    let denied = send(
+        "GET",
+        "/api/v1/admin/users".to_owned(),
+        &second.1,
+        json!(null),
+    )
+    .await;
+    assert_eq!(denied.0, StatusCode::FORBIDDEN);
+    // A suspended account cannot become an admin.
+    let (uri, body) = make_admin(&member_id, true);
+    assert_eq!(
+        send("PUT", uri, &root_cookie, body).await.1["code"],
+        "account_suspended"
+    );
+}
+
+#[tokio::test]
+async fn admins_list_accounts_and_issue_recovery_links() {
+    let database = TestDatabase::new().await.unwrap();
+    let identity = Arc::new(IdentityRepository::new((*database).clone()));
+    let setup = setup_owner(&identity).await;
+    let root_cookie = format!("__Host-orbit_session={}", setup.1);
+    let member = create_user(&database, &identity, "member@example.com", "Member").await;
+    let app = workspace_router(WorkspaceState::new(
+        Arc::clone(&identity),
+        "https://orbit.test".to_owned(),
+        CookieMode::secure(),
+    ));
+    let post = |uri: String, cookie: &str| json_request("POST", &uri, cookie, json!({}));
+
+    let forbidden = app
+        .clone()
+        .oneshot(cookie_request("GET", "/api/v1/admin/users", &member.1))
+        .await
+        .unwrap();
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+    let users = app
+        .clone()
+        .oneshot(cookie_request("GET", "/api/v1/admin/users", &root_cookie))
+        .await
+        .unwrap();
+    assert_eq!(users.status(), StatusCode::OK);
+    let users = response_json(users).await;
+    let items = users["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["email"], "owner@example.com");
+    assert_eq!(items[0]["root"], true);
+    assert_eq!(items[0]["workspace_count"], 1);
+    assert!(items[0]["last_active_at"].is_string());
+    assert_eq!(items[1]["id"], member.0.to_string());
+    assert_eq!(items[1]["root"], false);
+    assert_eq!(items[1]["suspended"], false);
+    assert_eq!(items[1]["workspace_count"], 0);
+    let root_id = items[0]["id"].as_str().unwrap().to_owned();
+
+    let link_uri = |id: &str| format!("/api/v1/admin/users/{id}/recovery-link");
+    let not_root = app
+        .clone()
+        .oneshot(post(link_uri(&root_id), &member.1))
+        .await
+        .unwrap();
+    assert_eq!(not_root.status(), StatusCode::FORBIDDEN);
+    let own = app
+        .clone()
+        .oneshot(post(link_uri(&root_id), &root_cookie))
+        .await
+        .unwrap();
+    assert_eq!(own.status(), StatusCode::CONFLICT);
+    assert_eq!(response_json(own).await["code"], "own_account");
+    let unknown = app
+        .clone()
+        .oneshot(post(link_uri(&Id::new_v7().to_string()), &root_cookie))
+        .await
+        .unwrap();
+    assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+
+    let link = app
+        .clone()
+        .oneshot(post(link_uri(&member.0.to_string()), &root_cookie))
+        .await
+        .unwrap();
+    assert_eq!(link.status(), StatusCode::CREATED);
+    let link = response_json(link).await;
+    let token = link["url"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("https://orbit.test/recovery?token=")
+        .unwrap();
+    assert!(
+        identity
+            .recovery_token_valid(token, TimestampMillis::now())
+            .await
+            .unwrap()
+    );
+
+    let suspend_root = app
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            &format!("/api/v1/admin/users/{root_id}/suspension"),
+            &root_cookie,
+            json!({"suspended": true}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(suspend_root.status(), StatusCode::CONFLICT);
+    assert_eq!(response_json(suspend_root).await["code"], "root_account");
+    let suspend_member = app
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            &format!("/api/v1/admin/users/{}/suspension", member.0),
+            &root_cookie,
+            json!({"suspended": true}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(suspend_member.status(), StatusCode::NO_CONTENT);
+    let suspended = app
+        .clone()
+        .oneshot(post(link_uri(&member.0.to_string()), &root_cookie))
+        .await
+        .unwrap();
+    assert_eq!(suspended.status(), StatusCode::CONFLICT);
+    assert_eq!(response_json(suspended).await["code"], "account_suspended");
+
+    let audit = app
+        .oneshot(cookie_request(
+            "GET",
+            "/api/v1/admin/audit?action=recovery.requested",
+            &root_cookie,
+        ))
+        .await
+        .unwrap();
+    let audit = response_json(audit).await;
+    let events = audit["items"].as_array().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["actor_id"], root_id);
+    assert_eq!(events[0]["resource_id"], member.0.to_string());
+}
+
+#[tokio::test]
 async fn owner_pointer_cannot_reference_another_workspaces_membership_on_insert() {
     let database = TestDatabase::new().await.unwrap();
     let identity = Arc::new(IdentityRepository::new((*database).clone()));
@@ -1932,6 +2197,65 @@ async fn retention_service_surfaces_worker_claim_failures() {
         RetentionServiceError::Worker(WorkerError::Store(JobStoreError::Id(_)))
     ));
     assert!(shutdown.is_cancelled());
+}
+
+#[tokio::test]
+async fn admin_user_list_pages_and_searches_by_name_or_email() {
+    let database = TestDatabase::new().await.unwrap();
+    let identity = Arc::new(IdentityRepository::new((*database).clone()));
+    let setup = setup_owner(&identity).await;
+    let root_cookie = format!("__Host-orbit_session={}", setup.1);
+    create_user(&database, &identity, "ada@example.com", "Ada Lovelace").await;
+    create_user(&database, &identity, "bob@example.com", "Bob").await;
+    create_user(&database, &identity, "carol@other.test", "Carol").await;
+    let app = workspace_router(WorkspaceState::new(
+        Arc::clone(&identity),
+        "https://orbit.test".to_owned(),
+        CookieMode::secure(),
+    ));
+    let list = |uri: String| {
+        let app = app.clone();
+        let cookie = root_cookie.clone();
+        async move {
+            let response = app
+                .oneshot(cookie_request("GET", &uri, &cookie))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            response_json(response).await
+        }
+    };
+
+    // Pages of one keep the order: root first, then the oldest accounts.
+    let mut emails = Vec::new();
+    let mut uri = "/api/v1/admin/users?limit=1".to_owned();
+    loop {
+        let page = list(uri).await;
+        assert_eq!(page["items"].as_array().unwrap().len(), 1);
+        emails.push(page["items"][0]["email"].as_str().unwrap().to_owned());
+        let Some(cursor) = page["next_cursor"].as_str() else {
+            break;
+        };
+        uri = format!("/api/v1/admin/users?limit=1&cursor={cursor}");
+    }
+    assert_eq!(
+        emails,
+        [
+            "owner@example.com",
+            "ada@example.com",
+            "bob@example.com",
+            "carol@other.test"
+        ]
+    );
+
+    let by_name = list("/api/v1/admin/users?q=LOVE".to_owned()).await;
+    assert_eq!(by_name["items"].as_array().unwrap().len(), 1);
+    assert_eq!(by_name["items"][0]["email"], "ada@example.com");
+    let by_email = list("/api/v1/admin/users?q=example.com".to_owned()).await;
+    assert_eq!(by_email["items"].as_array().unwrap().len(), 3);
+    assert!(by_email["next_cursor"].is_null());
+    let wildcard = list("/api/v1/admin/users?q=%25".to_owned()).await;
+    assert!(wildcard["items"].as_array().unwrap().is_empty());
 }
 
 async fn setup_owner(repository: &IdentityRepository) -> (String, String) {

@@ -28,7 +28,7 @@ export function SettingsCard({
           <h3 className="text-sm leading-5 font-medium text-muted-foreground">{title}</h3>
           {description ? <p className="mt-0.5 text-xs leading-4 text-muted-foreground">{description}</p> : null}
         </div>
-        {actions ? <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">{actions}</div> : null}
+        {actions ? <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 text-foreground">{actions}</div> : null}
       </header>
       <div
         className={cn(

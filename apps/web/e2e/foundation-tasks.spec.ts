@@ -20,9 +20,12 @@ async function bootstrapOwner(page: Page) {
   await page.getByLabel('Your name').fill('Orbit Owner')
   await page.getByLabel('Email').fill('owner@orbit.test')
   await page.getByLabel('Password').fill('correct horse battery staple')
+  await page.getByRole('button', { name: 'Create root account' }).click()
+  await expect(page).toHaveURL(/\/onboarding$/)
   await page.getByLabel('Workspace name').fill('Foundation')
-  await page.getByLabel('First project').fill('Launch')
   await page.getByRole('button', { name: 'Create workspace' }).click()
+  await page.getByLabel('Project name').fill('Launch')
+  await page.getByRole('button', { name: 'Create project' }).click()
   await expect(page).toHaveURL(/\/tasks(?:\?|$)/)
 
   await page.getByRole('button', { name: 'Account menu for Orbit Owner' }).click()

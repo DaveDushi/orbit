@@ -29,6 +29,8 @@ pub struct AuditEvent {
     pub workspace_id: Option<Id>,
     #[schema(value_type = Option<String>)]
     pub actor_id: Option<Id>,
+    /// The actor's current display name, `null` for system events and deleted accounts.
+    pub actor_name: Option<String>,
     pub action: String,
     pub outcome: String,
     pub resource_type: String,
@@ -134,9 +136,10 @@ pub async fn list(
     limit: usize,
 ) -> Result<(Vec<AuditEvent>, Option<Id>), sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT id, workspace_id, actor_id, action, outcome, resource_type, resource_id, \
-         request_id, metadata_json, occurred_at FROM audit_events \
-         WHERE workspace_id = ? AND (? IS NULL OR id < ?) ORDER BY id DESC LIMIT ?",
+        "SELECT audit_events.id, workspace_id, actor_id, users.display_name AS actor_name, action, outcome, \
+         resource_type, resource_id, request_id, metadata_json, occurred_at FROM audit_events \
+         LEFT JOIN users ON users.id = audit_events.actor_id \
+         WHERE workspace_id = ? AND (? IS NULL OR audit_events.id < ?) ORDER BY audit_events.id DESC LIMIT ?",
     )
     .bind(workspace_id.to_string())
     .bind(cursor.map(|id| id.to_string()))
@@ -155,10 +158,11 @@ pub async fn list_global(
     limit: usize,
 ) -> Result<(Vec<AuditEvent>, Option<Id>), sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT id, workspace_id, actor_id, action, outcome, resource_type, resource_id, \
-         request_id, metadata_json, occurred_at FROM audit_events \
+        "SELECT audit_events.id, workspace_id, actor_id, users.display_name AS actor_name, action, outcome, \
+         resource_type, resource_id, request_id, metadata_json, occurred_at FROM audit_events \
+         LEFT JOIN users ON users.id = audit_events.actor_id \
          WHERE (? IS NULL OR workspace_id = ?) AND (? IS NULL OR action = ?) \
-         AND (? IS NULL OR id < ?) ORDER BY id DESC LIMIT ?",
+         AND (? IS NULL OR audit_events.id < ?) ORDER BY audit_events.id DESC LIMIT ?",
     )
     .bind(workspace_id.map(|id| id.to_string()))
     .bind(workspace_id.map(|id| id.to_string()))
@@ -181,10 +185,11 @@ pub async fn list_resource(
     limit: usize,
 ) -> Result<(Vec<AuditEvent>, Option<Id>), sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT id, workspace_id, actor_id, action, outcome, resource_type, resource_id, \
-         request_id, metadata_json, occurred_at FROM audit_events \
+        "SELECT audit_events.id, workspace_id, actor_id, users.display_name AS actor_name, action, outcome, \
+         resource_type, resource_id, request_id, metadata_json, occurred_at FROM audit_events \
+         LEFT JOIN users ON users.id = audit_events.actor_id \
          WHERE workspace_id = ? AND resource_type = ? AND resource_id = ? \
-         AND (? IS NULL OR id < ?) ORDER BY id DESC LIMIT ?",
+         AND (? IS NULL OR audit_events.id < ?) ORDER BY audit_events.id DESC LIMIT ?",
     )
     .bind(workspace_id.to_string())
     .bind(resource_type)
@@ -229,6 +234,7 @@ fn decode_event(row: sqlx::sqlite::SqliteRow) -> Result<AuditEvent, sqlx::Error>
             .try_get::<Option<String>, _>("actor_id")?
             .map(parse_id)
             .transpose()?,
+        actor_name: row.try_get("actor_name")?,
         action: row.try_get("action")?,
         outcome: row.try_get("outcome")?,
         resource_type: row.try_get("resource_type")?,

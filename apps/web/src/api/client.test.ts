@@ -57,8 +57,6 @@ test('public credential and setup-token failures do not expire a session', async
             email: 'owner@example.test',
             display_name: 'Owner',
             password: 'a long enough password',
-            workspace_name: 'Orbit',
-            project_name: 'Work',
           },
           throwOnError: true,
         }),

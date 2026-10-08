@@ -11,7 +11,12 @@ export function useCan(permission: Permission): boolean {
   return useWorkspace().workspace.permissions.includes(permission)
 }
 
-/** Installation administrators manage backups, the global audit log and account suspension. */
+/** Can open Admin: the root user or an instance admin. */
 export function useIsInstallationAdmin(): boolean {
   return useCurrentUser().data?.installation_admin ?? false
+}
+
+/** The root user, who also chooses the instance admins. */
+export function useIsRoot(): boolean {
+  return useCurrentUser().data?.root ?? false
 }

@@ -15,7 +15,7 @@ import { Pane, PaneHeader, PaneTitle } from '@/components/common/Pane'
 import { InfoTip } from '@/components/common/InfoTip'
 import { UnsavedBar } from '@/components/common/UnsavedBar'
 import { TaskStatusIcon } from '@/features/tasks/components/TaskStatusIcon'
-import { CATEGORY_LABEL, CATEGORY_ORDER, STATUS_COLORS, defaultStatusOf, projectStatuses } from '@/features/tasks/taskMeta'
+import { CATEGORY_LABEL, CATEGORY_ORDER, PROJECT_COLORS, STATUS_COLORS, defaultStatusOf, projectStatuses } from '@/features/tasks/taskMeta'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import type { Project, StatusCategory, TaskStatusDef } from '@/features/tasks/api/models'
 import { useCreateStatus, useDeleteProject, useDeleteStatus, useProjectStatuses, useProjects, useReorderStatuses, useUpdateProject, useUpdateStatus } from '@/features/tasks/api/projects'
@@ -27,10 +27,6 @@ import { ProjectGithubCard, type PendingProjectSave } from '@/features/tasks/com
 import { useSlowPending } from '@/lib/useDebouncedValue'
 import { loadFailed } from '@/lib/connection'
 
-const PROJECT_COLORS = [
-  '#8b5cf6', '#6366f1', '#0ea5e9', '#06b6d4', '#10b981', '#22c55e', '#84cc16', '#eab308', '#f59e0b', '#f97316', '#ef4444',
-  '#ec4899', '#d946ef', '#64748b', '#78716c',
-]
 
 
 type Editor = { mode: 'new'; category: StatusCategory } | { mode: 'edit'; statusId: string }

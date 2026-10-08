@@ -18,6 +18,33 @@ export type AcceptanceRecord = {
     workspace_id: string;
 };
 
+/**
+ * One account as the root user's Admin area lists it.
+ */
+export type AdminUser = {
+    /**
+     * Can open Admin: the root user and the instance admins the root user chose.
+     */
+    admin: boolean;
+    created_at: string;
+    display_name: string;
+    email: string;
+    id: string;
+    /**
+     * The newest session activity, `null` if the account never signed in.
+     */
+    last_active_at?: string | null;
+    /**
+     * The root user: the account created at setup. Nobody can suspend or reset it.
+     */
+    root: boolean;
+    suspended: boolean;
+    /**
+     * Workspaces the account is a member of, deleted workspaces excluded.
+     */
+    workspace_count: number;
+};
+
 export type ApiTokenRecord = {
     created_at: string;
     expires_at?: string | null;
@@ -75,6 +102,10 @@ export type AttachmentUploadBody = {
 export type AuditEvent = {
     action: string;
     actor_id?: string | null;
+    /**
+     * The actor's current display name, `null` for system events and deleted accounts.
+     */
+    actor_name?: string | null;
     id: string;
     metadata: unknown;
     occurred_at: string;
@@ -83,6 +114,17 @@ export type AuditEvent = {
     resource_id?: string | null;
     resource_type: string;
     workspace_id?: string | null;
+};
+
+export type AuthOptions = {
+    /**
+     * A mail server is saved: password reset links and invitations go out by email.
+     */
+    email_enabled: boolean;
+    /**
+     * Anyone can create an account with an emailed link.
+     */
+    registration_open: boolean;
 };
 
 export type AuthProblem = {
@@ -104,9 +146,13 @@ export type AuthUserResponse = ProfileFields & {
     email: string;
     id: string;
     /**
-     * May manage backups, the global audit log and account suspension.
+     * Can open Admin: the root user or an instance admin.
      */
     installation_admin: boolean;
+    /**
+     * The root user (the account created at setup), who also chooses the instance admins.
+     */
+    root: boolean;
     /**
      * The presence and custom status the user set for themselves.
      */
@@ -969,6 +1015,15 @@ export type GroupBy = 'status' | 'assignee' | 'priority' | 'project' | 'label' |
 
 export type GroupOp = 'and' | 'or';
 
+export type InstanceAdminBody = {
+    admin: boolean;
+};
+
+export type InstanceSettingsView = {
+    registration_open: boolean;
+    smtp?: null | SmtpView;
+};
+
 export type InvitationBody = {
     delivery: DeliveryBody;
     email: string;
@@ -1826,10 +1881,41 @@ export type PageVersionSummary = {
     title: string;
 };
 
+export type PageAdminUser = {
+    items: Array<{
+        /**
+         * Can open Admin: the root user and the instance admins the root user chose.
+         */
+        admin: boolean;
+        created_at: string;
+        display_name: string;
+        email: string;
+        id: string;
+        /**
+         * The newest session activity, `null` if the account never signed in.
+         */
+        last_active_at?: string | null;
+        /**
+         * The root user: the account created at setup. Nobody can suspend or reset it.
+         */
+        root: boolean;
+        suspended: boolean;
+        /**
+         * Workspaces the account is a member of, deleted workspaces excluded.
+         */
+        workspace_count: number;
+    }>;
+    next_cursor?: string | null;
+};
+
 export type PageAuditEvent = {
     items: Array<{
         action: string;
         actor_id?: string | null;
+        /**
+         * The actor's current display name, `null` for system events and deleted accounts.
+         */
+        actor_name?: string | null;
         id: string;
         metadata: unknown;
         occurred_at: string;
@@ -2243,12 +2329,31 @@ export type RecoveryCompleteBody = {
     token: string;
 };
 
+export type RecoveryLink = {
+    expires_at: string;
+    url: string;
+};
+
 export type RecoveryRequestBody = {
     email: string;
 };
 
 export type RecoveryRequestResponse = {
     detail: string;
+};
+
+export type RegistrationBody = {
+    open: boolean;
+};
+
+export type RegistrationCompleteBody = {
+    display_name: string;
+    password: string;
+    token: string;
+};
+
+export type RegistrationRequestBody = {
+    email: string;
 };
 
 /**
@@ -2393,16 +2498,12 @@ export type SetupBody = {
     display_name: string;
     email: string;
     password: string;
-    project_name: string;
     token: string;
-    workspace_name: string;
 };
 
 export type SetupResponse = {
-    project_id: string;
     session_id: string;
     user_id: string;
-    workspace_id: string;
 };
 
 export type SetupStatus = {
@@ -2423,6 +2524,34 @@ export type ShortcutsBody = {
  * Which tasks in a done category (completed, cancelled, duplicate) stay visible.
  */
 export type ShowCompleted = 'all' | 'past_week' | 'past_month' | 'none';
+
+export type SmtpBody = {
+    from_address: string;
+    from_name?: string | null;
+    host: string;
+    /**
+     * Absent: keep the saved password. Empty: remove it. Otherwise: the new password.
+     */
+    password?: string | null;
+    port: number;
+    security: SmtpSecurity;
+    username?: string | null;
+};
+
+export type SmtpSecurity = 'tls' | 'starttls' | 'none';
+
+export type SmtpView = {
+    from_address: string;
+    from_name?: string | null;
+    host: string;
+    /**
+     * A password is saved. The password itself is never returned.
+     */
+    password_set: boolean;
+    port: number;
+    security: SmtpSecurity;
+    username?: string | null;
+};
 
 export type StartNotionImportBody = {
     destination?: NotionImportDestinationBody;
@@ -3172,6 +3301,453 @@ export type DownloadBackupResponses = {
 
 export type DownloadBackupResponse = DownloadBackupResponses[keyof DownloadBackupResponses];
 
+export type GetInstanceSettingsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/settings';
+};
+
+export type GetInstanceSettingsErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * installation_admin_required
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type GetInstanceSettingsError = GetInstanceSettingsErrors[keyof GetInstanceSettingsErrors];
+
+export type GetInstanceSettingsResponses = {
+    200: InstanceSettingsView;
+};
+
+export type GetInstanceSettingsResponse = GetInstanceSettingsResponses[keyof GetInstanceSettingsResponses];
+
+export type SetRegistrationData = {
+    body: RegistrationBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/settings/registration';
+};
+
+export type SetRegistrationErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden, installation_admin_required
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch, email_not_configured
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type SetRegistrationError = SetRegistrationErrors[keyof SetRegistrationErrors];
+
+export type SetRegistrationResponses = {
+    200: InstanceSettingsView;
+};
+
+export type SetRegistrationResponse = SetRegistrationResponses[keyof SetRegistrationResponses];
+
+export type RemoveSmtpData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/settings/smtp';
+};
+
+export type RemoveSmtpErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden, installation_admin_required
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type RemoveSmtpError = RemoveSmtpErrors[keyof RemoveSmtpErrors];
+
+export type RemoveSmtpResponses = {
+    200: InstanceSettingsView;
+};
+
+export type RemoveSmtpResponse = RemoveSmtpResponses[keyof RemoveSmtpResponses];
+
+export type SaveSmtpData = {
+    body: SmtpBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/settings/smtp';
+};
+
+export type SaveSmtpErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden, installation_admin_required
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * invalid_smtp_settings
+     */
+    422: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * app_key_missing
+     */
+    503: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type SaveSmtpError = SaveSmtpErrors[keyof SaveSmtpErrors];
+
+export type SaveSmtpResponses = {
+    200: InstanceSettingsView;
+};
+
+export type SaveSmtpResponse = SaveSmtpResponses[keyof SaveSmtpResponses];
+
+export type SendTestEmailData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/settings/smtp/test';
+};
+
+export type SendTestEmailErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden, installation_admin_required
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch, email_not_configured
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * email_failed
+     */
+    502: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type SendTestEmailError = SendTestEmailErrors[keyof SendTestEmailErrors];
+
+export type SendTestEmailResponses = {
+    204: void;
+};
+
+export type SendTestEmailResponse = SendTestEmailResponses[keyof SendTestEmailResponses];
+
+export type ListAdminUsersData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path?: never;
+    query?: {
+        /**
+         * Part of the display name or email, ignoring case.
+         */
+        q?: string;
+        cursor?: string;
+        limit?: number;
+    };
+    url: '/api/v1/admin/users';
+};
+
+export type ListAdminUsersErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * installation_admin_required
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type ListAdminUsersError = ListAdminUsersErrors[keyof ListAdminUsersErrors];
+
+export type ListAdminUsersResponses = {
+    200: PageAdminUser;
+};
+
+export type ListAdminUsersResponse = ListAdminUsersResponses[keyof ListAdminUsersResponses];
+
+export type SetInstanceAdminData = {
+    body: InstanceAdminBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        user_id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/users/{user_id}/admin';
+};
+
+export type SetInstanceAdminErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden, root_required
+     */
+    403: WorkspaceProblem;
+    /**
+     * workspace_resource_not_found, user_not_found
+     */
+    404: WorkspaceProblem;
+    /**
+     * contract_mismatch, root_account, account_suspended
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type SetInstanceAdminError = SetInstanceAdminErrors[keyof SetInstanceAdminErrors];
+
+export type SetInstanceAdminResponses = {
+    204: void;
+};
+
+export type SetInstanceAdminResponse = SetInstanceAdminResponses[keyof SetInstanceAdminResponses];
+
+export type CreateRecoveryLinkData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        user_id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/users/{user_id}/recovery-link';
+};
+
+export type CreateRecoveryLinkErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden, installation_admin_required
+     */
+    403: WorkspaceProblem;
+    /**
+     * workspace_resource_not_found, user_not_found
+     */
+    404: WorkspaceProblem;
+    /**
+     * contract_mismatch, root_account, own_account, account_suspended
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type CreateRecoveryLinkError = CreateRecoveryLinkErrors[keyof CreateRecoveryLinkErrors];
+
+export type CreateRecoveryLinkResponses = {
+    201: RecoveryLink;
+};
+
+export type CreateRecoveryLinkResponse = CreateRecoveryLinkResponses[keyof CreateRecoveryLinkResponses];
+
 export type SetAccountSuspensionData = {
     body: SuspensionBody;
     headers?: {
@@ -3205,7 +3781,7 @@ export type SetAccountSuspensionErrors = {
      */
     404: WorkspaceProblem;
     /**
-     * contract_mismatch
+     * contract_mismatch, root_account
      */
     409: WorkspaceProblem;
     /**
@@ -3550,6 +4126,54 @@ export type UpdateMeResponses = {
 
 export type UpdateMeResponse = UpdateMeResponses[keyof UpdateMeResponses];
 
+export type AuthOptionsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/options';
+};
+
+export type AuthOptionsErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: AuthProblem;
+    /**
+     * origin_forbidden
+     */
+    403: AuthProblem;
+    /**
+     * contract_mismatch
+     */
+    409: AuthProblem;
+    /**
+     * request_too_large
+     */
+    413: AuthProblem;
+    /**
+     * internal_error
+     */
+    500: AuthProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: AuthProblem;
+};
+
+export type AuthOptionsError = AuthOptionsErrors[keyof AuthOptionsErrors];
+
+export type AuthOptionsResponses = {
+    200: AuthOptions;
+};
+
+export type AuthOptionsResponse = AuthOptionsResponses[keyof AuthOptionsResponses];
+
 export type ChangePasswordData = {
     body: ChangePasswordBody;
     headers?: {
@@ -3705,6 +4329,110 @@ export type RecoveryRequestResponses = {
 };
 
 export type RecoveryRequestResponse2 = RecoveryRequestResponses[keyof RecoveryRequestResponses];
+
+export type RegistrationCompleteData = {
+    body: RegistrationCompleteBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/register/complete';
+};
+
+export type RegistrationCompleteErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request, invalid_registration_token
+     */
+    400: AuthProblem;
+    /**
+     * origin_forbidden, registration_closed
+     */
+    403: AuthProblem;
+    /**
+     * contract_mismatch, account_exists
+     */
+    409: AuthProblem;
+    /**
+     * request_too_large
+     */
+    413: AuthProblem;
+    /**
+     * invalid_display_name, invalid_password
+     */
+    422: AuthProblem;
+    /**
+     * internal_error
+     */
+    500: AuthProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: AuthProblem;
+};
+
+export type RegistrationCompleteError = RegistrationCompleteErrors[keyof RegistrationCompleteErrors];
+
+export type RegistrationCompleteResponses = {
+    201: SetupResponse;
+};
+
+export type RegistrationCompleteResponse = RegistrationCompleteResponses[keyof RegistrationCompleteResponses];
+
+export type RegistrationRequestData = {
+    body: RegistrationRequestBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/register/request';
+};
+
+export type RegistrationRequestErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: AuthProblem;
+    /**
+     * origin_forbidden, registration_closed
+     */
+    403: AuthProblem;
+    /**
+     * contract_mismatch
+     */
+    409: AuthProblem;
+    /**
+     * request_too_large
+     */
+    413: AuthProblem;
+    /**
+     * invalid_email
+     */
+    422: AuthProblem;
+    /**
+     * internal_error
+     */
+    500: AuthProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: AuthProblem;
+};
+
+export type RegistrationRequestError = RegistrationRequestErrors[keyof RegistrationRequestErrors];
+
+export type RegistrationRequestResponses = {
+    202: RecoveryRequestResponse;
+};
+
+export type RegistrationRequestResponse = RegistrationRequestResponses[keyof RegistrationRequestResponses];
 
 export type ListSessionsData = {
     body?: never;
@@ -8834,7 +9562,7 @@ export type CreateInvitationErrors = {
      */
     404: WorkspaceProblem;
     /**
-     * contract_mismatch, workspace_conflict
+     * contract_mismatch, workspace_conflict, email_not_configured
      */
     409: WorkspaceProblem;
     /**
@@ -8849,6 +9577,10 @@ export type CreateInvitationErrors = {
      * internal_error
      */
     500: WorkspaceProblem;
+    /**
+     * email_failed
+     */
+    502: WorkspaceProblem;
     /**
      * internal_error or another documented stable code
      */

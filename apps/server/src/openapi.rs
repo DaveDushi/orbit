@@ -43,6 +43,9 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::auth_routes::user_avatar,
         crate::auth_routes::change_password,
         crate::auth_routes::recovery_request,
+        crate::auth_routes::auth_options,
+        crate::auth_routes::registration_request,
+        crate::auth_routes::registration_complete,
         crate::auth_routes::recovery_complete,
         crate::auth_routes::list_sessions,
         crate::auth_routes::revoke_session,
@@ -68,7 +71,15 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::workspace_routes::list_api_tokens,
         crate::workspace_routes::create_api_token,
         crate::workspace_routes::revoke_api_token,
+        crate::workspace_routes::list_admin_users,
+        crate::workspace_routes::get_instance_settings,
+        crate::workspace_routes::set_registration,
+        crate::workspace_routes::save_smtp,
+        crate::workspace_routes::remove_smtp,
+        crate::workspace_routes::send_test_email,
         crate::workspace_routes::set_account_suspension,
+        crate::workspace_routes::create_recovery_link,
+        crate::workspace_routes::set_instance_admin,
         crate::workspace_routes::list_global_audit,
         crate::workspace_routes::export_global_audit,
         crate::workspace_routes::create_backup,
@@ -364,6 +375,9 @@ fn public_operation(operation_id: &str) -> bool {
             | "login"
             | "recovery_request"
             | "recovery_complete"
+            | "auth_options"
+            | "registration_request"
+            | "registration_complete"
             | "preview_invitation"
             | "github_webhook"
             | "github_manifest_callback"
@@ -400,6 +414,17 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
         }
         "recovery_complete" => {
             add_code(&mut responses, "400", "invalid_recovery_token");
+            add_code(&mut responses, "422", "invalid_password");
+        }
+        "registration_request" => {
+            add_code(&mut responses, "403", "registration_closed");
+            add_code(&mut responses, "422", "invalid_email");
+        }
+        "registration_complete" => {
+            add_code(&mut responses, "400", "invalid_registration_token");
+            add_code(&mut responses, "403", "registration_closed");
+            add_code(&mut responses, "409", "account_exists");
+            add_code(&mut responses, "422", "invalid_display_name");
             add_code(&mut responses, "422", "invalid_password");
         }
         "update_me" => {
@@ -486,7 +511,26 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             add_code(&mut responses, "403", "workspace_action_forbidden");
             add_code(&mut responses, "404", "workspace_resource_not_found");
             add_code(&mut responses, "409", "workspace_conflict");
+            add_code(&mut responses, "409", "email_not_configured");
             add_code(&mut responses, "422", "invalid_email");
+            add_code(&mut responses, "502", "email_failed");
+        }
+        "get_instance_settings" | "remove_smtp" => {
+            add_code(&mut responses, "403", "installation_admin_required");
+        }
+        "set_registration" => {
+            add_code(&mut responses, "403", "installation_admin_required");
+            add_code(&mut responses, "409", "email_not_configured");
+        }
+        "save_smtp" => {
+            add_code(&mut responses, "403", "installation_admin_required");
+            add_code(&mut responses, "422", "invalid_smtp_settings");
+            add_code(&mut responses, "503", "app_key_missing");
+        }
+        "send_test_email" => {
+            add_code(&mut responses, "403", "installation_admin_required");
+            add_code(&mut responses, "409", "email_not_configured");
+            add_code(&mut responses, "502", "email_failed");
         }
         "list_invitations" | "list_audit" | "list_api_tokens" | "create_api_token"
         | "revoke_api_token" => {
@@ -501,6 +545,25 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             add_code(&mut responses, "403", "installation_admin_required");
             add_code(&mut responses, "404", "workspace_resource_not_found");
             add_code(&mut responses, "404", "user_not_found");
+            add_code(&mut responses, "409", "root_account");
+        }
+        "set_instance_admin" => {
+            add_code(&mut responses, "403", "root_required");
+            add_code(&mut responses, "404", "workspace_resource_not_found");
+            add_code(&mut responses, "404", "user_not_found");
+            add_code(&mut responses, "409", "root_account");
+            add_code(&mut responses, "409", "account_suspended");
+        }
+        "create_recovery_link" => {
+            add_code(&mut responses, "403", "installation_admin_required");
+            add_code(&mut responses, "404", "workspace_resource_not_found");
+            add_code(&mut responses, "404", "user_not_found");
+            add_code(&mut responses, "409", "root_account");
+            add_code(&mut responses, "409", "own_account");
+            add_code(&mut responses, "409", "account_suspended");
+        }
+        "list_admin_users" => {
+            add_code(&mut responses, "403", "installation_admin_required");
         }
         "list_global_audit" | "export_global_audit" => {
             add_code(&mut responses, "403", "installation_admin_required");
@@ -594,6 +657,10 @@ fn invalid_request_operation(operation_id: &str) -> bool {
             | "change_password"
             | "recovery_request"
             | "recovery_complete"
+            | "registration_request"
+            | "registration_complete"
+            | "set_registration"
+            | "save_smtp"
             | "create_workspace"
             | "rename_workspace"
             | "list_members"
@@ -613,6 +680,7 @@ fn invalid_request_operation(operation_id: &str) -> bool {
             | "create_api_token"
             | "revoke_api_token"
             | "set_account_suspension"
+            | "set_instance_admin"
             | "list_global_audit"
             | "export_global_audit"
             | "list_projects"

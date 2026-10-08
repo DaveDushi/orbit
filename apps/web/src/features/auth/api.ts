@@ -7,6 +7,7 @@ import { clearViewSessionEdits } from '@/features/views/useViewState'
 import { clearLocalCache, withinTime } from '@/lib/localCache'
 import { connectionRetryDelay, retryConnectionFailure } from '@/lib/connection'
 import {
+  authOptions,
   changePassword,
   login,
   logout,
@@ -14,6 +15,8 @@ import {
   putStatus,
   recoveryComplete,
   recoveryRequest,
+  registrationComplete,
+  registrationRequest,
   removeAvatar,
   setupComplete,
   setupStatus,
@@ -25,6 +28,8 @@ import type {
   LoginBody,
   RecoveryCompleteBody,
   RecoveryRequestBody,
+  RegistrationCompleteBody,
+  RegistrationRequestBody,
   SetupBody,
   AuthUserResponse,
   UpdateMeBody,
@@ -111,6 +116,41 @@ export function useCompleteSetup() {
     },
     onSuccess: () => {
       queryClient.setQueryData(queryKeys.setup, { complete: true })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.currentUser })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.workspaces })
+    },
+  })
+}
+
+/** Public: whether open registration and emailed password resets are offered. */
+export function useAuthOptions() {
+  return useQuery({
+    queryKey: queryKeys.authOptions,
+    queryFn: async () => {
+      const { data } = await authOptions({ client: apiClient, throwOnError: true })
+      return data
+    },
+  })
+}
+
+export function useRequestRegistration() {
+  return useMutation({
+    mutationFn: async (body: RegistrationRequestBody) => {
+      const { data } = await registrationRequest({ client: apiClient, body, throwOnError: true })
+      return required(data, 'Registration response was empty.')
+    },
+  })
+}
+
+/** Creates the account from the emailed link and signs it in. */
+export function useCompleteRegistration() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (body: RegistrationCompleteBody) => {
+      const { data } = await registrationComplete({ client: apiClient, body, throwOnError: true })
+      return required(data, 'Registration response was empty.')
+    },
+    onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.currentUser })
       void queryClient.invalidateQueries({ queryKey: queryKeys.workspaces })
     },

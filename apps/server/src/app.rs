@@ -1,3 +1,4 @@
+use crate::mail::Mailer;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::net::SocketAddr;
@@ -7,7 +8,6 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::serve::ListenerExt;
-use base64::Engine;
 use orbit_platform::{
     BackupService, Config, Database, DatabaseConfig, HealthCheck, HealthRegistry, HttpLimits,
     IntegrityService, JobError, JobKind, JobStore, LocalBlobStore, MigrationRunner, OriginPolicy,
@@ -196,24 +196,14 @@ impl App {
             .await
             .map_err(|error| AppError::WritableStorage(error.to_string()))?;
 
-        let app_key = config
-            .secrets
-            .get("app_key")
-            .map(|secret| {
-                let bytes = base64::engine::general_purpose::STANDARD
-                    .decode(secret.expose())
-                    .map_err(|_| {
-                        AppError::Config(
-                            "secrets.app_key must be a base64-encoded 32-byte key".to_owned(),
-                        )
-                    })?;
-                <[u8; 32]>::try_from(bytes).map_err(|_| {
-                    AppError::Config(
-                        "secrets.app_key must be a base64-encoded 32-byte key".to_owned(),
-                    )
-                })
-            })
-            .transpose()?;
+        let app_key = Some(
+            crate::secret_box::load_or_create_app_key(
+                config.secrets.get("app_key").map(|secret| secret.expose()),
+                &config.data.database,
+            )
+            .map_err(AppError::Config)?,
+        );
+        let mailer = Mailer::new(database.clone(), app_key, &config.http.public_origin);
         let notion_imports = NotionImportService::new(
             database.clone(),
             PageFileRepository::new(database.clone(), attachment_state.uploads.clone()),
@@ -263,14 +253,15 @@ impl App {
                     &config.http.public_origin,
                 ),
                 oauth: crate::oauth::router(oauth),
-                auth,
+                auth: auth.with_mailer(mailer.clone()),
                 workspaces: WorkspaceState::with_repository(
                     Arc::clone(&identity),
                     Arc::clone(&workspaces),
                     config.http.public_origin.clone(),
                     cookie_mode,
                     backups.clone(),
-                ),
+                )
+                .with_mailer(mailer),
                 tasks: TaskState::new(Arc::clone(&identity), cookie_mode),
                 pages: PageState::new(Arc::clone(&identity), cookie_mode),
                 page_comments: PageCommentState::new(Arc::clone(&identity), cookie_mode),

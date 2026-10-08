@@ -1,4 +1,5 @@
 import { toast } from 'sonner'
+import { ApiProblem } from '@/api/problem'
 import { useMemo, useState, type ComponentProps } from 'react'
 import { cva, type VariantProps } from 'class-variance-authority'
 import { confirmAction } from '@/components/common/confirmAction'
@@ -16,7 +17,7 @@ import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { useCurrentUser } from '@/features/auth/api'
+import { useAuthOptions, useCurrentUser } from '@/features/auth/api'
 import { useChangeMemberRole, useCreateInvitation, useInvitations, useMembers, useRemoveMember, useRevokeInvitation, useTransferOwnership } from '@/features/workspaces/api'
 import { useCan } from '@/features/workspaces/permissions'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
@@ -54,6 +55,7 @@ export function MembersPage() {
   const { workspace } = useWorkspace()
   const canManage = useCan('members.manage')
   const currentUser = useCurrentUser()
+  const emailEnabled = useAuthOptions().data?.email_enabled ?? false
   const presence = usePresence()
   const membersQuery = useMembers(workspace.id)
   const createInvitation = useCreateInvitation(workspace.id)
@@ -111,6 +113,19 @@ export function MembersPage() {
       const response = await createInvitation.mutateAsync({ email, role: inviteRole.toLowerCase() as 'admin' | 'member', delivery: 'manual' })
       setInviteLink(response.url ?? null)
       setCopied(false)
+    } catch {
+      // Mutation feedback remains visible in the form.
+    }
+  }
+
+  const emailInvitation = async () => {
+    const email = inviteEmail.trim()
+    if (!email) return
+    try {
+      await createInvitation.mutateAsync({ email, role: inviteRole.toLowerCase() as 'admin' | 'member', delivery: 'smtp' })
+      setInviteLink(null)
+      setInviteEmail('')
+      toast(`Invitation sent to ${email}`)
     } catch {
       // Mutation feedback remains visible in the form.
     }
@@ -347,8 +362,8 @@ export function MembersPage() {
             description="Create a reusable invitation link or deliver it by email."
             actions={
               <>
-                <Tip label="Email delivery is not configured">
-                  <Button type="button" variant="outline" disabled>
+                <Tip label={emailEnabled ? 'Email the invitation link' : 'Email delivery is not configured'}>
+                  <Button type="button" variant="outline" disabled={!emailEnabled || createInvitation.isPending} onClick={() => void emailInvitation()}>
                     <Bell className="size-3.5" />
                     Send email
                   </Button>
@@ -402,7 +417,7 @@ export function MembersPage() {
                 </Button>
               </div>
             ) : null}
-            {createInvitation.isError ? <p role="alert" className="text-destructive">The invitation could not be created.</p> : null}
+            {createInvitation.isError ? <p role="alert" className="text-destructive">{createInvitation.error instanceof ApiProblem ? createInvitation.error.detail : 'The invitation could not be created.'}</p> : null}
             {copyError ? <p role="alert" className="text-destructive">The invitation link could not be copied. Select and copy it manually.</p> : null}
           </SettingsCard>
         </form>

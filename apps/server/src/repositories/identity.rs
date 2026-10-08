@@ -10,6 +10,7 @@ use thiserror::Error;
 use utoipa::ToSchema;
 
 use super::chat::join_public_channels;
+use super::task_filter::escape_like;
 use super::teamspaces::insert_default_teamspace;
 use crate::audit::{self, AuditOutcome};
 
@@ -19,6 +20,16 @@ pub struct Avatar {
     pub bytes: Vec<u8>,
 }
 
+/// The root account that `/setup/complete` creates. It has no workspace yet: the web onboarding creates the first one.
+#[derive(Clone)]
+pub struct RootAccountRequest {
+    pub token: String,
+    pub email: String,
+    pub display_name: String,
+    pub password_hash: String,
+}
+
+/// Setup with a first workspace and project in the same transaction, for `orbit seed` and test fixtures.
 #[derive(Clone)]
 pub struct SetupRequest {
     pub token: String,
@@ -38,6 +49,12 @@ pub struct StoredIdentity {
     pub password_hash: String,
     pub suspended: bool,
     pub installation_admin: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RootAccount {
+    pub user_id: Id,
+    pub session: IssuedSession,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -159,14 +176,56 @@ pub struct ProfileChanges {
     pub phone: Option<Option<String>>,
 }
 
+/// Why an open registration could not be finished.
 #[derive(Debug, Error)]
-pub enum SuspensionError {
-    #[error("only an installation administrator may suspend accounts")]
+pub enum RegistrationError {
+    #[error("registration is closed")]
+    Closed,
+    #[error("the registration link is invalid or expired")]
+    InvalidToken,
+    #[error("an account with this email already exists")]
+    AccountExists,
+    #[error("identity repository is unavailable")]
+    Unavailable(#[from] sqlx::Error),
+}
+
+/// Why the root user's action on another account was refused.
+#[derive(Debug, Error)]
+pub enum AdminAccountError {
+    #[error("only the installation administrator may manage accounts")]
     Forbidden,
     #[error("global user was not found")]
     NotFound,
+    #[error("only the root user may change the root account or other instance admins")]
+    RootAccount,
+    #[error("only the root user may do this")]
+    RootRequired,
+    #[error("the installation administrator cannot do this to their own account")]
+    OwnAccount,
+    #[error("the account is suspended")]
+    Suspended,
     #[error("identity repository is unavailable")]
     Unavailable(#[from] sqlx::Error),
+}
+
+/// One account as the root user's Admin area lists it.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct AdminUser {
+    pub id: String,
+    pub email: String,
+    pub display_name: String,
+    /// The root user: the account created at setup. Nobody can suspend or reset it.
+    pub root: bool,
+    /// Can open Admin: the root user and the instance admins the root user chose.
+    pub admin: bool,
+    pub suspended: bool,
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: TimestampMillis,
+    /// The newest session activity, `null` if the account never signed in.
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub last_active_at: Option<TimestampMillis>,
+    /// Workspaces the account is a member of, deleted workspaces excluded.
+    pub workspace_count: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -338,25 +397,48 @@ impl IdentityRepository {
         request: SetupRequest,
         now: TimestampMillis,
     ) -> Result<SetupResult, SetupError> {
-        self.complete_setup_inner(request, now, None).await
+        let user_id = Id::new_v7();
+        let defaults =
+            WorkspaceDefaults::new(user_id, request.workspace_name, request.project_name);
+        let account = RootAccountRequest {
+            token: request.token,
+            email: request.email,
+            display_name: request.display_name,
+            password_hash: request.password_hash,
+        };
+        let session = self
+            .complete_setup_inner(account, user_id, Some(&defaults), now, None)
+            .await?;
+        Ok(SetupResult {
+            user_id,
+            workspace_id: defaults.workspace.id,
+            project_id: defaults.project.id,
+            session,
+        })
     }
 
+    /// Creates the root account and its first session. Setup cannot run again afterwards.
     pub async fn complete_setup_audited(
         &self,
-        request: SetupRequest,
+        request: RootAccountRequest,
         request_id: &str,
         now: TimestampMillis,
-    ) -> Result<SetupResult, SetupError> {
-        self.complete_setup_inner(request, now, Some(request_id))
-            .await
+    ) -> Result<RootAccount, SetupError> {
+        let user_id = Id::new_v7();
+        let session = self
+            .complete_setup_inner(request, user_id, None, now, Some(request_id))
+            .await?;
+        Ok(RootAccount { user_id, session })
     }
 
     async fn complete_setup_inner(
         &self,
-        request: SetupRequest,
+        request: RootAccountRequest,
+        user_id: Id,
+        first_workspace: Option<&WorkspaceDefaults>,
         now: TimestampMillis,
         request_id: Option<&str>,
-    ) -> Result<SetupResult, SetupError> {
+    ) -> Result<IssuedSession, SetupError> {
         let mut transaction = self
             .database
             .immediate_transaction()
@@ -429,11 +511,8 @@ impl IdentityRepository {
 
         let email = request.email.trim().to_owned();
         let normalized_email = normalize_email(&email);
-        let user_id = Id::new_v7();
         let session_id = Id::new_v7();
         let session_token = generate_opaque_token();
-        let defaults =
-            WorkspaceDefaults::new(user_id, request.workspace_name, request.project_name);
         let timestamp = now.as_millis();
         sqlx::query(
             "INSERT INTO users (id, email, normalized_email, display_name, password_hash, \
@@ -449,80 +528,19 @@ impl IdentityRepository {
         .execute(&mut *transaction)
         .await
         .map_err(SetupError::Unavailable)?;
-        sqlx::query(
-            "INSERT INTO workspaces (id, name, version, owner_membership_id, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(defaults.workspace.id.to_string())
-        .bind(&defaults.workspace.name)
-        .bind(defaults.workspace.version as i64)
-        .bind(defaults.owner.id.to_string())
-        .bind(timestamp)
-        .bind(timestamp)
-        .execute(&mut *transaction)
-        .await
-        .map_err(SetupError::Unavailable)?;
-        sqlx::query(
-            "INSERT INTO memberships (id, workspace_id, user_id, role, version, created_at, updated_at) \
-             VALUES (?, ?, ?, 'owner', ?, ?, ?)",
-        )
-        .bind(defaults.owner.id.to_string())
-        .bind(defaults.workspace.id.to_string())
-        .bind(user_id.to_string())
-        .bind(defaults.owner.version as i64)
-        .bind(timestamp)
-        .bind(timestamp)
-        .execute(&mut *transaction)
-        .await
-        .map_err(SetupError::Unavailable)?;
-        join_public_channels(&mut transaction, defaults.workspace.id, user_id, now)
-            .await
-            .map_err(SetupError::Unavailable)?;
-        sqlx::query(
-            "INSERT INTO projects (id, workspace_id, name, project_key, color, version, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(defaults.project.id.to_string())
-        .bind(defaults.workspace.id.to_string())
-        .bind(&defaults.project.name)
-        .bind(&defaults.project.key)
-        .bind(&defaults.project.color)
-        .bind(defaults.project.version as i64)
-        .bind(timestamp)
-        .bind(timestamp)
-        .execute(&mut *transaction)
-        .await
-        .map_err(SetupError::Unavailable)?;
-        for status in &defaults.statuses {
-            sqlx::query(
-                "INSERT INTO task_statuses (id, workspace_id, project_id, name, description, color, \
-                 category, position, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(status.id.to_string())
-            .bind(status.workspace_id.to_string())
-            .bind(status.project_id.to_string())
-            .bind(&status.name)
-            .bind(&status.description)
-            .bind(&status.color)
-            .bind(status.category.as_str())
-            .bind(status.position)
-            .bind(status.version as i64)
-            .bind(timestamp)
-            .bind(timestamp)
-            .execute(&mut *transaction)
-            .await
-            .map_err(SetupError::Unavailable)?;
+        if let Some(defaults) = first_workspace {
+            insert_first_workspace(&mut transaction, defaults, user_id, now)
+                .await
+                .map_err(SetupError::Unavailable)?;
         }
-        insert_default_teamspace(&mut transaction, defaults.workspace.id, user_id, now)
-            .await
-            .map_err(SetupError::Unavailable)?;
         let session = insert_session(&mut transaction, session_id, &session_token, user_id, now)
             .await
             .map_err(SetupError::Unavailable)?;
         sqlx::query(
-            "UPDATE installation_state SET initialized = 1, initialized_at = ? WHERE id = 1",
+            "UPDATE installation_state SET initialized = 1, initialized_at = ?, root_user_id = ? WHERE id = 1",
         )
         .bind(timestamp)
+        .bind(user_id.to_string())
         .execute(&mut *transaction)
         .await
         .map_err(SetupError::Unavailable)?;
@@ -549,13 +567,7 @@ impl IdentityRepository {
             .commit()
             .await
             .map_err(SetupError::Unavailable)?;
-
-        Ok(SetupResult {
-            user_id,
-            workspace_id: defaults.workspace.id,
-            project_id: defaults.project.id,
-            session,
-        })
+        Ok(session)
     }
 
     pub async fn find_by_email(
@@ -589,7 +601,7 @@ impl IdentityRepository {
         suspended: bool,
         request_id: &str,
         now: TimestampMillis,
-    ) -> Result<(), SuspensionError> {
+    ) -> Result<(), AdminAccountError> {
         let result = self
             .set_suspended_unchecked(actor_id, user_id, suspended, request_id, now)
             .await;
@@ -606,7 +618,7 @@ impl IdentityRepository {
         suspended: bool,
         request_id: &str,
         now: TimestampMillis,
-    ) -> Result<(), SuspensionError> {
+    ) -> Result<(), AdminAccountError> {
         let mut transaction = self.database.immediate_transaction().await?;
         let installation_admin = sqlx::query_scalar::<_, i64>(
             "SELECT installation_admin FROM users WHERE id = ? AND suspended_at IS NULL",
@@ -629,8 +641,9 @@ impl IdentityRepository {
             )
             .await?;
             transaction.commit().await?;
-            return Err(SuspensionError::Forbidden);
+            return Err(AdminAccountError::Forbidden);
         }
+        Self::may_manage(&mut transaction, actor_id, user_id).await?;
         let changed = if suspended {
             sqlx::query(
                 "UPDATE users SET suspended_at = COALESCE(suspended_at, ?), version = version + 1, \
@@ -653,7 +666,7 @@ impl IdentityRepository {
             .rows_affected()
         };
         if changed == 0 {
-            return Err(SuspensionError::NotFound);
+            return Err(AdminAccountError::NotFound);
         }
         if suspended {
             sqlx::query(
@@ -681,6 +694,338 @@ impl IdentityRepository {
         )
         .await?;
         transaction.commit().await?;
+        Ok(())
+    }
+
+    /// Stores a one-time sign-up link for `email` (replacing an older one for the same address).
+    pub async fn store_registration_token(
+        &self,
+        email: &str,
+        token: &str,
+        expires_at: TimestampMillis,
+        now: TimestampMillis,
+    ) -> Result<(), IdentityError> {
+        let mut transaction = self.database.immediate_transaction().await?;
+        sqlx::query(
+            "DELETE FROM registration_tokens WHERE expires_at <= ? OR normalized_email = ?",
+        )
+        .bind(now.as_millis())
+        .bind(normalize_email(email))
+        .execute(&mut *transaction)
+        .await?;
+        sqlx::query(
+            "INSERT INTO registration_tokens (token_hash, normalized_email, expires_at, created_at) \
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(token_hash(token).to_vec())
+        .bind(normalize_email(email))
+        .bind(expires_at.as_millis())
+        .bind(now.as_millis())
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    /// Finishes an open registration: the emailed token proves the address, so the account starts verified. Uses up
+    /// the token and signs the new account in. It has no workspace yet; the web onboarding creates one.
+    pub async fn register_open_account(
+        &self,
+        token: &str,
+        display_name: String,
+        password_hash: String,
+        request_id: &str,
+        now: TimestampMillis,
+    ) -> Result<RootAccount, RegistrationError> {
+        let mut transaction = self.database.immediate_transaction().await?;
+        let open = sqlx::query_scalar::<_, i64>(
+            "SELECT registration_open FROM instance_settings WHERE id = 1",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if open == 0 {
+            return Err(RegistrationError::Closed);
+        }
+        let email = sqlx::query_scalar::<_, String>(
+            "SELECT normalized_email FROM registration_tokens WHERE token_hash = ? AND expires_at > ?",
+        )
+        .bind(token_hash(token).to_vec())
+        .bind(now.as_millis())
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or(RegistrationError::InvalidToken)?;
+        let existing =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users WHERE normalized_email = ?")
+                .bind(&email)
+                .fetch_one(&mut *transaction)
+                .await?;
+        if existing != 0 {
+            return Err(RegistrationError::AccountExists);
+        }
+        let user_id = Id::new_v7();
+        sqlx::query(
+            "INSERT INTO users (id, email, normalized_email, display_name, password_hash, \
+             email_verified_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(user_id.to_string())
+        .bind(&email)
+        .bind(&email)
+        .bind(display_name.trim())
+        .bind(password_hash)
+        .bind(now.as_millis())
+        .bind(now.as_millis())
+        .bind(now.as_millis())
+        .execute(&mut *transaction)
+        .await?;
+        sqlx::query("DELETE FROM registration_tokens WHERE normalized_email = ?")
+            .bind(&email)
+            .execute(&mut *transaction)
+            .await?;
+        let session = insert_session(
+            &mut transaction,
+            Id::new_v7(),
+            &generate_opaque_token(),
+            user_id,
+            now,
+        )
+        .await?;
+        audit::record_global(
+            &mut transaction,
+            Some(user_id),
+            "account.registered",
+            AuditOutcome::Success,
+            "user",
+            Some(user_id),
+            request_id,
+            serde_json::json!({}),
+            now,
+        )
+        .await?;
+        transaction.commit().await?;
+        Ok(RootAccount { user_id, session })
+    }
+
+    /// One page of accounts on this instance: the root user, then instance admins, then everyone else, oldest
+    /// first. `search` matches part of the display name or email, ignoring case. The cursor is the last user ID
+    /// of the previous page.
+    pub async fn list_users_for_admin(
+        &self,
+        search: Option<&str>,
+        cursor: Option<Id>,
+        limit: usize,
+    ) -> Result<(Vec<AdminUser>, Option<Id>), IdentityError> {
+        let limit = limit.clamp(1, 100);
+        let pattern = search
+            .map(str::trim)
+            .filter(|search| !search.is_empty())
+            .map(|search| format!("%{}%", escape_like(&search.to_lowercase())));
+        // The sort key is (root_rank, admin_rank, created_at, id) ascending, so a page starts after the cursor row.
+        let rows = sqlx::query(
+            "WITH keyed AS (SELECT users.*, \
+               users.id IS NOT (SELECT root_user_id FROM installation_state WHERE id = 1) AS root_rank, \
+               1 - users.installation_admin AS admin_rank FROM users) \
+             SELECT keyed.id, keyed.email, keyed.display_name, keyed.installation_admin, keyed.suspended_at, \
+             keyed.created_at, 1 - keyed.root_rank AS root, \
+             (SELECT MAX(sessions.last_activity_at) FROM sessions WHERE sessions.user_id = keyed.id) \
+               AS last_active_at, \
+             (SELECT COUNT(*) FROM memberships JOIN workspaces ON workspaces.id = memberships.workspace_id \
+               WHERE memberships.user_id = keyed.id AND workspaces.deleted_at IS NULL) AS workspace_count \
+             FROM keyed \
+             WHERE (?1 IS NULL OR LOWER(keyed.display_name) LIKE ?1 ESCAPE '\\' \
+               OR LOWER(keyed.email) LIKE ?1 ESCAPE '\\') \
+             AND (?2 IS NULL OR (keyed.root_rank, keyed.admin_rank, keyed.created_at, keyed.id) > \
+               (SELECT root_rank, admin_rank, created_at, id FROM keyed WHERE id = ?2)) \
+             ORDER BY keyed.root_rank, keyed.admin_rank, keyed.created_at, keyed.id LIMIT ?3",
+        )
+        .bind(pattern)
+        .bind(cursor.map(|id| id.to_string()))
+        .bind(limit.saturating_add(1) as i64)
+        .fetch_all(self.database.pool())
+        .await?;
+        let has_more = rows.len() > limit;
+        let users = rows
+            .into_iter()
+            .take(limit)
+            .map(|row| AdminUser {
+                id: row.get("id"),
+                email: row.get("email"),
+                display_name: row.get("display_name"),
+                root: row.get::<i64, _>("root") == 1,
+                admin: row.get::<i64, _>("installation_admin") == 1,
+                suspended: row.get::<Option<i64>, _>("suspended_at").is_some(),
+                created_at: TimestampMillis::from_millis(row.get("created_at")),
+                last_active_at: row
+                    .get::<Option<i64>, _>("last_active_at")
+                    .map(TimestampMillis::from_millis),
+                workspace_count: row.get("workspace_count"),
+            })
+            .collect::<Vec<_>>();
+        let next = has_more
+            .then(|| users.last().and_then(|user| user.id.parse().ok()))
+            .flatten();
+        Ok((users, next))
+    }
+
+    /// Stores a one-time recovery token for another account, issued from the Admin area. An admin's own password
+    /// changes in Profile, which asks for the current password; a recovery link would skip that.
+    pub async fn issue_recovery_token_as_admin(
+        &self,
+        actor_id: Id,
+        user_id: Id,
+        token: &str,
+        expires_at: TimestampMillis,
+        request_id: &str,
+    ) -> Result<(), AdminAccountError> {
+        let now = self.database.database_now().await?;
+        let mut transaction = self.database.immediate_transaction().await?;
+        if !Self::is_active_admin(&mut transaction, actor_id).await? {
+            return Err(AdminAccountError::Forbidden);
+        }
+        if actor_id == user_id {
+            return Err(AdminAccountError::OwnAccount);
+        }
+        Self::may_manage(&mut transaction, actor_id, user_id).await?;
+        let suspended_at =
+            sqlx::query_scalar::<_, Option<i64>>("SELECT suspended_at FROM users WHERE id = ?")
+                .bind(user_id.to_string())
+                .fetch_optional(&mut *transaction)
+                .await?
+                .ok_or(AdminAccountError::NotFound)?;
+        if suspended_at.is_some() {
+            return Err(AdminAccountError::Suspended);
+        }
+        insert_recovery_token(
+            &mut transaction,
+            &user_id.to_string(),
+            token,
+            expires_at,
+            now,
+        )
+        .await?;
+        audit::record_global(
+            &mut transaction,
+            Some(actor_id),
+            "recovery.requested",
+            AuditOutcome::Success,
+            "user",
+            Some(user_id),
+            request_id,
+            serde_json::json!({"issued_by": "admin"}),
+            now,
+        )
+        .await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    /// Makes an account an instance admin, or takes that back. Only the root user may, and never for the root account.
+    pub async fn set_instance_admin(
+        &self,
+        actor_id: Id,
+        user_id: Id,
+        admin: bool,
+        request_id: &str,
+        now: TimestampMillis,
+    ) -> Result<(), AdminAccountError> {
+        let mut transaction = self.database.immediate_transaction().await?;
+        if !Self::is_active_admin(&mut transaction, actor_id).await?
+            || !Self::is_root_account(&mut transaction, actor_id).await?
+        {
+            return Err(AdminAccountError::RootRequired);
+        }
+        if Self::is_root_account(&mut transaction, user_id).await? {
+            return Err(AdminAccountError::RootAccount);
+        }
+        let suspended_at =
+            sqlx::query_scalar::<_, Option<i64>>("SELECT suspended_at FROM users WHERE id = ?")
+                .bind(user_id.to_string())
+                .fetch_optional(&mut *transaction)
+                .await?
+                .ok_or(AdminAccountError::NotFound)?;
+        if admin && suspended_at.is_some() {
+            return Err(AdminAccountError::Suspended);
+        }
+        sqlx::query(
+            "UPDATE users SET installation_admin = ?, version = version + 1, updated_at = ? WHERE id = ?",
+        )
+        .bind(i64::from(admin))
+        .bind(now.as_millis())
+        .bind(user_id.to_string())
+        .execute(&mut *transaction)
+        .await?;
+        audit::record_global(
+            &mut transaction,
+            Some(actor_id),
+            if admin {
+                "account.admin_granted"
+            } else {
+                "account.admin_revoked"
+            },
+            AuditOutcome::Success,
+            "user",
+            Some(user_id),
+            request_id,
+            serde_json::json!({}),
+            now,
+        )
+        .await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    /// Whether the account is the root user.
+    pub async fn is_root(&self, user_id: Id) -> Result<bool, IdentityError> {
+        let mut transaction = self.database.immediate_transaction().await?;
+        let root = Self::is_root_account(&mut transaction, user_id).await?;
+        transaction.commit().await?;
+        Ok(root)
+    }
+
+    async fn is_active_admin(
+        transaction: &mut Transaction<'_, Sqlite>,
+        user_id: Id,
+    ) -> Result<bool, sqlx::Error> {
+        Ok(sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM users WHERE id = ? AND installation_admin = 1 AND suspended_at IS NULL",
+        )
+        .bind(user_id.to_string())
+        .fetch_one(&mut **transaction)
+        .await?
+            != 0)
+    }
+
+    async fn is_root_account(
+        transaction: &mut Transaction<'_, Sqlite>,
+        user_id: Id,
+    ) -> Result<bool, sqlx::Error> {
+        Ok(sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM installation_state WHERE id = 1 AND root_user_id = ?",
+        )
+        .bind(user_id.to_string())
+        .fetch_one(&mut **transaction)
+        .await?
+            != 0)
+    }
+
+    /// Whether an admin may suspend or reset `target`: nobody may touch the root account, and only the root user may
+    /// touch another admin. Suspending the root account would lock everyone out of Admin.
+    async fn may_manage(
+        transaction: &mut Transaction<'_, Sqlite>,
+        actor_id: Id,
+        target_id: Id,
+    ) -> Result<(), AdminAccountError> {
+        if Self::is_root_account(transaction, target_id).await? {
+            return Err(AdminAccountError::RootAccount);
+        }
+        let target_admin =
+            sqlx::query_scalar::<_, i64>("SELECT installation_admin FROM users WHERE id = ?")
+                .bind(target_id.to_string())
+                .fetch_optional(&mut **transaction)
+                .await?
+                .unwrap_or(0);
+        if target_admin == 1 && !Self::is_root_account(transaction, actor_id).await? {
+            return Err(AdminAccountError::RootAccount);
+        }
         Ok(())
     }
 
@@ -973,21 +1318,7 @@ impl IdentityRepository {
     ) -> Result<(), IdentityError> {
         let now = self.database.database_now().await?;
         let mut transaction = self.database.immediate_transaction().await?;
-        sqlx::query("DELETE FROM recovery_tokens WHERE expires_at <= ? OR user_id = ?")
-            .bind(now.as_millis())
-            .bind(user_id)
-            .execute(&mut *transaction)
-            .await?;
-        sqlx::query(
-            "INSERT INTO recovery_tokens (token_hash, user_id, expires_at, created_at) \
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind(token_hash(token).to_vec())
-        .bind(user_id)
-        .bind(expires_at.as_millis())
-        .bind(now.as_millis())
-        .execute(&mut *transaction)
-        .await?;
+        insert_recovery_token(&mut transaction, user_id, token, expires_at, now).await?;
         transaction.commit().await?;
         Ok(())
     }
@@ -1001,20 +1332,13 @@ impl IdentityRepository {
     ) -> Result<(), IdentityError> {
         let now = self.database.database_now().await?;
         let mut transaction = self.database.immediate_transaction().await?;
-        sqlx::query("DELETE FROM recovery_tokens WHERE expires_at <= ? OR user_id = ?")
-            .bind(now.as_millis())
-            .bind(user_id.to_string())
-            .execute(&mut *transaction)
-            .await?;
-        sqlx::query(
-            "INSERT INTO recovery_tokens (token_hash, user_id, expires_at, created_at) \
-             VALUES (?, ?, ?, ?)",
+        insert_recovery_token(
+            &mut transaction,
+            &user_id.to_string(),
+            token,
+            expires_at,
+            now,
         )
-        .bind(token_hash(token).to_vec())
-        .bind(user_id.to_string())
-        .bind(expires_at.as_millis())
-        .bind(now.as_millis())
-        .execute(&mut *transaction)
         .await?;
         audit::record_global(
             &mut transaction,
@@ -1505,6 +1829,77 @@ async fn insert_session(
     })
 }
 
+/// The first workspace that `complete_setup` creates with the account: owner membership, default project and workflow,
+/// default teamspace, and the public chat channels.
+async fn insert_first_workspace(
+    transaction: &mut Transaction<'_, Sqlite>,
+    defaults: &WorkspaceDefaults,
+    user_id: Id,
+    now: TimestampMillis,
+) -> Result<(), sqlx::Error> {
+    let timestamp = now.as_millis();
+    sqlx::query(
+        "INSERT INTO workspaces (id, name, version, owner_membership_id, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(defaults.workspace.id.to_string())
+    .bind(&defaults.workspace.name)
+    .bind(defaults.workspace.version as i64)
+    .bind(defaults.owner.id.to_string())
+    .bind(timestamp)
+    .bind(timestamp)
+    .execute(&mut **transaction)
+    .await?;
+    sqlx::query(
+        "INSERT INTO memberships (id, workspace_id, user_id, role, version, created_at, updated_at) \
+         VALUES (?, ?, ?, 'owner', ?, ?, ?)",
+    )
+    .bind(defaults.owner.id.to_string())
+    .bind(defaults.workspace.id.to_string())
+    .bind(user_id.to_string())
+    .bind(defaults.owner.version as i64)
+    .bind(timestamp)
+    .bind(timestamp)
+    .execute(&mut **transaction)
+    .await?;
+    join_public_channels(transaction, defaults.workspace.id, user_id, now).await?;
+    sqlx::query(
+        "INSERT INTO projects (id, workspace_id, name, project_key, color, version, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(defaults.project.id.to_string())
+    .bind(defaults.workspace.id.to_string())
+    .bind(&defaults.project.name)
+    .bind(&defaults.project.key)
+    .bind(&defaults.project.color)
+    .bind(defaults.project.version as i64)
+    .bind(timestamp)
+    .bind(timestamp)
+    .execute(&mut **transaction)
+    .await?;
+    for status in &defaults.statuses {
+        sqlx::query(
+            "INSERT INTO task_statuses (id, workspace_id, project_id, name, description, color, \
+             category, position, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(status.id.to_string())
+        .bind(status.workspace_id.to_string())
+        .bind(status.project_id.to_string())
+        .bind(&status.name)
+        .bind(&status.description)
+        .bind(&status.color)
+        .bind(status.category.as_str())
+        .bind(status.position)
+        .bind(status.version as i64)
+        .bind(timestamp)
+        .bind(timestamp)
+        .execute(&mut **transaction)
+        .await?;
+    }
+    insert_default_teamspace(transaction, defaults.workspace.id, user_id, now).await?;
+    Ok(())
+}
+
 fn decode_identity(row: sqlx::sqlite::SqliteRow) -> Result<StoredIdentity, IdentityError> {
     let id = row
         .get::<String, _>("id")
@@ -1523,6 +1918,32 @@ fn decode_identity(row: sqlx::sqlite::SqliteRow) -> Result<StoredIdentity, Ident
 
 fn token_hash(token: &str) -> [u8; 32] {
     Sha256::digest(token.as_bytes()).into()
+}
+
+/// Replaces the account's recovery token (one live link per account) and drops expired ones.
+async fn insert_recovery_token(
+    transaction: &mut Transaction<'_, Sqlite>,
+    user_id: &str,
+    token: &str,
+    expires_at: TimestampMillis,
+    now: TimestampMillis,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM recovery_tokens WHERE expires_at <= ? OR user_id = ?")
+        .bind(now.as_millis())
+        .bind(user_id)
+        .execute(&mut **transaction)
+        .await?;
+    sqlx::query(
+        "INSERT INTO recovery_tokens (token_hash, user_id, expires_at, created_at) \
+         VALUES (?, ?, ?, ?)",
+    )
+    .bind(token_hash(token).to_vec())
+    .bind(user_id)
+    .bind(expires_at.as_millis())
+    .bind(now.as_millis())
+    .execute(&mut **transaction)
+    .await?;
+    Ok(())
 }
 
 fn constant_time_eq(stored: &[u8], supplied: &[u8; 32]) -> bool {
@@ -1589,7 +2010,7 @@ mod tests {
 
     use orbit_platform::{PasswordService, TestDatabase, TimestampMillis};
 
-    use super::{IdentityError, IdentityRepository, SetupError, SetupRequest};
+    use super::{IdentityError, IdentityRepository, RootAccountRequest, SetupError, SetupRequest};
 
     #[tokio::test]
     async fn login_rejects_a_credential_observation_changed_by_recovery() {
@@ -1682,16 +2103,18 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        repository
-            .set_suspended(
-                setup.user_id,
-                setup.user_id,
-                true,
-                "suspend-request",
-                TimestampMillis::from_millis(2_000),
-            )
-            .await
-            .unwrap();
+        // The root account cannot be suspended through `set_suspended`; this test only needs a suspended account
+        // whose sessions are revoked, as `set_suspended` leaves them.
+        for statement in [
+            "UPDATE users SET suspended_at = 2000 WHERE id = ?",
+            "UPDATE sessions SET revoked_at = 2000 WHERE user_id = ?",
+        ] {
+            sqlx::query(statement)
+                .bind(setup.user_id.to_string())
+                .execute(database.pool())
+                .await
+                .unwrap();
+        }
 
         let result = repository
             .create_session_audited(
@@ -1771,7 +2194,12 @@ mod tests {
         assert!(
             repository
                 .complete_setup_audited(
-                    setup_request("operator-secret"),
+                    RootAccountRequest {
+                        token: "operator-secret".to_owned(),
+                        email: "owner@example.com".to_owned(),
+                        display_name: "Owner".to_owned(),
+                        password_hash: "hash".to_owned(),
+                    },
                     "setup-request",
                     TimestampMillis::from_millis(1_000)
                 )

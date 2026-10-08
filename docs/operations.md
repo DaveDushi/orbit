@@ -29,11 +29,27 @@ Restore refuses an active database ownership lock (the `<database>.lock` file ne
 
 ## Lost or expired setup token
 
-Stop Orbit and run `orbit --config config/orbit.toml setup-token rotate`. Share the new setup URL directly with the installation owner. Rotation invalidates the unused old token. Once setup completes, setup cannot run again.
+Stop Orbit and run `orbit --config config/orbit.toml setup-token rotate`. Share the new setup URL directly with the installation owner; the account created there becomes the root user. Rotation invalidates the unused old token. Once setup completes, setup cannot run again.
+
+## Root user and Admin area
+
+The account created at setup is the root user. **Admin** in the sidebar (`/admin`) has accounts (suspend, reinstate, password recovery links), the global audit log with CSV export, backups, and instance settings (email, registration).
+
+The root user can make other accounts **instance admins** (Admin → Users → Manage → Make admin). Admins see the same Admin area, but they cannot suspend or reset the root account or another admin, and they cannot choose admins. Nobody can suspend, reset or demote the root account. Removing an admin takes their Admin access away at once.
+
+## Email, registration and the app key
+
+Orbit sends email only for invitations, open-registration sign-up links and password reset links. The root user saves the SMTP server in **Admin → Settings → Email** and checks it with **Send test email**. Without a mail server, invitations are shared as links and password recovery works as described below.
+
+Registration is closed after setup: people join only by invitation. The root user can turn on **Open registration** in **Admin → Settings** once a mail server is saved. A new person then enters their email, opens the emailed link (60 minutes, one use) and chooses a name and password. Removing the mail server closes registration.
+
+Saved secrets (the SMTP password, GitHub App keys, Notion import tokens) are encrypted with the app key. Set `secrets.app_key` (base64 of 32 random bytes, for example `openssl rand -base64 32`) to manage it yourself; otherwise Orbit creates `app.key` beside the database on first start (mode 600). Keep that file with your backups: a restored database without it cannot read its saved secrets, and the root user must enter them again.
 
 ## Password recovery without SMTP
 
-Stop Orbit and use `orbit --config config/orbit.toml recovery-link --email <email> --origin <https-origin>`. Share the 30-minute link through an authenticated channel. Never log it. Unknown or suspended accounts do not receive a link.
+The root user opens **Admin → Users**, selects **Manage → Create password recovery link** for the account and shares the 30-minute link through an authenticated channel. The root user changes their own password in Profile instead.
+
+If the root user lost their own password, stop Orbit and use `orbit --config config/orbit.toml recovery-link --email <email> --origin <https-origin>`. Never log a link. Unknown or suspended accounts do not receive a link.
 
 ## Security checks after proxy changes
 

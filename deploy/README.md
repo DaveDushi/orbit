@@ -18,7 +18,7 @@ On first startup, retrieve the one-time setup URL locally:
 docker compose --env-file deploy/.env -f deploy/compose.yaml logs orbit
 ```
 
-Treat that URL as a secret. Open it at your HTTPS domain and create the owner account. Production has no seeded login or automatic setup bypass. Never copy the development database into production. The `seed`, `migrate run --seed`, and reset commands reject production mode. Dev seeding remains idempotent and available through `just dev`.
+Treat that URL as a secret. Open it at your HTTPS domain and create the root account (the only account that can open Admin). Orbit then asks for your first workspace and project. Production has no seeded login or automatic setup bypass. Never copy the development database into production. The `seed`, `migrate run --seed`, and reset commands reject production mode. Dev seeding remains idempotent and available through `just dev`.
 
 For Tailscale-only hosting, use an existing Tailscale HTTPS proxy instead of the Caddy service. Configure the actual HTTPS public origin and trust only the exact proxy address. Do not set production to development mode to work around HTTPS/origin checks.
 

@@ -510,7 +510,8 @@ fn endpoint_class(method: &Method, path: &str) -> Option<EndpointClass> {
     if path != "/api" && !path.starts_with("/api/") {
         return None;
     }
-    if path.contains("/recovery") {
+    // Both send email to an address anyone can type, so they share the strict recovery limit.
+    if path.contains("/recovery") || path.contains("/auth/register") {
         Some(EndpointClass::Recovery)
     } else if path.contains("/invitations") {
         Some(EndpointClass::Invitation)

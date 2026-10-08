@@ -2,7 +2,7 @@ import { Shortcut } from '@/shortcuts/Shortcut'
 import { createContext, Fragment, useContext, type ComponentType, type ReactNode } from 'react'
 import { Link, useLocation, useMatch, useResolvedPath, type LinkProps } from 'react-router'
 import { cva, type VariantProps } from 'class-variance-authority'
-import { Calendar, DirectInbox as Inbox, Home2 as Home, Layer, Message as MessageSquare, DocumentText as FileText, SearchNormal as Search, Setting2 as Settings, Sms as Mail, TaskSquare as SquareCheck, Timer } from 'reicon-react'
+import { Calendar, SecurityUser, DirectInbox as Inbox, Home2 as Home, Layer, Message as MessageSquare, DocumentText as FileText, SearchNormal as Search, Setting2 as Settings, Sms as Mail, TaskSquare as SquareCheck, Timer } from 'reicon-react'
 import { cn } from 'cn'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
@@ -139,6 +139,7 @@ export function SidebarNav({
   chatBadge,
   inboxUnread,
   chatEnabled: chat = chatEnabled,
+  isRoot = false,
 }: {
   onNavigate?: () => void
   collapsed?: boolean
@@ -148,6 +149,8 @@ export function SidebarNav({
   inboxUnread?: boolean
   /** Chat is a link instead of "Coming soon". Defaults to the build's setting. */
   chatEnabled?: boolean
+  /** The root user (installation administrator) also gets the Admin link. */
+  isRoot?: boolean
 }) {
   const location = useLocation()
   const currentParams = new URLSearchParams(location.search)
@@ -223,6 +226,7 @@ export function SidebarNav({
           <SidebarNavItem to={taskViewPath('due_soon')} active={taskViewActive('due_soon')} icon={Calendar} label="Due soon" onClick={onNavigate} />
           <SidebarSection label="Manage" collapsed={collapsed} />
           <SidebarNavItem to="/settings" icon={Settings} label="Settings" onClick={onNavigate} />
+          {isRoot ? <SidebarNavItem to="/admin" icon={SecurityUser} label="Admin" onClick={onNavigate} /> : null}
         </div>
       </div>
     </SidebarNavCollapsed.Provider>

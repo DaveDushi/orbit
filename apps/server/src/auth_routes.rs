@@ -23,10 +23,12 @@ use utoipa::ToSchema;
 
 use crate::audit::AuditOutcome;
 use crate::live::LiveHub;
+use crate::mail::{self, Mailer};
 use crate::repositories::identity::{
     AuthenticatedSession, IdentityError, IdentityRepository, ProfileChanges, ProfileFields,
-    SetupError, SetupRequest, UserStatus,
+    RegistrationError, RootAccountRequest, SetupError, UserStatus,
 };
+use crate::repositories::instance_settings::InstanceSettingsRepository;
 
 pub(crate) mod push;
 
@@ -35,6 +37,8 @@ const DEV_SESSION_COOKIE: &str = "orbit_session_dev";
 const GENERIC_LOGIN_DETAIL: &str = "Email or password is incorrect.";
 const GENERIC_RECOVERY_DETAIL: &str =
     "Contact your installation administrator to request a password recovery link.";
+const EMAILED_RECOVERY_DETAIL: &str =
+    "If an account exists for that address, we sent a link to set a new password.";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CookieMode {
@@ -115,9 +119,25 @@ pub struct AuthState {
     throttler: Arc<Mutex<LoginThrottler>>,
     cookie_mode: CookieMode,
     dummy_hash: String,
+    /// Sends registration and password reset links; `None` sends nothing.
+    mailer: Option<Mailer>,
 }
 
 impl AuthState {
+    #[must_use]
+    pub fn with_mailer(mut self, mailer: Mailer) -> Self {
+        self.mailer = Some(mailer);
+        self
+    }
+
+    /// The mailer when a mail server is saved.
+    async fn mailer(&self) -> Option<&Mailer> {
+        match &self.mailer {
+            Some(mailer) if mailer.enabled().await.unwrap_or(false) => Some(mailer),
+            _ => None,
+        }
+    }
+
     pub fn new(repository: Arc<IdentityRepository>, cookie_mode: CookieMode) -> Self {
         let passwords = PasswordService::default();
         let dummy_hash = passwords
@@ -130,6 +150,7 @@ impl AuthState {
             throttler: Arc::new(Mutex::new(LoginThrottler::new())),
             cookie_mode,
             dummy_hash,
+            mailer: None,
         }
     }
 }
@@ -187,6 +208,12 @@ pub fn auth_router(state: AuthState) -> Router {
         )
         .route("/api/v1/users/{user_id}/avatar", get(user_avatar))
         .route("/api/v1/auth/password", post(change_password))
+        .route("/api/v1/auth/options", get(auth_options))
+        .route("/api/v1/auth/register/request", post(registration_request))
+        .route(
+            "/api/v1/auth/register/complete",
+            post(registration_complete),
+        )
         .route("/api/v1/auth/recovery/request", post(recovery_request))
         .route("/api/v1/auth/recovery/complete", post(recovery_complete))
         .route("/api/v1/auth/sessions", get(list_sessions))
@@ -234,8 +261,6 @@ struct SetupStatus {
 #[derive(Debug, Serialize, ToSchema)]
 struct SetupResponse {
     user_id: String,
-    workspace_id: String,
-    project_id: String,
     session_id: String,
 }
 
@@ -256,8 +281,6 @@ struct SetupBody {
     email: String,
     display_name: String,
     password: String,
-    workspace_name: String,
-    project_name: String,
 }
 
 #[utoipa::path(post, path = "/api/v1/setup/complete", request_body = SetupBody, responses((status = 201, body = SetupResponse), (status = 401, description = "invalid_setup_token", body = ProblemBody, content_type = "application/problem+json"), (status = 409, description = "setup_unavailable", body = ProblemBody, content_type = "application/problem+json"), (status = 422, description = "invalid_password", body = ProblemBody, content_type = "application/problem+json")))]
@@ -302,13 +325,11 @@ async fn setup_complete(
     let result = state
         .repository
         .complete_setup_audited(
-            SetupRequest {
+            RootAccountRequest {
                 token: body.token,
                 email: body.email,
                 display_name: body.display_name,
                 password_hash,
-                workspace_name: body.workspace_name,
-                project_name: body.project_name,
             },
             request_id_value(request_id.as_ref()),
             TimestampMillis::now(),
@@ -340,8 +361,6 @@ async fn setup_complete(
         StatusCode::CREATED,
         Json(SetupResponse {
             user_id: result.user_id.to_string(),
-            workspace_id: result.workspace_id.to_string(),
-            project_id: result.project_id.to_string(),
             session_id: session.id.to_string(),
         }),
     )
@@ -376,8 +395,10 @@ struct AuthUserResponse {
     id: String,
     email: String,
     display_name: String,
-    /// May manage backups, the global audit log and account suspension.
+    /// Can open Admin: the root user or an instance admin.
     installation_admin: bool,
+    /// The root user (the account created at setup), who also chooses the instance admins.
+    root: bool,
     /// The profile picture; absent while the user has none. The URL changes with each upload.
     avatar_url: Option<String>,
     /// The presence and custom status the user set for themselves.
@@ -400,6 +421,11 @@ async fn user_response(
     let installation_admin = state
         .repository
         .is_installation_admin(user.id)
+        .await
+        .map_err(|_| ApiError::internal(instance, request_id))?;
+    let root = state
+        .repository
+        .is_root(user.id)
         .await
         .map_err(|_| ApiError::internal(instance, request_id))?;
     let avatar_updated_at = state
@@ -425,6 +451,7 @@ async fn user_response(
         email: user.email,
         display_name: user.display_name,
         installation_admin,
+        root,
     })
 }
 
@@ -595,6 +622,7 @@ async fn login(
             email: user.email,
             display_name: user.display_name,
             installation_admin: identity.installation_admin,
+            root: state.repository.is_root(user.id).await.unwrap_or(false),
         },
         session_id: session.id.to_string(),
     })
@@ -1174,18 +1202,233 @@ struct RecoveryRequestResponse {
 
 #[utoipa::path(post, path = "/api/v1/auth/recovery/request", request_body = RecoveryRequestBody, responses((status = 202, body = RecoveryRequestResponse)))]
 async fn recovery_request(
-    State(_state): State<AuthState>,
-    _request_id: Option<Extension<RequestId>>,
+    State(state): State<AuthState>,
+    request_id: Option<Extension<RequestId>>,
     ApiJson(body): ApiJson<RecoveryRequestBody>,
-) -> Response {
-    let _ = body.email;
+) -> Result<Response, ApiError> {
+    const LIFETIME_MILLIS: i64 = 30 * 60 * 1_000;
+    let instance = "/api/v1/auth/recovery/request";
+    let Some(mailer) = state.mailer().await else {
+        return Ok(accepted(GENERIC_RECOVERY_DETAIL));
+    };
+    // The answer is the same whether or not the account exists, and the email goes out in the background.
+    let account = state
+        .repository
+        .find_by_email(body.email.trim())
+        .await
+        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?
+        .filter(|account| !account.suspended);
+    if let Some(account) = account {
+        let token = orbit_platform::generate_opaque_token();
+        let expires_at =
+            TimestampMillis::from_millis(TimestampMillis::now().as_millis() + LIFETIME_MILLIS);
+        state
+            .repository
+            .store_recovery_token_audited(
+                account.id,
+                &token,
+                expires_at,
+                request_id_value(request_id.as_ref()),
+            )
+            .await
+            .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?;
+        mailer.send_later(mail::templates::recovery(
+            &account.email,
+            &mailer.link(&format!("/recovery?token={token}")),
+        ));
+    }
+    Ok(accepted(EMAILED_RECOVERY_DETAIL))
+}
+
+fn accepted(detail: &'static str) -> Response {
     (
         StatusCode::ACCEPTED,
-        Json(RecoveryRequestResponse {
-            detail: GENERIC_RECOVERY_DETAIL,
-        }),
+        Json(RecoveryRequestResponse { detail }),
     )
         .into_response()
+}
+
+#[derive(Serialize, ToSchema)]
+struct AuthOptions {
+    /// Anyone can create an account with an emailed link.
+    registration_open: bool,
+    /// A mail server is saved: password reset links and invitations go out by email.
+    email_enabled: bool,
+}
+
+/// What the sign-in pages offer. Public.
+#[utoipa::path(get, path = "/api/v1/auth/options", responses((status = 200, body = AuthOptions)))]
+async fn auth_options(
+    State(state): State<AuthState>,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<AuthOptions>, ApiError> {
+    let email_enabled = state.mailer().await.is_some();
+    let settings = InstanceSettingsRepository::new(state.repository.database().clone())
+        .get()
+        .await
+        .map_err(|_| ApiError::internal("/api/v1/auth/options", request_id.as_ref()))?;
+    Ok(Json(AuthOptions {
+        registration_open: email_enabled && settings.registration_open,
+        email_enabled,
+    }))
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct RegistrationRequestBody {
+    email: String,
+}
+
+/// Emails a one-time sign-up link when registration is open. The answer does not tell whether the address already
+/// has an account (then no email is sent).
+#[utoipa::path(post, path = "/api/v1/auth/register/request", request_body = RegistrationRequestBody, responses((status = 202, body = RecoveryRequestResponse), (status = 403, description = "registration_closed", body = ProblemBody, content_type = "application/problem+json"), (status = 422, description = "invalid_email", body = ProblemBody, content_type = "application/problem+json")))]
+async fn registration_request(
+    State(state): State<AuthState>,
+    request_id: Option<Extension<RequestId>>,
+    ApiJson(body): ApiJson<RegistrationRequestBody>,
+) -> Result<Response, ApiError> {
+    const LIFETIME_MILLIS: i64 = 60 * 60 * 1_000;
+    let instance = "/api/v1/auth/register/request";
+    let email = body.email.trim();
+    if !mail::valid_address(email) {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_email",
+            "Invalid email",
+            "Enter a valid email address.",
+            instance,
+            request_id.as_ref(),
+        ));
+    }
+    let open = InstanceSettingsRepository::new(state.repository.database().clone())
+        .get()
+        .await
+        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?
+        .registration_open;
+    let mailer = state
+        .mailer()
+        .await
+        .filter(|_| open)
+        .ok_or_else(|| registration_closed(instance, request_id.as_ref()))?;
+    let exists = state
+        .repository
+        .find_by_email(email)
+        .await
+        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?
+        .is_some();
+    if !exists {
+        let token = orbit_platform::generate_opaque_token();
+        let now = TimestampMillis::now();
+        state
+            .repository
+            .store_registration_token(
+                email,
+                &token,
+                TimestampMillis::from_millis(now.as_millis() + LIFETIME_MILLIS),
+                now,
+            )
+            .await
+            .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?;
+        mailer.send_later(mail::templates::registration(
+            email,
+            &mailer.link(&format!("/register?token={token}")),
+        ));
+    }
+    Ok(accepted(
+        "We sent a link to that address. Open it to finish creating your account.",
+    ))
+}
+
+fn registration_closed(instance: &str, request_id: Option<&Extension<RequestId>>) -> ApiError {
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        "registration_closed",
+        "Registration closed",
+        "This Orbit does not accept new accounts. Ask an administrator for an invitation.",
+        instance,
+        request_id,
+    )
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct RegistrationCompleteBody {
+    token: String,
+    display_name: String,
+    password: String,
+}
+
+#[utoipa::path(post, path = "/api/v1/auth/register/complete", request_body = RegistrationCompleteBody, responses((status = 201, body = SetupResponse), (status = 400, description = "invalid_registration_token", body = ProblemBody, content_type = "application/problem+json"), (status = 403, description = "registration_closed", body = ProblemBody, content_type = "application/problem+json"), (status = 409, description = "account_exists", body = ProblemBody, content_type = "application/problem+json"), (status = 422, description = "invalid_password", body = ProblemBody, content_type = "application/problem+json")))]
+async fn registration_complete(
+    State(state): State<AuthState>,
+    request_id: Option<Extension<RequestId>>,
+    ApiJson(body): ApiJson<RegistrationCompleteBody>,
+) -> Result<Response, ApiError> {
+    let instance = "/api/v1/auth/register/complete";
+    if body.display_name.trim().is_empty() {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_display_name",
+            "Invalid name",
+            "Enter your name.",
+            instance,
+            request_id.as_ref(),
+        ));
+    }
+    let password_hash = state
+        .passwords
+        .hash(body.password)
+        .await
+        .map_err(|error| password_problem(error, instance, request_id.as_ref()))?;
+    let account = state
+        .repository
+        .register_open_account(
+            &body.token,
+            body.display_name,
+            password_hash,
+            request_id_value(request_id.as_ref()),
+            TimestampMillis::now(),
+        )
+        .await
+        .map_err(|error| match error {
+            RegistrationError::Closed => registration_closed(instance, request_id.as_ref()),
+            RegistrationError::InvalidToken => ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_registration_token",
+                "Invalid registration link",
+                "This link is invalid or expired. Ask for a new one.",
+                instance,
+                request_id.as_ref(),
+            ),
+            RegistrationError::AccountExists => ApiError::new(
+                StatusCode::CONFLICT,
+                "account_exists",
+                "Account exists",
+                "An account with this email already exists. Sign in instead.",
+                instance,
+                request_id.as_ref(),
+            ),
+            RegistrationError::Unavailable(_) => ApiError::internal(instance, request_id.as_ref()),
+        })?;
+    let session = account.session;
+    let mut response = (
+        StatusCode::CREATED,
+        Json(SetupResponse {
+            user_id: account.user_id.to_string(),
+            session_id: session.id.to_string(),
+        }),
+    )
+        .into_response();
+    response.headers_mut().insert(
+        SET_COOKIE,
+        HeaderValue::from_str(&issued_session_cookie(
+            state.cookie_mode,
+            &session.token,
+            session.absolute_expires_at,
+        ))
+        .expect("generated tokens are valid cookie values"),
+    );
+    Ok(response)
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -1826,9 +2069,7 @@ mod tests {
                     "token": "operator-secret",
                     "email": "owner@example.com",
                     "display_name": "Owner",
-                    "password": "correct horse battery",
-                    "workspace_name": "Orbit",
-                    "project_name": "General"
+                    "password": "correct horse battery"
                 }),
             ))
             .await
@@ -1845,6 +2086,21 @@ mod tests {
                 .starts_with("__Host-orbit_session=")
         );
         assert_persistent_max_age(response.headers()[header::SET_COOKIE].to_str().unwrap());
+        // Setup creates only the root account; the web onboarding creates the first workspace.
+        assert_eq!(
+            database
+                .scalar::<i64>("SELECT installation_admin FROM users")
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            database
+                .scalar::<i64>("SELECT COUNT(*) FROM workspaces")
+                .await
+                .unwrap(),
+            0
+        );
     }
 
     #[tokio::test]

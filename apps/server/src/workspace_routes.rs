@@ -22,10 +22,16 @@ use tokio_stream::wrappers::ReceiverStream;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::auth_routes::{CookieMode, issued_session_cookie, request_session};
+use crate::mail::{self, Mailer};
 use crate::repositories::api_tokens::{
     ApiTokenError, ApiTokenRecord, ApiTokenRepository, IssuedApiToken,
 };
-use crate::repositories::identity::{AuthenticatedSession, IdentityRepository, SuspensionError};
+use crate::repositories::identity::{
+    AdminAccountError, AdminUser, AuthenticatedSession, IdentityRepository,
+};
+use crate::repositories::instance_settings::{
+    InstanceSettingsError, InstanceSettingsRepository, PasswordChange, SmtpSecurity, SmtpSettings,
+};
 use crate::repositories::workspaces::{InvitationDelivery, WorkspaceError, WorkspaceRepository};
 
 #[derive(Clone)]
@@ -38,6 +44,8 @@ pub struct WorkspaceState {
     passwords: PasswordExecutor,
     registration_throttler: Arc<Mutex<LoginThrottler>>,
     backups: Option<BackupService>,
+    /// Sends invitation emails and keeps the app key for the SMTP password; `None` sends nothing.
+    mailer: Option<Mailer>,
 }
 
 impl WorkspaceState {
@@ -57,6 +65,7 @@ impl WorkspaceState {
                 .expect("password executor concurrency is non-zero"),
             registration_throttler: Arc::new(Mutex::new(LoginThrottler::new())),
             backups: None,
+            mailer: None,
         }
     }
 
@@ -78,6 +87,21 @@ impl WorkspaceState {
                 .expect("password executor concurrency is non-zero"),
             registration_throttler: Arc::new(Mutex::new(LoginThrottler::new())),
             backups: Some(backups),
+            mailer: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_mailer(mut self, mailer: Mailer) -> Self {
+        self.mailer = Some(mailer);
+        self
+    }
+
+    /// The mailer when a mail server is saved.
+    async fn enabled_mailer(&self) -> Option<&Mailer> {
+        match &self.mailer {
+            Some(mailer) if mailer.enabled().await.unwrap_or(false) => Some(mailer),
+            _ => None,
         }
     }
 }
@@ -144,9 +168,25 @@ pub fn workspace_router(state: WorkspaceState) -> Router {
             "/api/v1/workspaces/{workspace_id}/api-tokens/{token_id}",
             delete(revoke_api_token),
         )
+        .route("/api/v1/admin/settings", get(get_instance_settings))
+        .route("/api/v1/admin/settings/registration", put(set_registration))
+        .route(
+            "/api/v1/admin/settings/smtp",
+            put(save_smtp).delete(remove_smtp),
+        )
+        .route("/api/v1/admin/settings/smtp/test", post(send_test_email))
+        .route("/api/v1/admin/users", get(list_admin_users))
         .route(
             "/api/v1/admin/users/{user_id}/suspension",
             post(set_account_suspension),
+        )
+        .route(
+            "/api/v1/admin/users/{user_id}/recovery-link",
+            post(create_recovery_link),
+        )
+        .route(
+            "/api/v1/admin/users/{user_id}/admin",
+            put(set_instance_admin),
         )
         .route("/api/v1/admin/audit", get(list_global_audit))
         .route("/api/v1/admin/audit/export", get(export_global_audit))
@@ -737,6 +777,15 @@ async fn create_invitation(
         DeliveryBody::Manual => InvitationDelivery::Manual,
         DeliveryBody::Smtp => InvitationDelivery::Smtp,
     };
+    let mailer = match delivery {
+        InvitationDelivery::Manual => None,
+        InvitationDelivery::Smtp => Some(
+            state
+                .enabled_mailer()
+                .await
+                .ok_or_else(|| email_not_configured(&instance, request_id.as_ref()))?,
+        ),
+    };
     let issued = state
         .workspaces
         .invite(
@@ -750,12 +799,42 @@ async fn create_invitation(
         )
         .await
         .map_err(|error| workspace_problem(error, &instance, request_id.as_ref()))?;
-    let url = (delivery == InvitationDelivery::Manual).then(|| {
-        format!(
-            "{}/accept-invitation?token={}",
-            state.public_origin, issued.token
-        )
-    });
+    let link = format!(
+        "{}/accept-invitation?token={}",
+        state.public_origin, issued.token
+    );
+    if let Some(mailer) = mailer {
+        let now = TimestampMillis::now();
+        let workspace_name = state
+            .workspaces
+            .preview_invitation(&issued.token, now)
+            .await
+            .map(|preview| preview.workspace_name)
+            .unwrap_or_else(|_| "Orbit".to_owned());
+        let sent = mailer
+            .send(mail::templates::invitation(
+                &issued.invitation.email,
+                &session.user.display_name,
+                &workspace_name,
+                &link,
+            ))
+            .await;
+        if let Err(error) = sent {
+            // Nobody can use an invitation whose link never arrived: take it back, so the admin can retry.
+            let _ = state
+                .workspaces
+                .revoke_invitation(
+                    workspace_id,
+                    issued.invitation.id,
+                    session.user.id,
+                    request_id_value(request_id.as_ref()),
+                    now,
+                )
+                .await;
+            return Err(email_failed(&error, &instance, request_id.as_ref()));
+        }
+    }
+    let url = (delivery == InvitationDelivery::Manual).then_some(link);
     Ok((
         StatusCode::CREATED,
         Json(InvitationResponse {
@@ -1131,7 +1210,398 @@ async fn set_account_suspension(
             TimestampMillis::now(),
         )
         .await
-        .map_err(|error| suspension_problem(error, &instance, request_id.as_ref()))?;
+        .map_err(|error| admin_account_problem(error, &instance, request_id.as_ref()))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize, IntoParams, ToSchema)]
+#[into_params(parameter_in = Query)]
+#[serde(deny_unknown_fields)]
+struct AdminUserQuery {
+    /// Part of the display name or email, ignoring case.
+    q: Option<String>,
+    cursor: Option<String>,
+    #[serde(default = "default_limit")]
+    #[param(required = false)]
+    limit: usize,
+}
+
+/// Accounts on this instance in cursor pages, for the Admin area.
+#[utoipa::path(get, path = "/api/v1/admin/users", params(AdminUserQuery), responses((status = 200, body = Page<AdminUser>)))]
+async fn list_admin_users(
+    State(state): State<WorkspaceState>,
+    ApiQuery(query): ApiQuery<AdminUserQuery>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<Page<AdminUser>>, ApiError> {
+    let instance = "/api/v1/admin/users";
+    let session = authenticate(&state, &headers, instance, request_id.as_ref()).await?;
+    require_installation_admin(&state, session.user.id, instance, request_id.as_ref()).await?;
+    let cursor = optional_id(query.cursor, instance, request_id.as_ref())?;
+    let (items, next_cursor) = state
+        .identity
+        .list_users_for_admin(query.q.as_deref(), cursor, query.limit)
+        .await
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                "Internal server error",
+                "An unexpected error occurred. Use the request ID when contacting support.",
+                instance,
+                request_id.as_ref(),
+            )
+        })?;
+    Ok(Json(Page { items, next_cursor }))
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct InstanceAdminBody {
+    admin: bool,
+}
+
+/// Makes an account an instance admin, or takes that back. Root only.
+#[utoipa::path(put, path = "/api/v1/admin/users/{user_id}/admin", params(("user_id" = String, Path)), request_body = InstanceAdminBody, responses((status = 204)))]
+async fn set_instance_admin(
+    State(state): State<WorkspaceState>,
+    Path(user_id): Path<String>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+    ApiJson(body): ApiJson<InstanceAdminBody>,
+) -> Result<StatusCode, ApiError> {
+    let instance = format!("/api/v1/admin/users/{user_id}/admin");
+    let session = authenticate(&state, &headers, &instance, request_id.as_ref()).await?;
+    let user_id = parse_id(&user_id, &instance, request_id.as_ref())?;
+    state
+        .identity
+        .set_instance_admin(
+            session.user.id,
+            user_id,
+            body.admin,
+            request_id_value(request_id.as_ref()),
+            TimestampMillis::now(),
+        )
+        .await
+        .map_err(|error| admin_account_problem(error, &instance, request_id.as_ref()))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Serialize, ToSchema)]
+struct RecoveryLink {
+    url: String,
+    #[schema(value_type = String, format = DateTime)]
+    expires_at: TimestampMillis,
+}
+
+/// A one-time password recovery link for another account. It lasts 30 minutes, the same as `orbit recovery-link`.
+#[utoipa::path(post, path = "/api/v1/admin/users/{user_id}/recovery-link", params(("user_id" = String, Path)), responses((status = 201, body = RecoveryLink)))]
+async fn create_recovery_link(
+    State(state): State<WorkspaceState>,
+    Path(user_id): Path<String>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<(StatusCode, Json<RecoveryLink>), ApiError> {
+    const LIFETIME_MILLIS: i64 = 30 * 60 * 1_000;
+    let instance = format!("/api/v1/admin/users/{user_id}/recovery-link");
+    let session = authenticate(&state, &headers, &instance, request_id.as_ref()).await?;
+    let user_id = parse_id(&user_id, &instance, request_id.as_ref())?;
+    let token = orbit_platform::generate_opaque_token();
+    let expires_at =
+        TimestampMillis::from_millis(TimestampMillis::now().as_millis() + LIFETIME_MILLIS);
+    state
+        .identity
+        .issue_recovery_token_as_admin(
+            session.user.id,
+            user_id,
+            &token,
+            expires_at,
+            request_id_value(request_id.as_ref()),
+        )
+        .await
+        .map_err(|error| admin_account_problem(error, &instance, request_id.as_ref()))?;
+    Ok((
+        StatusCode::CREATED,
+        Json(RecoveryLink {
+            url: format!("{}/recovery?token={token}", state.public_origin),
+            expires_at,
+        }),
+    ))
+}
+
+fn email_not_configured(instance: &str, request_id: Option<&Extension<RequestId>>) -> ApiError {
+    ApiError::new(
+        StatusCode::CONFLICT,
+        "email_not_configured",
+        "Email not configured",
+        "Save a mail server in Admin → Settings first.",
+        instance,
+        request_id,
+    )
+}
+
+fn email_failed(
+    error: &mail::MailError,
+    instance: &str,
+    request_id: Option<&Extension<RequestId>>,
+) -> ApiError {
+    ApiError::new(
+        StatusCode::BAD_GATEWAY,
+        "email_failed",
+        "Email failed",
+        format!("The email could not be sent: {error}"),
+        instance,
+        request_id,
+    )
+}
+
+fn internal(instance: &str, request_id: Option<&Extension<RequestId>>) -> ApiError {
+    ApiError::new(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "internal_error",
+        "Internal server error",
+        "An unexpected error occurred. Use the request ID when contacting support.",
+        instance,
+        request_id,
+    )
+}
+
+#[derive(Serialize, ToSchema)]
+struct SmtpView {
+    host: String,
+    port: u16,
+    security: SmtpSecurity,
+    username: Option<String>,
+    /// A password is saved. The password itself is never returned.
+    password_set: bool,
+    from_address: String,
+    from_name: Option<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+struct InstanceSettingsView {
+    registration_open: bool,
+    /// `null` until a mail server is saved.
+    smtp: Option<SmtpView>,
+}
+
+async fn settings_view(
+    state: &WorkspaceState,
+    instance: &str,
+    request_id: Option<&Extension<RequestId>>,
+) -> Result<Json<InstanceSettingsView>, ApiError> {
+    let settings = InstanceSettingsRepository::new(state.identity.database().clone())
+        .get()
+        .await
+        .map_err(|_| internal(instance, request_id))?;
+    Ok(Json(InstanceSettingsView {
+        registration_open: settings.registration_open,
+        smtp: settings.smtp.map(|smtp| SmtpView {
+            host: smtp.host,
+            port: smtp.port,
+            security: smtp.security,
+            username: smtp.username,
+            password_set: smtp.password.is_some(),
+            from_address: smtp.from_address,
+            from_name: smtp.from_name,
+        }),
+    }))
+}
+
+/// Root only.
+async fn require_root(
+    state: &WorkspaceState,
+    headers: &HeaderMap,
+    instance: &str,
+    request_id: Option<&Extension<RequestId>>,
+) -> Result<AuthenticatedSession, ApiError> {
+    let session = authenticate(state, headers, instance, request_id).await?;
+    require_installation_admin(state, session.user.id, instance, request_id).await?;
+    Ok(session)
+}
+
+#[utoipa::path(get, path = "/api/v1/admin/settings", responses((status = 200, body = InstanceSettingsView)))]
+async fn get_instance_settings(
+    State(state): State<WorkspaceState>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<InstanceSettingsView>, ApiError> {
+    let instance = "/api/v1/admin/settings";
+    require_root(&state, &headers, instance, request_id.as_ref()).await?;
+    settings_view(&state, instance, request_id.as_ref()).await
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct RegistrationBody {
+    open: bool,
+}
+
+/// Opens or closes registration. Opening needs a saved mail server (409 `email_not_configured`).
+#[utoipa::path(put, path = "/api/v1/admin/settings/registration", request_body = RegistrationBody, responses((status = 200, body = InstanceSettingsView)))]
+async fn set_registration(
+    State(state): State<WorkspaceState>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+    ApiJson(body): ApiJson<RegistrationBody>,
+) -> Result<Json<InstanceSettingsView>, ApiError> {
+    let instance = "/api/v1/admin/settings/registration";
+    let session = require_root(&state, &headers, instance, request_id.as_ref()).await?;
+    InstanceSettingsRepository::new(state.identity.database().clone())
+        .set_registration_open(
+            session.user.id,
+            body.open,
+            request_id_value(request_id.as_ref()),
+            TimestampMillis::now(),
+        )
+        .await
+        .map_err(|error| match error {
+            InstanceSettingsError::EmailNotConfigured => {
+                email_not_configured(instance, request_id.as_ref())
+            }
+            InstanceSettingsError::Unavailable(_) => internal(instance, request_id.as_ref()),
+        })?;
+    settings_view(&state, instance, request_id.as_ref()).await
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct SmtpBody {
+    host: String,
+    port: u16,
+    security: SmtpSecurity,
+    username: Option<String>,
+    /// Absent: keep the saved password. Empty: remove it. Otherwise: the new password.
+    password: Option<String>,
+    from_address: String,
+    from_name: Option<String>,
+}
+
+#[utoipa::path(put, path = "/api/v1/admin/settings/smtp", request_body = SmtpBody, responses((status = 200, body = InstanceSettingsView)))]
+async fn save_smtp(
+    State(state): State<WorkspaceState>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+    ApiJson(body): ApiJson<SmtpBody>,
+) -> Result<Json<InstanceSettingsView>, ApiError> {
+    let instance = "/api/v1/admin/settings/smtp";
+    let session = require_root(&state, &headers, instance, request_id.as_ref()).await?;
+    let invalid = |field: &str, detail: &str| {
+        ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_smtp_settings",
+            "Invalid mail settings",
+            format!("{field}: {detail}"),
+            instance,
+            request_id.as_ref(),
+        )
+    };
+    let host = body.host.trim().to_owned();
+    if host.is_empty() || host.len() > 253 || host.contains(char::is_whitespace) {
+        return Err(invalid("host", "enter the mail server's host name."));
+    }
+    if body.port == 0 {
+        return Err(invalid("port", "enter a port from 1 to 65535."));
+    }
+    let from_address = body.from_address.trim().to_owned();
+    if !mail::valid_address(&from_address) {
+        return Err(invalid("from_address", "enter one email address."));
+    }
+    let optional = |value: Option<String>| {
+        value
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    };
+    let username = optional(body.username);
+    let from_name = optional(body.from_name);
+    if from_name
+        .as_ref()
+        .is_some_and(|name| name.chars().count() > 120)
+    {
+        return Err(invalid("from_name", "use at most 120 characters."));
+    }
+    let password = match body.password {
+        None => PasswordChange::Keep,
+        Some(password) if password.is_empty() => PasswordChange::Clear,
+        Some(password) => {
+            let key = state
+                .mailer
+                .as_ref()
+                .and_then(Mailer::app_key)
+                .ok_or_else(|| {
+                    ApiError::new(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "app_key_missing",
+                        "App key missing",
+                        "The server has no app key to encrypt the password with.",
+                        instance,
+                        request_id.as_ref(),
+                    )
+                })?;
+            PasswordChange::Set(
+                crate::secret_box::encrypt_secret(key, &password)
+                    .map_err(|()| internal(instance, request_id.as_ref()))?,
+            )
+        }
+    };
+    InstanceSettingsRepository::new(state.identity.database().clone())
+        .save_smtp(
+            session.user.id,
+            SmtpSettings {
+                host,
+                port: body.port,
+                security: body.security,
+                username,
+                password: None,
+                from_address,
+                from_name,
+            },
+            password,
+            request_id_value(request_id.as_ref()),
+            TimestampMillis::now(),
+        )
+        .await
+        .map_err(|_| internal(instance, request_id.as_ref()))?;
+    settings_view(&state, instance, request_id.as_ref()).await
+}
+
+/// Removes the mail server. Registration closes with it.
+#[utoipa::path(delete, path = "/api/v1/admin/settings/smtp", responses((status = 200, body = InstanceSettingsView)))]
+async fn remove_smtp(
+    State(state): State<WorkspaceState>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<InstanceSettingsView>, ApiError> {
+    let instance = "/api/v1/admin/settings/smtp";
+    let session = require_root(&state, &headers, instance, request_id.as_ref()).await?;
+    InstanceSettingsRepository::new(state.identity.database().clone())
+        .clear_smtp(
+            session.user.id,
+            request_id_value(request_id.as_ref()),
+            TimestampMillis::now(),
+        )
+        .await
+        .map_err(|_| internal(instance, request_id.as_ref()))?;
+    settings_view(&state, instance, request_id.as_ref()).await
+}
+
+/// Sends a test email to the root user's own address with the saved settings and waits for the mail server.
+#[utoipa::path(post, path = "/api/v1/admin/settings/smtp/test", responses((status = 204)))]
+async fn send_test_email(
+    State(state): State<WorkspaceState>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<StatusCode, ApiError> {
+    let instance = "/api/v1/admin/settings/smtp/test";
+    let session = require_root(&state, &headers, instance, request_id.as_ref()).await?;
+    let mailer = state
+        .enabled_mailer()
+        .await
+        .ok_or_else(|| email_not_configured(instance, request_id.as_ref()))?;
+    mailer
+        .send(mail::templates::test(&session.user.email))
+        .await
+        .map_err(|error| email_failed(&error, instance, request_id.as_ref()))?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1777,21 +2247,21 @@ fn password_problem(
     )
 }
 
-fn suspension_problem(
-    error: SuspensionError,
+fn admin_account_problem(
+    error: AdminAccountError,
     instance: &str,
     request_id: Option<&Extension<RequestId>>,
 ) -> ApiError {
     match error {
-        SuspensionError::Forbidden => ApiError::new(
+        AdminAccountError::Forbidden => ApiError::new(
             StatusCode::FORBIDDEN,
             "installation_admin_required",
             "Installation administrator required",
-            "Only an installation administrator may suspend global accounts.",
+            "Only an instance admin may manage accounts.",
             instance,
             request_id,
         ),
-        SuspensionError::NotFound => ApiError::new(
+        AdminAccountError::NotFound => ApiError::new(
             StatusCode::NOT_FOUND,
             "user_not_found",
             "User not found",
@@ -1799,7 +2269,39 @@ fn suspension_problem(
             instance,
             request_id,
         ),
-        SuspensionError::Unavailable(_) => ApiError::new(
+        AdminAccountError::RootAccount => ApiError::new(
+            StatusCode::CONFLICT,
+            "root_account",
+            "Root account",
+            "Nobody can suspend or reset the root account, and only the root user can change other admins.",
+            instance,
+            request_id,
+        ),
+        AdminAccountError::RootRequired => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "root_required",
+            "Root user required",
+            "Only the root user can choose instance admins.",
+            instance,
+            request_id,
+        ),
+        AdminAccountError::OwnAccount => ApiError::new(
+            StatusCode::CONFLICT,
+            "own_account",
+            "Own account",
+            "Change your own password in your profile instead.",
+            instance,
+            request_id,
+        ),
+        AdminAccountError::Suspended => ApiError::new(
+            StatusCode::CONFLICT,
+            "account_suspended",
+            "Account suspended",
+            "Reinstate the account before you create a recovery link.",
+            instance,
+            request_id,
+        ),
+        AdminAccountError::Unavailable(_) => ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal_error",
             "Internal server error",
@@ -1826,7 +2328,8 @@ pub(crate) struct ProblemBody {
     title: &'static str,
     status: u16,
     code: &'static str,
-    detail: &'static str,
+    #[schema(value_type = String)]
+    detail: std::borrow::Cow<'static, str>,
     instance: String,
     request_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1851,7 +2354,7 @@ impl ApiError {
         status: StatusCode,
         code: &'static str,
         title: &'static str,
-        detail: &'static str,
+        detail: impl Into<std::borrow::Cow<'static, str>>,
         instance: impl Into<String>,
         request_id: Option<&Extension<RequestId>>,
     ) -> Self {
@@ -1862,7 +2365,7 @@ impl ApiError {
                 title,
                 status: status.as_u16(),
                 code,
-                detail,
+                detail: detail.into(),
                 instance: instance.into(),
                 request_id: request_id
                     .map(|Extension(value)| value.as_str().to_owned())
@@ -1886,7 +2389,7 @@ impl ApiError {
                 title: "Conflict",
                 status: StatusCode::CONFLICT.as_u16(),
                 code: "conflict",
-                detail: "The resource changed after it was read. Refresh and retry.",
+                detail: "The resource changed after it was read. Refresh and retry.".into(),
                 instance,
                 request_id: request_id
                     .map(|Extension(value)| value.as_str().to_owned())

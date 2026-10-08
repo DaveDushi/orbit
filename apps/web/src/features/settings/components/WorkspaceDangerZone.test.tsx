@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, within } from '@testing-library/react'
+import { fireEvent, render, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, useLocation } from 'react-router'
 import { WorkspaceProvider } from '@/features/workspaces/WorkspaceProvider'
@@ -82,7 +82,7 @@ test('failed deletion keeps the dialog open and permits retry', async () => {
   expect((dialog.getByRole('button', { name: 'Delete workspace' }) as HTMLButtonElement).disabled).toBe(false)
 })
 
-test('deleting the last workspace warns about losing access and shows the no-access screen', async () => {
+test('deleting the last workspace warns about losing access and opens the workspace onboarding', async () => {
   globalThis.fetch = (async () => new Response(null, { status: 204 })) as unknown as typeof fetch
   const { view } = setup('owner', true)
   fireEvent.click(view.getByRole('button', { name: 'Delete workspace' }))
@@ -90,7 +90,7 @@ test('deleting the last workspace warns about losing access and shows the no-acc
   expect(dialog.getByText(/last workspace/i)).toBeTruthy()
   await userEvent.type(dialog.getByLabelText('Confirm workspace name'), 'Alpha')
   await userEvent.click(dialog.getByRole('button', { name: 'Delete workspace' }))
-  expect(await view.findByRole('heading', { name: 'No workspace access' })).toBeTruthy()
+  await waitFor(() => expect(view.getByTestId('location').textContent).toBe('/onboarding'))
 })
 
 test('pending deletion blocks duplicate requests and dialog dismissal', async () => {

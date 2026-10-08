@@ -1,10 +1,11 @@
-import { NavLink, Outlet } from 'react-router'
-import { Driver, Key, Keyboard, Link2, Notification as Bell, Tag, Setting2 as Settings, ShieldTick as ShieldCheck, SmileCircle, Sticker, Danger as TriangleAlert, Trash as Trash2, User, People as Users } from 'reicon-react'
+import { Navigate, NavLink, Outlet } from 'react-router'
+import { ArchiveBox, ClipboardText, SecurityUser, Driver, Key, Keyboard, Link2, Notification as Bell, Tag, Setting2 as Settings, ShieldTick as ShieldCheck, SmileCircle, Sticker, Danger as TriangleAlert, Trash as Trash2, User, People as Users } from 'reicon-react'
 import { cn } from 'cn'
 import { buttonVariants } from '@/components/ui/button'
 import { Pane, PaneHeader, PaneTitle } from '@/components/common/Pane'
 import type { Permission } from '@/api/generated/types.gen'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
+import { useIsInstallationAdmin } from '@/features/workspaces/permissions'
 
 interface NavItem {
   to: string
@@ -54,6 +55,19 @@ const ACCOUNT_SECTIONS: { label: string; items: NavItem[] }[] = [
   },
 ]
 
+/** What belongs to the whole Orbit instance. Only the root user (the account created at setup) sees it. */
+const ADMIN_SECTIONS: { label: string; items: NavItem[] }[] = [
+  {
+    label: 'Instance',
+    items: [
+      { to: '/admin', label: 'General', icon: Settings, end: true },
+      { to: '/admin/users', label: 'Users', icon: Users },
+      { to: '/admin/audit', label: 'Audit log', icon: ClipboardText },
+      { to: '/admin/backups', label: 'Backups', icon: ArchiveBox },
+    ],
+  },
+]
+
 /** The workspace's settings. */
 export function SettingsLayout() {
   const { workspace } = useWorkspace()
@@ -66,6 +80,12 @@ export function SettingsLayout() {
 /** The signed-in person's own settings. */
 export function AccountLayout() {
   return <SettingsShell title="Account settings" icon={User} sections={ACCOUNT_SECTIONS} />
+}
+
+/** The root user's Admin area. The server refuses every admin request from other accounts; this only hides the pages. */
+export function AdminLayout() {
+  if (!useIsInstallationAdmin()) return <Navigate to="/tasks" replace />
+  return <SettingsShell title="Admin" icon={SecurityUser} sections={ADMIN_SECTIONS} />
 }
 
 /** Coolify `x-settings.layout`: sticky sub-navigation (210px) + content column. */
