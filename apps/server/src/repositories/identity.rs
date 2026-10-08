@@ -189,6 +189,17 @@ pub enum RegistrationError {
     Unavailable(#[from] sqlx::Error),
 }
 
+/// Why `orbit root set` could not choose the root user.
+#[derive(Debug, Error)]
+pub enum RootChangeError {
+    #[error("setup is not complete yet; the account created at setup becomes the root user")]
+    SetupIncomplete,
+    #[error("no account has this email")]
+    NotFound,
+    #[error("identity repository is unavailable")]
+    Unavailable(#[from] sqlx::Error),
+}
+
 /// Why the root user's action on another account was refused.
 #[derive(Debug, Error)]
 pub enum AdminAccountError {
@@ -971,6 +982,74 @@ impl IdentityRepository {
         .await?;
         transaction.commit().await?;
         Ok(())
+    }
+
+    /// The root user's email, if setup is done and a root user is recorded.
+    pub async fn root_email(&self) -> Result<Option<String>, IdentityError> {
+        Ok(sqlx::query_scalar::<_, String>(
+            "SELECT users.email FROM installation_state JOIN users ON users.id = installation_state.root_user_id \
+             WHERE installation_state.id = 1",
+        )
+        .fetch_optional(self.database.pool())
+        .await?)
+    }
+
+    /// The server operator's way to choose the root user (`orbit root set`), for when nobody can do it in the web app:
+    /// the root account was suspended, or the wrong account became root. Makes the account root, gives it Admin
+    /// access and reinstates it. The previous root user stays an instance admin. Returns the previous root's email.
+    pub async fn set_root_as_operator(
+        &self,
+        email: &str,
+        now: TimestampMillis,
+    ) -> Result<Option<String>, RootChangeError> {
+        let mut transaction = self.database.immediate_transaction().await?;
+        let initialized = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM installation_state WHERE id = 1 AND initialized = 1",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        if initialized == 0 {
+            return Err(RootChangeError::SetupIncomplete);
+        }
+        let target = sqlx::query("SELECT id, suspended_at FROM users WHERE normalized_email = ?")
+            .bind(normalize_email(email))
+            .fetch_optional(&mut *transaction)
+            .await?
+            .ok_or(RootChangeError::NotFound)?;
+        let target_id: String = target.get("id");
+        let reinstated = target.get::<Option<i64>, _>("suspended_at").is_some();
+        let previous = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT users.email FROM installation_state LEFT JOIN users ON users.id = installation_state.root_user_id \
+             WHERE installation_state.id = 1",
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        sqlx::query(
+            "UPDATE users SET installation_admin = 1, suspended_at = NULL, version = version + 1, updated_at = ? \
+             WHERE id = ?",
+        )
+        .bind(now.as_millis())
+        .bind(&target_id)
+        .execute(&mut *transaction)
+        .await?;
+        sqlx::query("UPDATE installation_state SET root_user_id = ? WHERE id = 1")
+            .bind(&target_id)
+            .execute(&mut *transaction)
+            .await?;
+        audit::record_global(
+            &mut transaction,
+            None,
+            "instance.root_changed",
+            AuditOutcome::Success,
+            "user",
+            target_id.parse().ok(),
+            "operator-cli",
+            serde_json::json!({"previous_root": previous, "reinstated": reinstated}),
+            now,
+        )
+        .await?;
+        transaction.commit().await?;
+        Ok(previous)
     }
 
     /// Whether the account is the root user.

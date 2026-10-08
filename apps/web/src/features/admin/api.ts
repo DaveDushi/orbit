@@ -1,8 +1,8 @@
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '@/api/client'
 import { queryKeys } from '@/api/queryKeys'
-import { createBackup, createRecoveryLink, getInstanceSettings, listAdminUsers, listBackups, listGlobalAudit, removeSmtp, setInstanceAdmin, saveSmtp, sendTestEmail, setAccountSuspension, setRegistration } from '@/api/generated/sdk.gen'
-import type { InstanceSettingsView, SmtpBody } from '@/api/generated/types.gen'
+import { createBackup, createRecoveryLink, deleteBackup, getInstanceSettings, listAdminUsers, listBackups, listGlobalAudit, removeS3, removeSmtp, saveS3, saveStorageOptions, setInstanceAdmin, startImageCompression, saveSmtp, sendTestEmail, setAccountSuspension, setRegistration } from '@/api/generated/sdk.gen'
+import type { InstanceSettingsView, S3Body, SmtpBody, StorageOptionsBody } from '@/api/generated/types.gen'
 
 /** Accounts on this instance in cursor pages; `search` matches part of the name or email. Admins only. */
 export function useAdminUsers(search: string) {
@@ -92,12 +92,28 @@ export function useCreateBackup() {
   })
 }
 
+export function useDeleteBackup() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (backupId: string) => {
+      await deleteBackup({ client: apiClient, throwOnError: true, path: { backup_id: backupId } })
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.backups }),
+  })
+}
+
 export function useInstanceSettings() {
   return useQuery({
     queryKey: queryKeys.adminSettings,
     queryFn: async () => {
       const { data } = await getInstanceSettings({ client: apiClient, throwOnError: true })
       return data
+    },
+    // Shows the progress while attachment files move between this server and S3, or images are compressed.
+    refetchInterval: (query) => {
+      const storage = query.state.data?.storage
+      if (storage?.image_compression?.running) return 2000
+      return storage?.files_to_move ? 5000 : false
     },
   })
 }
@@ -140,5 +156,33 @@ export function useSendTestEmail() {
     mutationFn: async () => {
       await sendTestEmail({ client: apiClient, throwOnError: true })
     },
+  })
+}
+
+export function useSaveS3() {
+  return useSettingsWrite(async (body: S3Body) => {
+    const { data } = await saveS3({ client: apiClient, throwOnError: true, body })
+    return data
+  })
+}
+
+export function useRemoveS3() {
+  return useSettingsWrite(async () => {
+    const { data } = await removeS3({ client: apiClient, throwOnError: true })
+    return data
+  })
+}
+
+export function useSaveStorageOptions() {
+  return useSettingsWrite(async (body: StorageOptionsBody) => {
+    const { data } = await saveStorageOptions({ client: apiClient, throwOnError: true, body })
+    return data
+  })
+}
+
+export function useStartImageCompression() {
+  return useSettingsWrite(async () => {
+    const { data } = await startImageCompression({ client: apiClient, throwOnError: true })
+    return data
   })
 }

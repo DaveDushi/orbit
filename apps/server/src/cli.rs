@@ -7,10 +7,12 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
+use std::sync::Arc;
+
 use orbit_platform::{
-    BackupService, Config, ConfigOverride, ConfigSources, Database, DatabaseConfig, DatabaseError,
-    EnvironmentMode, MigrationRunner, TimestampMillis, lock_database_ownership,
-    run_guarded_migrations,
+    AttachmentMutationCoordinator, BackupService, Config, ConfigOverride, ConfigSources, Database,
+    DatabaseConfig, DatabaseError, EnvironmentMode, LocalBlobStore, MigrationRunner,
+    TimestampMillis, UploadLimits, UploadService, lock_database_ownership, run_guarded_migrations,
 };
 use orbit_server::app::App;
 use orbit_server::repositories::identity::{IdentityRepository, SetupRequest};
@@ -59,6 +61,11 @@ pub enum Command {
         #[command(subcommand)]
         command: BackupCommand,
     },
+    /// Stored attachment files.
+    Attachments {
+        #[command(subcommand)]
+        command: AttachmentsCommand,
+    },
     DbReset {
         #[arg(long)]
         yes: bool,
@@ -69,6 +76,11 @@ pub enum Command {
         email: String,
         #[arg(long)]
         origin: Option<String>,
+    },
+    /// The root user: the account that manages Orbit and chooses the instance admins.
+    Root {
+        #[command(subcommand)]
+        command: RootCommand,
     },
     Openapi {
         #[arg(long)]
@@ -115,6 +127,29 @@ pub enum BackupCommand {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum AttachmentsCommand {
+    /// Makes large images in the local attachment directory smaller: at most 2560 px, re-encoded as WebP.
+    /// Runs while Orbit is stopped; while it runs, use Admin → Storage → Compress images (also for S3 files).
+    /// The originals are replaced: make a backup first if you want to keep them.
+    Compress {
+        /// Only reports what would change.
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RootCommand {
+    /// Prints the root user's email.
+    Show,
+    /// Makes this account the root user and reinstates it if suspended. The previous root stays an instance admin.
+    Set {
+        #[arg(long)]
+        email: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 pub enum SetupTokenCommand {
     Init {
         #[arg(long)]
@@ -142,11 +177,13 @@ pub async fn run(cli: Cli) -> Result<String, CliError> {
         Command::Config { command } => config_command(&cli, command),
         Command::Migrate { command } => migrate(&cli, command).await,
         Command::Backup { command } => backup(&cli, command).await,
+        Command::Attachments { command } => attachments(&cli, command).await,
         Command::DbReset { yes } => reset(&cli, *yes).await,
         Command::Seed => seed(&cli).await,
         Command::RecoveryLink { email, origin } => {
             recovery_link(&cli, email, origin.as_deref()).await
         }
+        Command::Root { command } => root(&cli, command).await,
         Command::Openapi { output } => write_openapi(output),
         Command::SetupToken { command } => setup_token(&cli, command).await,
     }
@@ -336,7 +373,9 @@ async fn migrate(cli: &Cli, command: &MigrateCommand) -> Result<String, CliError
 
 async fn backup(cli: &Cli, command: &BackupCommand) -> Result<String, CliError> {
     let config = effective_config(cli)?;
-    let service = BackupService::new(&config.data.backups, &config.data.attachments);
+    let storage = orbit_server::object_storage::from_env().map_err(CliError::Operation)?;
+    let service = BackupService::new(&config.data.backups, &config.data.attachments)
+        .with_object_storage(storage);
     match command {
         BackupCommand::Create => {
             let database = open_database(&config.data.database).await?;
@@ -354,8 +393,15 @@ async fn backup(cli: &Cli, command: &BackupCommand) -> Result<String, CliError> 
                 .into_iter()
                 .map(|snapshot| {
                     format!(
-                        "{}\t{}\t{:?}",
-                        snapshot.id, snapshot.manifest.created_at, snapshot.manifest.kind
+                        "{}\t{}\t{:?}\t{}",
+                        snapshot.id,
+                        snapshot.manifest.created_at,
+                        snapshot.manifest.kind,
+                        if snapshot.in_object_storage {
+                            "s3"
+                        } else {
+                            "local"
+                        }
                     )
                 })
                 .collect::<Vec<_>>()
@@ -372,6 +418,35 @@ async fn backup(cli: &Cli, command: &BackupCommand) -> Result<String, CliError> 
                 .map_err(operation)?;
             Ok(format!("backup {id} restored"))
         }
+    }
+}
+
+async fn attachments(cli: &Cli, command: &AttachmentsCommand) -> Result<String, CliError> {
+    let config = effective_config(cli)?;
+    let database = Database::open(&DatabaseConfig::new(&config.data.database))
+        .await
+        .map_err(|error| match error {
+            DatabaseError::AlreadyOwned { .. } => CliError::Operation(
+                "Orbit is running: use Admin → Storage → Compress images instead, or stop it first"
+                    .to_owned(),
+            ),
+            error => operation(error),
+        })?;
+    migrate_implicitly(&config, &database).await?;
+    // Offline, only the local attachment directory is readable; blobs in S3 are skipped.
+    let uploads = UploadService::new(
+        database.clone(),
+        Arc::new(LocalBlobStore::new(&config.data.attachments)),
+        AttachmentMutationCoordinator::default(),
+        UploadLimits::default(),
+    );
+    match command {
+        AttachmentsCommand::Compress { dry_run } => Ok(
+            orbit_server::image_compression::compress_images(&database, &uploads, *dry_run, |_| {})
+                .await
+                .map_err(operation)?
+                .report(*dry_run),
+        ),
     }
 }
 
@@ -423,6 +498,33 @@ async fn seed(cli: &Cli) -> Result<String, CliError> {
     let database = open_database(&config.data.database).await?;
     migrate_implicitly(&config, &database).await?;
     install_seed_data(database).await
+}
+
+async fn root(cli: &Cli, command: &RootCommand) -> Result<String, CliError> {
+    let config = effective_config(cli)?;
+    let database = open_database(&config.data.database).await?;
+    migrate_implicitly(&config, &database).await?;
+    let repository = IdentityRepository::new(database);
+    match command {
+        RootCommand::Show => Ok(repository
+            .root_email()
+            .await
+            .map_err(operation)?
+            .unwrap_or_else(|| "no root user yet: complete setup first".to_owned())),
+        RootCommand::Set { email } => {
+            let previous = repository
+                .set_root_as_operator(email, TimestampMillis::now())
+                .await
+                .map_err(operation)?;
+            Ok(match previous {
+                Some(previous) if !previous.eq_ignore_ascii_case(email.trim()) => format!(
+                    "{} is now the root user; {previous} stays an instance admin",
+                    email.trim()
+                ),
+                _ => format!("{} is the root user", email.trim()),
+            })
+        }
+    }
 }
 
 async fn recovery_link(cli: &Cli, email: &str, origin: Option<&str>) -> Result<String, CliError> {
@@ -1222,6 +1324,111 @@ mod tests {
             let _ = fs::remove_file(format!("{}{suffix}", database.display()));
         }
         let _ = fs::remove_file(config);
+    }
+
+    #[tokio::test]
+    async fn root_set_moves_root_reinstates_the_account_and_keeps_the_old_root_an_admin() {
+        let database_path = std::env::temp_dir().join(format!(
+            "orbit-root-set-{}-{}.sqlite",
+            std::process::id(),
+            orbit_platform::Id::new_v7()
+        ));
+        let database = Database::open(&DatabaseConfig::new(&database_path))
+            .await
+            .unwrap();
+        MigrationRunner::embedded(env!("CARGO_PKG_VERSION"))
+            .run(&database)
+            .await
+            .unwrap();
+        let repository = IdentityRepository::new(database.clone());
+        let now = TimestampMillis::now();
+        let setup = repository
+            .initialize_setup_token(now)
+            .await
+            .unwrap()
+            .unwrap();
+        repository
+            .complete_setup(
+                SetupRequest {
+                    token: setup.token,
+                    email: "owner@example.com".to_owned(),
+                    display_name: "Owner".to_owned(),
+                    password_hash: "test-password-hash".to_owned(),
+                    workspace_name: "Orbit".to_owned(),
+                    project_name: "Tasks".to_owned(),
+                },
+                now,
+            )
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO users (id, email, normalized_email, display_name, password_hash, suspended_at, \
+             created_at, updated_at) VALUES ('next', 'Next@Example.com', 'next@example.com', 'Next', 'x', 1, 1, 1)",
+        )
+        .execute(database.pool())
+        .await
+        .unwrap();
+        drop(repository);
+        drop(database);
+
+        let database_arg = database_path.to_string_lossy().into_owned();
+        let config_path = database_path.with_extension("toml");
+        fs::write(&config_path, "environment = \"development\"\n").unwrap();
+        let config_arg = config_path.to_string_lossy().into_owned();
+        let command = |args: &[&str]| {
+            let mut argv = vec![
+                "orbit",
+                "--config",
+                config_arg.as_str(),
+                "--database",
+                database_arg.as_str(),
+                "root",
+            ];
+            argv.extend_from_slice(args);
+            Cli::try_parse_from(argv).unwrap()
+        };
+        assert_eq!(run(command(&["show"])).await.unwrap(), "owner@example.com");
+        assert!(
+            run(command(&["set", "--email", "nobody@example.com"]))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            run(command(&["set", "--email", "next@example.com"]))
+                .await
+                .unwrap(),
+            "next@example.com is now the root user; owner@example.com stays an instance admin"
+        );
+        assert_eq!(run(command(&["show"])).await.unwrap(), "Next@Example.com");
+
+        let database = Database::open(&DatabaseConfig::new(&database_path))
+            .await
+            .unwrap();
+        let rows: Vec<(String, i64, Option<i64>)> = sqlx::query_as(
+            "SELECT normalized_email, installation_admin, suspended_at FROM users ORDER BY normalized_email",
+        )
+        .fetch_all(database.pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                ("next@example.com".to_owned(), 1, None),
+                ("owner@example.com".to_owned(), 1, None)
+            ]
+        );
+        let audited: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM audit_events WHERE action = 'instance.root_changed' AND request_id = 'operator-cli'",
+        )
+        .fetch_one(database.pool())
+        .await
+        .unwrap();
+        assert_eq!(audited, 1);
+        drop(database);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = fs::remove_file(format!("{}{suffix}", database_path.display()));
+        }
+        let _ = fs::remove_file(config_path);
     }
 
     #[tokio::test]

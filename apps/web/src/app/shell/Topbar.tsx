@@ -95,6 +95,7 @@ function crumbsFor(pathname: string, folderParam: string | null, state: AppState
       const crumbs: Crumb[] = [{ label: 'Admin', to: '/admin' }]
       if (id === 'audit') crumbs.push({ label: 'Audit log' })
       else if (id === 'backups') crumbs.push({ label: 'Backups' })
+      else if (id === 'storage') crumbs.push({ label: 'Storage' })
       else if (id === 'users') crumbs.push({ label: 'Users' })
       else crumbs.push({ label: 'General' })
       return { crumbs }

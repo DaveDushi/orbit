@@ -314,6 +314,13 @@ impl MigrationRunner {
                     include_str!("../../../../apps/server/migrations/0043_root_user.sql"),
                     false,
                 ),
+                Migration::new(
+                    44,
+                    include_str!(
+                        "../../../../apps/server/migrations/0044_instance_settings_storage.sql"
+                    ),
+                    false,
+                ),
             ],
         )
     }

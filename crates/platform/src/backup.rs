@@ -14,11 +14,14 @@ use tokio::sync::{OwnedRwLockReadGuard, RwLock};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::{Database, DatabaseError, lock_database_ownership};
+use crate::{Database, DatabaseError, ObjectStorage, S3Bucket, S3Error, lock_database_ownership};
 
 const DATABASE_FILE: &str = "database.sqlite";
 const MANIFEST_FILE: &str = "manifest.json";
-const SUPPORTED_SCHEMA_VERSION: i64 = 43;
+/// Snapshots fetched from S3 for verify, download or restore.
+const DOWNLOADS: &str = "downloads";
+const DOWNLOAD_CACHE_MILLIS: u128 = 60 * 60 * 1000;
+const SUPPORTED_SCHEMA_VERSION: i64 = 44;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -47,8 +50,11 @@ pub struct BackupManifest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BackupSnapshot {
     pub id: String,
+    /// The local snapshot directory. For a snapshot in S3, where [`BackupService::verify`] fetches it to.
     pub path: PathBuf,
     pub manifest: BackupManifest,
+    /// Stored in the S3 bucket instead of the local backup directory.
+    pub in_object_storage: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -74,6 +80,7 @@ pub struct BackupService {
     backup_root: PathBuf,
     attachment_root: PathBuf,
     attachment_mutations: AttachmentMutationCoordinator,
+    storage: ObjectStorage,
 }
 
 #[derive(Debug, Error)]
@@ -134,6 +141,8 @@ pub enum BackupError {
     },
     #[error("restore failed ({original}) and rollback was incomplete ({rollback})")]
     RestoreRollback { original: String, rollback: String },
+    #[error("backup object storage failed: {0}")]
+    ObjectStorage(#[from] S3Error),
 }
 
 impl BackupService {
@@ -143,7 +152,16 @@ impl BackupService {
             backup_root: backup_root.into(),
             attachment_root: attachment_root.into(),
             attachment_mutations: AttachmentMutationCoordinator::default(),
+            storage: ObjectStorage::default(),
         }
+    }
+
+    /// New snapshots go to the backup bucket of `storage` when it has one, and snapshots in its bucket are listed
+    /// and restorable. Pre-migration backups stay local: they run before the settings can be read.
+    #[must_use]
+    pub fn with_object_storage(mut self, storage: ObjectStorage) -> Self {
+        self.storage = storage;
+        self
     }
 
     #[must_use]
@@ -161,9 +179,15 @@ impl BackupService {
         database: &Database,
         cancellation: CancellationToken,
     ) -> Result<BackupSnapshot, BackupError> {
-        let snapshot = self
+        let mut snapshot = self
             .create_kind(database, BackupKind::Snapshot, cancellation.clone())
             .await?;
+        if let Some(bucket) = self.storage.backup_bucket() {
+            // On failure the local snapshot stays, so the backup is not lost.
+            upload_snapshot(&bucket, &snapshot).await?;
+            remove_dir_all(&snapshot.path)?;
+            snapshot.in_object_storage = true;
+        }
         self.apply_retention(cancellation).await?;
         Ok(snapshot)
     }
@@ -176,11 +200,53 @@ impl BackupService {
             .await
     }
 
+    /// Local snapshots and snapshots in the S3 bucket, newest first.
     pub async fn list(&self) -> Result<Vec<BackupSnapshot>, BackupError> {
         let service = self.clone();
-        tokio::task::spawn_blocking(move || service.list_kind_blocking(BackupKind::Snapshot))
-            .await
-            .map_err(|error| BackupError::BlockingTask(error.to_string()))?
+        let mut snapshots =
+            tokio::task::spawn_blocking(move || service.list_kind_blocking(BackupKind::Snapshot))
+                .await
+                .map_err(|error| BackupError::BlockingTask(error.to_string()))??;
+        if let Some(bucket) = self.storage.bucket() {
+            let local: HashSet<String> = snapshots.iter().map(|item| item.id.clone()).collect();
+            for object in bucket
+                .list(&remote_prefix(BackupKind::Snapshot, ""))
+                .await?
+            {
+                let Some(id) = object
+                    .key
+                    .strip_suffix(&format!("/{MANIFEST_FILE}"))
+                    .and_then(|path| path.rsplit('/').next())
+                else {
+                    continue;
+                };
+                if Uuid::parse_str(id).is_err() || local.contains(id) {
+                    continue;
+                }
+                let Some(contents) = bucket.get_bytes(&object.key).await? else {
+                    continue;
+                };
+                let manifest: BackupManifest =
+                    serde_json::from_slice(&contents).map_err(|source| BackupError::Manifest {
+                        path: PathBuf::from(&object.key),
+                        source,
+                    })?;
+                snapshots.push(BackupSnapshot {
+                    id: id.to_owned(),
+                    path: self.backup_root.join(DOWNLOADS).join(id),
+                    manifest,
+                    in_object_storage: true,
+                });
+            }
+        }
+        snapshots.sort_by(|left, right| {
+            right
+                .manifest
+                .created_at
+                .cmp(&left.manifest.created_at)
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        Ok(snapshots)
     }
 
     pub async fn list_pre_migration(&self) -> Result<Vec<BackupSnapshot>, BackupError> {
@@ -194,6 +260,41 @@ impl BackupService {
         let snapshot = self.find(id).await?;
         verify_snapshot(&snapshot)?;
         Ok(snapshot)
+    }
+
+    /// Deletes a local snapshot, a pre-migration backup or a snapshot in the S3 bucket.
+    pub async fn delete(&self, id: &str) -> Result<(), BackupError> {
+        if Uuid::parse_str(id).is_err() {
+            return Err(BackupError::NotFound { id: id.to_owned() });
+        }
+        for kind in [BackupKind::Snapshot, BackupKind::PreMigration] {
+            let path = self.kind_root(kind).join(id);
+            if path.is_dir() {
+                return remove_dir_all(&path);
+            }
+        }
+        let Some(bucket) = self.storage.bucket() else {
+            return Err(BackupError::NotFound { id: id.to_owned() });
+        };
+        let prefix = remote_prefix(BackupKind::Snapshot, id);
+        let Some(contents) = bucket
+            .get_bytes(&format!("{prefix}{MANIFEST_FILE}"))
+            .await?
+        else {
+            return Err(BackupError::NotFound { id: id.to_owned() });
+        };
+        let manifest: BackupManifest =
+            serde_json::from_slice(&contents).map_err(|source| BackupError::Manifest {
+                path: PathBuf::from(format!("{prefix}{MANIFEST_FILE}")),
+                source,
+            })?;
+        let snapshot = BackupSnapshot {
+            id: id.to_owned(),
+            path: self.backup_root.join(DOWNLOADS).join(id),
+            manifest,
+            in_object_storage: true,
+        };
+        delete_remote_snapshot(&bucket, &snapshot).await
     }
 
     pub async fn restore(&self, id: &str, database_path: &Path) -> Result<(), BackupError> {
@@ -412,6 +513,7 @@ impl BackupService {
                     id: id.clone(),
                     path: temporary.clone(),
                     manifest: manifest.clone(),
+                    in_object_storage: false,
                 };
                 verify_snapshot_cancellable(&unpublished, &cancellation)?;
                 check_cancelled(&cancellation)?;
@@ -421,6 +523,7 @@ impl BackupService {
                     id,
                     path: final_path,
                     manifest,
+                    in_object_storage: false,
                 })
             })();
             if result.is_err() {
@@ -442,7 +545,62 @@ impl BackupService {
                 return read_snapshot(path);
             }
         }
-        Err(BackupError::NotFound { id: id.to_owned() })
+        match self.storage.bucket() {
+            Some(bucket) => self.fetch(&bucket, id).await,
+            None => Err(BackupError::NotFound { id: id.to_owned() }),
+        }
+    }
+
+    /// Downloads a snapshot from S3 into the local download cache. The caller verifies it, so a damaged or
+    /// incomplete download is never restored.
+    async fn fetch(&self, bucket: &S3Bucket, id: &str) -> Result<BackupSnapshot, BackupError> {
+        let downloads = self.backup_root.join(DOWNLOADS);
+        create_dir_all(&downloads)?;
+        remove_stale_downloads(&downloads)?;
+        let final_path = downloads.join(id);
+        if final_path.is_dir() {
+            let mut snapshot = read_snapshot(final_path)?;
+            snapshot.in_object_storage = true;
+            return Ok(snapshot);
+        }
+        let prefix = remote_prefix(BackupKind::Snapshot, id);
+        let Some(contents) = bucket
+            .get_bytes(&format!("{prefix}{MANIFEST_FILE}"))
+            .await?
+        else {
+            return Err(BackupError::NotFound { id: id.to_owned() });
+        };
+        let manifest: BackupManifest =
+            serde_json::from_slice(&contents).map_err(|source| BackupError::Manifest {
+                path: PathBuf::from(format!("{prefix}{MANIFEST_FILE}")),
+                source,
+            })?;
+        let temporary = downloads.join(format!(".{id}.{}.tmp", Uuid::now_v7()));
+        let result = async {
+            for file in &manifest.files {
+                let relative = safe_manifest_path(&file.path)?;
+                let destination = temporary.join(relative);
+                create_dir_all(parent_directory(&destination))?;
+                if !bucket
+                    .get_to_file(&format!("{prefix}{}", file.path), &destination)
+                    .await?
+                {
+                    return Err(BackupError::InventoryMismatch);
+                }
+            }
+            create_dir_all(&temporary)?;
+            fs::write(temporary.join(MANIFEST_FILE), &contents)
+                .map_err(|source| io_error(temporary.join(MANIFEST_FILE), source))?;
+            fs::rename(&temporary, &final_path).map_err(|source| io_error(&final_path, source))
+        }
+        .await;
+        if let Err(error) = result {
+            let _ = fs::remove_dir_all(&temporary);
+            return Err(error);
+        }
+        let mut snapshot = read_snapshot(final_path)?;
+        snapshot.in_object_storage = true;
+        Ok(snapshot)
     }
 
     fn list_kind_blocking(&self, kind: BackupKind) -> Result<Vec<BackupSnapshot>, BackupError> {
@@ -473,41 +631,42 @@ impl BackupService {
     }
 
     async fn apply_retention(&self, cancellation: CancellationToken) -> Result<(), BackupError> {
-        let service = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let snapshots = service.list_kind_blocking(BackupKind::Snapshot)?;
-            let mut daily = HashSet::new();
-            let mut weekly = HashSet::new();
-            let mut keep = HashSet::new();
-            for snapshot in &snapshots {
-                check_cancelled(&cancellation)?;
-                let Some(created) = Utc
-                    .timestamp_millis_opt(snapshot.manifest.created_at)
-                    .single()
-                else {
-                    continue;
-                };
-                let daily_bucket = (created.year(), created.ordinal());
-                if daily.len() < 7 && daily.insert(daily_bucket) {
-                    keep.insert(snapshot.id.clone());
-                }
-                let week = created.iso_week();
-                let weekly_bucket = (week.year(), week.week());
-                if weekly.len() < 4 && weekly.insert(weekly_bucket) {
-                    keep.insert(snapshot.id.clone());
-                }
+        let snapshots = self.list().await?;
+        let mut daily = HashSet::new();
+        let mut weekly = HashSet::new();
+        let mut keep = HashSet::new();
+        for snapshot in &snapshots {
+            check_cancelled(&cancellation)?;
+            let Some(created) = Utc
+                .timestamp_millis_opt(snapshot.manifest.created_at)
+                .single()
+            else {
+                continue;
+            };
+            let daily_bucket = (created.year(), created.ordinal());
+            if daily.len() < 7 && daily.insert(daily_bucket) {
+                keep.insert(snapshot.id.clone());
             }
-            for snapshot in snapshots {
-                check_cancelled(&cancellation)?;
-                if !keep.contains(&snapshot.id) {
-                    fs::remove_dir_all(&snapshot.path)
-                        .map_err(|source| io_error(&snapshot.path, source))?;
-                }
+            let week = created.iso_week();
+            let weekly_bucket = (week.year(), week.week());
+            if weekly.len() < 4 && weekly.insert(weekly_bucket) {
+                keep.insert(snapshot.id.clone());
             }
-            Ok(())
-        })
-        .await
-        .map_err(|error| BackupError::BlockingTask(error.to_string()))?
+        }
+        for snapshot in snapshots {
+            check_cancelled(&cancellation)?;
+            if keep.contains(&snapshot.id) {
+                continue;
+            }
+            if snapshot.in_object_storage {
+                if let Some(bucket) = self.storage.bucket() {
+                    delete_remote_snapshot(&bucket, &snapshot).await?;
+                }
+            } else {
+                remove_dir_all(&snapshot.path)?;
+            }
+        }
+        Ok(())
     }
 
     fn kind_root(&self, kind: BackupKind) -> PathBuf {
@@ -740,6 +899,7 @@ fn read_snapshot(path: PathBuf) -> Result<BackupSnapshot, BackupError> {
         id: manifest.id.clone(),
         path,
         manifest,
+        in_object_storage: false,
     })
 }
 
@@ -780,16 +940,7 @@ fn verify_snapshot_cancellable(
     }
     for expected in &snapshot.manifest.files {
         check_cancelled(cancellation)?;
-        let relative = Path::new(&expected.path);
-        if relative.as_os_str().is_empty()
-            || relative
-                .components()
-                .any(|component| !matches!(component, Component::Normal(_)))
-        {
-            return Err(BackupError::UnsafeManifestPath {
-                path: expected.path.clone(),
-            });
-        }
+        let relative = safe_manifest_path(&expected.path)?;
         let path = snapshot.path.join(relative);
         let actual = file_manifest_cancellable(&path, &snapshot.path, cancellation)?;
         if actual.sha256 != expected.sha256 || actual.byte_size != expected.byte_size {
@@ -832,6 +983,90 @@ fn collect_snapshot_files_cancellable(
         }
     }
     Ok(())
+}
+
+fn safe_manifest_path(path: &str) -> Result<&Path, BackupError> {
+    let relative = Path::new(path);
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(BackupError::UnsafeManifestPath {
+            path: path.to_owned(),
+        });
+    }
+    Ok(relative)
+}
+
+/// `backups/snapshots/{id}/` in the bucket.
+fn remote_prefix(kind: BackupKind, id: &str) -> String {
+    let kind = match kind {
+        BackupKind::Snapshot => "snapshots",
+        BackupKind::PreMigration => "pre-migration",
+    };
+    if id.is_empty() {
+        format!("backups/{kind}/")
+    } else {
+        format!("backups/{kind}/{id}/")
+    }
+}
+
+/// Uploads the files first and the manifest last: a snapshot is listed only once it is complete.
+async fn upload_snapshot(bucket: &S3Bucket, snapshot: &BackupSnapshot) -> Result<(), BackupError> {
+    let prefix = remote_prefix(snapshot.manifest.kind, &snapshot.id);
+    for file in &snapshot.manifest.files {
+        bucket
+            .put_file(
+                &format!("{prefix}{}", file.path),
+                &snapshot.path.join(safe_manifest_path(&file.path)?),
+            )
+            .await?;
+    }
+    bucket
+        .put_file(
+            &format!("{prefix}{MANIFEST_FILE}"),
+            &snapshot.path.join(MANIFEST_FILE),
+        )
+        .await?;
+    Ok(())
+}
+
+/// Deletes the manifest first, so a partly deleted snapshot is no longer listed.
+async fn delete_remote_snapshot(
+    bucket: &S3Bucket,
+    snapshot: &BackupSnapshot,
+) -> Result<(), BackupError> {
+    let prefix = remote_prefix(snapshot.manifest.kind, &snapshot.id);
+    bucket.delete(&format!("{prefix}{MANIFEST_FILE}")).await?;
+    for object in bucket.list(&prefix).await? {
+        bucket.delete(&object.key).await?;
+    }
+    if snapshot.path.is_dir() {
+        remove_dir_all(&snapshot.path)?;
+    }
+    Ok(())
+}
+
+/// Removes fetched snapshots after an hour; a fetch for a download or restore uses them for a few minutes.
+fn remove_stale_downloads(downloads: &Path) -> Result<(), BackupError> {
+    for entry in fs::read_dir(downloads).map_err(|source| io_error(downloads, source))? {
+        let entry = entry.map_err(|source| io_error(downloads, source))?;
+        let stale = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age.as_millis() > DOWNLOAD_CACHE_MILLIS);
+        if stale {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
+    Ok(())
+}
+
+fn remove_dir_all(path: &Path) -> Result<(), BackupError> {
+    fs::remove_dir_all(path).map_err(|source| io_error(path, source))
 }
 
 fn create_dir_all(path: &Path) -> Result<(), BackupError> {

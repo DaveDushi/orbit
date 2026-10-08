@@ -48,6 +48,7 @@ import { announceAutoClosed } from './autoClosed'
 import { isTaskVersionConflict } from './conflicts'
 import { commentUploadMode } from './commentUpload'
 import { findCachedTask, patchWorkspaceTask, reconcileWorkspaceTask, restoreWorkspaceTasks, snapshotTasks, type WorkspaceTaskSnapshot } from './optimistic'
+import { shrinkImage } from '@/lib/shrinkImage'
 import { PartialUploadError, uploadFiles } from './uploadQueue'
 import { isTaskUuid, normalizeTaskParam, taskSlug } from '@/lib/taskLinks'
 import { loadFailed } from '@/lib/connection'
@@ -567,7 +568,7 @@ export function useCreateTaskComment(workspaceId: string, taskId: string) {
         } else if (mode === 'attachment-only') {
           const [first, ...rest] = files
           if (!first) throw new Error('A comment attachment was missing.')
-          const response = await createAttachmentComment({ client: apiClient, path: { workspace_id: workspaceId, task_id: taskId }, body: { file: first }, throwOnError: true })
+          const response = await createAttachmentComment({ client: apiClient, path: { workspace_id: workspaceId, task_id: taskId }, body: { file: await shrinkImage(first) }, throwOnError: true })
           comment = required(response.data, 'Attachment comment response was empty.').comment
           remaining = rest
           setProgress(Math.round(100 / files.length))

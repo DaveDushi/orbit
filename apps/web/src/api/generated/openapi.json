@@ -10,6 +10,113 @@
     "version": "orbit-api-v1"
   },
   "paths": {
+    "/api/v1/admin/attachments/compress": {
+      "post": {
+        "tags": [
+          "crate::workspace_routes"
+        ],
+        "summary": "Starts making large stored images smaller (at most 2560 px, WebP), on this server's disk and in S3. Runs in\nthe background; the settings show its progress in `storage.image_compression`. Starting it again while it runs\ndoes nothing.",
+        "operationId": "start_image_compression",
+        "parameters": [
+          {
+            "name": "X-Orbit-Contract",
+            "in": "header",
+            "description": "Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceSettingsView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_proxy_headers",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentProblem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentProblem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "origin_forbidden, installation_admin_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentProblem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "contract_mismatch",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentProblem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentProblem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentProblem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "internal_error or another documented stable code",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentProblem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/admin/audit": {
       "get": {
         "tags": [
@@ -499,6 +606,124 @@
         ]
       }
     },
+    "/api/v1/admin/backups/{backup_id}": {
+      "delete": {
+        "tags": [
+          "crate::workspace_routes"
+        ],
+        "summary": "Deletes a snapshot or pre-migration backup, from this server or the S3 bucket.",
+        "operationId": "delete_backup",
+        "parameters": [
+          {
+            "name": "backup_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Orbit-Contract",
+            "in": "header",
+            "description": "Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "400": {
+            "description": "invalid_proxy_headers",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "origin_forbidden, installation_admin_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "backup_not_found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "contract_mismatch",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "internal_error or another documented stable code",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/admin/backups/{backup_id}/download": {
       "get": {
         "tags": [
@@ -821,6 +1046,268 @@
           },
           "500": {
             "description": "internal_error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "internal_error or another documented stable code",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/settings/s3": {
+      "put": {
+        "tags": [
+          "crate::workspace_routes"
+        ],
+        "summary": "Saves the bucket after writing, reading and deleting a test object in it (502 `storage_unreachable` when that\nfails). Moving to another bucket or prefix needs the attachment files back on this server first.",
+        "operationId": "save_s3",
+        "parameters": [
+          {
+            "name": "X-Orbit-Contract",
+            "in": "header",
+            "description": "Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/S3Body"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceSettingsView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_proxy_headers, invalid_request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "origin_forbidden, installation_admin_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "contract_mismatch, storage_in_use",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid_storage_settings",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "storage_unreachable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "app_key_missing",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "internal_error or another documented stable code",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "crate::workspace_routes"
+        ],
+        "summary": "Removes the bucket. Refused (409 `storage_in_use`) while attachments use it or files in it still wait to move\nback to this server. Backups already in the bucket stay there.",
+        "operationId": "remove_s3",
+        "parameters": [
+          {
+            "name": "X-Orbit-Contract",
+            "in": "header",
+            "description": "Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceSettingsView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_proxy_headers",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "origin_forbidden, installation_admin_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "contract_mismatch, storage_in_use",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "storage_unreachable",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1172,6 +1659,123 @@
           },
           "502": {
             "description": "email_failed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "internal_error or another documented stable code",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/settings/storage": {
+      "put": {
+        "tags": [
+          "crate::workspace_routes"
+        ],
+        "summary": "Where attachments and backups are stored, and how often Orbit backs up by itself. Using S3 needs a saved\nbucket (409 `storage_not_configured`).",
+        "operationId": "save_storage_options",
+        "parameters": [
+          {
+            "name": "X-Orbit-Contract",
+            "in": "header",
+            "description": "Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorageOptionsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceSettingsView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_proxy_headers, invalid_request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "origin_forbidden, installation_admin_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "contract_mismatch, storage_not_configured",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -29890,11 +30494,27 @@
           }
         }
       },
+      "BackupLocation": {
+        "type": "string",
+        "enum": [
+          "local",
+          "s3"
+        ]
+      },
+      "BackupSchedule": {
+        "type": "string",
+        "enum": [
+          "off",
+          "hourly",
+          "daily"
+        ]
+      },
       "BackupSummary": {
         "type": "object",
         "required": [
           "id",
           "kind",
+          "location",
           "created_at",
           "byte_size",
           "file_count",
@@ -29925,6 +30545,9 @@
           },
           "kind": {
             "$ref": "#/components/schemas/BackupSummaryKind"
+          },
+          "location": {
+            "$ref": "#/components/schemas/BackupLocation"
           },
           "schema_version": {
             "type": "integer",
@@ -31351,6 +31974,64 @@
         },
         "additionalProperties": false
       },
+      "CompressSummary": {
+        "type": "object",
+        "required": [
+          "compressed",
+          "bytes_before",
+          "bytes_after",
+          "skipped"
+        ],
+        "properties": {
+          "bytes_after": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "bytes_before": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "compressed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Not a still JPEG, PNG or WebP, not readable, or not smaller after re-encoding.",
+            "minimum": 0
+          }
+        }
+      },
+      "CompressionStatus": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/CompressSummary"
+          },
+          {
+            "type": "object",
+            "required": [
+              "running"
+            ],
+            "properties": {
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Why the last run stopped early."
+              },
+              "running": {
+                "type": "boolean"
+              }
+            }
+          }
+        ],
+        "description": "The state of the last compression started from Admin → Storage."
+      },
       "Condition": {
         "type": "object",
         "required": [
@@ -32231,7 +32912,8 @@
       "InstanceSettingsView": {
         "type": "object",
         "required": [
-          "registration_open"
+          "registration_open",
+          "storage"
         ],
         "properties": {
           "registration_open": {
@@ -32247,6 +32929,9 @@
                 "description": "`null` until a mail server is saved."
               }
             ]
+          },
+          "storage": {
+            "$ref": "#/components/schemas/StorageView"
           }
         }
       },
@@ -36020,6 +36705,85 @@
         },
         "additionalProperties": false
       },
+      "S3Body": {
+        "type": "object",
+        "required": [
+          "endpoint",
+          "bucket",
+          "access_key_id"
+        ],
+        "properties": {
+          "access_key_id": {
+            "type": "string"
+          },
+          "bucket": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string",
+            "description": "`https://s3.eu-central-1.amazonaws.com`, `https://<account>.r2.cloudflarestorage.com`, `http://minio:9000`."
+          },
+          "path_style": {
+            "type": "boolean",
+            "description": "`endpoint/bucket/key` URLs (MinIO and most self-hosted servers) instead of `bucket.endpoint/key`."
+          },
+          "prefix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Key prefix in the bucket, for example `orbit`. Empty: the bucket root."
+          },
+          "region": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Empty: `us-east-1`."
+          },
+          "secret_access_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absent or empty: keep the saved secret key."
+          }
+        },
+        "additionalProperties": false
+      },
+      "S3View": {
+        "type": "object",
+        "description": "The saved bucket. The secret key is never returned.",
+        "required": [
+          "endpoint",
+          "region",
+          "bucket",
+          "prefix",
+          "access_key_id",
+          "path_style"
+        ],
+        "properties": {
+          "access_key_id": {
+            "type": "string"
+          },
+          "bucket": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "path_style": {
+            "type": "boolean"
+          },
+          "prefix": {
+            "type": "string",
+            "description": "Key prefix in the bucket; empty for the bucket root."
+          },
+          "region": {
+            "type": "string"
+          }
+        }
+      },
       "SavedViewRecord": {
         "type": "object",
         "required": [
@@ -36534,6 +37298,85 @@
           "url": {
             "type": "string",
             "description": "Same-origin image path. The image of an id never changes."
+          }
+        }
+      },
+      "StorageOptionsBody": {
+        "type": "object",
+        "required": [
+          "attachments_in_s3",
+          "backups_in_s3",
+          "backup_schedule"
+        ],
+        "properties": {
+          "attachments_in_s3": {
+            "type": "boolean",
+            "description": "New attachment files go to the bucket and existing ones move there. Off: they move back to this server."
+          },
+          "backup_schedule": {
+            "$ref": "#/components/schemas/BackupSchedule"
+          },
+          "backups_in_s3": {
+            "type": "boolean",
+            "description": "New backups are uploaded to the bucket."
+          }
+        },
+        "additionalProperties": false
+      },
+      "StorageView": {
+        "type": "object",
+        "required": [
+          "attachments_in_s3",
+          "backups_in_s3",
+          "backup_schedule",
+          "files_to_move"
+        ],
+        "properties": {
+          "attachments_in_s3": {
+            "type": "boolean",
+            "description": "New attachment files go to the bucket; existing ones move there in the background."
+          },
+          "backup_schedule": {
+            "$ref": "#/components/schemas/BackupSchedule"
+          },
+          "backups_in_s3": {
+            "type": "boolean",
+            "description": "New backups are uploaded to the bucket instead of kept on this server."
+          },
+          "files_to_move": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Attachment files still waiting to move between this server's disk and the bucket.",
+            "minimum": 0
+          },
+          "image_compression": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CompressionStatus",
+                "description": "The last run of \"Compress images\"; `null` when this server cannot compress."
+              }
+            ]
+          },
+          "move_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why moving files stopped last time. Orbit retries every ten minutes."
+          },
+          "s3": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/S3View",
+                "description": "`null` until a bucket is saved."
+              }
+            ]
           }
         }
       },

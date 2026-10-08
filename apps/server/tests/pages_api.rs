@@ -1011,7 +1011,12 @@ async fn delete_forever_purges_a_trashed_batch_by_permission() {
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    assert!(!fixture.trash_ids().await.contains(&id_of(&diary).to_owned()));
+    assert!(
+        !fixture
+            .trash_ids()
+            .await
+            .contains(&id_of(&diary).to_owned())
+    );
     let (status, problem) = fixture.call("DELETE", &purge_uri(&diary, 1), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(problem["code"], "page_not_found");

@@ -14,7 +14,8 @@ use axum::{Json, Router};
 use orbit_domain::WorkspaceRole;
 use orbit_platform::{
     BackupError, BackupKind, BackupService, BackupSnapshot, ClientIp, Id, LoginThrottler,
-    PasswordError, PasswordExecutor, PasswordService, RequestId, ThrottleDecision, TimestampMillis,
+    ObjectStorage, PasswordError, PasswordExecutor, PasswordService, RequestId, ThrottleDecision,
+    TieredBlobStore, TimestampMillis,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::auth_routes::{CookieMode, issued_session_cookie, request_session};
+use crate::image_compression::{CompressionStatus, ImageCompressor};
 use crate::mail::{self, Mailer};
 use crate::repositories::api_tokens::{
     ApiTokenError, ApiTokenRecord, ApiTokenRepository, IssuedApiToken,
@@ -30,7 +32,8 @@ use crate::repositories::identity::{
     AdminAccountError, AdminUser, AuthenticatedSession, IdentityRepository,
 };
 use crate::repositories::instance_settings::{
-    InstanceSettingsError, InstanceSettingsRepository, PasswordChange, SmtpSecurity, SmtpSettings,
+    BackupSchedule, InstanceSettingsError, InstanceSettingsRepository, PasswordChange, S3Settings,
+    SmtpSecurity, SmtpSettings, StorageSettingsError,
 };
 use crate::repositories::workspaces::{InvitationDelivery, WorkspaceError, WorkspaceRepository};
 
@@ -46,6 +49,10 @@ pub struct WorkspaceState {
     backups: Option<BackupService>,
     /// Sends invitation emails and keeps the app key for the SMTP password; `None` sends nothing.
     mailer: Option<Mailer>,
+    /// The running attachment and backup storage, changed by Admin → Storage.
+    object_storage: Option<(ObjectStorage, TieredBlobStore)>,
+    /// Makes large stored images smaller (Admin → Storage).
+    image_compressor: Option<ImageCompressor>,
 }
 
 impl WorkspaceState {
@@ -66,6 +73,8 @@ impl WorkspaceState {
             registration_throttler: Arc::new(Mutex::new(LoginThrottler::new())),
             backups: None,
             mailer: None,
+            object_storage: None,
+            image_compressor: None,
         }
     }
 
@@ -88,12 +97,26 @@ impl WorkspaceState {
             registration_throttler: Arc::new(Mutex::new(LoginThrottler::new())),
             backups: Some(backups),
             mailer: None,
+            object_storage: None,
+            image_compressor: None,
         }
     }
 
     #[must_use]
     pub fn with_mailer(mut self, mailer: Mailer) -> Self {
         self.mailer = Some(mailer);
+        self
+    }
+
+    #[must_use]
+    pub fn with_object_storage(mut self, storage: ObjectStorage, store: TieredBlobStore) -> Self {
+        self.object_storage = Some((storage, store));
+        self
+    }
+
+    #[must_use]
+    pub fn with_image_compressor(mut self, compressor: ImageCompressor) -> Self {
+        self.image_compressor = Some(compressor);
         self
     }
 
@@ -175,6 +198,12 @@ pub fn workspace_router(state: WorkspaceState) -> Router {
             put(save_smtp).delete(remove_smtp),
         )
         .route("/api/v1/admin/settings/smtp/test", post(send_test_email))
+        .route("/api/v1/admin/settings/s3", put(save_s3).delete(remove_s3))
+        .route("/api/v1/admin/settings/storage", put(save_storage_options))
+        .route(
+            "/api/v1/admin/attachments/compress",
+            post(start_image_compression),
+        )
         .route("/api/v1/admin/users", get(list_admin_users))
         .route(
             "/api/v1/admin/users/{user_id}/suspension",
@@ -198,6 +227,7 @@ pub fn workspace_router(state: WorkspaceState) -> Router {
             "/api/v1/admin/backups/{backup_id}/download",
             get(download_backup),
         )
+        .route("/api/v1/admin/backups/{backup_id}", delete(delete_backup))
         .with_state(state)
 }
 
@@ -1378,11 +1408,41 @@ struct SmtpView {
     from_name: Option<String>,
 }
 
+/// The saved bucket. The secret key is never returned.
+#[derive(Serialize, ToSchema)]
+struct S3View {
+    endpoint: String,
+    region: String,
+    bucket: String,
+    /// Key prefix in the bucket; empty for the bucket root.
+    prefix: String,
+    access_key_id: String,
+    path_style: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+struct StorageView {
+    /// `null` until a bucket is saved.
+    s3: Option<S3View>,
+    /// New attachment files go to the bucket; existing ones move there in the background.
+    attachments_in_s3: bool,
+    /// New backups are uploaded to the bucket instead of kept on this server.
+    backups_in_s3: bool,
+    backup_schedule: BackupSchedule,
+    /// Attachment files still waiting to move between this server's disk and the bucket.
+    files_to_move: u64,
+    /// Why moving files stopped last time. Orbit retries every ten minutes.
+    move_error: Option<String>,
+    /// The last run of "Compress images"; `null` when this server cannot compress.
+    image_compression: Option<CompressionStatus>,
+}
+
 #[derive(Serialize, ToSchema)]
 struct InstanceSettingsView {
     registration_open: bool,
     /// `null` until a mail server is saved.
     smtp: Option<SmtpView>,
+    storage: StorageView,
 }
 
 async fn settings_view(
@@ -1390,11 +1450,37 @@ async fn settings_view(
     instance: &str,
     request_id: Option<&Extension<RequestId>>,
 ) -> Result<Json<InstanceSettingsView>, ApiError> {
-    let settings = InstanceSettingsRepository::new(state.identity.database().clone())
+    let repository = InstanceSettingsRepository::new(state.identity.database().clone());
+    let settings = repository
         .get()
         .await
         .map_err(|_| internal(instance, request_id))?;
+    let storage = repository
+        .storage()
+        .await
+        .map_err(|_| internal(instance, request_id))?;
+    let moving = state
+        .object_storage
+        .as_ref()
+        .map(|(_, store)| store.status())
+        .unwrap_or_default();
     Ok(Json(InstanceSettingsView {
+        storage: StorageView {
+            s3: storage.s3.map(|s3| S3View {
+                endpoint: s3.endpoint,
+                region: s3.region,
+                bucket: s3.bucket,
+                prefix: s3.prefix,
+                access_key_id: s3.access_key_id,
+                path_style: s3.path_style,
+            }),
+            attachments_in_s3: storage.attachments_in_s3,
+            backups_in_s3: storage.backups_in_s3,
+            backup_schedule: storage.backup_schedule,
+            files_to_move: u64::try_from(moving.remaining).unwrap_or(u64::MAX),
+            move_error: moving.error,
+            image_compression: state.image_compressor.as_ref().map(ImageCompressor::status),
+        },
         registration_open: settings.registration_open,
         smtp: settings.smtp.map(|smtp| SmtpView {
             host: smtp.host,
@@ -1605,6 +1691,331 @@ async fn send_test_email(
     Ok(StatusCode::NO_CONTENT)
 }
 
+fn storage_unreachable(
+    error: impl std::fmt::Display,
+    instance: &str,
+    request_id: Option<&Extension<RequestId>>,
+) -> ApiError {
+    ApiError::new(
+        StatusCode::BAD_GATEWAY,
+        "storage_unreachable",
+        "Storage unreachable",
+        format!("Orbit could not use the bucket: {error}"),
+        instance,
+        request_id,
+    )
+}
+
+fn storage_in_use(
+    detail: &'static str,
+    instance: &str,
+    request_id: Option<&Extension<RequestId>>,
+) -> ApiError {
+    ApiError::new(
+        StatusCode::CONFLICT,
+        "storage_in_use",
+        "Storage in use",
+        detail,
+        instance,
+        request_id,
+    )
+}
+
+fn app_key_missing(instance: &str, request_id: Option<&Extension<RequestId>>) -> ApiError {
+    ApiError::new(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "app_key_missing",
+        "App key missing",
+        "The server has no app key to encrypt the secret with.",
+        instance,
+        request_id,
+    )
+}
+
+/// Makes the running server use the saved storage settings.
+async fn reload_storage(
+    state: &WorkspaceState,
+    instance: &str,
+    request_id: Option<&Extension<RequestId>>,
+) -> Result<(), ApiError> {
+    let Some((storage, _)) = &state.object_storage else {
+        return Ok(());
+    };
+    let settings = InstanceSettingsRepository::new(state.identity.database().clone())
+        .storage()
+        .await
+        .map_err(|_| internal(instance, request_id))?;
+    crate::object_storage::apply(
+        storage,
+        &settings,
+        state.mailer.as_ref().and_then(Mailer::app_key),
+    )
+    .map_err(|_| internal(instance, request_id))
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct S3Body {
+    /// `https://s3.eu-central-1.amazonaws.com`, `https://<account>.r2.cloudflarestorage.com`, `http://minio:9000`.
+    endpoint: String,
+    /// Empty: `us-east-1`.
+    region: Option<String>,
+    bucket: String,
+    /// Key prefix in the bucket, for example `orbit`. Empty: the bucket root.
+    prefix: Option<String>,
+    access_key_id: String,
+    /// Absent or empty: keep the saved secret key.
+    secret_access_key: Option<String>,
+    /// `endpoint/bucket/key` URLs (MinIO and most self-hosted servers) instead of `bucket.endpoint/key`.
+    #[serde(default)]
+    path_style: bool,
+}
+
+/// Saves the bucket after writing, reading and deleting a test object in it (502 `storage_unreachable` when that
+/// fails). Moving to another bucket or prefix needs the attachment files back on this server first.
+#[utoipa::path(put, path = "/api/v1/admin/settings/s3", request_body = S3Body, responses((status = 200, body = InstanceSettingsView)))]
+async fn save_s3(
+    State(state): State<WorkspaceState>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+    ApiJson(body): ApiJson<S3Body>,
+) -> Result<Json<InstanceSettingsView>, ApiError> {
+    let instance = "/api/v1/admin/settings/s3";
+    let session = require_root(&state, &headers, instance, request_id.as_ref()).await?;
+    let invalid = |field: &str, detail: &str| {
+        ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_storage_settings",
+            "Invalid storage settings",
+            format!("{field}: {detail}"),
+            instance,
+            request_id.as_ref(),
+        )
+    };
+    let endpoint = body.endpoint.trim().trim_end_matches('/').to_owned();
+    if !(endpoint.starts_with("https://") || endpoint.starts_with("http://"))
+        || endpoint.len() > 2048
+    {
+        return Err(invalid(
+            "endpoint",
+            "enter the http(s) URL of the S3 server.",
+        ));
+    }
+    let bucket = body.bucket.trim().to_owned();
+    if bucket.len() < 3 || bucket.len() > 63 {
+        return Err(invalid(
+            "bucket",
+            "enter a bucket name of 3 to 63 characters.",
+        ));
+    }
+    let region = body
+        .region
+        .map(|region| region.trim().to_owned())
+        .filter(|region| !region.is_empty())
+        .unwrap_or_else(|| "us-east-1".to_owned());
+    if region.len() > 64 {
+        return Err(invalid("region", "use at most 64 characters."));
+    }
+    let prefix = body
+        .prefix
+        .unwrap_or_default()
+        .trim()
+        .trim_matches('/')
+        .to_owned();
+    if prefix.len() > 512
+        || !prefix
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'))
+        || prefix.split('/').any(|part| part == "." || part == "..")
+    {
+        return Err(invalid(
+            "prefix",
+            "use letters, digits, '-', '_', '.' and '/' (at most 512).",
+        ));
+    }
+    let access_key_id = body.access_key_id.trim().to_owned();
+    if access_key_id.is_empty() || access_key_id.len() > 256 {
+        return Err(invalid("access_key_id", "enter the access key."));
+    }
+    let key = state
+        .mailer
+        .as_ref()
+        .and_then(Mailer::app_key)
+        .ok_or_else(|| app_key_missing(instance, request_id.as_ref()))?;
+    let repository = InstanceSettingsRepository::new(state.identity.database().clone());
+    let saved = repository
+        .storage()
+        .await
+        .map_err(|_| internal(instance, request_id.as_ref()))?;
+    let secret = match body.secret_access_key.filter(|secret| !secret.is_empty()) {
+        Some(secret) => secret,
+        None => saved
+            .s3
+            .as_ref()
+            .and_then(|s3| crate::secret_box::decrypt_secret(key, &s3.secret_access_key).ok())
+            .ok_or_else(|| invalid("secret_access_key", "enter the secret key."))?,
+    };
+    let s3 = S3Settings {
+        endpoint,
+        region,
+        bucket,
+        prefix,
+        access_key_id,
+        secret_access_key: crate::secret_box::encrypt_secret(key, &secret)
+            .map_err(|()| internal(instance, request_id.as_ref()))?,
+        path_style: body.path_style,
+    };
+    if let Some(old) = &saved.s3 {
+        let moved =
+            (&old.endpoint, &old.bucket, &old.prefix) != (&s3.endpoint, &s3.bucket, &s3.prefix);
+        if moved {
+            let in_use = saved.attachments_in_s3
+                || crate::object_storage::saved_bucket(old, Some(key))
+                    .map_err(|_| internal(instance, request_id.as_ref()))?
+                    .any("blobs/")
+                    .await
+                    .map_err(|error| storage_unreachable(error, instance, request_id.as_ref()))?;
+            if in_use {
+                return Err(storage_in_use(
+                    "Attachment files are in the saved bucket. Turn off S3 for attachments and wait until \
+                     no files are left to move before you change the endpoint, bucket or prefix.",
+                    instance,
+                    request_id.as_ref(),
+                ));
+            }
+        }
+    }
+    crate::object_storage::bucket(&s3, secret)
+        .map_err(|error| invalid("endpoint", &error))?
+        .probe()
+        .await
+        .map_err(|error| storage_unreachable(error, instance, request_id.as_ref()))?;
+    repository
+        .save_s3(
+            session.user.id,
+            &s3,
+            request_id_value(request_id.as_ref()),
+            TimestampMillis::now(),
+        )
+        .await
+        .map_err(|_| internal(instance, request_id.as_ref()))?;
+    reload_storage(&state, instance, request_id.as_ref()).await?;
+    settings_view(&state, instance, request_id.as_ref()).await
+}
+
+/// Removes the bucket. Refused (409 `storage_in_use`) while attachments use it or files in it still wait to move
+/// back to this server. Backups already in the bucket stay there.
+#[utoipa::path(delete, path = "/api/v1/admin/settings/s3", responses((status = 200, body = InstanceSettingsView)))]
+async fn remove_s3(
+    State(state): State<WorkspaceState>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<InstanceSettingsView>, ApiError> {
+    let instance = "/api/v1/admin/settings/s3";
+    let session = require_root(&state, &headers, instance, request_id.as_ref()).await?;
+    let repository = InstanceSettingsRepository::new(state.identity.database().clone());
+    let saved = repository
+        .storage()
+        .await
+        .map_err(|_| internal(instance, request_id.as_ref()))?;
+    if let Some(s3) = &saved.s3 {
+        if saved.attachments_in_s3 {
+            return Err(storage_in_use(
+                "Attachments use the bucket. Turn off S3 for attachments first.",
+                instance,
+                request_id.as_ref(),
+            ));
+        }
+        let app_key = state.mailer.as_ref().and_then(Mailer::app_key);
+        let files_left = crate::object_storage::saved_bucket(s3, app_key)
+            .map_err(|_| internal(instance, request_id.as_ref()))?
+            .any("blobs/")
+            .await
+            .map_err(|error| storage_unreachable(error, instance, request_id.as_ref()))?;
+        if files_left {
+            return Err(storage_in_use(
+                "Attachment files are still moving back to this server. Try again when none are left.",
+                instance,
+                request_id.as_ref(),
+            ));
+        }
+    }
+    repository
+        .clear_s3(
+            session.user.id,
+            request_id_value(request_id.as_ref()),
+            TimestampMillis::now(),
+        )
+        .await
+        .map_err(|_| internal(instance, request_id.as_ref()))?;
+    reload_storage(&state, instance, request_id.as_ref()).await?;
+    settings_view(&state, instance, request_id.as_ref()).await
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct StorageOptionsBody {
+    /// New attachment files go to the bucket and existing ones move there. Off: they move back to this server.
+    attachments_in_s3: bool,
+    /// New backups are uploaded to the bucket.
+    backups_in_s3: bool,
+    backup_schedule: BackupSchedule,
+}
+
+/// Where attachments and backups are stored, and how often Orbit backs up by itself. Using S3 needs a saved
+/// bucket (409 `storage_not_configured`).
+#[utoipa::path(put, path = "/api/v1/admin/settings/storage", request_body = StorageOptionsBody, responses((status = 200, body = InstanceSettingsView)))]
+async fn save_storage_options(
+    State(state): State<WorkspaceState>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+    ApiJson(body): ApiJson<StorageOptionsBody>,
+) -> Result<Json<InstanceSettingsView>, ApiError> {
+    let instance = "/api/v1/admin/settings/storage";
+    let session = require_root(&state, &headers, instance, request_id.as_ref()).await?;
+    InstanceSettingsRepository::new(state.identity.database().clone())
+        .save_storage_options(
+            session.user.id,
+            body.attachments_in_s3,
+            body.backups_in_s3,
+            body.backup_schedule,
+            request_id_value(request_id.as_ref()),
+            TimestampMillis::now(),
+        )
+        .await
+        .map_err(|error| match error {
+            StorageSettingsError::NotConfigured => ApiError::new(
+                StatusCode::CONFLICT,
+                "storage_not_configured",
+                "Storage not configured",
+                "Save a bucket first.",
+                instance,
+                request_id.as_ref(),
+            ),
+            StorageSettingsError::Unavailable(_) => internal(instance, request_id.as_ref()),
+        })?;
+    reload_storage(&state, instance, request_id.as_ref()).await?;
+    settings_view(&state, instance, request_id.as_ref()).await
+}
+
+/// Starts making large stored images smaller (at most 2560 px, WebP), on this server's disk and in S3. Runs in
+/// the background; the settings show its progress in `storage.image_compression`. Starting it again while it runs
+/// does nothing.
+#[utoipa::path(post, path = "/api/v1/admin/attachments/compress", responses((status = 200, body = InstanceSettingsView)))]
+async fn start_image_compression(
+    State(state): State<WorkspaceState>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<InstanceSettingsView>, ApiError> {
+    let instance = "/api/v1/admin/attachments/compress";
+    require_root(&state, &headers, instance, request_id.as_ref()).await?;
+    let Some(compressor) = &state.image_compressor else {
+        return Err(internal(instance, request_id.as_ref()));
+    };
+    compressor.start();
+    settings_view(&state, instance, request_id.as_ref()).await
+}
+
 #[derive(Serialize, ToSchema)]
 struct BackupCreated {
     id: String,
@@ -1618,9 +2029,19 @@ enum BackupSummaryKind {
 }
 
 #[derive(Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum BackupLocation {
+    /// This server's backup directory.
+    Local,
+    /// The S3 bucket from Admin → Storage.
+    S3,
+}
+
+#[derive(Serialize, ToSchema)]
 struct BackupSummary {
     id: String,
     kind: BackupSummaryKind,
+    location: BackupLocation,
     /// Unix milliseconds.
     created_at: i64,
     /// Total size of the database and attachment files in the snapshot.
@@ -1638,6 +2059,11 @@ impl From<BackupSnapshot> for BackupSummary {
             kind: match manifest.kind {
                 BackupKind::Snapshot => BackupSummaryKind::Snapshot,
                 BackupKind::PreMigration => BackupSummaryKind::PreMigration,
+            },
+            location: if snapshot.in_object_storage {
+                BackupLocation::S3
+            } else {
+                BackupLocation::Local
             },
             created_at: manifest.created_at,
             byte_size: manifest.files.iter().map(|file| file.byte_size).sum(),
@@ -1792,6 +2218,42 @@ async fn download_backup(
     }
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
     Ok(response)
+}
+
+/// Deletes a snapshot or pre-migration backup, from this server or the S3 bucket.
+#[utoipa::path(delete, path = "/api/v1/admin/backups/{backup_id}", params(("backup_id" = String, Path)), responses((status = 204)))]
+async fn delete_backup(
+    State(state): State<WorkspaceState>,
+    Path(backup_id): Path<String>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<StatusCode, ApiError> {
+    let instance = format!("/api/v1/admin/backups/{backup_id}");
+    let session = authenticate(&state, &headers, &instance, request_id.as_ref()).await?;
+    require_installation_admin(&state, session.user.id, &instance, request_id.as_ref()).await?;
+    let backups = backup_service(&state, &instance, request_id.as_ref())?;
+    backups
+        .delete(&backup_id)
+        .await
+        .map_err(|error| match error {
+            BackupError::NotFound { .. } => ApiError::new(
+                StatusCode::NOT_FOUND,
+                "backup_not_found",
+                "Backup not found",
+                "The backup does not exist.",
+                &instance,
+                request_id.as_ref(),
+            ),
+            _ => ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "backup_delete_failed",
+                "Backup delete failed",
+                "Orbit could not delete this backup.",
+                &instance,
+                request_id.as_ref(),
+            ),
+        })?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Writes the snapshot to an anonymous temporary file, rewound for reading. Entries sit under a `{id}/` folder, so

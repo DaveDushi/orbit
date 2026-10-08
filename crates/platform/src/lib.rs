@@ -34,11 +34,12 @@ pub use db::{
     run_guarded_migrations,
 };
 pub use files::{
-    AuthorizedAttachment, BLOB_REFERENCE_COUNT, BlobDownload, BlobFuture, BlobObject, BlobReader,
-    BlobStore, BlobStoreError, ContentDisposition, DownloadMetadata, FinalizedAttachment,
-    FinalizedBlob, INLINE_IMAGE_TYPES, LocalBlobStore, NewAttachmentReference, ReconcileResult,
-    StagedUpload, StoredObject, UploadError, UploadFinalization, UploadLimitError, UploadLimits,
-    UploadService,
+    AuthorizedAttachment, BLOB_REFERENCE_COUNT, BlobDownload, BlobFuture, BlobMoveStatus,
+    BlobObject, BlobReader, BlobStore, BlobStoreError, ContentDisposition, DownloadMetadata,
+    FinalizedAttachment, FinalizedBlob, INLINE_IMAGE_TYPES, LocalBlobStore, NewAttachmentReference,
+    ObjectStorage, ObjectStorageState, ReconcileResult, S3_DELETE_DELAY_MILLIS, S3Bucket, S3Config,
+    S3Error, S3Object, StagedUpload, StoredObject, TieredBlobStore, UploadError,
+    UploadFinalization, UploadLimitError, UploadLimits, UploadService, start_fake_s3,
 };
 pub use health::{HealthCheck, HealthCheckResult, HealthRegistry, ReadinessReport};
 pub use http::{

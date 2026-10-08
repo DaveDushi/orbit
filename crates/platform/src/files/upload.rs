@@ -531,6 +531,128 @@ impl UploadService {
         Ok(())
     }
 
+    /// The stored bytes of a blob, from the local disk or S3.
+    pub async fn read_blob(&self, storage_key: &str) -> Result<Vec<u8>, UploadError> {
+        let mut reader = self.store.open(storage_key).await?;
+        let mut bytes = Vec::new();
+        reader
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(|source| BlobStoreError::Io {
+                path: PathBuf::from(storage_key),
+                source,
+            })?;
+        Ok(bytes)
+    }
+
+    /// Replaces a blob's bytes with a re-encoded version (for example a smaller image). The blob keeps its id, so
+    /// every task, page and chat reference stays; their media type, size and file extension follow the new bytes.
+    /// Returns `false` and changes nothing when the blob changed since `expected_key` was read, or the workspace
+    /// already stores these exact bytes. The old file is released like an unreferenced blob.
+    pub async fn replace_blob(
+        &self,
+        blob_id: &str,
+        expected_key: &str,
+        bytes: &[u8],
+        extension: &str,
+    ) -> Result<bool, UploadError> {
+        let _operation = self.operations.lock().await;
+        let _mutation = self.mutations.begin().await;
+        let Some(row) = sqlx::query(
+            "SELECT workspace_id FROM attachment_blobs WHERE id = ? AND storage_key = ?",
+        )
+        .bind(blob_id)
+        .bind(expected_key)
+        .fetch_optional(self.database.pool())
+        .await?
+        else {
+            return Ok(false);
+        };
+        let workspace_id: String = row.try_get("workspace_id")?;
+        let sha256 = format!("{:x}", Sha256::digest(bytes));
+        let size_bytes = u64::try_from(bytes.len()).map_err(|_| UploadError::SizeOverflow)?;
+        let size_i64 = i64::try_from(size_bytes).map_err(|_| UploadError::SizeOverflow)?;
+        let duplicate: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM attachment_blobs WHERE workspace_id = ? AND sha256 = ? AND byte_size = ?",
+        )
+        .bind(&workspace_id)
+        .bind(&sha256)
+        .bind(size_i64)
+        .fetch_one(self.database.pool())
+        .await?;
+        if duplicate > 0 {
+            return Ok(false);
+        }
+
+        let temporary_path = self.store.create_temporary()?;
+        let mut temporary = TemporaryFile::new(self.store.clone(), temporary_path.clone());
+        fs::write(&temporary_path, bytes)
+            .await
+            .map_err(|source| BlobStoreError::Io {
+                path: temporary_path.clone(),
+                source,
+            })?;
+        let media_type = detect_media_type(bytes);
+        let staged = StagedUpload {
+            id: Id::new_v7(),
+            workspace_id: workspace_id
+                .parse()
+                .map_err(|_| UploadError::InvalidState)?,
+            owner_id: Id::new_v7(),
+            sha256: sha256.clone(),
+            size_bytes,
+            detected_media_type: media_type.to_owned(),
+            display_name: String::new(),
+            temporary_path,
+        };
+        let stored = self.store.install(&staged).await?;
+        temporary.disarm();
+
+        let updated = async {
+            let mut transaction = self.database.immediate_transaction().await?;
+            sqlx::query(
+                "UPDATE attachment_blobs SET sha256 = ?, byte_size = ?, storage_key = ? WHERE id = ?",
+            )
+            .bind(&sha256)
+            .bind(size_i64)
+            .bind(&stored.storage_key)
+            .bind(blob_id)
+            .execute(&mut *transaction)
+            .await?;
+            for (table, name, media, size) in [
+                ("attachment_references", "display_name", "media_type", "byte_size"),
+                ("page_files", "file_name", "mime_type", "size_bytes"),
+                ("chat_message_files", "file_name", "mime_type", "size_bytes"),
+            ] {
+                let references =
+                    sqlx::query(&format!("SELECT id, {name} AS name FROM {table} WHERE blob_id = ?"))
+                        .bind(blob_id)
+                        .fetch_all(&mut *transaction)
+                        .await?;
+                for reference in references {
+                    let old_name: String = reference.try_get("name")?;
+                    sqlx::query(&format!(
+                        "UPDATE {table} SET {name} = ?, {media} = ?, {size} = ? WHERE id = ?"
+                    ))
+                    .bind(with_extension(&old_name, extension))
+                    .bind(media_type)
+                    .bind(size_i64)
+                    .bind(reference.try_get::<String, _>("id")?)
+                    .execute(&mut *transaction)
+                    .await?;
+                }
+            }
+            transaction.commit().await
+        }
+        .await;
+        if let Err(error) = updated {
+            let _ = self.store.delete(&stored.storage_key).await;
+            return Err(error.into());
+        }
+        self.store.release(expected_key).await?;
+        Ok(true)
+    }
+
     pub async fn reconcile(&self, now_millis: i64) -> Result<ReconcileResult, UploadError> {
         let _operation = self.operations.lock().await;
         let _mutation = self.mutations.begin().await;
@@ -601,7 +723,7 @@ impl UploadService {
                     transaction.commit().await?;
                     continue;
                 }
-                self.store.delete(&storage_key).await?;
+                self.store.release(&storage_key).await?;
                 result.deleted_blobs += sqlx::query(
                     "DELETE FROM attachment_blobs WHERE id = ? AND quarantine_until <= ?",
                 )
@@ -615,7 +737,9 @@ impl UploadService {
         }
 
         for object in blob_inventory.into_values() {
-            if object.modified_at_millis > quarantine_cutoff {
+            let untracked_cutoff =
+                now_millis.saturating_sub(QUARANTINE_MILLIS.max(object.keep_untracked_millis));
+            if object.modified_at_millis > untracked_cutoff {
                 continue;
             }
             let mut transaction = self.database.immediate_transaction().await?;
@@ -629,7 +753,7 @@ impl UploadService {
                     .store
                     .blob_modified_at(&object.storage_key)
                     .await?
-                    .is_some_and(|modified_at| modified_at > quarantine_cutoff);
+                    .is_some_and(|modified_at| modified_at > untracked_cutoff);
                 if recently_published {
                     transaction.commit().await?;
                     continue;
@@ -688,6 +812,20 @@ fn safe_display_name(value: &str) -> Result<String, UploadError> {
         return Err(UploadError::InvalidDisplayName);
     }
     Ok(name.to_owned())
+}
+
+/// `photo.png` -> `photo.webp`. Keeps the name when the result would be longer than a display name may be.
+fn with_extension(name: &str, extension: &str) -> String {
+    let stem = match name.rsplit_once('.') {
+        Some((stem, _)) if !stem.is_empty() => stem,
+        _ => name,
+    };
+    let renamed = format!("{stem}.{extension}");
+    if renamed.len() > 255 {
+        name.to_owned()
+    } else {
+        renamed
+    }
 }
 
 fn header_filename(value: &str) -> String {

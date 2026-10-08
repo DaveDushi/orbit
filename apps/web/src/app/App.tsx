@@ -15,6 +15,7 @@ import { DocsPage } from '@/features/docs/pages/DocsPage'
 import { AccountLayout, AdminLayout, SettingsLayout } from '@/features/settings/pages/SettingsLayout'
 import { AdminAuditPage } from '@/features/admin/pages/AdminAuditPage'
 import { AdminBackupsPage } from '@/features/admin/pages/AdminBackupsPage'
+import { AdminStoragePage } from '@/features/admin/pages/AdminStoragePage'
 import { AdminSettingsPage } from '@/features/admin/pages/AdminSettingsPage'
 import { AdminUsersPage } from '@/features/admin/pages/AdminUsersPage'
 import { GeneralPage } from '@/features/settings/pages/GeneralPage'
@@ -114,6 +115,7 @@ export default function App() {
                 <Route index element={<AdminSettingsPage />} />
                 <Route path="users" element={<AdminUsersPage />} />
                 <Route path="audit" element={<AdminAuditPage />} />
+                <Route path="storage" element={<AdminStoragePage />} />
                 <Route path="backups" element={<AdminBackupsPage />} />
               </Route>
               <Route path="settings" element={<SettingsLayout />}>

@@ -42,6 +42,7 @@ import {
 import type { ChatEvent as WireEvent, ChatFileRecord } from '@/api/generated/types.gen'
 import type { Notice } from '@/features/realtime/notify'
 import type { PresenceEntry, PresenceMap } from '@/features/realtime/presence'
+import { shrinkImage } from '@/lib/shrinkImage'
 import type { ChatClient } from './client'
 import { type LiveSocket, type LiveSocketOptions, openLiveSocket } from './liveSocket'
 import { ChatError, type ChatEvent, type ConversationState } from './types'
@@ -407,9 +408,10 @@ export function createHttpChatClient(options: HttpChatClientOptions): ChatClient
      * One request with upload progress, which `fetch` cannot report. The file waits on the server for the message that
      * names it; the size of an image goes along so the list can reserve its space.
      */
-    async uploadAttachment(file, { onProgress, signal } = {}) {
+    async uploadAttachment(original, { onProgress, signal } = {}) {
       const failed = (message: string) => new ChatError('upload_failed', message)
       if (signal?.aborted) throw failed('The upload was cancelled.')
+      const file = await shrinkImage(original)
       const size = await imageSize(file)
       // A cancel while the image was measured: the listener below would never fire.
       if (signal?.aborted) throw failed('The upload was cancelled.')

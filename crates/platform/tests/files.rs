@@ -1223,3 +1223,67 @@ impl BlobStore for PausingDeleteStore {
         BlobStore::temporary_files(&self.inner)
     }
 }
+
+#[tokio::test]
+async fn replace_blob_keeps_the_blob_id_and_updates_its_references() {
+    let fixture = Fixture::new().await;
+    let png = b"\x89PNG\r\n\x1a\nlarge original image".to_vec();
+    let staged = fixture
+        .service
+        .stage(Id::new_v7(), Id::new_v7(), "photo.png", &png[..])
+        .await
+        .unwrap();
+    let blob = fixture
+        .service
+        .finalize(&staged, attachment())
+        .await
+        .unwrap();
+    let webp = b"RIFF\0\0\0\0WEBPsmaller".to_vec();
+
+    let replaced = fixture
+        .service
+        .replace_blob(&blob.id.to_string(), &blob.storage_key, &webp, "webp")
+        .await
+        .unwrap();
+
+    assert!(replaced);
+    let (storage_key, size): (String, i64) =
+        sqlx::query_as("SELECT storage_key, byte_size FROM attachment_blobs WHERE id = ?")
+            .bind(blob.id.to_string())
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap();
+    assert_ne!(storage_key, blob.storage_key);
+    assert_eq!(size, webp.len() as i64);
+    assert_eq!(fixture.service.read_blob(&storage_key).await.unwrap(), webp);
+    assert!(!fixture.store.path(&blob.storage_key).unwrap().exists());
+    let reference: (String, String, i64) = sqlx::query_as(
+        "SELECT display_name, media_type, byte_size FROM attachment_references WHERE blob_id = ?",
+    )
+    .bind(blob.id.to_string())
+    .fetch_one(fixture.database.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        reference,
+        (
+            "photo.webp".to_owned(),
+            "image/webp".to_owned(),
+            webp.len() as i64
+        )
+    );
+
+    // A stale read (the blob changed meanwhile) changes nothing.
+    let stale = fixture
+        .service
+        .replace_blob(
+            &blob.id.to_string(),
+            &blob.storage_key,
+            b"RIFF\0\0\0\0WEBPother",
+            "webp",
+        )
+        .await
+        .unwrap();
+    assert!(!stale);
+    assert_eq!(fixture.store.blobs().await.unwrap().len(), 1);
+}

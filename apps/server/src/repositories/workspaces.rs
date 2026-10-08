@@ -1964,7 +1964,7 @@ impl WorkspaceRepository {
                     .fetch_one(&mut *transaction)
                     .await?;
                     if live == 0 {
-                        store.delete(&path).await?;
+                        store.release(&path).await?;
                     }
                 }
                 "temporary" => {

@@ -192,7 +192,7 @@ async fn app_build_migrates_checks_readiness_and_returns_first_run_setup_url() {
             .scalar::<i64>("SELECT MAX(version) FROM schema_migrations")
             .await
             .unwrap(),
-        43
+        44
     );
 
     let readiness = app
@@ -492,6 +492,21 @@ async fn installation_admin_can_create_an_online_backup() {
         .await
         .unwrap();
     assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+
+    let delete = |path: String| {
+        app.router().oneshot(
+            Request::delete(path)
+                .header(header::ORIGIN, "http://127.0.0.1:8080")
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+    };
+    let deleted = delete(format!("/api/v1/admin/backups/{id}")).await.unwrap();
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    assert!(backups.list().await.unwrap().is_empty());
+    let again = delete(format!("/api/v1/admin/backups/{id}")).await.unwrap();
+    assert_eq!(again.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -506,7 +521,12 @@ async fn critical_durable_schedules_exist_before_serve() {
 
     assert_eq!(
         kinds,
-        ["integrity.weekly", "notion.cleanup", "workspace.retention"]
+        [
+            "backup.scheduled",
+            "integrity.weekly",
+            "notion.cleanup",
+            "workspace.retention"
+        ]
     );
     assert!(app.production_services_ready());
 }

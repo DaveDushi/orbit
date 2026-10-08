@@ -234,7 +234,8 @@ async fn only_the_root_user_saves_mail_settings_and_the_password_is_encrypted() 
 
     // Removing the mail server closes registration.
     let (_, body) = call(app, "DELETE", "/api/v1/admin/settings/smtp", root, None).await;
-    assert_eq!(body, json!({"registration_open": false, "smtp": null}));
+    assert_eq!(body["registration_open"], false);
+    assert!(body["smtp"].is_null());
 }
 
 #[tokio::test]

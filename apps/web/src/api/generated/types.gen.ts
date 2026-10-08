@@ -195,6 +195,10 @@ export type BackupList = {
     items: Array<BackupSummary>;
 };
 
+export type BackupLocation = 'local' | 's3';
+
+export type BackupSchedule = 'off' | 'hourly' | 'daily';
+
 export type BackupSummary = {
     application_version: string;
     /**
@@ -208,6 +212,7 @@ export type BackupSummary = {
     file_count: number;
     id: string;
     kind: BackupSummaryKind;
+    location: BackupLocation;
     schema_version: number;
 };
 
@@ -704,6 +709,27 @@ export type CommentUpdateBody = {
     expected_version: number;
 };
 
+export type CompressSummary = {
+    bytes_after: number;
+    bytes_before: number;
+    compressed: number;
+    /**
+     * Not a still JPEG, PNG or WebP, not readable, or not smaller after re-encoding.
+     */
+    skipped: number;
+};
+
+/**
+ * The state of the last compression started from Admin → Storage.
+ */
+export type CompressionStatus = CompressSummary & {
+    /**
+     * Why the last run stopped early.
+     */
+    error?: string | null;
+    running: boolean;
+};
+
 export type Condition = {
     field: FilterField;
     operator: FilterOperator;
@@ -1022,6 +1048,7 @@ export type InstanceAdminBody = {
 export type InstanceSettingsView = {
     registration_open: boolean;
     smtp?: null | SmtpView;
+    storage: StorageView;
 };
 
 export type InvitationBody = {
@@ -2429,6 +2456,46 @@ export type RoleChangeBody = {
     role: RoleBody;
 };
 
+export type S3Body = {
+    access_key_id: string;
+    bucket: string;
+    /**
+     * `https://s3.eu-central-1.amazonaws.com`, `https://<account>.r2.cloudflarestorage.com`, `http://minio:9000`.
+     */
+    endpoint: string;
+    /**
+     * `endpoint/bucket/key` URLs (MinIO and most self-hosted servers) instead of `bucket.endpoint/key`.
+     */
+    path_style?: boolean;
+    /**
+     * Key prefix in the bucket, for example `orbit`. Empty: the bucket root.
+     */
+    prefix?: string | null;
+    /**
+     * Empty: `us-east-1`.
+     */
+    region?: string | null;
+    /**
+     * Absent or empty: keep the saved secret key.
+     */
+    secret_access_key?: string | null;
+};
+
+/**
+ * The saved bucket. The secret key is never returned.
+ */
+export type S3View = {
+    access_key_id: string;
+    bucket: string;
+    endpoint: string;
+    path_style: boolean;
+    /**
+     * Key prefix in the bucket; empty for the bucket root.
+     */
+    prefix: string;
+    region: string;
+};
+
 export type SavedViewRecord = {
     /**
      * Whether the caller may change who sees this view.
@@ -2597,6 +2664,40 @@ export type StickerRecord = {
      * Same-origin image path. The image of an id never changes.
      */
     url: string;
+};
+
+export type StorageOptionsBody = {
+    /**
+     * New attachment files go to the bucket and existing ones move there. Off: they move back to this server.
+     */
+    attachments_in_s3: boolean;
+    backup_schedule: BackupSchedule;
+    /**
+     * New backups are uploaded to the bucket.
+     */
+    backups_in_s3: boolean;
+};
+
+export type StorageView = {
+    /**
+     * New attachment files go to the bucket; existing ones move there in the background.
+     */
+    attachments_in_s3: boolean;
+    backup_schedule: BackupSchedule;
+    /**
+     * New backups are uploaded to the bucket instead of kept on this server.
+     */
+    backups_in_s3: boolean;
+    /**
+     * Attachment files still waiting to move between this server's disk and the bucket.
+     */
+    files_to_move: number;
+    image_compression?: null | CompressionStatus;
+    /**
+     * Why moving files stopped last time. Orbit retries every ten minutes.
+     */
+    move_error?: string | null;
+    s3?: null | S3View;
 };
 
 /**
@@ -3025,6 +3126,58 @@ export type WorkspaceRecord = {
 
 export type WorkspaceRole = 'owner' | 'admin' | 'member';
 
+export type StartImageCompressionData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/attachments/compress';
+};
+
+export type StartImageCompressionErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: AttachmentProblem;
+    /**
+     * authentication_required
+     */
+    401: AttachmentProblem;
+    /**
+     * origin_forbidden, installation_admin_required
+     */
+    403: AttachmentProblem;
+    /**
+     * contract_mismatch
+     */
+    409: AttachmentProblem;
+    /**
+     * request_too_large
+     */
+    413: AttachmentProblem;
+    /**
+     * internal_error
+     */
+    500: AttachmentProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: AttachmentProblem;
+};
+
+export type StartImageCompressionError = StartImageCompressionErrors[keyof StartImageCompressionErrors];
+
+export type StartImageCompressionResponses = {
+    200: InstanceSettingsView;
+};
+
+export type StartImageCompressionResponse = StartImageCompressionResponses[keyof StartImageCompressionResponses];
+
 export type ListGlobalAuditData = {
     body?: never;
     headers?: {
@@ -3243,6 +3396,64 @@ export type CreateBackupResponses = {
 
 export type CreateBackupResponse = CreateBackupResponses[keyof CreateBackupResponses];
 
+export type DeleteBackupData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        backup_id: string;
+    };
+    query?: never;
+    url: '/api/v1/admin/backups/{backup_id}';
+};
+
+export type DeleteBackupErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden, installation_admin_required
+     */
+    403: WorkspaceProblem;
+    /**
+     * backup_not_found
+     */
+    404: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type DeleteBackupError = DeleteBackupErrors[keyof DeleteBackupErrors];
+
+export type DeleteBackupResponses = {
+    204: void;
+};
+
+export type DeleteBackupResponse = DeleteBackupResponses[keyof DeleteBackupResponses];
+
 export type DownloadBackupData = {
     body?: never;
     headers?: {
@@ -3404,6 +3615,126 @@ export type SetRegistrationResponses = {
 };
 
 export type SetRegistrationResponse = SetRegistrationResponses[keyof SetRegistrationResponses];
+
+export type RemoveS3Data = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/settings/s3';
+};
+
+export type RemoveS3Errors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden, installation_admin_required
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch, storage_in_use
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * storage_unreachable
+     */
+    502: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type RemoveS3Error = RemoveS3Errors[keyof RemoveS3Errors];
+
+export type RemoveS3Responses = {
+    200: InstanceSettingsView;
+};
+
+export type RemoveS3Response = RemoveS3Responses[keyof RemoveS3Responses];
+
+export type SaveS3Data = {
+    body: S3Body;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/settings/s3';
+};
+
+export type SaveS3Errors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden, installation_admin_required
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch, storage_in_use
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * invalid_storage_settings
+     */
+    422: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * storage_unreachable
+     */
+    502: WorkspaceProblem;
+    /**
+     * app_key_missing
+     */
+    503: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type SaveS3Error = SaveS3Errors[keyof SaveS3Errors];
+
+export type SaveS3Responses = {
+    200: InstanceSettingsView;
+};
+
+export type SaveS3Response = SaveS3Responses[keyof SaveS3Responses];
 
 export type RemoveSmtpData = {
     body?: never;
@@ -3572,6 +3903,58 @@ export type SendTestEmailResponses = {
 };
 
 export type SendTestEmailResponse = SendTestEmailResponses[keyof SendTestEmailResponses];
+
+export type SaveStorageOptionsData = {
+    body: StorageOptionsBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/settings/storage';
+};
+
+export type SaveStorageOptionsErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden, installation_admin_required
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch, storage_not_configured
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type SaveStorageOptionsError = SaveStorageOptionsErrors[keyof SaveStorageOptionsErrors];
+
+export type SaveStorageOptionsResponses = {
+    200: InstanceSettingsView;
+};
+
+export type SaveStorageOptionsResponse = SaveStorageOptionsResponses[keyof SaveStorageOptionsResponses];
 
 export type ListAdminUsersData = {
     body?: never;

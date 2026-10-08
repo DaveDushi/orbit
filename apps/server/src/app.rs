@@ -9,10 +9,10 @@ use std::time::Duration;
 use axum::Router;
 use axum::serve::ListenerExt;
 use orbit_platform::{
-    BackupService, Config, Database, DatabaseConfig, HealthCheck, HealthRegistry, HttpLimits,
-    IntegrityService, JobError, JobKind, JobStore, LocalBlobStore, MigrationRunner, OriginPolicy,
-    RecurringSchedule, Scheduler, TimestampMillis, UploadLimits, UploadService, Worker,
-    WorkerConfig, run_guarded_migrations,
+    BackupService, BlobStoreError, Config, Database, DatabaseConfig, HealthCheck, HealthRegistry,
+    HttpLimits, IntegrityService, JobError, JobKind, JobStore, LocalBlobStore, MigrationRunner,
+    ObjectStorage, OriginPolicy, RecurringSchedule, Scheduler, TieredBlobStore, TimestampMillis,
+    UploadLimits, UploadService, Worker, WorkerConfig, run_guarded_migrations,
 };
 use serde_json::json;
 use thiserror::Error;
@@ -33,6 +33,7 @@ use crate::page_file_routes::PageFileState;
 use crate::page_routes::PageState;
 use crate::repositories::api_tokens::ApiTokenRepository;
 use crate::repositories::identity::IdentityRepository;
+use crate::repositories::instance_settings::InstanceSettingsRepository;
 use crate::repositories::page_files::PageFileRepository;
 use crate::repositories::tasks::TaskRepository;
 use crate::repositories::workspaces::WorkspaceRepository;
@@ -45,6 +46,8 @@ use crate::workspace_routes::WorkspaceState;
 const BACKGROUND_DRAIN: Duration = Duration::from_secs(30);
 /// Hourly: deletes tokens of Notion scans not started within 24 hours.
 const NOTION_CLEANUP: &str = "notion.cleanup";
+/// Hourly: creates a backup when the saved schedule (Admin → Storage) says one is due.
+const SCHEDULED_BACKUP: &str = "backup.scheduled";
 
 pub struct App {
     config: Config,
@@ -55,6 +58,8 @@ pub struct App {
     metrics: Metrics,
     backups: BackupService,
     workspaces: Arc<WorkspaceRepository>,
+    object_storage: ObjectStorage,
+    blob_store: TieredBlobStore,
     production_services: Option<ProductionServices>,
 }
 
@@ -168,9 +173,28 @@ impl App {
         .await
         .map_err(|error| AppError::Authentication(error.to_string()))?;
 
-        let backups = BackupService::new(&config.data.backups, &config.data.attachments);
-        let store: Arc<dyn orbit_platform::BlobStore> =
-            Arc::new(LocalBlobStore::new(&config.data.attachments));
+        let app_key = Some(
+            crate::secret_box::load_or_create_app_key(
+                config.secrets.get("app_key").map(|secret| secret.expose()),
+                &config.data.database,
+            )
+            .map_err(AppError::Config)?,
+        );
+        let object_storage = ObjectStorage::default();
+        let storage_settings = InstanceSettingsRepository::new(database.clone())
+            .storage()
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        crate::object_storage::apply(&object_storage, &storage_settings, app_key.as_ref())
+            .map_err(|error| AppError::Config(format!("object storage: {error}")))?;
+        let backups = BackupService::new(&config.data.backups, &config.data.attachments)
+            .with_object_storage(object_storage.clone());
+        let blob_store = TieredBlobStore::new(
+            LocalBlobStore::new(&config.data.attachments),
+            object_storage.clone(),
+            backups.attachment_mutations(),
+        );
+        let store: Arc<dyn orbit_platform::BlobStore> = Arc::new(blob_store.clone());
         let workspaces = Arc::new(WorkspaceRepository::with_blob_store_and_mutations(
             database.clone(),
             Arc::clone(&store),
@@ -191,18 +215,17 @@ impl App {
             ),
             cookie_mode,
         );
-        attachment_state
+        match attachment_state
             .reconcile_at(orbit_platform::TimestampMillis::now().as_millis())
             .await
-            .map_err(|error| AppError::WritableStorage(error.to_string()))?;
+        {
+            // An unreachable bucket must not keep Orbit from starting; the reconcile service retries.
+            Err(orbit_platform::UploadError::BlobStore(BlobStoreError::ObjectStorage(error))) => {
+                tracing::warn!(%error, "startup attachment reconcile could not reach S3");
+            }
+            result => result.map_err(|error| AppError::WritableStorage(error.to_string()))?,
+        }
 
-        let app_key = Some(
-            crate::secret_box::load_or_create_app_key(
-                config.secrets.get("app_key").map(|secret| secret.expose()),
-                &config.data.database,
-            )
-            .map_err(AppError::Config)?,
-        );
         let mailer = Mailer::new(database.clone(), app_key, &config.http.public_origin);
         let notion_imports = NotionImportService::new(
             database.clone(),
@@ -216,6 +239,7 @@ impl App {
 
         let production_services = initialize_production_services(
             &database,
+            backups.clone(),
             Arc::clone(&workspaces),
             integrity.clone(),
             notion_imports.clone(),
@@ -261,7 +285,14 @@ impl App {
                     cookie_mode,
                     backups.clone(),
                 )
-                .with_mailer(mailer),
+                .with_mailer(mailer)
+                .with_object_storage(object_storage.clone(), blob_store.clone())
+                .with_image_compressor(
+                    crate::image_compression::ImageCompressor::new(
+                        database.clone(),
+                        attachment_state.uploads.clone(),
+                    ),
+                ),
                 tasks: TaskState::new(Arc::clone(&identity), cookie_mode),
                 pages: PageState::new(Arc::clone(&identity), cookie_mode),
                 page_comments: PageCommentState::new(Arc::clone(&identity), cookie_mode),
@@ -317,6 +348,8 @@ impl App {
             metrics,
             backups,
             workspaces,
+            object_storage,
+            blob_store,
             production_services: Some(production_services),
         })
     }
@@ -414,6 +447,12 @@ impl App {
         push.set_origin(&self.config.http.public_origin);
         let token = service_shutdown.clone();
         services.spawn(async move { push.run_inbox_service(token).await });
+        let mover = crate::object_storage::run_mover(
+            self.blob_store.clone(),
+            self.object_storage.clone(),
+            service_shutdown.clone(),
+        );
+        services.spawn(mover);
         let attachments = self.attachments.clone();
         let token = service_shutdown.clone();
         services.spawn(async move {
@@ -619,6 +658,7 @@ fn health_registry(
 
 async fn initialize_production_services(
     database: &Database,
+    backups: BackupService,
     workspaces: Arc<WorkspaceRepository>,
     integrity: IntegrityService,
     notion_imports: NotionImportService,
@@ -667,6 +707,18 @@ async fn initialize_production_services(
                 }
             })
         })
+        .and_then(|worker| {
+            let database = database.clone();
+            worker.with_handler(maintenance_kind(SCHEDULED_BACKUP), move |_| {
+                let database = database.clone();
+                let backups = backups.clone();
+                async move {
+                    crate::object_storage::run_scheduled_backup(&database, &backups)
+                        .await
+                        .map_err(JobError::Retryable)
+                }
+            })
+        })
         .and_then(|worker| crate::notion::import::register_jobs(worker, notion_imports))
         .map_err(|error| AppError::ProductionServices(error.to_string()))?;
 
@@ -695,6 +747,14 @@ async fn initialize_production_services(
         &scheduler,
         "integrity.weekly",
         Duration::from_secs(7 * 24 * 60 * 60),
+        now,
+    )
+    .await?;
+    ensure_schedule(
+        database,
+        &scheduler,
+        SCHEDULED_BACKUP,
+        Duration::from_secs(60 * 60),
         now,
     )
     .await?;

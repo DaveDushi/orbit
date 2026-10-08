@@ -10,6 +10,7 @@ use uuid::Uuid;
 use super::upload::detect_media_type;
 use super::{
     BlobFuture, BlobObject, BlobReader, BlobStore, BlobStoreError, StagedUpload, StoredObject,
+    blob_storage_key,
 };
 
 const SNIFF_BYTES: usize = 8 * 1024;
@@ -50,6 +51,27 @@ impl LocalBlobStore {
         list_files(&self.root, &self.root.join("temporary")).await
     }
 
+    /// Copies the staged upload to a private file in the staging directory and checks its hash, size and media
+    /// type on the way, so only verified bytes are published (to S3) even if the staging file changes.
+    pub(super) async fn verified_copy(
+        &self,
+        upload: &StagedUpload,
+    ) -> Result<PublishingFile, BlobStoreError> {
+        if !self.temporary_path_is_safe(&upload.temporary_path) {
+            return Err(BlobStoreError::UnsafeTemporaryPath(
+                upload.temporary_path.clone(),
+            ));
+        }
+        // The `upload-` name lets reconcile remove a copy left behind by a crash.
+        let path = self
+            .root
+            .join("temporary")
+            .join(format!("upload-{}.publish", Uuid::now_v7()));
+        let (publishing, mut output) = PublishingFile::create(path)?;
+        copy_and_verify(upload, publishing.path(), &mut output).await?;
+        Ok(publishing)
+    }
+
     fn temporary_path_is_safe(&self, path: &Path) -> bool {
         path.parent() == Some(self.root.join("temporary").as_path())
             && path
@@ -78,10 +100,7 @@ impl BlobStore for LocalBlobStore {
                     upload.temporary_path.clone(),
                 ));
             }
-            let storage_key = format!(
-                "blobs/{}/{}-{}",
-                upload.workspace_id, upload.sha256, upload.size_bytes
-            );
+            let storage_key = blob_storage_key(upload);
             let destination = self.path(&storage_key)?;
             let parent = destination
                 .parent()
@@ -233,7 +252,7 @@ async fn copy_and_verify(
     Ok(())
 }
 
-struct PublishingFile {
+pub(super) struct PublishingFile {
     path: Option<PathBuf>,
 }
 
@@ -247,13 +266,13 @@ impl PublishingFile {
         Ok((Self { path: Some(path) }, fs::File::from_std(file)))
     }
 
-    fn path(&self) -> &Path {
+    pub(super) fn path(&self) -> &Path {
         self.path
             .as_deref()
             .expect("publishing path is still owned")
     }
 
-    async fn remove(mut self) -> Result<(), BlobStoreError> {
+    pub(super) async fn remove(mut self) -> Result<(), BlobStoreError> {
         remove_if_exists(self.path()).await?;
         self.path = None;
         Ok(())
@@ -326,6 +345,7 @@ async fn list_files(root: &Path, directory: &Path) -> Result<Vec<BlobObject>, Bl
                     storage_key,
                     path: entry.path(),
                     modified_at_millis,
+                    keep_untracked_millis: 0,
                 });
             }
         }

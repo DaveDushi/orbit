@@ -77,6 +77,10 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::workspace_routes::save_smtp,
         crate::workspace_routes::remove_smtp,
         crate::workspace_routes::send_test_email,
+        crate::workspace_routes::save_s3,
+        crate::workspace_routes::remove_s3,
+        crate::workspace_routes::save_storage_options,
+        crate::workspace_routes::start_image_compression,
         crate::workspace_routes::set_account_suspension,
         crate::workspace_routes::create_recovery_link,
         crate::workspace_routes::set_instance_admin,
@@ -85,6 +89,7 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::workspace_routes::create_backup,
         crate::workspace_routes::list_backups,
         crate::workspace_routes::download_backup,
+        crate::workspace_routes::delete_backup,
         crate::integration_routes::create_discord_event,
         crate::integration_routes::github_webhook,
         crate::integration_routes::github_manifest_callback,
@@ -532,6 +537,25 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             add_code(&mut responses, "409", "email_not_configured");
             add_code(&mut responses, "502", "email_failed");
         }
+        "save_s3" => {
+            add_code(&mut responses, "403", "installation_admin_required");
+            add_code(&mut responses, "409", "storage_in_use");
+            add_code(&mut responses, "422", "invalid_storage_settings");
+            add_code(&mut responses, "502", "storage_unreachable");
+            add_code(&mut responses, "503", "app_key_missing");
+        }
+        "remove_s3" => {
+            add_code(&mut responses, "403", "installation_admin_required");
+            add_code(&mut responses, "409", "storage_in_use");
+            add_code(&mut responses, "502", "storage_unreachable");
+        }
+        "start_image_compression" => {
+            add_code(&mut responses, "403", "installation_admin_required");
+        }
+        "save_storage_options" => {
+            add_code(&mut responses, "403", "installation_admin_required");
+            add_code(&mut responses, "409", "storage_not_configured");
+        }
         "list_invitations" | "list_audit" | "list_api_tokens" | "create_api_token"
         | "revoke_api_token" => {
             add_code(&mut responses, "403", "workspace_action_forbidden");
@@ -571,7 +595,7 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
         "create_backup" | "list_backups" => {
             add_code(&mut responses, "403", "installation_admin_required");
         }
-        "download_backup" => {
+        "download_backup" | "delete_backup" => {
             add_code(&mut responses, "403", "installation_admin_required");
             add_code(&mut responses, "404", "backup_not_found");
         }
@@ -661,6 +685,8 @@ fn invalid_request_operation(operation_id: &str) -> bool {
             | "registration_complete"
             | "set_registration"
             | "save_smtp"
+            | "save_s3"
+            | "save_storage_options"
             | "create_workspace"
             | "rename_workspace"
             | "list_members"

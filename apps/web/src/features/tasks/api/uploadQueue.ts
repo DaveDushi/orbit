@@ -1,3 +1,5 @@
+import { shrinkImage } from '@/lib/shrinkImage'
+
 export class PartialUploadError extends Error {
   readonly completed: number
   readonly remaining: File[]
@@ -20,7 +22,7 @@ export async function uploadFiles(
 ): Promise<void> {
   for (const [index, file] of files.entries()) {
     try {
-      await upload(file)
+      await upload(await shrinkImage(file))
     } catch (error) {
       throw new PartialUploadError(error, index, files.slice(index))
     }

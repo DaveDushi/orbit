@@ -18,6 +18,7 @@ import {
 import type { CreatePageBody, Page, PageFile, PageSummary, PageTrashEmptied, PageUpdateBody, TrashedPage } from '@/api/generated/types.gen'
 import { ApiProblem } from '@/api/problem'
 import { queryKeys } from '@/api/queryKeys'
+import { shrinkImage } from '@/lib/shrinkImage'
 import { confirmAction } from '@/components/common/confirmAction'
 import { isTaskVersionConflict } from '@/features/tasks/api/conflicts'
 import { applyMove, descendantsOf, removeSubtree, type MoveTarget } from '../pageTree'
@@ -102,7 +103,7 @@ export async function savePage(client: ApiClient, workspaceId: string, pageId: s
  * download path that the page's readers can load, so it can go straight into a block or `cover_url`.
  */
 export async function uploadPageFileRequest(client: ApiClient, workspaceId: string, pageId: string, file: File): Promise<PageFile> {
-  const { data } = await uploadPageFile({ client, path: { workspace_id: workspaceId, page_id: pageId }, body: { file }, throwOnError: true })
+  const { data } = await uploadPageFile({ client, path: { workspace_id: workspaceId, page_id: pageId }, body: { file: await shrinkImage(file) }, throwOnError: true })
   return required(data, 'Upload response was empty.')
 }
 

@@ -7,17 +7,18 @@ import { AdminSettingsPage } from './AdminSettingsPage'
 const originalFetch = globalThis.fetch
 afterEach(() => { globalThis.fetch = originalFetch })
 
+const STORAGE = { s3: null, attachments_in_s3: false, backups_in_s3: false, backup_schedule: 'off', files_to_move: 0, move_error: null }
 const SMTP = { host: 'smtp.example.com', port: 587, security: 'starttls', username: 'orbit', password_set: true, from_address: 'orbit@example.com', from_name: 'Orbit' }
 
 test('saving with an empty password field keeps the saved password, and registration needs a mail server', async () => {
   const bodies: unknown[] = []
-  let settings: object = { registration_open: false, smtp: null }
+  let settings: object = { registration_open: false, smtp: null, storage: STORAGE }
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const request = input as Request
     if (request.method === 'PUT') {
       const body = await request.json()
       bodies.push(body)
-      settings = { registration_open: false, smtp: SMTP }
+      settings = { registration_open: false, smtp: SMTP, storage: STORAGE }
     }
     return Response.json(settings)
   }) as unknown as typeof fetch
