@@ -14,7 +14,7 @@ use tokio::sync::{OwnedRwLockReadGuard, RwLock};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::Database;
+use crate::{Database, DatabaseError, lock_database_ownership};
 
 const DATABASE_FILE: &str = "database.sqlite";
 const MANIFEST_FILE: &str = "manifest.json";
@@ -269,17 +269,12 @@ impl BackupService {
                 .map_err(|source| io_error(&staged_database, source))?;
 
             let database_existed = database_path.exists();
-            let target_lock = OpenOptions::new()
-                .create(true)
-                .read(true)
-                .write(true)
-                .truncate(false)
-                .open(&database_path)
-                .map_err(|source| io_error(&database_path, source))?;
-            target_lock
-                .try_lock_exclusive()
-                .map_err(|_| BackupError::RestoreTargetOwned {
-                    path: database_path.clone(),
+            let target_lock =
+                lock_database_ownership(&database_path).map_err(|error| match error {
+                    DatabaseError::OpenOwnershipLock { path, source } => io_error(&path, source),
+                    _ => BackupError::RestoreTargetOwned {
+                        path: database_path.clone(),
+                    },
                 })?;
 
             let mut database_old_moved = false;

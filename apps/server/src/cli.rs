@@ -7,10 +7,10 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
-use fs2::FileExt;
 use orbit_platform::{
-    BackupService, Config, ConfigOverride, ConfigSources, Database, DatabaseConfig,
-    EnvironmentMode, MigrationRunner, TimestampMillis, run_guarded_migrations,
+    BackupService, Config, ConfigOverride, ConfigSources, Database, DatabaseConfig, DatabaseError,
+    EnvironmentMode, MigrationRunner, TimestampMillis, lock_database_ownership,
+    run_guarded_migrations,
 };
 use orbit_server::app::App;
 use orbit_server::repositories::identity::{IdentityRepository, SetupRequest};
@@ -394,19 +394,17 @@ fn reset_data(config: &Config) -> Result<(), CliError> {
     validate_reset_paths(config)?;
     let path = &config.data.database;
     fs::create_dir_all(parent_directory(path)).map_err(operation)?;
-    let database_file = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(path)
-        .map_err(operation)?;
-    database_file.try_lock_exclusive().map_err(|_| {
-        CliError::Operation(format!(
+    let _ownership_lock = lock_database_ownership(path).map_err(|error| match error {
+        DatabaseError::AlreadyOwned { .. } => CliError::Operation(format!(
             "database is owned by a serving Orbit process: {}",
             path.display()
-        ))
+        )),
+        error => operation(error),
     })?;
+    let database_file = OpenOptions::new()
+        .write(true)
+        .open(path)
+        .map_err(operation)?;
     database_file.set_len(0).map_err(operation)?;
     database_file.sync_all().map_err(operation)?;
     remove_sidecars(path)?;

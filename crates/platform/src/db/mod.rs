@@ -79,12 +79,72 @@ pub enum DatabaseError {
     },
     #[error("database is already owned by another Orbit process: {path}")]
     AlreadyOwned { path: PathBuf },
+    #[error("database file has more than one hard link, which SQLite does not support: {path}")]
+    HardLinked { path: PathBuf },
     #[error("failed to open SQLite database {path}: {source}")]
     OpenDatabase {
         path: PathBuf,
         #[source]
         source: sqlx::Error,
     },
+}
+
+/// Takes the lock that makes this process the only owner of the database at `path`, creating an
+/// empty database file if none exists. The lock is a separate `<database>.lock` file next to the
+/// resolved database path: on macOS a `flock` on the database file itself also blocks SQLite's own
+/// `fcntl` locks, so SQLite fails with "database is locked" (code 5). Symlink aliases resolve to the
+/// same lock file; hard links are refused, because SQLite does not support them.
+pub fn lock_database_ownership(path: &Path) -> Result<File, DatabaseError> {
+    let open_error = |source| DatabaseError::OpenOwnershipLock {
+        path: path.to_owned(),
+        source,
+    };
+    // An existing file is not opened: closing a file descriptor drops this process's `fcntl`
+    // locks on that file, including the locks of SQLite connections that are open on it.
+    let database_path = match fs::canonicalize(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(false)
+                .open(path)
+                .map_err(open_error)?;
+            fs::canonicalize(path)
+        }
+        result => result,
+    }
+    .map_err(open_error)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        if fs::metadata(&database_path).map_err(open_error)?.nlink() > 1 {
+            return Err(DatabaseError::HardLinked {
+                path: path.to_owned(),
+            });
+        }
+    }
+
+    let mut lock_path = database_path.into_os_string();
+    lock_path.push(".lock");
+    let lock_path = PathBuf::from(lock_path);
+    let ownership_lock = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|source| DatabaseError::OpenOwnershipLock {
+            path: lock_path,
+            source,
+        })?;
+    ownership_lock
+        .try_lock_exclusive()
+        .map_err(|_| DatabaseError::AlreadyOwned {
+            path: path.to_owned(),
+        })?;
+    Ok(ownership_lock)
 }
 
 impl Database {
@@ -96,31 +156,7 @@ impl Database {
             })?;
         }
 
-        let database_file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(&config.path)
-            .map_err(|source| DatabaseError::OpenOwnershipLock {
-                path: config.path.clone(),
-                source,
-            })?;
-        let lock_path = ownership_lock_path(&config.path, &database_file)?;
-        let ownership_lock = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(&lock_path)
-            .map_err(|source| DatabaseError::OpenOwnershipLock {
-                path: lock_path,
-                source,
-            })?;
-        FileExt::try_lock_exclusive(&ownership_lock).map_err(|_| DatabaseError::AlreadyOwned {
-            path: config.path.clone(),
-        })?;
-        drop(database_file);
+        let ownership_lock = lock_database_ownership(&config.path)?;
 
         let options = SqliteConnectOptions::new()
             .filename(&config.path)
@@ -220,31 +256,4 @@ impl Database {
             .iter()
             .find_map(|extension| Arc::clone(extension).downcast::<T>().ok())
     }
-}
-
-#[cfg(unix)]
-fn ownership_lock_path(
-    database_path: &Path,
-    database_file: &File,
-) -> Result<PathBuf, DatabaseError> {
-    use std::os::unix::fs::MetadataExt;
-
-    let metadata = database_file
-        .metadata()
-        .map_err(|source| DatabaseError::OpenOwnershipLock {
-            path: database_path.to_owned(),
-            source,
-        })?;
-    let name = format!(".orbit-{:x}-{:x}.lock", metadata.dev(), metadata.ino());
-    Ok(database_path.with_file_name(name))
-}
-
-#[cfg(not(unix))]
-fn ownership_lock_path(
-    database_path: &Path,
-    _database_file: &File,
-) -> Result<PathBuf, DatabaseError> {
-    let mut path = database_path.as_os_str().to_owned();
-    path.push(".lock");
-    Ok(PathBuf::from(path))
 }

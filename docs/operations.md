@@ -25,7 +25,7 @@ Retention, reconciliation, scheduler, or integrity supervision failure cancels n
 
 ## Restore rollback or ownership error
 
-Restore refuses an active database ownership lock. Stop every Orbit process that uses that file. If restore reports rollback failure, do not start Orbit. Preserve the target and rollback paths named by the error and recover from a separate verified snapshot.
+Restore refuses an active database ownership lock (the `<database>.lock` file next to the database; do not delete it while Orbit runs). Stop every Orbit process that uses that file. If restore reports rollback failure, do not start Orbit. Preserve the target and rollback paths named by the error and recover from a separate verified snapshot.
 
 ## Lost or expired setup token
 

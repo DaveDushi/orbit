@@ -30,7 +30,8 @@ pub use config::{
 };
 pub use db::{
     Database, DatabaseConfig, DatabaseError, GuardedMigrationError, Migration, MigrationError,
-    MigrationRunner, PendingMigration, TestDatabase, TestDatabaseError, run_guarded_migrations,
+    MigrationRunner, PendingMigration, TestDatabase, TestDatabaseError, lock_database_ownership,
+    run_guarded_migrations,
 };
 pub use files::{
     AuthorizedAttachment, BLOB_REFERENCE_COUNT, BlobDownload, BlobFuture, BlobObject, BlobReader,

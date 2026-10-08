@@ -1528,7 +1528,6 @@ dependencies = [
  "base64 0.22.1",
  "chacha20poly1305",
  "clap",
- "fs2",
  "futures-util",
  "hkdf",
  "hmac",

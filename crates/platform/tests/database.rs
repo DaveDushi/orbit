@@ -359,7 +359,38 @@ async fn hard_link_alias_cannot_bypass_database_ownership() {
         .await
         .unwrap_err();
 
+    assert!(matches!(error, DatabaseError::HardLinked { .. }));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn symlink_alias_in_another_directory_cannot_bypass_database_ownership() {
+    let directory = tempfile::tempdir().unwrap();
+    let other_directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite");
+    let alias = other_directory.path().join("alias.sqlite");
+    let _database = Database::open(&DatabaseConfig::new(&path)).await.unwrap();
+    std::os::unix::fs::symlink(&path, &alias).unwrap();
+
+    let error = Database::open(&DatabaseConfig::new(alias))
+        .await
+        .unwrap_err();
+
     assert!(matches!(error, DatabaseError::AlreadyOwned { .. }));
+}
+
+#[tokio::test]
+async fn ownership_lock_does_not_lock_the_database_file() {
+    // On macOS a lock on the database file itself blocks SQLite's own locks ("database is locked").
+    use fs2::FileExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite");
+    let _database = Database::open(&DatabaseConfig::new(&path)).await.unwrap();
+
+    let database_file = std::fs::File::open(&path).unwrap();
+    database_file.try_lock_exclusive().unwrap();
+    assert!(directory.path().join("db.sqlite.lock").exists());
 }
 
 #[cfg(unix)]
