@@ -2,7 +2,8 @@
 
 Private team trial; upstream explicitly labels Orbit alpha, not production-ready.
 
-- URL: https://victor-vs-isolani.exe.xyz/
+- Canonical URL: https://orbit.wellrox.com/
+- The original exe.dev hostname still reaches nginx, but browser writes must originate from the canonical URL.
 - Source: DaveDushi/orbit, commit 599976c4c12a895da726439a2daca4f535742733.
 - Binary extracted from the upstream coollabsio/orbit image for the identical full commit.
 - Image digest: sha256:60fc44c7cb20fd0592d4c9f8b17a621416a40e57b4e781842b991c3f0218e097
@@ -14,6 +15,27 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 - nginx listens on 8000; Orbit listens only on loopback port 8080.
 - exe.dev terminates TLS and authenticates private web access; nginx forwards its HTTPS transport header. Orbit trusts only loopback.
 - nginx access logging is disabled for this app to avoid logging invitation/setup tokens.
+
+## Custom-domain configuration
+
+Orbit's `/etc/orbit/orbit.toml` sets `[http].public_origin` to
+`https://orbit.wellrox.com` (no trailing slash). This controls the browser
+origin policy as well as generated application links. Changing DNS alone does
+not update it: a mismatched origin makes sign-in fail with
+`The request origin is not allowed.`
+
+nginx's `/etc/nginx/conf.d/orbit.conf` names both the custom domain and original
+exe.dev hostname. After changing the domain, validate the application config
+and nginx config, restart `orbit.service`, and reload `nginx.service`.
+Keep production origin checks and the existing trusted-proxy policy enabled.
+The previous application config is saved locally at
+`/etc/orbit/orbit.toml.before-custom-domain`.
+
+Verified through the local nginx proxy with the HTTPS forwarding header:
+readiness is healthy; a login POST with the custom origin reaches request-body
+validation (400 for an empty body), while an unrelated origin still receives
+403 `origin_forbidden`. Both services are active. This verifies origin handling,
+not a successful authenticated login through the public domain.
 
 ## First login and team access
 
