@@ -4,9 +4,9 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The original exe.dev hostname still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, commit 599976c4c12a895da726439a2daca4f535742733.
+- Source: DaveDushi/orbit, upstream commit d83ce6ce7892b420abf317adbd861813dabba221.
 - Binary extracted from the upstream coollabsio/orbit image for the identical full commit.
-- Image digest: sha256:60fc44c7cb20fd0592d4c9f8b17a621416a40e57b4e781842b991c3f0218e097
+- Image digest: sha256:0291062e65cdaf19014003473a4f7941d4d7627199c1b4f606db8037a63bf64d
 - Executable: /usr/local/bin/orbit; unprivileged system user: orbit.
 - Config: /etc/orbit/orbit.toml (production mode, closed registration).
 - SQLite, attachments, encryption key: /var/lib/orbit/ (mode 700).
@@ -95,6 +95,27 @@ sudo systemctl start orbit
 ```
 
 ## Verification performed
+
+### October 14, 2026 upgrade
+
+Merged `origin/main` while retaining the VM deployment documentation commits.
+Installed the binary from `ghcr.io/coollabsio/orbit:d83ce6c` after the isolated
+production image smoke suite passed. The binary embeds the full upstream
+revision above. Existing SQLite storage and production configuration were kept;
+Postgres support does not change this instance's database backend.
+
+Stopped Orbit and created and verified snapshot
+`01a13996-4324-7168-88dd-25ecc5cff4de` before installing the new binary.
+The new CLI reported the existing database schema current. The previous
+executable is retained at `/usr/local/bin/orbit-599976c`.
+For rollback, stop Orbit before replacing the executable; if a future upgrade
+changes the schema, restore its matching verified snapshot before using an
+older executable.
+
+After restart, Orbit and nginx are active. Readiness reports all checks healthy,
+the embedded frontend returns 200 with HSTS and CSP, setup remains complete,
+the canonical origin reaches login validation, and an unrelated origin is
+rejected with 403. Authenticated browser workflows were not tested.
 
 Upstream production image smoke suite passed: non-root execution, HTTPS
 boundary, embedded frontend, setup required, no seeded login, production
