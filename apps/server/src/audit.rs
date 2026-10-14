@@ -1,7 +1,7 @@
-use orbit_platform::{Database, Id, TimestampMillis};
+use orbit_platform::{Database, Id, Row, TimestampMillis};
 use serde::Serialize;
 use serde_json::Value;
-use sqlx::{Row, Sqlite, Transaction};
+use sqlx::{Any, Transaction};
 use utoipa::ToSchema;
 
 const MAX_METADATA_BYTES: usize = 2_048;
@@ -44,7 +44,7 @@ pub struct AuditEvent {
 
 #[allow(clippy::too_many_arguments)]
 pub async fn record(
-    transaction: &mut Transaction<'_, Sqlite>,
+    transaction: &mut Transaction<'_, Any>,
     workspace_id: Id,
     actor_id: Option<Id>,
     action: &str,
@@ -72,7 +72,7 @@ pub async fn record(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn record_global(
-    transaction: &mut Transaction<'_, Sqlite>,
+    transaction: &mut Transaction<'_, Any>,
     actor_id: Option<Id>,
     action: &str,
     outcome: AuditOutcome,
@@ -99,7 +99,7 @@ pub async fn record_global(
 
 #[allow(clippy::too_many_arguments)]
 async fn record_scoped(
-    transaction: &mut Transaction<'_, Sqlite>,
+    transaction: &mut Transaction<'_, Any>,
     workspace_id: Option<Id>,
     actor_id: Option<Id>,
     action: &str,
@@ -112,7 +112,7 @@ async fn record_scoped(
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO audit_events (id, workspace_id, actor_id, action, outcome, resource_type, \
-         resource_id, request_id, metadata_json, occurred_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         resource_id, request_id, metadata_json, occurred_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
     )
     .bind(Id::new_v7().to_string())
     .bind(workspace_id.map(|id| id.to_string()))
@@ -139,7 +139,7 @@ pub async fn list(
         "SELECT audit_events.id, workspace_id, actor_id, users.display_name AS actor_name, action, outcome, \
          resource_type, resource_id, request_id, metadata_json, occurred_at FROM audit_events \
          LEFT JOIN users ON users.id = audit_events.actor_id \
-         WHERE workspace_id = ? AND (? IS NULL OR audit_events.id < ?) ORDER BY audit_events.id DESC LIMIT ?",
+         WHERE workspace_id = $1 AND ($2 IS NULL OR audit_events.id < $3) ORDER BY audit_events.id DESC LIMIT $4",
     )
     .bind(workspace_id.to_string())
     .bind(cursor.map(|id| id.to_string()))
@@ -161,8 +161,8 @@ pub async fn list_global(
         "SELECT audit_events.id, workspace_id, actor_id, users.display_name AS actor_name, action, outcome, \
          resource_type, resource_id, request_id, metadata_json, occurred_at FROM audit_events \
          LEFT JOIN users ON users.id = audit_events.actor_id \
-         WHERE (? IS NULL OR workspace_id = ?) AND (? IS NULL OR action = ?) \
-         AND (? IS NULL OR audit_events.id < ?) ORDER BY audit_events.id DESC LIMIT ?",
+         WHERE ($1 IS NULL OR workspace_id = $2) AND ($3 IS NULL OR action = $4) \
+         AND ($5 IS NULL OR audit_events.id < $6) ORDER BY audit_events.id DESC LIMIT $7",
     )
     .bind(workspace_id.map(|id| id.to_string()))
     .bind(workspace_id.map(|id| id.to_string()))
@@ -188,8 +188,8 @@ pub async fn list_resource(
         "SELECT audit_events.id, workspace_id, actor_id, users.display_name AS actor_name, action, outcome, \
          resource_type, resource_id, request_id, metadata_json, occurred_at FROM audit_events \
          LEFT JOIN users ON users.id = audit_events.actor_id \
-         WHERE workspace_id = ? AND resource_type = ? AND resource_id = ? \
-         AND (? IS NULL OR audit_events.id < ?) ORDER BY audit_events.id DESC LIMIT ?",
+         WHERE workspace_id = $1 AND resource_type = $2 AND resource_id = $3 \
+         AND ($4 IS NULL OR audit_events.id < $5) ORDER BY audit_events.id DESC LIMIT $6",
     )
     .bind(workspace_id.to_string())
     .bind(resource_type)
@@ -203,7 +203,7 @@ pub async fn list_resource(
 }
 
 fn decode_page(
-    rows: Vec<sqlx::sqlite::SqliteRow>,
+    rows: Vec<sqlx::any::AnyRow>,
     limit: usize,
 ) -> Result<(Vec<AuditEvent>, Option<Id>), sqlx::Error> {
     let has_more = rows.len() > limit;
@@ -218,7 +218,7 @@ fn decode_page(
     Ok((events, next))
 }
 
-fn decode_event(row: sqlx::sqlite::SqliteRow) -> Result<AuditEvent, sqlx::Error> {
+fn decode_event(row: sqlx::any::AnyRow) -> Result<AuditEvent, sqlx::Error> {
     let parse_id = |value: String| {
         value
             .parse()

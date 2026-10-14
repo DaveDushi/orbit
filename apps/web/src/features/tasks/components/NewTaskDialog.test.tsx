@@ -19,11 +19,23 @@ const workspace = testWorkspace()
 const project = { id: 'project-1', workspace_id: 'workspace-1', name: 'Launch', key: 'ORB', color: '#e0457b', created_at: '', updated_at: '', version: 1, auto_close_parent: true, auto_close_sub_issues: true }
 const status = (id: string, name: string, category: string, position: number) => ({ id, project_id: 'project-1', name, description: '', color: '#888', category, position, version: 1 })
 
+const otherTask = {
+  id: 'task-other', workspace_id: 'workspace-1', project_id: 'project-1', number: 7, title: 'Other', description: '', status_id: 'todo', priority: 'none',
+  assignee_ids: [], label_ids: [], due_at: null, due_start_at: null, position: 0, creator_id: 'user-1', created_at: '', updated_at: '', version: 1,
+  duplicate_of: null, blocked: false, parent_task_id: null, parent: null, sub_issue_count: 0, sub_issue_closed_count: 0,
+}
+
 /** Records the bodies of the create requests; each one answers with a new task. */
-function api(created: unknown[], uploads: string[] = []) {
+function api(created: unknown[], uploads: string[] = [], relations: unknown[] = []) {
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const request = input as Request
     const url = new URL(request.url)
+    if (request.method === 'POST' && url.pathname.endsWith('/relations')) {
+      relations.push({ path: url.pathname, body: await request.json() })
+      return Response.json({ id: 'relation-1', type: 'related', direction: 'outgoing', created_at: '', task: { id: 'task-other', title: 'Other', project_key: 'ORB', number: 7 } })
+    }
+    // the parent and relation pickers list this one task
+    if (request.method === 'GET' && url.pathname.endsWith('/tasks')) return Response.json({ items: [{ ...otherTask }], next_cursor: null })
     if (request.method === 'POST' && url.pathname.endsWith('/tasks')) {
       const body = await request.json()
       created.push(body)
@@ -58,7 +70,7 @@ test('creates the task with the defaults and opens it', async () => {
   await userEvent.type(view.getByLabelText('Task title'), '  Fix login  ')
   await userEvent.click(view.getByRole('button', { name: 'Create task' }))
   await waitFor(() => expect(opened).toEqual(['task-0001']))
-  expect(created).toEqual([{ title: 'Fix login', description: '', project_id: 'project-1', status_id: 'todo', priority: 'high', assignee_ids: [], label_ids: [], due_at: null, due_start_at: null }])
+  expect(created).toEqual([{ title: 'Fix login', description: '', project_id: 'project-1', status_id: 'todo', priority: 'high', assignee_ids: [], label_ids: [], due_at: null, due_start_at: null, parent_task_id: null }])
 })
 
 test('"Create more" keeps the dialog and the properties for the next task', async () => {
@@ -130,4 +142,25 @@ test('Mod+Shift+Enter creates the task and keeps the dialog, with "Create more" 
   expect(title.value).toBe('')
   expect(opened).toEqual([])
   expect(created.map((body) => body.title)).toEqual(['First'])
+})
+
+test('the picked parent and relations are saved with the new task', async () => {
+  const created: Array<{ parent_task_id?: string | null }> = []
+  const relations: unknown[] = []
+  api(created, [], relations)
+  const opened: string[] = []
+  const view = render(<NewTaskDialog onClose={() => {}} onOpenTask={(task) => opened.push(task.id)} />, { wrapper: Wrapper })
+  await view.findByRole('button', { name: 'Status: Todo' })
+  await userEvent.type(view.getByLabelText('Task title'), 'Child')
+  await userEvent.click(view.getByRole('button', { name: 'Parent' }))
+  await userEvent.click(await view.findByRole('option', { name: /Other/ }))
+  await view.findByRole('button', { name: 'Parent: ORB-7 Other' })
+  fireEvent.click(view.getByRole('button', { name: 'Add relation' }))
+  await userEvent.click(await view.findByRole('menuitem', { name: 'Blocks…' }))
+  await userEvent.click(await view.findByRole('option', { name: /Other/ }))
+  await view.findByRole('button', { name: 'Remove relation to ORB-7' })
+  await userEvent.click(view.getByRole('button', { name: 'Create task' }))
+  await waitFor(() => expect(opened).toEqual(['task-0001']))
+  expect(created[0]?.parent_task_id).toBe('task-other')
+  expect(relations).toEqual([{ path: '/api/v1/workspaces/workspace-1/tasks/task-0001/relations', body: { type: 'blocks', task_id: 'task-other' } }])
 })

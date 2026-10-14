@@ -4,7 +4,7 @@
 
 use orbit_domain::{Actor, WorkspaceRole};
 use orbit_platform::Id;
-use sqlx::Sqlite;
+use sqlx::Any;
 
 /// The caller as a member of a live workspace, or `None` for outsiders and trashed workspaces.
 /// Repositories call this inside their own transaction, so the rule holds for every caller
@@ -15,7 +15,7 @@ pub(crate) async fn actor<'e, E>(
     user_id: Id,
 ) -> Result<Option<Actor>, sqlx::Error>
 where
-    E: sqlx::Executor<'e, Database = Sqlite>,
+    E: sqlx::Executor<'e, Database = Any>,
 {
     actor_in(executor, workspace_id, user_id, false).await
 }
@@ -28,12 +28,12 @@ pub(crate) async fn actor_in<'e, E>(
     trashed: bool,
 ) -> Result<Option<Actor>, sqlx::Error>
 where
-    E: sqlx::Executor<'e, Database = Sqlite>,
+    E: sqlx::Executor<'e, Database = Any>,
 {
     let role: Option<String> = sqlx::query_scalar(
         "SELECT memberships.role FROM memberships JOIN workspaces ON workspaces.id = memberships.workspace_id \
-         WHERE memberships.workspace_id = ? AND memberships.user_id = ? \
-         AND (workspaces.deleted_at IS NOT NULL) = ?",
+         WHERE memberships.workspace_id = $1 AND memberships.user_id = $2 \
+         AND (workspaces.deleted_at IS NOT NULL) = $3",
     )
     .bind(workspace_id.to_string())
     .bind(user_id.to_string())

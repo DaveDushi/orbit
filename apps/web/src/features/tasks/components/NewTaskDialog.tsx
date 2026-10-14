@@ -1,9 +1,9 @@
 import { useCommand } from '@/shortcuts/useCommand'
 import { useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Calendar, ChevronRight, Paperclip2 as Paperclip, User as UserIcon, Xmark as X } from 'reicon-react'
+import { Calendar, ChevronRight, Hierarchy2, Paperclip2 as Paperclip, User as UserIcon, Xmark as X } from 'reicon-react'
 import { apiClient } from '@/api/client'
-import { uploadTaskAttachments } from '@/api/generated/sdk.gen'
+import { createTaskRelation, uploadTaskAttachments } from '@/api/generated/sdk.gen'
 import { Button } from '@/components/ui/button'
 import { Tip } from '@/components/common/Tip'
 import { Dialog, DialogContent, DialogFooter, DialogTitle } from '@/components/ui/dialog'
@@ -29,17 +29,25 @@ import { uploadFiles } from '@/features/tasks/api/uploadQueue'
 import { useMembers } from '@/features/workspaces/api'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import { useLabels } from '@/features/tasks/api/labels'
-import { taskIdentifier, type TaskPriority } from '@/features/tasks/api/models'
+import { taskIdentifier, type Task, type TaskPriority } from '@/features/tasks/api/models'
 import { useAllStatuses, useProjects } from '@/features/tasks/api/projects'
 import { useCreateTask } from '@/features/tasks/api/tasks'
 import { dueDateLabel, PRIORITY_LABEL, PRIORITY_ORDER, projectStatuses, statusKeyOf } from '@/features/tasks/taskMeta'
 import { resolveStatusId } from '@/features/tasks/tasksLib'
+import { ADD_RELATION_OPTIONS, type RelationKind } from '@/features/tasks/relationsLib'
 import { PriorityIcon } from './PriorityIcon'
 import { TaskLabels } from './TaskLabels'
+import { TaskPickerDialog } from './TaskPickerDialog'
+import { AddRelationMenu } from './TaskRelations'
 import { TaskStatusIcon } from './TaskStatusIcon'
 import { EditablePreview, taskTextVariants } from './TaskTextFields'
 
 const CREATE_MORE_KEY = 'orbit:new_task_create_more'
+// a duplicate needs a Duplicate status, which a new task cannot have
+const RELATION_OPTIONS = ADD_RELATION_OPTIONS.filter((option) => option.kind !== 'duplicate')
+const RELATION_LABEL: Record<RelationKind, string> = { blocks: 'Blocks', blocked_by: 'Blocked by', related: 'Related to', duplicate: 'Duplicate of' }
+
+type PendingRelation = { kind: Exclude<RelationKind, 'duplicate'>; task: Task }
 
 interface NewTaskDialogProps {
   /** Starting properties (the page's filter, a group header). Unknown or missing ones fall back to the first project and its default status. */
@@ -73,7 +81,11 @@ export function NewTaskDialog({ defaults = {}, initialTitle = '', initialDescrip
     labelIds: defaults.label_ids ?? [],
     dueAt: defaults.due_at ?? null,
     dueStartAt: defaults.due_start_at ?? null,
+    parent: null as Task | null,
   }))
+  // relations are saved once the task exists
+  const [relations, setRelations] = useState<PendingRelation[]>([])
+  const [picker, setPicker] = useState<'parent' | PendingRelation['kind'] | null>(null)
   const [createMore, setCreateMore] = useState(() => window.localStorage.getItem(CREATE_MORE_KEY) === '1')
   const [created, setCreated] = useState<TaskRecord>()
   const [dueDateOpen, setDueDateOpen] = useState(false)
@@ -119,7 +131,12 @@ export function NewTaskDialog({ defaults = {}, initialTitle = '', initialDescrip
         label_ids: draft.labelIds,
         due_at: draft.dueAt,
         due_start_at: draft.dueStartAt,
+        parent_task_id: draft.parent?.id ?? null,
       })
+      if (relations.length > 0) {
+        const results = await Promise.allSettled(relations.map((relation) => createTaskRelation({ client: apiClient, path: { workspace_id: workspace.id, task_id: task.id }, body: { type: relation.kind, task_id: relation.task.id }, throwOnError: true })))
+        if (results.some((result) => result.status === 'rejected')) toast.error('The task was created, but some relations were not added.')
+      }
       if (files.length > 0) {
         setUploading(true)
         try {
@@ -138,6 +155,7 @@ export function NewTaskDialog({ defaults = {}, initialTitle = '', initialDescrip
       setDescription('')
       setEditingDescription(false)
       setFiles([])
+      setRelations([])
       titleRef.current?.focus()
     } catch {
       // The draft stays; the mutation shows the error beside the create action.
@@ -283,10 +301,27 @@ export function NewTaskDialog({ defaults = {}, initialTitle = '', initialDescrip
                 </div>
               ) : null}
               <input ref={fileInputRef} type="file" multiple hidden aria-label="Attach files" onChange={(event) => { attach(event.target.files); event.target.value = '' }} />
-              <Button type="button" variant="ghost" className="mt-1.5 -ml-2 text-xs text-muted-foreground/70" disabled={busy} onClick={() => fileInputRef.current?.click()}>
-                <Paperclip className="size-3.5" />
-                Attach
-              </Button>
+              {relations.length > 0 ? (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {relations.map((relation) => (
+                    <span key={`${relation.kind}:${relation.task.id}`} className="inline-flex h-6 max-w-72 items-center gap-1 rounded-md border pr-0.5 pl-1.5 text-xs">
+                      <span className="shrink-0 text-muted-foreground">{RELATION_LABEL[relation.kind]}</span>
+                      <span className="shrink-0 text-muted-foreground tabular-nums">{relation.task.identifier}</span>
+                      <span className="truncate">{relation.task.title || 'Untitled'}</span>
+                      <Button type="button" variant="ghost" size="icon-xs" className="size-4 rounded-full" aria-label={`Remove relation to ${relation.task.identifier}`} disabled={busy} onClick={() => setRelations((current) => current.filter((item) => item !== relation))}>
+                        <X />
+                      </Button>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              <div className="mt-1.5 -ml-2 flex items-center">
+                <Button type="button" variant="ghost" className="text-xs text-muted-foreground/70" disabled={busy} onClick={() => fileInputRef.current?.click()}>
+                  <Paperclip className="size-3.5" />
+                  Attach
+                </Button>
+                <AddRelationMenu options={RELATION_OPTIONS} onChoose={(kind) => setPicker(kind as PendingRelation['kind'])} />
+              </div>
             </div>
           </div>
 
@@ -393,6 +428,28 @@ export function NewTaskDialog({ defaults = {}, initialTitle = '', initialDescrip
                 />
               </PopoverContent>
             </Popover>
+            {draft.parent ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button type="button" variant="outline" size="sm" className="max-w-64 font-normal" aria-label={`Parent: ${draft.parent.identifier} ${draft.parent.title}`}>
+                      <Hierarchy2 aria-hidden="true" />
+                      <span className="shrink-0 text-muted-foreground tabular-nums">{draft.parent.identifier}</span>
+                      <span className="truncate">{draft.parent.title || 'Untitled'}</span>
+                    </Button>
+                  }
+                />
+                <DropdownMenuContent className="w-auto min-w-45">
+                  <DropdownMenuItem onClick={() => setPicker('parent')}>Change parent…</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setDraft((current) => ({ ...current, parent: null }))}>Remove parent</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <Button type="button" variant="outline" size="sm" className="font-normal" onClick={() => setPicker('parent')}>
+                <Hierarchy2 aria-hidden="true" className="text-muted-foreground" />
+                Parent
+              </Button>
+            )}
           </div>
 
           <DialogFooter className="items-center py-2.5 sm:justify-between">
@@ -430,6 +487,19 @@ export function NewTaskDialog({ defaults = {}, initialTitle = '', initialDescrip
             </div>
           </DialogFooter>
         </form>
+        {picker ? (
+          <TaskPickerDialog
+            open
+            onOpenChange={(next) => { if (!next) setPicker(null) }}
+            title={picker === 'parent' ? 'New task: Parent…' : `New task: ${RELATION_LABEL[picker]}…`}
+            statuses={statuses}
+            excludeIds={picker === 'parent' ? [] : relations.map((relation) => relation.task.id)}
+            onSelect={(target) => {
+              if (picker === 'parent') setDraft((current) => ({ ...current, parent: target }))
+              else setRelations((current) => [...current, { kind: picker, task: target }])
+            }}
+          />
+        ) : null}
       </DialogContent>
     </Dialog>
   )
