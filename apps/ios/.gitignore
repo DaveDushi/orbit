@@ -1,0 +1,6 @@
+Orbit.xcodeproj/
+Orbit/Info.plist
+Config/Local.xcconfig
+build/
+DerivedData/
+xcuserdata/

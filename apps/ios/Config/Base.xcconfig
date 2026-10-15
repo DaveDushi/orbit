@@ -1,0 +1,7 @@
+// Shared build settings. Put your own team and bundle ID in Local.xcconfig (untracked):
+//   DEVELOPMENT_TEAM = ABCDE12345
+//   PRODUCT_BUNDLE_IDENTIFIER = com.example.orbit
+PRODUCT_BUNDLE_IDENTIFIER = dev.orbit.ios
+CODE_SIGN_STYLE = Automatic
+
+#include? "Local.xcconfig"

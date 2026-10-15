@@ -47,6 +47,7 @@ One Orbit process owns a database file. The process validates configuration, run
 ```text
 apps/web/       React, Vite, generated API client, unit tests, Playwright
 apps/server/    orbit binary, Axum routes, SQLx repositories, composition
+apps/ios/       Swift shell that loads a chosen Orbit server in a WKWebView
 crates/orbit/   domain rules and ports
 crates/platform reusable config, DB, jobs, files, backup, HTTP, health
 config/         deployment configuration example
