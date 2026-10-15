@@ -54,10 +54,8 @@ interface TaskDetailProps {
   task: Task | undefined
   project: Project | undefined
   state: TaskViewState
-  /** Closes the task (the close button, and after a delete). */
+  /** Closes the task (back arrow, close button, and after a delete). */
   onClose: () => void
-  /** The narrow-screen back arrow; closes the task when not set. */
-  onBack?: () => void
   /** Opens another task (banner, relation rows, activity links). */
   onOpenTask?: (taskId: string) => void
   /** Opens a project's task list (the breadcrumb's project crumb). */
@@ -65,7 +63,7 @@ interface TaskDetailProps {
 }
 
 /** Full-page task view: main column (title, description, activity, comment composer) + properties column. */
-export function TaskDetail({ task, project, state, onClose, onBack = onClose, onOpenTask, onOpenProject }: TaskDetailProps) {
+export function TaskDetail({ task, project, state, onClose, onOpenTask, onOpenProject }: TaskDetailProps) {
   const { workspace } = useWorkspace()
   const updateTask = useUpdateTask(workspace.id)
   const uploadAttachments = useUploadTaskAttachments(workspace.id, task?.id ?? '')
@@ -155,7 +153,7 @@ export function TaskDetail({ task, project, state, onClose, onBack = onClose, on
   return (
     <Pane>
       <PaneHeader>
-        <Button variant="ghost" size="icon-sm" className="text-muted-foreground/70 min-[900px]:hidden" onClick={onBack} aria-label="Back to tasks">
+        <Button variant="ghost" size="icon-sm" className="text-muted-foreground/70 min-[900px]:hidden" onClick={onClose} aria-label="Back to tasks">
           <ArrowLeft className="size-4" />
         </Button>
         <TaskBreadcrumb project={project} ancestors={task?.ancestors ?? []} identifier={task?.identifier ?? 'Task'} onOpen={openTask} onOpenProject={onOpenProject} />
