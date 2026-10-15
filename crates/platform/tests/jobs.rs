@@ -72,6 +72,39 @@ async fn claims_priority_first_and_fifo_within_priority() {
 }
 
 #[tokio::test]
+async fn a_kind_limit_holds_across_the_servers_of_the_database() {
+    let database = TestDatabase::new().await.unwrap();
+    // Two servers: each has its own store (lease owner) on the same database.
+    let one = JobStore::new((*database).clone());
+    let two = JobStore::new((*database).clone());
+    for store in [&one, &two] {
+        store
+            .register_kind(JobKind::new("backup").with_concurrency_limit(1))
+            .unwrap();
+    }
+    let queue = JobQueue::new(one.clone());
+    for at in [1_000, 1_001] {
+        queue
+            .enqueue(Job::new(
+                JobKind::new("backup").with_concurrency_limit(1),
+                json!({}),
+                TimestampMillis::from_millis(at),
+            ))
+            .await
+            .unwrap();
+    }
+    let now = TimestampMillis::from_millis(2_000);
+
+    let running = one.claim(now, ClaimSelection::Any).await.unwrap().unwrap();
+    assert!(
+        two.claim(now, ClaimSelection::Any).await.unwrap().is_none(),
+        "the other server waits for the running backup"
+    );
+    one.complete(&running, now).await.unwrap();
+    assert!(two.claim(now, ClaimSelection::Any).await.unwrap().is_some());
+}
+
+#[tokio::test]
 async fn worker_keeps_a_slot_available_for_critical_work() {
     let (_database, store) = store().await;
     let queue = JobQueue::new(store.clone());
@@ -371,6 +404,32 @@ async fn purge_removes_only_expired_dead_jobs_without_incident_holds() {
     assert_eq!(purged, 1);
     assert!(store.get(expired).await.unwrap().is_none());
     assert!(store.get(held).await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn servers_that_start_together_keep_one_instance_schedule_per_kind() {
+    let (database, store) = store().await;
+    let scheduler = Scheduler::new(store);
+    let schedule = || {
+        RecurringSchedule::interval(
+            JobKind::new("cleanup"),
+            json!({}),
+            Duration::from_secs(60),
+            TimestampMillis::from_millis(MINUTE),
+        )
+    };
+
+    let (one, two) = (schedule(), schedule());
+    let (first, second) = tokio::join!(scheduler.ensure(&one), scheduler.ensure(&two));
+    first.unwrap();
+    second.unwrap();
+    scheduler.ensure(&schedule()).await.unwrap();
+
+    let count: i64 = database
+        .scalar("SELECT COUNT(*) FROM schedules WHERE job_kind = 'cleanup'")
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
 }
 
 #[tokio::test]

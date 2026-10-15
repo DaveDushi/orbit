@@ -1,20 +1,19 @@
 //! Two-factor sign-in with an authenticator app (TOTP) and one-time recovery codes.
 
-use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
-use std::sync::Mutex;
 
 use axum::Json;
 use axum::extract::{Extension, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use orbit_platform::{
-    AuthenticatedUser, ClientIp, Id, RequestId, ThrottleDecision, TimestampMillis,
+    AuthenticatedUser, ClientIp, Database, Id, RequestId, Row, ThrottleDecision, TimestampMillis,
     generate_opaque_token,
 };
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use totp_rs::{Builder, Secret, Totp};
 use utoipa::ToSchema;
 use webauthn_rs::prelude::{DiscoverableAuthentication, PasskeyRegistration};
@@ -30,12 +29,15 @@ use crate::secret_box::{decrypt_secret, encrypt_secret};
 
 /// How long a sign-in waits for its second factor, and a passkey ceremony for the browser.
 const PENDING_LIFETIME_MILLIS: i64 = 5 * 60 * 1_000;
-/// Pending entries kept at most. Passkey sign-in starts without an account, so this bounds the memory it can take.
+/// Pending entries kept at most. Passkey sign-in starts without an account, so this bounds the rows it can add.
 const MAX_PENDING: usize = 10_000;
 /// Wrong codes one sign-in may try before the password is needed again.
 const MAX_CODE_ATTEMPTS: u8 = 5;
 
-/// Something the server waits on between two requests. Kept in memory: a restart only means signing in again.
+/// Something the server waits on between two requests. Kept in the database, so the next request
+/// can go to any server.
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub(super) enum Pending {
     /// The password was right; the session waits for a code.
     Login {
@@ -53,40 +55,96 @@ pub(super) enum Pending {
     },
 }
 
-#[derive(Default)]
 pub(super) struct PendingStore {
-    entries: Mutex<HashMap<String, (TimestampMillis, Pending)>>,
+    database: Database,
+}
+
+fn token_hash(token: &str) -> String {
+    format!("{:x}", Sha256::digest(token.as_bytes()))
+}
+
+fn encode(pending: &Pending) -> Result<String, sqlx::Error> {
+    serde_json::to_string(pending).map_err(|error| sqlx::Error::Encode(Box::new(error)))
 }
 
 impl PendingStore {
-    /// Keeps `pending` under a new random token. `None` when the store is full.
-    pub(super) fn insert(&self, pending: Pending) -> Option<String> {
-        let now = TimestampMillis::now();
-        let mut entries = self.entries.lock().expect("pending store mutex poisoned");
-        entries.retain(|_, (expires_at, _)| *expires_at > now);
-        if entries.len() >= MAX_PENDING {
-            return None;
-        }
-        let token = generate_opaque_token();
-        let expires_at = TimestampMillis::from_millis(now.as_millis() + PENDING_LIFETIME_MILLIS);
-        entries.insert(token.clone(), (expires_at, pending));
-        Some(token)
+    pub(super) fn new(database: Database) -> Self {
+        Self { database }
     }
 
-    /// Removes and returns the entry, unless it expired. Each token is good for one try.
-    pub(super) fn take(&self, token: &str) -> Option<(TimestampMillis, Pending)> {
-        let mut entries = self.entries.lock().expect("pending store mutex poisoned");
-        entries
-            .remove(token)
-            .filter(|(expires_at, _)| *expires_at > TimestampMillis::now())
+    /// Keeps `pending` under a new random token. `None` when the store is full.
+    pub(super) async fn insert(&self, pending: Pending) -> Result<Option<String>, sqlx::Error> {
+        let payload = encode(&pending)?;
+        let now = TimestampMillis::now();
+        let mut transaction = self.database.immediate_transaction().await?;
+        sqlx::query("DELETE FROM auth_pending WHERE expires_at <= $1")
+            .bind(now.as_millis())
+            .execute(&mut *transaction)
+            .await?;
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM auth_pending")
+            .fetch_one(&mut *transaction)
+            .await?;
+        if count >= i64::try_from(MAX_PENDING).unwrap_or(i64::MAX) {
+            return Ok(None);
+        }
+        let token = generate_opaque_token();
+        sqlx::query(
+            "INSERT INTO auth_pending (token_hash, expires_at, payload_json) VALUES ($1, $2, $3)",
+        )
+        .bind(token_hash(&token))
+        .bind(now.as_millis() + PENDING_LIFETIME_MILLIS)
+        .bind(payload)
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        Ok(Some(token))
+    }
+
+    /// Removes and returns the entry, unless it expired. Each token is good for one try, also
+    /// when two servers get it at the same time.
+    pub(super) async fn take(
+        &self,
+        token: &str,
+    ) -> Result<Option<(TimestampMillis, Pending)>, sqlx::Error> {
+        let mut transaction = self.database.immediate_transaction().await?;
+        let row = sqlx::query(
+            "DELETE FROM auth_pending WHERE token_hash = $1 RETURNING expires_at, payload_json",
+        )
+        .bind(token_hash(token))
+        .fetch_optional(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let expires_at = TimestampMillis::from_millis(row.get("expires_at"));
+        if expires_at <= TimestampMillis::now() {
+            return Ok(None);
+        }
+        let pending = serde_json::from_str(&row.get::<String, _>("payload_json"))
+            .map_err(|error| sqlx::Error::Decode(Box::new(error)))?;
+        Ok(Some((expires_at, pending)))
     }
 
     /// Puts an entry back under its token with its first expiry, for another try.
-    fn restore(&self, token: String, expires_at: TimestampMillis, pending: Pending) {
-        self.entries
-            .lock()
-            .expect("pending store mutex poisoned")
-            .insert(token, (expires_at, pending));
+    async fn restore(
+        &self,
+        token: &str,
+        expires_at: TimestampMillis,
+        pending: Pending,
+    ) -> Result<(), sqlx::Error> {
+        let payload = encode(&pending)?;
+        let mut transaction = self.database.immediate_transaction().await?;
+        sqlx::query(
+            "INSERT INTO auth_pending (token_hash, expires_at, payload_json) VALUES ($1, $2, $3) \
+             ON CONFLICT (token_hash) DO NOTHING",
+        )
+        .bind(token_hash(token))
+        .bind(expires_at.as_millis())
+        .bind(payload)
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await
     }
 }
 
@@ -97,7 +155,7 @@ pub(super) struct TwoFactorChallenge {
     two_factor_token: String,
 }
 
-pub(super) fn challenge(
+pub(super) async fn challenge(
     state: &AuthState,
     user: AuthenticatedUser,
     password_hash: String,
@@ -112,6 +170,8 @@ pub(super) fn challenge(
             replacement_hash,
             attempts: 0,
         })
+        .await
+        .map_err(|_| ApiError::internal("/api/v1/auth/login", request_id))?
         .ok_or_else(|| busy("/api/v1/auth/login", request_id))?;
     Ok((
         StatusCode::ACCEPTED,
@@ -168,7 +228,11 @@ pub(super) async fn login_second_factor(
             replacement_hash,
             attempts,
         },
-    )) = state.pending.take(&body.two_factor_token)
+    )) = state
+        .pending
+        .take(&body.two_factor_token)
+        .await
+        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?
     else {
         return Err(expired());
     };
@@ -179,22 +243,25 @@ pub(super) async fn login_second_factor(
     let throttle_key = format!("two-factor:{}", user.email);
     let admission = state
         .throttler
-        .lock()
-        .expect("throttler mutex poisoned")
-        .reserve(&throttle_key, ip, TimestampMillis::now());
+        .reserve(&throttle_key, ip, TimestampMillis::now())
+        .await;
     let reservation = match admission {
         Ok(reservation) => reservation,
         Err(ThrottleDecision::RetryAfter(delay)) => {
-            state.pending.restore(
-                body.two_factor_token,
-                expires_at,
-                Pending::Login {
-                    user,
-                    password_hash,
-                    replacement_hash,
-                    attempts,
-                },
-            );
+            state
+                .pending
+                .restore(
+                    &body.two_factor_token,
+                    expires_at,
+                    Pending::Login {
+                        user,
+                        password_hash,
+                        replacement_hash,
+                        attempts,
+                    },
+                )
+                .await
+                .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?;
             return Err(ApiError::throttled(delay, instance, request_id.as_ref()));
         }
         Err(ThrottleDecision::Allowed) => unreachable!("allowed admission returns a reservation"),
@@ -211,9 +278,8 @@ pub(super) async fn login_second_factor(
     if !accepted {
         state
             .throttler
-            .lock()
-            .expect("throttler mutex poisoned")
-            .finish_failure(reservation, TimestampMillis::now());
+            .finish_failure(reservation, TimestampMillis::now())
+            .await;
         state
             .repository
             .record_security_event(
@@ -229,16 +295,20 @@ pub(super) async fn login_second_factor(
             .await
             .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?;
         if attempts + 1 < MAX_CODE_ATTEMPTS {
-            state.pending.restore(
-                body.two_factor_token,
-                expires_at,
-                Pending::Login {
-                    user,
-                    password_hash,
-                    replacement_hash,
-                    attempts: attempts + 1,
-                },
-            );
+            state
+                .pending
+                .restore(
+                    &body.two_factor_token,
+                    expires_at,
+                    Pending::Login {
+                        user,
+                        password_hash,
+                        replacement_hash,
+                        attempts: attempts + 1,
+                    },
+                )
+                .await
+                .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?;
         }
         return Err(ApiError::new(
             StatusCode::UNAUTHORIZED,
@@ -249,11 +319,7 @@ pub(super) async fn login_second_factor(
             request_id.as_ref(),
         ));
     }
-    state
-        .throttler
-        .lock()
-        .expect("throttler mutex poisoned")
-        .finish_success(reservation);
+    state.throttler.finish_success(reservation).await;
 
     let session = state
         .repository
@@ -592,9 +658,8 @@ pub(super) async fn confirm_password(
         .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
     let reservation = state
         .throttler
-        .lock()
-        .expect("throttler mutex poisoned")
         .reserve(&session.user.email, ip, TimestampMillis::now())
+        .await
         .map_err(|decision| match decision {
             ThrottleDecision::RetryAfter(delay) => ApiError::throttled(delay, instance, request_id),
             ThrottleDecision::Allowed => ApiError::internal(instance, request_id),
@@ -611,12 +676,14 @@ pub(super) async fn confirm_password(
         .await
         .map_err(|_| ApiError::internal(instance, request_id))?
         .valid;
-    let mut throttler = state.throttler.lock().expect("throttler mutex poisoned");
     if valid {
-        throttler.finish_success(reservation);
+        state.throttler.finish_success(reservation).await;
         return Ok(());
     }
-    throttler.finish_failure(reservation, TimestampMillis::now());
+    state
+        .throttler
+        .finish_failure(reservation, TimestampMillis::now())
+        .await;
     Err(ApiError::new(
         StatusCode::UNAUTHORIZED,
         "invalid_credentials",

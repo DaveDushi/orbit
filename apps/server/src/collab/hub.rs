@@ -8,6 +8,13 @@
 //! `page_collab_docs.snapshot` every 500 updates or 1 MiB of log, and when a room is evicted. The
 //! JSON projection (`pages.content_json` / `content_text`) runs 2 s after the last change, at
 //! least every 10 s while people type, on eviction and on demand ([`CollabHub::flush_page`]).
+//!
+//! Several servers (Postgres): each has its own room for a page, and the rooms converge. Small
+//! updates and cursors go to the other servers at once ([`crate::cluster`]); the update log is
+//! the truth. Before a server writes its batch, a server-side replacement or a compaction, it
+//! reads the rows (and a newer snapshot) that the others wrote, in the same serialized write
+//! transaction ([`CollabHub::catch_up`]), so a snapshot always holds every row it replaces.
+//! Applying an update twice changes nothing, so a room may get one both ways.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -15,9 +22,12 @@ use std::sync::{Arc, Mutex as StdMutex, OnceLock, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
-use orbit_platform::{Backend, Database, Id, Row, TimestampMillis};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use orbit_platform::{Backend, Database, Flag, Id, Row, TimestampMillis};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::{Any, AnyPool, Transaction};
+use sqlx::{Any, AnyConnection, AnyPool, Transaction};
 use thiserror::Error;
 use tokio::sync::{Mutex, OwnedMutexGuard, broadcast};
 use yrs::encoding::read::Cursor;
@@ -29,6 +39,7 @@ use yrs::{ClientID, ReadTxn, StateVector, Transact, Update, WriteTxn};
 use super::blocknote::{self, FRAGMENT};
 use super::close;
 use super::sanitize::{repair_document, sanitize_blocks};
+use crate::cluster::{Cluster, Message as ClusterMessage};
 use crate::repositories::page_versions::project_collab_content;
 
 /// Limits and timings of the co-editing hub.
@@ -115,6 +126,42 @@ pub enum CollabError {
     Corrupt(String),
     #[error("collaborative storage is unavailable")]
     Unavailable(#[from] sqlx::Error),
+    /// Another server reset the document (new epoch): the room must start over.
+    #[error("collaborative document was reset")]
+    Reset,
+}
+
+/// What one server tells the others about co-editing.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(crate) enum CollabMessage {
+    /// A client's document update as the sending server applied it (base64; small ones only:
+    /// the others read larger ones from the log).
+    Update {
+        page_id: Id,
+        epoch: String,
+        data: String,
+        user_id: Id,
+    },
+    /// A y-sync awareness frame (cursors), base64.
+    Awareness { page_id: Id, data: String },
+    /// The sending server wrote rows of the page's update log, or a new snapshot.
+    Logged { page_id: Id },
+    /// Close the page's room and its connections with this code (document reset, lock change).
+    Close { page_id: Id, code: u16 },
+    /// The connections of the workspace (all with `None`) check their access again.
+    Revalidate { workspace_id: Option<Id> },
+}
+
+/// Base64 of at most this many bytes goes to the other servers in a message.
+const MAX_MESSAGE_DATA: usize = 6_000;
+
+fn close_reason(code: u16) -> &'static str {
+    match code {
+        close::RESET => "document reset",
+        close::LOCK_CHANGED => "page lock changed",
+        _ => "document reloaded",
+    }
 }
 
 /// Something every connection of a room receives.
@@ -245,6 +292,7 @@ pub struct CollabHub {
 pub(crate) struct HubInner {
     pool: AnyPool,
     backend: Backend,
+    cluster: Arc<Cluster>,
     config: CollabConfig,
     rooms: StdMutex<HashMap<Id, Arc<Room>>>,
     users: StdMutex<HashMap<Id, usize>>,
@@ -304,9 +352,11 @@ impl CollabHub {
     pub fn install(database: &Database, config: CollabConfig) -> Self {
         let pool = database.pool().clone();
         let backend = database.backend();
+        let cluster = Cluster::of(database);
         let inner = database.extension(move || HubInner {
             pool,
             backend,
+            cluster,
             config,
             rooms: StdMutex::new(HashMap::new()),
             users: StdMutex::new(HashMap::new()),
@@ -330,6 +380,214 @@ impl CollabHub {
     #[must_use]
     pub fn config(&self) -> &CollabConfig {
         &self.inner.config
+    }
+
+    /// Tells the other servers, while the cluster runs.
+    fn tell(&self, message: CollabMessage) {
+        self.inner.cluster.send(ClusterMessage::Collab(message));
+    }
+
+    /// Other servers may write the same documents (Postgres).
+    fn shared(&self) -> bool {
+        self.inner.backend == Backend::Postgres
+    }
+
+    /// Reads what other servers wrote to the page's log since this room's last row (and their
+    /// newer snapshot, if they compacted past it) into the room, and sends it to this server's
+    /// connections. On Postgres only; inside a write transaction it sees every committed row.
+    async fn catch_up(
+        &self,
+        connection: &mut AnyConnection,
+        room: &Room,
+        state: &mut RoomState,
+    ) -> Result<(), CollabError> {
+        if !self.shared() || !state.initialized {
+            return Ok(());
+        }
+        let page = room.page_id.to_string();
+        let row =
+            sqlx::query("SELECT snapshot_seq, epoch FROM page_collab_docs WHERE page_id = $1")
+                .bind(&page)
+                .fetch_optional(&mut *connection)
+                .await?
+                .ok_or(CollabError::NotFound)?;
+        if row.get::<String, _>("epoch") != state.epoch {
+            return Err(CollabError::Reset);
+        }
+        let snapshot_seq: i64 = row.get("snapshot_seq");
+        let snapshot: Option<Vec<u8>> = if snapshot_seq > state.last_seq {
+            sqlx::query_scalar("SELECT snapshot FROM page_collab_docs WHERE page_id = $1")
+                .bind(&page)
+                .fetch_optional(&mut *connection)
+                .await?
+        } else {
+            None
+        };
+        let log = sqlx::query(
+            "SELECT seq, data, user_id FROM page_collab_updates WHERE page_id = $1 AND seq > $2 \
+             ORDER BY seq",
+        )
+        .bind(&page)
+        .bind(snapshot_seq.max(state.last_seq))
+        .fetch_all(&mut *connection)
+        .await?;
+        if snapshot.is_none() && log.is_empty() {
+            return Ok(());
+        }
+        {
+            let doc = state.awareness.doc();
+            let mut txn = doc.transact_mut();
+            if let Some(snapshot) = &snapshot {
+                apply(&mut txn, snapshot)?;
+            }
+            for entry in &log {
+                apply(&mut txn, &entry.get::<Vec<u8>, _>("data"))?;
+            }
+        }
+        if snapshot.is_some() {
+            state.last_seq = snapshot_seq;
+            state.log_updates = 0;
+            state.log_bytes = 0;
+        }
+        if let Some(last) = log.last() {
+            state.last_seq = last.get("seq");
+            state.log_updates += log.len();
+            state.log_bytes += log
+                .iter()
+                .map(|entry| entry.get::<Vec<u8>, _>("data").len())
+                .sum::<usize>();
+            if let Some(editor) = last
+                .get::<Option<String>, _>("user_id")
+                .and_then(|id| id.parse().ok())
+            {
+                state.last_editor = Some(editor);
+            }
+        }
+        let deltas = state.take_captured();
+        for delta in &deltas {
+            state.state_bytes += delta.len();
+            broadcast_update(room, None, delta);
+        }
+        if !deltas.is_empty() {
+            state.mark_changed(None);
+            self.set_bytes(room, state);
+        }
+        Ok(())
+    }
+
+    /// [`Self::catch_up`] outside a transaction; a reset document closes the room.
+    async fn catch_up_logged(&self, room: &Arc<Room>, state: &mut RoomState) {
+        let result = match self.inner.pool.acquire().await {
+            Ok(mut connection) => self.catch_up(&mut connection, room, state).await,
+            Err(error) => Err(error.into()),
+        };
+        match result {
+            Ok(()) => {}
+            Err(CollabError::Reset) => self.close_room(room, state, close::RESET),
+            Err(error) => {
+                tracing::warn!(page_id = %room.page_id, error = %error, "co-editing catch-up failed");
+            }
+        }
+    }
+
+    fn close_room(&self, room: &Arc<Room>, state: &mut RoomState, code: u16) {
+        state.closed = true;
+        let _ = room.tx.send(Outbound::Close {
+            code,
+            reason: close_reason(code),
+        });
+        self.forget(room);
+    }
+
+    /// A message from another server.
+    pub(crate) async fn receive(&self, message: CollabMessage) {
+        let page_id = match &message {
+            CollabMessage::Revalidate { workspace_id } => {
+                self.revalidate_here(*workspace_id);
+                return;
+            }
+            CollabMessage::Update { page_id, .. }
+            | CollabMessage::Awareness { page_id, .. }
+            | CollabMessage::Logged { page_id }
+            | CollabMessage::Close { page_id, .. } => *page_id,
+        };
+        let Some(room) = self.rooms().get(&page_id).cloned() else {
+            return;
+        };
+        let mut state = Arc::clone(&room.state).lock_owned().await;
+        if state.closed || !state.initialized {
+            return;
+        }
+        match message {
+            CollabMessage::Update {
+                epoch,
+                data,
+                user_id,
+                ..
+            } => {
+                let Ok(update) = BASE64.decode(data) else {
+                    return;
+                };
+                if epoch != state.epoch {
+                    return;
+                }
+                let applied = {
+                    let doc = state.awareness.doc();
+                    let mut txn = doc.transact_mut();
+                    apply(&mut txn, &update)
+                };
+                let deltas = state.take_captured();
+                if applied.is_err() {
+                    return;
+                }
+                for delta in &deltas {
+                    state.state_bytes += delta.len();
+                    broadcast_update(&room, None, delta);
+                }
+                if !deltas.is_empty() {
+                    state.mark_changed(Some(user_id));
+                    self.set_bytes(&room, &state);
+                }
+            }
+            CollabMessage::Awareness { data, .. } => {
+                let Ok(frame) = BASE64.decode(data) else {
+                    return;
+                };
+                if let Ok(Message::Awareness(update)) = Message::decode_v1(&frame)
+                    && state.awareness.apply_update(update).is_ok()
+                {
+                    let _ = room.tx.send(Outbound::Frame {
+                        except: None,
+                        data: Bytes::from(frame),
+                    });
+                }
+            }
+            CollabMessage::Logged { .. } => self.catch_up_logged(&room, &mut state).await,
+            CollabMessage::Close { code, .. } => self.close_room(&room, &mut state, code),
+            CollabMessage::Revalidate { .. } => {}
+        }
+    }
+
+    /// Reads what the other servers wrote into every loaded room (messages may have been lost).
+    pub(crate) async fn catch_up_all(&self) {
+        let rooms: Vec<Arc<Room>> = self.rooms().values().cloned().collect();
+        for room in rooms {
+            let mut state = Arc::clone(&room.state).lock_owned().await;
+            if !state.closed && state.initialized {
+                self.catch_up_logged(&room, &mut state).await;
+            }
+        }
+    }
+
+    /// Sends a client's update (if small) or awareness frame to the other servers.
+    fn share(&self, message: CollabMessage) {
+        let data = match &message {
+            CollabMessage::Update { data, .. } | CollabMessage::Awareness { data, .. } => data,
+            _ => "",
+        };
+        if data.len() <= MAX_MESSAGE_DATA {
+            self.tell(message);
+        }
     }
 
     fn rooms(&self) -> std::sync::MutexGuard<'_, HashMap<Id, Arc<Room>>> {
@@ -512,7 +770,9 @@ impl CollabHub {
         if row.get::<i64, _>("converter_version") != blocknote::converter_version() {
             self.rebuild(room, state).await?;
         }
-        Ok(())
+        // Another server may have compacted between the reads above.
+        let mut connection = self.inner.pool.acquire().await?;
+        self.catch_up(&mut connection, room, state).await
     }
 
     /// First open of a page: builds the document from `pages.content_json`.
@@ -530,10 +790,10 @@ impl CollabHub {
         let snapshot = state.full_state();
         let workspace_id = *room.workspace_id.get().ok_or(CollabError::NotFound)?;
         let now = TimestampMillis::now().as_millis();
-        sqlx::query(
+        let inserted = sqlx::query(
             "INSERT INTO page_collab_docs (page_id, workspace_id, snapshot, snapshot_seq, epoch, \
              converter_version, projected_seq, created_at, updated_at) \
-             VALUES ($1, $2, $3, 0, $4, $5, 0, $6, $7)",
+             VALUES ($1, $2, $3, 0, $4, $5, 0, $6, $7) ON CONFLICT (page_id) DO NOTHING",
         )
         .bind(room.page_id.to_string())
         .bind(workspace_id.to_string())
@@ -543,7 +803,13 @@ impl CollabHub {
         .bind(now)
         .bind(now)
         .execute(pool)
-        .await?;
+        .await?
+        .rows_affected();
+        if inserted == 0 {
+            // Another server opened the page first: use its document.
+            state.reset_doc();
+            return self.load(room, state).await;
+        }
         state.initialized = true;
         state.last_seq = 0;
         state.projected_seq = 0;
@@ -604,6 +870,10 @@ impl CollabHub {
             code: close::RESET,
             reason: "document reset",
         });
+        self.tell(CollabMessage::Close {
+            page_id: room.page_id,
+            code: close::RESET,
+        });
         Ok(())
     }
 
@@ -632,6 +902,14 @@ impl CollabHub {
             state.pending.clear();
             return Ok(());
         }
+        let page_id = room.page_id;
+        let workspace_id = *room.workspace_id.get().ok_or(CollabError::NotFound)?;
+        let mut tx = self.write_transaction().await?;
+        // First what the other servers wrote: the projection and the snapshot must have it.
+        if let Err(error) = self.catch_up(&mut tx, room, state).await {
+            let _ = tx.rollback().await;
+            return Err(error);
+        }
         let project = project && state.unprojected_since.is_some();
         if project && repair(state) {
             // The repair is an ordinary update: persisted with the batch and broadcast.
@@ -639,23 +917,24 @@ impl CollabHub {
         }
         let compact = compact && (state.log_updates > 0 || !state.pending.is_empty());
         if state.pending.is_empty() && !project && !compact {
+            let _ = tx.rollback().await;
             return Ok(());
         }
-        let page_id = room.page_id;
-        let workspace_id = *room.workspace_id.get().ok_or(CollabError::NotFound)?;
         let now = TimestampMillis::now();
         let merged = if state.pending.is_empty() {
             None
         } else {
-            Some(
-                yrs::merge_updates_v1(&state.pending)
-                    .map_err(|error| CollabError::Corrupt(error.to_string()))?,
-            )
+            match yrs::merge_updates_v1(&state.pending) {
+                Ok(merged) => Some(merged),
+                Err(error) => {
+                    let _ = tx.rollback().await;
+                    return Err(CollabError::Corrupt(error.to_string()));
+                }
+            }
         };
         let blocks =
             project.then(|| sanitize_blocks(&blocknote::doc_to_blocks(state.awareness.doc())));
         let snapshot = compact.then(|| state.full_state());
-        let mut tx = self.write_transaction().await?;
         let result: Result<(i64, bool), CollabError> = async {
             let mut seq = state.last_seq;
             if let Some(data) = &merged {
@@ -737,6 +1016,9 @@ impl CollabHub {
             state.state_bytes = snapshot.len();
             self.set_bytes(room, state);
         }
+        if merged.is_some() || compact {
+            self.tell(CollabMessage::Logged { page_id });
+        }
         Ok(())
     }
 
@@ -769,6 +1051,18 @@ impl CollabHub {
                 let _ = room.tx.send(Outbound::Close {
                     code: close::GONE,
                     reason: "page deleted",
+                });
+                false
+            }
+            Err(CollabError::Reset) => {
+                // Another server reset the document; this room's edits since are dropped, as
+                // its clients' are (they reset too).
+                state.pending.clear();
+                state.unprojected_since = None;
+                state.closed = true;
+                let _ = room.tx.send(Outbound::Close {
+                    code: close::RESET,
+                    reason: "document reset",
                 });
                 false
             }
@@ -964,6 +1258,10 @@ impl CollabHub {
             }
             if let Ok(update) = state.awareness.update_with_clients(ids) {
                 let frame = Message::Awareness(update).encode_v1();
+                self.share(CollabMessage::Awareness {
+                    page_id: room.page_id,
+                    data: BASE64.encode(&frame),
+                });
                 let _ = room.tx.send(Outbound::Frame {
                     except: None,
                     data: Bytes::from(frame),
@@ -1051,6 +1349,14 @@ impl CollabHub {
                         for delta in &deltas {
                             broadcast_update(room, Some(connection), delta);
                         }
+                        if let Ok(merged) = yrs::merge_updates_v1(&deltas) {
+                            self.share(CollabMessage::Update {
+                                page_id: room.page_id,
+                                epoch: state.epoch.clone(),
+                                data: BASE64.encode(merged),
+                                user_id: peer.user_id,
+                            });
+                        }
                         // Links and file URLs can only arrive in updates that name them.
                         if (contains(&update, b"link") || contains(&update, b"url"))
                             && repair(&state)
@@ -1075,6 +1381,10 @@ impl CollabHub {
                     {
                         let frame = Message::Awareness(accepted.clone()).encode_v1();
                         if state.awareness.apply_update(accepted).is_ok() {
+                            self.share(CollabMessage::Awareness {
+                                page_id: room.page_id,
+                                data: BASE64.encode(&frame),
+                            });
                             // Echo to everyone incl. the sender: y-websocket closes a socket
                             // that receives nothing for 30 s.
                             let _ = room.tx.send(Outbound::Frame {
@@ -1123,13 +1433,15 @@ impl CollabHub {
     pub async fn lock_change(&self, page_id: Id) -> Result<CollabLock, CollabError> {
         let (room, state) = self.room(page_id, false).await?;
         Ok(CollabLock {
+            hub: self.clone(),
             room,
             state: Some(state),
         })
     }
 
     /// Writes pending edits of the page (if it is loaded) and projects them into
-    /// `pages.content_json` now (before duplicate, history, reads).
+    /// `pages.content_json` now (before duplicate, history, reads). With other servers, it also
+    /// projects the edits they logged and did not project yet.
     pub async fn flush_page(&self, page_id: Id) {
         let room = self.rooms().get(&page_id).cloned();
         if let Some(room) = room {
@@ -1137,28 +1449,70 @@ impl CollabHub {
             if !state.closed {
                 self.persist_logged(&room, &mut state, true, false).await;
             }
+            return;
+        }
+        if !self.shared() {
+            return;
+        }
+        let behind = sqlx::query_scalar::<_, Flag>(
+            "SELECT EXISTS (SELECT 1 FROM page_collab_docs JOIN page_collab_updates \
+             ON page_collab_updates.page_id = page_collab_docs.page_id \
+             AND page_collab_updates.seq > page_collab_docs.projected_seq \
+             WHERE page_collab_docs.page_id = $1)",
+        )
+        .bind(page_id.to_string())
+        .fetch_one(&self.inner.pool)
+        .await;
+        if matches!(behind, Ok(Flag(true))) {
+            // Loading reads the log and marks what was not projected.
+            match self.room(page_id, false).await {
+                Ok((room, mut state)) => {
+                    self.persist_logged(&room, &mut state, true, false).await;
+                }
+                Err(error) => {
+                    tracing::warn!(page_id = %page_id, error = %error, "co-editing flush failed");
+                }
+            }
         }
     }
 
-    /// [`Self::flush_page`] for every loaded page of the workspace.
+    /// [`Self::flush_page`] for every loaded page of the workspace, and with other servers for
+    /// every page of it with edits that were not projected.
     pub async fn flush_workspace(&self, workspace_id: Id) {
-        let rooms: Vec<Arc<Room>> = self
+        let mut pages: Vec<Id> = self
             .rooms()
             .values()
             .filter(|room| room.workspace_id.get() == Some(&workspace_id))
-            .cloned()
+            .map(|room| room.page_id)
             .collect();
-        for room in rooms {
-            let mut state = Arc::clone(&room.state).lock_owned().await;
-            if !state.closed {
-                self.persist_logged(&room, &mut state, true, false).await;
-            }
+        if self.shared() {
+            let behind = sqlx::query_scalar::<_, String>(
+                "SELECT DISTINCT page_collab_docs.page_id FROM page_collab_docs \
+                 JOIN page_collab_updates ON page_collab_updates.page_id = page_collab_docs.page_id \
+                 AND page_collab_updates.seq > page_collab_docs.projected_seq \
+                 WHERE page_collab_docs.workspace_id = $1",
+            )
+            .bind(workspace_id.to_string())
+            .fetch_all(&self.inner.pool)
+            .await
+            .unwrap_or_default();
+            pages.extend(behind.iter().filter_map(|id| id.parse::<Id>().ok()));
+            pages.sort_unstable();
+            pages.dedup();
+        }
+        for page_id in pages {
+            self.flush_page(page_id).await;
         }
     }
 
     /// Makes every connection of the workspace (all workspaces with `None`) re-check its access
     /// now; connections that lost it are closed (4401/4403/4404).
     pub fn revalidate(&self, workspace_id: Option<Id>) {
+        self.revalidate_here(workspace_id);
+        self.tell(CollabMessage::Revalidate { workspace_id });
+    }
+
+    fn revalidate_here(&self, workspace_id: Option<Id>) {
         for room in self.rooms().values() {
             if workspace_id.is_none() || room.workspace_id.get() == workspace_id.as_ref() {
                 let _ = room.tx.send(Outbound::Revalidate);
@@ -1239,6 +1593,13 @@ impl CollabWrite {
         if !state.initialized {
             return Ok(());
         }
+        // The caller's write transaction: the replacement goes after every row it can see.
+        if let Err(error) = self.hub.catch_up(tx, &self.room, state).await {
+            if matches!(error, CollabError::Reset) {
+                self.hub.close_room(&self.room, state, close::RESET);
+            }
+            return Err(error);
+        }
         let sanitized = sanitize_blocks(blocks);
         self.touched = true;
         {
@@ -1294,6 +1655,9 @@ impl CollabWrite {
             state.log_updates += 1;
             state.log_bytes += staged.bytes;
             self.hub.set_bytes(&self.room, &state);
+            self.hub.tell(CollabMessage::Logged {
+                page_id: self.room.page_id,
+            });
         }
         if state.connections == 0 {
             // Written through: nothing to keep in memory for a page nobody has open.
@@ -1326,6 +1690,7 @@ impl Drop for CollabWrite {
 /// A page lock change in progress, holding the room (see [`CollabHub::lock_change`]). Dropping it
 /// without [`Self::commit`] changes nothing.
 pub struct CollabLock {
+    hub: CollabHub,
     room: Arc<Room>,
     state: Option<OwnedMutexGuard<RoomState>>,
 }
@@ -1349,6 +1714,11 @@ impl CollabLock {
                 },
             });
         }
+        // The other servers' rooms reload the lock with the document.
+        self.hub.tell(CollabMessage::Close {
+            page_id: self.room.page_id,
+            code: close::LOCK_CHANGED,
+        });
         if state.connections == 0 {
             self.room.idle_since_ms.store(0, Ordering::Relaxed);
         }

@@ -169,6 +169,8 @@ pub(super) async fn start_passkey_registration(
             user_id: session.user.id,
             state: Box::new(registration),
         })
+        .await
+        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?
         .ok_or_else(|| busy(instance, request_id.as_ref()))?;
     Ok(Json(PasskeyChallenge {
         challenge_token,
@@ -217,7 +219,11 @@ pub(super) async fn finish_passkey_registration(
             user_id,
             state: registration,
         },
-    )) = state.pending.take(&body.challenge_token)
+    )) = state
+        .pending
+        .take(&body.challenge_token)
+        .await
+        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?
     else {
         return Err(invalid_passkey(instance, request_id.as_ref()));
     };
@@ -333,6 +339,8 @@ pub(super) async fn start_passkey_login(
         .insert(Pending::PasskeyLogin {
             state: Box::new(authentication),
         })
+        .await
+        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?
         .ok_or_else(|| busy(instance, request_id.as_ref()))?;
     Ok(Json(PasskeyChallenge {
         challenge_token,
@@ -377,7 +385,11 @@ pub(super) async fn finish_passkey_login(
         Pending::PasskeyLogin {
             state: authentication,
         },
-    )) = state.pending.take(&body.challenge_token)
+    )) = state
+        .pending
+        .take(&body.challenge_token)
+        .await
+        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?
     else {
         return Err(rejected());
     };

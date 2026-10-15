@@ -235,6 +235,62 @@ async fn sign_in_asks_for_a_code_once_the_authenticator_app_is_on() {
 }
 
 #[tokio::test]
+async fn the_code_can_go_to_another_server_than_the_password() {
+    let fixture = Fixture::new().await;
+    let (secret, _) = fixture.enable_totp().await;
+    // A second server: its own router and in-memory state on the same database.
+    let other = auth_router(
+        AuthState::new(Arc::clone(&fixture.identity), CookieMode::secure()).with_app_key([7; 32]),
+    );
+
+    let (status, challenge) = fixture.login().await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/v1/auth/login/two-factor")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({"two_factor_token": challenge["two_factor_token"], "code": code(&secret, 0)})
+                .to_string(),
+        ))
+        .unwrap();
+    let response = other.oneshot(request).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_lockout_holds_on_every_server() {
+    let fixture = Fixture::new().await;
+    for _ in 0..5 {
+        let (status, _) = fixture
+            .post(
+                "/api/v1/auth/login",
+                None,
+                json!({"email": "owner@example.com", "password": "wrong password value"}),
+            )
+            .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+    // A second server: its own router and in-memory state on the same database.
+    let other = auth_router(AuthState::new(
+        Arc::clone(&fixture.identity),
+        CookieMode::secure(),
+    ));
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/v1/auth/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({"email": "owner@example.com", "password": PASSWORD}).to_string(),
+        ))
+        .unwrap();
+    let response = other.oneshot(request).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
 async fn a_recovery_code_signs_in_once() {
     let fixture = Fixture::new().await;
     let (_, codes) = fixture.enable_totp().await;

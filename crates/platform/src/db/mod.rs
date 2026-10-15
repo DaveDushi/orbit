@@ -33,8 +33,16 @@ pub use test_db::{TestDatabase, TestDatabaseError};
 /// Server URL (e.g. `postgres://orbit:orbit@127.0.0.1:15432/orbit`) that makes tests run on
 /// Postgres; see [`Database::open`].
 const TEST_POSTGRES_ENV: &str = "ORBIT_TEST_POSTGRES_URL";
-/// Advisory lock held by the connection that owns a Postgres database, for the whole process.
-const POSTGRES_OWNERSHIP_LOCK: &str = "SELECT pg_try_advisory_lock(8030594652542119799)";
+/// Advisory lock held by the connection that owns a Postgres database, for the whole process:
+/// shared by the servers and online CLI commands, exclusive for restore and reset.
+const POSTGRES_SHARED_OWNERSHIP_LOCK: &str =
+    "SELECT pg_try_advisory_lock_shared(8030594652542119799)";
+const POSTGRES_EXCLUSIVE_OWNERSHIP_LOCK: &str = "SELECT pg_try_advisory_lock(8030594652542119799)";
+/// Session advisory lock that lets one process at a time apply migrations.
+const POSTGRES_MIGRATION_LOCK: &str = "SELECT pg_advisory_lock(8030594652542123517)";
+const POSTGRES_MIGRATION_UNLOCK: &str = "SELECT pg_advisory_unlock(8030594652542123517)";
+/// How long the ownership connection may take to answer before the lock counts as lost.
+const POSTGRES_OWNERSHIP_TIMEOUT: Duration = Duration::from_secs(5);
 /// True when the database orders and folds text like SQLite: code-point order (BINARY) and
 /// Unicode case folding, also in the text search parser.
 const POSTGRES_LOCALE_CHECK: &str = "SELECT 'B' < 'a' AND lower('Ü') = 'ü' AND to_tsvector('simple', 'Ü') = to_tsvector('simple', 'ü')";
@@ -66,6 +74,15 @@ pub enum Backend {
     Postgres,
 }
 
+/// How an open holds the database against other Orbit processes. A SQLite database is always
+/// held alone; on Postgres several servers share it, and restore and reset need it alone.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Access {
+    #[default]
+    Exclusive,
+    Shared,
+}
+
 #[derive(Clone, Eq, PartialEq)]
 pub struct DatabaseConfig {
     /// The SQLite database. With `postgres_url` it is not opened, but still anchors files that
@@ -75,6 +92,7 @@ pub struct DatabaseConfig {
     pub postgres_url: Option<String>,
     pub max_connections: u32,
     pub busy_timeout: Duration,
+    pub access: Access,
 }
 
 impl DatabaseConfig {
@@ -85,6 +103,16 @@ impl DatabaseConfig {
             postgres_url: None,
             max_connections: 5,
             busy_timeout: Duration::from_secs(5),
+            access: Access::Exclusive,
+        }
+    }
+
+    /// Lets other Orbit processes use the Postgres database at the same time (no effect on SQLite).
+    #[must_use]
+    pub fn shared(self) -> Self {
+        Self {
+            access: Access::Shared,
+            ..self
         }
     }
 
@@ -109,6 +137,7 @@ impl fmt::Debug for DatabaseConfig {
             )
             .field("max_connections", &self.max_connections)
             .field("busy_timeout", &self.busy_timeout)
+            .field("access", &self.access)
             .finish()
     }
 }
@@ -125,7 +154,7 @@ struct DatabaseInner {
     /// The native pool of a Postgres database, for `COPY` (backups), which the Any driver lacks.
     postgres: Option<PgPool>,
     path: PathBuf,
-    _ownership: Ownership,
+    ownership: Ownership,
     extensions: Extensions,
 }
 
@@ -137,9 +166,35 @@ enum Ownership {
     /// The connection that holds the ownership advisory lock, and in tests on Postgres also the
     /// lock file of the SQLite path the database stands in for.
     Postgres {
-        _connection: Mutex<PgConnection>,
+        connection: tokio::sync::Mutex<PgConnection>,
         _file: Option<File>,
     },
+}
+
+/// Held by the one process of the database that does some work now (see
+/// [`Database::try_singleton`]). Dropping it releases it: on Postgres its connection closes.
+pub struct Singleton(Option<sqlx::pool::PoolConnection<sqlx::Postgres>>);
+
+impl Drop for Singleton {
+    fn drop(&mut self) {
+        if let Some(connection) = self.0.as_mut() {
+            connection.close_on_drop();
+        }
+    }
+}
+
+/// Held while this process applies migrations; [`MigrationLock::release`] lets the next one in.
+pub(crate) struct MigrationLock<'a>(Option<tokio::sync::MutexGuard<'a, PgConnection>>);
+
+impl MigrationLock<'_> {
+    pub(crate) async fn release(self) -> Result<(), sqlx::Error> {
+        if let Some(mut connection) = self.0 {
+            sqlx::query(POSTGRES_MIGRATION_UNLOCK)
+                .execute(&mut *connection)
+                .await?;
+        }
+        Ok(())
+    }
 }
 
 /// Process-wide services bound to one open database (at most one value per type), e.g. the
@@ -169,6 +224,8 @@ pub enum DatabaseError {
     },
     #[error("database is already owned by another Orbit process: {path}")]
     AlreadyOwned { path: PathBuf },
+    #[error("lost the database ownership lock: {reason}")]
+    OwnershipLost { reason: String },
     #[error("database file has more than one hard link, which SQLite does not support: {path}")]
     HardLinked { path: PathBuf },
     #[error("failed to open SQLite database {path}: {source}")]
@@ -336,7 +393,7 @@ impl Database {
                 backend: Backend::Sqlite,
                 postgres: None,
                 path: config.path.clone(),
-                _ownership: Ownership::File {
+                ownership: Ownership::File {
                     _lock: ownership_lock,
                 },
                 extensions: Extensions::default(),
@@ -360,9 +417,13 @@ impl Database {
         let mut connection = PgConnection::connect_with(&options)
             .await
             .map_err(open_error)?;
+        let lock = match config.access {
+            Access::Exclusive => POSTGRES_EXCLUSIVE_OWNERSHIP_LOCK,
+            Access::Shared => POSTGRES_SHARED_OWNERSHIP_LOCK,
+        };
         let mut attempts = 0;
         loop {
-            let owned: bool = sqlx::query_scalar(POSTGRES_OWNERSHIP_LOCK)
+            let owned: bool = sqlx::query_scalar(lock)
                 .fetch_one(&mut connection)
                 .await
                 .map_err(open_error)?;
@@ -404,8 +465,8 @@ impl Database {
                 backend: Backend::Postgres,
                 postgres: Some(postgres),
                 path: config.path.clone(),
-                _ownership: Ownership::Postgres {
-                    _connection: Mutex::new(connection),
+                ownership: Ownership::Postgres {
+                    connection: tokio::sync::Mutex::new(connection),
                     _file: ownership_file,
                 },
                 extensions: Extensions::default(),
@@ -416,6 +477,54 @@ impl Database {
     #[must_use]
     pub fn backend(&self) -> Backend {
         self.inner.backend
+    }
+
+    /// Waits until no other process applies migrations to this database. Holds the ownership
+    /// connection, so a process that dies releases the lock with its session.
+    pub(crate) async fn lock_migrations(&self) -> Result<MigrationLock<'_>, sqlx::Error> {
+        let Ownership::Postgres { connection, .. } = &self.inner.ownership else {
+            return Ok(MigrationLock(None));
+        };
+        let mut connection = connection.lock().await;
+        sqlx::query(POSTGRES_MIGRATION_LOCK)
+            .execute(&mut *connection)
+            .await?;
+        Ok(MigrationLock(Some(connection)))
+    }
+
+    /// Takes the lock named `name` if no other process of the database holds it: work that one
+    /// server at a time does. A SQLite database has one process, so it always gets it.
+    pub async fn try_singleton(&self, name: &str) -> Result<Option<Singleton>, sqlx::Error> {
+        let Some(postgres) = &self.inner.postgres else {
+            return Ok(Some(Singleton(None)));
+        };
+        let digest = Sha256::digest(format!("orbit.singleton.{name}").as_bytes());
+        let key = i64::from_be_bytes(digest[..8].try_into().expect("a digest has 8 bytes"));
+        let mut connection = postgres.acquire().await?;
+        let held: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(key)
+            .fetch_one(&mut *connection)
+            .await?;
+        Ok(held.then(|| Singleton(Some(connection))))
+    }
+
+    /// Fails when this process may no longer hold the database: on Postgres the session that holds
+    /// the ownership lock is gone or does not answer, so the server holds no lock and must stop.
+    /// A SQLite file lock cannot be lost.
+    pub async fn verify_ownership(&self) -> Result<(), DatabaseError> {
+        let Ownership::Postgres { connection, .. } = &self.inner.ownership else {
+            return Ok(());
+        };
+        let mut connection = connection.lock().await;
+        match tokio::time::timeout(POSTGRES_OWNERSHIP_TIMEOUT, connection.ping()).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => Err(DatabaseError::OwnershipLost {
+                reason: error.to_string(),
+            }),
+            Err(_) => Err(DatabaseError::OwnershipLost {
+                reason: "the lock connection did not answer".to_owned(),
+            }),
+        }
     }
 
     pub async fn execute(&self, query: &str) -> Result<u64, sqlx::Error> {
@@ -481,7 +590,7 @@ impl Database {
         &self.inner.pool
     }
 
-    pub(crate) fn postgres_pool(&self) -> Option<&PgPool> {
+    pub fn postgres_pool(&self) -> Option<&PgPool> {
         self.inner.postgres.as_ref()
     }
 

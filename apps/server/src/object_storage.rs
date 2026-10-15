@@ -2,6 +2,7 @@
 //! bucket from the saved settings, applies them while the server runs, moves blobs in the background and makes
 //! the automatic backups.
 
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use orbit_platform::Row;
@@ -62,6 +63,62 @@ pub fn apply(
         backups: settings.backups_in_s3,
     });
     Ok(())
+}
+
+/// The storage the server uses and the settings it applied, so the server can apply what another server saved
+/// ([`reload_saved`]).
+struct Applied {
+    storage: ObjectStorage,
+    app_key: Option<[u8; 32]>,
+    settings: Mutex<StorageSettings>,
+}
+
+/// Makes the running server use `settings` (as [`apply`]) and remembers them for [`reload_saved`].
+pub fn apply_and_keep(
+    database: &Database,
+    storage: &ObjectStorage,
+    settings: &StorageSettings,
+    app_key: Option<&[u8; 32]>,
+) -> Result<(), String> {
+    apply(storage, settings, app_key)?;
+    let applied = database.extension(|| Applied {
+        storage: storage.clone(),
+        app_key: app_key.copied(),
+        settings: Mutex::new(settings.clone()),
+    });
+    *applied
+        .settings
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) = settings.clone();
+    Ok(())
+}
+
+/// Whether this server keeps new attachments in S3 (`None` before it applied settings).
+pub(crate) fn attachments_in_s3(database: &Database) -> Option<bool> {
+    database
+        .existing_extension::<Applied>()
+        .map(|applied| applied.storage.current().attachments)
+}
+
+/// Applies the saved storage settings if they differ from the ones this server uses (another server saved
+/// them). Does nothing before the server applied any.
+pub async fn reload_saved(database: &Database) -> Result<(), String> {
+    let Some(applied) = database.existing_extension::<Applied>() else {
+        return Ok(());
+    };
+    let saved = InstanceSettingsRepository::new(database.clone())
+        .storage()
+        .await
+        .map_err(|error| error.to_string())?;
+    if *applied
+        .settings
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        == saved
+    {
+        return Ok(());
+    }
+    apply_and_keep(database, &applied.storage, &saved, applied.app_key.as_ref())
 }
 
 /// Moves blobs to the active tier after every settings change, and every ten minutes to retry after errors. Each

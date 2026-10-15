@@ -568,6 +568,7 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
         "save_storage_options" => {
             add_code(&mut responses, "403", "installation_admin_required");
             add_code(&mut responses, "409", "storage_not_configured");
+            add_code(&mut responses, "409", "storage_shared");
         }
         "list_invitations" | "list_audit" | "list_api_tokens" | "create_api_token"
         | "revoke_api_token" => {

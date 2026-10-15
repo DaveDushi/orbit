@@ -365,6 +365,10 @@ impl From<CollabError> for PageError {
             CollabError::NotFound => Self::NotFound,
             CollabError::Unavailable(error) => Self::Unavailable(error),
             CollabError::Overloaded | CollabError::Corrupt(_) => Self::Corrupt,
+            // Another server reset the document while this write waited: try again.
+            CollabError::Reset => Self::Unavailable(sqlx::Error::Protocol(
+                "co-editing document was reset".to_owned(),
+            )),
         }
     }
 }

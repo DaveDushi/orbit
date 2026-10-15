@@ -842,12 +842,19 @@ impl PushService {
         .await?;
         for row in &rows {
             let id: String = row.get("id");
-            // Marked first: a notification is pushed at most once, also when the push fails.
-            sqlx::query("UPDATE notifications SET pushed_at = $1 WHERE id = $2")
-                .bind(TimestampMillis::now().as_millis())
-                .bind(&id)
-                .execute(self.database.pool())
-                .await?;
+            // Claimed first: a notification is pushed at most once, also when the push fails or
+            // another server's inbox pass selected it too.
+            let claimed = sqlx::query(
+                "UPDATE notifications SET pushed_at = $1 WHERE id = $2 AND pushed_at IS NULL",
+            )
+            .bind(TimestampMillis::now().as_millis())
+            .bind(&id)
+            .execute(self.database.pool())
+            .await?
+            .rows_affected();
+            if claimed == 0 {
+                continue;
+            }
             let actor: String = row.get("actor");
             let subject = |column: &str| {
                 row.get::<Option<String>, _>(column)

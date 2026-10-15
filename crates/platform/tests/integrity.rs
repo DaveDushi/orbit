@@ -85,6 +85,7 @@ async fn a_failed_quick_check_makes_readiness_fail() {
         HealthCheck::WritableStorage,
         HealthCheck::Scheduler,
         HealthCheck::CriticalConfig,
+        HealthCheck::Accepting,
     ] {
         health.register(check, || async { Ok(()) });
     }

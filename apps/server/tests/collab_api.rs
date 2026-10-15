@@ -34,6 +34,8 @@ use yrs::{
     XmlTextRef,
 };
 
+mod shared_postgres;
+
 const COOKIE: &str = "orbit_session_dev";
 
 type Socket =
@@ -73,7 +75,22 @@ struct Server {
 
 impl Server {
     async fn start(root: &TempDir, collab: CollabConfig) -> Self {
-        let app = App::build(app_config(root)).await.unwrap();
+        Self::start_with(app_config(root), collab).await
+    }
+
+    /// A server of the Postgres database `url`, which other servers may share.
+    async fn start_shared(root: &TempDir, url: &str, collab: CollabConfig) -> Self {
+        let mut config = app_config(root);
+        config.data.database_url = Some(url.to_owned());
+        config.secrets.insert(
+            "app_key".to_owned(),
+            orbit_platform::Secret::new(shared_postgres::APP_KEY),
+        );
+        Self::start_with(config, collab).await
+    }
+
+    async fn start_with(config: Config, collab: CollabConfig) -> Self {
+        let app = App::build(config).await.unwrap();
         CollabHub::install(app.database(), collab);
         let database = app.database().clone();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1666,5 +1683,140 @@ async fn rest_content_writes_notify_new_mentions_but_never_on_private_pages() {
     let (status, _) = server.api(&users.member, "PATCH", &path, Some(body)).await;
     assert_eq!(status, 200);
     assert_eq!(page_mentions(&server, &id, stranger).await, 0);
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn servers_of_one_database_co_edit_and_compact_without_losing_edits() {
+    let Some(database) = shared_postgres::SharedDatabase::create().await else {
+        return; // several servers need a Postgres database
+    };
+    let config = || CollabConfig {
+        compact_updates: 8,
+        ..fast_config()
+    };
+    let (root_one, root_two) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+    let one = Server::start_shared(&root_one, &database.url, config()).await;
+    let users = setup(&one).await;
+    let two = Server::start_shared(&root_two, &database.url, config()).await;
+    let page = create_page(&one, &users, &users.owner, json!({"title": "Pad"}), "x").await;
+    let id = page["id"].as_str().unwrap();
+    let mut a = Client::open(&one, &users, &users.owner, id).await;
+    let mut b = Client::open(&two, &users, &users.member, id).await;
+
+    // An edit on one server reaches the client of the other.
+    a.type_text(1, "y").await;
+    b.wait_text("xy").await;
+    b.type_text(2, "z").await;
+    a.wait_text("xyz").await;
+    // And so do cursors.
+    a.set_awareness(1, json!({"cursor": null})).await;
+    let a_id = a.doc.client_id().get();
+    assert!(
+        b.pump(Duration::from_secs(5), |client, _| client
+            .awareness
+            .contains_key(&a_id))
+            .await,
+        "awareness crossed servers"
+    );
+
+    // Both type at once while both servers write and compact the same log.
+    for i in 0..12 {
+        a.type_text(0, &format!("a{i}")).await;
+        let end = b.text().encode_utf16().count() as u32;
+        b.type_text(end, &format!("b{i}")).await;
+        tokio::time::sleep(Duration::from_millis(15)).await;
+    }
+    let prefix: String = (0..12).rev().map(|i| format!("a{i}")).collect();
+    let suffix: String = (0..12).map(|i| format!("b{i}")).collect();
+    let expected = format!("{prefix}xyz{suffix}");
+    a.wait_text(&expected).await;
+    b.wait_text(&expected).await;
+    wait_until("a compaction", || async {
+        scalar_i64(
+            &one,
+            "SELECT snapshot_seq FROM page_collab_docs WHERE page_id = $1",
+            id,
+        )
+        .await
+            > 0
+    })
+    .await;
+
+    // Both rooms are evicted (written, compacted); a new client loads every edit.
+    drop((a, b));
+    for server in [&one, &two] {
+        let hub = CollabHub::existing(&server.database).unwrap();
+        wait_until("eviction", || async { hub.stats().0 == 0 }).await;
+    }
+    let c = Client::open(&two, &users, &users.owner, id).await;
+    assert_eq!(c.text(), expected);
+    let stored = get_page(&one, &users, &users.owner, id).await;
+    assert_eq!(stored["content"][0]["content"][0]["text"], expected);
+    drop(c);
+    one.stop().await;
+    two.stop().await;
+    database.drop().await;
+}
+
+#[tokio::test]
+async fn a_compaction_keeps_what_another_server_logged() {
+    if !orbit_platform::testing_postgres() {
+        return; // other servers write the same log on Postgres only
+    }
+    let root = TempDir::new().unwrap();
+    let server = Server::start(
+        &root,
+        CollabConfig {
+            compact_updates: 8,
+            ..fast_config()
+        },
+    )
+    .await;
+    let users = setup(&server).await;
+    let page = create_page(&server, &users, &users.owner, json!({"title": "Log"}), "x").await;
+    let id = page["id"].as_str().unwrap();
+    let mut a = Client::open(&server, &users, &users.owner, id).await;
+
+    // Another server logged an edit, and its message never came.
+    let other = new_doc(None);
+    let known = a
+        .doc
+        .transact()
+        .encode_state_as_update_v1(&Default::default());
+    other
+        .transact_mut()
+        .apply_update(Update::decode_v1(&known).unwrap())
+        .unwrap();
+    let before = other.transact().state_vector();
+    {
+        let mut txn = other.transact_mut();
+        paragraph_text(&other, &mut txn, 0).insert(&mut txn, 0, "Q");
+    }
+    let logged = other.transact().encode_state_as_update_v1(&before);
+    sqlx::query(
+        "INSERT INTO page_collab_updates (page_id, workspace_id, data, user_id, created_at) \
+         VALUES ($1, $2, $3, NULL, 0)",
+    )
+    .bind(id)
+    .bind(&users.workspace)
+    .bind(logged)
+    .execute(server.database.pool())
+    .await
+    .unwrap();
+
+    // This server writes and compacts: its snapshot takes the other server's row in.
+    for _ in 0..10 {
+        let end = a.text().encode_utf16().count() as u32;
+        a.type_text(end, "z").await;
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    let expected = format!("Qx{}", "z".repeat(10));
+    a.wait_text(&expected).await;
+    drop(a);
+    let hub = CollabHub::existing(&server.database).unwrap();
+    wait_until("eviction", || async { hub.stats().0 == 0 }).await;
+    let b = Client::open(&server, &users, &users.member, id).await;
+    assert_eq!(b.text(), expected);
     server.stop().await;
 }

@@ -15,6 +15,7 @@ mod hub;
 pub mod sanitize;
 pub mod socket;
 
+pub(crate) use hub::CollabMessage;
 pub use hub::{CollabConfig, CollabError, CollabHub, CollabLock, CollabWrite};
 
 /// WebSocket close codes of the collaboration socket.

@@ -154,6 +154,23 @@ impl JobStore {
                 continue;
             }
             let policy = self.kinds.resolve(&kind);
+            // The limit holds for every process of the database: the claim transaction is
+            // serialized, so it sees the jobs other processes run (this one's own are in
+            // `excluded_kinds`).
+            if let Some(limit) = policy.concurrency_limit() {
+                let running: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM jobs WHERE kind = $1 AND state = 'running' \
+                     AND lease_expires_at > $2 AND lease_owner != $3",
+                )
+                .bind(&kind)
+                .bind(now.as_millis())
+                .bind(&self.lease_owner)
+                .fetch_one(&mut *transaction)
+                .await?;
+                if usize::try_from(running).unwrap_or(usize::MAX) >= limit {
+                    continue;
+                }
+            }
             if let Some(claim) = self
                 .claim_row(&mut transaction, &row, now, policy.lease())
                 .await?

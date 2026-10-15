@@ -4,15 +4,16 @@ use std::fs::{self, OpenOptions};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use axum::Router;
 use axum::serve::ListenerExt;
 use orbit_platform::{
     BackupService, BlobStoreError, Config, Database, DatabaseConfig, HealthCheck, HealthRegistry,
-    HttpLimits, IntegrityService, JobError, JobKind, JobStore, LocalBlobStore, MigrationRunner,
-    ObjectStorage, OriginPolicy, RecurringSchedule, Scheduler, TieredBlobStore, TimestampMillis,
-    UploadLimits, UploadService, Worker, WorkerConfig, run_guarded_migrations,
+    HttpLimits, IntegrityService, JobError, JobKind, JobStore, LocalBlobStore, MigrationError,
+    MigrationRunner, ObjectStorage, OriginPolicy, RecurringSchedule, Scheduler, TieredBlobStore,
+    TimestampMillis, UploadLimits, UploadService, Worker, WorkerConfig, run_guarded_migrations,
 };
 use serde_json::json;
 use thiserror::Error;
@@ -44,6 +45,8 @@ use crate::teamspace_routes::TeamspaceState;
 use crate::workspace_routes::WorkspaceState;
 
 const BACKGROUND_DRAIN: Duration = Duration::from_secs(30);
+/// How often a server checks that it still holds the database ownership lock.
+const OWNERSHIP_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 /// Hourly: deletes tokens of Notion scans not started within 24 hours.
 const NOTION_CLEANUP: &str = "notion.cleanup";
 /// Hourly: creates a backup when the saved schedule (Admin → Storage) says one is due.
@@ -61,6 +64,8 @@ pub struct App {
     object_storage: ObjectStorage,
     blob_store: TieredBlobStore,
     production_services: Option<ProductionServices>,
+    /// Set when the server stops: readiness fails, so a load balancer takes it out.
+    draining: Arc<AtomicBool>,
 }
 
 struct ProductionServices {
@@ -133,7 +138,7 @@ impl App {
             &config.data.backups,
         )?;
 
-        let database = Database::open(&DatabaseConfig::for_data(&config.data))
+        let database = Database::open(&DatabaseConfig::for_data(&config.data).shared())
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
         let migrations = MigrationRunner::embedded(env!("CARGO_PKG_VERSION"));
@@ -185,8 +190,13 @@ impl App {
             .storage()
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
-        crate::object_storage::apply(&object_storage, &storage_settings, app_key.as_ref())
-            .map_err(|error| AppError::Config(format!("object storage: {error}")))?;
+        crate::object_storage::apply_and_keep(
+            &database,
+            &object_storage,
+            &storage_settings,
+            app_key.as_ref(),
+        )
+        .map_err(|error| AppError::Config(format!("object storage: {error}")))?;
         let backups = BackupService::new(&config.data.backups, &config.data.attachments)
             .with_object_storage(object_storage.clone());
         let blob_store = TieredBlobStore::new(
@@ -247,7 +257,8 @@ impl App {
         )
         .await?;
 
-        let health = health_registry(&config, &database, &integrity);
+        let draining = Arc::new(AtomicBool::new(false));
+        let health = health_registry(&config, &database, &integrity, &draining);
         if !health.readiness().await.ready {
             return Err(AppError::Readiness);
         }
@@ -359,6 +370,7 @@ impl App {
             object_storage,
             blob_store,
             production_services: Some(production_services),
+            draining,
         })
     }
 
@@ -448,9 +460,18 @@ impl App {
                 .map_err(|error| error.to_string())
         });
         let database = self.database.clone();
+        let token = service_shutdown.clone();
+        services.spawn(async move { watch_database_ownership(database, token).await });
+        let database = self.database.clone();
         let scheduler = production.scheduler;
         let token = service_shutdown.clone();
         services.spawn(async move { run_scheduler_service(scheduler, database, token).await });
+        // Subscribed before HTTP starts: nothing the first clients do is missed.
+        let member = crate::cluster::join(&self.database)
+            .await
+            .map_err(|error| AppError::Background(error.to_string()))?;
+        let token = service_shutdown.clone();
+        services.spawn(async move { member.run(token).await });
         let push = crate::push::PushService::of(&self.database);
         push.set_origin(&self.config.http.public_origin);
         let token = service_shutdown.clone();
@@ -489,7 +510,16 @@ impl App {
         let mut http_result = None;
         tokio::select! {
             result = &mut server => http_result = Some(result),
-            () = shutdown.cancelled() => {}
+            () = shutdown.cancelled() => {
+                // Readiness fails first; requests in flight and new ones that the load balancer
+                // still sends are served during the delay.
+                self.draining.store(true, Ordering::SeqCst);
+                let delay = Duration::from_secs(self.config.http.shutdown_delay_seconds);
+                tokio::select! {
+                    result = &mut server => http_result = Some(result),
+                    () = tokio::time::sleep(delay) => {}
+                }
+            }
             () = integrity_failure.cancelled() => {
                 background_error = Some("weekly full database integrity check failed".to_owned());
             }
@@ -606,19 +636,22 @@ fn health_registry(
     config: &Config,
     database: &Database,
     integrity: &IntegrityService,
+    draining: &Arc<AtomicBool>,
 ) -> HealthRegistry {
     let migrations_database = database.clone();
     let mut health = HealthRegistry::new().with_check(HealthCheck::Migrations, move || {
         let database = migrations_database.clone();
         async move {
-            let pending = MigrationRunner::embedded(env!("CARGO_PKG_VERSION"))
+            match MigrationRunner::embedded(env!("CARGO_PKG_VERSION"))
                 .pending(&database)
                 .await
-                .map_err(|error| error.to_string())?;
-            if pending.is_empty() {
-                Ok(())
-            } else {
-                Err("pending migrations".to_owned())
+            {
+                Ok(pending) if pending.is_empty() => Ok(()),
+                Ok(_) => Err("pending migrations".to_owned()),
+                // A newer release migrated the database during a rolling upgrade (migrations keep
+                // the previous release working); this server serves until it is replaced.
+                Err(MigrationError::SchemaNewer { .. }) => Ok(()),
+                Err(error) => Err(error.to_string()),
             }
         }
     });
@@ -662,6 +695,17 @@ fn health_registry(
     health.register(HealthCheck::CriticalConfig, move || {
         let config = checked_config.clone();
         async move { config.validate().map_err(|error| error.to_string()) }
+    });
+    let draining = Arc::clone(draining);
+    health.register(HealthCheck::Accepting, move || {
+        let stopping = draining.load(Ordering::SeqCst);
+        async move {
+            if stopping {
+                Err("the server is stopping".to_owned())
+            } else {
+                Ok(())
+            }
+        }
     });
     health
 }
@@ -737,7 +781,6 @@ async fn initialize_production_services(
         .await
         .map_err(|error| AppError::ProductionServices(error.to_string()))?;
     ensure_schedule(
-        database,
         &scheduler,
         "workspace.retention",
         Duration::from_secs(24 * 60 * 60),
@@ -753,7 +796,6 @@ async fn initialize_production_services(
         .await
         .map_err(|error| AppError::ProductionServices(error.to_string()))?;
     ensure_schedule(
-        database,
         &scheduler,
         "integrity.weekly",
         Duration::from_secs(7 * 24 * 60 * 60),
@@ -761,7 +803,6 @@ async fn initialize_production_services(
     )
     .await?;
     ensure_schedule(
-        database,
         &scheduler,
         SCHEDULED_BACKUP,
         Duration::from_secs(60 * 60),
@@ -769,7 +810,6 @@ async fn initialize_production_services(
     )
     .await?;
     ensure_schedule(
-        database,
         &scheduler,
         NOTION_CLEANUP,
         Duration::from_secs(60 * 60),
@@ -789,38 +829,24 @@ async fn initialize_production_services(
 }
 
 async fn ensure_schedule(
-    database: &Database,
     scheduler: &Scheduler,
     kind: &str,
     cadence: Duration,
     now: TimestampMillis,
 ) -> Result<(), AppError> {
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM schedules WHERE job_kind = $1")
-        .bind(kind)
-        .fetch_one(database.pool())
+    scheduler
+        .ensure(&RecurringSchedule::interval(
+            if kind == "integrity.weekly" {
+                integrity_kind()
+            } else {
+                maintenance_kind(kind)
+            },
+            json!({}),
+            cadence,
+            now,
+        ))
         .await
-        .map_err(|error| AppError::ProductionServices(error.to_string()))?;
-    if count > 1 {
-        return Err(AppError::ProductionServices(format!(
-            "multiple durable schedules exist for {kind}"
-        )));
-    }
-    if count == 0 {
-        scheduler
-            .upsert(&RecurringSchedule::interval(
-                if kind == "integrity.weekly" {
-                    integrity_kind()
-                } else {
-                    maintenance_kind(kind)
-                },
-                json!({}),
-                cadence,
-                now,
-            ))
-            .await
-            .map_err(|error| AppError::ProductionServices(error.to_string()))?;
-    }
-    Ok(())
+        .map_err(|error| AppError::ProductionServices(error.to_string()))
 }
 
 fn maintenance_kind(name: &str) -> JobKind {
@@ -851,6 +877,24 @@ async fn run_scheduler_service(
             () = shutdown.cancelled() => return Ok(()),
             () = tokio::time::sleep(Duration::from_secs(60)) => {}
         }
+    }
+}
+
+/// Stops serving when the database ownership lock is lost (e.g. a dropped Postgres connection
+/// releases it), so a restore cannot run while this server still writes.
+async fn watch_database_ownership(
+    database: Database,
+    shutdown: CancellationToken,
+) -> Result<(), String> {
+    loop {
+        tokio::select! {
+            () = shutdown.cancelled() => return Ok(()),
+            () = tokio::time::sleep(OWNERSHIP_CHECK_INTERVAL) => {}
+        }
+        database
+            .verify_ownership()
+            .await
+            .map_err(|error| error.to_string())?;
     }
 }
 

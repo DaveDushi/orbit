@@ -21,7 +21,7 @@ On shutdown, the HTTP server stops accepting new connections and drains active r
 ## Persistence and security
 
 - SQLite uses WAL, foreign keys, a busy timeout, and one process ownership lock.
-- Postgres (`data.database_url`) uses an advisory ownership lock, and `immediate_transaction()` serializes writers with a transaction-scoped advisory lock. Rules for portable SQL are in [`AGENTS.md`](../AGENTS.md).
+- Postgres (`data.database_url`) uses an advisory ownership lock: shared by servers and online CLI commands (`DatabaseConfig::shared`), exclusive for restore and reset. A server checks its lock connection every 5 s (`Database::verify_ownership`) and stops when it is lost. `immediate_transaction()` serializes writers with a transaction-scoped advisory lock. Several servers can share one Postgres database: `apps/server/src/cluster.rs` carries live-socket and co-editing messages between them over `LISTEN`/`NOTIFY`, live events are numbered in `live_events`, and process-local state that must hold for all servers lives in the database (see `docs/operations.md`, Orbit Cloud). Rules for portable SQL are in [`AGENTS.md`](../AGENTS.md).
 - Repositories own explicit SQL and workspace scoping. HTTP handlers do not issue feature SQL.
 - Major mutations use record versions and return conflict metadata.
 - Session cookies are host-only, HTTP-only, SameSite Lax, and Secure in production.

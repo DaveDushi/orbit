@@ -27,11 +27,11 @@ Retention, reconciliation, scheduler, or integrity supervision failure cancels n
 
 Restore refuses an active database ownership lock (the `<database>.lock` file next to the database; do not delete it while Orbit runs). Stop every Orbit process that uses that file. If restore reports rollback failure, do not start Orbit. Preserve the target and rollback paths named by the error and recover from a separate verified snapshot.
 
-On Postgres (`data.database_url`), the ownership lock is a Postgres advisory lock held by the serving process, so stop every Orbit process that uses the database before `backup restore`. A Postgres snapshot holds one `COPY` file per table (`database/<table>.copy`) instead of `database.sqlite`. Restore replaces every table in one transaction: if it fails, the database is unchanged. A snapshot restores only into the same kind of database it came from.
+On Postgres (`data.database_url`), the ownership lock is a Postgres advisory lock. Each server holds it shared; `backup restore`, `migrate run --reset` and `db-reset` need it exclusive, so stop every Orbit server that uses the database first. A server whose lock connection drops (network, Postgres failover) stops with `lost the database ownership lock`; start it again. A Postgres snapshot holds one `COPY` file per table (`database/<table>.copy`) instead of `database.sqlite`. Restore replaces every table in one transaction: if it fails, the database is unchanged. A snapshot restores only into the same kind of database it came from.
 
 ## Lost or expired setup token
 
-Stop Orbit and run `orbit --config config/orbit.toml setup-token rotate`. Share the new setup URL directly with the installation owner; the account created there becomes the root user. Rotation invalidates the unused old token. Once setup completes, setup cannot run again.
+Run `orbit --config config/orbit.toml setup-token rotate` (on SQLite, stop Orbit first; on Postgres it works while Orbit runs). Share the new setup URL directly with the installation owner; the account created there becomes the root user. Rotation invalidates the unused old token. Once setup completes, setup cannot run again.
 
 ## Root user and Admin area
 
@@ -41,7 +41,7 @@ The root user can make other accounts **instance admins** (Admin → Users → M
 
 ## Choosing the root user from the server
 
-When nobody can fix the root user in the web app (the root account is suspended, the wrong account became root after an upgrade, or the root person left), use the CLI on the server. Like `recovery-link`, it needs Orbit stopped, because a running Orbit owns the database:
+When nobody can fix the root user in the web app (the root account is suspended, the wrong account became root after an upgrade, or the root person left), use the CLI on the server. Like `recovery-link`, on SQLite it needs Orbit stopped, because a running Orbit owns the database file (on Postgres it works while Orbit runs):
 
 ```sh
 orbit --config config/orbit.toml root show
@@ -72,7 +72,49 @@ With `data.database_url`, the database is on another host. Orbit then needs `sec
 
 Files and backups still go to `data.attachments` and `data.backups` on this server until the root user saves a bucket in **Admin → Storage** and turns on attachments and backups in S3. Do that to make the server replaceable; pre-migration backups always stay local.
 
-One server process at a time uses a database: a second one waits for the first one's advisory lock, then refuses to start. Live editing, presence and chat events are kept in the server's memory, so Orbit does not run as several replicas behind a load balancer.
+Several servers can share one Postgres database; see [Orbit Cloud](#orbit-cloud-one-postgres-several-orbit-servers).
+
+## Orbit Cloud: one Postgres, several Orbit servers
+
+Orbit Cloud is one shared installation: one Postgres database and several Orbit servers behind a load balancer. Each server is the same binary (backend and embedded frontend) with the same configuration. All customers use the same database:
+
+- A customer's data is kept apart by workspace. Accounts are global, so one person can be a member of workspaces of several customers with one login.
+- The root user and the instance admins are the Orbit Cloud operators, not customers.
+- Instance settings (email, open registration, storage, automatic backups) apply to every customer. Customers join by open registration or by invitation.
+
+A request, a live socket or a co-editing socket can go to any server; sticky sessions are not necessary. SQLite stays one server.
+
+### Deployment
+
+- **Postgres:** one database with failover (a managed service, or Patroni). Connect directly or through a pooler in session mode: Orbit uses advisory locks and `LISTEN`/`NOTIFY`, which a pooler in transaction mode (PgBouncer `pool_mode = transaction`) breaks. Give each server its share of `max_connections` (each server uses its pools plus two connections: the ownership lock and the cluster listener).
+- **Configuration on every server:** the same `data.database_url`, `secrets.app_key` and `http.public_origin`. `http.trusted_proxies` holds the load balancer addresses.
+- **Storage:** save a bucket in **Admin → Storage** and turn on attachments and backups in S3 before the second server starts. The local disk of a server then holds only temporary files (upload staging, backup downloads), so it can be an ephemeral volume. While other servers run, Orbit refuses to move attachments back to local disks (409 `storage_shared`), and a server that hears other servers while attachments are local logs a warning.
+- **Load balancer:** check `/health/ready` and remove a server on 503. Keep WebSockets open for a long time (idle timeout of 1 hour or more) for `/api/v1/workspaces/{id}/events`, the live socket (`/api/v1/workspaces/{id}/live`) and the co-editing socket of a page.
+- **Stopping a server:** set `http.shutdown_delay_seconds` (`ORBIT__HTTP__SHUTDOWN_DELAY_SECONDS`, 0 to 300, default 0) to a little more than the load balancer's health check interval. After SIGTERM, `/health/ready` reports 503 (`accepting`) at once and the server still serves for that long, then drains for up to 30 s. Give the orchestrator a stop timeout of at least the delay plus 30 s.
+- **Upgrades:** run `orbit migrate run` once (or let the first new server do it; a lock makes the others wait), then replace the servers one at a time. A migration must keep the previous release working until all servers run the new one: old servers stay ready on a newer schema, but an old server cannot start on it.
+- **CLI on a running cluster:** `root`, `recovery-link`, `setup-token`, `migrate status` and `backup create` work while the servers run. They refuse a database that needs migrations (run `orbit migrate run`). `backup restore`, `migrate run --reset`, `db-reset` and `attachments compress` need every server stopped.
+- **Restore:** stop every server before `backup restore` (see [Restore rollback or ownership error](#restore-rollback-or-ownership-error)). This is a full outage; choose the backup schedule for it.
+- **Write throughput:** every write transaction takes one Postgres advisory lock, so writes run one at a time for the whole database. More servers give more read and socket capacity and availability, not more write capacity.
+
+### How the servers share state
+
+| Area | How |
+|---|---|
+| Ownership | Each server holds the ownership advisory lock shared, checks its lock connection every 5 s and stops when it is lost. Restore and reset hold it exclusive. |
+| Cluster messages | `LISTEN`/`NOTIFY` on the channel `orbit_cluster` (`apps/server/src/cluster.rs`). A server subscribes before it accepts connections, beats every 5 s, and counts as stopped after 20 s without a beat. A lost listener connection makes the server read the database again. |
+| Live socket (chat, presence, typing) | Numbered events are in `live_events` (the newest 1000 for each workspace), so a client can reconnect to any server and get a replay. Signals and presence go through cluster messages. |
+| Co-editing | Each server has its own room for an open page; small updates and cursors go to the others at once. The update log is the truth: before a server writes, projects or compacts a document, it reads what the others logged, in the same serialized write transaction. |
+| Sign-in | 2FA and passkey steps are in `auth_pending`; failed sign-ins and registrations in `auth_throttle_emails` and `auth_throttle_ips`, so a lockout holds on every server. |
+| Jobs | Durable jobs are claimed in the database; a job kind's concurrency limit holds for all servers. Schedules are unique per job kind. Push notifications are claimed once. |
+| Storage settings | A save in **Admin → Storage** tells the other servers; each also compares the saved settings every 5 s. |
+| One server at a time | Image compression takes a cluster-wide lock. A Notion import cancel checks the jobs table for a running import. |
+
+### Limits
+
+- **Rate limits** (`[rate_limits]`) and the co-editing connection limits count on each server: with N servers the effective limit is N times the setting. Add a request limit at the load balancer for the endpoint classes that matter to you. The sign-in lockout is shared (see above).
+- **Event order:** the events of one server's writes keep their commit order. Two writes to the same workspace on two servers in the same moment can reach clients in the other order; the next event or a reload corrects the view.
+- **A server that stops without a beat:** its members show as online for up to 20 s more.
+- **Page lock:** a lock or unlock closes the page's sockets on every server; an edit that another server receives in the same moment can still be saved.
 
 ## Object storage (S3), backups and a lost server
 
@@ -112,7 +154,7 @@ orbit --config config/orbit.toml attachments compress
 
 The root user opens **Admin → Users**, selects **Manage → Create password recovery link** for the account and shares the 30-minute link through an authenticated channel. The root user changes their own password in Profile instead.
 
-If the root user lost their own password, stop Orbit and use `orbit --config config/orbit.toml recovery-link --email <email> --origin <https-origin>`. Never log a link. Unknown or suspended accounts do not receive a link.
+If the root user lost their own password, use (on SQLite, after you stop Orbit) `orbit --config config/orbit.toml recovery-link --email <email> --origin <https-origin>`. Never log a link. Unknown or suspended accounts do not receive a link.
 
 ## Security checks after proxy changes
 

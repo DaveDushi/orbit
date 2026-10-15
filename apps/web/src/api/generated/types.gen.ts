@@ -4071,7 +4071,7 @@ export type SaveStorageOptionsErrors = {
      */
     403: WorkspaceProblem;
     /**
-     * contract_mismatch, storage_not_configured
+     * contract_mismatch, storage_not_configured, storage_shared
      */
     409: WorkspaceProblem;
     /**

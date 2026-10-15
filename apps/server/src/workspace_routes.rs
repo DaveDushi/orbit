@@ -1,5 +1,5 @@
 use std::net::{IpAddr, Ipv4Addr};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use axum::body::Body;
 use axum::extract::{Extension, FromRequest, FromRequestParts, Path, Query, Request, State};
@@ -13,15 +13,16 @@ use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
 use orbit_domain::WorkspaceRole;
 use orbit_platform::{
-    BackupError, BackupKind, BackupService, BackupSnapshot, ClientIp, Id, LoginThrottler,
-    ObjectStorage, PasswordError, PasswordExecutor, PasswordService, RequestId, ThrottleDecision,
-    TieredBlobStore, TimestampMillis,
+    BackupError, BackupKind, BackupService, BackupSnapshot, ClientIp, Id, ObjectStorage,
+    PasswordError, PasswordExecutor, PasswordService, RequestId, ThrottleDecision, TieredBlobStore,
+    TimestampMillis,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio_stream::wrappers::ReceiverStream;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::auth_routes::throttle::SharedThrottler;
 use crate::auth_routes::{CookieMode, issued_session_cookie, request_session};
 use crate::image_compression::{CompressionStatus, ImageCompressor};
 use crate::mail::{self, Mailer};
@@ -45,7 +46,7 @@ pub struct WorkspaceState {
     public_origin: String,
     cookie_mode: CookieMode,
     passwords: PasswordExecutor,
-    registration_throttler: Arc<Mutex<LoginThrottler>>,
+    registration_throttler: Arc<SharedThrottler>,
     backups: Option<BackupService>,
     /// Sends invitation emails and keeps the app key for the SMTP password; `None` sends nothing.
     mailer: Option<Mailer>,
@@ -55,6 +56,14 @@ pub struct WorkspaceState {
     image_compressor: Option<ImageCompressor>,
 }
 
+/// Open registration is throttled like sign-in, on every server of the database.
+fn registration_throttler(identity: &IdentityRepository) -> Arc<SharedThrottler> {
+    Arc::new(SharedThrottler::new(
+        "registration",
+        identity.database().clone(),
+    ))
+}
+
 impl WorkspaceState {
     #[must_use]
     pub fn new(
@@ -62,6 +71,7 @@ impl WorkspaceState {
         public_origin: String,
         cookie_mode: CookieMode,
     ) -> Self {
+        let registration_throttler = registration_throttler(&identity);
         Self {
             api_tokens: Arc::new(ApiTokenRepository::new(identity.database().clone())),
             workspaces: Arc::new(WorkspaceRepository::new(identity.database().clone())),
@@ -70,7 +80,7 @@ impl WorkspaceState {
             cookie_mode,
             passwords: PasswordExecutor::new(PasswordService::default(), 2)
                 .expect("password executor concurrency is non-zero"),
-            registration_throttler: Arc::new(Mutex::new(LoginThrottler::new())),
+            registration_throttler,
             backups: None,
             mailer: None,
             object_storage: None,
@@ -86,6 +96,7 @@ impl WorkspaceState {
         cookie_mode: CookieMode,
         backups: BackupService,
     ) -> Self {
+        let registration_throttler = registration_throttler(&identity);
         Self {
             api_tokens: Arc::new(ApiTokenRepository::new(identity.database().clone())),
             identity,
@@ -94,7 +105,7 @@ impl WorkspaceState {
             cookie_mode,
             passwords: PasswordExecutor::new(PasswordService::default(), 2)
                 .expect("password executor concurrency is non-zero"),
-            registration_throttler: Arc::new(Mutex::new(LoginThrottler::new())),
+            registration_throttler,
             backups: Some(backups),
             mailer: None,
             object_storage: None,
@@ -1021,9 +1032,8 @@ async fn accept_invitation(
         .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
     let reservation = state
         .registration_throttler
-        .lock()
-        .expect("registration throttler mutex poisoned")
         .reserve(&email, ip, TimestampMillis::now())
+        .await
         .map_err(|decision| match decision {
             ThrottleDecision::RetryAfter(delay) => {
                 invitation_throttled_problem(delay, instance, request_id.as_ref())
@@ -1042,9 +1052,8 @@ async fn accept_invitation(
     {
         state
             .registration_throttler
-            .lock()
-            .expect("registration throttler mutex poisoned")
-            .finish_failure(reservation, TimestampMillis::now());
+            .finish_failure(reservation, TimestampMillis::now())
+            .await;
         return Err(workspace_problem(error, instance, request_id.as_ref()));
     }
     let password_hash = match state.passwords.hash(password).await {
@@ -1052,9 +1061,8 @@ async fn accept_invitation(
         Err(error) => {
             state
                 .registration_throttler
-                .lock()
-                .expect("registration throttler mutex poisoned")
-                .finish_failure(reservation, TimestampMillis::now());
+                .finish_failure(reservation, TimestampMillis::now())
+                .await;
             return Err(password_problem(error, instance, request_id.as_ref()));
         }
     };
@@ -1074,17 +1082,15 @@ async fn accept_invitation(
         Err(error) => {
             state
                 .registration_throttler
-                .lock()
-                .expect("registration throttler mutex poisoned")
-                .finish_failure(reservation, TimestampMillis::now());
+                .finish_failure(reservation, TimestampMillis::now())
+                .await;
             return Err(workspace_problem(error, instance, request_id.as_ref()));
         }
     };
     state
         .registration_throttler
-        .lock()
-        .expect("registration throttler mutex poisoned")
-        .finish_success(reservation);
+        .finish_success(reservation)
+        .await;
     let cookie = issued_session_cookie(
         state.cookie_mode,
         &registered.session.token,
@@ -1768,16 +1774,21 @@ async fn reload_storage(
     let Some((storage, _)) = &state.object_storage else {
         return Ok(());
     };
-    let settings = InstanceSettingsRepository::new(state.identity.database().clone())
+    let database = state.identity.database();
+    let settings = InstanceSettingsRepository::new(database.clone())
         .storage()
         .await
         .map_err(|_| internal(instance, request_id))?;
-    crate::object_storage::apply(
+    crate::object_storage::apply_and_keep(
+        database,
         storage,
         &settings,
         state.mailer.as_ref().and_then(Mailer::app_key),
     )
-    .map_err(|_| internal(instance, request_id))
+    .map_err(|_| internal(instance, request_id))?;
+    // The other servers of the database use them too.
+    crate::cluster::Cluster::of(database).send(crate::cluster::Message::StorageChanged);
+    Ok(())
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -1990,7 +2001,8 @@ struct StorageOptionsBody {
 }
 
 /// Where attachments and backups are stored, and how often Orbit backs up by itself. Using S3 needs a saved
-/// bucket (409 `storage_not_configured`).
+/// bucket (409 `storage_not_configured`). Attachments stay in S3 while other servers use the database: each
+/// server has its own disk (409 `storage_shared`).
 #[utoipa::path(put, path = "/api/v1/admin/settings/storage", request_body = StorageOptionsBody, responses((status = 200, body = InstanceSettingsView)))]
 async fn save_storage_options(
     State(state): State<WorkspaceState>,
@@ -2000,7 +2012,24 @@ async fn save_storage_options(
 ) -> Result<Json<InstanceSettingsView>, ApiError> {
     let instance = "/api/v1/admin/settings/storage";
     let session = require_root(&state, &headers, instance, request_id.as_ref()).await?;
-    InstanceSettingsRepository::new(state.identity.database().clone())
+    let database = state.identity.database();
+    if !body.attachments_in_s3 && crate::cluster::Cluster::of(database).others() > 0 {
+        let current = InstanceSettingsRepository::new(database.clone())
+            .storage()
+            .await
+            .map_err(|_| internal(instance, request_id.as_ref()))?;
+        if current.attachments_in_s3 {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "storage_shared",
+                "Other servers use this database",
+                "Attachments stay in S3 while other servers use this database: each server has its own disk.",
+                instance,
+                request_id.as_ref(),
+            ));
+        }
+    }
+    InstanceSettingsRepository::new(database.clone())
         .save_storage_options(
             session.user.id,
             body.attachments_in_s3,

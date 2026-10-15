@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::net::SocketAddr;
 use std::net::{IpAddr, Ipv4Addr};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Json;
@@ -13,8 +13,8 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use orbit_platform::{
-    AuthenticatedUser, ClientIp, Id, LoginThrottler, PasswordError, PasswordExecutor,
-    PasswordService, RequestId, ThrottleDecision, TimestampMillis, UploadService,
+    AuthenticatedUser, ClientIp, Id, PasswordError, PasswordExecutor, PasswordService, RequestId,
+    ThrottleDecision, TimestampMillis, UploadService,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -32,6 +32,7 @@ use crate::repositories::instance_settings::InstanceSettingsRepository;
 
 pub(crate) mod passkeys;
 pub(crate) mod push;
+pub(crate) mod throttle;
 pub(crate) mod two_factor;
 
 const SESSION_COOKIE: &str = "__Host-orbit_session";
@@ -118,7 +119,7 @@ impl fmt::Debug for SetupLaunch {
 pub struct AuthState {
     repository: Arc<IdentityRepository>,
     passwords: PasswordExecutor,
-    throttler: Arc<Mutex<LoginThrottler>>,
+    throttler: Arc<throttle::SharedThrottler>,
     cookie_mode: CookieMode,
     dummy_hash: String,
     /// Sends registration and password reset links; `None` sends nothing.
@@ -173,17 +174,22 @@ impl AuthState {
         let dummy_hash = passwords
             .hash("not a real account password")
             .expect("the static dummy password satisfies policy");
+        let pending = Arc::new(two_factor::PendingStore::new(repository.database().clone()));
+        let throttler = Arc::new(throttle::SharedThrottler::new(
+            "login",
+            repository.database().clone(),
+        ));
         Self {
             repository,
             passwords: PasswordExecutor::new(passwords, 2)
                 .expect("password executor concurrency is non-zero"),
-            throttler: Arc::new(Mutex::new(LoginThrottler::new())),
+            throttler,
             cookie_mode,
             dummy_hash,
             mailer: None,
             app_key: None,
             webauthn: None,
-            pending: Arc::default(),
+            pending,
             uploads: None,
         }
     }
@@ -546,9 +552,8 @@ async fn login(
         .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
     let admission = state
         .throttler
-        .lock()
-        .expect("throttler mutex poisoned")
-        .reserve(&body.email, ip, TimestampMillis::now());
+        .reserve(&body.email, ip, TimestampMillis::now())
+        .await;
     let reservation = match admission {
         Ok(reservation) => reservation,
         Err(ThrottleDecision::RetryAfter(delay)) => {
@@ -598,9 +603,8 @@ async fn login(
     if !valid {
         state
             .throttler
-            .lock()
-            .expect("throttler mutex poisoned")
-            .finish_failure(reservation, TimestampMillis::now());
+            .finish_failure(reservation, TimestampMillis::now())
+            .await;
         let actor_id = identity.as_ref().map(|identity| identity.id);
         state
             .repository
@@ -640,18 +644,15 @@ async fn login(
         .map_err(|_| ApiError::internal("/api/v1/auth/login", request_id.as_ref()))?
         .totp_enabled;
     if totp_enabled {
-        state
-            .throttler
-            .lock()
-            .expect("throttler mutex poisoned")
-            .finish_success(reservation);
+        state.throttler.finish_success(reservation).await;
         return two_factor::challenge(
             &state,
             user,
             identity.password_hash,
             replacement_hash,
             request_id.as_ref(),
-        );
+        )
+        .await;
     }
     let session = state
         .repository
@@ -665,19 +666,14 @@ async fn login(
         .await;
     let session = match session {
         Ok(session) => {
-            state
-                .throttler
-                .lock()
-                .expect("throttler mutex poisoned")
-                .finish_success(reservation);
+            state.throttler.finish_success(reservation).await;
             session
         }
         Err(IdentityError::InvalidCredential) => {
             state
                 .throttler
-                .lock()
-                .expect("throttler mutex poisoned")
-                .finish_failure(reservation, TimestampMillis::now());
+                .finish_failure(reservation, TimestampMillis::now())
+                .await;
             return Err(ApiError::new(
                 StatusCode::UNAUTHORIZED,
                 "invalid_credentials",

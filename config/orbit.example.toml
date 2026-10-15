@@ -8,6 +8,8 @@ port = 8080
 public_origin = "https://orbit.example.com"
 # Trust only the local reverse proxy or the exact proxy network you operate.
 trusted_proxies = ["127.0.0.1/32", "::1/128"]
+# Behind a load balancer: after SIGTERM, /health/ready reports 503 and the server still serves this long.
+# shutdown_delay_seconds = 10
 
 [data]
 # Keep the database, attachment directory, and backup directory separate.

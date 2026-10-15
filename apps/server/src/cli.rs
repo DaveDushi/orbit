@@ -292,7 +292,7 @@ async fn shutdown_signal() {
 async fn setup_token(cli: &Cli, command: &SetupTokenCommand) -> Result<String, CliError> {
     let config = effective_config(cli)?;
     let database = open_database(&config.data).await?;
-    migrate_implicitly(&config, &database).await?;
+    migrate_unless_shared(&config, &database).await?;
     let repository = IdentityRepository::new(database);
     let now = TimestampMillis::now();
     let (origin, issued) = match command {
@@ -414,8 +414,8 @@ async fn backup(cli: &Cli, command: &BackupCommand) -> Result<String, CliError> 
         }
         BackupCommand::Restore { id } => {
             if config.data.database_url.is_some() {
-                // Opening takes the ownership lock, so a serving Orbit blocks the restore.
-                let database = open_database(&config.data).await?;
+                // Opening takes the exclusive ownership lock, so a serving Orbit blocks the restore.
+                let database = open_database_alone(&config.data).await?;
                 service
                     .restore_postgres(id, &database)
                     .await
@@ -478,8 +478,8 @@ async fn reset(cli: &Cli, yes: bool) -> Result<String, CliError> {
 async fn reset_data(config: &Config) -> Result<(), CliError> {
     validate_reset_paths(config)?;
     if config.data.database_url.is_some() {
-        // Opening the database takes its ownership lock, so a serving Orbit blocks the reset.
-        open_database(&config.data)
+        // Opening takes the exclusive ownership lock, so a serving Orbit blocks the reset.
+        open_database_alone(&config.data)
             .await?
             .execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
             .await
@@ -525,7 +525,7 @@ async fn seed(cli: &Cli) -> Result<String, CliError> {
 async fn root(cli: &Cli, command: &RootCommand) -> Result<String, CliError> {
     let config = effective_config(cli)?;
     let database = open_database(&config.data).await?;
-    migrate_implicitly(&config, &database).await?;
+    migrate_unless_shared(&config, &database).await?;
     let repository = IdentityRepository::new(database);
     match command {
         RootCommand::Show => Ok(repository
@@ -552,7 +552,7 @@ async fn root(cli: &Cli, command: &RootCommand) -> Result<String, CliError> {
 async fn recovery_link(cli: &Cli, email: &str, origin: Option<&str>) -> Result<String, CliError> {
     let config = effective_config(cli)?;
     let database = open_database(&config.data).await?;
-    migrate_implicitly(&config, &database).await?;
+    migrate_unless_shared(&config, &database).await?;
     let repository = IdentityRepository::new(database);
     let identity = repository
         .find_by_email(email)
@@ -586,6 +586,26 @@ async fn migrate_implicitly(config: &Config, database: &Database) -> Result<(), 
     .await
     .map(|_| ())
     .map_err(operation)
+}
+
+/// For commands that run next to the servers of a Postgres database: a newer CLI must not change
+/// the schema under them, so pending migrations wait for `orbit migrate run`. SQLite (also the test
+/// stand-in for Postgres) is held alone and migrates as before.
+async fn migrate_unless_shared(config: &Config, database: &Database) -> Result<(), CliError> {
+    if config.data.database_url.is_none() {
+        return migrate_implicitly(config, database).await;
+    }
+    let pending = MigrationRunner::embedded(env!("CARGO_PKG_VERSION"))
+        .pending(database)
+        .await
+        .map_err(operation)?;
+    if pending.is_empty() {
+        Ok(())
+    } else {
+        Err(CliError::Operation(
+            "the database needs migrations: run `orbit migrate run` first".to_owned(),
+        ))
+    }
 }
 
 fn require_development(config: &Config) -> Result<(), CliError> {
@@ -1006,7 +1026,15 @@ fn apply_path_overrides(cli: &Cli, config: &mut Config) {
     }
 }
 
+/// Opens the database next to running servers (a Postgres database only; SQLite is always alone).
 async fn open_database(data: &DataConfig) -> Result<Database, CliError> {
+    Database::open(&DatabaseConfig::for_data(data).shared())
+        .await
+        .map_err(operation)
+}
+
+/// Opens the database only when no other Orbit process uses it, for commands that replace data.
+async fn open_database_alone(data: &DataConfig) -> Result<Database, CliError> {
     Database::open(&DatabaseConfig::for_data(data))
         .await
         .map_err(operation)

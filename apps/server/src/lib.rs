@@ -3,6 +3,7 @@ pub mod attachment_routes;
 pub mod audit;
 pub mod auth_routes;
 pub mod chat_routes;
+pub mod cluster;
 pub mod collab;
 pub mod export;
 pub mod export_routes;

@@ -1620,27 +1620,19 @@ impl WorkspaceRepository {
     ) -> Result<(), RetentionServiceError> {
         let store = JobStore::new(self.database.clone());
         let scheduler = Scheduler::new(store);
-        let exists = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM schedules WHERE job_kind = 'workspace.retention'",
-        )
-        .fetch_one(self.database.pool())
-        .await
-        .map_err(WorkspaceError::from)?;
-        if exists == 0 {
-            let now = self
-                .database
-                .database_now()
-                .await
-                .map_err(WorkspaceError::from)?;
-            scheduler
-                .upsert(&RecurringSchedule::interval(
-                    JobKind::new("workspace.retention").with_concurrency_limit(1),
-                    json!({}),
-                    cadence,
-                    now,
-                ))
-                .await?;
-        }
+        let now = self
+            .database
+            .database_now()
+            .await
+            .map_err(WorkspaceError::from)?;
+        scheduler
+            .ensure(&RecurringSchedule::interval(
+                JobKind::new("workspace.retention").with_concurrency_limit(1),
+                json!({}),
+                cadence,
+                now,
+            ))
+            .await?;
         let worker = self.retention_worker(worker_config)?;
         let worker_shutdown = shutdown.clone();
         let mut worker_task = tokio::spawn(async move { worker.run(worker_shutdown).await });

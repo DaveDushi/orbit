@@ -203,7 +203,8 @@ export const sendTestEmail = <ThrowOnError extends boolean = false>(options?: Op
 
 /**
  * Where attachments and backups are stored, and how often Orbit backs up by itself. Using S3 needs a saved
- * bucket (409 `storage_not_configured`).
+ * bucket (409 `storage_not_configured`). Attachments stay in S3 while other servers use the database: each
+ * server has its own disk (409 `storage_shared`).
  */
 export const saveStorageOptions = <ThrowOnError extends boolean = false>(options: Options<SaveStorageOptionsData, ThrowOnError>): RequestResult<SaveStorageOptionsResponses, SaveStorageOptionsErrors, ThrowOnError> => (options.client ?? client).put<SaveStorageOptionsResponses, SaveStorageOptionsErrors, ThrowOnError>({
     security: [{

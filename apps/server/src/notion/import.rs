@@ -19,13 +19,13 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 use std::time::Duration;
 
 use orbit_platform::Row;
 use orbit_platform::{
-    Backend, Database, Id, Job, JobError, JobKind, JobKindRegistrationError, JobQueue, JobStore,
-    TimestampMillis, Worker,
+    Backend, Database, Flag, Id, Job, JobError, JobKind, JobKindRegistrationError, JobQueue,
+    JobStore, TimestampMillis, Worker,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -171,33 +171,6 @@ struct Inner {
     files: PageFileRepository,
     jobs: JobQueue,
     settings: NotionImportSettings,
-    /// Imports whose `notion.import` job runs in this process right now.
-    running: Mutex<HashSet<Id>>,
-}
-
-/// Marks an import as running in this process until dropped.
-struct RunningGuard<'a> {
-    running: &'a Mutex<HashSet<Id>>,
-    import_id: Id,
-}
-
-impl<'a> RunningGuard<'a> {
-    fn enter(running: &'a Mutex<HashSet<Id>>, import_id: Id) -> Self {
-        running
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(import_id);
-        Self { running, import_id }
-    }
-}
-
-impl Drop for RunningGuard<'_> {
-    fn drop(&mut self) {
-        self.running
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(&self.import_id);
-    }
 }
 
 /// Errors of the import API.
@@ -451,7 +424,6 @@ impl NotionImportService {
                 database,
                 files,
                 settings,
-                running: Mutex::new(HashSet::new()),
             }),
         }
     }
@@ -778,7 +750,7 @@ impl NotionImportService {
         // A running job trashes its unfilled pages itself once it sees the cancellation (the
         // page it is filling right now must not be trashed under it). Otherwise (queued, or
         // waiting for a retry) clean up now.
-        if !self.is_running_here(import_id) {
+        if !self.is_running(import_id).await? {
             self.trash_unfilled_pages(import_id).await?;
         }
         self.load_view(workspace_id, user_id, import_id, false)
@@ -858,9 +830,6 @@ impl NotionImportService {
             let Ok(import_id) = id.parse::<Id>() else {
                 continue;
             };
-            if self.is_running_here(import_id) {
-                continue;
-            }
             self.fail_open_import(import_id, "The import stopped after repeated errors.")
                 .await?;
             finished += 1;
@@ -939,7 +908,6 @@ impl NotionImportService {
     /// The `notion.import` job: pass 1 creates the pages, pass 2 fills them. A failed or
     /// cancelled import trashes the pages it created but did not fill.
     pub async fn run_import(&self, import_id: Id, run: &JobRun) -> Result<(), JobError> {
-        let _running = RunningGuard::enter(&self.inner.running, import_id);
         match self.import(import_id, run).await {
             Ok(()) => {}
             Err(failure) => self.job_failure(import_id, failure, run).await?,
@@ -958,12 +926,20 @@ impl NotionImportService {
         Ok(())
     }
 
-    fn is_running_here(&self, import_id: Id) -> bool {
-        self.inner
-            .running
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .contains(&import_id)
+    /// Whether the `notion.import` job of the import runs now, on any server.
+    async fn is_running(&self, import_id: Id) -> Result<bool, ImportError> {
+        let import_id_of_job = match self.database().backend() {
+            Backend::Sqlite => "json_extract(jobs.payload_json, '$.import_id')",
+            Backend::Postgres => "(jobs.payload_json::jsonb ->> 'import_id')",
+        };
+        let Flag(running) = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT EXISTS (SELECT 1 FROM jobs WHERE jobs.kind = '{IMPORT_JOB}' \
+             AND jobs.state = 'running' AND {import_id_of_job} = $1)"
+        )))
+        .bind(import_id.to_string())
+        .fetch_one(self.database().pool())
+        .await?;
+        Ok(running)
     }
 
     /// Moves the pages that pass 1 created and pass 2 never filled (items still `created`) to

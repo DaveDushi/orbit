@@ -16,6 +16,7 @@ const HTTP_PORT_ENV: &str = "ORBIT__HTTP__PORT";
 const HTTP_BIND_ENV: &str = "ORBIT__HTTP__BIND";
 const HTTP_PUBLIC_ORIGIN_ENV: &str = "ORBIT__HTTP__PUBLIC_ORIGIN";
 const HTTP_TRUSTED_PROXIES_ENV: &str = "ORBIT__HTTP__TRUSTED_PROXIES";
+const HTTP_SHUTDOWN_DELAY_ENV: &str = "ORBIT__HTTP__SHUTDOWN_DELAY_SECONDS";
 const ENVIRONMENT_ENV: &str = "ORBIT__ENVIRONMENT";
 const DATA_DATABASE_ENV: &str = "ORBIT__DATA__DATABASE";
 const DATA_DATABASE_URL_ENV: &str = "ORBIT__DATA__DATABASE_URL";
@@ -81,6 +82,9 @@ pub struct HttpConfig {
     pub port: u16,
     pub public_origin: String,
     pub trusted_proxies: Vec<IpNet>,
+    /// How long the server still serves after a stop signal while `/health/ready` reports 503,
+    /// so a load balancer takes it out first.
+    pub shutdown_delay_seconds: u64,
 }
 
 impl Default for HttpConfig {
@@ -90,6 +94,7 @@ impl Default for HttpConfig {
             port: 8080,
             public_origin: "http://127.0.0.1:8080".to_owned(),
             trusted_proxies: Vec::new(),
+            shutdown_delay_seconds: 0,
         }
     }
 }
@@ -207,6 +212,11 @@ impl Default for RateLimitConfig {
 pub struct Secret(String);
 
 impl Secret {
+    #[must_use]
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
     #[must_use]
     pub fn expose(&self) -> &str {
         &self.0
@@ -396,6 +406,12 @@ impl Config {
             self.rate_limits.upload_per_minute,
             self.rate_limits.general_per_minute,
         ];
+        if self.http.shutdown_delay_seconds > 300 {
+            return Err(ConfigError::InvalidSetting {
+                key: "http.shutdown_delay_seconds",
+                detail: "the delay cannot exceed 300 seconds".to_owned(),
+            });
+        }
         if rate_limits.contains(&0) {
             return Err(ConfigError::InvalidSetting {
                 key: "rate_limits",
@@ -444,6 +460,7 @@ impl RawConfig {
                     .public_origin
                     .unwrap_or_else(|| default_public_origin(bind, self.http.port)),
                 trusted_proxies,
+                shutdown_delay_seconds: self.http.shutdown_delay_seconds,
             },
             data: DataConfig {
                 database: self.data.database,
@@ -489,6 +506,7 @@ struct RawHttpConfig {
     port: u16,
     public_origin: Option<String>,
     trusted_proxies: Vec<String>,
+    shutdown_delay_seconds: u64,
 }
 
 impl Default for RawHttpConfig {
@@ -499,6 +517,7 @@ impl Default for RawHttpConfig {
             port: defaults.port,
             public_origin: None,
             trusted_proxies: Vec::new(),
+            shutdown_delay_seconds: defaults.shutdown_delay_seconds,
         }
     }
 }
@@ -619,6 +638,8 @@ fn apply_environment(
                 .filter(|value| !value.is_empty())
                 .map(|value| parse_environment(key, value))
                 .collect::<Result<Vec<_>, _>>()?;
+        } else if key == HTTP_SHUTDOWN_DELAY_ENV {
+            config.http.shutdown_delay_seconds = parse_environment(key, value)?;
         } else if key == DATA_DATABASE_ENV {
             config.data.database = PathBuf::from(value);
         } else if key == DATA_DATABASE_URL_ENV {

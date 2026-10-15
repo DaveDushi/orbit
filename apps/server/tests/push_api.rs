@@ -292,29 +292,23 @@ async fn a_notice_goes_to_the_active_tab_or_else_to_every_browser_and_respects_t
 
     // An active tab: it gets the signal and no browser gets a push.
     let hub = LiveHub::of(&fixture.database);
-    let mut tab = hub.connect(
-        fixture.workspace_id,
-        owner,
-        UserStatus::default(),
-        None,
-        None,
-    );
+    let mut tab = hub.connect(fixture.workspace_id, owner, UserStatus::default());
     push.notify(owner, PushKind::DirectMessages, &notice())
         .await
         .unwrap();
     assert!(fixture.sent().is_empty());
-    let frame: Value = serde_json::from_str(&tab.frames.try_recv().unwrap()).unwrap();
+    let frame: Value = serde_json::from_str(&tab.frames.try_recv().unwrap().text).unwrap();
     assert_eq!(frame["topic"], "notify");
     assert_eq!(frame["event"]["url"], "/chat/1");
     // The window went out of focus for a while: the user is not looking, so the push goes out
     // again. The open tab still gets the signal, for its sound.
     let note = notice();
     let direct = || push.notify(owner, PushKind::DirectMessages, &note);
-    hub.set_away(fixture.workspace_id, tab.id, true);
+    hub.set_away(fixture.workspace_id, tab.id, owner, true);
     direct().await.unwrap();
     assert_eq!(fixture.sent().len(), 1);
     assert!(tab.frames.try_recv().is_ok());
-    hub.set_away(fixture.workspace_id, tab.id, false);
+    hub.set_away(fixture.workspace_id, tab.id, owner, false);
     direct().await.unwrap();
     assert!(fixture.sent().is_empty());
     assert!(tab.frames.try_recv().is_ok());
@@ -473,20 +467,14 @@ async fn a_long_title_and_body_are_cut_before_they_are_sent() {
 
     // An open tab gets the same short notice.
     let hub = LiveHub::of(&fixture.database);
-    let mut tab = hub.connect(
-        fixture.workspace_id,
-        owner,
-        UserStatus::default(),
-        None,
-        None,
-    );
+    let mut tab = hub.connect(fixture.workspace_id, owner, UserStatus::default());
     fixture
         .push
         .notify(owner, PushKind::Mentions, &long)
         .await
         .unwrap();
     assert!(fixture.sent().is_empty());
-    let frame: Value = serde_json::from_str(&tab.frames.try_recv().unwrap()).unwrap();
+    let frame: Value = serde_json::from_str(&tab.frames.try_recv().unwrap().text).unwrap();
     assert_eq!(
         frame["event"]["body"].as_str().unwrap().chars().count(),
         180
@@ -527,7 +515,10 @@ async fn inbox_notifications_are_pushed_once() {
         .await;
     assert_eq!(created, StatusCode::CREATED);
 
-    assert_eq!(fixture.push.push_inbox().await.unwrap(), 1);
+    // Every server runs the inbox loop: two passes at once push the notification once.
+    let (first, second) = tokio::join!(fixture.push.push_inbox(), fixture.push.push_inbox());
+    first.unwrap();
+    second.unwrap();
     let sent = fixture.sent();
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].1["title"], "Owner assigned you a task");

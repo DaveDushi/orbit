@@ -40,7 +40,7 @@ browser
       -> local verified backups
 ```
 
-One Orbit process owns the database (a SQLite file, or a Postgres database through an advisory lock). The process validates configuration, runs guarded migrations and a quick integrity check, verifies writable storage and the embedded client contract, then binds HTTP. Retention and attachment reconciliation services start with the server and stop after HTTP begins graceful shutdown. Backups are started manually.
+One Orbit process owns a SQLite database (file lock); on Postgres, servers share an advisory lock that restore and reset take exclusively. The process validates configuration, runs guarded migrations and a quick integrity check, verifies writable storage and the embedded client contract, then binds HTTP. Retention and attachment reconciliation services start with the server and stop after HTTP begins graceful shutdown. Backups are started manually.
 
 ## Repository layout
 

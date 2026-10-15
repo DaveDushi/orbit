@@ -12,6 +12,9 @@
 - A new SQLite migration also needs its change in the Postgres schema (`apps/server/migrations/postgres/`) and that file's entry in `runner.postgres` in `crates/platform/src/db/migrate.rs`.
 - Run the whole suite on Postgres with `ORBIT_TEST_POSTGRES_URL=postgres://orbit:orbit@127.0.0.1:15432/orbit`; each test database maps from its SQLite path.
 
+## Several servers on one Postgres database
+- Any process-local state (maps, locks, counters, caches, "running" flags, background loops) is per server. If it must hold for every server, keep it in the database (a serialized `immediate_transaction`, `Database::try_singleton`) or send it through `crate::cluster`. Test such changes with two `App`s on one database (`apps/server/tests/shared_postgres`), and prove the test fails without the fix.
+
 ## SQLite 3.46.0 (bundled by libsqlite3-sys 0.30) FTS5 integrity false positive
 - `PRAGMA integrity_check` reports "malformed inverted index for FTS5 table …" after a row of an FTS5 table is UPDATEd twice
   (or after `'rebuild'`), although queries are right and FTS5's own `INSERT INTO t(t) VALUES('integrity-check')` passes

@@ -669,12 +669,13 @@ async fn readiness_requires_every_named_platform_check() {
         .with_check(HealthCheck::Scheduler, || async {
             Err("worker stopped".to_owned())
         })
-        .with_check(HealthCheck::CriticalConfig, || async { Ok(()) });
+        .with_check(HealthCheck::CriticalConfig, || async { Ok(()) })
+        .with_check(HealthCheck::Accepting, || async { Ok(()) });
 
     assert!(registry.is_live());
     let readiness = registry.readiness().await;
     assert!(!readiness.ready);
-    assert_eq!(readiness.checks.len(), 5);
+    assert_eq!(readiness.checks.len(), 6);
     assert!(!readiness.checks["scheduler"].ready);
 }
 

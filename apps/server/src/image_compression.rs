@@ -155,7 +155,8 @@ pub struct CompressionStatus {
     pub error: Option<String>,
 }
 
-/// Runs one compression at a time in the serving process, next to uploads, backups and the S3 mover.
+/// Runs one compression at a time among the servers of the database, next to uploads, backups and the S3 mover.
+/// The status is the one of this server's last run.
 #[derive(Clone)]
 pub struct ImageCompressor {
     database: Database,
@@ -192,13 +193,18 @@ impl ImageCompressor {
         }
         let compressor = self.clone();
         tokio::spawn(async move {
-            let result = compress_images(
-                &compressor.database,
-                &compressor.uploads,
-                false,
-                |summary| compressor.lock().summary = summary.clone(),
-            )
-            .await;
+            let result = match compressor.database.try_singleton("image-compression").await {
+                Ok(Some(_one)) => compress_images(
+                    &compressor.database,
+                    &compressor.uploads,
+                    false,
+                    |summary| compressor.lock().summary = summary.clone(),
+                )
+                .await
+                .map_err(|error| error.to_string()),
+                Ok(None) => Err("Another server is compressing images.".to_owned()),
+                Err(error) => Err(error.to_string()),
+            };
             let mut status = compressor.lock();
             status.running = false;
             match result {

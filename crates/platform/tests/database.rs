@@ -74,7 +74,7 @@ async fn github_schema_is_in_one_draft_migration() {
         db.scalar::<i64>("SELECT MAX(version) FROM schema_migrations")
             .await
             .unwrap(),
-        46
+        50
     );
     assert_eq!(
         db.scalar::<i64>("SELECT COUNT(*) FROM pragma_table_info('github_issue_links') WHERE name IN ('kind', 'pull_state', 'sync_paused')")
@@ -211,7 +211,7 @@ async fn rejects_a_schema_newer_than_the_binary() {
         error,
         MigrationError::SchemaNewer {
             database_version: 999,
-            binary_version: 46
+            binary_version: 50
         }
     ));
 }
@@ -440,10 +440,9 @@ async fn another_process_cannot_own_the_database_through_an_alias() {
 async fn exposes_pending_destructive_migrations_without_running_backups() {
     let directory = tempfile::tempdir().unwrap();
     let database = Database::open(&DatabaseConfig {
-        path: directory.path().join("db.sqlite"),
-        postgres_url: None,
         max_connections: 1,
         busy_timeout: Duration::from_secs(1),
+        ..DatabaseConfig::new(directory.path().join("db.sqlite"))
     })
     .await
     .unwrap();
@@ -2202,28 +2201,46 @@ async fn database_now_follows_the_system_clock() {
     assert!((now - system).abs() < 5_000, "{now} vs {system}");
 }
 
-#[tokio::test]
-async fn a_configured_postgres_database_has_one_owner() {
-    let Ok(server) = std::env::var("ORBIT_TEST_POSTGRES_URL") else {
-        return; // needs a Postgres server
-    };
+/// A fresh Postgres database next to `ORBIT_TEST_POSTGRES_URL`, dropped by [`drop_database`].
+async fn configured_postgres_database(
+    server: &str,
+    directory: &tempfile::TempDir,
+) -> (sqlx::PgConnection, String, DatabaseConfig) {
     use sqlx::Connection;
 
     let name = format!(
         "orbit_t_owner_{}",
         Id::new_v7().to_string().replace('-', "")
     );
-    let mut admin = sqlx::PgConnection::connect(&server).await.unwrap();
+    let mut admin = sqlx::PgConnection::connect(server).await.unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
         .execute(&mut admin)
         .await
         .unwrap();
     let (base, _) = server.rsplit_once('/').unwrap();
-    let directory = tempfile::tempdir().unwrap();
     let config = DatabaseConfig {
         postgres_url: Some(format!("{base}/{name}")),
         ..DatabaseConfig::new(directory.path().join("orbit.sqlite"))
     };
+    (admin, name, config)
+}
+
+async fn drop_database(admin: &mut sqlx::PgConnection, name: &str) {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE {name} WITH (FORCE)"
+    )))
+    .execute(admin)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_configured_postgres_database_has_one_exclusive_owner() {
+    let Ok(server) = std::env::var("ORBIT_TEST_POSTGRES_URL") else {
+        return; // needs a Postgres server
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let (mut admin, name, config) = configured_postgres_database(&server, &directory).await;
 
     let database = Database::open(&config).await.unwrap();
     assert_eq!(database.backend(), Backend::Postgres);
@@ -2232,13 +2249,128 @@ async fn a_configured_postgres_database_has_one_owner() {
         Database::open(&config).await.unwrap_err(),
         DatabaseError::AlreadyOwned { .. }
     ));
+    assert!(matches!(
+        Database::open(&config.clone().shared()).await.unwrap_err(),
+        DatabaseError::AlreadyOwned { .. }
+    ));
     drop(database);
     Database::open(&config).await.unwrap();
 
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "DROP DATABASE {name} WITH (FORCE)"
-    )))
-    .execute(&mut admin)
-    .await
-    .unwrap();
+    drop_database(&mut admin, &name).await;
+}
+
+#[tokio::test]
+async fn servers_share_a_postgres_database_until_restore_needs_it_alone() {
+    let Ok(server) = std::env::var("ORBIT_TEST_POSTGRES_URL") else {
+        return; // needs a Postgres server
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let (mut admin, name, config) = configured_postgres_database(&server, &directory).await;
+    let shared = config.clone().shared();
+
+    let first = Database::open(&shared).await.unwrap();
+    let second = Database::open(&shared).await.unwrap();
+    first.verify_ownership().await.unwrap();
+    second.verify_ownership().await.unwrap();
+    // Restore and reset open the database alone: not while a server shares it.
+    assert!(matches!(
+        Database::open(&config).await.unwrap_err(),
+        DatabaseError::AlreadyOwned { .. }
+    ));
+    drop(first);
+    assert!(matches!(
+        Database::open(&config).await.unwrap_err(),
+        DatabaseError::AlreadyOwned { .. }
+    ));
+    drop(second);
+    Database::open(&config).await.unwrap();
+
+    drop_database(&mut admin, &name).await;
+}
+
+#[tokio::test]
+async fn servers_that_start_together_apply_each_migration_once() {
+    let Ok(server) = std::env::var("ORBIT_TEST_POSTGRES_URL") else {
+        return; // needs a Postgres server
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let (mut admin, name, config) = configured_postgres_database(&server, &directory).await;
+    let first = Database::open(&config.clone().shared()).await.unwrap();
+    let second = Database::open(&config.clone().shared()).await.unwrap();
+    let settings = orbit_platform::Config::default();
+    let runner = MigrationRunner::embedded("test");
+
+    let (a, b) = tokio::join!(
+        orbit_platform::run_guarded_migrations(&settings, &first, &runner),
+        orbit_platform::run_guarded_migrations(&settings, &second, &runner)
+    );
+
+    let mut counts = [a.unwrap(), b.unwrap()];
+    counts.sort_unstable();
+    assert_eq!(
+        counts[0], 0,
+        "the second server finds nothing left to apply"
+    );
+    assert!(counts[1] > 0);
+    assert!(runner.pending(&second).await.unwrap().is_empty());
+
+    drop((first, second));
+    drop_database(&mut admin, &name).await;
+}
+
+#[tokio::test]
+async fn one_server_at_a_time_holds_a_singleton() {
+    let Ok(server) = std::env::var("ORBIT_TEST_POSTGRES_URL") else {
+        return; // needs a Postgres server
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let (mut admin, name, config) = configured_postgres_database(&server, &directory).await;
+    let first = Database::open(&config.clone().shared()).await.unwrap();
+    let second = Database::open(&config.clone().shared()).await.unwrap();
+
+    let held = first.try_singleton("mover").await.unwrap().expect("free");
+    assert!(second.try_singleton("mover").await.unwrap().is_none());
+    assert!(second.try_singleton("other").await.unwrap().is_some());
+    drop(held);
+    // The closed connection's session ends a moment later.
+    let mut taken = None;
+    for _ in 0..50 {
+        taken = second.try_singleton("mover").await.unwrap();
+        if taken.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(taken.is_some());
+
+    drop((taken, first, second));
+    drop_database(&mut admin, &name).await;
+}
+
+#[tokio::test]
+async fn a_lost_postgres_ownership_connection_is_reported() {
+    let Ok(server) = std::env::var("ORBIT_TEST_POSTGRES_URL") else {
+        return; // needs a Postgres server
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let (mut admin, name, config) = configured_postgres_database(&server, &directory).await;
+    let database = Database::open(&config.clone().shared()).await.unwrap();
+    database.verify_ownership().await.unwrap();
+
+    // A dropped connection (network, failover) ends the session and releases its lock.
+    sqlx::query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1")
+        .bind(&name)
+        .execute(&mut admin)
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        database.verify_ownership().await.unwrap_err(),
+        DatabaseError::OwnershipLost { .. }
+    ));
+    // Nothing protects the database any more, so the server must stop.
+    drop(Database::open(&config).await.unwrap());
+
+    drop(database);
+    drop_database(&mut admin, &name).await;
 }

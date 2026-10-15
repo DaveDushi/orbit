@@ -598,11 +598,24 @@ impl Harness {
         .await
     }
 
+    /// Runs the import's job as the worker does: the job row shows it running meanwhile.
     async fn run_import(&self, id: &str) {
+        let set_state = |from: &'static str, to: &'static str| {
+            sqlx::query(
+                "UPDATE jobs SET state = $1 WHERE kind = 'notion.import' AND state = $2 \
+                 AND payload_json LIKE $3",
+            )
+            .bind(to)
+            .bind(from)
+            .bind(format!("%{id}%"))
+            .execute(self.database.pool())
+        };
+        set_state("queued", "running").await.unwrap();
         self.service
             .run_import(id.parse().unwrap(), &JobRun::default())
             .await
             .unwrap();
+        set_state("running", "succeeded").await.unwrap();
     }
 
     async fn detail(&self, cookie: &str, id: &str) -> Value {
