@@ -43,6 +43,7 @@
 - Layer/nested two-tone card surfaces are a reference pattern, not Coolify. Coolify cards = one surface + one border.
 
 ## Tooling
+- Never `git stash` to compare against `main`: other sessions edit this working tree at the same time, so the stash takes their work and `stash pop` fails on their new edits. Undo your change in place (or use `git show HEAD:path`) instead (2026-10-15).
 - The release image is static musl on Alpine with no OpenSSL. Pick pure-Rust crates (rustls, RustCrypto); `webauthn-rs` 0.5 needs OpenSSL, so Orbit pins the pure-Rust 0.6 line.
 - The user-run Vite dev server (port 8888) can serve a broken module graph after files are renamed (`.tsx`→`.ts`) mid-session — pages render blank with no console errors. Verify against `aubr build` + `aubx vite preview` before debugging app code, and report the dev server needs a restart instead of touching it.
 - Probing dev-mode React modules via `import()` from a bare page fails with "@vitejs/plugin-react can't detect preamble" — that's a probe artifact, not an app error.

@@ -77,8 +77,9 @@ import { countConditions, DEFAULT_DISPLAY, emptyFilter, isTaskPreset, normalizeV
 const EMPTY_PROJECTS: NonNullable<ReturnType<typeof useProjects>['data']> = []
 const OPEN_WAIT_MS = 300
 
-/** History state of a task URL: the project page it was opened from, where closing returns. */
-type TaskOrigin = { originProject: string | null }
+/** History state of a task URL: the project page it was opened from, where closing returns, and whether the
+ * previous history entry is another task (the back arrow then returns to it). */
+type TaskOrigin = { originProject: string | null; fromTask?: boolean }
 
 const PRESET_TITLE: Record<TaskPreset, string> = {
   mine: 'My tasks',
@@ -258,10 +259,11 @@ function WorkspaceTasksPage() {
     const wait = new Promise((resolve) => setTimeout(resolve, OPEN_WAIT_MS))
     void Promise.race([prefetchTaskDetail(queryClient, workspace.id, id), wait]).then(() => {
       // the identifier once the task is cached (the URL says ENG-12); the id if the prefetch is still running
-      if (opening.current === id) navigate(`${basePath}/${cachedTaskSlug(queryClient, workspace.id, id)}${detailSearchSuffix}`, { state: originState })
+      if (opening.current === id) navigate(`${basePath}/${cachedTaskSlug(queryClient, workspace.id, id)}${detailSearchSuffix}`, { state: { ...originState, fromTask: detailOpen } satisfies TaskOrigin })
     })
   }
   const closeTask = () => navigate(redirect ?? `${basePath}${closeSearchSuffix}`)
+  const backFromTask = () => ((location.state as TaskOrigin | null)?.fromTask ? navigate(-1) : closeTask())
 
   useEffect(() => {
     if (!taskParam || !searchParams.has('project')) return
@@ -359,7 +361,7 @@ function WorkspaceTasksPage() {
     <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background" data-view={taskId ? 'detail' : 'list'}>
       <TaskCommands tasks={taskId ? (activeTask ? [activeTask] : []) : visibleTasks} users={users} labels={labelsQuery.data ?? []} statuses={statusesQuery.data} groupContext={groupContext} currentUserId={currentUser.data?.id ?? ''} />
       {taskId ? (
-        <TaskDetail key={taskId} task={activeTask} project={projects.find((project) => project.id === activeTask?.projectId)} state={state} onBack={closeTask} onOpenTask={openTask} onOpenProject={(projectId) => navigate(`/tasks?project=${projectId}`)} />
+        <TaskDetail key={taskId} task={activeTask} project={projects.find((project) => project.id === activeTask?.projectId)} state={state} onClose={closeTask} onBack={backFromTask} onOpenTask={openTask} onOpenProject={(projectId) => navigate(`/tasks?project=${projectId}`)} />
       ) : (
         <Pane className="relative">
           <PaneHeader className="bg-background text-foreground max-[899px]:min-h-11 max-[899px]:flex-wrap max-[899px]:px-2 max-[899px]:py-1.5">

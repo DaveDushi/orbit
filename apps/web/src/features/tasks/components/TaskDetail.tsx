@@ -54,7 +54,10 @@ interface TaskDetailProps {
   task: Task | undefined
   project: Project | undefined
   state: TaskViewState
-  onBack: () => void
+  /** Closes the task (the close button, and after a delete). */
+  onClose: () => void
+  /** The narrow-screen back arrow; closes the task when not set. */
+  onBack?: () => void
   /** Opens another task (banner, relation rows, activity links). */
   onOpenTask?: (taskId: string) => void
   /** Opens a project's task list (the breadcrumb's project crumb). */
@@ -62,7 +65,7 @@ interface TaskDetailProps {
 }
 
 /** Full-page task view: main column (title, description, activity, comment composer) + properties column. */
-export function TaskDetail({ task, project, state, onBack, onOpenTask, onOpenProject }: TaskDetailProps) {
+export function TaskDetail({ task, project, state, onClose, onBack = onClose, onOpenTask, onOpenProject }: TaskDetailProps) {
   const { workspace } = useWorkspace()
   const updateTask = useUpdateTask(workspace.id)
   const uploadAttachments = useUploadTaskAttachments(workspace.id, task?.id ?? '')
@@ -131,7 +134,7 @@ export function TaskDetail({ task, project, state, onBack, onOpenTask, onOpenPro
   const deleteAndClose = async (input: { taskId: string; version: number }) => {
     try {
       await deleteTask.mutateAsync(input)
-      onBack()
+      onClose()
     } catch {
       // The visible mutation alert keeps the user on this task and offers retry.
     }
@@ -160,7 +163,7 @@ export function TaskDetail({ task, project, state, onBack, onOpenTask, onOpenPro
         <div className="flex-1" />
         {task ? <Tip label="Move to trash" side="bottom"><Button variant="destructive" disabled={deleteTask.isPending} onClick={() => void trash()}>Delete</Button></Tip> : null}
         <Tip label="Close task" side="bottom">
-          <Button variant="ghost" size="icon-sm" className="text-muted-foreground/70 max-[899px]:hidden" onClick={onBack} aria-label="Close task">
+          <Button variant="ghost" size="icon-sm" className="text-muted-foreground/70 max-[899px]:hidden" onClick={onClose} aria-label="Close task">
             <X className="size-4" />
           </Button>
         </Tip>

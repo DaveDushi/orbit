@@ -223,6 +223,23 @@ test('closing a task returns to the page it was opened from', async () => {
   await waitFor(() => expect(project.getByTestId('location').textContent).toBe('/tasks?workspace=workspace-1&project=project-1'))
 })
 
+test('the back arrow returns to the task the current one was opened from', async () => {
+  serve()
+  const page = renderAt('/tasks?workspace=workspace-1')
+  fireEvent.click(await page.findByText('Ship release'))
+  await settle(50)
+  await waitFor(() => expect(page.getByTestId('location').textContent).toBe('/tasks/task-1?workspace=workspace-1'))
+  await page.findByRole('button', { name: 'Close task' })
+  fireEvent.keyDown(document.body, { key: 'j', code: 'KeyJ' })
+  await settle(50)
+  await waitFor(() => expect(page.getByTestId('location').textContent).toBe('/tasks/task-2?workspace=workspace-1'))
+  fireEvent.click(page.getByRole('button', { name: 'Back to tasks' }))
+  await waitFor(() => expect(page.getByTestId('location').textContent).toBe('/tasks/task-1?workspace=workspace-1'))
+  // the first task was opened from the list: back closes it
+  fireEvent.click(await page.findByRole('button', { name: 'Back to tasks' }))
+  await waitFor(() => expect(page.getByTestId('location').textContent).toBe('/tasks?workspace=workspace-1'))
+})
+
 test('Escape does not close the task while typing or while a menu is open', async () => {
   serve()
   const page = renderAt('/tasks?workspace=workspace-1')

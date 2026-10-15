@@ -63,7 +63,7 @@ test('a sub-issue shows its ancestors in the header and its parent as a property
   const view = render(
     <TaskDetail
       task={{ ...task, id: 'task-0031', identifier: 'ORB-0031', parentTaskId: 'task-0012', parent: { id: 'task-0012', title: 'Checkout redesign', projectKey: 'ORB' }, ancestors: [{ id: 'task-0012', title: 'Checkout redesign', projectKey: 'ORB' }] }}
-      project={project} state={state} onBack={() => {}} onOpenTask={(id) => opened.push(id)}
+      project={project} state={state} onClose={() => {}} onOpenTask={(id) => opened.push(id)}
     />,
     { wrapper: Wrapper },
   )
@@ -81,7 +81,7 @@ test('"Set parent" never offers the task or anything loaded below it', async () 
     'task-0012': [record('task-0031', 'Payment form', 'task-0012', 1)],
     'task-0031': [record('task-0045', 'Card validation', 'task-0031')],
   }, [record('task-0012', 'Checkout redesign'), record('task-0031', 'Payment form', 'task-0012', 1), record('task-0045', 'Card validation', 'task-0031'), record('task-0099', 'Pricing page')])
-  const view = render(<TaskDetail task={{ ...task, subIssueCount: 1 }} project={project} state={state} onBack={() => {}} />, { wrapper: Wrapper })
+  const view = render(<TaskDetail task={{ ...task, subIssueCount: 1 }} project={project} state={state} onClose={() => {}} />, { wrapper: Wrapper })
   // the nested level is loaded: the grandchild shows in the Sub-issues section
   const section = await view.findByRole('region', { name: 'Sub-issues' })
   await within(section).findByText('Card validation')
@@ -96,7 +96,7 @@ test('"Set parent" never offers the task or anything loaded below it', async () 
 test('Esc in the composer returns focus to the "Add sub-issue" button that opened it', async () => {
   const calls: Call[] = []
   api(calls, {}, [])
-  const view = render(<TaskDetail task={task} project={project} state={state} onBack={() => {}} />, { wrapper: Wrapper })
+  const view = render(<TaskDetail task={task} project={project} state={state} onClose={() => {}} />, { wrapper: Wrapper })
   fireEvent.click(view.getByRole('button', { name: 'Add sub-issue' }))
   const input = await view.findByRole('textbox', { name: 'Sub-issue title' })
   expect(document.activeElement === input).toBe(true)
@@ -115,7 +115,7 @@ test('Esc in the composer returns focus to the "Add sub-issue" button that opene
 test('with sub-issues, Esc in the composer returns focus to the section\'s +', async () => {
   const calls: Call[] = []
   api(calls, { 'task-0012': [record('task-0031', 'Payment form', 'task-0012')] }, [])
-  const view = render(<TaskDetail task={{ ...task, subIssueCount: 1 }} project={project} state={state} onBack={() => {}} />, { wrapper: Wrapper })
+  const view = render(<TaskDetail task={{ ...task, subIssueCount: 1 }} project={project} state={state} onClose={() => {}} />, { wrapper: Wrapper })
   const section = await view.findByRole('region', { name: 'Sub-issues' })
   await within(section).findByText('Payment form')
   const plus = within(section).getByRole('button', { name: 'Add sub-issue' })
@@ -135,7 +135,7 @@ test('the trash confirmation counts the sub-issues at every loaded level', async
   const asked: ConfirmationOptions[] = []
   const unregister = registerConfirmationHandler(async (options) => { asked.push(options); return false })
   try {
-    const view = render(<TaskDetail task={{ ...task, subIssueCount: 2 }} project={project} state={state} onBack={() => {}} />, { wrapper: Wrapper })
+    const view = render(<TaskDetail task={{ ...task, subIssueCount: 2 }} project={project} state={state} onClose={() => {}} />, { wrapper: Wrapper })
     const section = await view.findByRole('region', { name: 'Sub-issues' })
     await within(section).findByText('Card number mask')
     fireEvent.click(view.getByRole('button', { name: 'Delete' }))
