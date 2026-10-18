@@ -46,9 +46,9 @@ Run under an unprivileged service account and an HTTPS reverse proxy. The binary
 
 ## Backups and upgrades
 
-Backups are created manually from Orbit Settings while Orbit runs. Snapshot retention keeps up to 24 snapshots from the last day, plus seven daily and four weekly buckets when enough backups exist. A backup volume on the same machine is not disaster recovery: copy it off-host, protect access, and regularly test restore into separate storage.
+Backups are created from **Admin → Backups** while Orbit runs, or automatically (hourly or daily) when the root user turns that on in **Admin → Storage**; with backups in S3 they are uploaded to the bucket. Snapshot retention keeps up to 24 snapshots from the last day, plus seven daily and four weekly buckets when enough backups exist. A backup volume on the same machine is not disaster recovery: copy it off-host, protect access, and regularly test restore into separate storage.
 
-The running server owns the database, so the CLI `backup create` works only while the app is stopped. `backup list` works at any time.
+On SQLite the running server owns the database file, so the CLI `backup create` works only while the app is stopped. On Postgres (`data.database_url`) it also works while servers run. `backup list` works at any time.
 
 ```sh
 docker compose --env-file deploy/.env -f deploy/compose.yaml stop orbit
@@ -57,15 +57,15 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml start orbit
 docker compose --env-file deploy/.env -f deploy/compose.yaml exec orbit /orbit --config /etc/orbit/orbit.toml backup list
 ```
 
-Before upgrading, create and verify a backup. Keep the old image and matching backup; older binaries reject newer database schemas. Never run two app processes against one database. Stop the app before restoring. See [operations](../docs/operations.md) and [restore commands](../.ai/DEVELOPMENT.md#migration-backup-and-restore).
+Before upgrading, create and verify a backup. Keep the old image and matching backup; older binaries reject newer database schemas. On SQLite, never run two app processes against one database. On Postgres several servers can share one database; see [Orbit Cloud](../docs/operations.md#orbit-cloud-one-postgres-several-orbit-servers). Stop every app process before restoring. See [operations](../docs/operations.md) and [restore commands](../.ai/DEVELOPMENT.md#migration-backup-and-restore).
 
 ## Live task collaboration
 
-Each tab opens a session-authenticated WebSocket for its active workspace. Every successful workspace audit mutation records a notification in the same SQLite transaction. The server coalesces ordered invalidations to a high-water sequence and checks for new events every second. No resource content is sent over the socket; clients refresh through authorized HTTP endpoints.
+Each tab opens a session-authenticated WebSocket for its active workspace. Every successful workspace audit mutation records a notification in the same database transaction. The server coalesces ordered invalidations to a high-water sequence and checks for new events every second. No resource content is sent over the socket; clients refresh through authorized HTTP endpoints.
 
-Reconnects resume from the last successfully refreshed sequence. Missing, expired, or invalid cursors trigger a full workspace refresh. Event retention is seven days; persistent counters never reset when old events are pruned. Revoked/expired sessions, suspended users, and removed memberships are checked before delivery and at least once per second. This is not collaborative text merging or presence/typing.
+Reconnects resume from the last successfully refreshed sequence. Missing, expired, or invalid cursors trigger a full workspace refresh. Event retention is seven days; persistent counters never reset when old events are pruned. Revoked/expired sessions, suspended users, and removed memberships are checked before delivery and at least once per second. Chat, presence and typing use the separate live socket, and page co-editing its own socket per page.
 
-Focused text drafts and in-flight writes defer remote refresh until editing finishes. Version conflicts use the existing conflict flow rather than silently overwriting another user's write. A connection banner appears while live updates are unavailable; reconnection uses capped backoff. Invitation/recovery links are shared manually; SMTP is not required.
+Focused text drafts and in-flight writes defer remote refresh until editing finishes. Version conflicts use the existing conflict flow rather than silently overwriting another user's write. A connection banner appears while live updates are unavailable; reconnection uses capped backoff. Without SMTP (Admin → Settings → Email), invitation and recovery links are shared manually.
 
 ## Acceptance checks
 
