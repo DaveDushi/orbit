@@ -14,7 +14,6 @@ services:
       ORBIT__HTTP__PUBLIC_ORIGIN: https://${ORBIT_DOMAIN:?Set ORBIT_DOMAIN in deploy/.env}
       ORBIT__HTTP__TRUSTED_PROXIES: 172.30.0.2/32
     volumes:
-      - ./orbit.toml:/etc/orbit/orbit.toml:ro
       - orbit-data:/var/lib/orbit
       - orbit-backups:/var/backups/orbit
     networks: [backend]

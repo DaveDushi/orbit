@@ -10,6 +10,8 @@ cp deploy/.env.example deploy/.env
 docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --build
 ```
 
+The image contains a default configuration (`deploy/orbit.toml` at `/etc/orbit/orbit.toml`), so a container needs only environment variables: `ORBIT__HTTP__PUBLIC_ORIGIN` and `ORBIT__HTTP__TRUSTED_PROXIES` are required, and any other setting can be set as `ORBIT__<SECTION>__<KEY>` (for example `ORBIT__DATA__DATABASE_URL` and `ORBIT__SECRETS__APP_KEY` for Postgres). To use your own file, mount it at `/etc/orbit/orbit.toml`.
+
 The application port is not published. Only Caddy can reach it through the deployment network. Caddy forwards WebSocket upgrades automatically. The application runs as UID 65532 with a read-only root filesystem and separate named volumes for SQLite/attachments and backups.
 
 On first startup, retrieve the one-time setup URL locally:

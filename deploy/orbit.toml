@@ -1,13 +1,16 @@
-# Copy to config/orbit.toml and set the public HTTPS origin before first start.
+# The default configuration of the container image (/etc/orbit/orbit.toml). Set the rest with environment
+# variables, which override every value here: ORBIT__<SECTION>__<KEY>, for example
+#   ORBIT__HTTP__PUBLIC_ORIGIN=https://orbit.example.com   (required)
+#   ORBIT__HTTP__TRUSTED_PROXIES=172.30.0.2/32              (required: your reverse proxy)
+#   ORBIT__DATA__DATABASE_URL=postgres://…                  (optional: Postgres instead of SQLite)
+#   ORBIT__SECRETS__APP_KEY=…                                (required with Postgres)
+# Production refuses to start without an https public origin and a trusted proxy.
 environment = "production"
 
 [http]
 # 0.0.0.0 works for containers and Tailscale interfaces. Firewall the port.
 bind = "0.0.0.0"
 port = 8080
-public_origin = "https://orbit.example.com"
-# Trust only the local reverse proxy or the exact proxy network you operate.
-trusted_proxies = ["127.0.0.1/32", "::1/128"]
 
 [data]
 # Keep the database, attachment directory, and backup directory separate.
