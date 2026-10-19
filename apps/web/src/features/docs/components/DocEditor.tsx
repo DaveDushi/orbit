@@ -64,6 +64,7 @@ import { pageMentionCandidates } from '@/features/docs/editor/pageMentions'
 import { useBlockDeepLink } from '@/features/docs/useBlockDeepLink'
 import { useMembers } from '@/features/workspaces/api'
 import { Comment as CommentIcon } from 'reicon-react'
+import { loadPageEditor } from '@/features/docs/editor/loadPageEditor'
 // Type-only imports: erased at build time, so the BlockNote chunk stays lazy.
 import type { PageEditorHandle } from '@/features/docs/editor/PageEditor'
 import type { PageRef } from '@/features/docs/editor/pageEditorContext'
@@ -72,8 +73,7 @@ import { CoverSourcePanel } from './CoverSourcePanel'
 import { PageHistoryPane } from './PageHistoryPane'
 import { PageLinkDialog } from './PageLinkDialog'
 
-// BlockNote + ProseMirror are ~1 MB: load them only when a page is opened.
-const PageEditor = lazy(() => import('@/features/docs/editor/PageEditor').then((module) => ({ default: module.PageEditor })))
+const PageEditor = lazy(() => loadPageEditor().then((module) => ({ default: module.PageEditor })))
 
 const editorSpinner = (
   <div className="flex justify-center py-10" data-testid="editor-loading">
@@ -597,6 +597,11 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
       { onError: () => toast.error(next ? 'Could not add the page to favorites.' : 'Could not remove the page from favorites.') },
     )
   const favoriteLabel = favorite ? 'Remove from favorites' : 'Add to favorites'
+  const mentions = {
+    members: membersQuery.data ?? null,
+    candidates: pageMentionCandidates(membersQuery.data ?? [], byId.get(pageId) ?? page, selfId),
+    privatePage: (byId.get(pageId) ?? page).teamspace_id === null,
+  }
 
   return (
     <>
@@ -977,17 +982,29 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
                                   : 'Could not update the thread.',
                         ),
                     }}
-                    mentions={{
-                      members: membersQuery.data ?? null,
-                      candidates: pageMentionCandidates(membersQuery.data ?? [], byId.get(pageId) ?? page, selfId),
-                      privatePage: (byId.get(pageId) ?? page).teamspace_id === null,
-                    }}
+                    mentions={mentions}
                     className="-mx-[54px] min-h-40 max-[899px]:mx-0"
                   />
                 </Suspense>
               ) : (
-                // Never bind an editor to a document before its first sync (it would be empty).
-                editorSpinner
+                // Never bind an editor to a document before its first sync (it would be empty). Until then, show the
+                // REST content read-only; the live editor replaces it with the same blocks.
+                <div data-testid="editor-preview">
+                  <Suspense fallback={editorSpinner}>
+                    <PageEditor
+                      key={`preview:${collab.key}`}
+                      pageId={`preview:${pageId}`}
+                      initialContent={page.content}
+                      editable={false}
+                      resolvePage={resolvePage}
+                      onOpenPage={onOpenPage}
+                      onCreateSubpage={onCreateSubpage}
+                      onPickPage={onPickPage}
+                      mentions={mentions}
+                      className="-mx-[54px] min-h-40 max-[899px]:mx-0"
+                    />
+                  </Suspense>
+                </div>
               )}
             </div>
           </div>
