@@ -25,11 +25,7 @@ const JOBS_CONCURRENCY_ENV: &str = "ORBIT_JOBS_CONCURRENCY";
 const UPLOADS_MAX_FILE_BYTES_ENV: &str = "ORBIT_UPLOAD_MAX_FILE_BYTES";
 const UPLOADS_MAX_REQUEST_BYTES_ENV: &str = "ORBIT_UPLOAD_MAX_REQUEST_BYTES";
 const METRICS_LISTEN_ENV: &str = "ORBIT_METRICS_LISTEN";
-const RATE_AUTH_ENV: &str = "ORBIT_RATE_LIMIT_AUTHENTICATION_PER_MINUTE";
-const RATE_RECOVERY_ENV: &str = "ORBIT_RATE_LIMIT_RECOVERY_PER_MINUTE";
-const RATE_INVITATION_ENV: &str = "ORBIT_RATE_LIMIT_INVITATION_PER_MINUTE";
-const RATE_UPLOAD_ENV: &str = "ORBIT_RATE_LIMIT_UPLOAD_PER_MINUTE";
-const RATE_GENERAL_ENV: &str = "ORBIT_RATE_LIMIT_GENERAL_PER_MINUTE";
+const RATE_LIMITS_ENV_PREFIX: &str = "ORBIT_RATE_LIMIT_";
 const APP_KEY_ENV: &str = "ORBIT_APP_KEY";
 const APP_KEY_FILE_ENV: &str = "ORBIT_APP_KEY_FILE";
 /// Variables that scripts and tests use, not the server.
@@ -191,6 +187,9 @@ pub struct MetricsConfig {
     pub listen: Option<SocketAddr>,
 }
 
+/// `ORBIT_RATE_LIMIT_<FIELD>`. The `*_per_minute` limits apply to each client IP address, each credential
+/// (session or token) and, multiplied by `workspace_multiplier`, each workspace. The email limits
+/// hold for every server of the database.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RateLimitConfig {
     pub authentication_per_minute: u32,
@@ -198,6 +197,13 @@ pub struct RateLimitConfig {
     pub invitation_per_minute: u32,
     pub upload_per_minute: u32,
     pub general_per_minute: u32,
+    pub workspace_multiplier: u32,
+    /// The time between two registration or password reset emails to one address.
+    pub account_email_cooldown_seconds: u32,
+    /// Registration and password reset emails to one address in 24 hours.
+    pub account_emails_per_day: u32,
+    pub invitation_emails_per_workspace_per_day: u32,
+    pub invitation_emails_per_inviter_per_day: u32,
 }
 
 impl Default for RateLimitConfig {
@@ -208,7 +214,90 @@ impl Default for RateLimitConfig {
             invitation_per_minute: 60,
             upload_per_minute: 120,
             general_per_minute: 600,
+            workspace_multiplier: 10,
+            account_email_cooldown_seconds: 60,
+            account_emails_per_day: 5,
+            invitation_emails_per_workspace_per_day: 100,
+            invitation_emails_per_inviter_per_day: 50,
         }
+    }
+}
+
+impl RateLimitConfig {
+    /// The setting named `name` (the lowercase rest of its `ORBIT_RATE_LIMIT_` variable).
+    fn setting_mut(&mut self, name: &str) -> Option<&mut u32> {
+        Some(match name {
+            "authentication_per_minute" => &mut self.authentication_per_minute,
+            "recovery_per_minute" => &mut self.recovery_per_minute,
+            "invitation_per_minute" => &mut self.invitation_per_minute,
+            "upload_per_minute" => &mut self.upload_per_minute,
+            "general_per_minute" => &mut self.general_per_minute,
+            "workspace_multiplier" => &mut self.workspace_multiplier,
+            "account_email_cooldown_seconds" => &mut self.account_email_cooldown_seconds,
+            "account_emails_per_day" => &mut self.account_emails_per_day,
+            "invitation_emails_per_workspace_per_day" => {
+                &mut self.invitation_emails_per_workspace_per_day
+            }
+            "invitation_emails_per_inviter_per_day" => {
+                &mut self.invitation_emails_per_inviter_per_day
+            }
+            _ => return None,
+        })
+    }
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        let invalid = |key, detail: &str| {
+            Err(ConfigError::InvalidSetting {
+                key,
+                detail: detail.to_owned(),
+            })
+        };
+        let per_minute = [
+            self.authentication_per_minute,
+            self.recovery_per_minute,
+            self.invitation_per_minute,
+            self.upload_per_minute,
+            self.general_per_minute,
+        ];
+        if per_minute.contains(&0) {
+            return invalid(
+                "ORBIT_RATE_LIMIT_*",
+                "all endpoint-class limits must be positive",
+            );
+        }
+        if per_minute.into_iter().any(|limit| limit > 1_000_000) {
+            return invalid(
+                "ORBIT_RATE_LIMIT_*",
+                "endpoint-class limits cannot exceed 1000000 per minute",
+            );
+        }
+        if !(1..=1_000).contains(&self.workspace_multiplier) {
+            return invalid(
+                "ORBIT_RATE_LIMIT_WORKSPACE_MULTIPLIER",
+                "must be between 1 and 1000",
+            );
+        }
+        if self.account_email_cooldown_seconds > 86_400 {
+            return invalid(
+                "ORBIT_RATE_LIMIT_ACCOUNT_EMAIL_COOLDOWN_SECONDS",
+                "cannot exceed 86400 seconds",
+            );
+        }
+        let per_day = [
+            self.account_emails_per_day,
+            self.invitation_emails_per_workspace_per_day,
+            self.invitation_emails_per_inviter_per_day,
+        ];
+        if per_day
+            .into_iter()
+            .any(|limit| !(1..=100_000).contains(&limit))
+        {
+            return invalid(
+                "ORBIT_RATE_LIMIT_*",
+                "daily email limits must be between 1 and 100000",
+            );
+        }
+        Ok(())
     }
 }
 
@@ -376,32 +465,13 @@ impl Config {
                 detail: "must be at least ORBIT_UPLOAD_MAX_FILE_BYTES".to_owned(),
             });
         }
-        let rate_limits = [
-            self.rate_limits.authentication_per_minute,
-            self.rate_limits.recovery_per_minute,
-            self.rate_limits.invitation_per_minute,
-            self.rate_limits.upload_per_minute,
-            self.rate_limits.general_per_minute,
-        ];
         if self.http.shutdown_delay_seconds > 300 {
             return Err(ConfigError::InvalidSetting {
                 key: HTTP_SHUTDOWN_DELAY_ENV,
                 detail: "the delay cannot exceed 300 seconds".to_owned(),
             });
         }
-        if rate_limits.contains(&0) {
-            return Err(ConfigError::InvalidSetting {
-                key: "ORBIT_RATE_LIMIT_*",
-                detail: "all endpoint-class limits must be positive".to_owned(),
-            });
-        }
-        if rate_limits.into_iter().any(|limit| limit > 1_000_000) {
-            return Err(ConfigError::InvalidSetting {
-                key: "ORBIT_RATE_LIMIT_*",
-                detail: "endpoint-class limits cannot exceed 1000000 per minute".to_owned(),
-            });
-        }
-        Ok(())
+        self.rate_limits.validate()
     }
 }
 
@@ -452,16 +522,11 @@ fn apply_environment(
             config.uploads.max_request_bytes = parse_environment(key, value)?;
         } else if key == METRICS_LISTEN_ENV {
             config.metrics.listen = Some(parse_environment(key, value)?);
-        } else if key == RATE_AUTH_ENV {
-            config.rate_limits.authentication_per_minute = parse_environment(key, value)?;
-        } else if key == RATE_RECOVERY_ENV {
-            config.rate_limits.recovery_per_minute = parse_environment(key, value)?;
-        } else if key == RATE_INVITATION_ENV {
-            config.rate_limits.invitation_per_minute = parse_environment(key, value)?;
-        } else if key == RATE_UPLOAD_ENV {
-            config.rate_limits.upload_per_minute = parse_environment(key, value)?;
-        } else if key == RATE_GENERAL_ENV {
-            config.rate_limits.general_per_minute = parse_environment(key, value)?;
+        } else if let Some(setting) = key
+            .strip_prefix(RATE_LIMITS_ENV_PREFIX)
+            .and_then(|name| config.rate_limits.setting_mut(&name.to_ascii_lowercase()))
+        {
+            *setting = parse_environment(key, value)?;
         } else if key == APP_KEY_ENV {
             config.app_key = Some(parse_app_key(value)?);
         } else if key == APP_KEY_FILE_ENV {

@@ -238,6 +238,45 @@ fn endpoint_class_rate_limits_are_configurable() {
 }
 
 #[test]
+fn principal_workspace_and_email_limits_have_defaults_and_overrides() {
+    let defaults = load([]).unwrap().rate_limits;
+    assert_eq!(defaults.workspace_multiplier, 10);
+    assert_eq!(defaults.account_email_cooldown_seconds, 60);
+    assert_eq!(defaults.account_emails_per_day, 5);
+    assert_eq!(defaults.invitation_emails_per_workspace_per_day, 100);
+    assert_eq!(defaults.invitation_emails_per_inviter_per_day, 50);
+
+    let cfg = load([
+        ("ORBIT_RATE_LIMIT_WORKSPACE_MULTIPLIER", "4"),
+        ("ORBIT_RATE_LIMIT_ACCOUNT_EMAILS_PER_DAY", "3"),
+        ("ORBIT_RATE_LIMIT_ACCOUNT_EMAIL_COOLDOWN_SECONDS", "120"),
+        (
+            "ORBIT_RATE_LIMIT_INVITATION_EMAILS_PER_WORKSPACE_PER_DAY",
+            "7",
+        ),
+        (
+            "ORBIT_RATE_LIMIT_INVITATION_EMAILS_PER_INVITER_PER_DAY",
+            "8",
+        ),
+    ])
+    .unwrap();
+    assert_eq!(cfg.rate_limits.workspace_multiplier, 4);
+    assert_eq!(cfg.rate_limits.account_emails_per_day, 3);
+    assert_eq!(cfg.rate_limits.account_email_cooldown_seconds, 120);
+    assert_eq!(cfg.rate_limits.invitation_emails_per_workspace_per_day, 7);
+    assert_eq!(cfg.rate_limits.invitation_emails_per_inviter_per_day, 8);
+
+    for invalid in [
+        ("ORBIT_RATE_LIMIT_WORKSPACE_MULTIPLIER", "0"),
+        ("ORBIT_RATE_LIMIT_ACCOUNT_EMAILS_PER_DAY", "0"),
+        ("ORBIT_RATE_LIMIT_ACCOUNT_EMAIL_COOLDOWN_SECONDS", "86401"),
+        ("ORBIT_RATE_LIMIT_UNKNOWN", "1"),
+    ] {
+        assert!(load([invalid]).is_err(), "{invalid:?}");
+    }
+}
+
+#[test]
 fn endpoint_class_rate_limits_reject_unsafe_values() {
     let error = load([("ORBIT_RATE_LIMIT_GENERAL_PER_MINUTE", "1000001")]).unwrap_err();
 

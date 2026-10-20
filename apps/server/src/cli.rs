@@ -1157,6 +1157,26 @@ pub fn redacted_config(config: &Config) -> String {
             "ORBIT_RATE_LIMIT_GENERAL_PER_MINUTE={}",
             config.rate_limits.general_per_minute
         ),
+        format!(
+            "ORBIT_RATE_LIMIT_WORKSPACE_MULTIPLIER={}",
+            config.rate_limits.workspace_multiplier
+        ),
+        format!(
+            "ORBIT_RATE_LIMIT_ACCOUNT_EMAIL_COOLDOWN_SECONDS={}",
+            config.rate_limits.account_email_cooldown_seconds
+        ),
+        format!(
+            "ORBIT_RATE_LIMIT_ACCOUNT_EMAILS_PER_DAY={}",
+            config.rate_limits.account_emails_per_day
+        ),
+        format!(
+            "ORBIT_RATE_LIMIT_INVITATION_EMAILS_PER_WORKSPACE_PER_DAY={}",
+            config.rate_limits.invitation_emails_per_workspace_per_day
+        ),
+        format!(
+            "ORBIT_RATE_LIMIT_INVITATION_EMAILS_PER_INVITER_PER_DAY={}",
+            config.rate_limits.invitation_emails_per_inviter_per_day
+        ),
     ]);
     match config.metrics.listen {
         Some(listen) => lines.push(format!("ORBIT_METRICS_LISTEN={listen}")),

@@ -398,6 +398,11 @@ impl MigrationRunner {
                     include_str!("../../../../apps/server/migrations/0054_job_limits.sql"),
                     false,
                 ),
+                Migration::new(
+                    55,
+                    include_str!("../../../../apps/server/migrations/0055_rate_limits.sql"),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -442,6 +447,11 @@ impl MigrationRunner {
             Migration::new(
                 54,
                 include_str!("../../../../apps/server/migrations/postgres/0054_job_limits.sql"),
+                false,
+            ),
+            Migration::new(
+                55,
+                include_str!("../../../../apps/server/migrations/postgres/0055_rate_limits.sql"),
                 false,
             ),
         ];
