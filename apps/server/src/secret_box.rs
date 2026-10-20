@@ -1,5 +1,5 @@
 //! Secrets at rest (GitHub App keys, Notion import tokens): ChaCha20-Poly1305 under the
-//! server's app key (`secrets.app_key`). The stored value is `nonce (12 bytes) || ciphertext`.
+//! server's app key (`ORBIT_APP_KEY`). The stored value is `nonce (12 bytes) || ciphertext`.
 
 use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, OsRng};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
@@ -26,7 +26,7 @@ pub(crate) fn decrypt_secret(key: &[u8; 32], value: &[u8]) -> Result<String, ()>
     String::from_utf8(plaintext).map_err(|_| ())
 }
 
-/// The key every secret at rest is encrypted with: `secrets.app_key` from the configuration when set, else the
+/// The key every secret at rest is encrypted with: `ORBIT_APP_KEY` from the configuration when set, else the
 /// `app.key` file beside the database, created with a random key on first start. The file is part of the data, so
 /// keep it with backups: without it, saved secrets (SMTP password, GitHub App keys) cannot be read.
 pub(crate) fn load_or_create_app_key(
@@ -44,7 +44,7 @@ pub(crate) fn load_or_create_app_key(
             .ok_or_else(|| format!("{source} must be a base64-encoded 32-byte key"))
     };
     if let Some(value) = configured {
-        return decode(value, "secrets.app_key");
+        return decode(value, "ORBIT_APP_KEY");
     }
     let path = database_path
         .parent()

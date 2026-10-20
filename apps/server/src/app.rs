@@ -180,7 +180,7 @@ impl App {
 
         let app_key = Some(
             crate::secret_box::load_or_create_app_key(
-                config.secrets.get("app_key").map(|secret| secret.expose()),
+                config.app_key.as_ref().map(|secret| secret.expose()),
                 &config.data.database,
             )
             .map_err(AppError::Config)?,

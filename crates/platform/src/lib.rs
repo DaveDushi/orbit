@@ -26,8 +26,8 @@ pub use backup::{
     BackupManifest, BackupService, BackupSnapshot,
 };
 pub use config::{
-    Config, ConfigError, ConfigOverride, ConfigSources, DataConfig, EnvironmentMode, HttpConfig,
-    JobsConfig, MetricsConfig, RateLimitConfig, Secret, UploadConfig, redact_database_url,
+    Config, ConfigError, DataConfig, EnvironmentMode, HttpConfig, JobsConfig, MetricsConfig,
+    RateLimitConfig, Secret, UploadConfig, redact_database_url,
 };
 pub use db::{
     Access, Backend, Column, Database, DatabaseConfig, DatabaseError, Flag, GuardedMigrationError,

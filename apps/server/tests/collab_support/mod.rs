@@ -79,10 +79,7 @@ impl Server {
     pub async fn start_shared(root: &TempDir, url: &str, collab: CollabConfig) -> Self {
         let mut config = app_config(root);
         config.data.database_url = Some(url.to_owned());
-        config.secrets.insert(
-            "app_key".to_owned(),
-            orbit_platform::Secret::new(crate::shared_postgres::APP_KEY),
-        );
+        config.app_key = Some(orbit_platform::Secret::new(crate::shared_postgres::APP_KEY));
         Self::start_with(config, collab).await
     }
 
