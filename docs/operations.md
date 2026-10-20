@@ -15,7 +15,7 @@ Orbit reads its configuration only from environment variables that start with `O
 | `ORBIT_BIND` | `127.0.0.1` | `0.0.0.0` works for containers and Tailscale interfaces. Firewall the port. |
 | `ORBIT_PORT` | `8080` | |
 | `ORBIT_PUBLIC_ORIGIN` | `http://<bind>:<port>` | The exact external origin. Production requires `https://`. |
-| `ORBIT_TRUSTED_PROXIES` | none | Comma-separated CIDRs, for example `127.0.0.1/32,::1/128`. Trust only the local reverse proxy or the exact proxy network that you operate. |
+| `ORBIT_TRUSTED_PROXIES` | none (image: `0.0.0.0/0,::/0`) | Comma-separated CIDRs, for example `127.0.0.1/32,::1/128`. Production requires at least one. Orbit reads the client IP and `https` from forwarding headers only on connections from these networks. The image default trusts every address: use it only when the reverse proxy is the only way to reach port 8080. |
 | `ORBIT_SHUTDOWN_DELAY_SECONDS` | `0` | 0 to 300. Use it behind a load balancer: after SIGTERM, `/health/ready` reports 503 and the server continues to serve for this time. See [Orbit Cloud](#deployment). |
 | `ORBIT_DATABASE_PATH` | `data/orbit.sqlite` | The SQLite database file. Keep the database, attachment directory and backup directory separate. |
 | `ORBIT_DATABASE_URL` | none | Postgres instead of SQLite, for example `postgres://orbit:password@db.internal:5432/orbit`. See [Postgres](#postgres). |

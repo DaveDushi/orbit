@@ -10,7 +10,7 @@ cp deploy/.env.example deploy/.env
 docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --build
 ```
 
-Orbit reads its configuration only from `ORBIT_*` environment variables. The image sets production mode, the bind address and the data paths. A container needs only `ORBIT_PUBLIC_ORIGIN`, `ORBIT_TRUSTED_PROXIES` and `ORBIT_APP_KEY`. To use Postgres, also set `ORBIT_DATABASE_URL`. Keep a copy of `ORBIT_APP_KEY` outside the server: without it, Orbit cannot read the secrets it saved. For all variables, see [Configuration](../docs/operations.md#configuration).
+Orbit reads its configuration only from `ORBIT_*` environment variables. The image sets production mode, the bind address, the data paths and `ORBIT_TRUSTED_PROXIES=0.0.0.0/0,::/0`. A container needs only `ORBIT_PUBLIC_ORIGIN` and `ORBIT_APP_KEY`. The image trusts forwarding headers from every address, so only the reverse proxy may reach port 8080. If anything else can reach it, set `ORBIT_TRUSTED_PROXIES` to the proxy network. To use Postgres, also set `ORBIT_DATABASE_URL`. Keep a copy of `ORBIT_APP_KEY` outside the server: without it, Orbit cannot read the secrets it saved. For all variables, see [Configuration](../docs/operations.md#configuration).
 
 The application port is not published. Only Caddy can reach it through the deployment network. Caddy forwards WebSocket upgrades automatically. The application runs as UID 65532 with a read-only root filesystem and separate named volumes for SQLite/attachments and backups.
 
