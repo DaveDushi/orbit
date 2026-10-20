@@ -94,6 +94,8 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::workspace_routes::remove_s3,
         crate::workspace_routes::save_storage_options,
         crate::workspace_routes::save_limits,
+        crate::workspace_routes::get_job_limits,
+        crate::workspace_routes::save_job_limits,
         crate::workspace_routes::start_image_compression,
         crate::workspace_routes::set_account_suspension,
         crate::workspace_routes::create_recovery_link,
@@ -543,7 +545,7 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             add_code(&mut responses, "422", "invalid_email");
             add_code(&mut responses, "502", "email_failed");
         }
-        "get_instance_settings" | "remove_smtp" => {
+        "get_instance_settings" | "remove_smtp" | "get_job_limits" => {
             add_code(&mut responses, "403", "installation_admin_required");
         }
         "set_registration" => {
@@ -578,6 +580,10 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
         "save_limits" => {
             add_code(&mut responses, "403", "installation_admin_required");
             add_code(&mut responses, "422", "invalid_limits");
+        }
+        "save_job_limits" => {
+            add_code(&mut responses, "403", "installation_admin_required");
+            add_code(&mut responses, "422", "invalid_job_limits");
         }
         "save_storage_options" => {
             add_code(&mut responses, "403", "installation_admin_required");
@@ -725,6 +731,7 @@ fn invalid_request_operation(operation_id: &str) -> bool {
             | "save_s3"
             | "save_storage_options"
             | "save_limits"
+            | "save_job_limits"
             | "create_workspace"
             | "rename_workspace"
             | "list_members"
