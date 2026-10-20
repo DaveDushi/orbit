@@ -1,5 +1,9 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
+# Orbit requires an app key. Local recipes use this public development key unless the environment or
+# .env.local sets one. Never use it for real data.
+export ORBIT_APP_KEY := env("ORBIT_APP_KEY", "b3JiaXQtZGV2ZWxvcG1lbnQta2V5LW5vdC1zZWNyZXQ=")
+
 setup:
     cargo --version
     bun --version

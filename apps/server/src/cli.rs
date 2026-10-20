@@ -1206,13 +1206,16 @@ mod tests {
             .collect()
     }
 
+    const APP_KEY: &str = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
+
     fn development() -> BTreeMap<String, String> {
-        environment(&[("ORBIT_ENV", "development")])
+        environment(&[("ORBIT_ENV", "development"), ("ORBIT_APP_KEY", APP_KEY)])
     }
 
     fn production() -> BTreeMap<String, String> {
         environment(&[
             ("ORBIT_ENV", "production"),
+            ("ORBIT_APP_KEY", APP_KEY),
             ("ORBIT_PUBLIC_ORIGIN", "https://orbit.example"),
             ("ORBIT_TRUSTED_PROXIES", "127.0.0.1/32"),
         ])
@@ -1574,7 +1577,7 @@ mod tests {
         let config = Config::from_environment(environment(&[
             ("ORBIT_ENV", "development"),
             ("ORBIT_PORT", "9000"),
-            ("ORBIT_APP_KEY", "very-secret"),
+            ("ORBIT_APP_KEY", APP_KEY),
         ]))
         .unwrap();
 
@@ -1583,7 +1586,7 @@ mod tests {
         assert!(shown.contains("ORBIT_PORT=9000"));
         assert!(shown.contains("# ORBIT_METRICS_LISTEN is not set"));
         assert!(shown.contains("ORBIT_APP_KEY=[REDACTED]"));
-        assert!(!shown.contains("very-secret"));
+        assert!(!shown.contains(APP_KEY));
     }
 
     #[test]
@@ -1622,6 +1625,7 @@ mod tests {
         let root = tempfile::TempDir::new().unwrap();
         let mut config = Config {
             environment: EnvironmentMode::Development,
+            app_key: Some(orbit_platform::AppKey::new([1; 32])),
             ..Config::default()
         };
         config.data.database = root.path().join("data/orbit.sqlite");
@@ -1643,6 +1647,7 @@ mod tests {
         let root = tempfile::TempDir::new().unwrap();
         let mut config = Config {
             environment: EnvironmentMode::Development,
+            app_key: Some(orbit_platform::AppKey::new([1; 32])),
             ..Config::default()
         };
         config.data.database = root.path().join("data/orbit.sqlite");

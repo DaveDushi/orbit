@@ -612,6 +612,7 @@ async fn mcp_route_is_mounted_in_the_application_and_rejects_oversized_bodies() 
     let root = tempfile::TempDir::new().unwrap();
     let mut config = orbit_platform::Config {
         environment: orbit_platform::EnvironmentMode::Development,
+        app_key: Some(orbit_platform::AppKey::new([1; 32])),
         ..Default::default()
     };
     config.data.database = root.path().join("orbit.sqlite");

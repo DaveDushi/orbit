@@ -25,14 +25,14 @@ cd apps/web
 bun install --frozen-lockfile
 bun run dev -- --host 127.0.0.1 --port 8888 --strictPort
 
-ORBIT_ENV=development cargo run -p orbit-server -- \
+ORBIT_ENV=development ORBIT_APP_KEY=b3JiaXQtZGV2ZWxvcG1lbnQta2V5LW5vdC1zZWNyZXQ= cargo run -p orbit-server -- \
   --database data/development.sqlite \
   --attachments data/attachments \
   --backups backups \
   serve --listen 127.0.0.1:8080 --origin http://127.0.0.1:8888
 ```
 
-To develop on Postgres, put `ORBIT_DATABASE_URL` and `ORBIT_APP_KEY` in `.env.local` (see [`AGENTS.md`](../AGENTS.md) for the required database locale). `just dev` loads that file; `just db-reset` and `just seed` do not, so export the variables first.
+The `justfile` sets a public development `ORBIT_APP_KEY` when none is set. To develop on Postgres, put `ORBIT_DATABASE_URL` in `.env.local` (see [`AGENTS.md`](../AGENTS.md) for the required database locale). `just dev` loads that file; `just db-reset` and `just seed` do not, so export the variables first.
 
 ## Verification commands
 
@@ -60,9 +60,11 @@ Build the frontend first because Cargo embeds `apps/web/dist`:
 
 ```bash
 just build
+(umask 077 && openssl rand -base64 32 > /etc/orbit/app-key)  # once; keep a copy of this file off the server
 export ORBIT_ENV=production \
   ORBIT_PUBLIC_ORIGIN=https://orbit.example.com \
-  ORBIT_TRUSTED_PROXIES=127.0.0.1/32,::1/128
+  ORBIT_TRUSTED_PROXIES=127.0.0.1/32,::1/128 \
+  ORBIT_APP_KEY_FILE=/etc/orbit/app-key
 ./target/release/orbit config check
 ./target/release/orbit config show
 ./target/release/orbit serve
@@ -85,6 +87,7 @@ docker run --name orbit --restart unless-stopped \
   -p 127.0.0.1:8080:8080 \
   -e ORBIT_PUBLIC_ORIGIN=https://orbit.example.com \
   -e ORBIT_TRUSTED_PROXIES=172.17.0.1/32 \
+  -e ORBIT_APP_KEY=<base64 key, see docs/operations.md> \
   -v orbit-data:/var/lib/orbit \
   -v "$PWD/backups:/var/backups/orbit" \
   orbit:milestone-1

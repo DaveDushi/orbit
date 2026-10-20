@@ -18,7 +18,7 @@ Orbit reads its configuration only from environment variables that start with `O
 | `ORBIT_TRUSTED_PROXIES` | none | Comma-separated CIDRs, for example `127.0.0.1/32,::1/128`. Trust only the local reverse proxy or the exact proxy network that you operate. |
 | `ORBIT_SHUTDOWN_DELAY_SECONDS` | `0` | 0 to 300. Use it behind a load balancer: after SIGTERM, `/health/ready` reports 503 and the server continues to serve for this time. See [Orbit Cloud](#deployment). |
 | `ORBIT_DATABASE_PATH` | `data/orbit.sqlite` | The SQLite database file. Keep the database, attachment directory and backup directory separate. |
-| `ORBIT_DATABASE_URL` | none | Postgres instead of SQLite, for example `postgres://orbit:password@db.internal:5432/orbit`. It requires `ORBIT_APP_KEY`. See [Postgres](#postgres). |
+| `ORBIT_DATABASE_URL` | none | Postgres instead of SQLite, for example `postgres://orbit:password@db.internal:5432/orbit`. See [Postgres](#postgres). |
 | `ORBIT_ATTACHMENTS_PATH` | `data/attachments` | |
 | `ORBIT_BACKUPS_PATH` | `backups` | Must be outside the attachment directory. |
 | `ORBIT_JOBS_CONCURRENCY` | `4` | |
@@ -30,10 +30,10 @@ Orbit reads its configuration only from environment variables that start with `O
 | `ORBIT_RATE_LIMIT_INVITATION_PER_MINUTE` | `60` | |
 | `ORBIT_RATE_LIMIT_UPLOAD_PER_MINUTE` | `120` | |
 | `ORBIT_RATE_LIMIT_GENERAL_PER_MINUTE` | `600` | |
-| `ORBIT_APP_KEY` | none | The key for saved secrets: base64 of 32 random bytes. Postgres requires it. |
-| `ORBIT_APP_KEY_FILE` | none | The path of a file that contains the app key. Orbit removes one trailing line ending. Do not set it together with `ORBIT_APP_KEY`. |
+| `ORBIT_APP_KEY` | none | **Required.** The key for saved secrets: base64 of 32 random bytes. |
+| `ORBIT_APP_KEY_FILE` | none | The path of a file that contains the app key, instead of `ORBIT_APP_KEY`. Do not set both. |
 
-`ORBIT_APP_KEY` is base64 of 32 random bytes. Without it, Orbit on SQLite creates `app.key` beside the database on first start. Keep that file with your backups. See [Email, registration and the app key](#email-registration-and-the-app-key).
+Create the app key once with `openssl rand -base64 32` and keep a copy outside the server. Orbit does not start without it. See [Email, registration and the app key](#email-registration-and-the-app-key).
 
 The root user configures outgoing email in **Admin → Settings** and S3 storage in **Admin → Storage**, not with variables.
 
@@ -99,11 +99,13 @@ Orbit sends email only for invitations, open-registration sign-up links and pass
 
 Registration is closed after setup: people join only by invitation. The root user can turn on **Open registration** in **Admin → Settings** once a mail server is saved. A new person then enters their email, opens the emailed link (60 minutes, one use) and chooses a name and password. Removing the mail server closes registration.
 
-Saved secrets (the SMTP password, GitHub App keys, Notion import tokens) are encrypted with the app key. Set `ORBIT_APP_KEY` (base64 of 32 random bytes, for example `openssl rand -base64 32`) to manage it yourself; otherwise, on SQLite, Orbit creates `app.key` beside the database on first start (mode 600); Postgres requires `ORBIT_APP_KEY`. Keep that file with your backups: a restored database without it cannot read its saved secrets, and the root user must enter them again.
+Saved secrets (the SMTP password, GitHub App keys, Notion import tokens) are encrypted with the app key. `ORBIT_APP_KEY` (base64 of 32 random bytes, from `openssl rand -base64 32`) is required. Orbit does not create a key. Keep a copy outside the server and its backups: a database restored without the same key cannot read its saved secrets, and the root user must enter them again. Users with two-factor authentication must set it up again.
+
+Older versions created an `app.key` file beside the SQLite database. If that file still exists, Orbit starts only when `ORBIT_APP_KEY` holds the same key. Set `ORBIT_APP_KEY` to the contents of the file, start Orbit, and then you can delete the file.
 
 ## Postgres
 
-With `ORBIT_DATABASE_URL`, the database is on another host. Orbit then needs `ORBIT_APP_KEY` (base64 of 32 random bytes) instead of an `app.key` file: it encrypts saved secrets, the S3 secret among them, so a new server needs the same key. Keep it with the database credentials.
+With `ORBIT_DATABASE_URL`, the database is on another host. `ORBIT_APP_KEY` encrypts saved secrets, the S3 secret among them, so every server and every new server needs the same key. Keep it with the database credentials.
 
 Files and backups still go to `ORBIT_ATTACHMENTS_PATH` and `ORBIT_BACKUPS_PATH` on this server until the root user saves a bucket in **Admin → Storage** and turns on attachments and backups in S3. Do that to make the server replaceable; pre-migration backups always stay local.
 
@@ -170,7 +172,7 @@ orbit backup list            # the last column says local or s3
 orbit backup restore <id>
 ```
 
-Put the old `app.key` (or `ORBIT_APP_KEY`) on the new server before you start Orbit: without it, Orbit cannot read the saved S3 secret and does not start while a bucket is saved. Data written after the last backup is lost, so choose the schedule by how much data you can lose.
+Set the same `ORBIT_APP_KEY` on the new server before you start Orbit: without it, Orbit cannot read the saved S3 secret and does not start while a bucket is saved. Data written after the last backup is lost, so choose the schedule by how much data you can lose.
 
 ## Large images
 

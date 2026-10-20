@@ -6,11 +6,11 @@ Requirements: Docker Compose, a DNS hostname pointing to this host, and inbound 
 
 ```sh
 cp deploy/.env.example deploy/.env
-# Edit ORBIT_DOMAIN in deploy/.env. Do not include https://.
+# Edit deploy/.env: set ORBIT_DOMAIN (without https://) and ORBIT_APP_KEY (openssl rand -base64 32).
 docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --build
 ```
 
-Orbit reads its configuration only from `ORBIT_*` environment variables. The image sets production mode, the bind address and the data paths. A container needs only `ORBIT_PUBLIC_ORIGIN` and `ORBIT_TRUSTED_PROXIES`. To use Postgres, also set `ORBIT_DATABASE_URL` and `ORBIT_APP_KEY`. For all variables, see [Configuration](../docs/operations.md#configuration).
+Orbit reads its configuration only from `ORBIT_*` environment variables. The image sets production mode, the bind address and the data paths. A container needs only `ORBIT_PUBLIC_ORIGIN`, `ORBIT_TRUSTED_PROXIES` and `ORBIT_APP_KEY`. To use Postgres, also set `ORBIT_DATABASE_URL`. Keep a copy of `ORBIT_APP_KEY` outside the server: without it, Orbit cannot read the secrets it saved. For all variables, see [Configuration](../docs/operations.md#configuration).
 
 The application port is not published. Only Caddy can reach it through the deployment network. Caddy forwards WebSocket upgrades automatically. The application runs as UID 65532 with a read-only root filesystem and separate named volumes for SQLite/attachments and backups.
 
@@ -40,9 +40,11 @@ chmod +x orbit
 Set the [`ORBIT_*` environment variables](../docs/operations.md#configuration) for the environment, the origin, the trusted proxies and the writable storage paths, then run:
 
 ```sh
+(umask 077 && openssl rand -base64 32 > /etc/orbit/app-key)  # once; keep a copy of this file off the server
 export ORBIT_ENV=production \
   ORBIT_PUBLIC_ORIGIN=https://orbit.example.com \
   ORBIT_TRUSTED_PROXIES=127.0.0.1/32,::1/128 \
+  ORBIT_APP_KEY_FILE=/etc/orbit/app-key \
   ORBIT_DATABASE_PATH=/var/lib/orbit/orbit.sqlite \
   ORBIT_ATTACHMENTS_PATH=/var/lib/orbit/attachments \
   ORBIT_BACKUPS_PATH=/var/backups/orbit

@@ -13,6 +13,7 @@ services:
       ORBIT_ENV: production
       ORBIT_PUBLIC_ORIGIN: https://${ORBIT_DOMAIN:?Set ORBIT_DOMAIN in deploy/.env}
       ORBIT_TRUSTED_PROXIES: 172.30.0.2/32
+      ORBIT_APP_KEY: ${ORBIT_APP_KEY:?Set ORBIT_APP_KEY in deploy/.env}
     volumes:
       - orbit-data:/var/lib/orbit
       - orbit-backups:/var/backups/orbit

@@ -10,6 +10,7 @@ proxy=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway
 docker run -d --name "$name" --read-only --cap-drop ALL --security-opt no-new-privileges:true \
   --tmpfs /tmp:size=64m,mode=1777 -p 127.0.0.1::8080 \
   -e ORBIT_ENV=production \
+  -e "ORBIT_APP_KEY=$(openssl rand -base64 32)" \
   -e ORBIT_PUBLIC_ORIGIN=https://orbit.test \
   -e "ORBIT_TRUSTED_PROXIES=127.0.0.1/32,$proxy/32" "$image" >/dev/null
 url="http://$(docker port "$name" 8080/tcp)"

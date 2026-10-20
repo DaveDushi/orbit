@@ -53,6 +53,7 @@ pub fn fast_config() -> CollabConfig {
 pub fn app_config(root: &TempDir) -> Config {
     let mut config = Config {
         environment: EnvironmentMode::Development,
+        app_key: Some(orbit_platform::AppKey::new([1; 32])),
         ..Config::default()
     };
     config.data.database = root.path().join("data/orbit.sqlite");
@@ -79,7 +80,7 @@ impl Server {
     pub async fn start_shared(root: &TempDir, url: &str, collab: CollabConfig) -> Self {
         let mut config = app_config(root);
         config.data.database_url = Some(url.to_owned());
-        config.app_key = Some(orbit_platform::Secret::new(crate::shared_postgres::APP_KEY));
+        config.app_key = Some(crate::shared_postgres::APP_KEY.parse().unwrap());
         Self::start_with(config, collab).await
     }
 

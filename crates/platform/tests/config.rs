@@ -22,8 +22,14 @@ fn load<const N: usize>(env: [(&str, &str); N]) -> Result<Config, orbit_platform
         .collect();
     env.entry("ORBIT_ENV".to_owned())
         .or_insert_with(|| "development".to_owned());
+    if !env.contains_key("ORBIT_APP_KEY_FILE") {
+        env.entry("ORBIT_APP_KEY".to_owned())
+            .or_insert_with(|| APP_KEY.to_owned());
+    }
     Config::from_environment(env)
 }
+
+const APP_KEY: &str = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
 
 #[test]
 fn environment_mode_must_be_explicit() {
@@ -60,7 +66,7 @@ fn setting_secret_and_secret_file_is_rejected() {
     fs::write(&secret_path, "from-file").unwrap();
     let path_value = secret_path.to_string_lossy().into_owned();
     let result = load([
-        ("ORBIT_APP_KEY", "from-env"),
+        ("ORBIT_APP_KEY", APP_KEY),
         ("ORBIT_APP_KEY_FILE", path_value.as_str()),
     ]);
     let _ = fs::remove_file(secret_path);
@@ -70,16 +76,33 @@ fn setting_secret_and_secret_file_is_rejected() {
 }
 
 #[test]
-fn secret_file_removes_exactly_one_trailing_newline_and_debug_is_redacted() {
+fn app_key_file_is_read_and_debug_is_redacted() {
     let secret_path = fixture_path("secret");
-    fs::write(&secret_path, "sensitive\n\n").unwrap();
+    fs::write(&secret_path, format!("{APP_KEY}\n")).unwrap();
     let path_value = secret_path.to_string_lossy().into_owned();
     let cfg = load([("ORBIT_APP_KEY_FILE", path_value.as_str())]).unwrap();
     let _ = fs::remove_file(secret_path);
 
-    let token = cfg.app_key.as_ref().unwrap();
-    assert_eq!(token.expose(), "sensitive\n");
-    assert_eq!(format!("{token:?}"), "[REDACTED]");
+    let key = cfg.app_key.unwrap();
+    assert_eq!(key.bytes(), &[1; 32]);
+    assert_eq!(format!("{key:?}"), "[REDACTED]");
+}
+
+#[test]
+fn app_key_is_required_and_must_be_32_base64_bytes() {
+    let without_key = Config::from_environment(BTreeMap::from([(
+        "ORBIT_ENV".to_owned(),
+        "development".to_owned(),
+    )]))
+    .unwrap_err()
+    .to_string();
+    assert!(without_key.contains("ORBIT_APP_KEY"), "{without_key}");
+
+    for invalid in ["", "not base64", "AQEBAQ=="] {
+        let error = load([("ORBIT_APP_KEY", invalid)]).unwrap_err().to_string();
+        assert!(error.contains("ORBIT_APP_KEY"), "{error}");
+        assert!(invalid.is_empty() || !error.contains(invalid), "{error}");
+    }
 }
 
 #[test]
@@ -287,13 +310,10 @@ fn notion_import_has_no_operator_settings() {
 
 #[test]
 fn postgres_database_url_comes_from_environment_and_is_redacted() {
-    let from_environment = load([
-        (
-            "ORBIT_DATABASE_URL",
-            "postgres://orbit:hunter2@db.internal:5432/orbit",
-        ),
-        STATELESS,
-    ])
+    let from_environment = load([(
+        "ORBIT_DATABASE_URL",
+        "postgres://orbit:hunter2@db.internal:5432/orbit",
+    )])
     .unwrap();
     assert_eq!(
         from_environment.data.database_url.as_deref(),
@@ -309,32 +329,11 @@ fn postgres_database_url_comes_from_environment_and_is_redacted() {
         "postgres://orbit:REDACTED@db.internal/orbit"
     );
 
-    let postgresql = load([
-        ("ORBIT_DATABASE_URL", "postgresql://orbit@127.0.0.1/orbit"),
-        STATELESS,
-    ])
-    .unwrap();
+    let postgresql = load([("ORBIT_DATABASE_URL", "postgresql://orbit@127.0.0.1/orbit")]).unwrap();
     assert_eq!(
         postgresql.data.database_url.as_deref(),
         Some("postgresql://orbit@127.0.0.1/orbit")
     );
     assert_eq!(load([]).unwrap().data.database_url, None);
-    assert!(load([("ORBIT_DATABASE_URL", "mysql://x"), STATELESS]).is_err());
-}
-
-/// What a Postgres configuration needs besides the URL: the key for saved secrets, so a replaced server can
-/// still read them.
-const STATELESS: (&str, &str) = (
-    "ORBIT_APP_KEY",
-    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-);
-
-#[test]
-fn postgres_needs_a_configured_app_key() {
-    let postgres = ("ORBIT_DATABASE_URL", "postgres://orbit@db/orbit");
-    assert!(load([postgres, STATELESS]).is_ok());
-    let error = load([postgres]).unwrap_err().to_string();
-    assert!(error.contains("ORBIT_APP_KEY"), "{error}");
-    // SQLite creates app.key beside its database file instead.
-    assert!(load([]).is_ok());
+    assert!(load([("ORBIT_DATABASE_URL", "mysql://x")]).is_err());
 }

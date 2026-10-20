@@ -44,8 +44,9 @@ pub struct Config {
     pub uploads: UploadConfig,
     pub metrics: MetricsConfig,
     pub rate_limits: RateLimitConfig,
-    /// The key for secrets saved in the database (`ORBIT_APP_KEY`).
-    pub app_key: Option<Secret>,
+    /// The key for secrets saved in the database (`ORBIT_APP_KEY`). Required: [`Config::validate`]
+    /// refuses a configuration without it.
+    pub app_key: Option<AppKey>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -211,22 +212,38 @@ impl Default for RateLimitConfig {
     }
 }
 
-#[derive(Clone, Eq, PartialEq)]
-pub struct Secret(String);
+/// The 32-byte key that encrypts secrets saved in the database. Set as base64 in `ORBIT_APP_KEY`.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct AppKey([u8; 32]);
 
-impl Secret {
+impl AppKey {
     #[must_use]
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
+    pub const fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
     }
 
     #[must_use]
-    pub fn expose(&self) -> &str {
+    pub const fn bytes(&self) -> &[u8; 32] {
         &self.0
     }
 }
 
-impl fmt::Debug for Secret {
+impl FromStr for AppKey {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        use base64::Engine as _;
+
+        base64::engine::general_purpose::STANDARD
+            .decode(value.trim())
+            .ok()
+            .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+            .map(Self)
+            .ok_or(())
+    }
+}
+
+impl fmt::Debug for AppKey {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("[REDACTED]")
     }
@@ -309,7 +326,10 @@ impl Config {
             EnvironmentMode::Production if !self.http.public_origin.starts_with("https://") => {
                 return Err(ConfigError::InvalidSetting {
                     key: HTTP_PUBLIC_ORIGIN_ENV,
-                    detail: "production mode requires an https public origin".to_owned(),
+                    detail: format!(
+                        "production mode requires an https public origin, got {:?}",
+                        self.http.public_origin
+                    ),
                 });
             }
             EnvironmentMode::Production if self.http.trusted_proxies.is_empty() => {
@@ -330,14 +350,11 @@ impl Config {
                 detail: "must be a postgres:// or postgresql:// URL".to_owned(),
             });
         }
-        // With Postgres the database lives on another host and the server can be replaced, so the key
-        // for saved secrets (the S3 secret among them) must come from the configuration, not an
-        // `app.key` file on this server's disk.
-        if self.data.database_url.is_some() && self.app_key.is_none() {
+        if self.app_key.is_none() {
             return Err(ConfigError::InvalidSetting {
                 key: APP_KEY_ENV,
-                detail: "a Postgres database (ORBIT_DATABASE_URL) needs ORBIT_APP_KEY \
-                         (base64 of 32 random bytes): the server keeps no app.key file"
+                detail: "is required: create it with `openssl rand -base64 32` and keep a copy \
+                         outside the server, because saved secrets cannot be read without it"
                     .to_owned(),
             });
         }
@@ -446,11 +463,9 @@ fn apply_environment(
         } else if key == RATE_GENERAL_ENV {
             config.rate_limits.general_per_minute = parse_environment(key, value)?;
         } else if key == APP_KEY_ENV {
-            config.app_key = Some(Secret(value.clone()));
+            config.app_key = Some(parse_app_key(value)?);
         } else if key == APP_KEY_FILE_ENV {
-            let mut secret = read_secret_file(key, Path::new(value))?;
-            remove_one_trailing_line_ending(&mut secret);
-            config.app_key = Some(Secret(secret));
+            config.app_key = Some(parse_app_key(&read_secret_file(key, Path::new(value))?)?);
         } else if key.starts_with("ORBIT_")
             && !IGNORED_ENV_PREFIXES
                 .iter()
@@ -526,10 +541,10 @@ fn read_secret_file(key: &str, path: &Path) -> Result<String, ConfigError> {
     })
 }
 
-fn remove_one_trailing_line_ending(value: &mut String) {
-    if value.ends_with("\r\n") {
-        value.truncate(value.len() - 2);
-    } else if value.ends_with('\n') {
-        value.pop();
-    }
+/// Unlike [`parse_environment`], the error does not repeat the value: it is a secret.
+fn parse_app_key(value: &str) -> Result<AppKey, ConfigError> {
+    value.parse().map_err(|()| ConfigError::InvalidSetting {
+        key: APP_KEY_ENV,
+        detail: "must be base64 of 32 bytes (`openssl rand -base64 32`)".to_owned(),
+    })
 }
