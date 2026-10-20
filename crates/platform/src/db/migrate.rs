@@ -388,6 +388,11 @@ impl MigrationRunner {
                     include_str!("../../../../apps/server/migrations/0052_task_rich_text.sql"),
                     false,
                 ),
+                Migration::new(
+                    53,
+                    include_str!("../../../../apps/server/migrations/0053_tenant_limits.sql"),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -422,6 +427,11 @@ impl MigrationRunner {
             Migration::new(
                 52,
                 include_str!("../../../../apps/server/migrations/postgres/0052_task_rich_text.sql"),
+                false,
+            ),
+            Migration::new(
+                53,
+                include_str!("../../../../apps/server/migrations/postgres/0053_tenant_limits.sql"),
                 false,
             ),
         ];

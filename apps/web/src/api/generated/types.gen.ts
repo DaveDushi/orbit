@@ -1125,6 +1125,7 @@ export type InstanceAdminBody = {
 };
 
 export type InstanceSettingsView = {
+    limits: LimitsView;
     registration_open: boolean;
     smtp?: null | SmtpView;
     storage: StorageView;
@@ -1182,6 +1183,21 @@ export type LabelUpdateBody = {
 };
 
 export type Layout = 'list' | 'board' | 'timeline';
+
+/**
+ * Limits for a shared installation. `null` is unlimited.
+ */
+export type LimitsView = {
+    /**
+     * Workspaces (not in the trash) one account may own. Instance admins are not limited.
+     */
+    max_owned_workspaces?: number | null;
+    /**
+     * Bytes of files one workspace may store: attachments, page and chat files, emoji and stickers. A file is
+     * counted once per workspace, however often it is attached.
+     */
+    workspace_storage_quota_bytes?: number | null;
+};
 
 /**
  * What a URL shows as a card. Image URLs are always `https`.
@@ -3356,6 +3372,21 @@ export type WorkspaceRecord = {
 
 export type WorkspaceRole = 'owner' | 'admin' | 'member';
 
+/**
+ * How many bytes of files a workspace stores, and its quota.
+ */
+export type WorkspaceStorage = {
+    /**
+     * `null` is unlimited.
+     */
+    quota_bytes?: number | null;
+    /**
+     * Each stored file once, however often it is attached. A deleted file stops counting about a day after its
+     * last reference goes (trashed tasks, pages and messages keep their files until the trash is emptied).
+     */
+    used_bytes: number;
+};
+
 export type StartImageCompressionData = {
     body?: never;
     headers?: {
@@ -3793,6 +3824,62 @@ export type GetInstanceSettingsResponses = {
 };
 
 export type GetInstanceSettingsResponse = GetInstanceSettingsResponses[keyof GetInstanceSettingsResponses];
+
+export type SaveLimitsData = {
+    body: LimitsView;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/settings/limits';
+};
+
+export type SaveLimitsErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden, installation_admin_required
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * invalid_limits
+     */
+    422: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type SaveLimitsError = SaveLimitsErrors[keyof SaveLimitsErrors];
+
+export type SaveLimitsResponses = {
+    200: InstanceSettingsView;
+};
+
+export type SaveLimitsResponse = SaveLimitsResponses[keyof SaveLimitsResponses];
 
 export type SetRegistrationData = {
     body: RegistrationBody;
@@ -6810,7 +6897,7 @@ export type CreateWorkspaceErrors = {
      */
     403: WorkspaceProblem;
     /**
-     * contract_mismatch
+     * contract_mismatch, workspace_limit_reached
      */
     409: WorkspaceProblem;
     /**
@@ -8800,7 +8887,7 @@ export type CreateChatEmojiErrors = {
      */
     409: TaskProblem;
     /**
-     * request_too_large, emoji_too_large
+     * request_too_large, emoji_too_large, storage_quota_exceeded
      */
     413: TaskProblem;
     /**
@@ -8979,7 +9066,7 @@ export type UploadChatFileErrors = {
      */
     409: TaskProblem;
     /**
-     * request_too_large, upload_too_large
+     * request_too_large, upload_too_large, storage_quota_exceeded
      */
     413: TaskProblem;
     /**
@@ -9976,7 +10063,7 @@ export type CreateChatStickerErrors = {
      */
     409: TaskProblem;
     /**
-     * request_too_large, sticker_too_large
+     * request_too_large, sticker_too_large, storage_quota_exceeded
      */
     413: TaskProblem;
     /**
@@ -12320,7 +12407,7 @@ export type UploadPageFileErrors = {
      */
     409: TaskProblem;
     /**
-     * request_too_large, upload_too_large
+     * request_too_large, upload_too_large, storage_quota_exceeded
      */
     413: TaskProblem;
     /**
@@ -14634,7 +14721,7 @@ export type RestoreWorkspaceErrors = {
      */
     404: WorkspaceProblem;
     /**
-     * contract_mismatch, workspace_conflict, conflict
+     * contract_mismatch, workspace_conflict, conflict, workspace_limit_reached
      */
     409: WorkspaceProblem;
     /**
@@ -14658,6 +14745,60 @@ export type RestoreWorkspaceResponses = {
 };
 
 export type RestoreWorkspaceResponse = RestoreWorkspaceResponses[keyof RestoreWorkspaceResponses];
+
+export type GetWorkspaceStorageData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/storage';
+};
+
+export type GetWorkspaceStorageErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * workspace_resource_not_found
+     */
+    404: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type GetWorkspaceStorageError = GetWorkspaceStorageErrors[keyof GetWorkspaceStorageErrors];
+
+export type GetWorkspaceStorageResponses = {
+    200: WorkspaceStorage;
+};
+
+export type GetWorkspaceStorageResponse = GetWorkspaceStorageResponses[keyof GetWorkspaceStorageResponses];
 
 export type ListTasksData = {
     body?: never;
@@ -15373,7 +15514,7 @@ export type UploadTaskAttachmentsErrors = {
      */
     409: AttachmentProblem;
     /**
-     * request_too_large, upload_too_large
+     * request_too_large, upload_too_large, storage_quota_exceeded
      */
     413: AttachmentProblem;
     /**
@@ -15673,7 +15814,7 @@ export type CreateAttachmentCommentErrors = {
      */
     409: AttachmentProblem;
     /**
-     * request_too_large, upload_too_large
+     * request_too_large, upload_too_large, storage_quota_exceeded
      */
     413: AttachmentProblem;
     /**
@@ -15922,7 +16063,7 @@ export type UploadCommentAttachmentsErrors = {
      */
     409: AttachmentProblem;
     /**
-     * request_too_large, upload_too_large
+     * request_too_large, upload_too_large, storage_quota_exceeded
      */
     413: AttachmentProblem;
     /**
@@ -16697,7 +16838,7 @@ export type TransferOwnershipErrors = {
      */
     404: WorkspaceProblem;
     /**
-     * contract_mismatch, workspace_conflict, conflict
+     * contract_mismatch, workspace_conflict, conflict, workspace_limit_reached
      */
     409: WorkspaceProblem;
     /**
