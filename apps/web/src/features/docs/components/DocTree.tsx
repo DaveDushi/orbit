@@ -835,7 +835,7 @@ function SpacePages({ open, children }: { open: boolean; children: ReactNode }) 
         open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
       )}
     >
-      <div className={cn('flex min-h-0 flex-col gap-px overflow-clip', open && '[overflow-clip-margin:2px]')} inert={!open}>
+      <div className={cn('flex min-h-0 min-w-0 flex-col gap-px overflow-clip', open && '[overflow-clip-margin:2px]')} inert={!open}>
         {children}
       </div>
     </div>
