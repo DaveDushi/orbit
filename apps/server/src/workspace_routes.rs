@@ -2444,11 +2444,24 @@ async fn create_backup(
         .await
         .map_err(|error| {
             tracing::error!(%error, "backup failed");
+            // Only installation admins reach this, so the cause is shown to them.
+            let (code, detail) = match error {
+                orbit_platform::BackupError::ObjectStorage(error) => (
+                    "backup_upload_failed",
+                    format!(
+                        "The backup was saved on this server, but the upload to S3 failed: {error}"
+                    ),
+                ),
+                error => (
+                    "backup_failed",
+                    format!("Orbit could not create a verified backup: {error}"),
+                ),
+            };
             ApiError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "backup_failed",
+                code,
                 "Backup failed",
-                "Orbit could not create a verified backup.",
+                detail,
                 instance,
                 request_id.as_ref(),
             )
