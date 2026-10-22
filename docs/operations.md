@@ -28,6 +28,12 @@ Orbit reads its configuration only from environment variables that start with `O
 | `ORBIT_RATE_LIMIT_*` | see notes | Request limits and email caps. See [Request limits and email caps](#request-limits-and-email-caps). |
 | `ORBIT_APP_KEY` | none | **Required.** The key for saved secrets: base64 of 32 random bytes. |
 | `ORBIT_APP_KEY_FILE` | none | The path of a file that contains the app key, instead of `ORBIT_APP_KEY`. Do not set both. |
+| `ORBIT_CLOUD` | `false` | `true` turns on Stripe billing for Orbit Cloud and requires the three Stripe variables below. See [Billing (Orbit Cloud)](#billing-orbit-cloud). |
+| `ORBIT_STRIPE_SECRET_KEY` | none | The Stripe secret key (`sk_live_…`, or `sk_test_…` for test mode). Only with `ORBIT_CLOUD=true`. |
+| `ORBIT_STRIPE_SECRET_KEY_FILE` | none | The path of a file that contains the Stripe secret key, instead of `ORBIT_STRIPE_SECRET_KEY`. Do not set both. |
+| `ORBIT_STRIPE_WEBHOOK_SECRET` | none | The signing secret (`whsec_…`) of the Stripe webhook endpoint. Only with `ORBIT_CLOUD=true`. |
+| `ORBIT_STRIPE_WEBHOOK_SECRET_FILE` | none | The path of a file that contains the webhook signing secret, instead of `ORBIT_STRIPE_WEBHOOK_SECRET`. Do not set both. |
+| `ORBIT_STRIPE_PRICES` | none | The plans, in display order: `plan:price_id` pairs separated by commas, for example `team:price_1Abc,business:price_2Def`. Plan keys are 1 to 32 lowercase letters, digits or hyphens, and keys and prices must be unique. Only with `ORBIT_CLOUD=true`. |
 
 Create the app key once with `openssl rand -base64 32` and keep a copy outside the server. Orbit does not start without it. See [Email, registration and the app key](#email-registration-and-the-app-key).
 
@@ -178,6 +184,18 @@ The root user and the instance admins set two limits in **Admin → Settings →
 Both checks run in the serialized write transaction, so they hold for concurrent requests on every server. Orbit calculates storage use from the stored files (`attachment_blobs`), so existing data counts at once. A deleted file stops counting when Orbit removes it from storage: about a day after its last reference goes. Files of trashed tasks, pages and messages count until the trash is emptied or purged.
 
 5 GB is enough for a small team: it holds 200 files at the largest upload size (25 MB). With 10 workspaces per account, it limits one open-registration account to 50 GB. Raise the quota for customers who need more.
+
+## Billing (Orbit Cloud)
+
+With `ORBIT_CLOUD=true`, every workspace needs a Stripe subscription to be writable. Each workspace pays one flat price for its plan; the plan is the Stripe price in `ORBIT_STRIPE_PRICES`. There is no free plan. A self-hosted server (`ORBIT_CLOUD` not set) has no billing routes, no billing page and no read-only check.
+
+- **Access.** A workspace whose subscription is `active`, `trialing` or `past_due` (Stripe still retries the card) has full access. Without a subscription, or with any other status (`canceled`, `unpaid`, `paused`, `incomplete`…), the workspace is read-only: members can read, search and export everything, but writes fail with 402 `workspace_read_only`. Co-editing sockets still show documents and drop edits. Writes that stay open: subscribing (**Settings → Billing**), deleting or restoring the workspace, transferring ownership, removing members or leaving, revoking invitations, creating and revoking API tokens, disconnecting GitHub, cancelling a Notion import, and the reader's own read markers and list preferences. Inbound GitHub and Discord integrations keep writing.
+- **Subscribing.** The workspace owner chooses a plan in **Settings → Billing**. Orbit creates a Stripe customer for the workspace and sends the owner to Stripe Checkout. Afterwards the owner opens the Stripe Billing Portal from the same page to change the card, the plan, or cancel. Other members see the status only.
+- **Webhook.** In the Stripe Dashboard (Workbench → Webhooks), add a destination with the **Snapshot** payload for `https://<public origin>/api/v1/billing/stripe/webhook` and these events: `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`. Put its signing secret in `ORBIT_STRIPE_WEBHOOK_SECRET`. Orbit checks the signature (at most 5 minutes old), records each event once, and queues a `billing.stripe_sync` job that reads the subscription again from Stripe. Events that arrive late, twice or out of order therefore all end in Stripe's current state. A failed job retries with backoff for several hours; see **Admin → Background jobs**.
+- **Billing Portal.** Turn on the customer portal in the Stripe Dashboard (Settings → Billing → Customer portal) in each mode you use. Without a saved portal configuration, Stripe refuses to open the portal and Orbit answers 502 `stripe_unavailable`.
+- **Your own workspace.** There is no exemption setting. Give the operator's workspace a 100% off coupon (forever) in Stripe and subscribe it like any other workspace.
+- **Local testing.** Use test-mode keys (`sk_test_…`) and forward events with the Stripe CLI: `stripe listen --forward-to http://127.0.0.1:8080/api/v1/billing/stripe/webhook`. The CLI prints the signing secret (`whsec_…`) to put in `ORBIT_STRIPE_WEBHOOK_SECRET`. Pay with the test card `4242 4242 4242 4242`.
+- **API version.** Orbit sends `Stripe-Version: 2026-09-30.endive` with each request. Webhook events use the endpoint's own API version; Orbit only reads ids from them, so that version does not matter.
 
 ## Object storage (S3), backups and a lost server
 
