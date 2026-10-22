@@ -376,3 +376,129 @@ fn postgres_database_url_comes_from_environment_and_is_redacted() {
     assert_eq!(load([]).unwrap().data.database_url, None);
     assert!(load([("ORBIT_DATABASE_URL", "mysql://x")]).is_err());
 }
+
+const STRIPE: [(&str, &str); 3] = [
+    ("ORBIT_STRIPE_SECRET_KEY", "sk_test_123"),
+    ("ORBIT_STRIPE_WEBHOOK_SECRET", "whsec_123"),
+    (
+        "ORBIT_STRIPE_PRICES",
+        "team:price_team, business-2:price_business",
+    ),
+];
+
+#[test]
+fn billing_is_off_by_default() {
+    assert_eq!(load([]).unwrap().billing, None);
+    assert_eq!(load([("ORBIT_CLOUD", "false")]).unwrap().billing, None);
+}
+
+#[test]
+fn cloud_mode_reads_stripe_settings_in_order() {
+    let [secret, webhook, prices] = STRIPE;
+    let cfg = load([("ORBIT_CLOUD", "true"), secret, webhook, prices]).unwrap();
+
+    let billing = cfg.billing.unwrap();
+    assert_eq!(billing.secret_key.expose(), "sk_test_123");
+    assert_eq!(billing.webhook_secret.expose(), "whsec_123");
+    assert_eq!(
+        billing.plans,
+        [
+            orbit_platform::Plan {
+                key: "team".to_owned(),
+                price_id: "price_team".to_owned()
+            },
+            orbit_platform::Plan {
+                key: "business-2".to_owned(),
+                price_id: "price_business".to_owned()
+            },
+        ]
+    );
+    assert_eq!(billing.api_base.as_str(), "https://api.stripe.com/");
+    assert!(!format!("{billing:?}").contains("sk_test_123"));
+    assert!(!format!("{billing:?}").contains("whsec_123"));
+}
+
+#[test]
+fn stripe_secrets_can_come_from_files() {
+    let secret_path = fixture_path("stripe-secret");
+    let webhook_path = fixture_path("stripe-webhook");
+    fs::write(&secret_path, "sk_test_file\n").unwrap();
+    fs::write(&webhook_path, "whsec_file\n").unwrap();
+    let secret = secret_path.to_string_lossy().into_owned();
+    let webhook = webhook_path.to_string_lossy().into_owned();
+    let result = load([
+        ("ORBIT_CLOUD", "true"),
+        ("ORBIT_STRIPE_SECRET_KEY_FILE", secret.as_str()),
+        ("ORBIT_STRIPE_WEBHOOK_SECRET_FILE", webhook.as_str()),
+        STRIPE[2],
+    ]);
+    let both = load([
+        ("ORBIT_CLOUD", "true"),
+        ("ORBIT_STRIPE_SECRET_KEY_FILE", secret.as_str()),
+        STRIPE[0],
+        STRIPE[1],
+        STRIPE[2],
+    ]);
+    let _ = fs::remove_file(secret_path);
+    let _ = fs::remove_file(webhook_path);
+
+    let billing = result.unwrap().billing.unwrap();
+    assert_eq!(billing.secret_key.expose(), "sk_test_file");
+    assert_eq!(billing.webhook_secret.expose(), "whsec_file");
+    assert!(matches!(
+        both.unwrap_err(),
+        orbit_platform::ConfigError::AmbiguousSecret { ref key } if key == "ORBIT_STRIPE_SECRET_KEY"
+    ));
+}
+
+#[test]
+fn cloud_mode_requires_every_stripe_setting() {
+    let [secret, webhook, prices] = STRIPE;
+    for (missing, env) in [
+        ("ORBIT_STRIPE_SECRET_KEY", [webhook, prices]),
+        ("ORBIT_STRIPE_WEBHOOK_SECRET", [secret, prices]),
+        ("ORBIT_STRIPE_PRICES", [secret, webhook]),
+    ] {
+        let error = load([("ORBIT_CLOUD", "true"), env[0], env[1]])
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(missing), "{error}");
+    }
+}
+
+#[test]
+fn stripe_settings_without_cloud_mode_are_rejected() {
+    for setting in STRIPE {
+        let error = load([setting]).unwrap_err().to_string();
+        assert!(
+            error.contains(setting.0) && error.contains("ORBIT_CLOUD"),
+            "{error}"
+        );
+    }
+    let error = load([("ORBIT_CLOUD", "yes")]).unwrap_err().to_string();
+    assert!(error.contains("ORBIT_CLOUD"), "{error}");
+}
+
+#[test]
+fn stripe_prices_must_be_unique_lowercase_plan_keys() {
+    let [secret, webhook, _] = STRIPE;
+    for prices in [
+        "",
+        "team",
+        "Team:price_1",
+        "team:price_1,team:price_2",
+        "team:price_1,business:price_1",
+        "te am:price_1",
+        "team:",
+    ] {
+        let error = load([
+            ("ORBIT_CLOUD", "true"),
+            secret,
+            webhook,
+            ("ORBIT_STRIPE_PRICES", prices),
+        ])
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("ORBIT_STRIPE_PRICES"), "{prices:?}: {error}");
+    }
+}

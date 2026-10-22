@@ -28,6 +28,13 @@ const METRICS_LISTEN_ENV: &str = "ORBIT_METRICS_LISTEN";
 const RATE_LIMITS_ENV_PREFIX: &str = "ORBIT_RATE_LIMIT_";
 const APP_KEY_ENV: &str = "ORBIT_APP_KEY";
 const APP_KEY_FILE_ENV: &str = "ORBIT_APP_KEY_FILE";
+const CLOUD_ENV: &str = "ORBIT_CLOUD";
+const STRIPE_SECRET_KEY_ENV: &str = "ORBIT_STRIPE_SECRET_KEY";
+const STRIPE_SECRET_KEY_FILE_ENV: &str = "ORBIT_STRIPE_SECRET_KEY_FILE";
+const STRIPE_WEBHOOK_SECRET_ENV: &str = "ORBIT_STRIPE_WEBHOOK_SECRET";
+const STRIPE_WEBHOOK_SECRET_FILE_ENV: &str = "ORBIT_STRIPE_WEBHOOK_SECRET_FILE";
+const STRIPE_PRICES_ENV: &str = "ORBIT_STRIPE_PRICES";
+const STRIPE_API_BASE: &str = "https://api.stripe.com";
 /// Variables that scripts and tests use, not the server.
 const IGNORED_ENV_PREFIXES: [&str; 2] = ["ORBIT_DEV_", "ORBIT_TEST_"];
 
@@ -43,6 +50,8 @@ pub struct Config {
     /// The key for secrets saved in the database (`ORBIT_APP_KEY`). Required: [`Config::validate`]
     /// refuses a configuration without it.
     pub app_key: Option<AppKey>,
+    /// Stripe billing for Orbit Cloud (`ORBIT_CLOUD=true`); `None` on a self-hosted server.
+    pub billing: Option<BillingConfig>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -338,6 +347,185 @@ impl fmt::Debug for AppKey {
     }
 }
 
+/// Orbit Cloud billing: every workspace needs a Stripe subscription to write.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BillingConfig {
+    pub secret_key: Secret,
+    pub webhook_secret: Secret,
+    /// The plans offered, in `ORBIT_STRIPE_PRICES` order. Never empty, keys are unique.
+    pub plans: Vec<Plan>,
+    /// The Stripe API. Only tests change it.
+    pub api_base: url::Url,
+}
+
+impl BillingConfig {
+    #[must_use]
+    pub fn new(secret_key: Secret, webhook_secret: Secret, plans: Vec<Plan>) -> Self {
+        Self {
+            secret_key,
+            webhook_secret,
+            plans,
+            api_base: url::Url::parse(STRIPE_API_BASE).expect("the Stripe API base is a URL"),
+        }
+    }
+
+    #[must_use]
+    pub fn plan(&self, key: &str) -> Option<&Plan> {
+        self.plans.iter().find(|plan| plan.key == key)
+    }
+
+    #[must_use]
+    pub fn plan_for_price(&self, price_id: &str) -> Option<&Plan> {
+        self.plans.iter().find(|plan| plan.price_id == price_id)
+    }
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        let invalid = |detail: String| {
+            Err(ConfigError::InvalidSetting {
+                key: STRIPE_PRICES_ENV,
+                detail,
+            })
+        };
+        if self.plans.is_empty() {
+            return invalid("must name at least one plan".to_owned());
+        }
+        for (index, plan) in self.plans.iter().enumerate() {
+            if !valid_plan_key(&plan.key) {
+                return invalid(format!(
+                    "plan key {:?} must be 1 to 32 lowercase letters, digits or hyphens",
+                    plan.key
+                ));
+            }
+            if plan.price_id.is_empty() || plan.price_id.contains(char::is_whitespace) {
+                return invalid(format!("plan {:?} needs a Stripe price id", plan.key));
+            }
+            if self.plans[..index]
+                .iter()
+                .any(|other| other.key == plan.key)
+            {
+                return invalid(format!("plan {:?} is listed twice", plan.key));
+            }
+            if self.plans[..index]
+                .iter()
+                .any(|other| other.price_id == plan.price_id)
+            {
+                return invalid(format!("price {:?} is listed twice", plan.price_id));
+            }
+        }
+        if self.secret_key.expose().is_empty() {
+            return Err(ConfigError::InvalidSetting {
+                key: STRIPE_SECRET_KEY_ENV,
+                detail: "must not be empty".to_owned(),
+            });
+        }
+        if self.webhook_secret.expose().is_empty() {
+            return Err(ConfigError::InvalidSetting {
+                key: STRIPE_WEBHOOK_SECRET_ENV,
+                detail: "must not be empty".to_owned(),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// A plan a workspace can subscribe to: its key in Orbit and its Stripe price.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Plan {
+    pub key: String,
+    pub price_id: String,
+}
+
+fn valid_plan_key(key: &str) -> bool {
+    (1..=32).contains(&key.len())
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+/// A secret string (an API key) that `Debug` never prints.
+#[derive(Clone, Eq, PartialEq)]
+pub struct Secret(String);
+
+impl Secret {
+    #[must_use]
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    #[must_use]
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for Secret {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("[REDACTED]")
+    }
+}
+
+/// The billing variables, collected before they are checked together.
+#[derive(Default)]
+struct BillingEnvironment {
+    cloud: bool,
+    secret_key: Option<String>,
+    webhook_secret: Option<String>,
+    prices: Option<String>,
+}
+
+impl BillingEnvironment {
+    fn into_config(self) -> Result<Option<BillingConfig>, ConfigError> {
+        let missing = |key: &'static str| ConfigError::InvalidSetting {
+            key,
+            detail: "is required when ORBIT_CLOUD is true".to_owned(),
+        };
+        if !self.cloud {
+            let set = [
+                (STRIPE_SECRET_KEY_ENV, self.secret_key.is_some()),
+                (STRIPE_WEBHOOK_SECRET_ENV, self.webhook_secret.is_some()),
+                (STRIPE_PRICES_ENV, self.prices.is_some()),
+            ];
+            return match set.into_iter().find(|(_, set)| *set) {
+                Some((key, _)) => Err(ConfigError::InvalidSetting {
+                    key,
+                    detail: "is only used with ORBIT_CLOUD=true".to_owned(),
+                }),
+                None => Ok(None),
+            };
+        }
+        let secret_key = self
+            .secret_key
+            .ok_or_else(|| missing(STRIPE_SECRET_KEY_ENV))?;
+        let webhook_secret = self
+            .webhook_secret
+            .ok_or_else(|| missing(STRIPE_WEBHOOK_SECRET_ENV))?;
+        let prices = self.prices.ok_or_else(|| missing(STRIPE_PRICES_ENV))?;
+        let plans = prices
+            .split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+            .map(|entry| {
+                let (key, price_id) =
+                    entry
+                        .split_once(':')
+                        .ok_or_else(|| ConfigError::InvalidSetting {
+                            key: STRIPE_PRICES_ENV,
+                            detail: format!("{entry:?} must be plan:price_id"),
+                        })?;
+                Ok(Plan {
+                    key: key.trim().to_owned(),
+                    price_id: price_id.trim().to_owned(),
+                })
+            })
+            .collect::<Result<Vec<_>, ConfigError>>()?;
+        Ok(Some(BillingConfig::new(
+            Secret::new(secret_key.trim()),
+            Secret::new(webhook_secret.trim()),
+            plans,
+        )))
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("invalid value for {key}: {value}")]
@@ -471,7 +659,11 @@ impl Config {
                 detail: "the delay cannot exceed 300 seconds".to_owned(),
             });
         }
-        self.rate_limits.validate()
+        self.rate_limits.validate()?;
+        match &self.billing {
+            Some(billing) => billing.validate(),
+            None => Ok(()),
+        }
     }
 }
 
@@ -479,11 +671,18 @@ fn apply_environment(
     config: &mut Config,
     environment: &BTreeMap<String, String>,
 ) -> Result<(), ConfigError> {
-    if environment.contains_key(APP_KEY_ENV) && environment.contains_key(APP_KEY_FILE_ENV) {
-        return Err(ConfigError::AmbiguousSecret {
-            key: APP_KEY_ENV.to_owned(),
-        });
+    for key in [
+        APP_KEY_ENV,
+        STRIPE_SECRET_KEY_ENV,
+        STRIPE_WEBHOOK_SECRET_ENV,
+    ] {
+        if environment.contains_key(key) && environment.contains_key(&format!("{key}_FILE")) {
+            return Err(ConfigError::AmbiguousSecret {
+                key: key.to_owned(),
+            });
+        }
     }
+    let mut billing = BillingEnvironment::default();
 
     for (key, value) in environment {
         if key == ENVIRONMENT_ENV {
@@ -531,6 +730,18 @@ fn apply_environment(
             config.app_key = Some(parse_app_key(value)?);
         } else if key == APP_KEY_FILE_ENV {
             config.app_key = Some(parse_app_key(&read_secret_file(key, Path::new(value))?)?);
+        } else if key == CLOUD_ENV {
+            billing.cloud = parse_environment(key, value)?;
+        } else if key == STRIPE_SECRET_KEY_ENV {
+            billing.secret_key = Some(value.clone());
+        } else if key == STRIPE_SECRET_KEY_FILE_ENV {
+            billing.secret_key = Some(read_secret_file(key, Path::new(value))?);
+        } else if key == STRIPE_WEBHOOK_SECRET_ENV {
+            billing.webhook_secret = Some(value.clone());
+        } else if key == STRIPE_WEBHOOK_SECRET_FILE_ENV {
+            billing.webhook_secret = Some(read_secret_file(key, Path::new(value))?);
+        } else if key == STRIPE_PRICES_ENV {
+            billing.prices = Some(value.clone());
         } else if key.starts_with("ORBIT_")
             && !IGNORED_ENV_PREFIXES
                 .iter()
@@ -539,6 +750,7 @@ fn apply_environment(
             return Err(ConfigError::UnknownEnvironment(key.clone()));
         }
     }
+    config.billing = billing.into_config()?;
     Ok(())
 }
 

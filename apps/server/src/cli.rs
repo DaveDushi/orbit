@@ -1185,6 +1185,23 @@ pub fn redacted_config(config: &Config) -> String {
     if config.app_key.is_some() {
         lines.push("ORBIT_APP_KEY=[REDACTED]".to_owned());
     }
+    match &config.billing {
+        Some(billing) => {
+            let prices = billing
+                .plans
+                .iter()
+                .map(|plan| format!("{}:{}", plan.key, plan.price_id))
+                .collect::<Vec<_>>()
+                .join(",");
+            lines.extend([
+                "ORBIT_CLOUD=true".to_owned(),
+                "ORBIT_STRIPE_SECRET_KEY=[REDACTED]".to_owned(),
+                "ORBIT_STRIPE_WEBHOOK_SECRET=[REDACTED]".to_owned(),
+                format!("ORBIT_STRIPE_PRICES={prices}"),
+            ]);
+        }
+        None => lines.push("ORBIT_CLOUD=false".to_owned()),
+    }
     lines.join("\n")
 }
 
@@ -1607,6 +1624,28 @@ mod tests {
         assert!(shown.contains("# ORBIT_METRICS_LISTEN is not set"));
         assert!(shown.contains("ORBIT_APP_KEY=[REDACTED]"));
         assert!(!shown.contains(APP_KEY));
+    }
+
+    #[test]
+    fn config_output_redacts_stripe_secrets() {
+        let config = Config::from_environment(environment(&[
+            ("ORBIT_ENV", "development"),
+            ("ORBIT_APP_KEY", APP_KEY),
+            ("ORBIT_CLOUD", "true"),
+            ("ORBIT_STRIPE_SECRET_KEY", "sk_test_hidden"),
+            ("ORBIT_STRIPE_WEBHOOK_SECRET", "whsec_hidden"),
+            ("ORBIT_STRIPE_PRICES", "team:price_1,business:price_2"),
+        ]))
+        .unwrap();
+
+        let shown = redacted_config(&config);
+
+        assert!(shown.contains("ORBIT_CLOUD=true"), "{shown}");
+        assert!(shown.contains("ORBIT_STRIPE_SECRET_KEY=[REDACTED]"));
+        assert!(shown.contains("ORBIT_STRIPE_WEBHOOK_SECRET=[REDACTED]"));
+        assert!(shown.contains("ORBIT_STRIPE_PRICES=team:price_1,business:price_2"));
+        assert!(!shown.contains("hidden"), "{shown}");
+        assert!(!format!("{config:?}").contains("hidden"));
     }
 
     #[test]
