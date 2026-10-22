@@ -67,6 +67,8 @@ fn classify(method: &Method, path: &str) -> Check {
         return Check::Pass;
     };
     let (workspace, rest) = rest.split_once('/').unwrap_or((rest, ""));
+    // Axum's `Path` decodes `%30…` into the same id, so the guard has to see the decoded one.
+    let workspace = percent_encoding::percent_decode_str(workspace).decode_utf8_lossy();
     let Ok(workspace_id) = workspace.parse::<Id>() else {
         return Check::Pass;
     };

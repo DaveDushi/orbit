@@ -410,6 +410,21 @@ async fn a_workspace_without_a_subscription_is_read_only_until_it_subscribes() {
         .await;
     assert_ne!(status, 402);
 
+    // A percent-encoded workspace id reaches the same handler, so the guard must decode it too.
+    let encoded: String = server
+        .workspace_id
+        .bytes()
+        .map(|byte| format!("%{byte:02X}"))
+        .collect();
+    let (status, problem) = server
+        .call(
+            "PATCH",
+            &format!("/api/v1/workspaces/{encoded}"),
+            Some(json!({"name": "Renamed"})),
+        )
+        .await;
+    assert_eq!(status, 402, "{problem}");
+
     let (status, options) = server.call("GET", "/api/v1/auth/options", None).await;
     assert_eq!(status, 200);
     assert_eq!(options["billing_enabled"], true);

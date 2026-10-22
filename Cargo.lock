@@ -2251,6 +2251,7 @@ dependencies = [
  "orbit-platform",
  "oxide-auth",
  "p256",
+ "percent-encoding",
  "pulldown-cmark",
  "rand_core 0.6.4",
  "reqwest",

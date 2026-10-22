@@ -24,6 +24,7 @@ oxide-auth = "=0.6.1"
 url = "2"
 orbit-domain = { path = "../../crates/orbit" }
 orbit-platform = { path = "../../crates/platform" }
+percent-encoding = "2"
 rmcp = { version = "=3.5.0", default-features = false, features = ["server", "transport-streamable-http-server"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
