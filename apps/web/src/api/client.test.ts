@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { CONTRACT_ID, createApiClient } from './client'
-import { login, me, setupComplete, setupStatus } from '@/api/generated/sdk.gen'
+import { createTask, login, me, setupComplete, setupStatus } from '@/api/generated/sdk.gen'
 
 test('API client sends cookies and the contract identifier', async () => {
   let captured: Request | undefined
@@ -83,4 +83,29 @@ test('public credential and setup-token failures do not expire a session', async
     await expect(request(client)).rejects.toMatchObject({ code })
     expect(unauthorized).toBe(0)
   }
+})
+
+test('API client reports writes refused by a read-only workspace with the server detail', async () => {
+  const refused: string[] = []
+  const client = createApiClient({
+    fetch: async () =>
+      Response.json(
+        {
+          type: 'https://docs.orbit.dev/problems/workspace_read_only',
+          title: 'Workspace is read-only',
+          status: 402,
+          code: 'workspace_read_only',
+          detail: 'This workspace is read-only because it has no active subscription.',
+          instance: '/api/v1/workspaces/w1/tasks',
+          request_id: 'request-two',
+        },
+        { status: 402, headers: { 'content-type': 'application/problem+json' } },
+      ),
+    onReadOnly: (detail) => refused.push(detail),
+  })
+
+  await expect(
+    createTask({ client, path: { workspace_id: 'w1' }, body: { project_id: 'p1', status_id: 's1', title: 'New' }, throwOnError: true }),
+  ).rejects.toMatchObject({ status: 402, code: 'workspace_read_only' })
+  expect(refused).toEqual(['This workspace is read-only because it has no active subscription.'])
 })

@@ -1,11 +1,12 @@
 import { Navigate, NavLink, Outlet } from 'react-router'
-import { ArchiveBox, ClipboardText, CloudConnection, Cpu, SecurityUser, Driver, Key, Keyboard, Link2, Lock, Notification as Bell, Setting2 as Settings, ShieldTick as ShieldCheck, SmileCircle, Sticker, Danger as TriangleAlert, Trash as Trash2, User, People as Users } from 'reicon-react'
+import { ArchiveBox, Card, ClipboardText, CloudConnection, Cpu, SecurityUser, Driver, Key, Keyboard, Link2, Lock, Notification as Bell, Setting2 as Settings, ShieldTick as ShieldCheck, SmileCircle, Sticker, Danger as TriangleAlert, Trash as Trash2, User, People as Users } from 'reicon-react'
 import { cn } from 'cn'
 import { buttonVariants } from '@/components/ui/button'
 import { Pane, PaneHeader, PaneTitle } from '@/components/common/Pane'
 import type { Permission } from '@/api/generated/types.gen'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import { useIsInstallationAdmin } from '@/features/workspaces/permissions'
+import { useBillingEnabled } from '@/features/workspaces/billing'
 
 interface NavItem {
   to: string
@@ -14,6 +15,8 @@ interface NavItem {
   end?: boolean
   /** Shown only to roles that hold this permission. */
   permission?: Permission
+  /** Shown only in Orbit Cloud (billing on). */
+  cloud?: boolean
 }
 
 const SECTIONS: { label: string; items: NavItem[] }[] = [
@@ -36,7 +39,10 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
   },
   {
     label: 'Workspace',
-    items: [{ to: '/settings/danger-zone', label: 'Danger zone', icon: TriangleAlert, permission: 'workspace.delete' }],
+    items: [
+      { to: '/settings/billing', label: 'Billing', icon: Card, cloud: true },
+      { to: '/settings/danger-zone', label: 'Danger zone', icon: TriangleAlert, permission: 'workspace.delete' },
+    ],
   },
 ]
 
@@ -73,8 +79,12 @@ const ADMIN_SECTIONS: { label: string; items: NavItem[] }[] = [
 /** The workspace's settings. */
 export function SettingsLayout() {
   const { workspace } = useWorkspace()
+  const cloud = useBillingEnabled()
   const sections = SECTIONS
-    .map((section) => ({ ...section, items: section.items.filter((item) => !item.permission || workspace.permissions.includes(item.permission)) }))
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => (!item.permission || workspace.permissions.includes(item.permission)) && (!item.cloud || cloud)),
+    }))
     .filter((section) => section.items.length > 0)
   return <SettingsShell title="Settings" icon={Settings} sections={sections} />
 }

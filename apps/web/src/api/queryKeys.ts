@@ -29,6 +29,8 @@ export const queryKeys = {
   memberProfile: (workspaceId: string, userId: string) => [...workspace(workspaceId), 'profiles', userId] as const,
   invitations: (workspaceId: string) => [...workspace(workspaceId), 'invitations'] as const,
   apiTokens: (workspaceId: string) => [...workspace(workspaceId), 'api-tokens'] as const,
+  /** Orbit Cloud: the workspace's subscription and access. */
+  billing: (workspaceId: string) => [...workspace(workspaceId), 'billing'] as const,
   /** Bytes of files the workspace stores, and its quota. */
   workspaceStorage: (workspaceId: string) => [...workspace(workspaceId), 'storage'] as const,
   projects: (workspaceId: string) => [...workspace(workspaceId), 'projects'] as const,

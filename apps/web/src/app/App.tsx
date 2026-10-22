@@ -24,6 +24,7 @@ import { GeneralPage } from '@/features/settings/pages/GeneralPage'
 import { GithubPage } from '@/features/settings/pages/GithubPage'
 import { EmojiPage } from '@/features/settings/pages/EmojiPage'
 import { DangerZonePage } from '@/features/settings/pages/DangerZonePage'
+import { BillingPage } from '@/features/settings/pages/BillingPage'
 import { MembersPage } from '@/features/settings/pages/MembersPage'
 import { SecurityPage } from '@/features/settings/pages/SecurityPage'
 import { SessionsPage } from '@/features/settings/pages/SessionsPage'
@@ -130,6 +131,7 @@ export default function App() {
                 <Route path="emoji" element={<EmojiPage />} />
                 <Route path="stickers" element={<StickersPage />} />
                 <Route path="github" element={<GithubPage />} />
+                <Route path="billing" element={<BillingPage />} />
                 <Route path="danger-zone" element={<DangerZonePage />} />
                 <Route path="members" element={<MembersPage />} />
                 <Route path="invitations" element={<Navigate to="/settings/members" replace />} />
