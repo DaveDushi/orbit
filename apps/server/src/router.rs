@@ -88,10 +88,12 @@ pub fn production_router(
         Some(billing) => crate::billing::guard::layer(
             router.merge(crate::billing::router(
                 billing.clone(),
-                identity,
+                std::sync::Arc::clone(&identity),
                 cookie_mode,
             )),
             billing,
+            identity,
+            cookie_mode,
         ),
         None => router,
     };

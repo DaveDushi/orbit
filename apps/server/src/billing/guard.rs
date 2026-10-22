@@ -1,18 +1,24 @@
-//! The read-only guard: in Orbit Cloud, a write to `/api/v1/workspaces/{id}[/…]` of a workspace
-//! without a subscription that grants access answers 402 `workspace_read_only`. Reads stay open,
-//! and so do the writes in [`ALLOWED_WRITES`]. Co-editing sockets open read-only instead
-//! ([`ReadOnlyWorkspace`]).
+//! The read-only guard: in Orbit Cloud, a member's write to `/api/v1/workspaces/{id}[/…]` of a
+//! workspace without a subscription that grants access answers 402 `workspace_read_only`. Reads
+//! stay open, and so do the writes in [`ALLOWED_WRITES`]. Co-editing sockets open read-only
+//! instead ([`ReadOnlyWorkspace`]). Anyone else's write passes to the handler, which refuses it as
+//! on any workspace, so a stranger cannot tell a read-only workspace from a paid one.
+
+use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{Request, State};
-use axum::http::{Method, StatusCode, header};
+use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::Response;
 use orbit_platform::{Id, Problem, RequestId};
 
 use super::{Billing, WorkspaceAccess};
+use crate::auth_routes::{CookieMode, request_session};
 use crate::repositories::billing as repository;
+use crate::repositories::identity::IdentityRepository;
+use crate::repositories::membership;
 
 const WORKSPACES: &str = "/api/v1/workspaces/";
 
@@ -102,18 +108,36 @@ fn matches_pattern(pattern: &str, path: &str) -> bool {
     }) && segments.next().is_none()
 }
 
-/// Adds the guard to `router` (Orbit Cloud only; a self-hosted router never has it).
-pub fn layer(router: Router, billing: Billing) -> Router {
-    router.layer(middleware::from_fn_with_state(billing, guard))
+#[derive(Clone)]
+struct GuardState {
+    billing: Billing,
+    identity: Arc<IdentityRepository>,
+    cookie_mode: CookieMode,
 }
 
-async fn guard(State(billing): State<Billing>, mut request: Request, next: Next) -> Response {
+/// Adds the guard to `router` (Orbit Cloud only; a self-hosted router never has it).
+pub fn layer(
+    router: Router,
+    billing: Billing,
+    identity: Arc<IdentityRepository>,
+    cookie_mode: CookieMode,
+) -> Router {
+    let state = GuardState {
+        billing,
+        identity,
+        cookie_mode,
+    };
+    router.layer(middleware::from_fn_with_state(state, guard))
+}
+
+async fn guard(State(state): State<GuardState>, mut request: Request, next: Next) -> Response {
     let check = classify(request.method(), request.uri().path());
     let workspace_id = match check {
         Check::Pass => return next.run(request).await,
         Check::Write(id) | Check::Collab(id) => id,
     };
-    let access = match repository::workspace_access(billing.database(), workspace_id).await {
+    let database = state.billing.database();
+    let access = match repository::workspace_access(database, workspace_id).await {
         Ok(access) => access,
         Err(error) => {
             tracing::warn!(%error, "workspace access lookup failed");
@@ -121,13 +145,42 @@ async fn guard(State(billing): State<Billing>, mut request: Request, next: Next)
         }
     };
     match (check, access) {
-        (_, WorkspaceAccess::Full) => next.run(request).await,
+        (Check::Pass, _) | (_, WorkspaceAccess::Full) => next.run(request).await,
         (Check::Collab(_), WorkspaceAccess::ReadOnly) => {
+            // The socket route authenticates the caller itself; a stranger gets its 401/404.
             request.extensions_mut().insert(ReadOnlyWorkspace);
             next.run(request).await
         }
-        _ => problem(&request, StatusCode::PAYMENT_REQUIRED, read_only()),
+        (Check::Write(_), WorkspaceAccess::ReadOnly) => {
+            match caller_is_member(&state, workspace_id, request.headers()).await {
+                Ok(true) => problem(&request, StatusCode::PAYMENT_REQUIRED, read_only()),
+                Ok(false) => next.run(request).await,
+                Err(error) => {
+                    tracing::warn!(%error, "workspace membership lookup failed");
+                    problem(&request, StatusCode::SERVICE_UNAVAILABLE, unavailable())
+                }
+            }
+        }
     }
+}
+
+/// Whether the request carries the session of a member of the workspace, as the handlers decide
+/// it (session cookie, then membership of a live workspace). Workspace routes take no API tokens.
+async fn caller_is_member(
+    state: &GuardState,
+    workspace_id: Id,
+    headers: &HeaderMap,
+) -> Result<bool, sqlx::Error> {
+    let Some(session) = request_session(&state.identity, state.cookie_mode, headers).await else {
+        return Ok(false);
+    };
+    membership::actor(
+        state.billing.database().pool(),
+        workspace_id,
+        session.user.id,
+    )
+    .await
+    .map(|actor| actor.is_some())
 }
 
 struct Message {

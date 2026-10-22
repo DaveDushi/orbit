@@ -244,8 +244,10 @@ impl Server {
         let mut request = self
             .http
             .request(method.parse().unwrap(), format!("{}{path}", self.base))
-            .header("origin", &self.base)
-            .header("cookie", format!("{COOKIE}={session}"));
+            .header("origin", &self.base);
+        if !session.is_empty() {
+            request = request.header("cookie", format!("{COOKIE}={session}"));
+        }
         if let Some(body) = body {
             request = request.json(&body);
         }
@@ -263,6 +265,10 @@ impl Server {
     }
 
     async fn create_task(&self, title: &str) -> (u16, Value) {
+        self.create_task_as(&self.session, title).await
+    }
+
+    async fn create_task_as(&self, session: &str, title: &str) -> (u16, Value) {
         let project: String = sqlx::query_scalar("SELECT id FROM projects WHERE workspace_id = $1")
             .bind(&self.workspace_id)
             .fetch_one(self.database.pool())
@@ -275,7 +281,8 @@ impl Server {
         .fetch_one(self.database.pool())
         .await
         .unwrap();
-        self.call(
+        self.call_as(
+            session,
             "POST",
             &self.workspace("/tasks"),
             Some(json!({"project_id": project, "status_id": status, "title": title})),
@@ -303,6 +310,19 @@ impl Server {
             .as_u16()
     }
 
+    async fn set_status(&self, status: &str) {
+        sqlx::query(
+            "INSERT INTO workspace_subscriptions (workspace_id, stripe_customer_id, status, updated_at) \
+             VALUES ($1, 'cus_test', $2, 0) \
+             ON CONFLICT (workspace_id) DO UPDATE SET status = excluded.status",
+        )
+        .bind(&self.workspace_id)
+        .bind(status)
+        .execute(self.database.pool())
+        .await
+        .unwrap();
+    }
+
     async fn sync_jobs(&self) -> i64 {
         sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE kind = 'billing.stripe_sync'")
             .fetch_one(self.database.pool())
@@ -328,19 +348,27 @@ impl Server {
     }
 
     async fn add_member(&self) -> String {
+        self.add_user("member@example.com", true).await
+    }
+
+    /// A signed-in user, a member of the workspace when `member` is set; returns the session.
+    async fn add_user(&self, email: &str, member: bool) -> String {
         let id = Id::new_v7();
         let now = TimestampMillis::now();
         sqlx::query(
             "INSERT INTO users (id, email, normalized_email, display_name, password_hash, created_at, updated_at) \
-             VALUES ($1, 'member@example.com', 'member@example.com', 'Member', 'unused', $2, $3)",
+             VALUES ($1, $2, $3, 'Member', 'unused', $4, $5)",
         )
         .bind(id.to_string())
+        .bind(email)
+        .bind(email)
         .bind(now.as_millis())
         .bind(now.as_millis())
         .execute(self.database.pool())
         .await
         .unwrap();
-        sqlx::query(
+        if member {
+            sqlx::query(
             "INSERT INTO memberships (id, workspace_id, user_id, role, version, created_at, updated_at) \
              VALUES ($1, $2, $3, 'member', 0, $4, $5)",
         )
@@ -352,11 +380,12 @@ impl Server {
         .execute(self.database.pool())
         .await
         .unwrap();
+        }
         self.identity
             .create_session(
                 &AuthenticatedUser {
                     id,
-                    email: "member@example.com".to_owned(),
+                    email: email.to_owned(),
                     display_name: "Member".to_owned(),
                 },
                 now,
@@ -713,6 +742,44 @@ async fn webhooks_without_a_valid_signature_are_rejected() {
     }
     assert_eq!(server.sync_jobs().await, 0);
     server.stop().await;
+}
+
+#[tokio::test]
+async fn only_members_learn_that_a_workspace_is_read_only() {
+    let stripe = FakeStripe::default();
+    let server = Server::start(Some(&stripe.start().await)).await;
+    let stranger = server.add_user("stranger@example.com", false).await;
+    let member = server.add_member().await;
+    server.set_status("active").await;
+    let [paid_anonymous, paid_stranger, paid_member] =
+        write_answers(&server, &stranger, &member).await;
+    server.set_status("canceled").await;
+    let [anonymous, stranger_answer, member_answer] =
+        write_answers(&server, &stranger, &member).await;
+
+    assert_eq!(paid_anonymous.0, 401);
+    assert_eq!(
+        anonymous, paid_anonymous,
+        "an anonymous write gets the same answer either way"
+    );
+    assert_eq!(paid_stranger.0, 404);
+    assert_eq!(
+        stranger_answer, paid_stranger,
+        "a non-member gets the non-member answer either way"
+    );
+    assert_eq!(paid_member.0, 201);
+    assert_eq!(member_answer, (402, json!("workspace_read_only")));
+    server.stop().await;
+}
+
+/// Status and problem code of a task created by an anonymous caller, by `stranger` and by `member`.
+async fn write_answers(server: &Server, stranger: &str, member: &str) -> [(u16, Value); 3] {
+    let mut answers = Vec::new();
+    for session in ["", stranger, member] {
+        let (status, problem) = server.create_task_as(session, "Task").await;
+        answers.push((status, problem["code"].clone()));
+    }
+    answers.try_into().unwrap()
 }
 
 #[tokio::test]
