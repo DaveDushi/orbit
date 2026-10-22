@@ -122,6 +122,10 @@ export type AuditEvent = {
 
 export type AuthOptions = {
     /**
+     * Orbit Cloud: workspaces need a subscription (Settings → Billing) to be writable.
+     */
+    billing_enabled: boolean;
+    /**
      * A mail server is saved: password reset links and invitations go out by email.
      */
     email_enabled: boolean;
@@ -225,6 +229,49 @@ export type BackupSummary = {
 };
 
 export type BackupSummaryKind = 'snapshot' | 'pre_migration';
+
+export type BillingCheckoutBody = {
+    /**
+     * One of `BillingView.plans`.
+     */
+    plan: string;
+};
+
+/**
+ * A Stripe page to send the browser to.
+ */
+export type BillingRedirect = {
+    url: string;
+};
+
+/**
+ * The workspace's subscription and what the caller may do about it.
+ */
+export type BillingView = {
+    access: WorkspaceAccess;
+    /**
+     * The caller may start a checkout and open the Billing Portal (the owner).
+     */
+    can_manage: boolean;
+    /**
+     * The subscription ends at `current_period_end` instead of renewing.
+     */
+    cancel_at_period_end: boolean;
+    current_period_end?: string | null;
+    /**
+     * The workspace has a Stripe customer, so the Billing Portal can open.
+     */
+    has_customer: boolean;
+    /**
+     * The subscribed plan's key, when its Stripe price is one of the configured plans.
+     */
+    plan?: string | null;
+    /**
+     * The plan keys a workspace can subscribe to, in order.
+     */
+    plans: Array<string>;
+    status?: null | SubscriptionStatus;
+};
 
 export type BulkBody = {
     updates: Array<BulkItem>;
@@ -2378,7 +2425,7 @@ export type PasswordConfirmationBody = {
  * A workspace capability that depends on the member's role. Actions open to
  * every member (tasks, projects, attachments, docs) are not listed here.
  */
-export type Permission = 'workspace.update' | 'workspace.delete' | 'workspace.transfer' | 'members.manage' | 'audit.view' | 'api_tokens.manage' | 'integrations.manage' | 'teamspaces.delete' | 'pages.purge' | 'views.manage_shared' | 'comments.moderate' | 'chat.manage';
+export type Permission = 'workspace.update' | 'workspace.delete' | 'workspace.transfer' | 'members.manage' | 'audit.view' | 'api_tokens.manage' | 'integrations.manage' | 'teamspaces.delete' | 'pages.purge' | 'views.manage_shared' | 'comments.moderate' | 'chat.manage' | 'billing.manage';
 
 /**
  * The presence a user sets for themselves. A user without a connection is offline whatever
@@ -2930,6 +2977,11 @@ export type StorageView = {
  */
 export type SubIssuesDisplay = 'nested' | 'flat' | 'hidden';
 
+/**
+ * A Stripe subscription status (`subscription.status`).
+ */
+export type SubscriptionStatus = 'incomplete' | 'incomplete_expired' | 'trialing' | 'active' | 'past_due' | 'canceled' | 'unpaid' | 'paused';
+
 export type SuspensionBody = {
     suspended: boolean;
 };
@@ -3381,6 +3433,11 @@ export type ViewUpdateBody = {
 };
 
 export type Visibility = 'personal' | 'workspace';
+
+/**
+ * What members of a workspace may do.
+ */
+export type WorkspaceAccess = 'full' | 'read_only';
 
 export type WorkspaceConflict = {
     current_version: number;
@@ -6264,6 +6321,55 @@ export type SetupTotpResponses = {
 
 export type SetupTotpResponse = SetupTotpResponses[keyof SetupTotpResponses];
 
+export type StripeWebhookData = {
+    body: unknown;
+    headers: {
+        /**
+         * Stripe webhook signature
+         */
+        'Stripe-Signature': string;
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/billing/stripe/webhook';
+};
+
+export type StripeWebhookErrors = {
+    /**
+     * invalid_proxy_headers, invalid_stripe_signature, invalid_stripe_event
+     */
+    400: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type StripeWebhookError = StripeWebhookErrors[keyof StripeWebhookErrors];
+
+export type StripeWebhookResponses = {
+    /**
+     * Event accepted or ignored
+     */
+    200: unknown;
+};
+
 export type CreateDiscordEventData = {
     body: DiscordEventBody;
     headers?: {
@@ -7650,6 +7756,188 @@ export type ListAuditResponses = {
 };
 
 export type ListAuditResponse = ListAuditResponses[keyof ListAuditResponses];
+
+export type GetBillingData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/billing';
+};
+
+export type GetBillingErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * billing_workspace_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type GetBillingError = GetBillingErrors[keyof GetBillingErrors];
+
+export type GetBillingResponses = {
+    200: BillingView;
+};
+
+export type GetBillingResponse = GetBillingResponses[keyof GetBillingResponses];
+
+export type BillingCheckoutData = {
+    body: BillingCheckoutBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/billing/checkout';
+};
+
+export type BillingCheckoutErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden, billing_owner_required
+     */
+    403: TaskProblem;
+    /**
+     * billing_workspace_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch, subscription_active
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * unknown_plan
+     */
+    422: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * stripe_unavailable
+     */
+    502: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type BillingCheckoutError = BillingCheckoutErrors[keyof BillingCheckoutErrors];
+
+export type BillingCheckoutResponses = {
+    200: BillingRedirect;
+};
+
+export type BillingCheckoutResponse = BillingCheckoutResponses[keyof BillingCheckoutResponses];
+
+export type BillingPortalData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/billing/portal';
+};
+
+export type BillingPortalErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden, billing_owner_required
+     */
+    403: TaskProblem;
+    /**
+     * billing_workspace_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch, billing_customer_missing
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * stripe_unavailable
+     */
+    502: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type BillingPortalError = BillingPortalErrors[keyof BillingPortalErrors];
+
+export type BillingPortalResponses = {
+    200: BillingRedirect;
+};
+
+export type BillingPortalResponse = BillingPortalResponses[keyof BillingPortalResponses];
 
 export type ListChatCategoriesData = {
     body?: never;

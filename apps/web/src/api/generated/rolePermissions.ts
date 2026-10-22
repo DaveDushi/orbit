@@ -28,6 +28,7 @@ export const ROLE_PERMISSIONS: Record<WorkspaceRole, Permission[]> = {
     "pages.purge",
     "views.manage_shared",
     "comments.moderate",
-    "chat.manage"
+    "chat.manage",
+    "billing.manage"
   ]
 }
