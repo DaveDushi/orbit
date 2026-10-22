@@ -25,6 +25,8 @@ use crate::view_routes::view_router;
 use crate::workspace_routes::{WorkspaceState, workspace_router};
 
 pub struct ApiRoutes {
+    /// Orbit Cloud billing: its routes and the read-only guard. `None` on a self-hosted server.
+    pub billing: Option<crate::billing::Billing>,
     pub mcp: Router,
     pub oauth: Router,
     pub auth: AuthState,
@@ -55,7 +57,9 @@ pub fn production_router(
     let database = api.auth.database().clone();
     let realtime = crate::realtime::router(api.tasks.clone());
     let views = view_router(api.tasks.clone());
-    auth_router(api.auth)
+    let identity = std::sync::Arc::clone(&api.tasks.identity);
+    let cookie_mode = api.tasks.cookie_mode;
+    let router = auth_router(api.auth)
         .merge(api.mcp)
         .merge(api.oauth)
         .merge(realtime)
@@ -79,21 +83,32 @@ pub fn production_router(
                 .with_state(health),
         )
         .merge(assets.router())
-        .method_not_allowed_fallback(method_not_allowed)
-        .layer({
-            let layer = HttpPlatformLayer::new(origin_policy)
-                .with_contract_id(crate::openapi::CONTRACT_ID)
-                .with_limits(limits)
-                .with_rate_limits(rate_limits)
-                .with_session_cookie(session_cookie)
-                .with_shared_rate_limits(database)
-                .with_csp_script_hash(csp_script_hash);
-            if require_secure_transport {
-                layer.require_secure_transport()
-            } else {
-                layer
-            }
-        })
+        .method_not_allowed_fallback(method_not_allowed);
+    let router = match api.billing {
+        Some(billing) => crate::billing::guard::layer(
+            router.merge(crate::billing::router(
+                billing.clone(),
+                identity,
+                cookie_mode,
+            )),
+            billing,
+        ),
+        None => router,
+    };
+    router.layer({
+        let layer = HttpPlatformLayer::new(origin_policy)
+            .with_contract_id(crate::openapi::CONTRACT_ID)
+            .with_limits(limits)
+            .with_rate_limits(rate_limits)
+            .with_session_cookie(session_cookie)
+            .with_shared_rate_limits(database)
+            .with_csp_script_hash(csp_script_hash);
+        if require_secure_transport {
+            layer.require_secure_transport()
+        } else {
+            layer
+        }
+    })
 }
 
 async fn method_not_allowed(request: Request) -> Response<Body> {

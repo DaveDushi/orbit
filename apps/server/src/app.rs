@@ -247,12 +247,16 @@ impl App {
             },
         );
 
+        let billing = config.billing.clone().map(|billing| {
+            crate::billing::Billing::new(billing, database.clone(), &config.http.public_origin)
+        });
         let production_services = initialize_production_services(
             &database,
             backups.clone(),
             Arc::clone(&workspaces),
             integrity.clone(),
             notion_imports.clone(),
+            billing.clone(),
             config.jobs.concurrency,
         )
         .await?;
@@ -279,6 +283,7 @@ impl App {
         );
         let router = metrics.instrument(production_router(
             ApiRoutes {
+                billing: billing.clone(),
                 mcp: crate::mcp::router(
                     crate::mcp::McpState::new(
                         Arc::new(ApiTokenRepository::new(database.clone())),
@@ -292,7 +297,8 @@ impl App {
                     let auth = auth
                         .with_mailer(mailer.clone())
                         .with_rate_limits(config.rate_limits)
-                        .with_uploads(attachment_state.uploads.clone());
+                        .with_uploads(attachment_state.uploads.clone())
+                        .with_billing_enabled(billing.is_some());
                     match app_key {
                         Some(app_key) => auth.with_app_key(app_key),
                         None => auth,
@@ -730,6 +736,7 @@ async fn initialize_production_services(
     workspaces: Arc<WorkspaceRepository>,
     integrity: IntegrityService,
     notion_imports: NotionImportService,
+    billing: Option<crate::billing::Billing>,
     concurrency: usize,
 ) -> Result<ProductionServices, AppError> {
     let store = JobStore::new(database.clone());
@@ -794,6 +801,10 @@ async fn initialize_production_services(
             })
         })
         .and_then(|worker| crate::notion::import::register_jobs(worker, notion_imports))
+        .and_then(|worker| match billing {
+            Some(billing) => crate::billing::register_jobs(worker, billing),
+            None => Ok(worker),
+        })
         .map_err(|error| AppError::ProductionServices(error.to_string()))?;
 
     let now = database

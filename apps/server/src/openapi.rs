@@ -205,6 +205,10 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::page_comment_routes::resolve_page_thread,
         crate::page_comment_routes::reopen_page_thread,
         crate::export_routes::export_page,
+        crate::billing::routes::get_billing,
+        crate::billing::routes::billing_checkout,
+        crate::billing::routes::billing_portal,
+        crate::billing::routes::stripe_webhook,
         crate::teamspace_routes::list_teamspaces,
         crate::teamspace_routes::create_teamspace,
         crate::teamspace_routes::update_teamspace,
@@ -381,6 +385,7 @@ fn problem_schema(route: &str) -> &'static str {
         || route.contains("/teamspaces")
         || route.contains("/imports/")
         || route.contains("/chat/")
+        || route.contains("/billing")
     {
         "TaskProblem"
     } else if route.starts_with("/api/v1/auth") || route.starts_with("/api/v1/setup") {
@@ -404,6 +409,7 @@ fn public_operation(operation_id: &str) -> bool {
             | "preview_invitation"
             | "github_webhook"
             | "github_manifest_callback"
+            | "stripe_webhook"
     )
 }
 
@@ -414,7 +420,10 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
     add_code(&mut responses, "413", "request_too_large");
     add_code(&mut responses, "500", "internal_error");
     if unsafe_operation(operation_id)
-        && !matches!(operation_id, "create_discord_event" | "github_webhook")
+        && !matches!(
+            operation_id,
+            "create_discord_event" | "github_webhook" | "stripe_webhook"
+        )
     {
         add_code(&mut responses, "403", "origin_forbidden");
     }
@@ -484,6 +493,26 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             add_code(&mut responses, "503", "app_key_missing");
             add_code(&mut responses, "503", "app_key_invalid");
             add_code(&mut responses, "409", "github_labels_ambiguous");
+        }
+        "get_billing" => {
+            add_code(&mut responses, "404", "billing_workspace_not_found");
+        }
+        "billing_checkout" => {
+            add_code(&mut responses, "403", "billing_owner_required");
+            add_code(&mut responses, "404", "billing_workspace_not_found");
+            add_code(&mut responses, "409", "subscription_active");
+            add_code(&mut responses, "422", "unknown_plan");
+            add_code(&mut responses, "502", "stripe_unavailable");
+        }
+        "billing_portal" => {
+            add_code(&mut responses, "403", "billing_owner_required");
+            add_code(&mut responses, "404", "billing_workspace_not_found");
+            add_code(&mut responses, "409", "billing_customer_missing");
+            add_code(&mut responses, "502", "stripe_unavailable");
+        }
+        "stripe_webhook" => {
+            add_code(&mut responses, "400", "invalid_stripe_signature");
+            add_code(&mut responses, "400", "invalid_stripe_event");
         }
         "github_workspace_settings" => {
             add_code(&mut responses, "404", "github_workspace_not_found");
@@ -714,6 +743,7 @@ fn invalid_request_operation(operation_id: &str) -> bool {
     matches!(
         operation_id,
         "create_discord_event"
+            | "billing_checkout"
             | "setup_complete"
             | "login"
             | "update_me"

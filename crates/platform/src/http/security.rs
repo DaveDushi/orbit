@@ -85,6 +85,7 @@ impl OriginPolicy {
             uri.path(),
             "/api/v1/integrations/discord/events"
                 | "/api/v1/integrations/github/webhook"
+                | "/api/v1/billing/stripe/webhook"
                 | "/oauth/register"
                 | "/oauth/token"
                 | "/oauth/revoke"

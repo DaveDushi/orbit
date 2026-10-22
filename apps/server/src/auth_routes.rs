@@ -135,12 +135,20 @@ pub struct AuthState {
     pending: Arc<two_factor::PendingStore>,
     /// Stores profile pictures; without it they cannot be uploaded or read.
     uploads: Option<UploadService>,
+    /// Orbit Cloud billing is on (`ORBIT_CLOUD`).
+    billing_enabled: bool,
 }
 
 impl AuthState {
     #[must_use]
     pub fn with_mailer(mut self, mailer: Mailer) -> Self {
         self.mailer = Some(mailer);
+        self
+    }
+
+    #[must_use]
+    pub fn with_billing_enabled(mut self, enabled: bool) -> Self {
+        self.billing_enabled = enabled;
         self
     }
 
@@ -227,6 +235,7 @@ impl AuthState {
             webauthn: None,
             pending,
             uploads: None,
+            billing_enabled: false,
         }
     }
 }
@@ -1419,6 +1428,8 @@ struct AuthOptions {
     email_enabled: bool,
     /// People can add passkeys and sign in with them (the public origin is a domain name).
     passkeys_enabled: bool,
+    /// Orbit Cloud: workspaces need a subscription (Settings → Billing) to be writable.
+    billing_enabled: bool,
 }
 
 /// What the sign-in pages offer. Public.
@@ -1436,6 +1447,7 @@ async fn auth_options(
         registration_open: email_enabled && settings.registration_open,
         email_enabled,
         passkeys_enabled: state.webauthn.is_some(),
+        billing_enabled: state.billing_enabled,
     }))
 }
 

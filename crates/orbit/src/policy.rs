@@ -41,10 +41,13 @@ pub enum Permission {
     /// members, and delete other members' chat messages.
     #[serde(rename = "chat.manage")]
     ChatManage,
+    /// Subscribe and manage the workspace's Orbit Cloud plan.
+    #[serde(rename = "billing.manage")]
+    BillingManage,
 }
 
 impl Permission {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::WorkspaceUpdate,
         Self::WorkspaceDelete,
         Self::WorkspaceTransfer,
@@ -57,6 +60,7 @@ impl Permission {
         Self::ViewsManageShared,
         Self::CommentsModerate,
         Self::ChatManage,
+        Self::BillingManage,
     ];
 }
 
@@ -208,7 +212,9 @@ impl Policy {
     #[must_use]
     pub const fn can(role: WorkspaceRole, permission: Permission) -> bool {
         match permission {
-            Permission::WorkspaceDelete | Permission::WorkspaceTransfer => {
+            Permission::WorkspaceDelete
+            | Permission::WorkspaceTransfer
+            | Permission::BillingManage => {
                 matches!(role, WorkspaceRole::Owner)
             }
             Permission::WorkspaceUpdate
