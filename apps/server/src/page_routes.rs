@@ -850,6 +850,7 @@ async fn collab_socket(
     Path((workspace, page)): Path<(String, String)>,
     Query(query): Query<CollabQuery>,
     headers: HeaderMap,
+    read_only: Option<Extension<crate::billing::guard::ReadOnlyWorkspace>>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
     crate::collab::socket::upgrade(
@@ -862,6 +863,7 @@ async fn collab_socket(
         query,
         &headers,
         upgrade,
+        read_only.is_some(),
     )
     .await
 }

@@ -54,6 +54,8 @@ impl Denied {
 }
 
 /// Upgrades an authorized request to the collaboration socket of a page or task (`kind`).
+/// With `read_only` (an Orbit Cloud workspace without a subscription) the socket syncs the
+/// document to the client but drops its content updates.
 #[allow(clippy::too_many_arguments)]
 pub async fn upgrade(
     identity: &IdentityRepository,
@@ -65,6 +67,7 @@ pub async fn upgrade(
     query: CollabQuery,
     headers: &HeaderMap,
     upgrade: WebSocketUpgrade,
+    read_only: bool,
 ) -> Response {
     let Some(session) = request_session(identity, cookie_mode, headers).await else {
         return StatusCode::UNAUTHORIZED.into_response();
@@ -97,6 +100,7 @@ pub async fn upgrade(
         peer: Peer {
             user_id: session.user.id,
             name: session.user.display_name,
+            read_only,
         },
         query,
     };

@@ -1368,3 +1368,70 @@ async fn a_page_write_past_the_memory_budget_is_busy() {
     assert_eq!(body["code"], "page_busy");
     server.stop().await;
 }
+
+#[tokio::test]
+async fn a_read_only_cloud_workspace_syncs_documents_but_drops_edits() {
+    let root = TempDir::new().unwrap();
+    let mut config = app_config(&root);
+    config.billing = Some(orbit_platform::BillingConfig::new(
+        orbit_platform::Secret::new("sk_test_unused"),
+        orbit_platform::Secret::new("whsec_unused"),
+        vec![orbit_platform::Plan {
+            key: "team".to_owned(),
+            price_id: "price_team".to_owned(),
+        }],
+    ));
+    let server = Server::start_with(config, fast_config()).await;
+    let users = setup(&server).await;
+    let set_status = |status: &'static str| {
+        let database = server.database.clone();
+        let workspace = users.workspace.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO workspace_subscriptions (workspace_id, stripe_customer_id, status, updated_at) \
+                 VALUES ($1, 'cus_test', $2, 0) \
+                 ON CONFLICT (workspace_id) DO UPDATE SET status = excluded.status",
+            )
+            .bind(workspace)
+            .bind(status)
+            .execute(database.pool())
+            .await
+            .unwrap();
+        }
+    };
+    set_status("active").await;
+    let page = create_page(
+        &server,
+        &users,
+        &users.owner,
+        json!({"title": "Paid"}),
+        "abc",
+    )
+    .await;
+    let id = page["id"].as_str().unwrap();
+    let mut a = Client::open(&server, &users, &users.owner, id).await;
+
+    set_status("canceled").await;
+    let mut b = Client::open(&server, &users, &users.member, id).await;
+    assert_eq!(
+        b.text(),
+        "abc",
+        "a read-only workspace still syncs the document"
+    );
+    b.type_text(3, "X").await;
+    assert!(
+        !a.pump(Duration::from_millis(600), |client, _| client.text()
+            != "abc")
+            .await,
+        "edits from a read-only workspace are not broadcast"
+    );
+    let stored = get_page(&server, &users, &users.owner, id).await;
+    assert_eq!(stored["content"][0]["content"][0]["text"], "abc");
+    let c = Client::open(&server, &users, &users.owner, id).await;
+    assert_eq!(
+        c.text(),
+        "abc",
+        "edits from a read-only workspace are not applied"
+    );
+    server.stop().await;
+}

@@ -339,6 +339,9 @@ pub(crate) struct Joined {
 pub(crate) struct Peer {
     pub(crate) user_id: Id,
     pub(crate) name: String,
+    /// The peer may read but not edit (see `crate::billing::guard`): its content updates are
+    /// dropped like those to a locked page.
+    pub(crate) read_only: bool,
 }
 
 /// What handling one inbound frame produced.
@@ -1373,7 +1376,7 @@ impl CollabHub {
                         .push(Message::Sync(SyncMessage::SyncStep2(update)).encode_v1());
                 }
                 Message::Sync(SyncMessage::SyncStep2(_) | SyncMessage::Update(_))
-                    if state.locked =>
+                    if state.locked || peer.read_only =>
                 {
                     // A locked page takes no content changes. They are dropped, not applied; the
                     // lock and the unlock both close every socket with 4423, so clients start over
