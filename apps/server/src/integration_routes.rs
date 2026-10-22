@@ -19,7 +19,10 @@ use utoipa::ToSchema;
 
 use crate::audit::{self, AuditOutcome};
 use crate::auth_routes::{CookieMode, request_session};
+use crate::billing::WorkspaceAccess;
+use crate::billing::guard::READ_ONLY_DETAIL;
 use crate::repositories::api_tokens::{ApiTokenError, ApiTokenRepository, ApiTokenScope};
+use crate::repositories::billing;
 use crate::repositories::identity::IdentityRepository;
 use crate::repositories::membership;
 use crate::repositories::tasks::{
@@ -891,6 +894,12 @@ async fn github_webhook_from_database(
     if !matches!(event.as_str(), "issues" | "pull_request") {
         return Ok(StatusCode::ACCEPTED);
     }
+    let workspace_id: Id = workspace.parse().map_err(|_| ApiError::internal(id))?;
+    if read_only(state, workspace_id, id).await? {
+        // A 2xx keeps GitHub from disabling the hook; the change is dropped.
+        tracing::info!(%workspace_id, event, "GitHub event dropped: the workspace is read-only");
+        return Ok(StatusCode::ACCEPTED);
+    }
     let repository = payload
         .pointer("/repository/full_name")
         .and_then(Value::as_str)
@@ -991,7 +1000,6 @@ async fn github_webhook_from_database(
         .get::<String, _>("project_id")
         .parse()
         .map_err(|_| ApiError::internal(id))?;
-    let workspace_id: Id = workspace.parse().map_err(|_| ApiError::internal(id))?;
     let actor: String = sqlx::query_scalar(
         "SELECT user_id FROM memberships WHERE workspace_id = $1 AND role = 'owner' LIMIT 1",
     )
@@ -1323,6 +1331,23 @@ pub(crate) async fn create_discord_event(
             request_id.as_ref().map(|value| &value.0),
         ));
     }
+    if read_only(
+        &state,
+        principal.workspace_id,
+        request_id.as_ref().map(|value| &value.0),
+    )
+    .await?
+    {
+        // The bot is told why, as any API client of a read-only workspace is.
+        tracing::info!(workspace_id = %principal.workspace_id, "Discord event refused: the workspace is read-only");
+        return Err(ApiError::new(
+            StatusCode::PAYMENT_REQUIRED,
+            "workspace_read_only",
+            "Workspace is read-only",
+            READ_ONLY_DETAIL,
+            request_id.as_ref().map(|value| &value.0),
+        ));
+    }
     let payload_hash: [u8; 32] = Sha256::new()
         .chain_update(message.as_bytes())
         .chain_update([0])
@@ -1362,6 +1387,19 @@ pub(crate) async fn create_discord_event(
         }),
     )
         .into_response())
+}
+
+/// Whether the workspace is read-only (Orbit Cloud without a subscription): it takes no
+/// changes from integrations.
+async fn read_only(
+    state: &IntegrationState,
+    workspace_id: Id,
+    request_id: Option<&RequestId>,
+) -> Result<bool, ApiError> {
+    billing::write_access(state.tasks.database(), workspace_id)
+        .await
+        .map(|access| access == WorkspaceAccess::ReadOnly)
+        .map_err(|_| ApiError::internal(request_id))
 }
 
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {

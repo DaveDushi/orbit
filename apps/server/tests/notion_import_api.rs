@@ -1873,3 +1873,36 @@ async fn a_retried_page_does_not_attach_its_files_twice() {
         .await;
     assert_eq!(status, StatusCode::OK);
 }
+
+#[tokio::test]
+async fn an_import_into_a_read_only_cloud_workspace_stops() {
+    let harness = Harness::new().await;
+    let id = harness.scanned(&harness.owner_cookie).await;
+    harness
+        .start(
+            &harness.owner_cookie,
+            &id,
+            json!({"selection": {"all": true}}),
+        )
+        .await;
+    let before = harness.page_count().await;
+    // Orbit Cloud, no subscription: the workspace is read-only.
+    let _billing = orbit_server::billing::Billing::new(
+        orbit_platform::BillingConfig::new(
+            orbit_platform::Secret::new("sk_test_unused"),
+            orbit_platform::Secret::new("whsec_unused"),
+            vec![],
+        ),
+        (*harness.database).clone(),
+        "https://orbit.test",
+    );
+    harness.run_import(&id).await;
+    let import = harness.detail(&harness.owner_cookie, &id).await;
+    assert_eq!(import["status"], "failed");
+    assert_eq!(
+        import["error"],
+        "The import stopped because the workspace is read-only: it has no active subscription."
+    );
+    assert!(!harness.token_stored(&id).await);
+    assert_eq!(harness.page_count().await, before);
+}
