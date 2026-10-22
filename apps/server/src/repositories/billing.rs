@@ -37,6 +37,27 @@ pub struct SubscriptionSnapshot {
     pub current_period_end: Option<i64>,
 }
 
+/// Set on a database whose server runs Orbit Cloud billing ([`crate::billing::Billing::new`]).
+struct BillingOn;
+
+/// Turns the read-only rule on for `database`; [`write_access`] answers `Full` until then.
+pub(crate) fn enable(database: &Database) {
+    database.extension(|| BillingOn);
+}
+
+/// Whether something may write to the workspace: `Full` on a self-hosted server (no query),
+/// else the workspace's subscription decides. Every writer outside the HTTP guard (co-editing
+/// sockets, webhooks, integration jobs) asks this.
+pub async fn write_access(
+    database: &Database,
+    workspace_id: Id,
+) -> Result<WorkspaceAccess, sqlx::Error> {
+    if database.existing_extension::<BillingOn>().is_none() {
+        return Ok(WorkspaceAccess::Full);
+    }
+    workspace_access(database, workspace_id).await
+}
+
 /// The access of one workspace; one primary-key lookup, run by the read-only guard on each write.
 pub async fn workspace_access(
     database: &Database,
@@ -140,7 +161,7 @@ pub async fn forget_event(database: &Database, event_id: &str) -> Result<(), sql
 /// Stores the subscription of a workspace and audits a status change. A workspace that has a
 /// different subscription keeps it unless this one grants access: a late event about an old,
 /// cancelled subscription must not lock a workspace that subscribed again. Returns `false` when
-/// the workspace no longer exists.
+/// the workspace no longer exists. A change of access re-checks the workspace's co-editing sockets.
 pub async fn apply_subscription(
     database: &Database,
     workspace_id: Id,
@@ -209,5 +230,11 @@ pub async fn apply_subscription(
         .await?;
     }
     transaction.commit().await?;
+    let previous_access = access(previous.as_deref().and_then(SubscriptionStatus::parse));
+    if written && grants_access != (previous_access == WorkspaceAccess::Full) {
+        // Open co-editing sockets on every server check their access again: one that may edit a
+        // workspace that just became read-only closes, and the client reconnects read-only.
+        crate::collab::CollabHub::revalidate_database(database, Some(workspace_id));
+    }
     Ok(true)
 }

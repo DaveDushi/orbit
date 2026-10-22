@@ -28,15 +28,16 @@ export interface CollabConnection {
  * - `connecting`: before the first sync (the editor is not mounted yet), or shortly after a drop
  * - `live`: connected and synced
  * - `offline`: disconnected for a while (or the browser is offline); y-websocket keeps retrying, edits stay local
- * - `reset`: the server's document was reset (4409) or the page was locked/unlocked (4423); the owner refetches the page
- *   and opens a new session with a fresh document (edits the server refused while locked are dropped)
+ * - `reset`: the server's document was reset (4409), the page was locked/unlocked (4423) or the workspace became read-only
+ *   (4402); the owner refetches the page and opens a new session with a fresh document (edits the server refused while
+ *   locked are dropped)
  * - `lost`: no access any more (4403/4404) or the session ended (4401)
  * - `error`: the server refused the document for good (4413 too large, 4400/4426 protocol)
  */
 export type CollabStatus = 'connecting' | 'live' | 'offline' | 'reset' | 'lost' | 'error'
 
 /** Why the server closed the socket for good. */
-export type CollabProblem = 'session' | 'forbidden' | 'gone' | 'reset' | 'too-large' | 'rate-limited' | 'protocol'
+export type CollabProblem = 'session' | 'read-only' | 'forbidden' | 'gone' | 'reset' | 'too-large' | 'rate-limited' | 'protocol'
 
 export interface CollabState {
   status: CollabStatus
@@ -68,6 +69,8 @@ export interface CollabSessionOptions {
 export const CLOSE = {
   BAD_MESSAGE: 4400,
   SESSION: 4401,
+  /** The workspace became read-only (Orbit Cloud, no subscription): refetch billing and reconnect read-only. */
+  READ_ONLY: 4402,
   FORBIDDEN: 4403,
   GONE: 4404,
   RESET: 4409,
@@ -93,6 +96,8 @@ export function problemOfClose(code: number): CollabProblem | null {
   switch (code) {
     case CLOSE.SESSION:
       return 'session'
+    case CLOSE.READ_ONLY:
+      return 'read-only'
     case CLOSE.FORBIDDEN:
       return 'forbidden'
     case CLOSE.GONE:
@@ -111,7 +116,7 @@ export function problemOfClose(code: number): CollabProblem | null {
 }
 
 /** What a screen does about a terminal problem (pages and task descriptions handle each the same way). */
-export type CollabProblemAction = 'leave' | 'unauthorized' | 'reopen' | 'rate-limited' | 'notice'
+export type CollabProblemAction = 'leave' | 'unauthorized' | 'reopen' | 'read-only' | 'rate-limited' | 'notice'
 
 export function collabProblemAction(problem: CollabProblem): CollabProblemAction {
   switch (problem) {
@@ -124,6 +129,9 @@ export function collabProblemAction(problem: CollabProblem): CollabProblemAction
     case 'reset':
       // the server's document was reset (new epoch, lock change): load again and reconnect
       return 'reopen'
+    case 'read-only':
+      // the workspace lost its subscription: show it as read-only, then load again and reconnect (read-only now)
+      return 'read-only'
     case 'rate-limited':
       return 'rate-limited'
     case 'too-large':
@@ -268,7 +276,7 @@ export class CollabSession {
       return
     }
     const status: CollabStatus =
-      problem === 'reset' ? 'reset' : problem === 'too-large' || problem === 'protocol' ? 'error' : 'lost'
+      problem === 'reset' || problem === 'read-only' ? 'reset' : problem === 'too-large' || problem === 'protocol' ? 'error' : 'lost'
     this.clearTimers()
     this.setState({ ...this.state, status, problem })
     this.options.onProblem?.(problem)

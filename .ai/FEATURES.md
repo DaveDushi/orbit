@@ -215,7 +215,9 @@ favorites through `/pages/favorites` (list), `/pages/{page_id}/favorite` (PUT/DE
   changes will sync" / "Access lost" / "Not syncing". Close handling: 4404/4403 → the editor turns read-only, a toast
   ("“X” was moved to the trash." / "You no longer have access to “X”."), the page leaves the tree and the app goes to
   /docs (not for the user's own "Move to trash", which announces itself); 4409 → refetch the page (new epoch) and
-  reconnect with a fresh document; 4401 → the app-wide unauthorized flow (login); 4413 → "too large" banner + read-only
+  reconnect with a fresh document; 4402 (Orbit Cloud: the workspace lost its subscription; every server closes its
+  editing sockets of the workspace) → read-only toast, billing refetched, then the same as 4409, and the new socket is
+  read-only; 4401 → the app-wide unauthorized flow (login); 4413 → "too large" banner + read-only
   until "Reload page"; 4400/4426 → "Reload app" banner; 4429 → toast, reconnect after 5 s; 1012/1013 and drops →
   y-websocket retries. Handshakes refused before the upgrade (HTTP 401/404 arrive as 1006) trigger a throttled REST
   check of the page after 2 failures (404 → leave like a trash, 401 → login). `beforeunload` warns only while

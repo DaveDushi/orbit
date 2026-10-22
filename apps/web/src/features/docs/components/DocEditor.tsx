@@ -63,7 +63,7 @@ import { mentionableMembers } from '@/features/docs/comments/mentionable'
 import { pageMentionCandidates } from '@/features/docs/editor/pageMentions'
 import { useBlockDeepLink } from '@/features/docs/useBlockDeepLink'
 import { useMembers } from '@/features/workspaces/api'
-import { useWorkspaceReadOnly } from '@/features/workspaces/billing'
+import { announceWorkspaceReadOnly, useWorkspaceReadOnly } from '@/features/workspaces/billing'
 import { Comment as CommentIcon } from 'reicon-react'
 import { loadPageEditor } from '@/features/docs/editor/loadPageEditor'
 // Type-only imports: erased at build time, so the BlockNote chunk stays lazy.
@@ -318,6 +318,10 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
         window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
         break
       case 'reopen':
+        void reopen()
+        break
+      case 'read-only':
+        announceWorkspaceReadOnly()
         void reopen()
         break
       case 'rate-limited':

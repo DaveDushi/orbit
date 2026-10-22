@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { apiClient } from '@/api/client'
+import { apiClient, READ_ONLY_EVENT } from '@/api/client'
 import { queryKeys } from '@/api/queryKeys'
 import { billingCheckout, billingPortal, getBilling } from '@/api/generated/sdk.gen'
 import { useAuthOptions } from '@/features/auth/api'
@@ -28,6 +28,15 @@ export function useWorkspaceBilling() {
 /** The workspace has no subscription that grants access: it can be read but not changed. */
 export function useWorkspaceReadOnly(): boolean {
   return useWorkspaceBilling().data?.access === 'read_only'
+}
+
+/**
+ * A co-editing socket closed because the workspace became read-only (close 4402). The same event as a refused write:
+ * one toast, and the billing state is fetched again, so the editors turn read-only before they reconnect.
+ */
+export function announceWorkspaceReadOnly(): void {
+  const detail = 'This workspace became read-only because it has no active subscription. Your editor is now read-only.'
+  window.dispatchEvent(new CustomEvent(READ_ONLY_EVENT, { detail }))
 }
 
 /** Starts a Stripe Checkout for `plan` and sends the browser there. */

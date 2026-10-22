@@ -109,6 +109,7 @@ impl Billing {
     #[must_use]
     pub fn new(config: BillingConfig, database: Database, public_origin: &str) -> Self {
         let stripe = stripe::StripeClient::new(&config);
+        crate::repositories::billing::enable(&database);
         Self {
             inner: Arc::new(Inner {
                 config,

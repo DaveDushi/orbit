@@ -10,6 +10,7 @@ use std::time::Duration;
 use orbit_platform::{Id, TimestampMillis};
 use orbit_server::collab::blocknote::{FRAGMENT, doc_to_blocks, new_doc};
 use orbit_server::collab::{CollabConfig, CollabHub};
+use orbit_server::repositories::billing::{self as billing_repository, SubscriptionSnapshot};
 use orbit_server::repositories::page_versions::SaveOrigin;
 use orbit_server::repositories::pages::{PageChanges, PageRepository};
 use serde_json::{Value, json};
@@ -1409,9 +1410,15 @@ async fn a_read_only_cloud_workspace_syncs_documents_but_drops_edits() {
     )
     .await;
     let id = page["id"].as_str().unwrap();
-    let mut a = Client::open(&server, &users, &users.owner, id).await;
+    let mut editing = Client::open(&server, &users, &users.owner, id).await;
 
     set_status("canceled").await;
+    assert_eq!(
+        editing.wait_close().await,
+        4402,
+        "an editing socket closes once the workspace is read-only"
+    );
+    let mut a = Client::open(&server, &users, &users.owner, id).await;
     let mut b = Client::open(&server, &users, &users.member, id).await;
     assert_eq!(
         b.text(),
@@ -1420,11 +1427,14 @@ async fn a_read_only_cloud_workspace_syncs_documents_but_drops_edits() {
     );
     b.type_text(3, "X").await;
     assert!(
-        !a.pump(Duration::from_millis(600), |client, _| client.text()
-            != "abc")
+        !a.pump(Duration::from_millis(1200), |client, _| client.text()
+            != "abc"
+            || client.closed.is_some())
             .await,
-        "edits from a read-only workspace are not broadcast"
+        "edits from a read-only workspace are not broadcast, and read-only sockets stay open \
+         past the access recheck"
     );
+    assert_eq!(b.closed, None);
     let stored = get_page(&server, &users, &users.owner, id).await;
     assert_eq!(stored["content"][0]["content"][0]["text"], "abc");
     let c = Client::open(&server, &users, &users.owner, id).await;
@@ -1434,4 +1444,76 @@ async fn a_read_only_cloud_workspace_syncs_documents_but_drops_edits() {
         "edits from a read-only workspace are not applied"
     );
     server.stop().await;
+}
+
+#[tokio::test]
+async fn a_lapsed_subscription_closes_editing_sockets_on_every_server() {
+    let Some(database) = shared_postgres::SharedDatabase::create().await else {
+        return; // several servers need a Postgres database
+    };
+    // No periodic recheck within the test: only the cluster message can close the socket.
+    let config = || CollabConfig {
+        recheck_interval: Duration::from_secs(600),
+        ..fast_config()
+    };
+    let billing = || {
+        Some(orbit_platform::BillingConfig::new(
+            orbit_platform::Secret::new("sk_test_unused"),
+            orbit_platform::Secret::new("whsec_unused"),
+            vec![orbit_platform::Plan {
+                key: "team".to_owned(),
+                price_id: "price_team".to_owned(),
+            }],
+        ))
+    };
+    let (root_one, root_two) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+    let shared = |root: &TempDir| {
+        let mut app = app_config(root);
+        app.data.database_url = Some(database.url.clone());
+        app.app_key = Some(shared_postgres::APP_KEY.parse().unwrap());
+        app.billing = billing();
+        app
+    };
+    let one = Server::start_with(shared(&root_one), config()).await;
+    let users = setup(&one).await;
+    let two = Server::start_with(shared(&root_two), config()).await;
+    let workspace: Id = users.workspace.parse().unwrap();
+    let subscription = |status: &str| SubscriptionSnapshot {
+        customer_id: "cus_test".to_owned(),
+        subscription_id: "sub_test".to_owned(),
+        plan: Some("team".to_owned()),
+        status: status.to_owned(),
+        cancel_at_period_end: false,
+        current_period_end: None,
+    };
+    billing_repository::apply_subscription(
+        &one.database,
+        workspace,
+        &subscription("active"),
+        TimestampMillis::now(),
+    )
+    .await
+    .unwrap();
+    let page = create_page(&one, &users, &users.owner, json!({"title": "Pad"}), "x").await;
+    let id = page["id"].as_str().unwrap();
+    let mut editing = Client::open(&two, &users, &users.member, id).await;
+
+    billing_repository::apply_subscription(
+        &one.database,
+        workspace,
+        &subscription("canceled"),
+        TimestampMillis::now(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        editing.wait_close().await,
+        4402,
+        "the other server closes its editing socket"
+    );
+    let reconnected = Client::open(&two, &users, &users.member, id).await;
+    assert_eq!(reconnected.text(), "x", "the client reconnects read-only");
+    one.stop().await;
+    two.stop().await;
+    database.drop().await;
 }

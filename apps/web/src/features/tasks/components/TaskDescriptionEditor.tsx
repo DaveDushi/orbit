@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { apiClient, UNAUTHORIZED_EVENT } from '@/api/client'
+import { announceWorkspaceReadOnly } from '@/features/workspaces/billing'
 import { storageQuotaDetail } from '@/api/problem'
 import { getTask } from '@/api/generated/sdk.gen'
 import { queryKeys } from '@/api/queryKeys'
@@ -84,6 +85,11 @@ export function TaskDescriptionEditor({
         break
       case 'unauthorized':
         window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
+        break
+      case 'read-only':
+        announceWorkspaceReadOnly()
+        setNotice(null)
+        void refresh().then(() => setGeneration((current) => current + 1))
         break
       case 'reopen':
         setNotice(null)

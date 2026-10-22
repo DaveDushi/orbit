@@ -6,8 +6,9 @@
 //! with `Upgrade` (403); then the session cookie (401), and workspace membership plus a live page
 //! the user can see, or a live task in a live project (404, the same answer as for an unknown id).
 //! After it: `v` must be `1` (4426) and `epoch` must be the document's `collab_epoch` (4409). The
-//! connection is re-checked every 15 s and whenever pages or tasks move, get trashed or members
-//! leave.
+//! connection is re-checked every 15 s and whenever pages or tasks move, get trashed, members
+//! leave or the workspace's subscription changes (an editing socket of a workspace that became
+//! read-only closes with 4402).
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -24,6 +25,8 @@ use tokio::sync::broadcast;
 use super::hub::{CollabHub, MessageKind, Outbound, Peer};
 use super::{DocKey, DocKind, close};
 use crate::auth_routes::{CookieMode, request_session};
+use crate::billing::WorkspaceAccess;
+use crate::repositories::billing;
 use crate::repositories::identity::IdentityRepository;
 
 /// Query parameters y-websocket appends (`params`).
@@ -93,6 +96,7 @@ pub async fn upgrade(
     let limit = hub.config().max_frame_bytes;
     let connection = Connection {
         hub,
+        database: database.clone(),
         pool,
         workspace_id,
         key,
@@ -115,6 +119,7 @@ pub async fn upgrade(
 
 struct Connection {
     hub: CollabHub,
+    database: Database,
     pool: AnyPool,
     workspace_id: Id,
     key: DocKey,
@@ -238,8 +243,8 @@ impl Connection {
                     }
                     Ok(Outbound::Close { code, reason }) => return (code, reason),
                     Ok(Outbound::Revalidate) => {
-                        if let Some(denied) = self.denied().await {
-                            return denied.close();
+                        if let Some(close) = self.denied().await {
+                            return close;
                         }
                     }
                     // Too slow to keep up: the client resyncs on reconnect.
@@ -255,17 +260,18 @@ impl Connection {
                     }
                 }
                 _ = recheck.tick() => {
-                    if let Some(denied) = self.denied().await {
-                        return denied.close();
+                    if let Some(close) = self.denied().await {
+                        return close;
                     }
                 }
             }
         }
     }
 
-    async fn denied(&self) -> Option<Denied> {
+    /// How to close a connection that may no longer stay open as it is.
+    async fn denied(&self) -> Option<(u16, &'static str)> {
         // A database hiccup is not a reason to drop an editor; the next check decides.
-        check_access(
+        let denied = check_access(
             &self.pool,
             self.workspace_id,
             self.key,
@@ -273,7 +279,15 @@ impl Connection {
             self.peer.user_id,
         )
         .await
-        .unwrap_or_default()
+        .unwrap_or_default();
+        if let Some(denied) = denied {
+            return Some(denied.close());
+        }
+        // An editing socket of a workspace that became read-only: the client reconnects, and the
+        // read-only guard opens the new socket read-only.
+        let access = billing::write_access(&self.database, self.workspace_id).await;
+        (!self.peer.read_only && access.ok() == Some(WorkspaceAccess::ReadOnly))
+            .then_some((close::READ_ONLY, "workspace is read-only"))
     }
 }
 
