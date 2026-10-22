@@ -1599,10 +1599,14 @@ impl CollabHub {
         }
     }
 
-    /// [`Self::revalidate`] on the database's hub, if it has one.
+    /// [`Self::revalidate`] on the database's hub. A server that never opened a co-editing
+    /// socket has no hub, but the other servers may have sockets, so they are told anyway.
     pub fn revalidate_database(database: &Database, workspace_id: Option<Id>) {
-        if let Some(hub) = Self::existing(database) {
-            hub.revalidate(workspace_id);
+        match Self::existing(database) {
+            Some(hub) => hub.revalidate(workspace_id),
+            None => Cluster::of(database).send(ClusterMessage::Collab(CollabMessage::Revalidate {
+                workspace_id,
+            })),
         }
     }
 
