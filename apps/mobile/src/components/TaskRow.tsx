@@ -2,56 +2,56 @@ import { Pressable, View } from 'react-native'
 
 import type { Person } from '../data/chat'
 import type { StatusRecord, TaskRecord } from '../data/orbit'
-import { dueLabel } from '../data/tasks'
-import { useTheme } from '../theme'
+import { alpha, type, useTheme } from '../theme'
 import { Avatar, PriorityIcon, StatusIcon, Text } from '../ui'
 
 export interface TaskRowProps {
   task: TaskRecord
   status: StatusRecord | undefined
-  identifier: string
   assignee: Person | undefined
-  now: Date
   onPress: () => void
 }
 
-/** Status, identifier, title, then the quiet details: priority, due date, assignee. */
-export function TaskRow({ task, status, identifier, assignee, now, onPress }: TaskRowProps) {
-  const { colors, spacing } = useTheme()
-  const due = task.due_at ? dueLabel(task.due_at, now) : null
+/**
+ * The web list row at phone width: the 28px select strip, priority, the tree gutter, status, title, assignee. The
+ * identifier column is hidden below 480px on the web too.
+ */
+export function TaskRow({ task, status, assignee, onPress }: TaskRowProps) {
+  const { colors } = useTheme()
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${identifier} ${task.title}`}
+      accessibilityLabel={task.title}
       onPress={onPress}
       style={({ pressed }) => ({
+        minHeight: 40,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: spacing[2.5],
-        minHeight: 48,
-        paddingHorizontal: spacing[4],
-        paddingVertical: spacing[2],
-        backgroundColor: pressed ? colors.accent : 'transparent',
+        gap: 6,
+        paddingRight: 12,
+        paddingVertical: 6,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+        backgroundColor: pressed ? alpha(colors.foreground, 0.02) : 'transparent',
       })}
     >
-      <StatusIcon status={status} />
-      <View style={{ flex: 1, gap: 2 }}>
-        <Text variant="label" numberOfLines={2}>
-          {task.title}
-        </Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing[2] }}>
-          <Text variant="caption" color="muted">
-            {identifier}
-          </Text>
-          {due ? (
-            <Text variant="caption" color={due === 'Overdue' ? 'destructive' : 'muted'}>
-              {due}
-            </Text>
-          ) : null}
-        </View>
-      </View>
-      <PriorityIcon priority={task.priority} />
-      {assignee ? <Avatar id={assignee.id} name={assignee.name} size={22} /> : null}
+      <View style={{ width: 28 }} />
+      <Glyph>
+        <PriorityIcon priority={task.priority} size={16} />
+      </Glyph>
+      <View style={{ width: 16 }} />
+      <Glyph>
+        <StatusIcon status={status} size={16} />
+      </Glyph>
+      <Text numberOfLines={1} style={[type(13, 'medium'), { flex: 1 }]}>
+        {task.title || 'Untitled'}
+      </Text>
+      <View style={{ width: 28, alignItems: 'flex-end' }}>{assignee ? <Avatar id={assignee.id} name={assignee.name} size={18} /> : null}</View>
     </Pressable>
   )
+}
+
+/** The 22px ghost button the web wraps each row picker in. */
+function Glyph({ children }: { children: React.ReactNode }) {
+  return <View style={{ width: 22, height: 22, alignItems: 'center', justifyContent: 'center' }}>{children}</View>
 }

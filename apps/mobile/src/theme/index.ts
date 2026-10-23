@@ -1,5 +1,8 @@
-import { Platform, useColorScheme } from 'react-native'
+import { useSyncExternalStore } from 'react'
+import { Platform, type TextStyle, useColorScheme } from 'react-native'
 
+import { alpha, mix } from '../data/color'
+import { storage } from '../storage'
 import { dark, light, radius } from './tokens.gen'
 
 export type ColorName = keyof typeof light
@@ -18,7 +21,20 @@ export const fonts = {
   mono: Platform.select({ ios: 'Menlo', default: 'monospace' }),
 } as const
 
+export type Weight = 'regular' | 'medium' | 'semibold' | 'bold'
+
+/** A web text size: the body's 1.45 line height, as `text-[13px] font-medium` renders in the browser. */
+export const type = (size: number, weight: Weight = 'regular'): TextStyle => ({ fontSize: size, lineHeight: Math.round(size * 145) / 100, fontFamily: fonts[weight] })
+
 export const palettes: Record<Scheme, Colors> = { light, dark }
+
+/** The CSS keywords the web mixes with: `color-mix(…, black 25%)` button edges, the `bg-black/50` scrim. */
+export const cssColors = { black: '#000000', white: '#ffffff' } as const
+
+/** Tailwind green-500, amber-500 and red-500: the web `StatusMark` draws presence with these in both themes. */
+export const presenceColors = { online: '#00c950', idle: '#fe9a00', dnd: '#fb2c36' } as const
+
+export { alpha, mix }
 
 export interface Theme {
   scheme: Scheme
@@ -28,8 +44,32 @@ export interface Theme {
   fonts: typeof fonts
 }
 
+const SCHEME_KEY = 'orbit.theme'
+/** `null` follows the system; the Profile header's theme button sets one explicitly, like the web toggle. */
+let preference: Scheme | null = null
+const listeners = new Set<() => void>()
+
+const subscribe = (listener: () => void) => {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
+export function setSchemePreference(scheme: Scheme | null) {
+  preference = scheme
+  listeners.forEach((listener) => listener())
+  void (scheme ? storage.set(SCHEME_KEY, scheme) : storage.remove(SCHEME_KEY))
+}
+
+/** Reads the stored choice once at startup. */
+export async function loadSchemePreference(): Promise<void> {
+  const stored = await storage.get(SCHEME_KEY).catch(() => null)
+  if (stored === 'light' || stored === 'dark') setSchemePreference(stored)
+}
+
 export function useTheme(): Theme {
-  const scheme: Scheme = useColorScheme() === 'dark' ? 'dark' : 'light'
+  const system = useColorScheme()
+  const chosen = useSyncExternalStore(subscribe, () => preference)
+  const scheme: Scheme = chosen ?? (system === 'dark' ? 'dark' : 'light')
   return { scheme, colors: palettes[scheme], spacing, radius, fonts }
 }
 

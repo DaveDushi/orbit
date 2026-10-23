@@ -1,7 +1,7 @@
 import type { ChatEvent } from '@orbit/api/generated/types.gen'
 import { type QueryClient, useQueryClient } from '@tanstack/react-query'
 import { useEffect } from 'react'
-import { AppState } from 'react-native'
+import { AppState, Platform } from 'react-native'
 
 import { type MessagePages, removeMessage, upsertMessage, upsertState } from './data/chat'
 import { keys } from './data/keys'
@@ -44,6 +44,8 @@ export function useLiveUpdates() {
   const queryClient = useQueryClient()
 
   useEffect(() => {
+    // A browser WebSocket cannot send the bearer header, so the web preview runs without live updates.
+    if (Platform.OS === 'web') return
     const { server, token } = session
     const create = (url: string) => new NativeWebSocket(url, null, { headers: { Authorization: `Bearer ${token}` } })
     const invalidate = (queryKeys: readonly (readonly string[])[]) => {

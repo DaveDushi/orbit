@@ -16,6 +16,7 @@ export interface Orbit {
   workspaces: WorkspaceRecord[]
   selectWorkspace: (id: string) => void
   signOut: () => Promise<void>
+  setUser: (user: User) => void
 }
 
 const OrbitContext = createContext<Orbit | null>(null)
@@ -25,7 +26,7 @@ const OrbitContext = createContext<Orbit | null>(null)
  * only once both are known, so every screen below can rely on `useOrbit()`.
  */
 export function OrbitProvider({ children }: { children: ReactNode }) {
-  const { state, signOut } = useSession()
+  const { state, signOut, setUser } = useSession()
   if (state.status !== 'signed_in') throw new Error('OrbitProvider needs a signed-in session')
   const { client, session, user } = state
   const list = useQuery({ queryKey: keys.workspaces, queryFn: () => listWorkspaces(client) })
@@ -47,7 +48,7 @@ export function OrbitProvider({ children }: { children: ReactNode }) {
   if (!workspace) {
     return (
       <Screen centered>
-        <EmptyState icon="home" title="No workspaces" description="Ask an admin to invite you, or create a workspace in Orbit on the web." action={<Button label="Sign out" variant="secondary" onPress={() => void signOut()} />} />
+        <EmptyState icon="home" title="No workspaces" description="Ask an admin to invite you, or create a workspace in Orbit on the web." action={<Button label="Sign out" variant="outline" onPress={() => void signOut()} />} />
       </Screen>
     )
   }
@@ -58,7 +59,7 @@ export function OrbitProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <OrbitContext value={{ client, session, user, workspace, workspaceId: workspace.id, workspaces: live, selectWorkspace, signOut }}>{children}</OrbitContext>
+    <OrbitContext value={{ client, session, user, workspace, workspaceId: workspace.id, workspaces: live, selectWorkspace, signOut, setUser }}>{children}</OrbitContext>
   )
 }
 

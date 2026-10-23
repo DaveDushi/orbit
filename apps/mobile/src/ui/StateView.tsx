@@ -23,7 +23,7 @@ export function ErrorView({ error, onRetry }: { error: unknown; onRetry: () => v
       <Text color="muted" style={{ textAlign: 'center' }}>
         {error instanceof Error ? error.message : String(error)}
       </Text>
-      <Button label="Retry" variant="secondary" onPress={onRetry} />
+      <Button label="Retry" variant="outline" onPress={onRetry} />
     </View>
   )
 }

@@ -25,9 +25,15 @@ export function useStatuses() {
   })
 }
 
-export function useTasks() {
+/** Every task, or a server view's tasks (`mine`, `my_week`, `overdue` …). */
+export function useTasks(view?: string) {
   const { client, workspaceId } = useOrbit()
-  return useQuery({ queryKey: keys.tasks(workspaceId), queryFn: () => api.tasks(client, workspaceId) })
+  return useQuery({ queryKey: view ? keys.taskView(workspaceId, view) : keys.tasks(workspaceId), queryFn: () => api.tasks(client, workspaceId, view) })
+}
+
+export function useLabels() {
+  const { client, workspaceId } = useOrbit()
+  return useQuery({ queryKey: keys.labels(workspaceId), queryFn: () => api.labels(client, workspaceId) })
 }
 
 export function useMembers() {
@@ -69,7 +75,17 @@ export function useNotifications() {
   return useQuery({ queryKey: keys.notifications(workspaceId), queryFn: () => api.notifications(client, workspaceId) })
 }
 
-export function useUnreadNotificationCount() {
+export function useUnreadNotifications() {
   const { client, workspaceId } = useOrbit()
-  return useQuery({ queryKey: keys.unreadNotifications(workspaceId), queryFn: () => api.unreadNotificationCount(client, workspaceId) })
+  return useQuery({ queryKey: keys.unreadNotifications(workspaceId), queryFn: () => api.unreadNotifications(client, workspaceId) })
+}
+
+export function usePages() {
+  const { client, workspaceId } = useOrbit()
+  return useQuery({ queryKey: keys.pages(workspaceId), queryFn: () => api.pages(client, workspaceId) })
+}
+
+export function useTeamspaces() {
+  const { client, workspaceId } = useOrbit()
+  return useQuery({ queryKey: keys.teamspaces(workspaceId), queryFn: () => api.teamspaces(client, workspaceId) })
 }

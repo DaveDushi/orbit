@@ -7,12 +7,12 @@ import { DarkTheme, DefaultTheme, SplashScreen, Stack, ThemeProvider } from 'exp
 import { StatusBar } from 'expo-status-bar'
 import * as SystemUI from 'expo-system-ui'
 import { useFonts } from 'expo-font'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { AppState } from 'react-native'
 
 import { OrbitProvider } from '../orbit-context'
 import { SessionProvider, useSession } from '../session-context'
-import { fonts, type Theme, useTheme } from '../theme'
+import { fonts, loadSchemePreference, type Theme, useTheme } from '../theme'
 
 void SplashScreen.preventAutoHideAsync()
 
@@ -53,7 +53,12 @@ export default function RootLayout() {
 function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
   const { state } = useSession()
   const theme = useTheme()
-  const ready = fontsReady && state.status !== 'loading'
+  const [schemeLoaded, setSchemeLoaded] = useState(false)
+  const ready = fontsReady && schemeLoaded && state.status !== 'loading'
+
+  useEffect(() => {
+    void loadSchemePreference().finally(() => setSchemeLoaded(true))
+  }, [])
   const signedIn = state.status === 'signed_in'
 
   useEffect(() => {
@@ -81,9 +86,7 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
     >
       <Stack.Protected guard={signedIn}>
         <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="task/[id]" options={{ headerShown: true, title: '' }} />
-        <Stack.Screen name="task/new" options={{ headerShown: true, title: 'New task', presentation: 'modal' }} />
-        <Stack.Screen name="chat/[id]" options={{ headerShown: true, title: '' }} />
+        <Stack.Screen name="chat/[id]" />
       </Stack.Protected>
       <Stack.Protected guard={!signedIn}>
         <Stack.Screen name="sign-in" />

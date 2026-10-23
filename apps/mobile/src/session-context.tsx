@@ -14,6 +14,8 @@ interface SessionContextValue {
   state: SessionState
   signIn: (session: StoredSession, user: User) => Promise<void>
   signOut: () => Promise<void>
+  /** The signed-in user after a profile change. */
+  setUser: (user: User) => void
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null)
@@ -70,7 +72,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     await end()
   }
 
-  return <SessionContext value={{ state, signIn, signOut }}>{children}</SessionContext>
+  const setUser = (user: User) => setState((current) => (current.status === 'signed_in' ? { ...current, user } : current))
+
+  return <SessionContext value={{ state, signIn, signOut, setUser }}>{children}</SessionContext>
 }
 
 export function useSession(): SessionContextValue {

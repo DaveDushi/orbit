@@ -1,11 +1,11 @@
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
-import { Stack, useLocalSearchParams } from 'expo-router'
-import { useHeaderHeight } from 'expo-router/react-navigation'
+import { router, useLocalSearchParams } from 'expo-router'
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, FlatList, KeyboardAvoidingView, Platform, View } from 'react-native'
+import { Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, TextInput, View } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
 
-import { Composer } from '../../components/Composer'
 import { buildMessageRows, conversationTitle, decodeMentions, type MessageRow, newNonce, type Person } from '../../data/chat'
+import { dayLabel, fullDate, relativeAgo, timeOfDay } from '../../data/format'
 import { keys } from '../../data/keys'
 import { markdownToText } from '../../data/markdown'
 import * as api from '../../data/orbit'
@@ -13,9 +13,9 @@ import { applyChatActions } from '../../live'
 import { useOrbit } from '../../orbit-context'
 import { useChatStates, useConversations, usePeople } from '../../queries'
 import { errorMessage } from '../../session-context'
-import { fonts, useTheme } from '../../theme'
-import { dayLabel, shortTime } from '../../time'
-import { Avatar, ErrorView, LoadingView, Spinner, Text } from '../../ui'
+import { useOpenOnWeb } from '../../web'
+import { alpha, type, useTheme } from '../../theme'
+import { Avatar, Button, ErrorView, Icon, IconButton, LoadingView, Spinner, Text } from '../../ui'
 
 /** A message the server has not confirmed yet. */
 interface Pending {
@@ -25,17 +25,19 @@ interface Pending {
 
 type Row = MessageRow | { type: 'pending'; key: string; pending: Pending }
 
+/** On a phone the web paints the whole conversation on the card surface (its chat `--background`). */
 export default function ConversationScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const { client, workspaceId, user } = useOrbit()
   const queryClient = useQueryClient()
-  const { spacing } = useTheme()
-  const headerHeight = useHeaderHeight()
+  const { colors } = useTheme()
   const people = usePeople()
   const conversations = useConversations()
   const states = useChatStates()
   const [draft, setDraft] = useState('')
   const [pending, setPending] = useState<Pending[]>([])
+  const openOnWeb = useOpenOnWeb()
+  const onWeb = () => openOnWeb(`/chat/${id}`)
 
   const messages = useInfiniteQuery({
     queryKey: keys.messages(workspaceId, id),
@@ -90,101 +92,212 @@ export default function ConversationScreen() {
     )
   }
 
-  const title = conversation ? `${conversation.kind === 'dm' ? '' : '#'}${conversationTitle(conversation, people, user.id)}` : ''
+  const name = conversation ? conversationTitle(conversation, people, user.id) : ''
+  const dmPeer = conversation?.kind === 'dm' ? (conversation.member_ids.find((member) => member !== user.id) ?? user.id) : null
+  const placeholder = conversation ? `Message ${conversation.kind === 'dm' ? name : `#${name}`}` : 'Message'
   const text = (body: string) => markdownToText(decodeMentions(body, people, channelNames))
+  const nameOf = (userId: string) => people.find((person) => person.id === userId)?.name ?? 'Unknown'
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={headerHeight}>
-      <Stack.Screen options={{ title }} />
-      {!messages.data ? (
-        messages.isError ? (
-          <ErrorView error={messages.error} onRetry={() => void messages.refetch()} />
+    <SafeAreaView edges={['top', 'left', 'right', 'bottom']} style={{ flex: 1, backgroundColor: colors.card }}>
+      <View style={{ height: 48, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8 }}>
+        <IconButton icon="back" label="Back to chat" size={32} iconSize={20} color={colors.mutedForeground} onPress={() => (router.canGoBack() ? router.back() : router.navigate('/chat'))} />
+        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          {dmPeer ? <Avatar id={dmPeer} name={name} size={20} /> : <Icon name={conversation?.kind === 'private' ? 'lock' : 'hashtag'} size={18} color={colors.mutedForeground} />}
+          <Text numberOfLines={1} style={[type(14, 'semibold'), { flexShrink: 1 }]}>
+            {name}
+          </Text>
+        </View>
+        <View style={{ flexDirection: 'row', gap: 2 }}>
+          <IconButton icon="search" label="Search" size={32} color={colors.mutedForeground} onPress={onWeb} />
+          <IconButton icon="people" label="Members" size={32} color={colors.mutedForeground} onPress={onWeb} />
+          <IconButton icon="more" label={`Options for ${name}`} size={32} color={colors.mutedForeground} onPress={onWeb} />
+        </View>
+      </View>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        {!messages.data ? (
+          messages.isError ? (
+            <ErrorView error={messages.error} onRetry={() => void messages.refetch()} />
+          ) : (
+            <LoadingView />
+          )
         ) : (
-          <LoadingView />
-        )
-      ) : (
-        <FlatList
-          inverted
-          data={rows}
-          keyExtractor={(row) => row.key}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
-          contentContainerStyle={{ paddingVertical: spacing[3] }}
-          onEndReached={() => {
-            if (messages.hasPreviousPage && !messages.isFetchingPreviousPage) void messages.fetchPreviousPage()
-          }}
-          onEndReachedThreshold={0.5}
-          ListFooterComponent={messages.isFetchingPreviousPage ? <Spinner /> : undefined}
-          ListEmptyComponent={
-            <View style={{ padding: spacing[6], transform: [{ scaleY: -1 }] }}>
-              <Text color="muted" style={{ textAlign: 'center' }}>
-                No messages yet. Say hello.
-              </Text>
-            </View>
-          }
-          renderItem={({ item }) => {
-            if (item.type === 'day') {
-              return (
-                <Text variant="caption" color="muted" style={{ textAlign: 'center', paddingVertical: spacing[2], fontFamily: fonts.medium }}>
-                  {dayLabel(item.at)}
-                </Text>
-              )
+          <FlatList
+            inverted
+            data={rows}
+            keyExtractor={(row) => row.key}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            contentContainerStyle={{ paddingTop: 20 }}
+            onEndReached={() => {
+              if (messages.hasPreviousPage && !messages.isFetchingPreviousPage) void messages.fetchPreviousPage()
+            }}
+            onEndReachedThreshold={0.5}
+            ListFooterComponent={
+              messages.hasPreviousPage ? (
+                <View style={{ padding: 16 }}>{messages.isFetchingPreviousPage ? <Spinner /> : null}</View>
+              ) : conversation ? (
+                <ConversationStart conversation={conversation} title={name} creator={nameOf(conversation.created_by)} isDm={conversation.kind === 'dm'} onAddPeople={onWeb} />
+              ) : undefined
             }
-            if (item.type === 'pending') {
+            renderItem={({ item }) => {
+              if (item.type === 'day') return <DayChip label={dayLabel(item.at)} />
+              if (item.type === 'pending') {
+                return (
+                  <View style={{ paddingLeft: 12 + 30 + 8, paddingRight: 12, paddingVertical: 2, opacity: 0.5 }}>
+                    <Text style={[type(14), { lineHeight: 21 }]}>{text(item.pending.body)}</Text>
+                  </View>
+                )
+              }
+              const { message, groupStart } = item
+              const author = nameOf(message.author_id)
+              if (message.kind !== 'message') {
+                const what = message.kind === 'join' ? 'joined' : message.kind === 'leave' ? 'left' : 'pinned a message'
+                return (
+                  <Text style={[type(12), { lineHeight: 16, paddingHorizontal: 12, paddingVertical: 4, color: colors.mutedForeground }]}>
+                    {author} {what} · {timeOfDay(message.created_at)}
+                  </Text>
+                )
+              }
+              const body = message.deleted ? 'Message deleted.' : text(message.body)
+              const extras = [
+                message.sticker ? 'Sticker' : null,
+                message.attachments.length > 0 ? `${message.attachments.length} attachment${message.attachments.length === 1 ? '' : 's'}` : null,
+                message.edited_at ? '(edited)' : null,
+              ].filter(Boolean)
               return (
-                <View style={{ paddingLeft: spacing[4] + 36 + spacing[2.5], paddingRight: spacing[4], paddingVertical: 2, opacity: 0.5 }}>
-                  <Text>{text(item.pending.body)}</Text>
+                <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingTop: groupStart ? 4 : 2, paddingBottom: 2, marginTop: groupStart ? 8 : 0 }}>
+                  <View style={{ width: 30, paddingTop: 2 }}>{groupStart ? <Avatar id={message.author_id} name={author} size={30} /> : null}</View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    {groupStart ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
+                        <Text numberOfLines={1} style={[type(14, 'medium'), { lineHeight: 20, flexShrink: 1 }]}>
+                          {author}
+                        </Text>
+                        <Text style={[type(12), { lineHeight: 16, color: colors.mutedForeground }]}>{timeOfDay(message.created_at)}</Text>
+                      </View>
+                    ) : null}
+                    {body ? (
+                      <Text selectable style={[type(14), { lineHeight: 21, color: message.deleted ? colors.mutedForeground : alpha(colors.foreground, 0.85) }]}>
+                        {body}
+                      </Text>
+                    ) : null}
+                    {extras.length > 0 ? <Text style={[type(12), { lineHeight: 16, color: colors.mutedForeground }]}>{extras.join(' · ')}</Text> : null}
+                    {message.reply_count > 0 ? <ReplySummary message={message} nameOf={nameOf} text={text} /> : null}
+                  </View>
                 </View>
               )
-            }
-            const { message, groupStart } = item
-            const author = people.find((person) => person.id === message.author_id)?.name ?? 'Unknown'
-            if (message.kind !== 'message') {
-              const what = message.kind === 'join' ? 'joined' : message.kind === 'leave' ? 'left' : 'pinned a message'
-              return (
-                <Text variant="caption" color="muted" style={{ paddingHorizontal: spacing[4], paddingVertical: spacing[1] }}>
-                  {author} {what} · {shortTime(message.created_at)}
-                </Text>
-              )
-            }
-            const body = message.deleted ? 'Message deleted.' : text(message.body)
-            const extras = [
-              message.sticker ? 'Sticker' : null,
-              message.attachments.length > 0 ? `${message.attachments.length} attachment${message.attachments.length === 1 ? '' : 's'}` : null,
-              message.reply_count > 0 ? `${message.reply_count} repl${message.reply_count === 1 ? 'y' : 'ies'}` : null,
-              message.edited_at ? 'edited' : null,
-            ].filter(Boolean)
-            return (
-              <View style={{ flexDirection: 'row', gap: spacing[2.5], paddingHorizontal: spacing[4], paddingTop: groupStart ? spacing[2.5] : 2 }}>
-                <View style={{ width: 36 }}>{groupStart ? <Avatar id={message.author_id} name={author} size={36} /> : null}</View>
-                <View style={{ flex: 1, gap: 2 }}>
-                  {groupStart ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: spacing[2] }}>
-                      <Text variant="label" numberOfLines={1} style={{ flexShrink: 1 }}>
-                        {author}
-                      </Text>
-                      <Text variant="caption" color="muted">
-                        {shortTime(message.created_at)}
-                      </Text>
-                    </View>
-                  ) : null}
-                  {body ? (
-                    <Text selectable color={message.deleted ? 'muted' : 'default'}>
-                      {body}
-                    </Text>
-                  ) : null}
-                  {extras.length > 0 ? (
-                    <Text variant="caption" color="muted">
-                      {extras.join(' · ')}
-                    </Text>
-                  ) : null}
-                </View>
-              </View>
-            )
-          }}
-        />
-      )}
-      <Composer value={draft} onChangeText={setDraft} onSend={send} placeholder={conversation ? `Message ${title}` : 'Message'} />
-    </KeyboardAvoidingView>
+            }}
+          />
+        )}
+        <ChatComposer value={draft} onChangeText={setDraft} onSend={send} placeholder={placeholder} onWeb={onWeb} />
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  )
+}
+
+function DayChip({ label }: { label: string }) {
+  const { colors } = useTheme()
+  return (
+    <View accessibilityRole="header" accessibilityLabel={label} style={{ alignItems: 'center', paddingVertical: 8 }}>
+      <View style={{ paddingHorizontal: 12, paddingVertical: 2, borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card }}>
+        <Text style={[type(12, 'medium'), { lineHeight: 16, color: colors.mutedForeground }]}>{label}</Text>
+      </View>
+    </View>
+  )
+}
+
+/** The block above the first message: who made the channel and when, and "Add people". */
+function ConversationStart({ conversation, title, creator, isDm, onAddPeople }: { conversation: api.ConversationRecord; title: string; creator: string; isDm: boolean; onAddPeople: () => void }) {
+  const { colors } = useTheme()
+  if (isDm) {
+    return (
+      <View style={{ paddingHorizontal: 12, paddingTop: 32, paddingBottom: 16 }}>
+        <Text style={[type(16, 'semibold'), { lineHeight: 24 }]}>{conversation.self_dm ? 'This is your space' : `This is the start of your conversation with ${title}`}</Text>
+      </View>
+    )
+  }
+  return (
+    <View style={{ paddingHorizontal: 12, paddingTop: 32, paddingBottom: 16, gap: 4, alignItems: 'flex-start' }}>
+      <Text style={[type(16, 'semibold'), { lineHeight: 24 }]}>This is the start of #{title}</Text>
+      {conversation.topic ? <Text style={[type(14), { color: colors.mutedForeground }]}>{conversation.topic}</Text> : null}
+      <Text style={[type(12), { lineHeight: 16, color: colors.mutedForeground }]}>
+        Created by <Text style={[type(12, 'medium'), { lineHeight: 16, color: alpha(colors.foreground, 0.85) }]}>{creator}</Text> on {fullDate(conversation.created_at)}, {timeOfDay(conversation.created_at)}
+      </Text>
+      <View style={{ marginTop: 8 }}>
+        <Button label="Add people" variant="outline" size="sm" onPress={onAddPeople} />
+      </View>
+    </View>
+  )
+}
+
+/** "2 replies · last reply Oct 15" with the last reply's preview, behind a 2px guide line. */
+function ReplySummary({ message, nameOf, text }: { message: api.MessageRecord; nameOf: (userId: string) => string; text: (body: string) => string }) {
+  const { colors } = useTheme()
+  const reply = message.last_reply
+  return (
+    <View style={{ marginTop: 6, marginLeft: -4, paddingVertical: 4, paddingLeft: 4, paddingRight: 8 }}>
+      <View style={{ borderLeftWidth: 2, borderLeftColor: colors.border, paddingLeft: 10, gap: 4 }}>
+        {reply ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 }}>
+            <Avatar id={reply.author_id} name={nameOf(reply.author_id)} size={16} />
+            <Text numberOfLines={1} style={[type(12, 'medium'), { lineHeight: 16, flexShrink: 0, color: alpha(colors.foreground, 0.9) }]}>
+              {nameOf(reply.author_id)}
+            </Text>
+            <Text numberOfLines={1} style={[type(13), { lineHeight: 17, flexShrink: 1, color: colors.mutedForeground }]}>
+              {reply.sticker ? 'Sticker' : text(reply.body)}
+            </Text>
+          </View>
+        ) : null}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Text style={[type(12, 'medium'), { lineHeight: 16, color: alpha(colors.foreground, 0.9) }]}>
+            {message.reply_count} {message.reply_count === 1 ? 'reply' : 'replies'}
+          </Text>
+          {message.last_reply_at ? <Text style={[type(12), { lineHeight: 16, color: colors.mutedForeground }]}>last reply {relativeAgo(message.last_reply_at)}</Text> : null}
+        </View>
+      </View>
+    </View>
+  )
+}
+
+/** The web chat composer: the field on top, attach / emoji / mention on the left and send on the right, in one box. */
+function ChatComposer({ value, onChangeText, onSend, placeholder, onWeb }: { value: string; onChangeText: (text: string) => void; onSend: () => void; placeholder: string; onWeb: () => void }) {
+  const { colors, scheme } = useTheme()
+  const [focused, setFocused] = useState(false)
+  const canSend = value.trim().length > 0
+  return (
+    <View style={{ margin: 8, borderRadius: 10, borderWidth: 1, borderColor: focused ? colors.ring : colors.input, backgroundColor: alpha(colors.input, 0.3) }}>
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        placeholder={placeholder}
+        placeholderTextColor={colors.mutedForeground}
+        selectionColor={colors.primary}
+        keyboardAppearance={scheme}
+        multiline
+        numberOfLines={1}
+        accessibilityLabel={placeholder}
+        style={{ minHeight: 40, maxHeight: 160, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 8, fontSize: 16, lineHeight: 24, fontFamily: type(16).fontFamily, color: colors.foreground }}
+      />
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 6, paddingTop: 6, paddingBottom: 6 }}>
+        <IconButton icon="attach" label="Attach files" size={32} iconSize={20} onPress={onWeb} />
+        <IconButton icon="smile" label="Emoji" size={32} iconSize={20} onPress={onWeb} />
+        <IconButton icon="at" label="Mention" size={32} iconSize={20} onPress={() => onChangeText(`${value}${value && !value.endsWith(' ') ? ' ' : ''}@`)} />
+        <View style={{ flex: 1 }} />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Send"
+          accessibilityState={{ disabled: !canSend }}
+          disabled={!canSend}
+          onPress={onSend}
+          hitSlop={4}
+          style={({ pressed }) => ({ width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', opacity: canSend ? 1 : 0.5, backgroundColor: pressed ? colors.muted : 'transparent' })}
+        >
+          <Icon name="send" size={20} color={colors.foreground} />
+        </Pressable>
+      </View>
+    </View>
   )
 }

@@ -99,8 +99,11 @@ try {
 
   const created = await api.newTask(client, ws, {
     title: 'Mobile API check (safe to delete)',
+    description: '',
     projectId: projects[0]!.id,
     statusId: projectStatuses(statuses, projects[0]!.id)[0]!.id,
+    priority: 'none',
+    assigneeIds: [],
   })
   check(created.title === 'Mobile API check (safe to delete)', `created task ${identifier(created, projects)}`)
   const target = projectStatuses(statuses, created.project_id).find((status) => status.id !== created.status_id)!
@@ -141,7 +144,7 @@ try {
 
   // inbox
   const notifications = await api.notifications(client, ws)
-  const unread = await api.unreadNotificationCount(client, ws)
+  const unread = (await api.unreadNotifications(client, ws)).length
   check(unread === notifications.filter((item) => !item.read_at).length || notifications.length === 100, `notifications: ${notifications.length}, unread ${unread}`)
 
   cleanup.push(async () => {

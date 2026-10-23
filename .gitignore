@@ -3,7 +3,7 @@ shadow/
 .DS_Store
 **/.DS_Store
 target/
-data/
+/data/
 backups/
 .env.local
 todo.md

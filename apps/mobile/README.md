@@ -2,11 +2,21 @@
 
 The iOS and Android app for Orbit, in `apps/mobile` of the Orbit monorepo. Built with Expo and React Native.
 
-The app signs in to an Orbit server and works in one workspace at a time: Home (greeting, my tasks, unread counts), Tasks (by status, task detail with status change and comments, new task), Chat (channels and DMs, read and send messages), Inbox (notifications) and Account (workspace switcher, sign out).
+The app signs in to an Orbit server and works in one workspace at a time. It follows the web app's phone layout: the same bottom dock (Home, Tasks, Docs, Chat, Mail as "coming soon", Settings) and the ☰ drawer (workspace switcher, Activity, the task views, Settings).
+
+- Home: greeting, Due this week, Unread in Inbox, Recently updated docs.
+- Tasks: project picker, filter, search, status groups; task detail with properties, activity and comments; New task dialog.
+- Docs: teamspaces and private pages; a page opens read-only.
+- Chat: channels and DMs, read and send messages.
+- Activity (from the drawer): notifications with All, Unread and Mentions.
+- Settings: the profile form, theme toggle, server and sign out.
+
+What the app does not do yet (uploads, relations, labels, admin…) opens the same page of Orbit on the web in the browser.
 
 ## Code map
 
-- `src/data/`: no React. `orbit.ts` has every API call over the generated SDK (`@orbit/api`), `keys.ts` every query key, and `tasks.ts`, `chat.ts`, `inbox.ts`, `markdown.ts`, `live.ts`, `socket.ts` the logic the screens and the live sockets use. Unit tests sit next to them.
+- `src/data/`: no React. `orbit.ts` has every API call over the generated SDK (`@orbit/api`), `keys.ts` every query key, and `tasks.ts`, `activity.ts`, `chat.ts`, `docs.ts`, `inbox.ts`, `profile.ts`, `format.ts`, `color.ts`, `markdown.ts`, `live.ts`, `socket.ts` the logic the screens and the live sockets use (`color.ts` and `format.ts` reproduce the web's color mixing and date wording). Unit tests sit next to them.
+- `src/components/`: the dock, the drawer, the task row and the New task dialog. `src/ui/`: the web's primitives (header, buttons, inputs, avatar, icons).
 - `src/session-context.tsx`: the stored session and one API client per session. A 401 signs out.
 - `src/orbit-context.tsx`: `useOrbit()` gives the client, the user and the current workspace (the last one chosen, else the first).
 - `src/live.ts`: the workspace events socket (marks task, project and inbox queries stale) and the chat live socket (patches messages and read states). Both close in the background and reconnect in the foreground.
@@ -62,7 +72,7 @@ Requirements: Bun, the Orbit dev server (`just dev` at the repo root), and a pho
 
 6. Sign in with a seed account: `member@example.com` / `password` (create it with `just seed`).
 
-You should see the Home tab. Account shows your name, email and server, and signs you out.
+You should see the Home tab. Settings shows your profile and the server, and signs you out.
 
 ## Checks
 
