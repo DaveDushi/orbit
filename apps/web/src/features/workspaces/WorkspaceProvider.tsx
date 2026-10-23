@@ -1,6 +1,6 @@
 import { useEffect, useMemo, type ReactNode } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router'
-import type { WorkspaceRecord } from '@/api/generated/types.gen'
+import type { WorkspaceRecord } from '@orbit/api/generated/types.gen'
 import { useWorkspaces } from './api'
 import { selectedWorkspaceId, switchWorkspaceHref } from './navigation'
 import { useIsInstallationAdmin } from './permissions'

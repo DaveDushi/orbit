@@ -8,7 +8,7 @@ use std::time::Duration;
 use axum::Json;
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, Extension, FromRequest, Multipart, Path, Request, State};
-use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, COOKIE, RETRY_AFTER, SET_COOKIE};
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, COOKIE, ORIGIN, RETRY_AFTER, SET_COOKIE};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
@@ -75,29 +75,71 @@ impl CookieMode {
         }
     }
 
-    /// The session token a request carries, if any.
-    pub(crate) fn session_token(self, headers: &HeaderMap) -> Option<&str> {
+    /// The session credential a request carries, if any. The session cookie wins over an
+    /// `Authorization: Bearer` header, so a browser request is always judged by its cookie.
+    pub(crate) fn session_credential(self, headers: &HeaderMap) -> Option<SessionCredential<'_>> {
         let name = self.session_cookie_name();
-        headers
-            .get(COOKIE)?
-            .to_str()
-            .ok()?
-            .split(';')
-            .find_map(|pair| pair.trim().strip_prefix(name)?.strip_prefix('='))
-            .filter(|token| !token.is_empty())
+        let cookie = headers
+            .get(COOKIE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|cookies| {
+                cookies
+                    .split(';')
+                    .find_map(|pair| pair.trim().strip_prefix(name)?.strip_prefix('='))
+            })
+            .filter(|token| !token.is_empty());
+        match cookie {
+            Some(token) => Some(SessionCredential::Cookie(token)),
+            None => orbit_platform::bearer_token(headers).map(SessionCredential::Bearer),
+        }
     }
 }
 
-/// The session a request carries. `None` when the cookie is missing or the session is expired,
-/// revoked or belongs to a suspended user. Every cookie-authenticated route and socket uses this.
+/// How a request presents its session token: the browser cookie, or `Authorization: Bearer`
+/// from a native client.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SessionCredential<'a> {
+    Cookie(&'a str),
+    Bearer(&'a str),
+}
+
+impl<'a> SessionCredential<'a> {
+    pub(crate) const fn token(self) -> &'a str {
+        match self {
+            Self::Cookie(token) | Self::Bearer(token) => token,
+        }
+    }
+}
+
+/// How a sign-in hands its new session to the client. Browsers always send `Origin` on a POST,
+/// so a sign-in without one comes from a native client, which keeps the token itself.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SessionDelivery {
+    Cookie,
+    Token,
+}
+
+impl SessionDelivery {
+    pub(crate) fn for_request(headers: &HeaderMap) -> Self {
+        if headers.contains_key(ORIGIN) {
+            Self::Cookie
+        } else {
+            Self::Token
+        }
+    }
+}
+
+/// The session a request carries. `None` when the cookie or bearer token is missing or the session
+/// is expired, revoked or belongs to a suspended user. Every session-authenticated route and socket
+/// uses this.
 pub(crate) async fn request_session(
     identity: &IdentityRepository,
     cookie_mode: CookieMode,
     headers: &HeaderMap,
 ) -> Option<AuthenticatedSession> {
-    let token = cookie_mode.session_token(headers)?;
+    let credential = cookie_mode.session_credential(headers)?;
     identity
-        .authenticate_session(token, TimestampMillis::now())
+        .authenticate_session(credential.token(), TimestampMillis::now())
         .await
         .ok()
 }
@@ -518,6 +560,9 @@ struct LoginBody {
 struct LoginResponse {
     user: AuthUserResponse,
     session_id: String,
+    /// Present only for native clients (requests without Origin); send it as `Authorization: Bearer`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_token: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -588,6 +633,7 @@ async fn user_response(
 #[utoipa::path(post, path = "/api/v1/auth/login", request_body = LoginBody, responses((status = 200, body = LoginResponse), (status = 202, description = "The account has two-factor sign-in on: send a code to /api/v1/auth/login/two-factor.", body = two_factor::TwoFactorChallenge), (status = 401, description = "invalid_credentials", body = ProblemBody, content_type = "application/problem+json"), (status = 429, description = "authentication_throttled", body = ProblemBody, content_type = "application/problem+json")))]
 async fn login(
     State(state): State<AuthState>,
+    headers: HeaderMap,
     client_ip: Option<Extension<ClientIp>>,
     request_id: Option<Extension<RequestId>>,
     ApiJson(body): ApiJson<LoginBody>,
@@ -735,16 +781,23 @@ async fn login(
             ));
         }
     };
-    Ok(signed_in_response(&state, user, &session).await)
+    Ok(signed_in_response(
+        &state,
+        user,
+        &session,
+        SessionDelivery::for_request(&headers),
+    )
+    .await)
 }
 
-/// The answer to a sign-in that created `session`: the user and the session cookie.
-/// Nothing here may fail: the session exists, so the response must carry its cookie.
+/// The answer to a sign-in that created `session`: the user and the session, as a cookie or as a
+/// token in the body. Nothing here may fail: the session exists, so the response must carry it.
 /// A failed avatar read only leaves the picture out.
 async fn signed_in_response(
     state: &AuthState,
     user: AuthenticatedUser,
     session: &orbit_platform::IssuedSession,
+    delivery: SessionDelivery,
 ) -> Response {
     let avatar_updated_at = state
         .repository
@@ -779,17 +832,20 @@ async fn signed_in_response(
             display_name: user.display_name,
         },
         session_id: session.id.to_string(),
+        session_token: (delivery == SessionDelivery::Token).then(|| session.token.clone()),
     })
     .into_response();
-    response.headers_mut().insert(
-        SET_COOKIE,
-        HeaderValue::from_str(&issued_session_cookie(
-            state.cookie_mode,
-            &session.token,
-            session.absolute_expires_at,
-        ))
-        .expect("generated tokens are valid cookie values"),
-    );
+    if delivery == SessionDelivery::Cookie {
+        response.headers_mut().insert(
+            SET_COOKIE,
+            HeaderValue::from_str(&issued_session_cookie(
+                state.cookie_mode,
+                &session.token,
+                session.absolute_expires_at,
+            ))
+            .expect("generated tokens are valid cookie values"),
+        );
+    }
     response
 }
 
@@ -819,10 +875,12 @@ async fn logout(
         ));
     }
     let mut response = StatusCode::NO_CONTENT.into_response();
-    response.headers_mut().insert(
-        SET_COOKIE,
-        HeaderValue::from_str(&clear_session_cookie(state.cookie_mode)).unwrap(),
-    );
+    if let Some(SessionCredential::Cookie(_)) = state.cookie_mode.session_credential(&headers) {
+        response.headers_mut().insert(
+            SET_COOKIE,
+            HeaderValue::from_str(&clear_session_cookie(state.cookie_mode)).unwrap(),
+        );
+    }
     Ok(response)
 }
 
@@ -833,25 +891,26 @@ async fn me(
     request_id: Option<Extension<RequestId>>,
 ) -> Result<Response, ApiError> {
     let session = authenticate(&state, &headers, "/api/v1/auth/me", request_id.as_ref()).await?;
-    let token = state
+    let credential = state
         .cookie_mode
-        .session_token(&headers)
-        .expect("authenticate requires the session cookie")
-        .to_owned();
+        .session_credential(&headers)
+        .expect("authenticate requires a session credential");
     let mut response =
         Json(user_response(&state, session.user, "/api/v1/auth/me", request_id.as_ref()).await?)
             .into_response();
     // Rewrite the cookie on each profile read. A browser that still has the old
     // session cookie then stores it with an expiry before the process stops.
-    response.headers_mut().insert(
-        SET_COOKIE,
-        HeaderValue::from_str(&issued_session_cookie(
-            state.cookie_mode,
-            &token,
-            session.absolute_expires_at,
-        ))
-        .expect("session cookie is a valid header"),
-    );
+    if let SessionCredential::Cookie(token) = credential {
+        response.headers_mut().insert(
+            SET_COOKIE,
+            HeaderValue::from_str(&issued_session_cookie(
+                state.cookie_mode,
+                token,
+                session.absolute_expires_at,
+            ))
+            .expect("session cookie is a valid header"),
+        );
+    }
     Ok(response)
 }
 
@@ -1754,7 +1813,9 @@ async fn revoke_session(
         ));
     }
     let mut response = StatusCode::NO_CONTENT.into_response();
-    if id == session.id {
+    if id == session.id
+        && let Some(SessionCredential::Cookie(_)) = state.cookie_mode.session_credential(&headers)
+    {
         response.headers_mut().insert(
             SET_COOKIE,
             HeaderValue::from_str(&clear_session_cookie(state.cookie_mode))
@@ -3006,6 +3067,108 @@ mod tests {
                 .status(),
             StatusCode::OK
         );
+    }
+
+    fn native_login_request() -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/auth/login")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"email":"owner@example.com","password":"correct horse battery"}).to_string(),
+            ))
+            .unwrap()
+    }
+
+    fn bearer_request(method: &str, uri: &str, token: &str) -> Request<Body> {
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn native_login_returns_the_session_token_instead_of_a_cookie() {
+        let (app, _, _database) = application(CookieMode::secure()).await;
+        let login = app.oneshot(native_login_request()).await.unwrap();
+
+        assert_eq!(login.status(), StatusCode::OK);
+        assert!(login.headers().get(header::SET_COOKIE).is_none());
+        let login: Value = serde_json::from_slice(&body(login).await).unwrap();
+        assert_eq!(login["user"]["email"], "Owner@Example.com");
+        assert!(!login["session_token"].as_str().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn bearer_session_reads_the_profile_and_signs_out() {
+        let (app, _, _database) = application(CookieMode::secure()).await;
+        let login = app.clone().oneshot(native_login_request()).await.unwrap();
+        let login: Value = serde_json::from_slice(&body(login).await).unwrap();
+        let token = login["session_token"].as_str().unwrap();
+
+        let me = app
+            .clone()
+            .oneshot(bearer_request("GET", "/api/v1/auth/me", token))
+            .await
+            .unwrap();
+        assert_eq!(me.status(), StatusCode::OK);
+        assert!(me.headers().get(header::SET_COOKIE).is_none());
+        let me: Value = serde_json::from_slice(&body(me).await).unwrap();
+        assert_eq!(me["email"], "Owner@Example.com");
+
+        let logout = app
+            .clone()
+            .oneshot(bearer_request("POST", "/api/v1/auth/logout", token))
+            .await
+            .unwrap();
+        assert_eq!(logout.status(), StatusCode::NO_CONTENT);
+        assert!(logout.headers().get(header::SET_COOKIE).is_none());
+
+        let me = app
+            .oneshot(bearer_request("GET", "/api/v1/auth/me", token))
+            .await
+            .unwrap();
+        assert_eq!(me.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn browser_login_keeps_the_token_out_of_the_body() {
+        let (app, _, _database) = application(CookieMode::secure()).await;
+        let login = app
+            .oneshot(json_request(
+                "/api/v1/auth/login",
+                json!({"email":"owner@example.com","password":"correct horse battery"}),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(login.status(), StatusCode::OK);
+        assert!(
+            login.headers()[header::SET_COOKIE]
+                .to_str()
+                .unwrap()
+                .starts_with("__Host-orbit_session=")
+        );
+        let login: Value = serde_json::from_slice(&body(login).await).unwrap();
+        assert!(login.get("session_token").is_none());
+    }
+
+    #[tokio::test]
+    async fn the_session_cookie_wins_over_a_bearer_token() {
+        let (app, _, _database) = application(CookieMode::secure()).await;
+        let cookie = login_cookie(&app, "correct horse battery").await;
+        let mut request = cookie_request("GET", "/api/v1/auth/me", &cookie);
+        request
+            .headers_mut()
+            .insert(header::AUTHORIZATION, "Bearer bogus".parse().unwrap());
+
+        let me = app.oneshot(request).await.unwrap();
+        assert_eq!(me.status(), StatusCode::OK);
+        assert!(me.headers().get(header::SET_COOKIE).is_some());
+        let me: Value = serde_json::from_slice(&body(me).await).unwrap();
+        assert_eq!(me["email"], "Owner@Example.com");
     }
 
     async fn application(

@@ -15,8 +15,8 @@ use webauthn_rs::{Webauthn, WebauthnBuilder};
 
 use super::two_factor::{Pending, busy, confirm_password};
 use super::{
-    ApiError, ApiJson, AuthState, LoginResponse, ProblemBody, authenticate, request_id_value,
-    signed_in_response,
+    ApiError, ApiJson, AuthState, LoginResponse, ProblemBody, SessionDelivery, authenticate,
+    request_id_value, signed_in_response,
 };
 use crate::audit::AuditOutcome;
 use crate::repositories::identity::IdentityError;
@@ -362,6 +362,7 @@ pub(super) struct FinishPasskeyLoginBody {
 #[utoipa::path(post, path = "/api/v1/auth/passkey/login/finish", request_body = FinishPasskeyLoginBody, responses((status = 200, body = LoginResponse), (status = 401, description = "invalid_passkey", body = ProblemBody, content_type = "application/problem+json"), (status = 409, description = "passkeys_unavailable", body = ProblemBody, content_type = "application/problem+json")))]
 pub(super) async fn finish_passkey_login(
     State(state): State<AuthState>,
+    headers: HeaderMap,
     request_id: Option<Extension<RequestId>>,
     ApiJson(body): ApiJson<FinishPasskeyLoginBody>,
 ) -> Result<Response, ApiError> {
@@ -431,7 +432,13 @@ pub(super) async fn finish_passkey_login(
             IdentityError::InvalidCredential => rejected(),
             _ => ApiError::internal(instance, request_id.as_ref()),
         })?;
-    Ok(signed_in_response(&state, user, &session).await)
+    Ok(signed_in_response(
+        &state,
+        user,
+        &session,
+        SessionDelivery::for_request(&headers),
+    )
+    .await)
 }
 
 async fn record_failure(

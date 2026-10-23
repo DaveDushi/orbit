@@ -2,6 +2,12 @@
 
 Read [`.ai/README.md`](.ai/README.md) first: it lists the project guides in order.
 
+## Apps
+
+The repo root is one Bun workspace: `apps/web` (Vite) and `apps/mobile` (Expo, see [`apps/mobile/AGENTS.md`](apps/mobile/AGENTS.md)).
+Run `bun install` at the root. Both apps share one hoisted `node_modules`, so they must use the same `react` and
+`react-dom` version. Find a package's files with module resolution, not a fixed `node_modules/…` path.
+
 ## Databases: SQLite and Postgres
 
 Orbit runs on SQLite (default, `ORBIT_DATABASE_PATH`) or Postgres (`ORBIT_DATABASE_URL`).

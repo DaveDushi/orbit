@@ -15,7 +15,7 @@ import {
   CommandShortcut,
 } from '@/components/ui/command'
 import { Kbd } from '@/components/ui/kbd'
-import type { TextRange } from '@/api/generated/types.gen'
+import type { TextRange } from '@orbit/api/generated/types.gen'
 import { queryKeys } from '@/api/queryKeys'
 import { chatKeys } from '@/features/chat/api/keys'
 import type { Conversation } from '@/features/chat/api/types'

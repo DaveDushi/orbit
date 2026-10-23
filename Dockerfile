@@ -1,10 +1,15 @@
 # syntax=docker/dockerfile:1.7
 ARG ORBIT_BUILD_REVISION=container
 FROM oven/bun:1.3.14-alpine AS web
+WORKDIR /src
+COPY package.json bun.lock bunfig.toml ./
+COPY apps/web/package.json apps/web/
+COPY apps/mobile/package.json apps/mobile/
+COPY packages/api/package.json packages/api/
+RUN bun install --frozen-lockfile --filter web
+COPY packages/api/ packages/api/
+COPY apps/web/ apps/web/
 WORKDIR /src/apps/web
-COPY apps/web/package.json apps/web/bun.lock ./
-RUN bun install --frozen-lockfile
-COPY apps/web/ ./
 ARG ORBIT_BUILD_REVISION
 RUN ORBIT_BUILD_REVISION=${ORBIT_BUILD_REVISION} bun run build
 

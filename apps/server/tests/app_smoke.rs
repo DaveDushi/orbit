@@ -59,7 +59,19 @@ async fn development_app_accepts_distinct_http_origins_but_still_requires_one() 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{origin}");
     }
 
-    let missing = app.router().oneshot(login_request(None)).await.unwrap();
+    // Native clients sign in without an Origin; other mutations still need one.
+    let native = app.router().oneshot(login_request(None)).await.unwrap();
+    assert_eq!(native.status(), StatusCode::UNAUTHORIZED);
+    let missing = app
+        .router()
+        .oneshot(
+            Request::post("/api/v1/auth/recovery/request")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"email":"owner@example.com"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(missing.status(), StatusCode::FORBIDDEN);
 }
 

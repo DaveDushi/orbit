@@ -14,9 +14,9 @@ import {
   searchPages,
   updatePage,
   uploadPageFile,
-} from '@/api/generated/sdk.gen'
-import type { CreatePageBody, Page, PageFile, PageSummary, PageTrashEmptied, PageUpdateBody, TrashedPage } from '@/api/generated/types.gen'
-import { ApiProblem } from '@/api/problem'
+} from '@orbit/api/generated/sdk.gen'
+import type { CreatePageBody, Page, PageFile, PageSummary, PageTrashEmptied, PageUpdateBody, TrashedPage } from '@orbit/api/generated/types.gen'
+import { ApiProblem } from '@orbit/api/problem'
 import { queryKeys } from '@/api/queryKeys'
 import { shrinkImage } from '@/lib/shrinkImage'
 import { confirmAction } from '@/components/common/confirmAction'

@@ -5,7 +5,7 @@
 import type { QueryClient } from '@tanstack/react-query'
 import { QueryObserver } from '@tanstack/react-query'
 import { ThreadStore, ThreadStoreAuth, type CommentData, type ThreadData } from '@blocknote/core/comments'
-import type { PageComment, PageThread } from '@/api/generated/types.gen'
+import type { PageComment, PageThread } from '@orbit/api/generated/types.gen'
 import type { CommentBlocks, CommentsApi } from './api'
 
 type Listener = (threads: Map<string, ThreadData>) => void

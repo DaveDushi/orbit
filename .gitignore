@@ -10,3 +10,5 @@ todo.md
 
 # Local production domain/image selection
 deploy/.env
+
+node_modules

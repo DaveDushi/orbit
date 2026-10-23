@@ -1,6 +1,6 @@
 import { Download, Trash } from 'reicon-react'
-import { ApiProblem } from '@/api/problem'
-import type { BackupSummary } from '@/api/generated/types.gen'
+import { ApiProblem } from '@orbit/api/problem'
+import type { BackupSummary } from '@orbit/api/generated/types.gen'
 import { confirmAction } from '@/components/common/confirmAction'
 import { SettingsCard } from '@/components/common/SettingsCard'
 import { Badge } from '@/components/ui/badge'

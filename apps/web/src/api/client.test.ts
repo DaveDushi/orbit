@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { CONTRACT_ID, createApiClient } from './client'
-import { createTask, login, me, setupComplete, setupStatus } from '@/api/generated/sdk.gen'
+import { createTask, login, me, setupComplete, setupStatus } from '@orbit/api/generated/sdk.gen'
 
 test('API client sends cookies and the contract identifier', async () => {
   let captured: Request | undefined

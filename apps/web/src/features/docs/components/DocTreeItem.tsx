@@ -1,5 +1,5 @@
 import { ChevronRight, Copy, MoreH as Ellipsis, DocumentText as FileText, Add as Plus, Star, Trash as Trash2 } from 'reicon-react'
-import type { PageSummary } from '@/api/generated/types.gen'
+import type { PageSummary } from '@orbit/api/generated/types.gen'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Emoji } from '@/components/common/Emoji'

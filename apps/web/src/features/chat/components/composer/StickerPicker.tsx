@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Search4 } from 'reicon-react'
-import type { CustomStickerRecord } from '@/api/generated/types.gen'
+import type { CustomStickerRecord } from '@orbit/api/generated/types.gen'
 import { Tip } from '@/components/common/Tip'
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group'
 import { searchStickers } from '@/lib/customSticker'

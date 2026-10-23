@@ -18,7 +18,7 @@ import {
   Trash as Trash2,
   People as Users,
 } from 'reicon-react'
-import type { PageSummary, Teamspace } from '@/api/generated/types.gen'
+import type { PageSummary, Teamspace } from '@orbit/api/generated/types.gen'
 import { cn } from 'cn'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'

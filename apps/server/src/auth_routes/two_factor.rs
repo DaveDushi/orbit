@@ -19,8 +19,8 @@ use utoipa::ToSchema;
 use webauthn_rs::prelude::{DiscoverableAuthentication, PasskeyRegistration};
 
 use super::{
-    ApiError, ApiJson, AuthState, LoginResponse, ProblemBody, authenticate, request_id_value,
-    signed_in_response,
+    ApiError, ApiJson, AuthState, LoginResponse, ProblemBody, SessionDelivery, authenticate,
+    request_id_value, signed_in_response,
 };
 use crate::audit::AuditOutcome;
 use crate::repositories::identity::{AuthenticatedSession, IdentityError};
@@ -205,6 +205,7 @@ pub(super) struct SecondFactorBody {
 #[utoipa::path(post, path = "/api/v1/auth/login/two-factor", request_body = SecondFactorBody, responses((status = 200, body = LoginResponse), (status = 400, description = "invalid_two_factor_token", body = ProblemBody, content_type = "application/problem+json"), (status = 401, description = "invalid_two_factor_code", body = ProblemBody, content_type = "application/problem+json"), (status = 429, description = "authentication_throttled", body = ProblemBody, content_type = "application/problem+json")))]
 pub(super) async fn login_second_factor(
     State(state): State<AuthState>,
+    headers: HeaderMap,
     client_ip: Option<Extension<ClientIp>>,
     request_id: Option<Extension<RequestId>>,
     ApiJson(body): ApiJson<SecondFactorBody>,
@@ -332,7 +333,13 @@ pub(super) async fn login_second_factor(
         )
         .await;
     match session {
-        Ok(session) => Ok(signed_in_response(&state, user, &session).await),
+        Ok(session) => Ok(signed_in_response(
+            &state,
+            user,
+            &session,
+            SessionDelivery::for_request(&headers),
+        )
+        .await),
         // The password changed or the account was suspended after the first step.
         Err(IdentityError::InvalidCredential) => Err(expired()),
         Err(_) => Err(ApiError::internal(instance, request_id.as_ref())),

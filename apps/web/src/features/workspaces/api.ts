@@ -18,8 +18,8 @@ import {
   renameWorkspace,
   revokeInvitation,
   transferOwnership,
-} from '@/api/generated/sdk.gen'
-import type { AcceptBody, InvitationBody, MemberRecord, RoleBody, WorkspaceRecord } from '@/api/generated/types.gen'
+} from '@orbit/api/generated/sdk.gen'
+import type { AcceptBody, InvitationBody, MemberRecord, RoleBody, WorkspaceRecord } from '@orbit/api/generated/types.gen'
 import type { User } from './models'
 
 type ApiClient = ReturnType<typeof createApiClient>

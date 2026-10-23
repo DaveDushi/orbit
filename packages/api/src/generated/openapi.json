@@ -36334,6 +36334,13 @@
           "session_id": {
             "type": "string"
           },
+          "session_token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Present only for native clients (requests without Origin); send it as `Authorization: Bearer`."
+          },
           "user": {
             "$ref": "#/components/schemas/AuthUserResponse"
           }

@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ComponentProps } from 'react'
-import { ApiProblem } from '@/api/problem'
+import { ApiProblem } from '@orbit/api/problem'
 import { Add as Plus, ChevronDown } from 'reicon-react'
 import { cn } from 'cn'
 import { Button } from '@/components/ui/button'

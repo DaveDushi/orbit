@@ -1,7 +1,7 @@
 // "Edited <time> by <name>" for the page header: the server's last editor (`updated_by_user`, `updated_at`) and, while
 // the page is open, edits seen live on the collaborative document (attributed through the awareness user stamps).
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { Page } from '@/api/generated/types.gen'
+import type { Page } from '@orbit/api/generated/types.gen'
 import type { CollabConnection } from './collab/session'
 
 export interface LastEdit {

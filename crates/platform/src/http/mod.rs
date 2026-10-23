@@ -21,7 +21,7 @@ use rate_limit::RateLimiter;
 
 pub use limits::HttpLimits;
 pub use request_id::RequestId;
-pub use security::{ClientIp, OriginPolicy, RequestTransport};
+pub use security::{ClientIp, OriginPolicy, RequestTransport, bearer_token};
 use security::{add_security_headers, inspect_request, strip_forwarding_headers};
 
 /// Applies Orbit's request identity, proxy, origin, limit, and response policy.

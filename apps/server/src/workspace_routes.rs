@@ -1065,7 +1065,7 @@ async fn accept_invitation(
     ApiJson(body): ApiJson<AcceptBody>,
 ) -> Result<Response, ApiError> {
     let instance = "/api/v1/workspaces/invitations/accept";
-    if state.cookie_mode.session_token(&headers).is_some() {
+    if state.cookie_mode.session_credential(&headers).is_some() {
         let session = authenticate(&state, &headers, instance, request_id.as_ref()).await?;
         let accepted = state
             .workspaces

@@ -1,15 +1,15 @@
 import { useEffect, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { apiClient, type createApiClient } from '@/api/client'
-import { cancelNotionImport, createNotionImport, getNotionImport, listNotionImports, startNotionImport } from '@/api/generated/sdk.gen'
+import { cancelNotionImport, createNotionImport, getNotionImport, listNotionImports, startNotionImport } from '@orbit/api/generated/sdk.gen'
 import type {
   NotionImport,
   NotionImportDestinationBody,
   NotionImportSelectionBody,
   NotionImportStatus,
   NotionImportTree,
-} from '@/api/generated/types.gen'
-import { ApiProblem } from '@/api/problem'
+} from '@orbit/api/generated/types.gen'
+import { ApiProblem } from '@orbit/api/problem'
 import { queryKeys } from '@/api/queryKeys'
 
 type ApiClient = ReturnType<typeof createApiClient>

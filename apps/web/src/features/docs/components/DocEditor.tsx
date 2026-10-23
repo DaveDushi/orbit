@@ -7,7 +7,7 @@ import { ArrowLeft, ArrowSwapHorizontal, Check, Copy, Download, MoreH as Ellipsi
 import { cn } from 'cn'
 import { apiClient, UNAUTHORIZED_EVENT } from '@/api/client'
 import { queryKeys } from '@/api/queryKeys'
-import type { Page, PageSummary, PageVersionSummary, Teamspace } from '@/api/generated/types.gen'
+import type { Page, PageSummary, PageVersionSummary, Teamspace } from '@orbit/api/generated/types.gen'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,

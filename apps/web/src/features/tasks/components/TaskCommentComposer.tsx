@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Tip } from '@/components/common/Tip'
 import type { PageMentionMember } from '@/features/docs/editor/pageMentions'
 import { uploadInlineFile } from '@/features/tasks/api/inlineFiles'
-import { storageQuotaDetail } from '@/api/problem'
+import { storageQuotaDetail } from '@orbit/api/problem'
 import { fileBlock, isEmptyRichText } from '@/features/tasks/lib/richText'
 // Type-only import: erased at build time, so the BlockNote chunk stays lazy.
 import type { PageEditorHandle } from '@/features/docs/editor/PageEditor'

@@ -1329,6 +1329,10 @@ export type LoginBody = {
 
 export type LoginResponse = {
     session_id: string;
+    /**
+     * Present only for native clients (requests without Origin); send it as `Authorization: Bearer`.
+     */
+    session_token?: string | null;
     user: AuthUserResponse;
 };
 

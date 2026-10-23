@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { apiClient, READ_ONLY_EVENT } from '@/api/client'
 import { queryKeys } from '@/api/queryKeys'
-import { billingCheckout, billingPortal, getBilling } from '@/api/generated/sdk.gen'
+import { billingCheckout, billingPortal, getBilling } from '@orbit/api/generated/sdk.gen'
 import { useAuthOptions } from '@/features/auth/api'
 import { useWorkspace } from './workspaceContext'
 

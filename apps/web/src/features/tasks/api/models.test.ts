@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import type { AttachmentRecord, AuditEvent, CommentRecord, ProjectRecord, TaskRecord } from '@/api/generated/types.gen'
+import type { AttachmentRecord, AuditEvent, CommentRecord, ProjectRecord, TaskRecord } from '@orbit/api/generated/types.gen'
 import { refIdentifier, taskFromRecord, taskIdentifier } from './models'
 
 const project: ProjectRecord = {

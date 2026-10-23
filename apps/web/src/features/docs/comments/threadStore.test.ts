@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'bun:test'
 import { QueryClient } from '@tanstack/react-query'
-import type { PageComment, PageThread } from '@/api/generated/types.gen'
+import type { PageComment, PageThread } from '@orbit/api/generated/types.gen'
 import type { CommentsApi } from './api'
 import { threadCounts } from './api'
 import { OrbitThreadStore, OrbitThreadStoreAuth, toThreadData } from './threadStore'

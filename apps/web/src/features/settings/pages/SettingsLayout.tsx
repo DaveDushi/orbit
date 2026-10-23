@@ -3,7 +3,7 @@ import { ArchiveBox, Card, ClipboardText, CloudConnection, Cpu, SecurityUser, Dr
 import { cn } from 'cn'
 import { buttonVariants } from '@/components/ui/button'
 import { Pane, PaneHeader, PaneTitle } from '@/components/common/Pane'
-import type { Permission } from '@/api/generated/types.gen'
+import type { Permission } from '@orbit/api/generated/types.gen'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import { useIsInstallationAdmin } from '@/features/workspaces/permissions'
 import { useBillingEnabled } from '@/features/workspaces/billing'

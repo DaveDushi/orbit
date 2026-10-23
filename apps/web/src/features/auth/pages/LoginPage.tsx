@@ -1,6 +1,6 @@
 import { useId, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
-import { ApiProblem } from '@/api/problem'
+import { ApiProblem } from '@orbit/api/problem'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
