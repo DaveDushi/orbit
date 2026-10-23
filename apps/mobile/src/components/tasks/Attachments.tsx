@@ -1,0 +1,108 @@
+import { useState } from 'react'
+import { ActivityIndicator, Alert, Image, Pressable, View } from 'react-native'
+
+import { fileSize } from '../../data/tasks'
+import { useOrbit } from '../../orbit-context'
+import { errorMessage } from '../../session-context'
+import { type, useTheme } from '../../theme'
+import { Icon, Text } from '../../ui'
+import { openFile } from './files'
+
+export interface ShownFile {
+  key: string
+  name: string
+  /** The server path, `/api/v1/…/download`; none while the file uploads. */
+  path?: string
+  image: boolean
+  size?: number
+}
+
+/**
+ * Files of a comment or of the task: images as thumbnails, other files as chips. A tap downloads the file with the
+ * session token and opens it in the system preview. `onRemove` adds a remove button (a file waiting in the composer).
+ */
+export function Attachments({ files, onRemove }: { files: readonly ShownFile[]; onRemove?: (key: string) => void }) {
+  const { session } = useOrbit()
+  const [opening, setOpening] = useState<string | null>(null)
+  if (files.length === 0) return null
+  const open = async (file: ShownFile) => {
+    if (opening || !file.path) return
+    setOpening(file.key)
+    try {
+      await openFile(`${session.server}${file.path}`, file.name, session.token)
+    } catch (error) {
+      Alert.alert(`Could not open “${file.name}”`, errorMessage(error))
+    } finally {
+      setOpening(null)
+    }
+  }
+  const images = files.filter((file) => file.image)
+  const others = files.filter((file) => !file.image)
+  return (
+    <View style={{ gap: 6, marginTop: 6 }}>
+      {images.length > 0 ? (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+          {images.map((file) => (
+            <Thumbnail key={file.key} file={file} opening={opening === file.key} onPress={() => void open(file)} onRemove={onRemove && (() => onRemove(file.key))} />
+          ))}
+        </View>
+      ) : null}
+      {others.map((file) => (
+        <FileChip key={file.key} file={file} opening={opening === file.key} onPress={() => void open(file)} onRemove={onRemove && (() => onRemove(file.key))} />
+      ))}
+    </View>
+  )
+}
+
+function Thumbnail({ file, opening, onPress, onRemove }: { file: ShownFile; opening: boolean; onPress: () => void; onRemove?: () => void }) {
+  const { colors } = useTheme()
+  const { session } = useOrbit()
+  return (
+    <View>
+      <Pressable accessibilityRole="imagebutton" accessibilityLabel={`Open ${file.name}`} onPress={onPress} style={{ width: 96, height: 96, borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.muted }}>
+        {file.path ? (
+          <Image source={{ uri: `${session.server}${file.path}`, headers: { Authorization: `Bearer ${session.token}` } }} resizeMode="cover" style={{ width: '100%', height: '100%' }} accessibilityIgnoresInvertColors />
+        ) : null}
+        {opening || !file.path ? <ActivityIndicator style={{ position: 'absolute', inset: 0 }} color={colors.foreground} /> : null}
+      </Pressable>
+      {onRemove ? <RemoveButton name={file.name} onPress={onRemove} /> : null}
+    </View>
+  )
+}
+
+function FileChip({ file, opening, onPress, onRemove }: { file: ShownFile; opening: boolean; onPress: () => void; onRemove?: () => void }) {
+  const { colors } = useTheme()
+  return (
+    <View style={{ alignSelf: 'flex-start', maxWidth: '100%' }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Open ${file.name}`}
+        onPress={onPress}
+        style={({ pressed }) => ({ minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 10, paddingRight: onRemove ? 32 : 10, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: pressed ? colors.muted : colors.card })}
+      >
+        {opening || !file.path ? <ActivityIndicator size="small" color={colors.mutedForeground} /> : <Icon name="documentDownload" size={16} color={colors.mutedForeground} />}
+        <Text numberOfLines={1} style={[type(13, 'medium'), { flexShrink: 1 }]}>
+          {file.name}
+        </Text>
+        {file.size !== undefined ? <Text style={[type(12), { color: colors.mutedForeground }]}>{fileSize(file.size)}</Text> : null}
+      </Pressable>
+      {onRemove ? <RemoveButton name={file.name} onPress={onRemove} center /> : null}
+    </View>
+  )
+}
+
+/** Sits over the corner of a thumbnail, or (`center`) at the end of a file chip; a sibling, never inside the open button. */
+function RemoveButton({ name, onPress, center = false }: { name: string; onPress: () => void; center?: boolean }) {
+  const { colors } = useTheme()
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Remove ${name}`}
+      hitSlop={8}
+      onPress={onPress}
+      style={{ position: 'absolute', top: center ? 8 : 4, right: center ? 8 : 4, width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.popover, borderWidth: 1, borderColor: colors.border }}
+    >
+      <Icon name="close" size={12} color={colors.foreground} />
+    </Pressable>
+  )
+}

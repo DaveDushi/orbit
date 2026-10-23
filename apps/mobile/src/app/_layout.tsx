@@ -87,6 +87,15 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
       <Stack.Protected guard={signedIn}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="chat/[id]" />
+        <Stack.Screen name="chat/[id]/members" />
+        <Stack.Screen name="chat/[id]/search" />
+        <Stack.Screen name="chat/[id]/pins" />
+        <Stack.Screen name="chat/[id]/files" />
+        <Stack.Screen name="chat/[id]/threads" />
+        <Stack.Screen name="chat/thread/[id]" />
+        <Stack.Screen name="chat/unreads" />
+        <Stack.Screen name="chat/threads" />
+        <Stack.Screen name="chat/browse" />
       </Stack.Protected>
       <Stack.Protected guard={!signedIn}>
         <Stack.Screen name="sign-in" />

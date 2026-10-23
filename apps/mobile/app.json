@@ -28,7 +28,8 @@
       "expo-secure-store",
       "expo-router",
       "expo-font",
-      "expo-system-ui"
+      "expo-system-ui",
+      "@react-native-community/datetimepicker"
     ],
     "backgroundColor": "#0a0a0a"
   }

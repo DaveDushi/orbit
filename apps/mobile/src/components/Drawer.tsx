@@ -7,7 +7,6 @@ import { useOrbit } from '../orbit-context'
 import { useChatUnreadCount, useUnreadNotifications } from '../queries'
 import { alpha, cssColors, fonts, mix, type, useTheme } from '../theme'
 import { Avatar, CountBadge, Icon, type IconName, IconButton, PickerSheet, Text } from '../ui'
-import { useOpenOnWeb } from '../web'
 
 const DrawerContext = createContext<(() => void) | null>(null)
 
@@ -52,7 +51,6 @@ function Drawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [mounted, setMounted] = useState(open)
   const [switching, setSwitching] = useState(false)
   const progress = useRef(new Animated.Value(0)).current
-  const openOnWeb = useOpenOnWeb()
 
   useEffect(() => {
     if (open) setMounted(true)
@@ -66,6 +64,8 @@ function Drawer({ open, onClose }: { open: boolean; onClose: () => void }) {
     router.navigate(href)
   }
   const onTasks = pathname === '/tasks' || pathname.startsWith('/tasks/')
+  const onSettings = pathname === '/settings' || pathname.startsWith('/settings/')
+  const onAdmin = pathname.startsWith('/settings/admin')
   const taskView = (name: string) => pathname === '/tasks' && view === name
   const workspaceLinks: NavLink[] = [
     { label: 'Home', icon: 'home', href: '/', active: pathname === '/' },
@@ -151,18 +151,12 @@ function Drawer({ open, onClose }: { open: boolean; onClose: () => void }) {
             <NavRow key={link.label} link={link} onPress={() => go(link.href)} />
           ))}
           <Section label="Manage" />
-          <NavRow link={{ label: 'Settings', icon: 'settings', href: '/settings', active: pathname.startsWith('/settings') }} onPress={() => go('/settings')} />
-          {user.root ? (
+          <NavRow link={{ label: 'Settings', icon: 'settings', href: '/settings', active: onSettings && !onAdmin }} onPress={() => go('/settings')} />
+          {user.installation_admin ? (
             <>
-              {/* the installation, not the workspace: it sits apart at the bottom, and opens on the web */}
+              {/* the installation, not the workspace: it sits apart at the bottom */}
               <View style={{ flex: 1 }} />
-              <NavRow
-                link={{ label: 'Admin', icon: 'admin', href: '/settings', active: false }}
-                onPress={() => {
-                  onClose()
-                  openOnWeb('/admin')
-                }}
-              />
+              <NavRow link={{ label: 'Admin', icon: 'admin', href: '/settings/admin', active: onAdmin }} onPress={() => go('/settings/admin')} />
             </>
           ) : null}
         </ScrollView>
@@ -170,7 +164,7 @@ function Drawer({ open, onClose }: { open: boolean; onClose: () => void }) {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Account: ${user.display_name}`}
-          onPress={() => go('/settings')}
+          onPress={() => go('/settings/profile')}
           style={({ pressed }) => ({
             height: 32,
             marginTop: 8,

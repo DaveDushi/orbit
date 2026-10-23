@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { docBlocks, docSpaces, pageTitle } from './docs'
+import { absoluteUrl, blockId, descendantsOf, docBlocks, docSpaces, favoritePages, iconOf, pageTitle, paragraphBlocks, spaceRequest, trashPrompt, validCoverUrl, visibleThreads } from './docs'
 import type { PageSummary, Teamspace } from './orbit'
 
 const page = (id: string, fields: Partial<PageSummary>): PageSummary => ({
@@ -79,5 +79,51 @@ describe('docBlocks', () => {
       { id: 'i', kind: 'other', text: 'Diagram', depth: 0 },
       { id: 'e', kind: 'paragraph', text: '', depth: 0 },
     ])
+  })
+})
+
+describe('writing docs', () => {
+  const tree = [page('a', {}), page('b', { parent_id: 'a' }), page('c', { parent_id: 'b' }), page('d', {})]
+
+  test('a new page goes to the default teamspace, a teamspace, or Private', () => {
+    expect(spaceRequest(null)).toEqual({})
+    expect(spaceRequest('private')).toEqual({ private: true })
+    expect(spaceRequest('teamspace:ts-1')).toEqual({ teamspace_id: 'ts-1' })
+  })
+
+  test('trashing a page says how many sub-pages go with it', () => {
+    expect(descendantsOf(tree, 'a').map((item) => item.id)).toEqual(['b', 'c'])
+    expect(trashPrompt(tree, tree[0])).toEqual({ title: 'Move “a” to the trash?', description: 'Its 2 sub-pages move with it. You can restore them from Trash.' })
+    expect(trashPrompt(tree, tree[3]).description).toBe('You can restore it from Trash.')
+  })
+
+  test('favorites keep their order and drop pages that are gone', () => {
+    expect(favoritePages(tree, ['d', 'gone', 'b']).map((item) => item.id)).toEqual(['d', 'b'])
+  })
+
+  test('typed text becomes one BlockNote paragraph per line', () => {
+    let next = 0
+    expect(paragraphBlocks('First line\n\n  \nSecond  ', () => `id-${++next}`)).toEqual([
+      { id: 'id-1', type: 'paragraph', props: { backgroundColor: 'default', textAlignment: 'left', textColor: 'default' }, content: [{ type: 'text', text: 'First line', styles: {} }], children: [] },
+      { id: 'id-2', type: 'paragraph', props: { backgroundColor: 'default', textAlignment: 'left', textColor: 'default' }, content: [{ type: 'text', text: 'Second', styles: {} }], children: [] },
+    ])
+    expect(docBlocks(paragraphBlocks('Hello', () => 'x'))).toEqual([{ id: 'x', kind: 'paragraph', text: 'Hello', depth: 0 }])
+  })
+
+  test('block ids are v4 UUIDs', () => {
+    expect(blockId(() => 0)).toBe('00000000-0000-4000-8000-000000000000')
+    expect(blockId()).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+  })
+
+  test('icons and covers', () => {
+    expect([iconOf('  '), iconOf('🚀 launch'), iconOf('👩‍💻x')]).toEqual([null, '🚀', '👩‍💻'])
+    expect([validCoverUrl(' https://img.example.com/a.png '), validCoverUrl('javascript:alert(1)'), validCoverUrl('')]).toEqual(['https://img.example.com/a.png', null, null])
+    expect([absoluteUrl('https://orbit.test', '/api/v1/files/1'), absoluteUrl('https://orbit.test', 'https://cdn.test/x.png')]).toEqual(['https://orbit.test/api/v1/files/1', 'https://cdn.test/x.png'])
+  })
+
+  test('comment threads: only those with a comment left, open first, latest first', () => {
+    const thread = (id: string, resolved: boolean, updated: string, deleted = false) => ({ id, resolved, updated_at: updated, comments: [{ deleted_at: deleted ? updated : null }] })
+    const list = [thread('old', false, '2026-10-01'), thread('done', true, '2026-10-09'), thread('new', false, '2026-10-05'), thread('empty', false, '2026-10-10', true)]
+    expect(visibleThreads(list).map((item) => item.id)).toEqual(['new', 'old', 'done'])
   })
 })

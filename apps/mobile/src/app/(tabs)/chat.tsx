@@ -3,15 +3,27 @@ import { type ReactNode, useMemo, useState } from 'react'
 import { Pressable, RefreshControl, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 
-import { chatSections, conversationBadge, conversationTitle } from '../../data/chat'
-import type { ConversationRecord, ConversationStateRecord } from '../../data/orbit'
+import { CategorySheet, NewChannelSheet, NewMessageSheet } from '../../components/chat/ChannelSheets'
+import { ConversationOptions } from '../../components/chat/ConversationOptions'
+import { ActionSheet, type SheetItem } from '../../components/chat/Sheet'
+import { chatSections, conversationBadge, conversationTitle, unreadThreadCount } from '../../data/chat'
+import * as chat from '../../data/chat-api'
+import type { CategoryRecord, ConversationRecord, ConversationStateRecord } from '../../data/orbit'
+import { confirmAction, useChatWrite, useFollowedThreads, useIsChatAdmin } from '../../hooks/chat'
 import { useOrbit } from '../../orbit-context'
-import { useChatCategories, useChatStates, useConversations, usePeople } from '../../queries'
-import { useOpenOnWeb } from '../../web'
+import { useChatCategories, useChatStates, useChatUnreadCount, useConversations, usePeople } from '../../queries'
 import { alpha, type, useTheme } from '../../theme'
 import { Avatar, CountBadge, EmptyState, ErrorView, HeaderTitle, Icon, type IconName, IconButton, LoadingView, PaneHeader, Text } from '../../ui'
 
 const PRESENCE_LABEL = { online: 'Online', idle: 'Idle', dnd: 'Do not disturb', invisible: 'Invisible' } as const
+
+/** The sheet or form open over the list. */
+type Overlay =
+  | { kind: 'new' }
+  | { kind: 'message' }
+  | { kind: 'channel'; categoryId: string | null }
+  | { kind: 'category'; category?: CategoryRecord }
+  | { kind: 'category-options'; category: CategoryRecord }
 
 /** The web's mobile chat list: Unreads and Threads, then each section, then the user bar. */
 export default function ChatScreen() {
@@ -22,7 +34,12 @@ export default function ChatScreen() {
   const states = useChatStates()
   const people = usePeople()
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
-  const openOnWeb = useOpenOnWeb()
+  const [overlay, setOverlay] = useState<Overlay | null>(null)
+  const admin = useIsChatAdmin()
+  const run = useChatWrite()
+  const threads = useFollowedThreads()
+  const unreads = useChatUnreadCount()
+  const close = () => setOverlay(null)
 
   const sections = useMemo(
     () => (conversations.data && categories.data && states.data ? chatSections(conversations.data, categories.data, states.data, user.id) : []),
@@ -43,8 +60,7 @@ export default function ChatScreen() {
         <View style={{ flex: 1 }}>
           <HeaderTitle>Chat</HeaderTitle>
         </View>
-        <IconButton icon="brush" label="Chat theme" size={32} color={colors.mutedForeground} onPress={() => openOnWeb('/chat')} />
-        <IconButton icon="plus" label="New" size={32} color={colors.mutedForeground} onPress={() => openOnWeb('/chat')} />
+        <IconButton icon="plus" label="New" size={32} iconSize={20} color={colors.mutedForeground} onPress={() => setOverlay({ kind: 'new' })} />
       </PaneHeader>
       {!conversations.data || !categories.data || !states.data ? (
         conversations.error || categories.error || states.error ? (
@@ -55,13 +71,20 @@ export default function ChatScreen() {
       ) : (
         <ScrollView refreshControl={<RefreshControl refreshing={conversations.isRefetching} onRefresh={() => void refresh()} tintColor={colors.mutedForeground} />}>
           <View style={{ paddingHorizontal: 8, paddingTop: 8, gap: 1 }}>
-            <Row leading={<Glyph icon="directInbox" />} name="Unreads" onPress={() => openOnWeb('/chat/unreads')} />
-            <Row leading={<Glyph icon="layer" />} name="Threads" onPress={() => openOnWeb('/chat/threads')} />
+            <PinnedRow icon="directInbox" name="Unreads" count={unreads} onPress={() => router.push('/chat/unreads')} />
+            <PinnedRow icon="layer" name="Threads" count={unreadThreadCount(threads.data ?? [])} onPress={() => router.push('/chat/threads')} />
           </View>
           <View style={{ padding: 8, paddingTop: 12, gap: 12 }}>
-            {sections.length === 0 ? <EmptyState icon="chat" title="No conversations" description="Join a channel or start a direct message in Orbit on the web." /> : null}
+            {sections.length === 0 ? <EmptyState icon="chat" title="No conversations" description="Start a direct message or create a channel with New." /> : null}
             {sections.map((section) => {
               const open = !collapsed.has(section.key)
+              const category = admin ? categories.data?.find((item) => `category-${item.id}` === section.key) : undefined
+              const onAdd =
+                section.key === 'dms'
+                  ? () => setOverlay({ kind: 'message' })
+                  : section.key === 'favorites'
+                    ? null
+                    : () => setOverlay({ kind: 'channel', categoryId: section.key.startsWith('category-') ? section.key.slice('category-'.length) : null })
               return (
                 <View key={section.key} style={{ gap: 1 }}>
                   <View style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 2, paddingRight: 6 }}>
@@ -77,8 +100,8 @@ export default function ChatScreen() {
                         {section.title}
                       </Text>
                     </Pressable>
-                    {section.key.startsWith('category-') ? <IconButton icon="more" label={`Options for the category ${section.title}`} size={24} color={colors.mutedForeground} onPress={() => openOnWeb('/chat')} /> : null}
-                    <IconButton icon="plus" label={`Add to ${section.title}`} size={24} color={colors.mutedForeground} onPress={() => openOnWeb('/chat')} />
+                    {category ? <IconButton icon="more" label={`Options for the category ${category.name}`} size={24} color={colors.mutedForeground} onPress={() => setOverlay({ kind: 'category-options', category })} /> : null}
+                    {onAdd ? <IconButton icon="plus" label={section.key === 'dms' ? 'New message' : `New channel in ${section.title}`} size={24} color={colors.mutedForeground} onPress={onAdd} /> : null}
                   </View>
                   {open
                     ? section.conversations.map((conversation) => (
@@ -115,8 +138,43 @@ export default function ChatScreen() {
           </View>
         </Pressable>
       </View>
+      <ActionSheet
+        visible={overlay?.kind === 'new'}
+        items={[
+          { key: 'message', label: 'New message', icon: 'messages2', onPress: () => setOverlay({ kind: 'message' }) },
+          { key: 'channel', label: 'New channel', icon: 'hashtag', onPress: () => setOverlay({ kind: 'channel', categoryId: null }) },
+          { key: 'browse', label: 'Browse channels', icon: 'search', onPress: () => router.push('/chat/browse') },
+          ...(admin ? [{ key: 'category', label: 'New category', icon: 'category' as const, onPress: () => setOverlay({ kind: 'category' }) }] : []),
+        ]}
+        onClose={close}
+      />
+      <ActionSheet
+        visible={overlay?.kind === 'category-options'}
+        title={overlay?.kind === 'category-options' ? overlay.category.name : undefined}
+        items={overlay?.kind === 'category-options' ? categoryItems(overlay.category) : []}
+        onClose={close}
+      />
+      {overlay?.kind === 'message' ? <NewMessageSheet onClose={close} /> : null}
+      {overlay?.kind === 'channel' ? <NewChannelSheet categoryId={overlay.categoryId} onClose={close} /> : null}
+      {overlay?.kind === 'category' ? <CategorySheet category={overlay.category} onClose={close} /> : null}
     </SafeAreaView>
   )
+
+  function categoryItems(category: CategoryRecord): SheetItem[] {
+    const remove = async () => {
+      const confirmed = await confirmAction(`Delete the category "${category.name}"?`, 'Its channels are kept and move to "Channels".', 'Delete category')
+      if (confirmed) await run('Could not delete the category', (client, workspaceId) => chat.deleteCategory(client, workspaceId, category.id))
+    }
+    return [
+      { key: 'rename', label: 'Rename', icon: 'edit', onPress: () => setOverlay({ kind: 'category', category }) },
+      { key: 'delete', label: 'Delete category', icon: 'trash', destructive: true, onPress: () => void remove() },
+    ]
+  }
+}
+
+/** `Unreads` and `Threads`, each with its count. */
+function PinnedRow({ icon, name, count, onPress }: { icon: IconName; name: string; count: number; onPress: () => void }) {
+  return <Row leading={<Glyph icon={icon} />} name={name} unread={count > 0} label={count > 0 ? `${name}, ${count} unread` : name} onPress={onPress} end={count > 0 ? <CountBadge count={count} /> : undefined} />
 }
 
 function Glyph({ icon }: { icon: IconName }) {
@@ -129,7 +187,7 @@ function Glyph({ icon }: { icon: IconName }) {
 }
 
 /** The web `ChatRow` at phone size: 40px, 14px text at 80% foreground, bold and full color when unread. */
-function Row({ leading, name, unread = false, end, onPress, label }: { leading: ReactNode; name: string; unread?: boolean; end?: ReactNode; onPress?: () => void; label?: string }) {
+function Row({ leading, name, unread = false, muted = false, end, onPress, onLongPress, label }: { leading: ReactNode; name: string; unread?: boolean; muted?: boolean; end?: ReactNode; onPress?: () => void; onLongPress?: () => void; label?: string }) {
   const { colors } = useTheme()
   return (
     <View style={{ height: 40, flexDirection: 'row', alignItems: 'center', borderRadius: 6 }}>
@@ -138,10 +196,11 @@ function Row({ leading, name, unread = false, end, onPress, label }: { leading: 
         accessibilityLabel={label ?? name}
         disabled={!onPress}
         onPress={onPress}
+        onLongPress={onLongPress}
         style={({ pressed }) => ({ flex: 1, height: 40, flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 8, borderRadius: 6, backgroundColor: pressed ? alpha(colors.muted, 0.6) : 'transparent' })}
       >
         {leading}
-        <Text numberOfLines={1} style={[type(14, unread ? 'semibold' : 'regular'), { lineHeight: 20, flexShrink: 1, color: unread ? colors.foreground : alpha(colors.foreground, 0.8) }]}>
+        <Text numberOfLines={1} style={[type(14, unread ? 'semibold' : 'regular'), { lineHeight: 20, flexShrink: 1, color: unread ? colors.foreground : muted ? colors.mutedForeground : alpha(colors.foreground, 0.8) }]}>
           {name}
         </Text>
       </Pressable>
@@ -153,7 +212,7 @@ function Row({ leading, name, unread = false, end, onPress, label }: { leading: 
 function ConversationRow({ conversation, title, state, userId }: { conversation: ConversationRecord; title: string; state: ConversationStateRecord | undefined; userId: string }) {
   const { colors } = useTheme()
   const badge = conversationBadge(conversation, state, userId)
-  const openOnWeb = useOpenOnWeb()
+  const [options, setOptions] = useState(false)
   const peer = conversation.member_ids.find((id) => id !== userId) ?? userId
   const leading =
     conversation.kind === 'dm' ? (
@@ -164,18 +223,23 @@ function ConversationRow({ conversation, title, state, userId }: { conversation:
       </View>
     )
   return (
-    <Row
-      leading={leading}
-      name={title}
-      unread={badge.unread}
-      label={badge.count ? `${title}, ${badge.count} unread` : title}
-      onPress={() => router.push(`/chat/${conversation.id}`)}
-      end={
-        <>
-          {badge.count > 0 ? <CountBadge count={badge.count} /> : badge.unread ? <View style={{ width: 6, height: 6, backgroundColor: colors.primary }} /> : null}
-          <IconButton icon="more" label={`Options for ${title}`} size={24} color={colors.mutedForeground} onPress={() => openOnWeb(`/chat/${conversation.id}`)} />
-        </>
-      }
-    />
+    <>
+      <Row
+        leading={leading}
+        name={title}
+        unread={badge.unread}
+        muted={state?.notify === 'muted'}
+        label={badge.count ? `${title}, ${badge.count} unread` : title}
+        onPress={() => router.push(`/chat/${conversation.id}`)}
+        onLongPress={() => setOptions(true)}
+        end={
+          <>
+            <IconButton icon="more" label={`Options for ${title}`} size={24} color={colors.mutedForeground} onPress={() => setOptions(true)} />
+            {badge.count > 0 ? <CountBadge count={badge.count} /> : badge.unread ? <View style={{ width: 6, height: 6, backgroundColor: colors.primary }} /> : null}
+          </>
+        }
+      />
+      <ConversationOptions conversation={conversation} title={title} placement="row" visible={options} onClose={() => setOptions(false)} />
+    </>
   )
 }

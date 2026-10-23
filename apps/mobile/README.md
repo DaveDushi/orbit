@@ -5,13 +5,13 @@ The iOS and Android app for Orbit, in `apps/mobile` of the Orbit monorepo. Built
 The app signs in to an Orbit server and works in one workspace at a time. It follows the web app's phone layout: the same bottom dock (Home, Tasks, Docs, Chat, Mail as "coming soon", Settings) and the ☰ drawer (workspace switcher, Activity, the task views, Settings).
 
 - Home: greeting, Due this week, Unread in Inbox, Recently updated docs.
-- Tasks: project picker, filter, search, status groups; task detail with properties, activity and comments; New task dialog.
-- Docs: teamspaces and private pages; a page opens read-only.
-- Chat: channels and DMs, read and send messages.
+- Tasks: project picker, filter, search, status groups; task detail with every property (status, priority, assignees, labels, due date, parent, source), relations, sub-issues, activity and comments with attachments; New task dialog.
+- Docs: teamspaces, private pages and favorites; create, rename, icon, cover, add paragraphs, comment, trash and restore. Existing blocks are read-only (BlockNote has no React Native version).
+- Chat: channels and DMs, new channel/DM, browse, unreads, threads, search, members, pins, files, reactions, emoji, attachments and message actions.
 - Activity (from the drawer): notifications with All, Unread and Mentions.
-- Settings: the profile form, theme toggle, server and sign out.
+- Settings: workspace General and Members, the account pages (Profile, Notifications, Security, Sessions), and Admin for instance admins.
 
-What the app does not do yet (uploads, relations, labels, admin…) opens the same page of Orbit on the web in the browser.
+Every action runs in the app; nothing opens the web.
 
 ## Code map
 
@@ -81,7 +81,10 @@ cd apps/mobile
 bunx tsc --noEmit
 bunx tsc --noEmit -p scripts
 bun test
-bun scripts/api-check.ts   # a running server (default http://127.0.0.1:18080, test@example.com / password); creates a task, a comment and a message, then deletes them
+bun scripts/api-check.ts            # a running server (default http://127.0.0.1:18080, test@example.com / password); creates a task, a comment and a message, then deletes them
+bun scripts/api-check-tasks.ts      # every task property, relations, sub-issues and comment attachments
+bun scripts/api-check-chat.ts       # channels, reactions, threads, uploads, search
+bun scripts/api-check-settings.ts   # profile, avatar, notifications, sessions, members, docs, admin reads
 bunx expo-doctor
 ```
 

@@ -3,7 +3,7 @@
  * reicon-react renders through React DOM, so the app renders this markup with react-native-svg instead.
  * Run: bun apps/mobile/scripts/generate-icons.ts
  */
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 
@@ -73,7 +73,30 @@ function outline(component: string): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">${markup}</svg>`
 }
 
-const entries = Object.entries(ICONS).map(([name, component]) => `  /** reicon ${component} */\n  ${name}: ${JSON.stringify(outline(component))},`)
+/** Every reicon icon the web imports, under its camelCase name, so a screen can use any icon the web uses. */
+function webIcons(): Record<string, string> {
+  const found: Record<string, string> = {}
+  const glob = new Bun.Glob('**/*.{ts,tsx}')
+  for (const file of glob.scanSync(resolve(import.meta.dir, '../../web/src'))) {
+    const source = readFileSync(resolve(import.meta.dir, '../../web/src', file), 'utf8')
+    for (const [, list] of source.matchAll(/import\s*\{([^}]+)\}\s*from\s*'reicon-react'/g)) {
+      for (const part of list.split(',')) {
+        const component = part.replace(/^\s*type\s+/, '').split(/\s+as\s+/)[0].trim()
+        if (/^[A-Z]/.test(component) && existsSync(resolve(reicon, 'icons', `${component}.js`))) found[component[0].toLowerCase() + component.slice(1)] = component
+      }
+    }
+  }
+  return found
+}
+
+const curated = new Set<string>(Object.values(ICONS))
+const all: Record<string, string> = { ...ICONS }
+for (const [name, component] of Object.entries(webIcons())) {
+  if (!curated.has(component) && !(name in all)) all[name] = component
+}
+const entries = Object.entries(all)
+  .sort(([a], [b]) => a.localeCompare(b))
+  .map(([name, component]) => `  /** reicon ${component} */\n  ${name}: ${JSON.stringify(outline(component))},`)
 
 /** The pixel "O" of the web's sign-in card, as the web serves it. */
 const logo = readFileSync(resolve(import.meta.dir, '../../web/public/logo.svg'), 'utf8').trim()
@@ -92,4 +115,4 @@ export type IconName = keyof typeof icons
 export const logo = ${JSON.stringify(logo)}
 `,
 )
-console.log(`Wrote ${Object.keys(ICONS).length} icons to ${output}`)
+console.log(`Wrote ${entries.length} icons to ${output}`)

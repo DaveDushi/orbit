@@ -1,33 +1,14 @@
 import type { ChatEvent } from '@orbit/api/generated/types.gen'
-import { type QueryClient, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { AppState, Platform } from 'react-native'
 
-import { type MessagePages, removeMessage, upsertMessage, upsertState } from './data/chat'
 import { keys } from './data/keys'
-import { type ChatAction, chatActions, chatResyncKeys, LiveCursor, parseLiveFrame, parseWorkspaceEvent, socketUrl, workspaceEventKeys } from './data/live'
-import type { ConversationStateRecord } from './data/orbit'
+import { chatResyncKeys, LiveCursor, parseLiveFrame, parseWorkspaceEvent, socketUrl, workspaceEventKeys } from './data/live'
 import { reconnectingSocket, type SocketLike } from './data/socket'
+import { applyChatEvents } from './chat-cache'
 import { useOrbit } from './orbit-context'
 
-export function applyChatActions(queryClient: QueryClient, workspaceId: string, actions: readonly ChatAction[]) {
-  for (const action of actions) {
-    switch (action.kind) {
-      case 'upsert-message':
-        queryClient.setQueryData<MessagePages>(keys.messages(workspaceId, action.conversationId), (data) => data && upsertMessage(data, action.message))
-        break
-      case 'remove-message':
-        queryClient.setQueryData<MessagePages>(keys.messages(workspaceId, action.conversationId), (data) => data && removeMessage(data, action.messageId))
-        break
-      case 'state':
-        queryClient.setQueryData<ConversationStateRecord[]>(keys.chatStates(workspaceId), (states) => states && upsertState(states, action.state))
-        break
-      case 'invalidate':
-        for (const queryKey of action.keys) void queryClient.invalidateQueries({ queryKey })
-        break
-    }
-  }
-}
 
 /** React Native's `WebSocket` takes the upgrade headers as a third argument. The DOM typings in scope do not know it. */
 const NativeWebSocket = WebSocket as unknown as new (url: string, protocols: null, options: { headers: Record<string, string> }) => SocketLike
@@ -79,7 +60,7 @@ export function useLiveUpdates() {
         cursor.read(frame)
         if (frame.type === 'resync') invalidate(chatResyncKeys(workspaceId))
         if (frame.type === 'event' && frame.topic === 'chat' && isChatEvent(frame.event)) {
-          applyChatActions(queryClient, workspaceId, chatActions(frame.event, workspaceId))
+          applyChatEvents(queryClient, workspaceId, [frame.event])
         }
       },
     })
