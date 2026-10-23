@@ -1,4 +1,6 @@
-import { Shortcut } from '@/shortcuts/Shortcut'
+import { Kbd } from '@/components/ui/kbd'
+import { shortcutText } from '@/shortcuts/shortcutText'
+import { useBindings } from '@/shortcuts/useCommand'
 import { createContext, Fragment, useContext, type ComponentType, type ReactNode } from 'react'
 import { Link, useLocation, useMatch, useResolvedPath, type LinkProps } from 'react-router'
 import { cva, type VariantProps } from 'class-variance-authority'
@@ -192,6 +194,8 @@ export function SidebarNav({
     return `/tasks${params.size > 0 ? `?${params}` : ''}`
   }
 
+  const paletteKeys = useBindings()['palette.open']
+
   const openSearch = () => {
     onNavigate?.()
     window.dispatchEvent(new CustomEvent('open-command-palette'))
@@ -222,7 +226,9 @@ export function SidebarNav({
             >
               <Search className="size-4 shrink-0 opacity-90" />
               <span className="min-w-0 flex-1 truncate text-left">Search</span>
-              <Shortcut id="palette.open" className="**:data-[slot=kbd]:h-auto **:data-[slot=kbd]:rounded-md **:data-[slot=kbd]:border **:data-[slot=kbd]:border-transparent **:data-[slot=kbd]:bg-neutral-200 **:data-[slot=kbd]:px-1.5 **:data-[slot=kbd]:py-0.5 **:data-[slot=kbd]:text-[11px] **:data-[slot=kbd]:font-medium **:data-[slot=kbd]:text-muted-foreground dark:**:data-[slot=kbd]:border-sidebar-tint/18 dark:**:data-[slot=kbd]:bg-white/6" />
+              {paletteKeys ? (
+                <Kbd className="h-auto rounded-md border border-neutral-300 bg-neutral-200 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground dark:border-sidebar-tint/18 dark:bg-white/6">{shortcutText(paletteKeys)}</Kbd>
+              ) : null}
             </button>
           )}
         </Tip>
