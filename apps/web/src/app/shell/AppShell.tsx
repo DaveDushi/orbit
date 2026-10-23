@@ -18,7 +18,6 @@ import { Outlet } from 'react-router'
 import { SidebarLeft as PanelLeft } from 'reicon-react'
 import { cn } from 'cn'
 import { SideSheet, SideSheetContent } from '@/components/common/SideSheet'
-import { Button } from '@/components/ui/button'
 import { Tip } from '@/components/common/Tip'
 import { useWorkspace, WorkspaceContext } from '@/features/workspaces/workspaceContext'
 import { useIsInstallationAdmin } from '@/features/workspaces/permissions'
@@ -116,8 +115,8 @@ function Shell() {
     <div className="flex h-[var(--app-height,100svh)] w-full overflow-hidden bg-background pt-[env(safe-area-inset-top,0px)] pl-[env(safe-area-inset-left,0px)] pr-[env(safe-area-inset-right,0px)]">
       <aside
         className={cn(
-          'flex shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar px-2 pb-2 text-sidebar-foreground transition-[width,padding] duration-200 ease-out max-[899px]:hidden',
-          sidebarCollapsed ? 'w-14' : 'w-56',
+          'flex shrink-0 flex-col overflow-hidden border-r border-sidebar-edge bg-sidebar bg-linear-to-b from-sidebar-wash to-transparent to-[520px] px-3 text-sidebar-foreground transition-[width,padding] duration-200 ease-out max-[899px]:hidden',
+          sidebarCollapsed ? 'w-16' : 'w-56',
         )}
         data-collapsed={sidebarCollapsed || undefined}
       >
@@ -132,22 +131,20 @@ function Shell() {
         <SidebarNav collapsed={sidebarCollapsed} chatBadge={chatBadge} inboxUnread={inboxUnread} isRoot={isRoot} />
         <div
           className={cn(
-            'flex shrink-0 items-center gap-2 border-t border-border pt-2',
-            sidebarCollapsed && 'flex-col justify-center gap-1.5',
+            'flex shrink-0 items-center justify-between gap-1 py-2',
+            sidebarCollapsed && 'flex-col justify-center',
           )}
         >
           <UserMenu collapsed={sidebarCollapsed} />
           <Tip label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} side={sidebarCollapsed ? 'right' : undefined}>
-            <Button
+            <button
               type="button"
-              variant="ghost"
-              size="icon-sm"
-              className="shrink-0 text-muted-foreground/70"
+              className="flex size-8 shrink-0 items-center justify-center rounded-md text-sidebar-nav transition-colors outline-none hover:bg-black/4 hover:text-sidebar-nav-active focus-visible:outline-1 focus-visible:outline-primary dark:hover:bg-white/5"
               aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
               onClick={toggleSidebar}
             >
-              <PanelLeft className={cn('size-[17px]', sidebarCollapsed && 'rotate-180')} />
-            </Button>
+              <PanelLeft className={cn('size-[18px] opacity-90', sidebarCollapsed && 'rotate-180')} />
+            </button>
           </Tip>
         </div>
       </aside>
@@ -166,13 +163,13 @@ function Shell() {
         <SideSheetContent
           side="left"
           aria-label="Navigation"
-          className="z-[41] w-[min(280px,84vw)] overflow-hidden border-r border-border bg-sidebar px-3 pt-[env(safe-area-inset-top,0px)] pb-[calc(12px+env(safe-area-inset-bottom,0px))] text-sidebar-foreground"
+          className="z-[41] w-[min(280px,84vw)] overflow-hidden border-r border-sidebar-edge bg-sidebar bg-linear-to-b from-sidebar-wash to-transparent to-[520px] px-3 pt-[env(safe-area-inset-top,0px)] pb-[calc(12px+env(safe-area-inset-bottom,0px))] text-sidebar-foreground"
         >
           <div className="mb-2 flex h-12 shrink-0 items-center justify-start gap-2 px-1.5">
             <WorkspaceSwitcher onSelect={() => setDrawerOpen(false)} />
           </div>
           <SidebarNav onNavigate={() => setDrawerOpen(false)} chatBadge={chatBadge} inboxUnread={inboxUnread} isRoot={isRoot} />
-          <div className="flex shrink-0 items-center gap-2 border-t border-border pt-2">
+          <div className="flex shrink-0 items-center pt-2">
             <UserMenu />
           </div>
         </SideSheetContent>

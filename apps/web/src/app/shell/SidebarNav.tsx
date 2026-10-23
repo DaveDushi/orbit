@@ -17,19 +17,47 @@ const WORKSPACE_LINKS = [
   { to: '/mail', label: 'Mail', icon: Mail, enabled: false },
 ].filter((link) => !(docsHidden && link.to === '/docs'))
 
+// Coolify tile navigation: the row never fills; the icon sits in a 3D tile and the current row shows a pink tile.
 const sidebarNavItemVariants = cva(
-  'relative flex h-8 w-full min-w-0 shrink-0 items-center justify-start gap-2 overflow-hidden rounded-md px-2 text-left text-[13px] font-medium whitespace-nowrap text-sidebar-foreground transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground group-data-[collapsed=true]/sidebar-nav:justify-center group-data-[collapsed=true]/sidebar-nav:px-0 [&_svg]:size-[18px] [&_svg]:shrink-0 [&_svg]:opacity-90',
+  'group/nav-item relative flex h-9 w-full min-w-0 shrink-0 items-center justify-start gap-2.5 overflow-hidden pr-2.5 pl-1 text-left text-[13px] font-medium whitespace-nowrap text-sidebar-nav transition-colors duration-120 outline-none hover:text-sidebar-nav-active focus-visible:text-sidebar-nav-active data-[active=true]:text-sidebar-nav-active group-data-[collapsed=true]/sidebar-nav:justify-center group-data-[collapsed=true]/sidebar-nav:px-0',
   {
     variants: {
       size: {
         default: '',
-        // nested under its parent entry while expanded; a plain rail icon while collapsed
-        sub: 'group-data-[collapsed=false]/sidebar-nav:h-7 group-data-[collapsed=false]/sidebar-nav:pl-[34px] group-data-[collapsed=false]/sidebar-nav:font-normal group-data-[collapsed=false]/sidebar-nav:[&_svg]:size-4',
+        // nested under its parent entry while expanded: a label behind a 1px guide line, with a neutral pill when current;
+        // a plain tile while collapsed
+        sub: 'group-data-[collapsed=false]/sidebar-nav:ml-5 group-data-[collapsed=false]/sidebar-nav:h-7 group-data-[collapsed=false]/sidebar-nav:w-[calc(100%-20px)] group-data-[collapsed=false]/sidebar-nav:rounded-r-md group-data-[collapsed=false]/sidebar-nav:border-l group-data-[collapsed=false]/sidebar-nav:border-black/8 group-data-[collapsed=false]/sidebar-nav:pl-3 group-data-[collapsed=false]/sidebar-nav:data-[active=true]:bg-black/5 dark:group-data-[collapsed=false]/sidebar-nav:border-sidebar-tint/10 dark:group-data-[collapsed=false]/sidebar-nav:data-[active=true]:bg-white/6 group-data-[collapsed=false]/sidebar-nav:[&>[data-slot=sidebar-nav-tile]]:hidden',
       },
     },
     defaultVariants: { size: 'default' },
   },
 )
+
+const sidebarNavTileVariants = cva(
+  // 30px: a 16px icon, 6px padding and a 1px border, resting on a 2px ledge
+  'box-content flex size-4 shrink-0 items-center justify-center rounded-lg border border-black/9 bg-neutral-50 p-1.5 shadow-[0_2px_0_var(--tile-depth)] transition-[translate,box-shadow,border-color,background-color] duration-80 [--tile-depth:rgb(0_0_0/0.22)] group-hover/nav-item:-translate-y-px group-hover/nav-item:border-black/18 group-hover/nav-item:bg-white group-hover/nav-item:shadow-[0_3px_0_var(--tile-depth)] group-active/nav-item:translate-y-0.5 group-active/nav-item:shadow-none group-disabled/nav-item:translate-y-0 group-disabled/nav-item:border-black/9 group-disabled/nav-item:bg-neutral-50 group-disabled/nav-item:shadow-[0_2px_0_var(--tile-depth)] dark:[--tile-depth:rgb(255_255_255/0.05)] [&_svg]:size-4 '
+    // current: a pink-edged white tile in light mode, the pink gradient tile in dark mode (no glow: the row clips it)
+    + 'group-data-[active=true]/nav-item:border-primary/45 group-data-[active=true]/nav-item:bg-white group-data-[active=true]/nav-item:text-primary group-data-[active=true]/nav-item:[--tile-depth:color-mix(in_oklab,var(--primary)_45%,transparent)] dark:group-data-[active=true]/nav-item:border-[color-mix(in_oklab,var(--primary),white_25%)] dark:group-data-[active=true]/nav-item:bg-primary dark:group-data-[active=true]/nav-item:bg-linear-to-b dark:group-data-[active=true]/nav-item:from-[color-mix(in_oklab,var(--primary),white_6%)] dark:group-data-[active=true]/nav-item:to-[color-mix(in_oklab,var(--primary),black_18%)] dark:group-data-[active=true]/nav-item:text-white dark:group-data-[active=true]/nav-item:[--tile-depth:color-mix(in_oklab,var(--primary),black_40%)]',
+  {
+    variants: {
+      tone: {
+        brand: 'dark:group-not-data-[active=true]/nav-item:border-sidebar-tint/13 dark:group-not-data-[active=true]/nav-item:bg-primary/7 dark:group-not-data-[active=true]/nav-item:text-sidebar-tint-foreground dark:group-not-data-[active=true]/nav-item:group-hover/nav-item:border-white/14 dark:group-not-data-[active=true]/nav-item:group-hover/nav-item:bg-white/6 dark:group-not-data-[active=true]/nav-item:group-hover/nav-item:text-white dark:group-disabled/nav-item:border-sidebar-tint/13! dark:group-disabled/nav-item:bg-primary/7! dark:group-disabled/nav-item:text-sidebar-tint-foreground!',
+        // Admin is not a workspace app: a neutral tile unless it is the current page
+        neutral: 'dark:group-not-data-[active=true]/nav-item:border-white/7 dark:group-not-data-[active=true]/nav-item:bg-white/3 dark:group-not-data-[active=true]/nav-item:text-[oklch(0.72_0_0)] dark:group-not-data-[active=true]/nav-item:group-hover/nav-item:border-white/14 dark:group-not-data-[active=true]/nav-item:group-hover/nav-item:bg-white/6 dark:group-not-data-[active=true]/nav-item:group-hover/nav-item:text-white',
+      },
+    },
+    defaultVariants: { tone: 'brand' },
+  },
+)
+
+/** The 3D icon tile: it lifts on hover, sinks on press, and turns pink on the current row. */
+function SidebarNavTile({ icon: Icon, tone }: { icon: SidebarNavIcon } & VariantProps<typeof sidebarNavTileVariants>) {
+  return (
+    <span data-slot="sidebar-nav-tile" className={sidebarNavTileVariants({ tone })}>
+      <Icon />
+    </span>
+  )
+}
 
 const SidebarNavCollapsed = createContext(false)
 
@@ -50,9 +78,10 @@ function SidebarNavItem({
   badge = 0,
   unread = false,
   size,
+  tone,
   className,
   ...props
-}: Omit<LinkProps, 'className' | 'children' | 'title'> & VariantProps<typeof sidebarNavItemVariants> & {
+}: Omit<LinkProps, 'className' | 'children' | 'title'> & VariantProps<typeof sidebarNavItemVariants> & VariantProps<typeof sidebarNavTileVariants> & {
   className?: string
   end?: boolean
   icon: SidebarNavIcon
@@ -78,7 +107,7 @@ function SidebarNavItem({
         to={to}
         {...props}
       >
-        <Icon />
+        <SidebarNavTile icon={Icon} tone={tone} />
         <SidebarNavLabel>{label}</SidebarNavLabel>
         {badge > 0 ? (
           <span
@@ -108,11 +137,10 @@ function SidebarNavComingSoon({ icon: Icon, label }: { icon: SidebarNavIcon; lab
       <Button
         data-slot="sidebar-nav-item"
         variant="ghost"
-        className={cn(sidebarNavItemVariants(), 'border-0 dark:hover:bg-sidebar-accent/50 disabled:pointer-events-auto disabled:cursor-not-allowed disabled:opacity-[0.48]')}
+        className={cn(sidebarNavItemVariants(), 'rounded-none border-0 hover:bg-transparent hover:text-sidebar-nav disabled:pointer-events-auto disabled:cursor-not-allowed disabled:opacity-[0.48] dark:hover:bg-transparent')}
         disabled
       >
-        {/* an explicit size: Button's own svg rule outranks the item's [&_svg] one */}
-        <Icon className="size-[18px]" />
+        <SidebarNavTile icon={Icon} />
         <SidebarNavLabel>{label}</SidebarNavLabel>
         <span className="ml-auto text-[10px] text-muted-foreground/70 group-data-[collapsed=true]/sidebar-nav:hidden">Coming soon</span>
       </Button>
@@ -123,10 +151,10 @@ function SidebarNavComingSoon({ icon: Icon, label }: { icon: SidebarNavIcon; lab
 function SidebarSection({ label, collapsed, first }: { label: string; collapsed: boolean; first?: boolean }) {
   if (collapsed) {
     if (first) return null
-    return <Separator className="mx-1 my-1.5 data-horizontal:w-auto" aria-hidden="true" />
+    return <Separator className="mx-2.5 my-2 bg-black/8 data-horizontal:w-auto dark:bg-sidebar-tint/10" aria-hidden="true" />
   }
   return (
-    <div className={cn('px-2 pt-1 pb-[3px] text-[10px] leading-4 font-medium tracking-[0.02em] text-sidebar-foreground/60 select-none', !first && 'mt-2')}>
+    <div className={cn('px-2.5 py-1 text-[11px] leading-4 font-medium text-sidebar-nav-muted select-none dark:font-mono dark:text-[10.5px] dark:tracking-[0.08em] dark:text-sidebar-tint/55 dark:uppercase', !first && 'mt-3')}>
       {label}
     </div>
   )
@@ -164,6 +192,11 @@ export function SidebarNav({
     return `/tasks${params.size > 0 ? `?${params}` : ''}`
   }
 
+  const openSearch = () => {
+    onNavigate?.()
+    window.dispatchEvent(new CustomEvent('open-command-palette'))
+  }
+
   const activityPath = selectedProject ? `/activity?project=${encodeURIComponent(selectedProject)}` : '/activity'
 
   // Tasks itself is active on its routes only while no task view is picked
@@ -173,29 +206,28 @@ export function SidebarNav({
   return (
     <SidebarNavCollapsed.Provider value={collapsed}>
       <div data-slot="sidebar-nav" data-collapsed={collapsed} className="group/sidebar-nav flex min-h-0 flex-1 flex-col">
+        <div className="px-1 pb-3">
         <Tip label={collapsed ? 'Search' : undefined} side="right">
-          <Button
-            variant="ghost"
-            className={cn(
-              'h-8 w-full justify-start gap-2 rounded-md border-0 bg-sidebar-accent px-2 text-[13px] font-medium text-muted-foreground/70 hover:bg-sidebar-accent/70 hover:text-muted-foreground active:not-aria-[haspopup]:translate-y-0 dark:hover:bg-sidebar-accent/70',
-              collapsed && 'justify-center px-0',
-            )}
-            aria-label="Search"
-            onClick={() => {
-              onNavigate?.()
-              window.dispatchEvent(new CustomEvent('open-command-palette'))
-            }}
-          >
-            <Search className="size-[15px] shrink-0" />
-            {!collapsed ? (
-              <>
-                Search{' '}
-                <Shortcut id="palette.open" className="ml-auto **:data-[slot=kbd]:rounded-md **:data-[slot=kbd]:bg-sidebar-accent **:data-[slot=kbd]:text-[11px] **:data-[slot=kbd]:text-muted-foreground/70" />
-              </>
-            ) : null}
-          </Button>
+          {collapsed ? (
+            <button type="button" data-slot="sidebar-nav-item" className={sidebarNavItemVariants()} aria-label="Search" onClick={openSearch}>
+              <SidebarNavTile icon={Search} />
+            </button>
+          ) : (
+            // the expanded sidebar shows Search as an input, not a tile
+            <button
+              type="button"
+              className="flex h-8 w-full min-w-0 items-center gap-2.5 rounded-md bg-neutral-100 pr-1.5 pl-2.5 text-[13px] font-medium text-muted-foreground transition-colors outline-none hover:bg-neutral-200 focus-visible:outline-1 focus-visible:outline-primary dark:bg-sidebar-tint/6 dark:inset-ring dark:inset-ring-sidebar-tint/10 dark:hover:bg-sidebar-tint/10"
+              aria-label="Search"
+              onClick={openSearch}
+            >
+              <Search className="size-4 shrink-0 opacity-90" />
+              <span className="min-w-0 flex-1 truncate text-left">Search</span>
+              <Shortcut id="palette.open" className="**:data-[slot=kbd]:h-auto **:data-[slot=kbd]:rounded-md **:data-[slot=kbd]:border **:data-[slot=kbd]:border-transparent **:data-[slot=kbd]:bg-neutral-200 **:data-[slot=kbd]:px-1.5 **:data-[slot=kbd]:py-0.5 **:data-[slot=kbd]:text-[11px] **:data-[slot=kbd]:font-medium **:data-[slot=kbd]:text-muted-foreground dark:**:data-[slot=kbd]:border-sidebar-tint/18 dark:**:data-[slot=kbd]:bg-white/6" />
+            </button>
+          )}
         </Tip>
-        <div className={cn('mt-2 flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain', collapsed ? 'gap-1' : 'gap-0.5')}>
+        </div>
+        <div className="-mx-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-1 pb-2">
           <SidebarSection label="Workspace" collapsed={collapsed} first />
           {WORKSPACE_LINKS.map((link) => link.enabled || (link.to === '/chat' && chat) ? (
             <Fragment key={link.to}>
@@ -226,7 +258,13 @@ export function SidebarNav({
           <SidebarNavItem to={taskViewPath('due_soon')} active={taskViewActive('due_soon')} icon={Timer} label="Due soon" onClick={onNavigate} />
           <SidebarSection label="Manage" collapsed={collapsed} />
           <SidebarNavItem to="/settings" icon={Settings} label="Settings" onClick={onNavigate} />
-          {isRoot ? <SidebarNavItem to="/admin" icon={SecurityUser} label="Admin" onClick={onNavigate} /> : null}
+          {isRoot ? (
+            <>
+              {/* the installation, not the workspace: it sits apart at the bottom */}
+              <div className="flex-1" aria-hidden="true" />
+              <SidebarNavItem to="/admin" icon={SecurityUser} tone="neutral" label="Admin" onClick={onNavigate} />
+            </>
+          ) : null}
         </div>
       </div>
     </SidebarNavCollapsed.Provider>

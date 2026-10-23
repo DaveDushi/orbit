@@ -50,7 +50,7 @@ export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
             render={
               <Button
                 variant="outline"
-                className={cn('h-auto min-h-[34px] w-full min-w-0 flex-1 justify-start gap-1.5 p-1.5 font-normal', collapsed && 'w-8 px-[5px]')}
+                className={cn('h-8 w-full min-w-0 flex-1 justify-start gap-2 rounded-lg px-2 aria-expanded:border-primary aria-expanded:bg-primary/5 dark:border-sidebar-tint/24 dark:bg-primary/14 dark:text-[oklch(0.95_0.02_359)] dark:[--button-depth:color-mix(in_oklab,var(--primary)_35%,transparent)] dark:hover:border-sidebar-tint/34 dark:hover:bg-primary/18 dark:aria-expanded:border-primary dark:aria-expanded:bg-primary/18 dark:[&_svg]:text-sidebar-tint', collapsed && 'w-8 flex-none justify-center px-0')}
                 aria-label={`Account menu for ${userName}`}
               />
             }
@@ -70,7 +70,8 @@ export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
             {!collapsed ? <ChevronDown className="size-3.5 shrink-0 text-muted-foreground/70 transition-transform group-aria-expanded/button:rotate-180" /> : null}
           </DropdownMenuTrigger>
         </Tip>
-        <DropdownMenuContent side="top" align="start" className="w-[220px] max-w-[calc(100vw-32px)]">
+        {/* the pink tint of the sidebar it opens from */}
+        <DropdownMenuContent side="top" align="start" sideOffset={4} className="w-52 max-w-[calc(100vw-32px)] rounded-[10px] dark:bg-sidebar-popover dark:ring-sidebar-tint/22 dark:**:data-[slot$=-item]:focus:bg-sidebar-tint/10 dark:**:data-[slot$=-item]:data-highlighted:bg-sidebar-tint/10">
           <div className="min-w-0 px-2 py-1.5">
             <div className="truncate text-[13px] font-semibold text-foreground">{userName}</div>
             {hasCustomStatus ? (
