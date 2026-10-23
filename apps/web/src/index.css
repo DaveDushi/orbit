@@ -27,7 +27,6 @@
     --color-sidebar-foreground: var(--sidebar-foreground);
     --color-sidebar: var(--sidebar);
     --color-sidebar-edge: var(--sidebar-edge);
-    --color-sidebar-wash: var(--sidebar-wash);
     --color-sidebar-nav: var(--sidebar-nav);
     --color-sidebar-nav-active: var(--sidebar-nav-active);
     --color-sidebar-nav-muted: var(--sidebar-nav-muted);
@@ -101,7 +100,6 @@
     --sidebar-ring: oklch(0.708 0 0);
     /* Coolify chrome: a faint neutral right edge in light mode, no brand wash */
     --sidebar-edge: rgb(0 0 0 / 6%);
-    --sidebar-wash: transparent;
     --sidebar-nav: oklch(0.4386 0 0);
     --sidebar-nav-active: oklch(0.2046 0 0);
     --sidebar-nav-muted: oklch(0.5103 0 0);
@@ -134,8 +132,9 @@
     --chart-3: oklch(0.546 0.245 262.881);
     --chart-4: oklch(0.488 0.243 264.376);
     --chart-5: oklch(0.424 0.199 265.638);
-    /* Coolify's dark sidebar is brand-black (#120e1a); Orbit's brand is pink, so pink-black */
-    --sidebar: oklch(0.17 0.018 359);
+    /* Coolify's dark sidebar: flat neutral #0d0d0d, one step above the canvas, no brand tint or wash.
+       Only the current item's tile uses the brand color. */
+    --sidebar: #0d0d0d;
     --sidebar-foreground: oklch(0.985 0 0);
     --sidebar-primary: oklch(0.659 0.216 358.989);
     --sidebar-primary-foreground: oklch(1 0 0);
@@ -143,14 +142,13 @@
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.556 0 0);
-    /* the pink counterparts of Coolify's lavender (#a391ff, #b9adff) and its tinted sidebar menus */
+    /* the pink counterparts of Coolify's lavender (#a391ff, #b9adff); only the command palette is tinted now */
     --sidebar-tint: oklch(0.74 0.15 359);
     --sidebar-tint-foreground: oklch(0.82 0.09 359);
-    --sidebar-edge: oklch(0.74 0.15 359 / 10%);
-    --sidebar-wash: oklch(0.659 0.216 358.989 / 9%);
-    --sidebar-nav: oklch(0.8 0.02 359);
+    --sidebar-edge: rgb(255 255 255 / 6%);
+    --sidebar-nav: oklch(0.738 0 0);
     --sidebar-nav-active: oklch(0.9612 0 0);
-    --sidebar-nav-muted: oklch(0.58 0.04 359);
+    --sidebar-nav-muted: oklch(0.61 0 0);
     --sidebar-popover: color-mix(in oklab, var(--primary) 10%, oklch(0.2002 0 0));
 }
 
