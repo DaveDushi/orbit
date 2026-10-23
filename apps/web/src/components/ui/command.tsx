@@ -15,7 +15,7 @@ import {
   InputGroup,
   InputGroupAddon,
 } from "./input-group"
-import { SearchNormal as SearchIcon, Check as CheckIcon } from 'reicon-react'
+import { Search4 as SearchIcon, Check as CheckIcon } from 'reicon-react'
 
 function Command({
   className,
