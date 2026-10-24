@@ -112,7 +112,7 @@ export function TaskCommentComposer({
 
   return (
     // one box holds the field and its actions; a reply (`compact`) sits inside its thread card
-    <div data-realtime-safe="" className={cn('relative flex flex-wrap items-end', compact ? 'gap-x-1' : 'rounded-[10px] border bg-card transition-colors focus-within:border-ring')}>
+    <div data-realtime-safe="" className={cn('relative flex flex-wrap items-end', compact ? 'gap-x-1' : 'rounded-[10px] border bg-card/50 transition-colors focus-within:border-ring/50')}>
       <div className={cn('min-w-0', compact ? 'flex-1 py-1' : 'basis-full px-3 pt-2.5')}>
         <Suspense fallback={<EditorFallback />}>
           <PageEditor
@@ -129,7 +129,7 @@ export function TaskCommentComposer({
             uploadFile={uploadFile}
             mentions={mentions}
             sideMenu={false}
-            className="text-[13px] [&_.bn-editor]:min-h-6"
+            className="[&_.bn-editor]:min-h-6 [&_.bn-editor]:text-[13px]! [&_.bn-trailing-block]:hidden!"
           />
         </Suspense>
       </div>
