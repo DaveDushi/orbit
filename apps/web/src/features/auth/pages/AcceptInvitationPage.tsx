@@ -71,7 +71,7 @@ export function AcceptInvitationPage() {
           : { token })
         navigate(`/?workspace=${encodeURIComponent(accepted.workspace_id)}`, { replace: true })
       }}
-      footer={!user.data ? <Button variant="outline" type="button" disabled={pending} onClick={() => {
+      actions={!user.data ? <Button variant="outline" size="lg" type="button" disabled={pending} onClick={() => {
         setSignIn((value) => !value)
         setPassword('')
         setTwoFactorToken(null)

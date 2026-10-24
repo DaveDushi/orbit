@@ -58,7 +58,7 @@ export function LoginPage() {
   const showPasskey = options.data?.passkeys_enabled === true && passkeysSupported()
   const passkeyError = passkey.error && !isPasskeyCancel(passkey.error) ? passkey.error : null
   return (
-    <AuthForm title="Sign in to Orbit" error={mutation.error ?? passkeyError ?? returnError} pending={mutation.isPending || passkey.isPending} submitLabel="Sign in" onSubmit={async () => {
+    <AuthForm title="Orbit" description="Sign in to your tasks, docs, mail and chat." error={mutation.error ?? passkeyError ?? returnError} pending={mutation.isPending || passkey.isPending} submitLabel="Sign in" onSubmit={async () => {
       setReturnError(null)
       passkey.reset()
       const response = await mutation.mutateAsync({ email, password })
@@ -68,25 +68,18 @@ export function LoginPage() {
         return
       }
       void signedIn()
-    }} footer={(
-      <div className="grid gap-4">
-        {showPasskey ? (
-          <Button type="button" variant="outline" disabled={mutation.isPending || passkey.isPending} onClick={() => {
-            setReturnError(null)
-            mutation.reset()
-            passkey.mutate(undefined, { onSuccess: () => void signedIn() })
-          }}>
-            Sign in with a passkey
-          </Button>
-        ) : null}
-        <span className="flex flex-wrap justify-center gap-x-4 gap-y-1">
-          <Link to="/recovery">Forgot your password?</Link>
-          {options.data?.registration_open ? <Link to="/register">Create an account</Link> : null}
-        </span>
-      </div>
-    )}>
+    }} actions={showPasskey ? (
+      <Button type="button" variant="outline" size="lg" className="border-primary/30 bg-primary/10 hover:bg-primary/15 dark:border-primary/30 dark:bg-primary/10 dark:hover:bg-primary/15" disabled={mutation.isPending || passkey.isPending} onClick={() => {
+        setReturnError(null)
+        mutation.reset()
+        passkey.mutate(undefined, { onSuccess: () => void signedIn() })
+      }}>
+        Sign in with a passkey
+      </Button>
+    ) : null} footer={options.data?.registration_open ? <>New to Orbit? <Link to="/register" className="font-medium text-foreground">Create an account</Link></> : undefined}>
       <AuthInput label="Email" type="email" value={email} onChange={setEmail} />
       <AuthInput label="Password" type="password" value={password} onChange={setPassword} />
+      <Link to="/recovery" className="justify-self-end text-[13px] text-muted-foreground hover:text-foreground">Forgot password?</Link>
     </AuthForm>
   )
 }
