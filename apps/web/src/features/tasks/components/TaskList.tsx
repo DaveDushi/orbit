@@ -360,7 +360,8 @@ export function TaskList({ tasks, users, labels, statuses, projects, display, gr
         ref={scroller}
         data-slot="task-list"
         data-virtual-scroller
-        className="h-full overflow-y-auto"
+        // a row brought into view (keyboard) stops below the sticky group and sub-group headers
+        className={cn('h-full overflow-y-auto', display.group_by !== 'none' && (display.sub_group_by !== 'none' ? 'scroll-pt-[68px]' : 'scroll-pt-9'))}
         onFocus={onFocus}
       >
         <div ref={content} className="relative" style={{ height: virtualizer.getTotalSize() }}>
