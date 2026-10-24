@@ -115,7 +115,7 @@ function Shell() {
     <div className="flex h-[var(--app-height,100svh)] w-full overflow-hidden bg-background pt-[env(safe-area-inset-top,0px)] pl-[env(safe-area-inset-left,0px)] pr-[env(safe-area-inset-right,0px)]">
       <aside
         className={cn(
-          'flex shrink-0 flex-col overflow-hidden border-r border-sidebar-edge bg-sidebar px-3 text-sidebar-foreground transition-[width,padding] duration-200 ease-out max-[899px]:hidden',
+          'flex shrink-0 flex-col overflow-hidden border-r border-sidebar-edge bg-sidebar bg-linear-to-b from-sidebar-wash to-transparent to-[520px] px-3 text-sidebar-foreground transition-[width,padding] duration-200 ease-out max-[899px]:hidden',
           sidebarCollapsed ? 'w-16' : 'w-56',
         )}
         data-collapsed={sidebarCollapsed || undefined}
@@ -163,7 +163,7 @@ function Shell() {
         <SideSheetContent
           side="left"
           aria-label="Navigation"
-          className="z-[41] w-[min(280px,84vw)] overflow-hidden border-r border-sidebar-edge bg-sidebar px-3 pt-[env(safe-area-inset-top,0px)] pb-[calc(12px+env(safe-area-inset-bottom,0px))] text-sidebar-foreground"
+          className="z-[41] w-[min(280px,84vw)] overflow-hidden border-r border-sidebar-edge bg-sidebar bg-linear-to-b from-sidebar-wash to-transparent to-[520px] px-3 pt-[env(safe-area-inset-top,0px)] pb-[calc(12px+env(safe-area-inset-bottom,0px))] text-sidebar-foreground"
         >
           <div className="mb-2 flex h-12 shrink-0 items-center justify-start gap-2 px-1.5">
             <WorkspaceSwitcher onSelect={() => setDrawerOpen(false)} />

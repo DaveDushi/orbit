@@ -39,7 +39,8 @@ export const light = {
   "sidebarPrimaryForeground": "#ffffff",
   "sidebarRing": "#a1a1a1",
   "sidebarTint": "#f2458f",
-  "sidebarTintForeground": "#f2458f"
+  "sidebarTintForeground": "#f2458f",
+  "sidebarWash": "rgba(0, 0, 0, 0)"
 } as const
 
 export const dark = {
@@ -66,21 +67,22 @@ export const dark = {
   "ring": "#737373",
   "secondary": "#27272a",
   "secondaryForeground": "#fafafa",
-  "sidebar": "#0d0d0d",
+  "sidebar": "#160c0f",
   "sidebarAccent": "#262626",
   "sidebarAccentForeground": "#fafafa",
   "sidebarBorder": "rgba(255, 255, 255, 0.1)",
-  "sidebarEdge": "rgba(255, 255, 255, 0.06)",
+  "sidebarEdge": "rgba(245, 127, 169, 0.1)",
   "sidebarForeground": "#fafafa",
-  "sidebarNav": "#aaaaaa",
+  "sidebarNav": "#c9b9bd",
   "sidebarNavActive": "#f2f2f2",
-  "sidebarNavMuted": "#838383",
+  "sidebarNavMuted": "#8f717a",
   "sidebarPopover": "#2a1c20",
   "sidebarPrimary": "#f2458f",
   "sidebarPrimaryForeground": "#ffffff",
   "sidebarRing": "#737373",
   "sidebarTint": "#f57fa9",
-  "sidebarTintForeground": "#f5acc3"
+  "sidebarTintForeground": "#f5acc3",
+  "sidebarWash": "rgba(242, 69, 143, 0.09)"
 } as const satisfies Record<keyof typeof light, string>
 
 export const radius = {

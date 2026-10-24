@@ -28,25 +28,34 @@ const sidebarNavItemVariants = cva(
         default: '',
         // nested under its parent entry while expanded: a label behind a 1px guide line, with a neutral pill when current;
         // a plain tile while collapsed
-        sub: 'group-data-[collapsed=false]/sidebar-nav:ml-5 group-data-[collapsed=false]/sidebar-nav:h-7 group-data-[collapsed=false]/sidebar-nav:w-[calc(100%-20px)] group-data-[collapsed=false]/sidebar-nav:rounded-r-md group-data-[collapsed=false]/sidebar-nav:border-l group-data-[collapsed=false]/sidebar-nav:border-black/8 group-data-[collapsed=false]/sidebar-nav:pl-3 group-data-[collapsed=false]/sidebar-nav:data-[active=true]:bg-black/5 dark:group-data-[collapsed=false]/sidebar-nav:border-white/6 dark:group-data-[collapsed=false]/sidebar-nav:data-[active=true]:bg-white/6 group-data-[collapsed=false]/sidebar-nav:[&>[data-slot=sidebar-nav-tile]]:hidden',
+        sub: 'group-data-[collapsed=false]/sidebar-nav:ml-5 group-data-[collapsed=false]/sidebar-nav:h-7 group-data-[collapsed=false]/sidebar-nav:w-[calc(100%-20px)] group-data-[collapsed=false]/sidebar-nav:rounded-r-md group-data-[collapsed=false]/sidebar-nav:border-l group-data-[collapsed=false]/sidebar-nav:border-black/8 group-data-[collapsed=false]/sidebar-nav:pl-3 group-data-[collapsed=false]/sidebar-nav:data-[active=true]:bg-black/5 dark:group-data-[collapsed=false]/sidebar-nav:border-sidebar-tint/10 dark:group-data-[collapsed=false]/sidebar-nav:data-[active=true]:bg-white/6 group-data-[collapsed=false]/sidebar-nav:[&>[data-slot=sidebar-nav-tile]]:hidden',
       },
     },
     defaultVariants: { size: 'default' },
   },
 )
 
-const sidebarNavTileClass =
+const sidebarNavTileVariants = cva(
   // 30px: a 16px icon, 6px padding and a 1px border, resting on a 2px ledge
   'box-content flex size-4 shrink-0 items-center justify-center rounded-lg border border-black/9 bg-neutral-50 p-1.5 shadow-[0_2px_0_var(--tile-depth)] transition-[translate,box-shadow,border-color,background-color] duration-80 [--tile-depth:rgb(0_0_0/0.22)] group-hover/nav-item:-translate-y-px group-hover/nav-item:border-black/18 group-hover/nav-item:bg-white group-hover/nav-item:shadow-[0_3px_0_var(--tile-depth)] group-active/nav-item:translate-y-0.5 group-active/nav-item:shadow-none group-disabled/nav-item:translate-y-0 group-disabled/nav-item:border-black/9 group-disabled/nav-item:bg-neutral-50 group-disabled/nav-item:shadow-[0_2px_0_var(--tile-depth)] dark:[--tile-depth:rgb(255_255_255/0.05)] [&_svg]:size-4 '
     // current: a pink-edged white tile in light mode, the pink gradient tile in dark mode (no glow: the row clips it)
-    + 'group-data-[active=true]/nav-item:border-primary/45 group-data-[active=true]/nav-item:bg-white group-data-[active=true]/nav-item:text-primary group-data-[active=true]/nav-item:[--tile-depth:color-mix(in_oklab,var(--primary)_45%,transparent)] dark:group-data-[active=true]/nav-item:border-[color-mix(in_oklab,var(--primary),white_25%)] dark:group-data-[active=true]/nav-item:bg-primary dark:group-data-[active=true]/nav-item:bg-linear-to-b dark:group-data-[active=true]/nav-item:from-[color-mix(in_oklab,var(--primary),white_6%)] dark:group-data-[active=true]/nav-item:to-[color-mix(in_oklab,var(--primary),black_18%)] dark:group-data-[active=true]/nav-item:text-white dark:group-data-[active=true]/nav-item:[--tile-depth:color-mix(in_oklab,var(--primary),black_40%)]'
-    // the rest: a neutral tile in dark mode; disabled rows keep it on hover
-    + ' dark:group-not-data-[active=true]/nav-item:border-white/7 dark:group-not-data-[active=true]/nav-item:bg-white/3 dark:group-not-data-[active=true]/nav-item:text-[oklch(0.72_0_0)] dark:group-not-data-[active=true]/nav-item:group-hover/nav-item:border-white/14 dark:group-not-data-[active=true]/nav-item:group-hover/nav-item:bg-white/6 dark:group-not-data-[active=true]/nav-item:group-hover/nav-item:text-white dark:group-disabled/nav-item:border-white/7! dark:group-disabled/nav-item:bg-white/3! dark:group-disabled/nav-item:text-[oklch(0.72_0_0)]!'
+    + 'group-data-[active=true]/nav-item:border-primary/45 group-data-[active=true]/nav-item:bg-white group-data-[active=true]/nav-item:text-primary group-data-[active=true]/nav-item:[--tile-depth:color-mix(in_oklab,var(--primary)_45%,transparent)] dark:group-data-[active=true]/nav-item:border-[color-mix(in_oklab,var(--primary),white_25%)] dark:group-data-[active=true]/nav-item:bg-primary dark:group-data-[active=true]/nav-item:bg-linear-to-b dark:group-data-[active=true]/nav-item:from-[color-mix(in_oklab,var(--primary),white_6%)] dark:group-data-[active=true]/nav-item:to-[color-mix(in_oklab,var(--primary),black_18%)] dark:group-data-[active=true]/nav-item:text-white dark:group-data-[active=true]/nav-item:[--tile-depth:color-mix(in_oklab,var(--primary),black_40%)]',
+  {
+    variants: {
+      tone: {
+        brand: 'dark:group-not-data-[active=true]/nav-item:border-sidebar-tint/13 dark:group-not-data-[active=true]/nav-item:bg-primary/7 dark:group-not-data-[active=true]/nav-item:text-sidebar-tint-foreground dark:group-not-data-[active=true]/nav-item:group-hover/nav-item:border-white/14 dark:group-not-data-[active=true]/nav-item:group-hover/nav-item:bg-white/6 dark:group-not-data-[active=true]/nav-item:group-hover/nav-item:text-white dark:group-disabled/nav-item:border-sidebar-tint/13! dark:group-disabled/nav-item:bg-primary/7! dark:group-disabled/nav-item:text-sidebar-tint-foreground!',
+        // Admin is not a workspace app: a neutral tile unless it is the current page
+        neutral: 'dark:group-not-data-[active=true]/nav-item:border-white/7 dark:group-not-data-[active=true]/nav-item:bg-white/3 dark:group-not-data-[active=true]/nav-item:text-[oklch(0.72_0_0)] dark:group-not-data-[active=true]/nav-item:group-hover/nav-item:border-white/14 dark:group-not-data-[active=true]/nav-item:group-hover/nav-item:bg-white/6 dark:group-not-data-[active=true]/nav-item:group-hover/nav-item:text-white',
+      },
+    },
+    defaultVariants: { tone: 'brand' },
+  },
+)
 
 /** The 3D icon tile: it lifts on hover, sinks on press, and turns pink on the current row. */
-function SidebarNavTile({ icon: Icon }: { icon: SidebarNavIcon }) {
+function SidebarNavTile({ icon: Icon, tone }: { icon: SidebarNavIcon } & VariantProps<typeof sidebarNavTileVariants>) {
   return (
-    <span data-slot="sidebar-nav-tile" className={sidebarNavTileClass}>
+    <span data-slot="sidebar-nav-tile" className={sidebarNavTileVariants({ tone })}>
       <Icon />
     </span>
   )
@@ -71,9 +80,10 @@ function SidebarNavItem({
   badge = 0,
   unread = false,
   size,
+  tone,
   className,
   ...props
-}: Omit<LinkProps, 'className' | 'children' | 'title'> & VariantProps<typeof sidebarNavItemVariants> & {
+}: Omit<LinkProps, 'className' | 'children' | 'title'> & VariantProps<typeof sidebarNavItemVariants> & VariantProps<typeof sidebarNavTileVariants> & {
   className?: string
   end?: boolean
   icon: SidebarNavIcon
@@ -99,7 +109,7 @@ function SidebarNavItem({
         to={to}
         {...props}
       >
-        <SidebarNavTile icon={Icon} />
+        <SidebarNavTile icon={Icon} tone={tone} />
         <SidebarNavLabel>{label}</SidebarNavLabel>
         {badge > 0 ? (
           <span
@@ -141,9 +151,9 @@ function SidebarNavComingSoon({ icon: Icon, label }: { icon: SidebarNavIcon; lab
 }
 
 function SidebarSection({ label, collapsed }: { label: string; collapsed: boolean }) {
-  if (collapsed) return <Separator className="mx-2.5 my-2 bg-black/8 data-horizontal:w-auto dark:bg-white/6" aria-hidden="true" />
+  if (collapsed) return <Separator className="mx-2.5 my-2 bg-black/8 data-horizontal:w-auto dark:bg-sidebar-tint/10" aria-hidden="true" />
   return (
-    <div className="mt-3 px-2.5 py-1 text-[11px] leading-4 font-medium text-sidebar-nav-muted select-none dark:font-mono dark:text-[10.5px] dark:tracking-[0.08em] dark:uppercase">
+    <div className="mt-3 px-2.5 py-1 text-[11px] leading-4 font-medium text-sidebar-nav-muted select-none dark:font-mono dark:text-[10.5px] dark:tracking-[0.08em] dark:text-sidebar-tint/55 dark:uppercase">
       {label}
     </div>
   )
@@ -207,14 +217,14 @@ export function SidebarNav({
             // the expanded sidebar shows Search as an input, not a tile
             <button
               type="button"
-              className="flex h-8 w-full min-w-0 items-center gap-2.5 rounded-md bg-neutral-100 pr-1.5 pl-2.5 text-[13px] font-medium text-muted-foreground transition-colors outline-none hover:bg-neutral-200 focus-visible:outline-1 focus-visible:outline-primary dark:bg-white/3 dark:inset-ring dark:inset-ring-white/6 dark:hover:bg-white/6"
+              className="flex h-8 w-full min-w-0 items-center gap-2.5 rounded-md bg-neutral-100 pr-1.5 pl-2.5 text-[13px] font-medium text-muted-foreground transition-colors outline-none hover:bg-neutral-200 focus-visible:outline-1 focus-visible:outline-primary dark:bg-sidebar-tint/6 dark:inset-ring dark:inset-ring-sidebar-tint/10 dark:hover:bg-sidebar-tint/10"
               aria-label="Search"
               onClick={openSearch}
             >
               <Search className="size-4 shrink-0 opacity-90" />
               <span className="min-w-0 flex-1 truncate text-left">Search</span>
               {paletteKeys ? (
-                <Kbd className="h-auto rounded-md border border-neutral-300 bg-neutral-200 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground dark:border-white/10 dark:bg-white/6">{shortcutText(paletteKeys)}</Kbd>
+                <Kbd className="h-auto rounded-md border border-neutral-300 bg-neutral-200 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground dark:border-sidebar-tint/18 dark:bg-white/6">{shortcutText(paletteKeys)}</Kbd>
               ) : null}
             </button>
           )}
@@ -254,7 +264,7 @@ export function SidebarNav({
             <>
               {/* the installation, not the workspace: it sits apart at the bottom */}
               <div className="flex-1" aria-hidden="true" />
-              <SidebarNavItem to="/admin" icon={SecurityUser} label="Admin" onClick={onNavigate} />
+              <SidebarNavItem to="/admin" icon={SecurityUser} tone="neutral" label="Admin" onClick={onNavigate} />
             </>
           ) : null}
         </div>

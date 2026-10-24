@@ -84,6 +84,15 @@ function fromOklch([L, C, h]: Oklch, a: number): Rgba {
 const ACHROMATIC = 2e-4
 
 /** CSS `color-mix(in oklch, <first> <weight*100>%, <second>)` with the shorter hue arc. */
+/**
+ * A color as an opaque color plus its opacity. react-native-svg on iOS ignores the alpha of an `rgba()` `stopColor`,
+ * so a gradient stop needs them apart (`stopColor` + `stopOpacity`).
+ */
+export function splitAlpha(color: string): { color: string; opacity: number } {
+  const rgba = parse(color)
+  return { color: format({ ...rgba, a: 1 }), opacity: rgba.a }
+}
+
 export function mix(first: string, weight: number, second: string): string {
   const one = parse(first)
   const two = parse(second)

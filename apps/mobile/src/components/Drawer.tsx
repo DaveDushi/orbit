@@ -2,9 +2,11 @@ import { type Href, router, useGlobalSearchParams, usePathname } from 'expo-rout
 import { createContext, type ReactNode, use, useEffect, useRef, useState } from 'react'
 import { Animated, Easing, Modal, Pressable, ScrollView, useWindowDimensions, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
 
 import { useOrbit } from '../orbit-context'
 import { useChatUnreadCount, useUnreadNotifications } from '../queries'
+import { splitAlpha } from '../data/color'
 import { alpha, cssColors, fonts, mix, type, useTheme } from '../theme'
 import { Avatar, CountBadge, Icon, type IconName, IconButton, PickerSheet, Text } from '../ui'
 
@@ -103,6 +105,7 @@ function Drawer({ open, onClose }: { open: boolean; onClose: () => void }) {
           transform: [{ translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [-width, 0] }) }],
         }}
       >
+        <Wash color={colors.sidebarWash} width={width} />
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Workspace: ${workspace.name}`}
@@ -128,9 +131,9 @@ function Drawer({ open, onClose }: { open: boolean; onClose: () => void }) {
               paddingLeft: 10,
               paddingRight: 6,
               borderRadius: 8,
-              backgroundColor: dark ? alpha(cssColors.white, pressed ? 0.06 : 0.03) : pressed ? colors.border : colors.muted,
+              backgroundColor: dark ? alpha(colors.sidebarTint, pressed ? 0.1 : 0.06) : pressed ? colors.border : colors.muted,
               borderWidth: dark ? 1 : 0,
-              borderColor: alpha(cssColors.white, 0.06),
+              borderColor: alpha(colors.sidebarTint, 0.1),
             })}
           >
             <Icon name="search" size={16} color={alpha(colors.mutedForeground, 0.9)} />
@@ -156,7 +159,7 @@ function Drawer({ open, onClose }: { open: boolean; onClose: () => void }) {
             <>
               {/* the installation, not the workspace: it sits apart at the bottom */}
               <View style={{ flex: 1 }} />
-              <NavRow link={{ label: 'Admin', icon: 'admin', href: '/settings/admin', active: onAdmin }} onPress={() => go('/settings/admin')} />
+              <NavRow link={{ label: 'Admin', icon: 'admin', href: '/settings/admin', active: onAdmin }} tone="neutral" onPress={() => go('/settings/admin')} />
             </>
           ) : null}
         </ScrollView>
@@ -174,15 +177,15 @@ function Drawer({ open, onClose }: { open: boolean; onClose: () => void }) {
             paddingHorizontal: 8,
             borderRadius: 10,
             borderWidth: 1,
-            borderColor: dark ? alpha(cssColors.white, 0.08) : colors.border,
-            backgroundColor: dark ? alpha(cssColors.white, pressed ? 0.07 : 0.04) : pressed ? colors.muted : colors.background,
+            borderColor: dark ? alpha(colors.sidebarTint, pressed ? 0.34 : 0.24) : colors.border,
+            backgroundColor: dark ? alpha(colors.primary, pressed ? 0.18 : 0.14) : pressed ? colors.muted : colors.background,
           })}
         >
           <Avatar id={user.id} name={user.display_name} size={20} presence={user.status.presence} />
-          <Text numberOfLines={1} style={[type(12, 'medium'), { flex: 1 }]}>
+          <Text numberOfLines={1} style={[type(12, 'medium'), { flex: 1 }, dark && { color: ACCOUNT_TEXT_DARK }]}>
             {user.display_name}
           </Text>
-          <Icon name="chevronDown" size={14} color={dark ? colors.sidebarNavMuted : alpha(colors.mutedForeground, 0.7)} />
+          <Icon name="chevronDown" size={14} color={dark ? colors.sidebarTint : alpha(colors.mutedForeground, 0.7)} />
         </Pressable>
       </Animated.View>
       <PickerSheet
@@ -201,7 +204,7 @@ function Drawer({ open, onClose }: { open: boolean; onClose: () => void }) {
 }
 
 /** The web `SidebarNavItem`: a 36px row with a 30px icon tile; the current row's tile turns pink. */
-function NavRow({ link, onPress, comingSoon = false }: { link: NavLink; onPress?: () => void; comingSoon?: boolean }) {
+function NavRow({ link, onPress, comingSoon = false, tone = 'brand' }: { link: NavLink; onPress?: () => void; comingSoon?: boolean; tone?: TileTone }) {
   const { colors } = useTheme()
   return (
     <Pressable
@@ -214,7 +217,7 @@ function NavRow({ link, onPress, comingSoon = false }: { link: NavLink; onPress?
     >
       {({ pressed }) => (
         <>
-          <Tile icon={link.icon} active={link.active} pressed={pressed} />
+          <Tile icon={link.icon} active={link.active} pressed={pressed} tone={tone} />
           <Text numberOfLines={1} style={[type(13, 'medium'), { flex: 1, color: link.active || pressed ? colors.sidebarNavActive : colors.sidebarNav }]}>
             {link.label}
           </Text>
@@ -226,7 +229,10 @@ function NavRow({ link, onPress, comingSoon = false }: { link: NavLink; onPress?
   )
 }
 
-function Tile({ icon, active, pressed }: { icon: IconName; active: boolean; pressed: boolean }) {
+/** `brand`: the workspace's apps, pink-tinted in dark mode. `neutral`: Admin, which is the installation, not the workspace. */
+type TileTone = 'brand' | 'neutral'
+
+function Tile({ icon, active, pressed, tone }: { icon: IconName; active: boolean; pressed: boolean; tone: TileTone }) {
   const { colors, scheme } = useTheme()
   const dark = scheme === 'dark'
   const look = active
@@ -234,7 +240,9 @@ function Tile({ icon, active, pressed }: { icon: IconName; active: boolean; pres
       ? { background: colors.primary, border: mix(colors.primary, 0.75, cssColors.white), edge: mix(colors.primary, 0.6, cssColors.black), icon: cssColors.white }
       : { background: cssColors.white, border: alpha(colors.primary, 0.45), edge: mix(colors.primary, 0.45, cssColors.white), icon: colors.primary }
     : dark
-      ? { background: alpha(cssColors.white, 0.03), border: alpha(cssColors.white, 0.07), edge: alpha(cssColors.white, 0.05), icon: colors.sidebarNav }
+      ? tone === 'brand'
+        ? { background: alpha(colors.primary, 0.07), border: alpha(colors.sidebarTint, 0.13), edge: alpha(cssColors.white, 0.05), icon: colors.sidebarTintForeground }
+        : { background: alpha(cssColors.white, 0.03), border: alpha(cssColors.white, 0.07), edge: alpha(cssColors.white, 0.05), icon: NEUTRAL_TILE_ICON_DARK }
       : { background: colors.sidebar, border: alpha(cssColors.black, 0.09), edge: alpha(cssColors.black, 0.22), icon: colors.sidebarNav }
   return (
     <View
@@ -264,7 +272,7 @@ function SubRow({ label, onPress }: { label: string; onPress: () => void }) {
       accessibilityRole="button"
       accessibilityLabel="Task views"
       onPress={onPress}
-      style={{ height: 28, marginLeft: 20, justifyContent: 'center', paddingLeft: 12, borderLeftWidth: 1, borderLeftColor: alpha(scheme === 'dark' ? cssColors.white : cssColors.black, scheme === 'dark' ? 0.06 : 0.08) }}
+      style={{ height: 28, marginLeft: 20, justifyContent: 'center', paddingLeft: 12, borderLeftWidth: 1, borderLeftColor: scheme === 'dark' ? alpha(colors.sidebarTint, 0.1) : alpha(cssColors.black, 0.08) }}
     >
       <Text style={[type(13, 'medium'), { color: colors.sidebarNav }]}>{label}</Text>
     </Pressable>
@@ -284,10 +292,30 @@ function Section({ label }: { label: string }) {
         lineHeight: 16,
         fontFamily: dark ? fonts.mono : fonts.medium,
         letterSpacing: dark ? 0.84 : 0,
-        color: colors.sidebarNavMuted,
+        color: dark ? alpha(colors.sidebarTint, 0.55) : colors.sidebarNavMuted,
       }}
     >
       {dark ? label.toUpperCase() : label}
     </Text>
+  )
+}
+
+/** The web's `oklch(0.72 0 0)` neutral tile icon and `oklch(0.95 0.02 359)` account text (dark). */
+const NEUTRAL_TILE_ICON_DARK = '#a4a4a4'
+const ACCOUNT_TEXT_DARK = '#fbe9ee'
+
+/** The web sidebar's `bg-linear-to-b from-sidebar-wash to-transparent to-[520px]`: a pink wash fading out from the top. */
+function Wash({ color, width }: { color: string; width: number }) {
+  const wash = splitAlpha(color)
+  return (
+    <Svg pointerEvents="none" width={width} height={520} style={{ position: 'absolute', top: 0, left: 0 }}>
+      <Defs>
+        <LinearGradient id="sidebar-wash" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor={wash.color} stopOpacity={wash.opacity} />
+          <Stop offset="1" stopColor={wash.color} stopOpacity={0} />
+        </LinearGradient>
+      </Defs>
+      <Rect width="100%" height="100%" fill="url(#sidebar-wash)" />
+    </Svg>
   )
 }

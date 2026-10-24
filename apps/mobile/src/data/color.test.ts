@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { alpha, avatarColors, mix, userColor } from './color'
+import { alpha, avatarColors, mix, splitAlpha, userColor } from './color'
 
 // Expected values are what Chromium paints for the web's CSS with the tokens as authored (`oklch(0.269 0 0)`). The app
 // gets the tokens as rounded hex, so a channel may differ by one step.
@@ -47,4 +47,10 @@ describe('alpha', () => {
     expect(alpha('#a1a1a1', 0.7)).toBe('rgba(161, 161, 161, 0.7)')
     expect(alpha('rgba(255, 255, 255, 0.15)', 0.3)).toBe('rgba(255, 255, 255, 0.045)')
   })
+})
+
+test('splitAlpha gives the opaque color and its opacity, for SVG gradient stops', () => {
+  expect(splitAlpha('rgba(242, 69, 143, 0.09)')).toEqual({ color: '#f2458f', opacity: 0.09 })
+  expect(splitAlpha('#160c0f')).toEqual({ color: '#160c0f', opacity: 1 })
+  expect(splitAlpha('rgba(0, 0, 0, 0)').opacity).toBe(0)
 })
