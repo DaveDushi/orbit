@@ -1,6 +1,6 @@
 import { Pressable, View } from 'react-native'
 
-import { alpha, cssColors, mix, useTheme } from '../theme'
+import { alpha, cssColors, mix, useButtonStyle, useTheme } from '../theme'
 import { Icon, type IconName } from './Icon'
 import { Spinner } from './Spinner'
 import { Text } from './Text'
@@ -40,14 +40,16 @@ export interface ButtonProps {
 }
 
 /**
- * The web `Button`: the same variants, and the physical 2px edge under every filled one that drops when pressed.
+ * The web `Button`: the same variants, and the physical 2px edge under every filled one that drops when pressed
+ * (none in the Flat style).
  * A disabled button is at half opacity, without its edge.
  */
 export function Button({ label, onPress, variant = 'primary', size = 'default', icon, loading = false, disabled = false, block = false, muted = false }: ButtonProps) {
   const { colors, scheme } = useTheme()
   const dark = scheme === 'dark'
+  const flat = useButtonStyle() === 'flat'
   const inactive = disabled || loading || !onPress
-  const edge = {
+  const edge = flat ? undefined : {
     primary: mix(colors.primary, 0.75, cssColors.black),
     outline: dark ? alpha(cssColors.white, 0.08) : alpha(cssColors.black, 0.22),
     secondary: alpha(dark ? cssColors.white : cssColors.black, dark ? 0.08 : 0.22),
@@ -69,7 +71,8 @@ export function Button({ label, onPress, variant = 'primary', size = 'default', 
       style={({ pressed }) => ({
         backgroundColor: variant === 'secondary' && pressed ? mix(colors.secondary, 0.95, colors.foreground) : undefined,
         boxShadow: edge && !pressed && !disabled ? `0 2px 0 ${edge}` : undefined,
-        transform: [{ translateY: pressed && edge ? 2 : 0 }],
+        // Flat has no edge to sink into: the press scales down a little instead
+        transform: flat ? [{ scale: pressed && variant !== 'ghost' ? 0.97 : 1 }] : [{ translateY: pressed && edge ? 2 : 0 }],
       })}
     >
       {loading ? <Spinner color={iconColor} /> : icon ? <View><Icon name={icon} size={size === 'default' || size === 'lg' ? 16 : 14} color={iconColor} /></View> : null}

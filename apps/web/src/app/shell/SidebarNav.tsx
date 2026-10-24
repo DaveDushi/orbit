@@ -20,8 +20,10 @@ const WORKSPACE_LINKS = [
 ].filter((link) => !(docsHidden && link.to === '/docs'))
 
 // Coolify tile navigation: the row never fills; the icon sits in a 3D tile and the current row shows a pink tile.
+// The Flat style (Account settings → Appearance) drops the tile: plain rows, and a filled row for the current page.
 const sidebarNavItemVariants = cva(
-  'group/nav-item relative flex h-9 w-full min-w-0 shrink-0 items-center justify-start gap-2.5 overflow-hidden pr-2.5 pl-1 text-left text-[13px] font-medium whitespace-nowrap text-sidebar-nav transition-colors duration-120 outline-none hover:text-sidebar-nav-active focus-visible:text-sidebar-nav-active data-[active=true]:text-sidebar-nav-active group-data-[collapsed=true]/sidebar-nav:justify-center group-data-[collapsed=true]/sidebar-nav:px-0',
+  'group/nav-item relative flex h-9 w-full min-w-0 shrink-0 items-center justify-start gap-2.5 overflow-hidden pr-2.5 pl-1 text-left text-[13px] font-medium whitespace-nowrap text-sidebar-nav transition-colors duration-120 outline-none hover:text-sidebar-nav-active focus-visible:text-sidebar-nav-active data-[active=true]:text-sidebar-nav-active group-data-[collapsed=true]/sidebar-nav:justify-center group-data-[collapsed=true]/sidebar-nav:px-0 '
+    + 'flat:h-8 flat:rounded-md flat:pl-2.5 flat:hover:not-disabled:bg-black/4 flat:data-[active=true]:bg-black/5 dark:flat:hover:not-disabled:bg-white/5 dark:flat:data-[active=true]:bg-white/6',
   {
     variants: {
       size: {
@@ -39,7 +41,9 @@ const sidebarNavTileVariants = cva(
   // 30px: a 16px icon, 6px padding and a 1px border, resting on a 2px ledge
   'box-content flex size-4 shrink-0 items-center justify-center rounded-lg border border-black/9 bg-neutral-50 p-1.5 shadow-[0_2px_0_var(--tile-depth)] transition-[translate,box-shadow,border-color,background-color] duration-80 [--tile-depth:rgb(0_0_0/0.22)] group-hover/nav-item:-translate-y-px group-hover/nav-item:border-black/18 group-hover/nav-item:bg-white group-hover/nav-item:shadow-[0_3px_0_var(--tile-depth)] group-active/nav-item:translate-y-0.5 group-active/nav-item:shadow-none group-disabled/nav-item:translate-y-0 group-disabled/nav-item:border-black/9 group-disabled/nav-item:bg-neutral-50 group-disabled/nav-item:shadow-[0_2px_0_var(--tile-depth)] dark:[--tile-depth:rgb(255_255_255/0.05)] [&_svg]:size-4 '
     // current: a pink-edged white tile in light mode, the pink gradient tile in dark mode (no glow: the row clips it)
-    + 'group-data-[active=true]/nav-item:border-primary/45 group-data-[active=true]/nav-item:bg-white group-data-[active=true]/nav-item:text-primary group-data-[active=true]/nav-item:[--tile-depth:color-mix(in_oklab,var(--primary)_45%,transparent)] dark:group-data-[active=true]/nav-item:border-[color-mix(in_oklab,var(--primary),white_25%)] dark:group-data-[active=true]/nav-item:bg-primary dark:group-data-[active=true]/nav-item:bg-linear-to-b dark:group-data-[active=true]/nav-item:from-[color-mix(in_oklab,var(--primary),white_6%)] dark:group-data-[active=true]/nav-item:to-[color-mix(in_oklab,var(--primary),black_18%)] dark:group-data-[active=true]/nav-item:text-white dark:group-data-[active=true]/nav-item:[--tile-depth:color-mix(in_oklab,var(--primary),black_40%)]',
+    + 'group-data-[active=true]/nav-item:border-primary/45 group-data-[active=true]/nav-item:bg-white group-data-[active=true]/nav-item:text-primary group-data-[active=true]/nav-item:[--tile-depth:color-mix(in_oklab,var(--primary)_45%,transparent)] dark:group-data-[active=true]/nav-item:border-[color-mix(in_oklab,var(--primary),white_25%)] dark:group-data-[active=true]/nav-item:bg-primary dark:group-data-[active=true]/nav-item:bg-linear-to-b dark:group-data-[active=true]/nav-item:from-[color-mix(in_oklab,var(--primary),white_6%)] dark:group-data-[active=true]/nav-item:to-[color-mix(in_oklab,var(--primary),black_18%)] dark:group-data-[active=true]/nav-item:text-white dark:group-data-[active=true]/nav-item:[--tile-depth:color-mix(in_oklab,var(--primary),black_40%)] '
+    // Flat: only the icon, in the row's colour (important: the tile's state classes are more specific)
+    + 'flat:translate-y-0! flat:border-0! flat:bg-transparent! flat:bg-none! flat:p-0! flat:text-current! flat:shadow-none! flat:size-[18px] flat:[&_svg]:size-[18px]! flat:[&_svg]:opacity-90',
   {
     variants: {
       tone: {

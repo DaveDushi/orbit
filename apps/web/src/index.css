@@ -8,6 +8,10 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Account settings → Appearance (lib/theme.tsx): Style → Flat, and Navigation style → Floating */
+@custom-variant flat (&:where([data-flat] *));
+@custom-variant floating (&:where([data-floating] *));
+
 /* hover-only affordances (e.g. relation × buttons): real hover and a fine pointer; touch keeps them visible */
 @custom-variant hover-fine {
   @media (hover: hover) and (pointer: fine) {

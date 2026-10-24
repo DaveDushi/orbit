@@ -1,5 +1,6 @@
 import { useId, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
+import { cn } from 'cn'
 import { Copy, Hashtag } from 'reicon-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -173,9 +174,6 @@ const APP_COLORS = { sidebar: 'var(--background)', selected: 'var(--muted)', acc
 
 /** A preset as a thumbnail of chat in its colours, with its name below. "Orbit" (`theme` null) is the default look. */
 function PresetButton({ name, theme, pressed, onSelect }: { name: string; theme: ChatTheme | null; pressed: boolean; onSelect: () => void }) {
-  const colors = theme ?? APP_COLORS
-  const sidebarText = theme ? readableOn(theme.sidebar) : 'var(--foreground)'
-  const chatText = theme ? readableOn(theme.chat) : 'var(--foreground)'
   return (
     <button
       type="button"
@@ -184,26 +182,36 @@ function PresetButton({ name, theme, pressed, onSelect }: { name: string; theme:
       className="group/preset flex min-w-0 flex-col gap-1 rounded-lg text-left outline-none"
       onClick={onSelect}
     >
-      <span
-        aria-hidden="true"
-        className="flex h-12 w-full overflow-hidden rounded-md border border-border transition-transform duration-150 ease-out group-focus-visible/preset:ring-3 group-focus-visible/preset:ring-ring/50 group-active/preset:scale-[0.97] group-aria-pressed/preset:border-primary group-aria-pressed/preset:ring-2 group-aria-pressed/preset:ring-primary/40 motion-reduce:transition-none"
-      >
-        <span className="flex w-[38%] flex-col gap-[3px] p-1.5" style={{ backgroundColor: colors.sidebar, color: sidebarText }}>
-          <span className="h-[3px] w-3/4 rounded-full bg-current opacity-35" />
-          <span className="-mx-0.5 flex h-[7px] items-center rounded-[2px] px-0.5" style={{ backgroundColor: colors.selected }} />
-          <span className="flex items-center justify-between">
-            <span className="h-[3px] w-1/2 rounded-full bg-current opacity-35" />
-            <span className="size-[4px]" style={{ backgroundColor: colors.accent }} />
-          </span>
-        </span>
-        <span className="flex flex-1 flex-col gap-[3px] p-1.5" style={{ backgroundColor: colors.chat, color: chatText }}>
-          <span className="h-[3px] w-4/5 rounded-full bg-current opacity-45" />
-          <span className="h-[3px] w-3/5 rounded-full bg-current opacity-25" />
-          <span className="mt-auto h-[7px] rounded-[2px] border border-current/25" />
-        </span>
-      </span>
+      <ChatThemeSwatch
+        theme={theme}
+        className="h-12 w-full transition-transform duration-150 ease-out group-focus-visible/preset:ring-3 group-focus-visible/preset:ring-ring/50 group-active/preset:scale-[0.97] group-aria-pressed/preset:border-primary group-aria-pressed/preset:ring-2 group-aria-pressed/preset:ring-primary/40 motion-reduce:transition-none"
+      />
       <span className="truncate px-0.5 text-xs text-muted-foreground group-aria-pressed/preset:font-medium group-aria-pressed/preset:text-foreground">{name}</span>
     </button>
+  )
+}
+
+/** A thumbnail of chat in the theme's colours. `null` is the Orbit default. */
+export function ChatThemeSwatch({ theme, className }: { theme: ChatTheme | null; className?: string }) {
+  const colors = theme ?? APP_COLORS
+  const sidebarText = theme ? readableOn(theme.sidebar) : 'var(--foreground)'
+  const chatText = theme ? readableOn(theme.chat) : 'var(--foreground)'
+  return (
+    <span aria-hidden="true" className={cn('flex overflow-hidden rounded-md border border-border', className)}>
+      <span className="flex w-[38%] flex-col gap-[3px] p-1.5" style={{ backgroundColor: colors.sidebar, color: sidebarText }}>
+        <span className="h-[3px] w-3/4 rounded-full bg-current opacity-35" />
+        <span className="-mx-0.5 flex h-[7px] items-center rounded-[2px] px-0.5" style={{ backgroundColor: colors.selected }} />
+        <span className="flex items-center justify-between">
+          <span className="h-[3px] w-1/2 rounded-full bg-current opacity-35" />
+          <span className="size-[4px]" style={{ backgroundColor: colors.accent }} />
+        </span>
+      </span>
+      <span className="flex flex-1 flex-col gap-[3px] p-1.5" style={{ backgroundColor: colors.chat, color: chatText }}>
+        <span className="h-[3px] w-4/5 rounded-full bg-current opacity-45" />
+        <span className="h-[3px] w-3/5 rounded-full bg-current opacity-25" />
+        <span className="mt-auto h-[7px] rounded-[2px] border border-current/25" />
+      </span>
+    </span>
   )
 }
 

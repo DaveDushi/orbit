@@ -112,10 +112,11 @@ function Shell() {
   return (
     <ProfilePopoverProvider>
     <NewTaskProvider>
-    <div className="flex h-[var(--app-height,100svh)] w-full overflow-hidden bg-background pt-[env(safe-area-inset-top,0px)] pl-[env(safe-area-inset-left,0px)] pr-[env(safe-area-inset-right,0px)]">
+    {/* Floating navigation (Account settings → Appearance, desktop): framed panels on a dotted backdrop */}
+    <div className="flex h-[var(--app-height,100svh)] w-full overflow-hidden bg-background pt-[env(safe-area-inset-top,0px)] pl-[env(safe-area-inset-left,0px)] pr-[env(safe-area-inset-right,0px)] min-[900px]:floating:gap-2 min-[900px]:floating:p-2 min-[900px]:floating:bg-[radial-gradient(circle,rgb(0_0_0/0.13)_1px,transparent_1.3px)] min-[900px]:floating:bg-size-[20px_20px] dark:min-[900px]:floating:bg-[radial-gradient(circle,rgb(255_255_255/0.09)_1px,transparent_1.3px)]">
       <aside
         className={cn(
-          'flex shrink-0 flex-col overflow-hidden border-r border-sidebar-edge bg-sidebar bg-linear-to-b from-sidebar-wash to-transparent to-[520px] px-3 text-sidebar-foreground transition-[width,padding] duration-200 ease-out max-[899px]:hidden',
+          'flex shrink-0 flex-col overflow-hidden border-r border-sidebar-edge bg-sidebar bg-linear-to-b from-sidebar-wash to-transparent to-[520px] px-3 text-sidebar-foreground transition-[width,padding] duration-200 ease-out max-[899px]:hidden floating:rounded-lg floating:border',
           sidebarCollapsed ? 'w-16' : 'w-56',
         )}
         data-collapsed={sidebarCollapsed || undefined}
@@ -149,7 +150,7 @@ function Shell() {
         </div>
       </aside>
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background min-[900px]:floating:overflow-hidden min-[900px]:floating:rounded-lg min-[900px]:floating:border">
         <ConnectionBanner live={live} />
         <ReadOnlyBanner />
         <Topbar onOpenDrawer={() => setDrawerOpen(true)} onOpenPalette={() => setPaletteOpen(true)} />

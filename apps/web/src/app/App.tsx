@@ -34,6 +34,7 @@ import { StoragePage } from '@/features/settings/pages/StoragePage'
 import { NotificationsPage } from '@/features/settings/pages/NotificationsPage'
 import { ApiTokensPage } from '@/features/settings/pages/ApiTokensPage'
 import { ProfilePage } from '@/features/profile/pages/ProfilePage'
+import { AppearancePage } from '@/features/profile/pages/AppearancePage'
 import { InboxPage } from '@/features/inbox/pages/InboxPage'
 import { AuthGate, GuestGate } from '@/features/auth/AuthGate'
 import { AcceptInvitationPage } from '@/features/auth/pages/AcceptInvitationPage'
@@ -110,6 +111,7 @@ export default function App() {
               <Route path="inbox" element={<MovedTo path="/activity" />} />
               <Route path="profile" element={<AccountLayout />}>
                 <Route index element={<ProfilePage />} />
+                <Route path="appearance" element={<AppearancePage />} />
                 <Route path="notifications" element={<NotificationsPage />} />
                 <Route path="security" element={<SecurityPage />} />
                 <Route path="sessions" element={<SessionsPage />} />

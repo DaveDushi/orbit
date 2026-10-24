@@ -166,6 +166,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       { id: 'nav_week', icon: SquareCheck, title: 'Go to Current week', meta: 'Navigation', to: '/tasks?view=current_week', command: 'nav.week', keywords: 'current week due' },
       { id: 'nav_overdue', icon: SquareCheck, title: 'Go to Overdue', meta: 'Navigation', to: '/tasks?view=overdue', command: 'nav.overdue', keywords: 'overdue late' },
       { id: 'nav_views', icon: SquareCheck, title: 'Go to Views', meta: 'Navigation', to: '/views', command: 'nav.views', keywords: 'views saved filters' },
+      { id: 'nav_appearance', icon: Settings, title: 'Go to Appearance', meta: 'Navigation', to: '/profile/appearance', keywords: 'appearance theme dark light system custom colors flat 3d floating navigation style' },
       { id: 'nav_shortcuts', icon: Settings, title: 'Go to Keyboard shortcuts', meta: 'Navigation', to: '/profile/shortcuts', keywords: 'keyboard shortcuts keys hotkeys customize' },
     ]
     const tasks: CommandEntry[] = (taskQuery.data?.pages.flatMap((page) => page.items) ?? []).map((record) => taskFromRecord(record, projects.data?.find((project) => project.id === record.project_id))).map((t) => ({

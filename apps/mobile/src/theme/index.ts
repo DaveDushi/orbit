@@ -36,8 +36,12 @@ export interface Theme {
 }
 
 const SCHEME_KEY = 'orbit.theme'
+const STYLE_KEY = 'orbit.style'
 /** `null` follows the system; the Profile header's theme button sets one explicitly, like the web toggle. */
 let preference: Scheme | null = null
+/** The web's Appearance → Style: `3d` buttons rest on a raised edge, `flat` ones have none. */
+export type ButtonStyle = '3d' | 'flat'
+let buttonStyle: ButtonStyle = '3d'
 const listeners = new Set<() => void>()
 
 const subscribe = (listener: () => void) => {
@@ -53,10 +57,26 @@ export function setSchemePreference(scheme: Scheme | null) {
   void (scheme ? storage.set(SCHEME_KEY, scheme) : storage.remove(SCHEME_KEY))
 }
 
-/** Reads the stored choice once at startup. */
-export async function loadSchemePreference(): Promise<void> {
-  const stored = await storage.get(SCHEME_KEY).catch(() => null)
-  if (stored === 'light' || stored === 'dark') setSchemePreference(stored)
+export function setButtonStyle(style: ButtonStyle) {
+  buttonStyle = style
+  listeners.forEach((listener) => listener())
+  void storage.set(STYLE_KEY, style)
+}
+
+/** Reads the stored choices once at startup. */
+export async function loadAppearance(): Promise<void> {
+  const [scheme, style] = await Promise.all([storage.get(SCHEME_KEY).catch(() => null), storage.get(STYLE_KEY).catch(() => null)])
+  if (scheme === 'light' || scheme === 'dark') setSchemePreference(scheme)
+  if (style === 'flat') setButtonStyle(style)
+}
+
+/** The choice in Settings → Appearance: `system` when none is set. */
+export function useSchemePreference(): Scheme | 'system' {
+  return useSyncExternalStore(subscribe, () => preference ?? 'system')
+}
+
+export function useButtonStyle(): ButtonStyle {
+  return useSyncExternalStore(subscribe, () => buttonStyle)
 }
 
 export function useTheme(): Theme {

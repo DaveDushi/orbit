@@ -13,8 +13,12 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>Orbit</title>
     <script>
-      // Apply the stored theme before first paint (default: dark) to avoid a light flash.
-      document.documentElement.classList.toggle('dark', localStorage.getItem('theme') !== 'light')
+      // Apply the stored appearance before first paint (default: dark) to avoid a light flash. lib/theme.tsx owns it later.
+      var theme = localStorage.getItem('theme')
+      var root = document.documentElement
+      root.classList.toggle('dark', theme === 'system' ? matchMedia('(prefers-color-scheme: dark)').matches : theme !== 'light')
+      root.toggleAttribute('data-flat', localStorage.getItem('orbit:style') === 'flat')
+      root.toggleAttribute('data-floating', localStorage.getItem('orbit:nav-style') === 'floating')
     </script>
   </head>
   <body>

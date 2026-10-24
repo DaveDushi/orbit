@@ -15,10 +15,10 @@ Home, Mail, Profile and webhooks still use isolated frontend seed data. Their ro
 - First sidebar groups Workspace, Personal, and Manage navigation.
 - It collapses to a 56px icon rail; state persists in `orbit:sidebar_collapsed`.
 - Search opens the command palette. `Cmd/Ctrl+K` toggles it.
-- User menu provides Profile and theme selection.
+- User menu provides Account settings and a link to Account settings → Appearance (`/profile/appearance`).
 - Mobile uses a bottom dock and a full navigation drawer.
 - Topbar breadcrumbs are route-derived in `Topbar.tsx`.
-- Theme defaults to dark and persists under `localStorage.theme`.
+- Appearance (port of Coolify's Profile → Appearance, `lib/theme.tsx`): color theme Light/System/Dark (default dark, `localStorage.theme`), the custom chat theme dialog, Navigation style Default/Floating (`orbit:nav-style`, `[data-floating]` on `<html>`, `floating:` variant, desktop only) and Style 3D/Flat (`orbit:style`, `[data-flat]`, `flat:` variant on buttons and sidebar items). `index.html` applies all of them before first paint. Coolify's Page width and Chart times are not ported.
 
 ## Home
 

@@ -4,8 +4,6 @@ import { UnsavedBar } from '@/components/common/UnsavedBar'
 import { Button } from '@/components/ui/button'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { useTheme, type Theme } from '@/lib/themeContext'
 import { Progress, ProgressLabel } from '@/components/ui/progress'
 import { useRenameWorkspace, useWorkspaceStorage } from '@/features/workspaces/api'
 import { useCan } from '@/features/workspaces/permissions'
@@ -16,14 +14,7 @@ import { formatBytes } from '@/lib/formatBytes'
 import { WorkspaceLeave } from '@/features/settings/components/WorkspaceLeave'
 import { useSlowPending } from '@/lib/useDebouncedValue'
 
-const THEME_OPTIONS = [
-  { value: 'light', label: 'Light' },
-  { value: 'dark', label: 'Dark' },
-] as const
-
-
 export function GeneralPage() {
-  const { theme, setTheme } = useTheme()
   const { workspace } = useWorkspace()
   const renameWorkspace = useRenameWorkspace(workspace.id)
   const renameSlow = useSlowPending(renameWorkspace.isPending)
@@ -55,24 +46,6 @@ export function GeneralPage() {
 
       <StorageCard workspaceId={workspace.id} />
 
-      <SettingsCard title="Appearance" description="Theme for this browser.">
-        <FieldGrid>
-          <Field>
-            <FieldLabel htmlFor="appearance-theme">
-              Theme
-            </FieldLabel>
-            {/* `items` lets Select.Value render the option label instead of the raw value. */}
-            <Select items={THEME_OPTIONS} value={theme} onValueChange={(value) => setTheme(value as Theme)}>
-              <SelectTrigger id="appearance-theme">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {THEME_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </Field>
-        </FieldGrid>
-      </SettingsCard>
       <WorkspaceLeave key={workspace.id} />
       {dirty ? (
         <UnsavedBar

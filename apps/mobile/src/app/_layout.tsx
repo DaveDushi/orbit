@@ -13,7 +13,7 @@ import { AppState } from 'react-native'
 
 import { OrbitProvider } from '../orbit-context'
 import { SessionProvider, useSession } from '../session-context'
-import { fonts, loadSchemePreference, type Theme, useTheme } from '../theme'
+import { fonts, loadAppearance, type Theme, useTheme } from '../theme'
 
 void SplashScreen.preventAutoHideAsync()
 
@@ -58,7 +58,7 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
   const ready = fontsReady && schemeLoaded && state.status !== 'loading'
 
   useEffect(() => {
-    void loadSchemePreference().finally(() => setSchemeLoaded(true))
+    void loadAppearance().finally(() => setSchemeLoaded(true))
   }, [])
   const signedIn = state.status === 'signed_in'
 

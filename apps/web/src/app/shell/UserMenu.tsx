@@ -1,18 +1,15 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
-import { ChevronDown, Logout as LogOut, Setting2 as Settings, User } from 'reicon-react'
+import { Brush, ChevronDown, Logout as LogOut, User } from 'reicon-react'
 import { cn } from 'cn'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useTheme, type Theme } from '@/lib/themeContext'
 import { useCurrentUser, useLogout } from '@/features/auth/api'
 import { userColor } from '@/features/workspaces/api'
 import { UserAvatar } from '@/components/common/UserAvatar'
@@ -22,19 +19,12 @@ import { CustomStatusText } from '@/features/realtime/components/CustomStatusTex
 import { StatusMenuItems } from '@/features/realtime/components/StatusMenuItems'
 import { useOwnStatus } from '@/features/realtime/useOwnStatus'
 
-const THEMES: { value: Theme; label: string }[] = [
-  { value: 'light', label: 'Light' },
-  { value: 'dark', label: 'Dark' },
-]
-
 /** Signed-in profile and account actions shared by both sidebars. */
 export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
   const user = useCurrentUser()
   const logout = useLogout()
   const navigate = useNavigate()
-  const { theme, setTheme } = useTheme()
   const me = user.data
-  const [appearanceOpen, setAppearanceOpen] = useState(false)
   // the user's own status is what they chose, not what the others see
   const status = useOwnStatus()
   const hasCustomStatus = status.emoji !== null || status.text !== null
@@ -44,7 +34,7 @@ export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
 
   return (
     <>
-      <DropdownMenu onOpenChange={(open) => { if (!open) setAppearanceOpen(false) }}>
+      <DropdownMenu>
         <Tip label={collapsed ? userName : undefined} side="right">
           <DropdownMenuTrigger
             render={
@@ -93,20 +83,10 @@ export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
             <User />
             Account settings
           </DropdownMenuItem>
-          <DropdownMenuItem closeOnClick={false} aria-expanded={appearanceOpen} onClick={() => setAppearanceOpen((o) => !o)}>
-            <Settings />
+          <DropdownMenuItem onClick={() => navigate('/profile/appearance')}>
+            <Brush />
             Appearance
-            <ChevronDown className={cn('ml-auto size-3.5 text-muted-foreground transition-transform', appearanceOpen && 'rotate-180')} />
           </DropdownMenuItem>
-          {appearanceOpen ? (
-            <DropdownMenuRadioGroup className="pl-6" value={theme} onValueChange={(value) => setTheme(value as Theme)}>
-              {THEMES.map((option) => (
-                <DropdownMenuRadioItem key={option.value} value={option.value} closeOnClick>
-                  {option.label}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          ) : null}
           <DropdownMenuSeparator />
           {/* data-danger, not variant="destructive": the preset menu popup forces destructive items to the accent color */}
           <DropdownMenuItem
