@@ -34,7 +34,7 @@ Orbit can make scheduled, verified backups. Put a reverse proxy in front of Orbi
 
 ### Development
 
-You need Rust 1.97.1, Bun 1.3.14 or later, and [Just](https://just.systems/).
+You need Rust 1.97.1, Bun 1.4.4 or later, and [Just](https://just.systems/).
 
 ```bash
 just setup

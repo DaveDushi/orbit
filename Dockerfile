@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 ARG ORBIT_BUILD_REVISION=container
-FROM oven/bun:1.3.14-alpine AS web
+FROM oven/bun:1.4.4-alpine AS web
 WORKDIR /src
 COPY package.json bun.lock bunfig.toml ./
 COPY apps/web/package.json apps/web/

@@ -3,7 +3,7 @@
 ## Requirements
 
 - Rust 1.97.1 from `rust-toolchain.toml`
-- Bun 1.3.14 or later
+- Bun 1.4.4 or later
 - Just
 - Docker only for OCI builds
 
