@@ -31,7 +31,7 @@ export function WorkspaceSwitcher({ collapsed = false, onSelect }: { collapsed?:
         </PopoverTrigger>
       </Tip>
       {/* Base UI unmounts the panel after its exit, so the create form resets each time it closes. */}
-      <PopoverContent align="start" className="max-h-(--available-height) w-auto min-w-[13rem] overflow-y-auto overscroll-contain p-1">
+      <PopoverContent align="start" className="max-h-(--available-height) w-auto min-w-[13rem] gap-0 overflow-y-auto overscroll-contain p-1">
         <WorkspaceMenu createWorkspace={createWorkspace} onSelect={() => { setOpen(false); onSelect?.() }} />
       </PopoverContent>
     </Popover>
@@ -94,7 +94,7 @@ function WorkspaceOption({ className, ...props }: ComponentProps<typeof Button>)
       data-slot="workspace-option"
       variant="ghost"
       className={cn(
-        'h-auto min-h-8 w-full justify-start px-2 py-1.5 text-left font-normal data-selected:bg-muted data-selected:font-medium max-[899px]:min-h-11 max-[899px]:whitespace-normal max-[899px]:[overflow-wrap:anywhere]',
+        'h-auto min-h-8 w-full justify-start px-2 py-1.5 text-left font-normal data-selected:bg-muted data-selected:font-medium dark:hover:bg-sidebar-tint/10 dark:data-selected:bg-sidebar-tint/10 max-[899px]:min-h-11 max-[899px]:whitespace-normal max-[899px]:[overflow-wrap:anywhere]',
         className,
       )}
       {...props}

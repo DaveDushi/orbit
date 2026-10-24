@@ -8,46 +8,46 @@ import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui
 import { Input } from '@/components/ui/input'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group'
 import {
-  CHAT_THEME_PRESETS,
-  chatSidebarVariables,
-  chatThemeVariables,
+  CUSTOM_THEME_PRESETS,
+  customSidebarVariables,
+  customThemeVariables,
   normalizeHex,
   readableOn,
-  parseChatTheme,
-  serializeChatTheme,
-  setChatTheme,
-  useChatTheme,
-  type ChatTheme,
-} from '@/features/chat/lib/chatTheme'
+  parseCustomTheme,
+  serializeCustomTheme,
+  setCustomTheme,
+  useCustomTheme,
+  type CustomTheme,
+} from '@/lib/customTheme'
 
 /** The colours the fields start from when the user edits the Orbit default. */
-const CUSTOM_BASE: ChatTheme = { sidebar: '#1f1f23', selected: '#34343b', accent: '#f2458f', chat: '#26262b' }
+const CUSTOM_BASE: CustomTheme = { sidebar: '#1f1f23', selected: '#34343b', accent: '#f2458f', chat: '#26262b' }
 
-const COLOR_FIELDS: readonly { key: keyof ChatTheme; label: string; hint: string }[] = [
-  { key: 'sidebar', label: 'Sidebar', hint: 'The conversation list' },
-  { key: 'selected', label: 'Selected', hint: 'The open conversation' },
+const COLOR_FIELDS: readonly { key: keyof CustomTheme; label: string; hint: string }[] = [
+  { key: 'sidebar', label: 'Sidebar', hint: 'The app sidebar' },
+  { key: 'selected', label: 'Selected', hint: 'The open row in a list' },
   { key: 'accent', label: 'Accent', hint: 'Unread, badges, mentions' },
-  { key: 'chat', label: 'Messages', hint: 'Messages, header, panes' },
+  { key: 'chat', label: 'Pages', hint: 'Every page, menus, dialogs' },
 ]
 
-/** The chat theme editor: presets, four colours, a live preview, and a code to share. Saved for this browser. */
-export function ChatThemeDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+/** The custom theme editor: presets, four colours, a live preview, and a code to share. Saved for this browser. */
+export function CustomThemeDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>Chat theme</DialogTitle>
-          <DialogDescription>Colours of your chat. Only you see them, and text stays readable on every colour.</DialogDescription>
+          <DialogTitle>Custom theme</DialogTitle>
+          <DialogDescription>Colours of the whole app, in place of Light, System or Dark. Only you see them, and text stays readable on every colour.</DialogDescription>
         </DialogHeader>
-        <ChatThemeForm onDone={() => onOpenChange(false)} />
+        <CustomThemeForm onDone={() => onOpenChange(false)} />
       </DialogContent>
     </Dialog>
   )
 }
 
-function ChatThemeForm({ onDone }: { onDone: () => void }) {
-  const saved = useChatTheme()
-  const [theme, setTheme] = useState<ChatTheme | null>(saved)
+function CustomThemeForm({ onDone }: { onDone: () => void }) {
+  const saved = useCustomTheme()
+  const [theme, setTheme] = useState<CustomTheme | null>(saved)
   // Changes when the colours come from a preset or a pasted code, so the hex fields take the new values.
   const [revision, setRevision] = useState(0)
   const [codeError, setCodeError] = useState(false)
@@ -56,7 +56,7 @@ function ChatThemeForm({ onDone }: { onDone: () => void }) {
   const colorsId = useId()
   const colors = theme ?? CUSTOM_BASE
 
-  const replace = (next: ChatTheme | null) => {
+  const replace = (next: CustomTheme | null) => {
     setTheme(next)
     setRevision((current) => current + 1)
     setCodeError(false)
@@ -67,7 +67,7 @@ function ChatThemeForm({ onDone }: { onDone: () => void }) {
       className="grid gap-5"
       onSubmit={(event) => {
         event.preventDefault()
-        setChatTheme(theme)
+        setCustomTheme(theme)
         onDone()
       }}
     >
@@ -78,12 +78,12 @@ function ChatThemeForm({ onDone }: { onDone: () => void }) {
           </h3>
           <div role="group" aria-labelledby={presetsId} className="grid grid-cols-3 gap-x-2 gap-y-2.5">
             <PresetButton name="Orbit" theme={null} pressed={theme === null} onSelect={() => replace(null)} />
-            {CHAT_THEME_PRESETS.map((preset) => (
+            {CUSTOM_THEME_PRESETS.map((preset) => (
               <PresetButton
                 key={preset.name}
                 name={preset.name}
                 theme={preset.theme}
-                pressed={theme !== null && serializeChatTheme(theme) === serializeChatTheme(preset.theme)}
+                pressed={theme !== null && serializeCustomTheme(theme) === serializeCustomTheme(preset.theme)}
                 onSelect={() => replace(preset.theme)}
               />
             ))}
@@ -121,14 +121,14 @@ function ChatThemeForm({ onDone }: { onDone: () => void }) {
               <InputGroupInput
                 key={revision}
                 id={codeId}
-                defaultValue={serializeChatTheme(colors)}
+                defaultValue={serializeCustomTheme(colors)}
                 spellCheck={false}
                 autoComplete="off"
                 aria-invalid={codeError || undefined}
                 aria-describedby={`${codeId}-hint`}
                 className="font-mono text-xs"
                 onChange={(event) => {
-                  const parsed = parseChatTheme(event.target.value)
+                  const parsed = parseCustomTheme(event.target.value)
                   setCodeError(!parsed)
                   if (parsed) setTheme(parsed)
                 }}
@@ -138,7 +138,7 @@ function ChatThemeForm({ onDone }: { onDone: () => void }) {
                   size="icon-xs"
                   aria-label="Copy share code"
                   onClick={() => {
-                    void navigator.clipboard.writeText(serializeChatTheme(colors)).then(
+                    void navigator.clipboard.writeText(serializeCustomTheme(colors)).then(
                       () => toast.success('Share code copied'),
                       () => toast.error('Could not copy the share code.'),
                     )
@@ -173,7 +173,7 @@ function ChatThemeForm({ onDone }: { onDone: () => void }) {
 const APP_COLORS = { sidebar: 'var(--background)', selected: 'var(--muted)', accent: 'var(--primary)', chat: 'var(--card)' }
 
 /** A preset as a thumbnail of chat in its colours, with its name below. "Orbit" (`theme` null) is the default look. */
-function PresetButton({ name, theme, pressed, onSelect }: { name: string; theme: ChatTheme | null; pressed: boolean; onSelect: () => void }) {
+function PresetButton({ name, theme, pressed, onSelect }: { name: string; theme: CustomTheme | null; pressed: boolean; onSelect: () => void }) {
   return (
     <button
       type="button"
@@ -182,7 +182,7 @@ function PresetButton({ name, theme, pressed, onSelect }: { name: string; theme:
       className="group/preset flex min-w-0 flex-col gap-1 rounded-lg text-left outline-none"
       onClick={onSelect}
     >
-      <ChatThemeSwatch
+      <CustomThemeSwatch
         theme={theme}
         className="h-12 w-full transition-transform duration-150 ease-out group-focus-visible/preset:ring-3 group-focus-visible/preset:ring-ring/50 group-active/preset:scale-[0.97] group-aria-pressed/preset:border-primary group-aria-pressed/preset:ring-2 group-aria-pressed/preset:ring-primary/40 motion-reduce:transition-none"
       />
@@ -192,7 +192,7 @@ function PresetButton({ name, theme, pressed, onSelect }: { name: string; theme:
 }
 
 /** A thumbnail of chat in the theme's colours. `null` is the Orbit default. */
-export function ChatThemeSwatch({ theme, className }: { theme: ChatTheme | null; className?: string }) {
+export function CustomThemeSwatch({ theme, className }: { theme: CustomTheme | null; className?: string }) {
   const colors = theme ?? APP_COLORS
   const sidebarText = theme ? readableOn(theme.sidebar) : 'var(--foreground)'
   const chatText = theme ? readableOn(theme.chat) : 'var(--foreground)'
@@ -262,15 +262,15 @@ function ColorField({ label, hint, value, onChange }: { label: string; hint: str
 }
 
 /** A small copy of chat with the theme on it: every state the four colours touch. */
-function ThemePreview({ theme }: { theme: ChatTheme | null }) {
+function ThemePreview({ theme }: { theme: CustomTheme | null }) {
   return (
     <div
       data-slot="chat-theme-preview"
       aria-hidden="true"
       className="flex h-[188px] overflow-hidden rounded-lg border border-border bg-background text-[13px] text-foreground dark:[--background:var(--card)]"
-      style={chatThemeVariables(theme)}
+      style={customThemeVariables(theme)}
     >
-      <div className="flex w-[132px] shrink-0 flex-col gap-px border-r border-border bg-background p-1.5 text-foreground/80" style={chatSidebarVariables(theme)}>
+      <div className="flex w-[132px] shrink-0 flex-col gap-px border-r border-border bg-background p-1.5 text-foreground/80" style={customSidebarVariables(theme)}>
         <span className="px-2 pt-1 pb-2 text-xs font-semibold text-foreground">Chat</span>
         <PreviewRow name="news" unread />
         <PreviewRow name="general" selected />
@@ -318,7 +318,7 @@ function PreviewRow({ name, selected, unread, count }: { name: string; selected?
   return (
     <span
       data-active={selected || undefined}
-      className="flex h-7 items-center gap-2 rounded-md px-2 data-active:bg-[var(--chat-selected,var(--muted))] data-active:text-[var(--chat-selected-foreground,var(--foreground))]"
+      className="flex h-7 items-center gap-2 rounded-md px-2 data-active:bg-[var(--chat-selected,var(--sidebar-accent))] data-active:text-[var(--chat-selected-foreground,var(--sidebar-accent-foreground))]"
     >
       <Hashtag className="size-3.5 shrink-0 opacity-70" />
       <span className={unread || count ? 'min-w-0 flex-1 truncate font-semibold text-foreground' : 'min-w-0 flex-1 truncate'}>{name}</span>

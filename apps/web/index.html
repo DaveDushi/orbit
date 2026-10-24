@@ -19,6 +19,7 @@
       root.classList.toggle('dark', theme === 'system' ? matchMedia('(prefers-color-scheme: dark)').matches : theme !== 'light')
       root.toggleAttribute('data-flat', localStorage.getItem('orbit:style') === 'flat')
       root.toggleAttribute('data-floating', localStorage.getItem('orbit:nav-style') === 'floating')
+      root.toggleAttribute('data-new-ui', localStorage.getItem('orbit:layout') === 'new')
     </script>
   </head>
   <body>

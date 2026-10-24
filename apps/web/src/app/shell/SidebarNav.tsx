@@ -1,15 +1,17 @@
 import { Kbd } from '@/components/ui/kbd'
 import { shortcutText } from '@/shortcuts/shortcutText'
 import { useBindings } from '@/shortcuts/useCommand'
-import { createContext, Fragment, useContext, type ComponentType, type ReactNode } from 'react'
+import { createContext, Fragment, useContext, useEffect, useState, type ComponentType, type ReactNode } from 'react'
 import { Link, useLocation, useMatch, useResolvedPath, type LinkProps } from 'react-router'
 import { cva, type VariantProps } from 'class-variance-authority'
-import { Calendar, CalendarTick, Danger, SecurityUser, Home2 as Home, Layer, Notification as Bell, Message as MessageSquare, DocumentText as FileText, Search4 as Search, Setting2 as Settings, Sms as Mail, TaskSquare as SquareCheck, Timer } from 'reicon-react'
+import { Calendar, ChevronDown, CalendarTick, Danger, SecurityUser, Home2 as Home, Layer, Notification as Bell, Message as MessageSquare, DocumentText as FileText, Search4 as Search, Setting2 as Settings, Sms as Mail, TaskSquare as SquareCheck, Timer } from 'reicon-react'
 import { cn } from 'cn'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { Tip } from '@/components/common/Tip'
+import { settingsAreaOf, useSettingsArea, type SettingsAreaName } from '@/features/settings/settingsNav'
 import { chatEnabled, docsHidden } from './productNavigation'
+import { hostsPageList } from './sidebarSlot'
 
 const WORKSPACE_LINKS = [
   { to: '/', label: 'Home', icon: Home, enabled: true },
@@ -163,6 +165,69 @@ function SidebarSection({ label, collapsed }: { label: string; collapsed: boolea
   )
 }
 
+const PAGE_LIST_TITLES: Record<string, string> = { docs: 'Docs', chat: 'Chat' }
+
+// The pages opened in this tab, newest last, so Back can leave the current area. Shared by the sidebar and the drawer.
+const recentPaths: string[] = []
+
+/** The area whose links or list replace the app links: a settings area, or a page with its own list. */
+function areaOf(pathname: string): string | null {
+  return settingsAreaOf(pathname) ?? (hostsPageList(pathname) ? pathname.split('/')[1] : null)
+}
+
+/**
+ * Coolify's Back row: a small chevron as wide as an icon tile, then the area's name, centred. No tile, a fill on hover.
+ * It opens the last page outside the current area.
+ */
+function BackToApp({ label, onNavigate }: { label: string; onNavigate?: () => void }) {
+  const collapsed = useContext(SidebarNavCollapsed)
+  const area = areaOf(useLocation().pathname)
+  const index = recentPaths.findLastIndex((path) => areaOf(path.split('?')[0]) !== area)
+  const target = recentPaths[index] ?? '/'
+  // Back pops: the pages after the target are forgotten, so the next Back goes further back instead of returning here
+  const goBack = () => {
+    recentPaths.length = Math.max(index, 0)
+    onNavigate?.()
+  }
+  return (
+    <Tip label={collapsed ? 'Back to the main menu' : undefined} side="right">
+      <Link
+        data-slot="sidebar-nav-back"
+        to={target}
+        title="Back to the main menu"
+        aria-label="Back to the main menu"
+        className="mb-1 flex h-9 w-full min-w-0 shrink-0 items-center gap-2.5 rounded-md pr-2.5 pl-1 text-[13px] outline-none transition-colors duration-120 hover:bg-neutral-100 focus-visible:outline-1 focus-visible:outline-primary dark:hover:bg-white/6 group-data-[collapsed=true]/sidebar-nav:justify-center group-data-[collapsed=true]/sidebar-nav:px-0 flat:h-8 flat:pl-2.5"
+        onClick={goBack}
+      >
+        {/* as wide as an icon tile (16px icon, padding and border), so the chevron lines up with the icons below */}
+        <span className="flex h-4 w-[30px] shrink-0 items-center justify-center flat:w-[18px]">
+          <ChevronDown className="size-3 rotate-90 text-primary dark:text-sidebar-nav" />
+        </span>
+        <span className="min-w-0 flex-1 truncate pr-6 text-center font-medium text-foreground group-data-[collapsed=true]/sidebar-nav:hidden">{label}</span>
+      </Link>
+    </Tip>
+  )
+}
+
+/** Coolify's content-aware sidebar: inside Settings, Account settings or Admin, the area's links replace the app links. */
+function SettingsAreaNav({ area, onNavigate }: { area: SettingsAreaName; onNavigate?: () => void }) {
+  const collapsed = useContext(SidebarNavCollapsed)
+  const { title, sections } = useSettingsArea(area)
+  return (
+    <>
+      <BackToApp label={title} onNavigate={onNavigate} />
+      {sections.map((section) => (
+        <Fragment key={section.label}>
+          <SidebarSection label={section.label} collapsed={collapsed} />
+          {section.items.map((item) => (
+            <SidebarNavItem key={item.to} to={item.to} end={item.end} icon={item.icon} label={item.label} onClick={onNavigate} />
+          ))}
+        </Fragment>
+      ))}
+    </>
+  )
+}
+
 /** Grouped sidebar navigation — shared by the desktop sidebar and the mobile drawer. */
 export function SidebarNav({
   onNavigate,
@@ -171,6 +236,8 @@ export function SidebarNav({
   inboxUnread,
   chatEnabled: chat = chatEnabled,
   isRoot = false,
+  contextual = false,
+  pageListRef,
 }: {
   onNavigate?: () => void
   collapsed?: boolean
@@ -182,8 +249,27 @@ export function SidebarNav({
   chatEnabled?: boolean
   /** The root user (installation administrator) also gets the Admin link. */
   isRoot?: boolean
+  /** The new UI: inside Settings, Account settings or Admin the area's links and Back replace the app links. */
+  contextual?: boolean
+  /** Set while the open page's own list (docs, chat) shows here instead of the app links: the element it renders in. */
+  pageListRef?: (element: HTMLDivElement | null) => void
 }) {
   const location = useLocation()
+  const area = contextual ? settingsAreaOf(location.pathname) : null
+  const pageList = pageListRef !== undefined && hostsPageList(location.pathname)
+  // What the sidebar shows below Search. Only a change animates, so the first load and moves inside an area stay still.
+  const content = pageList ? `list:${areaOf(location.pathname)}` : (area ?? 'app')
+  const [shown, setShown] = useState(content)
+  const [enter, setEnter] = useState<'forward' | 'back' | null>(null)
+  if (shown !== content) {
+    setShown(content)
+    setEnter(content === 'app' ? 'back' : 'forward')
+  }
+  useEffect(() => {
+    const path = location.pathname + location.search
+    if (recentPaths.at(-1) !== path) recentPaths.push(path)
+    if (recentPaths.length > 50) recentPaths.shift()
+  }, [location.pathname, location.search])
   const currentParams = new URLSearchParams(location.search)
   const view = currentParams.get('view')
   const selectedProject = currentParams.get('project')
@@ -234,43 +320,63 @@ export function SidebarNav({
           )}
         </Tip>
         </div>
-        <div className="-mx-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-1 pb-2">
-          {WORKSPACE_LINKS.map((link) => link.enabled || (link.to === '/chat' && chat) ? (
-            <Fragment key={link.to}>
-              <SidebarNavItem
-                to={link.to === '/tasks' ? taskViewPath() : link.to}
-                active={link.to === '/tasks' ? tasksActive : undefined}
-                end={link.to === '/'}
-                icon={link.icon}
-                label={link.label}
-                badge={link.to === '/chat' ? chatBadge : undefined}
-                onClick={onNavigate}
-              />
-              {/* saved views belong to Tasks, so they nest under it instead of sitting beside the other apps;
-                  always shown so the rows below never move when the route changes */}
-              {link.to === '/tasks' ? (
-                <SidebarNavItem to="/views" end size="sub" icon={Layer} label="Views" aria-label="Task views" onClick={onNavigate} />
-              ) : null}
-            </Fragment>
-          ) : (
-            <SidebarNavComingSoon key={link.to} icon={link.icon} label={link.label} />
-          ))}
-          <SidebarSection label="Personal" collapsed={collapsed} />
-          <SidebarNavItem to={activityPath} icon={Bell} label="Activity" unread={inboxUnread} onClick={onNavigate} />
-          <SidebarNavItem to={taskViewPath('mine')} active={taskViewActive('mine')} icon={SquareCheck} label="My tasks" onClick={onNavigate} />
-          <SidebarNavItem to={taskViewPath('current_week')} active={taskViewActive('current_week')} icon={Calendar} label="This week" onClick={onNavigate} />
-          <SidebarNavItem to={taskViewPath('my_week')} active={taskViewActive('my_week')} icon={CalendarTick} label="My week" onClick={onNavigate} />
-          <SidebarNavItem to={taskViewPath('overdue')} active={taskViewActive('overdue')} icon={Danger} label="Overdue" onClick={onNavigate} />
-          <SidebarNavItem to={taskViewPath('due_soon')} active={taskViewActive('due_soon')} icon={Timer} label="Due soon" onClick={onNavigate} />
-          <SidebarSection label="Manage" collapsed={collapsed} />
-          <SidebarNavItem to="/settings" icon={Settings} label="Settings" onClick={onNavigate} />
-          {isRoot ? (
+        {/* a new area slides in: forward from the right, back to the app links from the left */}
+        <div
+          key={content}
+          data-slot="sidebar-nav-content"
+          data-enter={enter ?? undefined}
+          className="flex min-h-0 flex-1 flex-col data-enter:animate-in data-enter:fade-in data-enter:duration-200 data-[enter=back]:slide-in-from-left-6 data-[enter=forward]:slide-in-from-right-6 motion-reduce:animate-none"
+        >
+          {pageList ? (
             <>
-              {/* the installation, not the workspace: it sits apart at the bottom */}
-              <div className="flex-1" aria-hidden="true" />
-              <SidebarNavItem to="/admin" icon={SecurityUser} tone="neutral" label="Admin" onClick={onNavigate} />
+              <BackToApp label={PAGE_LIST_TITLES[areaOf(location.pathname) ?? ''] ?? ''} onNavigate={onNavigate} />
+              {/* the page renders its list here (`InAppSidebar`); it scrolls on its own */}
+              <div ref={pageListRef} data-slot="sidebar-page-list" className="-mx-3 mt-2 flex min-h-0 flex-1 flex-col" />
             </>
-          ) : null}
+          ) : (
+            <div className="-mx-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-1 pb-2">
+              {area ? <SettingsAreaNav area={area} onNavigate={onNavigate} /> : (
+                <>
+                  {WORKSPACE_LINKS.map((link) => link.enabled || (link.to === '/chat' && chat) ? (
+                    <Fragment key={link.to}>
+                      <SidebarNavItem
+                        to={link.to === '/tasks' ? taskViewPath() : link.to}
+                        active={link.to === '/tasks' ? tasksActive : undefined}
+                        end={link.to === '/'}
+                        icon={link.icon}
+                        label={link.label}
+                        badge={link.to === '/chat' ? chatBadge : undefined}
+                        onClick={onNavigate}
+                      />
+                      {/* saved views belong to Tasks, so they nest under it instead of sitting beside the other apps;
+                          always shown so the rows below never move when the route changes */}
+                      {link.to === '/tasks' ? (
+                        <SidebarNavItem to="/views" end size="sub" icon={Layer} label="Views" aria-label="Task views" onClick={onNavigate} />
+                      ) : null}
+                    </Fragment>
+                  ) : (
+                    <SidebarNavComingSoon key={link.to} icon={link.icon} label={link.label} />
+                  ))}
+                  <SidebarSection label="Personal" collapsed={collapsed} />
+                  <SidebarNavItem to={activityPath} icon={Bell} label="Activity" unread={inboxUnread} onClick={onNavigate} />
+                  <SidebarNavItem to={taskViewPath('mine')} active={taskViewActive('mine')} icon={SquareCheck} label="My tasks" onClick={onNavigate} />
+                  <SidebarNavItem to={taskViewPath('current_week')} active={taskViewActive('current_week')} icon={Calendar} label="This week" onClick={onNavigate} />
+                  <SidebarNavItem to={taskViewPath('my_week')} active={taskViewActive('my_week')} icon={CalendarTick} label="My week" onClick={onNavigate} />
+                  <SidebarNavItem to={taskViewPath('overdue')} active={taskViewActive('overdue')} icon={Danger} label="Overdue" onClick={onNavigate} />
+                  <SidebarNavItem to={taskViewPath('due_soon')} active={taskViewActive('due_soon')} icon={Timer} label="Due soon" onClick={onNavigate} />
+                  <SidebarSection label="Manage" collapsed={collapsed} />
+                  <SidebarNavItem to="/settings" icon={Settings} label="Settings" onClick={onNavigate} />
+                  {isRoot ? (
+                    <>
+                      {/* the installation, not the workspace: it sits apart at the bottom */}
+                      <div className="flex-1" aria-hidden="true" />
+                      <SidebarNavItem to="/admin" icon={SecurityUser} tone="neutral" label="Admin" onClick={onNavigate} />
+                    </>
+                  ) : null}
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </SidebarNavCollapsed.Provider>
