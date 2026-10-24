@@ -44,11 +44,11 @@ export function visibleTaskIds(pointer: TaskPointer): string[] {
 /** The task row that holds the keyboard focus. */
 export const focusedTaskId = () => rowOf(document.activeElement)
 
-/** Gives a task row the keyboard focus and brings it into view. */
+/** Gives a task row the keyboard focus (with its ring, also after a click) and brings it into view. */
 export function focusTaskRow(id: string, pointer: TaskPointer) {
   pointer.list?.mount(id)
   const row = document.querySelector<HTMLElement>(`[data-task-id="${CSS.escape(id)}"]`)
-  row?.focus({ preventScroll: true })
+  row?.focus({ preventScroll: true, focusVisible: true })
   // keyboard movement never animates: the row is in view at once
   row?.scrollIntoView?.({ block: 'nearest' })
 }
