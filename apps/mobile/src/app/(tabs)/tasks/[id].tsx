@@ -649,7 +649,7 @@ function TimelineRow({ first, last, glyph, children }: { first: boolean; last: b
 /** A comment and its replies in one card. */
 function Thread({ thread, nameOf, filesOf }: { thread: CommentThread; nameOf: (userId: string) => string; filesOf: (comment: api.CommentRecord) => ShownFile[] }) {
   return (
-    <View className="my-3 rounded-lg border border-border bg-card overflow-hidden">
+    <View className="my-3 rounded-lg border border-border bg-card/50 overflow-hidden">
       {[thread.root, ...thread.replies].map((comment, index) => (
         <View key={comment.id} className={`flex-row gap-2 px-3.5 py-2.5 border-border ${index === 0 ? 'border-t-0' : 'border-t'}`}>
           <Avatar id={comment.author_id} name={nameOf(comment.author_id)} size={20} />
@@ -710,7 +710,7 @@ function CommentComposer({
   const { colors, scheme } = useTheme()
   const [focused, setFocused] = useState(false)
   return (
-    <View className={`mt-3 rounded-lg border bg-card ${focused ? 'border-ring' : 'border-border'}`}>
+    <View className={`mt-3 rounded-lg border bg-card/50 ${focused ? 'border-ring/50' : 'border-border'}`}>
       <TextInput
         value={value}
         onChangeText={onChangeText}

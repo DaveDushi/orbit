@@ -1,11 +1,10 @@
 import { useState } from 'react'
 import { KeyboardAvoidingView, Linking, Platform, ScrollView, View } from 'react-native'
-import { SvgXml } from 'react-native-svg'
 
 import { createClient, normalizeServer, signIn as signInWithPassword, signInSecondFactor } from '../data/orbit'
 import { errorMessage, useSession } from '../session-context'
+import { alpha, useTheme } from '../theme'
 import { Button, Input, Text } from '../ui'
-import { logo } from '../ui/icons.gen'
 
 type Step = { name: 'credentials' } | { name: 'two_factor'; server: string; twoFactorToken: string }
 
@@ -13,6 +12,7 @@ const DEFAULT_SERVER = process.env.EXPO_PUBLIC_ORBIT_SERVER ?? ''
 
 export default function SignInScreen() {
   const { state, signIn } = useSession()
+  const { colors } = useTheme()
   const [step, setStep] = useState<Step>({ name: 'credentials' })
   const [server, setServer] = useState(DEFAULT_SERVER)
   const [email, setEmail] = useState('')
@@ -50,26 +50,29 @@ export default function SignInScreen() {
   const credentials = step.name === 'credentials'
 
   return (
-    <KeyboardAvoidingView className="flex-1 bg-background" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView
+      className="flex-1 bg-background"
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      // the web sign-in's soft accent glow from the top edge
+      style={{ backgroundImage: `radial-gradient(ellipse 60% 45% at 50% 0%, ${alpha(colors.primary, 0.14)}, transparent)` }}
+    >
       <ScrollView contentContainerClassName="grow justify-center p-6" keyboardShouldPersistTaps="handled">
-        <View
-          className="w-full max-w-105 self-center gap-4.5 rounded-xl border border-border bg-card p-8 shadow-lg"
-        >
-          <View className="flex-row items-center gap-2">
-            <SvgXml xml={logo} width={22} height={22} />
-            <Text className="font-noto-bold text-[13px] tracking-[1.04px] text-primary">ORBIT</Text>
+        {/* the web `AuthForm`: a header, then an inset panel with the fields and actions */}
+        <View className="w-full max-w-115 self-center rounded-xl border border-border bg-card shadow-lg">
+          <View className="gap-1 px-6 pt-6 pb-5">
+            <Text className="font-noto-semibold text-[20px] leading-[28px]">{credentials ? 'Orbit' : 'Two-factor code'}</Text>
+            <Text className="text-[13px] leading-[19.5px] text-muted-foreground">
+              {credentials ? 'Sign in to your tasks, docs, mail and chat.' : 'Enter the 6-digit code from your authenticator app, or a recovery code.'}
+            </Text>
           </View>
-          <View className="mt-4 mb-2 gap-1">
-            <Text className="font-noto-semibold text-[24px] leading-[28px] tracking-[-0.6px]">{credentials ? 'Sign in to Orbit' : 'Two-factor code'}</Text>
-            {credentials ? null : <Text className="text-[14px] text-muted-foreground">Enter the 6-digit code from your authenticator app, or a recovery code.</Text>}
-          </View>
-          {step.name === 'credentials' ? (
-            <>
-              <View className="gap-3.5">
-                <Input label="Server" placeholder="orbit.example.com" autoCapitalize="none" autoCorrect={false} keyboardType="url" textContentType="URL" value={server} onChangeText={setServer} />
-                <Input label="Email" placeholder="you@example.com" autoCapitalize="none" autoComplete="email" keyboardType="email-address" textContentType="username" value={email} onChangeText={setEmail} />
+          <View className="-mx-px -mb-px gap-4 rounded-xl border border-border bg-background/40 p-6">
+            {step.name === 'credentials' ? (
+              <>
+                <Input label="Server" required placeholder="orbit.example.com" autoCapitalize="none" autoCorrect={false} keyboardType="url" textContentType="URL" value={server} onChangeText={setServer} />
+                <Input label="Email" required placeholder="you@example.com" autoCapitalize="none" autoComplete="email" keyboardType="email-address" textContentType="username" value={email} onChangeText={setEmail} />
                 <Input
                   label="Password"
+                  required
                   secureTextEntry
                   autoComplete="current-password"
                   textContentType="password"
@@ -79,43 +82,47 @@ export default function SignInScreen() {
                   onSubmitEditing={() => server && email && password && submitCredentials()}
                   error={error}
                 />
-              </View>
-              <Button label="Sign in" block loading={busy} disabled={!server || !email || !password} onPress={submitCredentials} />
-              {server.trim() ? (
-                <Text accessibilityRole="link" onPress={() => void Linking.openURL(`${normalizeServer(server)}/recovery`)} className="text-[13px] text-center">
-                  Forgot your password?
-                </Text>
-              ) : null}
-            </>
-          ) : (
-            <>
-              <Input
-                label="Code"
-                placeholder="123456"
-                autoCapitalize="none"
-                autoComplete="one-time-code"
-                textContentType="oneTimeCode"
-                autoFocus
-                value={code}
-                onChangeText={setCode}
-                returnKeyType="go"
-                onSubmitEditing={() => code && submitCode(step)}
-                error={error}
-              />
-              <Button label="Verify" block loading={busy} disabled={!code.trim()} onPress={() => submitCode(step)} />
-              <Button
-                label="Back"
-                variant="ghost"
-                block
-                disabled={busy}
-                onPress={() => {
-                  setStep({ name: 'credentials' })
-                  setCode('')
-                  setError(undefined)
-                }}
-              />
-            </>
-          )}
+                {server.trim() ? (
+                  <Text accessibilityRole="link" onPress={() => void Linking.openURL(`${normalizeServer(server)}/recovery`)} className="self-end text-[13px] text-muted-foreground">
+                    Forgot password?
+                  </Text>
+                ) : null}
+                <Button label="Sign in" size="lg" block loading={busy} disabled={!server || !email || !password} onPress={submitCredentials} />
+              </>
+            ) : (
+              <>
+                <Input
+                  label="Code"
+                  required
+                  placeholder="123456"
+                  autoCapitalize="none"
+                  autoComplete="one-time-code"
+                  textContentType="oneTimeCode"
+                  autoFocus
+                  value={code}
+                  onChangeText={setCode}
+                  returnKeyType="go"
+                  onSubmitEditing={() => code && submitCode(step)}
+                  error={error}
+                />
+                <View className="gap-3">
+                  <Button label="Verify" size="lg" block loading={busy} disabled={!code.trim()} onPress={() => submitCode(step)} />
+                  <Button
+                    label="Back"
+                    variant="outline"
+                    size="lg"
+                    block
+                    disabled={busy}
+                    onPress={() => {
+                      setStep({ name: 'credentials' })
+                      setCode('')
+                      setError(undefined)
+                    }}
+                  />
+                </View>
+              </>
+            )}
+          </View>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
