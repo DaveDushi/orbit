@@ -1,28 +1,22 @@
 import { View } from 'react-native'
 
-import { useTheme } from '../theme'
 import { Button } from './Button'
 import { Spinner } from './Spinner'
 import { Text } from './Text'
 
 export function LoadingView() {
   return (
-    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+    <View className="flex-1 items-center justify-center">
       <Spinner size="large" />
     </View>
   )
 }
 
 export function ErrorView({ error, onRetry }: { error: unknown; onRetry: () => void }) {
-  const { spacing } = useTheme()
   return (
-    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing[3], padding: spacing[6] }}>
-      <Text variant="heading" style={{ textAlign: 'center' }}>
-        Could not load
-      </Text>
-      <Text color="muted" style={{ textAlign: 'center' }}>
-        {error instanceof Error ? error.message : String(error)}
-      </Text>
+    <View className="flex-1 items-center justify-center gap-3 p-6">
+      <Text className="text-center font-noto-semibold text-[17px] leading-[22px]">Could not load</Text>
+      <Text className="text-center leading-[21px] text-muted-foreground">{error instanceof Error ? error.message : String(error)}</Text>
       <Button label="Retry" variant="outline" onPress={onRetry} />
     </View>
   )

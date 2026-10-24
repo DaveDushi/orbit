@@ -27,6 +27,7 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::auth_routes::login,
         crate::auth_routes::logout,
         crate::auth_routes::me,
+        crate::auth_routes::socket_ticket,
         crate::auth_routes::update_me,
         crate::auth_routes::put_status,
         crate::auth_routes::push::get_push_key,

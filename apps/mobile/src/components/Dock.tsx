@@ -4,7 +4,7 @@ import { Pressable, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { useChatUnreadCount } from '../queries'
-import { alpha, type, useTheme } from '../theme'
+import { alpha, useTheme } from '../theme'
 import { CountBadge, Icon, type IconName, Text } from '../ui'
 
 /** The web `MobileDock`: the tab routes in its order, Mail disabled as "coming soon". `route` is null for Mail. */
@@ -23,7 +23,7 @@ export function Dock({ state }: BottomTabBarProps) {
   const chatBadge = useChatUnreadCount()
   const current = state.routes[state.index]?.name
   return (
-    <View accessibilityRole="tablist" style={{ flexDirection: 'row', minHeight: 56, paddingTop: 12, paddingBottom: insets.bottom, backgroundColor: colors.background }}>
+    <View accessibilityRole="tablist" className="flex-row min-h-14 pt-3 bg-background" style={{ paddingBottom: insets.bottom }}>
       {ITEMS.map((item) => {
         const enabled = item.route !== null
         const active = enabled && item.route === current
@@ -37,17 +37,17 @@ export function Dock({ state }: BottomTabBarProps) {
             accessibilityState={{ selected: active, disabled: !enabled }}
             disabled={!enabled}
             onPress={() => router.navigate(item.href)}
-            style={{ flex: 1, height: 44, alignItems: 'center', justifyContent: 'center', gap: 2 }}
+            className="flex-1 h-11 items-center justify-center gap-0.5"
           >
             <View>
               <Icon name={item.icon} size={20} color={color} />
               {count > 0 ? (
-                <View style={{ position: 'absolute', top: -4, left: 12 }}>
+                <View className="absolute -top-1 left-3">
                   <CountBadge count={count} />
                 </View>
               ) : null}
             </View>
-            <Text style={[type(10, 'medium'), { color }]}>{item.label}</Text>
+            <Text className={`font-noto-medium text-[10px] ${active ? 'text-primary' : enabled ? 'text-muted-foreground' : 'text-muted-foreground/50'}`}>{item.label}</Text>
           </Pressable>
         )
       })}

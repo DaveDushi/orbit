@@ -8,7 +8,7 @@ import { relativeAgo } from '../../data/format'
 import { useFollowedThreads } from '../../hooks/chat'
 import { useOrbit } from '../../orbit-context'
 import { useConversations, usePeople } from '../../queries'
-import { alpha, type, useTheme } from '../../theme'
+import { useTheme } from '../../theme'
 import { CountBadge, EmptyState, ErrorView, LoadingView, Text } from '../../ui'
 
 /** The Threads view: the threads you follow, unread first, then by last reply. A row opens the thread. */
@@ -43,21 +43,21 @@ export default function ThreadsScreen() {
                 accessibilityRole="link"
                 accessibilityLabel={`Thread in ${title}, ${replies}${unread > 0 ? `, ${unread} unread` : ''}`}
                 onPress={() => router.push(`/chat/thread/${thread.root.id}`)}
-                style={({ pressed }) => ({ gap: 4, paddingHorizontal: 8, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: pressed ? alpha(colors.muted, 0.4) : 'transparent' })}
+                className="gap-1 px-2 py-3 border-b border-border active:bg-muted/40"
               >
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 4 }}>
+                <View className="flex-row items-center gap-1.5 px-1">
                   {conversation ? <ConversationGlyph conversation={conversation} title={title} userId={user.id} /> : null}
-                  <Text numberOfLines={1} style={[type(13, unread > 0 ? 'semibold' : 'medium'), { flexShrink: 1 }]}>
+                  <Text numberOfLines={1} className={`text-[13px] shrink ${unread > 0 ? 'font-noto-semibold' : 'font-noto-medium'}`}>
                     {title}
                   </Text>
-                  <Text style={[type(12), { color: colors.mutedForeground }]}>{replies}</Text>
-                  {lastReplyAt ? <Text style={[type(12), { color: colors.mutedForeground }]}>last reply {relativeAgo(lastReplyAt)}</Text> : null}
-                  <View style={{ flex: 1 }} />
+                  <Text className="text-[12px] text-muted-foreground">{replies}</Text>
+                  {lastReplyAt ? <Text className="text-[12px] text-muted-foreground">last reply {relativeAgo(lastReplyAt)}</Text> : null}
+                  <View className="flex-1" />
                   {unread > 0 ? <CountBadge count={unread} /> : null}
                 </View>
                 <MessagePreview message={thread.root} author={words.nameOf(thread.root.author_id)} text={words.text(thread.root.body)} clamp={2} />
                 {thread.last_reply ? (
-                  <View style={{ marginLeft: 12, borderLeftWidth: 2, borderLeftColor: colors.border }}>
+                  <View className="ml-3 border-l-2 border-border">
                     <MessagePreview message={thread.last_reply} author={words.nameOf(thread.last_reply.author_id)} text={words.text(thread.last_reply.body)} clamp={2} />
                   </View>
                 ) : null}

@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react'
-import { Image, Modal, Platform, Pressable, SectionList, Text as NativeText, TextInput, useWindowDimensions, View } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
+import { Image, Modal, Platform, Pressable, SectionList, useWindowDimensions, View } from 'react-native'
+import { NativeText, TextInput } from '../../ui/scaled'
 
 import { customEmojiName, type EmojiEntry, searchEmoji } from '../../data/chat'
 import { useCustomEmoji, useEmojiGroups, useServerImage } from '../../hooks/chat'
-import { type, useTheme } from '../../theme'
-import { Button, Icon, Text } from '../../ui'
+import { useTheme } from '../../theme'
+import { Button, Icon, SafeAreaView, Text } from '../../ui'
 
 const CELL = 44
 
@@ -53,9 +53,9 @@ export function EmojiPicker({ visible, onPick, onClose }: { visible: boolean; on
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>
-      <SafeAreaView edges={Platform.OS === 'ios' ? ['bottom', 'left', 'right'] : ['top', 'bottom', 'left', 'right']} style={{ flex: 1, backgroundColor: colors.popover }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, padding: 8 }}>
-          <View style={{ flex: 1, height: 36, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, borderRadius: 8, backgroundColor: colors.secondary }}>
+      <SafeAreaView edges={Platform.OS === 'ios' ? ['bottom', 'left', 'right'] : ['top', 'bottom', 'left', 'right']} className="flex-1 bg-popover">
+        <View className="flex-row items-center gap-2 p-2">
+          <View className="flex-1 h-9 flex-row items-center gap-2 px-2.5 rounded-md bg-secondary">
             <Icon name="search" size={14} color={colors.mutedForeground} />
             <SearchField value={query} onChange={setQuery} scheme={scheme} />
           </View>
@@ -67,13 +67,13 @@ export function EmojiPicker({ visible, onPick, onClose }: { visible: boolean; on
           keyboardShouldPersistTaps="handled"
           stickySectionHeadersEnabled
           initialNumToRender={12}
-          contentContainerStyle={{ paddingHorizontal: 8, paddingBottom: 16 }}
-          ListEmptyComponent={<Text style={[type(14), { padding: 16, textAlign: 'center', color: colors.mutedForeground }]}>No emoji found.</Text>}
+          contentContainerClassName="px-2 pb-4"
+          ListEmptyComponent={<Text className="text-[14px] p-4 text-center text-muted-foreground">No emoji found.</Text>}
           renderSectionHeader={({ section }) => (
-            <Text style={[type(12, 'medium'), { paddingHorizontal: 4, paddingTop: 12, paddingBottom: 6, color: colors.mutedForeground, backgroundColor: colors.popover }]}>{section.title}</Text>
+            <Text className="font-noto-medium text-[12px] px-1 pt-3 pb-1.5 text-muted-foreground bg-popover">{section.title}</Text>
           )}
           renderItem={({ item }) => (
-            <View style={{ flexDirection: 'row' }}>
+            <View className="flex-row">
               {item.cells.map((cell) => (
                 <Pressable
                   key={cell.key}
@@ -83,7 +83,7 @@ export function EmojiPicker({ visible, onPick, onClose }: { visible: boolean; on
                     onPick(cell.value)
                     close()
                   }}
-                  style={({ pressed }) => ({ width: CELL, height: CELL, alignItems: 'center', justifyContent: 'center', borderRadius: 8, backgroundColor: pressed ? colors.muted : 'transparent' })}
+                  className="items-center justify-center rounded-md active:bg-muted" style={{ width: CELL, height: CELL }}
                 >
                   <Emoji value={cell.value} size={30} />
                 </Pressable>
@@ -109,7 +109,7 @@ function SearchField({ value, onChange, scheme }: { value: string; onChange: (va
       keyboardAppearance={scheme}
       autoCapitalize="none"
       autoCorrect={false}
-      style={[type(16), { flex: 1, paddingVertical: 0, color: colors.foreground }]}
+      className="font-noto text-[16px] leading-[1.45] flex-1 py-0 text-foreground"
     />
   )
 }

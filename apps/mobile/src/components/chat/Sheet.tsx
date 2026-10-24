@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react'
 import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, View } from 'react-native'
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
-import { alpha, cssColors, type, useTheme } from '../../theme'
-import { Button, Icon, type IconName, Text } from '../../ui'
+import { useTheme } from '../../theme'
+import { Button, Icon, type IconName, SafeAreaView, Text } from '../../ui'
 
 export interface SheetItem {
   key: string
@@ -21,32 +21,23 @@ export interface SheetItem {
  * block above the rows (the quick reactions). A row closes the sheet, then runs.
  */
 export function ActionSheet({ visible, title, header, items, onClose }: { visible: boolean; title?: string; header?: ReactNode; items: readonly SheetItem[]; onClose: () => void }) {
-  const { colors, scheme } = useTheme()
+  const { colors } = useTheme()
   const insets = useSafeAreaInsets()
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable accessibilityLabel="Close" onPress={onClose} style={{ flex: 1, backgroundColor: alpha(scheme === 'dark' ? cssColors.black : colors.foreground, 0.4) }} />
+      <Pressable accessibilityLabel="Close" onPress={onClose} className="flex-1 bg-foreground/40 dark:bg-black/40" />
       <View
         accessibilityViewIsModal
-        style={{
-          maxHeight: '80%',
-          backgroundColor: colors.popover,
-          borderTopLeftRadius: 12,
-          borderTopRightRadius: 12,
-          borderTopWidth: 1,
-          borderColor: colors.border,
-          padding: 8,
-          paddingBottom: Math.max(8, insets.bottom),
-        }}
+        className="max-h-[80%] bg-popover rounded-t-[12px] border-t border-border p-2" style={{ paddingBottom: Math.max(8, insets.bottom) }}
       >
         {title ? (
-          <Text numberOfLines={1} style={[type(13, 'semibold'), { paddingHorizontal: 12, paddingTop: 4, paddingBottom: 8, color: colors.mutedForeground }]}>
+          <Text numberOfLines={1} className="font-noto-semibold text-[13px] px-3 pt-1 pb-2 text-muted-foreground">
             {title}
           </Text>
         ) : null}
         {header}
         <ScrollView bounces={false}>
-          <View style={{ paddingTop: header ? 4 : 0 }}>
+          <View className={`${header ? 'pt-1' : 'pt-0'}`}>
             {items.map((item) => (
               <Pressable
                 key={item.key}
@@ -58,10 +49,10 @@ export function ActionSheet({ visible, title, header, items, onClose }: { visibl
                   onClose()
                   item.onPress()
                 }}
-                style={({ pressed }) => ({ height: 44, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, borderRadius: 8, opacity: item.disabled ? 0.5 : 1, backgroundColor: pressed ? colors.muted : 'transparent' })}
+                className={`h-11 flex-row items-center gap-3 px-3 rounded-md active:bg-muted ${item.disabled ? 'opacity-50' : 'opacity-100'}`}
               >
                 {item.icon ? <Icon name={item.icon} size={20} color={item.destructive ? colors.destructive : colors.foreground} /> : null}
-                <Text style={[type(14), { flex: 1, color: item.destructive ? colors.destructive : colors.popoverForeground }]}>{item.label}</Text>
+                <Text className={`text-[14px] flex-1 ${item.destructive ? 'text-destructive' : 'text-popover-foreground'}`}>{item.label}</Text>
                 {item.selected ? <Icon name="check" size={18} color={colors.primary} /> : null}
               </Pressable>
             ))}
@@ -98,24 +89,23 @@ export function FormSheet({
   onClose: () => void
   children: ReactNode
 }) {
-  const { colors } = useTheme()
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <SafeAreaView edges={Platform.OS === 'ios' ? ['bottom', 'left', 'right'] : ['top', 'bottom', 'left', 'right']} style={{ flex: 1, backgroundColor: colors.popover }}>
-        <View style={{ height: 52, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: colors.border }}>
-          <View style={{ flex: 1, alignItems: 'flex-start' }}>
+      <SafeAreaView edges={Platform.OS === 'ios' ? ['bottom', 'left', 'right'] : ['top', 'bottom', 'left', 'right']} className="flex-1 bg-popover">
+        <View className="h-13 flex-row items-center gap-2 px-3 border-b border-border">
+          <View className="flex-1 items-start">
             <Button label={submitLabel ? 'Cancel' : 'Close'} variant="ghost" onPress={onClose} />
           </View>
-          <Text numberOfLines={1} accessibilityRole="header" style={[type(15, 'semibold'), { flexShrink: 1 }]}>
+          <Text numberOfLines={1} accessibilityRole="header" className="font-noto-semibold text-[15px] shrink">
             {title}
           </Text>
-          <View style={{ flex: 1, alignItems: 'flex-end' }}>
+          <View className="flex-1 items-end">
             {submitLabel && onSubmit ? <Button label={submitLabel} size="sm" loading={busy} disabled={!canSubmit} onPress={onSubmit} /> : null}
           </View>
         </View>
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 16, gap: 16 }}>
-            {description ? <Text style={[type(14), { lineHeight: 20, color: colors.mutedForeground }]}>{description}</Text> : null}
+        <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <ScrollView keyboardShouldPersistTaps="handled" contentContainerClassName="p-4 gap-4">
+            {description ? <Text className="text-[14px] leading-[20px] text-muted-foreground">{description}</Text> : null}
             {children}
           </ScrollView>
         </KeyboardAvoidingView>
@@ -128,9 +118,9 @@ export function FormSheet({
 export function ChoiceGroup<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: readonly { value: T; label: string; description: string; icon: IconName }[]; onChange: (value: T) => void }) {
   const { colors } = useTheme()
   return (
-    <View style={{ gap: 8 }}>
-      <Text style={[type(14, 'medium'), { lineHeight: 19.25 }]}>{label}</Text>
-      <View style={{ borderRadius: 10, borderWidth: 1, borderColor: colors.input, overflow: 'hidden' }}>
+    <View className="gap-2">
+      <Text className="font-noto-medium text-[14px] leading-[19.25px]">{label}</Text>
+      <View className="rounded-lg border border-input overflow-hidden">
         {options.map((option, index) => {
           const selected = option.value === value
           return (
@@ -140,14 +130,14 @@ export function ChoiceGroup<T extends string>({ label, value, options, onChange 
               accessibilityState={{ selected }}
               accessibilityLabel={`${option.label}. ${option.description}`}
               onPress={() => onChange(option.value)}
-              style={{ paddingHorizontal: 12, paddingVertical: 8, gap: 2, borderTopWidth: index === 0 ? 0 : 1, borderTopColor: colors.input, backgroundColor: selected ? colors.muted : 'transparent' }}
+              className={`px-3 py-2 gap-0.5 border-input ${index === 0 ? 'border-t-0' : 'border-t'} ${selected ? 'bg-muted' : ''}`}
             >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <View className="flex-row items-center gap-1.5">
                 <Icon name={option.icon} size={16} color={colors.foreground} />
-                <Text style={[type(14, 'medium'), { flex: 1 }]}>{option.label}</Text>
+                <Text className="font-noto-medium text-[14px] flex-1">{option.label}</Text>
                 {selected ? <Icon name="check" size={16} color={colors.primary} /> : null}
               </View>
-              <Text style={[type(12), { lineHeight: 16, color: colors.mutedForeground }]}>{option.description}</Text>
+              <Text className="text-[12px] leading-[16px] text-muted-foreground">{option.description}</Text>
             </Pressable>
           )
         })}

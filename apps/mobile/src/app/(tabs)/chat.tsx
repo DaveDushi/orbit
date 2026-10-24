@@ -1,7 +1,6 @@
 import { router } from 'expo-router'
 import { type ReactNode, useMemo, useState } from 'react'
 import { Pressable, RefreshControl, ScrollView, View } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
 
 import { CategorySheet, NewChannelSheet, NewMessageSheet } from '../../components/chat/ChannelSheets'
 import { ConversationOptions } from '../../components/chat/ConversationOptions'
@@ -12,8 +11,8 @@ import type { CategoryRecord, ConversationRecord, ConversationStateRecord } from
 import { confirmAction, useChatWrite, useFollowedThreads, useIsChatAdmin } from '../../hooks/chat'
 import { useOrbit } from '../../orbit-context'
 import { useChatCategories, useChatStates, useChatUnreadCount, useConversations, usePeople } from '../../queries'
-import { alpha, type, useTheme } from '../../theme'
-import { Avatar, CountBadge, EmptyState, ErrorView, HeaderTitle, Icon, type IconName, IconButton, LoadingView, PaneHeader, Text } from '../../ui'
+import { useTheme } from '../../theme'
+import { Avatar, CountBadge, EmptyState, ErrorView, HeaderTitle, Icon, type IconName, IconButton, LoadingView, PaneHeader, SafeAreaView, Text } from '../../ui'
 
 const PRESENCE_LABEL = { online: 'Online', idle: 'Idle', dnd: 'Do not disturb', invisible: 'Invisible' } as const
 
@@ -55,9 +54,9 @@ export default function ChatScreen() {
     })
 
   return (
-    <SafeAreaView edges={['top', 'left', 'right']} style={{ flex: 1, backgroundColor: colors.card }}>
-      <PaneHeader style={{ gap: 4, paddingLeft: 12, paddingRight: 8, backgroundColor: colors.card }}>
-        <View style={{ flex: 1 }}>
+    <SafeAreaView edges={['top', 'left', 'right']} className="flex-1 bg-card">
+      <PaneHeader className="gap-1 bg-card pr-2 pl-3">
+        <View className="flex-1">
           <HeaderTitle>Chat</HeaderTitle>
         </View>
         <IconButton icon="plus" label="New" size={32} iconSize={20} color={colors.mutedForeground} onPress={() => setOverlay({ kind: 'new' })} />
@@ -70,11 +69,11 @@ export default function ChatScreen() {
         )
       ) : (
         <ScrollView refreshControl={<RefreshControl refreshing={conversations.isRefetching} onRefresh={() => void refresh()} tintColor={colors.mutedForeground} />}>
-          <View style={{ paddingHorizontal: 8, paddingTop: 8, gap: 1 }}>
+          <View className="px-2 pt-2 gap-px">
             <PinnedRow icon="directInbox" name="Unreads" count={unreads} onPress={() => router.push('/chat/unreads')} />
             <PinnedRow icon="layer" name="Threads" count={unreadThreadCount(threads.data ?? [])} onPress={() => router.push('/chat/threads')} />
           </View>
-          <View style={{ padding: 8, paddingTop: 12, gap: 12 }}>
+          <View className="p-2 pt-3 gap-3">
             {sections.length === 0 ? <EmptyState icon="chat" title="No conversations" description="Start a direct message or create a channel with New." /> : null}
             {sections.map((section) => {
               const open = !collapsed.has(section.key)
@@ -86,17 +85,17 @@ export default function ChatScreen() {
                     ? null
                     : () => setOverlay({ kind: 'channel', categoryId: section.key.startsWith('category-') ? section.key.slice('category-'.length) : null })
               return (
-                <View key={section.key} style={{ gap: 1 }}>
-                  <View style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 2, paddingRight: 6 }}>
+                <View key={section.key} className="gap-px">
+                  <View className="h-7 flex-row items-center gap-0.5 pr-1.5">
                     <Pressable
                       accessibilityRole="button"
                       accessibilityState={{ expanded: open }}
                       accessibilityLabel={section.title}
                       onPress={() => toggle(section.key)}
-                      style={{ flex: 1, height: 24, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8 }}
+                      className="flex-1 h-6 flex-row items-center gap-1 px-2"
                     >
                       <Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} color={colors.mutedForeground} />
-                      <Text numberOfLines={1} style={[type(12), { lineHeight: 16, color: colors.mutedForeground }]}>
+                      <Text numberOfLines={1} className="text-[12px] leading-[16px] text-muted-foreground">
                         {section.title}
                       </Text>
                     </Pressable>
@@ -120,19 +119,19 @@ export default function ChatScreen() {
           </View>
         </ScrollView>
       )}
-      <View style={{ height: 48, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, borderTopWidth: 1, borderTopColor: colors.border }}>
+      <View className="h-12 flex-row items-center px-2 border-t border-border">
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Status menu for ${user.display_name}`}
           onPress={() => router.navigate('/settings')}
-          style={({ pressed }) => ({ flex: 1, height: 36, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 6, borderRadius: 10, backgroundColor: pressed ? colors.muted : 'transparent' })}
+          className="flex-1 h-9 flex-row items-center gap-2 px-1.5 rounded-lg active:bg-muted"
         >
           <Avatar id={user.id} name={user.display_name} size={28} presence={user.status.presence} surface={colors.card} />
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text numberOfLines={1} style={[type(13, 'medium'), { lineHeight: 16 }]}>
+          <View className="flex-1 min-w-0">
+            <Text numberOfLines={1} className="font-noto-medium text-[13px] leading-[16px]">
               {user.display_name}
             </Text>
-            <Text numberOfLines={1} style={[type(11), { lineHeight: 14, color: colors.mutedForeground }]}>
+            <Text numberOfLines={1} className="text-[11px] leading-[14px] text-muted-foreground">
               {user.status.text || PRESENCE_LABEL[user.status.presence]}
             </Text>
           </View>
@@ -180,7 +179,7 @@ function PinnedRow({ icon, name, count, onPress }: { icon: IconName; name: strin
 function Glyph({ icon }: { icon: IconName }) {
   const { colors } = useTheme()
   return (
-    <View style={{ width: 18, height: 18, alignItems: 'center', justifyContent: 'center' }}>
+    <View className="size-4.5 items-center justify-center">
       <Icon name={icon} size={16} color={colors.mutedForeground} />
     </View>
   )
@@ -188,23 +187,22 @@ function Glyph({ icon }: { icon: IconName }) {
 
 /** The web `ChatRow` at phone size: 40px, 14px text at 80% foreground, bold and full color when unread. */
 function Row({ leading, name, unread = false, muted = false, end, onPress, onLongPress, label }: { leading: ReactNode; name: string; unread?: boolean; muted?: boolean; end?: ReactNode; onPress?: () => void; onLongPress?: () => void; label?: string }) {
-  const { colors } = useTheme()
   return (
-    <View style={{ height: 40, flexDirection: 'row', alignItems: 'center', borderRadius: 6 }}>
+    <View className="h-10 flex-row items-center rounded-sm">
       <Pressable
         accessibilityRole={onPress ? 'link' : undefined}
         accessibilityLabel={label ?? name}
         disabled={!onPress}
         onPress={onPress}
         onLongPress={onLongPress}
-        style={({ pressed }) => ({ flex: 1, height: 40, flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 8, borderRadius: 6, backgroundColor: pressed ? alpha(colors.muted, 0.6) : 'transparent' })}
+        className="flex-1 h-10 flex-row items-center gap-2 pl-2 rounded-sm active:bg-muted/60"
       >
         {leading}
-        <Text numberOfLines={1} style={[type(14, unread ? 'semibold' : 'regular'), { lineHeight: 20, flexShrink: 1, color: unread ? colors.foreground : muted ? colors.mutedForeground : alpha(colors.foreground, 0.8) }]}>
+        <Text numberOfLines={1} className={`text-[14px] leading-[20px] shrink ${unread ? 'font-noto-semibold text-foreground' : muted ? 'text-muted-foreground' : 'text-foreground/80'}`}>
           {name}
         </Text>
       </Pressable>
-      {end ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 4, paddingRight: 8 }}>{end}</View> : null}
+      {end ? <View className="flex-row items-center gap-1.5 pl-1 pr-2">{end}</View> : null}
     </View>
   )
 }
@@ -235,7 +233,7 @@ function ConversationRow({ conversation, title, state, userId }: { conversation:
         end={
           <>
             <IconButton icon="more" label={`Options for ${title}`} size={24} color={colors.mutedForeground} onPress={() => setOptions(true)} />
-            {badge.count > 0 ? <CountBadge count={badge.count} /> : badge.unread ? <View style={{ width: 6, height: 6, backgroundColor: colors.primary }} /> : null}
+            {badge.count > 0 ? <CountBadge count={badge.count} /> : badge.unread ? <View className="size-1.5 bg-primary" /> : null}
           </>
         }
       />

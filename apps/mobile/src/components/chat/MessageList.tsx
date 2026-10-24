@@ -13,7 +13,6 @@ import { confirmAction, showError, useChatWrite, useIsChatAdmin } from '../../ho
 
 import { useOrbit } from '../../orbit-context'
 import { useConversations, usePeople } from '../../queries'
-import { type, useTheme } from '../../theme'
 import { type IconName, Spinner, Text } from '../../ui'
 import type { ComposerState, PendingMessage } from './Composer'
 import { Emoji, EmojiPicker } from './EmojiPicker'
@@ -155,28 +154,25 @@ export function useMessageSheet({ inThread, composer, loaded, onMarkedUnread }: 
 }
 
 function QuickReactions({ emojis, onReact, onMore }: { emojis: string[]; onReact: (emoji: string) => void; onMore: () => void }) {
-  const { colors } = useTheme()
-  const button = { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' } as const
   return (
-    <View style={{ flexDirection: 'row', justifyContent: 'space-around', gap: 8, paddingHorizontal: 8, paddingTop: 4, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+    <View className="flex-row justify-around gap-2 px-2 pt-1 pb-3 border-b border-border">
       {emojis.map((emoji) => (
-        <Pressable key={emoji} accessibilityRole="button" accessibilityLabel={`React with ${emoji}`} onPress={() => onReact(emoji)} style={({ pressed }) => [button, { backgroundColor: pressed ? colors.muted : colors.secondary }]}>
+        <Pressable key={emoji} accessibilityRole="button" accessibilityLabel={`React with ${emoji}`} onPress={() => onReact(emoji)} className="size-11 items-center justify-center rounded-full bg-secondary active:bg-muted">
           <Emoji value={emoji} size={24} />
         </Pressable>
       ))}
-      <Pressable accessibilityRole="button" accessibilityLabel="More reactions" onPress={onMore} style={({ pressed }) => [button, { backgroundColor: pressed ? colors.muted : colors.secondary }]}>
-        <Text style={[type(20), { color: colors.mutedForeground }]}>+</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel="More reactions" onPress={onMore} className="size-11 items-center justify-center rounded-full bg-secondary active:bg-muted">
+        <Text className="text-[20px] text-muted-foreground">+</Text>
       </Pressable>
     </View>
   )
 }
 
 function DayChip({ label }: { label: string }) {
-  const { colors } = useTheme()
   return (
-    <View accessibilityRole="header" accessibilityLabel={label} style={{ alignItems: 'center', paddingVertical: 8 }}>
-      <View style={{ paddingHorizontal: 12, paddingVertical: 2, borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card }}>
-        <Text style={[type(12, 'medium'), { lineHeight: 16, color: colors.mutedForeground }]}>{label}</Text>
+    <View accessibilityRole="header" accessibilityLabel={label} className="items-center py-2">
+      <View className="px-3 py-0.5 rounded-full border border-border bg-card">
+        <Text className="font-noto-medium text-[12px] leading-[16px] text-muted-foreground">{label}</Text>
       </View>
     </View>
   )
@@ -223,7 +219,7 @@ export function MessageList({
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="interactive"
       // the list is flipped: `flex-end` is the top of the screen
-      contentContainerStyle={[{ paddingTop: 12 }, fromTop && { flexGrow: 1, justifyContent: 'flex-end' }]}
+      contentContainerClassName={`pt-3 ${fromTop ? 'grow justify-end' : ''}`}
       initialScrollIndex={highlightIndex > 0 ? highlightIndex : undefined}
       onScrollToIndexFailed={({ index, averageItemLength }) => {
         list.current?.scrollToOffset({ offset: index * averageItemLength, animated: false })
@@ -233,8 +229,8 @@ export function MessageList({
       onEndReachedThreshold={0.5}
       onStartReached={onNewer}
       onStartReachedThreshold={0.5}
-      ListHeaderComponent={loadingNewer ? <View style={{ padding: 16 }}><Spinner /></View> : end}
-      ListFooterComponent={loadingOlder ? <View style={{ padding: 16 }}><Spinner /></View> : start}
+      ListHeaderComponent={loadingNewer ? <View className="p-4"><Spinner /></View> : end}
+      ListFooterComponent={loadingOlder ? <View className="p-4"><Spinner /></View> : start}
       renderItem={({ item }) => {
         if (item.type === 'day') return <DayChip label={dayLabel(item.at)} />
         if (item.type === 'pending') return <PendingRow pending={item.pending} text={handlers.text} />
@@ -245,11 +241,10 @@ export function MessageList({
 }
 
 function PendingRow({ pending, text }: { pending: PendingMessage; text: (body: string) => string }) {
-  const { colors } = useTheme()
   return (
-    <View style={{ paddingLeft: 12 + 30 + 8, paddingRight: 12, paddingVertical: 2, opacity: 0.5 }}>
-      {pending.body ? <Text style={[type(14), { lineHeight: 21 }]}>{text(pending.body)}</Text> : null}
-      {pending.files > 0 ? <Text style={[type(12), { color: colors.mutedForeground }]}>Sending {pending.files === 1 ? '1 file' : `${pending.files} files`}…</Text> : null}
+    <View className="pr-3 pl-12.5 py-0.5 opacity-50">
+      {pending.body ? <Text className="text-[14px] leading-[21px]">{text(pending.body)}</Text> : null}
+      {pending.files > 0 ? <Text className="text-[12px] text-muted-foreground">Sending {pending.files === 1 ? '1 file' : `${pending.files} files`}…</Text> : null}
     </View>
   )
 }

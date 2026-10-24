@@ -3,7 +3,8 @@ import { applyChatActions, applyChatEvents, chatQueryKeys } from '../../chat-cac
 import * as DocumentPicker from 'expo-document-picker'
 import * as ImagePicker from 'expo-image-picker'
 import { useState } from 'react'
-import { Image, Platform, Pressable, ScrollView, TextInput, View } from 'react-native'
+import { Image, Platform, Pressable, ScrollView, View } from 'react-native'
+import { TextInput } from '../../ui/scaled'
 
 import { newNonce, type ThreadPages, upsertThreadMessage } from '../../data/chat'
 import * as chat from '../../data/chat-api'
@@ -11,7 +12,7 @@ import type { MessageRecord } from '../../data/orbit'
 import { showError } from '../../hooks/chat'
 
 import { useOrbit } from '../../orbit-context'
-import { alpha, type, useTheme } from '../../theme'
+import { useTheme } from '../../theme'
 import { Icon, IconButton, Spinner, Text } from '../../ui'
 import { uploadPart } from '../../upload-part'
 import { EmojiPicker } from './EmojiPicker'
@@ -192,30 +193,30 @@ export function Composer({ state, placeholder, nameOf, alsoSendTo }: { state: Co
 
   const banner = mode.kind === 'edit' ? 'Editing message' : mode.replyTo ? `Replying to ${nameOf(mode.replyTo.author_id)}` : null
   return (
-    <View style={{ margin: 8, gap: 6 }}>
+    <View className="m-2 gap-1.5">
       {banner ? (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 10 }}>
+        <View className="flex-row items-center gap-1.5 pl-2.5">
           <Icon name={mode.kind === 'edit' ? 'edit' : 'reply'} size={14} color={colors.mutedForeground} />
-          <Text numberOfLines={1} style={[type(12), { flex: 1, color: colors.mutedForeground }]}>
+          <Text numberOfLines={1} className="text-[12px] flex-1 text-muted-foreground">
             {banner}
           </Text>
           <IconButton icon="x" label={mode.kind === 'edit' ? 'Cancel editing' : 'Cancel reply'} size={24} iconSize={14} color={colors.mutedForeground} onPress={state.cancelMode} />
         </View>
       ) : null}
-      <View style={{ borderRadius: 10, borderWidth: 1, borderColor: focused ? colors.ring : colors.input, backgroundColor: alpha(colors.input, 0.3) }}>
+      <View className={`rounded-lg border bg-input/30 ${focused ? 'border-ring' : 'border-input'}`}>
         {state.files.length > 0 ? (
-          <ScrollView horizontal keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 6, padding: 8, paddingBottom: 0 }}>
+          <ScrollView horizontal keyboardShouldPersistTaps="handled" contentContainerClassName="gap-1.5 p-2 pb-0">
             {state.files.map((file) => (
-              <View key={file.key} style={{ height: 56, flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: file.previewUri ? 0 : 10, paddingRight: 28, borderRadius: 8, borderWidth: 1, borderColor: file.status === 'failed' ? colors.destructive : colors.border, backgroundColor: colors.background, overflow: 'hidden' }}>
-                {file.previewUri ? <Image source={{ uri: file.previewUri }} style={{ width: 56, height: 56 }} /> : <Icon name="attach" size={18} color={colors.mutedForeground} />}
-                <View style={{ maxWidth: 140 }}>
-                  <Text numberOfLines={1} style={[type(12, 'medium')]}>
+              <View key={file.key} className={`h-14 flex-row items-center gap-2 pr-7 rounded-md border bg-background overflow-hidden ${file.previewUri ? 'pl-0' : 'pl-2.5'} ${file.status === 'failed' ? 'border-destructive' : 'border-border'}`}>
+                {file.previewUri ? <Image source={{ uri: file.previewUri }} className="size-14" /> : <Icon name="attach" size={18} color={colors.mutedForeground} />}
+                <View className="max-w-35">
+                  <Text numberOfLines={1} className="font-noto-medium text-[12px]">
                     {file.name}
                   </Text>
-                  <Text style={[type(11), { color: file.status === 'failed' ? colors.destructive : colors.mutedForeground }]}>{file.status === 'uploading' ? 'Uploading…' : file.status === 'failed' ? 'Upload failed' : 'Ready'}</Text>
+                  <Text className={`text-[11px] ${file.status === 'failed' ? 'text-destructive' : 'text-muted-foreground'}`}>{file.status === 'uploading' ? 'Uploading…' : file.status === 'failed' ? 'Upload failed' : 'Ready'}</Text>
                 </View>
                 {file.status === 'uploading' ? <Spinner /> : null}
-                <View style={{ position: 'absolute', top: 2, right: 2 }}>
+                <View className="absolute top-0.5 right-0.5">
                   <IconButton icon="x" label={`Remove ${file.name}`} size={22} iconSize={12} color={colors.mutedForeground} onPress={() => state.removeFile(file.key)} />
                 </View>
               </View>
@@ -234,13 +235,13 @@ export function Composer({ state, placeholder, nameOf, alsoSendTo }: { state: Co
           multiline
           numberOfLines={1}
           accessibilityLabel={placeholder}
-          style={{ minHeight: 40, maxHeight: 160, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 8, fontSize: 16, lineHeight: 24, fontFamily: type(16).fontFamily, color: colors.foreground }}
+          className="min-h-10 max-h-40 px-3 py-2 text-[16px] leading-[24px] font-noto text-foreground"
         />
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 6, paddingTop: 6, paddingBottom: 6 }}>
+        <View className="flex-row items-center gap-1 p-1.5">
           <IconButton icon="attach" label="Attach files" size={32} iconSize={20} disabled={mode.kind === 'edit'} onPress={() => setAttachOpen(true)} />
           <IconButton icon="smile" label="Emoji" size={32} iconSize={20} onPress={() => setEmojiOpen(true)} />
           <IconButton icon="at" label="Mention" size={32} iconSize={20} onPress={() => append('@')} />
-          <View style={{ flex: 1 }} />
+          <View className="flex-1" />
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={mode.kind === 'edit' ? 'Save' : 'Send'}
@@ -248,7 +249,7 @@ export function Composer({ state, placeholder, nameOf, alsoSendTo }: { state: Co
             disabled={!state.canSend}
             onPress={state.send}
             hitSlop={4}
-            style={({ pressed }) => ({ width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', opacity: state.canSend ? 1 : 0.5, backgroundColor: pressed ? colors.muted : 'transparent' })}
+            className={`size-8 rounded-lg items-center justify-center active:bg-muted ${state.canSend ? 'opacity-100' : 'opacity-50'}`}
           >
             <Icon name={mode.kind === 'edit' ? 'check' : 'send'} size={20} color={colors.foreground} />
           </Pressable>
@@ -259,12 +260,12 @@ export function Composer({ state, placeholder, nameOf, alsoSendTo }: { state: Co
           accessibilityRole="checkbox"
           accessibilityState={{ checked: state.alsoInChannel }}
           onPress={() => state.setAlsoInChannel(!state.alsoInChannel)}
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 4, paddingVertical: 2 }}
+          className="flex-row items-center gap-2 px-1 py-0.5"
         >
-          <View style={{ width: 16, height: 16, borderRadius: 4, borderWidth: 1, alignItems: 'center', justifyContent: 'center', borderColor: state.alsoInChannel ? colors.primary : colors.input, backgroundColor: state.alsoInChannel ? colors.primary : 'transparent' }}>
+          <View className={`size-4 rounded-[4px] border items-center justify-center ${state.alsoInChannel ? 'border-primary bg-primary' : 'border-input'}`}>
             {state.alsoInChannel ? <Icon name="check" size={11} color={colors.primaryForeground} /> : null}
           </View>
-          <Text style={[type(12), { color: colors.mutedForeground }]}>Also send to {alsoSendTo}</Text>
+          <Text className="text-[12px] text-muted-foreground">Also send to {alsoSendTo}</Text>
         </Pressable>
       ) : null}
       <ActionSheet

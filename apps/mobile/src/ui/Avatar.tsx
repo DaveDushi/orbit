@@ -1,7 +1,7 @@
 import { View } from 'react-native'
 
 import { avatarColors, userColor } from '../data/color'
-import { fonts, presenceColors, useTheme } from '../theme'
+import { presenceColors, useTheme } from '../theme'
 import { Text } from './Text'
 
 export type Presence = 'online' | 'idle' | 'dnd' | 'offline' | 'invisible'
@@ -30,19 +30,20 @@ export function Avatar({ id, name, size = 24, presence, surface }: AvatarProps) 
   const look = avatarColors(userColor(id), colors.muted, colors.foreground)
   return (
     <View accessibilityLabel={name} style={{ width: size, height: size }}>
-      <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: look.background, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-        <Text style={{ color: look.text, fontFamily: fonts.semibold, fontSize: Math.max(9, Math.round(size * 0.38)), lineHeight: size }}>{initialsOf(name)}</Text>
+      <View className="items-center justify-center overflow-hidden rounded-full" style={{ width: size, height: size, backgroundColor: look.background }}>
+        <Text className="font-noto-semibold" style={{ color: look.text, fontSize: Math.max(9, Math.round(size * 0.38)), lineHeight: size }}>
+          {initialsOf(name)}
+        </Text>
       </View>
       {presence ? <PresenceBadge presence={presence} size={size <= 24 ? 8 : size <= 40 ? 10 : size < 64 ? 12 : 14} surface={surface ?? colors.background} /> : null}
     </View>
   )
 }
 
-/** The web `AvatarBadge` + `StatusMark`: bottom-right, with a 2px ring of the background around it. */
+/** The web `AvatarBadge` + `StatusMark`: bottom-right, with a 2px ring of the background around it. Sizes and colors are props. */
 function PresenceBadge({ presence, size, surface }: { presence: Presence; size: number; surface: string }) {
-  const ring = 2
   return (
-    <View style={{ position: 'absolute', right: -ring, bottom: -ring, padding: ring, borderRadius: size, backgroundColor: surface }}>
+    <View className="absolute -right-0.5 -bottom-0.5 rounded-full p-0.5" style={{ backgroundColor: surface }}>
       <StatusMark presence={presence} size={size} surface={surface} />
     </View>
   )
@@ -50,26 +51,16 @@ function PresenceBadge({ presence, size, surface }: { presence: Presence; size: 
 
 /** Each presence has its own shape: online a dot, idle a crescent, do not disturb a dot with a bar, offline a ring. */
 function StatusMark({ presence, size, surface }: { presence: Presence; size: number; surface: string }) {
-  const { colors } = useTheme()
   const filled = presence === 'online' || presence === 'idle' || presence === 'dnd'
   return (
     <View
-      style={{
-        width: size,
-        height: size,
-        borderRadius: size / 2,
-        overflow: 'hidden',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: filled ? presenceColors[presence] : surface,
-        borderWidth: filled ? 0 : 1.5,
-        borderColor: colors.mutedForeground,
-      }}
+      className={`items-center justify-center overflow-hidden rounded-full ${filled ? '' : 'border-[1.5px] border-muted-foreground'}`}
+      style={{ width: size, height: size, backgroundColor: filled ? presenceColors[presence] : surface }}
     >
       {presence === 'idle' ? (
-        <View style={{ position: 'absolute', top: -size * 0.15, left: -size * 0.15, width: size * 0.65, height: size * 0.65, borderRadius: size, backgroundColor: surface }} />
+        <View className="absolute rounded-full" style={{ top: -size * 0.15, left: -size * 0.15, width: size * 0.65, height: size * 0.65, backgroundColor: surface }} />
       ) : null}
-      {presence === 'dnd' ? <View style={{ width: size * 0.6, height: size * 0.22, borderRadius: size, backgroundColor: surface }} /> : null}
+      {presence === 'dnd' ? <View className="rounded-full" style={{ width: size * 0.6, height: size * 0.22, backgroundColor: surface }} /> : null}
     </View>
   )
 }

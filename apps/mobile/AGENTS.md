@@ -5,7 +5,8 @@ Read `README.md` first. It explains how the app signs in to an Orbit server (bea
 - Keep business rules on the server. The app is a thin client of the Orbit HTTP API.
 - Store the session token only with `expo-secure-store`. Never put it in a URL or in logs.
 - Add dependencies with `bunx expo install <package>` in `apps/mobile`. The repo root is one Bun workspace with the hoisted linker: web and mobile must use the same `react` version (Expo decides it), or one app loads two copies of React.
-- Style with `useTheme()` (`src/theme`) and the components in `src/ui`. Never hard-code a color: the tokens are generated from `apps/web/src/index.css` (see README, Theme and icons).
+- Style with Uniwind `className` and the components in `src/ui`, using the classes the web uses for the same element. Keep `style` only for what a class cannot express: animated values, values computed at runtime (insets, measured sizes, colors from data, `mix()` results) and computed shadows. Props that are not styles (an `Icon`'s `color`, `placeholderTextColor`) read `useTheme().colors`. Never hard-code a color: the tokens are generated from `apps/web/src/index.css` (see README, Theme and icons).
+- Uniwind does not merge conflicting classes (there is no tailwind-merge), and the order inside `className` never decides. A `src/ui` component whose defaults a call site overrides keeps them in `@layer components` in `src/global.css` (`text-body`, `pane-header`), so any utility wins. `group-*` variants do nothing in the free version: use `active:` or Pressable's `pressed`.
 
 This is an Expo/React Native mobile application. Prioritize mobile-first patterns, performance, and cross-platform compatibility.
 

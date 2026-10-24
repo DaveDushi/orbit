@@ -56,6 +56,7 @@ test:
     cargo test --workspace
     cd apps/web && bun run test
     cd packages/api && bun run test
+    cd packages/editor && bun run test && bun run typecheck
 
 version-check:
     #!/usr/bin/env bash
@@ -77,6 +78,7 @@ check:
     cd apps/web && bun run lint
     cd apps/web && bun run test
     cd packages/api && bun run test
+    cd packages/editor && bun run test && bun run typecheck
     cd apps/mobile && bunx tsc --noEmit
     just api-check
     cargo build --release --workspace

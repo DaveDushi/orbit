@@ -1,16 +1,14 @@
 import { useSyncExternalStore } from 'react'
-import { Platform, type TextStyle, useColorScheme } from 'react-native'
+import { Platform, useColorScheme } from 'react-native'
+import { Uniwind } from 'uniwind'
 
 import { alpha, mix } from '../data/color'
 import { storage } from '../storage'
-import { dark, light, radius } from './tokens.gen'
+import { dark, light } from './tokens.gen'
 
 export type ColorName = keyof typeof light
 export type Colors = Record<ColorName, string>
 export type Scheme = 'light' | 'dark'
-
-/** 4px steps, matching Tailwind's spacing scale on the web (`p-1` = 4px). */
-export const spacing = { 0: 0, 0.5: 2, 1: 4, 1.5: 6, 2: 8, 2.5: 10, 3: 12, 4: 16, 5: 20, 6: 24, 8: 32, 10: 40, 12: 48 } as const
 
 /** Noto Sans faces loaded in the root layout. Each weight is its own family, so set `fontFamily`, not `fontWeight`. */
 export const fonts = {
@@ -20,11 +18,6 @@ export const fonts = {
   bold: 'NotoSans_700Bold',
   mono: Platform.select({ ios: 'Menlo', default: 'monospace' }),
 } as const
-
-export type Weight = 'regular' | 'medium' | 'semibold' | 'bold'
-
-/** A web text size: the body's 1.45 line height, as `text-[13px] font-medium` renders in the browser. */
-export const type = (size: number, weight: Weight = 'regular'): TextStyle => ({ fontSize: size, lineHeight: Math.round(size * 145) / 100, fontFamily: fonts[weight] })
 
 export const palettes: Record<Scheme, Colors> = { light, dark }
 
@@ -39,8 +32,6 @@ export { alpha, mix }
 export interface Theme {
   scheme: Scheme
   colors: Colors
-  spacing: typeof spacing
-  radius: typeof radius
   fonts: typeof fonts
 }
 
@@ -56,6 +47,8 @@ const subscribe = (listener: () => void) => {
 
 export function setSchemePreference(scheme: Scheme | null) {
   preference = scheme
+  // Uniwind's `dark:` classes follow the same choice ('system' follows the device again).
+  Uniwind.setTheme(scheme ?? 'system')
   listeners.forEach((listener) => listener())
   void (scheme ? storage.set(SCHEME_KEY, scheme) : storage.remove(SCHEME_KEY))
 }
@@ -70,7 +63,5 @@ export function useTheme(): Theme {
   const system = useColorScheme()
   const chosen = useSyncExternalStore(subscribe, () => preference)
   const scheme: Scheme = chosen ?? (system === 'dark' ? 'dark' : 'light')
-  return { scheme, colors: palettes[scheme], spacing, radius, fonts }
+  return { scheme, colors: palettes[scheme], fonts }
 }
-
-export { radius }

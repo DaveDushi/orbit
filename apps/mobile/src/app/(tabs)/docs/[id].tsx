@@ -1,28 +1,34 @@
+import { collabStatusLabel, type CollabProblem, type CollabState } from '@orbit/editor/collab/session'
 import { useQuery } from '@tanstack/react-query'
 import { router, useLocalSearchParams } from 'expo-router'
-import { useEffect, useMemo, useState } from 'react'
-import { Image, KeyboardAvoidingView, Platform, RefreshControl, ScrollView, TextInput, View } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { Image, KeyboardAvoidingView, Linking, Platform, RefreshControl, ScrollView, View } from 'react-native'
+import { TextInput } from '../../../ui/scaled'
 
 import { CommentsSheet } from '../../../components/docs/Comments'
+import { EditorToolbar } from '../../../components/docs/EditorToolbar'
 import { IconDialog } from '../../../components/docs/IconDialog'
+import PageEditor, { type PageCardInfo, type PageEditorProps, type PageEditorRef } from '../../../components/docs/PageEditor.dom'
 import { ActionSheet, ConfirmDialog, type ConfirmRequest, PromptDialog, type PromptRequest, type SheetAction } from '../../../components/settings/Dialog'
-import { absoluteUrl, type DocBlock, docBlocks, pageTitle, trashPrompt, validCoverUrl, visibleThreads } from '../../../data/docs'
+import { absoluteUrl, pageTitle, trashPrompt, validCoverUrl, visibleThreads } from '../../../data/docs'
+import { collabTicket, fileDataUrl } from '../../../data/docs-api'
 import { keys } from '../../../data/keys'
 import * as api from '../../../data/orbit'
+import { BLOCK_KINDS, type BlockKind, type EditorCommand, type FormatState, IDLE_FORMAT, PROBLEM_RESPONSES, type ProblemResponse, whileMounted } from '../../../data/page-editor'
 import { pickImage } from '../../../hooks/account'
-import { useAddParagraphs, useFavorites, usePageThreads, useSavePage, useToggleFavorite, useTrashPage, useUploadCover } from '../../../hooks/docs'
+import { useFavorites, usePageThreads, usePageTrash, useSavePage, useToggleFavorite, useTrashPage, useUploadPageImage } from '../../../hooks/docs'
 import { useOrbit } from '../../../orbit-context'
-import { usePages } from '../../../queries'
+import { useMembers, usePages } from '../../../queries'
 import { errorMessage } from '../../../session-context'
-import { alpha, fonts, type, useTheme } from '../../../theme'
-import { Button, CountBadge, ErrorView, Icon, IconButton, LoadingView, PaneHeader, Text } from '../../../ui'
+import { alpha, useTheme } from '../../../theme'
+import { Button, CountBadge, ErrorView, Icon, IconButton, LoadingView, PaneHeader, SafeAreaView, Text } from '../../../ui'
 
-const HEADING_SIZE: Record<number, number> = { 1: 24, 2: 20, 3: 17 }
+/** Room kept between the caret and the toolbar or the top of the screen while typing. */
+const CARET_MARGIN = 24
 
 /**
- * A page: its cover, icon and title (editable), its blocks as text, and a field that adds plain paragraphs at the end.
- * Editing the blocks themselves needs the web's BlockNote editor, which has no React Native version.
+ * A page: its cover, icon and title (native), and its body in the page editor (BlockNote in a web view), which
+ * co-edits the page live with everyone else. A formatting bar sits above the keyboard while the body has focus.
  */
 export default function DocScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
@@ -33,13 +39,10 @@ export default function DocScreen() {
   const favorites = useFavorites()
   const threads = usePageThreads(id)
   const save = useSavePage(id)
-  const addParagraphs = useAddParagraphs(id)
-  const uploadCover = useUploadCover(id)
+  const uploadImage = useUploadPageImage(id)
   const toggleFavorite = useToggleFavorite()
   const trash = useTrashPage()
-  const blocks = useMemo(() => (page.data ? docBlocks(page.data.content) : []), [page.data])
   const [title, setTitle] = useState<string | null>(null)
-  const [text, setText] = useState('')
   const [menu, setMenu] = useState<SheetAction[] | null>(null)
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
   const [prompt, setPrompt] = useState<PromptRequest | null>(null)
@@ -51,6 +54,58 @@ export default function DocScreen() {
   const openThreads = visibleThreads(threads.data ?? []).filter((thread) => !thread.resolved).length
   const locked = Boolean(page.data?.locked_at)
   const failed = (what: string) => (error: unknown) => setNotice(`${what} ${errorMessage(error)}`)
+
+  const editor = useRef<PageEditorRef>(null)
+  const [format, setFormat] = useState<FormatState>(IDLE_FORMAT)
+  const [choosingBlock, setChoosingBlock] = useState(false)
+  const [sync, setSync] = useState<CollabState | null>(null)
+  const [problem, setProblem] = useState<ProblemResponse | null>(null)
+  const [generation, setGeneration] = useState(0)
+  const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
+  const scrollY = useRef(0)
+  const viewportHeight = useRef(0)
+  const editorTop = useRef(0)
+  const editable = !locked && !problem?.readOnly
+
+  // Keep the caret between the top of the screen and the toolbar while typing.
+  useEffect(() => {
+    if (!format.focused || !format.caret) return
+    const top = editorTop.current + format.caret.top
+    const bottom = editorTop.current + format.caret.bottom
+    const visibleTop = scrollY.current + CARET_MARGIN
+    const visibleBottom = scrollY.current + viewportHeight.current - CARET_MARGIN
+    if (bottom > visibleBottom) scroll.current?.scrollTo({ y: bottom - viewportHeight.current + CARET_MARGIN, animated: true })
+    else if (top < visibleTop) scroll.current?.scrollTo({ y: Math.max(0, top - CARET_MARGIN), animated: true })
+  }, [format])
+
+  const run = (command: EditorCommand) => editor.current?.run(command)
+  const addImage = () =>
+    pickImage({ square: false }).then(
+      async (file) => {
+        if (!file) return
+        const url = await uploadImage.mutateAsync(file)
+        run({ type: 'image', url, name: (file as { name?: string }).name ?? 'image' })
+      },
+      failed('Could not read the image.'),
+    ).catch(failed('Could not upload the image.'))
+
+  const onProblem = (next: CollabProblem) => {
+    const response = PROBLEM_RESPONSES[next]
+    setProblem(response.notice || response.readOnly || response.stop ? response : null)
+    if (!response.refetch) return
+    void page.refetch().then(() => {
+      if (!response.reconnect) return
+      if (!response.readOnly) setProblem(null)
+      setGeneration((value) => value + 1)
+    })
+  }
+  // The socket handshake keeps failing: the page may be gone or out of reach.
+  const onProbe = () =>
+    void page.refetch().then(({ error }) => {
+      const status = (error as { status?: unknown } | null)?.status
+      if (status === 404) onProblem('gone')
+      else if (status === 403) onProblem('forbidden')
+    })
 
   // a new page from another device or a save: show the server's title unless one is being typed
   useEffect(() => setTitle(null), [page.data?.title])
@@ -66,7 +121,7 @@ export default function DocScreen() {
     pickImage({ square: false }).then(
       async (file) => {
         if (!file) return
-        const url = await uploadCover.mutateAsync(file)
+        const url = await uploadImage.mutateAsync(file)
         await save.mutateAsync({ cover_url: url })
       },
       failed('Could not read the image.'),
@@ -115,16 +170,16 @@ export default function DocScreen() {
       : []
 
   return (
-    <SafeAreaView edges={['top', 'left', 'right']} style={{ flex: 1, backgroundColor: colors.background }}>
-      <PaneHeader style={{ paddingHorizontal: 12 }}>
+    <SafeAreaView edges={['top', 'left', 'right']} className="flex-1 bg-background">
+      <PaneHeader className="px-3">
         <IconButton icon="back" label="Back to docs" color={muted} onPress={() => (router.canGoBack() ? router.back() : router.navigate('/docs'))} />
-        <Text numberOfLines={1} style={[type(13, 'medium'), { flex: 1 }]}>
+        <Text numberOfLines={1} className="font-noto-medium text-[13px] flex-1">
           {page.data ? pageTitle(page.data) : ''}
         </Text>
         <View>
           <IconButton icon="comment" label={openThreads > 0 ? `Comments, ${openThreads} open` : 'Comments'} color={muted} onPress={() => setCommentsOpen(true)} />
           {openThreads > 0 ? (
-            <View pointerEvents="none" style={{ position: 'absolute', top: -4, right: -6 }}>
+            <View pointerEvents="none" className="absolute -top-1 -right-1.5">
               <CountBadge count={openThreads} />
             </View>
           ) : null}
@@ -132,8 +187,13 @@ export default function DocScreen() {
         <IconButton icon="star" label={favorite ? 'Remove from favorites' : 'Add to favorites'} color={favorite ? colors.primary : muted} onPress={() => toggleFavorite.mutate({ pageId: id, favorite: !favorite })} />
         <IconButton icon="more" label="Page options" color={muted} onPress={() => setMenu(pageMenu())} />
       </PaneHeader>
+      {problem?.notice || (sync?.ready && sync.status !== 'live') ? (
+        <Text accessibilityRole="alert" className="text-[12px] mx-3 mb-1 text-muted-foreground">
+          {problem?.notice ?? (sync ? collabStatusLabel(sync) : '')}
+        </Text>
+      ) : null}
       {notice ? (
-        <Text accessibilityRole="alert" onPress={() => setNotice(null)} style={[type(13), { marginHorizontal: 12, marginBottom: 4, padding: 10, borderRadius: 8, overflow: 'hidden', color: colors.destructive, backgroundColor: alpha(colors.destructive, 0.1) }]}>
+        <Text accessibilityRole="alert" onPress={() => setNotice(null)} className="text-[13px] mx-3 mb-1 p-2.5 rounded-md overflow-hidden text-destructive bg-destructive/10">
           {notice}
         </Text>
       ) : null}
@@ -144,10 +204,14 @@ export default function DocScreen() {
           <LoadingView />
         )
       ) : (
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
+        <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
           <ScrollView
-            contentContainerStyle={{ paddingBottom: 32 }}
+            ref={scroll}
+            contentContainerClassName="pb-8"
             keyboardShouldPersistTaps="handled"
+            scrollEventThrottle={16}
+            onScroll={(event) => (scrollY.current = event.nativeEvent.contentOffset.y)}
+            onLayout={(event) => (viewportHeight.current = event.nativeEvent.layout.height)}
             refreshControl={<RefreshControl refreshing={page.isRefetching} onRefresh={() => void page.refetch()} tintColor={colors.mutedForeground} />}
           >
             {page.data.cover_url ? (
@@ -155,32 +219,32 @@ export default function DocScreen() {
                 <Image
                   accessibilityLabel="Cover"
                   source={{ uri: absoluteUrl(session.server, page.data.cover_url), headers: page.data.cover_url.startsWith('/') ? { Authorization: `Bearer ${session.token}` } : undefined }}
-                  style={{ height: 140, width: '100%', backgroundColor: colors.muted }}
+                  className="h-35 w-full bg-muted"
                   resizeMode="cover"
                 />
                 {!locked ? (
-                  <View style={{ position: 'absolute', right: 12, bottom: 8 }}>
+                  <View className="absolute right-3 bottom-2">
                     <Button label="Change cover" size="xs" variant="secondary" onPress={() => setMenu(coverActions())} />
                   </View>
                 ) : null}
               </View>
             ) : null}
-            <View style={{ paddingHorizontal: 12, paddingTop: 24 }}>
+            <View className="px-3 pt-6">
               {page.data.icon ? (
-                <Text accessibilityRole="button" accessibilityLabel="Change icon" onPress={locked ? undefined : () => setChoosingIcon(true)} style={{ fontSize: 40, lineHeight: 48, marginBottom: 8, alignSelf: 'flex-start' }}>
+                <Text accessibilityRole="button" accessibilityLabel="Change icon" onPress={locked ? undefined : () => setChoosingIcon(true)} className="text-[40px] leading-[48px] mb-2 self-start">
                   {page.data.icon}
                 </Text>
               ) : null}
               {!locked && (!page.data.icon || !page.data.cover_url) ? (
-                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+                <View className="flex-row gap-2 mb-2.5">
                   {page.data.icon ? null : <Button label="😀 Add icon" variant="ghost" size="sm" muted onPress={() => setChoosingIcon(true)} />}
                   {page.data.cover_url ? null : <Button label="🖼️ Add cover" variant="ghost" size="sm" muted onPress={() => setMenu(coverActions())} />}
                 </View>
               ) : null}
               {locked ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                <View className="flex-row items-center gap-1.5 mb-2.5">
                   <Icon name="lock" size={13} color={colors.mutedForeground} />
-                  <Text style={[type(12), { color: colors.mutedForeground }]}>Locked. Unlock it on the web to edit.</Text>
+                  <Text className="text-[12px] text-muted-foreground">Locked. Unlock it on the web to edit.</Text>
                 </View>
               ) : null}
               <TextInput
@@ -193,115 +257,120 @@ export default function DocScreen() {
                 onBlur={saveTitle}
                 onSubmitEditing={saveTitle}
                 returnKeyType="done"
-                style={[type(16, 'bold'), { lineHeight: 20, marginBottom: 17, padding: 0, color: colors.foreground }]}
+                className="font-noto-bold text-[16px] leading-[20px] mb-[17px] p-0 text-foreground"
               />
-              <View style={{ gap: 6 }}>
-                {blocks.map((block) => (
-                  <Block key={block.id} block={block} />
-                ))}
-              </View>
-              {!locked ? (
-                <View style={{ marginTop: 20, gap: 8 }}>
-                  <TextInput
-                    accessibilityLabel="Add text"
-                    placeholder={blocks.length === 0 ? 'Start writing…' : 'Add text…'}
-                    placeholderTextColor={muted}
-                    value={text}
-                    onChangeText={setText}
-                    multiline
-                    style={[type(16), { minHeight: 72, lineHeight: 24, padding: 10, borderRadius: 10, borderWidth: 1, borderColor: colors.input, textAlignVertical: 'top', color: colors.foreground }]}
-                  />
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <Text style={[type(12), { flex: 1, color: colors.mutedForeground }]}>Each line becomes a paragraph at the end of the page.</Text>
-                    <Button
-                      label="Add"
-                      size="sm"
-                      loading={addParagraphs.isPending}
-                      disabled={!text.trim()}
-                      onPress={() => addParagraphs.mutate(text, { onSuccess: () => setText(''), onError: failed('Could not add the text; the page changed meanwhile, so it is reloaded.') })}
-                    />
-                  </View>
-                </View>
-              ) : null}
+            </View>
+            <View onLayout={(event) => (editorTop.current = event.nativeEvent.layout.y)}>
+              {problem?.stop ? null : (
+                <EditorView
+                  ref={editor}
+                  pageId={id}
+                  epoch={page.data.collab_epoch}
+                  generation={generation}
+                  editable={editable}
+                  onStatus={setSync}
+                  onProblem={onProblem}
+                  onProbe={onProbe}
+                  onFormat={setFormat}
+                />
+              )}
             </View>
           </ScrollView>
+          {format.focused && editable ? <EditorToolbar format={format} onCommand={run} onBlockMenu={() => setChoosingBlock(true)} onImage={() => void addImage()} /> : null}
         </KeyboardAvoidingView>
       )}
       <ActionSheet visible={menu !== null} actions={menu ?? []} onClose={() => setMenu(null)} />
       <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />
       <PromptDialog request={prompt} onClose={() => setPrompt(null)} />
+      <ActionSheet
+        visible={choosingBlock}
+        title="Turn into"
+        actions={(Object.keys(BLOCK_KINDS) as BlockKind[]).map((kind) => ({ label: BLOCK_KINDS[kind].label, onPress: () => run({ type: 'block', kind }) }))}
+        onClose={() => setChoosingBlock(false)}
+      />
       <IconDialog visible={choosingIcon} title="Page icon" current={page.data?.icon ?? null} onPick={saveIcon} onClose={() => setChoosingIcon(false)} />
       <CommentsSheet pageId={id} visible={commentsOpen} onClose={() => setCommentsOpen(false)} />
     </SafeAreaView>
   )
 }
 
-function Block({ block }: { block: DocBlock }) {
-  const { colors } = useTheme()
-  const indent = { marginLeft: block.depth * 24 }
-  const body = [type(16), { lineHeight: 24, flex: 1 }]
-  switch (block.kind) {
-    case 'heading': {
-      const size = HEADING_SIZE[block.level ?? 1] ?? 17
-      return (
-        <Text selectable style={[type(size, 'semibold'), { lineHeight: Math.round(size * 1.3), marginTop: 8 }, indent]}>
-          {block.text}
-        </Text>
-      )
-    }
-    case 'bullet':
-    case 'numbered':
-      return (
-        <View style={[{ flexDirection: 'row', gap: 8 }, indent]}>
-          <Text style={[type(16), { lineHeight: 24, minWidth: 16, color: colors.mutedForeground }]}>{block.kind === 'bullet' ? '•' : `${block.number}.`}</Text>
-          <Text selectable style={body}>
-            {block.text}
-          </Text>
-        </View>
-      )
-    case 'check':
-      return (
-        <View style={[{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }, indent]}>
-          <View
-            accessibilityLabel={block.checked ? 'Done' : 'Not done'}
-            style={{ width: 16, height: 16, marginTop: 4, borderRadius: 4, borderWidth: 1, borderColor: block.checked ? colors.primary : colors.input, backgroundColor: block.checked ? colors.primary : 'transparent', alignItems: 'center', justifyContent: 'center' }}
-          >
-            {block.checked ? <Icon name="check" size={12} color={colors.primaryForeground} /> : null}
-          </View>
-          <Text selectable style={[body, block.checked && { color: colors.mutedForeground, textDecorationLine: 'line-through' }]}>
-            {block.text}
-          </Text>
-        </View>
-      )
-    case 'quote':
-      return (
-        <View style={[{ borderLeftWidth: 3, borderLeftColor: colors.border, paddingLeft: 12 }, indent]}>
-          <Text selectable style={body}>
-            {block.text}
-          </Text>
-        </View>
-      )
-    case 'code':
-      return (
-        <View style={[{ borderRadius: 8, backgroundColor: colors.muted, padding: 12 }, indent]}>
-          <Text selectable style={{ fontFamily: fonts.mono, fontSize: 13, lineHeight: 19, color: colors.foreground }}>
-            {block.text}
-          </Text>
-        </View>
-      )
-    case 'divider':
-      return <View style={[{ height: 1, marginVertical: 11, backgroundColor: colors.border }, indent]} />
-    case 'other':
-      return (
-        <Text selectable style={[type(14), { lineHeight: 24, color: colors.mutedForeground }, indent]}>
-          {block.text}
-        </Text>
-      )
-    default:
-      return (
-        <Text selectable style={[...body, indent]}>
-          {block.text || ' '}
-        </Text>
-      )
-  }
+type EditorViewProps = Pick<PageEditorProps, 'pageId' | 'epoch' | 'generation' | 'editable'> & {
+  ref: React.Ref<PageEditorRef>
+  onStatus: (state: CollabState) => void
+  onProblem: (problem: CollabProblem) => void
+  onProbe: () => void
+  onFormat: (state: FormatState) => void
 }
+
+/**
+ * The page editor with what it needs from the app: the session (tickets, files), the theme, page and member names.
+ * Every render sends all props to the web view, so it renders only when they change: the screen re-renders on every
+ * selection change (the toolbar), and the callbacks are read through a ref.
+ */
+const EditorView = memo(function EditorView({ ref, pageId, epoch, generation, editable, ...callbacks }: EditorViewProps) {
+  const { client, workspaceId, session, user } = useOrbit()
+  const { scheme, colors } = useTheme()
+  const pages = usePages()
+  const trash = usePageTrash()
+  const members = useMembers()
+  const [height, setHeight] = useState(120)
+  const latest = useRef(callbacks)
+  useEffect(() => {
+    latest.current = callbacks
+  })
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+
+  const cards = useMemo(() => {
+    const out: Record<string, PageCardInfo> = {}
+    for (const item of trash.data ?? []) out[item.id] = { title: item.title, icon: item.icon, trashed: true }
+    for (const item of pages.data ?? []) out[item.id] = { title: item.title, icon: item.icon, trashed: false }
+    return out
+  }, [pages.data, trash.data])
+  const names = useMemo(() => Object.fromEntries((members.data ?? []).map((member) => [member.user_id, member.display_name])), [members.data])
+  const editorColors = useMemo(
+    () => ({ background: colors.background, foreground: colors.foreground, mutedForeground: colors.mutedForeground, muted: colors.muted, border: colors.border, primary: colors.primary }),
+    [colors],
+  )
+  // the server shows everyone else this session's name and a color of its own
+  const me = useMemo(() => ({ name: user.display_name, color: colors.mutedForeground }), [user.display_name, colors.mutedForeground])
+  const actions = useMemo(
+    () => ({
+      getTicket: whileMounted(mounted, () => collabTicket(client)),
+      loadFile: whileMounted(mounted, (url: string) => fileDataUrl(session.server, session.token, url)),
+      openPage: whileMounted(mounted, async (target: string) => router.push(`/docs/${target}`)),
+      openUrl: whileMounted(mounted, async (url: string) => void Linking.openURL(url).catch(() => {})),
+      onStatus: whileMounted(mounted, async (state: CollabState) => latest.current.onStatus(state)),
+      onProblem: whileMounted(mounted, async (problem: CollabProblem) => latest.current.onProblem(problem)),
+      onProbe: whileMounted(mounted, async () => latest.current.onProbe()),
+      onFormat: whileMounted(mounted, async (state: FormatState) => latest.current.onFormat(state)),
+      onHeight: whileMounted(mounted, async (next: number) => setHeight(next)),
+    }),
+    [client, session.server, session.token],
+  )
+  const dom = useMemo(() => ({ scrollEnabled: false, style: { height } }), [height])
+
+  return (
+    <PageEditor
+      ref={ref}
+      dom={dom}
+      server={session.server}
+      workspaceId={workspaceId}
+      pageId={pageId}
+      epoch={epoch}
+      generation={generation}
+      editable={editable}
+      theme={scheme}
+      colors={editorColors}
+      user={me}
+      pages={cards}
+      members={names}
+      {...actions}
+    />
+  )
+})

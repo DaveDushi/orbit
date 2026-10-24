@@ -65,23 +65,8 @@ export function useSavePage(pageId: string) {
   })
 }
 
-/** Appends plain paragraphs to the page's blocks (one per line). */
-export function useAddParagraphs(pageId: string) {
-  const { client, workspaceId } = useOrbit()
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: async (text: string) => {
-      const page = queryClient.getQueryData<Page>(keys.page(workspaceId, pageId))
-      if (!page) throw new Error('The page is not loaded yet.')
-      return docs.savePage(client, workspaceId, page, { content: [...page.content, ...paragraphBlocks(text)] })
-    },
-    onSuccess: (page) => reconcile(queryClient, workspaceId, page),
-    // a conflict means someone else edited the page: show theirs
-    onError: () => void queryClient.invalidateQueries({ queryKey: keys.page(workspaceId, pageId), exact: true }),
-  })
-}
-
-export function useUploadCover(pageId: string) {
+/** Stores an image on the page (a cover, or an image block); resolves to its URL. */
+export function useUploadPageImage(pageId: string) {
   const { client, workspaceId } = useOrbit()
   return useMutation({ mutationFn: (file: UploadFile) => docs.uploadPageImage(client, workspaceId, pageId, file) })
 }

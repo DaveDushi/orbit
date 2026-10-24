@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { Pressable, View } from 'react-native'
 
 import { iconOf, PAGE_ICONS } from '../../data/docs'
-import { useTheme } from '../../theme'
 import { Button, Input, Text } from '../../ui'
 import { Dialog } from '../settings/Dialog'
 
@@ -11,7 +10,6 @@ import { Dialog } from '../settings/Dialog'
  * picker has no React Native version.
  */
 export function IconDialog({ visible, title, current, onPick, onClose }: { visible: boolean; title: string; current: string | null; onPick: (icon: string | null) => void; onClose: () => void }) {
-  const { colors } = useTheme()
   const [typed, setTyped] = useState('')
   useEffect(() => setTyped(''), [visible])
   const pick = (icon: string | null) => {
@@ -31,7 +29,7 @@ export function IconDialog({ visible, title, current, onPick, onClose }: { visib
         </>
       }
     >
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4 }}>
+      <View className="flex-row flex-wrap gap-1">
         {PAGE_ICONS.map((icon) => (
           <Pressable
             key={icon}
@@ -39,9 +37,9 @@ export function IconDialog({ visible, title, current, onPick, onClose }: { visib
             accessibilityLabel={`Icon ${icon}`}
             accessibilityState={{ selected: icon === current }}
             onPress={() => pick(icon)}
-            style={({ pressed }) => ({ width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 8, backgroundColor: icon === current ? colors.sidebarAccent : pressed ? colors.muted : 'transparent' })}
+            className={`size-10 items-center justify-center rounded-md ${icon === current ? 'bg-sidebar-accent' : 'active:bg-muted'}`}
           >
-            <Text style={{ fontSize: 22, lineHeight: 28 }}>{icon}</Text>
+            <Text className="text-[22px] leading-[28px]">{icon}</Text>
           </Pressable>
         ))}
       </View>

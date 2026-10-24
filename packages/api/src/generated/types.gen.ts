@@ -2888,6 +2888,14 @@ export type SmtpView = {
     username?: string | null;
 };
 
+export type SocketTicketResponse = {
+    expires_at: string;
+    /**
+     * Pass as the `ticket` query parameter of a co-editing socket, without a cookie.
+     */
+    ticket: string;
+};
+
 export type StartNotionImportBody = {
     destination?: NotionImportDestinationBody;
     selection: NotionImportSelectionBody;
@@ -5996,6 +6004,58 @@ export type PutShortcutsResponses = {
 };
 
 export type PutShortcutsResponse = PutShortcutsResponses[keyof PutShortcutsResponses];
+
+export type SocketTicketData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/socket-ticket';
+};
+
+export type SocketTicketErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: AuthProblem;
+    /**
+     * authentication_required
+     */
+    401: AuthProblem;
+    /**
+     * origin_forbidden
+     */
+    403: AuthProblem;
+    /**
+     * contract_mismatch
+     */
+    409: AuthProblem;
+    /**
+     * request_too_large
+     */
+    413: AuthProblem;
+    /**
+     * internal_error
+     */
+    500: AuthProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: AuthProblem;
+};
+
+export type SocketTicketError = SocketTicketErrors[keyof SocketTicketErrors];
+
+export type SocketTicketResponses = {
+    200: SocketTicketResponse;
+};
+
+export type SocketTicketResponse2 = SocketTicketResponses[keyof SocketTicketResponses];
 
 export type PutStatusData = {
     body: UserStatus;

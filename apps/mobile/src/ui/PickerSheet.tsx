@@ -17,25 +17,13 @@ export interface PickerOption {
 
 /** A bottom sheet with one choice per row. Tapping outside closes it. */
 export function PickerSheet({ visible, title, options, onSelect, onClose }: { visible: boolean; title: string; options: readonly PickerOption[]; onSelect: (key: string) => void; onClose: () => void }) {
-  const { colors, radius, spacing, scheme } = useTheme()
+  const { colors } = useTheme()
   const insets = useSafeAreaInsets()
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable accessibilityLabel="Close" onPress={onClose} style={{ flex: 1, backgroundColor: scheme === 'dark' ? colors.background : colors.foreground, opacity: 0.4 }} />
-      <View
-        style={{
-          maxHeight: '70%',
-          backgroundColor: colors.popover,
-          borderTopLeftRadius: radius.xl,
-          borderTopRightRadius: radius.xl,
-          borderColor: colors.border,
-          borderWidth: 1,
-          paddingBottom: insets.bottom + spacing[2],
-        }}
-      >
-        <Text variant="heading" style={{ padding: spacing[4], paddingBottom: spacing[2] }}>
-          {title}
-        </Text>
+      <Pressable accessibilityLabel="Close" onPress={onClose} className="flex-1 bg-foreground opacity-40 dark:bg-background" />
+      <View className="max-h-[70%] rounded-t-xl border border-border bg-popover" style={{ paddingBottom: insets.bottom + 8 }}>
+        <Text className="p-4 pb-2 font-noto-semibold text-[17px] leading-[22px]">{title}</Text>
         <ScrollView>
           {options.map((option) => (
             <ListRow

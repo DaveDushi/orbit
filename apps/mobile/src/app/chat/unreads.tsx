@@ -8,7 +8,7 @@ import * as chat from '../../data/chat-api'
 import { useChatWrite, useMessages } from '../../hooks/chat'
 import { useOrbit } from '../../orbit-context'
 import { useChatStates, useConversations, usePeople } from '../../queries'
-import { type, useTheme } from '../../theme'
+import { useTheme } from '../../theme'
 import { Button, EmptyState, ErrorView, LoadingView, Text } from '../../ui'
 
 /** The Unreads view: one group for each unread conversation that is not muted, newest activity first. */
@@ -45,7 +45,6 @@ export default function UnreadsScreen() {
 
 function UnreadGroup({ conversation, state }: UnreadConversation) {
   const { user } = useOrbit()
-  const { colors } = useTheme()
   const people = usePeople()
   const messages = useMessages(conversation.id, undefined)
   const words = useMessageText()
@@ -56,26 +55,26 @@ function UnreadGroup({ conversation, state }: UnreadConversation) {
   const open = () => router.push(`/chat/${conversation.id}`)
 
   return (
-    <View accessibilityLabel={title} style={{ gap: 4, paddingHorizontal: 8, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.border }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 4 }}>
-        <Pressable accessibilityRole="link" accessibilityLabel={`Open ${title}`} onPress={open} style={{ flexShrink: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+    <View accessibilityLabel={title} className="gap-1 px-2 py-3 border-b border-border">
+      <View className="flex-row items-center gap-2 px-1">
+        <Pressable accessibilityRole="link" accessibilityLabel={`Open ${title}`} onPress={open} className="shrink flex-row items-center gap-2">
           <ConversationGlyph conversation={conversation} title={title} userId={user.id} />
-          <Text numberOfLines={1} style={[type(13, 'semibold'), { flexShrink: 1 }]}>
+          <Text numberOfLines={1} className="font-noto-semibold text-[13px] shrink">
             {title}
           </Text>
         </Pressable>
-        <Text style={[type(12), { color: colors.mutedForeground }]}>{state.unread_count} unread</Text>
-        <View style={{ flex: 1 }} />
+        <Text className="text-[12px] text-muted-foreground">{state.unread_count} unread</Text>
+        <View className="flex-1" />
         <Button label="Mark as read" variant="ghost" size="sm" onPress={() => void run('Could not mark as read', (client, workspaceId) => chat.markRead(client, workspaceId, conversation.id))} />
       </View>
       {messages.isError ? (
-        <Text style={[type(13), { paddingHorizontal: 4, color: colors.mutedForeground }]}>Could not load these messages.</Text>
+        <Text className="text-[13px] px-1 text-muted-foreground">Could not load these messages.</Text>
       ) : (
         shown.map((message) => <MessagePreview key={message.id} message={message} author={words.nameOf(message.author_id)} text={words.text(message.body)} onPress={open} />)
       )}
       {more > 0 && !messages.isPending ? (
-        <Pressable accessibilityRole="link" onPress={open} style={{ paddingHorizontal: 4 }}>
-          <Text style={[type(12), { color: colors.mutedForeground }]}>
+        <Pressable accessibilityRole="link" onPress={open} className="px-1">
+          <Text className="text-[12px] text-muted-foreground">
             {more} more unread {more === 1 ? 'message' : 'messages'}
           </Text>
         </Pressable>

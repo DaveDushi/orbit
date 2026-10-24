@@ -1,7 +1,8 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { router } from 'expo-router'
 import { type ReactNode, useState } from 'react'
-import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, TextInput, useWindowDimensions, View } from 'react-native'
+import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, useWindowDimensions, View } from 'react-native'
+import { TextInput } from '../ui/scaled'
 
 import { keys } from '../data/keys'
 import * as api from '../data/orbit'
@@ -25,7 +26,7 @@ import {
 import { useOrbit } from '../orbit-context'
 import { useLabels, usePeople, useProjects, useStatuses } from '../queries'
 import { errorMessage } from '../session-context'
-import { alpha, cssColors, type, useTheme } from '../theme'
+import { alpha, cssColors, useTheme } from '../theme'
 import { Avatar, Button, Icon, type IconName, IconButton, PriorityIcon, StatusIcon, Text } from '../ui'
 import { type FileSource, pickFiles } from './tasks/files'
 import { Dot, DueDateChoices, LabelChoices, MenuChoices, PeopleChoices, PriorityChoices, StatusChoices, TaskChoices } from './tasks/pickers'
@@ -162,41 +163,33 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable accessibilityLabel="Close" onPress={onClose} style={{ position: 'absolute', inset: 0, backgroundColor: alpha(cssColors.black, 0.1) }} />
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }} pointerEvents="box-none">
+      <Pressable accessibilityLabel="Close" onPress={onClose} className="absolute inset-0 bg-black/10" />
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} className="flex-1" pointerEvents="box-none">
         <View
           accessibilityViewIsModal
-          style={{
-            marginTop: Math.round(height * 0.14),
-            marginHorizontal: 16,
-            maxHeight: height * 0.8,
-            borderRadius: 14,
-            backgroundColor: colors.popover,
-            boxShadow: `0 0 0 1px ${alpha(colors.foreground, 0.1)}`,
-            overflow: 'hidden',
-          }}
+          className="mx-4 rounded-xl bg-popover overflow-hidden" style={{ marginTop: Math.round(height * 0.14), maxHeight: height * 0.8, boxShadow: `0 0 0 1px ${alpha(colors.foreground, 0.1)}` }}
         >
-          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 12, gap: 12 }} keyboardShouldPersistTaps="handled">
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingRight: 32 }}>
+          <ScrollView contentContainerClassName="p-4 pb-3 gap-3" keyboardShouldPersistTaps="handled">
+            <View className="flex-row items-center gap-1.5 pr-8">
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Project: ${project?.name ?? 'none'}`}
                 onPress={() => sheets.open({ kind: 'project' })}
-                style={{ height: 24, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, borderRadius: 8, borderWidth: 1, borderColor: colors.input, backgroundColor: alpha(colors.input, 0.3), boxShadow: `0 2px 0 ${alpha(scheme === 'dark' ? cssColors.white : cssColors.black, scheme === 'dark' ? 0.08 : 0.22)}` }}
+                className="h-6 flex-row items-center gap-1 px-2 rounded-md border border-input bg-input/30" style={{ boxShadow: `0 2px 0 ${alpha(scheme === 'dark' ? cssColors.white : cssColors.black, scheme === 'dark' ? 0.08 : 0.22)}` }}
               >
                 {project ? <Dot color={project.color} size={6} /> : null}
-                <Text numberOfLines={1} style={[type(12), { lineHeight: 16, maxWidth: 170 }]}>
+                <Text numberOfLines={1} className="text-[12px] leading-[16px] max-w-42.5">
                   {project?.name ?? 'No project'}
                 </Text>
               </Pressable>
               <Icon name="chevronRight" size={12} color={alpha(colors.mutedForeground, 0.7)} />
-              <Text style={[type(12), { lineHeight: 16, color: colors.mutedForeground }]}>New task</Text>
+              <Text className="text-[12px] leading-[16px] text-muted-foreground">New task</Text>
             </View>
-            <View style={{ position: 'absolute', top: 8, right: 8 }}>
+            <View className="absolute top-2 right-2">
               <IconButton icon="close" label="Close" onPress={onClose} />
             </View>
 
-            <View style={{ gap: 6 }}>
+            <View className="gap-1.5">
               <TextInput
                 accessibilityLabel="Task title"
                 placeholder="Task title"
@@ -206,7 +199,7 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
                 autoFocus
                 value={title}
                 onChangeText={setTitle}
-                style={{ ...type(16, 'medium'), lineHeight: 25, padding: 0, color: colors.foreground }}
+                className="font-noto-medium text-[16px] leading-[25px] p-0 text-foreground"
               />
               <TextInput
                 accessibilityLabel="Description"
@@ -217,14 +210,14 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
                 multiline
                 value={description}
                 onChangeText={setDescription}
-                style={{ ...type(16), lineHeight: 24, minHeight: 80, padding: 0, paddingTop: 2, textAlignVertical: 'top', color: colors.foreground }}
+                className="font-noto text-[16px] leading-[24px] min-h-20 p-0 pt-0.5 text-foreground" style={{ textAlignVertical: 'top' }}
               />
               {files.length > 0 || relations.length > 0 ? (
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                <View className="flex-row flex-wrap gap-1.5">
                   {files.map((file, index) => (
                     <Pending key={`${file.uri}-${index}`} label={`Remove ${file.name}`} onRemove={() => setFiles((list) => list.filter((_, at) => at !== index))}>
                       <Icon name="attach" size={12} color={colors.mutedForeground} />
-                      <Text numberOfLines={1} style={[type(12), { maxWidth: 180 }]}>
+                      <Text numberOfLines={1} className="text-[12px] max-w-45">
                         {file.name}
                       </Text>
                     </Pending>
@@ -235,22 +228,22 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
                       label={`Remove relation to ${identifier(relation.task, projects.data ?? [])}`}
                       onRemove={() => setRelations((list) => list.filter((item) => item !== relation))}
                     >
-                      <Text style={[type(12), { color: colors.mutedForeground }]}>{RELATION_LABEL[relation.kind]}</Text>
-                      <Text style={[type(12), { color: colors.mutedForeground }]}>{identifier(relation.task, projects.data ?? [])}</Text>
-                      <Text numberOfLines={1} style={[type(12), { maxWidth: 140 }]}>
+                      <Text className="text-[12px] text-muted-foreground">{RELATION_LABEL[relation.kind]}</Text>
+                      <Text className="text-[12px] text-muted-foreground">{identifier(relation.task, projects.data ?? [])}</Text>
+                      <Text numberOfLines={1} className="text-[12px] max-w-35">
                         {relation.task.title || 'Untitled'}
                       </Text>
                     </Pending>
                   ))}
                 </View>
               ) : null}
-              <View style={{ flexDirection: 'row', marginLeft: -8 }}>
+              <View className="flex-row -ml-2">
                 <Quiet icon="attach" label="Attach" onPress={() => sheets.open({ kind: 'attach' })} />
                 <Quiet icon="relation" label="Add relation" onPress={() => sheets.open({ kind: 'relation-menu' })} />
               </View>
             </View>
 
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+            <View className="flex-row flex-wrap gap-1.5">
               <Chip label={`Status: ${status?.name ?? 'none'}`} onPress={() => sheets.open({ kind: 'status' })}>
                 <StatusIcon status={status} size={14} />
                 <ChipText>{status?.name ?? 'No status'}</ChipText>
@@ -265,7 +258,7 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
               </Chip>
               <Chip label={chosenLabels.length > 0 ? `Labels: ${chosenLabels.map((label) => label.name).join(', ')}` : 'Labels'} onPress={project ? () => sheets.open({ kind: 'labels' }) : undefined}>
                 {chosenLabels.length > 0 ? (
-                  <View style={{ flexDirection: 'row', gap: 2 }}>
+                  <View className="flex-row gap-0.5">
                     {chosenLabels.slice(0, 3).map((label) => (
                       <Dot key={label.id} color={label.color} />
                     ))}
@@ -284,29 +277,29 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
                 onPress={() => sheets.open(parent ? { kind: 'parent-menu' } : { kind: 'pick-task', purpose: 'parent' })}
               >
                 <Icon name="subIssue" size={14} color={colors.mutedForeground} />
-                {parent ? <Text style={[type(12.8), { lineHeight: 18, color: colors.mutedForeground }]}>{identifier(parent, projects.data ?? [])}</Text> : null}
+                {parent ? <Text className="text-[12.8px] leading-[18px] text-muted-foreground">{identifier(parent, projects.data ?? [])}</Text> : null}
                 <ChipText>{parent ? parent.title || 'Untitled' : 'Parent'}</ChipText>
               </Chip>
             </View>
-            {create.isError ? <Text style={[type(12), { color: colors.destructive }]}>{errorMessage(create.error)}</Text> : null}
+            {create.isError ? <Text className="text-[12px] text-destructive">{errorMessage(create.error)}</Text> : null}
           </ScrollView>
 
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 18, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: alpha(colors.muted, 0.5) }}>
+          <View className="flex-row items-center justify-center gap-3 px-4 pt-2.5 pb-4.5 border-t border-border bg-muted/50">
             {created ? (
               <Pressable accessibilityRole="link" onPress={() => {
                   onClose()
                   router.push(`/tasks/${created.id}`)
-                }} style={{ flexShrink: 1 }}>
-                <Text numberOfLines={1} style={[type(12), { color: colors.mutedForeground }]}>
-                  Created <Text style={[type(12, 'medium'), { color: colors.foreground }]}>{identifier(created, projects.data ?? [])}</Text>
+                }} className="shrink">
+                <Text numberOfLines={1} className="text-[12px] text-muted-foreground">
+                  Created <Text className="font-noto-medium text-[12px] text-foreground">{identifier(created, projects.data ?? [])}</Text>
                 </Text>
               </Pressable>
             ) : null}
-            <Pressable accessibilityRole="switch" accessibilityState={{ checked: createMore }} onPress={() => setCreateMore((value) => !value)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <View style={{ width: 24, height: 14, borderRadius: 7, padding: 1, alignItems: createMore ? 'flex-end' : 'flex-start', backgroundColor: createMore ? colors.primary : alpha(colors.foreground, 0.12) }}>
-                <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: createMore ? colors.primaryForeground : colors.foreground }} />
+            <Pressable accessibilityRole="switch" accessibilityState={{ checked: createMore }} onPress={() => setCreateMore((value) => !value)} className="flex-row items-center gap-2">
+              <View className={`w-6 h-3.5 rounded-full p-px ${createMore ? 'items-end bg-primary' : 'items-start bg-foreground/12'}`}>
+                <View className={`size-3 rounded-full ${createMore ? 'bg-primary-foreground' : 'bg-foreground'}`} />
               </View>
-              <Text style={[type(12), { lineHeight: 16, color: colors.mutedForeground }]}>Create more</Text>
+              <Text className="text-[12px] leading-[16px] text-muted-foreground">Create more</Text>
             </Pressable>
             <Button label={files.length > 0 && create.isPending ? 'Attaching…' : 'Create task'} loading={create.isPending} disabled={!canCreate} onPress={() => create.mutate()} />
           </View>
@@ -407,7 +400,7 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
 
 /** The web's outline `sm` button: a 28px chip with the 2px edge. */
 function Chip({ label, onPress, children }: { label: string; onPress?: () => void; children: ReactNode }) {
-  const { colors, scheme } = useTheme()
+  const { scheme } = useTheme()
   const edge = alpha(scheme === 'dark' ? cssColors.white : cssColors.black, scheme === 'dark' ? 0.08 : 0.22)
   return (
     <Pressable
@@ -415,19 +408,8 @@ function Chip({ label, onPress, children }: { label: string; onPress?: () => voi
       accessibilityLabel={label}
       disabled={!onPress}
       onPress={onPress}
-      style={({ pressed }) => ({
-        height: 28,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-        paddingHorizontal: 10,
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: colors.input,
-        backgroundColor: alpha(colors.input, pressed ? 0.5 : 0.3),
-        boxShadow: pressed ? undefined : `0 2px 0 ${edge}`,
-        transform: [{ translateY: pressed ? 2 : 0 }],
-      })}
+      className="h-7 flex-row items-center gap-1 rounded-md border border-input bg-input/30 px-2.5 active:bg-input/50"
+      style={({ pressed }) => ({ boxShadow: pressed ? undefined : `0 2px 0 ${edge}`, transform: [{ translateY: pressed ? 2 : 0 }] })}
     >
       {children}
     </Pressable>
@@ -436,7 +418,7 @@ function Chip({ label, onPress, children }: { label: string; onPress?: () => voi
 
 function ChipText({ children }: { children: ReactNode }) {
   return (
-    <Text numberOfLines={1} style={[type(12.8), { lineHeight: 18, maxWidth: 200 }]}>
+    <Text numberOfLines={1} className="text-[12.8px] leading-[18px] max-w-50">
       {children}
     </Text>
   )
@@ -450,10 +432,10 @@ function Quiet({ icon, label, onPress }: { icon: IconName; label: string; onPres
       accessibilityRole="button"
       accessibilityLabel={label}
       onPress={onPress}
-      style={({ pressed }) => ({ height: 32, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: pressed ? colors.muted : 'transparent' })}
+      className="h-8 flex-row items-center gap-1.5 px-2.5 rounded-lg active:bg-muted"
     >
       <Icon name={icon} size={14} color={color} />
-      <Text style={[type(12, 'medium'), { lineHeight: 16, color }]}>{label}</Text>
+      <Text className="font-noto-medium text-[12px] leading-[16px] text-muted-foreground/70">{label}</Text>
     </Pressable>
   )
 }
@@ -462,7 +444,7 @@ function Quiet({ icon, label, onPress }: { icon: IconName; label: string; onPres
 function Pending({ label, onRemove, children }: { label: string; onRemove: () => void; children: ReactNode }) {
   const { colors } = useTheme()
   return (
-    <View style={{ height: 26, maxWidth: '100%', flexDirection: 'row', alignItems: 'center', gap: 4, paddingLeft: 8, paddingRight: 2, borderRadius: 8, borderWidth: 1, borderColor: colors.border }}>
+    <View className="h-6.5 max-w-full flex-row items-center gap-1 pl-2 pr-0.5 rounded-md border border-border">
       {children}
       <IconButton icon="close" label={label} size={20} iconSize={12} color={colors.mutedForeground} onPress={onRemove} />
     </View>

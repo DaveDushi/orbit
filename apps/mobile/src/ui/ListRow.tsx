@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react'
-import { Pressable, StyleSheet, View } from 'react-native'
+import { Pressable, View } from 'react-native'
 
-import { useTheme } from '../theme'
 import { Text } from './Text'
 
 export interface ListRowProps {
@@ -15,22 +14,16 @@ export interface ListRowProps {
 }
 
 export function ListRow({ title, subtitle, leading, trailing, onPress, separator = false }: ListRowProps) {
-  const { colors, spacing } = useTheme()
   return (
-    <Pressable
-      accessibilityRole={onPress ? 'button' : undefined}
-      disabled={!onPress}
-      onPress={onPress}
-      style={({ pressed }) => [styles.row, { paddingLeft: spacing[4], gap: spacing[3], backgroundColor: pressed ? colors.accent : 'transparent' }]}
-    >
+    <Pressable accessibilityRole={onPress ? 'button' : undefined} disabled={!onPress} onPress={onPress} className="flex-row items-center gap-3 pl-4 active:bg-accent">
       {leading}
-      <View style={[styles.body, { paddingRight: spacing[4], gap: spacing[3] }, separator && { borderBottomWidth: 1, borderBottomColor: colors.border }]}>
-        <View style={styles.text}>
-          <Text variant="label" numberOfLines={1}>
+      <View className={`min-h-[52px] flex-1 flex-row items-center gap-3 self-stretch pr-4 ${separator ? 'border-b border-border' : ''}`}>
+        <View className="flex-1 gap-0.5 py-2">
+          <Text numberOfLines={1} className="font-noto-medium text-[14px] leading-[19px]">
             {title}
           </Text>
           {subtitle ? (
-            <Text variant="caption" color="muted" numberOfLines={1}>
+            <Text numberOfLines={1} className="text-[12px] leading-[16px] text-muted-foreground">
               {subtitle}
             </Text>
           ) : null}
@@ -40,9 +33,3 @@ export function ListRow({ title, subtitle, leading, trailing, onPress, separator
     </Pressable>
   )
 }
-
-const styles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center' },
-  body: { flex: 1, minHeight: 52, flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch' },
-  text: { flex: 1, gap: 2, paddingVertical: 8 },
-})

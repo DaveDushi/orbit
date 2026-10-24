@@ -1,27 +1,26 @@
 import { router } from 'expo-router'
 import type { ReactNode } from 'react'
 import { Pressable, View } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
 
 import type { TextSegment } from '../../data/chat'
 import { shortDate, timeOfDay } from '../../data/format'
 import type { ConversationRecord, MessageRecord } from '../../data/orbit'
-import { alpha, type, useTheme } from '../../theme'
-import { Avatar, Icon, IconButton, Text } from '../../ui'
+import { useTheme } from '../../theme'
+import { Avatar, Icon, IconButton, SafeAreaView, Text } from '../../ui'
 
 /** A chat screen with the web's 48px pane header: Back, the title, and actions at the end. */
 export function ChatPane({ title, subtitle, actions, children }: { title: string; subtitle?: string; actions?: ReactNode; children: ReactNode }) {
   const { colors } = useTheme()
   return (
-    <SafeAreaView edges={['top', 'left', 'right']} style={{ flex: 1, backgroundColor: colors.card }}>
-      <View style={{ height: 48, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8 }}>
+    <SafeAreaView edges={['top', 'left', 'right']} className="flex-1 bg-card">
+      <View className="h-12 flex-row items-center gap-1 px-2">
         <IconButton icon="back" label="Back" size={32} iconSize={20} color={colors.mutedForeground} onPress={() => (router.canGoBack() ? router.back() : router.navigate('/chat'))} />
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text accessibilityRole="header" numberOfLines={1} style={[type(14, 'semibold'), { lineHeight: 18 }]}>
+        <View className="flex-1 min-w-0">
+          <Text accessibilityRole="header" numberOfLines={1} className="font-noto-semibold text-[14px] leading-[18px]">
             {title}
           </Text>
           {subtitle ? (
-            <Text numberOfLines={1} style={[type(12), { lineHeight: 16, color: colors.mutedForeground }]}>
+            <Text numberOfLines={1} className="text-[12px] leading-[16px] text-muted-foreground">
               {subtitle}
             </Text>
           ) : null}
@@ -68,29 +67,29 @@ export function MessagePreview({
       accessibilityRole={onPress ? 'button' : undefined}
       disabled={!onPress}
       onPress={onPress}
-      style={({ pressed }) => ({ flexDirection: 'row', gap: 8, padding: 8, borderRadius: 8, backgroundColor: pressed ? alpha(colors.muted, 0.6) : 'transparent' })}
+      className="flex-row gap-2 p-2 rounded-md active:bg-muted/60"
     >
       <Avatar id={message.author_id} name={author} size={24} />
-      <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
-          <Text numberOfLines={1} style={[type(13, 'medium'), { flexShrink: 1 }]}>
+      <View className="flex-1 min-w-0 gap-0.5">
+        <View className="flex-row items-baseline gap-1.5">
+          <Text numberOfLines={1} className="font-noto-medium text-[13px] shrink">
             {author}
           </Text>
-          <Text style={[type(11), { color: colors.mutedForeground }]}>
+          <Text className="text-[11px] text-muted-foreground">
             {shortDate(message.created_at)} {timeOfDay(message.created_at)}
           </Text>
           {context ? (
-            <Text numberOfLines={1} style={[type(11), { flexShrink: 1, color: colors.mutedForeground }]}>
+            <Text numberOfLines={1} className="text-[11px] shrink text-muted-foreground">
               {context}
             </Text>
           ) : null}
         </View>
         {text || segments ? (
-          <Text numberOfLines={clamp} style={[type(14), { lineHeight: 20, color: alpha(colors.foreground, 0.85) }]}>
+          <Text numberOfLines={clamp} className="text-[14px] leading-[20px] text-foreground/85">
             {segments
               ? segments.map((segment, index) =>
                   segment.match ? (
-                    <Text key={index} style={{ backgroundColor: alpha(colors.primary, 0.2), color: colors.foreground }}>
+                    <Text key={index} className="bg-primary/20 text-foreground leading-[21px]">
                       {segment.text}
                     </Text>
                   ) : (
@@ -101,9 +100,9 @@ export function MessagePreview({
           </Text>
         ) : null}
         {files > 0 ? (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <View className="flex-row items-center gap-1">
             <Icon name="attach" size={13} color={colors.mutedForeground} />
-            <Text numberOfLines={1} style={[type(12), { flexShrink: 1, color: colors.mutedForeground }]}>
+            <Text numberOfLines={1} className="text-[12px] shrink text-muted-foreground">
               {files === 1 ? message.attachments[0]!.file_name : `${files} files`}
             </Text>
           </View>

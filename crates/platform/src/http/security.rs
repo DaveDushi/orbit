@@ -100,6 +100,10 @@ impl OriginPolicy {
             return true;
         }
 
+        if is_ticket_socket(method, uri, headers) {
+            return true;
+        }
+
         let mut origins = headers.get_all(axum::http::header::ORIGIN).iter();
         let Some(origin) = origins.next() else {
             // Browsers send Origin on every POST and WebSocket upgrade, so a request without one
@@ -126,6 +130,20 @@ impl OriginPolicy {
                 }
             })
     }
+}
+
+/// A co-editing socket opened with a socket ticket and no cookie, from any or no Origin: a
+/// browser socket in a native app's WebView sends the WebView's Origin and cannot send the
+/// session. The ticket is a short-lived secret the page obtained with the session, so the
+/// request carries no ambient authority to forge; the socket verifies it.
+fn is_ticket_socket(method: &Method, uri: &Uri, headers: &HeaderMap) -> bool {
+    *method == Method::GET
+        && headers.contains_key(axum::http::header::UPGRADE)
+        && !headers.contains_key(axum::http::header::COOKIE)
+        && uri.path().ends_with("/collab")
+        && uri
+            .query()
+            .is_some_and(|query| query.split('&').any(|pair| pair.starts_with("ticket=")))
 }
 
 /// The token of the request's single `Authorization: Bearer` header. `None` when the header is
@@ -366,6 +384,66 @@ mod tests {
             TASKS,
             &[(AUTHORIZATION, "Basic abc")]
         ));
+    }
+
+    const COLLAB: &str = "/api/v1/workspaces/w/pages/p/collab?v=1&epoch=e&ticket=t";
+
+    #[test]
+    fn ticket_sockets_are_allowed_from_any_or_no_origin_without_a_cookie() {
+        for origin in [None, Some("null"), Some("https://evil.example")] {
+            let mut headers = vec![(UPGRADE, "websocket")];
+            headers.extend(origin.map(|origin| (ORIGIN, origin)));
+            assert!(permits(Method::GET, COLLAB, &headers), "{origin:?}");
+        }
+        assert!(permits(
+            Method::GET,
+            "/api/v1/workspaces/w/tasks/t/collab?ticket=t&v=1",
+            &[(UPGRADE, "websocket"), (ORIGIN, "file://")]
+        ));
+    }
+
+    #[test]
+    fn ticket_sockets_keep_the_origin_rules_otherwise() {
+        let foreign = (ORIGIN, "https://evil.example");
+        let upgrade = (UPGRADE, "websocket");
+        // With a cookie.
+        assert!(!permits(
+            Method::GET,
+            COLLAB,
+            &[
+                upgrade.clone(),
+                foreign.clone(),
+                (COOKIE, "orbit_session=s")
+            ]
+        ));
+        // Without a ticket, or with a lookalike parameter.
+        for path in [
+            "/api/v1/workspaces/w/pages/p/collab?v=1&epoch=e",
+            "/api/v1/workspaces/w/pages/p/collab?v=1&xticket=t",
+            "/api/v1/workspaces/w/pages/p/collab",
+        ] {
+            assert!(
+                !permits(Method::GET, path, &[upgrade.clone(), foreign.clone()]),
+                "{path}"
+            );
+        }
+        // Another socket or a plain request.
+        assert!(!permits(
+            Method::GET,
+            "/api/v1/live?ticket=t",
+            &[upgrade.clone(), foreign.clone()]
+        ));
+        assert!(!permits(
+            Method::GET,
+            "/api/v1/workspaces/w/pages/p/collab/x?ticket=t",
+            &[upgrade.clone(), foreign.clone()]
+        ));
+        assert!(!permits(
+            Method::POST,
+            COLLAB,
+            &[(ORIGIN, "https://evil.example")]
+        ));
+        assert!(!permits(Method::POST, COLLAB, &[upgrade, foreign]));
     }
 
     #[test]

@@ -2,7 +2,6 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { type Href, router } from 'expo-router'
 import { useState } from 'react'
 import { Alert, FlatList, Pressable, RefreshControl, View } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
 
 import { MenuButton } from '../../components/Drawer'
 import { relativeTime } from '../../data/format'
@@ -11,8 +10,8 @@ import * as api from '../../data/orbit'
 import { useOrbit } from '../../orbit-context'
 import { useNotifications, usePages, usePeople } from '../../queries'
 import { errorMessage } from '../../session-context'
-import { alpha, type, useTheme } from '../../theme'
-import { Button, CountBadge, EmptyState, ErrorView, HeaderTitle, LoadingView, PaneHeader, Text } from '../../ui'
+import { useTheme } from '../../theme'
+import { Button, CountBadge, EmptyState, ErrorView, HeaderTitle, LoadingView, PaneHeader, SafeAreaView, Text } from '../../ui'
 
 type Tab = 'all' | 'unread' | 'mentions'
 const TABS: { value: Tab; label: string }[] = [
@@ -47,15 +46,15 @@ export default function ActivityScreen() {
   const items = all.filter((item) => (tab === 'unread' ? !item.read_at : tab === 'mentions' ? isMention(item) : true))
 
   return (
-    <SafeAreaView edges={['top', 'left', 'right']} style={{ flex: 1, backgroundColor: colors.background }}>
-      <PaneHeader style={{ paddingHorizontal: 12 }}>
+    <SafeAreaView edges={['top', 'left', 'right']} className="flex-1 bg-background">
+      <PaneHeader className="px-3">
         <MenuButton />
         <HeaderTitle>Activity</HeaderTitle>
         {unreadCount > 0 ? <CountBadge count={unreadCount} /> : null}
-        <View style={{ flex: 1 }} />
+        <View className="flex-1" />
         <Button label={markAll.isPending ? 'Marking…' : 'Mark all read'} variant="ghost" disabled={unreadCount === 0 || markAll.isPending} onPress={() => markAll.mutate()} />
       </PaneHeader>
-      <View accessibilityRole="tablist" style={{ minHeight: 40, flexDirection: 'row', alignItems: 'flex-end', gap: 6, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+      <View accessibilityRole="tablist" className="min-h-10 flex-row items-end gap-1.5 px-3 border-b border-border">
         {TABS.map((item) => {
           const selected = item.value === tab
           return (
@@ -64,10 +63,10 @@ export default function ActivityScreen() {
               accessibilityRole="tab"
               accessibilityState={{ selected }}
               onPress={() => setTab(item.value)}
-              style={{ height: 33, justifyContent: 'flex-start', paddingTop: 5 }}
+              className="h-[33px] justify-start pt-[5px]"
             >
-              <Text style={[type(13, 'medium'), { paddingHorizontal: 10, color: selected ? colors.foreground : colors.mutedForeground }]}>{item.label}</Text>
-              <View style={{ position: 'absolute', left: 0, right: 0, bottom: -1, height: 2, backgroundColor: selected ? colors.foreground : 'transparent' }} />
+              <Text className={`font-noto-medium text-[13px] px-2.5 ${selected ? 'text-foreground' : 'text-muted-foreground'}`}>{item.label}</Text>
+              <View className={`absolute left-0 right-0 -bottom-px h-0.5 ${selected ? 'bg-foreground' : ''}`} />
             </Pressable>
           )
         })}
@@ -82,7 +81,7 @@ export default function ActivityScreen() {
         <FlatList
           data={items}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={items.length === 0 ? { flexGrow: 1 } : undefined}
+          contentContainerClassName={items.length === 0 ? 'grow' : undefined}
           refreshControl={<RefreshControl refreshing={notifications.isRefetching} onRefresh={() => void notifications.refetch()} tintColor={colors.mutedForeground} />}
           ListEmptyComponent={<EmptyState icon="inbox" title="You're all caught up" description="Assignments and mentions appear here." />}
           renderItem={({ item }) => {
@@ -99,31 +98,21 @@ export default function ActivityScreen() {
                   const target = notificationTarget(item)
                   if (target) router.push(target as Href)
                 }}
-                style={({ pressed }) => ({
-                  minHeight: 56,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 10,
-                  paddingHorizontal: 12,
-                  paddingVertical: 6,
-                  borderBottomWidth: 1,
-                  borderBottomColor: colors.border,
-                  backgroundColor: pressed ? colors.muted : 'transparent',
-                })}
+                className="min-h-14 flex-row items-center gap-2.5 px-3 py-1.5 border-b border-border active:bg-muted"
               >
-                <View style={{ width: 8, alignItems: 'center' }}>{unread ? <View accessibilityLabel="Unread" style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary }} /> : null}</View>
-                <View style={{ width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.muted }}>
-                  <Text style={[type(14), { lineHeight: 20, color: colors.mutedForeground }]}>{(actor?.name ?? '?').charAt(0).toUpperCase()}</Text>
+                <View className="w-2 items-center">{unread ? <View accessibilityLabel="Unread" className="size-2 rounded-full bg-primary" /> : null}</View>
+                <View className="size-7 rounded-full items-center justify-center bg-muted">
+                  <Text className="text-[14px] leading-[20px] text-muted-foreground">{(actor?.name ?? '?').charAt(0).toUpperCase()}</Text>
                 </View>
-                <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-                  <Text numberOfLines={1} style={[type(13, unread ? 'semibold' : 'regular'), { lineHeight: 18.5 }]}>
+                <View className="flex-1 min-w-0 gap-0.5">
+                  <Text numberOfLines={1} className={`text-[13px] leading-[18.5px] ${unread ? 'font-noto-semibold' : ''}`}>
                     {copy.title}
                   </Text>
-                  <Text numberOfLines={1} style={[type(12), { lineHeight: 16, color: alpha(colors.mutedForeground, 0.7) }]}>
+                  <Text numberOfLines={1} className="text-[12px] leading-[16px] text-muted-foreground/70">
                     {actor ? `${actor.name} · ${copy.body}` : copy.body}
                   </Text>
                 </View>
-                <Text style={[type(12), { lineHeight: 16, color: alpha(colors.mutedForeground, 0.7) }]}>{relativeTime(item.created_at)}</Text>
+                <Text className="text-[12px] leading-[16px] text-muted-foreground/70">{relativeTime(item.created_at)}</Text>
               </Pressable>
             )
           }}

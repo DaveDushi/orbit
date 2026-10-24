@@ -2,7 +2,7 @@ import { type ReactNode, useEffect, useState } from 'react'
 import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
-import { alpha, cssColors, type, useTheme } from '../../theme'
+import { useTheme } from '../../theme'
 import { Button, Icon, type IconName, Input, Text } from '../../ui'
 
 export interface SheetAction {
@@ -19,10 +19,10 @@ export function ActionSheet({ visible, title, actions, onClose }: { visible: boo
   const insets = useSafeAreaInsets()
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable accessibilityLabel="Close" onPress={onClose} style={{ flex: 1, backgroundColor: alpha(cssColors.black, 0.5) }} />
-      <View style={{ position: 'absolute', left: 8, right: 8, bottom: 8 + insets.bottom, borderRadius: 14, backgroundColor: colors.popover, borderWidth: 1, borderColor: colors.border, paddingVertical: 6 }}>
+      <Pressable accessibilityLabel="Close" onPress={onClose} className="flex-1 bg-black/50" />
+      <View className="absolute left-2 right-2 rounded-xl bg-popover border border-border py-1.5" style={{ bottom: 8 + insets.bottom }}>
         {title ? (
-          <Text numberOfLines={1} style={[type(12, 'medium'), { paddingHorizontal: 14, paddingTop: 6, paddingBottom: 6, color: colors.mutedForeground }]}>
+          <Text numberOfLines={1} className="font-noto-medium text-[12px] px-3.5 py-1.5 text-muted-foreground">
             {title}
           </Text>
         ) : null}
@@ -37,10 +37,10 @@ export function ActionSheet({ visible, title, actions, onClose }: { visible: boo
               onClose()
               action.onPress()
             }}
-            style={({ pressed }) => ({ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 6, paddingHorizontal: 8, borderRadius: 8, opacity: action.disabled ? 0.5 : 1, backgroundColor: pressed ? colors.muted : 'transparent' })}
+            className={`min-h-11 flex-row items-center gap-2.5 mx-1.5 px-2 rounded-md active:bg-muted ${action.disabled ? 'opacity-50' : 'opacity-100'}`}
           >
             {action.icon ? <Icon name={action.icon} size={16} color={action.destructive ? colors.destructive : colors.mutedForeground} /> : null}
-            <Text style={[type(14, 'medium'), { color: action.destructive ? colors.destructive : colors.foreground }]}>{action.label}</Text>
+            <Text className={`font-noto-medium text-[14px] ${action.destructive ? 'text-destructive' : 'text-foreground'}`}>{action.label}</Text>
           </Pressable>
         ))}
       </View>
@@ -50,20 +50,19 @@ export function ActionSheet({ visible, title, actions, onClose }: { visible: boo
 
 /** The web `Modal`: centered on both axes, title, description, body and the footer buttons. */
 export function Dialog({ visible, title, description, children, footer, onClose }: { visible: boolean; title: string; description?: string; children?: ReactNode; footer: ReactNode; onClose: () => void }) {
-  const { colors } = useTheme()
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-        <Pressable accessibilityLabel="Close" onPress={onClose} style={{ position: 'absolute', inset: 0, backgroundColor: alpha(cssColors.black, 0.5) }} />
-        <View pointerEvents="box-none" style={{ flex: 1, justifyContent: 'center', padding: 16 }}>
-          <View accessibilityRole="none" accessibilityLabel={title} style={{ maxHeight: '90%', borderRadius: 14, backgroundColor: colors.popover, borderWidth: 1, borderColor: colors.border }}>
-            <ScrollView contentContainerStyle={{ padding: 16, gap: 14 }} keyboardShouldPersistTaps="handled">
-              <View style={{ gap: 4 }}>
-                <Text style={[type(16, 'semibold')]}>{title}</Text>
-                {description ? <Text style={[type(13), { lineHeight: 19, color: colors.mutedForeground }]}>{description}</Text> : null}
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} className="flex-1">
+        <Pressable accessibilityLabel="Close" onPress={onClose} className="absolute inset-0 bg-black/50" />
+        <View pointerEvents="box-none" className="flex-1 justify-center p-4">
+          <View accessibilityRole="none" accessibilityLabel={title} className="max-h-[90%] rounded-xl bg-popover border border-border">
+            <ScrollView contentContainerClassName="p-4 gap-3.5" keyboardShouldPersistTaps="handled">
+              <View className="gap-1">
+                <Text className="font-noto-semibold text-[16px]">{title}</Text>
+                {description ? <Text className="text-[13px] leading-[19px] text-muted-foreground">{description}</Text> : null}
               </View>
               {children}
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 8 }}>{footer}</View>
+              <View className="flex-row flex-wrap justify-end gap-2">{footer}</View>
             </ScrollView>
           </View>
         </View>

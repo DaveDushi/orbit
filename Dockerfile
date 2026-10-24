@@ -6,8 +6,10 @@ COPY package.json bun.lock bunfig.toml ./
 COPY apps/web/package.json apps/web/
 COPY apps/mobile/package.json apps/mobile/
 COPY packages/api/package.json packages/api/
+COPY packages/editor/package.json packages/editor/
 RUN bun install --frozen-lockfile --filter web
 COPY packages/api/ packages/api/
+COPY packages/editor/ packages/editor/
 COPY apps/web/ apps/web/
 WORKDIR /src/apps/web
 ARG ORBIT_BUILD_REVISION

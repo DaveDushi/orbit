@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Share, TextInput, View } from 'react-native'
+import { Share, View } from 'react-native'
+import { TextInput } from '../../../ui/scaled'
 
 import { ActionSheet, ConfirmDialog, type ConfirmRequest, type SheetAction } from '../../../components/settings/Dialog'
 import { ProfilePicture } from '../../../components/settings/ProfilePicture'
@@ -11,7 +12,7 @@ import { useAuthOptions, useInvitations, useMemberWrites } from '../../../hooks/
 import { useOrbit } from '../../../orbit-context'
 import { useMembers } from '../../../queries'
 import { errorMessage } from '../../../session-context'
-import { alpha, type, useTheme } from '../../../theme'
+import { alpha, useTheme } from '../../../theme'
 import { Button, Icon, IconButton, Input } from '../../../ui'
 
 const INVITE_ROLES = [
@@ -50,8 +51,8 @@ export default function MembersScreen() {
   return (
     <SettingsShell title="Settings" nav={WORKSPACE_NAV} refreshing={members.isRefetching} onRefresh={() => void members.refetch()}>
       <SettingsCard title="Members" flush>
-        <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: colors.border }}>
-          <View style={{ height: 32, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, borderRadius: 10, borderWidth: 1, borderColor: colors.input }}>
+        <View className="p-3 border-b border-border">
+          <View className="h-8 flex-row items-center gap-2 px-2.5 rounded-lg border border-input">
             <Icon name="search" size={14} color={alpha(colors.mutedForeground, 0.7)} />
             <TextInput
               accessibilityLabel="Search members"
@@ -61,14 +62,14 @@ export default function MembersScreen() {
               onChangeText={setSearch}
               autoCapitalize="none"
               autoCorrect={false}
-              style={[type(14), { flex: 1, paddingVertical: 0, color: colors.foreground }]}
+              className="font-noto text-[14px] leading-[1.45] flex-1 py-0 text-foreground"
             />
             {search ? <IconButton icon="close" label="Clear search" size={22} iconSize={12} color={colors.mutedForeground} onPress={() => setSearch('')} /> : null}
           </View>
         </View>
-        {members.isPending ? <View style={{ padding: 16 }}><Note>Loading workspace members…</Note></View> : null}
-        {members.isError ? <View style={{ padding: 16 }}><Note error>Workspace members could not be loaded.</Note></View> : null}
-        {members.data && list.length === 0 ? <View style={{ padding: 16 }}><Note>No matching members. Try a different name, email address, or role.</Note></View> : null}
+        {members.isPending ? <View className="p-4"><Note>Loading workspace members…</Note></View> : null}
+        {members.isError ? <View className="p-4"><Note error>Workspace members could not be loaded.</Note></View> : null}
+        {members.data && list.length === 0 ? <View className="p-4"><Note>No matching members. Try a different name, email address, or role.</Note></View> : null}
         {list.map((member, index) => {
           const actions = memberActions(member, user.id)
           return (
@@ -89,7 +90,7 @@ export default function MembersScreen() {
             </SettingsRow>
           )
         })}
-        {writeError ? <View style={{ padding: 16 }}><Note error>{errorMessage(writeError)}</Note></View> : null}
+        {writeError ? <View className="p-4"><Note error>{errorMessage(writeError)}</Note></View> : null}
       </SettingsCard>
 
       {canManage ? <Invite /> : null}
@@ -137,14 +138,14 @@ function Invite() {
         </>
       }
     >
-      <View style={{ gap: 16 }}>
+      <View className="gap-4">
         <Input label="Email address" required value={email} onChangeText={setEmail} placeholder="teammate@example.com" keyboardType="email-address" autoCapitalize="none" autoCorrect={false} autoComplete="email" />
         <Segmented label="Role" value={role} options={INVITE_ROLES} onChange={setRole} />
         {!emailEnabled ? <Note>Email delivery is not configured on this server.</Note> : null}
         {link ? (
-          <View style={{ gap: 8 }}>
+          <View className="gap-2">
             <Input label={`Invitation link (${roleLabel(role)})`} value={link} editable={false} selectTextOnFocus />
-            <View style={{ flexDirection: 'row' }}>
+            <View className="flex-row">
               <Button label="Share link" icon="send" variant="outline" onPress={() => void Share.share({ message: link })} />
             </View>
           </View>
@@ -171,7 +172,7 @@ function PendingInvitations() {
           <Button label="Revoke" variant="ghost" size="sm" disabled={revokeInvitation.isPending} onPress={() => revokeInvitation.mutate(invitation.id)} />
         </SettingsRow>
       ))}
-      {revokeInvitation.isError ? <View style={{ padding: 16 }}><Note error>Invitation revocation failed. {errorMessage(revokeInvitation.error)}</Note></View> : null}
+      {revokeInvitation.isError ? <View className="p-4"><Note error>Invitation revocation failed. {errorMessage(revokeInvitation.error)}</Note></View> : null}
     </SettingsCard>
   )
 }

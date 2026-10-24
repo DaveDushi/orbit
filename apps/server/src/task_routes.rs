@@ -29,6 +29,7 @@ use crate::repositories::tasks::{
     normalize_project_key,
 };
 use crate::repositories::views::ViewRepository;
+use crate::socket_ticket::SocketTickets;
 
 #[derive(Clone)]
 pub struct TaskState {
@@ -36,6 +37,8 @@ pub struct TaskState {
     tasks: Arc<TaskRepository>,
     pub(crate) views: Arc<ViewRepository>,
     pub(crate) cookie_mode: CookieMode,
+    /// Verifies the tickets of co-editing sockets; `None` refuses every ticket.
+    socket_tickets: Option<SocketTickets>,
 }
 
 impl TaskState {
@@ -47,7 +50,14 @@ impl TaskState {
             views: Arc::new(ViewRepository::new(database)),
             identity,
             cookie_mode,
+            socket_tickets: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_socket_tickets(mut self, socket_tickets: Option<SocketTickets>) -> Self {
+        self.socket_tickets = socket_tickets;
+        self
     }
 
     #[must_use]
@@ -61,6 +71,7 @@ impl TaskState {
             identity,
             tasks,
             cookie_mode,
+            socket_tickets: None,
         }
     }
 }
@@ -1196,6 +1207,7 @@ async fn collab_socket(
     crate::collab::socket::upgrade(
         &state.identity,
         state.cookie_mode,
+        state.socket_tickets.as_ref(),
         state.identity.database(),
         &workspace,
         crate::collab::DocKind::Task,

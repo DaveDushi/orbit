@@ -1,5 +1,6 @@
 import { useDeferredValue, useState } from 'react'
-import { Share, TextInput, View } from 'react-native'
+import { Share, View } from 'react-native'
+import { TextInput } from '../../../../ui/scaled'
 
 import { ActionSheet, ConfirmDialog, type ConfirmRequest, Dialog, type SheetAction } from '../../../../components/settings/Dialog'
 import { AdminShell, Badge, type BadgeTone, Note, RowText, SettingsCard, SettingsRow } from '../../../../components/settings/Shell'
@@ -8,7 +9,7 @@ import { shortDate } from '../../../../data/format'
 import { useAdminUserWrites, useAdminUsers } from '../../../../hooks/admin'
 import { useOrbit } from '../../../../orbit-context'
 import { errorMessage } from '../../../../session-context'
-import { alpha, type, useTheme } from '../../../../theme'
+import { alpha, useTheme } from '../../../../theme'
 import { Avatar, Button, Icon, Input } from '../../../../ui'
 
 const BADGE_TONE: Record<string, BadgeTone> = { Root: 'primary', Admin: 'secondary', '2FA': 'outline', Suspended: 'destructive' }
@@ -75,8 +76,8 @@ export default function AdminUsersScreen() {
   return (
     <AdminShell refreshing={users.isRefetching} onRefresh={() => void users.refetch()}>
       <SettingsCard title="Users" description="Every account on this Orbit instance." flush>
-        <View style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: colors.border }}>
-          <View style={{ height: 32, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, borderRadius: 10, borderWidth: 1, borderColor: colors.input }}>
+        <View className="p-3 border-b border-border">
+          <View className="h-8 flex-row items-center gap-2 px-2.5 rounded-lg border border-input">
             <Icon name="search" size={14} color={alpha(colors.mutedForeground, 0.7)} />
             <TextInput
               accessibilityLabel="Search users"
@@ -86,13 +87,13 @@ export default function AdminUsersScreen() {
               onChangeText={setQuery}
               autoCapitalize="none"
               autoCorrect={false}
-              style={[type(14), { flex: 1, paddingVertical: 0, color: colors.foreground }]}
+              className="font-noto text-[14px] leading-[1.45] flex-1 py-0 text-foreground"
             />
           </View>
         </View>
-        {users.isPending ? <View style={{ padding: 16 }}><Note>Loading users…</Note></View> : null}
-        {users.isError ? <View style={{ padding: 16 }}><Note error>Users could not be loaded.</Note></View> : null}
-        {search && users.data && list.length === 0 ? <View style={{ padding: 16 }}><Note>No user matches "{search}".</Note></View> : null}
+        {users.isPending ? <View className="p-4"><Note>Loading users…</Note></View> : null}
+        {users.isError ? <View className="p-4"><Note error>Users could not be loaded.</Note></View> : null}
+        {search && users.data && list.length === 0 ? <View className="p-4"><Note>No user matches "{search}".</Note></View> : null}
         {list.map((user, index) => (
           <SettingsRow key={user.id} first={index === 0}>
             <Avatar id={user.id} name={user.display_name || user.email} size={32} />
@@ -105,11 +106,11 @@ export default function AdminUsersScreen() {
           </SettingsRow>
         ))}
         {users.hasNextPage ? (
-          <View style={{ padding: 8, alignItems: 'center', borderTopWidth: 1, borderTopColor: colors.border }}>
+          <View className="p-2 items-center border-t border-border">
             <Button label={users.isFetchingNextPage ? 'Loading…' : 'Load more users'} variant="ghost" disabled={users.isFetchingNextPage} onPress={() => void users.fetchNextPage()} />
           </View>
         ) : null}
-        {failed ? <View style={{ padding: 16 }}><Note error>{errorMessage(failed)}</Note></View> : null}
+        {failed ? <View className="p-4"><Note error>{errorMessage(failed)}</Note></View> : null}
       </SettingsCard>
 
       <ActionSheet visible={managing !== null} title={managing?.display_name} actions={sheet} onClose={() => setManaging(null)} />

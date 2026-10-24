@@ -1,6 +1,6 @@
 import { Pressable, View } from 'react-native'
 
-import { alpha, cssColors, mix, type, useTheme } from '../theme'
+import { alpha, cssColors, mix, useTheme } from '../theme'
 import { Icon, type IconName } from './Icon'
 import { Spinner } from './Spinner'
 import { Text } from './Text'
@@ -9,8 +9,21 @@ export type ButtonVariant = 'primary' | 'outline' | 'secondary' | 'ghost' | 'des
 /** The web's `default` (32), `sm` (28) and `xs` (24) heights; `lg` (44) is the touch size of forms like sign-in. */
 export type ButtonSize = 'xs' | 'sm' | 'default' | 'lg'
 
-const HEIGHT: Record<ButtonSize, number> = { xs: 24, sm: 28, default: 32, lg: 44 }
-const TEXT: Record<ButtonSize, number> = { xs: 12, sm: 12.8, default: 14, lg: 15 }
+const SIZE: Record<ButtonSize, { box: string; text: string }> = {
+  xs: { box: 'h-6 rounded-md px-2', text: 'text-[12px] leading-[17px]' },
+  sm: { box: 'h-7 rounded-md px-2.5', text: 'text-[12.8px] leading-[18px]' },
+  default: { box: 'h-8 rounded-lg px-2.5', text: 'text-[14px] leading-[20px]' },
+  lg: { box: 'h-11 rounded-lg px-2.5', text: 'text-[15px] leading-[21px]' },
+}
+
+const VARIANT: Record<ButtonVariant, { box: string; text: string }> = {
+  primary: { box: 'border-transparent bg-primary active:bg-primary/80', text: 'text-primary-foreground' },
+  outline: { box: 'border-border bg-background active:bg-muted dark:border-input dark:bg-input/30 dark:active:bg-input/50', text: 'text-foreground' },
+  // pressed: `color-mix` of secondary and foreground, a computed color (see the style)
+  secondary: { box: 'border-transparent bg-secondary', text: 'text-secondary-foreground' },
+  ghost: { box: 'border-transparent active:bg-muted dark:active:bg-muted/50', text: 'text-foreground' },
+  destructive: { box: 'border-transparent bg-destructive/10 active:bg-destructive/20 dark:bg-destructive/20 dark:active:bg-destructive/30', text: 'text-destructive' },
+}
 
 export interface ButtonProps {
   label: string
@@ -34,16 +47,17 @@ export function Button({ label, onPress, variant = 'primary', size = 'default', 
   const { colors, scheme } = useTheme()
   const dark = scheme === 'dark'
   const inactive = disabled || loading || !onPress
-  const look = {
-    primary: { background: colors.primary, pressed: alpha(colors.primary, 0.8), text: colors.primaryForeground, border: 'transparent', edge: mix(colors.primary, 0.75, cssColors.black) },
-    outline: dark
-      ? { background: alpha(colors.input, 0.3), pressed: alpha(colors.input, 0.5), text: colors.foreground, border: colors.input, edge: alpha(cssColors.white, 0.08) }
-      : { background: colors.background, pressed: colors.muted, text: colors.foreground, border: colors.border, edge: alpha(cssColors.black, 0.22) },
-    secondary: { background: colors.secondary, pressed: mix(colors.secondary, 0.95, colors.foreground), text: colors.secondaryForeground, border: 'transparent', edge: alpha(dark ? cssColors.white : cssColors.black, dark ? 0.08 : 0.22) },
-    ghost: { background: 'transparent', pressed: dark ? alpha(colors.muted, 0.5) : colors.muted, text: colors.foreground, border: 'transparent', edge: undefined },
-    destructive: { background: alpha(colors.destructive, dark ? 0.2 : 0.1), pressed: alpha(colors.destructive, dark ? 0.3 : 0.2), text: colors.destructive, border: 'transparent', edge: alpha(colors.destructive, 0.4) },
+  const edge = {
+    primary: mix(colors.primary, 0.75, cssColors.black),
+    outline: dark ? alpha(cssColors.white, 0.08) : alpha(cssColors.black, 0.22),
+    secondary: alpha(dark ? cssColors.white : cssColors.black, dark ? 0.08 : 0.22),
+    ghost: undefined,
+    destructive: alpha(colors.destructive, 0.4),
   }[variant]
-  const text = muted ? alpha(colors.mutedForeground, 0.7) : look.text
+  // the icon and spinner take a color prop, not a class
+  const iconColor = muted
+    ? alpha(colors.mutedForeground, 0.7)
+    : { primary: colors.primaryForeground, outline: colors.foreground, secondary: colors.secondaryForeground, ghost: colors.foreground, destructive: colors.destructive }[variant]
   return (
     <Pressable
       accessibilityRole="button"
@@ -51,25 +65,15 @@ export function Button({ label, onPress, variant = 'primary', size = 'default', 
       accessibilityState={{ disabled: inactive, busy: loading }}
       disabled={inactive}
       onPress={onPress}
+      className={`flex-row items-center justify-center gap-1.5 border ${SIZE[size].box} ${VARIANT[variant].box} ${block ? 'self-stretch' : ''} ${disabled && !loading ? 'opacity-50' : ''}`}
       style={({ pressed }) => ({
-        height: HEIGHT[size],
-        alignSelf: block ? 'stretch' : undefined,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 6,
-        paddingHorizontal: size === 'xs' ? 8 : 10,
-        borderRadius: size === 'default' || size === 'lg' ? 10 : 8,
-        borderWidth: 1,
-        borderColor: look.border,
-        backgroundColor: pressed ? look.pressed : look.background,
-        opacity: disabled && !loading ? 0.5 : 1,
-        boxShadow: look.edge && !pressed && !disabled ? `0 2px 0 ${look.edge}` : undefined,
-        transform: [{ translateY: pressed && look.edge ? 2 : 0 }],
+        backgroundColor: variant === 'secondary' && pressed ? mix(colors.secondary, 0.95, colors.foreground) : undefined,
+        boxShadow: edge && !pressed && !disabled ? `0 2px 0 ${edge}` : undefined,
+        transform: [{ translateY: pressed && edge ? 2 : 0 }],
       })}
     >
-      {loading ? <Spinner color={text} /> : icon ? <View><Icon name={icon} size={size === 'default' || size === 'lg' ? 16 : 14} color={text} /></View> : null}
-      <Text style={[type(TEXT[size], 'medium'), { lineHeight: Math.round(TEXT[size] * 1.4), color: text }]}>{label}</Text>
+      {loading ? <Spinner color={iconColor} /> : icon ? <View><Icon name={icon} size={size === 'default' || size === 'lg' ? 16 : 14} color={iconColor} /></View> : null}
+      <Text className={`font-noto-medium ${SIZE[size].text} ${muted ? 'text-muted-foreground/70' : VARIANT[variant].text}`}>{label}</Text>
     </Pressable>
   )
 }

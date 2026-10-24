@@ -3,7 +3,6 @@ import { applyChatEvents } from '../../chat-cache'
 import { router, useLocalSearchParams } from 'expo-router'
 import { useEffect, useMemo, useState } from 'react'
 import { KeyboardAvoidingView, Platform, View } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
 
 import { AddPeopleSheet } from '../../components/chat/ChannelSheets'
 import { Composer, useComposer } from '../../components/chat/Composer'
@@ -16,8 +15,8 @@ import type { ConversationRecord } from '../../data/orbit'
 import { useChatWrite, useIsChatAdmin, useMessages } from '../../hooks/chat'
 import { useOrbit } from '../../orbit-context'
 import { useChatStates, useConversations, usePeople } from '../../queries'
-import { alpha, type, useTheme } from '../../theme'
-import { Avatar, Button, ErrorView, Icon, IconButton, LoadingView, Text } from '../../ui'
+import { useTheme } from '../../theme'
+import { Avatar, Button, ErrorView, Icon, IconButton, LoadingView, SafeAreaView, Text } from '../../ui'
 
 /**
  * A conversation on a phone, painted on the card surface like the web. `?message=` opens it around that message (a
@@ -75,22 +74,22 @@ export default function ConversationScreen() {
   const back = () => (router.canGoBack() ? router.back() : router.navigate('/chat'))
 
   return (
-    <SafeAreaView edges={['top', 'left', 'right', 'bottom']} style={{ flex: 1, backgroundColor: colors.card }}>
-      <View style={{ height: 48, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8 }}>
+    <SafeAreaView edges={['top', 'left', 'right', 'bottom']} className="flex-1 bg-card">
+      <View className="h-12 flex-row items-center gap-1 px-2">
         <IconButton icon="back" label="Back to chat" size={32} iconSize={20} color={colors.mutedForeground} onPress={back} />
-        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 }}>
+        <View className="flex-1 flex-row items-center gap-2 min-w-0">
           {dmPeer ? <Avatar id={dmPeer} name={name} size={20} /> : <Icon name={conversation?.kind === 'private' ? 'lock' : 'hashtag'} size={18} color={colors.mutedForeground} />}
-          <Text numberOfLines={1} style={[type(14, 'semibold'), { flexShrink: 1 }]}>
+          <Text numberOfLines={1} className="font-noto-semibold text-[14px] shrink">
             {name}
           </Text>
         </View>
-        <View style={{ flexDirection: 'row', gap: 2 }}>
+        <View className="flex-row gap-0.5">
           <IconButton icon="search" label="Search" size={32} iconSize={20} color={colors.mutedForeground} onPress={() => router.push(`/chat/${id}/search`)} />
           <IconButton icon="people" label="Members" size={32} iconSize={20} color={colors.mutedForeground} onPress={() => router.push(`/chat/${id}/members`)} />
           <IconButton icon="more" label={`Options for ${name}`} size={32} iconSize={20} color={colors.mutedForeground} disabled={!conversation} onPress={() => setOptions(true)} />
         </View>
       </View>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         {!messages.data ? (
           messages.isError ? (
             <ErrorView error={messages.error} onRetry={() => void messages.refetch()} />
@@ -118,7 +117,7 @@ export default function ConversationScreen() {
           />
         )}
         {around ? (
-          <View style={{ alignItems: 'center', paddingTop: 6 }}>
+          <View className="items-center pt-1.5">
             <Button label="Jump to present" size="sm" variant="secondary" icon="arrowDown" onPress={() => router.setParams({ message: undefined })} />
           </View>
         ) : null}
@@ -127,8 +126,8 @@ export default function ConversationScreen() {
         ) : member ? (
           <Composer state={composer} placeholder={placeholder} nameOf={handlers.nameOf} />
         ) : (
-          <View style={{ margin: 8, padding: 12, gap: 8, alignItems: 'center', borderRadius: 10, borderWidth: 1, borderColor: colors.border }}>
-            <Text style={[type(14), { color: colors.mutedForeground }]}>You are viewing #{conversation.name}.</Text>
+          <View className="m-2 p-3 gap-2 items-center rounded-lg border border-border">
+            <Text className="text-[14px] text-muted-foreground">You are viewing #{conversation.name}.</Text>
             <Button label="Join channel" onPress={() => void run('Could not join the channel', (client, workspaceId) => chat.joinChannel(client, workspaceId, conversation.id))} />
           </View>
         )}
@@ -141,33 +140,31 @@ export default function ConversationScreen() {
 }
 
 function Notice({ text }: { text: string }) {
-  const { colors } = useTheme()
   return (
-    <View style={{ margin: 8, padding: 12, borderRadius: 10, backgroundColor: colors.muted }}>
-      <Text style={[type(13), { textAlign: 'center', color: colors.mutedForeground }]}>{text}</Text>
+    <View className="m-2 p-3 rounded-lg bg-muted">
+      <Text className="text-[13px] text-center text-muted-foreground">{text}</Text>
     </View>
   )
 }
 
 /** The block above the first message: who made the channel and when, and "Add people" for those who may. */
 function ConversationStart({ conversation, title, creator, onAddPeople }: { conversation: ConversationRecord; title: string; creator: string; onAddPeople?: () => void }) {
-  const { colors } = useTheme()
   if (conversation.kind === 'dm') {
     return (
-      <View style={{ paddingHorizontal: 12, paddingTop: 32, paddingBottom: 16 }}>
-        <Text style={[type(16, 'semibold'), { lineHeight: 24 }]}>{conversation.self_dm ? 'This is your space' : `This is the start of your conversation with ${title}`}</Text>
+      <View className="px-3 pt-8 pb-4">
+        <Text className="font-noto-semibold text-[16px] leading-[24px]">{conversation.self_dm ? 'This is your space' : `This is the start of your conversation with ${title}`}</Text>
       </View>
     )
   }
   return (
-    <View style={{ paddingHorizontal: 12, paddingTop: 32, paddingBottom: 16, gap: 4, alignItems: 'flex-start' }}>
-      <Text style={[type(16, 'semibold'), { lineHeight: 24 }]}>This is the start of #{title}</Text>
-      {conversation.topic ? <Text style={[type(14), { color: colors.mutedForeground }]}>{conversation.topic}</Text> : null}
-      <Text style={[type(12), { lineHeight: 16, color: colors.mutedForeground }]}>
-        Created by <Text style={[type(12, 'medium'), { lineHeight: 16, color: alpha(colors.foreground, 0.85) }]}>{creator}</Text> on {fullDate(conversation.created_at)}, {timeOfDay(conversation.created_at)}
+    <View className="px-3 pt-8 pb-4 gap-1 items-start">
+      <Text className="font-noto-semibold text-[16px] leading-[24px]">This is the start of #{title}</Text>
+      {conversation.topic ? <Text className="text-[14px] text-muted-foreground">{conversation.topic}</Text> : null}
+      <Text className="text-[12px] leading-[16px] text-muted-foreground">
+        Created by <Text className="font-noto-medium text-[12px] leading-[16px] text-foreground/85">{creator}</Text> on {fullDate(conversation.created_at)}, {timeOfDay(conversation.created_at)}
       </Text>
       {onAddPeople ? (
-        <View style={{ marginTop: 8 }}>
+        <View className="mt-2">
           <Button label="Add people" variant="outline" size="sm" icon="userAdd" onPress={onAddPeople} />
         </View>
       ) : null}

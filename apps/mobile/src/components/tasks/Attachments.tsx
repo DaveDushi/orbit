@@ -4,7 +4,7 @@ import { ActivityIndicator, Alert, Image, Pressable, View } from 'react-native'
 import { fileSize } from '../../data/tasks'
 import { useOrbit } from '../../orbit-context'
 import { errorMessage } from '../../session-context'
-import { type, useTheme } from '../../theme'
+import { useTheme } from '../../theme'
 import { Icon, Text } from '../../ui'
 import { openFile } from './files'
 
@@ -39,9 +39,9 @@ export function Attachments({ files, onRemove }: { files: readonly ShownFile[]; 
   const images = files.filter((file) => file.image)
   const others = files.filter((file) => !file.image)
   return (
-    <View style={{ gap: 6, marginTop: 6 }}>
+    <View className="gap-1.5 mt-1.5">
       {images.length > 0 ? (
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+        <View className="flex-row flex-wrap gap-1.5">
           {images.map((file) => (
             <Thumbnail key={file.key} file={file} opening={opening === file.key} onPress={() => void open(file)} onRemove={onRemove && (() => onRemove(file.key))} />
           ))}
@@ -59,11 +59,11 @@ function Thumbnail({ file, opening, onPress, onRemove }: { file: ShownFile; open
   const { session } = useOrbit()
   return (
     <View>
-      <Pressable accessibilityRole="imagebutton" accessibilityLabel={`Open ${file.name}`} onPress={onPress} style={{ width: 96, height: 96, borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.muted }}>
+      <Pressable accessibilityRole="imagebutton" accessibilityLabel={`Open ${file.name}`} onPress={onPress} className="size-24 rounded-md overflow-hidden border border-border bg-muted">
         {file.path ? (
-          <Image source={{ uri: `${session.server}${file.path}`, headers: { Authorization: `Bearer ${session.token}` } }} resizeMode="cover" style={{ width: '100%', height: '100%' }} accessibilityIgnoresInvertColors />
+          <Image source={{ uri: `${session.server}${file.path}`, headers: { Authorization: `Bearer ${session.token}` } }} resizeMode="cover" className="size-full" accessibilityIgnoresInvertColors />
         ) : null}
-        {opening || !file.path ? <ActivityIndicator style={{ position: 'absolute', inset: 0 }} color={colors.foreground} /> : null}
+        {opening || !file.path ? <ActivityIndicator className="absolute inset-0" color={colors.foreground} /> : null}
       </Pressable>
       {onRemove ? <RemoveButton name={file.name} onPress={onRemove} /> : null}
     </View>
@@ -73,18 +73,18 @@ function Thumbnail({ file, opening, onPress, onRemove }: { file: ShownFile; open
 function FileChip({ file, opening, onPress, onRemove }: { file: ShownFile; opening: boolean; onPress: () => void; onRemove?: () => void }) {
   const { colors } = useTheme()
   return (
-    <View style={{ alignSelf: 'flex-start', maxWidth: '100%' }}>
+    <View className="self-start max-w-full">
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Open ${file.name}`}
         onPress={onPress}
-        style={({ pressed }) => ({ minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 10, paddingRight: onRemove ? 32 : 10, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: pressed ? colors.muted : colors.card })}
+        className={`min-h-9 flex-row items-center gap-2 pl-2.5 rounded-md border border-border bg-card active:bg-muted ${onRemove ? 'pr-8' : 'pr-2.5'}`}
       >
         {opening || !file.path ? <ActivityIndicator size="small" color={colors.mutedForeground} /> : <Icon name="documentDownload" size={16} color={colors.mutedForeground} />}
-        <Text numberOfLines={1} style={[type(13, 'medium'), { flexShrink: 1 }]}>
+        <Text numberOfLines={1} className="font-noto-medium text-[13px] shrink">
           {file.name}
         </Text>
-        {file.size !== undefined ? <Text style={[type(12), { color: colors.mutedForeground }]}>{fileSize(file.size)}</Text> : null}
+        {file.size !== undefined ? <Text className="text-[12px] text-muted-foreground">{fileSize(file.size)}</Text> : null}
       </Pressable>
       {onRemove ? <RemoveButton name={file.name} onPress={onRemove} center /> : null}
     </View>
@@ -100,7 +100,7 @@ function RemoveButton({ name, onPress, center = false }: { name: string; onPress
       accessibilityLabel={`Remove ${name}`}
       hitSlop={8}
       onPress={onPress}
-      style={{ position: 'absolute', top: center ? 8 : 4, right: center ? 8 : 4, width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.popover, borderWidth: 1, borderColor: colors.border }}
+      className={`absolute size-5 rounded-full items-center justify-center bg-popover border border-border ${center ? 'top-2 right-2' : 'top-1 right-1'}`}
     >
       <Icon name="close" size={12} color={colors.foreground} />
     </Pressable>

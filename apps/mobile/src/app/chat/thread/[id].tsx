@@ -3,7 +3,6 @@ import { applyChatEvents } from '../../../chat-cache'
 import { router, useLocalSearchParams } from 'expo-router'
 import { useEffect, useMemo } from 'react'
 import { KeyboardAvoidingView, Platform, View } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
 
 import { Composer, useComposer } from '../../../components/chat/Composer'
 import { MessageItem } from '../../../components/chat/Message'
@@ -13,8 +12,8 @@ import * as chat from '../../../data/chat-api'
 import { useChatWrite, useFollowedThreads, useThread, useThreadFollowsRoot } from '../../../hooks/chat'
 import { useOrbit } from '../../../orbit-context'
 import { useConversations, usePeople } from '../../../queries'
-import { type, useTheme } from '../../../theme'
-import { ErrorView, IconButton, LoadingView, Text } from '../../../ui'
+import { useTheme } from '../../../theme'
+import { ErrorView, IconButton, LoadingView, SafeAreaView, Text } from '../../../ui'
 
 /**
  * A thread in full view, as the web's `/chat/:id/thread/:messageId` on a phone: the root, its replies, and a composer
@@ -66,15 +65,15 @@ export default function ThreadScreen() {
   const member = conversation?.member_ids.includes(user.id) ?? false
 
   return (
-    <SafeAreaView edges={['top', 'left', 'right', 'bottom']} style={{ flex: 1, backgroundColor: colors.card }}>
-      <View style={{ height: 48, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8 }}>
+    <SafeAreaView edges={['top', 'left', 'right', 'bottom']} className="flex-1 bg-card">
+      <View className="h-12 flex-row items-center gap-1 px-2">
         <IconButton icon="back" label="Back" size={32} iconSize={20} color={colors.mutedForeground} onPress={() => (router.canGoBack() ? router.back() : router.navigate(conversationId ? `/chat/${conversationId}` : '/chat'))} />
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text numberOfLines={1} style={[type(14, 'semibold'), { lineHeight: 18 }]}>
+        <View className="flex-1 min-w-0">
+          <Text numberOfLines={1} className="font-noto-semibold text-[14px] leading-[18px]">
             Thread
           </Text>
           {where ? (
-            <Text numberOfLines={1} style={[type(12), { lineHeight: 16, color: colors.mutedForeground }]}>
+            <Text numberOfLines={1} className="text-[12px] leading-[16px] text-muted-foreground">
               {where}
             </Text>
           ) : null}
@@ -90,7 +89,7 @@ export default function ThreadScreen() {
         />
         {conversationId ? <IconButton icon="chat" label={`Open ${where}`} size={32} iconSize={20} color={colors.mutedForeground} onPress={() => router.push(`/chat/${conversationId}?message=${rootId}`)} /> : null}
       </View>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         {!thread.data || !root ? (
           thread.isError ? (
             <ErrorView error={thread.error} onRetry={() => void thread.refetch()} />
@@ -108,13 +107,13 @@ export default function ThreadScreen() {
             }}
             start={
               thread.hasPreviousPage ? undefined : (
-                <View style={{ paddingTop: 8 }}>
+                <View className="pt-2">
                   <MessageItem message={root} groupStart handlers={handlers} />
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingTop: 12, paddingBottom: 4 }}>
-                    <Text style={[type(12, 'medium'), { color: colors.mutedForeground }]}>
+                  <View className="flex-row items-center gap-2 px-3 pt-3 pb-1">
+                    <Text className="font-noto-medium text-[12px] text-muted-foreground">
                       {root.reply_count} {root.reply_count === 1 ? 'reply' : 'replies'}
                     </Text>
-                    <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
+                    <View className="flex-1 h-px bg-border" />
                   </View>
                 </View>
               )

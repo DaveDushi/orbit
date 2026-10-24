@@ -1,7 +1,7 @@
 import { router, useLocalSearchParams } from 'expo-router'
 import { useMemo, useState } from 'react'
-import { Pressable, RefreshControl, SectionList, TextInput, View } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
+import { Pressable, RefreshControl, SectionList, View } from 'react-native'
+import { TextInput } from '../../../ui/scaled'
 
 import { MenuButton } from '../../../components/Drawer'
 import { NewTaskDialog, type NewTaskDefaults } from '../../../components/NewTaskDialog'
@@ -9,8 +9,8 @@ import { TaskRow } from '../../../components/TaskRow'
 import { groupTasksByStatus, type StatusGroup } from '../../../data/tasks'
 import { useOrbit } from '../../../orbit-context'
 import { usePeople, useProjects, useStatuses, useTasks } from '../../../queries'
-import { alpha, type, useTheme } from '../../../theme'
-import { EmptyState, ErrorView, HeaderTitle, Icon, IconButton, LoadingView, PaneHeader, PickerSheet, StatusIcon, Text } from '../../../ui'
+import { useTheme } from '../../../theme'
+import { EmptyState, ErrorView, HeaderTitle, Icon, IconButton, LoadingView, PaneHeader, PickerSheet, SafeAreaView, StatusIcon, Text } from '../../../ui'
 
 /** The server's task views the drawer links to, with the web page titles. */
 const PRESET_TITLE: Record<string, string> = {
@@ -67,40 +67,30 @@ export default function TasksScreen() {
 
   const header = (
     <>
-      <PaneHeader style={{ minHeight: 44, paddingVertical: 6, flexWrap: 'wrap' }}>
+      <PaneHeader className="flex-wrap">
         <MenuButton />
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Select project"
           onPress={() => setSheet('project')}
-          style={({ pressed }) => ({ height: 32, maxWidth: '30%', flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 7, borderRadius: 10, backgroundColor: pressed ? colors.muted : 'transparent' })}
+          className="h-8 max-w-[30%] flex-row items-center gap-[7px] px-[7px] rounded-lg active:bg-muted"
         >
-          {project ? <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: project.color }} /> : null}
-          <Text numberOfLines={1} style={[type(14), { lineHeight: 20, flexShrink: 1, color: colors.mutedForeground }]}>
+          {project ? <View className="size-2 rounded-full" style={{ backgroundColor: project.color }} /> : null}
+          <Text numberOfLines={1} className="text-[14px] leading-[20px] shrink text-muted-foreground">
             {project?.name ?? 'All projects'}
           </Text>
           <Icon name="chevronDown" size={14} color={colors.mutedForeground} />
         </Pressable>
-        <View style={{ flex: 1, minWidth: 0 }}>
+        <View className="flex-1 min-w-0">
           <HeaderTitle>{view ? PRESET_TITLE[view] : 'All tasks'}</HeaderTitle>
         </View>
         <IconButton icon="filter" label="Filter" size={32} onPress={() => setSheet('filter')} color={assignedToMe ? colors.primary : undefined} />
         <IconButton icon="display" label="Display" size={32} onPress={() => setSheet('display')} />
         <IconButton icon="plus" label="New task" size={32} variant="primary" onPress={() => newTask()} />
         <View
-          style={{
-            flexBasis: '100%',
-            height: 34,
-            marginTop: 4,
-            flexDirection: 'row',
-            alignItems: 'center',
-            borderWidth: 1,
-            borderColor: colors.input,
-            borderRadius: 10,
-            backgroundColor: alpha(colors.input, 0.3),
-          }}
+          className="h-8.5 mt-1 basis-full flex-row items-center border border-input rounded-lg bg-input/30"
         >
-          <View style={{ width: 22, alignItems: 'flex-end' }}>
+          <View className="w-5.5 items-end">
             <Icon name="search" size={14} color={colors.mutedForeground} />
           </View>
           <TextInput
@@ -112,17 +102,17 @@ export default function TasksScreen() {
             value={search}
             onChangeText={setSearch}
             returnKeyType="search"
-            style={{ flex: 1, height: 32, paddingLeft: 8, paddingRight: 10, fontSize: 16, fontFamily: type(16).fontFamily, color: colors.foreground }}
+            className="flex-1 h-8 pl-2 pr-2.5 font-noto text-[16px] text-foreground"
           />
         </View>
       </PaneHeader>
     </>
   )
 
-  const projectOptions = [{ key: 'all', label: 'All projects', selected: projectId === null }, ...(projects.data ?? []).map((item) => ({ key: item.id, label: item.name, selected: item.id === projectId, leading: <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: item.color }} /> }))]
+  const projectOptions = [{ key: 'all', label: 'All projects', selected: projectId === null }, ...(projects.data ?? []).map((item) => ({ key: item.id, label: item.name, selected: item.id === projectId, leading: <View className="size-2 rounded-full" style={{ backgroundColor: item.color }} /> }))]
 
   return (
-    <SafeAreaView edges={['top', 'left', 'right']} style={{ flex: 1, backgroundColor: colors.background }}>
+    <SafeAreaView edges={['top', 'left', 'right']} className="flex-1 bg-background">
       {header}
       {!tasks.data || !statuses.data ? (
         tasks.error || statuses.error ? (
@@ -136,7 +126,7 @@ export default function TasksScreen() {
           keyExtractor={(task) => task.id}
           stickySectionHeadersEnabled={false}
           keyboardShouldPersistTaps="handled"
-          contentContainerStyle={sections.length === 0 ? { flexGrow: 1 } : { paddingBottom: 24 }}
+          contentContainerClassName={sections.length === 0 ? 'grow' : 'pb-6'}
           refreshControl={<RefreshControl refreshing={tasks.isRefetching} onRefresh={() => void refresh()} tintColor={colors.mutedForeground} />}
           ListEmptyComponent={<EmptyState icon="tasks" title="No tasks" description={search || assignedToMe || projectId ? 'No task matches the filter.' : 'Tap + to create the first task.'} />}
           renderSectionHeader={({ section }) =>
@@ -199,23 +189,23 @@ export default function TasksScreen() {
 function GroupHeader({ group, count, collapsed, onToggle, onAdd }: { group: StatusGroup; count: number; collapsed: boolean; onToggle: () => void; onAdd: () => void }) {
   const { colors } = useTheme()
   return (
-    <View style={{ height: 36, flexDirection: 'row', alignItems: 'center', paddingLeft: 6, paddingRight: 8, backgroundColor: colors.card, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+    <View className="h-9 flex-row items-center pl-1.5 pr-2 bg-card border-b border-border">
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={collapsed ? `Expand ${group.name}` : `Collapse ${group.name}`}
         onPress={onToggle}
         hitSlop={8}
-        style={{ width: 20, height: 20, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.muted }}
+        className="size-5 rounded-md items-center justify-center bg-muted"
       >
-        <View style={{ transform: [{ rotate: collapsed ? '-90deg' : '0deg' }] }}>
+        <View className={collapsed ? '-rotate-90' : undefined}>
           <Icon name="chevronDown" size={12} color={colors.foreground} />
         </View>
       </Pressable>
-      <View style={{ marginLeft: 8 }}>
+      <View className="ml-2">
         <StatusIcon status={group.status} size={14} />
       </View>
-      <Text style={[type(12, 'semibold'), { lineHeight: 16, marginLeft: 8, color: colors.mutedForeground }]}>{group.name}</Text>
-      <Text style={[type(12), { lineHeight: 16, marginLeft: 8, flex: 1, color: alpha(colors.mutedForeground, 0.7) }]}>{count}</Text>
+      <Text className="font-noto-semibold text-[12px] leading-[16px] ml-2 text-muted-foreground">{group.name}</Text>
+      <Text className="text-[12px] leading-[16px] ml-2 flex-1 text-muted-foreground/70">{count}</Text>
       <IconButton icon="plus" label={`New task in ${group.name}`} size={24} iconSize={12} color={colors.mutedForeground} onPress={onAdd} />
     </View>
   )

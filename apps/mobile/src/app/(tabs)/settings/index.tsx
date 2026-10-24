@@ -9,7 +9,7 @@ import { useMemberWrites, useRenameWorkspace, useWorkspaceStorage } from '../../
 import { useOrbit } from '../../../orbit-context'
 import { useMembers } from '../../../queries'
 import { errorMessage } from '../../../session-context'
-import { setSchemePreference, type, useTheme } from '../../../theme'
+import { setSchemePreference, useTheme } from '../../../theme'
 import { Button, Icon, Input, Text } from '../../../ui'
 
 const THEMES = [
@@ -51,7 +51,7 @@ export default function GeneralScreen() {
             <Icon name="chevronRight" size={14} color={colors.mutedForeground} />
           </SettingsRow>
         ))}
-        <View style={{ padding: 16, borderTopWidth: 1, borderTopColor: colors.border, gap: 8, alignItems: 'flex-start' }}>
+        <View className="p-4 border-t border-border gap-2 items-start">
           <Button
             label="Sign out"
             variant="outline"
@@ -83,9 +83,9 @@ function WorkspaceName() {
   return (
     <SettingsCard title="Workspace" description="Rename this workspace.">
       <Input label="Name" required value={name} onChangeText={setName} maxLength={100} returnKeyType="done" onSubmitEditing={() => dirty && name.trim() && rename.mutate(name.trim())} />
-      {rename.isError ? <View style={{ marginTop: 12 }}><Note error>Workspace rename failed. {errorMessage(rename.error)}</Note></View> : null}
+      {rename.isError ? <View className="mt-3"><Note error>Workspace rename failed. {errorMessage(rename.error)}</Note></View> : null}
       {dirty ? (
-        <View style={{ marginTop: 16, flexDirection: 'row', gap: 8, justifyContent: 'flex-end' }}>
+        <View className="mt-4 flex-row gap-2 justify-end">
           <Button label="Discard" variant="outline" onPress={() => setName(workspace.name)} />
           <Button label="Save" loading={rename.isPending} disabled={!name.trim()} onPress={() => rename.mutate(name.trim())} />
         </View>
@@ -95,16 +95,15 @@ function WorkspaceName() {
 }
 
 function StorageBar({ label, fraction }: { label: string; fraction: number | null }) {
-  const { colors } = useTheme()
   return (
-    <View style={{ gap: 8 }}>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
-        <Text style={type(13)}>Used</Text>
-        <Text style={[type(13), { color: colors.mutedForeground, fontVariant: ['tabular-nums'] }]}>{label}</Text>
+    <View className="gap-2">
+      <View className="flex-row justify-between gap-2">
+        <Text className="text-[13px]">Used</Text>
+        <Text className="text-[13px] text-muted-foreground tabular-nums">{label}</Text>
       </View>
       {fraction !== null ? (
-        <View accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: Math.round(fraction * 100) }} style={{ height: 6, borderRadius: 3, backgroundColor: colors.muted, overflow: 'hidden' }}>
-          <View style={{ width: `${fraction * 100}%`, height: 6, borderRadius: 3, backgroundColor: fraction >= 0.9 ? colors.destructive : colors.primary }} />
+        <View accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: Math.round(fraction * 100) }} className="h-1.5 rounded-full bg-muted overflow-hidden">
+          <View className={`h-1.5 rounded-full ${fraction >= 0.9 ? 'bg-destructive' : 'bg-primary'}`} style={{ width: `${fraction * 100}%` }} />
         </View>
       ) : null}
     </View>
@@ -128,7 +127,7 @@ function LeaveWorkspace() {
   }
   return (
     <SettingsCard title="Leave workspace" description="Remove yourself from this workspace.">
-      <View style={{ alignItems: 'flex-start', gap: 8 }}>
+      <View className="items-start gap-2">
         <Button
           label={leave.isPending ? 'Leaving…' : 'Leave workspace'}
           variant="destructive"

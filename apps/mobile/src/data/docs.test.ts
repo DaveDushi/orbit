@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { absoluteUrl, blockId, descendantsOf, docBlocks, docSpaces, favoritePages, iconOf, pageTitle, paragraphBlocks, spaceRequest, trashPrompt, validCoverUrl, visibleThreads } from './docs'
+import { absoluteUrl, blockId, descendantsOf, docSpaces, favoritePages, iconOf, pageTitle, paragraphBlocks, spaceRequest, trashPrompt, validCoverUrl, visibleThreads } from './docs'
 import type { PageSummary, Teamspace } from './orbit'
 
 const page = (id: string, fields: Partial<PageSummary>): PageSummary => ({
@@ -56,32 +56,6 @@ test('an empty title reads Untitled', () => {
   expect(pageTitle({ title: '  ' })).toBe('Untitled')
 })
 
-describe('docBlocks', () => {
-  test('blocks become lines with their kind, numbering and nesting', () => {
-    const blocks = docBlocks([
-      { id: 'h', type: 'heading', props: { level: 2 }, content: [{ type: 'text', text: 'Plan', styles: {} }], children: [] },
-      { id: 'p', type: 'paragraph', content: [{ type: 'text', text: 'See ', styles: {} }, { type: 'link', href: 'https://x', content: [{ type: 'text', text: 'the doc', styles: {} }] }] },
-      { id: 'n1', type: 'numberedListItem', content: [{ type: 'text', text: 'One' }], children: [{ id: 'b', type: 'bulletListItem', content: [{ type: 'text', text: 'Detail' }] }] },
-      { id: 'n2', type: 'numberedListItem', content: [{ type: 'text', text: 'Two' }] },
-      { id: 'c', type: 'checkListItem', props: { checked: true }, content: [{ type: 'text', text: 'Done' }] },
-      { id: 'm', type: 'paragraph', content: [{ type: 'mention', props: { label: 'Ada' } }] },
-      { id: 'i', type: 'image', props: { caption: 'Diagram' } },
-      { id: 'e', type: 'paragraph', content: [] },
-    ])
-    expect(blocks).toEqual([
-      { id: 'h', kind: 'heading', text: 'Plan', depth: 0, level: 2 },
-      { id: 'p', kind: 'paragraph', text: 'See the doc', depth: 0 },
-      { id: 'n1', kind: 'numbered', text: 'One', depth: 0, number: 1 },
-      { id: 'b', kind: 'bullet', text: 'Detail', depth: 1 },
-      { id: 'n2', kind: 'numbered', text: 'Two', depth: 0, number: 2 },
-      { id: 'c', kind: 'check', text: 'Done', depth: 0, checked: true },
-      { id: 'm', kind: 'paragraph', text: '@Ada', depth: 0 },
-      { id: 'i', kind: 'other', text: 'Diagram', depth: 0 },
-      { id: 'e', kind: 'paragraph', text: '', depth: 0 },
-    ])
-  })
-})
-
 describe('writing docs', () => {
   const tree = [page('a', {}), page('b', { parent_id: 'a' }), page('c', { parent_id: 'b' }), page('d', {})]
 
@@ -107,7 +81,6 @@ describe('writing docs', () => {
       { id: 'id-1', type: 'paragraph', props: { backgroundColor: 'default', textAlignment: 'left', textColor: 'default' }, content: [{ type: 'text', text: 'First line', styles: {} }], children: [] },
       { id: 'id-2', type: 'paragraph', props: { backgroundColor: 'default', textAlignment: 'left', textColor: 'default' }, content: [{ type: 'text', text: 'Second', styles: {} }], children: [] },
     ])
-    expect(docBlocks(paragraphBlocks('Hello', () => 'x'))).toEqual([{ id: 'x', kind: 'paragraph', text: 'Hello', depth: 0 }])
   })
 
   test('block ids are v4 UUIDs', () => {

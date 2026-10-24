@@ -1,6 +1,7 @@
 import { router, useLocalSearchParams } from 'expo-router'
 import { useEffect, useState } from 'react'
-import { FlatList, Pressable, TextInput, View } from 'react-native'
+import { FlatList, Pressable, View } from 'react-native'
+import { TextInput } from '../../../ui/scaled'
 
 import { useMessageText } from '../../../components/chat/MessageList'
 import { ChatPane, MessagePreview } from '../../../components/chat/Pane'
@@ -9,7 +10,7 @@ import type { MessageRecord } from '../../../data/orbit'
 import { useChatSearch } from '../../../hooks/chat'
 import { useOrbit } from '../../../orbit-context'
 import { useConversations, usePeople } from '../../../queries'
-import { alpha, type, useTheme } from '../../../theme'
+import { useTheme } from '../../../theme'
 import { Button, EmptyState, ErrorView, Icon, LoadingView, PickerSheet, Spinner, Text } from '../../../ui'
 
 /** Search in a conversation (or all of them) with the web's filters. A result opens the message where it is. */
@@ -51,16 +52,16 @@ export default function SearchScreen() {
       accessibilityRole="button"
       accessibilityState={{ selected: on }}
       onPress={onPress}
-      style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: on ? colors.primary : colors.input, backgroundColor: on ? alpha(colors.primary, 0.12) : 'transparent' }}
+      className={`h-7 flex-row items-center gap-1 px-2.5 rounded-md border ${on ? 'border-primary bg-primary/12' : 'border-input'}`}
     >
-      <Text style={[type(12.8, 'medium'), { color: on ? colors.foreground : colors.mutedForeground }]}>{label}</Text>
+      <Text className={`font-noto-medium text-[12.8px] ${on ? 'text-foreground' : 'text-muted-foreground'}`}>{label}</Text>
     </Pressable>
   )
 
   return (
     <ChatPane title="Search" subtitle={thisConversation && conversation ? `in ${conversation.kind === 'dm' ? title : `#${title}`}` : 'in all conversations'}>
-      <View style={{ paddingHorizontal: 12, gap: 8, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: colors.border }}>
-        <View style={{ height: 36, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: alpha(colors.secondary, 0.6) }}>
+      <View className="px-3 gap-2 pb-2 border-b border-border">
+        <View className="h-9 flex-row items-center gap-2 px-2.5 rounded-lg bg-secondary/60">
           <Icon name="search" size={16} color={colors.mutedForeground} />
           <TextInput
             autoFocus
@@ -75,10 +76,10 @@ export default function SearchScreen() {
             keyboardAppearance={scheme}
             autoCapitalize="none"
             autoCorrect={false}
-            style={[type(16), { flex: 1, paddingVertical: 0, color: colors.foreground }]}
+            className="font-noto text-[16px] leading-[1.45] flex-1 py-0 text-foreground"
           />
         </View>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+        <View className="flex-row flex-wrap gap-1.5">
           {chip('This conversation', thisConversation, () => setThisConversation(!thisConversation))}
           {chip(authorId ? `From ${words.nameOf(authorId)}` : 'From…', authorId !== null, () => setPickAuthor(true))}
           {chip('Has file', hasFile, () => setHasFile(!hasFile))}
@@ -102,11 +103,11 @@ export default function SearchScreen() {
           data={hits}
           keyExtractor={(hit) => hit.message.id}
           keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ padding: 4 }}
+          contentContainerClassName="p-1"
           onEndReached={() => {
             if (search.hasNextPage && !search.isFetchingNextPage) void search.fetchNextPage()
           }}
-          ListFooterComponent={search.isFetchingNextPage ? <View style={{ padding: 16 }}><Spinner /></View> : undefined}
+          ListFooterComponent={search.isFetchingNextPage ? <View className="p-4"><Spinner /></View> : undefined}
           renderItem={({ item: hit }) => {
             const where = conversations.find((item) => item.id === hit.conversation_id)
             const segments = leadToFirstMatch(splitByRanges(hit.message.body, hit.ranges)).map((segment) => ({ ...segment, text: decodeMentions(segment.text, people, channels) }))

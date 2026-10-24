@@ -1,20 +1,19 @@
 import type { ReactNode } from 'react'
-import { Pressable, View, type ViewStyle } from 'react-native'
+import { Pressable, View } from 'react-native'
 
-import { alpha, cssColors, mix, type, useTheme } from '../theme'
+import { cssColors, mix, useTheme } from '../theme'
 import { Icon, type IconName } from './Icon'
 import { Text } from './Text'
 
-/** The web's 48px pane header on a phone: 8px sides, 8px gaps, no bottom border. */
-export function PaneHeader({ children, style }: { children: ReactNode; style?: ViewStyle }) {
-  const { colors } = useTheme()
-  return <View style={[{ minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 8, backgroundColor: colors.background }, style]}>{children}</View>
+/** The 44px pane header (the web's Tasks, Docs and Settings; Home and Activity are 48px there) on a phone (`pane-header` in global.css); `className` utilities override it. */
+export function PaneHeader({ children, className }: { children: ReactNode; className?: string }) {
+  return <View className={className ? `pane-header ${className}` : 'pane-header'}>{children}</View>
 }
 
 /** `PaneTitle`: 13px semibold. Home's topbar crumb is 14px. */
-export function HeaderTitle({ children, size = 13 }: { children: ReactNode; size?: number }) {
+export function HeaderTitle({ children, size = 13 }: { children: ReactNode; size?: 13 | 14 }) {
   return (
-    <Text numberOfLines={1} style={[type(size, 'semibold'), { flexShrink: 1 }]}>
+    <Text numberOfLines={1} className={`shrink font-noto-semibold ${size === 14 ? 'text-[14px]' : 'text-[13px]'}`}>
       {children}
     </Text>
   )
@@ -43,13 +42,13 @@ export function IconButton({ icon, label, onPress, size = 28, iconSize = 16, col
       disabled={disabled || !onPress}
       onPress={onPress}
       hitSlop={size < 32 ? (32 - size) / 2 + 4 : 4}
-      style={({ pressed }) => [
-        { width: size, height: size, borderRadius: size >= 32 ? 10 : 8, alignItems: 'center', justifyContent: 'center' },
-        primary
-          ? { backgroundColor: pressed ? alpha(colors.primary, 0.8) : colors.primary, boxShadow: pressed ? undefined : `0 2px 0 ${mix(colors.primary, 0.75, cssColors.black)}`, transform: [{ translateY: pressed ? 2 : 0 }] }
-          : { backgroundColor: pressed ? colors.muted : 'transparent' },
-        disabled && { opacity: 0.5 },
-      ]}
+      className={`items-center justify-center ${size >= 32 ? 'rounded-lg' : 'rounded-md'} ${primary ? 'bg-primary active:bg-primary/80' : 'active:bg-muted'} ${disabled ? 'opacity-50' : ''}`}
+      // the size is a prop, and the primary edge a computed color
+      style={({ pressed }) => ({
+        width: size,
+        height: size,
+        ...(primary && { boxShadow: pressed ? undefined : `0 2px 0 ${mix(colors.primary, 0.75, cssColors.black)}`, transform: [{ translateY: pressed ? 2 : 0 }] }),
+      })}
     >
       <Icon name={icon} size={iconSize} color={color ?? (primary ? colors.primaryForeground : colors.foreground)} />
     </Pressable>

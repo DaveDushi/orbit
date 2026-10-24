@@ -6,7 +6,6 @@ import { ACCOUNT_NAV, Badge, Note, RowIcon, RowText, SettingsCard, SettingsRow, 
 import { type TotpSetup, twoFactorSummary } from '../../../data/account-api'
 import { useTwoFactor, useTwoFactorWrites } from '../../../hooks/account'
 import { errorMessage } from '../../../session-context'
-import { cssColors, fonts, type, useTheme } from '../../../theme'
 import { Button, Input, Text } from '../../../ui'
 
 /**
@@ -63,8 +62,8 @@ export default function SecurityScreen() {
         }
         flush
       >
-        {status.isPending ? <View style={{ padding: 16 }}><Note>Loading…</Note></View> : null}
-        {status.isError ? <View style={{ padding: 16 }}><Note error>Two-factor sign-in could not be loaded.</Note></View> : null}
+        {status.isPending ? <View className="p-4"><Note>Loading…</Note></View> : null}
+        {status.isError ? <View className="p-4"><Note error>Two-factor sign-in could not be loaded.</Note></View> : null}
         {status.data ? (
           <SettingsRow first>
             <RowIcon icon="mobile" />
@@ -119,7 +118,7 @@ function SetupDialog({ setup, onEnabled, onClose }: { setup: TotpSetup | null; o
     >
       {setup ? (
         <>
-          <Image accessibilityLabel="QR code for your authenticator app" source={{ uri: setup.qr_code }} style={{ width: 168, height: 168, alignSelf: 'center', borderRadius: 8, backgroundColor: cssColors.white }} />
+          <Image accessibilityLabel="QR code for your authenticator app" source={{ uri: setup.qr_code }} className="size-42 self-center rounded-md bg-white" />
           <Button label="Open in authenticator app" icon="key" variant="outline" onPress={() => void Linking.openURL(setup.otpauth_url).catch(() => undefined)} />
           <CopyValue label="Setup key" value={setup.secret} />
           <Input label="Code from the app" value={code} onChangeText={setCode} keyboardType="number-pad" autoComplete="one-time-code" textContentType="oneTimeCode" returnKeyType="done" onSubmitEditing={submit} error={enable.isError ? errorMessage(enable.error) : undefined} />
@@ -130,7 +129,6 @@ function SetupDialog({ setup, onEnabled, onClose }: { setup: TotpSetup | null; o
 }
 
 function RecoveryCodesDialog({ codes, onClose }: { codes: { title: string; codes: string[] } | null; onClose: () => void }) {
-  const { colors } = useTheme()
   const text = codes ? `Orbit recovery codes\nEach code signs in once in place of an authenticator app code.\n\n${codes.codes.join('\n')}\n` : ''
   return (
     <Dialog
@@ -145,9 +143,9 @@ function RecoveryCodesDialog({ codes, onClose }: { codes: { title: string; codes
         </>
       }
     >
-      <View accessibilityLabel="Recovery codes" style={{ flexDirection: 'row', flexWrap: 'wrap', rowGap: 6, padding: 16, borderRadius: 8, backgroundColor: colors.muted }}>
+      <View accessibilityLabel="Recovery codes" className="flex-row flex-wrap gap-y-1.5 p-4 rounded-md bg-muted">
         {codes?.codes.map((code) => (
-          <Text key={code} selectable style={{ width: '50%', fontFamily: fonts.mono, fontSize: 13, color: colors.foreground }}>
+          <Text key={code} selectable className="w-[50%] font-mono text-[13px] text-foreground leading-[21px]">
             {code}
           </Text>
         ))}
@@ -158,12 +156,11 @@ function RecoveryCodesDialog({ codes, onClose }: { codes: { title: string; codes
 
 /** A read-only value to select or share (the app has no clipboard module). */
 function CopyValue({ label, value }: { label: string; value: string }) {
-  const { colors } = useTheme()
   return (
-    <View style={{ gap: 8 }}>
-      <Text style={[type(14, 'medium')]}>{label}</Text>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <Text selectable style={{ flex: 1, fontFamily: fonts.mono, fontSize: 13, color: colors.foreground, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: colors.input }}>
+    <View className="gap-2">
+      <Text className="font-noto-medium text-[14px]">{label}</Text>
+      <View className="flex-row items-center gap-2">
+        <Text selectable className="flex-1 font-mono text-[13px] text-foreground p-2 rounded-md border border-input leading-[21px]">
           {value}
         </Text>
         <Button label="Share" variant="outline" size="sm" onPress={() => void Share.share({ message: value })} />

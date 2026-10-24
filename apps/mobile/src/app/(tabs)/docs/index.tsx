@@ -1,7 +1,6 @@
 import { router } from 'expo-router'
 import { type ReactNode, useMemo, useState } from 'react'
 import { Pressable, RefreshControl, ScrollView, View } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
 
 import { IconDialog } from '../../../components/docs/IconDialog'
 import { MenuButton } from '../../../components/Drawer'
@@ -12,8 +11,8 @@ import { useCreatePage, useDuplicatePage, useFavorites, useTeamspaceWrites, useT
 import { useOrbit } from '../../../orbit-context'
 import { usePages, useTeamspaces } from '../../../queries'
 import { errorMessage } from '../../../session-context'
-import { alpha, type, useTheme } from '../../../theme'
-import { ErrorView, HeaderTitle, Icon, type IconName, IconButton, LoadingView, PaneHeader, Text } from '../../../ui'
+import { alpha, useTheme } from '../../../theme'
+import { ErrorView, HeaderTitle, Icon, type IconName, IconButton, LoadingView, PaneHeader, SafeAreaView, Text } from '../../../ui'
 
 type Menu = { title: string; actions: SheetAction[] }
 
@@ -117,10 +116,10 @@ export default function DocsScreen() {
   }
 
   return (
-    <SafeAreaView edges={['top', 'left', 'right']} style={{ flex: 1, backgroundColor: colors.background }}>
-      <PaneHeader style={{ minHeight: 44, paddingVertical: 6 }}>
+    <SafeAreaView edges={['top', 'left', 'right']} className="flex-1 bg-background">
+      <PaneHeader>
         <MenuButton />
-        <View style={{ flex: 1 }}>
+        <View className="flex-1">
           <HeaderTitle>Documents</HeaderTitle>
         </View>
         {/* the web's menu has Import from Notion, a desktop upload: the app offers the other docs actions */}
@@ -140,8 +139,8 @@ export default function DocsScreen() {
         <IconButton icon="plus" label="New page" size={32} variant="primary" disabled={create.isPending} onPress={() => newPage({ space: null })} />
       </PaneHeader>
       {notice ? (
-        <Pressable accessibilityRole="alert" accessibilityLabel={notice} onPress={() => setNotice(null)} style={{ marginHorizontal: 12, marginBottom: 4, padding: 10, borderRadius: 8, backgroundColor: alpha(colors.destructive, 0.1) }}>
-          <Text style={[type(13), { color: colors.destructive }]}>{notice}</Text>
+        <Pressable accessibilityRole="alert" accessibilityLabel={notice} onPress={() => setNotice(null)} className="mx-3 mb-1 p-2.5 rounded-md bg-destructive/10">
+          <Text className="text-[13px] text-destructive">{notice}</Text>
         </Pressable>
       ) : null}
       {!spaces ? (
@@ -151,7 +150,7 @@ export default function DocsScreen() {
           <LoadingView />
         )
       ) : (
-        <ScrollView contentContainerStyle={{ paddingHorizontal: 8, paddingTop: 8, paddingBottom: 16, gap: 14 }} refreshControl={<RefreshControl refreshing={pages.isRefetching} onRefresh={() => void refresh()} tintColor={colors.mutedForeground} />}>
+        <ScrollView contentContainerClassName="px-2 pt-2 pb-4 gap-3.5" refreshControl={<RefreshControl refreshing={pages.isRefetching} onRefresh={() => void refresh()} tintColor={colors.mutedForeground} />}>
           {favoriteRows.length > 0 ? (
             <View>
               <GroupHeader label="Favorites" icon="star" />
@@ -160,7 +159,7 @@ export default function DocsScreen() {
                   key={page.id}
                   label={pageTitle(page)}
                   paddingLeft={28}
-                  leading={page.icon ? <Text style={type(14)}>{page.icon}</Text> : <Icon name="docs" size={15} color={muted} />}
+                  leading={page.icon ? <Text className="text-[14px]">{page.icon}</Text> : <Icon name="docs" size={15} color={muted} />}
                   onPress={() => router.push(`/docs/${page.id}`)}
                   actions={<IconButton icon="more" label={`${pageTitle(page)} options`} size={22} iconSize={13} color={muted} onPress={() => pageMenu(page)} />}
                 />
@@ -176,7 +175,7 @@ export default function DocsScreen() {
                 <View key={space.key}>
                   <TreeItem
                     label={space.name}
-                    leading={teamspace?.icon ? <Text style={type(14)}>{teamspace.icon}</Text> : <Icon name="people" size={15} color={muted} />}
+                    leading={teamspace?.icon ? <Text className="text-[14px]">{teamspace.icon}</Text> : <Icon name="people" size={15} color={muted} />}
                     paddingLeft={8}
                     onPress={() => toggle(space.key)}
                     actions={
@@ -194,8 +193,8 @@ export default function DocsScreen() {
           <View>
             <GroupHeader label="Private" icon="lock" action={<IconButton icon="plus" label="New private page" size={22} iconSize={13} color={muted} onPress={() => newPage({ space: 'private' })} />} />
             {spaces.private.rows.length === 0 ? (
-              <View style={{ height: 32, justifyContent: 'center', paddingLeft: 40 }}>
-                <Text style={[type(13), { color: alpha(colors.mutedForeground, 0.6) }]}>No pages inside</Text>
+              <View className="h-8 justify-center pl-10">
+                <Text className="text-[13px] text-muted-foreground/60">No pages inside</Text>
               </View>
             ) : (
               <PageRows rows={spaces.private.rows} collapsed={collapsed} onToggle={toggle} onCreateChild={(parentId) => newPage({ parentId })} onMenu={pageMenu} />
@@ -207,10 +206,10 @@ export default function DocsScreen() {
         accessibilityRole="link"
         accessibilityLabel="Trash"
         onPress={() => router.push('/docs/trash')}
-        style={({ pressed }) => ({ height: 49, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: pressed ? colors.muted : 'transparent' })}
+        className="h-[49px] flex-row items-center gap-2.5 px-4 border-t border-border active:bg-muted"
       >
         <Icon name="trash" size={15} color={colors.mutedForeground} />
-        <Text style={[type(13, 'medium'), { color: colors.foreground }]}>Trash</Text>
+        <Text className="font-noto-medium text-[13px] text-foreground">Trash</Text>
       </Pressable>
 
       <ActionSheet visible={menu !== null} title={menu?.title} actions={menu?.actions ?? []} onClose={() => setMenu(null)} />
@@ -230,9 +229,9 @@ export default function DocsScreen() {
 function GroupHeader({ label, icon, action }: { label: string; icon?: IconName; action?: ReactNode }) {
   const { colors } = useTheme()
   return (
-    <View style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 8, paddingRight: 8 }}>
+    <View className="h-7 flex-row items-center gap-1.5 px-2">
       {icon ? <Icon name={icon} size={14} color={colors.mutedForeground} /> : null}
-      <Text style={[type(12, 'medium'), { lineHeight: 16, flex: 1, color: colors.mutedForeground }]}>{label}</Text>
+      <Text className="font-noto-medium text-[12px] leading-[16px] flex-1 text-muted-foreground">{label}</Text>
       {action}
     </View>
   )
@@ -259,7 +258,7 @@ function PageRows({
       label={pageTitle(row.page)}
       paddingLeft={28 + row.depth * 18}
       chevron={row.hasChildren ? { open: !collapsed.has(row.page.id), onPress: () => onToggle(row.page.id) } : null}
-      leading={row.page.icon ? <Text style={type(14)}>{row.page.icon}</Text> : <Icon name="docs" size={15} color={muted} />}
+      leading={row.page.icon ? <Text className="text-[14px]">{row.page.icon}</Text> : <Icon name="docs" size={15} color={muted} />}
       onPress={() => router.push(`/docs/${row.page.id}`)}
       actions={
         <>
@@ -289,24 +288,24 @@ function TreeItem({
 }) {
   const { colors } = useTheme()
   return (
-    <View style={{ height: 32, marginTop: 1, flexDirection: 'row', alignItems: 'center' }}>
+    <View className="h-8 mt-px flex-row items-center">
       <Pressable
         accessibilityRole="link"
         accessibilityLabel={label}
         onPress={onPress}
-        style={({ pressed }) => ({ flex: 1, height: 32, flexDirection: 'row', alignItems: 'center', paddingLeft, borderRadius: 8, backgroundColor: pressed ? colors.muted : 'transparent' })}
+        className="flex-1 h-8 flex-row items-center rounded-md active:bg-muted" style={{ paddingLeft }}
       >
         {chevron !== undefined ? (
-          <Pressable accessibilityRole="button" accessibilityLabel={chevron?.open ? `Collapse ${label}` : `Expand ${label}`} disabled={!chevron} onPress={chevron?.onPress} style={{ width: 16, marginRight: 6, alignItems: 'center' }}>
+          <Pressable accessibilityRole="button" accessibilityLabel={chevron?.open ? `Collapse ${label}` : `Expand ${label}`} disabled={!chevron} onPress={chevron?.onPress} className="w-4 mr-1.5 items-center">
             {chevron ? <Icon name={chevron.open ? 'chevronDown' : 'chevronRight'} size={12} color={colors.mutedForeground} /> : null}
           </Pressable>
         ) : null}
-        <View style={{ width: 15, alignItems: 'center', marginRight: chevron !== undefined ? 7 : 8 }}>{leading}</View>
-        <Text numberOfLines={1} style={[type(13, 'medium'), { flex: 1 }]}>
+        <View className={`w-[15px] items-center ${chevron !== undefined ? 'mr-[7px]' : 'mr-2'}`}>{leading}</View>
+        <Text numberOfLines={1} className="font-noto-medium text-[13px] flex-1">
           {label}
         </Text>
       </Pressable>
-      <View style={{ flexDirection: 'row', gap: 2, paddingLeft: 4, paddingRight: 6 }}>{actions}</View>
+      <View className="flex-row gap-0.5 pl-1 pr-1.5">{actions}</View>
     </View>
   )
 }

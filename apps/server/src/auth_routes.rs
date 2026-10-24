@@ -30,6 +30,7 @@ use crate::repositories::identity::{
     RegistrationError, RootAccountRequest, SetupError, UserStatus,
 };
 use crate::repositories::instance_settings::InstanceSettingsRepository;
+use crate::socket_ticket::SocketTickets;
 
 pub(crate) mod passkeys;
 pub(crate) mod push;
@@ -351,6 +352,7 @@ pub fn auth_router(state: AuthState) -> Router {
             delete(passkeys::delete_passkey),
         )
         .route("/api/v1/auth/logout", post(logout))
+        .route("/api/v1/auth/socket-ticket", post(socket_ticket))
         .route("/api/v1/auth/me", get(me).patch(update_me))
         .route("/api/v1/auth/status", put(put_status))
         .route("/api/v1/push/key", get(push::get_push_key))
@@ -912,6 +914,36 @@ async fn me(
         );
     }
     Ok(response)
+}
+
+#[derive(Serialize, ToSchema)]
+struct SocketTicketResponse {
+    /// Pass as the `ticket` query parameter of a co-editing socket, without a cookie.
+    ticket: String,
+    #[schema(value_type = String, format = DateTime)]
+    expires_at: TimestampMillis,
+}
+
+/// A ticket that opens a co-editing socket (`…/collab?ticket=…`) of this session for 60 s, for
+/// sockets that cannot send the session cookie or `Authorization` header (a native app's WebView).
+#[utoipa::path(post, path = "/api/v1/auth/socket-ticket", responses((status = 200, body = SocketTicketResponse), (status = 401, description = "authentication_required", body = ProblemBody, content_type = "application/problem+json")))]
+async fn socket_ticket(
+    State(state): State<AuthState>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<SocketTicketResponse>, ApiError> {
+    const INSTANCE: &str = "/api/v1/auth/socket-ticket";
+    let session = authenticate(&state, &headers, INSTANCE, request_id.as_ref()).await?;
+    let app_key = state
+        .app_key
+        .ok_or_else(|| ApiError::internal(INSTANCE, request_id.as_ref()))?;
+    let expires_at = TimestampMillis::from_millis(
+        TimestampMillis::now().as_millis() + crate::socket_ticket::TICKET_LIFETIME_MS,
+    );
+    Ok(Json(SocketTicketResponse {
+        ticket: SocketTickets::new(&app_key).issue(session.id, expires_at),
+        expires_at,
+    }))
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -3131,6 +3163,85 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(me.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn socket_tickets_name_the_session_of_a_bearer_or_cookie_for_60_seconds() {
+        let database = TestDatabase::new().await.unwrap();
+        let repository = Arc::new(IdentityRepository::new((*database).clone()));
+        setup_repository(&repository).await;
+        let app = auth_router(
+            AuthState::new(Arc::clone(&repository), CookieMode::secure()).with_app_key([7; 32]),
+        )
+        .layer(HttpPlatformLayer::new(OriginPolicy::new(
+            "https://orbit.test",
+        )));
+        let tickets = crate::socket_ticket::SocketTickets::new(&[7; 32]);
+        let issued = |response: Value| {
+            assert_eq!(response.as_object().unwrap().len(), 2, "{response}");
+            let expires_at: TimestampMillis =
+                serde_json::from_value(response["expires_at"].clone()).unwrap();
+            let lifetime = expires_at.as_millis() - TimestampMillis::now().as_millis();
+            assert!((55_000..=60_000).contains(&lifetime), "{lifetime}");
+            tickets.verify(response["ticket"].as_str().unwrap(), TimestampMillis::now())
+        };
+
+        let login = app.clone().oneshot(native_login_request()).await.unwrap();
+        let login: Value = serde_json::from_slice(&body(login).await).unwrap();
+        let token = login["session_token"].as_str().unwrap();
+        let bearer_session = repository
+            .authenticate_session(token, TimestampMillis::now())
+            .await
+            .unwrap()
+            .id;
+        let response = app
+            .clone()
+            .oneshot(bearer_request("POST", "/api/v1/auth/socket-ticket", token))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response: Value = serde_json::from_slice(&body(response).await).unwrap();
+        assert_eq!(issued(response), Some(bearer_session));
+
+        let cookie = login_cookie(&app, "correct horse battery").await;
+        let cookie_session = repository
+            .authenticate_session(cookie.split_once('=').unwrap().1, TimestampMillis::now())
+            .await
+            .unwrap()
+            .id;
+        let response = app
+            .clone()
+            .oneshot(cookie_request(
+                "POST",
+                "/api/v1/auth/socket-ticket",
+                &cookie,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response: Value = serde_json::from_slice(&body(response).await).unwrap();
+        assert_eq!(issued(response), Some(cookie_session));
+        assert_ne!(cookie_session, bearer_session);
+
+        let anonymous = Request::builder()
+            .method("POST")
+            .uri("/api/v1/auth/socket-ticket")
+            .header(header::ORIGIN, "https://orbit.test")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            app.clone().oneshot(anonymous).await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+        // A cookie keeps the browser's Origin rule.
+        let mut foreign = cookie_request("POST", "/api/v1/auth/socket-ticket", &cookie);
+        foreign
+            .headers_mut()
+            .insert(header::ORIGIN, "https://evil.example".parse().unwrap());
+        assert_eq!(
+            app.oneshot(foreign).await.unwrap().status(),
+            StatusCode::FORBIDDEN
+        );
     }
 
     #[tokio::test]

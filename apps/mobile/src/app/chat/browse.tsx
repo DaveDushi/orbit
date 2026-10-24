@@ -7,7 +7,7 @@ import * as chat from '../../data/chat-api'
 import { useChatWrite } from '../../hooks/chat'
 import { useOrbit } from '../../orbit-context'
 import { useConversations } from '../../queries'
-import { alpha, type, useTheme } from '../../theme'
+import { useTheme } from '../../theme'
 import { Button, EmptyState, Icon, Input, LoadingView, Text } from '../../ui'
 
 /** Browse channels: the public channels you are not in, to open or join. Joined ones are in the chat list. */
@@ -33,7 +33,7 @@ export default function BrowseChannelsScreen() {
 
   return (
     <ChatPane title="Browse channels">
-      <View style={{ paddingHorizontal: 12, paddingBottom: 8 }}>
+      <View className="px-3 pb-2">
         <Input placeholder="Search channels" value={query} onChangeText={setQuery} autoCapitalize="none" autoCorrect={false} accessibilityLabel="Search channels" />
       </View>
       {!conversations.data ? (
@@ -41,21 +41,21 @@ export default function BrowseChannelsScreen() {
       ) : channels.length === 0 ? (
         <EmptyState icon="hashtag" title={text ? 'No channels found' : 'You are in every channel'} description={text ? 'Try another name.' : 'New public channels show here.'} />
       ) : (
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: 8 }}>
+        <ScrollView keyboardShouldPersistTaps="handled" contentContainerClassName="px-2">
           {channels.map((channel) => (
-            <View key={channel.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 8 }}>
+            <View key={channel.id} className="flex-row items-center gap-2 rounded-md">
               <Pressable
                 accessibilityRole="link"
                 accessibilityLabel={`Open #${channel.name}`}
                 onPress={() => router.push(`/chat/${channel.id}`)}
-                style={({ pressed }) => ({ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, padding: 8, borderRadius: 8, backgroundColor: pressed ? alpha(colors.muted, 0.6) : 'transparent' })}
+                className="flex-1 flex-row items-center gap-2 p-2 rounded-md active:bg-muted/60"
               >
                 <Icon name="hashtag" size={16} color={colors.mutedForeground} />
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text numberOfLines={1} style={[type(14, 'medium')]}>
+                <View className="flex-1 min-w-0">
+                  <Text numberOfLines={1} className="font-noto-medium text-[14px]">
                     {channel.name}
                   </Text>
-                  <Text numberOfLines={1} style={[type(12), { color: colors.mutedForeground }]}>
+                  <Text numberOfLines={1} className="text-[12px] text-muted-foreground">
                     {channel.topic || `${channel.member_ids.length} ${channel.member_ids.length === 1 ? 'member' : 'members'}`}
                   </Text>
                 </View>

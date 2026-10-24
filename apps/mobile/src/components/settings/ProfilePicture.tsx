@@ -15,7 +15,8 @@ export function ProfilePicture({ id, name, url, size }: { id: string; name: stri
       accessibilityLabel={name}
       source={{ uri: absoluteUrl(session.server, url), headers: { Authorization: `Bearer ${session.token}` } }}
       onError={() => setFailed(url)}
-      style={{ width: size, height: size, borderRadius: size / 2 }}
+      className="rounded-full"
+      style={{ width: size, height: size }}
     />
   )
 }

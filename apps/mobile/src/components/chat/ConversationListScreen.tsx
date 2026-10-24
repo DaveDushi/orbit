@@ -42,7 +42,7 @@ export function ConversationListScreen({ conversationId, kind }: { conversationI
         <FlatList
           data={list.data}
           keyExtractor={(message) => message.id}
-          contentContainerStyle={{ padding: 4 }}
+          contentContainerClassName="p-1"
           refreshControl={<RefreshControl refreshing={list.isRefetching} onRefresh={() => void list.refetch()} tintColor={colors.mutedForeground} />}
           renderItem={({ item }) => (
             <MessagePreview

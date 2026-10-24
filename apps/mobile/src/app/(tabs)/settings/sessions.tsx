@@ -24,8 +24,8 @@ export default function SessionsScreen() {
         actions={others.length > 0 ? <Button label="Sign out all other sessions" variant="outline" disabled={revoke.isPending} onPress={() => revoke.mutate(others.map((session) => session.id))} /> : undefined}
         flush
       >
-        {sessions.isPending ? <View style={{ padding: 16 }}><Note>Loading sessions…</Note></View> : null}
-        {sessions.isError ? <View style={{ padding: 16 }}><Note error>Sessions could not be loaded.</Note></View> : null}
+        {sessions.isPending ? <View className="p-4"><Note>Loading sessions…</Note></View> : null}
+        {sessions.isError ? <View className="p-4"><Note error>Sessions could not be loaded.</Note></View> : null}
         {list.map((session, index) => (
           <SettingsRow key={session.id} first={index === 0}>
             <RowIcon icon={session.current ? 'mobile' : 'monitor'} />
@@ -37,8 +37,8 @@ export default function SessionsScreen() {
             {!session.current ? <Button label="Revoke" variant="ghost" size="sm" disabled={revoke.isPending} onPress={() => revoke.mutate([session.id])} /> : null}
           </SettingsRow>
         ))}
-        {revoke.isPending ? <View style={{ padding: 16 }}><Note>Revoking {revoke.variables?.length ?? 1} session{revoke.variables?.length === 1 ? '' : 's'}…</Note></View> : null}
-        {revoke.isError ? <View style={{ padding: 16 }}><Note error>{errorMessage(revoke.error)}</Note></View> : null}
+        {revoke.isPending ? <View className="p-4"><Note>Revoking {revoke.variables?.length ?? 1} session{revoke.variables?.length === 1 ? '' : 's'}…</Note></View> : null}
+        {revoke.isError ? <View className="p-4"><Note error>{errorMessage(revoke.error)}</Note></View> : null}
       </SettingsCard>
     </SettingsShell>
   )

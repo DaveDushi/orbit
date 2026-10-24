@@ -9,7 +9,7 @@ import * as chat from '../../../data/chat-api'
 import { confirmAction, useChatWrite, useIsChatAdmin } from '../../../hooks/chat'
 import { useOrbit } from '../../../orbit-context'
 import { useConversations, useMembers, usePeople } from '../../../queries'
-import { alpha, presenceColors, type, useTheme } from '../../../theme'
+import { presenceColors, useTheme } from '../../../theme'
 import { Avatar, Button, ErrorView, Icon, IconButton, LoadingView, Text } from '../../../ui'
 
 /**
@@ -52,18 +52,18 @@ export default function MembersScreen() {
       ) : !conversation || !members.data ? (
         <LoadingView />
       ) : (
-        <ScrollView contentContainerStyle={{ paddingHorizontal: 8, paddingBottom: 16 }}>
-          <Text style={[type(12, 'semibold'), { paddingHorizontal: 8, paddingTop: 8, paddingBottom: 4, color: colors.mutedForeground }]}>Members, {inIt.length}</Text>
+        <ScrollView contentContainerClassName="px-2 pb-4">
+          <Text className="font-noto-semibold text-[12px] px-2 pt-2 pb-1 text-muted-foreground">Members, {inIt.length}</Text>
           {inIt.map((member) => (
-            <View key={member.user_id} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <View key={member.user_id} className="flex-row items-center gap-1">
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={member.user_id === user.id ? 'Message yourself' : `Message ${member.display_name}`}
                 onPress={() => void message(member.user_id)}
-                style={({ pressed }) => ({ flex: 1, height: 48, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 8, borderRadius: 8, backgroundColor: pressed ? alpha(colors.muted, 0.8) : 'transparent' })}
+                className="flex-1 h-12 flex-row items-center gap-3 px-2 rounded-md active:bg-muted/80"
               >
                 <Avatar id={member.user_id} name={member.display_name} size={32} />
-                <Text numberOfLines={1} style={[type(15, 'medium'), { flexShrink: 1 }]}>
+                <Text numberOfLines={1} className="font-noto-medium text-[15px] shrink">
                   {member.display_name}
                   {member.user_id === user.id ? ' (you)' : ''}
                 </Text>

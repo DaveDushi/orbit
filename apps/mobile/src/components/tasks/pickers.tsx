@@ -28,7 +28,7 @@ import {
 } from '../../data/tasks'
 import { useCreateLabel, useTaskSearch } from '../../hooks/tasks'
 import { useLabels, useProjects, useStatuses } from '../../queries'
-import { alpha, type, useTheme } from '../../theme'
+import { useTheme } from '../../theme'
 import { Avatar, Button, Icon, type IconName, Input, PriorityIcon, StatusIcon, Text } from '../../ui'
 import { DayPicker } from './DayPicker'
 import { SheetList, SheetNote, SheetRow, SheetSearch } from './Sheet'
@@ -127,7 +127,7 @@ export function LabelChoices({ projectId, value, onChange }: { projectId: string
 /** The label palette as round swatches; the chosen one wears a ring in its own colour. */
 function Swatches({ value, onChange }: { value: string; onChange: (color: string) => void }) {
   return (
-    <View accessibilityRole="radiogroup" accessibilityLabel="Label color" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, paddingHorizontal: 16, paddingTop: 4, paddingBottom: 12 }}>
+    <View accessibilityRole="radiogroup" accessibilityLabel="Label color" className="flex-row flex-wrap gap-2.5 px-4 pt-1 pb-3">
       {LABEL_PALETTE.map((swatch) => {
         const checked = swatch.color === value
         return (
@@ -138,9 +138,9 @@ function Swatches({ value, onChange }: { value: string; onChange: (color: string
             accessibilityState={{ checked }}
             hitSlop={4}
             onPress={() => onChange(swatch.color)}
-            style={{ width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: checked ? swatch.color : 'transparent' }}
+            className="size-6.5 rounded-full items-center justify-center border-[1.5px]" style={{ borderColor: checked ? swatch.color : 'transparent' }}
           >
-            <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: swatch.color }} />
+            <View className="size-4.5 rounded-full" style={{ backgroundColor: swatch.color }} />
           </Pressable>
         )
       })}
@@ -208,7 +208,7 @@ export function DueDateChoices({ dueAt, onChange }: { dueAt: string | null | und
 export function SourceForm({ value, onSave }: { value: string | null | undefined; onSave: (url: string | null) => void }) {
   const [draft, setDraft] = useState(value ?? '')
   return (
-    <View style={{ paddingHorizontal: 16, paddingBottom: 8, gap: 12 }}>
+    <View className="px-4 pb-2 gap-3">
       <Input
         label="Source URL"
         value={draft}
@@ -221,7 +221,7 @@ export function SourceForm({ value, onSave }: { value: string | null | undefined
         returnKeyType="done"
         onSubmitEditing={() => onSave(sourceValue(draft))}
       />
-      <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+      <View className="flex-row justify-end gap-2">
         {value ? <Button label="Remove" variant="ghost" onPress={() => onSave(null)} /> : null}
         <Button label="Save" onPress={() => onSave(sourceValue(draft))} />
       </View>
@@ -241,16 +241,15 @@ export function MenuChoices<K extends string>({ items, onSelect }: { items: read
 }
 
 export function Dot({ color, size = 8 }: { color: string; size?: number }) {
-  return <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color }} />
+  return <View className="rounded-full" style={{ width: size, height: size, backgroundColor: color }} />
 }
 
 /** A label: the round outline pill with its colour dot, as on the web. */
 export function LabelPill({ label, children }: { label: Pick<LabelRecord, 'name' | 'color'>; children?: ReactNode }) {
-  const { colors } = useTheme()
   return (
-    <View style={{ height: 20, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, borderRadius: 10, borderWidth: 1, borderColor: colors.input, backgroundColor: alpha(colors.input, 0.3) }}>
+    <View className="h-5 flex-row items-center gap-1 px-2 rounded-full border border-input bg-input/30">
       <Dot color={label.color} size={6} />
-      <Text numberOfLines={1} style={[type(12, 'medium'), { lineHeight: 16 }]}>
+      <Text numberOfLines={1} className="font-noto-medium text-[12px] leading-[16px]">
         {label.name}
       </Text>
       {children}

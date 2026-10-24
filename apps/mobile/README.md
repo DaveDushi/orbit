@@ -6,7 +6,7 @@ The app signs in to an Orbit server and works in one workspace at a time. It fol
 
 - Home: greeting, Due this week, Unread in Inbox, Recently updated docs.
 - Tasks: project picker, filter, search, status groups; task detail with every property (status, priority, assignees, labels, due date, parent, source), relations, sub-issues, activity and comments with attachments; New task dialog.
-- Docs: teamspaces, private pages and favorites; create, rename, icon, cover, add paragraphs, comment, trash and restore. Existing blocks are read-only (BlockNote has no React Native version).
+- Docs: teamspaces, private pages and favorites; create, rename, icon, cover, comment, trash and restore. The page body is BlockNote in a DOM component (a web view) that co-edits the page live with the web, with a formatting bar above the keyboard.
 - Chat: channels and DMs, new channel/DM, browse, unreads, threads, search, members, pins, files, reactions, emoji, attachments and message actions.
 - Activity (from the drawer): notifications with All, Unread and Mentions.
 - Settings: workspace General and Members, the account pages (Profile, Notifications, Security, Sessions), and Admin for instance admins.
@@ -19,6 +19,7 @@ Every action runs in the app; nothing opens the web.
 - `src/components/`: the dock, the drawer, the task row and the New task dialog. `src/ui/`: the web's primitives (header, buttons, inputs, avatar, icons).
 - `src/session-context.tsx`: the stored session and one API client per session. A 401 signs out.
 - `src/orbit-context.tsx`: `useOrbit()` gives the client, the user and the current workspace (the last one chosen, else the first).
+- `src/components/docs/PageEditor.dom.tsx`: the page editor, an Expo DOM component (`'use dom'`) running BlockNote with the web's schema from `@orbit/editor` (`packages/editor`). It connects to the page's collab socket with a one-time ticket (`getTicket` native action), and the screen (`src/app/(tabs)/docs/[id].tsx`) drives it through props, native actions and `ref.run(command)`. `src/data/page-editor.ts` holds the commands, the toolbar state and the answers to close codes.
 - `src/live.ts`: the workspace events socket (marks task, project and inbox queries stale) and the chat live socket (patches messages and read states). Both close in the background and reconnect in the foreground.
 
 ## How the app talks to Orbit
@@ -93,7 +94,7 @@ bunx expo-doctor
 The colors, radii and icons come from the web app. Do not edit the generated files; regenerate them from the repo root after the web changes:
 
 ```bash
-bun apps/mobile/scripts/generate-theme.ts   # apps/web/src/index.css → src/theme/tokens.gen.ts
+bun apps/mobile/scripts/generate-theme.ts   # apps/web/src/index.css → src/theme/tokens.gen.ts and theme.gen.css
 bun apps/mobile/scripts/generate-icons.ts   # reicon-react Outline icons → src/ui/icons.gen.ts
 ```
 

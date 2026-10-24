@@ -13,7 +13,7 @@ import type { CategoryRecord, ConversationRecord } from '../../data/orbit'
 import { useChatWrite } from '../../hooks/chat'
 import { useOrbit } from '../../orbit-context'
 import { useChatCategories, useMembers } from '../../queries'
-import { alpha, type, useTheme } from '../../theme'
+import { useTheme } from '../../theme'
 import { Avatar, Icon, Input, PickerSheet, Text } from '../../ui'
 import { ChoiceGroup, FormSheet } from './Sheet'
 
@@ -26,15 +26,15 @@ function CategoryField({ value, onChange }: { value: string | null; onChange: (i
   const [open, setOpen] = useState(false)
   const current = categories.find((category) => category.id === value)
   return (
-    <View style={{ gap: 8 }}>
-      <Text style={[type(14, 'medium'), { lineHeight: 19.25 }]}>Category</Text>
+    <View className="gap-2">
+      <Text className="font-noto-medium text-[14px] leading-[19.25px]">Category</Text>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Category, ${current?.name ?? 'No category'}`}
         onPress={() => setOpen(true)}
-        style={{ height: 36, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, borderRadius: 10, borderWidth: 1, borderColor: colors.input }}
+        className="h-9 flex-row items-center px-2.5 rounded-lg border border-input"
       >
-        <Text style={[type(15), { flex: 1 }]}>{current?.name ?? 'No category'}</Text>
+        <Text className="text-[15px] flex-1">{current?.name ?? 'No category'}</Text>
         <Icon name="chevronDown" size={16} color={colors.mutedForeground} />
       </Pressable>
       <PickerSheet
@@ -71,7 +71,6 @@ function NameField({ value, onChange, error }: { value: string; onChange: (value
 }
 
 export function NewChannelSheet({ categoryId, onClose }: { categoryId: string | null; onClose: () => void }) {
-  const { colors } = useTheme()
   const { user } = useOrbit()
   const members = useMembers().data ?? []
   const run = useChatWrite()
@@ -120,10 +119,10 @@ export function NewChannelSheet({ categoryId, onClose }: { categoryId: string | 
         ]}
       />
       {kind === 'private' ? (
-        <View style={{ gap: 8 }}>
-          <Text style={[type(14, 'medium'), { lineHeight: 19.25 }]}>Add people</Text>
+        <View className="gap-2">
+          <Text className="font-noto-medium text-[14px] leading-[19.25px]">Add people</Text>
           <MemberPicker people={pickablePeople(members, user.id)} selectedIds={memberIds} onChange={setMemberIds} />
-          <Text style={[type(14), { lineHeight: 21, color: colors.mutedForeground }]}>You are a member already. You can add more people later.</Text>
+          <Text className="text-[14px] leading-[21px] text-muted-foreground">You are a member already. You can add more people later.</Text>
         </View>
       ) : null}
     </FormSheet>
@@ -172,10 +171,10 @@ export function EditChannelSheet({ conversation, onClose }: { conversation: Conv
       />
       <Input label="Topic" value={topic} maxLength={250} placeholder="What this channel is about" onChangeText={setTopic} />
       <CategoryField value={category} onChange={setCategory} />
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, opacity: conversation.is_default ? 0.5 : 1 }}>
-        <View style={{ flex: 1, gap: 4 }}>
-          <Text style={[type(14, 'medium'), { lineHeight: 19.25 }]}>Private channel</Text>
-          <Text style={[type(13), { lineHeight: 18, color: colors.mutedForeground }]}>
+      <View className={`flex-row items-center gap-3 ${conversation.is_default ? 'opacity-50' : 'opacity-100'}`}>
+        <View className="flex-1 gap-1">
+          <Text className="font-noto-medium text-[14px] leading-[19.25px]">Private channel</Text>
+          <Text className="text-[13px] leading-[18px] text-muted-foreground">
             {conversation.is_default
               ? `#${conversation.name} is the default channel. Everybody is in it, so it cannot be private.`
               : isPrivate
@@ -271,19 +270,19 @@ export function MemberPicker({ people, selectedIds, onChange, autoFocus = false 
   const chosen = selectedIds.flatMap((id) => people.find((person) => person.id === id) ?? [])
   const shown = matchPeople(people, query)
   return (
-    <View style={{ gap: 8 }}>
+    <View className="gap-2">
       {chosen.length > 0 ? (
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+        <View className="flex-row flex-wrap gap-1.5">
           {chosen.map((person) => (
             <Pressable
               key={person.id}
               accessibilityRole="button"
               accessibilityLabel={`Remove ${person.name}`}
               onPress={() => toggle(person.id)}
-              style={{ height: 28, flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 4, paddingRight: 8, borderRadius: 999, backgroundColor: colors.secondary }}
+              className="h-7 flex-row items-center gap-1.5 pl-1 pr-2 rounded-full bg-secondary"
             >
               <Avatar id={person.id} name={person.name} size={20} />
-              <Text style={[type(13, 'medium'), { color: colors.secondaryForeground }]}>{person.name}</Text>
+              <Text className="font-noto-medium text-[13px] text-secondary-foreground">{person.name}</Text>
               <Icon name="x" size={12} color={colors.mutedForeground} />
             </Pressable>
           ))}
@@ -291,7 +290,7 @@ export function MemberPicker({ people, selectedIds, onChange, autoFocus = false 
       ) : null}
       <Input autoFocus={autoFocus} placeholder="Search people" value={query} onChangeText={setQuery} autoCapitalize="none" autoCorrect={false} accessibilityLabel="Search people" />
       <View>
-        {shown.length === 0 ? <Text style={[type(14), { padding: 8, color: colors.mutedForeground }]}>No people found.</Text> : null}
+        {shown.length === 0 ? <Text className="text-[14px] p-2 text-muted-foreground">No people found.</Text> : null}
         {shown.map((person) => {
           const selected = selectedIds.includes(person.id)
           return (
@@ -301,23 +300,14 @@ export function MemberPicker({ people, selectedIds, onChange, autoFocus = false 
               accessibilityState={{ checked: selected }}
               accessibilityLabel={person.name}
               onPress={() => toggle(person.id)}
-              style={({ pressed }) => ({ height: 44, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 8, borderRadius: 8, backgroundColor: pressed ? alpha(colors.muted, 0.8) : 'transparent' })}
+              className="h-11 flex-row items-center gap-2.5 px-2 rounded-md active:bg-muted/80"
             >
               <Avatar id={person.id} name={person.name} size={28} />
-              <Text numberOfLines={1} style={[type(14), { flex: 1 }]}>
+              <Text numberOfLines={1} className="text-[14px] flex-1">
                 {person.name}
               </Text>
               <View
-                style={{
-                  width: 18,
-                  height: 18,
-                  borderRadius: 5,
-                  borderWidth: 1,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderColor: selected ? colors.primary : colors.input,
-                  backgroundColor: selected ? colors.primary : 'transparent',
-                }}
+                className={`size-4.5 rounded-[5px] border items-center justify-center ${selected ? 'border-primary bg-primary' : 'border-input'}`}
               >
                 {selected ? <Icon name="check" size={12} color={colors.primaryForeground} /> : null}
               </View>

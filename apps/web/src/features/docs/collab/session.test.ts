@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import * as Y from 'yjs'
 import { FakeProvider } from '@/test/fakeCollab'
-import { COLLAB_FRAGMENT } from './connection'
+import { COLLAB_FRAGMENT } from '@orbit/editor/collab/target'
 import {
   collabProblemAction,
   CollabSession,
@@ -13,7 +13,7 @@ import {
   problemOfClose,
   type CollabProblem,
   type CollabTimers,
-} from './session'
+} from '@orbit/editor/collab/session'
 
 function fakeClock() {
   let now = 1_000_000

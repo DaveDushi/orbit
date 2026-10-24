@@ -14,23 +14,17 @@ export interface EmptyStateProps {
 }
 
 export function EmptyState({ title, description, icon, action }: EmptyStateProps) {
-  const { colors, radius, spacing } = useTheme()
+  const { colors } = useTheme()
   return (
-    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing[2], padding: spacing[6] }}>
+    <View className="flex-1 items-center justify-center gap-2 p-6">
       {icon ? (
-        <View style={{ width: 48, height: 48, borderRadius: radius.xl, backgroundColor: colors.muted, alignItems: 'center', justifyContent: 'center', marginBottom: spacing[2] }}>
+        <View className="mb-2 size-12 items-center justify-center rounded-xl bg-muted">
           <Icon name={icon} size={24} color={colors.mutedForeground} />
         </View>
       ) : null}
-      <Text variant="heading" style={{ textAlign: 'center' }}>
-        {title}
-      </Text>
-      {description ? (
-        <Text color="muted" style={{ textAlign: 'center', maxWidth: 300 }}>
-          {description}
-        </Text>
-      ) : null}
-      {action ? <View style={{ marginTop: spacing[2] }}>{action}</View> : null}
+      <Text className="text-center font-noto-semibold text-[17px] leading-[22px]">{title}</Text>
+      {description ? <Text className="max-w-[300px] text-center leading-[21px] text-muted-foreground">{description}</Text> : null}
+      {action ? <View className="mt-2">{action}</View> : null}
     </View>
   )
 }

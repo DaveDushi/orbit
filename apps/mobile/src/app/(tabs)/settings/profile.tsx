@@ -10,7 +10,6 @@ import { phoneValid, profileChanges, profileFormOf, type ProfileForm } from '../
 import { pickImage, useChangePassword, useSetProfilePicture } from '../../../hooks/account'
 import { useOrbit } from '../../../orbit-context'
 import { errorMessage } from '../../../session-context'
-import { type, useTheme } from '../../../theme'
 import { Button, Input, Text } from '../../../ui'
 
 /** The server refuses a bigger picture. */
@@ -22,7 +21,6 @@ const BIO_COUNTER_FROM = 100
 /** The web's Profile page: the picture, the details other members see, and the password. */
 export default function ProfileScreen() {
   const { client, user, setUser } = useOrbit()
-  const { colors } = useTheme()
   const saved = profileFormOf(user)
   const [form, setForm] = useState<ProfileForm>(saved)
   const set = (part: Partial<ProfileForm>) => setForm((current) => ({ ...current, ...part }))
@@ -42,7 +40,7 @@ export default function ProfileScreen() {
     <SettingsShell title="Account settings" nav={ACCOUNT_NAV}>
       <SettingsCard title="Profile details" description="Your picture, name and what the people in your workspaces see of you.">
         <PictureField />
-        <View style={{ marginTop: 16, gap: 16 }}>
+        <View className="mt-4 gap-4">
           <Input label="Name" required value={form.name} onChangeText={(name) => set({ name })} autoComplete="name" />
           <Input label="Email" value={user.email} editable={false} />
           <Input label="Title" value={form.title} onChangeText={(title) => set({ title })} placeholder="Product designer" maxLength={100} />
@@ -58,14 +56,14 @@ export default function ProfileScreen() {
             error={phoneInvalid ? 'Use digits, spaces and + - ( ) . only.' : undefined}
           />
           <Input label="Time zone" value={form.timezone} onChangeText={(timezone) => set({ timezone })} placeholder="Europe/Budapest" autoCapitalize="none" autoCorrect={false} />
-          <View style={{ gap: 4 }}>
+          <View className="gap-1">
             <Input label="Bio" value={form.bio} onChangeText={(bio) => set({ bio })} multiline maxLength={BIO_LIMIT} />
-            {bioLeft <= BIO_COUNTER_FROM ? <Text style={[type(12), { textAlign: 'right', color: colors.mutedForeground }]}>{`${form.bio.length} / ${BIO_LIMIT}`}</Text> : null}
+            {bioLeft <= BIO_COUNTER_FROM ? <Text className="text-[12px] text-right text-muted-foreground">{`${form.bio.length} / ${BIO_LIMIT}`}</Text> : null}
           </View>
         </View>
-        {save.isError ? <View style={{ marginTop: 12 }}><Note error>{errorMessage(save.error)}</Note></View> : null}
+        {save.isError ? <View className="mt-3"><Note error>{errorMessage(save.error)}</Note></View> : null}
         {changes ? (
-          <View style={{ marginTop: 16, flexDirection: 'row', gap: 8, justifyContent: 'flex-end' }}>
+          <View className="mt-4 flex-row gap-2 justify-end">
             <Button label="Discard" variant="outline" onPress={() => setForm(saved)} />
             <Button label="Save" loading={save.isPending} disabled={phoneInvalid} onPress={() => save.mutate(changes)} />
           </View>
@@ -91,10 +89,10 @@ function PictureField() {
   }
   const error = pickError ?? (setPicture.isError ? errorMessage(setPicture.error) : null)
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+    <View className="flex-row items-center gap-4 flex-wrap">
       <ProfilePicture id={user.id} name={user.display_name} url={user.avatar_url} size={64} />
-      <View style={{ flex: 1, minWidth: 180, gap: 8 }}>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
+      <View className="flex-1 min-w-45 gap-2">
+        <View className="flex-row gap-2">
           <Button label={setPicture.isPending ? 'Saving…' : user.avatar_url ? 'Change picture' : 'Upload picture'} variant="outline" disabled={setPicture.isPending} onPress={choose} />
           {user.avatar_url ? <Button label="Remove" variant="ghost" disabled={setPicture.isPending} onPress={() => setPicture.mutate(null)} /> : null}
         </View>
@@ -131,7 +129,7 @@ function PasswordCard() {
   const alert = problem ?? (change.isError ? errorMessage(change.error) : null)
   return (
     <SettingsCard title="Password" description="Other devices will be signed out." actions={<Button label={change.isPending ? 'Changing…' : 'Change password'} variant="outline" disabled={change.isPending} onPress={submit} />}>
-      <View style={{ gap: 16 }}>
+      <View className="gap-4">
         <Input label="Current password" required value={current} onChangeText={setCurrent} secureTextEntry autoComplete="current-password" autoCapitalize="none" />
         <Input label="New password" required value={next} onChangeText={setNext} secureTextEntry autoComplete="new-password" autoCapitalize="none" />
         <Input label="Confirm new password" required value={confirm} onChangeText={setConfirm} secureTextEntry autoComplete="new-password" autoCapitalize="none" returnKeyType="done" onSubmitEditing={submit} />

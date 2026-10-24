@@ -2,7 +2,7 @@
 // the page is open, edits seen live on the collaborative document (attributed through the awareness user stamps).
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Page } from '@orbit/api/generated/types.gen'
-import type { CollabConnection } from './collab/session'
+import type { CollabConnection } from '@orbit/editor/collab/session'
 
 export interface LastEdit {
   userId: string

@@ -1,5 +1,5 @@
 /**
- * The Docs writes (create, rename, icon, cover, paragraphs, favorites, trash, teamspaces) and page comments over the
+ * The Docs writes (create, rename, icon, cover, favorites, trash, teamspaces) and page comments over the
  * generated SDK. No React; the tree and block logic is in `docs.ts`.
  */
 import {
@@ -19,11 +19,13 @@ import {
   purgePage,
   removePageFavorite,
   restorePage,
+  socketTicket,
   updatePage,
   updateTeamspace,
   uploadPageFile,
 } from '@orbit/api/generated/sdk.gen'
 import type { CreatePageBody, PageThread, PageUpdateBody, TrashedPage } from '@orbit/api/generated/types.gen'
+import type { TicketResult } from '@orbit/editor/collab/ticketSocket'
 
 import { multipart, type UploadFile } from './account-api'
 import type { OrbitClient, Page, PageSummary, Teamspace } from './orbit'
@@ -43,8 +45,11 @@ export async function newPage(client: OrbitClient, workspaceId: string, body: Cr
   return (await createPage({ client, path: { workspace_id: workspaceId }, body, throwOnError: true })).data
 }
 
-/** Title, icon, cover or content. `content` replaces the page's blocks (and its live collaborative document). */
-export async function savePage(client: OrbitClient, workspaceId: string, page: Pick<PageSummary, 'id' | 'version'>, body: Omit<PageUpdateBody, 'expected_version'>): Promise<Page> {
+/**
+ * Title, icon or cover. Never the content: the page body is a live collaborative document, edited only through the
+ * page editor's socket (a content PATCH would replace everyone's edits).
+ */
+export async function savePage(client: OrbitClient, workspaceId: string, page: Pick<PageSummary, 'id' | 'version'>, body: Pick<PageUpdateBody, 'title' | 'icon' | 'cover_url'>): Promise<Page> {
   return (await updatePage({ client, path: pagePath(workspaceId, page.id), body: { ...body, expected_version: page.version }, throwOnError: true })).data
 }
 
@@ -56,6 +61,34 @@ export async function duplicate(client: OrbitClient, workspaceId: string, pageId
 /** Stores an image on the page; its `url` can go straight into `cover_url`. */
 export async function uploadPageImage(client: OrbitClient, workspaceId: string, pageId: string, file: UploadFile): Promise<string> {
   return (await uploadPageFile({ client, path: pagePath(workspaceId, pageId), body: { file: file as Blob }, bodySerializer: multipart(file), throwOnError: true })).data.url
+}
+
+/** A one-time ticket for the page editor's socket (`…/collab?ticket=`), which cannot send the bearer token. */
+export async function collabTicket(client: OrbitClient): Promise<TicketResult> {
+  try {
+    return { ok: true, ticket: (await socketTicket({ client, throwOnError: true })).data.ticket }
+  } catch (error) {
+    const status = (error as { status?: unknown }).status
+    return { ok: false, status: typeof status === 'number' ? status : 0 }
+  }
+}
+
+/** An Orbit file (`/api/…`, which needs the session) as a data URL, for the page editor's web view; `null` when it fails. */
+export async function fileDataUrl(server: string, token: string, url: string): Promise<string | null> {
+  if (!url.startsWith('/api/')) return null
+  try {
+    const response = await fetch(`${server}${url}`, { headers: { Authorization: `Bearer ${token}` } })
+    if (!response.ok) return null
+    const blob = await response.blob()
+    return await new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
+      reader.onerror = () => resolve(null)
+      reader.readAsDataURL(blob)
+    })
+  } catch {
+    return null
+  }
 }
 
 /** The favorite page ids, in the user's order. */

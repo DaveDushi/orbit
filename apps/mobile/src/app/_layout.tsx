@@ -1,3 +1,4 @@
+import '../global.css'
 import { NotoSans_400Regular } from '@expo-google-fonts/noto-sans/400Regular'
 import { NotoSans_500Medium } from '@expo-google-fonts/noto-sans/500Medium'
 import { NotoSans_600SemiBold } from '@expo-google-fonts/noto-sans/600SemiBold'

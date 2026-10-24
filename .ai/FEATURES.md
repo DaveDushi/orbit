@@ -175,7 +175,12 @@ favorites through `/pages/favorites` (list), `/pages/{page_id}/favorite` (PUT/DE
   (also over BlockNote's own `.dark` containers), images fitted, page breaks avoided inside images/code/tables/headings.
   Static CSS (production CSP). Smoke: `target/orbit-smoke/export.mjs`.
 - Editor: BlockNote 0.55 (rich text, markdown shortcuts, nested blocks, drag handles, undo, slash menu), lazy-loaded in its own
-  chunk. Custom `page` block links to a page; it greys out as "Missing page" when the target is trashed or gone.
+  chunk. The schema lives in `packages/editor` (`@orbit/editor`): `createEditorSchemas(views)` builds the page and task
+  schemas from fixed block configs (`page`, `callout`, `mention`, code block + `sugar-high` highlighting); a host only
+  passes how blocks render (web: `editor/schema.ts` with the shadcn views; mobile: `PageEditor.dom.tsx`). The package
+  test checks that any views give `blocknote-schema.json`, so every editor bound to a page's Y.Doc has the server's
+  schema. The package also holds `codeLanguages`, `commentMarks()` (the comment mark for editors without threads),
+  the framework-free `CollabSession` (status, close codes) and `ticketWebSocket` (a fresh socket ticket per connect). Custom `page` block links to a page; it greys out as "Missing page" when the target is trashed or gone.
   Slash items "Sub-page" (creates a child page, inserts the link, opens it) and "Link a page" (picker over the tree).
   Custom `callout` block (`editor/CalloutBlock.tsx`; slash "Callout" in Basic blocks after Quote, aliases callout/note/tip/
   warning/info): inline rich text, props `emoji` (default 💡; click it to pick another in the app's emoji picker),
@@ -293,7 +298,10 @@ favorites through `/pages/favorites` (list), `/pages/{page_id}/favorite` (PUT/DE
   Socket `GET /api/v1/workspaces/{ws}/pages/{id}/collab?v=1&epoch=<Page.collab_epoch>` speaks y-sync v1 (y-websocket 3:
   `new WebsocketProvider(origin + '/api/v1/workspaces/{ws}/pages/{id}', 'collab', doc, { params: { v: '1', epoch } })`,
   fragment `prosemirror`). Handshake: one allowed `Origin` (platform layer, 403), session cookie (401), then membership +
-  live page visible to the user, else 404 exactly like an unknown id. After the upgrade: `v` ≠ 1 → 4426, stale/missing
+  live page visible to the user, else 404 exactly like an unknown id. A WebView socket (mobile editor) that cannot send
+  the cookie instead appends `ticket=` from `POST /api/v1/auth/socket-ticket` (`socket_ticket.rs`: stateless, HMAC
+  under an HKDF subkey of the app key, 60 s, session re-checked); with a ticket and no Cookie any Origin passes, and a
+  ticket plus a cookie or bearer is 401. After the upgrade: `v` ≠ 1 → 4426, stale/missing
   epoch → 4409. Close codes (4400–4499 terminal for y-websocket): 4400 malformed, 4401 session ended, 4403 no access (moved
   into someone's Private, removed from the workspace), 4404 trashed/deleted, 4409 reset, 4413 frame > 1 MiB or document
   > 8 MiB (checked before applying), 4429 > 200 sync / 30 awareness msgs/s; 1012 restart, 1013 overloaded (50 sockets per
@@ -478,4 +486,14 @@ turns its routes, navigation and shortcuts off.
 - Tasks, Docs, Mail, Chat, DMs, and Inbox use their own compact headers instead of the global topbar.
 - Chat uses compact messages, avatars, attachment grids, date separators, and pinned system notices; header search is an icon that expands when used.
 - Docs drop BlockNote's side-menu gutter on phones; the page list and the page are separate screens.
+- The mobile app (`apps/mobile`) edits the page body with BlockNote in an Expo DOM component
+  (`src/components/docs/PageEditor.dom.tsx`, a web view): `@orbit/editor`'s schema bound to the page's Y.Doc over the
+  same collab socket as the web, so both co-edit one document. The socket uses `ticketWebSocket`: the native side
+  fetches `POST /auth/socket-ticket` with its bearer token before every connect and reconnect (401 → close 4401).
+  BlockNote's own menus are off (`BlockNoteViewRaw`); a native bar above the keyboard (`EditorToolbar.tsx`) sends
+  commands (styles, block types, lists, indent, image, divider, undo/redo) through the DOM ref, and the editor reports
+  its selection state, caret line and height back. The page scrolls natively (the web view is as tall as its content)
+  and the screen scrolls the caret above the bar. Close codes map to `PROBLEM_RESPONSES` (`src/data/page-editor.ts`):
+  4409/4423 reload the page and reconnect, 4402 read-only, 4403/4404/4401 stop. Orbit files load through the native
+  side as data URLs. Mobile never PATCHes page content (`savePage` takes title, icon and cover only).
 - Shared confirmation and input modals remain vertically and horizontally centered at mobile sizes.

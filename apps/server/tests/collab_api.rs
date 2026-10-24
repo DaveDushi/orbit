@@ -11,8 +11,10 @@ use orbit_platform::{Id, TimestampMillis};
 use orbit_server::collab::blocknote::{FRAGMENT, doc_to_blocks, new_doc};
 use orbit_server::collab::{CollabConfig, CollabHub};
 use orbit_server::repositories::billing::{self as billing_repository, SubscriptionSnapshot};
+use orbit_server::repositories::identity::IdentityRepository;
 use orbit_server::repositories::page_versions::SaveOrigin;
 use orbit_server::repositories::pages::{PageChanges, PageRepository};
+use orbit_server::socket_ticket::SocketTickets;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use yrs::sync::awareness::AwarenessUpdateEntry;
@@ -141,6 +143,133 @@ async fn handshake_checks_origin_session_membership_and_page_visibility() {
             .await
             .err(),
         Some(4409)
+    );
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn a_ticket_opens_the_socket_from_a_webview_without_the_cookie() {
+    let root = TempDir::new().unwrap();
+    let server = Server::start(&root, fast_config()).await;
+    let users = setup(&server).await;
+    let page = create_page(
+        &server,
+        &users,
+        &users.owner,
+        json!({"title": "Shared"}),
+        "hello",
+    )
+    .await;
+    let id = page["id"].as_str().unwrap();
+    let epoch = page["collab_epoch"].as_str().unwrap();
+    let url = |ticket: &str| {
+        server.ws_url(
+            &users.workspace,
+            id,
+            &format!("v=1&epoch={epoch}&ticket={ticket}"),
+        )
+    };
+
+    // A WebView sends an opaque or foreign Origin, or none, and no cookie.
+    let ticket = server.socket_ticket(&users.member).await;
+    let socket = server
+        .socket(&url(&ticket), None, Some("null"))
+        .await
+        .expect("upgraded");
+    let mut webview = Client::sync(socket).await.expect("synced");
+    assert_eq!(webview.text(), "hello");
+    let socket = server
+        .socket(&url(&ticket), None, Some("https://webview.example"))
+        .await
+        .expect("upgraded");
+    assert_eq!(Client::sync(socket).await.expect("synced").text(), "hello");
+    let socket = server
+        .socket(&url(&ticket), None, None)
+        .await
+        .expect("upgraded");
+    assert_eq!(Client::sync(socket).await.expect("synced").text(), "hello");
+
+    // It edits like a cookie client, as the ticket's user.
+    let mut browser = Client::open(&server, &users, &users.owner, id).await;
+    webview.type_text(5, " world").await;
+    browser.wait_text("hello world").await;
+    browser.type_text(0, "Oh, ").await;
+    webview.wait_text("Oh, hello world").await;
+    webview
+        .set_awareness(1, json!({"user": {"name": "Mallory"}, "cursor": null}))
+        .await;
+    let webview_id = webview.doc.client_id().get();
+    assert!(
+        browser
+            .pump(Duration::from_secs(5), |client, _| client
+                .awareness
+                .contains_key(&webview_id))
+            .await
+    );
+    let state: Value = serde_json::from_str(&browser.awareness[&webview_id]).unwrap();
+    assert_eq!(state["user"]["id"], users.member_id.to_string());
+    assert_eq!(state["user"]["name"], "Mia Member");
+
+    // A ticket never comes with the cookie.
+    assert_eq!(
+        server
+            .socket(&url(&ticket), Some(&users.member), Some(&server.base))
+            .await
+            .err(),
+        Some(401)
+    );
+    // Altered, expired, foreign-key, or garbage tickets.
+    let mut altered = ticket.clone().into_bytes();
+    altered[10] = if altered[10] == b'A' { b'B' } else { b'A' };
+    let altered = String::from_utf8(altered).unwrap();
+    let identity = IdentityRepository::new(server.database.clone());
+    let member_session = identity
+        .authenticate_session(&users.member, TimestampMillis::now())
+        .await
+        .unwrap()
+        .id;
+    let expired = SocketTickets::new(&[1; 32]).issue(
+        member_session,
+        TimestampMillis::from_millis(TimestampMillis::now().as_millis() - 1),
+    );
+    let foreign_key = SocketTickets::new(&[2; 32]).issue(
+        member_session,
+        TimestampMillis::from_millis(TimestampMillis::now().as_millis() + 60_000),
+    );
+    for ticket in [altered.as_str(), &expired, &foreign_key, "x", ""] {
+        assert_eq!(
+            server.socket(&url(ticket), None, Some("null")).await.err(),
+            Some(401),
+            "{ticket}"
+        );
+    }
+    // The ticket of a session that signed out.
+    let (_, session) = add_user(&server, Some(&users.workspace), "pat@example.com", "Pat").await;
+    let ticket = server.socket_ticket(&session).await;
+    assert!(
+        server
+            .socket(&url(&ticket), None, Some("null"))
+            .await
+            .is_ok()
+    );
+    let (status, _) = server
+        .api(&session, "POST", "/api/v1/auth/logout", None)
+        .await;
+    assert_eq!(status, 204);
+    assert_eq!(
+        server.socket(&url(&ticket), None, Some("null")).await.err(),
+        Some(401)
+    );
+    // Outside a co-editing socket a ticket does not lift the Origin rule.
+    let ticket = server.socket_ticket(&users.member).await;
+    let live = format!(
+        "{}/api/v1/workspaces/{}/live?ticket={ticket}",
+        server.base.replacen("http", "ws", 1),
+        users.workspace
+    );
+    assert_eq!(
+        server.socket(&live, None, Some("null")).await.err(),
+        Some(403)
     );
     server.stop().await;
 }

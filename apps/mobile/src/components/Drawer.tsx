@@ -1,14 +1,15 @@
 import { type Href, router, useGlobalSearchParams, usePathname } from 'expo-router'
-import { createContext, type ReactNode, use, useEffect, useRef, useState } from 'react'
-import { Animated, Easing, Modal, Pressable, ScrollView, useWindowDimensions, View } from 'react-native'
+import { createContext, type ReactNode, use, useRef, useState } from 'react'
+import { Animated, Easing, Modal, PanResponder, type PanResponderGestureState, Pressable, ScrollView, useWindowDimensions, View } from 'react-native'
+import { NativeText as RNText } from '../ui/scaled'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
 
 import { useOrbit } from '../orbit-context'
 import { useChatUnreadCount, useUnreadNotifications } from '../queries'
 import { splitAlpha } from '../data/color'
-import { alpha, cssColors, fonts, mix, type, useTheme } from '../theme'
-import { Avatar, CountBadge, Icon, type IconName, IconButton, PickerSheet, Text } from '../ui'
+import { alpha, cssColors, mix, useTheme } from '../theme'
+import { Avatar, CountBadge, Icon, type IconName, IconButton, PickerSheet } from '../ui'
 
 const DrawerContext = createContext<(() => void) | null>(null)
 
@@ -19,13 +20,73 @@ export function MenuButton() {
   return <IconButton icon="menu" label="Menu" iconSize={18} color={alpha(colors.mutedForeground, 0.7)} onPress={open ?? undefined} />
 }
 
-/** Holds the drawer of the tab screens. Mount once, around the tabs. */
+/** The tab roots: on a pushed screen the same edge swipe is iOS's back gesture. */
+const SWIPE_ROOTS = new Set(['/', '/tasks', '/docs', '/chat', '/settings', '/activity'])
+/** A swipe opens the drawer only when it starts this close to the left edge. */
+const EDGE = 24
+
+/** A clear horizontal move, so taps and vertical scrolling stay with the screen. */
+const horizontal = (gesture: PanResponderGestureState, direction: 1 | -1) =>
+  gesture.dx * direction > 10 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5
+
+const clamp = (value: number) => Math.min(1, Math.max(0, value))
+
+/**
+ * Holds the drawer of the tab screens. Mount once, around the tabs. The ☰ button opens it; a swipe from the left
+ * edge of a tab root drags it open and a swipe to the left drags it closed, following the finger.
+ */
 export function DrawerProvider({ children }: { children: ReactNode }) {
-  const [open, setOpen] = useState(false)
+  const { width: screen } = useWindowDimensions()
+  const width = Math.min(280, screen * 0.84)
+  const pathname = usePathname()
+  const [mounted, setMounted] = useState(false)
+  const progress = useRef(new Animated.Value(0)).current
+  // The pan responders are created once: they read the current values through this ref.
+  const live = useRef({ width, mounted, swipeable: false })
+  live.current = { width, mounted, swipeable: SWIPE_ROOTS.has(pathname) }
+
+  const settle = (open: boolean, velocity = 0) => {
+    if (open) setMounted(true)
+    const duration = Math.abs(velocity) > 1 ? 120 : open ? 200 : 150
+    Animated.timing(progress, { toValue: open ? 1 : 0, duration, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start(({ finished }) => {
+      if (finished && !open) setMounted(false)
+    })
+  }
+
+  // Where the touch began: `gesture.x0` is not that on every platform (react-native-web), so record it.
+  const touchStartX = useRef(Number.POSITIVE_INFINITY)
+  const edge = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponderCapture: (event) => {
+        touchStartX.current = event.nativeEvent.pageX
+        return false
+      },
+      onMoveShouldSetPanResponderCapture: (_, gesture) => live.current.swipeable && !live.current.mounted && touchStartX.current <= EDGE && horizontal(gesture, 1),
+      onPanResponderGrant: () => {
+        progress.setValue(0)
+        setMounted(true)
+      },
+      onPanResponderMove: (_, gesture) => progress.setValue(clamp(gesture.dx / live.current.width)),
+      onPanResponderRelease: (_, gesture) => settle(gesture.dx > live.current.width / 3 || gesture.vx > 0.5, gesture.vx),
+      onPanResponderTerminate: () => settle(false),
+    }),
+  ).current
+
+  const back = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponderCapture: (_, gesture) => horizontal(gesture, -1),
+      onPanResponderMove: (_, gesture) => progress.setValue(clamp(1 + gesture.dx / live.current.width)),
+      onPanResponderRelease: (_, gesture) => settle(!(gesture.dx < -live.current.width / 3 || gesture.vx < -0.5), gesture.vx),
+      onPanResponderTerminate: () => settle(true),
+    }),
+  ).current
+
   return (
-    <DrawerContext value={() => setOpen(true)}>
-      {children}
-      <Drawer open={open} onClose={() => setOpen(false)} />
+    <DrawerContext value={() => settle(true)}>
+      <View className="flex-1" {...edge.panHandlers}>
+        {children}
+      </View>
+      <Drawer mounted={mounted} progress={progress} width={width} panHandlers={back.panHandlers} onClose={() => settle(false)} />
     </DrawerContext>
   )
 }
@@ -40,26 +101,27 @@ interface NavLink {
 }
 
 /** The web's `SideSheet` with `SidebarNav`: workspace, Search, the products, Personal, Manage, the user. */
-function Drawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+function Drawer({
+  mounted,
+  progress,
+  width,
+  panHandlers,
+  onClose,
+}: {
+  mounted: boolean
+  progress: Animated.Value
+  width: number
+  panHandlers: ReturnType<typeof PanResponder.create>['panHandlers']
+  onClose: () => void
+}) {
   const { colors, scheme } = useTheme()
   const { user, workspace, workspaces, selectWorkspace } = useOrbit()
   const insets = useSafeAreaInsets()
-  const { width: screen } = useWindowDimensions()
-  const width = Math.min(280, screen * 0.84)
   const pathname = usePathname()
   const { view } = useGlobalSearchParams<{ view?: string }>()
   const chatBadge = useChatUnreadCount()
   const inboxUnread = (useUnreadNotifications().data?.length ?? 0) > 0
-  const [mounted, setMounted] = useState(open)
   const [switching, setSwitching] = useState(false)
-  const progress = useRef(new Animated.Value(0)).current
-
-  useEffect(() => {
-    if (open) setMounted(true)
-    Animated.timing(progress, { toValue: open ? 1 : 0, duration: open ? 200 : 150, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start(({ finished }) => {
-      if (finished && !open) setMounted(false)
-    })
-  }, [open, progress])
 
   const go = (href: Href) => {
     onClose()
@@ -85,109 +147,79 @@ function Drawer({ open, onClose }: { open: boolean; onClose: () => void }) {
 
   return (
     <Modal visible={mounted} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
+      <View className="flex-1" {...panHandlers}>
       <Animated.View style={{ position: 'absolute', inset: 0, backgroundColor: alpha(cssColors.black, 0.5), opacity: progress }}>
-        <Pressable accessibilityLabel="Close menu" style={{ flex: 1 }} onPress={onClose} />
+        <Pressable accessibilityLabel="Close menu" className="flex-1" onPress={onClose} />
       </Animated.View>
+      {/* Animated: only the slide; the look is the web's classes on the inner view */}
       <Animated.View
         accessibilityLabel="Navigation"
-        style={{
-          position: 'absolute',
-          top: 0,
-          bottom: 0,
-          left: 0,
-          width,
-          backgroundColor: colors.sidebar,
-          borderRightWidth: 1,
-          borderRightColor: colors.sidebarEdge,
-          paddingHorizontal: 12,
-          paddingTop: insets.top,
-          paddingBottom: 12 + insets.bottom,
-          transform: [{ translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [-width, 0] }) }],
-        }}
+        style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width, transform: [{ translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [-width, 0] }) }] }}
       >
-        <Wash color={colors.sidebarWash} width={width} />
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Workspace: ${workspace.name}`}
-          onPress={() => setSwitching(true)}
-          style={{ height: 48, marginBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 6 }}
-        >
-          <Text numberOfLines={1} style={[type(17, 'bold'), { letterSpacing: -0.34, flexShrink: 1 }]}>
-            {workspace.name}
-          </Text>
-          <Icon name="chevronDown" size={13} color={alpha(colors.mutedForeground, 0.7)} />
-        </Pressable>
-
-        <View style={{ paddingHorizontal: 4, paddingBottom: 12 }}>
+        <View className="flex-1 border-r border-sidebar-edge bg-sidebar px-3" style={{ paddingTop: insets.top, paddingBottom: 12 + insets.bottom }}>
+          <Wash color={colors.sidebarWash} width={width} />
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Search"
-            onPress={() => go('/tasks?search=1')}
-            style={({ pressed }) => ({
-              height: 32,
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 10,
-              paddingLeft: 10,
-              paddingRight: 6,
-              borderRadius: 8,
-              backgroundColor: dark ? alpha(colors.sidebarTint, pressed ? 0.1 : 0.06) : pressed ? colors.border : colors.muted,
-              borderWidth: dark ? 1 : 0,
-              borderColor: alpha(colors.sidebarTint, 0.1),
-            })}
+            accessibilityLabel={`Workspace: ${workspace.name}`}
+            onPress={() => setSwitching(true)}
+            className="mb-2 h-12 flex-row items-center gap-[7px] px-1.5"
           >
-            <Icon name="search" size={16} color={alpha(colors.mutedForeground, 0.9)} />
-            <Text style={[type(13, 'medium'), { color: colors.mutedForeground }]}>Search</Text>
+            <RNText numberOfLines={1} className="shrink font-noto-bold text-[17px] tracking-[-0.34px] text-foreground">
+              {workspace.name}
+            </RNText>
+            <Icon name="chevronDown" size={13} color={alpha(colors.mutedForeground, 0.7)} />
+          </Pressable>
+
+          <View className="px-1 pb-3">
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Search"
+              onPress={() => go('/tasks?search=1')}
+              className="h-8 flex-row items-center gap-2.5 rounded-md bg-neutral-100 pr-1.5 pl-2.5 active:bg-neutral-200 dark:border dark:border-sidebar-tint/10 dark:bg-sidebar-tint/6 dark:active:bg-sidebar-tint/10"
+            >
+              <Icon name="search" size={16} color={alpha(colors.mutedForeground, 0.9)} />
+              <RNText className="font-noto-medium text-[13px] text-muted-foreground">Search</RNText>
+            </Pressable>
+          </View>
+
+          <ScrollView className="-mx-1 flex-1" contentContainerClassName="grow gap-0.5 px-1 pb-2">
+            {workspaceLinks.map((link) => (
+              <NavRow key={link.label} link={link} onPress={() => go(link.href)} />
+            ))}
+            <SubRow label="Views" onPress={() => go('/tasks')} />
+            <NavRow link={{ label: 'Docs', icon: 'docs', href: '/docs', active: pathname.startsWith('/docs') }} onPress={() => go('/docs')} />
+            <NavRow link={{ label: 'Chat', icon: 'chat', href: '/chat', active: pathname.startsWith('/chat'), badge: chatBadge }} onPress={() => go('/chat')} />
+            <NavRow link={{ label: 'Mail', icon: 'mail', href: '/', active: false }} comingSoon />
+            <Section label="Personal" />
+            {personal.map((link) => (
+              <NavRow key={link.label} link={link} onPress={() => go(link.href)} />
+            ))}
+            <Section label="Manage" />
+            <NavRow link={{ label: 'Settings', icon: 'settings', href: '/settings', active: onSettings && !onAdmin }} onPress={() => go('/settings')} />
+            {user.installation_admin ? (
+              <>
+                {/* the installation, not the workspace: it sits apart at the bottom */}
+                <View className="flex-1" />
+                <NavRow link={{ label: 'Admin', icon: 'admin', href: '/settings/admin', active: onAdmin }} tone="neutral" onPress={() => go('/settings/admin')} />
+              </>
+            ) : null}
+          </ScrollView>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Account: ${user.display_name}`}
+            onPress={() => go('/settings/profile')}
+            className="mt-2 h-8 flex-row items-center gap-2 rounded-[10px] border border-border bg-background px-2 active:bg-muted dark:border-sidebar-tint/24 dark:bg-primary/14 dark:active:border-sidebar-tint/34 dark:active:bg-primary/18"
+          >
+            <Avatar id={user.id} name={user.display_name} size={20} presence={user.status.presence} />
+            <RNText numberOfLines={1} className="flex-1 font-noto-medium text-[12px] text-foreground dark:text-[#fbe9ee]">
+              {user.display_name}
+            </RNText>
+            <Icon name="chevronDown" size={14} color={dark ? colors.sidebarTint : alpha(colors.mutedForeground, 0.7)} />
           </Pressable>
         </View>
-
-        <ScrollView style={{ flex: 1, marginHorizontal: -4 }} contentContainerStyle={{ flexGrow: 1, gap: 2, paddingHorizontal: 4, paddingBottom: 8 }}>
-          {workspaceLinks.map((link) => (
-            <NavRow key={link.label} link={link} onPress={() => go(link.href)} />
-          ))}
-          <SubRow label="Views" onPress={() => go('/tasks')} />
-          <NavRow link={{ label: 'Docs', icon: 'docs', href: '/docs', active: pathname.startsWith('/docs') }} onPress={() => go('/docs')} />
-          <NavRow link={{ label: 'Chat', icon: 'chat', href: '/chat', active: pathname.startsWith('/chat'), badge: chatBadge }} onPress={() => go('/chat')} />
-          <NavRow link={{ label: 'Mail', icon: 'mail', href: '/', active: false }} comingSoon />
-          <Section label="Personal" />
-          {personal.map((link) => (
-            <NavRow key={link.label} link={link} onPress={() => go(link.href)} />
-          ))}
-          <Section label="Manage" />
-          <NavRow link={{ label: 'Settings', icon: 'settings', href: '/settings', active: onSettings && !onAdmin }} onPress={() => go('/settings')} />
-          {user.installation_admin ? (
-            <>
-              {/* the installation, not the workspace: it sits apart at the bottom */}
-              <View style={{ flex: 1 }} />
-              <NavRow link={{ label: 'Admin', icon: 'admin', href: '/settings/admin', active: onAdmin }} tone="neutral" onPress={() => go('/settings/admin')} />
-            </>
-          ) : null}
-        </ScrollView>
-
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Account: ${user.display_name}`}
-          onPress={() => go('/settings/profile')}
-          style={({ pressed }) => ({
-            height: 32,
-            marginTop: 8,
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 8,
-            paddingHorizontal: 8,
-            borderRadius: 10,
-            borderWidth: 1,
-            borderColor: dark ? alpha(colors.sidebarTint, pressed ? 0.34 : 0.24) : colors.border,
-            backgroundColor: dark ? alpha(colors.primary, pressed ? 0.18 : 0.14) : pressed ? colors.muted : colors.background,
-          })}
-        >
-          <Avatar id={user.id} name={user.display_name} size={20} presence={user.status.presence} />
-          <Text numberOfLines={1} style={[type(12, 'medium'), { flex: 1 }, dark && { color: ACCOUNT_TEXT_DARK }]}>
-            {user.display_name}
-          </Text>
-          <Icon name="chevronDown" size={14} color={dark ? colors.sidebarTint : alpha(colors.mutedForeground, 0.7)} />
-        </Pressable>
       </Animated.View>
+      </View>
       <PickerSheet
         visible={switching}
         title="Workspaces"
@@ -205,7 +237,6 @@ function Drawer({ open, onClose }: { open: boolean; onClose: () => void }) {
 
 /** The web `SidebarNavItem`: a 36px row with a 30px icon tile; the current row's tile turns pink. */
 function NavRow({ link, onPress, comingSoon = false, tone = 'brand' }: { link: NavLink; onPress?: () => void; comingSoon?: boolean; tone?: TileTone }) {
-  const { colors } = useTheme()
   return (
     <Pressable
       accessibilityRole="button"
@@ -213,16 +244,16 @@ function NavRow({ link, onPress, comingSoon = false, tone = 'brand' }: { link: N
       accessibilityState={{ selected: link.active, disabled: comingSoon }}
       disabled={comingSoon || !onPress}
       onPress={onPress}
-      style={{ height: 36, flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: 4, paddingRight: 10, opacity: comingSoon ? 0.48 : 1 }}
+      className={`h-9 flex-row items-center gap-2.5 pr-2.5 pl-1 ${comingSoon ? 'opacity-[0.48]' : ''}`}
     >
       {({ pressed }) => (
         <>
           <Tile icon={link.icon} active={link.active} pressed={pressed} tone={tone} />
-          <Text numberOfLines={1} style={[type(13, 'medium'), { flex: 1, color: link.active || pressed ? colors.sidebarNavActive : colors.sidebarNav }]}>
+          <RNText numberOfLines={1} className={`flex-1 font-noto-medium text-[13px] ${link.active || pressed ? 'text-sidebar-nav-active' : 'text-sidebar-nav'}`}>
             {link.label}
-          </Text>
-          {comingSoon ? <Text style={[type(10, 'medium'), { color: alpha(colors.mutedForeground, 0.7) }]}>Coming soon</Text> : null}
-          {link.badge ? <CountBadge count={link.badge} /> : link.dot ? <View style={{ width: 8, height: 8, marginRight: 4, borderRadius: 4, backgroundColor: colors.primary }} /> : null}
+          </RNText>
+          {comingSoon ? <RNText className="font-noto-medium text-[10px] text-muted-foreground/70">Coming soon</RNText> : null}
+          {link.badge ? <CountBadge count={link.badge} /> : link.dot ? <View className="mr-1 size-2 rounded-full bg-primary" /> : null}
         </>
       )}
     </Pressable>
@@ -232,77 +263,57 @@ function NavRow({ link, onPress, comingSoon = false, tone = 'brand' }: { link: N
 /** `brand`: the workspace's apps, pink-tinted in dark mode. `neutral`: Admin, which is the installation, not the workspace. */
 type TileTone = 'brand' | 'neutral'
 
+/**
+ * The web's `sidebarNavTileVariants`. The 2px ledge (`shadow-[0_2px_0_var(--tile-depth)]`) and the current tile's
+ * `color-mix` border stay styles: they are computed colors.
+ */
 function Tile({ icon, active, pressed, tone }: { icon: IconName; active: boolean; pressed: boolean; tone: TileTone }) {
   const { colors, scheme } = useTheme()
   const dark = scheme === 'dark'
-  const look = active
-    ? dark
-      ? { background: colors.primary, border: mix(colors.primary, 0.75, cssColors.white), edge: mix(colors.primary, 0.6, cssColors.black), icon: cssColors.white }
-      : { background: cssColors.white, border: alpha(colors.primary, 0.45), edge: mix(colors.primary, 0.45, cssColors.white), icon: colors.primary }
-    : dark
-      ? tone === 'brand'
-        ? { background: alpha(colors.primary, 0.07), border: alpha(colors.sidebarTint, 0.13), edge: alpha(cssColors.white, 0.05), icon: colors.sidebarTintForeground }
-        : { background: alpha(cssColors.white, 0.03), border: alpha(cssColors.white, 0.07), edge: alpha(cssColors.white, 0.05), icon: NEUTRAL_TILE_ICON_DARK }
-      : { background: colors.sidebar, border: alpha(cssColors.black, 0.09), edge: alpha(cssColors.black, 0.22), icon: colors.sidebarNav }
+  const className = active
+    ? 'bg-white border-primary/45 dark:bg-primary'
+    : tone === 'brand'
+      ? 'bg-sidebar border-black/9 dark:border-sidebar-tint/13 dark:bg-primary/7'
+      : 'bg-sidebar border-black/9 dark:border-white/7 dark:bg-white/3'
+  const edge = active
+    ? dark ? mix(colors.primary, 0.6, cssColors.black) : mix(colors.primary, 0.45, cssColors.white)
+    : dark ? alpha(cssColors.white, 0.05) : alpha(cssColors.black, 0.22)
+  const icon_ = active ? (dark ? cssColors.white : colors.primary) : dark ? (tone === 'brand' ? colors.sidebarTintForeground : NEUTRAL_TILE_ICON_DARK) : colors.sidebarNav
   return (
     <View
+      className={`size-[30px] items-center justify-center rounded-[10px] border ${className}`}
       style={{
-        width: 30,
-        height: 30,
-        borderRadius: 10,
-        borderWidth: 1,
-        borderColor: look.border,
-        backgroundColor: look.background,
-        alignItems: 'center',
-        justifyContent: 'center',
-        boxShadow: pressed ? undefined : `0 2px 0 ${look.edge}`,
+        borderColor: active && dark ? mix(colors.primary, 0.75, cssColors.white) : undefined,
+        boxShadow: pressed ? undefined : `0 2px 0 ${edge}`,
         transform: [{ translateY: pressed ? 2 : 0 }],
       }}
     >
-      <Icon name={icon} size={16} color={look.icon} />
+      <Icon name={icon} size={16} color={icon_} />
     </View>
   )
 }
 
 /** "Views" nested under Tasks behind a 1px guide line. */
 function SubRow({ label, onPress }: { label: string; onPress: () => void }) {
-  const { colors, scheme } = useTheme()
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel="Task views"
-      onPress={onPress}
-      style={{ height: 28, marginLeft: 20, justifyContent: 'center', paddingLeft: 12, borderLeftWidth: 1, borderLeftColor: scheme === 'dark' ? alpha(colors.sidebarTint, 0.1) : alpha(cssColors.black, 0.08) }}
-    >
-      <Text style={[type(13, 'medium'), { color: colors.sidebarNav }]}>{label}</Text>
+    <Pressable accessibilityRole="button" accessibilityLabel="Task views" onPress={onPress} className="ml-5 h-7 justify-center border-l border-black/8 pl-3 dark:border-sidebar-tint/10">
+      <RNText className="font-noto-medium text-[13px] text-sidebar-nav">{label}</RNText>
     </Pressable>
   )
 }
 
+/** The web's section label: mono, uppercase and pink-tinted in dark mode. */
 function Section({ label }: { label: string }) {
-  const { colors, scheme } = useTheme()
-  const dark = scheme === 'dark'
+  const { scheme } = useTheme()
   return (
-    <Text
-      style={{
-        marginTop: 12,
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-        fontSize: dark ? 10.5 : 11,
-        lineHeight: 16,
-        fontFamily: dark ? fonts.mono : fonts.medium,
-        letterSpacing: dark ? 0.84 : 0,
-        color: dark ? alpha(colors.sidebarTint, 0.55) : colors.sidebarNavMuted,
-      }}
-    >
-      {dark ? label.toUpperCase() : label}
-    </Text>
+    <RNText className="mt-3 px-2.5 py-1 font-noto-medium text-[11px] leading-4 text-sidebar-nav-muted dark:font-mono dark:text-[10.5px] dark:tracking-[0.84px] dark:text-sidebar-tint/55">
+      {scheme === 'dark' ? label.toUpperCase() : label}
+    </RNText>
   )
 }
 
-/** The web's `oklch(0.72 0 0)` neutral tile icon and `oklch(0.95 0.02 359)` account text (dark). */
+/** The web's `oklch(0.72 0 0)` neutral tile icon (dark). */
 const NEUTRAL_TILE_ICON_DARK = '#a4a4a4'
-const ACCOUNT_TEXT_DARK = '#fbe9ee'
 
 /** The web sidebar's `bg-linear-to-b from-sidebar-wash to-transparent to-[520px]`: a pink wash fading out from the top. */
 function Wash({ color, width }: { color: string; width: number }) {

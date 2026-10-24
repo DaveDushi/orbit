@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react'
-import { ScrollView, StyleSheet, View, type ViewStyle } from 'react-native'
-import { type Edge, SafeAreaView } from 'react-native-safe-area-context'
+import { ScrollView, View } from 'react-native'
+import type { Edge } from 'react-native-safe-area-context'
 
-import { useTheme } from '../theme'
+import { SafeAreaView } from './SafeAreaView'
 
 export interface ScreenProps {
   children: ReactNode
@@ -11,27 +11,19 @@ export interface ScreenProps {
   scroll?: boolean
   /** Centers the content, for forms and empty states. */
   centered?: boolean
-  style?: ViewStyle
 }
 
-export function Screen({ children, edges = ['top', 'bottom', 'left', 'right'], scroll, centered, style }: ScreenProps) {
-  const { colors, spacing } = useTheme()
-  const content = [styles.content, { padding: spacing[4], gap: spacing[3] }, centered && styles.centered, style]
+export function Screen({ children, edges = ['top', 'bottom', 'left', 'right'], scroll, centered }: ScreenProps) {
+  const content = `grow gap-3 p-4 ${centered ? 'justify-center' : ''}`
   return (
-    <SafeAreaView edges={edges} style={[styles.root, { backgroundColor: colors.background }]}>
+    <SafeAreaView edges={edges} className="flex-1 bg-background">
       {scroll ? (
-        <ScrollView contentContainerStyle={content} keyboardShouldPersistTaps="handled" contentInsetAdjustmentBehavior="automatic">
+        <ScrollView contentContainerClassName={content} keyboardShouldPersistTaps="handled" contentInsetAdjustmentBehavior="automatic">
           {children}
         </ScrollView>
       ) : (
-        <View style={content}>{children}</View>
+        <View className={content}>{children}</View>
       )}
     </SafeAreaView>
   )
 }
-
-const styles = StyleSheet.create({
-  root: { flex: 1 },
-  content: { flexGrow: 1 },
-  centered: { justifyContent: 'center' },
-})

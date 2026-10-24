@@ -1,8 +1,9 @@
 import { type ReactNode, useState } from 'react'
-import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, TextInput, View } from 'react-native'
+import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, View } from 'react-native'
+import { TextInput } from '../../ui/scaled'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
-import { type, useTheme } from '../../theme'
+import { useTheme } from '../../theme'
 import { Icon, type IconName, ListRow, Text } from '../../ui'
 
 /**
@@ -26,25 +27,16 @@ export function useSheet<S>() {
 
 /** The bottom sheet of every task picker (the `PickerSheet` look): a title over the content. Tapping outside closes it. */
 export function Sheet({ visible, title, onClose, children }: { visible: boolean; title: string; onClose: () => void; children: ReactNode }) {
-  const { colors, radius, spacing, scheme } = useTheme()
   const insets = useSafeAreaInsets()
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <Pressable accessibilityLabel="Close" onPress={onClose} style={{ flex: 1, backgroundColor: scheme === 'dark' ? colors.background : colors.foreground, opacity: 0.4 }} />
+      <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <Pressable accessibilityLabel="Close" onPress={onClose} className="flex-1 bg-foreground dark:bg-background opacity-40" />
         <View
           accessibilityViewIsModal
-          style={{
-            maxHeight: '80%',
-            backgroundColor: colors.popover,
-            borderTopLeftRadius: radius.xl,
-            borderTopRightRadius: radius.xl,
-            borderColor: colors.border,
-            borderWidth: 1,
-            paddingBottom: insets.bottom + spacing[2],
-          }}
+          className="max-h-[80%] rounded-t-xl border border-border bg-popover" style={{ paddingBottom: insets.bottom + 8 }}
         >
-          <Text variant="heading" numberOfLines={1} style={{ padding: spacing[4], paddingBottom: spacing[2] }}>
+          <Text numberOfLines={1} className="p-4 pb-2 font-noto-semibold text-[17px] leading-[22px]">
             {title}
           </Text>
           {children}
@@ -57,16 +49,16 @@ export function Sheet({ visible, title, onClose, children }: { visible: boolean;
 /** The rows of a sheet, scrolling under its title and search. */
 export function SheetList({ children }: { children: ReactNode }) {
   return (
-    <ScrollView keyboardShouldPersistTaps="handled" style={{ flexShrink: 1 }}>
+    <ScrollView keyboardShouldPersistTaps="handled" className="shrink">
       {children}
     </ScrollView>
   )
 }
 
 export function SheetSearch({ value, onChange, placeholder, autoFocus = false }: { value: string; onChange: (text: string) => void; placeholder: string; autoFocus?: boolean }) {
-  const { colors, spacing, scheme } = useTheme()
+  const { colors, scheme } = useTheme()
   return (
-    <View style={{ marginHorizontal: spacing[4], marginBottom: spacing[2], flexDirection: 'row', alignItems: 'center', gap: 8, height: 36, paddingHorizontal: 10, borderRadius: 10, borderWidth: 1, borderColor: colors.input }}>
+    <View className="mx-4 mb-2 flex-row items-center gap-2 h-9 px-2.5 rounded-lg border border-input">
       <Icon name="search" size={16} color={colors.mutedForeground} />
       <TextInput
         value={value}
@@ -79,7 +71,7 @@ export function SheetSearch({ value, onChange, placeholder, autoFocus = false }:
         autoFocus={autoFocus}
         autoCorrect={false}
         autoCapitalize="none"
-        style={{ flex: 1, ...type(16), lineHeight: 22, padding: 0, color: colors.foreground }}
+        className="flex-1 font-noto text-[16px] leading-[22px] p-0 text-foreground"
       />
     </View>
   )
@@ -101,6 +93,5 @@ export function SheetRow({ label, subtitle, leading, icon, checked, onPress }: {
 
 /** Quiet text in a sheet: an empty list, a loading search, an error. */
 export function SheetNote({ children, tone = 'muted' }: { children: ReactNode; tone?: 'muted' | 'destructive' }) {
-  const { colors, spacing } = useTheme()
-  return <Text style={[type(13), { paddingHorizontal: spacing[4], paddingVertical: spacing[3], color: tone === 'destructive' ? colors.destructive : colors.mutedForeground }]}>{children}</Text>
+  return <Text className={`text-[13px] px-4 py-3 ${tone === 'destructive' ? 'text-destructive' : 'text-muted-foreground'}`}>{children}</Text>
 }

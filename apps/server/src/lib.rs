@@ -28,6 +28,7 @@ pub mod push;
 pub mod repositories;
 pub mod router;
 mod secret_box;
+pub mod socket_ticket;
 pub mod static_assets;
 pub mod task_routes;
 pub mod teamspace_routes;

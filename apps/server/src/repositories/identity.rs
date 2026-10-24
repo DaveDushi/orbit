@@ -14,6 +14,19 @@ use super::task_filter::escape_like;
 use super::teamspaces::insert_default_teamspace;
 use crate::audit::{self, AuditOutcome};
 
+/// The query of the session row [`IdentityRepository::live_session`] reads, with a `WHERE` clause.
+macro_rules! session_select {
+    ($filter:literal) => {
+        concat!(
+            "SELECT sessions.id AS session_id, sessions.token_hash, sessions.created_at, \
+             sessions.last_activity_at, sessions.idle_expires_at, sessions.absolute_expires_at, \
+             users.id AS user_id, users.email, users.display_name, users.suspended_at \
+             FROM sessions JOIN users ON users.id = sessions.user_id WHERE ",
+            $filter
+        )
+    };
+}
+
 /// A stored profile picture.
 pub struct Avatar {
     pub mime_type: String,
@@ -1704,16 +1717,10 @@ impl IdentityRepository {
         token: &str,
         now: TimestampMillis,
     ) -> Result<AuthenticatedSession, IdentityError> {
-        const ACTIVITY_WRITE_INTERVAL: i64 = 5 * 60 * 1_000;
-        const IDLE_LIFETIME: i64 = 30 * 24 * 60 * 60 * 1_000;
         let supplied = token_hash(token);
-        let row = sqlx::query(
-            "SELECT sessions.id AS session_id, sessions.token_hash, sessions.created_at, \
-             sessions.last_activity_at, sessions.idle_expires_at, sessions.absolute_expires_at, \
-             users.id AS user_id, users.email, users.display_name, users.suspended_at \
-             FROM sessions JOIN users ON users.id = sessions.user_id \
-             WHERE sessions.token_hash = $1 AND sessions.revoked_at IS NULL",
-        )
+        let row = sqlx::query(session_select!(
+            "sessions.token_hash = $1 AND sessions.revoked_at IS NULL"
+        ))
         .bind(supplied.to_vec())
         .fetch_optional(self.database.pool())
         .await?
@@ -1721,6 +1728,34 @@ impl IdentityRepository {
         if !constant_time_eq(&row.get::<Vec<u8>, _>("token_hash"), &supplied) {
             return Err(IdentityError::InvalidCredential);
         }
+        self.live_session(row, now).await
+    }
+
+    /// [`Self::authenticate_session`] for a session id the server vouched for (a socket ticket).
+    pub async fn authenticate_session_id(
+        &self,
+        session_id: Id,
+        now: TimestampMillis,
+    ) -> Result<AuthenticatedSession, IdentityError> {
+        let row = sqlx::query(session_select!(
+            "sessions.id = $1 AND sessions.revoked_at IS NULL"
+        ))
+        .bind(session_id.to_string())
+        .fetch_optional(self.database.pool())
+        .await?
+        .ok_or(IdentityError::InvalidCredential)?;
+        self.live_session(row, now).await
+    }
+
+    /// The session of an unrevoked `session_select!` row, unless it expired or its user is
+    /// suspended (then it is deleted). Extends the idle expiry at most every five minutes.
+    async fn live_session(
+        &self,
+        row: sqlx::any::AnyRow,
+        now: TimestampMillis,
+    ) -> Result<AuthenticatedSession, IdentityError> {
+        const ACTIVITY_WRITE_INTERVAL: i64 = 5 * 60 * 1_000;
+        const IDLE_LIFETIME: i64 = 30 * 24 * 60 * 60 * 1_000;
         let session_id = row
             .get::<String, _>("session_id")
             .parse::<Id>()

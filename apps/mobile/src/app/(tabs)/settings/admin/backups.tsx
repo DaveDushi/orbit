@@ -3,7 +3,6 @@ import { View } from 'react-native'
 import { AdminShell, Badge, Note, RowIcon, RowText, SettingsCard, SettingsRow } from '../../../../components/settings/Shell'
 import { formatBytes } from '../../../../data/account-api'
 import { useBackups } from '../../../../hooks/admin'
-import { type, useTheme } from '../../../../theme'
 import { Text } from '../../../../ui'
 
 /**
@@ -11,15 +10,14 @@ import { Text } from '../../../../ui'
  * work on the web.
  */
 export default function AdminBackupsScreen() {
-  const { colors } = useTheme()
   const backups = useBackups()
   const list = [...(backups.data ?? [])].sort((a, b) => b.created_at - a.created_at)
   return (
     <AdminShell refreshing={backups.isRefetching} onRefresh={() => void backups.refetch()}>
       <SettingsCard title="Backups" description="Verified snapshots of the database and attachments." flush>
-        {backups.isPending ? <View style={{ padding: 16 }}><Note>Loading backups…</Note></View> : null}
-        {backups.isError ? <View style={{ padding: 16 }}><Note error>Backups could not be loaded.</Note></View> : null}
-        {backups.data && list.length === 0 ? <View style={{ padding: 16 }}><Note>No backups yet.</Note></View> : null}
+        {backups.isPending ? <View className="p-4"><Note>Loading backups…</Note></View> : null}
+        {backups.isError ? <View className="p-4"><Note error>Backups could not be loaded.</Note></View> : null}
+        {backups.data && list.length === 0 ? <View className="p-4"><Note>No backups yet.</Note></View> : null}
         {list.map((backup, index) => (
           <SettingsRow key={backup.id} first={index === 0}>
             <RowIcon icon="archiveBox" />
@@ -36,7 +34,7 @@ export default function AdminBackupsScreen() {
           </SettingsRow>
         ))}
       </SettingsCard>
-      <Text style={[type(12), { color: colors.mutedForeground }]}>Create, download and delete backups in Orbit in a browser.</Text>
+      <Text className="text-[12px] text-muted-foreground">Create, download and delete backups in Orbit in a browser.</Text>
     </AdminShell>
   )
 }

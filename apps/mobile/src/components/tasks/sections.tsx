@@ -1,24 +1,24 @@
 /** The main-column sections of the task page under the description: Duplicate banner, Sub-issues, Relations. */
 import { router } from 'expo-router'
 import { type ReactNode, useState } from 'react'
-import { Pressable, TextInput, View } from 'react-native'
+import { Pressable, View } from 'react-native'
+import { TextInput } from '../../ui/scaled'
 
 import type { StatusRecord, TaskRecord } from '../../data/orbit'
 import type { TaskRelationRecord } from '../../data/task-api'
 import { defaultStatusOf, groupRelations, identifier, isClosed, refIdentifier } from '../../data/tasks'
 import { useProjects } from '../../queries'
-import { alpha, type, useTheme } from '../../theme'
+import { useTheme } from '../../theme'
 import { Button, Icon, IconButton, StatusIcon, Text } from '../../ui'
 
 const openTask = (taskId: string) => router.push(`/tasks/${taskId}`)
 
 function SectionTitle({ title, count, children }: { title: string; count: ReactNode; children?: ReactNode }) {
-  const { colors } = useTheme()
   return (
-    <View style={{ minHeight: 28, flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-      <Text style={[type(12, 'semibold'), { color: colors.mutedForeground }]}>{title}</Text>
-      {typeof count === 'number' ? <Text style={[type(12), { color: alpha(colors.mutedForeground, 0.6) }]}>{count}</Text> : count}
-      <View style={{ flex: 1 }} />
+    <View className="min-h-7 flex-row items-center gap-1.5 mb-1">
+      <Text className="font-noto-semibold text-[12px] text-muted-foreground">{title}</Text>
+      {typeof count === 'number' ? <Text className="text-[12px] text-muted-foreground/60">{count}</Text> : count}
+      <View className="flex-1" />
       {children}
     </View>
   )
@@ -26,18 +26,17 @@ function SectionTitle({ title, count, children }: { title: string; count: ReactN
 
 /** One task line: status, identifier and title; a tap opens the task. */
 function TaskLine({ status, taskId, id, title, label, trailing }: { status: StatusRecord | undefined; taskId: string; id: string; title: string; label?: string; trailing?: ReactNode }) {
-  const { colors } = useTheme()
   return (
-    <View style={{ minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+    <View className="min-h-9 flex-row items-center gap-2">
       {label !== undefined ? (
-        <Text numberOfLines={1} style={[type(12), { width: 72, color: alpha(colors.mutedForeground, 0.7) }]}>
+        <Text numberOfLines={1} className="text-[12px] w-18 text-muted-foreground/70">
           {label}
         </Text>
       ) : null}
-      <Pressable accessibilityRole="link" accessibilityLabel={`${id} ${title}`} onPress={() => openTask(taskId)} style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 }}>
+      <Pressable accessibilityRole="link" accessibilityLabel={`${id} ${title}`} onPress={() => openTask(taskId)} className="flex-1 flex-row items-center gap-2 min-w-0">
         <StatusIcon status={status} size={14} />
-        <Text style={[type(12), { color: colors.mutedForeground }]}>{id}</Text>
-        <Text numberOfLines={1} style={[type(13), { flex: 1 }]}>
+        <Text className="text-[12px] text-muted-foreground">{id}</Text>
+        <Text numberOfLines={1} className="text-[13px] flex-1">
           {title || 'Untitled'}
         </Text>
       </Pressable>
@@ -48,16 +47,15 @@ function TaskLine({ status, taskId, id, title, label, trailing }: { status: Stat
 
 /** The web's strip above the title while the task is a duplicate: the canonical task (opens it) and Unmark. */
 export function DuplicateBanner({ task, status, pending, onUnmark }: { task: TaskRecord; status: StatusRecord | undefined; pending: boolean; onUnmark: () => void }) {
-  const { colors } = useTheme()
   const target = task.duplicate_of
   if (!target) return null
   return (
-    <View accessibilityLabel={`Duplicate of ${refIdentifier(target)}`} style={{ minHeight: 40, flexDirection: 'row', alignItems: 'center', gap: 8, paddingBottom: 8, marginBottom: 6, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+    <View accessibilityLabel={`Duplicate of ${refIdentifier(target)}`} className="min-h-10 flex-row items-center gap-2 pb-2 mb-1.5 border-b border-border">
       <StatusIcon status={status} size={14} />
-      <Text style={[type(13), { color: colors.mutedForeground }]}>Duplicate of</Text>
-      <Pressable accessibilityRole="link" onPress={() => openTask(target.id)} style={{ flex: 1, flexDirection: 'row', gap: 6, minWidth: 0 }}>
-        <Text style={[type(13), { flexShrink: 0, color: colors.mutedForeground }]}>{refIdentifier(target)}</Text>
-        <Text numberOfLines={1} style={[type(13, 'medium'), { flexShrink: 1 }]}>
+      <Text className="text-[13px] text-muted-foreground">Duplicate of</Text>
+      <Pressable accessibilityRole="link" onPress={() => openTask(target.id)} className="flex-1 flex-row gap-1.5 min-w-0">
+        <Text className="text-[13px] shrink-0 text-muted-foreground">{refIdentifier(target)}</Text>
+        <Text numberOfLines={1} className="font-noto-medium text-[13px] shrink">
           {target.title || 'Untitled'}
         </Text>
       </Pressable>
@@ -106,13 +104,13 @@ export function SubIssuesSection({
     onCreate(text)
   }
   return (
-    <View style={{ borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 12 }}>
+    <View className="border-t border-border pt-3">
       <SectionTitle
         title="Sub-issues"
         count={
-          <View style={{ height: 22, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 7, borderRadius: 11, borderWidth: 1, borderColor: colors.border }}>
+          <View className="h-5.5 flex-row items-center gap-1 px-[7px] rounded-full border border-border">
             <Icon name="circle" size={12} color={colors.mutedForeground} />
-            <Text style={[type(12), { color: colors.mutedForeground }]}>{`${closed}/${tasks.length}`}</Text>
+            <Text className="text-[12px] text-muted-foreground">{`${closed}/${tasks.length}`}</Text>
           </View>
         }
       >
@@ -123,7 +121,7 @@ export function SubIssuesSection({
         <TaskLine key={task.id} taskId={task.id} status={statusOf(task.status_id)} id={identifier(task, projects.data ?? [])} title={task.title} />
       ))}
       {composing ? (
-        <View style={{ minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 8, marginHorizontal: -8, borderRadius: 8, backgroundColor: alpha(colors.muted, 0.5) }}>
+        <View className="min-h-9 flex-row items-center gap-2 px-2 -mx-2 rounded-md bg-muted/50">
           <StatusIcon status={defaultStatusOf(statuses, projectId)} size={14} />
           <TextInput
             autoFocus
@@ -137,13 +135,13 @@ export function SubIssuesSection({
             placeholderTextColor={colors.mutedForeground}
             selectionColor={colors.primary}
             keyboardAppearance={scheme}
-            style={{ flex: 1, ...type(16), lineHeight: 22, paddingVertical: 6, color: colors.foreground }}
+            className="flex-1 font-noto text-[16px] leading-[22px] py-1.5 text-foreground"
           />
-          {creating ? <Text style={[type(12), { color: colors.mutedForeground }]}>Creating…</Text> : null}
+          {creating ? <Text className="text-[12px] text-muted-foreground">Creating…</Text> : null}
           <IconButton icon="close" label="Close the composer" size={24} iconSize={14} color={colors.mutedForeground} onPress={onCloseComposer} />
         </View>
       ) : null}
-      {failed ? <Text style={[type(12), { color: colors.destructive, marginTop: 4 }]}>Couldn’t create the sub-issue.</Text> : null}
+      {failed ? <Text className="text-[12px] text-destructive mt-1">Couldn’t create the sub-issue.</Text> : null}
     </View>
   )
 }
@@ -156,7 +154,7 @@ export function RelationsSection({ relations, statuses, removingId, onRemove }: 
   if (groups.length === 0) return null
   const count = groups.reduce((total, group) => total + group.relations.length, 0)
   return (
-    <View style={{ borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 12 }}>
+    <View className="border-t border-border pt-3">
       <SectionTitle title="Relations" count={count} />
       {groups.map((group) =>
         group.relations.map((relation, index) => {

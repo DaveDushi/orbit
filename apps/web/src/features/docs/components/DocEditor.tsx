@@ -51,7 +51,7 @@ import { PageAutosaver, type AutosaveState, type PagePatch } from '@/features/do
 import { revealCollabCursor } from '@/features/docs/collab/cursor'
 import { useCollaborators } from '@/features/docs/collab/presence'
 import { PresenceAvatars } from '@/features/docs/collab/PresenceAvatars'
-import { collabProblemAction, collabStatusLabel, type CollabProblem, type CollabSession, type CollabState } from '@/features/docs/collab/session'
+import { collabProblemAction, collabStatusLabel, type CollabProblem, type CollabSession, type CollabState } from '@orbit/editor/collab/session'
 import { useCollabSession } from '@/features/docs/collab/useCollabSession'
 import { useDocPageActions } from '@/features/docs/pageActions'
 import { downloadPageMarkdown, printPage } from '@/features/docs/pageExport'

@@ -22,6 +22,7 @@ use crate::repositories::pages::{
     PageRepository, PageSearch, PageTrash, PageTrashEmptied, RECENT_DEFAULT_LIMIT,
     RECENT_MAX_LIMIT, RecentPageList, SpaceRequest,
 };
+use crate::socket_ticket::SocketTickets;
 use crate::task_routes::{
     ApiError, ApiJson, ApiQuery, MutationQuery, RestoreBody, authenticate_session, bounded,
     deserialize_source_patch, http_url, request_id_value, validation,
@@ -35,6 +36,8 @@ pub struct PageState {
     identity: Arc<IdentityRepository>,
     pages: Arc<PageRepository>,
     cookie_mode: CookieMode,
+    /// Verifies the tickets of co-editing sockets; `None` refuses every ticket.
+    socket_tickets: Option<SocketTickets>,
 }
 
 impl PageState {
@@ -44,7 +47,14 @@ impl PageState {
             pages: Arc::new(PageRepository::new(identity.database().clone())),
             identity,
             cookie_mode,
+            socket_tickets: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_socket_tickets(mut self, socket_tickets: Option<SocketTickets>) -> Self {
+        self.socket_tickets = socket_tickets;
+        self
     }
 }
 
@@ -856,6 +866,7 @@ async fn collab_socket(
     crate::collab::socket::upgrade(
         &state.identity,
         state.cookie_mode,
+        state.socket_tickets.as_ref(),
         state.identity.database(),
         &workspace,
         crate::collab::DocKind::Page,

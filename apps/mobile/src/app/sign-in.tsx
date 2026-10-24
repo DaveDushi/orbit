@@ -4,7 +4,6 @@ import { SvgXml } from 'react-native-svg'
 
 import { createClient, normalizeServer, signIn as signInWithPassword, signInSecondFactor } from '../data/orbit'
 import { errorMessage, useSession } from '../session-context'
-import { alpha, cssColors, type, useTheme } from '../theme'
 import { Button, Input, Text } from '../ui'
 import { logo } from '../ui/icons.gen'
 
@@ -14,7 +13,6 @@ const DEFAULT_SERVER = process.env.EXPO_PUBLIC_ORBIT_SERVER ?? ''
 
 export default function SignInScreen() {
   const { state, signIn } = useSession()
-  const { colors } = useTheme()
   const [step, setStep] = useState<Step>({ name: 'credentials' })
   const [server, setServer] = useState(DEFAULT_SERVER)
   const [email, setEmail] = useState('')
@@ -52,33 +50,22 @@ export default function SignInScreen() {
   const credentials = step.name === 'credentials'
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.background }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 24 }} keyboardShouldPersistTaps="handled">
+    <KeyboardAvoidingView className="flex-1 bg-background" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView contentContainerClassName="grow justify-center p-6" keyboardShouldPersistTaps="handled">
         <View
-          style={{
-            width: '100%',
-            maxWidth: 420,
-            alignSelf: 'center',
-            padding: 32,
-            gap: 18,
-            borderRadius: 14,
-            borderWidth: 1,
-            borderColor: colors.border,
-            backgroundColor: colors.card,
-            boxShadow: `0 10px 15px -3px ${alpha(cssColors.black, 0.1)}, 0 4px 6px -4px ${alpha(cssColors.black, 0.1)}`,
-          }}
+          className="w-full max-w-105 self-center gap-4.5 rounded-xl border border-border bg-card p-8 shadow-lg"
         >
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View className="flex-row items-center gap-2">
             <SvgXml xml={logo} width={22} height={22} />
-            <Text style={[type(13, 'bold'), { letterSpacing: 1.04, color: colors.primary }]}>ORBIT</Text>
+            <Text className="font-noto-bold text-[13px] tracking-[1.04px] text-primary">ORBIT</Text>
           </View>
-          <View style={{ marginTop: 16, marginBottom: 8, gap: 4 }}>
-            <Text style={{ ...type(24, 'semibold'), lineHeight: 28, letterSpacing: -0.6 }}>{credentials ? 'Sign in to Orbit' : 'Two-factor code'}</Text>
-            {credentials ? null : <Text style={[type(14), { color: colors.mutedForeground }]}>Enter the 6-digit code from your authenticator app, or a recovery code.</Text>}
+          <View className="mt-4 mb-2 gap-1">
+            <Text className="font-noto-semibold text-[24px] leading-[28px] tracking-[-0.6px]">{credentials ? 'Sign in to Orbit' : 'Two-factor code'}</Text>
+            {credentials ? null : <Text className="text-[14px] text-muted-foreground">Enter the 6-digit code from your authenticator app, or a recovery code.</Text>}
           </View>
           {step.name === 'credentials' ? (
             <>
-              <View style={{ gap: 14 }}>
+              <View className="gap-3.5">
                 <Input label="Server" placeholder="orbit.example.com" autoCapitalize="none" autoCorrect={false} keyboardType="url" textContentType="URL" value={server} onChangeText={setServer} />
                 <Input label="Email" placeholder="you@example.com" autoCapitalize="none" autoComplete="email" keyboardType="email-address" textContentType="username" value={email} onChangeText={setEmail} />
                 <Input
@@ -95,7 +82,7 @@ export default function SignInScreen() {
               </View>
               <Button label="Sign in" block loading={busy} disabled={!server || !email || !password} onPress={submitCredentials} />
               {server.trim() ? (
-                <Text accessibilityRole="link" onPress={() => void Linking.openURL(`${normalizeServer(server)}/recovery`)} style={[type(13), { textAlign: 'center' }]}>
+                <Text accessibilityRole="link" onPress={() => void Linking.openURL(`${normalizeServer(server)}/recovery`)} className="text-[13px] text-center">
                   Forgot your password?
                 </Text>
               ) : null}

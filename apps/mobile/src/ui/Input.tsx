@@ -1,7 +1,7 @@
-import { useState } from 'react'
-import { TextInput, type TextInputProps, View } from 'react-native'
+import { type TextInputProps, View } from 'react-native'
+import { TextInput } from './scaled'
 
-import { alpha, type, useTheme } from '../theme'
+import { useTheme } from '../theme'
 import { Text } from './Text'
 
 export interface InputProps extends Omit<TextInputProps, 'style'> {
@@ -14,15 +14,14 @@ export interface InputProps extends Omit<TextInputProps, 'style'> {
 }
 
 /** The web `Input` at phone size: a 32px field (16px text, so iOS does not zoom) under a 14px label. */
-export function Input({ label, required = false, description, error, multiline, onFocus, onBlur, ...props }: InputProps) {
+export function Input({ label, required = false, description, error, multiline, ...props }: InputProps) {
   const { colors, scheme } = useTheme()
-  const [focused, setFocused] = useState(false)
   return (
-    <View style={{ gap: 8 }}>
+    <View className="gap-2">
       {label ? (
-        <Text style={[type(14, 'medium'), { lineHeight: 19.25 }]}>
+        <Text className="font-noto-medium text-[14px] leading-[19.25px]">
           {label}
-          {required ? <Text style={[type(14, 'semibold'), { lineHeight: 19.25, color: colors.primary }]}>{'  *'}</Text> : null}
+          {required ? <Text className="font-noto-semibold text-[14px] leading-[19.25px] text-primary">{'  *'}</Text> : null}
         </Text>
       ) : null}
       <TextInput
@@ -32,30 +31,11 @@ export function Input({ label, required = false, description, error, multiline, 
         accessibilityLabel={label}
         multiline={multiline}
         {...props}
-        onFocus={(event) => {
-          setFocused(true)
-          onFocus?.(event)
-        }}
-        onBlur={(event) => {
-          setFocused(false)
-          onBlur?.(event)
-        }}
-        style={{
-          minHeight: multiline ? 76 : 32,
-          paddingHorizontal: 10,
-          paddingVertical: multiline ? 6 : 3,
-          borderRadius: 10,
-          borderWidth: 1,
-          borderColor: error ? colors.destructive : focused ? colors.ring : colors.input,
-          // the web's `dark:bg-input/30`: a faint fill so the field reads on the dark canvas
-          backgroundColor: scheme === 'dark' ? alpha(colors.input, 0.3) : 'transparent',
-          ...type(16),
-          lineHeight: 24,
-          textAlignVertical: multiline ? 'top' : 'center',
-          color: colors.foreground,
-        }}
+        // `dark:bg-input/30`: the web's faint fill, so the field reads on the dark canvas
+        className={`rounded-lg border px-2.5 font-noto text-[16px] leading-[24px] text-foreground dark:bg-input/30 ${multiline ? 'min-h-[76px] py-1.5' : 'min-h-8 py-[3px]'} ${error ? 'border-destructive' : 'border-input focus:border-ring'}`}
+        style={{ textAlignVertical: multiline ? 'top' : 'center' }}
       />
-      {error || description ? <Text style={[type(14), { lineHeight: 21, color: error ? colors.destructive : colors.mutedForeground }]}>{error ?? description}</Text> : null}
+      {error || description ? <Text className={`text-[14px] leading-[21px] ${error ? 'text-destructive' : 'text-muted-foreground'}`}>{error ?? description}</Text> : null}
     </View>
   )
 }

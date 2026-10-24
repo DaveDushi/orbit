@@ -39,6 +39,7 @@ use crate::repositories::page_files::PageFileRepository;
 use crate::repositories::tasks::TaskRepository;
 use crate::repositories::workspaces::WorkspaceRepository;
 use crate::router::{ApiRoutes, production_router};
+use crate::socket_ticket::SocketTickets;
 use crate::static_assets::{FRONTEND_REVISION, StaticAssetError, StaticAssets};
 use crate::task_routes::TaskState;
 use crate::teamspace_routes::TeamspaceState;
@@ -320,8 +321,10 @@ impl App {
                         attachment_state.uploads.clone(),
                     ),
                 ),
-                tasks: TaskState::new(Arc::clone(&identity), cookie_mode),
-                pages: PageState::new(Arc::clone(&identity), cookie_mode),
+                tasks: TaskState::new(Arc::clone(&identity), cookie_mode)
+                    .with_socket_tickets(app_key.as_ref().map(SocketTickets::new)),
+                pages: PageState::new(Arc::clone(&identity), cookie_mode)
+                    .with_socket_tickets(app_key.as_ref().map(SocketTickets::new)),
                 page_comments: PageCommentState::new(Arc::clone(&identity), cookie_mode),
                 page_files: PageFileState::new(
                     Arc::clone(&identity),
