@@ -1,6 +1,7 @@
 import { useId, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { cn } from 'cn'
+import { useTheme, type Theme } from '@/lib/themeContext'
 import { Copy, Hashtag } from 'reicon-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -169,8 +170,21 @@ function CustomThemeForm({ onDone }: { onDone: () => void }) {
   )
 }
 
-/** The app's own colours, for the "Orbit" preset's thumbnail. */
-const APP_COLORS = { sidebar: 'var(--background)', selected: 'var(--muted)', accent: 'var(--primary)', chat: 'var(--card)' }
+/**
+ * Orbit's own colours (`index.css`), for the "Orbit" preset's thumbnail. Literal, because while a custom theme is on
+ * it replaces the `var(--…)` colours on the page.
+ */
+const ORBIT_COLORS: Record<Theme, CustomTheme & { text: string }> = {
+  light: { sidebar: 'oklch(0.985 0 0)', selected: 'oklch(0.97 0 0)', accent: 'oklch(0.659 0.216 358.989)', chat: 'oklch(1 0 0)', text: 'oklch(0.145 0 0)' },
+  dark: { sidebar: 'oklch(0.17 0.018 359)', selected: 'oklch(0.269 0 0)', accent: 'oklch(0.659 0.216 358.989)', chat: 'oklch(0.145 0 0)', text: 'oklch(0.985 0 0)' },
+}
+
+/** Light or Dark as chosen in Appearance (System follows the device), whatever custom theme is on. */
+function useOrbitScheme(): Theme {
+  const choice = useTheme().appearance.theme
+  if (choice !== 'system') return choice
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+}
 
 /** A preset as a thumbnail of chat in its colours, with its name below. "Orbit" (`theme` null) is the default look. */
 function PresetButton({ name, theme, pressed, onSelect }: { name: string; theme: CustomTheme | null; pressed: boolean; onSelect: () => void }) {
@@ -193,9 +207,10 @@ function PresetButton({ name, theme, pressed, onSelect }: { name: string; theme:
 
 /** A thumbnail of chat in the theme's colours. `null` is the Orbit default. */
 export function CustomThemeSwatch({ theme, className }: { theme: CustomTheme | null; className?: string }) {
-  const colors = theme ?? APP_COLORS
-  const sidebarText = theme ? readableOn(theme.sidebar) : 'var(--foreground)'
-  const chatText = theme ? readableOn(theme.chat) : 'var(--foreground)'
+  const orbit = ORBIT_COLORS[useOrbitScheme()]
+  const colors = theme ?? orbit
+  const sidebarText = theme ? readableOn(theme.sidebar) : orbit.text
+  const chatText = theme ? readableOn(theme.chat) : orbit.text
   return (
     <span aria-hidden="true" className={cn('flex overflow-hidden rounded-md border border-border', className)}>
       <span className="flex w-[38%] flex-col gap-[3px] p-1.5" style={{ backgroundColor: colors.sidebar, color: sidebarText }}>

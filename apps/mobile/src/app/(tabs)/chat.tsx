@@ -2,17 +2,22 @@ import { router } from 'expo-router'
 import { type ReactNode, useMemo, useState } from 'react'
 import { Pressable, RefreshControl, ScrollView, View } from 'react-native'
 
+import { AccountMenu } from '../../components/AccountMenu'
+import { MenuButton } from '../../components/Drawer'
 import { CategorySheet, NewChannelSheet, NewMessageSheet } from '../../components/chat/ChannelSheets'
 import { ConversationOptions } from '../../components/chat/ConversationOptions'
+import { Emoji } from '../../components/chat/EmojiPicker'
 import { ActionSheet, type SheetItem } from '../../components/chat/Sheet'
 import { chatSections, conversationBadge, conversationTitle, unreadThreadCount } from '../../data/chat'
 import * as chat from '../../data/chat-api'
 import type { CategoryRecord, ConversationRecord, ConversationStateRecord } from '../../data/orbit'
+import { useOwnStatus } from '../../hooks/account'
 import { confirmAction, useChatWrite, useFollowedThreads, useIsChatAdmin } from '../../hooks/chat'
 import { useOrbit } from '../../orbit-context'
 import { useChatCategories, useChatStates, useChatUnreadCount, useConversations, usePeople } from '../../queries'
 import { useTheme } from '../../theme'
 import { Avatar, CountBadge, EmptyState, ErrorView, HeaderTitle, Icon, type IconName, IconButton, LoadingView, PaneHeader, SafeAreaView, Text } from '../../ui'
+import { ChatColorScope } from '../../components/chat/ChatColorScope'
 
 const PRESENCE_LABEL = { online: 'Online', idle: 'Idle', dnd: 'Do not disturb', invisible: 'Invisible' } as const
 
@@ -26,6 +31,14 @@ type Overlay =
 
 /** The web's mobile chat list: Unreads and Threads, then each section, then the user bar. */
 export default function ChatScreen() {
+  return (
+    <ChatColorScope surface="list">
+      <ChatScreenContent />
+    </ChatColorScope>
+  )
+}
+
+function ChatScreenContent() {
   const { user } = useOrbit()
   const { colors } = useTheme()
   const conversations = useConversations()
@@ -34,6 +47,8 @@ export default function ChatScreen() {
   const people = usePeople()
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
   const [overlay, setOverlay] = useState<Overlay | null>(null)
+  const [accountOpen, setAccountOpen] = useState(false)
+  const ownStatus = useOwnStatus()
   const admin = useIsChatAdmin()
   const run = useChatWrite()
   const threads = useFollowedThreads()
@@ -55,7 +70,8 @@ export default function ChatScreen() {
 
   return (
     <SafeAreaView edges={['top', 'left', 'right']} className="flex-1 bg-card">
-      <PaneHeader className="gap-1 bg-card pr-2 pl-3">
+      <PaneHeader className="bg-card">
+        <MenuButton />
         <View className="flex-1">
           <HeaderTitle>Chat</HeaderTitle>
         </View>
@@ -123,7 +139,7 @@ export default function ChatScreen() {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Status menu for ${user.display_name}`}
-          onPress={() => router.navigate('/settings')}
+          onPress={() => setAccountOpen(true)}
           className="flex-1 h-9 flex-row items-center gap-2 px-1.5 rounded-lg active:bg-muted"
         >
           <Avatar id={user.id} name={user.display_name} size={28} presence={user.status.presence} surface={colors.card} />
@@ -131,12 +147,16 @@ export default function ChatScreen() {
             <Text numberOfLines={1} className="font-noto-medium text-[13px] leading-[16px]">
               {user.display_name}
             </Text>
-            <Text numberOfLines={1} className="text-[11px] leading-[14px] text-muted-foreground">
-              {user.status.text || PRESENCE_LABEL[user.status.presence]}
-            </Text>
+            <View className="flex-row items-center gap-1 min-w-0">
+              {ownStatus.emoji ? <Emoji value={ownStatus.emoji} size={12} /> : null}
+              <Text numberOfLines={1} className="flex-1 text-[11px] leading-[14px] text-muted-foreground">
+                {ownStatus.emoji || ownStatus.text ? ownStatus.text : PRESENCE_LABEL[ownStatus.presence]}
+              </Text>
+            </View>
           </View>
         </Pressable>
       </View>
+      <AccountMenu visible={accountOpen} onClose={() => setAccountOpen(false)} onNavigate={(href) => router.navigate(href)} />
       <ActionSheet
         visible={overlay?.kind === 'new'}
         items={[

@@ -69,7 +69,8 @@ export function Button({ label, onPress, variant = 'primary', size = 'default', 
       onPress={onPress}
       className={`flex-row items-center justify-center gap-1.5 border ${SIZE[size].box} ${VARIANT[variant].box} ${block ? 'self-stretch' : ''} ${disabled && !loading ? 'opacity-50' : ''}`}
       style={({ pressed }) => ({
-        backgroundColor: variant === 'secondary' && pressed ? mix(colors.secondary, 0.95, colors.foreground) : undefined,
+        // only when set: a key with `undefined` would replace the class's background (`bg-primary`) in the merged style
+        ...(variant === 'secondary' && pressed ? { backgroundColor: mix(colors.secondary, 0.95, colors.foreground) } : {}),
         boxShadow: edge && !pressed && !disabled ? `0 2px 0 ${edge}` : undefined,
         // Flat has no edge to sink into: the press scales down a little instead
         transform: flat ? [{ scale: pressed && variant !== 'ghost' ? 0.97 : 1 }] : [{ translateY: pressed && edge ? 2 : 0 }],

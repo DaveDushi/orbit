@@ -11,12 +11,21 @@ import { useOrbit } from '../../../orbit-context'
 import { useConversations, useMembers, usePeople } from '../../../queries'
 import { presenceColors, useTheme } from '../../../theme'
 import { Avatar, Button, ErrorView, Icon, IconButton, LoadingView, Text } from '../../../ui'
+import { ChatColorScope } from '../../../components/chat/ChatColorScope'
 
 /**
  * The people in a conversation, by name. A tap opens the direct message with them; those who manage a private channel
  * add and remove people.
  */
 export default function MembersScreen() {
+  return (
+    <ChatColorScope surface="page">
+      <MembersScreenContent />
+    </ChatColorScope>
+  )
+}
+
+function MembersScreenContent() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const { user } = useOrbit()
   const { colors } = useTheme()

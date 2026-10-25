@@ -1,10 +1,13 @@
 /** The account and workspace settings queries and writes, over `data/account-api.ts`. */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as ImagePicker from 'expo-image-picker'
+import { useEffect, useState } from 'react'
+import { Alert } from 'react-native'
 
 import * as account from '../data/account-api'
 import { keys } from '../data/keys'
 import type { MemberRecord, User } from '../data/orbit'
+import { currentStatus, type OwnStatus, type UserStatus } from '../data/status'
 import { useOrbit } from '../orbit-context'
 import { uploadPart } from '../upload-part'
 
@@ -39,6 +42,44 @@ export function useSetProfilePicture() {
   return useMutation({
     mutationFn: (file: account.UploadFile | null) => (file ? account.uploadProfilePicture(client, file) : account.removeProfilePicture(client)),
     onSuccess: changed,
+  })
+}
+
+/**
+ * The signed-in user's own status, from the session user (where an invisible user is not offline). The custom status
+ * goes away when its time comes: the hook renders again at that moment.
+ */
+export function useOwnStatus(): OwnStatus {
+  const status = useOrbit().user.status
+  const expiresAt = status.expires_at ?? null
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (expiresAt === null) return
+    const delay = Math.max(0, Date.parse(expiresAt) - Date.now())
+    if (!(delay <= 2 ** 31 - 1)) return
+    const timer = setTimeout(() => setNow(Date.now()), delay + 50)
+    return () => clearTimeout(timer)
+  }, [expiresAt])
+  return currentStatus(status, now)
+}
+
+/**
+ * Sets the presence and the custom status. The session user shows it at once; a failure puts the old one back.
+ * `alertOnError: false` leaves the error to the caller (the custom status dialog shows it and stays open).
+ */
+export function useSetStatus({ alertOnError = true }: { alertOnError?: boolean } = {}) {
+  const { client, user, setUser } = useOrbit()
+  return useMutation({
+    mutationFn: (status: UserStatus) => account.setStatus(client, status),
+    onMutate: (status) => {
+      setUser({ ...user, status })
+      return { previous: user }
+    },
+    onError: (_error, _status, context) => {
+      if (context) setUser(context.previous)
+      if (alertOnError) Alert.alert('Could not update your status', 'Try again.')
+    },
+    onSuccess: setUser,
   })
 }
 

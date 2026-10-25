@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, Switch, View } from 'react-native'
 
 import { useOrbit } from '../../orbit-context'
-import { alpha, cssColors, setSchemePreference, useTheme } from '../../theme'
+import { alpha, cssColors, setSchemePreference, useLayout, useTheme } from '../../theme'
 import { Icon, type IconName, IconButton, PaneHeader, SafeAreaView, Text } from '../../ui'
 import { MenuButton } from '../Drawer'
 
@@ -24,27 +24,32 @@ export const WORKSPACE_NAV: readonly SettingsNavItem[] = [
 
 export const ACCOUNT_NAV: readonly SettingsNavItem[] = [
   { href: '/settings/profile', label: 'Profile', icon: 'user' },
+  { href: '/settings/appearance', label: 'Appearance', icon: 'brush' },
   { href: '/settings/notifications', label: 'Notifications', icon: 'bell' },
   { href: '/settings/security', label: 'Security', icon: 'lock' },
   { href: '/settings/sessions', label: 'Sessions', icon: 'shield' },
 ]
 
-/** The instance's General (registration, limits, email) and Storage (S3) pages are operator setup: on the web only. */
+/** The web's Admin pages in its order; General is the area's first page, as `/admin` is on the web. */
 export const ADMIN_NAV: readonly SettingsNavItem[] = [
-  { href: '/settings/admin', label: 'Users', icon: 'people' },
+  { href: '/settings/admin', label: 'General', icon: 'settings' },
+  { href: '/settings/admin/users', label: 'Users', icon: 'people' },
   { href: '/settings/admin/audit', label: 'Audit log', icon: 'clipboardText' },
+  { href: '/settings/admin/storage', label: 'Storage', icon: 'cloudConnection' },
   { href: '/settings/admin/backups', label: 'Backups', icon: 'archiveBox' },
   { href: '/settings/admin/jobs', label: 'Background jobs', icon: 'cpu' },
 ]
 
 /**
  * The web's `SettingsShell` on a phone: the topbar, the two-column sub-navigation between hairlines, then the cards.
- * A page opened from another screen gets a back button; the area's own pages swap in place.
+ * A page opened from another screen gets a back button; the area's own pages swap in place. In the new UI the drawer
+ * lists the area's pages instead, so the grid is left out.
  */
 export function SettingsShell({ title, nav, children, refreshing, onRefresh }: { title: string; nav: readonly SettingsNavItem[]; children: ReactNode; refreshing?: boolean; onRefresh?: () => void }) {
   const { colors, scheme } = useTheme()
   const navigation = useNavigation()
   const pathname = usePathname()
+  const newUi = useLayout() === 'new'
   const muted = alpha(colors.mutedForeground, 0.7)
   return (
     <SafeAreaView edges={['top', 'left', 'right']} className="flex-1 bg-background">
@@ -65,26 +70,28 @@ export function SettingsShell({ title, nav, children, refreshing, onRefresh }: {
           keyboardShouldPersistTaps="handled"
           refreshControl={onRefresh ? <RefreshControl refreshing={refreshing ?? false} onRefresh={onRefresh} tintColor={colors.mutedForeground} /> : undefined}
         >
-          <View accessibilityRole="tablist" accessibilityLabel={title} className="flex-row flex-wrap gap-0.5 py-3 border-t border-b border-border">
-            {nav.map((item) => {
-              const active = pathname === item.href
-              return (
-                <Pressable
-                  key={item.href}
-                  accessibilityRole="tab"
-                  accessibilityLabel={item.label}
-                  accessibilityState={{ selected: active }}
-                  onPress={active ? undefined : () => router.replace(item.href)}
-                  className={`w-[49.6%] h-8 flex-row items-center gap-2.5 px-2.5 rounded-lg ${active ? 'bg-sidebar-accent' : 'active:bg-muted'}`}
-                >
-                  <Icon name={item.icon} size={18} color={alpha(active ? colors.sidebarAccentForeground : colors.foreground, 0.9)} />
-                  <Text numberOfLines={1} className="font-noto-medium text-[13px] flex-1">
-                    {item.label}
-                  </Text>
-                </Pressable>
-              )
-            })}
-          </View>
+          {newUi ? null : (
+            <View accessibilityRole="tablist" accessibilityLabel={title} className="flex-row flex-wrap gap-0.5 py-3 border-t border-b border-border">
+              {nav.map((item) => {
+                const active = pathname === item.href
+                return (
+                  <Pressable
+                    key={item.href}
+                    accessibilityRole="tab"
+                    accessibilityLabel={item.label}
+                    accessibilityState={{ selected: active }}
+                    onPress={active ? undefined : () => router.replace(item.href)}
+                    className={`w-[49.6%] h-8 flex-row items-center gap-2.5 px-2.5 rounded-lg ${active ? 'bg-sidebar-accent' : 'active:bg-muted'}`}
+                  >
+                    <Icon name={item.icon} size={18} color={alpha(active ? colors.sidebarAccentForeground : colors.foreground, 0.9)} />
+                    <Text numberOfLines={1} className="font-noto-medium text-[13px] flex-1">
+                      {item.label}
+                    </Text>
+                  </Pressable>
+                )
+              })}
+            </View>
+          )}
           {children}
         </ScrollView>
       </KeyboardAvoidingView>
@@ -158,6 +165,26 @@ export function RowText({ title, subtitle, badges }: { title: string; subtitle?:
       ) : null}
     </View>
   )
+}
+
+/** A switch row's title and its explanation lines, which may wrap (unlike `RowText`'s two-line subtitle). */
+export function OptionText({ title, children }: { title: string; children?: ReactNode }) {
+  return (
+    <View className="flex-1 min-w-0 gap-0.5">
+      <Text className="font-noto-medium text-[13px]">{title}</Text>
+      {children}
+    </View>
+  )
+}
+
+/** One quiet line under an `OptionText` title; `error` for a failure. */
+export function OptionHint({ children, error = false }: { children: ReactNode; error?: boolean }) {
+  return <Text className={`text-[12px] leading-[17px] ${error ? 'text-destructive' : 'text-muted-foreground'}`}>{children}</Text>
+}
+
+/** A form's label above a control that is not an `Input` (a `Segmented`, a switch). */
+export function FieldLabel({ children }: { children: ReactNode }) {
+  return <Text className="font-noto-medium text-[14px] leading-[19.25px]">{children}</Text>
 }
 
 export type BadgeTone = 'primary' | 'secondary' | 'outline' | 'destructive'

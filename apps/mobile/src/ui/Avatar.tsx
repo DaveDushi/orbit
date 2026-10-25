@@ -50,7 +50,7 @@ function PresenceBadge({ presence, size, surface }: { presence: Presence; size: 
 }
 
 /** Each presence has its own shape: online a dot, idle a crescent, do not disturb a dot with a bar, offline a ring. */
-function StatusMark({ presence, size, surface }: { presence: Presence; size: number; surface: string }) {
+export function StatusMark({ presence, size, surface }: { presence: Presence; size: number; surface: string }) {
   const filled = presence === 'online' || presence === 'idle' || presence === 'dnd'
   return (
     <View

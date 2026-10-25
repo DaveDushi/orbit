@@ -1,5 +1,5 @@
 /**
- * The account and workspace settings calls (profile picture, password, two-factor, sessions, notification choices,
+ * The account and workspace settings calls (profile picture, status, password, two-factor, sessions, notification choices,
  * workspace name, storage, members and invitations) over the generated SDK, with the pure rules the screens share. No
  * React.
  */
@@ -15,6 +15,7 @@ import {
   getWorkspaceStorage,
   listInvitations,
   listSessions,
+  putStatus,
   putNotificationPreferences,
   regenerateRecoveryCodes,
   removeAvatar,
@@ -33,6 +34,7 @@ import type {
   SessionRecord,
   TotpSetup,
   TwoFactorStatus,
+  UserStatus,
   WorkspaceRole,
   WorkspaceStorage,
 } from '@orbit/api/generated/types.gen'
@@ -91,6 +93,13 @@ export function passwordProblem(current: string, next: string, confirm: string):
   if (!current || !next || !confirm) return 'Fill in all three fields.'
   if (next !== confirm) return 'The new password confirmation does not match.'
   return null
+}
+
+// ---- status
+
+/** Sets the presence and the custom status; answers with the user. */
+export async function setStatus(client: OrbitClient, status: UserStatus): Promise<User> {
+  return (await putStatus({ client, body: status, throwOnError: true })).data
 }
 
 // ---- two-factor sign-in

@@ -10,9 +10,18 @@ import { useOrbit } from '../../orbit-context'
 import { useConversations, usePeople } from '../../queries'
 import { useTheme } from '../../theme'
 import { CountBadge, EmptyState, ErrorView, LoadingView, Text } from '../../ui'
+import { ChatColorScope } from '../../components/chat/ChatColorScope'
 
 /** The Threads view: the threads you follow, unread first, then by last reply. A row opens the thread. */
 export default function ThreadsScreen() {
+  return (
+    <ChatColorScope surface="page">
+      <ThreadsScreenContent />
+    </ChatColorScope>
+  )
+}
+
+function ThreadsScreenContent() {
   const { user } = useOrbit()
   const { colors } = useTheme()
   const threads = useFollowedThreads()

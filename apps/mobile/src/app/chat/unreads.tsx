@@ -10,9 +10,18 @@ import { useOrbit } from '../../orbit-context'
 import { useChatStates, useConversations, usePeople } from '../../queries'
 import { useTheme } from '../../theme'
 import { Button, EmptyState, ErrorView, LoadingView, Text } from '../../ui'
+import { ChatColorScope } from '../../components/chat/ChatColorScope'
 
 /** The Unreads view: one group for each unread conversation that is not muted, newest activity first. */
 export default function UnreadsScreen() {
+  return (
+    <ChatColorScope surface="page">
+      <UnreadsScreenContent />
+    </ChatColorScope>
+  )
+}
+
+function UnreadsScreenContent() {
   const { user } = useOrbit()
   const { colors } = useTheme()
   const conversations = useConversations()

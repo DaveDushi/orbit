@@ -3,35 +3,22 @@ import { useState } from 'react'
 import { View } from 'react-native'
 
 import { ConfirmDialog, type ConfirmRequest } from '../../../components/settings/Dialog'
-import { ACCOUNT_NAV, Note, RowIcon, RowText, Segmented, SettingsCard, SettingsRow, SettingsShell, WORKSPACE_NAV } from '../../../components/settings/Shell'
+import { ACCOUNT_NAV, Note, RowIcon, RowText, SettingsCard, SettingsRow, SettingsShell, WORKSPACE_NAV } from '../../../components/settings/Shell'
 import { storageUse } from '../../../data/account-api'
 import { useMemberWrites, useRenameWorkspace, useWorkspaceStorage } from '../../../hooks/account'
 import { useOrbit } from '../../../orbit-context'
 import { useMembers } from '../../../queries'
 import { errorMessage } from '../../../session-context'
-import { setButtonStyle, setSchemePreference, useButtonStyle, useSchemePreference, useTheme } from '../../../theme'
+import { useTheme } from '../../../theme'
 import { Button, Icon, Input, Text } from '../../../ui'
 
-const THEMES = [
-  { value: 'light', label: 'Light' },
-  { value: 'system', label: 'System' },
-  { value: 'dark', label: 'Dark' },
-] as const
-
-const STYLES = [
-  { value: '3d', label: '3D' },
-  { value: 'flat', label: 'Flat' },
-] as const
-
 /**
- * The dock's Settings: the web's workspace General page (name, storage, appearance, leave), and the account pages,
+ * The dock's Settings: the web's workspace General page (name, storage, leave), and the account pages,
  * the server and Sign out, which the web keeps in the account menu.
  */
 export default function GeneralScreen() {
   const { workspace, session, user, signOut } = useOrbit()
   const { colors } = useTheme()
-  const schemePreference = useSchemePreference()
-  const buttonStyle = useButtonStyle()
   const storage = useWorkspaceStorage()
   const [signingOut, setSigningOut] = useState(false)
   const [signOutError, setSignOutError] = useState<string | null>(null)
@@ -45,13 +32,6 @@ export default function GeneralScreen() {
         description="Files, emoji and stickers of this workspace. A file attached more than once counts once; a deleted file stops counting about a day after the trash is emptied."
       >
         {storage.data ? <StorageBar {...storageUse(storage.data)} /> : <Note error={storage.isError}>{storage.isError ? 'Storage use could not be loaded.' : 'Loading storage…'}</Note>}
-      </SettingsCard>
-
-      <SettingsCard title="Appearance" description="Theme for this device.">
-        <View className="gap-3">
-          <Segmented label="Theme" value={schemePreference} options={THEMES} onChange={(value) => setSchemePreference(value === 'system' ? null : value)} />
-          <Segmented label="Style" value={buttonStyle} options={STYLES} onChange={setButtonStyle} />
-        </View>
       </SettingsCard>
 
       <SettingsCard title="Account" description={`${user.email} on ${session.server}`} flush>

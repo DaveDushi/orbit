@@ -17,12 +17,21 @@ import { useOrbit } from '../../orbit-context'
 import { useChatStates, useConversations, usePeople } from '../../queries'
 import { useTheme } from '../../theme'
 import { Avatar, Button, ErrorView, Icon, IconButton, LoadingView, SafeAreaView, Text } from '../../ui'
+import { ChatColorScope } from '../../components/chat/ChatColorScope'
 
 /**
  * A conversation on a phone, painted on the card surface like the web. `?message=` opens it around that message (a
  * search result) with the message marked; "Jump to present" goes back to the newest.
  */
 export default function ConversationScreen() {
+  return (
+    <ChatColorScope surface="page">
+      <ConversationScreenContent />
+    </ChatColorScope>
+  )
+}
+
+function ConversationScreenContent() {
   const { id, message: around } = useLocalSearchParams<{ id: string; message?: string }>()
   const { client, workspaceId, user } = useOrbit()
   const queryClient = useQueryClient()

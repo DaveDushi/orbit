@@ -1,8 +1,9 @@
-import { useSyncExternalStore } from 'react'
+import { createContext, use, useSyncExternalStore } from 'react'
 import { Platform, useColorScheme } from 'react-native'
 import { Uniwind } from 'uniwind'
 
 import { alpha, mix } from '../data/color'
+import { customThemeScheme, parseCustomTheme, serializeCustomTheme, type CustomTheme } from '../data/custom-theme'
 import { storage } from '../storage'
 import { dark, light } from './tokens.gen'
 
@@ -37,11 +38,21 @@ export interface Theme {
 
 const SCHEME_KEY = 'orbit.theme'
 const STYLE_KEY = 'orbit.style'
+const LAYOUT_KEY = 'orbit.layout'
+const CUSTOM_THEME_KEY = 'orbit.customTheme'
 /** `null` follows the system; the Profile header's theme button sets one explicitly, like the web toggle. */
 let preference: Scheme | null = null
 /** The web's Appearance → Style: `3d` buttons rest on a raised edge, `flat` ones have none. */
 export type ButtonStyle = '3d' | 'flat'
 let buttonStyle: ButtonStyle = '3d'
+/**
+ * The web's Appearance → Layout. `new` is the new UI: a contextual drawer (settings links and Back) and a custom theme
+ * that colours the whole app. `classic` keeps the drawer with the app links only, and a custom theme that colours chat.
+ */
+export type Layout = 'classic' | 'new'
+let layout: Layout = 'classic'
+/** Settings → Appearance → Custom. `null` is the chosen Light, System or Dark. */
+let customTheme: CustomTheme | null = null
 const listeners = new Set<() => void>()
 
 const subscribe = (listener: () => void) => {
@@ -63,12 +74,47 @@ export function setButtonStyle(style: ButtonStyle) {
   void storage.set(STYLE_KEY, style)
 }
 
+export function setLayout(next: Layout) {
+  layout = next
+  listeners.forEach((listener) => listener())
+  void storage.set(LAYOUT_KEY, next)
+}
+
+/** Saves the custom theme on this device. `null` goes back to Light, System or Dark. */
+export function setCustomTheme(theme: CustomTheme | null) {
+  customTheme = theme
+  listeners.forEach((listener) => listener())
+  void (theme ? storage.set(CUSTOM_THEME_KEY, serializeCustomTheme(theme)) : storage.remove(CUSTOM_THEME_KEY))
+}
+
 /** Reads the stored choices once at startup. */
 export async function loadAppearance(): Promise<void> {
-  const [scheme, style] = await Promise.all([storage.get(SCHEME_KEY).catch(() => null), storage.get(STYLE_KEY).catch(() => null)])
+  const read = (key: string) => storage.get(key).catch(() => null)
+  const [scheme, style, storedLayout, storedTheme] = await Promise.all([read(SCHEME_KEY), read(STYLE_KEY), read(LAYOUT_KEY), read(CUSTOM_THEME_KEY)])
   if (scheme === 'light' || scheme === 'dark') setSchemePreference(scheme)
   if (style === 'flat') setButtonStyle(style)
+  if (storedLayout === 'new') setLayout(storedLayout)
+  const theme = storedTheme ? parseCustomTheme(storedTheme) : null
+  if (theme) setCustomTheme(theme)
 }
+
+export function useLayout(): Layout {
+  return useSyncExternalStore(subscribe, () => layout)
+}
+
+/** The stored custom theme, whatever the layout. */
+export function useCustomTheme(): CustomTheme | null {
+  return useSyncExternalStore(subscribe, () => customTheme)
+}
+
+/** The custom theme that colours the whole app: only in the new UI. */
+export function useAppCustomTheme(): CustomTheme | null {
+  const theme = useCustomTheme()
+  return useLayout() === 'new' ? theme : null
+}
+
+/** The colours of a part of the screen (`ColorScope`): the whole app, the drawer, or chat. */
+export const ColorScopeContext = createContext<{ scheme: Scheme; colors: Colors } | null>(null)
 
 /** The choice in Settings → Appearance: `system` when none is set. */
 export function useSchemePreference(): Scheme | 'system' {
@@ -79,9 +125,17 @@ export function useButtonStyle(): ButtonStyle {
   return useSyncExternalStore(subscribe, () => buttonStyle)
 }
 
-export function useTheme(): Theme {
+/** The app's scheme: a custom theme in the new UI decides it from its message colour, otherwise the chosen one. */
+export function useAppScheme(): Scheme {
   const system = useColorScheme()
   const chosen = useSyncExternalStore(subscribe, () => preference)
-  const scheme: Scheme = chosen ?? (system === 'dark' ? 'dark' : 'light')
-  return { scheme, colors: palettes[scheme], fonts }
+  const custom = useAppCustomTheme()
+  if (custom) return customThemeScheme(custom)
+  return chosen ?? (system === 'dark' ? 'dark' : 'light')
+}
+
+export function useTheme(): Theme {
+  const scope = use(ColorScopeContext)
+  const scheme = useAppScheme()
+  return scope ? { ...scope, fonts } : { scheme, colors: palettes[scheme], fonts }
 }

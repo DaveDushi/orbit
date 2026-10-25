@@ -13,7 +13,8 @@ import { AppState } from 'react-native'
 
 import { OrbitProvider } from '../orbit-context'
 import { SessionProvider, useSession } from '../session-context'
-import { fonts, loadAppearance, type Theme, useTheme } from '../theme'
+import { fonts, loadAppearance, palettes, type Theme, useTheme } from '../theme'
+import { AppColorScope, useAppPalette } from '../theme/ColorScope'
 
 void SplashScreen.preventAutoHideAsync()
 
@@ -53,7 +54,9 @@ export default function RootLayout() {
 
 function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
   const { state } = useSession()
-  const theme = useTheme()
+  // the root is above `AppColorScope`, so it reads the app's colours itself (custom theme in the new UI)
+  const palette = useAppPalette()
+  const theme = { ...useTheme(), scheme: palette.scheme, colors: { ...palettes[palette.scheme], ...palette.colors } }
   const [schemeLoaded, setSchemeLoaded] = useState(false)
   const ready = fontsReady && schemeLoaded && state.status !== 'loading'
 
@@ -105,9 +108,11 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
   )
 
   return (
-    <ThemeProvider value={navigationTheme(theme)}>
-      <StatusBar style={theme.scheme === 'dark' ? 'light' : 'dark'} />
-      {signedIn ? <OrbitProvider>{stack}</OrbitProvider> : stack}
-    </ThemeProvider>
+    <AppColorScope>
+      <ThemeProvider value={navigationTheme(theme)}>
+        <StatusBar style={theme.scheme === 'dark' ? 'light' : 'dark'} />
+        {signedIn ? <OrbitProvider>{stack}</OrbitProvider> : stack}
+      </ThemeProvider>
+    </AppColorScope>
   )
 }

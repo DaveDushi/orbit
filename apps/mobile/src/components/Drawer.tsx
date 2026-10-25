@@ -1,6 +1,6 @@
 import { type Href, router, useGlobalSearchParams, usePathname } from 'expo-router'
-import { createContext, type ReactNode, use, useRef, useState } from 'react'
-import { Animated, Easing, Modal, PanResponder, type PanResponderGestureState, Pressable, ScrollView, useWindowDimensions, View } from 'react-native'
+import { createContext, Fragment, type ReactNode, use, useEffect, useMemo, useRef, useState } from 'react'
+import { AccessibilityInfo, Animated, Easing, Modal, PanResponder, type PanResponderGestureState, Pressable, ScrollView, useWindowDimensions, View } from 'react-native'
 import { NativeText as RNText } from '../ui/scaled'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
@@ -8,8 +8,13 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
 import { useOrbit } from '../orbit-context'
 import { useChatUnreadCount, useUnreadNotifications } from '../queries'
 import { splitAlpha } from '../data/color'
-import { alpha, cssColors, mix, useTheme } from '../theme'
+import { customSidebarTheme } from '../data/custom-theme'
+import { alpha, cssColors, mix, useAppCustomTheme, useButtonStyle, useLayout, useTheme } from '../theme'
+import { ColorScope } from '../theme/ColorScope'
 import { Avatar, CountBadge, Icon, type IconName, IconButton, PickerSheet } from '../ui'
+import { AccountMenu } from './AccountMenu'
+import { DRAWER_AREA_TITLES, type DrawerArea, drawerAreaOf, drawerSections } from './drawerAreas'
+import { ACCOUNT_NAV, ADMIN_NAV, WORKSPACE_NAV } from './settings/Shell'
 
 const DrawerContext = createContext<(() => void) | null>(null)
 
@@ -52,6 +57,17 @@ export function DrawerProvider({ children }: { children: ReactNode }) {
       if (finished && !open) setMounted(false)
     })
   }
+
+  // Any move to another page or view closes the drawer, like the web's mobile sheet.
+  const route = `${pathname}?${JSON.stringify(useGlobalSearchParams())}`
+  const shownRoute = useRef(route)
+  const close = useRef(settle)
+  close.current = settle
+  useEffect(() => {
+    if (shownRoute.current === route) return
+    shownRoute.current = route
+    if (live.current.mounted) close.current(false)
+  }, [route])
 
   // Where the touch began: `gesture.x0` is not that on every platform (react-native-web), so record it.
   const touchStartX = useRef(Number.POSITIVE_INFINITY)
@@ -100,7 +116,13 @@ interface NavLink {
   dot?: boolean
 }
 
-/** The web's `SideSheet` with `SidebarNav`: workspace, Search, the products, Personal, Manage, the user. */
+/**
+ * The settings areas of the new UI's contextual drawer: the links of Shell.tsx's sub-navigation. A function, because
+ * Shell.tsx imports this file: its arrays may not exist yet while this module loads.
+ */
+const areaNavs = () => ({ workspace: WORKSPACE_NAV, account: ACCOUNT_NAV, admin: ADMIN_NAV })
+
+/** The web's `SideSheet`: the scrim and the sliding panel around `DrawerPanel`. */
 function Drawer({
   mounted,
   progress,
@@ -114,6 +136,39 @@ function Drawer({
   panHandlers: ReturnType<typeof PanResponder.create>['panHandlers']
   onClose: () => void
 }) {
+  // the new UI's custom theme colours the drawer with its sidebar colour (the web's `appSidebarTheme`)
+  const custom = useAppCustomTheme()
+  const sidebarTheme = useMemo(() => (custom ? customSidebarTheme(custom) : null), [custom])
+  const panel = <DrawerPanel mounted={mounted} width={width} onClose={onClose} />
+  return (
+    <Modal visible={mounted} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
+      <View className="flex-1" {...panHandlers}>
+      <Animated.View style={{ position: 'absolute', inset: 0, backgroundColor: alpha(cssColors.black, 0.5), opacity: progress }}>
+        <Pressable accessibilityLabel="Close menu" className="flex-1" onPress={onClose} />
+      </Animated.View>
+      {/* Animated: only the slide; the look is the web's classes on the inner view */}
+      <Animated.View
+        accessibilityLabel="Navigation"
+        style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width, transform: [{ translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [-width, 0] }) }] }}
+      >
+        {sidebarTheme ? (
+          <ColorScope scheme={sidebarTheme.scheme} colors={sidebarTheme.colors}>
+            {panel}
+          </ColorScope>
+        ) : (
+          panel
+        )}
+      </Animated.View>
+      </View>
+    </Modal>
+  )
+}
+
+/**
+ * The web's `SidebarNav`: workspace, Search, the products, Personal, Manage, the user. In the new UI a settings page
+ * shows its area's links and Back instead of the app links; Back shows the app links again without leaving the page.
+ */
+function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: number; onClose: () => void }) {
   const { colors, scheme } = useTheme()
   const { user, workspace, workspaces, selectWorkspace } = useOrbit()
   const insets = useSafeAreaInsets()
@@ -122,6 +177,25 @@ function Drawer({
   const chatBadge = useChatUnreadCount()
   const inboxUnread = (useUnreadNotifications().data?.length ?? 0) > 0
   const [switching, setSwitching] = useState(false)
+  const [accountOpen, setAccountOpen] = useState(false)
+  const newUi = useLayout() === 'new'
+  const reduceMotion = useReduceMotion()
+
+  const navs = areaNavs()
+  const pageArea = newUi ? drawerAreaOf(pathname, navs) : null
+  // the area whose Back was pressed: the app links show until the page moves to another area or the drawer closes
+  const [mainMenuFor, setMainMenuFor] = useState<DrawerArea | null>(null)
+  if (!mounted && mainMenuFor) setMainMenuFor(null)
+  const area = pageArea && pageArea !== mainMenuFor ? pageArea : null
+  // Only a change while the drawer is open slides in: an area from the right, the app links back from the left.
+  const content = area ?? 'app'
+  const [shown, setShown] = useState(content)
+  const [enter, setEnter] = useState<SlideFrom | null>(null)
+  if (shown !== content) {
+    setShown(content)
+    setEnter(mounted ? (content === 'app' ? 'left' : 'right') : null)
+  }
+  if (!mounted && enter) setEnter(null)
 
   const go = (href: Href) => {
     onClose()
@@ -146,83 +220,91 @@ function Drawer({
   const dark = scheme === 'dark'
 
   return (
-    <Modal visible={mounted} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
-      <View className="flex-1" {...panHandlers}>
-      <Animated.View style={{ position: 'absolute', inset: 0, backgroundColor: alpha(cssColors.black, 0.5), opacity: progress }}>
-        <Pressable accessibilityLabel="Close menu" className="flex-1" onPress={onClose} />
-      </Animated.View>
-      {/* Animated: only the slide; the look is the web's classes on the inner view */}
-      <Animated.View
-        accessibilityLabel="Navigation"
-        style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width, transform: [{ translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [-width, 0] }) }] }}
+    <View className="flex-1 border-r border-sidebar-edge bg-sidebar px-3" style={{ paddingTop: insets.top, paddingBottom: 12 + insets.bottom }}>
+      <Wash color={colors.sidebarWash} width={width} />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Workspace: ${workspace.name}`}
+        onPress={() => setSwitching(true)}
+        className="mb-2 h-12 flex-row items-center gap-[7px] px-1.5"
       >
-        <View className="flex-1 border-r border-sidebar-edge bg-sidebar px-3" style={{ paddingTop: insets.top, paddingBottom: 12 + insets.bottom }}>
-          <Wash color={colors.sidebarWash} width={width} />
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Workspace: ${workspace.name}`}
-            onPress={() => setSwitching(true)}
-            className="mb-2 h-12 flex-row items-center gap-[7px] px-1.5"
-          >
-            <RNText numberOfLines={1} className="shrink font-noto-bold text-[17px] tracking-[-0.34px] text-foreground">
-              {workspace.name}
-            </RNText>
-            <Icon name="chevronDown" size={13} color={alpha(colors.mutedForeground, 0.7)} />
-          </Pressable>
+        <RNText numberOfLines={1} className="shrink font-noto-bold text-[17px] tracking-[-0.34px] text-foreground">
+          {workspace.name}
+        </RNText>
+        <Icon name="chevronDown" size={13} color={alpha(colors.mutedForeground, 0.7)} />
+      </Pressable>
 
-          <View className="px-1 pb-3">
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Search"
-              onPress={() => go('/tasks?search=1')}
-              className="h-8 flex-row items-center gap-2.5 rounded-md bg-neutral-100 pr-1.5 pl-2.5 active:bg-neutral-200 dark:border dark:border-sidebar-tint/10 dark:bg-sidebar-tint/6 dark:active:bg-sidebar-tint/10"
-            >
-              <Icon name="search" size={16} color={alpha(colors.mutedForeground, 0.9)} />
-              <RNText className="font-noto-medium text-[13px] text-muted-foreground">Search</RNText>
-            </Pressable>
-          </View>
-
-          <ScrollView className="-mx-1 flex-1" contentContainerClassName="grow gap-0.5 px-1 pb-2">
-            {workspaceLinks.map((link) => (
-              <NavRow key={link.label} link={link} onPress={() => go(link.href)} />
-            ))}
-            <SubRow label="Views" onPress={() => go('/tasks')} />
-            <NavRow link={{ label: 'Docs', icon: 'docs', href: '/docs', active: pathname.startsWith('/docs') }} onPress={() => go('/docs')} />
-            <NavRow link={{ label: 'Chat', icon: 'chat', href: '/chat', active: pathname.startsWith('/chat'), badge: chatBadge }} onPress={() => go('/chat')} />
-            <NavRow link={{ label: 'Mail', icon: 'mail', href: '/', active: false }} comingSoon />
-            <Section label="Personal" />
-            {personal.map((link) => (
-              <NavRow key={link.label} link={link} onPress={() => go(link.href)} />
-            ))}
-            <Section label="Manage" />
-            <NavRow link={{ label: 'Settings', icon: 'settings', href: '/settings', active: onSettings && !onAdmin }} onPress={() => go('/settings')} />
-            {user.installation_admin ? (
-              <>
-                {/* the installation, not the workspace: it sits apart at the bottom */}
-                <View className="flex-1" />
-                <NavRow link={{ label: 'Admin', icon: 'admin', href: '/settings/admin', active: onAdmin }} tone="neutral" onPress={() => go('/settings/admin')} />
-              </>
-            ) : null}
-          </ScrollView>
-
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Account: ${user.display_name}`}
-            onPress={() => go('/settings/profile')}
-            className="mt-2 h-8 flex-row items-center gap-2 rounded-[10px] border border-border bg-background px-2 active:bg-muted dark:border-sidebar-tint/24 dark:bg-primary/14 dark:active:border-sidebar-tint/34 dark:active:bg-primary/18"
-          >
-            <Avatar id={user.id} name={user.display_name} size={20} presence={user.status.presence} />
-            <RNText numberOfLines={1} className="flex-1 font-noto-medium text-[12px] text-foreground dark:text-[#fbe9ee]">
-              {user.display_name}
-            </RNText>
-            <Icon name="chevronDown" size={14} color={dark ? colors.sidebarTint : alpha(colors.mutedForeground, 0.7)} />
-          </Pressable>
-        </View>
-      </Animated.View>
+      <View className="px-1 pb-3">
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Search"
+          onPress={() => go('/tasks?search=1')}
+          className="h-8 flex-row items-center gap-2.5 rounded-md bg-neutral-100 pr-1.5 pl-2.5 active:bg-neutral-200 dark:border dark:border-sidebar-tint/10 dark:bg-sidebar-tint/6 dark:active:bg-sidebar-tint/10"
+        >
+          <Icon name="search" size={16} color={alpha(colors.mutedForeground, 0.9)} />
+          <RNText className="font-noto-medium text-[13px] text-muted-foreground">Search</RNText>
+        </Pressable>
       </View>
+
+      <SlideIn key={content} from={reduceMotion ? null : enter}>
+        <ScrollView className="-mx-1 flex-1" contentContainerClassName="grow gap-0.5 px-1 pb-2">
+          {area ? (
+            <>
+              <BackRow label={DRAWER_AREA_TITLES[area]} onPress={() => setMainMenuFor(area)} />
+              {drawerSections(area, navs[area]).map((section) => (
+                <Fragment key={section.label}>
+                  <Section label={section.label} />
+                  {section.items.map((item) => (
+                    <NavRow key={item.href} link={{ label: item.label, icon: item.icon, href: item.href, active: pathname === item.href }} onPress={() => go(item.href)} />
+                  ))}
+                </Fragment>
+              ))}
+            </>
+          ) : (
+            <>
+              {workspaceLinks.map((link) => (
+                <NavRow key={link.label} link={link} onPress={() => go(link.href)} />
+              ))}
+              <SubRow label="Views" onPress={() => go('/tasks')} />
+              <NavRow link={{ label: 'Docs', icon: 'docs', href: '/docs', active: pathname.startsWith('/docs') }} onPress={() => go('/docs')} />
+              <NavRow link={{ label: 'Chat', icon: 'chat', href: '/chat', active: pathname.startsWith('/chat'), badge: chatBadge }} onPress={() => go('/chat')} />
+              <NavRow link={{ label: 'Mail', icon: 'mail', href: '/', active: false }} comingSoon />
+              <Section label="Personal" />
+              {personal.map((link) => (
+                <NavRow key={link.label} link={link} onPress={() => go(link.href)} />
+              ))}
+              <Section label="Manage" />
+              <NavRow link={{ label: 'Settings', icon: 'settings', href: '/settings', active: onSettings && !onAdmin }} onPress={() => go('/settings')} />
+              {user.installation_admin ? (
+                <>
+                  {/* the installation, not the workspace: it sits apart at the bottom */}
+                  <View className="flex-1" />
+                  <NavRow link={{ label: 'Admin', icon: 'admin', href: '/settings/admin', active: onAdmin }} tone="neutral" onPress={() => go('/settings/admin')} />
+                </>
+              ) : null}
+            </>
+          )}
+        </ScrollView>
+      </SlideIn>
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Account menu for ${user.display_name}`}
+        onPress={() => setAccountOpen(true)}
+        // one set of classes per scheme: Uniwind does not let `dark:border-*` win over `border-border`
+        className={`mt-2 h-8 flex-row items-center gap-2 rounded-[10px] border px-2 ${dark ? 'border-sidebar-tint/24 bg-primary/14 active:border-sidebar-tint/34 active:bg-primary/18' : 'border-border bg-background active:bg-muted'}`}
+      >
+        <Avatar id={user.id} name={user.display_name} size={20} presence={user.status.presence} />
+        <RNText numberOfLines={1} className="flex-1 font-noto-medium text-[12px] text-foreground dark:text-[#fbe9ee]">
+          {user.display_name}
+        </RNText>
+        <Icon name="chevronDown" size={14} color={dark ? colors.sidebarTint : alpha(colors.mutedForeground, 0.7)} />
+      </Pressable>
+      <AccountMenu visible={accountOpen} surface={newUi ? 'sidebarPopover' : 'popover'} onClose={() => setAccountOpen(false)} onNavigate={go} />
       <PickerSheet
         visible={switching}
         title="Workspaces"
+        surface={newUi ? 'sidebarPopover' : 'popover'}
         options={workspaces.map((item) => ({ key: item.id, label: item.name, subtitle: item.role, selected: item.id === workspace.id }))}
         onSelect={(id) => {
           setSwitching(false)
@@ -231,12 +313,69 @@ function Drawer({
         }}
         onClose={() => setSwitching(false)}
       />
-    </Modal>
+    </View>
   )
 }
 
-/** The web `SidebarNavItem`: a 36px row with a 30px icon tile; the current row's tile turns pink. */
+type SlideFrom = 'left' | 'right'
+
+/** The web's `slide-in-from-left-6` / `slide-in-from-right-6` with a fade, 200ms. Mounted again for each new content. */
+function SlideIn({ from, children }: { from: SlideFrom | null; children: ReactNode }) {
+  const progress = useRef(new Animated.Value(from ? 0 : 1)).current
+  useEffect(() => {
+    if (from) Animated.timing(progress, { toValue: 1, duration: 200, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start()
+  }, [from, progress])
+  const offset = from === 'left' ? -24 : 24
+  return (
+    <Animated.View className="flex-1" style={{ opacity: progress, transform: [{ translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [offset, 0] }) }] }}>
+      {children}
+    </Animated.View>
+  )
+}
+
+/** The system's Reduce motion setting. */
+function useReduceMotion(): boolean {
+  const [reduce, setReduce] = useState(false)
+  useEffect(() => {
+    void AccessibilityInfo.isReduceMotionEnabled().then(setReduce)
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduce)
+    return () => subscription.remove()
+  }, [])
+  return reduce
+}
+
+/**
+ * Coolify's Back row (the web's `BackToApp`): a small chevron as wide as an icon tile, then the area's name, centred.
+ * No tile, a fill while pressed.
+ */
+function BackRow({ label, onPress }: { label: string; onPress: () => void }) {
+  const { colors, scheme } = useTheme()
+  const flat = useButtonStyle() === 'flat'
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Back to the main menu"
+      onPress={onPress}
+      className={`mb-1 flex-row items-center gap-2.5 rounded-md pr-2.5 active:bg-neutral-100 dark:active:bg-white/6 ${flat ? 'h-8 pl-2.5' : 'h-9 pl-1'}`}
+    >
+      <View className={`h-4 items-center justify-center ${flat ? 'w-[18px]' : 'w-[30px]'}`}>
+        <Icon name="chevronLeft" size={12} color={scheme === 'dark' ? colors.sidebarNav : colors.primary} />
+      </View>
+      <RNText numberOfLines={1} className="flex-1 pr-6 text-center font-noto-medium text-[13px] text-foreground">
+        {label}
+      </RNText>
+    </Pressable>
+  )
+}
+
+/**
+ * The web `SidebarNavItem`: a 36px row with a 30px icon tile; the current row's tile turns pink. The Flat style has no
+ * tile: an 18px icon on a 32px row, and the current row is filled.
+ */
 function NavRow({ link, onPress, comingSoon = false, tone = 'brand' }: { link: NavLink; onPress?: () => void; comingSoon?: boolean; tone?: TileTone }) {
+  const { colors } = useTheme()
+  const flat = useButtonStyle() === 'flat'
+  const shape = flat ? `h-8 rounded-md pl-2.5 ${link.active ? 'bg-black/5 dark:bg-white/6' : 'active:bg-black/4 dark:active:bg-white/5'}` : 'h-9 pl-1'
   return (
     <Pressable
       accessibilityRole="button"
@@ -244,11 +383,15 @@ function NavRow({ link, onPress, comingSoon = false, tone = 'brand' }: { link: N
       accessibilityState={{ selected: link.active, disabled: comingSoon }}
       disabled={comingSoon || !onPress}
       onPress={onPress}
-      className={`h-9 flex-row items-center gap-2.5 pr-2.5 pl-1 ${comingSoon ? 'opacity-[0.48]' : ''}`}
+      className={`flex-row items-center gap-2.5 pr-2.5 ${shape} ${comingSoon ? 'opacity-[0.48]' : ''}`}
     >
       {({ pressed }) => (
         <>
-          <Tile icon={link.icon} active={link.active} pressed={pressed} tone={tone} />
+          {flat ? (
+            <Icon name={link.icon} size={18} color={alpha(link.active || pressed ? colors.sidebarNavActive : colors.sidebarNav, 0.9)} />
+          ) : (
+            <Tile icon={link.icon} active={link.active} pressed={pressed} tone={tone} />
+          )}
           <RNText numberOfLines={1} className={`flex-1 font-noto-medium text-[13px] ${link.active || pressed ? 'text-sidebar-nav-active' : 'text-sidebar-nav'}`}>
             {link.label}
           </RNText>
@@ -283,7 +426,10 @@ function Tile({ icon, active, pressed, tone }: { icon: IconName; active: boolean
     <View
       className={`size-[30px] items-center justify-center rounded-[10px] border ${className}`}
       style={{
-        borderColor: active && dark ? mix(colors.primary, 0.75, cssColors.white) : undefined,
+        // the web's tile borders; set here because Uniwind does not let `dark:border-*` win over `border-black/9`
+        borderColor: active
+          ? dark ? mix(colors.primary, 0.75, cssColors.white) : alpha(colors.primary, 0.45)
+          : !dark ? alpha(cssColors.black, 0.09) : tone === 'brand' ? alpha(colors.sidebarTint, 0.13) : alpha(cssColors.white, 0.07),
         boxShadow: pressed ? undefined : `0 2px 0 ${edge}`,
         transform: [{ translateY: pressed ? 2 : 0 }],
       }}
@@ -295,8 +441,9 @@ function Tile({ icon, active, pressed, tone }: { icon: IconName; active: boolean
 
 /** "Views" nested under Tasks behind a 1px guide line. */
 function SubRow({ label, onPress }: { label: string; onPress: () => void }) {
+  const dark = useTheme().scheme === 'dark'
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel="Task views" onPress={onPress} className="ml-5 h-7 justify-center border-l border-black/8 pl-3 dark:border-sidebar-tint/10">
+    <Pressable accessibilityRole="button" accessibilityLabel="Task views" onPress={onPress} className={`ml-5 h-7 justify-center border-l pl-3 ${dark ? 'border-sidebar-tint/10' : 'border-black/8'}`}>
       <RNText className="font-noto-medium text-[13px] text-sidebar-nav">{label}</RNText>
     </Pressable>
   )
