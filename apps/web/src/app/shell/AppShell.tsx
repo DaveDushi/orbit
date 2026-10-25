@@ -82,7 +82,13 @@ function Shell() {
   // Coolify's content-aware sidebar: the open sidebar holds the page's own list (docs, chat) instead of the app links.
   // Collapsed or on a phone, the page keeps its list beside the content.
   const desktop = useSyncExternalStore(subscribeDesktop, isDesktop)
-  const { pathname } = useLocation()
+  const { pathname, search } = useLocation()
+  // Any move to another page closes the mobile drawer: sidebar links, the account menu (Appearance…), Back and the rest
+  const [drawerPage, setDrawerPage] = useState(pathname + search)
+  if (drawerPage !== pathname + search) {
+    setDrawerPage(pathname + search)
+    setDrawerOpen(false)
+  }
   // only in the new UI (Account settings → Appearance → Layout)
   const newUi = useNewUi()
   const hostsList = newUi && desktop && !sidebarCollapsed && hostsPageList(pathname)
@@ -202,7 +208,7 @@ function Shell() {
             <div className="mb-2 flex h-12 shrink-0 items-center justify-start gap-2 px-1.5">
               <WorkspaceSwitcher onSelect={() => setDrawerOpen(false)} />
             </div>
-            <SidebarNav contextual={newUi} onNavigate={() => setDrawerOpen(false)} chatBadge={chatBadge} inboxUnread={inboxUnread} isRoot={isRoot} />
+            <SidebarNav contextual={newUi} backShowsMenu onNavigate={() => setDrawerOpen(false)} chatBadge={chatBadge} inboxUnread={inboxUnread} isRoot={isRoot} />
             <div className="flex shrink-0 items-center pt-2">
               <UserMenu />
             </div>

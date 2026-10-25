@@ -179,7 +179,7 @@ function areaOf(pathname: string): string | null {
  * Coolify's Back row: a small chevron as wide as an icon tile, then the area's name, centred. No tile, a fill on hover.
  * It opens the last page outside the current area.
  */
-function BackToApp({ label, onNavigate }: { label: string; onNavigate?: () => void }) {
+function BackToApp({ label, onNavigate, onBack }: { label: string; onNavigate?: () => void; onBack?: () => void }) {
   const collapsed = useContext(SidebarNavCollapsed)
   const area = areaOf(useLocation().pathname)
   const index = recentPaths.findLastIndex((path) => areaOf(path.split('?')[0]) !== area)
@@ -189,33 +189,36 @@ function BackToApp({ label, onNavigate }: { label: string; onNavigate?: () => vo
     recentPaths.length = Math.max(index, 0)
     onNavigate?.()
   }
-  return (
-    <Tip label={collapsed ? 'Back to the main menu' : undefined} side="right">
-      <Link
-        data-slot="sidebar-nav-back"
-        to={target}
-        title="Back to the main menu"
-        aria-label="Back to the main menu"
-        className="mb-1 flex h-9 w-full min-w-0 shrink-0 items-center gap-2.5 rounded-md pr-2.5 pl-1 text-[13px] outline-none transition-colors duration-120 hover:bg-neutral-100 focus-visible:outline-1 focus-visible:outline-primary dark:hover:bg-white/6 group-data-[collapsed=true]/sidebar-nav:justify-center group-data-[collapsed=true]/sidebar-nav:px-0 flat:h-8 flat:pl-2.5"
-        onClick={goBack}
-      >
+  const props = {
+    'data-slot': 'sidebar-nav-back',
+    title: 'Back to the main menu',
+    'aria-label': 'Back to the main menu',
+    className: 'mb-1 flex h-9 w-full min-w-0 shrink-0 items-center gap-2.5 rounded-md pr-2.5 pl-1 text-[13px] outline-none transition-colors duration-120 hover:bg-neutral-100 focus-visible:outline-1 focus-visible:outline-primary dark:hover:bg-white/6 group-data-[collapsed=true]/sidebar-nav:justify-center group-data-[collapsed=true]/sidebar-nav:px-0 flat:h-8 flat:pl-2.5',
+    children: (
+      <>
         {/* as wide as an icon tile (16px icon, padding and border), so the chevron lines up with the icons below */}
         <span className="flex h-4 w-[30px] shrink-0 items-center justify-center flat:w-[18px]">
           <ChevronDown className="size-3 rotate-90 text-primary dark:text-sidebar-nav" />
         </span>
         <span className="min-w-0 flex-1 truncate pr-6 text-center font-medium text-foreground group-data-[collapsed=true]/sidebar-nav:hidden">{label}</span>
-      </Link>
+      </>
+    ),
+  }
+  return (
+    <Tip label={collapsed ? 'Back to the main menu' : undefined} side="right">
+      {/* with `onBack` (the mobile drawer) Back only shows the main menu, like Coolify's drawer: the page stays */}
+      {onBack ? <button type="button" {...props} onClick={onBack} /> : <Link {...props} to={target} onClick={goBack} />}
     </Tip>
   )
 }
 
 /** Coolify's content-aware sidebar: inside Settings, Account settings or Admin, the area's links replace the app links. */
-function SettingsAreaNav({ area, onNavigate }: { area: SettingsAreaName; onNavigate?: () => void }) {
+function SettingsAreaNav({ area, onNavigate, onBack }: { area: SettingsAreaName; onNavigate?: () => void; onBack?: () => void }) {
   const collapsed = useContext(SidebarNavCollapsed)
   const { title, sections } = useSettingsArea(area)
   return (
     <>
-      <BackToApp label={title} onNavigate={onNavigate} />
+      <BackToApp label={title} onNavigate={onNavigate} onBack={onBack} />
       {sections.map((section) => (
         <Fragment key={section.label}>
           <SidebarSection label={section.label} collapsed={collapsed} />
@@ -237,6 +240,7 @@ export function SidebarNav({
   chatEnabled: chat = chatEnabled,
   isRoot = false,
   contextual = false,
+  backShowsMenu = false,
   pageListRef,
 }: {
   onNavigate?: () => void
@@ -251,11 +255,16 @@ export function SidebarNav({
   isRoot?: boolean
   /** The new UI: inside Settings, Account settings or Admin the area's links and Back replace the app links. */
   contextual?: boolean
+  /** The mobile drawer: Back shows the main menu without leaving the page. Closing the drawer forgets it. */
+  backShowsMenu?: boolean
   /** Set while the open page's own list (docs, chat) shows here instead of the app links: the element it renders in. */
   pageListRef?: (element: HTMLDivElement | null) => void
 }) {
   const location = useLocation()
-  const area = contextual ? settingsAreaOf(location.pathname) : null
+  const pageArea = contextual ? settingsAreaOf(location.pathname) : null
+  // the area whose Back was pressed in the drawer: the main menu shows until the page moves to another area
+  const [mainMenuFor, setMainMenuFor] = useState<SettingsAreaName | null>(null)
+  const area = pageArea && pageArea === mainMenuFor ? null : pageArea
   const pageList = pageListRef !== undefined && hostsPageList(location.pathname)
   // What the sidebar shows below Search. Only a change animates, so the first load and moves inside an area stay still.
   const content = pageList ? `list:${areaOf(location.pathname)}` : (area ?? 'app')
@@ -335,7 +344,7 @@ export function SidebarNav({
             </>
           ) : (
             <div className="-mx-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-1 pb-2">
-              {area ? <SettingsAreaNav area={area} onNavigate={onNavigate} /> : (
+              {area ? <SettingsAreaNav area={area} onNavigate={onNavigate} onBack={backShowsMenu ? () => setMainMenuFor(area) : undefined} /> : (
                 <>
                   {WORKSPACE_LINKS.map((link) => link.enabled || (link.to === '/chat' && chat) ? (
                     <Fragment key={link.to}>

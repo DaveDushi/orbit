@@ -271,3 +271,18 @@ test('the classic layout keeps the app links in settings, with no Back', () => {
   expect(view.queryByRole('link', { name: 'Back to the main menu' })).toBeNull()
   expect(view.queryByRole('link', { name: 'Appearance' })).toBeNull()
 })
+
+test('in the mobile drawer Back shows the main menu and stays on the page', () => {
+  const view = render(
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter initialEntries={['/tasks', '/profile/appearance']} initialIndex={1}>
+        <SidebarNav contextual backShowsMenu />
+        <Location />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  fireEvent.click(view.getByRole('button', { name: 'Back to the main menu' }))
+  expect(view.getByTestId('location').textContent).toBe('/profile/appearance')
+  expect(view.getByRole('link', { name: 'Tasks' })).toBeTruthy()
+  expect(view.queryByRole('link', { name: 'Appearance' })).toBeNull()
+})
