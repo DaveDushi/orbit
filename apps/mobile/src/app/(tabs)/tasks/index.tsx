@@ -25,7 +25,7 @@ type Sheet = 'project' | 'filter' | 'display'
 type Grouping = 'status' | 'none'
 
 export default function TasksScreen() {
-  const { view: viewParam, search: searchParam } = useLocalSearchParams<{ view?: string; search?: string }>()
+  const { view: viewParam, search: searchParam, project: projectParam } = useLocalSearchParams<{ view?: string; search?: string; project?: string }>()
   const view = viewParam && viewParam in PRESET_TITLE ? viewParam : undefined
   const { user } = useOrbit()
   const { colors } = useTheme()
@@ -33,7 +33,9 @@ export default function TasksScreen() {
   const statuses = useStatuses()
   const projects = useProjects()
   const people = usePeople()
-  const [projectId, setProjectId] = useState<string | null>(null)
+  // in the URL, so the drawer's project links can pick it
+  const projectId = projectParam || null
+  const setProjectId = (id: string | null) => router.setParams({ project: id ?? undefined })
   const [assignedToMe, setAssignedToMe] = useState(false)
   const [grouping, setGrouping] = useState<Grouping>('status')
   const [search, setSearch] = useState('')

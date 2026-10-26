@@ -2,13 +2,19 @@ import { Kbd } from '@/components/ui/kbd'
 import { shortcutText } from '@/shortcuts/shortcutText'
 import { useBindings } from '@/shortcuts/useCommand'
 import { createContext, Fragment, useContext, useEffect, useState, type ComponentType, type ReactNode } from 'react'
-import { Link, useLocation, useMatch, useResolvedPath, type LinkProps } from 'react-router'
+import { Link, useLocation, useMatch, useNavigate, useResolvedPath, type LinkProps } from 'react-router'
 import { cva, type VariantProps } from 'class-variance-authority'
-import { Calendar, ChevronDown, CalendarTick, Danger, SecurityUser, Home2 as Home, Layer, Notification as Bell, Message as MessageSquare, DocumentText as FileText, Search4 as Search, Setting2 as Settings, Sms as Mail, TaskSquare as SquareCheck, Timer } from 'reicon-react'
+import { Calendar, ChevronDown, CalendarTick, Danger, SecurityUser, Home2 as Home, Layer, Notification as Bell, Message as MessageSquare, DocumentText as FileText, Search4 as Search, Setting2 as Settings, Sms as Mail, Star, TaskSquare as SquareCheck, Timer, Folder, Add as Plus } from 'reicon-react'
 import { cn } from 'cn'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { Tip } from '@/components/common/Tip'
+import { ColorDot } from '@/components/common/ColorDot'
+import { useQuery } from '@tanstack/react-query'
+import { useProjects } from '@/features/tasks/api/projects'
+import { NewProjectModal } from '@/features/tasks/components/NewProjectModal'
+import { savedViewsQueryOptions } from '@/features/views/api/views'
+import { WorkspaceContext } from '@/features/workspaces/workspaceContext'
 import { settingsAreaOf, useSettingsArea, type SettingsAreaName } from '@/features/settings/settingsNav'
 import { chatEnabled, docsHidden } from './productNavigation'
 import { hostsPageList } from './sidebarSlot'
@@ -169,10 +175,125 @@ const PAGE_LIST_TITLES: Record<string, string> = { docs: 'Docs', chat: 'Chat' }
 
 // The pages opened in this tab, newest last, so Back can leave the current area. Shared by the sidebar and the drawer.
 const recentPaths: string[] = []
+// Set by Back, so the next area slides in from the left even when Back lands in another area (Settings → Tasks).
+let backPressed = false
 
-/** The area whose links or list replace the app links: a settings area, or a page with its own list. */
+/** Tasks and its saved views (not `/tasks-trash`, which is in the workspace settings). */
+const isTasksPath = (pathname: string) => /^\/(tasks|views)(\/|$)/.test(pathname)
+
+/** The area whose links or list replace the app links: a settings area, Tasks, or a page with its own list. */
 function areaOf(pathname: string): string | null {
-  return settingsAreaOf(pathname) ?? (hostsPageList(pathname) ? pathname.split('/')[1] : null)
+  return settingsAreaOf(pathname) ?? (isTasksPath(pathname) ? 'tasks' : hostsPageList(pathname) ? pathname.split('/')[1] : null)
+}
+
+type SidebarArea = SettingsAreaName | 'tasks'
+
+/** The task pages ("presets") of the URL's `view`, as the old Personal section listed them. */
+const TASK_PRESETS = [
+  { view: 'mine', label: 'My tasks', icon: SquareCheck },
+  { view: 'current_week', label: 'This week', icon: Calendar },
+  { view: 'my_week', label: 'My week', icon: CalendarTick },
+  { view: 'overdue', label: 'Overdue', icon: Danger },
+  { view: 'due_soon', label: 'Due soon', icon: Timer },
+] as const
+
+// One icon component per colour, so a project's tile keeps its identity between renders.
+const dotIcons = new Map<string, SidebarNavIcon>()
+function dotIcon(color: string): SidebarNavIcon {
+  let icon = dotIcons.get(color)
+  if (!icon) {
+    icon = ({ className }) => <ColorDot color={color} className={cn('size-2.5 rounded-[3px]', className)} />
+    dotIcons.set(color, icon)
+  }
+  return icon
+}
+
+/**
+ * The new UI's Tasks area: what used to sit beside Tasks in the app links (Views, the task pages under Personal) and
+ * the project menu of the page header, as sidebar links.
+ */
+function TasksAreaNav({ onNavigate, onBack }: { onNavigate?: () => void; onBack?: () => void }) {
+  const collapsed = useContext(SidebarNavCollapsed)
+  const location = useLocation()
+  const params = new URLSearchParams(location.search)
+  const view = params.get('view')
+  const project = params.get('project')
+  const onTasks = location.pathname === '/tasks'
+  const navigate = useNavigate()
+  const [creating, setCreating] = useState(false)
+  const workspaceId = useContext(WorkspaceContext)?.workspace.id ?? ''
+  const projects = useProjects(workspaceId, workspaceId !== '').data ?? []
+  const favorites = (useQuery({ ...savedViewsQueryOptions(workspaceId), enabled: workspaceId !== '' }).data ?? [])
+    .filter((saved) => saved.is_favorite)
+    .sort((a, b) => (a.favorite_position ?? 0) - (b.favorite_position ?? 0))
+
+  const tasksPath = (next: { view?: string | null; project?: string | null }) => {
+    const query = new URLSearchParams()
+    const nextProject = next.project === undefined ? project : next.project
+    const nextView = next.view === undefined ? view : next.view
+    if (nextProject) query.set('project', nextProject)
+    if (nextView) query.set('view', nextView)
+    return `/tasks${query.size > 0 ? `?${query}` : ''}`
+  }
+
+  return (
+    <>
+      <BackToApp label="Tasks" onNavigate={onNavigate} onBack={onBack} />
+      <SidebarNavItem to={tasksPath({ view: null })} active={onTasks && !view} icon={SquareCheck} label="All tasks" onClick={onNavigate} />
+      <SidebarNavItem to="/views" end icon={Layer} label="Views" aria-label="Task views" onClick={onNavigate} />
+      <SidebarSection label="My work" collapsed={collapsed} />
+      {TASK_PRESETS.map((preset) => (
+        <SidebarNavItem key={preset.view} to={tasksPath({ view: preset.view })} active={onTasks && view === preset.view} icon={preset.icon} label={preset.label} onClick={onNavigate} />
+      ))}
+      {projects.length > 0 ? (
+        <>
+          <SidebarSection label="Projects" collapsed={collapsed} />
+          <SidebarNavItem to={tasksPath({ project: null })} active={onTasks && !project} icon={Folder} label="All projects" onClick={onNavigate} />
+          {projects.map((item) => (
+            <div key={item.id} className="group/project relative">
+              <SidebarNavItem to={tasksPath({ project: item.id })} active={onTasks && project === item.id} icon={dotIcon(item.color)} label={item.name} className="pr-8" onClick={onNavigate} />
+              {collapsed ? null : (
+                <Tip label="Project settings" side="right">
+                  <Link
+                    to={`/tasks/projects/${item.id}/settings`}
+                    aria-label={`${item.name} settings`}
+                    className="absolute top-1/2 right-1 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-sidebar-nav opacity-0 transition-opacity outline-none group-hover/project:opacity-100 hover:bg-black/5 hover:text-sidebar-nav-active focus-visible:opacity-100 pointer-coarse:opacity-100 dark:hover:bg-white/8"
+                    onClick={onNavigate}
+                  >
+                    <Settings className="size-3.5" />
+                  </Link>
+                </Tip>
+              )}
+            </div>
+          ))}
+        </>
+      ) : <SidebarSection label="Projects" collapsed={collapsed} />}
+      <Tip label={collapsed ? 'New project' : undefined} side="right">
+        <button type="button" data-slot="sidebar-nav-item" className={sidebarNavItemVariants()} aria-label="New project" onClick={() => setCreating(true)}>
+          <SidebarNavTile icon={Plus} />
+          <SidebarNavLabel>New project</SidebarNavLabel>
+        </button>
+      </Tip>
+      {creating ? (
+        <NewProjectModal
+          onClose={() => setCreating(false)}
+          onCreated={(created) => {
+            setCreating(false)
+            onNavigate?.()
+            navigate(tasksPath({ project: created.id }))
+          }}
+        />
+      ) : null}
+      {favorites.length > 0 ? (
+        <>
+          <SidebarSection label="Favorite views" collapsed={collapsed} />
+          {favorites.map((saved) => (
+            <SidebarNavItem key={saved.id} to={`/views/${saved.id}`} icon={Star} label={saved.name} onClick={onNavigate} />
+          ))}
+        </>
+      ) : null}
+    </>
+  )
 }
 
 /**
@@ -186,6 +307,7 @@ function BackToApp({ label, onNavigate, onBack }: { label: string; onNavigate?: 
   const target = recentPaths[index] ?? '/'
   // Back pops: the pages after the target are forgotten, so the next Back goes further back instead of returning here
   const goBack = () => {
+    backPressed = true
     recentPaths.length = Math.max(index, 0)
     onNavigate?.()
   }
@@ -253,7 +375,7 @@ export function SidebarNav({
   chatEnabled?: boolean
   /** The root user (installation administrator) also gets the Admin link. */
   isRoot?: boolean
-  /** The new UI: inside Settings, Account settings or Admin the area's links and Back replace the app links. */
+  /** The new UI: inside Tasks, Settings, Account settings or Admin the area's links and Back replace the app links. */
   contextual?: boolean
   /** The mobile drawer: Back shows the main menu without leaving the page. Closing the drawer forgets it. */
   backShowsMenu?: boolean
@@ -261,9 +383,9 @@ export function SidebarNav({
   pageListRef?: (element: HTMLDivElement | null) => void
 }) {
   const location = useLocation()
-  const pageArea = contextual ? settingsAreaOf(location.pathname) : null
+  const pageArea: SidebarArea | null = contextual ? (settingsAreaOf(location.pathname) ?? (isTasksPath(location.pathname) ? 'tasks' : null)) : null
   // the area whose Back was pressed in the drawer: the main menu shows until the page moves to another area
-  const [mainMenuFor, setMainMenuFor] = useState<SettingsAreaName | null>(null)
+  const [mainMenuFor, setMainMenuFor] = useState<SidebarArea | null>(null)
   const area = pageArea && pageArea === mainMenuFor ? null : pageArea
   const pageList = pageListRef !== undefined && hostsPageList(location.pathname)
   // What the sidebar shows below Search. Only a change animates, so the first load and moves inside an area stay still.
@@ -272,8 +394,11 @@ export function SidebarNav({
   const [enter, setEnter] = useState<'forward' | 'back' | null>(null)
   if (shown !== content) {
     setShown(content)
-    setEnter(content === 'app' ? 'back' : 'forward')
+    setEnter(content === 'app' || backPressed ? 'back' : 'forward')
   }
+  useEffect(() => {
+    backPressed = false
+  }, [content])
   useEffect(() => {
     const path = location.pathname + location.search
     if (recentPaths.at(-1) !== path) recentPaths.push(path)
@@ -344,7 +469,7 @@ export function SidebarNav({
             </>
           ) : (
             <div className="-mx-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-1 pb-2">
-              {area ? <SettingsAreaNav area={area} onNavigate={onNavigate} onBack={backShowsMenu ? () => setMainMenuFor(area) : undefined} /> : (
+              {area === 'tasks' ? <TasksAreaNav onNavigate={onNavigate} onBack={backShowsMenu ? () => setMainMenuFor(area) : undefined} /> : area ? <SettingsAreaNav area={area} onNavigate={onNavigate} onBack={backShowsMenu ? () => setMainMenuFor(area) : undefined} /> : (
                 <>
                   {WORKSPACE_LINKS.map((link) => link.enabled || (link.to === '/chat' && chat) ? (
                     <Fragment key={link.to}>
@@ -359,7 +484,7 @@ export function SidebarNav({
                       />
                       {/* saved views belong to Tasks, so they nest under it instead of sitting beside the other apps;
                           always shown so the rows below never move when the route changes */}
-                      {link.to === '/tasks' ? (
+                      {link.to === '/tasks' && !contextual ? (
                         <SidebarNavItem to="/views" end size="sub" icon={Layer} label="Views" aria-label="Task views" onClick={onNavigate} />
                       ) : null}
                     </Fragment>
@@ -368,11 +493,10 @@ export function SidebarNav({
                   ))}
                   <SidebarSection label="Personal" collapsed={collapsed} />
                   <SidebarNavItem to={activityPath} icon={Bell} label="Activity" unread={inboxUnread} onClick={onNavigate} />
-                  <SidebarNavItem to={taskViewPath('mine')} active={taskViewActive('mine')} icon={SquareCheck} label="My tasks" onClick={onNavigate} />
-                  <SidebarNavItem to={taskViewPath('current_week')} active={taskViewActive('current_week')} icon={Calendar} label="This week" onClick={onNavigate} />
-                  <SidebarNavItem to={taskViewPath('my_week')} active={taskViewActive('my_week')} icon={CalendarTick} label="My week" onClick={onNavigate} />
-                  <SidebarNavItem to={taskViewPath('overdue')} active={taskViewActive('overdue')} icon={Danger} label="Overdue" onClick={onNavigate} />
-                  <SidebarNavItem to={taskViewPath('due_soon')} active={taskViewActive('due_soon')} icon={Timer} label="Due soon" onClick={onNavigate} />
+                  {/* the new UI keeps these in the Tasks area */}
+                  {contextual ? null : TASK_PRESETS.map((preset) => (
+                    <SidebarNavItem key={preset.view} to={taskViewPath(preset.view)} active={taskViewActive(preset.view)} icon={preset.icon} label={preset.label} onClick={onNavigate} />
+                  ))}
                   <SidebarSection label="Manage" collapsed={collapsed} />
                   <SidebarNavItem to="/settings" icon={Settings} label="Settings" onClick={onNavigate} />
                   {isRoot ? (

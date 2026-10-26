@@ -286,3 +286,24 @@ test('in the mobile drawer Back shows the main menu and stays on the page', () =
   expect(view.getByRole('link', { name: 'Tasks' })).toBeTruthy()
   expect(view.queryByRole('link', { name: 'Appearance' })).toBeNull()
 })
+
+test('in the new UI Tasks has its own area: views, task pages and projects leave the main menu', () => {
+  const view = render(
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter initialEntries={['/']}>
+        <SidebarNav contextual />
+        <Link to="/tasks?view=overdue">Open overdue</Link>
+        <Location />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  expect(view.queryByRole('link', { name: 'Task views' })).toBeNull()
+  expect(view.queryByRole('link', { name: 'My tasks' })).toBeNull()
+
+  fireEvent.click(view.getByText('Open overdue'))
+  expect(view.getByRole('link', { name: 'Back to the main menu' }).textContent).toBe('Tasks')
+  expect(view.getByRole('link', { name: 'Overdue' }).dataset.active).toBe('true')
+  fireEvent.click(view.getByRole('link', { name: 'Task views' }))
+  expect(view.getByTestId('location').textContent).toBe('/views')
+  expect(view.getByRole('link', { name: 'Back to the main menu' }).textContent).toBe('Tasks')
+})

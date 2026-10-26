@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { drawerAreaOf, drawerSections } from './drawerAreas'
+import { drawerAreaOf, drawerSections, tasksHref } from './drawerAreas'
 
 // the shape of Shell.tsx's WORKSPACE_NAV, ACCOUNT_NAV and ADMIN_NAV (Shell.tsx itself loads react-native)
 const areas = {
@@ -25,9 +25,15 @@ describe('drawerAreaOf', () => {
     expect(drawerAreaOf('/settings/unknown', areas)).toBe('workspace')
   })
 
+  test('task routes are the Tasks area', () => {
+    expect(drawerAreaOf('/tasks', areas)).toBe('tasks')
+    expect(drawerAreaOf('/tasks/abc', areas)).toBe('tasks')
+    expect(drawerAreaOf('/tasks-trash', areas)).toBeNull()
+  })
+
   test('app routes have no area', () => {
     expect(drawerAreaOf('/', areas)).toBeNull()
-    expect(drawerAreaOf('/tasks', areas)).toBeNull()
+    expect(drawerAreaOf('/docs', areas)).toBeNull()
     expect(drawerAreaOf('/settingsx', areas)).toBeNull()
   })
 })
@@ -39,5 +45,18 @@ describe('drawerSections', () => {
       { label: 'Team', items: [{ href: '/settings/members' }] },
     ])
     expect(drawerSections('admin', areas.admin)).toEqual([{ label: 'Instance', items: areas.admin }])
+  })
+})
+
+describe('tasksHref', () => {
+  test('a preset keeps the project, a project keeps the preset', () => {
+    expect(tasksHref({ view: 'mine', project: 'p1' }, { view: 'overdue' })).toBe('/tasks?project=p1&view=overdue')
+    expect(tasksHref({ view: 'mine' }, { project: 'p2' })).toBe('/tasks?project=p2&view=mine')
+  })
+
+  test('null clears a key', () => {
+    expect(tasksHref({ view: 'mine', project: 'p1' }, { view: null })).toBe('/tasks?project=p1')
+    expect(tasksHref({ view: 'mine', project: 'p1' }, { project: null })).toBe('/tasks?view=mine')
+    expect(tasksHref({}, { view: null })).toBe('/tasks')
   })
 })

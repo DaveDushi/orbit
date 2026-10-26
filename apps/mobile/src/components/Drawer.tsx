@@ -6,14 +6,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
 
 import { useOrbit } from '../orbit-context'
-import { useChatUnreadCount, useUnreadNotifications } from '../queries'
+import { useChatUnreadCount, useProjects, useUnreadNotifications } from '../queries'
 import { splitAlpha } from '../data/color'
 import { customSidebarTheme } from '../data/custom-theme'
 import { alpha, cssColors, mix, useAppCustomTheme, useButtonStyle, useLayout, useTheme } from '../theme'
 import { ColorScope } from '../theme/ColorScope'
 import { Avatar, CountBadge, Icon, type IconName, IconButton, PickerSheet } from '../ui'
 import { AccountMenu } from './AccountMenu'
-import { DRAWER_AREA_TITLES, type DrawerArea, drawerAreaOf, drawerSections } from './drawerAreas'
+import { DRAWER_AREA_TITLES, type DrawerArea, drawerAreaOf, drawerSections, TASK_PRESETS, tasksHref } from './drawerAreas'
 import { ACCOUNT_NAV, ADMIN_NAV, WORKSPACE_NAV } from './settings/Shell'
 
 const DrawerContext = createContext<(() => void) | null>(null)
@@ -110,6 +110,8 @@ export function DrawerProvider({ children }: { children: ReactNode }) {
 interface NavLink {
   label: string
   icon: IconName
+  /** A project's colour: a dot replaces the icon tile. */
+  color?: string
   href: Href
   active: boolean
   badge?: number
@@ -173,7 +175,7 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
   const { user, workspace, workspaces, selectWorkspace } = useOrbit()
   const insets = useSafeAreaInsets()
   const pathname = usePathname()
-  const { view } = useGlobalSearchParams<{ view?: string }>()
+  const { view, project } = useGlobalSearchParams<{ view?: string; project?: string }>()
   const chatBadge = useChatUnreadCount()
   const inboxUnread = (useUnreadNotifications().data?.length ?? 0) > 0
   const [switching, setSwitching] = useState(false)
@@ -207,15 +209,12 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
   const taskView = (name: string) => pathname === '/tasks' && view === name
   const workspaceLinks: NavLink[] = [
     { label: 'Home', icon: 'home', href: '/', active: pathname === '/' },
-    { label: 'Tasks', icon: 'tasks', href: '/tasks', active: onTasks && !view },
+    { label: 'Tasks', icon: 'tasks', href: tasksHref({ project }, {}), active: onTasks && !view },
   ]
   const personal: NavLink[] = [
     { label: 'Activity', icon: 'inbox', href: '/activity', active: pathname === '/activity', dot: inboxUnread },
-    { label: 'My tasks', icon: 'tasks', href: '/tasks?view=mine', active: taskView('mine') },
-    { label: 'This week', icon: 'calendar', href: '/tasks?view=current_week', active: taskView('current_week') },
-    { label: 'My week', icon: 'calendarTick', href: '/tasks?view=my_week', active: taskView('my_week') },
-    { label: 'Overdue', icon: 'danger', href: '/tasks?view=overdue', active: taskView('overdue') },
-    { label: 'Due soon', icon: 'timer', href: '/tasks?view=due_soon', active: taskView('due_soon') },
+    // the new UI keeps the task presets in the Tasks area
+    ...(newUi ? [] : TASK_PRESETS.map((preset) => ({ label: preset.label, icon: preset.icon, href: tasksHref({ project }, { view: preset.view }), active: taskView(preset.view) }))),
   ]
   const dark = scheme === 'dark'
 
@@ -248,7 +247,9 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
 
       <SlideIn key={content} from={reduceMotion ? null : enter}>
         <ScrollView className="-mx-1 flex-1" contentContainerClassName="grow gap-0.5 px-1 pb-2">
-          {area ? (
+          {area === 'tasks' ? (
+            <TasksArea view={view} project={project} onTasks={pathname === '/tasks'} onBack={() => setMainMenuFor(area)} go={go} />
+          ) : area ? (
             <>
               <BackRow label={DRAWER_AREA_TITLES[area]} onPress={() => setMainMenuFor(area)} />
               {drawerSections(area, navs[area]).map((section) => (
@@ -265,7 +266,7 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
               {workspaceLinks.map((link) => (
                 <NavRow key={link.label} link={link} onPress={() => go(link.href)} />
               ))}
-              <SubRow label="Views" onPress={() => go('/tasks')} />
+              {newUi ? null : <SubRow label="Views" onPress={() => go('/tasks')} />}
               <NavRow link={{ label: 'Docs', icon: 'docs', href: '/docs', active: pathname.startsWith('/docs') }} onPress={() => go('/docs')} />
               <NavRow link={{ label: 'Chat', icon: 'chat', href: '/chat', active: pathname.startsWith('/chat'), badge: chatBadge }} onPress={() => go('/chat')} />
               <NavRow link={{ label: 'Mail', icon: 'mail', href: '/', active: false }} comingSoon />
@@ -314,6 +315,33 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
         onClose={() => setSwitching(false)}
       />
     </View>
+  )
+}
+
+/**
+ * The new UI's Tasks area (the web's `TasksAreaNav`): All tasks, Views, the task presets and the projects. A preset
+ * keeps the project and a project keeps the preset. The web's Favorite views are left out: the app has no saved views.
+ */
+function TasksArea({ view, project, onTasks, onBack, go }: { view?: string; project?: string; onTasks: boolean; onBack: () => void; go: (href: Href) => void }) {
+  const projects = useProjects().data ?? []
+  const current = { view, project }
+  const row = (link: NavLink) => <NavRow key={String(link.href)} link={link} onPress={() => go(link.href)} />
+  return (
+    <>
+      <BackRow label={DRAWER_AREA_TITLES.tasks} onPress={onBack} />
+      {row({ label: 'All tasks', icon: 'tasks', href: tasksHref(current, { view: null }), active: onTasks && !view })}
+      {/* the app's task list is its views page, like the main menu's Views row */}
+      <NavRow link={{ label: 'Views', icon: 'layer', href: '/tasks', active: false }} onPress={() => go('/tasks')} />
+      <Section label="My work" />
+      {TASK_PRESETS.map((preset) => row({ label: preset.label, icon: preset.icon, href: tasksHref(current, { view: preset.view }), active: onTasks && view === preset.view }))}
+      {projects.length > 0 ? (
+        <>
+          <Section label="Projects" />
+          {row({ label: 'All projects', icon: 'folder', href: tasksHref(current, { project: null }), active: onTasks && !project })}
+          {projects.map((item) => row({ label: item.name, icon: 'folder', color: item.color, href: tasksHref(current, { project: item.id }), active: onTasks && project === item.id }))}
+        </>
+      ) : null}
+    </>
   )
 }
 
@@ -387,7 +415,12 @@ function NavRow({ link, onPress, comingSoon = false, tone = 'brand' }: { link: N
     >
       {({ pressed }) => (
         <>
-          {flat ? (
+          {link.color ? (
+            // the web's `dotIcon`: the project's colour where the icon would be, as wide as the icon or tile
+            <View className={`items-center justify-center ${flat ? 'w-[18px]' : 'w-[30px]'}`}>
+              <View className="size-2.5 rounded-[3px]" style={{ backgroundColor: link.color }} />
+            </View>
+          ) : flat ? (
             <Icon name={link.icon} size={18} color={alpha(link.active || pressed ? colors.sidebarNavActive : colors.sidebarNav, 0.9)} />
           ) : (
             <Tile icon={link.icon} active={link.active} pressed={pressed} tone={tone} />

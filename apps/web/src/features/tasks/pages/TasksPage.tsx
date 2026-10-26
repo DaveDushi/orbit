@@ -11,6 +11,7 @@ import { loadFailed } from '@/lib/connection'
 import { useScrollMemory } from '@/lib/useScrollMemory'
 import { Bookmark, ChevronDown, Menu, Add as Plus, Setting2 as Settings, TaskSquare as SquareCheck } from 'reicon-react'
 import { cn } from 'cn'
+import { useNewUi } from '@/lib/themeContext'
 import { ApiProblem } from '@orbit/api/problem'
 import { Button } from '@/components/ui/button'
 import { Tip } from '@/components/common/Tip'
@@ -125,6 +126,7 @@ function WorkspaceTasksPage() {
   const currentUser = useCurrentUser()
   const queryClient = useQueryClient()
   const [showNewProject, setShowNewProject] = useState(false)
+  const newUi = useNewUi()
   const [pxPerDay, setPxPerDay] = useTimelineZoom()
   const timelineRef = useRef<TimelineHandle>(null)
 
@@ -406,28 +408,36 @@ function WorkspaceTasksPage() {
               />
             ) : (
               <>
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    render={
-                      <Button type="button" variant="ghost" className="min-w-0 gap-[7px] px-[7px] font-normal text-muted-foreground max-[899px]:max-w-[30vw]" aria-label="Select project">
-                        {activeProject ? <ColorDot color={activeProject.color} /> : null}
-                        <span className="truncate">{activeProject?.name ?? 'All projects'}</span><ChevronDown className="size-3.5 shrink-0" />
-                      </Button>
-                    }
-                  />
-                  <DropdownMenuContent className="w-auto min-w-[190px]">
-                    <DropdownMenuItem className="data-active:bg-accent data-active:font-medium" data-active={projectFilter === null || undefined} onClick={() => setProjectFilter(null)}><SquareCheck />All projects</DropdownMenuItem>
-                    {projects.map((project) => <div key={project.id} className="relative flex items-center">
-                      <DropdownMenuItem className="min-w-0 flex-1 pr-8 data-active:bg-accent data-active:font-medium" data-active={project.id === projectFilter || undefined} onClick={() => setProjectFilter(project.id)}>
-                        <ColorDot color={project.color} />
-                        <span className="min-w-0 flex-1 truncate">{project.name}</span>
-                      </DropdownMenuItem>
-                      <Tip label="Project settings" side="right"><DropdownMenuItem className="absolute right-1 size-6 justify-center p-0 text-muted-foreground" aria-label={`${project.name} settings`} onClick={() => navigate(`/tasks/projects/${project.id}/settings`)}><Settings className="size-3.5" /></DropdownMenuItem></Tip>
-                    </div>)}
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={() => setShowNewProject(true)}><Plus />New project</DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                {/* the new UI picks and manages projects in the sidebar's Tasks area: here only the name shows */}
+                {newUi ? (
+                  <span className="flex min-w-0 items-center gap-[7px] px-[7px] text-muted-foreground max-[899px]:max-w-[30vw]">
+                    {activeProject ? <ColorDot color={activeProject.color} /> : null}
+                    <span className="truncate">{activeProject?.name ?? 'All projects'}</span>
+                  </span>
+                ) : (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <Button type="button" variant="ghost" className="min-w-0 gap-[7px] px-[7px] font-normal text-muted-foreground max-[899px]:max-w-[30vw]" aria-label="Select project">
+                          {activeProject ? <ColorDot color={activeProject.color} /> : null}
+                          <span className="truncate">{activeProject?.name ?? 'All projects'}</span><ChevronDown className="size-3.5 shrink-0" />
+                        </Button>
+                      }
+                    />
+                    <DropdownMenuContent className="w-auto min-w-[190px]">
+                      <DropdownMenuItem className="data-active:bg-accent data-active:font-medium" data-active={projectFilter === null || undefined} onClick={() => setProjectFilter(null)}><SquareCheck />All projects</DropdownMenuItem>
+                      {projects.map((project) => <div key={project.id} className="relative flex items-center">
+                        <DropdownMenuItem className="min-w-0 flex-1 pr-8 data-active:bg-accent data-active:font-medium" data-active={project.id === projectFilter || undefined} onClick={() => setProjectFilter(project.id)}>
+                          <ColorDot color={project.color} />
+                          <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                        </DropdownMenuItem>
+                        <Tip label="Project settings" side="right"><DropdownMenuItem className="absolute right-1 size-6 justify-center p-0 text-muted-foreground" aria-label={`${project.name} settings`} onClick={() => navigate(`/tasks/projects/${project.id}/settings`)}><Settings className="size-3.5" /></DropdownMenuItem></Tip>
+                      </div>)}
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={() => setShowNewProject(true)}><Plus />New project</DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
                 <PaneTitle className="max-[899px]:min-w-0 max-[899px]:flex-1 max-[899px]:basis-0">{viewTitle}</PaneTitle>
                 <div className="flex-1 max-[899px]:hidden" />
               </>
