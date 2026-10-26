@@ -7,6 +7,10 @@ Read `README.md` first. It explains how the app signs in to an Orbit server (bea
 - Add dependencies with `bunx expo install <package>` in `apps/mobile`. The repo root is one Bun workspace with the hoisted linker: web and mobile must use the same `react` version (Expo decides it), or one app loads two copies of React.
 - Style with Uniwind `className` and the components in `src/ui`, using the classes the web uses for the same element. Keep `style` only for what a class cannot express: animated values, values computed at runtime (insets, measured sizes, colors from data, `mix()` results) and computed shadows. Props that are not styles (an `Icon`'s `color`, `placeholderTextColor`) read `useTheme().colors`. Never hard-code a color: the tokens are generated from `apps/web/src/index.css` (see README, Theme and icons).
 - Uniwind does not merge conflicting classes (there is no tailwind-merge), and the order inside `className` never decides. A `src/ui` component whose defaults a call site overrides keeps them in `@layer components` in `src/global.css` (`text-body`, `pane-header`), so any utility wins. `group-*` variants do nothing in the free version: use `active:` or Pressable's `pressed`.
+  - This includes the `dark:` variant: `border-black/9 dark:border-sidebar-tint/13` on one element keeps the black border in dark mode. Choose the classes for each scheme in JS (`useTheme().scheme`), or set the value in `style`.
+  - Fraction widths (`w-1/2`, `w-1/3`) do nothing on native. Write percentages: `w-[50%]`.
+  - A `style` key whose value is `undefined` replaces the class value (React Native merges every key). Write `...(pressed ? { backgroundColor: … } : {})`, never `backgroundColor: pressed ? … : undefined`, for a property that a class also sets.
+- The custom theme and the New UI colors reach a part of the screen through `ColorScope` (`src/theme/ColorScope.tsx`), not through one-off props. `useTheme()` reads the nearest scope.
 
 This is an Expo/React Native mobile application. Prioritize mobile-first patterns, performance, and cross-platform compatibility.
 

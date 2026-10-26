@@ -8,10 +8,13 @@ The repo root is one Bun workspace: `apps/web` (Vite) and `apps/mobile` (Expo, s
 Run `bun install` at the root. Both apps share one hoisted `node_modules`, so they must use the same `react` and
 `react-dom` version. Find a package's files with module resolution, not a fixed `node_modules/…` path.
 
-**Port web changes to mobile.** When you change a feature, a behavior or a style in `apps/web`, make the same
-change in `apps/mobile` in the same task. Skip a change only when mobile does not have the problem it fixes (for
-example, a keyboard-only feature, or a fix for a component that mobile does not use). Then tell the user which
-changes you did not port, and why.
+**Always port web changes to mobile.** When you change a feature, a behavior or a style in `apps/web`, make the
+same change in `apps/mobile` in the same task, without waiting for the user to ask. A web task is not done until the
+mobile port is done and checked (`bunx tsc --noEmit -p .` and `bun test src` in `apps/mobile`, and the iOS bundle
+builds on the running Metro server). Skip a change only when mobile does not have the problem it fixes (for example,
+a keyboard-only or desktop-only feature, or a fix for a component that mobile does not use). Then tell the user
+which changes you did not port, and why. When mobile lacks a screen that the change needs, say so and offer to port
+that screen.
 
 ## Databases: SQLite and Postgres
 

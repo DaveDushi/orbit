@@ -5,6 +5,7 @@
 import { createOrbitClient } from '@orbit/api/client'
 import {
   createComment,
+  createProject as createProjectRequest,
   createTask,
   deleteChatMessage,
   deleteComment,
@@ -52,6 +53,7 @@ import type {
   Page,
   PageAuditEvent,
   PageSummary,
+  ProjectBody,
   ProjectRecord,
   StatusRecord,
   TaskRecord,
@@ -213,6 +215,15 @@ export function labels(client: OrbitClient, workspaceId: string): Promise<LabelR
 
 export function projects(client: OrbitClient, workspaceId: string): Promise<ProjectRecord[]> {
   return allPages(async (cursor) => (await listProjects({ ...at(client, workspaceId), query: { cursor, limit: 100 } })).data)
+}
+
+/** A new project from its name, as the web's `projectDraft`: a key of up to five letters and digits, and violet. */
+export function projectDraft(name: string): ProjectBody {
+  return { name, key: name.replace(/[^a-z0-9]/gi, '').slice(0, 5).toUpperCase() || 'PROJ', color: '#8b5cf6' }
+}
+
+export async function createProject(client: OrbitClient, workspaceId: string, body: ProjectBody): Promise<ProjectRecord> {
+  return (await createProjectRequest({ ...at(client, workspaceId), body })).data
 }
 
 /** The statuses of every project, in one list. */

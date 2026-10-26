@@ -13,6 +13,7 @@ import { alpha, cssColors, mix, useAppCustomTheme, useButtonStyle, useLayout, us
 import { ColorScope } from '../theme/ColorScope'
 import { Avatar, CountBadge, Icon, type IconName, IconButton, PickerSheet } from '../ui'
 import { AccountMenu } from './AccountMenu'
+import { NewProjectSheet } from './NewProjectSheet'
 import { DRAWER_AREA_TITLES, type DrawerArea, drawerAreaOf, drawerSections, TASK_PRESETS, tasksHref } from './drawerAreas'
 import { ACCOUNT_NAV, ADMIN_NAV, WORKSPACE_NAV } from './settings/Shell'
 
@@ -324,6 +325,7 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
  */
 function TasksArea({ view, project, onTasks, onBack, go }: { view?: string; project?: string; onTasks: boolean; onBack: () => void; go: (href: Href) => void }) {
   const projects = useProjects().data ?? []
+  const [creating, setCreating] = useState(false)
   const current = { view, project }
   const row = (link: NavLink) => <NavRow key={String(link.href)} link={link} onPress={() => go(link.href)} />
   return (
@@ -340,7 +342,12 @@ function TasksArea({ view, project, onTasks, onBack, go }: { view?: string; proj
           {row({ label: 'All projects', icon: 'folder', href: tasksHref(current, { project: null }), active: onTasks && !project })}
           {projects.map((item) => row({ label: item.name, icon: 'folder', color: item.color, href: tasksHref(current, { project: item.id }), active: onTasks && project === item.id }))}
         </>
-      ) : null}
+      ) : <Section label="Projects" />}
+      <NavRow link={{ label: 'New project', icon: 'plus', href: '/tasks', active: false }} onPress={() => setCreating(true)} />
+      <NewProjectSheet visible={creating} onClose={() => setCreating(false)} onCreated={(created) => {
+        setCreating(false)
+        go(tasksHref(current, { project: created.id }))
+      }} />
     </>
   )
 }
