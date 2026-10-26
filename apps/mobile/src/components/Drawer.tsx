@@ -491,7 +491,10 @@ function SubRow({ label, onPress }: { label: string; onPress: () => void }) {
 
 /** The web's section label. */
 function Section({ label }: { label: string }) {
-  return <RNText className="mt-3 px-2.5 py-1 font-noto-medium text-[11px] leading-4 text-muted-foreground">{label}</RNText>
+  const { scheme } = useTheme()
+  // The web's header: Title Case in light, small mono capitals in dark (0.08em of 10.5px).
+  const face = scheme === 'dark' ? 'font-mono text-[10.5px] tracking-[0.84px] uppercase' : 'font-noto-medium text-[11px]'
+  return <RNText className={`mt-3 px-2.5 py-1 leading-4 text-sidebar-nav-muted ${face}`}>{label}</RNText>
 }
 
 /** The web's `oklch(0.72 0 0)` neutral tile icon (dark). */

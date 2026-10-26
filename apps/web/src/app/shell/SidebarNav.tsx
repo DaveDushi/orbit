@@ -165,7 +165,8 @@ function SidebarNavComingSoon({ icon: Icon, label }: { icon: SidebarNavIcon; lab
 function SidebarSection({ label, collapsed }: { label: string; collapsed: boolean }) {
   if (collapsed) return <Separator className="mx-2.5 my-2 bg-black/8 data-horizontal:w-auto dark:bg-sidebar-tint/10" aria-hidden="true" />
   return (
-    <div className="mt-3 px-2.5 py-1 text-[11px] leading-4 font-medium text-muted-foreground select-none">
+    // Coolify's section header: Title Case in light, small mono capitals in dark.
+    <div className="mt-3 px-2.5 py-1 text-[11px] leading-4 font-medium text-sidebar-nav-muted select-none dark:font-mono dark:text-[10.5px] dark:tracking-[0.08em] dark:uppercase">
       {label}
     </div>
   )
