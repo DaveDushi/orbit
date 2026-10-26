@@ -18,7 +18,7 @@ export function InAppSidebar({ children }: { children: ReactNode }) {
 export function SidebarListHeader({ label, children }: { label: string; children?: ReactNode }) {
   return (
     <div data-slot="sidebar-list-header" className="flex h-7 shrink-0 items-center gap-0.5 pr-3.5 pl-[18px] [&_button]:text-sidebar-nav [&_button:hover]:text-sidebar-nav-active [&_button_svg]:size-3.5">
-      <h2 className="min-w-0 flex-1 truncate text-[11px] leading-4 font-medium text-sidebar-nav-muted select-none dark:font-mono dark:text-[10.5px] dark:tracking-[0.08em] dark:text-sidebar-tint/55 dark:uppercase">
+      <h2 className="min-w-0 flex-1 truncate text-[11px] leading-4 font-medium text-muted-foreground select-none">
         {label}
       </h2>
       {children}

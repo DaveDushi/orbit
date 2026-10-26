@@ -8,7 +8,7 @@ import { useCommand } from '@/shortcuts/useCommand'
 import { useContext, useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react'
 import { useWorkspaceEvents } from '@/features/realtime/useWorkspaceEvents'
 import { ChatProvider } from '@/features/chat/api/ChatProvider'
-import { useChatBadgeCount } from '@/features/chat/api/queries'
+import { useChatBadges } from '@/features/chat/api/queries'
 import { useHasUnreadNotifications } from '@/features/inbox/api'
 import { startPushWorker } from '@/features/realtime/push'
 import { preloadPageEditorWhenIdle } from '@/features/docs/editor/loadPageEditor'
@@ -65,7 +65,7 @@ function WorkspaceShell() {
 function Shell() {
   const { workspace } = useWorkspace()
   const live = useWorkspaceEvents(workspace.id)
-  const chatBadge = useChatBadgeCount()
+  const { total: chatBadge, unread: chatUnread } = useChatBadges()
   // The tab icon gets a dot while chat or the Inbox has something unread.
   const inboxUnread = useHasUnreadNotifications(workspace.id).data === true
   const isRoot = useIsInstallationAdmin()
@@ -165,7 +165,7 @@ function Shell() {
           >
             <WorkspaceSwitcher collapsed={sidebarCollapsed} />
           </div>
-          <SidebarNav contextual={newUi} collapsed={sidebarCollapsed} chatBadge={chatBadge} inboxUnread={inboxUnread} isRoot={isRoot} pageListRef={hostsList ? setPageListSlot : undefined} />
+          <SidebarNav contextual={newUi} collapsed={sidebarCollapsed} chatBadge={chatBadge} chatUnread={chatUnread} inboxUnread={inboxUnread} isRoot={isRoot} pageListRef={hostsList ? setPageListSlot : undefined} />
           <div
             className={cn(
               'flex shrink-0 items-center justify-between gap-1 py-2',
@@ -194,7 +194,7 @@ function Shell() {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <Outlet />
         </div>
-        <MobileDock chatBadge={chatBadge} />
+        <MobileDock chatBadge={chatBadge} chatUnread={chatUnread} />
       </div>
 
       <SideSheet open={drawerOpen} onOpenChange={setDrawerOpen}>
@@ -208,7 +208,7 @@ function Shell() {
             <div className="mb-2 flex h-12 shrink-0 items-center justify-start gap-2 px-1.5">
               <WorkspaceSwitcher onSelect={() => setDrawerOpen(false)} />
             </div>
-            <SidebarNav contextual={newUi} backShowsMenu onNavigate={() => setDrawerOpen(false)} chatBadge={chatBadge} inboxUnread={inboxUnread} isRoot={isRoot} />
+            <SidebarNav contextual={newUi} backShowsMenu onNavigate={() => setDrawerOpen(false)} chatBadge={chatBadge} chatUnread={chatUnread} inboxUnread={inboxUnread} isRoot={isRoot} />
             <div className="flex shrink-0 items-center pt-2">
               <UserMenu />
             </div>

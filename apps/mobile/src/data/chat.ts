@@ -23,10 +23,16 @@ export function conversationBadge(
   return { count: state.notify === 'all' ? state.unread_count : state.mention_count, unread: state.unread_count > 0 }
 }
 
-/** The Chat tab badge: the sum of the row badges. */
-export function chatUnreadCount(conversations: readonly ConversationRecord[], states: readonly ConversationStateRecord[], userId: string): number {
+/** The Chat tab badge: the sum of the row badges, and `unread` while any row is unread (a dot when the count is 0). */
+export function chatBadge(
+  conversations: readonly ConversationRecord[],
+  states: readonly ConversationStateRecord[],
+  userId: string,
+): { count: number; unread: boolean } {
   const stateById = new Map(states.map((state) => [state.conversation_id, state]))
-  return conversations.reduce((total, conversation) => total + conversationBadge(conversation, stateById.get(conversation.id), userId).count, 0)
+  const rows = conversations.map((conversation) => conversationBadge(conversation, stateById.get(conversation.id), userId))
+  const count = rows.reduce((total, row) => total + row.count, 0)
+  return { count, unread: count > 0 || rows.some((row) => row.unread) }
 }
 
 export function conversationTitle(conversation: ConversationRecord, people: readonly Person[], userId: string): string {

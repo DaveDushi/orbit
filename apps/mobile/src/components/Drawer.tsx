@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
 
 import { useOrbit } from '../orbit-context'
-import { useChatUnreadCount, useProjects, useUnreadNotifications } from '../queries'
+import { useChatBadge, useProjects, useUnreadNotifications } from '../queries'
 import { splitAlpha } from '../data/color'
 import { customSidebarTheme } from '../data/custom-theme'
 import { alpha, cssColors, mix, useAppCustomTheme, useButtonStyle, useLayout, useTheme } from '../theme'
@@ -177,7 +177,7 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
   const insets = useSafeAreaInsets()
   const pathname = usePathname()
   const { view, project } = useGlobalSearchParams<{ view?: string; project?: string }>()
-  const chatBadge = useChatUnreadCount()
+  const chatBadge = useChatBadge()
   const inboxUnread = (useUnreadNotifications().data?.length ?? 0) > 0
   const [switching, setSwitching] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
@@ -269,7 +269,7 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
               ))}
               {newUi ? null : <SubRow label="Views" onPress={() => go('/tasks')} />}
               <NavRow link={{ label: 'Docs', icon: 'docs', href: '/docs', active: pathname.startsWith('/docs') }} onPress={() => go('/docs')} />
-              <NavRow link={{ label: 'Chat', icon: 'chat', href: '/chat', active: pathname.startsWith('/chat'), badge: chatBadge }} onPress={() => go('/chat')} />
+              <NavRow link={{ label: 'Chat', icon: 'chat', href: '/chat', active: pathname.startsWith('/chat'), badge: chatBadge.count, dot: chatBadge.unread }} onPress={() => go('/chat')} />
               <NavRow link={{ label: 'Mail', icon: 'mail', href: '/', active: false }} comingSoon />
               <Section label="Personal" />
               {personal.map((link) => (
@@ -489,14 +489,9 @@ function SubRow({ label, onPress }: { label: string; onPress: () => void }) {
   )
 }
 
-/** The web's section label: mono, uppercase and pink-tinted in dark mode. */
+/** The web's section label. */
 function Section({ label }: { label: string }) {
-  const { scheme } = useTheme()
-  return (
-    <RNText className="mt-3 px-2.5 py-1 font-noto-medium text-[11px] leading-4 text-sidebar-nav-muted dark:font-mono dark:text-[10.5px] dark:tracking-[0.84px] dark:text-sidebar-tint/55">
-      {scheme === 'dark' ? label.toUpperCase() : label}
-    </RNText>
-  )
+  return <RNText className="mt-3 px-2.5 py-1 font-noto-medium text-[11px] leading-4 text-muted-foreground">{label}</RNText>
 }
 
 /** The web's `oklch(0.72 0 0)` neutral tile icon (dark). */

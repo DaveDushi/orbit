@@ -165,7 +165,7 @@ function SidebarNavComingSoon({ icon: Icon, label }: { icon: SidebarNavIcon; lab
 function SidebarSection({ label, collapsed }: { label: string; collapsed: boolean }) {
   if (collapsed) return <Separator className="mx-2.5 my-2 bg-black/8 data-horizontal:w-auto dark:bg-sidebar-tint/10" aria-hidden="true" />
   return (
-    <div className="mt-3 px-2.5 py-1 text-[11px] leading-4 font-medium text-sidebar-nav-muted select-none dark:font-mono dark:text-[10.5px] dark:tracking-[0.08em] dark:text-sidebar-tint/55 dark:uppercase">
+    <div className="mt-3 px-2.5 py-1 text-[11px] leading-4 font-medium text-muted-foreground select-none">
       {label}
     </div>
   )
@@ -358,6 +358,7 @@ export function SidebarNav({
   onNavigate,
   collapsed = false,
   chatBadge,
+  chatUnread,
   inboxUnread,
   chatEnabled: chat = chatEnabled,
   isRoot = false,
@@ -369,6 +370,8 @@ export function SidebarNav({
   collapsed?: boolean
   /** Unread count on the Chat item. */
   chatBadge?: number
+  /** Chat has an unread message, with or without a count. */
+  chatUnread?: boolean
   /** Activity has an unread notification. */
   inboxUnread?: boolean
   /** Chat is a link instead of "Coming soon". Defaults to the build's setting. */
@@ -480,6 +483,7 @@ export function SidebarNav({
                         icon={link.icon}
                         label={link.label}
                         badge={link.to === '/chat' ? chatBadge : undefined}
+                        unread={link.to === '/chat' ? chatUnread : undefined}
                         onClick={onNavigate}
                       />
                       {/* saved views belong to Tasks, so they nest under it instead of sitting beside the other apps;

@@ -3,7 +3,7 @@ import type { BottomTabBarProps } from 'expo-router/js-tabs'
 import { Pressable, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
-import { useChatUnreadCount } from '../queries'
+import { useChatBadge } from '../queries'
 import { alpha, useTheme } from '../theme'
 import { CountBadge, Icon, type IconName, Text } from '../ui'
 
@@ -20,20 +20,22 @@ const ITEMS: { route: string | null; href: Href; label: string; icon: IconName }
 export function Dock({ state }: BottomTabBarProps) {
   const { colors } = useTheme()
   const insets = useSafeAreaInsets()
-  const chatBadge = useChatUnreadCount()
+  const chatBadge = useChatBadge()
   const current = state.routes[state.index]?.name
   return (
     <View accessibilityRole="tablist" className="flex-row min-h-14 pt-3 bg-background" style={{ paddingBottom: insets.bottom }}>
       {ITEMS.map((item) => {
         const enabled = item.route !== null
         const active = enabled && item.route === current
-        const count = item.route === 'chat' ? chatBadge : 0
+        const count = item.route === 'chat' ? chatBadge.count : 0
+        // a dot when chat is unread but nothing counts, like a channel message that does not mention you
+        const dot = item.route === 'chat' && count === 0 && chatBadge.unread
         const color = active ? colors.primary : enabled ? colors.mutedForeground : alpha(colors.mutedForeground, 0.5)
         return (
           <Pressable
             key={item.label}
             accessibilityRole="tab"
-            accessibilityLabel={count > 0 ? `${item.label}, ${count} unread` : item.label}
+            accessibilityLabel={count > 0 ? `${item.label}, ${count} unread` : dot ? `${item.label}, unread` : item.label}
             accessibilityState={{ selected: active, disabled: !enabled }}
             disabled={!enabled}
             onPress={() => router.navigate(item.href)}
@@ -45,6 +47,8 @@ export function Dock({ state }: BottomTabBarProps) {
                 <View className="absolute -top-1 left-3">
                   <CountBadge count={count} />
                 </View>
+              ) : dot ? (
+                <View className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-primary" />
               ) : null}
             </View>
             <Text className={`font-noto-medium text-[10px] ${active ? 'text-primary' : enabled ? 'text-muted-foreground' : 'text-muted-foreground/50'}`}>{item.label}</Text>

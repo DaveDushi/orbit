@@ -2,7 +2,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo } from 'react'
 
-import { chatUnreadCount, type Person } from './data/chat'
+import { chatBadge, type Person } from './data/chat'
 import { keys } from './data/keys'
 import * as api from './data/orbit'
 import { useOrbit } from './orbit-context'
@@ -62,12 +62,12 @@ export function useChatStates() {
   return useQuery({ queryKey: keys.chatStates(workspaceId), queryFn: () => api.chatStates(client, workspaceId) })
 }
 
-/** The Chat badge. 0 while the data loads. */
-export function useChatUnreadCount(): number {
+/** The Chat badge. Nothing while the data loads. */
+export function useChatBadge(): { count: number; unread: boolean } {
   const { user } = useOrbit()
   const conversations = useConversations()
   const states = useChatStates()
-  return chatUnreadCount(conversations.data ?? [], states.data ?? [], user.id)
+  return chatBadge(conversations.data ?? [], states.data ?? [], user.id)
 }
 
 export function useNotifications() {

@@ -5,7 +5,7 @@ import {
   channelNameFinal,
   channelNameInput,
   chatSections,
-  chatUnreadCount,
+  chatBadge,
   conversationActions,
   conversationPermissions,
   conversationTitle,
@@ -111,7 +111,14 @@ test('unread count: all unread where notify is all, mentions elsewhere, nothing 
     state('design', { notify: 'muted', unread_count: 7, mention_count: 1 }),
     state('left', { notify: 'all', unread_count: 5 }),
   ]
-  expect(chatUnreadCount(CONVERSATIONS, states, 'me')).toBe(7)
+  expect(chatBadge(CONVERSATIONS, states, 'me')).toEqual({ count: 7, unread: true })
+})
+
+test('unread without a count: a channel with only messages that do not mention you', () => {
+  expect(chatBadge(CONVERSATIONS, [state('random', { notify: 'mentions', unread_count: 3 })], 'me')).toEqual({ count: 0, unread: true })
+  // muted and left conversations do not count
+  const quiet = [state('design', { notify: 'muted', unread_count: 7 }), state('left', { notify: 'all', unread_count: 5 })]
+  expect(chatBadge(CONVERSATIONS, quiet, 'me')).toEqual({ count: 0, unread: false })
 })
 
 test('DM titles and mention tokens use names', () => {

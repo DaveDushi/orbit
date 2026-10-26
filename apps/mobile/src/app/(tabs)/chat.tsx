@@ -14,7 +14,7 @@ import type { CategoryRecord, ConversationRecord, ConversationStateRecord } from
 import { useOwnStatus } from '../../hooks/account'
 import { confirmAction, useChatWrite, useFollowedThreads, useIsChatAdmin } from '../../hooks/chat'
 import { useOrbit } from '../../orbit-context'
-import { useChatCategories, useChatStates, useChatUnreadCount, useConversations, usePeople } from '../../queries'
+import { useChatCategories, useChatStates, useChatBadge, useConversations, usePeople } from '../../queries'
 import { useTheme } from '../../theme'
 import { Avatar, CountBadge, EmptyState, ErrorView, HeaderTitle, Icon, type IconName, IconButton, LoadingView, PaneHeader, SafeAreaView, Text } from '../../ui'
 import { ChatColorScope } from '../../components/chat/ChatColorScope'
@@ -52,7 +52,7 @@ function ChatScreenContent() {
   const admin = useIsChatAdmin()
   const run = useChatWrite()
   const threads = useFollowedThreads()
-  const unreads = useChatUnreadCount()
+  const unreads = useChatBadge().count
   const close = () => setOverlay(null)
 
   const sections = useMemo(
