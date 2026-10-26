@@ -9,7 +9,7 @@ import { TaskRow } from '../../../components/TaskRow'
 import { groupTasksByStatus, type StatusGroup } from '../../../data/tasks'
 import { useOrbit } from '../../../orbit-context'
 import { usePeople, useProjects, useStatuses, useTasks } from '../../../queries'
-import { useLayout, useTheme } from '../../../theme'
+import { useTheme } from '../../../theme'
 import { EmptyState, ErrorView, HeaderTitle, Icon, IconButton, LoadingView, PaneHeader, PickerSheet, SafeAreaView, StatusIcon, Text } from '../../../ui'
 
 /** The server's task views the drawer links to, with the web page titles. */
@@ -32,7 +32,6 @@ export default function TasksScreen() {
   const tasks = useTasks(view)
   const statuses = useStatuses()
   const projects = useProjects()
-  const newUi = useLayout() === 'new'
   const people = usePeople()
   // in the URL, so the drawer's project links can pick it
   const projectId = projectParam || null
@@ -72,28 +71,18 @@ export default function TasksScreen() {
     <>
       <PaneHeader className="flex-wrap">
         <MenuButton />
-        {/* the new UI picks and creates projects in the drawer's Tasks area: here only the name shows */}
-        {newUi ? (
-          <View className="h-8 max-w-[30%] flex-row items-center gap-[7px] px-[7px]">
-            {project ? <View className="size-2 rounded-full" style={{ backgroundColor: project.color }} /> : null}
-            <Text numberOfLines={1} className="text-[14px] leading-[20px] shrink text-muted-foreground">
-              {project?.name ?? 'All projects'}
-            </Text>
-          </View>
-        ) : (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Select project"
-            onPress={() => setSheet('project')}
-            className="h-8 max-w-[30%] flex-row items-center gap-[7px] px-[7px] rounded-lg active:bg-muted"
-          >
-            {project ? <View className="size-2 rounded-full" style={{ backgroundColor: project.color }} /> : null}
-            <Text numberOfLines={1} className="text-[14px] leading-[20px] shrink text-muted-foreground">
-              {project?.name ?? 'All projects'}
-            </Text>
-            <Icon name="chevronDown" size={14} color={colors.mutedForeground} />
-          </Pressable>
-        )}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Select project"
+          onPress={() => setSheet('project')}
+          className="h-8 max-w-[30%] flex-row items-center gap-[7px] px-[7px] rounded-lg active:bg-muted"
+        >
+          {project ? <View className="size-2 rounded-full" style={{ backgroundColor: project.color }} /> : null}
+          <Text numberOfLines={1} className="text-[14px] leading-[20px] shrink text-muted-foreground">
+            {project?.name ?? 'All projects'}
+          </Text>
+          <Icon name="chevronDown" size={14} color={colors.mutedForeground} />
+        </Pressable>
         <View className="flex-1 min-w-0">
           <HeaderTitle>{view ? PRESET_TITLE[view] : 'All tasks'}</HeaderTitle>
         </View>
