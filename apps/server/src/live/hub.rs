@@ -1,23 +1,34 @@
-//! Connections, event numbers, the replay buffer and presence.
+//! The connections of this server, presence, and the delivery of events to the connections.
+//!
+//! Numbered events are kept in the database ([`super::events`]). This server delivers the new ones
+//! of each workspace that has a connection here, in order ([`LiveHub::deliver_new`]). On Postgres,
+//! several servers share the database: through [`crate::cluster`] each tells the others about new
+//! events, sends the signals that are not kept (typing, presence, notices), and what it has of
+//! every member, so each one shows the same presence.
 //!
 //! Locking rule (as in the co-editing hub): the hub's state lock is a plain mutex that is never
 //! held across an `await`. A writer that must publish in commit order takes
-//! [`LiveHub::write_lock`] *before* it begins its database transaction.
+//! [`LiveHub::write_lock`] *before* it begins its database transaction. That orders the writes of
+//! one server; two servers that write to the same workspace in the same moment can publish in the
+//! other order.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use orbit_platform::{Database, Id, TimestampMillis};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sqlx::AnyPool;
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard, mpsc};
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::{TaskTracker, task_tracker::TaskTrackerToken};
 
+use super::events::{self, NewEvent};
+use crate::cluster::{Cluster, Message};
 use crate::repositories::identity::{Presence, UserStatus};
 
-/// Events kept for each workspace, for clients that reconnect.
-const BUFFERED_EVENTS: usize = 1000;
 /// Frames that may wait for one connection. A connection that falls further behind is closed;
 /// it reconnects and gets a replay.
 const QUEUED_FRAMES: usize = 256;
@@ -29,9 +40,12 @@ pub(super) const HEARTBEAT: Duration = Duration::from_secs(25);
 /// How long after a connection was last heard from the user can still be at its tab: a little
 /// longer than one heartbeat.
 const HEARD_WINDOW: Duration = Duration::from_secs(35);
+/// How long a server that stops waits for its connections to send their close frames.
+const CLOSE_WAIT: Duration = Duration::from_secs(5);
 
 /// Who an event is for.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "to", content = "users", rename_all = "snake_case")]
 pub enum Recipients {
     /// Every workspace member.
     Workspace,
@@ -51,38 +65,117 @@ impl Recipients {
     }
 }
 
+/// A frame for a connection. Events have their number, so a connection can skip the ones its
+/// replay already had; signals have none.
+#[derive(Clone)]
+pub struct Frame {
+    pub seq: Option<u64>,
+    pub text: Arc<str>,
+}
+
+/// What one server tells the others about the live socket.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(crate) enum LiveMessage {
+    /// New events of the workspace are in `live_events`.
+    Events {
+        workspace_id: Id,
+    },
+    Signal {
+        workspace_id: Id,
+        recipients: Recipients,
+        frame: String,
+    },
+    UserSignal {
+        user_id: Id,
+        active_only: bool,
+        frame: String,
+    },
+    /// What the sending server has of a member; `tabs` is `None` when the member is not online
+    /// there any more.
+    Tabs {
+        workspace_id: Id,
+        user_id: Id,
+        tabs: Option<Tabs>,
+        status: UserStatus,
+    },
+    Status {
+        user_id: Id,
+        status: UserStatus,
+    },
+    /// Asks every server to tell again what it has of every member.
+    Sync,
+}
+
+/// What one server has of a member in a workspace. A member whose last tab there closed a
+/// moment ago has no tabs and is still online.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Tabs {
+    tabs: u32,
+    idle: u32,
+    /// A tab the user is at: input lately, the window in focus, the connection heard from.
+    active: bool,
+}
+
 #[derive(Clone)]
 pub struct LiveHub {
     inner: Arc<Inner>,
+    database: Database,
 }
 
 struct Inner {
-    /// Made when the process starts: a client with another epoch cannot get a replay.
-    epoch: String,
+    cluster: Arc<Cluster>,
     workspaces: Mutex<HashMap<Id, Workspace>>,
-    /// The write lock of each workspace that has a write now. They are not in `workspaces`:
-    /// a write takes its lock before it knows that the workspace exists.
-    write_locks: Mutex<HashMap<Id, Arc<AsyncMutex<()>>>>,
+    /// The write lock of each workspace that has a write now.
+    write_locks: KeyedLocks,
+    /// One delivery at a time for each workspace, so its events go out in order.
+    delivery_locks: KeyedLocks,
+    /// The other servers, and when each was last heard from.
+    servers: Mutex<HashMap<String, Instant>>,
     next_connection: AtomicU64,
     offline_grace: Duration,
     heard_window: Duration,
+    /// Cancelled when the server stops: every connection closes with 1012.
+    stopping: CancellationToken,
+    /// The connections that are served, so a server that stops can wait for their close frames.
+    serving: TaskTracker,
+}
+
+/// Async locks by id that leave no entry behind once nobody holds or waits for them.
+#[derive(Default)]
+struct KeyedLocks(Mutex<HashMap<Id, Arc<AsyncMutex<()>>>>);
+
+impl KeyedLocks {
+    async fn lock(&self, id: Id) -> OwnedMutexGuard<()> {
+        let lock = {
+            let mut locks = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+            // A lock that only this map refers to has nobody that holds it or waits for it.
+            locks.retain(|_, lock| Arc::strong_count(lock) > 1);
+            Arc::clone(locks.entry(id).or_default())
+        };
+        lock.lock_owned().await
+    }
 }
 
 #[derive(Default)]
 struct Workspace {
-    seq: u64,
-    buffer: VecDeque<Buffered>,
     connections: HashMap<u64, Connection>,
-    /// Members whose last connection closed a moment ago; still online. The value is that
+    /// Members whose last connection here closed a moment ago; still online. The value is that
     /// connection, so only its own timer takes the member offline.
     leaving: HashMap<Id, u64>,
     /// What each online member set for themselves.
     statuses: HashMap<Id, UserStatus>,
+    /// What the other servers have of each member, by server.
+    remote: HashMap<Id, HashMap<String, Tabs>>,
+    /// What this server last told the others it has of each member.
+    told: HashMap<Id, Tabs>,
+    /// The number of the last event delivered here; `None` while no connection here needs them.
+    delivered: Option<u64>,
 }
 
 struct Connection {
     user_id: Id,
-    sender: mpsc::Sender<Arc<str>>,
+    sender: mpsc::Sender<Frame>,
     /// The tab had no input for a while.
     idle: bool,
     /// The window of the tab has been out of focus for a while: the user is not looking at it.
@@ -92,9 +185,15 @@ struct Connection {
     heard: Instant,
 }
 
+impl Connection {
+    fn active(&self, heard_window: Duration) -> bool {
+        !self.idle && !self.away && self.heard.elapsed() <= heard_window
+    }
+}
+
 /// What the others see of a member who does not show as offline.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-struct Shown {
+pub(super) struct Shown {
     user_id: Id,
     /// `online`, `idle` or `dnd`.
     status: &'static str,
@@ -103,35 +202,28 @@ struct Shown {
     expires_at: Option<TimestampMillis>,
 }
 
-struct Buffered {
-    seq: u64,
-    recipients: Recipients,
-    frame: Arc<str>,
-}
-
-/// A new connection: its frames, and what to send first.
+/// A new connection: its frames, and the members who show as online when it connected.
 pub struct Attached {
     pub id: u64,
-    pub frames: mpsc::Receiver<Arc<str>>,
-    pub hello: String,
-    /// The events the client missed; `None` when the hub cannot tell (the client must resync).
-    pub replay: Option<Vec<Arc<str>>>,
+    pub frames: mpsc::Receiver<Frame>,
+    pub(super) presence: Vec<Shown>,
 }
 
 impl Workspace {
-    fn online(&self) -> Vec<Id> {
-        let mut users: Vec<Id> = self
-            .connections
-            .values()
-            .map(|connection| connection.user_id)
-            .chain(self.leaving.keys().copied())
-            .collect();
-        users.sort_unstable();
-        users.dedup();
-        users
+    /// What this server has of a member; `None` when the member is not online here.
+    fn local_tabs(&self, user_id: Id, heard_window: Duration) -> Option<Tabs> {
+        let mut tabs = Tabs::default();
+        for connection in self.connections.values() {
+            if connection.user_id == user_id {
+                tabs.tabs += 1;
+                tabs.idle += u32::from(connection.idle);
+                tabs.active |= connection.active(heard_window);
+            }
+        }
+        (tabs.tabs > 0 || self.leaving.contains_key(&user_id)).then_some(tabs)
     }
 
-    fn is_online(&self, user_id: Id) -> bool {
+    fn online_here(&self, user_id: Id) -> bool {
         self.leaving.contains_key(&user_id)
             || self
                 .connections
@@ -139,18 +231,40 @@ impl Workspace {
                 .any(|connection| connection.user_id == user_id)
     }
 
+    fn is_online(&self, user_id: Id) -> bool {
+        self.online_here(user_id) || self.remote.contains_key(&user_id)
+    }
+
+    fn online(&self) -> Vec<Id> {
+        let mut users: Vec<Id> = self
+            .connections
+            .values()
+            .map(|connection| connection.user_id)
+            .chain(self.leaving.keys().copied())
+            .chain(self.remote.keys().copied())
+            .collect();
+        users.sort_unstable();
+        users.dedup();
+        users
+    }
+
     /// Queues a frame for every connection of a recipient. A connection whose queue is full
     /// (or whose socket is gone) is dropped: its socket task sees the closed queue and ends.
-    fn deliver(&mut self, recipients: &Recipients, frame: &Arc<str>) {
+    fn deliver(&mut self, recipients: &Recipients, frame: &Frame) {
         self.connections.retain(|_, connection| {
             !recipients.includes(connection.user_id)
-                || connection.sender.try_send(Arc::clone(frame)).is_ok()
+                || connection.sender.try_send(frame.clone()).is_ok()
         });
     }
 
-    fn signal(&mut self, recipients: &Recipients, topic: &str, event: &impl Serialize) {
-        let frame: Arc<str> = json!({ "topic": topic, "event": event }).to_string().into();
-        self.deliver(recipients, &frame);
+    fn signal(&mut self, recipients: &Recipients, text: &Arc<str>) {
+        self.deliver(
+            recipients,
+            &Frame {
+                seq: None,
+                text: Arc::clone(text),
+            },
+        );
     }
 
     /// What the others see of a member; `None` for offline and for invisible.
@@ -162,13 +276,24 @@ impl Workspace {
             .get(&user_id)?
             .clone()
             .at(TimestampMillis::now());
-        let mut tabs = self
-            .connections
-            .values()
-            .filter(|connection| connection.user_id == user_id)
-            .peekable();
+        let (mut tabs, mut idle) = (0, 0);
+        for connection in self.connections.values() {
+            if connection.user_id == user_id {
+                tabs += 1;
+                idle += u32::from(connection.idle);
+            }
+        }
+        for remote in self
+            .remote
+            .get(&user_id)
+            .into_iter()
+            .flat_map(HashMap::values)
+        {
+            tabs += remote.tabs;
+            idle += remote.idle;
+        }
         // A member is idle when every tab is. One whose last tab closed a moment ago is not.
-        let all_idle = tabs.peek().is_some() && tabs.all(|connection| connection.idle);
+        let all_idle = tabs > 0 && idle == tabs;
         let shown = match status.presence {
             Presence::Invisible => return None,
             Presence::Dnd => "dnd",
@@ -195,21 +320,10 @@ impl Workspace {
         shown.sort_unstable_by_key(|shown| shown.user_id);
         shown
     }
+}
 
-    /// Changes something about a member and tells the workspace, if what the others see of the
-    /// member changed.
-    fn change(&mut self, user_id: Id, change: impl FnOnce(&mut Self)) {
-        let before = self.shown(user_id);
-        change(self);
-        let after = self.shown(user_id);
-        if before != after {
-            self.signal(
-                &Recipients::Workspace,
-                "presence",
-                &presence_event(user_id, after),
-            );
-        }
-    }
+fn frame_text(topic: &str, event: &impl Serialize) -> Arc<str> {
+    json!({ "topic": topic, "event": event }).to_string().into()
 }
 
 fn presence_event(user_id: Id, shown: Option<Shown>) -> Value {
@@ -219,6 +333,276 @@ fn presence_event(user_id: Id, shown: Option<Shown>) -> Value {
     };
     event["type"] = json!("presence");
     event
+}
+
+impl Inner {
+    fn new(cluster: Arc<Cluster>, offline_grace: Duration, heard_window: Duration) -> Self {
+        Self {
+            cluster,
+            workspaces: Mutex::new(HashMap::new()),
+            write_locks: KeyedLocks::default(),
+            delivery_locks: KeyedLocks::default(),
+            servers: Mutex::new(HashMap::new()),
+            next_connection: AtomicU64::new(1),
+            offline_grace,
+            heard_window,
+            stopping: CancellationToken::new(),
+            serving: TaskTracker::new(),
+        }
+    }
+
+    fn workspaces(&self) -> std::sync::MutexGuard<'_, HashMap<Id, Workspace>> {
+        self.workspaces
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Queues a message for the other servers, while the cluster runs.
+    fn send(&self, message: LiveMessage) {
+        self.cluster.send(Message::Live(message));
+    }
+
+    /// Changes something about a member: this server's connections are told when what they see
+    /// of the member changed, and the other servers when what this server has of it changed.
+    fn change(
+        &self,
+        workspace_id: Id,
+        workspace: &mut Workspace,
+        user_id: Id,
+        change: impl FnOnce(&mut Workspace),
+    ) {
+        let before = workspace.shown(user_id);
+        change(workspace);
+        let after = workspace.shown(user_id);
+        if before != after {
+            workspace.signal(
+                &Recipients::Workspace,
+                &frame_text("presence", &presence_event(user_id, after)),
+            );
+        }
+        self.tell_tabs(workspace_id, workspace, user_id);
+    }
+
+    fn tell_tabs(&self, workspace_id: Id, workspace: &mut Workspace, user_id: Id) {
+        if !self.cluster.running() {
+            return;
+        }
+        let tabs = workspace.local_tabs(user_id, self.heard_window);
+        if workspace.told.get(&user_id).copied() == tabs {
+            return;
+        }
+        match tabs {
+            Some(tabs) => workspace.told.insert(user_id, tabs),
+            None => workspace.told.remove(&user_id),
+        };
+        self.send(LiveMessage::Tabs {
+            workspace_id,
+            user_id,
+            tabs,
+            status: workspace
+                .statuses
+                .get(&user_id)
+                .cloned()
+                .unwrap_or_default(),
+        });
+    }
+
+    fn apply_status(&self, user_id: Id, status: &UserStatus, tell_own_tabs: bool) {
+        let mut workspaces = self.workspaces();
+        for (workspace_id, workspace) in workspaces.iter_mut() {
+            if !workspace.statuses.contains_key(&user_id) {
+                continue;
+            }
+            self.change(*workspace_id, workspace, user_id, |workspace| {
+                workspace.statuses.insert(user_id, status.clone());
+            });
+            if tell_own_tabs {
+                workspace.signal(
+                    &Recipients::Users(vec![user_id]),
+                    &frame_text("presence", &json!({ "type": "self" })),
+                );
+            }
+        }
+    }
+
+    fn signal_user_here(&self, user_id: Id, active_only: bool, text: &Arc<str>) -> bool {
+        let mut reached = false;
+        for workspace in self.workspaces().values_mut() {
+            workspace.connections.retain(|_, connection| {
+                if connection.user_id != user_id
+                    || (active_only && !connection.active(self.heard_window))
+                {
+                    return true;
+                }
+                let frame = Frame {
+                    seq: None,
+                    text: Arc::clone(text),
+                };
+                let sent = connection.sender.try_send(frame).is_ok();
+                reached |= sent;
+                sent
+            });
+        }
+        reached
+    }
+
+    /// A message from another server; the workspace whose new events to deliver, if any.
+    fn receive(&self, server: &str, message: LiveMessage) -> Option<Id> {
+        match message {
+            LiveMessage::Events { workspace_id } => return Some(workspace_id),
+            LiveMessage::Signal {
+                workspace_id,
+                recipients,
+                frame,
+            } => {
+                if let Some(workspace) = self.workspaces().get_mut(&workspace_id) {
+                    workspace.signal(&recipients, &frame.into());
+                }
+            }
+            LiveMessage::UserSignal {
+                user_id,
+                active_only,
+                frame,
+            } => {
+                self.signal_user_here(user_id, active_only, &frame.into());
+            }
+            LiveMessage::Tabs {
+                workspace_id,
+                user_id,
+                tabs,
+                status,
+            } => {
+                let mut workspaces = self.workspaces();
+                let workspace = workspaces.entry(workspace_id).or_default();
+                self.change(workspace_id, workspace, user_id, |workspace| {
+                    let servers = workspace.remote.entry(user_id).or_default();
+                    match tabs {
+                        Some(tabs) => {
+                            servers.insert(server.to_owned(), tabs);
+                        }
+                        None => {
+                            servers.remove(server);
+                        }
+                    }
+                    if servers.is_empty() {
+                        workspace.remote.remove(&user_id);
+                    }
+                    if workspace.is_online(user_id) {
+                        workspace.statuses.entry(user_id).or_insert(status);
+                    } else {
+                        workspace.statuses.remove(&user_id);
+                    }
+                });
+            }
+            LiveMessage::Status { user_id, status } => self.apply_status(user_id, &status, true),
+            LiveMessage::Sync => self.tell_all_again(),
+        }
+        None
+    }
+
+    /// Tells the other servers again everything this server has of every member (a server
+    /// joined, or this one lost messages).
+    fn tell_all_again(&self) {
+        let mut workspaces = self.workspaces();
+        for (workspace_id, workspace) in workspaces.iter_mut() {
+            workspace.told.clear();
+            let users: Vec<Id> = workspace
+                .connections
+                .values()
+                .map(|connection| connection.user_id)
+                .chain(workspace.leaving.keys().copied())
+                .collect();
+            for user_id in users {
+                self.tell_tabs(*workspace_id, workspace, user_id);
+            }
+        }
+    }
+
+    /// Every few seconds on Postgres: tells the others what changed with time (a tab that went
+    /// silent is no tab the user is at), and forgets the servers that stopped.
+    fn tick(&self, server_timeout: Duration) {
+        let gone: Vec<String> = {
+            let mut servers = self.servers.lock().unwrap_or_else(PoisonError::into_inner);
+            let gone = servers
+                .iter()
+                .filter(|(_, heard)| heard.elapsed() > server_timeout)
+                .map(|(server, _)| server.clone())
+                .collect::<Vec<_>>();
+            for server in &gone {
+                servers.remove(server);
+            }
+            gone
+        };
+        let mut workspaces = self.workspaces();
+        for (workspace_id, workspace) in workspaces.iter_mut() {
+            let users: Vec<Id> = workspace
+                .connections
+                .values()
+                .map(|connection| connection.user_id)
+                .chain(workspace.remote.keys().copied())
+                .collect();
+            for user_id in users {
+                self.change(*workspace_id, workspace, user_id, |workspace| {
+                    if let Some(servers) = workspace.remote.get_mut(&user_id) {
+                        servers.retain(|server, _| !gone.contains(server));
+                        if servers.is_empty() {
+                            workspace.remote.remove(&user_id);
+                        }
+                    }
+                    if !workspace.is_online(user_id) {
+                        workspace.statuses.remove(&user_id);
+                    }
+                });
+            }
+        }
+    }
+
+    /// The workspaces whose events this server delivers.
+    fn delivering(&self) -> Vec<Id> {
+        self.workspaces()
+            .iter()
+            .filter(|(_, workspace)| workspace.delivered.is_some())
+            .map(|(workspace_id, _)| *workspace_id)
+            .collect()
+    }
+}
+
+/// Delivers the events of a workspace that this server has not delivered yet, in order.
+async fn deliver_new(inner: &Inner, pool: &AnyPool, workspace_id: Id) {
+    let _one = inner.delivery_locks.lock(workspace_id).await;
+    let Some(after) = inner
+        .workspaces()
+        .get(&workspace_id)
+        .and_then(|workspace| workspace.delivered)
+    else {
+        return;
+    };
+    let stored = match events::after(pool, workspace_id, after).await {
+        Ok(stored) => stored,
+        Err(error) => {
+            tracing::warn!(error = %error, "live events");
+            return;
+        }
+    };
+    let mut workspaces = inner.workspaces();
+    let Some(workspace) = workspaces.get_mut(&workspace_id) else {
+        return;
+    };
+    let Some(mut delivered) = workspace.delivered else {
+        return;
+    };
+    for event in stored {
+        if event.seq <= delivered {
+            continue;
+        }
+        let frame = Frame {
+            seq: Some(event.seq),
+            text: event.frame,
+        };
+        workspace.deliver(&event.recipients, &frame);
+        delivered = event.seq;
+    }
+    workspace.delivered = Some(delivered);
 }
 
 impl LiveHub {
@@ -242,72 +626,115 @@ impl LiveHub {
     }
 
     fn with(database: &Database, offline_grace: Duration, heard_window: Duration) -> Self {
-        let inner = database.extension(move || Inner {
-            epoch: Id::new_v7().to_string(),
-            workspaces: Mutex::new(HashMap::new()),
-            write_locks: Mutex::new(HashMap::new()),
-            next_connection: AtomicU64::new(1),
-            offline_grace,
-            heard_window,
-        });
-        Self { inner }
+        let cluster = Cluster::of(database);
+        Self {
+            inner: database.extension(|| Inner::new(cluster, offline_grace, heard_window)),
+            database: database.clone(),
+        }
     }
 
-    fn workspaces(&self) -> std::sync::MutexGuard<'_, HashMap<Id, Workspace>> {
+    /// The hub of this database, if anything made one.
+    #[must_use]
+    pub fn existing(database: &Database) -> Option<Self> {
+        database.existing_extension::<Inner>().map(|inner| Self {
+            inner,
+            database: database.clone(),
+        })
+    }
+
+    /// Cancelled when the server stops; the connection then closes with 1012.
+    pub(super) fn stopping(&self) -> CancellationToken {
+        self.inner.stopping.clone()
+    }
+
+    /// Held while a connection is served, until its close frame is sent.
+    pub(super) fn serving(&self) -> TaskTrackerToken {
+        self.inner.serving.token()
+    }
+
+    /// Server shutdown: closes every connection with 1012 (service restart), so the clients
+    /// reconnect at once to another server or to this one when it is back, and waits a moment
+    /// for the close frames to go out.
+    pub async fn shutdown(&self) {
+        self.inner.stopping.cancel();
+        self.inner.serving.close();
+        if tokio::time::timeout(CLOSE_WAIT, self.inner.serving.wait())
+            .await
+            .is_err()
+        {
+            tracing::warn!("live sockets did not close in time");
+        }
+    }
+
+    /// The cluster started on this server: it tells the others what it has, and asks them to
+    /// tell theirs.
+    pub(crate) fn joined_cluster(&self) {
+        self.inner.tell_all_again();
+        self.inner.send(LiveMessage::Sync);
+    }
+
+    /// Another server was heard from: it is alive.
+    pub(crate) fn heard_server(&self, server: &str) {
         self.inner
-            .workspaces
+            .servers
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+            .insert(server.to_owned(), Instant::now());
+    }
+
+    /// A message from another server.
+    pub(crate) async fn receive(&self, server: &str, message: LiveMessage) {
+        if let Some(workspace_id) = self.inner.receive(server, message) {
+            self.deliver_new(workspace_id).await;
+        }
+    }
+
+    /// Delivers what this server may have missed.
+    pub(crate) async fn catch_up(&self) {
+        for workspace_id in self.inner.delivering() {
+            self.deliver_new(workspace_id).await;
+        }
+    }
+
+    /// Every few seconds while the cluster runs: tells the others what changed with time,
+    /// forgets the servers not heard from for `server_timeout`, and delivers what it missed.
+    pub(crate) async fn tick(&self, server_timeout: Duration) {
+        self.inner.tick(server_timeout);
+        self.catch_up().await;
     }
 
     /// Hold this from before a write's transaction until its events are published, so the
     /// events of a workspace go out in commit order.
     pub async fn write_lock(&self, workspace_id: Id) -> OwnedMutexGuard<()> {
-        let lock = {
-            let mut locks = self
-                .inner
-                .write_locks
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            // A lock that only this map refers to has no write that holds it or waits for it.
-            // Such locks go here, so a write to an id that names no workspace leaves nothing.
-            locks.retain(|_, lock| Arc::strong_count(lock) > 1);
-            Arc::clone(locks.entry(workspace_id).or_default())
-        };
-        lock.lock_owned().await
+        self.inner.write_locks.lock(workspace_id).await
     }
 
-    /// Numbers an event, keeps it for replay and sends it to the recipients who are connected.
-    pub fn publish(
-        &self,
-        workspace_id: Id,
-        recipients: &Recipients,
-        topic: &str,
-        event: &impl Serialize,
-    ) {
-        let mut workspaces = self.workspaces();
-        let workspace = workspaces.entry(workspace_id).or_default();
-        workspace.seq += 1;
-        let frame: Arc<str> = json!({ "seq": workspace.seq, "topic": topic, "event": event })
-            .to_string()
-            .into();
-        if workspace.buffer.len() == BUFFERED_EVENTS {
-            workspace.buffer.pop_front();
+    /// Numbers and keeps events, and sends them to the recipients who are connected to any
+    /// server. Returns the number of the last one; with no events, the newest number.
+    pub async fn publish(&self, workspace_id: Id, events: &[NewEvent]) -> Result<u64, sqlx::Error> {
+        let seq = events::append(&self.database, workspace_id, events).await?;
+        if !events.is_empty() {
+            self.inner.send(LiveMessage::Events { workspace_id });
+            self.deliver_new(workspace_id).await;
         }
-        workspace.buffer.push_back(Buffered {
-            seq: workspace.seq,
-            recipients: recipients.clone(),
-            frame: Arc::clone(&frame),
-        });
-        workspace.deliver(recipients, &frame);
+        Ok(seq)
     }
 
-    /// The number of the newest event of a workspace.
-    #[must_use]
-    pub fn seq(&self, workspace_id: Id) -> u64 {
-        self.workspaces()
-            .get(&workspace_id)
-            .map_or(0, |workspace| workspace.seq)
+    /// Delivers the events of a workspace that this server has not delivered yet.
+    pub async fn deliver_new(&self, workspace_id: Id) {
+        deliver_new(&self.inner, self.database.pool(), workspace_id).await;
+    }
+
+    /// A connection of the workspace starts after event `newest`: from now on this server
+    /// delivers the events after it (if it does not already), and the ones that are there.
+    pub async fn start_delivery(&self, workspace_id: Id, newest: u64) {
+        if let Some(workspace) = self.inner.workspaces().get_mut(&workspace_id)
+            && !workspace.connections.is_empty()
+            && workspace.delivered.is_none()
+        {
+            workspace.delivered = Some(newest);
+        }
+        self.deliver_new(workspace_id).await;
     }
 
     /// Sends a signal that is not numbered and not kept (typing).
@@ -318,15 +745,22 @@ impl LiveHub {
         topic: &str,
         event: &impl Serialize,
     ) {
-        if let Some(workspace) = self.workspaces().get_mut(&workspace_id) {
-            workspace.signal(recipients, topic, event);
+        let text = frame_text(topic, event);
+        if let Some(workspace) = self.inner.workspaces().get_mut(&workspace_id) {
+            workspace.signal(recipients, &text);
         }
+        self.inner.send(LiveMessage::Signal {
+            workspace_id,
+            recipients: recipients.clone(),
+            frame: text.to_string(),
+        });
     }
 
-    /// The members with a connection (or one that closed a moment ago).
+    /// The members with a connection to any server (or one that closed a moment ago).
     #[must_use]
     pub fn online(&self, workspace_id: Id) -> Vec<Id> {
-        self.workspaces()
+        self.inner
+            .workspaces()
             .get(&workspace_id)
             .map(Workspace::online)
             .unwrap_or_default()
@@ -335,37 +769,23 @@ impl LiveHub {
     /// The user changed their presence or custom status: every workspace where they are online
     /// shows it, and their own tabs read the status again.
     pub fn set_status(&self, user_id: Id, status: &UserStatus) {
-        self.apply_status(user_id, status, true);
+        self.inner.apply_status(user_id, status, true);
+        self.inner.send(LiveMessage::Status {
+            user_id,
+            status: status.clone(),
+        });
     }
 
     /// As [`Self::set_status`], for a status the user's tabs already read: they are not told to
     /// read it again. The socket uses it when the status changed while it connected.
     pub(crate) fn correct_status(&self, user_id: Id, status: &UserStatus) {
-        self.apply_status(user_id, status, false);
+        self.inner.apply_status(user_id, status, false);
     }
 
-    fn apply_status(&self, user_id: Id, status: &UserStatus, tell_own_tabs: bool) {
-        for workspace in self.workspaces().values_mut() {
-            if !workspace.statuses.contains_key(&user_id) {
-                continue;
-            }
-            workspace.change(user_id, |workspace| {
-                workspace.statuses.insert(user_id, status.clone());
-            });
-            if tell_own_tabs {
-                workspace.signal(
-                    &Recipients::Users(vec![user_id]),
-                    "presence",
-                    &json!({ "type": "self" }),
-                );
-            }
-        }
-    }
-
-    /// Sends a signal to the tabs of a user in every workspace: with `active_only`, to the tabs
-    /// the user is at (input lately, the window in focus or out of it for a moment only, and
-    /// the connection heard from lately: one whose network died is no tab the user is at).
-    /// `false` when it reached no tab.
+    /// Sends a signal to the tabs of a user in every workspace, on every server: with
+    /// `active_only`, to the tabs the user is at (input lately, the window in focus or out of it
+    /// for a moment only, and the connection heard from lately: one whose network died is no
+    /// tab the user is at). `false` when it reached no tab.
     pub fn signal_user(
         &self,
         user_id: Id,
@@ -373,19 +793,20 @@ impl LiveHub {
         topic: &str,
         event: &impl Serialize,
     ) -> bool {
-        let frame: Arc<str> = json!({ "topic": topic, "event": event }).to_string().into();
-        let mut reached = false;
-        for workspace in self.workspaces().values_mut() {
-            workspace.connections.retain(|_, connection| {
-                let active = !connection.idle
-                    && !connection.away
-                    && connection.heard.elapsed() <= self.inner.heard_window;
-                if connection.user_id != user_id || (active_only && !active) {
-                    return true;
-                }
-                let sent = connection.sender.try_send(Arc::clone(&frame)).is_ok();
-                reached |= sent;
-                sent
+        let text = frame_text(topic, event);
+        let mut reached = self.inner.signal_user_here(user_id, active_only, &text);
+        let elsewhere = self.inner.workspaces().values().any(|workspace| {
+            workspace
+                .remote
+                .get(&user_id)
+                .is_some_and(|servers| servers.values().any(|tabs| tabs.active || !active_only))
+        });
+        if elsewhere {
+            reached = true;
+            self.inner.send(LiveMessage::UserSignal {
+                user_id,
+                active_only,
+                frame: text.to_string(),
             });
         }
         reached
@@ -394,6 +815,7 @@ impl LiveHub {
     /// The client of a connection sent something: its network is alive.
     pub fn heard(&self, workspace_id: Id, connection_id: u64) {
         if let Some(connection) = self
+            .inner
             .workspaces()
             .get_mut(&workspace_id)
             .and_then(|workspace| workspace.connections.get_mut(&connection_id))
@@ -404,117 +826,94 @@ impl LiveHub {
 
     /// A tab reports that its window has been out of focus for a while, or is in focus again.
     /// It does not change what the others see of the member.
-    pub fn set_away(&self, workspace_id: Id, connection_id: u64, away: bool) {
-        if let Some(connection) = self
-            .workspaces()
-            .get_mut(&workspace_id)
-            .and_then(|workspace| workspace.connections.get_mut(&connection_id))
-        {
-            connection.away = away;
+    pub fn set_away(&self, workspace_id: Id, connection_id: u64, user_id: Id, away: bool) {
+        if let Some(workspace) = self.inner.workspaces().get_mut(&workspace_id) {
+            self.inner
+                .change(workspace_id, workspace, user_id, |workspace| {
+                    if let Some(connection) = workspace.connections.get_mut(&connection_id) {
+                        connection.away = away;
+                    }
+                });
         }
     }
 
     /// A tab reports that it has had no input for a while, or that it has input again.
     pub fn set_idle(&self, workspace_id: Id, connection_id: u64, user_id: Id, idle: bool) {
-        if let Some(workspace) = self.workspaces().get_mut(&workspace_id) {
-            workspace.change(user_id, |workspace| {
-                if let Some(connection) = workspace.connections.get_mut(&connection_id) {
-                    connection.idle = idle;
-                }
-            });
+        if let Some(workspace) = self.inner.workspaces().get_mut(&workspace_id) {
+            self.inner
+                .change(workspace_id, workspace, user_id, |workspace| {
+                    if let Some(connection) = workspace.connections.get_mut(&connection_id) {
+                        connection.idle = idle;
+                    }
+                });
         }
     }
 
-    /// Adds a connection. `status` is what the user set for themselves; `epoch` and `after` are
-    /// what the client saw last, if it reconnects.
-    pub fn connect(
-        &self,
-        workspace_id: Id,
-        user_id: Id,
-        status: UserStatus,
-        epoch: Option<&str>,
-        after: Option<u64>,
-    ) -> Attached {
+    /// Adds a connection. `status` is what the user set for themselves.
+    pub fn connect(&self, workspace_id: Id, user_id: Id, status: UserStatus) -> Attached {
         let (sender, frames) = mpsc::channel(QUEUED_FRAMES);
         let id = self.inner.next_connection.fetch_add(1, Ordering::Relaxed);
-        let mut workspaces = self.workspaces();
+        let mut workspaces = self.inner.workspaces();
         let workspace = workspaces.entry(workspace_id).or_default();
-        // The new connection is not there yet: its `hello` tells it about itself.
-        workspace.change(user_id, |workspace| {
-            workspace.leaving.remove(&user_id);
-            workspace.statuses.insert(user_id, status);
-        });
-        workspace.change(user_id, |workspace| {
-            let connection = Connection {
-                user_id,
-                sender,
-                idle: false,
-                away: false,
-                heard: Instant::now(),
-            };
-            workspace.connections.insert(id, connection);
-        });
-
-        // A replay is complete only if the buffer still starts at or before the first event
-        // the client has not seen.
-        let replay = after
-            .filter(|after| epoch == Some(self.inner.epoch.as_str()) && *after <= workspace.seq)
-            .filter(|after| {
-                *after == workspace.seq
-                    || workspace
-                        .buffer
-                        .front()
-                        .is_some_and(|oldest| oldest.seq <= after + 1)
-            })
-            .map(|after| {
-                workspace
-                    .buffer
-                    .iter()
-                    .filter(|event| event.seq > after && event.recipients.includes(user_id))
-                    .map(|event| Arc::clone(&event.frame))
-                    .collect()
+        // The new connection is not there yet: it learns about itself from the presence list.
+        self.inner
+            .change(workspace_id, workspace, user_id, |workspace| {
+                workspace.leaving.remove(&user_id);
+                workspace.statuses.insert(user_id, status);
             });
-        let hello = json!({
-            "type": "hello",
-            "epoch": self.inner.epoch,
-            "seq": workspace.seq,
-            "presence": workspace.all_shown(),
-        })
-        .to_string();
+        self.inner
+            .change(workspace_id, workspace, user_id, |workspace| {
+                let connection = Connection {
+                    user_id,
+                    sender,
+                    idle: false,
+                    away: false,
+                    heard: Instant::now(),
+                };
+                workspace.connections.insert(id, connection);
+            });
         Attached {
             id,
             frames,
-            hello,
-            replay,
+            presence: workspace.all_shown(),
         }
     }
 
     /// Removes a connection. The member goes offline a moment later, unless it connects again.
     pub fn disconnect(&self, workspace_id: Id, connection_id: u64, user_id: Id) {
         {
-            let mut workspaces = self.workspaces();
+            let mut workspaces = self.inner.workspaces();
             let Some(workspace) = workspaces.get_mut(&workspace_id) else {
                 return;
             };
             // The tabs that stay can all be idle.
-            workspace.change(user_id, |workspace| {
-                workspace.connections.remove(&connection_id);
-            });
-            if workspace.is_online(user_id) {
+            self.inner
+                .change(workspace_id, workspace, user_id, |workspace| {
+                    workspace.connections.remove(&connection_id);
+                    if workspace.connections.is_empty() {
+                        workspace.delivered = None;
+                    }
+                });
+            if workspace.online_here(user_id) {
                 return;
             }
-            workspace.leaving.insert(user_id, connection_id);
+            self.inner
+                .change(workspace_id, workspace, user_id, |workspace| {
+                    workspace.leaving.insert(user_id, connection_id);
+                });
         }
-        let hub = self.clone();
+        let inner = Arc::clone(&self.inner);
         tokio::spawn(async move {
-            tokio::time::sleep(hub.inner.offline_grace).await;
-            let mut workspaces = hub.workspaces();
+            tokio::time::sleep(inner.offline_grace).await;
+            let mut workspaces = inner.workspaces();
             if let Some(workspace) = workspaces.get_mut(&workspace_id)
                 && workspace.leaving.get(&user_id) == Some(&connection_id)
             {
-                workspace.change(user_id, |workspace| {
+                inner.change(workspace_id, workspace, user_id, |workspace| {
                     workspace.leaving.remove(&user_id);
-                    workspace.statuses.remove(&user_id);
+                    if !workspace.is_online(user_id) {
+                        workspace.statuses.remove(&user_id);
+                    }
                 });
             }
         });
@@ -528,43 +927,48 @@ mod tests {
 
     fn frames(attached: &mut Attached) -> Vec<Value> {
         std::iter::from_fn(|| attached.frames.try_recv().ok())
-            .map(|frame| serde_json::from_str(&frame).unwrap())
+            .map(|frame| serde_json::from_str(&frame.text).unwrap())
             .collect()
     }
 
+    fn event(recipients: Recipients, n: u64) -> NewEvent {
+        NewEvent {
+            recipients,
+            topic: "chat",
+            event: json!({ "n": n }),
+        }
+    }
+
+    async fn page_collab_generation(database: &Database) {
+        // Migrations made the generation the epoch is read from.
+        assert!(!events::epoch(database.pool()).await.unwrap().is_empty());
+    }
+
     #[tokio::test]
-    async fn events_reach_their_recipients_only_and_a_reconnect_gets_what_it_missed() {
+    async fn events_reach_their_recipients_only_and_are_kept_in_order() {
         let database = TestDatabase::new().await.unwrap();
+        page_collab_generation(&database).await;
         let hub = LiveHub::of(&database);
         let (workspace, ada, bob) = (Id::new_v7(), Id::new_v7(), Id::new_v7());
-        let mut ada_tab = hub.connect(workspace, ada, UserStatus::default(), None, None);
-        let mut bob_tab = hub.connect(workspace, bob, UserStatus::default(), None, None);
-        assert!(
-            ada_tab.replay.is_none(),
-            "a first connection has nothing to replay"
-        );
+        let mut ada_tab = hub.connect(workspace, ada, UserStatus::default());
+        let mut bob_tab = hub.connect(workspace, bob, UserStatus::default());
+        hub.start_delivery(workspace, 0).await;
         // Ada saw Bob come online; nobody is told about themselves.
         assert_eq!(frames(&mut ada_tab)[0]["event"]["status"], "online");
         assert!(frames(&mut bob_tab).is_empty());
 
-        hub.publish(
-            workspace,
-            &Recipients::Workspace,
-            "chat",
-            &json!({ "n": 1 }),
-        );
-        hub.publish(
-            workspace,
-            &Recipients::Users(vec![ada]),
-            "chat",
-            &json!({ "n": 2 }),
-        );
-        hub.publish(
-            workspace,
-            &Recipients::WorkspaceExcept(vec![ada]),
-            "chat",
-            &json!({ "n": 3 }),
-        );
+        let last = hub
+            .publish(
+                workspace,
+                &[
+                    event(Recipients::Workspace, 1),
+                    event(Recipients::Users(vec![ada]), 2),
+                    event(Recipients::WorkspaceExcept(vec![ada]), 3),
+                ],
+            )
+            .await
+            .unwrap();
+        assert_eq!(last, 3);
         let seen = |frames: Vec<Value>| -> Vec<(u64, u64)> {
             frames
                 .iter()
@@ -579,63 +983,35 @@ mod tests {
         assert_eq!(seen(frames(&mut ada_tab)), [(1, 1), (2, 2)]);
         assert_eq!(seen(frames(&mut bob_tab)), [(1, 1), (3, 3)]);
 
-        // Bob reconnects after event 1: he gets event 3, and never Ada's event 2.
-        let hello: Value = serde_json::from_str(&bob_tab.hello).unwrap();
-        let epoch = hello["epoch"].as_str().unwrap();
-        let again = hub.connect(workspace, bob, UserStatus::default(), Some(epoch), Some(1));
-        let replay: Vec<Value> = again
-            .replay
-            .expect("the buffer reaches back to event 1")
-            .iter()
-            .map(|frame| serde_json::from_str(frame).unwrap())
-            .collect();
-        assert_eq!(seen(replay), [(3, 3)]);
-        // Another epoch (a restarted server) or a number from the future cannot be replayed.
-        assert!(
-            hub.connect(
-                workspace,
-                bob,
-                UserStatus::default(),
-                Some("other"),
-                Some(1)
-            )
-            .replay
-            .is_none()
+        // A reconnect after event 1 reads the rest from the database, Ada's event too: the
+        // socket filters it.
+        let kept = events::after(database.pool(), workspace, 1).await.unwrap();
+        assert_eq!(
+            kept.iter().map(|event| event.seq).collect::<Vec<_>>(),
+            [2, 3]
         );
-        assert!(
-            hub.connect(workspace, bob, UserStatus::default(), Some(epoch), Some(9))
-                .replay
-                .is_none()
+        assert!(!kept[0].recipients.includes(bob));
+        assert_eq!(
+            events::range(database.pool(), workspace).await.unwrap(),
+            (1, 3)
         );
+        // No events: the newest number.
+        assert_eq!(hub.publish(workspace, &[]).await.unwrap(), 3);
     }
 
     #[tokio::test]
-    async fn a_reconnect_past_the_buffer_must_resync() {
+    async fn only_the_newest_events_are_kept() {
         let database = TestDatabase::new().await.unwrap();
         let hub = LiveHub::of(&database);
-        let (workspace, ada) = (Id::new_v7(), Id::new_v7());
-        let first = hub.connect(workspace, ada, UserStatus::default(), None, None);
-        let hello: Value = serde_json::from_str(&first.hello).unwrap();
-        let epoch = hello["epoch"].as_str().unwrap().to_owned();
-        drop(first);
-        for n in 0..=BUFFERED_EVENTS {
-            hub.publish(
-                workspace,
-                &Recipients::Workspace,
-                "chat",
-                &json!({ "n": n }),
-            );
-        }
+        let workspace = Id::new_v7();
+        let batch: Vec<NewEvent> = (0..=events::BUFFERED_EVENTS)
+            .map(|n| event(Recipients::Workspace, u64::try_from(n).unwrap()))
+            .collect();
+        hub.publish(workspace, &batch).await.unwrap();
         // Event 1 fell out of the buffer.
-        assert!(
-            hub.connect(workspace, ada, UserStatus::default(), Some(&epoch), Some(0))
-                .replay
-                .is_none()
-        );
-        assert!(
-            hub.connect(workspace, ada, UserStatus::default(), Some(&epoch), Some(1))
-                .replay
-                .is_some()
+        assert_eq!(
+            events::range(database.pool(), workspace).await.unwrap(),
+            (2, 1001)
         );
     }
 
@@ -644,13 +1020,13 @@ mod tests {
         let database = TestDatabase::new().await.unwrap();
         let hub = LiveHub::with_offline_grace(&database, Duration::from_millis(40));
         let (workspace, ada, bob) = (Id::new_v7(), Id::new_v7(), Id::new_v7());
-        let mut ada_tab = hub.connect(workspace, ada, UserStatus::default(), None, None);
-        let bob_tab = hub.connect(workspace, bob, UserStatus::default(), None, None);
+        let mut ada_tab = hub.connect(workspace, ada, UserStatus::default());
+        let bob_tab = hub.connect(workspace, bob, UserStatus::default());
         frames(&mut ada_tab);
 
         // A reload: the connection closes and a new one opens inside the delay.
         hub.disconnect(workspace, bob_tab.id, bob);
-        let bob_tab = hub.connect(workspace, bob, UserStatus::default(), None, None);
+        let bob_tab = hub.connect(workspace, bob, UserStatus::default());
         tokio::time::sleep(Duration::from_millis(80)).await;
         assert!(frames(&mut ada_tab).is_empty());
         assert_eq!(hub.online(workspace).len(), 2);
@@ -676,7 +1052,7 @@ mod tests {
         let database = TestDatabase::new().await.unwrap();
         let hub = LiveHub::of(&database);
         let (workspace, ada, bob) = (Id::new_v7(), Id::new_v7(), Id::new_v7());
-        let mut ada_tab = hub.connect(workspace, ada, UserStatus::default(), None, None);
+        let mut ada_tab = hub.connect(workspace, ada, UserStatus::default());
         let status = |presence| UserStatus {
             presence,
             text: Some("Lunch".to_owned()),
@@ -690,10 +1066,9 @@ mod tests {
                 .collect()
         };
 
-        // Invisible: Bob connects and nobody is told; the hello does not list him.
-        let first = hub.connect(workspace, bob, status(Presence::Invisible), None, None);
-        let hello: Value = serde_json::from_str(&first.hello).unwrap();
-        assert_eq!(hello["presence"].as_array().unwrap().len(), 1);
+        // Invisible: Bob connects and nobody is told; the presence list does not have him.
+        let first = hub.connect(workspace, bob, status(Presence::Invisible));
+        assert_eq!(first.presence.len(), 1);
         assert!(seen(&mut ada_tab).is_empty());
         // `@here` and the per-member events still count him as connected.
         assert_eq!(hub.online(workspace).len(), 2);
@@ -710,7 +1085,7 @@ mod tests {
         // Online with two tabs: idle only when both are, online again when one has input, and
         // idle again when the tab with input closes.
         hub.set_status(bob, &UserStatus::default());
-        let second = hub.connect(workspace, bob, UserStatus::default(), None, None);
+        let second = hub.connect(workspace, bob, UserStatus::default());
         assert_eq!(seen(&mut ada_tab)[0]["status"], "online");
         hub.set_idle(workspace, first.id, bob, true);
         assert!(seen(&mut ada_tab).is_empty());
@@ -744,23 +1119,23 @@ mod tests {
             )),
             ..UserStatus::default()
         };
-        let bob_tab = hub.connect(workspace, bob, lunch, None, None);
-        let mut ada_tab = hub.connect(workspace, ada, UserStatus::default(), None, None);
-        let bob_in = |hello: &str| -> Value {
-            let hello: Value = serde_json::from_str(hello).unwrap();
-            let mut shown = hello["presence"].as_array().unwrap().iter();
-            shown
-                .find(|shown| shown["user_id"] == json!(bob))
-                .cloned()
+        let bob_tab = hub.connect(workspace, bob, lunch);
+        let mut ada_tab = hub.connect(workspace, ada, UserStatus::default());
+        let bob_in = |presence: &[Shown]| -> Value {
+            presence
+                .iter()
+                .find(|shown| shown.user_id == bob)
+                .map(|shown| json!(shown))
                 .unwrap()
         };
-        assert_eq!(bob_in(&ada_tab.hello)["text"], "Lunch");
+        assert_eq!(bob_in(&ada_tab.presence)["text"], "Lunch");
 
-        // It ends while Bob is connected: a later hello and a later event do not carry it.
+        // It ends while Bob is connected: a later presence list and a later event do not carry
+        // it.
         tokio::time::sleep(Duration::from_millis(450)).await;
-        let later = hub.connect(workspace, ada, UserStatus::default(), None, None);
+        let later = hub.connect(workspace, ada, UserStatus::default());
         assert_eq!(
-            bob_in(&later.hello),
+            bob_in(&later.presence),
             json!({ "user_id": bob, "status": "online", "emoji": null, "text": null, "expires_at": null })
         );
         hub.set_idle(workspace, bob_tab.id, bob, true);
@@ -778,7 +1153,7 @@ mod tests {
         let database = TestDatabase::new().await.unwrap();
         let hub = LiveHub::with_heard_window(&database, Duration::from_millis(60));
         let (workspace, ada) = (Id::new_v7(), Id::new_v7());
-        let mut tab = hub.connect(workspace, ada, UserStatus::default(), None, None);
+        let mut tab = hub.connect(workspace, ada, UserStatus::default());
         let at_a_tab = || hub.signal_user(ada, true, "notify", &json!({}));
         assert!(at_a_tab(), "a new connection was heard from");
 
@@ -800,10 +1175,10 @@ mod tests {
         let hub = LiveHub::with_offline_grace(&database, Duration::from_millis(200));
         let (workspace, ada) = (Id::new_v7(), Id::new_v7());
 
-        let first = hub.connect(workspace, ada, UserStatus::default(), None, None);
+        let first = hub.connect(workspace, ada, UserStatus::default());
         hub.disconnect(workspace, first.id, ada);
         tokio::time::sleep(Duration::from_millis(120)).await;
-        let second = hub.connect(workspace, ada, UserStatus::default(), None, None);
+        let second = hub.connect(workspace, ada, UserStatus::default());
         hub.disconnect(workspace, second.id, ada);
 
         // The first timer ends here; the second delay has only started.
@@ -817,13 +1192,13 @@ mod tests {
     async fn a_write_lock_leaves_no_entry_and_still_keeps_the_order() {
         let database = TestDatabase::new().await.unwrap();
         let hub = LiveHub::of(&database);
-        let locks = || hub.inner.write_locks.lock().unwrap().len();
+        let locks = || hub.inner.write_locks.0.lock().unwrap().len();
         // Writes to ids that name no workspace: the locks do not add up.
         for _ in 0..100 {
             drop(hub.write_lock(Id::new_v7()).await);
         }
         assert_eq!(locks(), 1, "only the lock of the last write is left");
-        assert!(hub.workspaces().is_empty());
+        assert!(hub.inner.workspaces().is_empty());
 
         // A held lock stays through the writes of other workspaces: the next write of its
         // workspace waits for it.
@@ -848,15 +1223,12 @@ mod tests {
         let database = TestDatabase::new().await.unwrap();
         let hub = LiveHub::of(&database);
         let (workspace, ada) = (Id::new_v7(), Id::new_v7());
-        let mut slow = hub.connect(workspace, ada, UserStatus::default(), None, None);
-        for n in 0..=QUEUED_FRAMES {
-            hub.publish(
-                workspace,
-                &Recipients::Workspace,
-                "chat",
-                &json!({ "n": n }),
-            );
-        }
+        let mut slow = hub.connect(workspace, ada, UserStatus::default());
+        hub.start_delivery(workspace, 0).await;
+        let batch: Vec<NewEvent> = (0..=QUEUED_FRAMES)
+            .map(|n| event(Recipients::Workspace, u64::try_from(n).unwrap()))
+            .collect();
+        hub.publish(workspace, &batch).await.unwrap();
         assert_eq!(frames(&mut slow).len(), QUEUED_FRAMES);
         // The queue is closed: the socket task ends and the client reconnects.
         assert!(slow.frames.recv().await.is_none());

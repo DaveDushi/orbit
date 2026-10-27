@@ -27,6 +27,7 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::auth_routes::login,
         crate::auth_routes::logout,
         crate::auth_routes::me,
+        crate::auth_routes::socket_ticket,
         crate::auth_routes::update_me,
         crate::auth_routes::put_status,
         crate::auth_routes::push::get_push_key,
@@ -64,6 +65,10 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::workspace_routes::create_workspace,
         crate::workspace_routes::list_workspaces,
         crate::workspace_routes::get_workspace,
+        crate::workspace_routes::get_workspace_storage,
+        crate::workspace_routes::get_workspace_bucket,
+        crate::workspace_routes::save_workspace_bucket,
+        crate::workspace_routes::remove_workspace_bucket,
         crate::workspace_routes::rename_workspace,
         crate::workspace_routes::list_members,
         crate::workspace_routes::get_member_profile,
@@ -92,6 +97,9 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::workspace_routes::save_s3,
         crate::workspace_routes::remove_s3,
         crate::workspace_routes::save_storage_options,
+        crate::workspace_routes::save_limits,
+        crate::workspace_routes::get_job_limits,
+        crate::workspace_routes::save_job_limits,
         crate::workspace_routes::start_image_compression,
         crate::workspace_routes::set_account_suspension,
         crate::workspace_routes::create_recovery_link,
@@ -123,6 +131,7 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::task_routes::delete_status,
         crate::task_routes::reorder_statuses,
         crate::task_routes::list_labels,
+        crate::task_routes::list_project_labels,
         crate::task_routes::create_label,
         crate::task_routes::update_label,
         crate::task_routes::delete_label,
@@ -200,6 +209,10 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::page_comment_routes::resolve_page_thread,
         crate::page_comment_routes::reopen_page_thread,
         crate::export_routes::export_page,
+        crate::billing::routes::get_billing,
+        crate::billing::routes::billing_checkout,
+        crate::billing::routes::billing_portal,
+        crate::billing::routes::stripe_webhook,
         crate::teamspace_routes::list_teamspaces,
         crate::teamspace_routes::create_teamspace,
         crate::teamspace_routes::update_teamspace,
@@ -376,6 +389,7 @@ fn problem_schema(route: &str) -> &'static str {
         || route.contains("/teamspaces")
         || route.contains("/imports/")
         || route.contains("/chat/")
+        || route.contains("/billing")
     {
         "TaskProblem"
     } else if route.starts_with("/api/v1/auth") || route.starts_with("/api/v1/setup") {
@@ -399,6 +413,7 @@ fn public_operation(operation_id: &str) -> bool {
             | "preview_invitation"
             | "github_webhook"
             | "github_manifest_callback"
+            | "stripe_webhook"
     )
 }
 
@@ -409,7 +424,10 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
     add_code(&mut responses, "413", "request_too_large");
     add_code(&mut responses, "500", "internal_error");
     if unsafe_operation(operation_id)
-        && !matches!(operation_id, "create_discord_event" | "github_webhook")
+        && !matches!(
+            operation_id,
+            "create_discord_event" | "github_webhook" | "stripe_webhook"
+        )
     {
         add_code(&mut responses, "403", "origin_forbidden");
     }
@@ -480,6 +498,26 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             add_code(&mut responses, "503", "app_key_invalid");
             add_code(&mut responses, "409", "github_labels_ambiguous");
         }
+        "get_billing" => {
+            add_code(&mut responses, "404", "billing_workspace_not_found");
+        }
+        "billing_checkout" => {
+            add_code(&mut responses, "403", "billing_owner_required");
+            add_code(&mut responses, "404", "billing_workspace_not_found");
+            add_code(&mut responses, "409", "subscription_active");
+            add_code(&mut responses, "422", "unknown_plan");
+            add_code(&mut responses, "502", "stripe_unavailable");
+        }
+        "billing_portal" => {
+            add_code(&mut responses, "403", "billing_owner_required");
+            add_code(&mut responses, "404", "billing_workspace_not_found");
+            add_code(&mut responses, "409", "billing_customer_missing");
+            add_code(&mut responses, "502", "stripe_unavailable");
+        }
+        "stripe_webhook" => {
+            add_code(&mut responses, "400", "invalid_stripe_signature");
+            add_code(&mut responses, "400", "invalid_stripe_event");
+        }
         "github_workspace_settings" => {
             add_code(&mut responses, "404", "github_workspace_not_found");
         }
@@ -505,8 +543,13 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             add_code(&mut responses, "502", "github_registration_failed");
             add_code(&mut responses, "503", "app_key_missing");
         }
-        "create_workspace" => add_code(&mut responses, "422", "invalid_workspace_name"),
-        "get_workspace" => add_code(&mut responses, "404", "workspace_resource_not_found"),
+        "create_workspace" => {
+            add_code(&mut responses, "409", "workspace_limit_reached");
+            add_code(&mut responses, "422", "invalid_workspace_name");
+        }
+        "get_workspace" | "get_workspace_storage" => {
+            add_code(&mut responses, "404", "workspace_resource_not_found");
+        }
         "rename_workspace" => {
             workspace_resource_errors(&mut responses);
             add_code(&mut responses, "422", "invalid_workspace_name");
@@ -522,9 +565,11 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             workspace_resource_errors(&mut responses);
             add_code(&mut responses, "409", "ownership_transfer_required");
         }
-        "transfer_ownership" | "delete_workspace" | "restore_workspace" => {
+        "transfer_ownership" | "restore_workspace" => {
             workspace_resource_errors(&mut responses);
+            add_code(&mut responses, "409", "workspace_limit_reached");
         }
+        "delete_workspace" => workspace_resource_errors(&mut responses),
         "create_invitation" => {
             add_code(&mut responses, "403", "workspace_action_forbidden");
             add_code(&mut responses, "404", "workspace_resource_not_found");
@@ -533,7 +578,7 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             add_code(&mut responses, "422", "invalid_email");
             add_code(&mut responses, "502", "email_failed");
         }
-        "get_instance_settings" | "remove_smtp" => {
+        "get_instance_settings" | "remove_smtp" | "get_job_limits" => {
             add_code(&mut responses, "403", "installation_admin_required");
         }
         "set_registration" => {
@@ -550,6 +595,18 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             add_code(&mut responses, "409", "email_not_configured");
             add_code(&mut responses, "502", "email_failed");
         }
+        "get_workspace_bucket" | "remove_workspace_bucket" => {
+            add_code(&mut responses, "403", "workspace_action_forbidden");
+            add_code(&mut responses, "404", "workspace_resource_not_found");
+        }
+        "save_workspace_bucket" => {
+            add_code(&mut responses, "403", "workspace_action_forbidden");
+            add_code(&mut responses, "404", "workspace_resource_not_found");
+            add_code(&mut responses, "409", "storage_in_use");
+            add_code(&mut responses, "422", "invalid_storage_settings");
+            add_code(&mut responses, "502", "storage_unreachable");
+            add_code(&mut responses, "503", "app_key_missing");
+        }
         "save_s3" => {
             add_code(&mut responses, "403", "installation_admin_required");
             add_code(&mut responses, "409", "storage_in_use");
@@ -565,9 +622,18 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
         "start_image_compression" => {
             add_code(&mut responses, "403", "installation_admin_required");
         }
+        "save_limits" => {
+            add_code(&mut responses, "403", "installation_admin_required");
+            add_code(&mut responses, "422", "invalid_limits");
+        }
+        "save_job_limits" => {
+            add_code(&mut responses, "403", "installation_admin_required");
+            add_code(&mut responses, "422", "invalid_job_limits");
+        }
         "save_storage_options" => {
             add_code(&mut responses, "403", "installation_admin_required");
             add_code(&mut responses, "409", "storage_not_configured");
+            add_code(&mut responses, "409", "storage_shared");
         }
         "list_invitations" | "list_audit" | "list_api_tokens" | "create_api_token"
         | "revoke_api_token" => {
@@ -630,6 +696,7 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             }
             add_code(&mut responses, "404", "attachment_not_found");
             add_code(&mut responses, "413", "upload_too_large");
+            add_code(&mut responses, "413", "storage_quota_exceeded");
             add_code(&mut responses, "422", "validation_failed");
         }
         id if attachment_operation(id) => {
@@ -643,6 +710,7 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             add_code(&mut responses, "400", "invalid_multipart");
             add_code(&mut responses, "404", "page_file_not_found");
             add_code(&mut responses, "413", "upload_too_large");
+            add_code(&mut responses, "413", "storage_quota_exceeded");
             add_code(&mut responses, "422", "validation_failed");
         }
         "download_page_file" => add_code(&mut responses, "404", "page_file_not_found"),
@@ -658,6 +726,13 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
         id if teamspace_operation(id) => teamspace_errors(id, &mut responses),
         id if id.contains("chat") => chat_errors(id, &mut responses),
         _ => {}
+    }
+    // Orbit Cloud: the billing guard refuses these creates at the trial's limits.
+    if matches!(
+        operation_id,
+        "create_task" | "create_page" | "duplicate_page" | "create_invitation"
+    ) {
+        add_code(&mut responses, "402", "trial_limit_reached");
     }
 
     responses
@@ -691,6 +766,7 @@ fn invalid_request_operation(operation_id: &str) -> bool {
     matches!(
         operation_id,
         "create_discord_event"
+            | "billing_checkout"
             | "setup_complete"
             | "login"
             | "update_me"
@@ -706,7 +782,10 @@ fn invalid_request_operation(operation_id: &str) -> bool {
             | "set_registration"
             | "save_smtp"
             | "save_s3"
+            | "save_workspace_bucket"
             | "save_storage_options"
+            | "save_limits"
+            | "save_job_limits"
             | "create_workspace"
             | "rename_workspace"
             | "list_members"
@@ -741,6 +820,7 @@ fn invalid_request_operation(operation_id: &str) -> bool {
             | "delete_status"
             | "reorder_statuses"
             | "list_labels"
+            | "list_project_labels"
             | "create_label"
             | "update_label"
             | "delete_label"
@@ -864,6 +944,7 @@ fn task_operation(operation_id: &str) -> bool {
             | "delete_status"
             | "reorder_statuses"
             | "list_labels"
+            | "list_project_labels"
             | "create_label"
             | "update_label"
             | "delete_label"
@@ -895,6 +976,7 @@ fn task_errors(operation_id: &str, responses: &mut BTreeMap<&'static str, Vec<&'
             | "list_project_trash"
             | "list_statuses"
             | "list_labels"
+            | "list_project_labels"
             | "list_tasks"
             | "query_tasks"
             | "list_task_trash"
@@ -1127,6 +1209,7 @@ fn chat_errors(operation_id: &str, responses: &mut BTreeMap<&'static str, Vec<&'
     if operation_id == "upload_chat_file" {
         add_code(responses, "400", "invalid_multipart");
         add_code(responses, "413", "upload_too_large");
+        add_code(responses, "413", "storage_quota_exceeded");
         add_code(responses, "422", "validation_failed");
         return;
     }
@@ -1142,6 +1225,7 @@ fn chat_errors(operation_id: &str, responses: &mut BTreeMap<&'static str, Vec<&'
         add_code(responses, "409", "emoji_name_taken");
         add_code(responses, "409", "emoji_limit_reached");
         add_code(responses, "413", "emoji_too_large");
+        add_code(responses, "413", "storage_quota_exceeded");
         add_code(responses, "422", "validation_failed");
         add_code(responses, "422", "invalid_emoji");
         return;
@@ -1152,6 +1236,7 @@ fn chat_errors(operation_id: &str, responses: &mut BTreeMap<&'static str, Vec<&'
         add_code(responses, "409", "sticker_name_taken");
         add_code(responses, "409", "sticker_limit_reached");
         add_code(responses, "413", "sticker_too_large");
+        add_code(responses, "413", "storage_quota_exceeded");
         add_code(responses, "422", "validation_failed");
         add_code(responses, "422", "invalid_sticker");
         return;

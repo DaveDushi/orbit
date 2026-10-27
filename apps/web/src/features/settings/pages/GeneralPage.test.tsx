@@ -2,13 +2,18 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router'
 import { queryKeys } from '@/api/queryKeys'
 import { WorkspaceContext } from '@/features/workspaces/workspaceContext'
 import { GeneralPage } from './GeneralPage'
 import { testWorkspace } from '@/test/workspace'
 
 const originalFetch = globalThis.fetch
-beforeEach(() => { globalThis.fetch = (async () => Response.json({ items: [] })) as unknown as typeof fetch })
+beforeEach(() => {
+  globalThis.fetch = (async (input: Request) => Response.json(new URL(input.url).pathname.endsWith('/storage')
+    ? { used_bytes: 0, quota_bytes: null, largest_files: [] }
+    : { items: [] })) as unknown as typeof fetch
+})
 afterEach(() => { globalThis.fetch = originalFetch })
 
 function renderPage() {
@@ -17,9 +22,11 @@ function renderPage() {
   const workspace = testWorkspace('owner', { version: 7 })
   return render(
     <QueryClientProvider client={client}>
-      <WorkspaceContext.Provider value={{ workspace, workspaces: [workspace], selectWorkspace: () => {} }}>
-        <GeneralPage />
-      </WorkspaceContext.Provider>
+      <MemoryRouter>
+        <WorkspaceContext.Provider value={{ workspace, workspaces: [workspace], selectWorkspace: () => {} }}>
+          <GeneralPage />
+        </WorkspaceContext.Provider>
+      </MemoryRouter>
     </QueryClientProvider>,
   )
 }

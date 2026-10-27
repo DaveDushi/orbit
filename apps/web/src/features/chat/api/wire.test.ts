@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
-import type { ChatEvent as WireEvent, ConversationRecord, MessageRecord } from '@/api/generated/types.gen'
-import { ApiProblem } from '@/api/problem'
+import type { ChatEvent as WireEvent, ConversationRecord, MessageRecord } from '@orbit/api/generated/types.gen'
+import { ApiProblem } from '@orbit/api/problem'
 import { ChatError } from './types'
 import { toChatError, toEvent } from './wire'
 

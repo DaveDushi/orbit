@@ -76,7 +76,11 @@ fn owner_holds_every_permission() {
 
 #[test]
 fn admin_holds_every_permission_except_the_owner_only_ones() {
-    let owner_only = [Permission::WorkspaceDelete, Permission::WorkspaceTransfer];
+    let owner_only = [
+        Permission::WorkspaceDelete,
+        Permission::WorkspaceTransfer,
+        Permission::BillingManage,
+    ];
     for permission in Permission::ALL {
         assert_eq!(
             Policy::can(WorkspaceRole::Admin, permission),

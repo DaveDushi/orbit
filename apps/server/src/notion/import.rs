@@ -19,17 +19,17 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 use std::time::Duration;
 
+use orbit_platform::Row;
 use orbit_platform::{
-    Database, Id, Job, JobError, JobKind, JobKindRegistrationError, JobQueue, JobStore,
-    TimestampMillis, Worker,
+    Backend, Database, Flag, Id, Job, JobError, JobKind, JobKindRegistrationError, JobQueue,
+    JobStore, TimestampMillis, Worker,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use sqlx::Row;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use utoipa::ToSchema;
@@ -43,6 +43,8 @@ use super::files::sanitize_file_name;
 use super::model::{BlockNode, NotionPage, normalize_id};
 pub use super::scan::{NotionImportNode, NotionImportNodeKind, NotionImportTree};
 use super::scan::{ScanControl, build_tree};
+use crate::billing::WorkspaceAccess;
+use crate::repositories::billing;
 use crate::repositories::membership;
 use crate::repositories::page_files::{PageFileRepository, page_file_url};
 use crate::repositories::page_versions::SaveOrigin;
@@ -70,7 +72,8 @@ const MAX_LISTED_IMPORTS: i64 = 20;
 const ACTIVE: &str = "('scanning', 'queued', 'importing')";
 const OPEN: &str = "('scanning', 'ready', 'queued', 'importing')";
 
-/// Both import job kinds: two at a time globally, a few retries for Notion outages.
+/// Both import job kinds: two at a time on all servers and one per workspace while another
+/// workspace waits (defaults; Admin can change them), a few retries for Notion outages.
 #[must_use]
 pub fn scan_job_kind() -> JobKind {
     notion_job_kind(SCAN_JOB)
@@ -84,6 +87,7 @@ pub fn import_job_kind() -> JobKind {
 fn notion_job_kind(name: &str) -> JobKind {
     JobKind::new(name)
         .with_concurrency_limit(2)
+        .with_workspace_limit(1)
         .with_retry_policy(
             5,
             vec![
@@ -171,33 +175,6 @@ struct Inner {
     files: PageFileRepository,
     jobs: JobQueue,
     settings: NotionImportSettings,
-    /// Imports whose `notion.import` job runs in this process right now.
-    running: Mutex<HashSet<Id>>,
-}
-
-/// Marks an import as running in this process until dropped.
-struct RunningGuard<'a> {
-    running: &'a Mutex<HashSet<Id>>,
-    import_id: Id,
-}
-
-impl<'a> RunningGuard<'a> {
-    fn enter(running: &'a Mutex<HashSet<Id>>, import_id: Id) -> Self {
-        running
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(import_id);
-        Self { running, import_id }
-    }
-}
-
-impl Drop for RunningGuard<'_> {
-    fn drop(&mut self) {
-        self.running
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(&self.import_id);
-    }
 }
 
 /// Errors of the import API.
@@ -451,7 +428,6 @@ impl NotionImportService {
                 database,
                 files,
                 settings,
-                running: Mutex::new(HashSet::new()),
             }),
         }
     }
@@ -519,9 +495,9 @@ impl NotionImportService {
 
         let id = Id::new_v7();
         let mut tx = self.database().immediate_transaction().await?;
-        let active: i64 = sqlx::query_scalar(&format!(
-            "SELECT COUNT(*) FROM notion_imports WHERE user_id = ? AND status IN {ACTIVE}"
-        ))
+        let active: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM notion_imports WHERE user_id = $1 AND status IN {ACTIVE}"
+        )))
         .bind(user_id.to_string())
         .fetch_one(&mut *tx)
         .await?;
@@ -529,8 +505,8 @@ impl NotionImportService {
             return Err(ImportError::InProgress);
         }
         sqlx::query(
-            "UPDATE notion_imports SET status = 'cancelled', token_ciphertext = NULL, updated_at = ? \
-             WHERE user_id = ? AND workspace_id = ? AND status = 'ready'",
+            "UPDATE notion_imports SET status = 'cancelled', token_ciphertext = NULL, updated_at = $1 \
+             WHERE user_id = $2 AND workspace_id = $3 AND status = 'ready'",
         )
         .bind(now.as_millis())
         .bind(user_id.to_string())
@@ -539,7 +515,7 @@ impl NotionImportService {
         .await?;
         sqlx::query(
             "INSERT INTO notion_imports (id, workspace_id, user_id, status, token_ciphertext, \
-             notion_workspace_name, created_at, updated_at) VALUES (?, ?, ?, 'scanning', ?, ?, ?, ?)",
+             notion_workspace_name, created_at, updated_at) VALUES ($1, $2, $3, 'scanning', $4, $5, $6, $7)",
         )
         .bind(id.to_string())
         .bind(workspace_id.to_string())
@@ -568,8 +544,8 @@ impl NotionImportService {
         self.require_member(workspace_id, user_id).await?;
         self.expire_stale(TimestampMillis::now()).await?;
         let ids: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM notion_imports WHERE workspace_id = ? AND user_id = ? \
-             ORDER BY created_at DESC, id DESC LIMIT ?",
+            "SELECT id FROM notion_imports WHERE workspace_id = $1 AND user_id = $2 \
+             ORDER BY created_at DESC, id DESC LIMIT $3",
         )
         .bind(workspace_id.to_string())
         .bind(user_id.to_string())
@@ -613,7 +589,7 @@ impl NotionImportService {
         self.require_member(workspace_id, user_id).await?;
         self.expire_stale(TimestampMillis::now()).await?;
         let row = sqlx::query(
-            "SELECT status, tree_json FROM notion_imports WHERE id = ? AND workspace_id = ? AND user_id = ?",
+            "SELECT status, tree_json FROM notion_imports WHERE id = $1 AND workspace_id = $2 AND user_id = $3",
         )
         .bind(import_id.to_string())
         .bind(workspace_id.to_string())
@@ -660,8 +636,8 @@ impl NotionImportService {
         let previously: HashSet<String> = sqlx::query_scalar(
             "SELECT DISTINCT items.notion_id FROM notion_import_items AS items \
              JOIN notion_imports ON notion_imports.id = items.import_id \
-             WHERE notion_imports.workspace_id = ? AND notion_imports.user_id = ? \
-             AND notion_imports.id <> ? AND items.status = 'done'",
+             WHERE notion_imports.workspace_id = $1 AND notion_imports.user_id = $2 \
+             AND notion_imports.id <> $3 AND items.status = 'done'",
         )
         .bind(workspace_id.to_string())
         .bind(user_id.to_string())
@@ -694,9 +670,9 @@ impl NotionImportService {
 
         let now = TimestampMillis::now();
         let mut tx = self.database().immediate_transaction().await?;
-        let active: i64 = sqlx::query_scalar(&format!(
-            "SELECT COUNT(*) FROM notion_imports WHERE user_id = ? AND id <> ? AND status IN {ACTIVE}"
-        ))
+        let active: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM notion_imports WHERE user_id = $1 AND id <> $2 AND status IN {ACTIVE}"
+        )))
         .bind(user_id.to_string())
         .bind(import_id.to_string())
         .fetch_one(&mut *tx)
@@ -705,14 +681,14 @@ impl NotionImportService {
             return Err(ImportError::InProgress);
         }
         let updated = sqlx::query(
-            "UPDATE notion_imports SET status = 'queued', selection_json = ?, target_teamspace_id = ?, \
-             target_private = ?, target_parent_page_id = ?, total = ?, done = 0, failed = 0, \
-             report_json = ?, updated_at = ? \
-             WHERE id = ? AND status = 'ready' AND token_ciphertext IS NOT NULL",
+            "UPDATE notion_imports SET status = 'queued', selection_json = $1, target_teamspace_id = $2, \
+             target_private = $3, target_parent_page_id = $4, total = $5, done = 0, failed = 0, \
+             report_json = $6, updated_at = $7 \
+             WHERE id = $8 AND status = 'ready' AND token_ciphertext IS NOT NULL",
         )
         .bind(serde_json::to_string(&stored_selection).unwrap_or_default())
         .bind(space.teamspace_id().map(|id| id.to_string()))
-        .bind(matches!(space, PageSpace::Private(_)))
+        .bind(i64::from(matches!(space, PageSpace::Private(_))))
         .bind(destination.parent_page_id.map(|id| id.to_string()))
         .bind(plan.len() as i64)
         .bind(serde_json::to_string(&report).unwrap_or_default())
@@ -727,7 +703,7 @@ impl NotionImportService {
         for (position, item) in plan.iter().enumerate() {
             sqlx::query(
                 "INSERT INTO notion_import_items (import_id, notion_id, kind, parent_notion_id, \
-                 position, title, icon) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                 position, title, icon) VALUES ($1, $2, $3, $4, $5, $6, $7)",
             )
             .bind(import_id.to_string())
             .bind(&item.notion_id)
@@ -759,10 +735,10 @@ impl NotionImportService {
         import_id: Id,
     ) -> Result<NotionImport, ImportError> {
         self.require_member(workspace_id, user_id).await?;
-        let updated = sqlx::query(&format!(
-            "UPDATE notion_imports SET status = 'cancelled', token_ciphertext = NULL, updated_at = ? \
-             WHERE id = ? AND workspace_id = ? AND user_id = ? AND status IN {OPEN}"
-        ))
+        let updated = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE notion_imports SET status = 'cancelled', token_ciphertext = NULL, updated_at = $1 \
+             WHERE id = $2 AND workspace_id = $3 AND user_id = $4 AND status IN {OPEN}"
+        )))
         .bind(TimestampMillis::now().as_millis())
         .bind(import_id.to_string())
         .bind(workspace_id.to_string())
@@ -778,7 +754,7 @@ impl NotionImportService {
         // A running job trashes its unfilled pages itself once it sees the cancellation (the
         // page it is filling right now must not be trashed under it). Otherwise (queued, or
         // waiting for a retry) clean up now.
-        if !self.is_running_here(import_id) {
+        if !self.is_running(import_id).await? {
             self.trash_unfilled_pages(import_id).await?;
         }
         self.load_view(workspace_id, user_id, import_id, false)
@@ -792,19 +768,19 @@ impl NotionImportService {
         let stalled_cutoff = now.as_millis() - STALLED_AFTER.as_millis() as i64;
         let expired = sqlx::query(
             "UPDATE notion_imports SET status = 'expired', token_ciphertext = NULL, \
-             error = 'The import was not started within 24 hours.', updated_at = ? \
-             WHERE status = 'ready' AND updated_at < ?",
+             error = 'The import was not started within 24 hours.', updated_at = $1 \
+             WHERE status = 'ready' AND updated_at < $2",
         )
         .bind(now.as_millis())
         .bind(ready_cutoff)
         .execute(self.database().pool())
         .await?
         .rows_affected();
-        let stalled = sqlx::query(&format!(
+        let stalled = sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE notion_imports SET status = 'failed', token_ciphertext = NULL, \
-             error = 'The import stopped making progress.', updated_at = ? \
-             WHERE status IN {ACTIVE} AND updated_at < ?"
-        ))
+             error = 'The import stopped making progress.', updated_at = $1 \
+             WHERE status IN {ACTIVE} AND updated_at < $2"
+        )))
         .bind(now.as_millis())
         .bind(stalled_cutoff)
         .execute(self.database().pool())
@@ -838,15 +814,19 @@ impl NotionImportService {
     /// Fails active imports whose job is dead (for example its lease expired on the final
     /// attempt after a crash) and that have no live job left. Returns the imports finished.
     async fn fail_imports_with_dead_jobs(&self) -> Result<u64, ImportError> {
-        let ids: Vec<String> = sqlx::query_scalar(&format!(
+        let import_id_of_job = match self.database().backend() {
+            Backend::Sqlite => "json_extract(jobs.payload_json, '$.import_id')",
+            Backend::Postgres => "(jobs.payload_json::jsonb ->> 'import_id')",
+        };
+        let ids: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT id FROM notion_imports WHERE status IN {ACTIVE} \
              AND EXISTS (SELECT 1 FROM jobs WHERE jobs.kind IN ('{SCAN_JOB}', '{IMPORT_JOB}') \
                  AND jobs.state = 'dead' \
-                 AND json_extract(jobs.payload_json, '$.import_id') = notion_imports.id) \
+                 AND {import_id_of_job} = notion_imports.id) \
              AND NOT EXISTS (SELECT 1 FROM jobs WHERE jobs.kind IN ('{SCAN_JOB}', '{IMPORT_JOB}') \
                  AND jobs.state IN ('queued', 'running') \
-                 AND json_extract(jobs.payload_json, '$.import_id') = notion_imports.id)"
-        ))
+                 AND {import_id_of_job} = notion_imports.id)"
+        )))
         .fetch_all(self.database().pool())
         .await?;
         let mut finished = 0;
@@ -854,9 +834,6 @@ impl NotionImportService {
             let Ok(import_id) = id.parse::<Id>() else {
                 continue;
             };
-            if self.is_running_here(import_id) {
-                continue;
-            }
             self.fail_open_import(import_id, "The import stopped after repeated errors.")
                 .await?;
             finished += 1;
@@ -867,7 +844,7 @@ impl NotionImportService {
     /// Trashes the unfilled pages of an open import, then fails it and deletes its token.
     async fn fail_open_import(&self, import_id: Id, message: &str) -> Result<(), sqlx::Error> {
         let status: Option<String> =
-            sqlx::query_scalar("SELECT status FROM notion_imports WHERE id = ?")
+            sqlx::query_scalar("SELECT status FROM notion_imports WHERE id = $1")
                 .bind(import_id.to_string())
                 .fetch_optional(self.database().pool())
                 .await?;
@@ -884,7 +861,7 @@ impl NotionImportService {
     /// The `notion.scan` job: lists pages and data sources and stores the tree.
     pub async fn run_scan(&self, import_id: Id, run: &JobRun) -> Result<(), JobError> {
         let Some(row) =
-            sqlx::query("SELECT status, token_ciphertext FROM notion_imports WHERE id = ?")
+            sqlx::query("SELECT status, token_ciphertext FROM notion_imports WHERE id = $1")
                 .bind(import_id.to_string())
                 .fetch_optional(self.database().pool())
                 .await
@@ -917,8 +894,8 @@ impl NotionImportService {
             Ok(None) => Ok(()),
             Ok(Some(tree)) => {
                 sqlx::query(
-                    "UPDATE notion_imports SET status = 'ready', tree_json = ?, updated_at = ? \
-                     WHERE id = ? AND status = 'scanning'",
+                    "UPDATE notion_imports SET status = 'ready', tree_json = $1, updated_at = $2 \
+                     WHERE id = $3 AND status = 'scanning'",
                 )
                 .bind(serde_json::to_string(&tree).map_err(retryable)?)
                 .bind(TimestampMillis::now().as_millis())
@@ -935,13 +912,12 @@ impl NotionImportService {
     /// The `notion.import` job: pass 1 creates the pages, pass 2 fills them. A failed or
     /// cancelled import trashes the pages it created but did not fill.
     pub async fn run_import(&self, import_id: Id, run: &JobRun) -> Result<(), JobError> {
-        let _running = RunningGuard::enter(&self.inner.running, import_id);
         match self.import(import_id, run).await {
             Ok(()) => {}
             Err(failure) => self.job_failure(import_id, failure, run).await?,
         }
         let status: Option<String> =
-            sqlx::query_scalar("SELECT status FROM notion_imports WHERE id = ?")
+            sqlx::query_scalar("SELECT status FROM notion_imports WHERE id = $1")
                 .bind(import_id.to_string())
                 .fetch_optional(self.database().pool())
                 .await
@@ -954,12 +930,20 @@ impl NotionImportService {
         Ok(())
     }
 
-    fn is_running_here(&self, import_id: Id) -> bool {
-        self.inner
-            .running
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .contains(&import_id)
+    /// Whether the `notion.import` job of the import runs now, on any server.
+    async fn is_running(&self, import_id: Id) -> Result<bool, ImportError> {
+        let import_id_of_job = match self.database().backend() {
+            Backend::Sqlite => "json_extract(jobs.payload_json, '$.import_id')",
+            Backend::Postgres => "(jobs.payload_json::jsonb ->> 'import_id')",
+        };
+        let Flag(running) = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT EXISTS (SELECT 1 FROM jobs WHERE jobs.kind = '{IMPORT_JOB}' \
+             AND jobs.state = 'running' AND {import_id_of_job} = $1)"
+        )))
+        .bind(import_id.to_string())
+        .fetch_one(self.database().pool())
+        .await?;
+        Ok(running)
     }
 
     /// Moves the pages that pass 1 created and pass 2 never filled (items still `created`) to
@@ -968,7 +952,7 @@ impl NotionImportService {
     /// these pages (e.g. a page someone moved under it). Idempotent; returns the pages trashed.
     async fn trash_unfilled_pages(&self, import_id: Id) -> Result<u64, sqlx::Error> {
         let Some(row) =
-            sqlx::query("SELECT workspace_id, user_id FROM notion_imports WHERE id = ?")
+            sqlx::query("SELECT workspace_id, user_id FROM notion_imports WHERE id = $1")
                 .bind(import_id.to_string())
                 .fetch_optional(self.database().pool())
                 .await?
@@ -983,7 +967,7 @@ impl NotionImportService {
         };
         let unfilled: Vec<(String, Option<String>, String)> = sqlx::query_as(
             "SELECT notion_id, parent_notion_id, page_id FROM notion_import_items \
-             WHERE import_id = ? AND status = 'created' AND page_id IS NOT NULL ORDER BY position",
+             WHERE import_id = $1 AND status = 'created' AND page_id IS NOT NULL ORDER BY position",
         )
         .bind(import_id.to_string())
         .fetch_all(self.database().pool())
@@ -1004,15 +988,16 @@ impl NotionImportService {
             // (version, live pages in the subtree, of which kept: filled or not ours)
             let (version, size, kept): (Option<i64>, i64, i64) = sqlx::query_as(
                 "WITH RECURSIVE subtree(id) AS ( \
-                     SELECT id FROM pages WHERE id = ? AND deleted_at IS NULL \
+                     SELECT id FROM pages WHERE id = $1 AND deleted_at IS NULL \
                      UNION ALL \
                      SELECT pages.id FROM pages JOIN subtree ON pages.parent_id = subtree.id \
                      WHERE pages.deleted_at IS NULL \
                  ) \
-                 SELECT (SELECT version FROM pages WHERE id = ?), COUNT(*), \
-                        COALESCE(SUM(pages.content_json <> '[]' OR pages.id NOT IN ( \
+                 SELECT (SELECT version FROM pages WHERE id = $2), COUNT(*), \
+                        CAST(COALESCE(SUM(CASE WHEN pages.content_json <> '[]' OR pages.id NOT IN ( \
                             SELECT page_id FROM notion_import_items \
-                            WHERE import_id = ? AND status = 'created' AND page_id IS NOT NULL)), 0) \
+                            WHERE import_id = $3 AND status = 'created' AND page_id IS NOT NULL) \
+                            THEN 1 ELSE 0 END), 0) AS BIGINT) \
                  FROM pages WHERE pages.id IN (SELECT id FROM subtree)",
             )
             .bind(page_id)
@@ -1083,7 +1068,7 @@ impl NotionImportService {
     async fn import(&self, import_id: Id, run: &JobRun) -> Result<(), Failure> {
         let Some(row) = sqlx::query(
             "SELECT workspace_id, user_id, status, token_ciphertext, selection_json, \
-             target_teamspace_id, target_private, report_json FROM notion_imports WHERE id = ?",
+             target_teamspace_id, target_private, report_json FROM notion_imports WHERE id = $1",
         )
         .bind(import_id.to_string())
         .fetch_optional(self.database().pool())
@@ -1097,6 +1082,7 @@ impl NotionImportService {
         }
         let workspace_id = parse_stored_id(row.get("workspace_id"))?;
         let user_id = parse_stored_id(row.get("user_id"))?;
+        self.ensure_writable(workspace_id).await?;
         let selection: Option<StoredSelection> = row
             .get::<Option<String>, _>("selection_json")
             .and_then(|json| serde_json::from_str(&json).ok());
@@ -1120,7 +1106,7 @@ impl NotionImportService {
             .client_for(row.get("token_ciphertext"))
             .map_err(Failure::Fatal)?;
         sqlx::query(
-            "UPDATE notion_imports SET status = 'importing', updated_at = ? WHERE id = ? AND status = 'queued'",
+            "UPDATE notion_imports SET status = 'importing', updated_at = $1 WHERE id = $2 AND status = 'queued'",
         )
         .bind(TimestampMillis::now().as_millis())
         .bind(import_id.to_string())
@@ -1161,7 +1147,7 @@ impl NotionImportService {
             if items[index].status != "pending" {
                 continue;
             }
-            if self.should_stop(import_id, run).await? {
+            if self.should_stop(import_id, workspace_id, run).await? {
                 return stopped(run);
             }
             let parent = items[index]
@@ -1202,7 +1188,7 @@ impl NotionImportService {
         let members = sqlx::query(
             "SELECT users.id, users.display_name, users.normalized_email FROM memberships \
              JOIN users ON users.id = memberships.user_id \
-             WHERE memberships.workspace_id = ? AND users.suspended_at IS NULL",
+             WHERE memberships.workspace_id = $1 AND users.suspended_at IS NULL",
         )
         .bind(workspace_id.to_string())
         .fetch_all(self.database().pool())
@@ -1229,7 +1215,7 @@ impl NotionImportService {
             if items[index].status != "created" {
                 continue;
             }
-            if self.should_stop(import_id, run).await? {
+            if self.should_stop(import_id, workspace_id, run).await? {
                 return stopped(run);
             }
             let item = items[index].clone();
@@ -1248,7 +1234,7 @@ impl NotionImportService {
                 Ok(()) => {
                     sqlx::query(
                         "UPDATE notion_import_items SET status = 'done', error = NULL \
-                         WHERE import_id = ? AND notion_id = ?",
+                         WHERE import_id = $1 AND notion_id = $2",
                     )
                     .bind(import_id.to_string())
                     .bind(&item.notion_id)
@@ -1270,8 +1256,8 @@ impl NotionImportService {
         }
 
         sqlx::query(
-            "UPDATE notion_imports SET status = 'completed', token_ciphertext = NULL, updated_at = ? \
-             WHERE id = ? AND status = 'importing'",
+            "UPDATE notion_imports SET status = 'completed', token_ciphertext = NULL, updated_at = $1 \
+             WHERE id = $2 AND status = 'importing'",
         )
         .bind(TimestampMillis::now().as_millis())
         .bind(import_id.to_string())
@@ -1296,7 +1282,7 @@ impl NotionImportService {
             None => {
                 let page_id = Id::new_v7();
                 sqlx::query(
-                    "UPDATE notion_import_items SET page_id = ? WHERE import_id = ? AND notion_id = ?",
+                    "UPDATE notion_import_items SET page_id = $1 WHERE import_id = $2 AND notion_id = $3",
                 )
                 .bind(page_id.to_string())
                 .bind(import_id.to_string())
@@ -1307,7 +1293,7 @@ impl NotionImportService {
                 page_id
             }
         };
-        let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pages WHERE id = ?")
+        let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pages WHERE id = $1")
             .bind(page_id.to_string())
             .fetch_one(self.database().pool())
             .await?;
@@ -1356,13 +1342,13 @@ impl NotionImportService {
             }
         }
         sqlx::query(
-            "UPDATE notion_import_items SET status = 'created' WHERE import_id = ? AND notion_id = ?",
+            "UPDATE notion_import_items SET status = 'created' WHERE import_id = $1 AND notion_id = $2",
         )
         .bind(import_id.to_string())
         .bind(&item.notion_id)
         .execute(self.database().pool())
         .await?;
-        sqlx::query("UPDATE notion_imports SET updated_at = ? WHERE id = ?")
+        sqlx::query("UPDATE notion_imports SET updated_at = $1 WHERE id = $2")
             .bind(TimestampMillis::now().as_millis())
             .bind(import_id.to_string())
             .execute(self.database().pool())
@@ -1554,7 +1540,7 @@ impl NotionImportService {
             "SELECT page_files.id, page_files.file_name, attachment_blobs.sha256, \
              attachment_blobs.byte_size FROM page_files \
              JOIN attachment_blobs ON attachment_blobs.id = page_files.blob_id \
-             WHERE page_files.workspace_id = ? AND page_files.page_id = ? \
+             WHERE page_files.workspace_id = $1 AND page_files.page_id = $2 \
              ORDER BY page_files.created_at, page_files.id",
         )
         .bind(workspace_id.to_string())
@@ -1577,16 +1563,35 @@ impl NotionImportService {
             .collect())
     }
 
-    async fn should_stop(&self, import_id: Id, run: &JobRun) -> Result<bool, Failure> {
+    /// Whether to stop before the next page; a workspace that became read-only fails the import.
+    async fn should_stop(
+        &self,
+        import_id: Id,
+        workspace_id: Id,
+        run: &JobRun,
+    ) -> Result<bool, Failure> {
         if run.cancel.is_cancelled() {
             return Ok(true);
         }
+        self.ensure_writable(workspace_id).await?;
         let status: Option<String> =
-            sqlx::query_scalar("SELECT status FROM notion_imports WHERE id = ?")
+            sqlx::query_scalar("SELECT status FROM notion_imports WHERE id = $1")
                 .bind(import_id.to_string())
                 .fetch_optional(self.database().pool())
                 .await?;
         Ok(status.as_deref() != Some("importing"))
+    }
+
+    /// Orbit Cloud: a read-only workspace (past its trial, no subscription) takes no imported pages.
+    async fn ensure_writable(&self, workspace_id: Id) -> Result<(), Failure> {
+        match billing::write_access(self.database(), workspace_id).await? {
+            WorkspaceAccess::Full | WorkspaceAccess::Trial => Ok(()),
+            WorkspaceAccess::ReadOnly => Err(Failure::Fatal(
+                "The import stopped because the workspace is read-only: it has no active \
+                 subscription."
+                    .to_owned(),
+            )),
+        }
     }
 
     async fn fail_item(
@@ -1597,8 +1602,8 @@ impl NotionImportService {
     ) -> Result<(), Failure> {
         let mut tx = self.database().immediate_transaction().await?;
         let changed = sqlx::query(
-            "UPDATE notion_import_items SET status = 'failed', error = ? \
-             WHERE import_id = ? AND notion_id = ? AND status <> 'failed'",
+            "UPDATE notion_import_items SET status = 'failed', error = $1 \
+             WHERE import_id = $2 AND notion_id = $3 AND status <> 'failed'",
         )
         .bind(clamp(message, 500, 2_000))
         .bind(import_id.to_string())
@@ -1606,12 +1611,14 @@ impl NotionImportService {
         .execute(&mut *tx)
         .await?
         .rows_affected();
-        sqlx::query("UPDATE notion_imports SET failed = failed + ?, updated_at = ? WHERE id = ?")
-            .bind(changed as i64)
-            .bind(TimestampMillis::now().as_millis())
-            .bind(import_id.to_string())
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "UPDATE notion_imports SET failed = failed + $1, updated_at = $2 WHERE id = $3",
+        )
+        .bind(changed as i64)
+        .bind(TimestampMillis::now().as_millis())
+        .bind(import_id.to_string())
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
         Ok(())
     }
@@ -1624,8 +1631,8 @@ impl NotionImportService {
         failed: i64,
     ) -> Result<(), Failure> {
         sqlx::query(
-            "UPDATE notion_imports SET done = done + ?, failed = failed + ?, report_json = ?, \
-             updated_at = ? WHERE id = ?",
+            "UPDATE notion_imports SET done = done + $1, failed = failed + $2, report_json = $3, \
+             updated_at = $4 WHERE id = $5",
         )
         .bind(done)
         .bind(failed)
@@ -1644,10 +1651,10 @@ impl NotionImportService {
         status: &str,
         error: Option<&str>,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query(&format!(
-            "UPDATE notion_imports SET status = ?, token_ciphertext = NULL, error = ?, updated_at = ? \
-             WHERE id = ? AND status IN {OPEN}"
-        ))
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE notion_imports SET status = $1, token_ciphertext = NULL, error = $2, updated_at = $3 \
+             WHERE id = $4 AND status IN {OPEN}"
+        )))
         .bind(status)
         .bind(error.map(|error| clamp(error, 500, 2_000)))
         .bind(TimestampMillis::now().as_millis())
@@ -1702,9 +1709,9 @@ impl NotionImportService {
         user_id: Id,
         except: Option<Id>,
     ) -> Result<bool, ImportError> {
-        let count: i64 = sqlx::query_scalar(&format!(
-            "SELECT COUNT(*) FROM notion_imports WHERE user_id = ? AND id IS NOT ? AND status IN {ACTIVE}"
-        ))
+        let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM notion_imports WHERE user_id = $1 AND id IS DISTINCT FROM $2 AND status IN {ACTIVE}"
+        )))
         .bind(user_id.to_string())
         .bind(except.map(|id| id.to_string()))
         .fetch_one(self.database().pool())
@@ -1715,7 +1722,7 @@ impl NotionImportService {
     async fn load_items(&self, import_id: Id) -> Result<Vec<Item>, Failure> {
         let rows = sqlx::query(
             "SELECT notion_id, kind, parent_notion_id, title, icon, page_id, status \
-             FROM notion_import_items WHERE import_id = ? ORDER BY position",
+             FROM notion_import_items WHERE import_id = $1 ORDER BY position",
         )
         .bind(import_id.to_string())
         .fetch_all(self.database().pool())
@@ -1748,10 +1755,10 @@ impl NotionImportService {
     ) -> Result<NotionImport, ImportError> {
         let row = sqlx::query(
             "SELECT id, workspace_id, status, notion_workspace_name, \
-             CASE WHEN ? THEN tree_json END AS tree_json, selection_json, target_teamspace_id, \
+             CASE WHEN $1 THEN tree_json END AS tree_json, selection_json, target_teamspace_id, \
              target_private, target_parent_page_id, total, done, failed, \
              report_json, error, created_at, updated_at FROM notion_imports \
-             WHERE id = ? AND workspace_id = ? AND user_id = ?",
+             WHERE id = $2 AND workspace_id = $3 AND user_id = $4",
         )
         .bind(with_tree)
         .bind(import_id.to_string())
@@ -1793,7 +1800,7 @@ impl NotionImportService {
                 .unwrap_or_default();
             let failures = sqlx::query(
                 "SELECT notion_id, title, error FROM notion_import_items \
-                 WHERE import_id = ? AND status = 'failed' ORDER BY position LIMIT ?",
+                 WHERE import_id = $1 AND status = 'failed' ORDER BY position LIMIT $2",
             )
             .bind(import_id.to_string())
             .bind(MAX_FAILURES_LISTED)
@@ -1809,7 +1816,7 @@ impl NotionImportService {
             let unfilled_pages_trashed: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM notion_import_items AS items \
                  JOIN pages ON pages.id = items.page_id \
-                 WHERE items.import_id = ? AND items.status = 'created' \
+                 WHERE items.import_id = $1 AND items.status = 'created' \
                  AND pages.deleted_at IS NOT NULL",
             )
             .bind(import_id.to_string())
@@ -1832,9 +1839,9 @@ impl NotionImportService {
         let root_page_ids = sqlx::query_scalar::<_, String>(
             "SELECT items.page_id FROM notion_import_items AS items \
              JOIN pages ON pages.id = items.page_id \
-             WHERE items.import_id = ? AND items.parent_notion_id IS NULL \
-             AND items.status IN ('created', 'done') AND pages.workspace_id = ? \
-             AND pages.deleted_at IS NULL AND (pages.teamspace_id IS NOT NULL OR pages.owner_id = ?) \
+             WHERE items.import_id = $1 AND items.parent_notion_id IS NULL \
+             AND items.status IN ('created', 'done') AND pages.workspace_id = $2 \
+             AND pages.deleted_at IS NULL AND (pages.teamspace_id IS NOT NULL OR pages.owner_id = $3) \
              ORDER BY items.position",
         )
         .bind(import_id.to_string())
@@ -2028,7 +2035,7 @@ impl ScanControl for ScanRun<'_> {
             if self.cancel.is_cancelled() {
                 return true;
             }
-            match sqlx::query_scalar::<_, String>("SELECT status FROM notion_imports WHERE id = ?")
+            match sqlx::query_scalar::<_, String>("SELECT status FROM notion_imports WHERE id = $1")
                 .bind(self.import_id.to_string())
                 .fetch_optional(self.database.pool())
                 .await

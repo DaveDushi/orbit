@@ -1,7 +1,8 @@
-import { useMemo, useState, type DragEvent, type KeyboardEvent } from 'react'
+import { useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { Filter, Layer, Lock, Menu, People, Add as Plus, Star, type IconComponent } from 'reicon-react'
 import { cn } from 'cn'
+import { useScrollMemory } from '@/lib/useScrollMemory'
 import { EmptyState } from '@/components/common/EmptyState'
 import { UserAvatar } from '@/components/common/UserAvatar'
 import { Button } from '@/components/ui/button'
@@ -32,6 +33,8 @@ export function ViewsPage() {
   const members = useMembers(workspace.id).data ?? []
   const [search, setSearch] = useState('')
   const [dialog, setDialog] = useState<RowDialog | null>(null)
+  const scroller = useRef<HTMLDivElement>(null)
+  useScrollMemory(scroller, 'views', !viewsQuery.isPending)
   const views = useMemo(() => (Array.isArray(viewsQuery.data) ? viewsQuery.data : []), [viewsQuery.data])
   const query = search.trim().toLowerCase()
   const sections = useMemo<Section[]>(() => {
@@ -86,7 +89,7 @@ export function ViewsPage() {
           </>
         ) : null}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto">
         {viewsQuery.isPending ? (
           <p className="p-4 text-[13px] text-muted-foreground">Loading views…</p>
         ) : loadFailed(viewsQuery) ? (

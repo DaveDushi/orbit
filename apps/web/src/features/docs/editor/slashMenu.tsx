@@ -1,9 +1,9 @@
 import { filterSuggestionItems, insertOrUpdateBlockForSlashMenu } from '@blocknote/core/extensions'
 import { getDefaultReactSlashMenuItems, type DefaultReactSuggestionItem } from '@blocknote/react'
 import { DocumentText, Hierarchy, LampOn, Link2 } from 'reicon-react'
-import { MERMAID_LANGUAGE } from '@/lib/codeLanguages'
-import { CALLOUT_DEFAULT_BACKGROUND } from './CalloutBlock'
-import type { PageEditorInstance } from './schema'
+import { MERMAID_LANGUAGE } from '@orbit/editor/codeLanguages'
+import { CALLOUT_DEFAULT_BACKGROUND } from '@orbit/editor/schema'
+import type { PageEditorInstance } from '@orbit/editor/schema'
 
 /** Group the custom page items join (the reference editor's default "Basic blocks" group). */
 export const PAGE_ITEMS_GROUP = 'Basic blocks'
@@ -113,5 +113,12 @@ export function preferTitleMatches<T extends { title: string; group?: string }>(
 export function getPageSlashMenuItems(editor: PageEditorInstance, actions: PageSlashActions, query: string): DefaultReactSuggestionItem[] {
   const defaults = insertAfterKey(getDefaultReactSlashMenuItems(editor), 'quote', calloutSlashItem(editor))
   const merged = mergeSlashItems(insertAfterKey(defaults, 'code_block', mermaidSlashItem(editor)), pageSlashItems(actions))
+  return preferTitleMatches(filterSuggestionItems(merged, query), query)
+}
+
+/** Slash menu items for task descriptions and comments: the page items without Sub-page and Link a page. */
+export function getTaskSlashMenuItems(editor: PageEditorInstance, query: string): DefaultReactSuggestionItem[] {
+  const defaults = insertAfterKey(getDefaultReactSlashMenuItems(editor), 'quote', calloutSlashItem(editor))
+  const merged = insertAfterKey(defaults, 'code_block', mermaidSlashItem(editor))
   return preferTitleMatches(filterSuggestionItems(merged, query), query)
 }

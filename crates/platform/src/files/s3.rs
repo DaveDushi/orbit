@@ -96,7 +96,17 @@ struct Target {
 }
 
 impl S3Bucket {
-    pub fn new(mut config: S3Config) -> Result<Self, S3Error> {
+    pub fn new(config: S3Config) -> Result<Self, S3Error> {
+        Self::build(config, false)
+    }
+
+    /// A bucket that a workspace member picked: only `https` on a public internet address, so the server cannot
+    /// be made to reach its own network (SSRF).
+    pub fn new_public(config: S3Config) -> Result<Self, S3Error> {
+        Self::build(config, true)
+    }
+
+    fn build(mut config: S3Config, public_only: bool) -> Result<Self, S3Error> {
         config.prefix = config.prefix.trim_matches('/').to_owned();
         if config.region.trim().is_empty() {
             config.region = "us-east-1".to_owned();
@@ -115,6 +125,18 @@ impl S3Bucket {
         let host = endpoint
             .host_str()
             .ok_or_else(|| S3Error::Config("endpoint has no host".to_owned()))?;
+        if public_only {
+            let public = match endpoint.host() {
+                Some(url::Host::Ipv4(ip)) => crate::is_public_ip(ip.into()),
+                Some(url::Host::Ipv6(ip)) => crate::is_public_ip(ip.into()),
+                _ => true,
+            };
+            if endpoint.scheme() != "https" || !public {
+                return Err(S3Error::Config(
+                    "endpoint must be an https URL on the public internet".to_owned(),
+                ));
+            }
+        }
         let authority = match endpoint.port() {
             Some(port) => format!("{host}:{port}"),
             None => host.to_owned(),
@@ -129,11 +151,14 @@ impl S3Bucket {
                 "bucket must use lowercase letters, digits, '-' and '.'".to_owned(),
             ));
         }
-        let client = reqwest::Client::builder()
+        let mut client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .read_timeout(Duration::from_secs(120))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()?;
+            .redirect(reqwest::redirect::Policy::none());
+        if public_only {
+            client = client.dns_resolver(std::sync::Arc::new(crate::PublicResolver));
+        }
+        let client = client.build()?;
         Ok(Self {
             scheme: endpoint.scheme().to_owned(),
             authority,

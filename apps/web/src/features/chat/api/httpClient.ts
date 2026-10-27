@@ -38,8 +38,8 @@ import {
   sendChatMessage,
   updateChatChannel,
   updateChatState,
-} from '@/api/generated/sdk.gen'
-import type { ChatEvent as WireEvent, ChatFileRecord } from '@/api/generated/types.gen'
+} from '@orbit/api/generated/sdk.gen'
+import type { ChatEvent as WireEvent, ChatFileRecord } from '@orbit/api/generated/types.gen'
 import type { Notice } from '@/features/realtime/notify'
 import type { PresenceEntry, PresenceMap } from '@/features/realtime/presence'
 import { shrinkImage } from '@/lib/shrinkImage'
@@ -427,7 +427,11 @@ export function createHttpChatClient(options: HttpChatClientOptions): ChatClient
         }
         request.onload = () => {
           if (request.status === 201) resolve(toAttachment(request.response as ChatFileRecord))
-          else reject(failed((request.response as { detail?: string } | null)?.detail ?? 'The upload failed.'))
+          else {
+            const problem = request.response as { code?: string; detail?: string } | null
+            const detail = problem?.detail ?? 'The upload failed.'
+            reject(problem?.code === 'storage_quota_exceeded' ? new ChatError('storage_full', detail) : failed(detail))
+          }
         }
         request.onerror = () => reject(failed('The server could not be reached.'))
         request.onabort = () => reject(failed('The upload was cancelled.'))

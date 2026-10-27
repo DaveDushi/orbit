@@ -1,8 +1,11 @@
 import { useContext, useEffect, useRef, useState } from 'react'
-import { CollabConnectContext, type CollabTarget } from './connection'
-import { CollabSession, type CollabConnection, type CollabProblem, type CollabState } from './session'
+import { CollabSession, type CollabConnection, type CollabProblem, type CollabState } from '@orbit/editor/collab/session'
+import type { CollabTarget } from '@orbit/editor/collab/target'
+import { CollabConnectContext } from './connection'
 
 export interface CollabUser {
+  /** The signed-in user (undefined while loading). */
+  id?: string
   name: string
   color: string
 }
@@ -29,12 +32,12 @@ export interface CollabSessionView {
 const INITIAL: CollabState = { status: 'connecting', problem: null, ready: false }
 
 /**
- * One Y.Doc + provider per page, epoch and generation: created on mount, destroyed on page switch and unmount.
- * Never bind an editor before `state.ready` (the first sync): an unsynced fragment is empty.
+ * One Y.Doc + provider per document, epoch and generation: created on mount, destroyed on document switch and
+ * unmount. Never bind an editor before `state.ready` (the first sync): an unsynced fragment is empty.
  */
-export function useCollabSession({ workspaceId, pageId, epoch, generation, user, onProblem, onProbe }: UseCollabSessionOptions): CollabSessionView {
+export function useCollabSession({ workspaceId, kind, id, epoch, generation, user, onProblem, onProbe }: UseCollabSessionOptions): CollabSessionView {
   const connect = useContext(CollabConnectContext)
-  const key = `${pageId}:${epoch}:${generation}`
+  const key = `${kind}:${id}:${epoch}:${generation}`
   const [view, setView] = useState<Omit<CollabSessionView, 'key'> & { key: string | null }>({
     key: null,
     connection: null,
@@ -49,7 +52,7 @@ export function useCollabSession({ workspaceId, pageId, epoch, generation, user,
   useEffect(() => {
     let cancelled = false
     let session: CollabSession | null = null
-    void connect({ workspaceId, pageId, epoch }).then(
+    void connect({ workspaceId, kind, id, epoch }).then(
       (connection) => {
         if (cancelled) {
           connection.provider.destroy()
@@ -80,9 +83,9 @@ export function useCollabSession({ workspaceId, pageId, epoch, generation, user,
       session?.destroy()
       setView({ key: null, connection: null, state: INITIAL, session: null })
     }
-  }, [connect, workspaceId, pageId, epoch, generation, key])
+  }, [connect, workspaceId, kind, id, epoch, generation, key])
 
-  // A stale view (previous page/epoch) never reaches the caller.
+  // A stale view (previous document/epoch) never reaches the caller.
   if (view.key !== key) return { key, connection: null, state: INITIAL, session: null }
   return { ...view, key }
 }

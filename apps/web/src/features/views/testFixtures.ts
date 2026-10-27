@@ -1,4 +1,4 @@
-import type { LabelRecord, ProjectRecord } from '@/api/generated/types.gen'
+import type { LabelRecord, ProjectRecord } from '@orbit/api/generated/types.gen'
 import type { TaskStatusDef } from '@/features/tasks/api/models'
 import type { User } from '@/features/workspaces/models'
 import type { FilterOptions } from './filterFields'
@@ -24,7 +24,7 @@ function status(id: string, projectId: string, name: string, category: TaskStatu
 }
 
 function label(id: string, name: string, color: string): LabelRecord {
-  return { id, name, color, version: 1, workspace_id: 'alpha' }
+  return { id, name, color, version: 1, workspace_id: 'alpha', project_id: 'project-a' }
 }
 
 const LAUNCH: ProjectRecord = {

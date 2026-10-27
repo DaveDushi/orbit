@@ -16,15 +16,18 @@ pub enum HealthCheck {
     WritableStorage,
     Scheduler,
     CriticalConfig,
+    /// The server is not stopping.
+    Accepting,
 }
 
 impl HealthCheck {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::Migrations,
         Self::DatabaseIntegrity,
         Self::WritableStorage,
         Self::Scheduler,
         Self::CriticalConfig,
+        Self::Accepting,
     ];
 
     #[must_use]
@@ -35,6 +38,7 @@ impl HealthCheck {
             Self::WritableStorage => "writable_storage",
             Self::Scheduler => "scheduler",
             Self::CriticalConfig => "critical_config",
+            Self::Accepting => "accepting",
         }
     }
 }

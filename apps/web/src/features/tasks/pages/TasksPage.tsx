@@ -1,6 +1,6 @@
 import { useShortcutTitle } from '@/shortcuts/shortcutText'
 import { TaskCommands } from '@/features/tasks/TaskCommands'
-import { useListNavigation, useTaskTarget, visibleTaskIds } from '@/shortcuts/taskTarget'
+import { focusTaskRow, useListNavigation, useTaskTarget, visibleTaskIds } from '@/shortcuts/taskTarget'
 import { TaskTargetProvider } from '@/shortcuts/TaskTargetProvider'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
@@ -8,9 +8,10 @@ import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { UNDO_TOAST_DURATION } from '@/lib/toast'
 import { loadFailed } from '@/lib/connection'
+import { useScrollMemory } from '@/lib/useScrollMemory'
 import { Bookmark, ChevronDown, Menu, Add as Plus, Setting2 as Settings, TaskSquare as SquareCheck } from 'reicon-react'
 import { cn } from 'cn'
-import { ApiProblem } from '@/api/problem'
+import { ApiProblem } from '@orbit/api/problem'
 import { Button } from '@/components/ui/button'
 import { Tip } from '@/components/common/Tip'
 import {
@@ -27,6 +28,7 @@ import { useMembers } from '@/features/workspaces/api'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import { useAllStatuses, useProjects } from '@/features/tasks/api/projects'
 import { useLabels } from '@/features/tasks/api/labels'
+import { projectLabels } from '@/features/tasks/taskMeta'
 import { taskFromRecord } from '@/features/tasks/api/models'
 import { taskPath, taskSlug } from '@/lib/taskLinks'
 import {
@@ -75,10 +77,14 @@ import { validateFilterOnServer } from '@/features/views/validateFilter'
 import { countConditions, DEFAULT_DISPLAY, emptyFilter, isTaskPreset, normalizeViewState, pageKeyFor, type TaskPreset } from '@/features/views/viewState'
 
 const EMPTY_PROJECTS: NonNullable<ReturnType<typeof useProjects>['data']> = []
+const EMPTY_LABELS: NonNullable<ReturnType<typeof useLabels>['data']> = []
 const OPEN_WAIT_MS = 300
+/** The last task open from each list page (its path and query): back on the list, that row has the keyboard focus. */
+const lastOpenTask = new Map<string, string>()
 
-/** History state of a task URL: the project page it was opened from, where closing returns. */
-type TaskOrigin = { originProject: string | null }
+/** History state of a task URL: the project page it was opened from, where closing returns, and whether the
+ * previous history entry is another task (closing then returns to it). */
+type TaskOrigin = { originProject: string | null; fromTask?: boolean }
 
 const PRESET_TITLE: Record<TaskPreset, string> = {
   mine: 'My tasks',
@@ -196,10 +202,14 @@ function WorkspaceTasksPage() {
     ? taskFromRecord(detailQuery.data, projects.find((project) => project.id === detailQuery.data?.project_id), commentsQuery.data, [...(attachmentsQuery.data ?? []), ...commentAttachments.data], activityQuery.data, projects, knownNumbers)
     : undefined
   const users = membersQuery.data ?? []
+  const labels = labelsQuery.data ?? EMPTY_LABELS
+  // a project page offers only its project's labels; other pages merge same-named labels of every project
+  const pageLabels = projectFilter ? projectLabels(labels, projectFilter) : labels
   const filterOptions: FilterOptions = {
     statuses: statusesQuery.data,
     members: users,
-    labels: labelsQuery.data ?? [],
+    labels,
+    projectId: projectFilter,
     projects,
     currentUserId: currentUser.data?.id ?? '',
     taskRefs,
@@ -209,14 +219,14 @@ function WorkspaceTasksPage() {
     currentUserId: currentUser.data?.id ?? '',
     users,
     statuses: statusesQuery.data,
-    labels: labelsQuery.data ?? [],
+    labels,
     tasks,
   }
   // Grouping and new-task defaults see only the page's own workflow: a project page knows only its project and its statuses.
   const groupContext: GroupContext = {
     statuses: projectFilter ? statusesQuery.data.filter((status) => status.projectId === projectFilter) : statusesQuery.data,
     members: users,
-    labels: labelsQuery.data ?? [],
+    labels: pageLabels,
     projects: projectFilter ? projects.filter((project) => project.id === projectFilter) : projects,
     currentUserId: state.currentUserId,
     showEmpty: display.show_empty_groups,
@@ -258,10 +268,13 @@ function WorkspaceTasksPage() {
     const wait = new Promise((resolve) => setTimeout(resolve, OPEN_WAIT_MS))
     void Promise.race([prefetchTaskDetail(queryClient, workspace.id, id), wait]).then(() => {
       // the identifier once the task is cached (the URL says ENG-12); the id if the prefetch is still running
-      if (opening.current === id) navigate(`${basePath}/${cachedTaskSlug(queryClient, workspace.id, id)}${detailSearchSuffix}`, { state: originState })
+      if (opening.current === id) navigate(`${basePath}/${cachedTaskSlug(queryClient, workspace.id, id)}${detailSearchSuffix}`, { state: { ...originState, fromTask: detailOpen } satisfies TaskOrigin })
     })
   }
-  const closeTask = () => navigate(redirect ?? `${basePath}${closeSearchSuffix}`)
+  const closeTask = () => {
+    if ((location.state as TaskOrigin | null)?.fromTask) navigate(-1)
+    else navigate(redirect ?? `${basePath}${closeSearchSuffix}`)
+  }
 
   useEffect(() => {
     if (!taskParam || !searchParams.has('project')) return
@@ -288,6 +301,26 @@ function WorkspaceTasksPage() {
   }
   useCommand('detail.next', taskId ? () => stepTask(1) : null)
   useCommand('detail.prev', taskId ? () => stepTask(-1) : null)
+
+  // `viewState.isLoading` too: after a page or view switch the disabled task query still shows the previous
+  // page's tasks as placeholder data, which must not render under the new page's title and placeholder display.
+  const pending = viewState.isLoading || projectsQuery.isPending || statusesQuery.isPending || membersQuery.isPending || labelsQuery.isPending
+  const tasksShown = !detailOpen && !pending && !tasksQuery.isLoading && !tasksQuery.error
+  // closing a task returns to the list as it was: same scroll position, and the task's row has the focus
+  const listKey = `${basePath}${closeSearchSuffix}`
+  useEffect(() => {
+    if (taskId) lastOpenTask.set(listKey, taskId)
+  }, [listKey, taskId])
+  useEffect(() => {
+    const id = tasksShown ? lastOpenTask.get(listKey) : undefined
+    if (!id || !visibleTaskIds(pointer).includes(id)) return
+    // next frame: a virtual list puts its rows in the DOM only after it has measured its scroller
+    const frame = requestAnimationFrame(() => focusTaskRow(id, pointer))
+    return () => cancelAnimationFrame(frame)
+  }, [listKey, pointer, tasksShown])
+  // the board scrolls in the page; the list and the timeline remember their own scrollers
+  const boardScroller = useRef<HTMLDivElement>(null)
+  useScrollMemory(boardScroller, 'task-board', tasksShown && layout === 'board')
   // list keys work in every layout; rows can be selected in the list only (it has the bulk toolbar)
   useListNavigation(detailOpen ? null : openTask, { selectable: layout === 'list' })
 
@@ -332,10 +365,7 @@ function WorkspaceTasksPage() {
   if (loadFailed(preference)) {
     return <TaskBoundary title="Tasks unavailable" description="The server could not load the settings for this page." />
   }
-  // `viewState.isLoading` too: after a page or view switch the disabled task query still shows the previous
-  // page's tasks as placeholder data, which must not render under the new page's title and placeholder display.
   // On a list, the task query loads and fails inside the list area, so the filter stays reachable to fix it.
-  const pending = viewState.isLoading || projectsQuery.isPending || statusesQuery.isPending || membersQuery.isPending || labelsQuery.isPending
   if (taskRoute.error) {
     return <TaskBoundary title="Task unavailable" description={taskUnavailableDescription(taskRoute.error)} />
   }
@@ -357,9 +387,9 @@ function WorkspaceTasksPage() {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background" data-view={taskId ? 'detail' : 'list'}>
-      <TaskCommands tasks={taskId ? (activeTask ? [activeTask] : []) : visibleTasks} users={users} labels={labelsQuery.data ?? []} statuses={statusesQuery.data} groupContext={groupContext} currentUserId={currentUser.data?.id ?? ''} />
+      <TaskCommands tasks={taskId ? (activeTask ? [activeTask] : []) : visibleTasks} users={users} labels={labels} statuses={statusesQuery.data} groupContext={groupContext} currentUserId={currentUser.data?.id ?? ''} />
       {taskId ? (
-        <TaskDetail key={taskId} task={activeTask} project={projects.find((project) => project.id === activeTask?.projectId)} state={state} onBack={closeTask} onOpenTask={openTask} onOpenProject={(projectId) => navigate(`/tasks?project=${projectId}`)} />
+        <TaskDetail key={taskId} task={activeTask} project={projects.find((project) => project.id === activeTask?.projectId)} state={state} onClose={closeTask} onOpenTask={openTask} onOpenProject={(projectId) => navigate(`/tasks?project=${projectId}`)} />
       ) : (
         <Pane className="relative">
           <PaneHeader className="bg-background text-foreground max-[899px]:min-h-11 max-[899px]:flex-wrap max-[899px]:px-2 max-[899px]:py-1.5">
@@ -465,7 +495,7 @@ function WorkspaceTasksPage() {
             }}
           />
           {showNewProject ? <NewProjectModal onClose={() => setShowNewProject(false)} onCreated={(project) => { setProjectFilter(project.id); setShowNewProject(false) }} /> : null}
-          <div className={cn('min-h-0 flex-1', layout === 'timeline' ? 'overflow-hidden' : 'overflow-y-auto')}>
+          <div ref={boardScroller} className={cn('min-h-0 flex-1', layout === 'timeline' ? 'overflow-hidden' : 'overflow-y-auto')}>
             {tasksQuery.error || tasksQuery.isLoading ? (
               <div className="flex h-full flex-col p-2 *:flex-1">
                 {tasksQuery.error
@@ -473,12 +503,12 @@ function WorkspaceTasksPage() {
                   : <EmptyState icon={SquareCheck} title="Loading tasks" description="Loading persisted workspace tasks." />}
               </div>
             ) : (
-                <TaskContextMenu tasks={visibleTasks} users={users} labels={labelsQuery.data ?? []} statuses={statusesQuery.data} groupContext={groupContext} currentUserId={currentUser.data?.id ?? ''}>
+                <TaskContextMenu tasks={visibleTasks} users={users} labels={labels} statuses={statusesQuery.data} groupContext={groupContext} currentUserId={currentUser.data?.id ?? ''}>
                   {layout === 'timeline'
                     ? <TaskTimeline ref={timelineRef} key={workspace.id} tasks={visibleTasks} projects={projects} statuses={statusesQuery.data} users={users} groupBy={display.group_by} properties={display.properties} groupContext={groupContext} pxPerDay={pxPerDay} onZoomChange={setPxPerDay} onOpen={openTask} />
                     : layout === 'board'
-                    ? <TaskBoard key={`${workspace.id}:${collapseScope}`} tasks={visibleTasks} users={users} labels={labelsQuery.data ?? []} statuses={statusesQuery.data} projects={projects} display={display} groupContext={groupContext} collapseScope={collapseScope} activeTaskId={null} onOpen={openTask} />
-                    : <TaskList key={`${workspace.id}:${collapseScope}`} tasks={visibleTasks} users={users} labels={labelsQuery.data ?? []} statuses={statusesQuery.data} projects={projects} display={display} groupContext={groupContext} collapseScope={collapseScope} onOpen={openTask} onAdd={(values) => openNewTask({ values })} />}
+                    ? <TaskBoard key={`${workspace.id}:${collapseScope}`} tasks={visibleTasks} users={users} labels={labels} statuses={statusesQuery.data} projects={projects} display={display} groupContext={groupContext} collapseScope={collapseScope} activeTaskId={null} onOpen={openTask} />
+                    : <TaskList key={`${workspace.id}:${collapseScope}`} tasks={visibleTasks} users={users} labels={labels} statuses={statusesQuery.data} projects={projects} display={display} groupContext={groupContext} collapseScope={collapseScope} onOpen={openTask} onAdd={(values) => openNewTask({ values })} />}
                 </TaskContextMenu>
               )}
           </div>

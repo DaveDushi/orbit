@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use crate::TimestampMillis;
 
-const WINDOW_MILLIS: i64 = 15 * 60 * 1_000;
+/// Failures older than this no longer count (also for a store that shares them).
+pub const WINDOW_MILLIS: i64 = 15 * 60 * 1_000;
 const IP_FAILURE_LIMIT: usize = 50;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -13,11 +14,12 @@ pub enum ThrottleDecision {
     RetryAfter(Duration),
 }
 
-#[derive(Clone, Copy, Debug)]
-struct EmailFailures {
-    count: u32,
-    last_failure_at: TimestampMillis,
-    blocked_until: TimestampMillis,
+/// The failed sign-ins of one email address.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EmailFailures {
+    pub count: u32,
+    pub last_failure_at: TimestampMillis,
+    pub blocked_until: TimestampMillis,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -112,6 +114,45 @@ impl LoginThrottler {
             },
         );
         Ok(reservation)
+    }
+
+    /// The email address (normalized) and IP address of a reserved attempt.
+    #[must_use]
+    pub fn attempt(&self, reservation: LoginReservation) -> Option<(String, IpAddr)> {
+        self.pending
+            .get(&reservation.0)
+            .map(|attempt| (attempt.email.clone(), attempt.ip))
+    }
+
+    /// The failures of an email address, as `record_failure` left them.
+    #[must_use]
+    pub fn email_failures(&self, email: &str) -> Option<EmailFailures> {
+        self.emails.get(&normalize_email(email)).copied()
+    }
+
+    /// Replaces what this throttler knows of an email address and an IP address with what a
+    /// shared store has (other processes record failures too).
+    pub fn load(
+        &mut self,
+        email: &str,
+        failures: Option<EmailFailures>,
+        ip: IpAddr,
+        ip_failures: Vec<TimestampMillis>,
+    ) {
+        let email = normalize_email(email);
+        match failures {
+            Some(failures) => {
+                self.emails.insert(email, failures);
+            }
+            None => {
+                self.emails.remove(&email);
+            }
+        }
+        if ip_failures.is_empty() {
+            self.ips.remove(&ip);
+        } else {
+            self.ips.insert(ip, ip_failures.into());
+        }
     }
 
     pub fn finish_failure(&mut self, reservation: LoginReservation, now: TimestampMillis) {

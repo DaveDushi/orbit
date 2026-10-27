@@ -25,7 +25,7 @@ import {
   startPasskeyLogin,
   updateMe,
   uploadAvatar,
-} from '@/api/generated/sdk.gen'
+} from '@orbit/api/generated/sdk.gen'
 import type {
   ChangePasswordBody,
   LoginBody,
@@ -40,8 +40,8 @@ import type {
   AuthUserResponse,
   UpdateMeBody,
   UserStatus,
-} from '@/api/generated/types.gen'
-import { ApiProblem } from '@/api/problem'
+} from '@orbit/api/generated/types.gen'
+import { ApiProblem } from '@orbit/api/problem'
 import { getPasskey } from '@/features/auth/passkey'
 
 type ApiClient = ReturnType<typeof createApiClient>

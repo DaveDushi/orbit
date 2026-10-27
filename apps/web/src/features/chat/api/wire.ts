@@ -9,8 +9,8 @@ import type {
   MessageRecord,
   ThreadPage as WireThreadPage,
   ThreadStateRecord,
-} from '@/api/generated/types.gen'
-import { ApiProblem } from '@/api/problem'
+} from '@orbit/api/generated/types.gen'
+import { ApiProblem } from '@orbit/api/problem'
 import {
   type Attachment,
   ChatError,

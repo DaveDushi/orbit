@@ -4,7 +4,7 @@ import { fireEvent, waitFor } from '@testing-library/react'
 import { render } from '@/test/render'
 import type { ReactNode } from 'react'
 import { toast } from 'sonner'
-import type { WorkspaceRecord } from '@/api/generated/types.gen'
+import type { WorkspaceRecord } from '@orbit/api/generated/types.gen'
 import { WorkspaceContext } from '@/features/workspaces/workspaceContext'
 import type { Project, Task, TaskStatusDef } from '@/features/tasks/api/models'
 import type { GroupContext } from '@/features/views/grouping'
@@ -41,8 +41,8 @@ const statuses: TaskStatusDef[] = [
 const projects = [{ id: 'p1', name: 'Web', key: 'WEB', color: '#e0457b', version: 1 }] as Project[]
 
 const labels = [
-  { id: 'bug', name: 'Bug', color: '#eb5757', version: 1, workspace_id: 'ws' },
-  { id: 'ui', name: 'UI', color: '#26b5ce', version: 1, workspace_id: 'ws' },
+  { id: 'bug', name: 'Bug', color: '#eb5757', version: 1, workspace_id: 'ws', project_id: 'p1' },
+  { id: 'ui', name: 'UI', color: '#26b5ce', version: 1, workspace_id: 'ws', project_id: 'p1' },
 ]
 const context: GroupContext = { statuses, members: [], labels, projects, currentUserId: 'u1', showEmpty: false }
 

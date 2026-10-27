@@ -46,7 +46,7 @@ test('task due date uses the custom picker and can clear the saved value', async
     comments: [], activity: [], version: 1,
   }
   const state: TaskViewState = { currentUserId: 'user-1', users: [], statuses: [], labels: [], tasks: [task] }
-  const view = render(<TaskDetail task={task} project={undefined} state={state} onBack={() => {}} />, { wrapper: Wrapper })
+  const view = render(<TaskDetail task={task} project={undefined} state={state} onClose={() => {}} />, { wrapper: Wrapper })
 
   expect(view.container.querySelector('input[type="datetime-local"]')).toBeNull()
   fireEvent.click(view.getByRole('button', { name: 'Due date' }))
@@ -74,7 +74,7 @@ for (const [label, weeksAhead] of [['This week', 0], ['Next week', 1]] as const)
     labels: [], attachments: [], dueAt: null, createdAt: '', updatedAt: '', comments: [], activity: [], version: 1,
   }
   const state: TaskViewState = { currentUserId: 'user-1', users: [], statuses: [], labels: [], tasks: [task] }
-  const view = render(<TaskDetail task={task} project={undefined} state={state} onBack={() => {}} />, { wrapper: Wrapper })
+  const view = render(<TaskDetail task={task} project={undefined} state={state} onClose={() => {}} />, { wrapper: Wrapper })
 
   fireEvent.click(view.getByRole('button', { name: 'Due date' }))
   // no Done step: the shortcut saves at once and the picker stays open
@@ -109,7 +109,7 @@ test('task source appears in properties and saves a separate URL', async () => {
     labels: [], attachments: [], dueAt: null, createdAt: '', updatedAt: '', comments: [], activity: [], version: 1,
   }
   const state: TaskViewState = { currentUserId: 'user-1', users: [], statuses: [], labels: [], tasks: [task] }
-  const view = render(<TaskDetail task={task} project={undefined} state={state} onBack={() => {}} />, { wrapper: Wrapper })
+  const view = render(<TaskDetail task={task} project={undefined} state={state} onClose={() => {}} />, { wrapper: Wrapper })
 
   const source = view.getByRole('link', { name: 'github.com' }) as HTMLAnchorElement
   expect(source.href).toBe('https://github.com/acme/repo/issues/12')

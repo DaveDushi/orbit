@@ -2,7 +2,6 @@
 # Tests an image in isolated temporary storage. Never touches the dev database.
 set -euo pipefail
 image=${1:-orbit:local}
-root=$(cd "$(dirname "$0")/.." && pwd)
 name="orbit-deployment-smoke-$$"
 tmp=$(mktemp -d)
 cleanup() { docker rm -fv "$name" >/dev/null 2>&1 || true; rm -rf "$tmp"; }
@@ -10,10 +9,10 @@ trap cleanup EXIT
 proxy=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')
 docker run -d --name "$name" --read-only --cap-drop ALL --security-opt no-new-privileges:true \
   --tmpfs /tmp:size=64m,mode=1777 -p 127.0.0.1::8080 \
-  -v "$root/deploy/orbit.toml:/etc/orbit/orbit.toml:ro" \
-  -e ORBIT__ENVIRONMENT=production \
-  -e ORBIT__HTTP__PUBLIC_ORIGIN=https://orbit.test \
-  -e "ORBIT__HTTP__TRUSTED_PROXIES=127.0.0.1/32,$proxy/32" "$image" >/dev/null
+  -e ORBIT_ENV=production \
+  -e "ORBIT_APP_KEY=$(openssl rand -base64 32)" \
+  -e ORBIT_PUBLIC_ORIGIN=https://orbit.test \
+  -e "ORBIT_TRUSTED_PROXIES=127.0.0.1/32,$proxy/32" "$image" >/dev/null
 url="http://$(docker port "$name" 8080/tcp)"
 ready() {
   url="http://$(docker port "$name" 8080/tcp)"
@@ -40,7 +39,7 @@ curl -fsS -H 'X-Forwarded-Proto: https' "$url/api/v1/setup/status" >"$tmp/setup"
 python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); assert not s["complete"],s' "$tmp/setup"
 [[ $(curl -s -o /dev/null -w '%{http_code}' -H 'X-Forwarded-Proto: https' -H 'Origin: https://orbit.test' -H 'Content-Type: application/json' --data '{"email":"test@example.com","password":"password"}' "$url/api/v1/auth/login") == 401 ]]
 for flag in --seed --reset; do
-  if docker exec "$name" /orbit --config /etc/orbit/orbit.toml migrate run "$flag" --yes >"$tmp/guard" 2>&1; then
+  if docker exec "$name" /orbit migrate run "$flag" --yes >"$tmp/guard" 2>&1; then
     echo "Production incorrectly accepted $flag" >&2; exit 1
   fi
   grep -q 'development mode' "$tmp/guard"

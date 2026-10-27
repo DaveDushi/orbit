@@ -2,10 +2,11 @@ import { defineConfig } from 'vite'
 import react, { reactCompilerPreset } from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import babel from '@rolldown/plugin-babel'
-import openapi from './src/api/generated/openapi.json' with { type: 'json' }
+import openapi from '@orbit/api/generated/openapi.json' with { type: 'json' }
 import { createHash } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
-import { basename } from 'node:path'
+import { createRequire } from 'node:module'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const buildRevision = process.env.ORBIT_BUILD_REVISION ?? 'development'
@@ -21,14 +22,15 @@ const cspScriptHash = `sha256-${createHash('sha256').update(bootstrapScript).dig
  * reads them from there and the build copies them into `dist`. The versions are those of the installed packages, as in
  * `src/lib/twemoji.ts`. The images are the `jdecked/twemoji` repository: its npm package of images stops at 15.0.0.
  */
+const packageDir = (name: string): string => dirname(createRequire(import.meta.url).resolve(`${name}/package.json`))
 const packageVersion = (name: string): string =>
-  JSON.parse(readFileSync(new URL(`./node_modules/${name}/package.json`, import.meta.url), 'utf8')).version
+  JSON.parse(readFileSync(join(packageDir(name), 'package.json'), 'utf8')).version
 const twemojiVersion = packageVersion('twemoji-assets')
 const emojibaseVersion = packageVersion('emojibase-data')
 const emojiAssets = [
-  { url: `/assets/twemoji-${twemojiVersion}/`, dir: fileURLToPath(new URL('./node_modules/twemoji-assets/assets/svg/', import.meta.url)), files: /^[0-9a-f-]+\.svg$/, type: 'image/svg+xml' },
-  { url: `/assets/emojibase-${emojibaseVersion}/en/shortcodes/`, dir: fileURLToPath(new URL('./node_modules/emojibase-data/en/shortcodes/', import.meta.url)), files: /^github\.json$/, type: 'application/json' },
-  { url: `/assets/emojibase-${emojibaseVersion}/en/`, dir: fileURLToPath(new URL('./node_modules/emojibase-data/en/', import.meta.url)), files: /^(data|messages)\.json$/, type: 'application/json' },
+  { url: `/assets/twemoji-${twemojiVersion}/`, dir: join(packageDir('twemoji-assets'), 'assets/svg/'), files: /^[0-9a-f-]+\.svg$/, type: 'image/svg+xml' },
+  { url: `/assets/emojibase-${emojibaseVersion}/en/shortcodes/`, dir: join(packageDir('emojibase-data'), 'en/shortcodes/'), files: /^github\.json$/, type: 'application/json' },
+  { url: `/assets/emojibase-${emojibaseVersion}/en/`, dir: join(packageDir('emojibase-data'), 'en/'), files: /^(data|messages)\.json$/, type: 'application/json' },
 ]
 
 // https://vite.dev/config/
