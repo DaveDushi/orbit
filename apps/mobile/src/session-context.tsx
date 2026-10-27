@@ -44,6 +44,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       () => {
         if (current.current === session) void end('Your session ended. Sign in again.')
       },
+      // a write the workspace's subscription refused: fetch the billing state again, so the banner shows at once
+      () => void queryClient.invalidateQueries({ queryKey: ['billing'] }),
     )
   }
 

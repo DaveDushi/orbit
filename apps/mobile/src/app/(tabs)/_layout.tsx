@@ -1,5 +1,6 @@
 import { Tabs } from 'expo-router/js-tabs'
 
+import { BillingBanner } from '../../components/BillingBanner'
 import { Dock } from '../../components/Dock'
 import { DrawerProvider } from '../../components/Drawer'
 import { useLiveUpdates } from '../../live'
@@ -10,7 +11,12 @@ export default function TabsLayout() {
   useLiveUpdates()
   return (
     <DrawerProvider>
-      <Tabs tabBar={(props) => <Dock {...props} />} screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: colors.background } }}>
+      <Tabs tabBar={(props) => (
+          <>
+            <BillingBanner />
+            <Dock {...props} />
+          </>
+        )} screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: colors.background } }}>
         <Tabs.Screen name="index" />
         <Tabs.Screen name="tasks" />
         <Tabs.Screen name="docs" />
