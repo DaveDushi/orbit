@@ -28,6 +28,7 @@ import { ReadOnlyBanner } from './ReadOnlyBanner'
 import { SidebarNav } from './SidebarNav'
 import { Topbar } from './Topbar'
 import { UserMenu } from './UserMenu'
+import { SidebarResizeHandle, usePageListWidth } from './pageListWidth'
 import { MobileDock } from './MobileDock'
 import { ProfilePopoverProvider } from './ProfilePopover'
 import { OperatorShell } from './OperatorShell'
@@ -92,6 +93,9 @@ function Shell() {
   // only in the new UI (Account settings → Appearance → Layout)
   const newUi = useNewUi()
   const hostsList = newUi && desktop && !sidebarCollapsed && hostsPageList(pathname)
+  // a long page tree needs room: the sidebar that holds it can be dragged wider
+  const [pageListWidth, setPageListWidth] = usePageListWidth()
+  const [resizing, setResizing] = useState(false)
   const [pageListSlot, setPageListSlot] = useState<HTMLElement | null>(null)
   // Account settings → Appearance → Custom colours the sidebar too, not only chat
   const sidebarTheme = useAppSidebarTheme()
@@ -150,12 +154,14 @@ function Shell() {
       <aside
         className={cn(
           sidebarTheme.scheme,
-          'flex shrink-0 flex-col overflow-hidden border-r border-sidebar-edge bg-sidebar bg-linear-to-b from-sidebar-wash to-transparent to-[520px] px-3 text-sidebar-foreground transition-[width,padding] duration-200 ease-out max-[899px]:hidden floating:rounded-lg floating:border',
-          sidebarCollapsed ? 'w-16' : hostsList ? 'w-[260px]' : 'w-56',
+          'relative flex shrink-0 flex-col overflow-hidden border-r border-sidebar-edge bg-sidebar bg-linear-to-b from-sidebar-wash to-transparent to-[520px] px-3 text-sidebar-foreground transition-[width,padding] duration-200 ease-out max-[899px]:hidden floating:rounded-lg floating:border',
+          sidebarCollapsed ? 'w-16' : !hostsList && 'w-56',
+          resizing && 'transition-none select-none',
         )}
         data-collapsed={sidebarCollapsed || undefined}
-        style={sidebarTheme.style}
+        style={hostsList ? { ...sidebarTheme.style, width: pageListWidth } : sidebarTheme.style}
       >
+        {hostsList && <SidebarResizeHandle width={pageListWidth} onResize={setPageListWidth} onDragging={setResizing} />}
         <MenuSurfaceContext value={menuSurface}>
           <div
             className={cn(

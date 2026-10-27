@@ -10,7 +10,7 @@ function Controls() {
     <>
       <output data-testid="theme">{theme}</output>
       <output data-testid="appearance">{JSON.stringify(appearance)}</output>
-      <button type="button" onClick={() => setAppearance({ theme: 'light', style: 'flat', navStyle: 'floating', layout: 'new' })}>change</button>
+      <button type="button" onClick={() => setAppearance({ theme: 'light', style: 'flat', navStyle: 'floating', layout: 'classic' })}>change</button>
     </>
   )
 }
@@ -27,7 +27,7 @@ afterEach(() => {
 
 test('a choice is saved and applied to the page', () => {
   const view = render(<ThemeProvider><Controls /></ThemeProvider>)
-  expect(view.getByTestId('appearance').textContent).toBe('{"theme":"dark","style":"3d","navStyle":"default","layout":"classic"}')
+  expect(view.getByTestId('appearance').textContent).toBe('{"theme":"dark","style":"3d","navStyle":"default","layout":"new"}')
   expect(document.documentElement.classList.contains('dark')).toBe(true)
 
   fireEvent.click(view.getByRole('button', { name: 'change' }))
@@ -36,8 +36,8 @@ test('a choice is saved and applied to the page', () => {
   expect(document.documentElement.classList.contains('dark')).toBe(false)
   expect(document.documentElement.hasAttribute('data-flat')).toBe(true)
   expect(document.documentElement.hasAttribute('data-floating')).toBe(true)
-  expect(document.documentElement.hasAttribute('data-new-ui')).toBe(true)
-  expect([localStorage.getItem('theme'), localStorage.getItem('orbit:style'), localStorage.getItem('orbit:nav-style'), localStorage.getItem('orbit:layout')]).toEqual(['light', 'flat', 'floating', 'new'])
+  expect(document.documentElement.hasAttribute('data-new-ui')).toBe(false)
+  expect([localStorage.getItem('theme'), localStorage.getItem('orbit:style'), localStorage.getItem('orbit:nav-style'), localStorage.getItem('orbit:layout')]).toEqual(['light', 'flat', 'floating', 'classic'])
 })
 
 test('the system theme follows the operating system', () => {
@@ -66,7 +66,6 @@ test('the system theme follows the operating system', () => {
 })
 
 test('in the new UI a custom theme replaces the chosen theme on every page, and turning it off restores the theme', () => {
-  localStorage.setItem('orbit:layout', 'new')
   const root = document.documentElement
   const view = render(<ThemeProvider><Controls /></ThemeProvider>)
 
@@ -82,6 +81,7 @@ test('in the new UI a custom theme replaces the chosen theme on every page, and 
 })
 
 test('in the classic layout a custom theme leaves the chosen theme and the page colours alone (it colours chat only)', () => {
+  localStorage.setItem('orbit:layout', 'classic')
   const root = document.documentElement
   const view = render(<ThemeProvider><Controls /></ThemeProvider>)
 

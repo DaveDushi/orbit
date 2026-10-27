@@ -9,7 +9,7 @@ function storedAppearance(): Appearance {
     theme: theme === 'light' || theme === 'system' ? theme : 'dark',
     style: localStorage.getItem('orbit:style') === 'flat' ? 'flat' : '3d',
     navStyle: localStorage.getItem('orbit:nav-style') === 'floating' ? 'floating' : 'default',
-    layout: localStorage.getItem('orbit:layout') === 'new' ? 'new' : 'classic',
+    layout: localStorage.getItem('orbit:layout') === 'classic' ? 'classic' : 'new',
   }
 }
 

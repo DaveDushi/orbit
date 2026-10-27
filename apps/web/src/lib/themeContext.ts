@@ -25,7 +25,7 @@ export const ThemeContext = createContext<{
   toggleTheme: () => void
 }>({
   theme: 'dark',
-  appearance: { theme: 'dark', style: '3d', navStyle: 'default', layout: 'classic' },
+  appearance: { theme: 'dark', style: '3d', navStyle: 'default', layout: 'new' },
   setAppearance: () => {},
   toggleTheme: () => {},
 })

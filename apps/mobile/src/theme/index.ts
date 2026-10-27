@@ -50,7 +50,7 @@ let buttonStyle: ButtonStyle = '3d'
  * that colours the whole app. `classic` keeps the drawer with the app links only, and a custom theme that colours chat.
  */
 export type Layout = 'classic' | 'new'
-let layout: Layout = 'classic'
+let layout: Layout = 'new'
 /** Settings → Appearance → Custom. `null` is the chosen Light, System or Dark. */
 let customTheme: CustomTheme | null = null
 const listeners = new Set<() => void>()
@@ -93,7 +93,7 @@ export async function loadAppearance(): Promise<void> {
   const [scheme, style, storedLayout, storedTheme] = await Promise.all([read(SCHEME_KEY), read(STYLE_KEY), read(LAYOUT_KEY), read(CUSTOM_THEME_KEY)])
   if (scheme === 'light' || scheme === 'dark') setSchemePreference(scheme)
   if (style === 'flat') setButtonStyle(style)
-  if (storedLayout === 'new') setLayout(storedLayout)
+  if (storedLayout === 'classic') setLayout(storedLayout)
   const theme = storedTheme ? parseCustomTheme(storedTheme) : null
   if (theme) setCustomTheme(theme)
 }
