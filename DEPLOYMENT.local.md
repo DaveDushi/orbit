@@ -4,9 +4,9 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The original exe.dev hostname still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, upstream commit 4f149f1ddd640860de334cab551f2d0dd4a59ff8.
+- Source: DaveDushi/orbit, upstream commit 45df05b8e74084033abbfe7ea9210ac5d4292412.
 - Binary extracted from the upstream coollabsio/orbit image for the identical full commit.
-- Image digest: sha256:fe28b7df675e2e2f049e6a85bc584ad06ac1bd6f26a80a0678a103557ef0bfa0
+- Image digest: sha256:60fb9473cd50fdb38116cbf9371c3ddf0e7c4617ae630c9069730ad4837e0673
 - Executable: /usr/local/bin/orbit; unprivileged system user: orbit.
 - Config: /etc/orbit/orbit.env (production mode); registration remains closed in instance settings.
 - Environment-only startup: /etc/systemd/system/orbit.service.d/environment.conf.
@@ -109,6 +109,51 @@ sudo systemctl start orbit
 ```
 
 ## Verification performed
+
+### October 27, 2026 evening upgrade
+
+Fetched and merged seven new commits from `origin/main`, through `45df05b`.
+Installed the executable extracted from `ghcr.io/coollabsio/orbit:45df05b`
+at the image digest above after the isolated `deploy/smoke.sh` suite passed.
+The live `/orbit-build.json` confirms the full upstream revision above.
+
+Stopped Orbit, created and verified snapshot
+`01a17edf-c340-77e3-9dd5-ebdb73ed90dc`, and rehearsed migrations 57–59
+against a separate database copy. Full integrity and foreign-key checks
+passed, with user/workspace/project/task counts unchanged. Applied the same
+three migrations to the live database and restarted. Live quick-check and
+foreign-key checks pass; counts remain 5 users, 1 workspace, 2 projects
+and 10 tasks.
+
+The default workspace storage quota changed from 5,000,000,000 to
+1,000,000,000 bytes, as specified by migration 59. Cloud billing remains
+disabled (`ORBIT_CLOUD` is unset/false); the new trial restrictions do not
+apply to this self-hosted installation. One workspace is now marked
+billing-exempt by migration 57. Existing files, app key, storage backend,
+production environment and origin/proxy settings were preserved.
+
+Orbit and nginx are active and enabled. Verification through local nginx
+with the HTTPS forwarding header passed: liveness, all readiness checks,
+completed setup, matching embedded revision, frontend and three referenced
+assets, HSTS/CSP, unauthenticated API rejection, canonical-origin login body
+validation (400), and unrelated-origin rejection (403). No recent service
+warnings were reported. Authenticated browser workflows and external
+private-domain access were not tested; no native mobile build was deployed.
+
+The previous executable is `/usr/local/bin/orbit-4f149f1`.
+**Rollback requires the matching pre-upgrade snapshot above**, not just the
+old executable, because the live schema advanced. Preserve current data
+before any restore; changes since that snapshot would be lost. Stop Orbit,
+verify and restore that snapshot using the matching old CLI and existing
+environment, restore the old executable, then start and verify readiness.
+The environment-based systemd configuration does not need to change.
+
+Update highlights: new layout default on web/mobile; resizable page-list
+sidebar on web; regrouped workspace/admin settings with dedicated Email
+and Limits pages; optional workspace-owned S3 file storage with background
+file relocation; largest-file usage details; Cloud trial/plan UI and mobile
+billing notices. These web/mobile feature changes came together from upstream;
+this deployment changed no application code.
 
 ### October 27, 2026 upgrade
 
