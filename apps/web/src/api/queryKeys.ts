@@ -33,6 +33,8 @@ export const queryKeys = {
   billing: (workspaceId: string) => [...workspace(workspaceId), 'billing'] as const,
   /** Bytes of files the workspace stores, and its quota. */
   workspaceStorage: (workspaceId: string) => [...workspace(workspaceId), 'storage'] as const,
+  /** The workspace's own S3 bucket for its files. */
+  workspaceBucket: (workspaceId: string) => [...workspace(workspaceId), 'storage', 'bucket'] as const,
   projects: (workspaceId: string) => [...workspace(workspaceId), 'projects'] as const,
   statuses: (workspaceId: string, projectId: string) =>
     [...workspace(workspaceId), 'projects', projectId, 'statuses'] as const,

@@ -160,6 +160,27 @@ export function useWorkspaceStorage() {
   return useQuery({ queryKey: account.accountKeys.storage(workspaceId), queryFn: () => account.workspaceStorage(client, workspaceId) })
 }
 
+export function useWorkspaceBucket() {
+  const { client, workspaceId, workspace } = useOrbit()
+  return useQuery({
+    enabled: workspace.permissions.includes('storage.manage'),
+    queryKey: account.accountKeys.bucket(workspaceId),
+    queryFn: () => account.workspaceBucket(client, workspaceId),
+    refetchInterval: (query) => account.bucketPollInterval(query.state.data),
+  })
+}
+
+/** Save and remove answer with the new bucket state, which the page shows at once. */
+export function useWorkspaceBucketWrites() {
+  const { client, workspaceId } = useOrbit()
+  const queryClient = useQueryClient()
+  const onSuccess = (view: account.WorkspaceBucketView) => queryClient.setQueryData(account.accountKeys.bucket(workspaceId), view)
+  return {
+    save: useMutation({ mutationFn: (body: Parameters<typeof account.saveBucket>[2]) => account.saveBucket(client, workspaceId, body), onSuccess }),
+    remove: useMutation({ mutationFn: () => account.removeBucket(client, workspaceId), onSuccess }),
+  }
+}
+
 export function useRenameWorkspace() {
   const { client, workspace } = useOrbit()
   const queryClient = useQueryClient()

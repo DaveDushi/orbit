@@ -27,6 +27,7 @@ use crate::auth_routes::{CookieMode, issued_session_cookie, request_session};
 use crate::email_quota::{self, Quota};
 use crate::image_compression::{CompressionStatus, ImageCompressor};
 use crate::mail::{self, Mailer};
+use crate::object_storage::Owner;
 use crate::repositories::api_tokens::{
     ApiTokenError, ApiTokenRecord, ApiTokenRepository, IssuedApiToken,
 };
@@ -38,6 +39,7 @@ use crate::repositories::instance_settings::{
     PasswordChange, S3Settings, SmtpSecurity, SmtpSettings, StorageSettingsError,
     adjustable_job_kinds,
 };
+use crate::repositories::workspace_storage::{WorkspaceStorageError, WorkspaceStorageRepository};
 use crate::repositories::workspaces::{InvitationDelivery, WorkspaceError, WorkspaceRepository};
 
 #[derive(Clone)]
@@ -176,6 +178,12 @@ pub fn workspace_router(state: WorkspaceState) -> Router {
         .route(
             "/api/v1/workspaces/{workspace_id}/storage",
             get(get_workspace_storage),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/storage/bucket",
+            get(get_workspace_bucket)
+                .put(save_workspace_bucket)
+                .delete(remove_workspace_bucket),
         )
         .route(
             "/api/v1/workspaces/{workspace_id}/restore",
@@ -2004,8 +2012,7 @@ async fn reload_storage(
         return Ok(());
     };
     let database = state.identity.database();
-    let settings = InstanceSettingsRepository::new(database.clone())
-        .storage()
+    let settings = crate::object_storage::load_saved(database)
         .await
         .map_err(|_| internal(instance, request_id))?;
     crate::object_storage::apply_and_keep(
@@ -2038,27 +2045,53 @@ struct S3Body {
     path_style: bool,
 }
 
-/// Saves the bucket after writing, reading and deleting a test object in it (502 `storage_unreachable` when that
-/// fails). Moving to another bucket or prefix needs the attachment files back on this server first.
-#[utoipa::path(put, path = "/api/v1/admin/settings/s3", request_body = S3Body, responses((status = 200, body = InstanceSettingsView)))]
-async fn save_s3(
-    State(state): State<WorkspaceState>,
-    headers: HeaderMap,
-    request_id: Option<Extension<RequestId>>,
-    ApiJson(body): ApiJson<S3Body>,
-) -> Result<Json<InstanceSettingsView>, ApiError> {
-    let instance = "/api/v1/admin/settings/s3";
-    let session = require_root(&state, &headers, instance, request_id.as_ref()).await?;
-    let invalid = |field: &str, detail: &str| {
-        ApiError::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "invalid_storage_settings",
-            "Invalid storage settings",
-            format!("{field}: {detail}"),
-            instance,
-            request_id.as_ref(),
-        )
-    };
+fn invalid_storage(
+    field: &str,
+    detail: &str,
+    instance: &str,
+    request_id: Option<&Extension<RequestId>>,
+) -> ApiError {
+    ApiError::new(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "invalid_storage_settings",
+        "Invalid storage settings",
+        format!("{field}: {detail}"),
+        instance,
+        request_id,
+    )
+}
+
+/// The checked fields of an [`S3Body`], without the secret key.
+struct S3Location {
+    endpoint: String,
+    region: String,
+    bucket: String,
+    prefix: String,
+    access_key_id: String,
+    path_style: bool,
+}
+
+impl S3Location {
+    /// `secret_access_key` is encrypted under the app key.
+    fn with_secret(self, secret_access_key: Vec<u8>) -> S3Settings {
+        S3Settings {
+            endpoint: self.endpoint,
+            region: self.region,
+            bucket: self.bucket,
+            prefix: self.prefix,
+            access_key_id: self.access_key_id,
+            secret_access_key,
+            path_style: self.path_style,
+        }
+    }
+}
+
+fn validated_s3(
+    body: &S3Body,
+    instance: &str,
+    request_id: Option<&Extension<RequestId>>,
+) -> Result<S3Location, ApiError> {
+    let invalid = |field: &str, detail: &str| invalid_storage(field, detail, instance, request_id);
     let endpoint = body.endpoint.trim().trim_end_matches('/').to_owned();
     if !(endpoint.starts_with("https://") || endpoint.starts_with("http://"))
         || endpoint.len() > 2048
@@ -2077,6 +2110,7 @@ async fn save_s3(
     }
     let region = body
         .region
+        .as_deref()
         .map(|region| region.trim().to_owned())
         .filter(|region| !region.is_empty())
         .unwrap_or_else(|| "us-east-1".to_owned());
@@ -2085,6 +2119,7 @@ async fn save_s3(
     }
     let prefix = body
         .prefix
+        .as_deref()
         .unwrap_or_default()
         .trim()
         .trim_matches('/')
@@ -2104,6 +2139,30 @@ async fn save_s3(
     if access_key_id.is_empty() || access_key_id.len() > 256 {
         return Err(invalid("access_key_id", "enter the access key."));
     }
+    Ok(S3Location {
+        endpoint,
+        region,
+        bucket,
+        prefix,
+        access_key_id,
+        path_style: body.path_style,
+    })
+}
+
+/// Saves the bucket after writing, reading and deleting a test object in it (502 `storage_unreachable` when that
+/// fails). Moving to another bucket or prefix needs the attachment files back on this server first.
+#[utoipa::path(put, path = "/api/v1/admin/settings/s3", request_body = S3Body, responses((status = 200, body = InstanceSettingsView)))]
+async fn save_s3(
+    State(state): State<WorkspaceState>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+    ApiJson(body): ApiJson<S3Body>,
+) -> Result<Json<InstanceSettingsView>, ApiError> {
+    let instance = "/api/v1/admin/settings/s3";
+    let session = require_root(&state, &headers, instance, request_id.as_ref()).await?;
+    let invalid =
+        |field: &str, detail: &str| invalid_storage(field, detail, instance, request_id.as_ref());
+    let location = validated_s3(&body, instance, request_id.as_ref())?;
     let key = state
         .mailer
         .as_ref()
@@ -2122,22 +2181,16 @@ async fn save_s3(
             .and_then(|s3| crate::secret_box::decrypt_secret(key, &s3.secret_access_key).ok())
             .ok_or_else(|| invalid("secret_access_key", "enter the secret key."))?,
     };
-    let s3 = S3Settings {
-        endpoint,
-        region,
-        bucket,
-        prefix,
-        access_key_id,
-        secret_access_key: crate::secret_box::encrypt_secret(key, &secret)
+    let s3 = location.with_secret(
+        crate::secret_box::encrypt_secret(key, &secret)
             .map_err(|()| internal(instance, request_id.as_ref()))?,
-        path_style: body.path_style,
-    };
+    );
     if let Some(old) = &saved.s3 {
         let moved =
             (&old.endpoint, &old.bucket, &old.prefix) != (&s3.endpoint, &s3.bucket, &s3.prefix);
         if moved {
             let in_use = saved.attachments_in_s3
-                || crate::object_storage::saved_bucket(old, Some(key))
+                || crate::object_storage::saved_bucket(old, Some(key), Owner::Installation)
                     .map_err(|_| internal(instance, request_id.as_ref()))?
                     .any("blobs/")
                     .await
@@ -2152,7 +2205,7 @@ async fn save_s3(
             }
         }
     }
-    crate::object_storage::bucket(&s3, secret)
+    crate::object_storage::bucket(&s3, secret, Owner::Installation)
         .map_err(|error| invalid("endpoint", &error))?
         .probe()
         .await
@@ -2194,7 +2247,7 @@ async fn remove_s3(
             ));
         }
         let app_key = state.mailer.as_ref().and_then(Mailer::app_key);
-        let files_left = crate::object_storage::saved_bucket(s3, app_key)
+        let files_left = crate::object_storage::saved_bucket(s3, app_key, Owner::Installation)
             .map_err(|_| internal(instance, request_id.as_ref()))?
             .any("blobs/")
             .await
@@ -2217,6 +2270,225 @@ async fn remove_s3(
         .map_err(|_| internal(instance, request_id.as_ref()))?;
     reload_storage(&state, instance, request_id.as_ref()).await?;
     settings_view(&state, instance, request_id.as_ref()).await
+}
+
+/// The S3 bucket that a workspace connected for its own files.
+#[derive(Serialize, ToSchema)]
+struct WorkspaceBucketView {
+    /// `null` while the workspace uses the installation's storage.
+    s3: Option<S3View>,
+    /// The bucket was removed: its files move back to the installation's storage, then it disappears.
+    removing: bool,
+    /// Orbit has not counted the files to move since the bucket was saved or removed yet; `files_to_move` is 0
+    /// until it has.
+    checking: bool,
+    /// The workspace's files still waiting to move into the bucket (or back out of it): existing files on this
+    /// server and in the installation's bucket move in the background.
+    files_to_move: u64,
+    /// Why moving files stopped last time. Orbit retries every ten minutes.
+    move_error: Option<String>,
+}
+
+fn workspace_storage_problem(
+    error: WorkspaceStorageError,
+    instance: &str,
+    request_id: Option<&Extension<RequestId>>,
+) -> ApiError {
+    match error {
+        WorkspaceStorageError::NotFound => {
+            workspace_problem(WorkspaceError::NotFound, instance, request_id)
+        }
+        WorkspaceStorageError::Forbidden => {
+            workspace_problem(WorkspaceError::Forbidden, instance, request_id)
+        }
+        WorkspaceStorageError::Database(_) => internal(instance, request_id),
+    }
+}
+
+async fn workspace_bucket_view(
+    state: &WorkspaceState,
+    workspace_id: Id,
+    user_id: Id,
+    instance: &str,
+    request_id: Option<&Extension<RequestId>>,
+) -> Result<Json<WorkspaceBucketView>, ApiError> {
+    let saved = WorkspaceStorageRepository::new(state.identity.database().clone())
+        .get(workspace_id, user_id)
+        .await
+        .map_err(|error| workspace_storage_problem(error, instance, request_id))?;
+    let moving = state
+        .object_storage
+        .as_ref()
+        .and_then(|(_, store)| store.workspace_status(&workspace_id.to_string()));
+    let checking = saved.is_some() && moving.is_none();
+    let moving = moving.unwrap_or_default();
+    Ok(Json(WorkspaceBucketView {
+        checking,
+        removing: saved.as_ref().is_some_and(|saved| !saved.active),
+        s3: saved.map(|saved| S3View {
+            endpoint: saved.s3.endpoint,
+            region: saved.s3.region,
+            bucket: saved.s3.bucket,
+            prefix: saved.s3.prefix,
+            access_key_id: saved.s3.access_key_id,
+            path_style: saved.s3.path_style,
+        }),
+        files_to_move: u64::try_from(moving.remaining).unwrap_or(u64::MAX),
+        move_error: moving.error,
+    }))
+}
+
+/// The workspace's own bucket. Owners and admins only.
+#[utoipa::path(get, path = "/api/v1/workspaces/{workspace_id}/storage/bucket", params(("workspace_id" = String, Path)), responses((status = 200, body = WorkspaceBucketView)))]
+async fn get_workspace_bucket(
+    State(state): State<WorkspaceState>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<WorkspaceBucketView>, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace_id}/storage/bucket");
+    let session = authenticate(&state, &headers, &instance, request_id.as_ref()).await?;
+    let workspace_id = parse_id(&workspace_id, &instance, request_id.as_ref())?;
+    workspace_bucket_view(
+        &state,
+        workspace_id,
+        session.user.id,
+        &instance,
+        request_id.as_ref(),
+    )
+    .await
+}
+
+/// Connects the workspace's own S3 bucket, after writing, reading and deleting a test object in it (502
+/// `storage_unreachable` when that fails). New files of the workspace go there and its other files move there in
+/// the background. The endpoint must be `https` on the public internet. Moving to another bucket or prefix needs
+/// the files back out of the old one first (409 `storage_in_use`).
+#[utoipa::path(put, path = "/api/v1/workspaces/{workspace_id}/storage/bucket", params(("workspace_id" = String, Path)), request_body = S3Body, responses((status = 200, body = WorkspaceBucketView)))]
+async fn save_workspace_bucket(
+    State(state): State<WorkspaceState>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+    ApiJson(body): ApiJson<S3Body>,
+) -> Result<Json<WorkspaceBucketView>, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace_id}/storage/bucket");
+    let instance = instance.as_str();
+    let session = authenticate(&state, &headers, instance, request_id.as_ref()).await?;
+    let workspace_id = parse_id(&workspace_id, instance, request_id.as_ref())?;
+    let invalid =
+        |field: &str, detail: &str| invalid_storage(field, detail, instance, request_id.as_ref());
+    let location = validated_s3(&body, instance, request_id.as_ref())?;
+    let database = state.identity.database();
+    let repository = WorkspaceStorageRepository::new(database.clone());
+    let saved = repository
+        .get(workspace_id, session.user.id)
+        .await
+        .map_err(|error| workspace_storage_problem(error, instance, request_id.as_ref()))?;
+    let key = state
+        .mailer
+        .as_ref()
+        .and_then(Mailer::app_key)
+        .ok_or_else(|| app_key_missing(instance, request_id.as_ref()))?;
+    let secret = match body.secret_access_key.filter(|secret| !secret.is_empty()) {
+        Some(secret) => secret,
+        None => saved
+            .as_ref()
+            .and_then(|saved| {
+                crate::secret_box::decrypt_secret(key, &saved.s3.secret_access_key).ok()
+            })
+            .ok_or_else(|| invalid("secret_access_key", "enter the secret key."))?,
+    };
+    let s3 = location.with_secret(
+        crate::secret_box::encrypt_secret(key, &secret)
+            .map_err(|()| internal(instance, request_id.as_ref()))?,
+    );
+    let location_of = |s3: &S3Settings| (s3.endpoint.clone(), s3.bucket.clone(), s3.prefix.clone());
+    let installation = InstanceSettingsRepository::new(database.clone())
+        .storage()
+        .await
+        .map_err(|_| internal(instance, request_id.as_ref()))?;
+    if installation
+        .s3
+        .as_ref()
+        .is_some_and(|own| location_of(own) == location_of(&s3))
+    {
+        return Err(invalid(
+            "bucket",
+            "the installation keeps its files under this bucket and prefix; use another prefix.",
+        ));
+    }
+    if let Some(old) = saved.filter(|old| location_of(&old.s3) != location_of(&s3)) {
+        let files_left = crate::object_storage::saved_bucket(&old.s3, Some(key), Owner::Workspace)
+            .map_err(|_| internal(instance, request_id.as_ref()))?
+            .any(&format!("blobs/{workspace_id}/"))
+            .await
+            .map_err(|error| storage_unreachable(error, instance, request_id.as_ref()))?;
+        if files_left {
+            return Err(storage_in_use(
+                "Files are in the saved bucket. Remove it and wait until no files are left to move before you \
+                 change the endpoint, bucket or prefix.",
+                instance,
+                request_id.as_ref(),
+            ));
+        }
+    }
+    crate::object_storage::bucket(&s3, secret, Owner::Workspace)
+        .map_err(|error| invalid("endpoint", &error))?
+        .probe()
+        .await
+        .map_err(|error| storage_unreachable(error, instance, request_id.as_ref()))?;
+    repository
+        .save(
+            workspace_id,
+            session.user.id,
+            &s3,
+            request_id_value(request_id.as_ref()),
+            TimestampMillis::now(),
+        )
+        .await
+        .map_err(|error| workspace_storage_problem(error, instance, request_id.as_ref()))?;
+    reload_storage(&state, instance, request_id.as_ref()).await?;
+    workspace_bucket_view(
+        &state,
+        workspace_id,
+        session.user.id,
+        instance,
+        request_id.as_ref(),
+    )
+    .await
+}
+
+/// Stops using the workspace's own bucket: new files go to the installation's storage, and the files in the
+/// bucket move back and are deleted from it. The bucket disappears from the settings when none are left.
+#[utoipa::path(delete, path = "/api/v1/workspaces/{workspace_id}/storage/bucket", params(("workspace_id" = String, Path)), responses((status = 200, body = WorkspaceBucketView)))]
+async fn remove_workspace_bucket(
+    State(state): State<WorkspaceState>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<WorkspaceBucketView>, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace_id}/storage/bucket");
+    let instance = instance.as_str();
+    let session = authenticate(&state, &headers, instance, request_id.as_ref()).await?;
+    let workspace_id = parse_id(&workspace_id, instance, request_id.as_ref())?;
+    WorkspaceStorageRepository::new(state.identity.database().clone())
+        .remove(
+            workspace_id,
+            session.user.id,
+            request_id_value(request_id.as_ref()),
+            TimestampMillis::now(),
+        )
+        .await
+        .map_err(|error| workspace_storage_problem(error, instance, request_id.as_ref()))?;
+    reload_storage(&state, instance, request_id.as_ref()).await?;
+    workspace_bucket_view(
+        &state,
+        workspace_id,
+        session.user.id,
+        instance,
+        request_id.as_ref(),
+    )
+    .await
 }
 
 #[derive(Deserialize, ToSchema)]

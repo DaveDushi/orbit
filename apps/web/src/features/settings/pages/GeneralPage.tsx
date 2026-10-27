@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { cn } from 'cn'
+import { Link } from 'react-router'
 import { UnsavedBar } from '@/components/common/UnsavedBar'
 import { Button } from '@/components/ui/button'
 import { Field, FieldLabel } from '@/components/ui/field'
@@ -64,8 +65,13 @@ function StorageCard({ workspaceId }: { workspaceId: string }) {
   const used = storage.data?.used_bytes ?? 0
   const quota = storage.data?.quota_bytes ?? null
   const percent = quota ? Math.min(100, (used / quota) * 100) : 0
+  const canManageStorage = useCan('storage.manage')
   return (
-    <SettingsCard title="Storage" description="Files, emoji and stickers of this workspace. A file attached more than once counts once; a deleted file stops counting about a day after the trash is emptied.">
+    <SettingsCard
+      title="Storage"
+      description="Files, emoji and stickers of this workspace. A file attached more than once counts once; a deleted file stops counting about a day after the trash is emptied."
+      actions={canManageStorage ? <Button variant="outline" render={<Link to="/settings/file-storage" />} nativeButton={false}>Use your own bucket</Button> : null}
+    >
       {storage.isPending ? <p role="status" className="text-[13px] text-muted-foreground">Loading storage…</p> : null}
       {storage.isError ? <p role="alert" className="text-[13px] text-destructive">Storage use could not be loaded.</p> : null}
       {storage.data ? (

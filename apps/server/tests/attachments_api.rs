@@ -1089,7 +1089,7 @@ async fn uploads_stay_within_the_workspace_storage_quota() {
     let storage = workspaces.storage(workspace_id, owner_id).await.unwrap();
     assert_eq!(
         (storage.used_bytes, storage.quota_bytes),
-        (0, Some(5_000_000_000))
+        (0, Some(1_000_000_000))
     );
     let quota = PNG.len() as i64 + 100;
     sqlx::query("UPDATE instance_settings SET workspace_storage_quota_bytes = $1 WHERE id = 1")

@@ -183,11 +183,11 @@ A job counts against a limit until it ends or its lease expires (5 minutes witho
 The root user and the instance admins set two limits in **Admin → Settings → Limits**. Workspace owners and workspace admins cannot change them (403 `installation_admin_required`). They apply to every installation, also SQLite. Empty or 0 is unlimited. A lower limit refuses only new work: nothing that exists is removed.
 
 - **Workspaces per account** (default 10): how many workspaces one account may own, not counting workspaces in the trash. Creating a workspace, restoring one from the trash and transferring ownership to an account at the limit fail with 409 `workspace_limit_reached`. The root user and the instance admins are not limited.
-- **Storage per workspace** (default 5 GB): the bytes of files one workspace stores. This includes task and comment attachments, page and chat files, custom emoji and stickers. A file is counted once per workspace, however often it is attached. Profile pictures belong to the account and do not count. An upload that would go over the quota fails with 413 `storage_quota_exceeded` before Orbit stores the file. Members see the use and the quota in **Settings → General**.
+- **Storage per workspace** (default 1 GB): the bytes of files one workspace stores. This includes task and comment attachments, page and chat files, custom emoji and stickers. A file is counted once per workspace, however often it is attached. Profile pictures belong to the account and do not count. An upload that would go over the quota fails with 413 `storage_quota_exceeded` before Orbit stores the file. Members see the use and the quota in **Settings → General**.
 
 Both checks run in the serialized write transaction, so they hold for concurrent requests on every server. Orbit calculates storage use from the stored files (`attachment_blobs`), so existing data counts at once. A deleted file stops counting when Orbit removes it from storage: about a day after its last reference goes. Files of trashed tasks, pages and messages count until the trash is emptied or purged.
 
-5 GB is enough for a small team: it holds 200 files at the largest upload size (25 MB). With 10 workspaces per account, it limits one open-registration account to 50 GB. Raise the quota for customers who need more.
+1 GB is enough for a small team: it holds 40 files at the largest upload size (25 MB). With 10 workspaces per account, it limits one open-registration account to 10 GB. Raise the quota for customers who need more. Installations that kept the old 5 GB default got 1 GB with migration 0059; a quota the admin chose stays.
 
 ## Billing (Orbit Cloud)
 
@@ -222,6 +222,18 @@ orbit backup restore <id>
 ```
 
 Set the same `ORBIT_APP_KEY` on the new server before you start Orbit: without it, Orbit cannot read the saved S3 secret and does not start while a bucket is saved. Data written after the last backup is lost, so choose the schedule by how much data you can lose.
+
+### A workspace's own bucket
+
+Workspace owners and admins can connect their own bucket in **Settings → File storage** (permission `storage.manage`). The workspace's attachment files (`blobs/{workspace_id}/…` under the bucket's prefix) then go to that bucket, whatever Admin → Storage says. Backups stay with the installation.
+
+- The endpoint must be `https` on a public internet address. Orbit refuses local and private addresses, also when a host name resolves to one, so a workspace cannot make the server reach its own network. A team with a MinIO on a private network cannot use it here; the root user can use it in Admin → Storage instead.
+- Orbit tests the bucket like the installation's bucket. It cannot use the installation's bucket and prefix.
+- After the save, existing files move from this server's disk and the installation's bucket to the workspace's bucket in the background, as when the root user turns on attachments in S3. The page says "Checking which files to move…" until the first pass counted them, then shows how many are left. Files stay readable during the move.
+- **Remove** sends new files to the installation's storage again. The files in the workspace's bucket move back and are deleted from it. When none are left, the bucket disappears from the settings. To change the endpoint, bucket or prefix, remove the bucket first and wait for that.
+- As with the installation's bucket, Orbit keeps an unused file in the workspace's bucket for 40 days. If the bucket fails (for example, revoked keys), other workspaces are not affected: reads try the other tiers, and cleanup skips that bucket until it works again.
+- Files in a workspace's bucket still count toward the workspace's storage quota.
+- When a workspace is deleted for good, its files in its own bucket stay there.
 
 ## Large images
 

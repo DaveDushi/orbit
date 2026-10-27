@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 
-import { filterMembers, formatBytes, memberActions, passwordProblem, pickedImageName, sortedSessions, storageUse, twoFactorSummary } from './account-api'
+import { bucketMovingText, bucketPollInterval, filterMembers, formatBytes, memberActions, passwordProblem, pickedImageName, sortedSessions, storageUse, twoFactorSummary } from './account-api'
 import type { MemberRecord } from './orbit'
 
 const member = (id: string, fields: Partial<MemberRecord>): MemberRecord => ({
@@ -60,4 +60,19 @@ test('a picked photo is uploaded under its file name, else one from its type', (
   expect(pickedImageName({ uri: 'file:///tmp/a.png' })).toBe('picture.png')
   expect(pickedImageName({ uri: 'file:///tmp/b', fileName: 'IMG_1.HEIC', mimeType: 'image/jpeg' })).toBe('IMG_1.HEIC')
   expect(pickedImageName({ uri: 'file:///tmp/c' })).toBe('picture.jpg')
+})
+
+test('bucketPollInterval polls while files move either way', () => {
+  expect(bucketPollInterval(undefined)).toBe(false)
+  expect(bucketPollInterval({ s3: null, removing: false, checking: false, files_to_move: 0 })).toBe(false)
+  expect(bucketPollInterval({ s3: null, removing: false, checking: false, files_to_move: 3 })).toBe(5000)
+  expect(bucketPollInterval({ s3: null, removing: true, checking: false, files_to_move: 0 })).toBe(5000)
+  expect(bucketPollInterval({ s3: null, removing: false, checking: true, files_to_move: 0 })).toBe(5000)
+})
+
+test('bucketMovingText names the direction', () => {
+  expect(bucketMovingText({ removing: false, checking: false, files_to_move: 0 })).toBeNull()
+  expect(bucketMovingText({ removing: false, checking: false, files_to_move: 1 })).toBe('1 file left to move to your bucket.')
+  expect(bucketMovingText({ removing: true, checking: false, files_to_move: 12 })).toBe("12 files left to move back to Orbit's storage.")
+  expect(bucketMovingText({ removing: false, checking: true, files_to_move: 0 })).toBe('Checking which files to move…')
 })

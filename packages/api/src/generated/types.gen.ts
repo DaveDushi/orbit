@@ -2438,7 +2438,7 @@ export type PasswordConfirmationBody = {
  * A workspace capability that depends on the member's role. Actions open to
  * every member (tasks, projects, attachments, docs) are not listed here.
  */
-export type Permission = 'workspace.update' | 'workspace.delete' | 'workspace.transfer' | 'members.manage' | 'audit.view' | 'api_tokens.manage' | 'integrations.manage' | 'teamspaces.delete' | 'pages.purge' | 'views.manage_shared' | 'comments.moderate' | 'chat.manage' | 'billing.manage';
+export type Permission = 'workspace.update' | 'workspace.delete' | 'workspace.transfer' | 'members.manage' | 'audit.view' | 'api_tokens.manage' | 'integrations.manage' | 'teamspaces.delete' | 'pages.purge' | 'views.manage_shared' | 'comments.moderate' | 'chat.manage' | 'billing.manage' | 'storage.manage';
 
 export type PlanInterval = 'month' | 'year';
 
@@ -3504,6 +3504,31 @@ export type Visibility = 'personal' | 'workspace';
  * What members of a workspace may do.
  */
 export type WorkspaceAccess = 'full' | 'trial' | 'read_only';
+
+/**
+ * The S3 bucket that a workspace connected for its own files.
+ */
+export type WorkspaceBucketView = {
+    /**
+     * Orbit has not counted the files to move since the bucket was saved or removed yet; `files_to_move` is 0
+     * until it has.
+     */
+    checking: boolean;
+    /**
+     * The workspace's files still waiting to move into the bucket (or back out of it): existing files on this
+     * server and in the installation's bucket move in the background.
+     */
+    files_to_move: number;
+    /**
+     * Why moving files stopped last time. Orbit retries every ten minutes.
+     */
+    move_error?: string | null;
+    /**
+     * The bucket was removed: its files move back to the installation's storage, then it disappears.
+     */
+    removing: boolean;
+    s3?: null | S3View;
+};
 
 export type WorkspaceConflict = {
     current_version: number;
@@ -15369,6 +15394,192 @@ export type GetWorkspaceStorageResponses = {
 };
 
 export type GetWorkspaceStorageResponse = GetWorkspaceStorageResponses[keyof GetWorkspaceStorageResponses];
+
+export type RemoveWorkspaceBucketData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/storage/bucket';
+};
+
+export type RemoveWorkspaceBucketErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden, workspace_action_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * workspace_resource_not_found
+     */
+    404: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type RemoveWorkspaceBucketError = RemoveWorkspaceBucketErrors[keyof RemoveWorkspaceBucketErrors];
+
+export type RemoveWorkspaceBucketResponses = {
+    200: WorkspaceBucketView;
+};
+
+export type RemoveWorkspaceBucketResponse = RemoveWorkspaceBucketResponses[keyof RemoveWorkspaceBucketResponses];
+
+export type GetWorkspaceBucketData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/storage/bucket';
+};
+
+export type GetWorkspaceBucketErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * workspace_action_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * workspace_resource_not_found
+     */
+    404: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type GetWorkspaceBucketError = GetWorkspaceBucketErrors[keyof GetWorkspaceBucketErrors];
+
+export type GetWorkspaceBucketResponses = {
+    200: WorkspaceBucketView;
+};
+
+export type GetWorkspaceBucketResponse = GetWorkspaceBucketResponses[keyof GetWorkspaceBucketResponses];
+
+export type SaveWorkspaceBucketData = {
+    body: S3Body;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/storage/bucket';
+};
+
+export type SaveWorkspaceBucketErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden, workspace_action_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * workspace_resource_not_found
+     */
+    404: WorkspaceProblem;
+    /**
+     * contract_mismatch, storage_in_use
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * invalid_storage_settings
+     */
+    422: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * storage_unreachable
+     */
+    502: WorkspaceProblem;
+    /**
+     * app_key_missing
+     */
+    503: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type SaveWorkspaceBucketError = SaveWorkspaceBucketErrors[keyof SaveWorkspaceBucketErrors];
+
+export type SaveWorkspaceBucketResponses = {
+    200: WorkspaceBucketView;
+};
+
+export type SaveWorkspaceBucketResponse = SaveWorkspaceBucketResponses[keyof SaveWorkspaceBucketResponses];
 
 export type ListTasksData = {
     body?: never;

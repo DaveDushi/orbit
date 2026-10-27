@@ -15,7 +15,7 @@ import { Avatar, CountBadge, Icon, type IconName, IconButton, PickerSheet } from
 import { AccountMenu } from './AccountMenu'
 import { NewProjectSheet } from './NewProjectSheet'
 import { DRAWER_AREA_TITLES, type DrawerArea, drawerAreaOf, drawerSections, TASK_PRESETS, tasksHref } from './drawerAreas'
-import { ACCOUNT_NAV, ADMIN_NAV, WORKSPACE_NAV } from './settings/Shell'
+import { ACCOUNT_NAV, ADMIN_NAV, allowedNav, WORKSPACE_NAV } from './settings/Shell'
 
 const DrawerContext = createContext<(() => void) | null>(null)
 
@@ -253,7 +253,7 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
           ) : area ? (
             <>
               <BackRow label={DRAWER_AREA_TITLES[area]} onPress={() => setMainMenuFor(area)} />
-              {drawerSections(area, navs[area]).map((section) => (
+              {drawerSections(area, allowedNav(navs[area], workspace.permissions)).map((section) => (
                 <Fragment key={section.label}>
                   <Section label={section.label} />
                   {section.items.map((item) => (

@@ -30,6 +30,7 @@ export default function GeneralScreen() {
       <SettingsCard
         title="Storage"
         description="Files, emoji and stickers of this workspace. A file attached more than once counts once; a deleted file stops counting about a day after the trash is emptied."
+        actions={workspace.permissions.includes('storage.manage') ? <Button label="Use your own bucket" variant="outline" size="sm" onPress={() => router.push('/settings/file-storage')} /> : undefined}
       >
         {storage.data ? <StorageBar {...storageUse(storage.data)} /> : <Note error={storage.isError}>{storage.isError ? 'Storage use could not be loaded.' : 'Loading storage…'}</Note>}
       </SettingsCard>
