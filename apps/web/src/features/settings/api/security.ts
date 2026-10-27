@@ -11,7 +11,7 @@ import {
   regenerateRecoveryCodes,
   setupTotp,
   startPasskeyRegistration,
-} from '@/api/generated/sdk.gen'
+} from '@orbit/api/generated/sdk.gen'
 import { createPasskey } from '@/features/auth/passkey'
 
 function required<T>(data: T | undefined, message: string): T {

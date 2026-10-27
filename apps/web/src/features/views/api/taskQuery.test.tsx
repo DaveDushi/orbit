@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { createApiClient } from '@/api/client'
-import type { PageTaskRecord, TaskRecord } from '@/api/generated/types.gen'
+import type { PageTaskRecord, TaskRecord } from '@orbit/api/generated/types.gen'
 import { queryKeys } from '@/api/queryKeys'
 import { patchWorkspaceTask } from '@/features/tasks/api/optimistic'
 import { DEFAULT_DISPLAY, PRESET_FILTERS, emptyFilter } from '@/features/views/viewState'
@@ -14,7 +14,7 @@ afterEach(() => { globalThis.fetch = originalFetch })
 
 const task = (id: string): TaskRecord => ({
   id, workspace_id: 'workspace-1', project_id: 'project-1', number: 1, status_id: 'todo', title: id,
-  description: '', position: 0, priority: 'none', assignee_ids: [], creator_id: 'user-1', label_ids: [],
+  description: '', description_json: null, collab_epoch: '', position: 0, priority: 'none', assignee_ids: [], creator_id: 'user-1', label_ids: [],
   created_at: '2026-09-05T10:00:00Z', updated_at: '2026-09-05T10:00:00Z', duplicate_of: null, blocked: false, version: 1,
   parent: null, parent_task_id: null, sub_issue_count: 0, sub_issue_closed_count: 0,
 })

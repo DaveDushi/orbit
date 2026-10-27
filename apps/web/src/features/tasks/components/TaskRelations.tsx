@@ -2,7 +2,7 @@ import { Hierarchy, Xmark as X } from 'reicon-react'
 import { cn } from 'cn'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import type { TaskRelationRecord } from '@/api/generated/types.gen'
+import type { TaskRelationRecord } from '@orbit/api/generated/types.gen'
 import { taskIdentifier, type Project, type TaskRef, type TaskStatusDef } from '@/features/tasks/api/models'
 import { ADD_RELATION_OPTIONS, groupRelations, type RelationKind } from '@/features/tasks/relationsLib'
 import { StatusPicker } from './StatusPicker'
@@ -114,19 +114,24 @@ export function TaskRelationsSection({ relations, statuses, projects, newRelatio
 }
 
 /** Ghost button beside Attach: Blocks…, Blocked by…, Related to…, Mark as duplicate of… (each opens the picker). */
-export function AddRelationMenu({ open, onOpenChange, onChoose }: { open?: boolean; onOpenChange?: (open: boolean) => void; onChoose: (kind: RelationKind) => void }) {
+export function AddRelationMenu({ open, onOpenChange, onChoose, options = ADD_RELATION_OPTIONS }: {
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  onChoose: (kind: RelationKind) => void
+  options?: typeof ADD_RELATION_OPTIONS
+}) {
   return (
     <DropdownMenu modal={false} open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger
         render={
-          <Button variant="ghost" className="text-xs text-muted-foreground/70">
+          <Button type="button" variant="ghost" className="text-xs text-muted-foreground/70">
             <Hierarchy className="size-3.5" aria-hidden="true" />
             Add relation
           </Button>
         }
       />
       <DropdownMenuContent className="w-auto min-w-50">
-        {ADD_RELATION_OPTIONS.map((option) => (
+        {options.map((option) => (
           <DropdownMenuItem key={option.kind} onClick={() => onChoose(option.kind)}>
             {option.label}
           </DropdownMenuItem>

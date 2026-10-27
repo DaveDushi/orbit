@@ -1,6 +1,6 @@
 import type { User } from '@/features/workspaces/models'
 import { formatTaskIdentifier } from '@/lib/taskLinks'
-import type { AttachmentRecord, AuditEvent, CommentRecord, LabelRecord, ProjectRecord, TaskRecord } from '@/api/generated/types.gen'
+import type { AttachmentRecord, AuditEvent, CommentRecord, LabelRecord, ProjectRecord, TaskRecord } from '@orbit/api/generated/types.gen'
 
 export type StatusCategory = 'unstarted' | 'started' | 'completed' | 'cancelled' | 'duplicate'
 export type TaskPriority = 'none' | 'low' | 'medium' | 'high' | 'urgent'
@@ -38,7 +38,10 @@ export interface Attachment {
 export interface TaskComment {
   id: string
   authorId: string
+  /** Markdown copy of `bodyJson`. */
   body: string
+  /** BlockNote blocks; null for a comment written before rich text (only `body` exists). */
+  bodyJson?: unknown[] | null
   /** Decided by the server for the current user. */
   canEdit: boolean
   canDelete: boolean
@@ -80,7 +83,12 @@ export interface Task {
   number?: number
   projectKey?: string
   title: string
+  /** Markdown copy of `descriptionJson`. */
   description: string
+  /** BlockNote blocks; null for a task written before rich text (only `description` exists). */
+  descriptionJson?: unknown[] | null
+  /** Epoch of the description's co-editing document. */
+  collabEpoch?: string
   sourceUrl?: string | null
   statusId: string
   position: number
@@ -288,6 +296,8 @@ export function taskFromRecord(
     projectKey: project?.key,
     title: record.title,
     description: record.description,
+    descriptionJson: record.description_json ?? null,
+    collabEpoch: record.collab_epoch,
     sourceUrl: record.source_url ?? null,
     statusId: record.status_id,
     position: record.position,
@@ -307,6 +317,7 @@ export function taskFromRecord(
       id: comment.id,
       authorId: comment.author_id,
       body: comment.body,
+      bodyJson: comment.body_json ?? null,
       canEdit: comment.can_edit,
       canDelete: comment.can_delete,
       createdAt: comment.created_at,

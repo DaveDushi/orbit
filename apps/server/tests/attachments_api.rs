@@ -5,13 +5,15 @@ use axum::body::{Body, Bytes, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use orbit_platform::{
     AttachmentMutationCoordinator, AuthenticatedUser, HttpLimits, HttpPlatformLayer, Id,
-    LocalBlobStore, OriginPolicy, PasswordService, TestDatabase, TimestampMillis, UploadLimits,
-    UploadService,
+    LocalBlobStore, OriginPolicy, PasswordService, TestDatabase, TimestampMillis, UploadError,
+    UploadLimits, UploadService,
 };
 use orbit_server::attachment_routes::{AttachmentState, attachment_router};
 use orbit_server::auth_routes::CookieMode;
 use orbit_server::repositories::identity::{IdentityRepository, SetupRequest};
+use orbit_server::repositories::workspaces::WorkspaceRepository;
 use orbit_server::task_routes::{TaskState, task_router};
+use orbit_server::workspace_routes::{WorkspaceState, workspace_router};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -60,7 +62,7 @@ impl Fixture {
             .await
             .unwrap();
         let status_id: String = sqlx::query_scalar(
-            "SELECT id FROM task_statuses WHERE project_id = ? ORDER BY position LIMIT 1",
+            "SELECT id FROM task_statuses WHERE project_id = $1 ORDER BY position LIMIT 1",
         )
         .bind(setup.project_id.to_string())
         .fetch_one(database.pool())
@@ -263,8 +265,8 @@ async fn target_is_revalidated_atomically_after_the_stream_finishes() {
         .unwrap();
     let app = fixture.app.clone();
     let response = tokio::spawn(async move { app.oneshot(request).await.unwrap() });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    sqlx::query("UPDATE tasks SET deleted_at = ? WHERE id = ?")
+    wait_until_read(&sender).await;
+    sqlx::query("UPDATE tasks SET deleted_at = $1 WHERE id = $2")
         .bind(TimestampMillis::now().as_millis())
         .bind(&fixture.task_id)
         .execute(fixture.database.pool())
@@ -478,8 +480,8 @@ async fn revoked_actor_cannot_finalize_after_streaming_bytes() {
         .unwrap();
     let app = fixture.app.clone();
     let response = tokio::spawn(async move { app.oneshot(request).await.unwrap() });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    sqlx::query("UPDATE users SET suspended_at = ? WHERE id = ?")
+    wait_until_read(&sender).await;
+    sqlx::query("UPDATE users SET suspended_at = $1 WHERE id = $2")
         .bind(TimestampMillis::now().as_millis())
         .bind(&fixture.owner_id)
         .execute(fixture.database.pool())
@@ -596,8 +598,8 @@ async fn revoked_session_cannot_finalize_after_streaming_bytes() {
         .unwrap();
     let app = fixture.app.clone();
     let response = tokio::spawn(async move { app.oneshot(request).await.unwrap() });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    sqlx::query("UPDATE sessions SET revoked_at = ? WHERE user_id = ?")
+    wait_until_read(&sender).await;
+    sqlx::query("UPDATE sessions SET revoked_at = $1 WHERE user_id = $2")
         .bind(TimestampMillis::now().as_millis())
         .bind(&fixture.owner_id)
         .execute(fixture.database.pool())
@@ -806,13 +808,14 @@ async fn cancelling_http_after_a_complete_field_discards_staged_bytes() {
 #[tokio::test]
 async fn database_finalization_failure_leaves_new_bytes_quarantined_for_reconciliation() {
     let fixture = Fixture::new(UploadLimits::default()).await;
-    sqlx::query(
-        "CREATE TRIGGER fail_attachment_finalize BEFORE INSERT ON attachment_references \
-         BEGIN SELECT RAISE(ABORT, 'injected metadata failure'); END",
+    fail_inserts(
+        &fixture.database,
+        "fail_attachment_finalize",
+        "attachment_references",
+        "1 = 1",
+        "injected metadata failure",
     )
-    .execute(fixture.database.pool())
-    .await
-    .unwrap();
+    .await;
     let response = fixture.upload("orphan.png", PNG).await;
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(fixture.store.blobs().await.unwrap().len(), 1);
@@ -842,13 +845,14 @@ async fn database_finalization_failure_leaves_new_bytes_quarantined_for_reconcil
 #[tokio::test]
 async fn attachment_only_comment_and_reference_finalize_in_one_database_transaction() {
     let fixture = Fixture::new(UploadLimits::default()).await;
-    sqlx::query(
-        "CREATE TRIGGER fail_comment_attachment BEFORE INSERT ON attachment_references \
-         BEGIN SELECT RAISE(ABORT, 'injected comment attachment failure'); END",
+    fail_inserts(
+        &fixture.database,
+        "fail_comment_attachment",
+        "attachment_references",
+        "1 = 1",
+        "injected comment attachment failure",
     )
-    .execute(fixture.database.pool())
-    .await
-    .unwrap();
+    .await;
     let response = fixture
         .app
         .clone()
@@ -960,7 +964,7 @@ async fn only_the_author_changes_the_attachments_of_a_comment() {
     let now = TimestampMillis::now();
     sqlx::query(
         "INSERT INTO users (id, email, normalized_email, display_name, password_hash, created_at, updated_at) \
-         VALUES (?, 'member@example.com', 'member@example.com', 'Member', 'unused', ?, ?)",
+         VALUES ($1, 'member@example.com', 'member@example.com', 'Member', 'unused', $2, $3)",
     )
     .bind(member_id.to_string())
     .bind(now.as_millis())
@@ -970,7 +974,7 @@ async fn only_the_author_changes_the_attachments_of_a_comment() {
     .unwrap();
     sqlx::query(
         "INSERT INTO memberships (id, workspace_id, user_id, role, version, created_at, updated_at) \
-         VALUES (?, ?, ?, 'member', 0, ?, ?)",
+         VALUES ($1, $2, $3, 'member', 0, $4, $5)",
     )
     .bind(Id::new_v7().to_string())
     .bind(&fixture.workspace_id)
@@ -1076,6 +1080,250 @@ async fn only_the_author_changes_the_attachments_of_a_comment() {
     assert_eq!(delete.status(), StatusCode::NO_CONTENT);
 }
 
+#[tokio::test]
+async fn uploads_stay_within_the_workspace_storage_quota() {
+    let fixture = Fixture::new(UploadLimits::default()).await;
+    let workspace_id: Id = fixture.workspace_id.parse().unwrap();
+    let owner_id: Id = fixture.owner_id.parse().unwrap();
+    let workspaces = WorkspaceRepository::new((*fixture.database).clone());
+    let storage = workspaces.storage(workspace_id, owner_id).await.unwrap();
+    assert_eq!(
+        (storage.used_bytes, storage.quota_bytes),
+        (0, Some(1_000_000_000))
+    );
+    let quota = PNG.len() as i64 + 100;
+    sqlx::query("UPDATE instance_settings SET workspace_storage_quota_bytes = $1 WHERE id = 1")
+        .bind(quota)
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        fixture.upload("first.png", PNG).await.status(),
+        StatusCode::CREATED
+    );
+    // The same bytes again are stored once, so they fit.
+    assert_eq!(
+        fixture.upload("again.png", PNG).await.status(),
+        StatusCode::CREATED
+    );
+    let too_large = fixture.upload("big.bin", &[7_u8; 101]).await;
+    assert_eq!(too_large.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        response_json(too_large).await["code"],
+        "storage_quota_exceeded"
+    );
+    // Refused before the bytes were stored.
+    assert_eq!(fixture.store.blobs().await.unwrap().len(), 1);
+    assert_eq!(
+        fixture.upload("small.bin", &[7_u8; 100]).await.status(),
+        StatusCode::CREATED
+    );
+
+    let router = workspace_router(WorkspaceState::new(
+        Arc::clone(&fixture.identity),
+        "https://orbit.test".to_owned(),
+        CookieMode::secure(),
+    ));
+    let usage = router
+        .oneshot(cookie_request(
+            "GET",
+            &format!("/api/v1/workspaces/{workspace_id}/storage"),
+            &fixture.owner_cookie,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(usage.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(usage).await,
+        json!({"used_bytes": quota, "quota_bytes": quota, "largest_files": [
+            {"byte_size": 100, "name": "small.bin", "uses": [{"kind": "task", "title": "Attachment task"}]},
+            {"byte_size": PNG.len(), "name": "again.png", "uses": [{"kind": "task", "title": "Attachment task"}]},
+        ]})
+    );
+
+    // Emoji and stickers count too; a profile picture is not a workspace file.
+    let uploads = UploadService::new(
+        (*fixture.database).clone(),
+        Arc::new(fixture.store.clone()),
+        AttachmentMutationCoordinator::default(),
+        UploadLimits::default(),
+    );
+    let now = TimestampMillis::now();
+    {
+        let finalization = uploads.begin_finalization().await;
+        let mut transaction = fixture.database.immediate_transaction().await.unwrap();
+        assert!(matches!(
+            finalization
+                .finalize_bytes_in_transaction(&mut transaction, workspace_id, b"emoji", now)
+                .await,
+            Err(UploadError::StorageQuotaExceeded { .. })
+        ));
+        finalization
+            .finalize_unmetered_bytes_in_transaction(&mut transaction, owner_id, b"avatar", now)
+            .await
+            .unwrap();
+        transaction.commit().await.unwrap();
+    }
+    assert_eq!(
+        workspaces
+            .storage(workspace_id, owner_id)
+            .await
+            .unwrap()
+            .used_bytes,
+        quota as u64
+    );
+
+    // Deleted files stop counting once reconcile removes them.
+    for attachment in response_json(
+        fixture
+            .app
+            .clone()
+            .oneshot(cookie_request(
+                "GET",
+                &fixture.task_attachments(),
+                &fixture.owner_cookie,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await["items"]
+        .as_array()
+        .unwrap()
+    {
+        let deleted = fixture
+            .app
+            .clone()
+            .oneshot(cookie_request(
+                "DELETE",
+                &format!(
+                    "{}/{}",
+                    fixture.task_attachments(),
+                    attachment["id"].as_str().unwrap()
+                ),
+                &fixture.owner_cookie,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    }
+    // Reconcile keeps a blob for a day after its last reference and after its file was written.
+    uploads
+        .reconcile(TimestampMillis::now().as_millis() + 2 * 24 * 60 * 60 * 1000)
+        .await
+        .unwrap();
+    assert_eq!(
+        workspaces
+            .storage(workspace_id, owner_id)
+            .await
+            .unwrap()
+            .used_bytes,
+        0
+    );
+    // 0 is unlimited.
+    sqlx::query("UPDATE instance_settings SET workspace_storage_quota_bytes = 0 WHERE id = 1")
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        workspaces
+            .storage(workspace_id, owner_id)
+            .await
+            .unwrap()
+            .quota_bytes,
+        None
+    );
+    assert_eq!(
+        fixture.upload("big.bin", &[7_u8; 1000]).await.status(),
+        StatusCode::CREATED
+    );
+}
+
+#[tokio::test]
+async fn admins_see_the_largest_files_and_private_names_stay_hidden() {
+    let fixture = Fixture::new(UploadLimits::default()).await;
+    let workspace_id: Id = fixture.workspace_id.parse().unwrap();
+    let owner_id: Id = fixture.owner_id.parse().unwrap();
+    for (name, bytes) in [
+        ("first.png", PNG),
+        ("again.png", PNG),
+        ("big.bin", &[7_u8; 2000][..]),
+    ] {
+        assert_eq!(
+            fixture.upload(name, bytes).await.status(),
+            StatusCode::CREATED
+        );
+    }
+    // An unsent chat upload is private; a blob without uses waits for reconcile.
+    let now = TimestampMillis::now().as_millis();
+    for (size, key) in [(10_000_i64, "secret"), (5_000, "orphan")] {
+        sqlx::query(
+            "INSERT INTO attachment_blobs (id, workspace_id, sha256, byte_size, storage_key, created_at, quarantine_until) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(key)
+        .bind(&fixture.workspace_id)
+        .bind(key)
+        .bind(size)
+        .bind(key)
+        .bind(now)
+        .bind(now)
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO chat_message_files (id, workspace_id, blob_id, file_name, mime_type, size_bytes, uploaded_by, created_at) \
+         VALUES ($1, $2, 'secret', 'secret.bin', 'application/octet-stream', 10000, $3, $4)",
+    )
+    .bind(Id::new_v7().to_string())
+    .bind(&fixture.workspace_id)
+    .bind(&fixture.owner_id)
+    .bind(now)
+    .execute(fixture.database.pool())
+    .await
+    .unwrap();
+
+    let workspaces = WorkspaceRepository::new((*fixture.database).clone());
+    let storage = workspaces.storage(workspace_id, owner_id).await.unwrap();
+    assert_eq!(
+        serde_json::to_value(&storage.largest_files).unwrap(),
+        json!([
+            {"byte_size": 10_000, "name": null, "uses": [{"kind": "private", "title": null}]},
+            {"byte_size": 5_000, "name": null, "uses": []},
+            {"byte_size": 2000, "name": "big.bin", "uses": [{"kind": "task", "title": "Attachment task"}]},
+            {"byte_size": PNG.len(), "name": "again.png", "uses": [{"kind": "task", "title": "Attachment task"}]},
+        ])
+    );
+
+    let member_id = Id::new_v7();
+    sqlx::query(
+        "INSERT INTO users (id, email, normalized_email, display_name, password_hash, created_at, updated_at) \
+         VALUES ($1, 'member@example.com', 'member@example.com', 'Member', 'unused', $2, $3)",
+    )
+    .bind(member_id.to_string())
+    .bind(now)
+    .bind(now)
+    .execute(fixture.database.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO memberships (id, workspace_id, user_id, role, version, created_at, updated_at) \
+         VALUES ($1, $2, $3, 'member', 0, $4, $5)",
+    )
+    .bind(Id::new_v7().to_string())
+    .bind(&fixture.workspace_id)
+    .bind(member_id.to_string())
+    .bind(now)
+    .bind(now)
+    .execute(fixture.database.pool())
+    .await
+    .unwrap();
+    let storage = workspaces.storage(workspace_id, member_id).await.unwrap();
+    assert_eq!(storage.used_bytes, 15_000 + 2000 + PNG.len() as u64);
+    assert!(storage.largest_files.is_empty());
+}
+
 fn multipart_request(uri: &str, cookie: &str, files: &[(&str, &[u8])]) -> Request<Body> {
     let boundary = "orbit-test-boundary";
     let mut body = Vec::new();
@@ -1119,4 +1367,94 @@ fn cookie_request(method: &str, uri: &str, cookie: &str) -> Request<Body> {
 
 async fn response_json(response: axum::response::Response) -> Value {
     serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap()
+}
+
+/// Makes inserts into `table` that match `when` (an SQL condition on `NEW`) fail with `message`.
+async fn fail_inserts(
+    database: &orbit_platform::Database,
+    name: &str,
+    table: &str,
+    when: &str,
+    message: &str,
+) {
+    let sql = match database.backend() {
+        orbit_platform::Backend::Sqlite => format!(
+            "CREATE TRIGGER {name} BEFORE INSERT ON {table} WHEN {when} \
+             BEGIN SELECT RAISE(ABORT, '{message}'); END"
+        ),
+        orbit_platform::Backend::Postgres => format!(
+            "CREATE FUNCTION {name}_fn() RETURNS trigger LANGUAGE plpgsql AS $$ \
+             BEGIN RAISE EXCEPTION '{message}'; END $$; \
+             CREATE TRIGGER {name} BEFORE INSERT ON {table} FOR EACH ROW WHEN ({when}) \
+             EXECUTE FUNCTION {name}_fn()"
+        ),
+    };
+    database.execute(&sql).await.unwrap();
+}
+
+#[tokio::test]
+async fn inline_upload_hidden_from_list_but_downloadable() {
+    let fixture = Fixture::new(UploadLimits::default()).await;
+    let inline = fixture
+        .app
+        .clone()
+        .oneshot(multipart_request(
+            &format!("{}?inline=1", fixture.task_attachments()),
+            &fixture.owner_cookie,
+            &[("pasted.png", PNG)],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(inline.status(), StatusCode::CREATED);
+    let inline = response_json(inline).await;
+    assert_eq!(
+        fixture.upload("listed.png", PNG).await.status(),
+        StatusCode::CREATED
+    );
+
+    let listed = fixture
+        .app
+        .clone()
+        .oneshot(cookie_request(
+            "GET",
+            &fixture.task_attachments(),
+            &fixture.owner_cookie,
+        ))
+        .await
+        .unwrap();
+    let items = response_json(listed).await["items"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["display_name"], "listed.png");
+
+    let download = fixture
+        .app
+        .clone()
+        .oneshot(cookie_request(
+            "GET",
+            &format!(
+                "{}/{}/download",
+                fixture.task_attachments(),
+                inline["id"].as_str().unwrap()
+            ),
+            &fixture.owner_cookie,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(download.status(), StatusCode::OK);
+}
+
+/// Waits until the server has read every chunk sent so far: it authorized the request and is
+/// streaming the body. (A fixed sleep raced the authorization on a slow database.)
+async fn wait_until_read<T>(sender: &tokio::sync::mpsc::Sender<T>) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while sender.capacity() < sender.max_capacity() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the server did not read the upload"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
 }

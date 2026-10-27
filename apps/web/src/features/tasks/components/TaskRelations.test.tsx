@@ -60,7 +60,7 @@ function Wrapper({ children }: { children: ReactNode }) {
 }
 
 function renderDetail(overrides: Partial<Task> = {}, onOpenTask: (taskId: string) => void = () => {}) {
-  return render(<TaskDetail task={{ ...task, ...overrides }} project={project} state={state} onBack={() => {}} onOpenTask={onOpenTask} />, { wrapper: Wrapper })
+  return render(<TaskDetail task={{ ...task, ...overrides }} project={project} state={state} onClose={() => {}} onOpenTask={onOpenTask} />, { wrapper: Wrapper })
 }
 
 test('a duplicate shows a banner that opens the canonical task and unmarks it', async () => {

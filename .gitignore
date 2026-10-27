@@ -3,11 +3,12 @@ shadow/
 .DS_Store
 **/.DS_Store
 target/
-data/
+/data/
 backups/
-config/orbit.toml
 .env.local
 todo.md
 
 # Local production domain/image selection
 deploy/.env
+
+node_modules

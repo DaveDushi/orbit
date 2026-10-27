@@ -4,11 +4,11 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
+use orbit_platform::SqlBuilder;
 use orbit_platform::{Id, TimestampMillis};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use sqlx::{QueryBuilder, Sqlite};
 use utoipa::ToSchema;
 
 use super::sub_issues;
@@ -25,6 +25,7 @@ pub const MAX_TEXT_CHARS: usize = 200;
 pub const MAX_OFFSET_DAYS: i64 = 3_650;
 
 const MAX_STATUS_NAME_CHARS: usize = 200;
+const MAX_LABEL_NAME_CHARS: usize = 100;
 const DAY_MS: i64 = 86_400_000;
 const STATUS_CATEGORIES: [&str; 5] = [
     "unstarted",
@@ -571,7 +572,8 @@ fn validate_values(field: FilterField, value: &Value, path: &str) -> Result<(), 
             FilterField::StatusCategory => STATUS_CATEGORIES.contains(&text),
             FilterField::Priority => PRIORITIES.contains(&text),
             FilterField::Assignee | FilterField::Creator => text == "me" || is_id(text),
-            FilterField::Label | FilterField::Project => is_id(text),
+            FilterField::Label => valid_label_value(text),
+            FilterField::Project => is_id(text),
             FilterField::DueDate
             | FilterField::CreatedAt
             | FilterField::UpdatedAt
@@ -588,6 +590,11 @@ fn validate_values(field: FilterField, value: &Value, path: &str) -> Result<(), 
 
 fn is_id(value: &str) -> bool {
     value.parse::<Id>().is_ok()
+}
+
+/// A label key (its name) or a label id (views saved before labels were per project).
+fn valid_label_value(value: &str) -> bool {
+    !value.trim().is_empty() && value.chars().count() <= MAX_LABEL_NAME_CHARS
 }
 
 /// A `category:name` status key, or a bare status id (legacy `GET /tasks?status_id=`).
@@ -845,18 +852,14 @@ const LIVE_CHILD: &str = "SELECT 1 FROM tasks AS child \
 
 /// Appends ` AND (<compiled tree>)` to `query`. Every value is bound. The tree must already be
 /// validated; an unexpected node fails closed (`0 = 1`).
-pub fn push_filter(query: &mut QueryBuilder<'_, Sqlite>, group: &FilterGroup, ctx: &FilterContext) {
+pub fn push_filter(query: &mut SqlBuilder, group: &FilterGroup, ctx: &FilterContext) {
     query.push(" AND (");
     push_group(query, group, ctx);
     query.push(")");
 }
 
 /// Appends the `show_completed` restriction; `All` adds nothing.
-pub fn push_show_completed(
-    query: &mut QueryBuilder<'_, Sqlite>,
-    show: ShowCompleted,
-    now: TimestampMillis,
-) {
+pub fn push_show_completed(query: &mut SqlBuilder, show: ShowCompleted, now: TimestampMillis) {
     let window = match show {
         ShowCompleted::All => return,
         ShowCompleted::None => {
@@ -874,7 +877,7 @@ pub fn push_show_completed(
         .push(")");
 }
 
-fn push_group(query: &mut QueryBuilder<'_, Sqlite>, group: &FilterGroup, ctx: &FilterContext) {
+fn push_group(query: &mut SqlBuilder, group: &FilterGroup, ctx: &FilterContext) {
     if group.children.is_empty() {
         query.push("1 = 1");
         return;
@@ -896,11 +899,7 @@ fn push_group(query: &mut QueryBuilder<'_, Sqlite>, group: &FilterGroup, ctx: &F
     }
 }
 
-fn push_condition(
-    query: &mut QueryBuilder<'_, Sqlite>,
-    condition: &Condition,
-    ctx: &FilterContext,
-) {
+fn push_condition(query: &mut SqlBuilder, condition: &Condition, ctx: &FilterContext) {
     use FilterField as F;
     use FilterOperator as O;
     let negated = matches!(condition.operator, O::IsNot | O::Excludes);
@@ -930,14 +929,10 @@ fn push_condition(
         (F::Creator, O::Is | O::IsNot) => {
             push_column_in(query, "tasks.creator_id", negated, values(value, ctx, true));
         }
-        (F::Label, O::IncludesAny | O::Excludes) => push_exists(
-            query,
-            negated,
-            TASK_LABEL,
-            " AND task_labels.label_id IN ",
-            values(value, ctx, false),
-        ),
-        (F::Label, O::IncludesAll) => push_all_labels(query, values(value, ctx, false)),
+        (F::Label, O::IncludesAny | O::Excludes) => {
+            push_labels(query, values(value, ctx, false), false, negated);
+        }
+        (F::Label, O::IncludesAll) => push_labels(query, values(value, ctx, false), true, false),
         (F::Label, O::IsEmpty) => {
             query.push("NOT EXISTS (").push(TASK_LABEL).push(")");
         }
@@ -998,7 +993,7 @@ fn values(value: &Value, ctx: &FilterContext, resolve_me: bool) -> Vec<String> {
 }
 
 /// Pushes `(?, ?, …)`.
-fn push_list(query: &mut QueryBuilder<'_, Sqlite>, values: Vec<String>) {
+fn push_list(query: &mut SqlBuilder, values: Vec<String>) {
     let mut list = query.separated(", ");
     list.push_unseparated("(");
     for value in values {
@@ -1008,7 +1003,7 @@ fn push_list(query: &mut QueryBuilder<'_, Sqlite>, values: Vec<String>) {
 }
 
 fn push_exists(
-    query: &mut QueryBuilder<'_, Sqlite>,
+    query: &mut SqlBuilder,
     negated: bool,
     subquery: &'static str,
     column_in: &'static str,
@@ -1027,7 +1022,7 @@ fn push_exists(
 }
 
 fn push_column_in(
-    query: &mut QueryBuilder<'_, Sqlite>,
+    query: &mut SqlBuilder,
     column: &'static str,
     negated: bool,
     values: Vec<String>,
@@ -1054,7 +1049,7 @@ fn push_column_in(
 /// `parent is [ids…, "none"]`, matched against the visible parent (the `parent` field): a task
 /// whose parent is hidden has parent `none`. The positive expression is never NULL (the EXISTS
 /// is false for a NULL parent), so `is_not [id]` keeps top-level tasks.
-fn push_parent(query: &mut QueryBuilder<'_, Sqlite>, values: Vec<String>, negated: bool) {
+fn push_parent(query: &mut SqlBuilder, values: Vec<String>, negated: bool) {
     let none = values.iter().any(|value| value == "none");
     let ids: Vec<String> = values.into_iter().filter(|value| value != "none").collect();
     if !none && ids.is_empty() {
@@ -1081,7 +1076,7 @@ fn push_parent(query: &mut QueryBuilder<'_, Sqlite>, values: Vec<String>, negate
 }
 
 /// `sub_issues is [has|none]`: whether the task has live direct children.
-fn push_sub_issues(query: &mut QueryBuilder<'_, Sqlite>, values: Vec<String>) {
+fn push_sub_issues(query: &mut SqlBuilder, values: Vec<String>) {
     let has = values.iter().any(|value| value == "has");
     let none = values.iter().any(|value| value == "none");
     match (has, none) {
@@ -1100,23 +1095,54 @@ fn push_sub_issues(query: &mut QueryBuilder<'_, Sqlite>, values: Vec<String>) {
     }
 }
 
-fn push_all_labels(query: &mut QueryBuilder<'_, Sqlite>, values: Vec<String>) {
+/// Labels belong to one project, so label conditions match by name (trimmed, case-insensitive)
+/// and find the same name in every project. A value is a label key (the name, as the web's
+/// `labelKeyOf`) or a label id that stands for its name, as in views saved before labels were
+/// per project. `all` needs every value on the task, else any one.
+fn push_labels(query: &mut SqlBuilder, values: Vec<String>, all: bool, negated: bool) {
     if values.is_empty() {
-        query.push("0 = 1");
+        query.push(if negated { "1 = 1" } else { "0 = 1" });
         return;
     }
-    let count = i64::try_from(values.len()).unwrap_or(i64::MAX);
-    query.push(
-        "(SELECT COUNT(DISTINCT task_labels.label_id) FROM task_labels \
-         WHERE task_labels.task_id = tasks.id AND task_labels.label_id IN ",
-    );
-    push_list(query, values);
-    query.push(") = ").push_bind(count);
+    query.push(if negated { "NOT (" } else { "(" });
+    for (index, value) in values.into_iter().enumerate() {
+        if index > 0 {
+            query.push(if all { " AND " } else { " OR " });
+        }
+        query.push(
+            "EXISTS (SELECT 1 FROM task_labels JOIN labels ON labels.id = task_labels.label_id \
+             WHERE task_labels.task_id = tasks.id AND lower(trim(labels.name)) = ",
+        );
+        if value.parse::<Id>().is_ok() {
+            // An id from before labels were per project keeps the name it had then (its copy may
+            // be renamed or gone since); a newer one is read from its label. An unknown id has no
+            // name, so it matches nothing.
+            query
+                .push(
+                    "COALESCE((SELECT lower(trim(alias.name)) FROM label_name_aliases AS alias \
+                     WHERE alias.workspace_id = tasks.workspace_id AND alias.label_id = ",
+                )
+                .push_bind(value.clone())
+                .push(
+                    "), (SELECT lower(trim(selected.name)) FROM labels AS selected \
+                     WHERE selected.workspace_id = tasks.workspace_id AND selected.id = ",
+                )
+                .push_bind(value)
+                .push("))");
+        } else {
+            query
+                .push("lower(trim(")
+                .push_bind(value.trim().to_owned())
+                .push("))");
+        }
+        query.push(")");
+    }
+    query.push(")");
 }
 
 /// Status values are `category:name` keys (names compared lower-cased and trimmed, like the
 /// web's `statusKeyOf`; SQLite `lower()` folds ASCII only) or bare status ids.
-fn push_status(query: &mut QueryBuilder<'_, Sqlite>, value: &Value, negated: bool) {
+fn push_status(query: &mut SqlBuilder, value: &Value, negated: bool) {
     let mut keys = BTreeSet::new();
     let mut ids = BTreeSet::new();
     for item in value
@@ -1162,7 +1188,7 @@ fn push_status(query: &mut QueryBuilder<'_, Sqlite>, value: &Value, negated: boo
 
 /// `before D`: `< D`; `after D`: `>= D + 1 day`; `between [a, b]`: `>= a AND < b + 1 day`.
 fn push_date(
-    query: &mut QueryBuilder<'_, Sqlite>,
+    query: &mut SqlBuilder,
     column: &'static str,
     condition: &Condition,
     now: TimestampMillis,
@@ -1210,7 +1236,7 @@ fn push_date(
     }
 }
 
-fn push_text(query: &mut QueryBuilder<'_, Sqlite>, value: &Value) {
+fn push_text(query: &mut SqlBuilder, value: &Value) {
     let Some(text) = value.as_str().filter(|text| !text.is_empty()) else {
         query.push("0 = 1");
         return;
@@ -1352,7 +1378,7 @@ mod tests {
         assert_eq!(
             path_of(tree(vec![
                 ok.clone(),
-                json!({ "op": "or", "children": [condition("label", "includes_any", json!(["nope"]))] }),
+                json!({ "op": "or", "children": [condition("project", "is", json!(["nope"]))] }),
             ])),
             "filter.children[1].children[0].value[0]"
         );
@@ -1493,10 +1519,14 @@ mod tests {
             ),
             (
                 condition(
-                    "label",
-                    "includes_any",
+                    "project",
+                    "is",
                     json!(["0190F5B4-7C1E-7A3B-8C4D-5E6F7A8B9C0D"]),
                 ),
+                "filter.children[0].value[0]",
+            ),
+            (
+                condition("label", "includes_any", json!(["  "])),
                 "filter.children[0].value[0]",
             ),
             (
@@ -1851,14 +1881,14 @@ mod tests {
 
 #[cfg(test)]
 mod sql_tests {
+    use orbit_platform::SqlBuilder;
     use serde_json::json;
-    use sqlx::{QueryBuilder, Sqlite};
 
     use super::*;
 
     fn compile(tree: Value) -> String {
         let group = parse_filter(&tree).unwrap();
-        let mut query = QueryBuilder::<Sqlite>::new("SELECT tasks.id FROM tasks WHERE 1 = 1");
+        let mut query = SqlBuilder::new("SELECT tasks.id FROM tasks WHERE 1 = 1");
         push_filter(
             &mut query,
             &group,
@@ -1867,7 +1897,7 @@ mod sql_tests {
                 now: TimestampMillis::from_millis(0),
             },
         );
-        query.sql().to_owned()
+        query.sql().as_str().to_owned()
     }
 
     #[test]
@@ -1878,7 +1908,7 @@ mod sql_tests {
         ] }));
         assert!(!sql.contains("1=1"), "{sql}");
         assert!(!sql.contains("it's"), "{sql}");
-        assert_eq!(sql.matches('?').count(), 3, "{sql}");
+        assert_eq!(sql.matches('$').count(), 3, "{sql}");
     }
 
     #[test]
@@ -1892,28 +1922,28 @@ mod sql_tests {
                 { "field": "priority", "operator": "is", "value": ["high"] },
                 { "op": "and", "children": [] }
             ] })),
-            "SELECT tasks.id FROM tasks WHERE 1 = 1 AND ((tasks.priority IN (?)) OR (1 = 1))"
+            "SELECT tasks.id FROM tasks WHERE 1 = 1 AND ((tasks.priority IN ($1)) OR (1 = 1))"
         );
     }
 
     #[test]
     fn show_completed_all_adds_nothing() {
-        let mut query = QueryBuilder::<Sqlite>::new("SELECT 1");
+        let mut query = SqlBuilder::new("SELECT 1");
         push_show_completed(
             &mut query,
             ShowCompleted::All,
             TimestampMillis::from_millis(0),
         );
-        assert_eq!(query.sql(), "SELECT 1");
+        assert_eq!(query.sql().as_str(), "SELECT 1");
         push_show_completed(
             &mut query,
             ShowCompleted::PastWeek,
             TimestampMillis::from_millis(0),
         );
         assert!(
-            query.sql().contains("tasks.completed_at >= ?"),
+            query.sql().as_str().contains("tasks.completed_at >= $1"),
             "{}",
-            query.sql()
+            query.sql().as_str()
         );
     }
 
@@ -1925,7 +1955,7 @@ mod sql_tests {
         let visible = sub_issues::has_visible_parent_sql("tasks.parent_task_id");
         assert!(
             sql.contains(&format!(
-                "NOT (NOT {visible} OR ({visible} AND tasks.parent_task_id IN (?)))"
+                "NOT (NOT {visible} OR ({visible} AND tasks.parent_task_id IN ($1)))"
             )),
             "{sql}"
         );

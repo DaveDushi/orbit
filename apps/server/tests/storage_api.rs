@@ -199,3 +199,48 @@ async fn storage_options_need_a_bucket_and_the_bucket_stays_while_attachments_us
     assert!(view["storage"]["s3"].is_null());
     assert!(fixture.storage.bucket().is_none());
 }
+
+#[tokio::test]
+async fn settings_another_server_saved_apply_on_reload() {
+    let fixture = fixture().await;
+    let (status, _) = fixture
+        .call("PUT", "/api/v1/admin/settings/s3", Some(s3_body().await))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let options =
+        json!({"attachments_in_s3": true, "backups_in_s3": false, "backup_schedule": "off"});
+    let (status, _) = fixture
+        .call("PUT", "/api/v1/admin/settings/storage", Some(options))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(fixture.storage.current().attachments);
+
+    // Another server of the database turns on backups in S3.
+    let root: String = fixture
+        .database
+        .scalar("SELECT id FROM users")
+        .await
+        .unwrap();
+    orbit_server::repositories::instance_settings::InstanceSettingsRepository::new(
+        (*fixture.database).clone(),
+    )
+    .save_storage_options(
+        root.parse().unwrap(),
+        true,
+        true,
+        orbit_server::repositories::instance_settings::BackupSchedule::Off,
+        "other-server",
+        TimestampMillis::now(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !fixture.storage.current().backups,
+        "not applied before a reload"
+    );
+
+    orbit_server::object_storage::reload_saved(&fixture.database)
+        .await
+        .unwrap();
+    assert!(fixture.storage.current().backups);
+}

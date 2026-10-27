@@ -531,7 +531,7 @@ impl Harness {
         let now = TimestampMillis::now();
         sqlx::query(
             "INSERT INTO users (id, email, normalized_email, display_name, password_hash, created_at, updated_at) \
-             VALUES (?, ?, ?, 'Member', 'unused', ?, ?)",
+             VALUES ($1, $2, $3, 'Member', 'unused', $4, $5)",
         )
         .bind(id.to_string())
         .bind(email)
@@ -543,7 +543,7 @@ impl Harness {
         .unwrap();
         sqlx::query(
             "INSERT INTO memberships (id, workspace_id, user_id, role, version, created_at, updated_at) \
-             VALUES (?, ?, ?, 'member', 0, ?, ?)",
+             VALUES ($1, $2, $3, 'member', 0, $4, $5)",
         )
         .bind(Id::new_v7().to_string())
         .bind(&self.workspace_id)
@@ -598,11 +598,24 @@ impl Harness {
         .await
     }
 
+    /// Runs the import's job as the worker does: the job row shows it running meanwhile.
     async fn run_import(&self, id: &str) {
+        let set_state = |from: &'static str, to: &'static str| {
+            sqlx::query(
+                "UPDATE jobs SET state = $1 WHERE kind = 'notion.import' AND state = $2 \
+                 AND payload_json LIKE $3",
+            )
+            .bind(to)
+            .bind(from)
+            .bind(format!("%{id}%"))
+            .execute(self.database.pool())
+        };
+        set_state("queued", "running").await.unwrap();
         self.service
             .run_import(id.parse().unwrap(), &JobRun::default())
             .await
             .unwrap();
+        set_state("running", "succeeded").await.unwrap();
     }
 
     async fn detail(&self, cookie: &str, id: &str) -> Value {
@@ -629,7 +642,7 @@ impl Harness {
 
     async fn token_stored(&self, id: &str) -> bool {
         sqlx::query_scalar::<_, Option<Vec<u8>>>(
-            "SELECT token_ciphertext FROM notion_imports WHERE id = ?",
+            "SELECT token_ciphertext FROM notion_imports WHERE id = $1",
         )
         .bind(id)
         .fetch_one(self.database.pool())
@@ -651,7 +664,7 @@ impl Harness {
     /// Orbit page id of an imported Notion page.
     async fn orbit_id(&self, import_id: &str, notion_id: &str) -> String {
         sqlx::query_scalar(
-            "SELECT page_id FROM notion_import_items WHERE import_id = ? AND notion_id = ?",
+            "SELECT page_id FROM notion_import_items WHERE import_id = $1 AND notion_id = $2",
         )
         .bind(import_id)
         .bind(notion_id)
@@ -675,7 +688,7 @@ impl Harness {
     }
 
     async fn children_titles(&self, parent: &str) -> Vec<String> {
-        sqlx::query_scalar("SELECT title FROM pages WHERE parent_id = ? ORDER BY position, id")
+        sqlx::query_scalar("SELECT title FROM pages WHERE parent_id = $1 ORDER BY position, id")
             .bind(parent)
             .fetch_all(self.database.pool())
             .await
@@ -1370,7 +1383,7 @@ async fn import_resumes_after_a_crash_without_duplicates() {
 
     // A crash between creating a page and recording it: the page exists, the item is pending.
     sqlx::query(
-        "UPDATE notion_import_items SET status = 'pending' WHERE import_id = ? AND notion_id = ?",
+        "UPDATE notion_import_items SET status = 'pending' WHERE import_id = $1 AND notion_id = $2",
     )
     .bind(&id)
     .bind(ORPHAN)
@@ -1408,7 +1421,7 @@ async fn a_revoked_token_fails_the_import_and_page_errors_are_reported() {
         .await;
     // A page that disappeared from Notion is recorded; the import continues.
     sqlx::query(
-        "UPDATE notion_import_items SET notion_id = ? WHERE import_id = ? AND notion_id = ?",
+        "UPDATE notion_import_items SET notion_id = $1 WHERE import_id = $2 AND notion_id = $3",
     )
     .bind("f0000000-0000-4000-8000-000000000001")
     .bind(&id)
@@ -1461,7 +1474,7 @@ async fn a_revoked_token_fails_the_import_and_page_errors_are_reported() {
 async fn unstarted_scans_expire_after_a_day() {
     let harness = Harness::new().await;
     let id = harness.scanned(&harness.owner_cookie).await;
-    sqlx::query("UPDATE notion_imports SET updated_at = ? WHERE id = ?")
+    sqlx::query("UPDATE notion_imports SET updated_at = $1 WHERE id = $2")
         .bind(TimestampMillis::now().as_millis() - 25 * 60 * 60 * 1000)
         .bind(&id)
         .execute(harness.database.pool())
@@ -1540,7 +1553,7 @@ async fn wait_for(harness: &Harness, id: &str, status: &str) {
 }
 
 async fn page_files_of(harness: &Harness, page_id: &str) -> i64 {
-    sqlx::query_scalar("SELECT COUNT(*) FROM page_files WHERE page_id = ?")
+    sqlx::query_scalar("SELECT COUNT(*) FROM page_files WHERE page_id = $1")
         .bind(page_id)
         .fetch_one(harness.database.pool())
         .await
@@ -1774,12 +1787,20 @@ async fn an_exhausted_job_fails_the_import_when_its_last_attempt_ends() {
         import["error"].as_str().unwrap().contains("503"),
         "{import}"
     );
-    let live: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM jobs WHERE kind = 'notion.import' AND state IN ('queued', 'running')",
-    )
-    .fetch_one(harness.database.pool())
-    .await
-    .unwrap();
+    // The handler fails the import before it returns; the worker records the dead job after.
+    let mut live = -1_i64;
+    for _ in 0..500 {
+        live = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM jobs WHERE kind = 'notion.import' AND state IN ('queued', 'running')",
+        )
+        .fetch_one(harness.database.pool())
+        .await
+        .unwrap();
+        if live == 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     assert_eq!(live, 0);
     shutdown.cancel();
     running.await.unwrap().unwrap();
@@ -1824,7 +1845,7 @@ async fn a_retried_page_does_not_attach_its_files_twice() {
     );
     // A crash after Handbook's files were attached but before it was marked done.
     sqlx::query(
-        "UPDATE notion_import_items SET status = 'created' WHERE import_id = ? AND notion_id = ?",
+        "UPDATE notion_import_items SET status = 'created' WHERE import_id = $1 AND notion_id = $2",
     )
     .bind(&id)
     .bind(HANDBOOK)
@@ -1851,4 +1872,42 @@ async fn a_retried_page_does_not_attach_its_files_twice() {
         .call_raw(&harness.owner_cookie, "GET", &image, None)
         .await;
     assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn an_import_into_a_read_only_cloud_workspace_stops() {
+    let harness = Harness::new().await;
+    let id = harness.scanned(&harness.owner_cookie).await;
+    harness
+        .start(
+            &harness.owner_cookie,
+            &id,
+            json!({"selection": {"all": true}}),
+        )
+        .await;
+    let before = harness.page_count().await;
+    // Not the exempt root workspace and past its trial, so without a subscription it is read-only.
+    sqlx::query("UPDATE workspaces SET created_at = 0, billing_exempt = 0 WHERE id = $1")
+        .bind(harness.workspace_id.to_string())
+        .execute(harness.database.pool())
+        .await
+        .unwrap();
+    let _billing = orbit_server::billing::Billing::new(
+        orbit_platform::BillingConfig::new(
+            orbit_platform::Secret::new("sk_test_unused"),
+            orbit_platform::Secret::new("whsec_unused"),
+            vec![],
+        ),
+        (*harness.database).clone(),
+        "https://orbit.test",
+    );
+    harness.run_import(&id).await;
+    let import = harness.detail(&harness.owner_cookie, &id).await;
+    assert_eq!(import["status"], "failed");
+    assert_eq!(
+        import["error"],
+        "The import stopped because the workspace is read-only: it has no active subscription."
+    );
+    assert!(!harness.token_stored(&id).await);
+    assert_eq!(harness.page_count().await, before);
 }

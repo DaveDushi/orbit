@@ -29,6 +29,7 @@ use crate::repositories::attachments::{
 use crate::repositories::identity::AuthenticatedSession;
 use crate::repositories::identity::IdentityRepository;
 use crate::repositories::tasks::CommentRecord;
+use crate::task_routes::ApiError;
 
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
@@ -301,7 +302,7 @@ async fn list_comment_attachments(
     ))
 }
 
-#[utoipa::path(post, path = "/api/v1/workspaces/{workspace_id}/tasks/{task_id}/attachments", params(("workspace_id" = String, Path), ("task_id" = String, Path)), request_body(content = AttachmentUploadBody, content_type = "multipart/form-data"), responses((status = 201, body = AttachmentRecord)))]
+#[utoipa::path(post, path = "/api/v1/workspaces/{workspace_id}/tasks/{task_id}/attachments", params(("workspace_id" = String, Path), ("task_id" = String, Path), ("inline" = Option<String>, Query, description = "`1`: a file placed in the description or a comment's text; attachment lists leave it out")), request_body(content = AttachmentUploadBody, content_type = "multipart/form-data"), responses((status = 201, body = AttachmentRecord)))]
 async fn upload_task_attachments(
     State(state): State<AttachmentState>,
     Path((workspace, task)): Path<(String, String)>,
@@ -322,12 +323,18 @@ async fn upload_task_attachments(
         request_id.as_ref(),
     )
     .await?;
+    // `?inline=1`: a file pasted into the description or a comment's text (not listed).
+    let inline = request
+        .uri()
+        .query()
+        .is_some_and(|query| query.split('&').any(|pair| pair == "inline=1"));
     let records = upload_fields(
         &state,
         request,
         workspace_id,
         task_id,
         None,
+        inline,
         &session,
         &instance,
         request_id.as_ref(),
@@ -370,6 +377,7 @@ async fn upload_comment_attachments(
         workspace_id,
         task_id,
         Some(comment_id),
+        false,
         &session,
         &instance,
         request_id.as_ref(),
@@ -448,6 +456,7 @@ async fn upload_fields(
     workspace_id: Id,
     task_id: Id,
     comment_id: Option<Id>,
+    inline: bool,
     session: &AuthenticatedSession,
     instance: &str,
     request_id: Option<&Extension<RequestId>>,
@@ -464,7 +473,7 @@ async fn upload_fields(
     let staged = staged_uploads.upload().clone();
     let attachment = match state
         .attachments
-        .finalize(session, workspace_id, task_id, comment_id, &staged)
+        .finalize(session, workspace_id, task_id, comment_id, inline, &staged)
         .await
     {
         Ok(attachment) => attachment,
@@ -993,6 +1002,14 @@ impl AttachmentApiError {
                 instance,
                 request_id,
             ),
+            UploadError::StorageQuotaExceeded { .. } => Self::new(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "storage_quota_exceeded",
+                "Storage quota exceeded",
+                STORAGE_QUOTA_DETAIL,
+                instance,
+                request_id,
+            ),
             UploadError::InvalidDisplayName => Self::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "validation_failed",
@@ -1049,4 +1066,24 @@ impl IntoResponse for AttachmentApiError {
         );
         response
     }
+}
+
+const STORAGE_QUOTA_DETAIL: &str = "This file does not fit in the workspace's storage quota. Delete files you no \
+     longer need (files in the trash count until the trash is emptied), or ask the administrator of this Orbit for a \
+     higher quota.";
+
+/// 413 `storage_quota_exceeded`: the file would take the workspace over its storage quota. Settings show how much
+/// the workspace uses.
+pub(crate) fn storage_quota_exceeded(
+    instance: &str,
+    request_id: Option<&Extension<RequestId>>,
+) -> ApiError {
+    ApiError::new(
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "storage_quota_exceeded",
+        "Storage quota exceeded",
+        STORAGE_QUOTA_DETAIL,
+        instance,
+        request_id,
+    )
 }

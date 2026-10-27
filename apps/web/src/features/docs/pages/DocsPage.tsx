@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ComponentProps } from 'react'
+import { isPaymentRequired } from '@orbit/api/problem'
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
 import { DocumentText as FileText, Add as Plus } from 'reicon-react'
@@ -23,6 +24,7 @@ import { useTeamspaces } from '@/features/docs/api/teamspaces'
 import { descendantsOf, dropOnSpace, landingPage, pageTitle, spaceKey, spaceLabel, type SpaceKey } from '@/features/docs/pageTree'
 import { cn } from 'cn'
 import { DocEditor, type DocEditorControl } from '@/features/docs/components/DocEditor'
+import { preloadPageEditor } from '@/features/docs/editor/loadPageEditor'
 import { DocTree } from '@/features/docs/components/DocTree'
 import { DocPageActionsContext, type DocPageActions } from '@/features/docs/pageActions'
 import { NotionImportPane } from './NotionImportPane'
@@ -66,6 +68,10 @@ export function DocsPage({ view = 'page' }: { view?: 'page' | 'trash' | 'import'
     activeIdRef.current = activeId
     locationKeyRef.current = location.key
   })
+  // Download the editor while the page itself loads, not after its socket has synced.
+  useEffect(() => {
+    preloadPageEditor()
+  }, [])
   const markGone = (id: string) => setGone({ id, key: locationKeyRef.current })
 
   const createFirstPage = () => {
@@ -73,7 +79,9 @@ export function DocsPage({ view = 'page' }: { view?: 'page' | 'trash' | 'import'
       {},
       {
         onSuccess: (created) => navigate(`/docs/${created.id}`),
-        onError: () => toast.error('Could not create the page. Try again.'),
+        onError: (error) => {
+          if (!isPaymentRequired(error)) toast.error('Could not create the page. Try again.')
+        },
       },
     )
   }
@@ -158,7 +166,9 @@ export function DocsPage({ view = 'page' }: { view?: 'page' | 'trash' | 'import'
           navigate(`/docs/${copy.id}`)
           toast.success(`Duplicated “${pageTitle(target)}”`)
         },
-        onError: () => toast.error('Could not duplicate the page.'),
+        onError: (error) => {
+          if (!isPaymentRequired(error)) toast.error('Could not duplicate the page.')
+        },
       },
     )
   }

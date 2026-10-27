@@ -25,7 +25,7 @@ use utoipa::ToSchema;
 
 use crate::auth_routes::CookieMode;
 use crate::link_preview::LinkPreviewer;
-use crate::live::{LiveHub, Recipients};
+use crate::live::{LiveHub, NewEvent, Recipients};
 use crate::repositories::chat::{ChatError, ChatEvent, ChatRepository, Written};
 use crate::repositories::identity::IdentityRepository;
 use crate::task_routes::{ApiError, authenticate_session, validation};
@@ -74,13 +74,26 @@ impl ChatState {
     ) -> Result<(Written<T>, u64), ChatError> {
         let _order = self.hub.write_lock(workspace_id).await;
         let written = write.await?;
-        for emitted in &written.events {
-            self.hub
-                .publish(workspace_id, &emitted.recipients, TOPIC, &emitted.event);
-        }
+        let events: Vec<NewEvent> = written
+            .events
+            .iter()
+            .map(|emitted| NewEvent {
+                recipients: emitted.recipients.clone(),
+                topic: TOPIC,
+                event: serde_json::to_value(&emitted.event).unwrap_or_default(),
+            })
+            .collect();
         // The number of the write's last event. A client that has seen it on its socket knows
         // that the response is not news, and that it must not put it over newer events.
-        let seq = self.hub.seq(workspace_id);
+        let seq = match self.hub.publish(workspace_id, &events).await {
+            Ok(seq) => seq,
+            Err(error) => {
+                // The write is done; the sockets miss its events until they resync. No socket
+                // has seen this number, so the writer's client applies the response.
+                tracing::warn!(error = %error, "chat events for the live socket");
+                UNSEEN_SEQ
+            }
+        };
         if !written.inbox.is_empty() {
             self.hub.signal(
                 workspace_id,
@@ -97,35 +110,37 @@ impl ChatState {
             .into_iter()
             .filter(|user_id| *user_id != actor_id)
             .collect();
+        let mut states = Vec::new();
         if let Some(conversation_id) = written.counted {
             match self.chat.states_for(conversation_id, &others).await {
-                Ok(states) => {
-                    for (user_id, state) in states {
-                        self.hub.publish(
-                            workspace_id,
-                            &Recipients::Users(vec![user_id]),
-                            TOPIC,
-                            &ChatEvent::StateChanged { state },
-                        );
-                    }
-                }
+                Ok(found) => states.extend(
+                    found
+                        .into_iter()
+                        .map(|(user_id, state)| (user_id, ChatEvent::StateChanged { state })),
+                ),
                 Err(error) => tracing::warn!(error = %error, "chat states for the live socket"),
             }
         }
         if let Some(root_id) = written.replied {
             match self.chat.thread_states_for(root_id, &others).await {
-                Ok(states) => {
-                    for (user_id, state) in states {
-                        self.hub.publish(
-                            workspace_id,
-                            &Recipients::Users(vec![user_id]),
-                            TOPIC,
-                            &ChatEvent::ThreadChanged { state },
-                        );
-                    }
-                }
+                Ok(found) => states.extend(
+                    found
+                        .into_iter()
+                        .map(|(user_id, state)| (user_id, ChatEvent::ThreadChanged { state })),
+                ),
                 Err(error) => tracing::warn!(error = %error, "thread states for the live socket"),
             }
+        }
+        let states: Vec<NewEvent> = states
+            .into_iter()
+            .map(|(user_id, event)| NewEvent {
+                recipients: Recipients::Users(vec![user_id]),
+                topic: TOPIC,
+                event: serde_json::to_value(&event).unwrap_or_default(),
+            })
+            .collect();
+        if let Err(error) = self.hub.publish(workspace_id, &states).await {
+            tracing::warn!(error = %error, "chat states for the live socket");
         }
         Ok((written, seq))
     }
@@ -133,6 +148,8 @@ impl ChatState {
 
 /// The topic of chat events on the live socket.
 const TOPIC: &str = "chat";
+/// A number no live socket has seen (the largest integer a browser reads exactly).
+const UNSEEN_SEQ: u64 = (1 << 53) - 1;
 
 pub fn chat_router(state: ChatState) -> Router {
     files::file_router(state.clone()).merge(json_router(state))

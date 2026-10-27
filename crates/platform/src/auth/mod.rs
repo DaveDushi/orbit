@@ -11,5 +11,8 @@ pub use session::{
     AuthenticatedUser, InMemorySessionStore, IssuedSession, SessionError, SessionRecord,
     SessionStore,
 };
-pub use throttle::{LoginReservation, LoginThrottler, ThrottleDecision, normalize_email};
+pub use throttle::{
+    EmailFailures, LoginReservation, LoginThrottler, ThrottleDecision,
+    WINDOW_MILLIS as THROTTLE_WINDOW_MILLIS, normalize_email,
+};
 pub use token::{IssuedToken, OneTimeTokenStore, TokenError, TokenKind, generate_opaque_token};

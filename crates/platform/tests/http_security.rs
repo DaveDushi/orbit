@@ -669,12 +669,13 @@ async fn readiness_requires_every_named_platform_check() {
         .with_check(HealthCheck::Scheduler, || async {
             Err("worker stopped".to_owned())
         })
-        .with_check(HealthCheck::CriticalConfig, || async { Ok(()) });
+        .with_check(HealthCheck::CriticalConfig, || async { Ok(()) })
+        .with_check(HealthCheck::Accepting, || async { Ok(()) });
 
     assert!(registry.is_live());
     let readiness = registry.readiness().await;
     assert!(!readiness.ready);
-    assert_eq!(readiness.checks.len(), 5);
+    assert_eq!(readiness.checks.len(), 6);
     assert!(!readiness.checks["scheduler"].ready);
 }
 
@@ -708,6 +709,12 @@ async fn endpoint_class_limits_return_correlated_problem_details() {
     let response = app.oneshot(request()).await.unwrap();
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(response.headers()[CONTENT_TYPE], "application/problem+json");
+    let retry_after: u64 = response.headers()["retry-after"]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!((1..=60).contains(&retry_after));
     let response_request_id = response.headers()["x-request-id"]
         .to_str()
         .unwrap()

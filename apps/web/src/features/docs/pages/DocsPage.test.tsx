@@ -3,12 +3,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
-import type { Page, PageSummary, Teamspace, WorkspaceRole } from '@/api/generated/types.gen'
+import type { Page, PageSummary, Teamspace, WorkspaceRole } from '@orbit/api/generated/types.gen'
 import { queryKeys } from '@/api/queryKeys'
 import { ConfirmationModalHost } from '@/components/common/ConfirmationModal'
 import { WorkspaceProvider } from '@/features/workspaces/WorkspaceProvider'
 import { toSummary } from '@/features/docs/api/pages'
-import { CollabConnectContext, type CollabTarget } from '@/features/docs/collab/connection'
+import type { CollabTarget } from '@orbit/editor/collab/target'
+import { CollabConnectContext } from '@/features/docs/collab/connection'
 import { DocsPage } from './DocsPage'
 import { PRINT_ATTR } from '@/features/docs/pageExport'
 import { fakeCollab, fragmentText, type FakeCollab } from '@/test/fakeCollab'
@@ -113,7 +114,8 @@ function clearTitle(title: HTMLInputElement) {
 
 async function editorMounted(view: ReturnType<typeof render>) {
   await waitFor(() => {
-    if (!view.container.querySelector('.bn-editor')) throw new Error('editor not mounted yet')
+    // The read-only preview before the first sync does not count.
+    if (!view.container.querySelector('.bn-editor') || view.queryByTestId('editor-preview')) throw new Error('editor not mounted yet')
   }, { timeout: 4000 })
 }
 
@@ -492,15 +494,18 @@ const pageRoutes = (extra: Handler = () => undefined): Handler => (call) =>
   (call.path === '/pages/first' && call.method === 'GET' ? Response.json(fullPage('first', { title: 'Plan' })) : undefined) ??
   (call.path === '/pages/second' && call.method === 'GET' ? Response.json(fullPage('second', { title: 'Second' })) : undefined)
 
-test('content is live: the editor mounts after the first sync, shows remote edits, and typing sends no PATCH', async () => {
+test('content is live: a read-only preview until the first sync, then the live editor shows remote edits and typing sends no PATCH', async () => {
   const collab = fakeCollab({ content: () => text('Shared text'), autoSync: false })
-  const { view, calls } = setup('/docs/first', pageRoutes(), 'owner', { collab })
+  const saved = (call: { path: string; method: string }) =>
+    call.path === '/pages/first' && call.method === 'GET' ? Response.json(fullPage('first', { title: 'Plan', content: text('Saved text') })) : undefined
+  const { view, calls } = setup('/docs/first', pageRoutes(saved), 'owner', { collab })
   await view.findByLabelText('Page title')
   await waitFor(() => expect(collab.connections).toHaveLength(1))
-  expect(collab.last().target).toEqual({ workspaceId: 'workspace-1', pageId: 'first', epoch: 'epoch-1' })
-  // Never bound to an unsynced (empty) document.
-  expect(view.getByTestId('editor-loading')).toBeTruthy()
-  expect(view.container.querySelector('.bn-editor')).toBeNull()
+  expect(collab.last().target).toEqual({ workspaceId: 'workspace-1', kind: 'pages', id: 'first', epoch: 'epoch-1' })
+  // Never bound to an unsynced (empty) document: the saved content shows read-only until the first sync.
+  const preview = await view.findByTestId('editor-preview')
+  await waitFor(() => expect(preview.textContent).toContain('Saved text'))
+  expect(preview.querySelector('.bn-editor')?.getAttribute('contenteditable')).toBe('false')
   expect(collabStatus(view).dataset.collabStatus).toBe('connecting')
   expect(collabStatus(view).textContent).toBe('Connecting…')
 

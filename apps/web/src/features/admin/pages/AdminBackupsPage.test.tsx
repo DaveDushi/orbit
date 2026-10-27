@@ -49,3 +49,21 @@ test('deleting a backup asks first, then removes it from the list', async () => 
     unregister()
   }
 })
+
+test('a failed backup shows the reason from the server', async () => {
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const request = input as Request
+    if (request.method === 'POST') {
+      return Response.json(
+        { type: 'about:blank', title: 'Backup failed', status: 500, code: 'backup_upload_failed', detail: 'The backup was saved on this server, but the upload to S3 failed: object storage answered 403: AccessDenied', instance: '/api/v1/admin/backups', request_id: 'r' },
+        { status: 500, headers: { 'content-type': 'application/problem+json' } },
+      )
+    }
+    return Response.json({ items: [] })
+  }) as unknown as typeof fetch
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const view = render(<QueryClientProvider client={client}><AdminBackupsPage /></QueryClientProvider>)
+  await view.findByText('No backups yet.')
+  fireEvent.click(view.getByRole('button', { name: 'Create backup now' }))
+  expect((await view.findByRole('alert')).textContent).toBe('The backup was saved on this server, but the upload to S3 failed: object storage answered 403: AccessDenied')
+})

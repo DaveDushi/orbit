@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from
 import { cn } from 'cn'
 import { useQueryClient } from '@tanstack/react-query'
 import { confirmAction } from '@/components/common/confirmAction'
-import { ArrowLeft, Calendar, Hierarchy2, Link2, Paperclip2 as Paperclip, TaskSquare as SquareCheck, User as UserIcon, Xmark as X } from 'reicon-react'
+import { Add as Plus, ArrowLeft, Calendar, Hierarchy2, Link2, Tag, TaskSquare as SquareCheck, User as UserIcon, Xmark as X } from 'reicon-react'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Tip } from '@/components/common/Tip'
@@ -25,13 +25,13 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { Pane, PaneHeader } from '@/components/common/Pane'
 import { PriorityIcon } from './PriorityIcon'
 import { TaskStatusIcon } from './TaskStatusIcon'
-import { dueDateLabel, PRIORITY_LABEL, PRIORITY_ORDER, projectStatuses } from '@/features/tasks/taskMeta'
+import { dueDateLabel, PRIORITY_LABEL, PRIORITY_ORDER, projectLabels, projectStatuses } from '@/features/tasks/taskMeta'
 import { refIdentifier, type Project, type Task, type TaskViewState } from '@/features/tasks/api/models'
 import { cachedDescendantIds, type PageTaskRecord } from '@/features/tasks/api/optimistic'
 import { useProjects } from '@/features/tasks/api/projects'
 import {
   useAddTaskRelation, useCreateTaskComment, useDeleteTask, useDeleteTaskAttachment, useRemoveTaskRelation,
-  subIssuesQuery, useSubIssues, useTaskGithubLinks, useTaskRelations, useUpdateTask, useUploadTaskAttachments,
+  subIssuesQuery, useSubIssues, useTaskGithubLinks, useTaskRelations, useUpdateTask,
 } from '@/features/tasks/api/tasks'
 import { pickerTitle, relatedTaskIds, type RelationKind } from '@/features/tasks/relationsLib'
 import { useDuplicateActions } from '@/features/tasks/useDuplicateActions'
@@ -44,17 +44,20 @@ import { AddRelationMenu, DuplicateBanner, TaskRelationsSection } from './TaskRe
 import { TaskBreadcrumb } from './TaskBreadcrumb'
 import { SubIssuesSection } from './TaskSubIssues'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
+import { useWorkspaceReadOnly } from '@/features/workspaces/billing'
 import { Attachments } from '@/components/common/Attachments'
 import { ActivityFeed } from './ActivityFeed'
 import { TaskCommentComposer } from './TaskCommentComposer'
-import { LabelPill, TaskLabels } from './TaskLabels'
+import { LabelPicker, LabelPill } from './TaskLabels'
+import { TaskDescriptionEditor, type TaskDescriptionHandle } from './TaskDescriptionEditor'
 import { TaskTextFields } from './TaskTextFields'
 
 interface TaskDetailProps {
   task: Task | undefined
   project: Project | undefined
   state: TaskViewState
-  onBack: () => void
+  /** Closes the task (back arrow, close button, and after a delete). */
+  onClose: () => void
   /** Opens another task (banner, relation rows, activity links). */
   onOpenTask?: (taskId: string) => void
   /** Opens a project's task list (the breadcrumb's project crumb). */
@@ -62,22 +65,25 @@ interface TaskDetailProps {
 }
 
 /** Full-page task view: main column (title, description, activity, comment composer) + properties column. */
-export function TaskDetail({ task, project, state, onBack, onOpenTask, onOpenProject }: TaskDetailProps) {
+export function TaskDetail({ task, project, state, onClose, onOpenTask, onOpenProject }: TaskDetailProps) {
   const { workspace } = useWorkspace()
   const updateTask = useUpdateTask(workspace.id)
-  const uploadAttachments = useUploadTaskAttachments(workspace.id, task?.id ?? '')
   const deleteAttachment = useDeleteTaskAttachment(workspace.id, task?.id ?? '')
   const createComment = useCreateTaskComment(workspace.id, task?.id ?? '')
   const deleteTask = useDeleteTask(workspace.id)
   const githubLinks = useTaskGithubLinks(workspace.id, task?.id)
+  const workspaceReadOnly = useWorkspaceReadOnly()
   const githubContentReadOnly = !githubLinks.isSuccess || githubLinks.data.some((link) => link.source)
+  // Orbit Cloud without a subscription: the description socket drops edits, so offer none.
+  const contentReadOnly = githubContentReadOnly || workspaceReadOnly
   const githubSyncPaused = githubLinks.data?.some((link) => link.source && link.state === 'paused')
   const githubPullRequests = githubLinks.data?.filter((link) => link.kind === 'pull_request' && !link.source) ?? []
   // the task is the GitHub issue or pull request it syncs from: the server refuses to move it to another project
   const githubIssueLinked = githubLinks.data?.some((link) => link.source) ?? false
+  const taskLabels = task ? projectLabels(state.labels, task.projectId).filter((label) => task.labels.includes(label.id)).sort((a, b) => a.name.localeCompare(b.name)) : []
   const moveToProject = useMoveToProject(workspace.id)
   const users = state.users
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const descriptionRef = useRef<TaskDescriptionHandle>(null)
   // the date panel needs to close itself from Clear, so the popover stays controlled
   const [dueDateOpen, setDueDateOpen] = useState(false)
   // each pick saves and the picker stays open; quick picks queue behind the save in flight
@@ -122,16 +128,13 @@ export function TaskDetail({ task, project, state, onBack, onOpenTask, onOpenPro
     await duplicates.unmarkOne(task)
     setUnmarking(false)
   }
-  const attach = (files: FileList | File[] | null) => {
-    if (task && files && files.length > 0) uploadAttachments.mutate(Array.from(files))
-  }
   const status = state.statuses.find((s) => s.id === task?.statusId)
   const statusOptions = task ? projectStatuses(state.statuses, task.projectId) : []
   const assignees = users.filter((u) => task?.assigneeIds.includes(u.id))
   const deleteAndClose = async (input: { taskId: string; version: number }) => {
     try {
       await deleteTask.mutateAsync(input)
-      onBack()
+      onClose()
     } catch {
       // The visible mutation alert keeps the user on this task and offers retry.
     }
@@ -152,7 +155,7 @@ export function TaskDetail({ task, project, state, onBack, onOpenTask, onOpenPro
   return (
     <Pane>
       <PaneHeader>
-        <Button variant="ghost" size="icon-sm" className="text-muted-foreground/70 min-[900px]:hidden" onClick={onBack} aria-label="Back to tasks">
+        <Button variant="ghost" size="icon-sm" className="text-muted-foreground/70 min-[900px]:hidden" onClick={onClose} aria-label="Back to tasks">
           <ArrowLeft className="size-4" />
         </Button>
         <TaskBreadcrumb project={project} ancestors={task?.ancestors ?? []} identifier={task?.identifier ?? 'Task'} onOpen={openTask} onOpenProject={onOpenProject} />
@@ -160,7 +163,7 @@ export function TaskDetail({ task, project, state, onBack, onOpenTask, onOpenPro
         <div className="flex-1" />
         {task ? <Tip label="Move to trash" side="bottom"><Button variant="destructive" disabled={deleteTask.isPending} onClick={() => void trash()}>Delete</Button></Tip> : null}
         <Tip label="Close task" side="bottom">
-          <Button variant="ghost" size="icon-sm" className="text-muted-foreground/70 max-[899px]:hidden" onClick={onBack} aria-label="Close task">
+          <Button variant="ghost" size="icon-sm" className="text-muted-foreground/70 max-[899px]:hidden" onClick={onClose} aria-label="Close task">
             <X className="size-4" />
           </Button>
         </Tip>
@@ -191,32 +194,26 @@ export function TaskDetail({ task, project, state, onBack, onOpenTask, onOpenPro
             ) : null}
             <TaskTextFields
               task={task}
-              readOnly={githubContentReadOnly}
+              readOnly={contentReadOnly}
               onUpdate={(body) => updateTask.mutate({ taskId: task.id, body: { expected_version: task.version, ...body } })}
-              onAttachFiles={attach}
-            >
-              {task.attachments.length > 0 ? (
-                <div className="max-w-[520px]">
-                  <Attachments attachments={task.attachments} onRemove={(id) => deleteAttachment.mutate(id)} />
-                </div>
-              ) : null}
-              <div className="mt-1.5">
-                <input ref={fileInputRef} type="file" multiple hidden aria-label="Attach files" onChange={(e) => attach(e.target.files)} />
-                <Button variant="ghost" className="-ml-2 text-xs text-muted-foreground/70" onClick={() => fileInputRef.current?.click()}>
-                  <Paperclip className="size-3.5" />
-                  Attach
-                </Button>
-                <AddRelationMenu open={relationMenuOpen} onOpenChange={setRelationMenuOpen} onChoose={setPicker} />
-                {(task.subIssueCount ?? 0) === 0 && childIds.length === 0 && !composingSubIssue ? (
-                  <Button ref={subIssueAddRef} variant="ghost" className="text-xs text-muted-foreground/70" onClick={() => setComposingSubIssue(true)}>
-                    <Hierarchy2 className="size-3.5" aria-hidden="true" />
-                    Add sub-issue
-                  </Button>
-                ) : null}
-                {uploadAttachments.isPending ? <span role="status" aria-live="polite" className="text-xs text-muted-foreground/70 tabular-nums">Uploading {uploadAttachments.progress}%</span> : null}
-                {uploadAttachments.isError ? <span role="alert" className="text-xs text-destructive">{uploadAttachments.remainingCount} file(s) remain. <Button variant="ghost" onClick={uploadAttachments.retry}>Retry upload</Button></span> : null}
+              onTitleTab={() => descriptionRef.current?.focus()}
+            />
+            <TaskDescriptionEditor ref={descriptionRef} workspaceId={workspace.id} task={task} readOnly={contentReadOnly} />
+            {/* files attached before rich text; new files go into the description */}
+            {task.attachments.length > 0 ? (
+              <div className="mt-2 max-w-[520px]">
+                <Attachments attachments={task.attachments} onRemove={(id) => deleteAttachment.mutate(id)} />
               </div>
-            </TaskTextFields>
+            ) : null}
+            <div className="mt-1.5">
+              <AddRelationMenu open={relationMenuOpen} onOpenChange={setRelationMenuOpen} onChoose={setPicker} />
+              {(task.subIssueCount ?? 0) === 0 && childIds.length === 0 && !composingSubIssue ? (
+                <Button ref={subIssueAddRef} variant="ghost" className="text-xs text-muted-foreground/70" onClick={() => setComposingSubIssue(true)}>
+                  <Hierarchy2 className="size-3.5" aria-hidden="true" />
+                  Add sub-issue
+                </Button>
+              ) : null}
+            </div>
             {githubLinks.data?.some((link) => link.source) ? <p className="mt-2 text-xs text-muted-foreground">This task's title and description are read-only while it is linked to GitHub.</p> : null}
             {githubSyncPaused ? <p className="mt-2 text-xs text-muted-foreground">Add the project label to the GitHub issue or pull request again to resume updates.</p> : null}
             {updateTask.isError ? <p role="alert" className="text-xs text-destructive">Task update failed. <Button variant="ghost" onClick={() => updateTask.variables && updateTask.mutate(updateTask.variables)}>Retry</Button></p> : null}
@@ -375,7 +372,26 @@ export function TaskDetail({ task, project, state, onBack, onOpenTask, onOpenPro
             </PropertyGroup>
 
             <PropertyGroup title="Labels">
-              <TaskLabels workspaceId={workspace.id} labelIds={task.labels} labels={state.labels} onChange={(labelIds) => updateTask.mutate({ taskId: task.id, body: { expected_version: task.version, label_ids: labelIds } })} />
+              <LabelPicker
+                workspaceId={workspace.id}
+                projectId={task.projectId}
+                labelIds={task.labels}
+                labels={state.labels}
+                editLink
+                onChange={(labelIds) => updateTask.mutate({ taskId: task.id, body: { expected_version: task.version, label_ids: labelIds } })}
+                trigger={taskLabels.length === 0 ? (
+                  <PropertyButton className="text-muted-foreground" aria-label="Add label">
+                    <Tag className="size-3.5" aria-hidden="true" />
+                    Add label
+                  </PropertyButton>
+                ) : (
+                  // one control: the pills open the picker, where labels are also removed
+                  <button type="button" aria-label={`Labels: ${taskLabels.map((label) => label.name).join(', ')}`} className="-mx-1 flex max-w-full flex-wrap gap-1 rounded-md p-1 text-left outline-none hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50 aria-expanded:bg-muted/50">
+                    {taskLabels.map((label) => <LabelPill key={label.id} label={label} />)}
+                    <span aria-hidden="true" className="flex h-5 items-center px-0.5 text-muted-foreground"><Plus className="size-3.5" /></span>
+                  </button>
+                )}
+              />
             </PropertyGroup>
 
             <PropertyGroup title="Project">
@@ -474,9 +490,9 @@ export function TaskDetail({ task, project, state, onBack, onOpenTask, onOpenPro
           <div className="col-start-1 min-w-0 min-[900px]:mx-auto min-[900px]:w-full min-[900px]:max-w-[840px] min-[900px]:px-10 min-[900px]:pb-12">
             <ActivityFeed task={task} state={state} onOpenTask={onOpenTask} />
 
-            {/* the chat composer: markdown, @mentions, emoji, attachments (paste / drop / pick) */}
+            {/* the rich text comment field: blocks, @mentions, inline files (paste / drop / pick) */}
             <div className="mt-4 max-[899px]:mt-3">
-              <TaskCommentComposer placeholder="Leave a comment…" pending={createComment.isPending} progress={createComment.progress} error={createComment.isError ? `${createComment.remainingCount || 'Comment'} upload failed.` : undefined} members={users} onSend={(body, files, mentionedUserIds) => createComment.mutateAsync({ body, files, mentionedUserIds })} />
+              <TaskCommentComposer workspaceId={workspace.id} taskId={task.id} pending={createComment.isPending} error={createComment.isError ? 'Comment failed.' : undefined} members={users} onSend={(bodyJson) => createComment.mutateAsync({ bodyJson })} />
             </div>
           </div>
           {picker ? (
