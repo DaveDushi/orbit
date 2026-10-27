@@ -4,11 +4,13 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The original exe.dev hostname still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, upstream commit d83ce6ce7892b420abf317adbd861813dabba221.
+- Source: DaveDushi/orbit, upstream commit 4f149f1ddd640860de334cab551f2d0dd4a59ff8.
 - Binary extracted from the upstream coollabsio/orbit image for the identical full commit.
-- Image digest: sha256:0291062e65cdaf19014003473a4f7941d4d7627199c1b4f606db8037a63bf64d
+- Image digest: sha256:fe28b7df675e2e2f049e6a85bc584ad06ac1bd6f26a80a0678a103557ef0bfa0
 - Executable: /usr/local/bin/orbit; unprivileged system user: orbit.
-- Config: /etc/orbit/orbit.toml (production mode, closed registration).
+- Config: /etc/orbit/orbit.env (production mode); registration remains closed in instance settings.
+- Environment-only startup: /etc/systemd/system/orbit.service.d/environment.conf.
+- Legacy TOML is retained at /etc/orbit/orbit.toml for the old binary and rollback only.
 - SQLite, attachments, encryption key: /var/lib/orbit/ (mode 700).
 - Local backups: /var/backups/orbit/ (mode 700).
 - systemd: orbit.service and nginx.service, enabled at boot.
@@ -18,7 +20,7 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 ## Custom-domain configuration
 
-Orbit's `/etc/orbit/orbit.toml` sets `[http].public_origin` to
+Orbit's `/etc/orbit/orbit.env` sets `ORBIT_PUBLIC_ORIGIN` to
 `https://orbit.wellrox.com` (no trailing slash). This controls the browser
 origin policy as well as generated application links. Changing DNS alone does
 not update it: a mismatched origin makes sign-in fail with
@@ -28,8 +30,18 @@ nginx's `/etc/nginx/conf.d/orbit.conf` names both the custom domain and original
 exe.dev hostname. After changing the domain, validate the application config
 and nginx config, restart `orbit.service`, and reload `nginx.service`.
 Keep production origin checks and the existing trusted-proxy policy enabled.
-The previous application config is saved locally at
+The original pre-domain application config is saved locally at
 `/etc/orbit/orbit.toml.before-custom-domain`.
+
+For CLI commands, load the same environment as the service:
+
+```sh
+sudo -u orbit bash
+set -a
+source /etc/orbit/orbit.env
+set +a
+orbit config check
+```
 
 Verified through the local nginx proxy with the HTTPS forwarding header:
 readiness is healthy; a login POST with the custom origin reaches request-body
@@ -66,16 +78,18 @@ For disaster recovery, configure an off-host S3-compatible bucket there.
 Local snapshots on this VM do not protect against VM loss.
 
 Keep /var/lib/orbit/app.key with secure off-host backups: it is needed to
-decrypt saved secrets. A local mode-600 copy is /var/backups/orbit/app.key.
+decrypt saved secrets. `ORBIT_APP_KEY_FILE` points to that existing key; do not
+generate a replacement during upgrades. A local mode-600 copy is
+/var/backups/orbit/app.key.
 
 Manual CLI backup (the CLI requires the live app stopped):
 
 ```sh
 sudo systemctl stop orbit
-sudo -u orbit /usr/local/bin/orbit --config /etc/orbit/orbit.toml backup create
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; orbit backup create'
 sudo systemctl start orbit
-sudo -u orbit /usr/local/bin/orbit --config /etc/orbit/orbit.toml backup list
-sudo -u orbit /usr/local/bin/orbit --config /etc/orbit/orbit.toml backup verify <id>
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; orbit backup list'
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; orbit backup verify <id>'
 ```
 
 If creating a backup fails, still start Orbit again after investigating.
@@ -89,12 +103,48 @@ While setup is incomplete:
 
 ```sh
 sudo systemctl stop orbit
-sudo -u orbit /usr/local/bin/orbit --config /etc/orbit/orbit.toml setup-token rotate > /home/exedev/orbit-setup-link.txt
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; orbit setup-token rotate' > /home/exedev/orbit-setup-link.txt
 chmod 600 /home/exedev/orbit-setup-link.txt
 sudo systemctl start orbit
 ```
 
 ## Verification performed
+
+### October 27, 2026 upgrade
+
+Fetched and merged `origin/main`, retaining the VM deployment documentation.
+Installed the executable extracted from `ghcr.io/coollabsio/orbit:4f149f1`
+at the image digest above after `deploy/smoke.sh` passed.
+`/orbit-build.json` confirms the full upstream revision above.
+
+Translated all existing TOML settings to `/etc/orbit/orbit.env` (root:orbit,
+mode 640) and validated them with the new binary. The systemd drop-in loads
+that file and replaces the obsolete `--config` command. The existing app key,
+SQLite paths, canonical origin, loopback-only bind, proxy trust and limits
+are unchanged.
+
+Created and verified pre-upgrade snapshot
+`01a17c80-10e3-7071-b2ea-2be1e9d38ca2`. Rehearsed migrations 47–56 against a
+copy of its database: integrity passed, no foreign-key violations, and user,
+workspace, project and task counts were unchanged. Applied the same ten
+migrations to the live database while Orbit was stopped, then restarted.
+After restart, the database still has 5 users, 1 workspace, 2 projects and
+10 tasks; SQLite quick-check passes with no foreign-key violations.
+
+Orbit and nginx are active and enabled. Checks through local nginx with the
+HTTPS forwarding header passed: liveness/readiness, completed setup,
+unauthenticated API rejection, embedded frontend and its three referenced
+assets, HSTS/CSP, canonical-origin login validation (400 for an empty body),
+and unrelated-origin rejection (403). No authenticated browser workflows or
+external private-domain access were tested.
+
+The previous executable is `/usr/local/bin/orbit-d83ce6c`, with the previous
+base unit saved at `/etc/orbit/orbit.service.before-4f149f1`. **Rollback needs
+the matching pre-upgrade database snapshot**, not only the old executable:
+stop Orbit, use the old CLI with the retained TOML to verify/restore the
+snapshot, restore the previous executable/unit, disable the environment
+drop-in, reload systemd, then start and verify readiness. Preserve current
+data before restoring; changes since the snapshot would be lost.
 
 ### October 14, 2026 upgrade
 
