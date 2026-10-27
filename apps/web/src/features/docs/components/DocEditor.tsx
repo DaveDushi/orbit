@@ -1,4 +1,5 @@
 import { useCommand } from '@/shortcuts/useCommand'
+import { isPaymentRequired } from '@orbit/api/problem'
 import { lazy, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
@@ -527,7 +528,7 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
       const created = await createSubpage({ parent_id: pageId })
       return created.id
     } catch (error) {
-      toast.error('Could not create the sub-page. Try again.')
+      if (!isPaymentRequired(error)) toast.error('Could not create the sub-page. Try again.')
       throw error
     }
   }, [createSubpage, pageId])

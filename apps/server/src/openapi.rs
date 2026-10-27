@@ -712,6 +712,13 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
         id if id.contains("chat") => chat_errors(id, &mut responses),
         _ => {}
     }
+    // Orbit Cloud: the billing guard refuses these creates at the trial's limits.
+    if matches!(
+        operation_id,
+        "create_task" | "create_page" | "duplicate_page" | "create_invitation"
+    ) {
+        add_code(&mut responses, "402", "trial_limit_reached");
+    }
 
     responses
         .into_iter()

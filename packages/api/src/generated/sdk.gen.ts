@@ -992,7 +992,8 @@ export const getBilling = <ThrowOnError extends boolean = false>(options: Option
 
 /**
  * Starts a Stripe Checkout for `plan` and returns its URL. Refused while the workspace already
- * has full access: plan changes and cancellations go through the Billing Portal.
+ * has full access (a subscription, or the exempt workspace): plan changes and cancellations go
+ * through the Billing Portal.
  */
 export const billingCheckout = <ThrowOnError extends boolean = false>(options: Options<BillingCheckoutData, ThrowOnError>): RequestResult<BillingCheckoutResponses, BillingCheckoutErrors, ThrowOnError> => (options.client ?? client).post<BillingCheckoutResponses, BillingCheckoutErrors, ThrowOnError>({
     security: [{

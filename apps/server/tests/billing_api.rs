@@ -5,13 +5,13 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Form, Json, Router};
 use orbit_platform::{
     AuthenticatedUser, BillingConfig, Config, Database, EnvironmentMode, Id, PasswordService, Plan,
-    Secret, TimestampMillis,
+    Secret, TimestampMillis, TrialConfig,
 };
 use orbit_server::app::App;
 use orbit_server::billing::stripe::{API_VERSION, sign};
@@ -23,12 +23,14 @@ use tokio_util::sync::CancellationToken;
 const COOKIE: &str = "orbit_session_dev";
 const WEBHOOK_SECRET: &str = "whsec_billing_test";
 const SECRET_KEY: &str = "sk_test_billing";
+const DAY_MILLIS: i64 = 24 * 60 * 60 * 1000;
 
-/// A Stripe stand-in: records requests, serves subscriptions the test sets.
+/// A Stripe stand-in: records requests, serves subscriptions and prices the test sets.
 #[derive(Clone, Default)]
 struct FakeStripe {
     requests: Arc<Mutex<Vec<StripeRequest>>>,
     subscriptions: Arc<Mutex<HashMap<String, Value>>>,
+    prices: Arc<Mutex<HashMap<String, Value>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -82,8 +84,40 @@ impl FakeStripe {
         );
     }
 
+    fn set_price(&self, id: &str, product: (&str, &str), amount: i64, interval: &str) {
+        self.prices.lock().unwrap().insert(
+            id.to_owned(),
+            json!({
+                "id": id,
+                "object": "price",
+                "currency": "usd",
+                "unit_amount": amount,
+                "recurring": {"interval": interval, "interval_count": 1},
+                "product": {"id": product.0, "object": "product", "name": product.1},
+            }),
+        );
+    }
+
     async fn start(&self) -> String {
         let router = Router::new()
+            .route(
+                "/v1/prices/{id}",
+                get(
+                    |State(stripe): State<FakeStripe>,
+                     headers: HeaderMap,
+                     Path(id): Path<String>,
+                     Query(query): Query<HashMap<String, String>>| async move {
+                        stripe.record(&format!("/v1/prices/{id}"), &headers, query);
+                        match stripe.prices.lock().unwrap().get(&id) {
+                            Some(price) => (StatusCode::OK, Json(price.clone())),
+                            None => (
+                                StatusCode::NOT_FOUND,
+                                Json(json!({"error": {"message": "No such price"}})),
+                            ),
+                        }
+                    },
+                ),
+            )
             .route(
                 "/v1/customers",
                 post(
@@ -157,7 +191,27 @@ struct Server {
 }
 
 impl Server {
+    /// A server whose workspace is not the billing-exempt one, so its trial and subscription count.
     async fn start(stripe_base: Option<&str>) -> Self {
+        Self::start_with_trial(stripe_base, TrialConfig::default()).await
+    }
+
+    async fn start_with_trial(stripe_base: Option<&str>, trial: TrialConfig) -> Self {
+        let server = Self::boot(stripe_base, trial).await;
+        sqlx::query("UPDATE workspaces SET billing_exempt = 0 WHERE id = $1")
+            .bind(&server.workspace_id)
+            .execute(server.database.pool())
+            .await
+            .unwrap();
+        server
+    }
+
+    /// A server whose workspace is the one created at setup: the root user's first, exempt one.
+    async fn start_with_root_team(stripe_base: Option<&str>) -> Self {
+        Self::boot(stripe_base, TrialConfig::default()).await
+    }
+
+    async fn boot(stripe_base: Option<&str>, trial: TrialConfig) -> Self {
         let root = tempfile::tempdir().unwrap();
         let mut config = Config {
             environment: EnvironmentMode::Development,
@@ -169,6 +223,7 @@ impl Server {
         config.data.backups = root.path().join("backups");
         config.billing = stripe_base.map(|base| BillingConfig {
             api_base: base.parse().unwrap(),
+            trial,
             ..BillingConfig::new(
                 Secret::new(SECRET_KEY),
                 Secret::new(WEBHOOK_SECRET),
@@ -323,6 +378,16 @@ impl Server {
         .unwrap();
     }
 
+    /// Moves the workspace's creation `days` into the past.
+    async fn age_workspace(&self, days: i64) {
+        sqlx::query("UPDATE workspaces SET created_at = $1 WHERE id = $2")
+            .bind(TimestampMillis::now().as_millis() - days * DAY_MILLIS)
+            .bind(&self.workspace_id)
+            .execute(self.database.pool())
+            .await
+            .unwrap();
+    }
+
     async fn sync_jobs(&self) -> i64 {
         sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE kind = 'billing.stripe_sync'")
             .fetch_one(self.database.pool())
@@ -425,9 +490,10 @@ fn checkout_completed(id: &str, subscription: &str, workspace_id: &str) -> Value
 }
 
 #[tokio::test]
-async fn a_workspace_without_a_subscription_is_read_only_until_it_subscribes() {
+async fn a_workspace_without_a_subscription_is_read_only_after_its_trial_until_it_subscribes() {
     let stripe = FakeStripe::default();
     let server = Server::start(Some(&stripe.start().await)).await;
+    server.age_workspace(7).await;
 
     let (status, problem) = server.create_task("Blocked").await;
     assert_eq!(status, 402, "{problem}");
@@ -467,11 +533,17 @@ async fn a_workspace_without_a_subscription_is_read_only_until_it_subscribes() {
             "plan": null,
             "status": null,
             "access": "read_only",
+            "exempt": false,
             "cancel_at_period_end": false,
             "current_period_end": null,
-            "plans": ["team", "business"],
+            "plans": [
+                {"key": "team", "product_id": null, "name": "Team", "amount": null, "currency": null, "interval": null},
+                {"key": "business", "product_id": null, "name": "Business", "amount": null, "currency": null, "interval": null},
+            ],
             "has_customer": false,
             "can_manage": true,
+            "trial_days": 7,
+            "trial": null,
         })
     );
 
@@ -750,6 +822,7 @@ async fn only_members_learn_that_a_workspace_is_read_only() {
     let server = Server::start(Some(&stripe.start().await)).await;
     let stranger = server.add_user("stranger@example.com", false).await;
     let member = server.add_member().await;
+    server.age_workspace(8).await;
     server.set_status("active").await;
     let [paid_anonymous, paid_stranger, paid_member] =
         write_answers(&server, &stranger, &member).await;
@@ -769,6 +842,392 @@ async fn only_members_learn_that_a_workspace_is_read_only() {
     );
     assert_eq!(paid_member.0, 201);
     assert_eq!(member_answer, (402, json!("workspace_read_only")));
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn a_new_workspace_is_on_a_trial_with_limits() {
+    let stripe = FakeStripe::default();
+    let server = Server::start(Some(&stripe.start().await)).await;
+    let created_at: i64 = sqlx::query_scalar("SELECT created_at FROM workspaces WHERE id = $1")
+        .bind(&server.workspace_id)
+        .fetch_one(server.database.pool())
+        .await
+        .unwrap();
+    let tasks_before: i64 = sqlx::query_scalar(
+        "SELECT CAST(COUNT(*) AS BIGINT) FROM tasks WHERE workspace_id = $1 AND deleted_at IS NULL",
+    )
+    .bind(&server.workspace_id)
+    .fetch_one(server.database.pool())
+    .await
+    .unwrap();
+
+    let (status, task) = server.create_task("Trial task").await;
+    assert_eq!(status, 201, "{task}");
+    let (status, billing) = server
+        .call("GET", &server.workspace("/billing"), None)
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(billing["access"], "trial", "{billing}");
+    assert_eq!(
+        billing["trial"],
+        json!({
+            "ends_at": serde_json::to_value(TimestampMillis::from_millis(created_at + 7 * DAY_MILLIS)).unwrap(),
+            "tasks": {"used": tasks_before + 1, "limit": 50},
+            "pages": {"used": 0, "limit": 20},
+            "members": {"used": 1, "limit": 3},
+        })
+    );
+
+    for index in tasks_before + 1..50 {
+        let (status, task) = server.create_task(&format!("Task {index}")).await;
+        assert_eq!(status, 201, "{task}");
+    }
+    let (status, problem) = server.create_task("One too many").await;
+    assert_eq!(status, 402, "{problem}");
+    assert_eq!(
+        (&problem["code"], &problem["type"], &problem["detail"]),
+        (
+            &json!("trial_limit_reached"),
+            &json!("https://docs.orbit.dev/problems/trial_limit_reached"),
+            &json!("The trial allows 50 tasks. Choose a plan to add more."),
+        )
+    );
+    let path = server.workspace(&format!(
+        "/tasks/{}?expected_version={}",
+        task["id"].as_str().unwrap(),
+        task["version"]
+    ));
+    let (status, deleted) = server.call("DELETE", &path, None).await;
+    assert_eq!(status, 204, "{deleted}");
+    assert_eq!(server.create_task("Freed slot").await.0, 201);
+
+    for index in 0..20 {
+        let (status, page) = server
+            .call(
+                "POST",
+                &server.workspace("/pages"),
+                Some(json!({"title": format!("Page {index}")})),
+            )
+            .await;
+        assert_eq!(status, 201, "{page}");
+    }
+    let (status, problem) = server
+        .call("POST", &server.workspace("/pages"), Some(json!({})))
+        .await;
+    assert_eq!(
+        (status, &problem["detail"]),
+        (
+            402,
+            &json!("The trial allows 20 pages. Choose a plan to add more.")
+        )
+    );
+    let page: String = sqlx::query_scalar("SELECT id FROM pages WHERE workspace_id = $1 LIMIT 1")
+        .bind(&server.workspace_id)
+        .fetch_one(server.database.pool())
+        .await
+        .unwrap();
+    let (status, problem) = server
+        .call(
+            "POST",
+            &server.workspace(&format!("/pages/{page}/duplicate")),
+            Some(json!({"include_children": false})),
+        )
+        .await;
+    assert_eq!(
+        (status, &problem["code"]),
+        (402, &json!("trial_limit_reached"))
+    );
+
+    for email in ["one@example.com", "two@example.com"] {
+        let (status, invitation) = server
+            .call(
+                "POST",
+                &server.workspace("/invitations"),
+                Some(json!({"email": email, "role": "member", "delivery": "manual"})),
+            )
+            .await;
+        assert_eq!(status, 201, "{invitation}");
+    }
+    let (status, problem) = server
+        .call(
+            "POST",
+            &server.workspace("/invitations"),
+            Some(json!({"email": "three@example.com", "role": "member", "delivery": "manual"})),
+        )
+        .await;
+    assert_eq!(
+        (status, &problem["detail"]),
+        (
+            402,
+            &json!("The trial allows 3 members. Choose a plan to add more.")
+        )
+    );
+
+    // A stranger learns nothing about the trial: the handler refuses them as on any workspace.
+    let stranger = server.add_user("stranger@example.com", false).await;
+    assert_eq!(server.create_task_as(&stranger, "Task").await.0, 404);
+
+    server.age_workspace(7).await;
+    let (status, problem) = server.create_task("After the trial").await;
+    assert_eq!(
+        (status, &problem["code"]),
+        (402, &json!("workspace_read_only"))
+    );
+    let (_, billing) = server
+        .call("GET", &server.workspace("/billing"), None)
+        .await;
+    assert_eq!(
+        (&billing["access"], &billing["trial"]),
+        (&json!("read_only"), &Value::Null)
+    );
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn the_trial_length_and_limits_come_from_the_config() {
+    let stripe = FakeStripe::default();
+    let trial = TrialConfig {
+        days: 1,
+        tasks: 2,
+        ..TrialConfig::default()
+    };
+    let server = Server::start_with_trial(Some(&stripe.start().await), trial).await;
+    sqlx::query("UPDATE tasks SET deleted_at = $1 WHERE workspace_id = $2")
+        .bind(TimestampMillis::now().as_millis())
+        .bind(&server.workspace_id)
+        .execute(server.database.pool())
+        .await
+        .unwrap();
+
+    assert_eq!(server.create_task("One").await.0, 201);
+    assert_eq!(server.create_task("Two").await.0, 201);
+    let (status, problem) = server.create_task("Three").await;
+    assert_eq!(
+        (status, &problem["code"], &problem["detail"]),
+        (
+            402,
+            &json!("trial_limit_reached"),
+            &json!("The trial allows 2 tasks. Choose a plan to add more."),
+        )
+    );
+    let (_, billing) = server
+        .call("GET", &server.workspace("/billing"), None)
+        .await;
+    assert_eq!(
+        (&billing["trial_days"], &billing["trial"]["tasks"]),
+        (&json!(1), &json!({"used": 2, "limit": 2}))
+    );
+
+    sqlx::query("UPDATE workspaces SET created_at = $1 WHERE id = $2")
+        .bind(TimestampMillis::now().as_millis() - DAY_MILLIS - 1)
+        .bind(&server.workspace_id)
+        .execute(server.database.pool())
+        .await
+        .unwrap();
+    let (status, problem) = server
+        .call("POST", &server.workspace("/pages"), Some(json!({})))
+        .await;
+    assert_eq!(
+        (status, &problem["code"]),
+        (402, &json!("workspace_read_only"))
+    );
+    let (_, billing) = server
+        .call("GET", &server.workspace("/billing"), None)
+        .await;
+    assert_eq!(
+        (&billing["access"], &billing["trial"]),
+        (&json!("read_only"), &Value::Null)
+    );
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn billing_describes_each_plan_as_stripe_prices_it_and_asks_stripe_once() {
+    let stripe = FakeStripe::default();
+    stripe.set_price("price_team", ("prod_team", "Team"), 1000, "month");
+    stripe.set_price(
+        "price_business",
+        ("prod_business", "Business"),
+        29000,
+        "year",
+    );
+    let server = Server::start(Some(&stripe.start().await)).await;
+
+    for _ in 0..2 {
+        let (status, billing) = server
+            .call("GET", &server.workspace("/billing"), None)
+            .await;
+        assert_eq!(status, 200, "{billing}");
+        assert_eq!(
+            billing["plans"],
+            json!([
+                {"key": "team", "product_id": "prod_team", "name": "Team", "amount": 1000, "currency": "usd", "interval": "month"},
+                {"key": "business", "product_id": "prod_business", "name": "Business", "amount": 29000, "currency": "usd", "interval": "year"},
+            ])
+        );
+    }
+    let fetches = stripe.requests("/v1/prices/price_team");
+    assert_eq!(fetches.len(), 1);
+    assert_eq!(fetches[0].form["expand[]"], "product");
+    assert_eq!(stripe.requests("/v1/prices/price_business").len(), 1);
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn billing_names_plans_by_key_while_stripe_fails_and_asks_again_next_time() {
+    let stripe = FakeStripe::default();
+    stripe.set_price("price_team", ("prod_team", "Team"), 1000, "month");
+    let server = Server::start(Some(&stripe.start().await)).await;
+
+    let (status, billing) = server
+        .call("GET", &server.workspace("/billing"), None)
+        .await;
+    assert_eq!(status, 200, "{billing}");
+    assert_eq!(
+        billing["plans"],
+        json!([
+            {"key": "team", "product_id": null, "name": "Team", "amount": null, "currency": null, "interval": null},
+            {"key": "business", "product_id": null, "name": "Business", "amount": null, "currency": null, "interval": null},
+        ])
+    );
+
+    stripe.set_price(
+        "price_business",
+        ("prod_business", "Business"),
+        2900,
+        "month",
+    );
+    let (_, billing) = server
+        .call("GET", &server.workspace("/billing"), None)
+        .await;
+    assert_eq!(billing["plans"][1]["amount"], 2900);
+    assert_eq!(stripe.requests("/v1/prices/price_business").len(), 2);
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn a_subscribed_workspace_has_no_trial_limits() {
+    let stripe = FakeStripe::default();
+    let server = Server::start(Some(&stripe.start().await)).await;
+    server.set_status("active").await;
+    for index in 0..21 {
+        let (status, page) = server
+            .call(
+                "POST",
+                &server.workspace("/pages"),
+                Some(json!({"title": format!("Page {index}")})),
+            )
+            .await;
+        assert_eq!(status, 201, "{page}");
+    }
+    for email in ["one@example.com", "two@example.com", "three@example.com"] {
+        let (status, invitation) = server
+            .call(
+                "POST",
+                &server.workspace("/invitations"),
+                Some(json!({"email": email, "role": "member", "delivery": "manual"})),
+            )
+            .await;
+        assert_eq!(status, 201, "{invitation}");
+    }
+    let (_, billing) = server
+        .call("GET", &server.workspace("/billing"), None)
+        .await;
+    assert_eq!(
+        (&billing["access"], &billing["trial"]),
+        (&json!("full"), &Value::Null)
+    );
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn the_root_users_first_workspace_needs_no_subscription() {
+    let stripe = FakeStripe::default();
+    let server = Server::start_with_root_team(Some(&stripe.start().await)).await;
+    server.age_workspace(8).await;
+
+    for index in 0..21 {
+        let (status, page) = server
+            .call(
+                "POST",
+                &server.workspace("/pages"),
+                Some(json!({"title": format!("Page {index}")})),
+            )
+            .await;
+        assert_eq!(status, 201, "{page}");
+    }
+    for email in ["one@example.com", "two@example.com", "three@example.com"] {
+        let (status, invitation) = server
+            .call(
+                "POST",
+                &server.workspace("/invitations"),
+                Some(json!({"email": email, "role": "member", "delivery": "manual"})),
+            )
+            .await;
+        assert_eq!(status, 201, "{invitation}");
+    }
+    let (status, task) = server.create_task("After eight days").await;
+    assert_eq!(status, 201, "{task}");
+    let (_, billing) = server
+        .call("GET", &server.workspace("/billing"), None)
+        .await;
+    assert_eq!(
+        (&billing["access"], &billing["exempt"], &billing["trial"]),
+        (&json!("full"), &json!(true), &Value::Null),
+        "{billing}"
+    );
+    let (status, problem) = server
+        .call(
+            "POST",
+            &server.workspace("/billing/checkout"),
+            Some(json!({"plan": "team"})),
+        )
+        .await;
+    assert_eq!(
+        (status, &problem["code"]),
+        (409, &json!("subscription_active"))
+    );
+    assert!(stripe.requests("/v1/customers").is_empty());
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn other_workspaces_of_root_and_workspaces_of_other_users_are_on_a_trial() {
+    let stripe = FakeStripe::default();
+    let server = Server::start_with_root_team(Some(&stripe.start().await)).await;
+    let other_user = server.add_user("other@example.com", false).await;
+
+    for (session, name) in [
+        (server.session.as_str(), "Root second"),
+        (other_user.as_str(), "Other team"),
+    ] {
+        let (status, workspace) = server
+            .call_as(
+                session,
+                "POST",
+                "/api/v1/workspaces",
+                Some(json!({"name": name})),
+            )
+            .await;
+        assert_eq!(status, 201, "{workspace}");
+        let path = format!(
+            "/api/v1/workspaces/{}/billing",
+            workspace["id"].as_str().unwrap()
+        );
+        let (_, billing) = server.call_as(session, "GET", &path, None).await;
+        assert_eq!(
+            (&billing["access"], &billing["exempt"]),
+            (&json!("trial"), &json!(false)),
+            "{name}: {billing}"
+        );
+    }
+    let exempt: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM workspaces WHERE billing_exempt = 1")
+            .fetch_all(server.database.pool())
+            .await
+            .unwrap();
+    assert_eq!(exempt, ["Acme"]);
     server.stop().await;
 }
 

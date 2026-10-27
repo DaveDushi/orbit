@@ -410,6 +410,11 @@ impl MigrationRunner {
                     ),
                     false,
                 ),
+                Migration::new(
+                    57,
+                    include_str!("../../../../apps/server/migrations/0057_billing_exempt.sql"),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -466,6 +471,11 @@ impl MigrationRunner {
                 include_str!(
                     "../../../../apps/server/migrations/postgres/0056_workspace_subscriptions.sql"
                 ),
+                false,
+            ),
+            Migration::new(
+                57,
+                include_str!("../../../../apps/server/migrations/postgres/0057_billing_exempt.sql"),
                 false,
             ),
         ];

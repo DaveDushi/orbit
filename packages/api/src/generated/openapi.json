@@ -9396,7 +9396,7 @@
         "tags": [
           "crate::billing::routes"
         ],
-        "summary": "Starts a Stripe Checkout for `plan` and returns its URL. Refused while the workspace already\nhas full access: plan changes and cancellations go through the Billing Portal.",
+        "summary": "Starts a Stripe Checkout for `plan` and returns its URL. Refused while the workspace already\nhas full access (a subscription, or the exempt workspace): plan changes and cancellations go\nthrough the Billing Portal.",
         "operationId": "billing_checkout",
         "parameters": [
           {
@@ -17651,6 +17651,16 @@
               }
             }
           },
+          "402": {
+            "description": "trial_limit_reached",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
           "403": {
             "description": "origin_forbidden, workspace_action_forbidden",
             "content": {
@@ -18940,6 +18950,16 @@
           },
           "401": {
             "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "trial_limit_reached",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -20281,6 +20301,16 @@
           },
           "401": {
             "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "trial_limit_reached",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -26765,6 +26795,16 @@
           },
           "401": {
             "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "trial_limit_reached",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -33424,10 +33464,12 @@
         "description": "The workspace's subscription and what the caller may do about it.",
         "required": [
           "access",
+          "exempt",
           "cancel_at_period_end",
           "plans",
           "has_customer",
-          "can_manage"
+          "can_manage",
+          "trial_days"
         ],
         "properties": {
           "access": {
@@ -33448,6 +33490,10 @@
             ],
             "format": "date-time"
           },
+          "exempt": {
+            "type": "boolean",
+            "description": "The root user's first workspace: full access without a subscription."
+          },
           "has_customer": {
             "type": "boolean",
             "description": "The workspace has a Stripe customer, so the Billing Portal can open."
@@ -33462,9 +33508,9 @@
           "plans": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/PlanView"
             },
-            "description": "The plan keys a workspace can subscribe to, in order."
+            "description": "The plans a workspace can subscribe to, in order."
           },
           "status": {
             "oneOf": [
@@ -33475,6 +33521,23 @@
                 "$ref": "#/components/schemas/SubscriptionStatus"
               }
             ]
+          },
+          "trial": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TrialView",
+                "description": "Only while `access` is `trial`."
+              }
+            ]
+          },
+          "trial_days": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How long a new workspace's trial lasts; 0 when new workspaces have none.",
+            "minimum": 0
           }
         }
       },
@@ -39255,6 +39318,63 @@
           "billing.manage"
         ]
       },
+      "PlanInterval": {
+        "type": "string",
+        "enum": [
+          "month",
+          "year"
+        ]
+      },
+      "PlanView": {
+        "type": "object",
+        "description": "A plan as Stripe describes its price. When Stripe cannot be reached, only `key` and a `name`\nmade from it are set.",
+        "required": [
+          "key",
+          "name"
+        ],
+        "properties": {
+          "amount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "In the currency's minor units (cents)."
+          },
+          "currency": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ISO 4217, lowercase (`usd`)."
+          },
+          "interval": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PlanInterval"
+              }
+            ]
+          },
+          "key": {
+            "type": "string",
+            "description": "What `BillingCheckoutBody.plan` takes."
+          },
+          "name": {
+            "type": "string",
+            "description": "The product's name."
+          },
+          "product_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Plans of one product are the same plan billed at different intervals."
+          }
+        }
+      },
       "Presence": {
         "type": "string",
         "description": "The presence a user sets for themselves. A user without a connection is offline whatever\nthey set; `Invisible` shows them as offline to everybody else while they are connected.",
@@ -41667,6 +41787,31 @@
           }
         }
       },
+      "TrialView": {
+        "type": "object",
+        "description": "A trial workspace's end and usage of its limits.",
+        "required": [
+          "ends_at",
+          "tasks",
+          "pages",
+          "members"
+        ],
+        "properties": {
+          "ends_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "members": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "pages": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "tasks": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        }
+      },
       "TwoFactorChallenge": {
         "type": "object",
         "description": "The answer to a right password when the account has two-factor sign-in on.",
@@ -41741,6 +41886,23 @@
           }
         },
         "additionalProperties": false
+      },
+      "Usage": {
+        "type": "object",
+        "required": [
+          "used",
+          "limit"
+        ],
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "used": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
       },
       "UserStatus": {
         "type": "object",
@@ -41984,6 +42146,7 @@
         "description": "What members of a workspace may do.",
         "enum": [
           "full",
+          "trial",
           "read_only"
         ]
       },

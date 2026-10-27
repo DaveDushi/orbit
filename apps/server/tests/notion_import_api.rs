@@ -1886,7 +1886,12 @@ async fn an_import_into_a_read_only_cloud_workspace_stops() {
         )
         .await;
     let before = harness.page_count().await;
-    // Orbit Cloud, no subscription: the workspace is read-only.
+    // Not the exempt root workspace and past its trial, so without a subscription it is read-only.
+    sqlx::query("UPDATE workspaces SET created_at = 0, billing_exempt = 0 WHERE id = $1")
+        .bind(harness.workspace_id.to_string())
+        .execute(harness.database.pool())
+        .await
+        .unwrap();
     let _billing = orbit_server::billing::Billing::new(
         orbit_platform::BillingConfig::new(
             orbit_platform::Secret::new("sk_test_unused"),

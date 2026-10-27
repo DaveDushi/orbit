@@ -1,4 +1,5 @@
 import { useCommand } from '@/shortcuts/useCommand'
+import { isPaymentRequired } from '@orbit/api/problem'
 import { useEffect, useRef, useState, type ComponentProps, type DragEvent, type FormEvent, type ReactElement, type ReactNode } from 'react'
 import { NavLink, useNavigate } from 'react-router'
 import { toast } from 'sonner'
@@ -227,7 +228,9 @@ export function DocTree({
         setSpaceCollapsed(spaceKey(page), false)
         navigate(`/docs/${page.id}`)
       },
-      onError: () => toast.error('Could not create the page. Try again.'),
+      onError: (error) => {
+        if (!isPaymentRequired(error)) toast.error('Could not create the page. Try again.')
+      },
     })
   }
   useCommand('docs.createPage', () => handleCreate(null))

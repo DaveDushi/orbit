@@ -1,6 +1,6 @@
 import { createClient } from './generated/client/index'
 import { CONTRACT_ID } from './generated/contract'
-import { parseProblem } from './problem'
+import { isPaymentRequired, parseProblem } from './problem'
 
 export interface OrbitClientOptions {
   baseUrl: string
@@ -9,7 +9,8 @@ export interface OrbitClientOptions {
   token?: () => string | null | undefined
   fetch?: (request: Request) => Promise<Response>
   onUnauthorized?: () => void
-  onReadOnly?: (detail: string) => void
+  /** Orbit Cloud refused a write: the workspace is read-only or at a trial limit. */
+  onPaymentRequired?: (detail: string) => void
 }
 
 export function createOrbitClient(options: OrbitClientOptions) {
@@ -35,9 +36,7 @@ export function createOrbitClient(options: OrbitClientOptions) {
     if (problem.status === 401 && problem.code === 'authentication_required') {
       options.onUnauthorized?.()
     }
-    if (problem.status === 402 && problem.code === 'workspace_read_only') {
-      options.onReadOnly?.(problem.detail)
-    }
+    if (isPaymentRequired(problem)) options.onPaymentRequired?.(problem.detail)
     throw problem
   })
   return client

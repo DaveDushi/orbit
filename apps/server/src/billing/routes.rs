@@ -15,7 +15,7 @@ use serde_json::Value;
 use utoipa::ToSchema;
 
 use super::stripe::{CheckoutRequest, verify_signature};
-use super::{Billing, SubscriptionStatus, WorkspaceAccess, sync};
+use super::{Billing, SubscriptionStatus, TrialLimit, WorkspaceAccess, sync};
 use crate::auth_routes::CookieMode;
 use crate::repositories::billing as repository;
 use crate::repositories::identity::{AuthenticatedSession, IdentityRepository};
@@ -71,16 +71,62 @@ pub struct BillingView {
     plan: Option<String>,
     status: Option<SubscriptionStatus>,
     access: WorkspaceAccess,
+    /// The root user's first workspace: full access without a subscription.
+    exempt: bool,
     /// The subscription ends at `current_period_end` instead of renewing.
     cancel_at_period_end: bool,
     #[schema(value_type = Option<String>, format = DateTime)]
     current_period_end: Option<TimestampMillis>,
-    /// The plan keys a workspace can subscribe to, in order.
-    plans: Vec<String>,
+    /// The plans a workspace can subscribe to, in order.
+    plans: Vec<PlanView>,
     /// The workspace has a Stripe customer, so the Billing Portal can open.
     has_customer: bool,
     /// The caller may start a checkout and open the Billing Portal (the owner).
     can_manage: bool,
+    /// How long a new workspace's trial lasts; 0 when new workspaces have none.
+    trial_days: u32,
+    /// Only while `access` is `trial`.
+    trial: Option<TrialView>,
+}
+
+/// A plan as Stripe describes its price. When Stripe cannot be reached, only `key` and a `name`
+/// made from it are set.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct PlanView {
+    /// What `BillingCheckoutBody.plan` takes.
+    pub(super) key: String,
+    /// Plans of one product are the same plan billed at different intervals.
+    pub(super) product_id: Option<String>,
+    /// The product's name.
+    pub(super) name: String,
+    /// In the currency's minor units (cents).
+    pub(super) amount: Option<i64>,
+    /// ISO 4217, lowercase (`usd`).
+    pub(super) currency: Option<String>,
+    pub(super) interval: Option<PlanInterval>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanInterval {
+    Month,
+    Year,
+}
+
+/// A trial workspace's end and usage of its limits.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TrialView {
+    #[schema(value_type = String, format = DateTime)]
+    ends_at: TimestampMillis,
+    tasks: Usage,
+    pages: Usage,
+    members: Usage,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct Usage {
+    used: i64,
+    limit: i64,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -111,31 +157,52 @@ pub(crate) async fn get_billing(
     let instance = format!("/api/v1/workspaces/{workspace}/billing");
     let id = request_id.as_ref();
     let (workspace_id, actor, _) = member(&state, &workspace, &headers, &instance, id).await?;
-    let subscription = repository::subscription(state.billing.database(), workspace_id)
+    let database = state.billing.database();
+    let subscription = repository::subscription(database, workspace_id)
         .await
         .map_err(|_| internal(&instance, id))?;
+    let now = TimestampMillis::now();
+    let trial_config = &state.billing.config().trial;
+    let access = subscription.access(now, trial_config);
+    let trial = if access == WorkspaceAccess::Trial {
+        let usage = async |limit: TrialLimit| {
+            repository::trial_usage(database, workspace_id, limit, now)
+                .await
+                .map(|used| Usage {
+                    used,
+                    limit: limit.limit(trial_config),
+                })
+                .map_err(|_| internal(&instance, id))
+        };
+        Some(TrialView {
+            ends_at: TimestampMillis::from_millis(subscription.trial_ends_at(trial_config)),
+            tasks: usage(TrialLimit::Tasks).await?,
+            pages: usage(TrialLimit::Pages).await?,
+            members: usage(TrialLimit::Members).await?,
+        })
+    } else {
+        None
+    };
     Ok(Json(BillingView {
         plan: subscription.plan.clone(),
         status: subscription.status,
-        access: subscription.access(),
+        access,
+        exempt: subscription.exempt,
         cancel_at_period_end: subscription.cancel_at_period_end,
         current_period_end: subscription
             .current_period_end
             .map(TimestampMillis::from_millis),
-        plans: state
-            .billing
-            .config()
-            .plans
-            .iter()
-            .map(|plan| plan.key.clone())
-            .collect(),
+        plans: state.billing.plans().await,
         has_customer: subscription.stripe_customer_id.is_some(),
         can_manage: actor.can(Permission::BillingManage),
+        trial_days: trial_config.days,
+        trial,
     }))
 }
 
 /// Starts a Stripe Checkout for `plan` and returns its URL. Refused while the workspace already
-/// has full access: plan changes and cancellations go through the Billing Portal.
+/// has full access (a subscription, or the exempt workspace): plan changes and cancellations go
+/// through the Billing Portal.
 #[utoipa::path(
     post,
     path = "/api/v1/workspaces/{workspace_id}/billing/checkout",
@@ -167,7 +234,9 @@ pub(crate) async fn billing_checkout(
     let subscription = repository::subscription(database, workspace_id)
         .await
         .map_err(|_| internal(&instance, id))?;
-    if subscription.access() == WorkspaceAccess::Full {
+    if subscription.access(TimestampMillis::now(), &state.billing.config().trial)
+        == WorkspaceAccess::Full
+    {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
             "subscription_active",

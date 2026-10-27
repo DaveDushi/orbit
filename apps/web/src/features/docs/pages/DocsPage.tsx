@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ComponentProps } from 'react'
+import { isPaymentRequired } from '@orbit/api/problem'
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
 import { DocumentText as FileText, Add as Plus } from 'reicon-react'
@@ -78,7 +79,9 @@ export function DocsPage({ view = 'page' }: { view?: 'page' | 'trash' | 'import'
       {},
       {
         onSuccess: (created) => navigate(`/docs/${created.id}`),
-        onError: () => toast.error('Could not create the page. Try again.'),
+        onError: (error) => {
+          if (!isPaymentRequired(error)) toast.error('Could not create the page. Try again.')
+        },
       },
     )
   }
@@ -163,7 +166,9 @@ export function DocsPage({ view = 'page' }: { view?: 'page' | 'trash' | 'import'
           navigate(`/docs/${copy.id}`)
           toast.success(`Duplicated “${pageTitle(target)}”`)
         },
-        onError: () => toast.error('Could not duplicate the page.'),
+        onError: (error) => {
+          if (!isPaymentRequired(error)) toast.error('Could not duplicate the page.')
+        },
       },
     )
   }

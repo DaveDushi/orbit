@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/reac
 import { useEffect, useState, type ReactNode } from 'react'
 import { BrowserRouter, useNavigate } from 'react-router'
 import { toast } from 'sonner'
-import { READ_ONLY_EVENT, UNAUTHORIZED_EVENT } from '@/api/client'
+import { PAYMENT_REQUIRED_EVENT, UNAUTHORIZED_EVENT } from '@/api/client'
 import { ThemeProvider } from '@/lib/theme'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { clearExpiredSession } from './authSession'
@@ -21,22 +21,23 @@ function UnauthorizedSessionHandler() {
 }
 
 /**
- * Orbit Cloud: a write refused because the workspace has no subscription gets one clear toast (not a generic failure)
- * with a way to the billing page. `ReadOnlyBanner` fetches the billing state again.
+ * Orbit Cloud: a write refused because the workspace is read-only or at a trial limit gets one clear toast (callers
+ * skip their generic failure toast, see `isPaymentRequired`) with a way to the billing page. `ReadOnlyBanner` fetches
+ * the billing state again.
  */
-function ReadOnlyWorkspaceHandler() {
+function PaymentRequiredHandler() {
   const navigate = useNavigate()
 
   useEffect(() => {
     const refused = (event: Event) => {
-      const detail = event instanceof CustomEvent && typeof event.detail === 'string' ? event.detail : 'This workspace is read-only.'
+      const detail = event instanceof CustomEvent && typeof event.detail === 'string' ? event.detail : 'Choose a plan to keep working.'
       toast.error(detail, {
-        id: READ_ONLY_EVENT,
+        id: PAYMENT_REQUIRED_EVENT,
         action: { label: 'Billing', onClick: () => navigate('/settings/billing') },
       })
     }
-    window.addEventListener(READ_ONLY_EVENT, refused)
-    return () => window.removeEventListener(READ_ONLY_EVENT, refused)
+    window.addEventListener(PAYMENT_REQUIRED_EVENT, refused)
+    return () => window.removeEventListener(PAYMENT_REQUIRED_EVENT, refused)
   }, [navigate])
 
   return null
@@ -58,7 +59,7 @@ export function Providers({ children }: { children: ReactNode }) {
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
           <UnauthorizedSessionHandler />
-          <ReadOnlyWorkspaceHandler />
+          <PaymentRequiredHandler />
           <TooltipProvider>{children}</TooltipProvider>
         </BrowserRouter>
       </QueryClientProvider>

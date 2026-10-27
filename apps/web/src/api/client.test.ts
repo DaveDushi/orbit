@@ -85,27 +85,34 @@ test('public credential and setup-token failures do not expire a session', async
   }
 })
 
-test('API client reports writes refused by a read-only workspace with the server detail', async () => {
+test('API client reports writes refused by Orbit Cloud billing with the server detail', async () => {
+  const refusals = [
+    { code: 'workspace_read_only', detail: 'This workspace is read-only because it has no active subscription.' },
+    { code: 'trial_limit_reached', detail: 'The trial allows 50 tasks. Choose a plan to add more.' },
+    { code: 'payment_required_elsewhere', detail: 'Not a billing refusal.' },
+  ]
   const refused: string[] = []
-  const client = createApiClient({
-    fetch: async () =>
-      Response.json(
-        {
-          type: 'https://docs.orbit.dev/problems/workspace_read_only',
-          title: 'Workspace is read-only',
-          status: 402,
-          code: 'workspace_read_only',
-          detail: 'This workspace is read-only because it has no active subscription.',
-          instance: '/api/v1/workspaces/w1/tasks',
-          request_id: 'request-two',
-        },
-        { status: 402, headers: { 'content-type': 'application/problem+json' } },
-      ),
-    onReadOnly: (detail) => refused.push(detail),
-  })
+  for (const { code, detail } of refusals) {
+    const client = createApiClient({
+      fetch: async () =>
+        Response.json(
+          {
+            type: `https://docs.orbit.dev/problems/${code}`,
+            title: 'Refused',
+            status: 402,
+            code,
+            detail,
+            instance: '/api/v1/workspaces/w1/tasks',
+            request_id: 'request-two',
+          },
+          { status: 402, headers: { 'content-type': 'application/problem+json' } },
+        ),
+      onPaymentRequired: (detail) => refused.push(detail),
+    })
 
-  await expect(
-    createTask({ client, path: { workspace_id: 'w1' }, body: { project_id: 'p1', status_id: 's1', title: 'New' }, throwOnError: true }),
-  ).rejects.toMatchObject({ status: 402, code: 'workspace_read_only' })
-  expect(refused).toEqual(['This workspace is read-only because it has no active subscription.'])
+    await expect(
+      createTask({ client, path: { workspace_id: 'w1' }, body: { project_id: 'p1', status_id: 's1', title: 'New' }, throwOnError: true }),
+    ).rejects.toMatchObject({ status: 402, code })
+  }
+  expect(refused).toEqual(['This workspace is read-only because it has no active subscription.', 'The trial allows 50 tasks. Choose a plan to add more.'])
 })

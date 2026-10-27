@@ -1513,6 +1513,12 @@ async fn a_read_only_cloud_workspace_syncs_documents_but_drops_edits() {
     ));
     let server = Server::start_with(config, fast_config()).await;
     let users = setup(&server).await;
+    // Not the exempt root workspace and past its trial, so without a subscription it is read-only.
+    sqlx::query("UPDATE workspaces SET created_at = 0, billing_exempt = 0 WHERE id = $1")
+        .bind(&users.workspace)
+        .execute(server.database.pool())
+        .await
+        .unwrap();
     let set_status = |status: &'static str| {
         let database = server.database.clone();
         let workspace = users.workspace.clone();
@@ -1607,6 +1613,12 @@ async fn a_lapsed_subscription_closes_editing_sockets_on_every_server() {
     let users = setup(&one).await;
     let two = Server::start_with(shared(&root_two), config()).await;
     let workspace: Id = users.workspace.parse().unwrap();
+    // Not the exempt root workspace and past its trial, so without a subscription it is read-only.
+    sqlx::query("UPDATE workspaces SET created_at = 0, billing_exempt = 0 WHERE id = $1")
+        .bind(&users.workspace)
+        .execute(one.database.pool())
+        .await
+        .unwrap();
     let subscription = |status: &str| SubscriptionSnapshot {
         customer_id: "cus_test".to_owned(),
         subscription_id: "sub_test".to_owned(),

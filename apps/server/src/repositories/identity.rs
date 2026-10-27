@@ -1989,9 +1989,12 @@ async fn insert_first_workspace(
     now: TimestampMillis,
 ) -> Result<(), sqlx::Error> {
     let timestamp = now.as_millis();
+    // Created at setup, so it is the root user's first workspace: exempt from billing, unless an
+    // older installation already marked one.
     sqlx::query(
-        "INSERT INTO workspaces (id, name, version, owner_membership_id, created_at, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6)",
+        "INSERT INTO workspaces (id, name, version, owner_membership_id, created_at, updated_at, \
+         billing_exempt) VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN EXISTS (SELECT 1 FROM workspaces \
+         WHERE billing_exempt = 1) THEN 0 ELSE 1 END)",
     )
     .bind(defaults.workspace.id.to_string())
     .bind(&defaults.workspace.name)

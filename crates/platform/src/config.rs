@@ -34,6 +34,10 @@ const STRIPE_SECRET_KEY_FILE_ENV: &str = "ORBIT_STRIPE_SECRET_KEY_FILE";
 const STRIPE_WEBHOOK_SECRET_ENV: &str = "ORBIT_STRIPE_WEBHOOK_SECRET";
 const STRIPE_WEBHOOK_SECRET_FILE_ENV: &str = "ORBIT_STRIPE_WEBHOOK_SECRET_FILE";
 const STRIPE_PRICES_ENV: &str = "ORBIT_STRIPE_PRICES";
+const TRIAL_DAYS_ENV: &str = "ORBIT_TRIAL_DAYS";
+const TRIAL_TASKS_ENV: &str = "ORBIT_TRIAL_TASKS";
+const TRIAL_PAGES_ENV: &str = "ORBIT_TRIAL_PAGES";
+const TRIAL_MEMBERS_ENV: &str = "ORBIT_TRIAL_MEMBERS";
 const STRIPE_API_BASE: &str = "https://api.stripe.com";
 /// Variables that scripts and tests use, not the server.
 const IGNORED_ENV_PREFIXES: [&str; 2] = ["ORBIT_DEV_", "ORBIT_TEST_"];
@@ -356,6 +360,62 @@ pub struct BillingConfig {
     pub plans: Vec<Plan>,
     /// The Stripe API. Only tests change it.
     pub api_base: url::Url,
+    pub trial: TrialConfig,
+}
+
+/// The trial of a workspace without a subscription: its length from the workspace's creation and
+/// what it may hold (`ORBIT_TRIAL_*`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TrialConfig {
+    /// 0 to 365; 0 means no trial: a new workspace is read-only until it subscribes.
+    pub days: u32,
+    /// Tasks not in the trash.
+    pub tasks: i64,
+    /// Pages not in the trash.
+    pub pages: i64,
+    /// Members and pending invitations, the owner included, so at least 1.
+    pub members: i64,
+}
+
+impl Default for TrialConfig {
+    fn default() -> Self {
+        Self {
+            days: 7,
+            tasks: 50,
+            pages: 20,
+            members: 3,
+        }
+    }
+}
+
+impl TrialConfig {
+    /// The trial length in milliseconds.
+    #[must_use]
+    pub const fn millis(&self) -> i64 {
+        self.days as i64 * 24 * 60 * 60 * 1000
+    }
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        let invalid = |key, detail: &str| {
+            Err(ConfigError::InvalidSetting {
+                key,
+                detail: detail.to_owned(),
+            })
+        };
+        if self.days > 365 {
+            return invalid(TRIAL_DAYS_ENV, "must be 0 to 365 days");
+        }
+        if self.tasks < 0 {
+            return invalid(TRIAL_TASKS_ENV, "must be 0 or more");
+        }
+        if self.pages < 0 {
+            return invalid(TRIAL_PAGES_ENV, "must be 0 or more");
+        }
+        if self.members < 1 {
+            return invalid(TRIAL_MEMBERS_ENV, "must be 1 or more (the owner counts)");
+        }
+        Ok(())
+    }
 }
 
 impl BillingConfig {
@@ -366,6 +426,7 @@ impl BillingConfig {
             webhook_secret,
             plans,
             api_base: url::Url::parse(STRIPE_API_BASE).expect("the Stripe API base is a URL"),
+            trial: TrialConfig::default(),
         }
     }
 
@@ -424,7 +485,7 @@ impl BillingConfig {
                 detail: "must not be empty".to_owned(),
             });
         }
-        Ok(())
+        self.trial.validate()
     }
 }
 
@@ -471,6 +532,10 @@ struct BillingEnvironment {
     secret_key: Option<String>,
     webhook_secret: Option<String>,
     prices: Option<String>,
+    trial_days: Option<String>,
+    trial_tasks: Option<String>,
+    trial_pages: Option<String>,
+    trial_members: Option<String>,
 }
 
 impl BillingEnvironment {
@@ -484,6 +549,10 @@ impl BillingEnvironment {
                 (STRIPE_SECRET_KEY_ENV, self.secret_key.is_some()),
                 (STRIPE_WEBHOOK_SECRET_ENV, self.webhook_secret.is_some()),
                 (STRIPE_PRICES_ENV, self.prices.is_some()),
+                (TRIAL_DAYS_ENV, self.trial_days.is_some()),
+                (TRIAL_TASKS_ENV, self.trial_tasks.is_some()),
+                (TRIAL_PAGES_ENV, self.trial_pages.is_some()),
+                (TRIAL_MEMBERS_ENV, self.trial_members.is_some()),
             ];
             return match set.into_iter().find(|(_, set)| *set) {
                 Some((key, _)) => Err(ConfigError::InvalidSetting {
@@ -518,12 +587,38 @@ impl BillingEnvironment {
                 })
             })
             .collect::<Result<Vec<_>, ConfigError>>()?;
-        Ok(Some(BillingConfig::new(
-            Secret::new(secret_key.trim()),
-            Secret::new(webhook_secret.trim()),
-            plans,
-        )))
+        let defaults = TrialConfig::default();
+        let trial = TrialConfig {
+            days: parse_trial(TRIAL_DAYS_ENV, self.trial_days, defaults.days)?,
+            tasks: parse_trial(TRIAL_TASKS_ENV, self.trial_tasks, defaults.tasks)?,
+            pages: parse_trial(TRIAL_PAGES_ENV, self.trial_pages, defaults.pages)?,
+            members: parse_trial(TRIAL_MEMBERS_ENV, self.trial_members, defaults.members)?,
+        };
+        Ok(Some(BillingConfig {
+            trial,
+            ..BillingConfig::new(
+                Secret::new(secret_key.trim()),
+                Secret::new(webhook_secret.trim()),
+                plans,
+            )
+        }))
     }
+}
+
+fn parse_trial<T: std::str::FromStr>(
+    key: &'static str,
+    value: Option<String>,
+    default: T,
+) -> Result<T, ConfigError> {
+    value.map_or(Ok(default), |value| {
+        value
+            .trim()
+            .parse()
+            .map_err(|_| ConfigError::InvalidSetting {
+                key,
+                detail: format!("{value:?} must be a whole number"),
+            })
+    })
 }
 
 #[derive(Debug, Error)]
@@ -742,6 +837,14 @@ fn apply_environment(
             billing.webhook_secret = Some(read_secret_file(key, Path::new(value))?);
         } else if key == STRIPE_PRICES_ENV {
             billing.prices = Some(value.clone());
+        } else if key == TRIAL_DAYS_ENV {
+            billing.trial_days = Some(value.clone());
+        } else if key == TRIAL_TASKS_ENV {
+            billing.trial_tasks = Some(value.clone());
+        } else if key == TRIAL_PAGES_ENV {
+            billing.trial_pages = Some(value.clone());
+        } else if key == TRIAL_MEMBERS_ENV {
+            billing.trial_members = Some(value.clone());
         } else if key.starts_with("ORBIT_")
             && !IGNORED_ENV_PREFIXES
                 .iter()

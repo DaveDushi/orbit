@@ -1,14 +1,18 @@
 //! `workspace_subscriptions` and `stripe_events` (Orbit Cloud billing, see `crate::billing`).
 
-use orbit_platform::{Database, Id, Row, TimestampMillis};
+use orbit_platform::{Database, Id, Row, TimestampMillis, TrialConfig};
 use serde_json::json;
 
 use crate::audit::{self, AuditOutcome};
-use crate::billing::{SubscriptionStatus, WorkspaceAccess, access};
+use crate::billing::{SubscriptionStatus, TrialLimit, WorkspaceAccess, access, grants_access};
 
-/// A workspace's billing row as stored.
+/// A workspace's billing row as stored, with the workspace's creation time (its trial start).
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct WorkspaceSubscription {
+    /// The root user's first workspace, which needs no subscription.
+    pub exempt: bool,
+    /// Unix milliseconds.
+    pub workspace_created_at: i64,
     pub stripe_customer_id: Option<String>,
     pub plan: Option<String>,
     /// `None` without a subscription, or for a status this server does not know.
@@ -20,8 +24,20 @@ pub struct WorkspaceSubscription {
 
 impl WorkspaceSubscription {
     #[must_use]
-    pub fn access(&self) -> WorkspaceAccess {
-        access(self.status)
+    pub fn access(&self, now: TimestampMillis, trial: &TrialConfig) -> WorkspaceAccess {
+        access(
+            self.exempt,
+            self.status,
+            self.workspace_created_at,
+            now.as_millis(),
+            trial.millis(),
+        )
+    }
+
+    /// When the trial ends (or ended), Unix milliseconds.
+    #[must_use]
+    pub fn trial_ends_at(&self, trial: &TrialConfig) -> i64 {
+        self.workspace_created_at.saturating_add(trial.millis())
     }
 }
 
@@ -37,12 +53,13 @@ pub struct SubscriptionSnapshot {
     pub current_period_end: Option<i64>,
 }
 
-/// Set on a database whose server runs Orbit Cloud billing ([`crate::billing::Billing::new`]).
-struct BillingOn;
+/// Set on a database whose server runs Orbit Cloud billing ([`crate::billing::Billing::new`]),
+/// with its trial, so writers outside the guard need no [`crate::billing::Billing`].
+struct BillingOn(TrialConfig);
 
 /// Turns the read-only rule on for `database`; [`write_access`] answers `Full` until then.
-pub(crate) fn enable(database: &Database) {
-    database.extension(|| BillingOn);
+pub(crate) fn enable(database: &Database, trial: TrialConfig) {
+    database.extension(|| BillingOn(trial));
 }
 
 /// Whether something may write to the workspace: `Full` on a self-hosted server (no query),
@@ -52,53 +69,83 @@ pub async fn write_access(
     database: &Database,
     workspace_id: Id,
 ) -> Result<WorkspaceAccess, sqlx::Error> {
-    if database.existing_extension::<BillingOn>().is_none() {
+    let Some(billing) = database.existing_extension::<BillingOn>() else {
         return Ok(WorkspaceAccess::Full);
-    }
-    workspace_access(database, workspace_id).await
+    };
+    workspace_access(database, workspace_id, &billing.0).await
 }
 
-/// The access of one workspace; one primary-key lookup, run by the read-only guard on each write.
+/// The access of one workspace; one primary-key lookup, run by the guard on each write.
 pub async fn workspace_access(
     database: &Database,
     workspace_id: Id,
+    trial: &TrialConfig,
 ) -> Result<WorkspaceAccess, sqlx::Error> {
-    let status: Option<Option<String>> =
-        sqlx::query_scalar("SELECT status FROM workspace_subscriptions WHERE workspace_id = $1")
-            .bind(workspace_id.to_string())
-            .fetch_optional(database.pool())
-            .await?;
-    Ok(access(
-        status
-            .flatten()
-            .as_deref()
-            .and_then(SubscriptionStatus::parse),
-    ))
+    Ok(subscription(database, workspace_id)
+        .await?
+        .access(TimestampMillis::now(), trial))
 }
 
+/// The workspace's subscription; the default (no trial left) when the workspace does not exist.
 pub async fn subscription(
     database: &Database,
     workspace_id: Id,
 ) -> Result<WorkspaceSubscription, sqlx::Error> {
     let row = sqlx::query(
-        "SELECT stripe_customer_id, plan, status, cancel_at_period_end, current_period_end \
-         FROM workspace_subscriptions WHERE workspace_id = $1",
+        "SELECT workspaces.created_at, workspaces.billing_exempt, s.stripe_customer_id, s.plan, s.status, \
+         s.cancel_at_period_end, s.current_period_end FROM workspaces \
+         LEFT JOIN workspace_subscriptions s ON s.workspace_id = workspaces.id \
+         WHERE workspaces.id = $1",
     )
     .bind(workspace_id.to_string())
     .fetch_optional(database.pool())
     .await?;
     Ok(row.map_or_else(WorkspaceSubscription::default, |row| {
         WorkspaceSubscription {
-            stripe_customer_id: Some(row.get("stripe_customer_id")),
+            exempt: row.get("billing_exempt"),
+            workspace_created_at: row.get("created_at"),
+            stripe_customer_id: row.get("stripe_customer_id"),
             plan: row.get("plan"),
             status: row
                 .get::<Option<String>, _>("status")
                 .as_deref()
                 .and_then(SubscriptionStatus::parse),
-            cancel_at_period_end: row.get("cancel_at_period_end"),
+            cancel_at_period_end: row
+                .get::<Option<bool>, _>("cancel_at_period_end")
+                .unwrap_or(false),
             current_period_end: row.get("current_period_end"),
         }
     }))
+}
+
+/// How much of `limit` the workspace uses.
+pub async fn trial_usage(
+    database: &Database,
+    workspace_id: Id,
+    limit: TrialLimit,
+    now: TimestampMillis,
+) -> Result<i64, sqlx::Error> {
+    let query = match limit {
+        TrialLimit::Tasks => sqlx::query_scalar(
+            "SELECT CAST(COUNT(*) AS BIGINT) FROM tasks \
+             WHERE workspace_id = $1 AND deleted_at IS NULL",
+        )
+        .bind(workspace_id.to_string()),
+        TrialLimit::Pages => sqlx::query_scalar(
+            "SELECT CAST(COUNT(*) AS BIGINT) FROM pages \
+             WHERE workspace_id = $1 AND deleted_at IS NULL",
+        )
+        .bind(workspace_id.to_string()),
+        TrialLimit::Members => sqlx::query_scalar(
+            "SELECT CAST((SELECT COUNT(*) FROM memberships WHERE workspace_id = $1) \
+             + (SELECT COUNT(*) FROM workspace_invitations WHERE workspace_id = $1 \
+             AND accepted_at IS NULL AND revoked_at IS NULL AND replaced_at IS NULL \
+             AND expires_at > $2) AS BIGINT)",
+        )
+        .bind(workspace_id.to_string())
+        .bind(now.as_millis()),
+    };
+    query.fetch_one(database.pool()).await
 }
 
 /// Saves the workspace's Stripe customer unless it already has one; returns the one it has.
@@ -168,8 +215,7 @@ pub async fn apply_subscription(
     snapshot: &SubscriptionSnapshot,
     now: TimestampMillis,
 ) -> Result<bool, sqlx::Error> {
-    let grants_access =
-        access(SubscriptionStatus::parse(&snapshot.status)) == WorkspaceAccess::Full;
+    let grants = grants_access(SubscriptionStatus::parse(&snapshot.status));
     let mut transaction = database.immediate_transaction().await?;
     let exists: Option<String> = sqlx::query_scalar("SELECT id FROM workspaces WHERE id = $1")
         .bind(workspace_id.to_string())
@@ -205,7 +251,7 @@ pub async fn apply_subscription(
     .bind(i64::from(snapshot.cancel_at_period_end))
     .bind(snapshot.current_period_end)
     .bind(now.as_millis())
-    .bind(i64::from(grants_access))
+    .bind(i64::from(grants))
     .execute(&mut *transaction)
     .await?
     .rows_affected()
@@ -230,8 +276,8 @@ pub async fn apply_subscription(
         .await?;
     }
     transaction.commit().await?;
-    let previous_access = access(previous.as_deref().and_then(SubscriptionStatus::parse));
-    if written && grants_access != (previous_access == WorkspaceAccess::Full) {
+    let previously_granted = grants_access(previous.as_deref().and_then(SubscriptionStatus::parse));
+    if written && grants != previously_granted {
         // Open co-editing sockets on every server check their access again: one that may edit a
         // workspace that just became read-only closes, and the client reconnects read-only.
         crate::collab::CollabHub::revalidate_database(database, Some(workspace_id));

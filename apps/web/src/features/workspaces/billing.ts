@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { apiClient, READ_ONLY_EVENT } from '@/api/client'
+import { apiClient, PAYMENT_REQUIRED_EVENT } from '@/api/client'
 import { queryKeys } from '@/api/queryKeys'
 import { billingCheckout, billingPortal, getBilling } from '@orbit/api/generated/sdk.gen'
 import { useAuthOptions } from '@/features/auth/api'
@@ -36,7 +36,7 @@ export function useWorkspaceReadOnly(): boolean {
  */
 export function announceWorkspaceReadOnly(): void {
   const detail = 'This workspace became read-only because it has no active subscription. Your editor is now read-only.'
-  window.dispatchEvent(new CustomEvent(READ_ONLY_EVENT, { detail }))
+  window.dispatchEvent(new CustomEvent(PAYMENT_REQUIRED_EVENT, { detail }))
 }
 
 /** Starts a Stripe Checkout for `plan` and sends the browser there. */

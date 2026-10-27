@@ -259,6 +259,10 @@ export type BillingView = {
     cancel_at_period_end: boolean;
     current_period_end?: string | null;
     /**
+     * The root user's first workspace: full access without a subscription.
+     */
+    exempt: boolean;
+    /**
      * The workspace has a Stripe customer, so the Billing Portal can open.
      */
     has_customer: boolean;
@@ -267,10 +271,15 @@ export type BillingView = {
      */
     plan?: string | null;
     /**
-     * The plan keys a workspace can subscribe to, in order.
+     * The plans a workspace can subscribe to, in order.
      */
-    plans: Array<string>;
+    plans: Array<PlanView>;
     status?: null | SubscriptionStatus;
+    trial?: null | TrialView;
+    /**
+     * How long a new workspace's trial lasts; 0 when new workspaces have none.
+     */
+    trial_days: number;
 };
 
 export type BulkBody = {
@@ -2431,6 +2440,36 @@ export type PasswordConfirmationBody = {
  */
 export type Permission = 'workspace.update' | 'workspace.delete' | 'workspace.transfer' | 'members.manage' | 'audit.view' | 'api_tokens.manage' | 'integrations.manage' | 'teamspaces.delete' | 'pages.purge' | 'views.manage_shared' | 'comments.moderate' | 'chat.manage' | 'billing.manage';
 
+export type PlanInterval = 'month' | 'year';
+
+/**
+ * A plan as Stripe describes its price. When Stripe cannot be reached, only `key` and a `name`
+ * made from it are set.
+ */
+export type PlanView = {
+    /**
+     * In the currency's minor units (cents).
+     */
+    amount?: number | null;
+    /**
+     * ISO 4217, lowercase (`usd`).
+     */
+    currency?: string | null;
+    interval?: null | PlanInterval;
+    /**
+     * What `BillingCheckoutBody.plan` takes.
+     */
+    key: string;
+    /**
+     * The product's name.
+     */
+    name: string;
+    /**
+     * Plans of one product are the same plan billed at different intervals.
+     */
+    product_id?: string | null;
+};
+
 /**
  * The presence a user sets for themselves. A user without a connection is offline whatever
  * they set; `Invisible` shows them as offline to everybody else while they are connected.
@@ -3319,6 +3358,16 @@ export type TrashedPage = {
 };
 
 /**
+ * A trial workspace's end and usage of its limits.
+ */
+export type TrialView = {
+    ends_at: string;
+    members: Usage;
+    pages: Usage;
+    tasks: Usage;
+};
+
+/**
  * The answer to a right password when the account has two-factor sign-in on.
  */
 export type TwoFactorChallenge = {
@@ -3352,6 +3401,11 @@ export type UpdateMeBody = {
      * The optional parts: absent leaves the part as it is, an empty text removes it.
      */
     title?: string | null;
+};
+
+export type Usage = {
+    limit: number;
+    used: number;
 };
 
 /**
@@ -3449,7 +3503,7 @@ export type Visibility = 'personal' | 'workspace';
 /**
  * What members of a workspace may do.
  */
-export type WorkspaceAccess = 'full' | 'read_only';
+export type WorkspaceAccess = 'full' | 'trial' | 'read_only';
 
 export type WorkspaceConflict = {
     current_version: number;
@@ -11470,6 +11524,10 @@ export type CreateInvitationErrors = {
      */
     401: WorkspaceProblem;
     /**
+     * trial_limit_reached
+     */
+    402: WorkspaceProblem;
+    /**
      * origin_forbidden, workspace_action_forbidden
      */
     403: WorkspaceProblem;
@@ -12049,6 +12107,10 @@ export type CreatePageErrors = {
      * authentication_required
      */
     401: TaskProblem;
+    /**
+     * trial_limit_reached
+     */
+    402: TaskProblem;
     /**
      * origin_forbidden
      */
@@ -12652,6 +12714,10 @@ export type DuplicatePageErrors = {
      * authentication_required
      */
     401: TaskProblem;
+    /**
+     * trial_limit_reached
+     */
+    402: TaskProblem;
     /**
      * origin_forbidden
      */
@@ -15400,6 +15466,10 @@ export type CreateTaskErrors = {
      * authentication_required
      */
     401: TaskProblem;
+    /**
+     * trial_limit_reached
+     */
+    402: TaskProblem;
     /**
      * origin_forbidden
      */
