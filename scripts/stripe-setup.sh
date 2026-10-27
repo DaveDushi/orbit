@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Creates the Orbit Cloud products and prices in Stripe, then prints ORBIT_STRIPE_PRICES.
+# Creates the Orbit Cloud product, its prices and the Billing Portal in Stripe, then prints
+# ORBIT_STRIPE_PRICES.
 # Run it once with a test key and once with the live key: each run finds what exists by product id
 # and price lookup key, so running it again creates nothing new. It renames products whose name
 # differs, since Orbit shows the product name on the billing page.
@@ -17,12 +18,11 @@ stripe() {
     curl -sS -X "$method" -u "$STRIPE_SECRET_KEY:" "$api$path" "$@"
 }
 
-# plan key, product id, product name, amount in cents, interval
+# plan key, product id, product name, amount in cents, interval. The product gets the Stripe Tax code
+# "SaaS - personal use" (txcd_10103001).
 plans=(
-    "team-monthly orbit_team Team 1000 month"
-    "team-annual orbit_team Team 10000 year"
-    "business-monthly orbit_business Business 2900 month"
-    "business-annual orbit_business Business 29000 year"
+    "monthly orbit Orbit 1000 month"
+    "annual orbit Orbit 10000 year"
 )
 
 prices=()
@@ -30,8 +30,8 @@ for line in "${plans[@]}"; do
     read -r key product name amount interval <<<"$line"
     existing=$(stripe GET "/products/$product")
     if jq -e '.error' >/dev/null <<<"$existing"; then
-        stripe POST /products -d id="$product" -d name="$name" \
-            -d "metadata[orbit_plan]=${key%-*}" | jq -er '.id' >/dev/null
+        stripe POST /products -d id="$product" -d name="$name" -d tax_code=txcd_10103001 \
+            | jq -er '.id' >/dev/null
         echo "created product $product" >&2
     elif [ "$(jq -r '.name' <<<"$existing")" != "$name" ]; then
         stripe POST "/products/$product" -d name="$name" | jq -er '.id' >/dev/null
@@ -46,6 +46,27 @@ for line in "${plans[@]}"; do
     fi
     prices+=("$key:$price")
 done
+
+# Orbit opens the Billing Portal without naming a configuration, so the account needs a default one.
+if [ -z "$(stripe GET /billing_portal/configurations -G -d is_default=true | jq -r '.data[0].id // empty')" ]; then
+    portal=(-d "features[customer_update][enabled]=true"
+        -d "features[customer_update][allowed_updates][]=email"
+        -d "features[customer_update][allowed_updates][]=address"
+        -d "features[customer_update][allowed_updates][]=tax_id"
+        -d "features[invoice_history][enabled]=true"
+        -d "features[payment_method_update][enabled]=true"
+        -d "features[subscription_cancel][enabled]=true"
+        -d "features[subscription_cancel][mode]=at_period_end"
+        -d "features[subscription_update][enabled]=true"
+        -d "features[subscription_update][default_allowed_updates][]=price"
+        -d "features[subscription_update][proration_behavior]=create_prorations"
+        -d "features[subscription_update][products][0][product]=orbit")
+    for entry in "${prices[@]}"; do
+        portal+=(-d "features[subscription_update][products][0][prices][]=${entry#*:}")
+    done
+    stripe POST /billing_portal/configurations "${portal[@]}" | jq -er '.id' >/dev/null
+    echo "created the default Billing Portal configuration" >&2
+fi
 
 if [ -n "${ORBIT_WEBHOOK_URL:-}" ]; then
     existing=$(stripe GET /webhook_endpoints -G -d limit=100 |
