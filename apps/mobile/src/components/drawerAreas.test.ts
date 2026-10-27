@@ -41,8 +41,7 @@ describe('drawerAreaOf', () => {
 describe('drawerSections', () => {
   test('groups links under the web section labels', () => {
     expect(drawerSections('workspace', areas.workspace)).toEqual([
-      { label: 'Configuration', items: [{ href: '/settings' }] },
-      { label: 'Team', items: [{ href: '/settings/members' }] },
+      { label: 'Workspace', items: [{ href: '/settings' }, { href: '/settings/members' }] },
     ])
     expect(drawerSections('admin', areas.admin)).toEqual([{ label: 'Instance', items: areas.admin }])
   })

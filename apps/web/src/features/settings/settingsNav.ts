@@ -35,26 +35,31 @@ const AREAS: Record<SettingsAreaName, SettingsArea> = {
     icon: Settings,
     sections: [
       {
-        label: 'Configuration',
+        label: 'Workspace',
         items: [
           { to: '/settings', label: 'General', icon: Settings, end: true },
-          { to: '/settings/api-tokens', label: 'API tokens', icon: Key, permission: 'api_tokens.manage' },
-          { to: '/settings/emoji', label: 'Emoji', icon: SmileCircle, permission: 'chat.manage' },
-          { to: '/settings/stickers', label: 'Stickers', icon: Sticker, permission: 'chat.manage' },
-          { to: '/settings/github', label: 'GitHub', icon: Link2 },
+          { to: '/settings/members', label: 'Members', icon: Users },
+          { to: '/settings/billing', label: 'Billing', icon: Card, cloud: true },
           { to: '/tasks-trash', label: 'Trash', icon: Trash2 },
         ],
       },
       {
-        label: 'Team',
+        label: 'Chat',
         items: [
-          { to: '/settings/members', label: 'Members', icon: Users },
+          { to: '/settings/emoji', label: 'Emoji', icon: SmileCircle, permission: 'chat.manage' },
+          { to: '/settings/stickers', label: 'Stickers', icon: Sticker, permission: 'chat.manage' },
         ],
       },
       {
-        label: 'Workspace',
+        label: 'Integrations',
         items: [
-          { to: '/settings/billing', label: 'Billing', icon: Card, cloud: true },
+          { to: '/settings/github', label: 'GitHub', icon: Link2 },
+          { to: '/settings/api-tokens', label: 'API tokens', icon: Key, permission: 'api_tokens.manage' },
+        ],
+      },
+      {
+        label: 'Advanced',
+        items: [
           { to: '/settings/danger-zone', label: 'Danger zone', icon: TriangleAlert, permission: 'workspace.delete' },
         ],
       },
