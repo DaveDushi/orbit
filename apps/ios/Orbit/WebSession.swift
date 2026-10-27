@@ -10,7 +10,9 @@ final class WebSession: NSObject, ObservableObject {
 
     /// Why the last page load failed; `nil` while the page is fine.
     @Published private(set) var loadError: String?
+    @Published private(set) var sharingError: String?
 
+    private var shareSync: ShareSessionSync?
     private var downloads: [WKDownload: URL] = [:]
 
     init(server: Server) {
@@ -23,6 +25,9 @@ final class WebSession: NSObject, ObservableObject {
         configuration.allowsInlineMediaPlayback = true
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init()
+        shareSync = ShareSessionSync(server: server, cookies: configuration.websiteDataStore.httpCookieStore) { [weak self] in
+            self?.sharingError = $0
+        }
 
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -114,6 +119,7 @@ extension WebSession: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         loadError = nil
+        shareSync?.refresh()
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {

@@ -4,3 +4,7 @@ Config/Local.xcconfig
 build/
 DerivedData/
 xcuserdata/
+.build/
+.bsp/
+.swiftpm/
+xtool/

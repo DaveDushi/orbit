@@ -1,0 +1,10 @@
+version: 1
+bundleID: dev.orbit.ios
+product: Orbit
+infoPath: build/Info.plist
+entitlementsPath: Config/Sharing.entitlements
+extensions:
+  - product: OrbitShare
+    bundleID: dev.orbit.ios.share
+    infoPath: build/ShareInfo.plist
+    entitlementsPath: Config/Sharing.entitlements
