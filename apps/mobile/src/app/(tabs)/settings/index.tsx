@@ -1,10 +1,12 @@
+import { storageFileLabel } from '@orbit/api/storage'
+import type { StorageFile } from '@orbit/api/generated/types.gen'
 import { router } from 'expo-router'
 import { useState } from 'react'
 import { View } from 'react-native'
 
 import { ConfirmDialog, type ConfirmRequest } from '../../../components/settings/Dialog'
 import { ACCOUNT_NAV, Note, RowIcon, RowText, SettingsCard, SettingsRow, SettingsShell, WORKSPACE_NAV } from '../../../components/settings/Shell'
-import { storageUse } from '../../../data/account-api'
+import { formatBytes, storageUse } from '../../../data/account-api'
 import { useMemberWrites, useRenameWorkspace, useWorkspaceStorage } from '../../../hooks/account'
 import { useOrbit } from '../../../orbit-context'
 import { useMembers } from '../../../queries'
@@ -33,6 +35,7 @@ export default function GeneralScreen() {
         actions={workspace.permissions.includes('storage.manage') ? <Button label="Use your own bucket" variant="outline" size="sm" onPress={() => router.push('/settings/file-storage')} /> : undefined}
       >
         {storage.data ? <StorageBar {...storageUse(storage.data)} /> : <Note error={storage.isError}>{storage.isError ? 'Storage use could not be loaded.' : 'Loading storage…'}</Note>}
+        {storage.data?.largest_files.length ? <LargestFiles files={storage.data.largest_files} /> : null}
       </SettingsCard>
 
       <SettingsCard title="Account" description={`${user.email} on ${session.server}`} flush>
@@ -98,6 +101,29 @@ function StorageBar({ label, fraction }: { label: string; fraction: number | nul
           <View className={`h-1.5 rounded-full ${fraction >= 0.9 ? 'bg-destructive' : 'bg-primary'}`} style={{ width: `${fraction * 100}%` }} />
         </View>
       ) : null}
+    </View>
+  )
+}
+
+/** Only admins get these from the server. */
+function LargestFiles({ files }: { files: StorageFile[] }) {
+  return (
+    <View className="mt-5 gap-2">
+      <Text className="text-[13px] font-medium">Largest files</Text>
+      <View className="rounded-lg border border-border">
+        {files.map((file, index) => {
+          const { name, where } = storageFileLabel(file)
+          return (
+            <View key={index} className={`flex-row items-center gap-3 px-3 py-2 ${index > 0 ? 'border-t border-border' : ''}`}>
+              <View className="flex-1 gap-0.5">
+                <Text className="text-[13px]" numberOfLines={1}>{name}</Text>
+                <Text className="text-xs text-muted-foreground" numberOfLines={1}>{where}</Text>
+              </View>
+              <Text className="text-[13px] text-muted-foreground tabular-nums">{formatBytes(file.byte_size)}</Text>
+            </View>
+          )
+        })}
+      </View>
     </View>
   )
 }

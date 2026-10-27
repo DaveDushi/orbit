@@ -2988,6 +2988,31 @@ export type StickerRecord = {
     url: string;
 };
 
+/**
+ * One stored file (blob) of a workspace.
+ */
+export type StorageFile = {
+    byte_size: number;
+    /**
+     * `null` when the file is only used in private places, or no longer used (it stops counting soon).
+     */
+    name?: string | null;
+    /**
+     * Where the file is attached; empty when nothing uses it any more.
+     */
+    uses: Array<StorageFileUse>;
+};
+
+export type StorageFileUse = {
+    kind: StorageFileUseKind;
+    /**
+     * The task title, page title or channel name; `null` for emoji, stickers and private places.
+     */
+    title?: string | null;
+};
+
+export type StorageFileUseKind = 'task' | 'page' | 'channel' | 'emoji' | 'sticker' | 'private';
+
 export type StorageOptionsBody = {
     /**
      * New attachment files go to the bucket and existing ones move there. Off: they move back to this server.
@@ -3564,6 +3589,10 @@ export type WorkspaceRole = 'owner' | 'admin' | 'member';
  * How many bytes of files a workspace stores, and its quota.
  */
 export type WorkspaceStorage = {
+    /**
+     * The files that use the most storage, largest first. Empty unless the caller may update the workspace.
+     */
+    largest_files: Array<StorageFile>;
     /**
      * `null` is unlimited.
      */

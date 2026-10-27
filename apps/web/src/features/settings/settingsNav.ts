@@ -1,5 +1,5 @@
 import { useContext, type ComponentType } from 'react'
-import { ArchiveBox, Brush, Card, Chart, ClipboardText, CloudConnection, Cpu, SecurityUser, Driver, Key, Keyboard, Link2, Lock, Notification as Bell, Setting2 as Settings, ShieldTick as ShieldCheck, SmileCircle, Sms as Mail, Sticker, Danger as TriangleAlert, Trash as Trash2, User, People as Users } from 'reicon-react'
+import { ArchiveBox, Brush, Card, Chart, ClipboardText, CloudConnection, Cpu, SecurityUser, Driver, Key, Keyboard, Link2, Lock, Notification as Bell, Setting2 as Settings, ShieldTick as ShieldCheck, SmileCircle, Sms as Mail, Sticker, Danger as TriangleAlert, User, People as Users } from 'reicon-react'
 import type { Permission } from '@orbit/api/generated/types.gen'
 import { WorkspaceContext } from '@/features/workspaces/workspaceContext'
 import { useBillingEnabled } from '@/features/workspaces/billing'
@@ -40,7 +40,6 @@ const AREAS: Record<SettingsAreaName, SettingsArea> = {
           { to: '/settings', label: 'General', icon: Settings, end: true },
           { to: '/settings/members', label: 'Members', icon: Users },
           { to: '/settings/billing', label: 'Billing', icon: Card, cloud: true },
-          { to: '/tasks-trash', label: 'Trash', icon: Trash2 },
         ],
       },
       {
@@ -121,8 +120,7 @@ const under = (pathname: string, root: string) => pathname === root || pathname.
 
 /** The settings area a route belongs to; the sidebar shows that area's links instead of the app links. */
 export function settingsAreaOf(pathname: string): SettingsAreaName | null {
-  // Trash is a link in the workspace settings, so the settings links stay while it is open
-  if (under(pathname, '/settings') || under(pathname, '/tasks-trash')) return 'settings'
+  if (under(pathname, '/settings')) return 'settings'
   if (under(pathname, '/profile')) return 'profile'
   if (under(pathname, '/admin')) return 'admin'
   return null

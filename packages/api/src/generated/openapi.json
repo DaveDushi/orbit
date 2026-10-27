@@ -41156,6 +41156,64 @@
           }
         }
       },
+      "StorageFile": {
+        "type": "object",
+        "description": "One stored file (blob) of a workspace.",
+        "required": [
+          "byte_size",
+          "uses"
+        ],
+        "properties": {
+          "byte_size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` when the file is only used in private places, or no longer used (it stops counting soon)."
+          },
+          "uses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StorageFileUse"
+            },
+            "description": "Where the file is attached; empty when nothing uses it any more."
+          }
+        }
+      },
+      "StorageFileUse": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/StorageFileUseKind"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The task title, page title or channel name; `null` for emoji, stickers and private places."
+          }
+        }
+      },
+      "StorageFileUseKind": {
+        "type": "string",
+        "enum": [
+          "task",
+          "page",
+          "channel",
+          "emoji",
+          "sticker",
+          "private"
+        ]
+      },
       "StorageOptionsBody": {
         "type": "object",
         "required": [
@@ -42721,9 +42779,17 @@
         "type": "object",
         "description": "How many bytes of files a workspace stores, and its quota.",
         "required": [
-          "used_bytes"
+          "used_bytes",
+          "largest_files"
         ],
         "properties": {
+          "largest_files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StorageFile"
+            },
+            "description": "The files that use the most storage, largest first. Empty unless the caller may update the workspace."
+          },
           "quota_bytes": {
             "type": [
               "integer",

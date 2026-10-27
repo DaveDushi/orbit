@@ -307,3 +307,19 @@ test('in the new UI Tasks has its own area: views, task pages and projects leave
   expect(view.getByTestId('location').textContent).toBe('/views')
   expect(view.getByRole('link', { name: 'Back to the main menu' }).textContent).toBe('Tasks')
 })
+
+test('the task trash sits in the Tasks area, which stays open while the trash is shown', () => {
+  const view = render(
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter initialEntries={['/tasks']}>
+        <SidebarNav contextual />
+        <Location />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+
+  fireEvent.click(view.getByRole('link', { name: 'Task trash' }))
+  expect(view.getByTestId('location').textContent).toBe('/tasks-trash')
+  expect(view.getByRole('link', { name: 'Back to the main menu' }).textContent).toBe('Tasks')
+  expect(view.getByRole('link', { name: 'Task trash' }).dataset.active).toBe('true')
+})

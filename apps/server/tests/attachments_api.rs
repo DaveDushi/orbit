@@ -1136,7 +1136,10 @@ async fn uploads_stay_within_the_workspace_storage_quota() {
     assert_eq!(usage.status(), StatusCode::OK);
     assert_eq!(
         response_json(usage).await,
-        json!({"used_bytes": quota, "quota_bytes": quota})
+        json!({"used_bytes": quota, "quota_bytes": quota, "largest_files": [
+            {"byte_size": 100, "name": "small.bin", "uses": [{"kind": "task", "title": "Attachment task"}]},
+            {"byte_size": PNG.len(), "name": "again.png", "uses": [{"kind": "task", "title": "Attachment task"}]},
+        ]})
     );
 
     // Emoji and stickers count too; a profile picture is not a workspace file.
@@ -1234,6 +1237,91 @@ async fn uploads_stay_within_the_workspace_storage_quota() {
         fixture.upload("big.bin", &[7_u8; 1000]).await.status(),
         StatusCode::CREATED
     );
+}
+
+#[tokio::test]
+async fn admins_see_the_largest_files_and_private_names_stay_hidden() {
+    let fixture = Fixture::new(UploadLimits::default()).await;
+    let workspace_id: Id = fixture.workspace_id.parse().unwrap();
+    let owner_id: Id = fixture.owner_id.parse().unwrap();
+    for (name, bytes) in [
+        ("first.png", PNG),
+        ("again.png", PNG),
+        ("big.bin", &[7_u8; 2000][..]),
+    ] {
+        assert_eq!(
+            fixture.upload(name, bytes).await.status(),
+            StatusCode::CREATED
+        );
+    }
+    // An unsent chat upload is private; a blob without uses waits for reconcile.
+    let now = TimestampMillis::now().as_millis();
+    for (size, key) in [(10_000_i64, "secret"), (5_000, "orphan")] {
+        sqlx::query(
+            "INSERT INTO attachment_blobs (id, workspace_id, sha256, byte_size, storage_key, created_at, quarantine_until) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(key)
+        .bind(&fixture.workspace_id)
+        .bind(key)
+        .bind(size)
+        .bind(key)
+        .bind(now)
+        .bind(now)
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO chat_message_files (id, workspace_id, blob_id, file_name, mime_type, size_bytes, uploaded_by, created_at) \
+         VALUES ($1, $2, 'secret', 'secret.bin', 'application/octet-stream', 10000, $3, $4)",
+    )
+    .bind(Id::new_v7().to_string())
+    .bind(&fixture.workspace_id)
+    .bind(&fixture.owner_id)
+    .bind(now)
+    .execute(fixture.database.pool())
+    .await
+    .unwrap();
+
+    let workspaces = WorkspaceRepository::new((*fixture.database).clone());
+    let storage = workspaces.storage(workspace_id, owner_id).await.unwrap();
+    assert_eq!(
+        serde_json::to_value(&storage.largest_files).unwrap(),
+        json!([
+            {"byte_size": 10_000, "name": null, "uses": [{"kind": "private", "title": null}]},
+            {"byte_size": 5_000, "name": null, "uses": []},
+            {"byte_size": 2000, "name": "big.bin", "uses": [{"kind": "task", "title": "Attachment task"}]},
+            {"byte_size": PNG.len(), "name": "again.png", "uses": [{"kind": "task", "title": "Attachment task"}]},
+        ])
+    );
+
+    let member_id = Id::new_v7();
+    sqlx::query(
+        "INSERT INTO users (id, email, normalized_email, display_name, password_hash, created_at, updated_at) \
+         VALUES ($1, 'member@example.com', 'member@example.com', 'Member', 'unused', $2, $3)",
+    )
+    .bind(member_id.to_string())
+    .bind(now)
+    .bind(now)
+    .execute(fixture.database.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO memberships (id, workspace_id, user_id, role, version, created_at, updated_at) \
+         VALUES ($1, $2, $3, 'member', 0, $4, $5)",
+    )
+    .bind(Id::new_v7().to_string())
+    .bind(&fixture.workspace_id)
+    .bind(member_id.to_string())
+    .bind(now)
+    .bind(now)
+    .execute(fixture.database.pool())
+    .await
+    .unwrap();
+    let storage = workspaces.storage(workspace_id, member_id).await.unwrap();
+    assert_eq!(storage.used_bytes, 15_000 + 2000 + PNG.len() as u64);
+    assert!(storage.largest_files.is_empty());
 }
 
 fn multipart_request(uri: &str, cookie: &str, files: &[(&str, &[u8])]) -> Request<Body> {
