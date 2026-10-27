@@ -164,14 +164,66 @@ pub struct MaintenanceSummary {
 }
 
 /// How many bytes of files a workspace stores, and its quota.
-#[derive(Clone, Copy, Debug, Serialize, ToSchema)]
+#[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct WorkspaceStorage {
     /// Each stored file once, however often it is attached. A deleted file stops counting about a day after its
     /// last reference goes (trashed tasks, pages and messages keep their files until the trash is emptied).
     pub used_bytes: u64,
     /// `null` is unlimited.
     pub quota_bytes: Option<u64>,
+    /// The files that use the most storage, largest first. Empty unless the caller may update the workspace.
+    pub largest_files: Vec<StorageFile>,
 }
+
+/// One stored file (blob) of a workspace.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct StorageFile {
+    pub byte_size: u64,
+    /// `null` when the file is only used in private places, or no longer used (it stops counting soon).
+    pub name: Option<String>,
+    /// Where the file is attached; empty when nothing uses it any more.
+    pub uses: Vec<StorageFileUse>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
+pub struct StorageFileUse {
+    pub kind: StorageFileUseKind,
+    /// The task title, page title or channel name; `null` for emoji, stickers and private places.
+    pub title: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StorageFileUseKind {
+    Task,
+    Page,
+    Channel,
+    Emoji,
+    Sticker,
+    /// A personal page, a private channel, a direct message or an unsent chat upload. Its names stay hidden.
+    Private,
+}
+
+/// How many files `WorkspaceStorage::largest_files` lists.
+const LARGEST_FILES: i64 = 10;
+
+/// Every use of the largest blobs of workspace `$1`, largest blob first. Names in private places are `NULL`.
+const LARGEST_FILE_USES: &str = "SELECT b.id AS blob_id, b.byte_size, u.kind, u.file_name, u.title \
+     FROM attachment_blobs b LEFT JOIN ( \
+       SELECT r.blob_id, 'task' AS kind, r.display_name AS file_name, t.title AS title \
+         FROM attachment_references r JOIN tasks t ON t.id = r.task_id WHERE r.workspace_id = $1 \
+       UNION ALL SELECT f.blob_id, CASE WHEN p.owner_id IS NULL THEN 'page' ELSE 'private' END, \
+         CASE WHEN p.owner_id IS NULL THEN f.file_name END, CASE WHEN p.owner_id IS NULL THEN p.title END \
+         FROM page_files f JOIN pages p ON p.id = f.page_id WHERE f.workspace_id = $1 \
+       UNION ALL SELECT f.blob_id, CASE WHEN c.kind = 'public' THEN 'channel' ELSE 'private' END, \
+         CASE WHEN c.kind = 'public' THEN f.file_name END, CASE WHEN c.kind = 'public' THEN c.name END \
+         FROM chat_message_files f LEFT JOIN chat_conversations c ON c.id = f.conversation_id \
+         WHERE f.workspace_id = $1 \
+       UNION ALL SELECT blob_id, 'emoji', name, NULL FROM custom_emoji WHERE workspace_id = $1 AND blob_id IS NOT NULL \
+       UNION ALL SELECT blob_id, 'sticker', name, NULL FROM custom_stickers WHERE workspace_id = $1 AND blob_id IS NOT NULL \
+     ) u ON u.blob_id = b.id \
+     WHERE b.id IN (SELECT id FROM attachment_blobs WHERE workspace_id = $1 ORDER BY byte_size DESC, id LIMIT $2) \
+     ORDER BY b.byte_size DESC, b.id, u.kind, u.title, u.file_name";
 
 #[derive(Debug, Error)]
 pub enum WorkspaceError {
@@ -292,15 +344,19 @@ impl WorkspaceRepository {
         let id = defaults.workspace.id;
         let mut transaction = self.database.immediate_transaction().await?;
         ensure_may_own_another(&mut transaction, actor_id).await?;
+        // The root user's first workspace is exempt from billing (`crate::billing::access`).
         sqlx::query(
-            "INSERT INTO workspaces (id, name, version, owner_membership_id, created_at, updated_at) \
-             VALUES ($1, $2, 0, $3, $4, $5)",
+            "INSERT INTO workspaces (id, name, version, owner_membership_id, created_at, updated_at, \
+             billing_exempt) VALUES ($1, $2, 0, $3, $4, $5, CASE WHEN EXISTS (SELECT 1 FROM \
+             installation_state WHERE id = 1 AND root_user_id = $6) AND NOT EXISTS (SELECT 1 FROM \
+             workspaces WHERE billing_exempt = 1) THEN 1 ELSE 0 END)",
         )
         .bind(id.to_string())
         .bind(&defaults.workspace.name)
         .bind(defaults.owner.id.to_string())
         .bind(now.as_millis())
         .bind(now.as_millis())
+        .bind(actor_id.to_string())
         .execute(&mut *transaction)
         .await?;
         sqlx::query(
@@ -364,7 +420,7 @@ impl WorkspaceRepository {
         workspace_id: Id,
         actor_id: Id,
     ) -> Result<WorkspaceStorage, WorkspaceError> {
-        self.get(workspace_id, actor_id).await?;
+        let workspace = self.get(workspace_id, actor_id).await?;
         let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT ({WORKSPACE_STORAGE_USED}) AS used, workspace_storage_quota_bytes AS quota \
              FROM instance_settings WHERE id = 1"
@@ -372,12 +428,61 @@ impl WorkspaceRepository {
         .bind(workspace_id.to_string())
         .fetch_one(self.database.pool())
         .await?;
+        let largest_files = if workspace.permissions.contains(&Permission::WorkspaceUpdate) {
+            self.largest_files(workspace_id).await?
+        } else {
+            Vec::new()
+        };
         Ok(WorkspaceStorage {
             used_bytes: u64::try_from(row.get::<i64, _>("used")).unwrap_or(0),
             quota_bytes: u64::try_from(row.get::<i64, _>("quota"))
                 .ok()
                 .filter(|quota| *quota > 0),
+            largest_files,
         })
+    }
+
+    async fn largest_files(&self, workspace_id: Id) -> Result<Vec<StorageFile>, WorkspaceError> {
+        let rows = sqlx::query(LARGEST_FILE_USES)
+            .bind(workspace_id.to_string())
+            .bind(LARGEST_FILES)
+            .fetch_all(self.database.pool())
+            .await?;
+        let mut files: Vec<(String, StorageFile)> = Vec::new();
+        for row in rows {
+            let blob_id: String = row.get("blob_id");
+            if files.last().is_none_or(|(id, _)| *id != blob_id) {
+                let file = StorageFile {
+                    byte_size: u64::try_from(row.get::<i64, _>("byte_size")).unwrap_or(0),
+                    name: None,
+                    uses: Vec::new(),
+                };
+                files.push((blob_id, file));
+            }
+            let Some((_, file)) = files.last_mut() else {
+                continue;
+            };
+            let kind = match row.get::<Option<String>, _>("kind").as_deref() {
+                Some("task") => StorageFileUseKind::Task,
+                Some("page") => StorageFileUseKind::Page,
+                Some("channel") => StorageFileUseKind::Channel,
+                Some("emoji") => StorageFileUseKind::Emoji,
+                Some("sticker") => StorageFileUseKind::Sticker,
+                Some(_) => StorageFileUseKind::Private,
+                None => continue,
+            };
+            if file.name.is_none() {
+                file.name = row.get("file_name");
+            }
+            let used = StorageFileUse {
+                kind,
+                title: row.get("title"),
+            };
+            if !file.uses.contains(&used) {
+                file.uses.push(used);
+            }
+        }
+        Ok(files.into_iter().map(|(_, file)| file).collect())
     }
 
     pub async fn rename(

@@ -4,7 +4,7 @@ import { useBindings } from '@/shortcuts/useCommand'
 import { createContext, Fragment, useContext, useEffect, useState, type ComponentType, type ReactNode } from 'react'
 import { Link, useLocation, useMatch, useNavigate, useResolvedPath, type LinkProps } from 'react-router'
 import { cva, type VariantProps } from 'class-variance-authority'
-import { Calendar, ChevronDown, CalendarTick, Danger, SecurityUser, Home2 as Home, Layer, Notification as Bell, Message as MessageSquare, DocumentText as FileText, Search4 as Search, Setting2 as Settings, Sms as Mail, Star, TaskSquare as SquareCheck, Timer, Folder, Add as Plus } from 'reicon-react'
+import { Calendar, ChevronDown, CalendarTick, Danger, SecurityUser, Home2 as Home, Layer, Notification as Bell, Message as MessageSquare, DocumentText as FileText, Search4 as Search, Setting2 as Settings, Sms as Mail, Star, TaskSquare as SquareCheck, Timer, Folder, Add as Plus, Trash } from 'reicon-react'
 import { cn } from 'cn'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
@@ -179,8 +179,8 @@ const recentPaths: string[] = []
 // Set by Back, so the next area slides in from the left even when Back lands in another area (Settings → Tasks).
 let backPressed = false
 
-/** Tasks and its saved views (not `/tasks-trash`, which is in the workspace settings). */
-const isTasksPath = (pathname: string) => /^\/(tasks|views)(\/|$)/.test(pathname)
+/** Tasks, its saved views and its trash. */
+const isTasksPath = (pathname: string) => /^\/(tasks|tasks-trash|views)(\/|$)/.test(pathname)
 
 /** The area whose links or list replace the app links: a settings area, Tasks, or a page with its own list. */
 function areaOf(pathname: string): string | null {
@@ -293,6 +293,9 @@ function TasksAreaNav({ onNavigate, onBack }: { onNavigate?: () => void; onBack?
           ))}
         </>
       ) : null}
+      {/* at the bottom, like the Docs trash */}
+      <div className="flex-1" aria-hidden="true" />
+      <SidebarNavItem to="/tasks-trash" icon={Trash} label="Trash" aria-label="Task trash" onClick={onNavigate} />
     </>
   )
 }
@@ -490,7 +493,10 @@ export function SidebarNav({
                       {/* saved views belong to Tasks, so they nest under it instead of sitting beside the other apps;
                           always shown so the rows below never move when the route changes */}
                       {link.to === '/tasks' && !contextual ? (
-                        <SidebarNavItem to="/views" end size="sub" icon={Layer} label="Views" aria-label="Task views" onClick={onNavigate} />
+                        <>
+                          <SidebarNavItem to="/views" end size="sub" icon={Layer} label="Views" aria-label="Task views" onClick={onNavigate} />
+                          <SidebarNavItem to="/tasks-trash" size="sub" icon={Trash} label="Trash" aria-label="Task trash" onClick={onNavigate} />
+                        </>
                       ) : null}
                     </Fragment>
                   ) : (

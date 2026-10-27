@@ -12,6 +12,7 @@ import {
   enableTotp,
   getNotificationPreferences,
   getTwoFactor,
+  getWorkspaceBucket,
   getWorkspaceStorage,
   listInvitations,
   listSessions,
@@ -20,9 +21,11 @@ import {
   regenerateRecoveryCodes,
   removeAvatar,
   removeMember,
+  removeWorkspaceBucket,
   renameWorkspace as renameWorkspaceRequest,
   revokeInvitation as revokeInvitationRequest,
   revokeSession as revokeSessionRequest,
+  saveWorkspaceBucket,
   setupTotp,
   transferOwnership as transferOwnershipRequest,
   uploadAvatar,
@@ -31,17 +34,19 @@ import type {
   AuthOptions,
   InvitationRecord,
   NotificationPrefs,
+  S3Body,
   SessionRecord,
   TotpSetup,
   TwoFactorStatus,
   UserStatus,
+  WorkspaceBucketView,
   WorkspaceRole,
   WorkspaceStorage,
 } from '@orbit/api/generated/types.gen'
 
 import type { MemberRecord, OrbitClient, User, WorkspaceRecord } from './orbit'
 
-export type { InvitationRecord, NotificationPrefs, SessionRecord, TotpSetup, TwoFactorStatus, WorkspaceStorage }
+export type { InvitationRecord, NotificationPrefs, SessionRecord, TotpSetup, TwoFactorStatus, WorkspaceBucketView, WorkspaceStorage }
 
 /** Query keys of the account (not per workspace) and of the workspace settings. */
 export const accountKeys = {
@@ -51,6 +56,7 @@ export const accountKeys = {
   /** Under the `members` prefix, so the workspace events socket refreshes it with the members. */
   invitations: (workspaceId: string) => ['members', workspaceId, 'invitations'] as const,
   storage: (workspaceId: string) => ['workspace-storage', workspaceId] as const,
+  bucket: (workspaceId: string) => ['workspace-bucket', workspaceId] as const,
   authOptions: ['auth-options'] as const,
 }
 
@@ -175,6 +181,33 @@ export async function renameWorkspace(client: OrbitClient, workspace: Pick<Works
 
 export async function workspaceStorage(client: OrbitClient, workspaceId: string): Promise<WorkspaceStorage> {
   return (await getWorkspaceStorage({ client, path: { workspace_id: workspaceId }, throwOnError: true })).data
+}
+
+/** The File storage page: the workspace's own S3 bucket for attachments. */
+export async function workspaceBucket(client: OrbitClient, workspaceId: string): Promise<WorkspaceBucketView> {
+  return (await getWorkspaceBucket({ client, path: { workspace_id: workspaceId }, throwOnError: true })).data
+}
+
+/** Orbit tests the bucket before it saves; an empty secret key keeps the saved one. */
+export async function saveBucket(client: OrbitClient, workspaceId: string, body: S3Body): Promise<WorkspaceBucketView> {
+  return (await saveWorkspaceBucket({ client, path: { workspace_id: workspaceId }, body, throwOnError: true })).data
+}
+
+/** The bucket's files move back to Orbit's storage; the bucket goes away when none are left. */
+export async function removeBucket(client: OrbitClient, workspaceId: string): Promise<WorkspaceBucketView> {
+  return (await removeWorkspaceBucket({ client, path: { workspace_id: workspaceId }, throwOnError: true })).data
+}
+
+/** Polls while files move either way, as the admin Storage page does. */
+export function bucketPollInterval(view: WorkspaceBucketView | undefined): number | false {
+  return view && (view.checking || view.files_to_move > 0 || view.removing) ? 5000 : false
+}
+
+/** The File storage page's progress line, or `null` when no file waits to move. */
+export function bucketMovingText(view: Pick<WorkspaceBucketView, 'checking' | 'files_to_move' | 'removing'>): string | null {
+  if (view.checking) return 'Checking which files to move…'
+  if (view.files_to_move <= 0) return null
+  return `${view.files_to_move} ${view.files_to_move === 1 ? 'file' : 'files'} left to move ${view.removing ? "back to Orbit's storage" : 'to your bucket'}.`
 }
 
 /** The web's `formatBytes`: `512 B`, `12 KB`, `1.5 MB`, `2 GB`. */

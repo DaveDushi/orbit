@@ -66,6 +66,9 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::workspace_routes::list_workspaces,
         crate::workspace_routes::get_workspace,
         crate::workspace_routes::get_workspace_storage,
+        crate::workspace_routes::get_workspace_bucket,
+        crate::workspace_routes::save_workspace_bucket,
+        crate::workspace_routes::remove_workspace_bucket,
         crate::workspace_routes::rename_workspace,
         crate::workspace_routes::list_members,
         crate::workspace_routes::get_member_profile,
@@ -592,6 +595,18 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             add_code(&mut responses, "409", "email_not_configured");
             add_code(&mut responses, "502", "email_failed");
         }
+        "get_workspace_bucket" | "remove_workspace_bucket" => {
+            add_code(&mut responses, "403", "workspace_action_forbidden");
+            add_code(&mut responses, "404", "workspace_resource_not_found");
+        }
+        "save_workspace_bucket" => {
+            add_code(&mut responses, "403", "workspace_action_forbidden");
+            add_code(&mut responses, "404", "workspace_resource_not_found");
+            add_code(&mut responses, "409", "storage_in_use");
+            add_code(&mut responses, "422", "invalid_storage_settings");
+            add_code(&mut responses, "502", "storage_unreachable");
+            add_code(&mut responses, "503", "app_key_missing");
+        }
         "save_s3" => {
             add_code(&mut responses, "403", "installation_admin_required");
             add_code(&mut responses, "409", "storage_in_use");
@@ -712,6 +727,13 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
         id if id.contains("chat") => chat_errors(id, &mut responses),
         _ => {}
     }
+    // Orbit Cloud: the billing guard refuses these creates at the trial's limits.
+    if matches!(
+        operation_id,
+        "create_task" | "create_page" | "duplicate_page" | "create_invitation"
+    ) {
+        add_code(&mut responses, "402", "trial_limit_reached");
+    }
 
     responses
         .into_iter()
@@ -760,6 +782,7 @@ fn invalid_request_operation(operation_id: &str) -> bool {
             | "set_registration"
             | "save_smtp"
             | "save_s3"
+            | "save_workspace_bucket"
             | "save_storage_options"
             | "save_limits"
             | "save_job_limits"

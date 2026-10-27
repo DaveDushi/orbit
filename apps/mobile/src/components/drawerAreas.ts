@@ -33,9 +33,13 @@ export function drawerAreaOf(pathname: string, areas: Record<SettingsArea, reado
 
 /** The web's section labels (`settingsNav.ts`); a link not listed here sits in its area's first section. */
 const SECTIONS: Record<SettingsArea, { label: string; hrefs?: readonly string[] }[]> = {
-  workspace: [{ label: 'Configuration' }, { label: 'Team', hrefs: ['/settings/members'] }, { label: 'Workspace', hrefs: ['/settings/billing', '/settings/danger-zone'] }],
+  workspace: [{ label: 'Workspace' }, { label: 'Integrations', hrefs: ['/settings/file-storage'] }],
   account: [{ label: 'Account' }],
-  admin: [{ label: 'Instance' }],
+  admin: [
+    { label: 'Instance' },
+    { label: 'Data', hrefs: ['/settings/admin/storage', '/settings/admin/backups'] },
+    { label: 'Monitoring', hrefs: ['/settings/admin/audit', '/settings/admin/jobs'] },
+  ],
 }
 
 /** An area's links grouped under the web's section labels, in the web's section order; empty sections are left out. */

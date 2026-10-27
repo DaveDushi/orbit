@@ -1,8 +1,10 @@
 //! The read-only guard: in Orbit Cloud, a member's write to `/api/v1/workspaces/{id}[/…]` of a
 //! workspace without a subscription that grants access answers 402 `workspace_read_only`. Reads
 //! stay open, and so do the writes in [`ALLOWED_WRITES`]. Co-editing sockets open read-only
-//! instead ([`ReadOnlyWorkspace`]). Anyone else's write passes to the handler, which refuses it as
-//! on any workspace, so a stranger cannot tell a read-only workspace from a paid one.
+//! instead ([`ReadOnlyWorkspace`]). During the trial, a member's create in [`LIMITED_CREATES`]
+//! answers 402 `trial_limit_reached` once the workspace holds the [`TrialLimit`]. Anyone else's
+//! write passes to the handler, which refuses it as on any workspace, so a stranger cannot tell a
+//! read-only or trial workspace from a paid one.
 
 use std::sync::Arc;
 
@@ -12,9 +14,9 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::Response;
-use orbit_platform::{Id, Problem, RequestId};
+use orbit_platform::{Id, Problem, RequestId, TimestampMillis, TrialConfig};
 
-use super::{Billing, WorkspaceAccess};
+use super::{Billing, TrialLimit, WorkspaceAccess};
 use crate::auth_routes::{CookieMode, request_session};
 use crate::repositories::billing as repository;
 use crate::repositories::identity::IdentityRepository;
@@ -54,6 +56,15 @@ const ALLOWED_WRITES: &[(Method, &str)] = &[
     (Method::PUT, "view-preferences/*"),
 ];
 
+/// Creates a trial workspace refuses at its limit: the method and the path after
+/// `/api/v1/workspaces/{id}`, as in [`ALLOWED_WRITES`].
+const LIMITED_CREATES: &[(Method, &str, TrialLimit)] = &[
+    (Method::POST, "tasks", TrialLimit::Tasks),
+    (Method::POST, "pages", TrialLimit::Pages),
+    (Method::POST, "pages/*/duplicate", TrialLimit::Pages),
+    (Method::POST, "invitations", TrialLimit::Members),
+];
+
 /// Set on a co-editing socket request of a read-only workspace: the socket drops content updates.
 #[derive(Clone, Copy, Debug)]
 pub struct ReadOnlyWorkspace;
@@ -64,6 +75,8 @@ enum Check {
     Pass,
     /// A write that a read-only workspace refuses.
     Write(Id),
+    /// A write that a read-only workspace refuses and a trial one refuses at `TrialLimit`.
+    Create(Id, TrialLimit),
     /// A co-editing socket, read-only for a read-only workspace.
     Collab(Id),
 }
@@ -86,6 +99,12 @@ fn classify(method: &Method, path: &str) -> Check {
         };
     }
     let rest = rest.trim_end_matches('/');
+    if let Some((.., limit)) = LIMITED_CREATES
+        .iter()
+        .find(|(limited, pattern, _)| limited == method && matches_pattern(pattern, rest))
+    {
+        return Check::Create(workspace_id, *limit);
+    }
     let allowed = ALLOWED_WRITES
         .iter()
         .any(|(allowed, pattern)| allowed == method && matches_pattern(pattern, rest));
@@ -134,34 +153,63 @@ async fn guard(State(state): State<GuardState>, mut request: Request, next: Next
     let check = classify(request.method(), request.uri().path());
     let workspace_id = match check {
         Check::Pass => return next.run(request).await,
-        Check::Write(id) | Check::Collab(id) => id,
+        Check::Write(id) | Check::Create(id, _) | Check::Collab(id) => id,
     };
     let database = state.billing.database();
-    let access = match repository::workspace_access(database, workspace_id).await {
+    let trial = &state.billing.config().trial;
+    let access = match repository::workspace_access(database, workspace_id, trial).await {
         Ok(access) => access,
         Err(error) => {
             tracing::warn!(%error, "workspace access lookup failed");
             return problem(&request, StatusCode::SERVICE_UNAVAILABLE, unavailable());
         }
     };
-    match (check, access) {
-        (Check::Pass, _) | (_, WorkspaceAccess::Full) => next.run(request).await,
+    let refusal = match (check, access) {
+        (Check::Pass, _)
+        | (_, WorkspaceAccess::Full)
+        | (Check::Write(_) | Check::Collab(_), WorkspaceAccess::Trial) => {
+            return next.run(request).await;
+        }
         (Check::Collab(_), WorkspaceAccess::ReadOnly) => {
             // The socket route authenticates the caller itself; a stranger gets its 401/404.
             request.extensions_mut().insert(ReadOnlyWorkspace);
-            next.run(request).await
+            return next.run(request).await;
         }
-        (Check::Write(_), WorkspaceAccess::ReadOnly) => {
-            match caller_is_member(&state, workspace_id, request.headers()).await {
-                Ok(true) => problem(&request, StatusCode::PAYMENT_REQUIRED, read_only()),
-                Ok(false) => next.run(request).await,
+        (Check::Write(_) | Check::Create(..), WorkspaceAccess::ReadOnly) => Refusal::ReadOnly,
+        (Check::Create(_, limit), WorkspaceAccess::Trial) => {
+            // Counted before the handler runs, so concurrent creates can pass the limit by a few:
+            // a trial limit, not a security boundary.
+            match repository::trial_usage(database, workspace_id, limit, TimestampMillis::now())
+                .await
+            {
+                Ok(used) if used < limit.limit(trial) => return next.run(request).await,
+                Ok(_) => Refusal::TrialLimit(limit),
                 Err(error) => {
-                    tracing::warn!(%error, "workspace membership lookup failed");
-                    problem(&request, StatusCode::SERVICE_UNAVAILABLE, unavailable())
+                    tracing::warn!(%error, "trial usage lookup failed");
+                    return problem(&request, StatusCode::SERVICE_UNAVAILABLE, unavailable());
                 }
             }
         }
+    };
+    match caller_is_member(&state, workspace_id, request.headers()).await {
+        Ok(true) => match refusal {
+            Refusal::ReadOnly => problem(&request, StatusCode::PAYMENT_REQUIRED, read_only()),
+            Refusal::TrialLimit(limit) => {
+                let message = trial_limit(limit, trial);
+                problem(&request, StatusCode::PAYMENT_REQUIRED, message)
+            }
+        },
+        Ok(false) => next.run(request).await,
+        Err(error) => {
+            tracing::warn!(%error, "workspace membership lookup failed");
+            problem(&request, StatusCode::SERVICE_UNAVAILABLE, unavailable())
+        }
     }
+}
+
+enum Refusal {
+    ReadOnly,
+    TrialLimit(TrialLimit),
 }
 
 /// Whether the request carries the session of a member of the workspace, as the handlers decide
@@ -186,26 +234,39 @@ async fn caller_is_member(
 struct Message {
     code: &'static str,
     title: &'static str,
-    detail: &'static str,
+    detail: String,
 }
 
 /// Also the MCP and co-editing wording, so every surface says the same.
 pub const READ_ONLY_DETAIL: &str = "This workspace is read-only because it has no active \
      subscription. Its data stays readable and exportable; the owner can subscribe in Settings → Billing.";
 
-const fn read_only() -> Message {
+fn read_only() -> Message {
     Message {
         code: "workspace_read_only",
         title: "Workspace is read-only",
-        detail: READ_ONLY_DETAIL,
+        detail: READ_ONLY_DETAIL.to_owned(),
     }
 }
 
-const fn unavailable() -> Message {
+fn trial_limit(limit: TrialLimit, trial: &TrialConfig) -> Message {
+    Message {
+        code: "trial_limit_reached",
+        title: "Trial limit reached",
+        detail: format!(
+            "The trial allows {} {}. Choose a plan to add more.",
+            limit.limit(trial),
+            limit.noun()
+        ),
+    }
+}
+
+fn unavailable() -> Message {
     Message {
         code: "service_unavailable",
         title: "Service unavailable",
-        detail: "The workspace's subscription could not be checked. Try again in a moment.",
+        detail: "The workspace's subscription could not be checked. Try again in a moment."
+            .to_owned(),
     }
 }
 
@@ -219,7 +280,7 @@ fn problem(request: &Request, status: StatusCode, message: Message) -> Response 
         title: message.title.to_owned(),
         status: status.as_u16(),
         code: message.code.to_owned(),
-        detail: message.detail.to_owned(),
+        detail: message.detail,
         instance: request.uri().path().to_owned(),
         request_id,
         errors: None,
@@ -240,6 +301,7 @@ mod tests {
     use orbit_platform::Id;
 
     use super::{Check, classify};
+    use crate::billing::TrialLimit;
 
     const WORKSPACE: &str = "01890000-0000-7000-8000-000000000001";
 
@@ -250,7 +312,7 @@ mod tests {
     #[test]
     fn writes_to_a_workspace_are_checked_and_reads_pass() {
         let id: Id = WORKSPACE.parse().unwrap();
-        assert_eq!(check(Method::POST, "/tasks"), Check::Write(id));
+        assert_eq!(check(Method::POST, "/tasks/abc/comments"), Check::Write(id));
         assert_eq!(check(Method::PATCH, ""), Check::Write(id));
         assert_eq!(check(Method::DELETE, "/tasks/abc"), Check::Write(id));
         assert_eq!(check(Method::PUT, "/pages/abc/favorite"), Check::Write(id));
@@ -259,6 +321,36 @@ mod tests {
         assert_eq!(check(Method::HEAD, ""), Check::Pass);
         assert_eq!(check(Method::GET, "/pages/abc/collab"), Check::Collab(id));
         assert_eq!(check(Method::GET, "/tasks/abc/collab"), Check::Collab(id));
+    }
+
+    #[test]
+    fn creates_of_limited_records_are_checked_against_the_trial_limits() {
+        let id: Id = WORKSPACE.parse().unwrap();
+        for (method, rest, expected) in [
+            (Method::POST, "/tasks", Check::Create(id, TrialLimit::Tasks)),
+            (
+                Method::POST,
+                "/tasks/",
+                Check::Create(id, TrialLimit::Tasks),
+            ),
+            (Method::POST, "/pages", Check::Create(id, TrialLimit::Pages)),
+            (
+                Method::POST,
+                "/pages/p1/duplicate",
+                Check::Create(id, TrialLimit::Pages),
+            ),
+            (
+                Method::POST,
+                "/invitations",
+                Check::Create(id, TrialLimit::Members),
+            ),
+            (Method::POST, "/pages/p1/move", Check::Write(id)),
+            (Method::POST, "/pages/trash/empty", Check::Write(id)),
+            (Method::DELETE, "/invitations/i1", Check::Pass),
+            (Method::GET, "/tasks", Check::Pass),
+        ] {
+            assert_eq!(check(method.clone(), rest), expected, "{method} {rest}");
+        }
     }
 
     #[test]

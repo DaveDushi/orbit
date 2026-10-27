@@ -1,5 +1,7 @@
 import { useRef, useState } from 'react'
+import { storageFileLabel } from '@orbit/api/storage'
 import { cn } from 'cn'
+import { Link } from 'react-router'
 import { UnsavedBar } from '@/components/common/UnsavedBar'
 import { Button } from '@/components/ui/button'
 import { Field, FieldLabel } from '@/components/ui/field'
@@ -58,14 +60,19 @@ export function GeneralPage() {
   )
 }
 
-/** How much of its storage quota the workspace uses. Every member sees it. */
+/** How much of its storage quota the workspace uses. Every member sees it; admins also see the largest files. */
 function StorageCard({ workspaceId }: { workspaceId: string }) {
   const storage = useWorkspaceStorage(workspaceId)
   const used = storage.data?.used_bytes ?? 0
   const quota = storage.data?.quota_bytes ?? null
   const percent = quota ? Math.min(100, (used / quota) * 100) : 0
+  const canManageStorage = useCan('storage.manage')
   return (
-    <SettingsCard title="Storage" description="Files, emoji and stickers of this workspace. A file attached more than once counts once; a deleted file stops counting about a day after the trash is emptied.">
+    <SettingsCard
+      title="Storage"
+      description="Files, emoji and stickers of this workspace. A file attached more than once counts once; a deleted file stops counting about a day after the trash is emptied."
+      actions={canManageStorage ? <Button variant="outline" render={<Link to="/settings/file-storage" />} nativeButton={false}>Use your own bucket</Button> : null}
+    >
       {storage.isPending ? <p role="status" className="text-[13px] text-muted-foreground">Loading storage…</p> : null}
       {storage.isError ? <p role="alert" className="text-[13px] text-destructive">Storage use could not be loaded.</p> : null}
       {storage.data ? (
@@ -78,6 +85,25 @@ function StorageCard({ workspaceId }: { workspaceId: string }) {
             {quota ? `${formatBytes(used)} of ${formatBytes(quota)}` : `${formatBytes(used)} · no limit`}
           </span>
         </Progress>
+      ) : null}
+      {storage.data?.largest_files.length ? (
+        <div className="mt-5 flex flex-col gap-2">
+          <h3 className="text-[13px] font-medium text-foreground">Largest files</h3>
+          <ul className="flex flex-col divide-y rounded-lg border">
+            {storage.data.largest_files.map((file, index) => {
+              const { name, where } = storageFileLabel(file)
+              return (
+                <li key={index} className="flex items-center gap-3 px-3 py-2">
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="truncate text-[13px] text-foreground">{name}</span>
+                    <span className="truncate text-xs text-muted-foreground">{where}</span>
+                  </div>
+                  <span className="shrink-0 text-[13px] text-muted-foreground tabular-nums">{formatBytes(file.byte_size)}</span>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
       ) : null}
     </SettingsCard>
   )

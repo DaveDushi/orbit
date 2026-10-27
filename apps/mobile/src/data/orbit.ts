@@ -98,8 +98,8 @@ export function normalizeServer(input: string): string {
  * React Native sends no `Origin` header, so the server treats the app as a native client: sign-in returns the session
  * token in the body, and every later request sends it as a bearer token.
  */
-export function createClient(server: string, token: () => string | null, onUnauthorized?: () => void): OrbitClient {
-  return createOrbitClient({ baseUrl: server, token, onUnauthorized })
+export function createClient(server: string, token: () => string | null, onUnauthorized?: () => void, onPaymentRequired?: () => void): OrbitClient {
+  return createOrbitClient({ baseUrl: server, token, onUnauthorized, onPaymentRequired })
 }
 
 export type SignIn = { kind: 'signed_in'; token: string; user: User } | { kind: 'two_factor'; twoFactorToken: string }

@@ -16,6 +16,7 @@ pub use local::LocalBlobStore;
 pub use s3::{S3Bucket, S3Config, S3Error, S3Object};
 pub use tiered::{
     BlobMoveStatus, ObjectStorage, ObjectStorageState, S3_DELETE_DELAY_MILLIS, TieredBlobStore,
+    WorkspaceBucket,
 };
 pub use upload::{
     AuthorizedAttachment, BLOB_REFERENCE_COUNT, BlobDownload, ContentDisposition, DownloadMetadata,

@@ -29,6 +29,11 @@ export class ApiProblem extends Error {
   }
 }
 
+/** Orbit Cloud refused a write because of billing: the workspace is read-only or at a trial limit. */
+export function isPaymentRequired(error: unknown): error is ApiProblem {
+  return error instanceof ApiProblem && error.status === 402 && (error.code === 'workspace_read_only' || error.code === 'trial_limit_reached')
+}
+
 export function fieldErrors(error: ApiProblem): FieldError[] {
   return Object.entries(error.problem.errors ?? {})
     .sort(([left], [right]) => left.localeCompare(right))

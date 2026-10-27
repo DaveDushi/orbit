@@ -88,6 +88,28 @@ impl Subscription {
     }
 }
 
+/// A price as `GET /v1/prices/{id}?expand[]=product` returns it, reduced to what plans show.
+#[derive(Clone, Debug, Deserialize)]
+pub struct PriceDetails {
+    /// Minor units; `None` for prices that are not a fixed amount.
+    pub unit_amount: Option<i64>,
+    pub currency: String,
+    pub recurring: Option<Recurring>,
+    pub product: Product,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct Recurring {
+    /// `day`, `week`, `month` or `year`.
+    pub interval: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct Product {
+    pub id: String,
+    pub name: String,
+}
+
 #[derive(Deserialize)]
 struct Created {
     id: String,
@@ -195,7 +217,22 @@ impl StripeClient {
     }
 
     pub async fn subscription(&self, id: &str) -> Result<Subscription, StripeError> {
-        let mut url = self.url("/v1/subscriptions/")?;
+        self.get("/v1/subscriptions/", id, &[]).await
+    }
+
+    pub async fn price(&self, id: &str) -> Result<PriceDetails, StripeError> {
+        self.get("/v1/prices/", id, &[("expand[]", "product")])
+            .await
+    }
+
+    /// `GET {collection}{id}`, with `id` as one escaped path segment.
+    async fn get<T: DeserializeOwned>(
+        &self,
+        collection: &str,
+        id: &str,
+        query: &[(&str, &str)],
+    ) -> Result<T, StripeError> {
+        let mut url = self.url(collection)?;
         url.path_segments_mut()
             .map_err(|()| StripeError::Decode("the Stripe API base cannot have a path".to_owned()))?
             .pop_if_empty()
@@ -203,6 +240,7 @@ impl StripeClient {
         let response = self
             .http
             .get(url)
+            .query(query)
             .bearer_auth(self.secret_key.expose())
             .header("Stripe-Version", API_VERSION)
             .send()

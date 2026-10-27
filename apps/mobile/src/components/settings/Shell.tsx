@@ -1,4 +1,5 @@
 import { type Href, router, useNavigation, usePathname } from 'expo-router'
+import type { Permission } from '@orbit/api/generated/types.gen'
 import type { ReactNode } from 'react'
 import { KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, Switch, View } from 'react-native'
 
@@ -11,6 +12,8 @@ export interface SettingsNavItem {
   href: Href & string
   label: string
   icon: IconName
+  /** Shown only to roles that hold this permission. */
+  permission?: Permission
 }
 
 /**
@@ -19,8 +22,14 @@ export interface SettingsNavItem {
  */
 export const WORKSPACE_NAV: readonly SettingsNavItem[] = [
   { href: '/settings', label: 'General', icon: 'settings' },
+  { href: '/settings/file-storage', label: 'File storage', icon: 'cloudConnection', permission: 'storage.manage' },
   { href: '/settings/members', label: 'Members', icon: 'people' },
 ]
+
+/** The links of `nav` this workspace role may open. */
+export function allowedNav<T extends SettingsNavItem>(nav: readonly T[], permissions: readonly Permission[]): T[] {
+  return nav.filter((item) => !item.permission || permissions.includes(item.permission))
+}
 
 export const ACCOUNT_NAV: readonly SettingsNavItem[] = [
   { href: '/settings/profile', label: 'Profile', icon: 'user' },
@@ -34,9 +43,11 @@ export const ACCOUNT_NAV: readonly SettingsNavItem[] = [
 export const ADMIN_NAV: readonly SettingsNavItem[] = [
   { href: '/settings/admin', label: 'General', icon: 'settings' },
   { href: '/settings/admin/users', label: 'Users', icon: 'people' },
-  { href: '/settings/admin/audit', label: 'Audit log', icon: 'clipboardText' },
+  { href: '/settings/admin/email', label: 'Email', icon: 'mail' },
+  { href: '/settings/admin/limits', label: 'Limits', icon: 'chart' },
   { href: '/settings/admin/storage', label: 'Storage', icon: 'cloudConnection' },
   { href: '/settings/admin/backups', label: 'Backups', icon: 'archiveBox' },
+  { href: '/settings/admin/audit', label: 'Audit log', icon: 'clipboardText' },
   { href: '/settings/admin/jobs', label: 'Background jobs', icon: 'cpu' },
 ]
 
@@ -50,6 +61,7 @@ export function SettingsShell({ title, nav, children, refreshing, onRefresh }: {
   const navigation = useNavigation()
   const pathname = usePathname()
   const newUi = useLayout() === 'new'
+  const { workspace } = useOrbit()
   const muted = alpha(colors.mutedForeground, 0.7)
   return (
     <SafeAreaView edges={['top', 'left', 'right']} className="flex-1 bg-background">
@@ -72,7 +84,7 @@ export function SettingsShell({ title, nav, children, refreshing, onRefresh }: {
         >
           {newUi ? null : (
             <View accessibilityRole="tablist" accessibilityLabel={title} className="flex-row flex-wrap gap-0.5 py-3 border-t border-b border-border">
-              {nav.map((item) => {
+              {allowedNav(nav, workspace.permissions).map((item) => {
                 const active = pathname === item.href
                 return (
                   <Pressable

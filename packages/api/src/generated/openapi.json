@@ -9396,7 +9396,7 @@
         "tags": [
           "crate::billing::routes"
         ],
-        "summary": "Starts a Stripe Checkout for `plan` and returns its URL. Refused while the workspace already\nhas full access: plan changes and cancellations go through the Billing Portal.",
+        "summary": "Starts a Stripe Checkout for `plan` and returns its URL. Refused while the workspace already\nhas full access (a subscription, or the exempt workspace): plan changes and cancellations go\nthrough the Billing Portal.",
         "operationId": "billing_checkout",
         "parameters": [
           {
@@ -17651,6 +17651,16 @@
               }
             }
           },
+          "402": {
+            "description": "trial_limit_reached",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
           "403": {
             "description": "origin_forbidden, workspace_action_forbidden",
             "content": {
@@ -18940,6 +18950,16 @@
           },
           "401": {
             "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "trial_limit_reached",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -20281,6 +20301,16 @@
           },
           "401": {
             "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "trial_limit_reached",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -26480,6 +26510,417 @@
         ]
       }
     },
+    "/api/v1/workspaces/{workspace_id}/storage/bucket": {
+      "get": {
+        "tags": [
+          "crate::workspace_routes"
+        ],
+        "summary": "The workspace's own bucket. Owners and admins only.",
+        "operationId": "get_workspace_bucket",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Orbit-Contract",
+            "in": "header",
+            "description": "Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceBucketView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_proxy_headers",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "workspace_action_forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "workspace_resource_not_found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "contract_mismatch",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "internal_error or another documented stable code",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "crate::workspace_routes"
+        ],
+        "summary": "Connects the workspace's own S3 bucket, after writing, reading and deleting a test object in it (502\n`storage_unreachable` when that fails). New files of the workspace go there and its other files move there in\nthe background. The endpoint must be `https` on the public internet. Moving to another bucket or prefix needs\nthe files back out of the old one first (409 `storage_in_use`).",
+        "operationId": "save_workspace_bucket",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Orbit-Contract",
+            "in": "header",
+            "description": "Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/S3Body"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceBucketView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_proxy_headers, invalid_request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "origin_forbidden, workspace_action_forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "workspace_resource_not_found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "contract_mismatch, storage_in_use",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid_storage_settings",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "storage_unreachable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "app_key_missing",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "internal_error or another documented stable code",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "crate::workspace_routes"
+        ],
+        "summary": "Stops using the workspace's own bucket: new files go to the installation's storage, and the files in the\nbucket move back and are deleted from it. The bucket disappears from the settings when none are left.",
+        "operationId": "remove_workspace_bucket",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Orbit-Contract",
+            "in": "header",
+            "description": "Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceBucketView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_proxy_headers",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "origin_forbidden, workspace_action_forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "workspace_resource_not_found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "contract_mismatch",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "internal_error or another documented stable code",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/tasks": {
       "get": {
         "tags": [
@@ -26765,6 +27206,16 @@
           },
           "401": {
             "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "trial_limit_reached",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -33424,10 +33875,12 @@
         "description": "The workspace's subscription and what the caller may do about it.",
         "required": [
           "access",
+          "exempt",
           "cancel_at_period_end",
           "plans",
           "has_customer",
-          "can_manage"
+          "can_manage",
+          "trial_days"
         ],
         "properties": {
           "access": {
@@ -33448,6 +33901,10 @@
             ],
             "format": "date-time"
           },
+          "exempt": {
+            "type": "boolean",
+            "description": "The root user's first workspace: full access without a subscription."
+          },
           "has_customer": {
             "type": "boolean",
             "description": "The workspace has a Stripe customer, so the Billing Portal can open."
@@ -33462,9 +33919,9 @@
           "plans": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/PlanView"
             },
-            "description": "The plan keys a workspace can subscribe to, in order."
+            "description": "The plans a workspace can subscribe to, in order."
           },
           "status": {
             "oneOf": [
@@ -33475,6 +33932,23 @@
                 "$ref": "#/components/schemas/SubscriptionStatus"
               }
             ]
+          },
+          "trial": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TrialView",
+                "description": "Only while `access` is `trial`."
+              }
+            ]
+          },
+          "trial_days": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How long a new workspace's trial lasts; 0 when new workspaces have none.",
+            "minimum": 0
           }
         }
       },
@@ -39252,8 +39726,66 @@
           "views.manage_shared",
           "comments.moderate",
           "chat.manage",
-          "billing.manage"
+          "billing.manage",
+          "storage.manage"
         ]
+      },
+      "PlanInterval": {
+        "type": "string",
+        "enum": [
+          "month",
+          "year"
+        ]
+      },
+      "PlanView": {
+        "type": "object",
+        "description": "A plan as Stripe describes its price. When Stripe cannot be reached, only `key` and a `name`\nmade from it are set.",
+        "required": [
+          "key",
+          "name"
+        ],
+        "properties": {
+          "amount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "In the currency's minor units (cents)."
+          },
+          "currency": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ISO 4217, lowercase (`usd`)."
+          },
+          "interval": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PlanInterval"
+              }
+            ]
+          },
+          "key": {
+            "type": "string",
+            "description": "What `BillingCheckoutBody.plan` takes."
+          },
+          "name": {
+            "type": "string",
+            "description": "The product's name."
+          },
+          "product_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Plans of one product are the same plan billed at different intervals."
+          }
+        }
       },
       "Presence": {
         "type": "string",
@@ -40624,6 +41156,64 @@
           }
         }
       },
+      "StorageFile": {
+        "type": "object",
+        "description": "One stored file (blob) of a workspace.",
+        "required": [
+          "byte_size",
+          "uses"
+        ],
+        "properties": {
+          "byte_size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`null` when the file is only used in private places, or no longer used (it stops counting soon)."
+          },
+          "uses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StorageFileUse"
+            },
+            "description": "Where the file is attached; empty when nothing uses it any more."
+          }
+        }
+      },
+      "StorageFileUse": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/StorageFileUseKind"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The task title, page title or channel name; `null` for emoji, stickers and private places."
+          }
+        }
+      },
+      "StorageFileUseKind": {
+        "type": "string",
+        "enum": [
+          "task",
+          "page",
+          "channel",
+          "emoji",
+          "sticker",
+          "private"
+        ]
+      },
       "StorageOptionsBody": {
         "type": "object",
         "required": [
@@ -41667,6 +42257,31 @@
           }
         }
       },
+      "TrialView": {
+        "type": "object",
+        "description": "A trial workspace's end and usage of its limits.",
+        "required": [
+          "ends_at",
+          "tasks",
+          "pages",
+          "members"
+        ],
+        "properties": {
+          "ends_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "members": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "pages": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "tasks": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        }
+      },
       "TwoFactorChallenge": {
         "type": "object",
         "description": "The answer to a right password when the account has two-factor sign-in on.",
@@ -41741,6 +42356,23 @@
           }
         },
         "additionalProperties": false
+      },
+      "Usage": {
+        "type": "object",
+        "required": [
+          "used",
+          "limit"
+        ],
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "used": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
       },
       "UserStatus": {
         "type": "object",
@@ -41984,8 +42616,52 @@
         "description": "What members of a workspace may do.",
         "enum": [
           "full",
+          "trial",
           "read_only"
         ]
+      },
+      "WorkspaceBucketView": {
+        "type": "object",
+        "description": "The S3 bucket that a workspace connected for its own files.",
+        "required": [
+          "removing",
+          "checking",
+          "files_to_move"
+        ],
+        "properties": {
+          "checking": {
+            "type": "boolean",
+            "description": "Orbit has not counted the files to move since the bucket was saved or removed yet; `files_to_move` is 0\nuntil it has."
+          },
+          "files_to_move": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The workspace's files still waiting to move into the bucket (or back out of it): existing files on this\nserver and in the installation's bucket move in the background.",
+            "minimum": 0
+          },
+          "move_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why moving files stopped last time. Orbit retries every ten minutes."
+          },
+          "removing": {
+            "type": "boolean",
+            "description": "The bucket was removed: its files move back to the installation's storage, then it disappears."
+          },
+          "s3": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/S3View",
+                "description": "`null` while the workspace uses the installation's storage."
+              }
+            ]
+          }
+        }
       },
       "WorkspaceConflict": {
         "type": "object",
@@ -42103,9 +42779,17 @@
         "type": "object",
         "description": "How many bytes of files a workspace stores, and its quota.",
         "required": [
-          "used_bytes"
+          "used_bytes",
+          "largest_files"
         ],
         "properties": {
+          "largest_files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StorageFile"
+            },
+            "description": "The files that use the most storage, largest first. Empty unless the caller may update the workspace."
+          },
           "quota_bytes": {
             "type": [
               "integer",
@@ -42147,7 +42831,8 @@
       "pages.purge",
       "views.manage_shared",
       "comments.moderate",
-      "chat.manage"
+      "chat.manage",
+      "storage.manage"
     ],
     "member": [],
     "owner": [
@@ -42163,7 +42848,8 @@
       "views.manage_shared",
       "comments.moderate",
       "chat.manage",
-      "billing.manage"
+      "billing.manage",
+      "storage.manage"
     ]
   }
 }

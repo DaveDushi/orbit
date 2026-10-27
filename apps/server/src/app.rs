@@ -34,7 +34,6 @@ use crate::page_file_routes::PageFileState;
 use crate::page_routes::PageState;
 use crate::repositories::api_tokens::ApiTokenRepository;
 use crate::repositories::identity::IdentityRepository;
-use crate::repositories::instance_settings::InstanceSettingsRepository;
 use crate::repositories::page_files::PageFileRepository;
 use crate::repositories::tasks::TaskRepository;
 use crate::repositories::workspaces::WorkspaceRepository;
@@ -187,8 +186,7 @@ impl App {
                 .map_err(AppError::Config)?;
         }
         let object_storage = ObjectStorage::default();
-        let storage_settings = InstanceSettingsRepository::new(database.clone())
-            .storage()
+        let storage_settings = crate::object_storage::load_saved(&database)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
         crate::object_storage::apply_and_keep(

@@ -44,10 +44,13 @@ pub enum Permission {
     /// Subscribe and manage the workspace's Orbit Cloud plan.
     #[serde(rename = "billing.manage")]
     BillingManage,
+    /// Connect the workspace's own S3 bucket for its files.
+    #[serde(rename = "storage.manage")]
+    StorageManage,
 }
 
 impl Permission {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::WorkspaceUpdate,
         Self::WorkspaceDelete,
         Self::WorkspaceTransfer,
@@ -61,6 +64,7 @@ impl Permission {
         Self::CommentsModerate,
         Self::ChatManage,
         Self::BillingManage,
+        Self::StorageManage,
     ];
 }
 
@@ -226,7 +230,8 @@ impl Policy {
             | Permission::PagesPurge
             | Permission::ViewsManageShared
             | Permission::CommentsModerate
-            | Permission::ChatManage => {
+            | Permission::ChatManage
+            | Permission::StorageManage => {
                 matches!(role, WorkspaceRole::Owner | WorkspaceRole::Admin)
             }
         }

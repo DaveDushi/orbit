@@ -259,6 +259,10 @@ export type BillingView = {
     cancel_at_period_end: boolean;
     current_period_end?: string | null;
     /**
+     * The root user's first workspace: full access without a subscription.
+     */
+    exempt: boolean;
+    /**
      * The workspace has a Stripe customer, so the Billing Portal can open.
      */
     has_customer: boolean;
@@ -267,10 +271,15 @@ export type BillingView = {
      */
     plan?: string | null;
     /**
-     * The plan keys a workspace can subscribe to, in order.
+     * The plans a workspace can subscribe to, in order.
      */
-    plans: Array<string>;
+    plans: Array<PlanView>;
     status?: null | SubscriptionStatus;
+    trial?: null | TrialView;
+    /**
+     * How long a new workspace's trial lasts; 0 when new workspaces have none.
+     */
+    trial_days: number;
 };
 
 export type BulkBody = {
@@ -2429,7 +2438,37 @@ export type PasswordConfirmationBody = {
  * A workspace capability that depends on the member's role. Actions open to
  * every member (tasks, projects, attachments, docs) are not listed here.
  */
-export type Permission = 'workspace.update' | 'workspace.delete' | 'workspace.transfer' | 'members.manage' | 'audit.view' | 'api_tokens.manage' | 'integrations.manage' | 'teamspaces.delete' | 'pages.purge' | 'views.manage_shared' | 'comments.moderate' | 'chat.manage' | 'billing.manage';
+export type Permission = 'workspace.update' | 'workspace.delete' | 'workspace.transfer' | 'members.manage' | 'audit.view' | 'api_tokens.manage' | 'integrations.manage' | 'teamspaces.delete' | 'pages.purge' | 'views.manage_shared' | 'comments.moderate' | 'chat.manage' | 'billing.manage' | 'storage.manage';
+
+export type PlanInterval = 'month' | 'year';
+
+/**
+ * A plan as Stripe describes its price. When Stripe cannot be reached, only `key` and a `name`
+ * made from it are set.
+ */
+export type PlanView = {
+    /**
+     * In the currency's minor units (cents).
+     */
+    amount?: number | null;
+    /**
+     * ISO 4217, lowercase (`usd`).
+     */
+    currency?: string | null;
+    interval?: null | PlanInterval;
+    /**
+     * What `BillingCheckoutBody.plan` takes.
+     */
+    key: string;
+    /**
+     * The product's name.
+     */
+    name: string;
+    /**
+     * Plans of one product are the same plan billed at different intervals.
+     */
+    product_id?: string | null;
+};
 
 /**
  * The presence a user sets for themselves. A user without a connection is offline whatever
@@ -2949,6 +2988,31 @@ export type StickerRecord = {
     url: string;
 };
 
+/**
+ * One stored file (blob) of a workspace.
+ */
+export type StorageFile = {
+    byte_size: number;
+    /**
+     * `null` when the file is only used in private places, or no longer used (it stops counting soon).
+     */
+    name?: string | null;
+    /**
+     * Where the file is attached; empty when nothing uses it any more.
+     */
+    uses: Array<StorageFileUse>;
+};
+
+export type StorageFileUse = {
+    kind: StorageFileUseKind;
+    /**
+     * The task title, page title or channel name; `null` for emoji, stickers and private places.
+     */
+    title?: string | null;
+};
+
+export type StorageFileUseKind = 'task' | 'page' | 'channel' | 'emoji' | 'sticker' | 'private';
+
 export type StorageOptionsBody = {
     /**
      * New attachment files go to the bucket and existing ones move there. Off: they move back to this server.
@@ -3319,6 +3383,16 @@ export type TrashedPage = {
 };
 
 /**
+ * A trial workspace's end and usage of its limits.
+ */
+export type TrialView = {
+    ends_at: string;
+    members: Usage;
+    pages: Usage;
+    tasks: Usage;
+};
+
+/**
  * The answer to a right password when the account has two-factor sign-in on.
  */
 export type TwoFactorChallenge = {
@@ -3352,6 +3426,11 @@ export type UpdateMeBody = {
      * The optional parts: absent leaves the part as it is, an empty text removes it.
      */
     title?: string | null;
+};
+
+export type Usage = {
+    limit: number;
+    used: number;
 };
 
 /**
@@ -3449,7 +3528,32 @@ export type Visibility = 'personal' | 'workspace';
 /**
  * What members of a workspace may do.
  */
-export type WorkspaceAccess = 'full' | 'read_only';
+export type WorkspaceAccess = 'full' | 'trial' | 'read_only';
+
+/**
+ * The S3 bucket that a workspace connected for its own files.
+ */
+export type WorkspaceBucketView = {
+    /**
+     * Orbit has not counted the files to move since the bucket was saved or removed yet; `files_to_move` is 0
+     * until it has.
+     */
+    checking: boolean;
+    /**
+     * The workspace's files still waiting to move into the bucket (or back out of it): existing files on this
+     * server and in the installation's bucket move in the background.
+     */
+    files_to_move: number;
+    /**
+     * Why moving files stopped last time. Orbit retries every ten minutes.
+     */
+    move_error?: string | null;
+    /**
+     * The bucket was removed: its files move back to the installation's storage, then it disappears.
+     */
+    removing: boolean;
+    s3?: null | S3View;
+};
 
 export type WorkspaceConflict = {
     current_version: number;
@@ -3485,6 +3589,10 @@ export type WorkspaceRole = 'owner' | 'admin' | 'member';
  * How many bytes of files a workspace stores, and its quota.
  */
 export type WorkspaceStorage = {
+    /**
+     * The files that use the most storage, largest first. Empty unless the caller may update the workspace.
+     */
+    largest_files: Array<StorageFile>;
     /**
      * `null` is unlimited.
      */
@@ -11470,6 +11578,10 @@ export type CreateInvitationErrors = {
      */
     401: WorkspaceProblem;
     /**
+     * trial_limit_reached
+     */
+    402: WorkspaceProblem;
+    /**
      * origin_forbidden, workspace_action_forbidden
      */
     403: WorkspaceProblem;
@@ -12049,6 +12161,10 @@ export type CreatePageErrors = {
      * authentication_required
      */
     401: TaskProblem;
+    /**
+     * trial_limit_reached
+     */
+    402: TaskProblem;
     /**
      * origin_forbidden
      */
@@ -12652,6 +12768,10 @@ export type DuplicatePageErrors = {
      * authentication_required
      */
     401: TaskProblem;
+    /**
+     * trial_limit_reached
+     */
+    402: TaskProblem;
     /**
      * origin_forbidden
      */
@@ -15304,6 +15424,192 @@ export type GetWorkspaceStorageResponses = {
 
 export type GetWorkspaceStorageResponse = GetWorkspaceStorageResponses[keyof GetWorkspaceStorageResponses];
 
+export type RemoveWorkspaceBucketData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/storage/bucket';
+};
+
+export type RemoveWorkspaceBucketErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden, workspace_action_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * workspace_resource_not_found
+     */
+    404: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type RemoveWorkspaceBucketError = RemoveWorkspaceBucketErrors[keyof RemoveWorkspaceBucketErrors];
+
+export type RemoveWorkspaceBucketResponses = {
+    200: WorkspaceBucketView;
+};
+
+export type RemoveWorkspaceBucketResponse = RemoveWorkspaceBucketResponses[keyof RemoveWorkspaceBucketResponses];
+
+export type GetWorkspaceBucketData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/storage/bucket';
+};
+
+export type GetWorkspaceBucketErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * workspace_action_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * workspace_resource_not_found
+     */
+    404: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type GetWorkspaceBucketError = GetWorkspaceBucketErrors[keyof GetWorkspaceBucketErrors];
+
+export type GetWorkspaceBucketResponses = {
+    200: WorkspaceBucketView;
+};
+
+export type GetWorkspaceBucketResponse = GetWorkspaceBucketResponses[keyof GetWorkspaceBucketResponses];
+
+export type SaveWorkspaceBucketData = {
+    body: S3Body;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/storage/bucket';
+};
+
+export type SaveWorkspaceBucketErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden, workspace_action_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * workspace_resource_not_found
+     */
+    404: WorkspaceProblem;
+    /**
+     * contract_mismatch, storage_in_use
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * invalid_storage_settings
+     */
+    422: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * storage_unreachable
+     */
+    502: WorkspaceProblem;
+    /**
+     * app_key_missing
+     */
+    503: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type SaveWorkspaceBucketError = SaveWorkspaceBucketErrors[keyof SaveWorkspaceBucketErrors];
+
+export type SaveWorkspaceBucketResponses = {
+    200: WorkspaceBucketView;
+};
+
+export type SaveWorkspaceBucketResponse = SaveWorkspaceBucketResponses[keyof SaveWorkspaceBucketResponses];
+
 export type ListTasksData = {
     body?: never;
     headers?: {
@@ -15400,6 +15706,10 @@ export type CreateTaskErrors = {
      * authentication_required
      */
     401: TaskProblem;
+    /**
+     * trial_limit_reached
+     */
+    402: TaskProblem;
     /**
      * origin_forbidden
      */

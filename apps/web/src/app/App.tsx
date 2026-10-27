@@ -16,7 +16,9 @@ import { DocsPage } from '@/features/docs/pages/DocsPage'
 import { AccountLayout, AdminLayout, SettingsLayout } from '@/features/settings/pages/SettingsLayout'
 import { AdminAuditPage } from '@/features/admin/pages/AdminAuditPage'
 import { AdminBackupsPage } from '@/features/admin/pages/AdminBackupsPage'
+import { AdminEmailPage } from '@/features/admin/pages/AdminEmailPage'
 import { AdminJobsPage } from '@/features/admin/pages/AdminJobsPage'
+import { AdminLimitsPage } from '@/features/admin/pages/AdminLimitsPage'
 import { AdminStoragePage } from '@/features/admin/pages/AdminStoragePage'
 import { AdminSettingsPage } from '@/features/admin/pages/AdminSettingsPage'
 import { AdminUsersPage } from '@/features/admin/pages/AdminUsersPage'
@@ -33,6 +35,7 @@ import { StickersPage } from '@/features/settings/pages/StickersPage'
 import { StoragePage } from '@/features/settings/pages/StoragePage'
 import { NotificationsPage } from '@/features/settings/pages/NotificationsPage'
 import { ApiTokensPage } from '@/features/settings/pages/ApiTokensPage'
+import { FileStoragePage } from '@/features/settings/pages/FileStoragePage'
 import { ProfilePage } from '@/features/profile/pages/ProfilePage'
 import { AppearancePage } from '@/features/profile/pages/AppearancePage'
 import { InboxPage } from '@/features/inbox/pages/InboxPage'
@@ -121,6 +124,8 @@ export default function App() {
               <Route path="admin" element={<AdminLayout />}>
                 <Route index element={<AdminSettingsPage />} />
                 <Route path="users" element={<AdminUsersPage />} />
+                <Route path="email" element={<AdminEmailPage />} />
+                <Route path="limits" element={<AdminLimitsPage />} />
                 <Route path="audit" element={<AdminAuditPage />} />
                 <Route path="storage" element={<AdminStoragePage />} />
                 <Route path="backups" element={<AdminBackupsPage />} />
@@ -142,6 +147,7 @@ export default function App() {
                 <Route path="shortcuts" element={<MovedTo path="/profile/shortcuts" />} />
                 <Route path="notifications" element={<MovedTo path="/profile/notifications" />} />
                 <Route path="api-tokens" element={<ApiTokensPage />} />
+                <Route path="file-storage" element={<FileStoragePage />} />
               </Route>
               <Route path="*" element={<Navigate to="/tasks" replace />} />
             </Route>

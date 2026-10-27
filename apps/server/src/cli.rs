@@ -1198,6 +1198,10 @@ pub fn redacted_config(config: &Config) -> String {
                 "ORBIT_STRIPE_SECRET_KEY=[REDACTED]".to_owned(),
                 "ORBIT_STRIPE_WEBHOOK_SECRET=[REDACTED]".to_owned(),
                 format!("ORBIT_STRIPE_PRICES={prices}"),
+                format!("ORBIT_TRIAL_DAYS={}", billing.trial.days),
+                format!("ORBIT_TRIAL_TASKS={}", billing.trial.tasks),
+                format!("ORBIT_TRIAL_PAGES={}", billing.trial.pages),
+                format!("ORBIT_TRIAL_MEMBERS={}", billing.trial.members),
             ]);
         }
         None => lines.push("ORBIT_CLOUD=false".to_owned()),
@@ -1635,11 +1639,19 @@ mod tests {
             ("ORBIT_STRIPE_SECRET_KEY", "sk_test_hidden"),
             ("ORBIT_STRIPE_WEBHOOK_SECRET", "whsec_hidden"),
             ("ORBIT_STRIPE_PRICES", "team:price_1,business:price_2"),
+            ("ORBIT_TRIAL_DAYS", "14"),
+            ("ORBIT_TRIAL_MEMBERS", "5"),
         ]))
         .unwrap();
 
         let shown = redacted_config(&config);
 
+        assert!(
+            shown.contains(
+                "ORBIT_TRIAL_DAYS=14\nORBIT_TRIAL_TASKS=50\nORBIT_TRIAL_PAGES=20\nORBIT_TRIAL_MEMBERS=5"
+            ),
+            "{shown}"
+        );
         assert!(shown.contains("ORBIT_CLOUD=true"), "{shown}");
         assert!(shown.contains("ORBIT_STRIPE_SECRET_KEY=[REDACTED]"));
         assert!(shown.contains("ORBIT_STRIPE_WEBHOOK_SECRET=[REDACTED]"));

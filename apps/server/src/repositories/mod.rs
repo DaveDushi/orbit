@@ -18,6 +18,7 @@ pub mod tasks;
 pub mod teamspaces;
 pub mod two_factor;
 pub mod views;
+pub mod workspace_storage;
 pub mod workspaces;
 
 /// Test helper: a trigger that makes `event` (e.g. `BEFORE INSERT`, `BEFORE UPDATE OF revoked_at`)

@@ -1582,10 +1582,10 @@ impl NotionImportService {
         Ok(status.as_deref() != Some("importing"))
     }
 
-    /// Orbit Cloud: a workspace without a subscription takes no imported pages.
+    /// Orbit Cloud: a read-only workspace (past its trial, no subscription) takes no imported pages.
     async fn ensure_writable(&self, workspace_id: Id) -> Result<(), Failure> {
         match billing::write_access(self.database(), workspace_id).await? {
-            WorkspaceAccess::Full => Ok(()),
+            WorkspaceAccess::Full | WorkspaceAccess::Trial => Ok(()),
             WorkspaceAccess::ReadOnly => Err(Failure::Fatal(
                 "The import stopped because the workspace is read-only: it has no active \
                  subscription."
