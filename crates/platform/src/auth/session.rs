@@ -6,7 +6,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use rand::RngCore;
 use rand::rngs::OsRng;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use utoipa::ToSchema;
 
@@ -18,7 +18,7 @@ const IDLE_LIFETIME: i64 = 30 * DAY_MILLIS;
 const ABSOLUTE_LIFETIME: i64 = 90 * DAY_MILLIS;
 const ACTIVITY_WRITE_INTERVAL: i64 = 5 * 60 * 1_000;
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, ToSchema)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AuthenticatedUser {
     #[schema(value_type = String)]
     pub id: Id,

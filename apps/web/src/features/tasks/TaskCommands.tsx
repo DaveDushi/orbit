@@ -1,13 +1,13 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import type { BulkItem, LabelRecord } from '@/api/generated/types.gen'
+import type { BulkItem, LabelRecord } from '@orbit/api/generated/types.gen'
 import { ColorDot } from '@/components/common/ColorDot'
 import { UserAvatar } from '@/components/common/UserAvatar'
 import { Command, CommandDialog, CommandEmpty, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import type { Task, TaskStatusDef } from '@/features/tasks/api/models'
 import { useProjects } from '@/features/tasks/api/projects'
 import { useBulkTasks } from '@/features/tasks/api/tasks'
-import { assignUpdates, assigneeToggleUpdates, dueUpdates, labelToggleUpdates, priorityUpdates, statusUpdates } from '@/features/tasks/bulkUpdates'
+import { assignUpdates, assigneeToggleUpdates, dueUpdates, everyTaskHasLabel, labelChoices, labelToggleUpdates, priorityUpdates, statusUpdates } from '@/features/tasks/bulkUpdates'
 import { DueDateDialog } from '@/features/tasks/components/DueDateDialog'
 import { PriorityIcon } from '@/features/tasks/components/PriorityIcon'
 import { LabelPill } from '@/features/tasks/components/TaskLabels'
@@ -138,8 +138,8 @@ export function TaskCommands({ tasks, users, labels, statuses, groupContext, cur
               {user.name}
             </CommandItem>
           )) : null}
-          {menu.field === 'labels' ? labels.map((label) => (
-            <CommandItem key={label.id} value={label.name} data-checked={menuTasks.every((task) => task.labels.includes(label.id))} onSelect={() => mutate(labelToggleUpdates(menuTasks, label.id))}>
+          {menu.field === 'labels' ? labelChoices(menuTasks, labels).map((label) => (
+            <CommandItem key={label.id} value={label.name} data-checked={everyTaskHasLabel(menuTasks, labels, label)} onSelect={() => mutate(labelToggleUpdates(menuTasks, labels, label))}>
               <LabelPill label={label} />
             </CommandItem>
           )) : null}

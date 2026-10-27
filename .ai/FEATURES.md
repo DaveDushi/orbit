@@ -15,10 +15,10 @@ Home, Mail, Profile and webhooks still use isolated frontend seed data. Their ro
 - First sidebar groups Workspace, Personal, and Manage navigation.
 - It collapses to a 56px icon rail; state persists in `orbit:sidebar_collapsed`.
 - Search opens the command palette. `Cmd/Ctrl+K` toggles it.
-- User menu provides Profile and theme selection.
+- User menu provides Account settings and a link to Account settings → Appearance (`/profile/appearance`).
 - Mobile uses a bottom dock and a full navigation drawer.
 - Topbar breadcrumbs are route-derived in `Topbar.tsx`.
-- Theme defaults to dark and persists under `localStorage.theme`.
+- Appearance (port of Coolify's Profile → Appearance, `lib/theme.tsx`): Layout Classic/New UI (`orbit:layout`, default classic, `[data-new-ui]` on `<html>`, `new-ui:` variant, `useNewUi()`): the new UI turns on the contextual sidebar (settings areas, the docs and chat lists in the sidebar, Back) and the whole-app custom theme on the sidebar, its menus (`MenuSurfaceContext`) and ⌘K; the classic layout keeps the custom theme on chat only. color theme Light/System/Dark (default dark, `localStorage.theme`), the custom theme (`lib/customTheme.ts`, `CustomThemeDialog`; replaces Light/System/Dark while set: `ThemeProvider` puts `customThemeVariables` on `<html>` and picks `.dark` from the message colour; picking a base theme clears it; the app sidebar uses `appSidebarTheme`, which puts `.dark` or `.light` on the sidebar so its `dark:` styles follow the sidebar colour), Navigation style Default/Floating (`orbit:nav-style`, `[data-floating]` on `<html>`, `floating:` variant, desktop only) and Style 3D/Flat (`orbit:style`, `[data-flat]`, `flat:` variant on buttons and sidebar items). `index.html` applies all of them before first paint. Coolify's Page width and Chart times are not ported.
 
 ## Home
 
@@ -42,9 +42,31 @@ Core files: `TasksPage.tsx`, `components/TaskList.tsx`, `components/TaskBoard.ts
 - Multi-select displays a bottom bulk toolbar for status, priority, assignee, and labels.
 - New task creates an empty record and opens task detail with title autofocus; no creation modal.
 - Task detail supports title, description, status, priority, assignees, labels, project, due date, activity, comments, replies, and attachments.
-- Description attachments support paste, drop, file selection, image lightbox, compact file chips, and removal.
-- Task comments reuse the chat composer, mentions, channel suggestions, markdown, emoji, and attachments.
+- Rich text (migration 0052): the description and comments use the Docs BlockNote editor in a `task` profile
+  (`PageEditor` `profile="task"`: no page blocks, no comments; slash menu with Callout and Mermaid; @mentions).
+  `tasks.description_json` / `task_comments.body_json` hold the blocks; `description` / `body` keep a markdown copy
+  (search, MCP, GitHub, API clients that send markdown, which the server converts: `collab/markdown_import.rs`).
+  NULL JSON is a row written before rich text; it is converted (and stored) when first opened or edited. A task created
+  with markdown (API, MCP) is converted at once, so its mentions notify. Task lists
+  leave `description_json` out (null); `GET /tasks/{id}` and write responses carry it.
+- The description is co-edited live like a docs page (`GET /tasks/{id}/collab`, `task_collab_docs` /
+  `task_collab_updates`, the same hub keyed by `DocKey { Page | Task }`): cursors, presence avatars, a read-only
+  preview until the first sync. Edits project into the task without a version bump; REST and GitHub writes replace the
+  live document. A GitHub-linked task is locked. Newly mentioned members get `description_mentioned` (again after 10
+  minutes, not while a mention is removed and added back).
+- Files pasted, dropped or picked into the description or a comment become image/file blocks; they are task
+  attachments with `inline = 1`, left out of the attachment list (which shows only older attachments). Images and files
+  pasted into a task's description or comments from another task or a docs page are copied into the task (download,
+  inline upload, the block points at the copy), so they stay when the source goes to the trash. The new task dialog has
+  no task to upload to: images of other tasks stay as links, docs page images are dropped. The server accepts any task
+  attachment URL of the workspace (API writes). Comments mount their editors only near the screen (the markdown copy
+  shows until then), and reply fields when first used. The new task
+  dialog keeps file chips and appends the files to the description after create.
+- Comments: Cmd/Ctrl+Enter sends; edits use the same editor (Cmd/Ctrl+Enter saves, Esc cancels; Save on an emptied
+  comment asks to delete it; an unchanged Save sends nothing); the server reads mentions from the mention nodes and
+  notifies only newly mentioned members on edit.
 - Projects, workflows, labels, tasks, comments, and task attachments persist in SQLite.
+- Labels belong to one project (Project settings → Labels); a task takes only its project's labels. Moving a task keeps the labels whose name the target project also has. Views across projects merge same-named labels: label filters store the label key (the name) and the server matches it case-insensitively in every project (an id saved before migration 0051 stands for its name and becomes a key when the filter is edited); group-by-label, filter pickers and bulk label menus show one entry per name. Views across projects show no labels of trashed projects.
 - Writes include the observed record version. Stale writes restore the server record and expose a conflict prompt.
 - Bulk and reorder requests are one atomic request of at most 100 items. Empty unchanged choices are local no-ops.
 - Task and project trash have server-backed restore flows and 30-day retention.
@@ -153,7 +175,12 @@ favorites through `/pages/favorites` (list), `/pages/{page_id}/favorite` (PUT/DE
   (also over BlockNote's own `.dark` containers), images fitted, page breaks avoided inside images/code/tables/headings.
   Static CSS (production CSP). Smoke: `target/orbit-smoke/export.mjs`.
 - Editor: BlockNote 0.55 (rich text, markdown shortcuts, nested blocks, drag handles, undo, slash menu), lazy-loaded in its own
-  chunk. Custom `page` block links to a page; it greys out as "Missing page" when the target is trashed or gone.
+  chunk. The schema lives in `packages/editor` (`@orbit/editor`): `createEditorSchemas(views)` builds the page and task
+  schemas from fixed block configs (`page`, `callout`, `mention`, code block + `sugar-high` highlighting); a host only
+  passes how blocks render (web: `editor/schema.ts` with the shadcn views; mobile: `PageEditor.dom.tsx`). The package
+  test checks that any views give `blocknote-schema.json`, so every editor bound to a page's Y.Doc has the server's
+  schema. The package also holds `codeLanguages`, `commentMarks()` (the comment mark for editors without threads),
+  the framework-free `CollabSession` (status, close codes) and `ticketWebSocket` (a fresh socket ticket per connect). Custom `page` block links to a page; it greys out as "Missing page" when the target is trashed or gone.
   Slash items "Sub-page" (creates a child page, inserts the link, opens it) and "Link a page" (picker over the tree).
   Custom `callout` block (`editor/CalloutBlock.tsx`; slash "Callout" in Basic blocks after Quote, aliases callout/note/tip/
   warning/info): inline rich text, props `emoji` (default 💡; click it to pick another in the app's emoji picker),
@@ -184,7 +211,8 @@ favorites through `/pages/favorites` (list), `/pages/{page_id}/favorite` (PUT/DE
 - Remote metadata updates (realtime refresh, other tabs) apply title/icon/cover when there are no unsaved local edits;
   metadata-only changes (e.g. a move) just advance the version. Content never comes from the page query after mount.
 - Real-time co-editing, web (`features/docs/collab/`: `session.ts` state machine, `connection.ts` socket factory +
-  `CollabConnectContext` for tests, `useCollabSession.ts`, `presence.ts`, `PresenceAvatars.tsx`, `palette.ts`; test fake
+  `CollabConnectContext` for tests, `useCollabSession.ts`, `presence.ts`, `PresenceAvatars.tsx`, `cursor.ts`,
+  `blockPresence.ts`; test fake
   `src/test/fakeCollab.ts`): DocEditor opens one Y.Doc + y-websocket provider per page/epoch (yjs + y-websocket load on
   demand, `disableBc`, backoff ≤ 5 s) and mounts `PageEditor` with `collab` (`withCollaboration`, no `initialContent`,
   Yjs undo, caret labels `showCursorLabels: 'activity'`) only after the first sync; both are destroyed on page switch.
@@ -192,14 +220,20 @@ favorites through `/pages/favorites` (list), `/pages/{page_id}/favorite` (PUT/DE
   changes will sync" / "Access lost" / "Not syncing". Close handling: 4404/4403 → the editor turns read-only, a toast
   ("“X” was moved to the trash." / "You no longer have access to “X”."), the page leaves the tree and the app goes to
   /docs (not for the user's own "Move to trash", which announces itself); 4409 → refetch the page (new epoch) and
-  reconnect with a fresh document; 4401 → the app-wide unauthorized flow (login); 4413 → "too large" banner + read-only
+  reconnect with a fresh document; 4402 (Orbit Cloud: the workspace lost its subscription; every server closes its
+  editing sockets of the workspace) → read-only toast, billing refetched, then the same as 4409, and the new socket is
+  read-only; 4401 → the app-wide unauthorized flow (login); 4413 → "too large" banner + read-only
   until "Reload page"; 4400/4426 → "Reload app" banner; 4429 → toast, reconnect after 5 s; 1012/1013 and drops →
   y-websocket retries. Handshakes refused before the upgrade (HTTP 401/404 arrive as 1006) trigger a throttled REST
   check of the page after 2 failures (404 → leave like a trash, 401 → login). `beforeunload` warns only while
   disconnected with local edits typed offline or within 3 s before the drop (and for unsaved title edits).
-  Presence: avatars (max 4 + "+n", tooltips, `aria-label` "Also here: …") from awareness, deduped by the server-stamped
-  user id, without the own user (other tabs included); colors = `collabColor(user id)`, the same hash and 8 colors as
-  `hub.rs::user_color`, so avatar and caret match. Restore from history, Notion import and REST content PATCH arrive
+  Presence: avatars (max 4 + "+n", `aria-label` "Also here: …") from awareness, deduped by the server-stamped user id,
+  without the own user (other tabs included). Colors come from the server (`hub.rs::room_color`): everyone on a page gets
+  a different one of 9 while one is free (their usual, id-hashed color if nobody has it), all tabs of a user share it,
+  and avatar ring, caret and marker use it. A full ring means editing (a tab publishes a cursor), a faint ring viewing;
+  hover shows "Name · Editing/Viewing", a click opens the shell profile popover, with "Go to cursor" (scroll + name
+  flag, `revealCollabCursor`) for someone editing. Carets carry `data-collab-user` (`renderCollabCursor`); each block
+  holding someone else's caret gets a right-margin marker with initials (+n) in their color (`collabBlockPresence`). Restore from history, Notion import and REST content PATCH arrive
   live through Y; the history pane's restore only applies the returned title/icon (+ toast, list refresh).
   E2E: `target/orbit-smoke/collab.mjs [base] [label]` (two users, REST PATCH live, typing both ways with latency,
   presence colors, reload, restore both ways, trash notice, CSP/console check; `COLLAB_DB` backdates the test page so a
@@ -264,7 +298,10 @@ favorites through `/pages/favorites` (list), `/pages/{page_id}/favorite` (PUT/DE
   Socket `GET /api/v1/workspaces/{ws}/pages/{id}/collab?v=1&epoch=<Page.collab_epoch>` speaks y-sync v1 (y-websocket 3:
   `new WebsocketProvider(origin + '/api/v1/workspaces/{ws}/pages/{id}', 'collab', doc, { params: { v: '1', epoch } })`,
   fragment `prosemirror`). Handshake: one allowed `Origin` (platform layer, 403), session cookie (401), then membership +
-  live page visible to the user, else 404 exactly like an unknown id. After the upgrade: `v` ≠ 1 → 4426, stale/missing
+  live page visible to the user, else 404 exactly like an unknown id. A WebView socket (mobile editor) that cannot send
+  the cookie instead appends `ticket=` from `POST /api/v1/auth/socket-ticket` (`socket_ticket.rs`: stateless, HMAC
+  under an HKDF subkey of the app key, 60 s, session re-checked); with a ticket and no Cookie any Origin passes, and a
+  ticket plus a cookie or bearer is 401. After the upgrade: `v` ≠ 1 → 4426, stale/missing
   epoch → 4409. Close codes (4400–4499 terminal for y-websocket): 4400 malformed, 4401 session ended, 4403 no access (moved
   into someone's Private, removed from the workspace), 4404 trashed/deleted, 4409 reset, 4413 frame > 1 MiB or document
   > 8 MiB (checked before applying), 4429 > 200 sync / 30 awareness msgs/s; 1012 restart, 1013 overloaded (50 sockets per
@@ -449,4 +486,14 @@ turns its routes, navigation and shortcuts off.
 - Tasks, Docs, Mail, Chat, DMs, and Inbox use their own compact headers instead of the global topbar.
 - Chat uses compact messages, avatars, attachment grids, date separators, and pinned system notices; header search is an icon that expands when used.
 - Docs drop BlockNote's side-menu gutter on phones; the page list and the page are separate screens.
+- The mobile app (`apps/mobile`) edits the page body with BlockNote in an Expo DOM component
+  (`src/components/docs/PageEditor.dom.tsx`, a web view): `@orbit/editor`'s schema bound to the page's Y.Doc over the
+  same collab socket as the web, so both co-edit one document. The socket uses `ticketWebSocket`: the native side
+  fetches `POST /auth/socket-ticket` with its bearer token before every connect and reconnect (401 → close 4401).
+  BlockNote's own menus are off (`BlockNoteViewRaw`); a native bar above the keyboard (`EditorToolbar.tsx`) sends
+  commands (styles, block types, lists, indent, image, divider, undo/redo) through the DOM ref, and the editor reports
+  its selection state, caret line and height back. The page scrolls natively (the web view is as tall as its content)
+  and the screen scrolls the caret above the bar. Close codes map to `PROBLEM_RESPONSES` (`src/data/page-editor.ts`):
+  4409/4423 reload the page and reconnect, 4402 read-only, 4403/4404/4401 stop. Orbit files load through the native
+  side as data URLs. Mobile never PATCHes page content (`savePage` takes title, icon and cover only).
 - Shared confirmation and input modals remain vertically and horizontally centered at mobile sizes.

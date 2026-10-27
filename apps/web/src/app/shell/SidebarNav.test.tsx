@@ -1,6 +1,10 @@
 import { expect, test } from 'bun:test'
 import { fireEvent, render } from '@testing-library/react'
-import { MemoryRouter, useLocation } from 'react-router'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { useState } from 'react'
+import { Link, MemoryRouter, useLocation } from 'react-router'
+import { InAppSidebar } from './InAppSidebar'
+import { SidebarSlotContext } from './sidebarSlot'
 import { SidebarNav } from './SidebarNav'
 
 function Location() {
@@ -77,7 +81,7 @@ test('task views nest under Tasks, not beside the other apps', () => {
 })
 
 test('the views entry shows on every route, so the rows below never move', () => {
-  for (const path of ['/settings', '/', '/views/view-1', '/tasks/task-1']) {
+  for (const path of ['/', '/views/view-1', '/tasks/task-1']) {
     const view = render(
       <MemoryRouter initialEntries={[path]}>
         <SidebarNav />
@@ -167,4 +171,139 @@ test('Activity shows a dot while a notification is unread', () => {
     </MemoryRouter>,
   )
   expect(view.getByRole('link', { name: 'Activity' }).querySelectorAll('[data-slot="sidebar-nav-dot"]').length).toBe(0)
+})
+
+test('inside account settings the sidebar shows its links, and Back returns to the last app page', () => {
+  const view = render(
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter initialEntries={['/tasks?view=mine']}>
+        <SidebarNav contextual />
+        <Link to="/profile/appearance">Open appearance</Link>
+        <Location />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+
+  const enter = () => (view.container.querySelector('[data-slot=sidebar-nav-content]') as HTMLElement).dataset.enter
+  expect(enter()).toBeUndefined()
+
+  fireEvent.click(view.getByText('Open appearance'))
+  expect(enter()).toBe('forward')
+  expect(view.getByRole('link', { name: 'Back to the main menu' }).textContent).toBe('Account settings')
+  expect(view.queryByRole('link', { name: 'Tasks' })).toBeNull()
+  expect(view.getByRole('link', { name: 'Appearance' }).dataset.active).toBe('true')
+  fireEvent.click(view.getByRole('link', { name: 'Sessions' }))
+  expect(view.getByTestId('location').textContent).toBe('/profile/sessions')
+
+  fireEvent.click(view.getByRole('link', { name: 'Back to the main menu' }))
+  expect(view.getByTestId('location').textContent).toBe('/tasks?view=mine')
+  expect(enter()).toBe('back')
+  expect(view.getByRole('link', { name: 'My tasks' }).dataset.active).toBe('true')
+})
+
+/** The desktop shell in small: an open sidebar that holds the page's list, and a page that renders one. */
+function ShellWithPageList() {
+  const [slot, setSlot] = useState<HTMLElement | null>(null)
+  return (
+    <SidebarSlotContext value={slot}>
+      <aside data-testid="sidebar">
+        <SidebarNav contextual pageListRef={setSlot} />
+      </aside>
+      <main data-testid="page">
+        <InAppSidebar>
+          <nav aria-label="Pages">page tree</nav>
+        </InAppSidebar>
+      </main>
+      <Link to="/docs/page-1">Open docs</Link>
+      <Location />
+    </SidebarSlotContext>
+  )
+}
+
+test('on docs the open sidebar holds the page tree instead of the app links, and Back leaves docs', () => {
+  const view = render(
+    <MemoryRouter initialEntries={['/activity']}>
+      <ShellWithPageList />
+    </MemoryRouter>,
+  )
+  expect(view.getByTestId('page').textContent).toBe('page tree')
+
+  fireEvent.click(view.getByText('Open docs'))
+
+  expect(view.getByTestId('sidebar').contains(view.getByRole('navigation', { name: 'Pages' }))).toBe(true)
+  expect(view.getByTestId('page').textContent).toBe('')
+  expect(view.getByRole('link', { name: 'Back to the main menu' }).textContent).toBe('Docs')
+  expect(view.queryByRole('link', { name: 'Tasks' })).toBeNull()
+
+  fireEvent.click(view.getByRole('link', { name: 'Back to the main menu' }))
+  expect(view.getByTestId('location').textContent).toBe('/activity')
+  expect(view.getByRole('link', { name: 'Tasks' })).toBeTruthy()
+})
+
+test('Back pops: from docs to account settings and back twice, it never loops between them', () => {
+  const view = render(
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter initialEntries={['/activity']}>
+        <ShellWithPageList />
+        <Link to="/profile/appearance">Open appearance</Link>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  const back = () => fireEvent.click(view.getByRole('link', { name: 'Back to the main menu' }))
+  const location = () => view.getByTestId('location').textContent
+
+  fireEvent.click(view.getByText('Open docs'))
+  fireEvent.click(view.getByText('Open appearance'))
+  back()
+  expect(location()).toBe('/docs/page-1')
+  back()
+  expect(location()).toBe('/activity')
+  expect(view.queryByRole('link', { name: 'Back to the main menu' })).toBeNull()
+})
+
+test('the classic layout keeps the app links in settings, with no Back', () => {
+  const view = render(
+    <MemoryRouter initialEntries={['/profile/appearance']}>
+      <SidebarNav />
+    </MemoryRouter>,
+  )
+  expect(view.getByRole('link', { name: 'Tasks' })).toBeTruthy()
+  expect(view.queryByRole('link', { name: 'Back to the main menu' })).toBeNull()
+  expect(view.queryByRole('link', { name: 'Appearance' })).toBeNull()
+})
+
+test('in the mobile drawer Back shows the main menu and stays on the page', () => {
+  const view = render(
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter initialEntries={['/tasks', '/profile/appearance']} initialIndex={1}>
+        <SidebarNav contextual backShowsMenu />
+        <Location />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  fireEvent.click(view.getByRole('button', { name: 'Back to the main menu' }))
+  expect(view.getByTestId('location').textContent).toBe('/profile/appearance')
+  expect(view.getByRole('link', { name: 'Tasks' })).toBeTruthy()
+  expect(view.queryByRole('link', { name: 'Appearance' })).toBeNull()
+})
+
+test('in the new UI Tasks has its own area: views, task pages and projects leave the main menu', () => {
+  const view = render(
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter initialEntries={['/']}>
+        <SidebarNav contextual />
+        <Link to="/tasks?view=overdue">Open overdue</Link>
+        <Location />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  expect(view.queryByRole('link', { name: 'Task views' })).toBeNull()
+  expect(view.queryByRole('link', { name: 'My tasks' })).toBeNull()
+
+  fireEvent.click(view.getByText('Open overdue'))
+  expect(view.getByRole('link', { name: 'Back to the main menu' }).textContent).toBe('Tasks')
+  expect(view.getByRole('link', { name: 'Overdue' }).dataset.active).toBe('true')
+  fireEvent.click(view.getByRole('link', { name: 'Task views' }))
+  expect(view.getByTestId('location').textContent).toBe('/views')
+  expect(view.getByRole('link', { name: 'Back to the main menu' }).textContent).toBe('Tasks')
 })

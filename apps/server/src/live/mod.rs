@@ -1,8 +1,9 @@
 //! The live socket of a workspace: one WebSocket for each open tab, which carries what changed
 //! as it changes. Chat is its first topic.
 //!
-//! - [`hub`]: the connections of each workspace, in memory. It numbers the events, keeps the
-//!   newest ones for a client that reconnects, and knows who is online.
+//! - [`events`]: the numbered events in the database: one sequence per workspace, and the newest
+//!   ones for a client that reconnects to any server.
+//! - [`hub`]: the connections of this server, who is online, and the delivery of events.
 //! - [`socket`]: the route `GET /api/v1/workspaces/{workspace_id}/live`.
 //!
 //! Frames from the server are JSON text:
@@ -19,9 +20,12 @@
 //! With each of those the server also sends a WebSocket ping frame. A browser answers it on its
 //! own, so the server can tell a dead connection too: it is no active tab, and it is closed.
 //!
-//! The hub lives in this process only, as the server does.
+//! Several servers can share one Postgres database: a client may connect to any of them.
 
+mod events;
 mod hub;
 pub mod socket;
 
-pub use hub::{Attached, LiveHub, Recipients};
+pub use events::NewEvent;
+pub(crate) use hub::LiveMessage;
+pub use hub::{Attached, Frame, LiveHub, Recipients};

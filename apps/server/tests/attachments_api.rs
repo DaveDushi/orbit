@@ -5,13 +5,15 @@ use axum::body::{Body, Bytes, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use orbit_platform::{
     AttachmentMutationCoordinator, AuthenticatedUser, HttpLimits, HttpPlatformLayer, Id,
-    LocalBlobStore, OriginPolicy, PasswordService, TestDatabase, TimestampMillis, UploadLimits,
-    UploadService,
+    LocalBlobStore, OriginPolicy, PasswordService, TestDatabase, TimestampMillis, UploadError,
+    UploadLimits, UploadService,
 };
 use orbit_server::attachment_routes::{AttachmentState, attachment_router};
 use orbit_server::auth_routes::CookieMode;
 use orbit_server::repositories::identity::{IdentityRepository, SetupRequest};
+use orbit_server::repositories::workspaces::WorkspaceRepository;
 use orbit_server::task_routes::{TaskState, task_router};
+use orbit_server::workspace_routes::{WorkspaceState, workspace_router};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -263,7 +265,7 @@ async fn target_is_revalidated_atomically_after_the_stream_finishes() {
         .unwrap();
     let app = fixture.app.clone();
     let response = tokio::spawn(async move { app.oneshot(request).await.unwrap() });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    wait_until_read(&sender).await;
     sqlx::query("UPDATE tasks SET deleted_at = $1 WHERE id = $2")
         .bind(TimestampMillis::now().as_millis())
         .bind(&fixture.task_id)
@@ -478,7 +480,7 @@ async fn revoked_actor_cannot_finalize_after_streaming_bytes() {
         .unwrap();
     let app = fixture.app.clone();
     let response = tokio::spawn(async move { app.oneshot(request).await.unwrap() });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    wait_until_read(&sender).await;
     sqlx::query("UPDATE users SET suspended_at = $1 WHERE id = $2")
         .bind(TimestampMillis::now().as_millis())
         .bind(&fixture.owner_id)
@@ -596,7 +598,7 @@ async fn revoked_session_cannot_finalize_after_streaming_bytes() {
         .unwrap();
     let app = fixture.app.clone();
     let response = tokio::spawn(async move { app.oneshot(request).await.unwrap() });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    wait_until_read(&sender).await;
     sqlx::query("UPDATE sessions SET revoked_at = $1 WHERE user_id = $2")
         .bind(TimestampMillis::now().as_millis())
         .bind(&fixture.owner_id)
@@ -1078,6 +1080,162 @@ async fn only_the_author_changes_the_attachments_of_a_comment() {
     assert_eq!(delete.status(), StatusCode::NO_CONTENT);
 }
 
+#[tokio::test]
+async fn uploads_stay_within_the_workspace_storage_quota() {
+    let fixture = Fixture::new(UploadLimits::default()).await;
+    let workspace_id: Id = fixture.workspace_id.parse().unwrap();
+    let owner_id: Id = fixture.owner_id.parse().unwrap();
+    let workspaces = WorkspaceRepository::new((*fixture.database).clone());
+    let storage = workspaces.storage(workspace_id, owner_id).await.unwrap();
+    assert_eq!(
+        (storage.used_bytes, storage.quota_bytes),
+        (0, Some(5_000_000_000))
+    );
+    let quota = PNG.len() as i64 + 100;
+    sqlx::query("UPDATE instance_settings SET workspace_storage_quota_bytes = $1 WHERE id = 1")
+        .bind(quota)
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        fixture.upload("first.png", PNG).await.status(),
+        StatusCode::CREATED
+    );
+    // The same bytes again are stored once, so they fit.
+    assert_eq!(
+        fixture.upload("again.png", PNG).await.status(),
+        StatusCode::CREATED
+    );
+    let too_large = fixture.upload("big.bin", &[7_u8; 101]).await;
+    assert_eq!(too_large.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        response_json(too_large).await["code"],
+        "storage_quota_exceeded"
+    );
+    // Refused before the bytes were stored.
+    assert_eq!(fixture.store.blobs().await.unwrap().len(), 1);
+    assert_eq!(
+        fixture.upload("small.bin", &[7_u8; 100]).await.status(),
+        StatusCode::CREATED
+    );
+
+    let router = workspace_router(WorkspaceState::new(
+        Arc::clone(&fixture.identity),
+        "https://orbit.test".to_owned(),
+        CookieMode::secure(),
+    ));
+    let usage = router
+        .oneshot(cookie_request(
+            "GET",
+            &format!("/api/v1/workspaces/{workspace_id}/storage"),
+            &fixture.owner_cookie,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(usage.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(usage).await,
+        json!({"used_bytes": quota, "quota_bytes": quota})
+    );
+
+    // Emoji and stickers count too; a profile picture is not a workspace file.
+    let uploads = UploadService::new(
+        (*fixture.database).clone(),
+        Arc::new(fixture.store.clone()),
+        AttachmentMutationCoordinator::default(),
+        UploadLimits::default(),
+    );
+    let now = TimestampMillis::now();
+    {
+        let finalization = uploads.begin_finalization().await;
+        let mut transaction = fixture.database.immediate_transaction().await.unwrap();
+        assert!(matches!(
+            finalization
+                .finalize_bytes_in_transaction(&mut transaction, workspace_id, b"emoji", now)
+                .await,
+            Err(UploadError::StorageQuotaExceeded { .. })
+        ));
+        finalization
+            .finalize_unmetered_bytes_in_transaction(&mut transaction, owner_id, b"avatar", now)
+            .await
+            .unwrap();
+        transaction.commit().await.unwrap();
+    }
+    assert_eq!(
+        workspaces
+            .storage(workspace_id, owner_id)
+            .await
+            .unwrap()
+            .used_bytes,
+        quota as u64
+    );
+
+    // Deleted files stop counting once reconcile removes them.
+    for attachment in response_json(
+        fixture
+            .app
+            .clone()
+            .oneshot(cookie_request(
+                "GET",
+                &fixture.task_attachments(),
+                &fixture.owner_cookie,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await["items"]
+        .as_array()
+        .unwrap()
+    {
+        let deleted = fixture
+            .app
+            .clone()
+            .oneshot(cookie_request(
+                "DELETE",
+                &format!(
+                    "{}/{}",
+                    fixture.task_attachments(),
+                    attachment["id"].as_str().unwrap()
+                ),
+                &fixture.owner_cookie,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    }
+    // Reconcile keeps a blob for a day after its last reference and after its file was written.
+    uploads
+        .reconcile(TimestampMillis::now().as_millis() + 2 * 24 * 60 * 60 * 1000)
+        .await
+        .unwrap();
+    assert_eq!(
+        workspaces
+            .storage(workspace_id, owner_id)
+            .await
+            .unwrap()
+            .used_bytes,
+        0
+    );
+    // 0 is unlimited.
+    sqlx::query("UPDATE instance_settings SET workspace_storage_quota_bytes = 0 WHERE id = 1")
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        workspaces
+            .storage(workspace_id, owner_id)
+            .await
+            .unwrap()
+            .quota_bytes,
+        None
+    );
+    assert_eq!(
+        fixture.upload("big.bin", &[7_u8; 1000]).await.status(),
+        StatusCode::CREATED
+    );
+}
+
 fn multipart_request(uri: &str, cookie: &str, files: &[(&str, &[u8])]) -> Request<Body> {
     let boundary = "orbit-test-boundary";
     let mut body = Vec::new();
@@ -1144,4 +1302,71 @@ async fn fail_inserts(
         ),
     };
     database.execute(&sql).await.unwrap();
+}
+
+#[tokio::test]
+async fn inline_upload_hidden_from_list_but_downloadable() {
+    let fixture = Fixture::new(UploadLimits::default()).await;
+    let inline = fixture
+        .app
+        .clone()
+        .oneshot(multipart_request(
+            &format!("{}?inline=1", fixture.task_attachments()),
+            &fixture.owner_cookie,
+            &[("pasted.png", PNG)],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(inline.status(), StatusCode::CREATED);
+    let inline = response_json(inline).await;
+    assert_eq!(
+        fixture.upload("listed.png", PNG).await.status(),
+        StatusCode::CREATED
+    );
+
+    let listed = fixture
+        .app
+        .clone()
+        .oneshot(cookie_request(
+            "GET",
+            &fixture.task_attachments(),
+            &fixture.owner_cookie,
+        ))
+        .await
+        .unwrap();
+    let items = response_json(listed).await["items"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["display_name"], "listed.png");
+
+    let download = fixture
+        .app
+        .clone()
+        .oneshot(cookie_request(
+            "GET",
+            &format!(
+                "{}/{}/download",
+                fixture.task_attachments(),
+                inline["id"].as_str().unwrap()
+            ),
+            &fixture.owner_cookie,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(download.status(), StatusCode::OK);
+}
+
+/// Waits until the server has read every chunk sent so far: it authorized the request and is
+/// streaming the body. (A fixed sleep raced the authorization on a slow database.)
+async fn wait_until_read<T>(sender: &tokio::sync::mpsc::Sender<T>) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while sender.capacity() < sender.max_capacity() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the server did not read the upload"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
 }

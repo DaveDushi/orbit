@@ -10,10 +10,9 @@ use clap::{Parser, Subcommand};
 use std::sync::Arc;
 
 use orbit_platform::{
-    AttachmentMutationCoordinator, BackupService, Config, ConfigOverride, ConfigSources,
-    DataConfig, Database, DatabaseConfig, DatabaseError, EnvironmentMode, LocalBlobStore,
-    MigrationRunner, TimestampMillis, UploadLimits, UploadService, lock_database_ownership,
-    run_guarded_migrations,
+    AttachmentMutationCoordinator, BackupService, Config, DataConfig, Database, DatabaseConfig,
+    DatabaseError, EnvironmentMode, LocalBlobStore, MigrationRunner, TimestampMillis, UploadLimits,
+    UploadService, lock_database_ownership, run_guarded_migrations,
 };
 use orbit_server::app::App;
 use orbit_server::repositories::identity::{IdentityRepository, SetupRequest};
@@ -25,8 +24,6 @@ use tokio_util::sync::CancellationToken;
 #[derive(Debug, Parser)]
 #[command(name = "orbit", about = "Orbit server and operations CLI")]
 pub struct Cli {
-    #[arg(long, global = true, default_value = "config/orbit.toml")]
-    config: PathBuf,
     #[arg(long, global = true)]
     database: Option<PathBuf>,
     #[arg(long, global = true)]
@@ -168,25 +165,23 @@ pub enum CliError {
     Operation(String),
 }
 
-pub async fn run(cli: Cli) -> Result<String, CliError> {
+pub async fn run(cli: Cli, env: BTreeMap<String, String>) -> Result<String, CliError> {
+    let config = || effective_config(&cli, env.clone());
     match &cli.command {
-        Command::Serve { listen, origin } => serve(&cli, *listen, origin.as_deref()).await,
-        Command::Healthcheck => {
-            let config = effective_config(&cli)?;
-            healthcheck(healthcheck_address(&config))
-        }
-        Command::Config { command } => config_command(&cli, command),
-        Command::Migrate { command } => migrate(&cli, command).await,
-        Command::Backup { command } => backup(&cli, command).await,
-        Command::Attachments { command } => attachments(&cli, command).await,
-        Command::DbReset { yes } => reset(&cli, *yes).await,
-        Command::Seed => seed(&cli).await,
+        Command::Serve { listen, origin } => serve(config()?, *listen, origin.as_deref()).await,
+        Command::Healthcheck => healthcheck(healthcheck_address(&config()?)),
+        Command::Config { command } => Ok(config_command(&config()?, command)),
+        Command::Migrate { command } => migrate(config()?, command).await,
+        Command::Backup { command } => backup(config()?, command).await,
+        Command::Attachments { command } => attachments(config()?, command).await,
+        Command::DbReset { yes } => reset(config()?, *yes).await,
+        Command::Seed => seed(config()?).await,
         Command::RecoveryLink { email, origin } => {
-            recovery_link(&cli, email, origin.as_deref()).await
+            recovery_link(config()?, email, origin.as_deref()).await
         }
-        Command::Root { command } => root(&cli, command).await,
+        Command::Root { command } => root(config()?, command).await,
         Command::Openapi { output } => write_openapi(output),
-        Command::SetupToken { command } => setup_token(&cli, command).await,
+        Command::SetupToken { command } => setup_token(config()?, command).await,
     }
 }
 
@@ -236,20 +231,18 @@ fn write_openapi(output: &Path) -> Result<String, CliError> {
     Ok(format!("wrote {}", output.display()))
 }
 
-fn config_command(cli: &Cli, command: &ConfigCommand) -> Result<String, CliError> {
-    let config = load_config_file(cli)?;
+fn config_command(config: &Config, command: &ConfigCommand) -> String {
     match command {
-        ConfigCommand::Check => Ok(format!("configuration is valid: {}", cli.config.display())),
-        ConfigCommand::Show => Ok(redacted_config(&config)),
+        ConfigCommand::Check => "configuration is valid".to_owned(),
+        ConfigCommand::Show => redacted_config(config),
     }
 }
 
 async fn serve(
-    cli: &Cli,
+    mut config: Config,
     listen: Option<std::net::SocketAddr>,
     origin: Option<&str>,
 ) -> Result<String, CliError> {
-    let mut config = effective_config(cli)?;
     if let Some(listen) = listen {
         config.http.bind = listen.ip();
         config.http.port = listen.port();
@@ -289,10 +282,9 @@ async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
-async fn setup_token(cli: &Cli, command: &SetupTokenCommand) -> Result<String, CliError> {
-    let config = effective_config(cli)?;
+async fn setup_token(config: Config, command: &SetupTokenCommand) -> Result<String, CliError> {
     let database = open_database(&config.data).await?;
-    migrate_implicitly(&config, &database).await?;
+    migrate_unless_shared(&config, &database).await?;
     let repository = IdentityRepository::new(database);
     let now = TimestampMillis::now();
     let (origin, issued) = match command {
@@ -325,8 +317,7 @@ async fn setup_token(cli: &Cli, command: &SetupTokenCommand) -> Result<String, C
     ))
 }
 
-async fn migrate(cli: &Cli, command: &MigrateCommand) -> Result<String, CliError> {
-    let config = effective_config(cli)?;
+async fn migrate(config: Config, command: &MigrateCommand) -> Result<String, CliError> {
     let (reset, seed, yes) = match command {
         MigrateCommand::Status => {
             let database = open_database(&config.data).await?;
@@ -372,8 +363,7 @@ async fn migrate(cli: &Cli, command: &MigrateCommand) -> Result<String, CliError
     Ok(output)
 }
 
-async fn backup(cli: &Cli, command: &BackupCommand) -> Result<String, CliError> {
-    let config = effective_config(cli)?;
+async fn backup(config: Config, command: &BackupCommand) -> Result<String, CliError> {
     let storage = orbit_server::object_storage::from_env().map_err(CliError::Operation)?;
     let service = BackupService::new(&config.data.backups, &config.data.attachments)
         .with_object_storage(storage);
@@ -414,8 +404,8 @@ async fn backup(cli: &Cli, command: &BackupCommand) -> Result<String, CliError> 
         }
         BackupCommand::Restore { id } => {
             if config.data.database_url.is_some() {
-                // Opening takes the ownership lock, so a serving Orbit blocks the restore.
-                let database = open_database(&config.data).await?;
+                // Opening takes the exclusive ownership lock, so a serving Orbit blocks the restore.
+                let database = open_database_alone(&config.data).await?;
                 service
                     .restore_postgres(id, &database)
                     .await
@@ -431,8 +421,7 @@ async fn backup(cli: &Cli, command: &BackupCommand) -> Result<String, CliError> 
     }
 }
 
-async fn attachments(cli: &Cli, command: &AttachmentsCommand) -> Result<String, CliError> {
-    let config = effective_config(cli)?;
+async fn attachments(config: Config, command: &AttachmentsCommand) -> Result<String, CliError> {
     let database = Database::open(&DatabaseConfig::for_data(&config.data))
         .await
         .map_err(|error| match error {
@@ -460,13 +449,12 @@ async fn attachments(cli: &Cli, command: &AttachmentsCommand) -> Result<String, 
     }
 }
 
-async fn reset(cli: &Cli, yes: bool) -> Result<String, CliError> {
+async fn reset(config: Config, yes: bool) -> Result<String, CliError> {
     if !yes {
         return Err(CliError::Operation(
             "db-reset requires --yes because it destroys all current data".to_owned(),
         ));
     }
-    let config = effective_config(cli)?;
     require_development(&config)?;
     reset_data(&config).await?;
 
@@ -478,8 +466,8 @@ async fn reset(cli: &Cli, yes: bool) -> Result<String, CliError> {
 async fn reset_data(config: &Config) -> Result<(), CliError> {
     validate_reset_paths(config)?;
     if config.data.database_url.is_some() {
-        // Opening the database takes its ownership lock, so a serving Orbit blocks the reset.
-        open_database(&config.data)
+        // Opening takes the exclusive ownership lock, so a serving Orbit blocks the reset.
+        open_database_alone(&config.data)
             .await?
             .execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
             .await
@@ -514,18 +502,16 @@ fn reset_sqlite_file(path: &Path) -> Result<(), CliError> {
     Ok(())
 }
 
-async fn seed(cli: &Cli) -> Result<String, CliError> {
-    let config = effective_config(cli)?;
+async fn seed(config: Config) -> Result<String, CliError> {
     require_development(&config)?;
     let database = open_database(&config.data).await?;
     migrate_implicitly(&config, &database).await?;
     install_seed_data(database).await
 }
 
-async fn root(cli: &Cli, command: &RootCommand) -> Result<String, CliError> {
-    let config = effective_config(cli)?;
+async fn root(config: Config, command: &RootCommand) -> Result<String, CliError> {
     let database = open_database(&config.data).await?;
-    migrate_implicitly(&config, &database).await?;
+    migrate_unless_shared(&config, &database).await?;
     let repository = IdentityRepository::new(database);
     match command {
         RootCommand::Show => Ok(repository
@@ -549,10 +535,13 @@ async fn root(cli: &Cli, command: &RootCommand) -> Result<String, CliError> {
     }
 }
 
-async fn recovery_link(cli: &Cli, email: &str, origin: Option<&str>) -> Result<String, CliError> {
-    let config = effective_config(cli)?;
+async fn recovery_link(
+    config: Config,
+    email: &str,
+    origin: Option<&str>,
+) -> Result<String, CliError> {
     let database = open_database(&config.data).await?;
-    migrate_implicitly(&config, &database).await?;
+    migrate_unless_shared(&config, &database).await?;
     let repository = IdentityRepository::new(database);
     let identity = repository
         .find_by_email(email)
@@ -586,6 +575,26 @@ async fn migrate_implicitly(config: &Config, database: &Database) -> Result<(), 
     .await
     .map(|_| ())
     .map_err(operation)
+}
+
+/// For commands that run next to the servers of a Postgres database: a newer CLI must not change
+/// the schema under them, so pending migrations wait for `orbit migrate run`. SQLite (also the test
+/// stand-in for Postgres) is held alone and migrates as before.
+async fn migrate_unless_shared(config: &Config, database: &Database) -> Result<(), CliError> {
+    if config.data.database_url.is_none() {
+        return migrate_implicitly(config, database).await;
+    }
+    let pending = MigrationRunner::embedded(env!("CARGO_PKG_VERSION"))
+        .pending(database)
+        .await
+        .map_err(operation)?;
+    if pending.is_empty() {
+        Ok(())
+    } else {
+        Err(CliError::Operation(
+            "the database needs migrations: run `orbit migrate run` first".to_owned(),
+        ))
+    }
 }
 
 fn require_development(config: &Config) -> Result<(), CliError> {
@@ -945,6 +954,7 @@ async fn install_seed_data(database: Database) -> Result<String, CliError> {
                     status_id: status_id.parse().map_err(operation)?,
                     title: TASK_TITLE.to_owned(),
                     description: TASK_DESCRIPTION.to_owned(),
+                    description_json: None,
                     source_url: None,
                     priority: "medium".to_owned(),
                     position: None,
@@ -966,23 +976,8 @@ async fn install_seed_data(database: Database) -> Result<String, CliError> {
     )
 }
 
-fn load_config_file(cli: &Cli) -> Result<Config, CliError> {
-    let mut config = Config::load(ConfigSources {
-        path: cli.config.clone(),
-        env: std::env::vars().collect::<BTreeMap<_, _>>(),
-        cli: ConfigOverride::default(),
-    })
-    .map_err(operation)?;
-    apply_path_overrides(cli, &mut config);
-    config.validate().map_err(operation)?;
-    Ok(config)
-}
-
-fn effective_config(cli: &Cli) -> Result<Config, CliError> {
-    if cli.config.exists() {
-        return load_config_file(cli);
-    }
-    let mut config = Config::from_environment(std::env::vars().collect()).map_err(operation)?;
+fn effective_config(cli: &Cli, env: BTreeMap<String, String>) -> Result<Config, CliError> {
+    let mut config = Config::from_environment(env).map_err(operation)?;
     apply_path_overrides(cli, &mut config);
     config.validate().map_err(operation)?;
     Ok(config)
@@ -1006,7 +1001,15 @@ fn apply_path_overrides(cli: &Cli, config: &mut Config) {
     }
 }
 
+/// Opens the database next to running servers (a Postgres database only; SQLite is always alone).
 async fn open_database(data: &DataConfig) -> Result<Database, CliError> {
+    Database::open(&DatabaseConfig::for_data(data).shared())
+        .await
+        .map_err(operation)
+}
+
+/// Opens the database only when no other Orbit process uses it, for commands that replace data.
+async fn open_database_alone(data: &DataConfig) -> Result<Database, CliError> {
     Database::open(&DatabaseConfig::for_data(data))
         .await
         .map_err(operation)
@@ -1098,53 +1101,108 @@ pub fn redacted_config(config: &Config) -> String {
         .http
         .trusted_proxies
         .iter()
-        .map(|proxy| format!("\"{proxy}\""))
+        .map(ToString::to_string)
         .collect::<Vec<_>>()
-        .join(", ");
-    let mut output = format!(
-        "environment = \"{}\"\n\n[http]\nbind = \"{}\"\nport = {}\npublic_origin = \"{}\"\ntrusted_proxies = [{}]\n\n[data]\ndatabase = \"{}\"\nattachments = \"{}\"\nbackups = \"{}\"\n\n[jobs]\nconcurrency = {}\n\n[uploads]\nmax_file_bytes = {}\nmax_request_bytes = {}\n\n[rate_limits]\nauthentication_per_minute = {}\nrecovery_per_minute = {}\ninvitation_per_minute = {}\nupload_per_minute = {}\ngeneral_per_minute = {}",
-        config.environment.as_str(),
-        config.http.bind,
-        config.http.port,
-        config.http.public_origin,
-        proxies,
-        config.data.database.display(),
-        config.data.attachments.display(),
-        config.data.backups.display(),
-        config.jobs.concurrency,
-        config.uploads.max_file_bytes,
-        config.uploads.max_request_bytes,
-        config.rate_limits.authentication_per_minute,
-        config.rate_limits.recovery_per_minute,
-        config.rate_limits.invitation_per_minute,
-        config.rate_limits.upload_per_minute,
-        config.rate_limits.general_per_minute,
-    );
+        .join(",");
+    let mut lines = vec![
+        format!("ORBIT_ENV={}", config.environment.as_str()),
+        format!("ORBIT_BIND={}", config.http.bind),
+        format!("ORBIT_PORT={}", config.http.port),
+        format!("ORBIT_PUBLIC_ORIGIN={}", config.http.public_origin),
+        format!("ORBIT_TRUSTED_PROXIES={proxies}"),
+        format!(
+            "ORBIT_SHUTDOWN_DELAY_SECONDS={}",
+            config.http.shutdown_delay_seconds
+        ),
+        format!("ORBIT_DATABASE_PATH={}", config.data.database.display()),
+    ];
     if let Some(url) = &config.data.database_url {
-        let at = output
-            .find("\nattachments = ")
-            .expect("the [data] section is written above");
-        output.insert_str(
-            at,
-            &format!(
-                "\ndatabase_url = \"{}\"",
-                orbit_platform::redact_database_url(url)
-            ),
-        );
+        lines.push(format!(
+            "ORBIT_DATABASE_URL={}",
+            orbit_platform::redact_database_url(url)
+        ));
     }
-    output.push_str("\n\n[metrics]\n");
-    if let Some(listen) = config.metrics.listen {
-        output.push_str(&format!("listen = \"{listen}\""));
-    } else {
-        output.push_str("# listen is disabled");
+    lines.extend([
+        format!(
+            "ORBIT_ATTACHMENTS_PATH={}",
+            config.data.attachments.display()
+        ),
+        format!("ORBIT_BACKUPS_PATH={}", config.data.backups.display()),
+        format!("ORBIT_JOBS_CONCURRENCY={}", config.jobs.concurrency),
+        format!(
+            "ORBIT_UPLOAD_MAX_FILE_BYTES={}",
+            config.uploads.max_file_bytes
+        ),
+        format!(
+            "ORBIT_UPLOAD_MAX_REQUEST_BYTES={}",
+            config.uploads.max_request_bytes
+        ),
+        format!(
+            "ORBIT_RATE_LIMIT_AUTHENTICATION_PER_MINUTE={}",
+            config.rate_limits.authentication_per_minute
+        ),
+        format!(
+            "ORBIT_RATE_LIMIT_RECOVERY_PER_MINUTE={}",
+            config.rate_limits.recovery_per_minute
+        ),
+        format!(
+            "ORBIT_RATE_LIMIT_INVITATION_PER_MINUTE={}",
+            config.rate_limits.invitation_per_minute
+        ),
+        format!(
+            "ORBIT_RATE_LIMIT_UPLOAD_PER_MINUTE={}",
+            config.rate_limits.upload_per_minute
+        ),
+        format!(
+            "ORBIT_RATE_LIMIT_GENERAL_PER_MINUTE={}",
+            config.rate_limits.general_per_minute
+        ),
+        format!(
+            "ORBIT_RATE_LIMIT_WORKSPACE_MULTIPLIER={}",
+            config.rate_limits.workspace_multiplier
+        ),
+        format!(
+            "ORBIT_RATE_LIMIT_ACCOUNT_EMAIL_COOLDOWN_SECONDS={}",
+            config.rate_limits.account_email_cooldown_seconds
+        ),
+        format!(
+            "ORBIT_RATE_LIMIT_ACCOUNT_EMAILS_PER_DAY={}",
+            config.rate_limits.account_emails_per_day
+        ),
+        format!(
+            "ORBIT_RATE_LIMIT_INVITATION_EMAILS_PER_WORKSPACE_PER_DAY={}",
+            config.rate_limits.invitation_emails_per_workspace_per_day
+        ),
+        format!(
+            "ORBIT_RATE_LIMIT_INVITATION_EMAILS_PER_INVITER_PER_DAY={}",
+            config.rate_limits.invitation_emails_per_inviter_per_day
+        ),
+    ]);
+    match config.metrics.listen {
+        Some(listen) => lines.push(format!("ORBIT_METRICS_LISTEN={listen}")),
+        None => lines.push("# ORBIT_METRICS_LISTEN is not set: metrics are disabled".to_owned()),
     }
-    if !config.secrets.is_empty() {
-        output.push_str("\n\n[secrets]");
-        for name in config.secrets.keys() {
-            output.push_str(&format!("\n{name} = \"[REDACTED]\""));
+    if config.app_key.is_some() {
+        lines.push("ORBIT_APP_KEY=[REDACTED]".to_owned());
+    }
+    match &config.billing {
+        Some(billing) => {
+            let prices = billing
+                .plans
+                .iter()
+                .map(|plan| format!("{}:{}", plan.key, plan.price_id))
+                .collect::<Vec<_>>()
+                .join(",");
+            lines.extend([
+                "ORBIT_CLOUD=true".to_owned(),
+                "ORBIT_STRIPE_SECRET_KEY=[REDACTED]".to_owned(),
+                "ORBIT_STRIPE_WEBHOOK_SECRET=[REDACTED]".to_owned(),
+                format!("ORBIT_STRIPE_PRICES={prices}"),
+            ]);
         }
+        None => lines.push("ORBIT_CLOUD=false".to_owned()),
     }
-    output
+    lines.join("\n")
 }
 
 pub fn failure_message(error: &str) -> String {
@@ -1167,8 +1225,8 @@ mod tests {
 
     use clap::Parser;
     use orbit_platform::{
-        BackupService, Config, ConfigOverride, ConfigSources, Database, DatabaseConfig,
-        EnvironmentMode, Id, Migration, MigrationRunner, TimestampMillis,
+        BackupService, Config, Database, DatabaseConfig, EnvironmentMode, Id, Migration,
+        MigrationRunner, TimestampMillis,
     };
     use orbit_server::repositories::identity::{IdentityRepository, SetupRequest};
 
@@ -1177,6 +1235,28 @@ mod tests {
         failure_message, healthcheck, parent_directory, redacted_config, remove_sidecars, run,
         validate_reset_paths,
     };
+
+    fn environment(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect()
+    }
+
+    const APP_KEY: &str = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
+
+    fn development() -> BTreeMap<String, String> {
+        environment(&[("ORBIT_ENV", "development"), ("ORBIT_APP_KEY", APP_KEY)])
+    }
+
+    fn production() -> BTreeMap<String, String> {
+        environment(&[
+            ("ORBIT_ENV", "production"),
+            ("ORBIT_APP_KEY", APP_KEY),
+            ("ORBIT_PUBLIC_ORIGIN", "https://orbit.example"),
+            ("ORBIT_TRUSTED_PROXIES", "127.0.0.1/32"),
+        ])
+    }
 
     #[test]
     fn parses_all_operations_subcommands() {
@@ -1327,15 +1407,10 @@ mod tests {
             std::process::id(),
             orbit_platform::Id::new_v7()
         ));
-        let config = database.with_extension("toml");
-        fs::write(&config, "environment = \"development\"\n").unwrap();
         let database_arg = database.to_string_lossy().into_owned();
-        let config_arg = config.to_string_lossy().into_owned();
         let parse = |operation: &str| {
             Cli::try_parse_from([
                 "orbit",
-                "--config",
-                config_arg.as_str(),
                 "--database",
                 database_arg.as_str(),
                 "setup-token",
@@ -1346,9 +1421,9 @@ mod tests {
             .unwrap()
         };
 
-        let initial = run(parse("init")).await.unwrap();
-        let repeated = run(parse("init")).await.unwrap();
-        let rotated = run(parse("rotate")).await.unwrap();
+        let initial = run(parse("init"), development()).await.unwrap();
+        let repeated = run(parse("init"), development()).await.unwrap();
+        let rotated = run(parse("rotate"), development()).await.unwrap();
 
         assert!(initial.starts_with("https://orbit.test/setup?token="));
         assert_eq!(repeated, "setup token already exists or setup is complete");
@@ -1357,7 +1432,6 @@ mod tests {
         for suffix in ["", "-wal", "-shm"] {
             let _ = fs::remove_file(format!("{}{suffix}", database.display()));
         }
-        let _ = fs::remove_file(config);
     }
 
     #[tokio::test]
@@ -1406,34 +1480,36 @@ mod tests {
         drop(database);
 
         let database_arg = database_path.to_string_lossy().into_owned();
-        let config_path = database_path.with_extension("toml");
-        fs::write(&config_path, "environment = \"development\"\n").unwrap();
-        let config_arg = config_path.to_string_lossy().into_owned();
         let command = |args: &[&str]| {
-            let mut argv = vec![
-                "orbit",
-                "--config",
-                config_arg.as_str(),
-                "--database",
-                database_arg.as_str(),
-                "root",
-            ];
+            let mut argv = vec!["orbit", "--database", database_arg.as_str(), "root"];
             argv.extend_from_slice(args);
             Cli::try_parse_from(argv).unwrap()
         };
-        assert_eq!(run(command(&["show"])).await.unwrap(), "owner@example.com");
+        assert_eq!(
+            run(command(&["show"]), development()).await.unwrap(),
+            "owner@example.com"
+        );
         assert!(
-            run(command(&["set", "--email", "nobody@example.com"]))
-                .await
-                .is_err()
+            run(
+                command(&["set", "--email", "nobody@example.com"]),
+                development()
+            )
+            .await
+            .is_err()
         );
         assert_eq!(
-            run(command(&["set", "--email", "next@example.com"]))
-                .await
-                .unwrap(),
+            run(
+                command(&["set", "--email", "next@example.com"]),
+                development()
+            )
+            .await
+            .unwrap(),
             "next@example.com is now the root user; owner@example.com stays an instance admin"
         );
-        assert_eq!(run(command(&["show"])).await.unwrap(), "Next@Example.com");
+        assert_eq!(
+            run(command(&["show"]), development()).await.unwrap(),
+            "Next@Example.com"
+        );
 
         let database = Database::open(&DatabaseConfig::new(&database_path))
             .await
@@ -1462,7 +1538,6 @@ mod tests {
         for suffix in ["", "-wal", "-shm"] {
             let _ = fs::remove_file(format!("{}{suffix}", database_path.display()));
         }
-        let _ = fs::remove_file(config_path);
     }
 
     #[tokio::test]
@@ -1504,13 +1579,8 @@ mod tests {
         drop(database);
 
         let database_arg = database_path.to_string_lossy().into_owned();
-        let config_path = database_path.with_extension("toml");
-        fs::write(&config_path, "environment = \"development\"\n").unwrap();
-        let config_arg = config_path.to_string_lossy().into_owned();
         let cli = Cli::try_parse_from([
             "orbit",
-            "--config",
-            config_arg.as_str(),
             "--database",
             database_arg.as_str(),
             "recovery-link",
@@ -1520,7 +1590,7 @@ mod tests {
             "https://orbit.test",
         ])
         .unwrap();
-        let url = run(cli).await.unwrap();
+        let url = run(cli, development()).await.unwrap();
         let token = url
             .strip_prefix("https://orbit.test/recovery?token=")
             .unwrap();
@@ -1537,36 +1607,45 @@ mod tests {
         for suffix in ["", "-wal", "-shm"] {
             let _ = fs::remove_file(format!("{}{suffix}", database_path.display()));
         }
-        let _ = fs::remove_file(config_path);
     }
 
     #[test]
     fn config_output_redacts_secret_values() {
-        let path = std::env::temp_dir().join(format!(
-            "orbit-cli-config-{}-{}.toml",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("test")
-        ));
-        fs::write(
-            &path,
-            "environment = \"development\"\nhttp.port = 9000\nsecrets.token = \"very-secret\"",
-        )
+        let config = Config::from_environment(environment(&[
+            ("ORBIT_ENV", "development"),
+            ("ORBIT_PORT", "9000"),
+            ("ORBIT_APP_KEY", APP_KEY),
+        ]))
         .unwrap();
-        let config = Config::load(ConfigSources {
-            path: path.clone(),
-            env: BTreeMap::new(),
-            cli: ConfigOverride::default(),
-        })
-        .unwrap();
-        let _ = fs::remove_file(path);
 
         let shown = redacted_config(&config);
 
-        assert!(shown.contains("port = 9000"));
-        assert!(shown.contains("[metrics]"));
-        assert!(shown.contains("# listen is disabled"));
-        assert!(shown.contains("token = \"[REDACTED]\""));
-        assert!(!shown.contains("very-secret"));
+        assert!(shown.contains("ORBIT_PORT=9000"));
+        assert!(shown.contains("# ORBIT_METRICS_LISTEN is not set"));
+        assert!(shown.contains("ORBIT_APP_KEY=[REDACTED]"));
+        assert!(!shown.contains(APP_KEY));
+    }
+
+    #[test]
+    fn config_output_redacts_stripe_secrets() {
+        let config = Config::from_environment(environment(&[
+            ("ORBIT_ENV", "development"),
+            ("ORBIT_APP_KEY", APP_KEY),
+            ("ORBIT_CLOUD", "true"),
+            ("ORBIT_STRIPE_SECRET_KEY", "sk_test_hidden"),
+            ("ORBIT_STRIPE_WEBHOOK_SECRET", "whsec_hidden"),
+            ("ORBIT_STRIPE_PRICES", "team:price_1,business:price_2"),
+        ]))
+        .unwrap();
+
+        let shown = redacted_config(&config);
+
+        assert!(shown.contains("ORBIT_CLOUD=true"), "{shown}");
+        assert!(shown.contains("ORBIT_STRIPE_SECRET_KEY=[REDACTED]"));
+        assert!(shown.contains("ORBIT_STRIPE_WEBHOOK_SECRET=[REDACTED]"));
+        assert!(shown.contains("ORBIT_STRIPE_PRICES=team:price_1,business:price_2"));
+        assert!(!shown.contains("hidden"), "{shown}");
+        assert!(!format!("{config:?}").contains("hidden"));
     }
 
     #[test]
@@ -1605,6 +1684,7 @@ mod tests {
         let root = tempfile::TempDir::new().unwrap();
         let mut config = Config {
             environment: EnvironmentMode::Development,
+            app_key: Some(orbit_platform::AppKey::new([1; 32])),
             ..Config::default()
         };
         config.data.database = root.path().join("data/orbit.sqlite");
@@ -1626,6 +1706,7 @@ mod tests {
         let root = tempfile::TempDir::new().unwrap();
         let mut config = Config {
             environment: EnvironmentMode::Development,
+            app_key: Some(orbit_platform::AppKey::new([1; 32])),
             ..Config::default()
         };
         config.data.database = root.path().join("data/orbit.sqlite");
@@ -1663,13 +1744,9 @@ mod tests {
     async fn migrate_run_seed_installs_exact_credentials_and_preserves_edits() {
         let root = tempfile::TempDir::new().unwrap();
         let database = root.path().join("orbit.sqlite");
-        let config_path = root.path().join("orbit.toml");
-        fs::write(&config_path, "environment = \"development\"\n").unwrap();
         let args = || {
             Cli::try_parse_from([
                 "orbit",
-                "--config",
-                config_path.to_str().unwrap(),
                 "--database",
                 database.to_str().unwrap(),
                 "migrate",
@@ -1693,7 +1770,7 @@ mod tests {
             .unwrap();
         drop(prepared);
 
-        let first = run(args()).await.unwrap();
+        let first = run(args(), development()).await.unwrap();
         assert!(first.contains("test@example.com"));
         assert!(first.contains("password"));
 
@@ -1722,7 +1799,7 @@ mod tests {
         .unwrap();
         drop(prepared);
 
-        let second = run(args()).await.unwrap();
+        let second = run(args(), development()).await.unwrap();
         assert_eq!(first, second);
 
         let database = Database::open(&DatabaseConfig::new(database))
@@ -1859,12 +1936,8 @@ mod tests {
         drop(identity);
         drop(database);
 
-        let config_path = root.path().join("orbit.toml");
-        fs::write(&config_path, "environment = \"development\"\n").unwrap();
         let cli = Cli::try_parse_from([
             "orbit",
-            "--config",
-            config_path.to_str().unwrap(),
             "--database",
             database_path.to_str().unwrap(),
             "migrate",
@@ -1873,7 +1946,7 @@ mod tests {
         ])
         .unwrap();
 
-        run(cli).await.unwrap();
+        run(cli, development()).await.unwrap();
 
         let database = Database::open(&DatabaseConfig::new(database_path))
             .await
@@ -1923,12 +1996,8 @@ mod tests {
         let root = tempfile::TempDir::new().unwrap();
         let database = root.path().join("orbit.sqlite");
         fs::write(&database, b"keep-me").unwrap();
-        let development_config = root.path().join("development.toml");
-        fs::write(&development_config, "environment = \"development\"\n").unwrap();
         let without_yes = Cli::try_parse_from([
             "orbit",
-            "--config",
-            development_config.to_str().unwrap(),
             "--database",
             database.to_str().unwrap(),
             "migrate",
@@ -1937,21 +2006,13 @@ mod tests {
         ])
         .unwrap();
 
-        let error = run(without_yes).await.unwrap_err();
+        let error = run(without_yes, development()).await.unwrap_err();
         assert!(error.to_string().contains("requires --yes"));
         assert_eq!(fs::read(&database).unwrap(), b"keep-me");
 
-        let production_config = root.path().join("production.toml");
-        fs::write(
-            &production_config,
-            "environment = \"production\"\nhttp.public_origin = \"https://orbit.example\"\nhttp.trusted_proxies = [\"127.0.0.1/32\"]\n",
-        )
-        .unwrap();
         for flag in ["--reset", "--seed"] {
             let cli = Cli::try_parse_from([
                 "orbit",
-                "--config",
-                production_config.to_str().unwrap(),
                 "--database",
                 database.to_str().unwrap(),
                 "migrate",
@@ -1960,7 +2021,7 @@ mod tests {
                 "--yes",
             ])
             .unwrap();
-            let error = run(cli).await.unwrap_err();
+            let error = run(cli, production()).await.unwrap_err();
             assert!(error.to_string().contains("development mode"));
             assert_eq!(fs::read(&database).unwrap(), b"keep-me");
         }
@@ -1977,12 +2038,8 @@ mod tests {
         fs::write(format!("{}-wal", database.display()), b"old wal").unwrap();
         fs::write(format!("{}-shm", database.display()), b"old shm").unwrap();
         fs::write(format!("{}-journal", database.display()), b"old journal").unwrap();
-        let config_path = root.path().join("orbit.toml");
-        fs::write(&config_path, "environment = \"development\"\n").unwrap();
         let cli = Cli::try_parse_from([
             "orbit",
-            "--config",
-            config_path.to_str().unwrap(),
             "--database",
             database.to_str().unwrap(),
             "--attachments",
@@ -1995,7 +2052,7 @@ mod tests {
         ])
         .unwrap();
 
-        let output = run(cli).await.unwrap();
+        let output = run(cli, development()).await.unwrap();
 
         assert!(output.contains("applied"));
         assert!(output.contains("test@example.com"));
@@ -2049,12 +2106,8 @@ mod tests {
                 fs::create_dir_all(&alias_parent).unwrap();
                 alias_parent.join("../backups")
             };
-            let config_path = root.path().join("orbit.toml");
-            fs::write(&config_path, "environment = \"development\"\n").unwrap();
             let cli = Cli::try_parse_from([
                 "orbit",
-                "--config",
-                config_path.to_str().unwrap(),
                 "--database",
                 database.to_str().unwrap(),
                 "--attachments",
@@ -2068,7 +2121,7 @@ mod tests {
             ])
             .unwrap();
 
-            let error = run(cli).await.unwrap_err();
+            let error = run(cli, development()).await.unwrap_err();
 
             assert!(error.to_string().contains("unsafe attachment path"));
             assert_eq!(fs::read(&database).unwrap(), b"keep database");
@@ -2101,24 +2154,22 @@ mod tests {
         let mut url = url::Url::parse(&server).unwrap();
         url.set_path(&name);
         let root = tempfile::TempDir::new().unwrap();
-        let config_path = root.path().join("orbit.toml");
-        fs::write(
-            &config_path,
-            format!(
-                "environment = \"development\"\n[data]\ndatabase_url = \"{url}\"\n\
-                 database = \"{}\"\nattachments = \"{}\"\nbackups = \"{}\"\n\
-                 [secrets]\napp_key = \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"\n",
-                root.path().join("orbit.sqlite").display(),
-                root.path().join("attachments").display(),
-                root.path().join("backups").display(),
+        let url = url.to_string();
+        let database_path = root.path().join("orbit.sqlite");
+        let attachments = root.path().join("attachments");
+        let backups = root.path().join("backups");
+        let env = environment(&[
+            ("ORBIT_ENV", "development"),
+            ("ORBIT_DATABASE_URL", &url),
+            ("ORBIT_DATABASE_PATH", database_path.to_str().unwrap()),
+            ("ORBIT_ATTACHMENTS_PATH", attachments.to_str().unwrap()),
+            ("ORBIT_BACKUPS_PATH", backups.to_str().unwrap()),
+            (
+                "ORBIT_APP_KEY",
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
             ),
-        )
-        .unwrap();
-        let config = super::effective_config(
-            &Cli::try_parse_from(["orbit", "--config", config_path.to_str().unwrap(), "serve"])
-                .unwrap(),
-        )
-        .unwrap();
+        ]);
+        let config = Config::from_environment(env.clone()).unwrap();
 
         let database = Database::open(&DatabaseConfig::for_data(&config.data))
             .await
@@ -2141,15 +2192,10 @@ mod tests {
             .unwrap();
         drop(database);
 
-        let restored = run(Cli::try_parse_from([
-            "orbit",
-            "--config",
-            config_path.to_str().unwrap(),
-            "backup",
-            "restore",
-            &backup.id,
-        ])
-        .unwrap())
+        let restored = run(
+            Cli::try_parse_from(["orbit", "backup", "restore", &backup.id]).unwrap(),
+            env,
+        )
         .await;
 
         let database = Database::open(&DatabaseConfig::for_data(&config.data))
@@ -2175,16 +2221,8 @@ mod tests {
         let root = tempfile::TempDir::new().unwrap();
         let database = root.path().join("orbit.sqlite");
         fs::write(&database, b"keep-me").unwrap();
-        let config_path = root.path().join("orbit.toml");
-        fs::write(
-            &config_path,
-            "environment = \"production\"\nhttp.public_origin = \"https://orbit.example\"\nhttp.trusted_proxies = [\"127.0.0.1/32\"]\n",
-        )
-        .unwrap();
         let cli = Cli::try_parse_from([
             "orbit",
-            "--config",
-            config_path.to_str().unwrap(),
             "--database",
             database.to_str().unwrap(),
             "db-reset",
@@ -2192,7 +2230,7 @@ mod tests {
         ])
         .unwrap();
 
-        let error = run(cli).await.unwrap_err();
+        let error = run(cli, production()).await.unwrap_err();
 
         assert!(error.to_string().contains("development mode"));
         assert_eq!(fs::read(database).unwrap(), b"keep-me");

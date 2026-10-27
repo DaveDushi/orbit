@@ -5,7 +5,8 @@
 Orbit is a self-hosted workspace for teams. It puts tasks, documents, mail, and
 team chat in one application, so your team's work stays in one place and on
 your own server. The goal is an AI assistant that has the full context of every
-part of the workspace.
+part of the workspace. Because Orbit runs on your server, the AI reads your data
+there, not in someone else's cloud.
 
 ## What is in Orbit
 
@@ -34,7 +35,7 @@ Orbit can make scheduled, verified backups. Put a reverse proxy in front of Orbi
 
 ### Development
 
-You need Rust 1.97.1, Bun 1.3.14 or later, and [Just](https://just.systems/).
+You need Rust 1.97.1, Bun 1.4.4 or later, and [Just](https://just.systems/).
 
 ```bash
 just setup

@@ -15,8 +15,8 @@ use webauthn_rs::{Webauthn, WebauthnBuilder};
 
 use super::two_factor::{Pending, busy, confirm_password};
 use super::{
-    ApiError, ApiJson, AuthState, LoginResponse, ProblemBody, authenticate, request_id_value,
-    signed_in_response,
+    ApiError, ApiJson, AuthState, LoginResponse, ProblemBody, SessionDelivery, authenticate,
+    request_id_value, signed_in_response,
 };
 use crate::audit::AuditOutcome;
 use crate::repositories::identity::IdentityError;
@@ -169,6 +169,8 @@ pub(super) async fn start_passkey_registration(
             user_id: session.user.id,
             state: Box::new(registration),
         })
+        .await
+        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?
         .ok_or_else(|| busy(instance, request_id.as_ref()))?;
     Ok(Json(PasskeyChallenge {
         challenge_token,
@@ -217,7 +219,11 @@ pub(super) async fn finish_passkey_registration(
             user_id,
             state: registration,
         },
-    )) = state.pending.take(&body.challenge_token)
+    )) = state
+        .pending
+        .take(&body.challenge_token)
+        .await
+        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?
     else {
         return Err(invalid_passkey(instance, request_id.as_ref()));
     };
@@ -333,6 +339,8 @@ pub(super) async fn start_passkey_login(
         .insert(Pending::PasskeyLogin {
             state: Box::new(authentication),
         })
+        .await
+        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?
         .ok_or_else(|| busy(instance, request_id.as_ref()))?;
     Ok(Json(PasskeyChallenge {
         challenge_token,
@@ -354,6 +362,7 @@ pub(super) struct FinishPasskeyLoginBody {
 #[utoipa::path(post, path = "/api/v1/auth/passkey/login/finish", request_body = FinishPasskeyLoginBody, responses((status = 200, body = LoginResponse), (status = 401, description = "invalid_passkey", body = ProblemBody, content_type = "application/problem+json"), (status = 409, description = "passkeys_unavailable", body = ProblemBody, content_type = "application/problem+json")))]
 pub(super) async fn finish_passkey_login(
     State(state): State<AuthState>,
+    headers: HeaderMap,
     request_id: Option<Extension<RequestId>>,
     ApiJson(body): ApiJson<FinishPasskeyLoginBody>,
 ) -> Result<Response, ApiError> {
@@ -377,7 +386,11 @@ pub(super) async fn finish_passkey_login(
         Pending::PasskeyLogin {
             state: authentication,
         },
-    )) = state.pending.take(&body.challenge_token)
+    )) = state
+        .pending
+        .take(&body.challenge_token)
+        .await
+        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?
     else {
         return Err(rejected());
     };
@@ -419,7 +432,13 @@ pub(super) async fn finish_passkey_login(
             IdentityError::InvalidCredential => rejected(),
             _ => ApiError::internal(instance, request_id.as_ref()),
         })?;
-    Ok(signed_in_response(&state, user, &session).await)
+    Ok(signed_in_response(
+        &state,
+        user,
+        &session,
+        SessionDelivery::for_request(&headers),
+    )
+    .await)
 }
 
 async fn record_failure(

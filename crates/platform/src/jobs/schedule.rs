@@ -212,6 +212,28 @@ impl Scheduler {
         Ok(())
     }
 
+    /// Adds `schedule` unless an instance-wide schedule of its kind exists. Servers that start at
+    /// the same time all call this; the unique index keeps one row.
+    pub async fn ensure(&self, schedule: &RecurringSchedule) -> Result<(), ScheduleError> {
+        self.store.register_kind(schedule.kind.clone())?;
+        sqlx::query(
+            "INSERT INTO schedules (id, workspace_id, job_kind, payload_json, schedule, \
+             next_run_at, catch_up_mode, consecutive_failures, enabled, updated_at) \
+             VALUES ($1, NULL, $2, $3, $4, $5, $6, 0, $7, $8) ON CONFLICT DO NOTHING",
+        )
+        .bind(schedule.id.to_string())
+        .bind(schedule.kind.name())
+        .bind(serde_json::to_string(&schedule.payload)?)
+        .bind(schedule.encoded_recurrence())
+        .bind(schedule.next_run_at.as_millis())
+        .bind(schedule.catch_up.as_str())
+        .bind(i64::from(schedule.enabled))
+        .bind(TimestampMillis::now().as_millis())
+        .execute(self.store.database().pool())
+        .await?;
+        Ok(())
+    }
+
     pub async fn materialize_due(&self, now: TimestampMillis) -> Result<Vec<Id>, ScheduleError> {
         let rows = sqlx::query(
             "SELECT id, workspace_id, job_kind, payload_json, schedule, next_run_at, \

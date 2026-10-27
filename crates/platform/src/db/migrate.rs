@@ -107,6 +107,21 @@ pub async fn run_guarded_migrations(
     database: &Database,
     runner: &MigrationRunner,
 ) -> Result<usize, GuardedMigrationError> {
+    // Servers that start together apply each migration (and its backup) once.
+    let lock = database
+        .lock_migrations()
+        .await
+        .map_err(MigrationError::from)?;
+    let result = run_pending_migrations(config, database, runner).await;
+    lock.release().await.map_err(MigrationError::from)?;
+    result
+}
+
+async fn run_pending_migrations(
+    config: &Config,
+    database: &Database,
+    runner: &MigrationRunner,
+) -> Result<usize, GuardedMigrationError> {
     let pending = runner.pending(database).await?;
     if pending.iter().any(|migration| migration.destructive) {
         let service = BackupService::new(&config.data.backups, &config.data.attachments);
@@ -341,9 +356,119 @@ impl MigrationRunner {
                     ),
                     false,
                 ),
+                Migration::new(
+                    47,
+                    include_str!(
+                        "../../../../apps/server/migrations/0047_unique_instance_schedules.sql"
+                    ),
+                    false,
+                ),
+                Migration::new(
+                    48,
+                    include_str!("../../../../apps/server/migrations/0048_auth_pending.sql"),
+                    false,
+                ),
+                Migration::new(
+                    49,
+                    include_str!("../../../../apps/server/migrations/0049_live_events.sql"),
+                    false,
+                ),
+                Migration::new(
+                    50,
+                    include_str!("../../../../apps/server/migrations/0050_auth_throttle.sql"),
+                    false,
+                ),
+                Migration::new(
+                    51,
+                    include_str!("../../../../apps/server/migrations/0051_project_labels.sql"),
+                    false,
+                ),
+                Migration::new(
+                    52,
+                    include_str!("../../../../apps/server/migrations/0052_task_rich_text.sql"),
+                    false,
+                ),
+                Migration::new(
+                    53,
+                    include_str!("../../../../apps/server/migrations/0053_tenant_limits.sql"),
+                    false,
+                ),
+                Migration::new(
+                    54,
+                    include_str!("../../../../apps/server/migrations/0054_job_limits.sql"),
+                    false,
+                ),
+                Migration::new(
+                    55,
+                    include_str!("../../../../apps/server/migrations/0055_rate_limits.sql"),
+                    false,
+                ),
+                Migration::new(
+                    56,
+                    include_str!(
+                        "../../../../apps/server/migrations/0056_workspace_subscriptions.sql"
+                    ),
+                    false,
+                ),
             ],
         );
-        runner.postgres = vec![Migration::new(46, POSTGRES_BASELINE, false)];
+        runner.postgres = vec![
+            Migration::new(46, POSTGRES_BASELINE, false),
+            Migration::new(
+                47,
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0047_unique_instance_schedules.sql"
+                ),
+                false,
+            ),
+            Migration::new(
+                48,
+                include_str!("../../../../apps/server/migrations/postgres/0048_auth_pending.sql"),
+                false,
+            ),
+            Migration::new(
+                49,
+                include_str!("../../../../apps/server/migrations/postgres/0049_live_events.sql"),
+                false,
+            ),
+            Migration::new(
+                50,
+                include_str!("../../../../apps/server/migrations/postgres/0050_auth_throttle.sql"),
+                false,
+            ),
+            Migration::new(
+                51,
+                include_str!("../../../../apps/server/migrations/postgres/0051_project_labels.sql"),
+                false,
+            ),
+            Migration::new(
+                52,
+                include_str!("../../../../apps/server/migrations/postgres/0052_task_rich_text.sql"),
+                false,
+            ),
+            Migration::new(
+                53,
+                include_str!("../../../../apps/server/migrations/postgres/0053_tenant_limits.sql"),
+                false,
+            ),
+            Migration::new(
+                54,
+                include_str!("../../../../apps/server/migrations/postgres/0054_job_limits.sql"),
+                false,
+            ),
+            Migration::new(
+                55,
+                include_str!("../../../../apps/server/migrations/postgres/0055_rate_limits.sql"),
+                false,
+            ),
+            Migration::new(
+                56,
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0056_workspace_subscriptions.sql"
+                ),
+                false,
+            ),
+        ];
         runner
     }
 

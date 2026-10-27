@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use orbit_platform::{Config, ConfigOverride, ConfigSources, EnvironmentMode};
+use orbit_platform::{Config, EnvironmentMode};
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
@@ -15,74 +15,48 @@ fn fixture_path(name: &str) -> PathBuf {
     ))
 }
 
-fn load_fixture<const N: usize>(
-    toml: &str,
-    env: [(&str, &str); N],
-    cli_port: Option<u16>,
-) -> Result<Config, orbit_platform::ConfigError> {
-    let path = fixture_path("config.toml");
-    let toml = if toml.contains("environment =") {
-        toml.to_owned()
-    } else {
-        format!("environment = \"development\"\n{toml}")
-    };
-    fs::write(&path, toml).unwrap();
-    let result = Config::load(ConfigSources {
-        path: path.clone(),
-        env: env
-            .into_iter()
-            .map(|(key, value)| (key.to_owned(), value.to_owned()))
-            .collect(),
-        cli: ConfigOverride {
-            http_port: cli_port,
-        },
-    });
-    let _ = fs::remove_file(path);
-    result
+fn load<const N: usize>(env: [(&str, &str); N]) -> Result<Config, orbit_platform::ConfigError> {
+    let mut env: BTreeMap<String, String> = env
+        .into_iter()
+        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+        .collect();
+    env.entry("ORBIT_ENV".to_owned())
+        .or_insert_with(|| "development".to_owned());
+    if !env.contains_key("ORBIT_APP_KEY_FILE") {
+        env.entry("ORBIT_APP_KEY".to_owned())
+            .or_insert_with(|| APP_KEY.to_owned());
+    }
+    Config::from_environment(env)
 }
+
+const APP_KEY: &str = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
 
 #[test]
 fn environment_mode_must_be_explicit() {
-    let path = fixture_path("missing-environment.toml");
-    fs::write(&path, "http.port = 8080").unwrap();
-    let error = Config::load(ConfigSources {
-        path: path.clone(),
-        env: BTreeMap::new(),
-        cli: ConfigOverride::default(),
-    })
+    let error = Config::from_environment(BTreeMap::from([(
+        "ORBIT_PORT".to_owned(),
+        "8080".to_owned(),
+    )]))
     .unwrap_err();
-    let _ = fs::remove_file(path);
 
-    assert!(error.to_string().contains("environment"));
+    assert!(error.to_string().contains("ORBIT_ENV"), "{error}");
 }
 
 #[test]
-fn cli_overrides_env_and_toml() {
-    let cfg = load_fixture(
-        "http.port = 8080",
-        [("ORBIT__HTTP__PORT", "8081")],
-        Some(8082),
-    )
-    .unwrap();
-
-    assert_eq!(cfg.http.port, 8082);
-}
-
-#[test]
-fn environment_overrides_toml() {
-    let cfg = load_fixture("http.port = 8080", [("ORBIT__HTTP__PORT", "8081")], None).unwrap();
+fn port_sets_the_default_public_origin() {
+    let cfg = load([("ORBIT_PORT", "8081")]).unwrap();
 
     assert_eq!(cfg.http.port, 8081);
     assert_eq!(cfg.http.public_origin, "http://127.0.0.1:8081");
 }
 
 #[test]
-fn unknown_toml_keys_are_rejected() {
-    let error = load_fixture("http.port = 8080\nhttp.potr = 8081", [], None).unwrap_err();
+fn unknown_environment_keys_are_rejected() {
+    let error = load([("ORBIT_POTR", "8081")]).unwrap_err();
 
     assert!(matches!(
         error,
-        orbit_platform::ConfigError::ParseConfig { .. }
+        orbit_platform::ConfigError::UnknownEnvironment(ref key) if key == "ORBIT_POTR"
     ));
 }
 
@@ -91,108 +65,81 @@ fn setting_secret_and_secret_file_is_rejected() {
     let secret_path = fixture_path("secret");
     fs::write(&secret_path, "from-file").unwrap();
     let path_value = secret_path.to_string_lossy().into_owned();
-    let result = load_fixture(
-        "http.port = 8080",
-        [
-            ("ORBIT__SECRETS__TOKEN", "from-env"),
-            ("ORBIT__SECRETS__TOKEN_FILE", path_value.as_str()),
-        ],
-        None,
-    );
+    let result = load([
+        ("ORBIT_APP_KEY", APP_KEY),
+        ("ORBIT_APP_KEY_FILE", path_value.as_str()),
+    ]);
     let _ = fs::remove_file(secret_path);
 
     let error = result.unwrap_err();
-    assert!(error.to_string().contains("ORBIT__SECRETS__TOKEN"));
+    assert!(error.to_string().contains("ORBIT_APP_KEY"));
 }
 
 #[test]
-fn secret_file_removes_exactly_one_trailing_newline_and_debug_is_redacted() {
+fn app_key_file_is_read_and_debug_is_redacted() {
     let secret_path = fixture_path("secret");
-    fs::write(&secret_path, "sensitive\n\n").unwrap();
+    fs::write(&secret_path, format!("{APP_KEY}\n")).unwrap();
     let path_value = secret_path.to_string_lossy().into_owned();
-    let cfg = load_fixture(
-        "http.port = 8080",
-        [("ORBIT__SECRETS__TOKEN_FILE", path_value.as_str())],
-        None,
-    )
-    .unwrap();
+    let cfg = load([("ORBIT_APP_KEY_FILE", path_value.as_str())]).unwrap();
     let _ = fs::remove_file(secret_path);
 
-    let token = &cfg.secrets["token"];
-    assert_eq!(token.expose(), "sensitive\n");
-    assert_eq!(format!("{token:?}"), "[REDACTED]");
+    let key = cfg.app_key.unwrap();
+    assert_eq!(key.bytes(), &[1; 32]);
+    assert_eq!(format!("{key:?}"), "[REDACTED]");
+}
+
+#[test]
+fn app_key_is_required_and_must_be_32_base64_bytes() {
+    let without_key = Config::from_environment(BTreeMap::from([(
+        "ORBIT_ENV".to_owned(),
+        "development".to_owned(),
+    )]))
+    .unwrap_err()
+    .to_string();
+    assert!(without_key.contains("ORBIT_APP_KEY"), "{without_key}");
+
+    for invalid in ["", "not base64", "AQEBAQ=="] {
+        let error = load([("ORBIT_APP_KEY", invalid)]).unwrap_err().to_string();
+        assert!(error.contains("ORBIT_APP_KEY"), "{error}");
+        assert!(invalid.is_empty() || !error.contains(invalid), "{error}");
+    }
 }
 
 #[test]
 fn malformed_environment_override_is_rejected() {
-    let env = BTreeMap::from([("ORBIT__HTTP__PORT".to_owned(), "not-a-port".to_owned())]);
-    let path = fixture_path("config.toml");
-    fs::write(&path, "http.port = 8080").unwrap();
-
-    let result = Config::load(ConfigSources {
-        path: path.clone(),
-        env,
-        cli: ConfigOverride::default(),
-    });
-    let _ = fs::remove_file(path);
-
-    assert!(result.is_err());
+    assert!(load([("ORBIT_PORT", "not-a-port")]).is_err());
 }
 
 #[test]
 fn unrelated_environment_file_pairs_are_ignored() {
-    let cfg = load_fixture(
-        "http.port = 8080",
-        [("EDITOR", "vim"), ("EDITOR_FILE", "/tmp/editor")],
-        None,
-    )
+    let cfg = load([
+        ("ORBIT_PORT", "8080"),
+        ("ORBIT_DEV_API_PORT", "18080"),
+        ("ORBIT_TEST_POSTGRES_URL", "postgres://test"),
+        ("EDITOR", "vim"),
+        ("EDITOR_FILE", "/tmp/editor"),
+    ])
     .unwrap();
 
     assert_eq!(cfg.http.port, 8080);
 }
 
 #[test]
-fn malformed_toml_error_does_not_echo_secret_contents() {
-    let error = load_fixture(
-        "http.port = 8080\nsecrets.token = \"dont-print-me",
-        [],
-        None,
-    )
-    .unwrap_err();
-
-    assert!(!error.to_string().contains("dont-print-me"));
-}
-
-#[test]
 fn deployment_config_parses_tailscale_friendly_bind_and_durable_paths() {
-    let cfg = load_fixture(
-        r#"
-        environment = "production"
-
-        [http]
-        bind = "0.0.0.0"
-        port = 8080
-        public_origin = "https://orbit.tailnet.example"
-        trusted_proxies = ["127.0.0.1/32", "100.64.0.0/10"]
-
-        [data]
-        database = "/var/lib/orbit/orbit.sqlite"
-        attachments = "/var/lib/orbit/attachments"
-        backups = "/var/backups/orbit"
-
-        [jobs]
-        concurrency = 6
-
-        [uploads]
-        max_file_bytes = 10485760
-        max_request_bytes = 52428800
-
-        [metrics]
-        listen = "127.0.0.1:9090"
-        "#,
-        [],
-        None,
-    )
+    let cfg = load([
+        ("ORBIT_ENV", "production"),
+        ("ORBIT_BIND", "0.0.0.0"),
+        ("ORBIT_PORT", "8080"),
+        ("ORBIT_PUBLIC_ORIGIN", "https://orbit.tailnet.example"),
+        ("ORBIT_TRUSTED_PROXIES", "127.0.0.1/32, 100.64.0.0/10"),
+        ("ORBIT_DATABASE_PATH", "/var/lib/orbit/orbit.sqlite"),
+        ("ORBIT_ATTACHMENTS_PATH", "/var/lib/orbit/attachments"),
+        ("ORBIT_BACKUPS_PATH", "/var/backups/orbit"),
+        ("ORBIT_JOBS_CONCURRENCY", "6"),
+        ("ORBIT_UPLOAD_MAX_FILE_BYTES", "10485760"),
+        ("ORBIT_UPLOAD_MAX_REQUEST_BYTES", "52428800"),
+        ("ORBIT_METRICS_LISTEN", "127.0.0.1:9090"),
+    ])
     .unwrap();
 
     assert_eq!(cfg.http.bind.to_string(), "0.0.0.0");
@@ -222,23 +169,19 @@ fn deployment_config_parses_tailscale_friendly_bind_and_durable_paths() {
 
 #[test]
 fn deployment_environment_overrides_bind_origin_paths_and_worker_count() {
-    let cfg = load_fixture(
-        "http.port = 8080",
-        [
-            ("ORBIT__ENVIRONMENT", "production"),
-            ("ORBIT__HTTP__BIND", "100.64.0.12"),
-            ("ORBIT__HTTP__PUBLIC_ORIGIN", "https://orbit.example"),
-            ("ORBIT__HTTP__TRUSTED_PROXIES", "100.64.0.0/10"),
-            ("ORBIT__DATA__DATABASE", "/srv/orbit.sqlite"),
-            ("ORBIT__DATA__ATTACHMENTS", "/srv/attachments"),
-            ("ORBIT__DATA__BACKUPS", "/mnt/backups"),
-            ("ORBIT__JOBS__CONCURRENCY", "2"),
-            ("ORBIT__UPLOADS__MAX_FILE_BYTES", "8388608"),
-            ("ORBIT__UPLOADS__MAX_REQUEST_BYTES", "33554432"),
-            ("ORBIT__METRICS__LISTEN", "100.64.0.12:9100"),
-        ],
-        None,
-    )
+    let cfg = load([
+        ("ORBIT_ENV", "production"),
+        ("ORBIT_BIND", "100.64.0.12"),
+        ("ORBIT_PUBLIC_ORIGIN", "https://orbit.example"),
+        ("ORBIT_TRUSTED_PROXIES", "100.64.0.0/10"),
+        ("ORBIT_DATABASE_PATH", "/srv/orbit.sqlite"),
+        ("ORBIT_ATTACHMENTS_PATH", "/srv/attachments"),
+        ("ORBIT_BACKUPS_PATH", "/mnt/backups"),
+        ("ORBIT_JOBS_CONCURRENCY", "2"),
+        ("ORBIT_UPLOAD_MAX_FILE_BYTES", "8388608"),
+        ("ORBIT_UPLOAD_MAX_REQUEST_BYTES", "33554432"),
+        ("ORBIT_METRICS_LISTEN", "100.64.0.12:9100"),
+    ])
     .unwrap();
 
     assert_eq!(cfg.http.bind.to_string(), "100.64.0.12");
@@ -254,48 +197,37 @@ fn deployment_environment_overrides_bind_origin_paths_and_worker_count() {
 
 #[test]
 fn environment_mode_restricts_cookie_and_proxy_boundaries() {
-    let development = load_fixture("environment = \"development\"", [], None).unwrap();
+    let development = load([("ORBIT_ENV", "development")]).unwrap();
     assert_eq!(development.environment, EnvironmentMode::Development);
 
-    let insecure = load_fixture(
-        "environment = \"production\"\nhttp.public_origin = \"http://127.0.0.1:8080\"",
-        [],
-        None,
-    )
+    let insecure = load([
+        ("ORBIT_ENV", "production"),
+        ("ORBIT_PUBLIC_ORIGIN", "http://127.0.0.1:8080"),
+    ])
     .unwrap_err();
     assert!(insecure.to_string().contains("production"));
 
-    let missing_proxy = load_fixture(
-        "environment = \"production\"\nhttp.public_origin = \"https://orbit.example\"",
-        [],
-        None,
-    )
+    let missing_proxy = load([
+        ("ORBIT_ENV", "production"),
+        ("ORBIT_PUBLIC_ORIGIN", "https://orbit.example"),
+    ])
     .unwrap_err();
     assert!(missing_proxy.to_string().contains("trusted proxy"));
 
-    let exposed_development = load_fixture(
-        "environment = \"development\"\nhttp.bind = \"0.0.0.0\"",
-        [],
-        None,
-    )
-    .unwrap_err();
+    let exposed_development =
+        load([("ORBIT_ENV", "development"), ("ORBIT_BIND", "0.0.0.0")]).unwrap_err();
     assert!(exposed_development.to_string().contains("loopback"));
 }
 
 #[test]
 fn endpoint_class_rate_limits_are_configurable() {
-    let cfg = load_fixture(
-        r#"
-        [rate_limits]
-        authentication_per_minute = 2
-        recovery_per_minute = 3
-        invitation_per_minute = 4
-        upload_per_minute = 5
-        general_per_minute = 6
-        "#,
-        [],
-        None,
-    )
+    let cfg = load([
+        ("ORBIT_RATE_LIMIT_AUTHENTICATION_PER_MINUTE", "2"),
+        ("ORBIT_RATE_LIMIT_RECOVERY_PER_MINUTE", "3"),
+        ("ORBIT_RATE_LIMIT_INVITATION_PER_MINUTE", "4"),
+        ("ORBIT_RATE_LIMIT_UPLOAD_PER_MINUTE", "5"),
+        ("ORBIT_RATE_LIMIT_GENERAL_PER_MINUTE", "6"),
+    ])
     .unwrap();
 
     assert_eq!(cfg.rate_limits.authentication_per_minute, 2);
@@ -306,40 +238,79 @@ fn endpoint_class_rate_limits_are_configurable() {
 }
 
 #[test]
-fn endpoint_class_rate_limits_reject_unsafe_values() {
-    let error = load_fixture("[rate_limits]\ngeneral_per_minute = 1000001", [], None).unwrap_err();
+fn principal_workspace_and_email_limits_have_defaults_and_overrides() {
+    let defaults = load([]).unwrap().rate_limits;
+    assert_eq!(defaults.workspace_multiplier, 10);
+    assert_eq!(defaults.account_email_cooldown_seconds, 60);
+    assert_eq!(defaults.account_emails_per_day, 5);
+    assert_eq!(defaults.invitation_emails_per_workspace_per_day, 100);
+    assert_eq!(defaults.invitation_emails_per_inviter_per_day, 50);
 
+    let cfg = load([
+        ("ORBIT_RATE_LIMIT_WORKSPACE_MULTIPLIER", "4"),
+        ("ORBIT_RATE_LIMIT_ACCOUNT_EMAILS_PER_DAY", "3"),
+        ("ORBIT_RATE_LIMIT_ACCOUNT_EMAIL_COOLDOWN_SECONDS", "120"),
+        (
+            "ORBIT_RATE_LIMIT_INVITATION_EMAILS_PER_WORKSPACE_PER_DAY",
+            "7",
+        ),
+        (
+            "ORBIT_RATE_LIMIT_INVITATION_EMAILS_PER_INVITER_PER_DAY",
+            "8",
+        ),
+    ])
+    .unwrap();
+    assert_eq!(cfg.rate_limits.workspace_multiplier, 4);
+    assert_eq!(cfg.rate_limits.account_emails_per_day, 3);
+    assert_eq!(cfg.rate_limits.account_email_cooldown_seconds, 120);
+    assert_eq!(cfg.rate_limits.invitation_emails_per_workspace_per_day, 7);
+    assert_eq!(cfg.rate_limits.invitation_emails_per_inviter_per_day, 8);
+
+    for invalid in [
+        ("ORBIT_RATE_LIMIT_WORKSPACE_MULTIPLIER", "0"),
+        ("ORBIT_RATE_LIMIT_ACCOUNT_EMAILS_PER_DAY", "0"),
+        ("ORBIT_RATE_LIMIT_ACCOUNT_EMAIL_COOLDOWN_SECONDS", "86401"),
+        ("ORBIT_RATE_LIMIT_UNKNOWN", "1"),
+    ] {
+        assert!(load([invalid]).is_err(), "{invalid:?}");
+    }
+}
+
+#[test]
+fn endpoint_class_rate_limits_reject_unsafe_values() {
+    let error = load([("ORBIT_RATE_LIMIT_GENERAL_PER_MINUTE", "1000001")]).unwrap_err();
+
+    assert!(error.to_string().contains("ORBIT_RATE_LIMIT_*"), "{error}");
     assert!(error.to_string().contains("cannot exceed 1000000"));
 }
 
 #[test]
 fn metrics_listener_is_disabled_by_default() {
-    assert_eq!(
-        load_fixture("http.port = 8080", [], None)
-            .unwrap()
-            .metrics
-            .listen,
-        None
-    );
+    assert_eq!(load([]).unwrap().metrics.listen, None);
 }
 
 #[test]
 fn zero_worker_concurrency_is_rejected_during_config_load() {
-    let error = load_fixture("jobs.concurrency = 0", [], None).unwrap_err();
+    let error = load([("ORBIT_JOBS_CONCURRENCY", "0")]).unwrap_err();
 
-    assert!(error.to_string().contains("jobs.concurrency"));
+    assert!(
+        error.to_string().contains("ORBIT_JOBS_CONCURRENCY"),
+        "{error}"
+    );
 }
 
 #[test]
 fn upload_request_limit_must_cover_an_individual_file() {
-    let error = load_fixture(
-        "uploads.max_file_bytes = 100\nuploads.max_request_bytes = 99",
-        [],
-        None,
-    )
+    let error = load([
+        ("ORBIT_UPLOAD_MAX_FILE_BYTES", "100"),
+        ("ORBIT_UPLOAD_MAX_REQUEST_BYTES", "99"),
+    ])
     .unwrap_err();
 
-    assert!(error.to_string().contains("uploads.max_request_bytes"));
+    assert!(
+        error.to_string().contains("ORBIT_UPLOAD_MAX_REQUEST_BYTES"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -350,9 +321,11 @@ fn public_origin_must_be_an_http_origin_without_path_or_query() {
         "https://orbit.example?debug=true",
         "ftp://orbit.example",
     ] {
-        let error =
-            load_fixture(&format!("http.public_origin = \"{origin}\""), [], None).unwrap_err();
-        assert!(error.to_string().contains("http.public_origin"), "{origin}");
+        let error = load([("ORBIT_PUBLIC_ORIGIN", origin)]).unwrap_err();
+        assert!(
+            error.to_string().contains("ORBIT_PUBLIC_ORIGIN"),
+            "{origin}"
+        );
     }
 }
 
@@ -360,92 +333,172 @@ fn public_origin_must_be_an_http_origin_without_path_or_query() {
 fn notion_import_has_no_operator_settings() {
     // The Notion API origin and request rate are fixed in the client (api.notion.com, 180/min):
     // the old keys are unknown settings now, like any typo.
-    let error = load_fixture(
-        "",
-        [("ORBIT__NOTION__API_BASE", "https://api.notion.com")],
-        None,
-    )
-    .unwrap_err();
+    let error = load([("ORBIT_NOTION_API_BASE", "https://api.notion.com")]).unwrap_err();
     assert!(
-        error.to_string().contains("ORBIT__NOTION__API_BASE"),
+        error.to_string().contains("ORBIT_NOTION_API_BASE"),
         "{error}"
     );
-    let error =
-        load_fixture("", [("ORBIT__NOTION__REQUESTS_PER_MINUTE", "600")], None).unwrap_err();
+    let error = load([("ORBIT_NOTION_REQUESTS_PER_MINUTE", "600")]).unwrap_err();
     assert!(
         error
             .to_string()
-            .contains("ORBIT__NOTION__REQUESTS_PER_MINUTE"),
+            .contains("ORBIT_NOTION_REQUESTS_PER_MINUTE"),
         "{error}"
     );
-    assert!(load_fixture("[notion]\nrequests_per_minute = 600", [], None).is_err());
 }
 
 #[test]
-fn postgres_database_url_comes_from_toml_or_environment_and_is_redacted() {
-    let from_toml = load_fixture(
-        &format!(
-            r#"
-        [data]
-        database_url = "postgres://orbit:hunter2@db.internal:5432/orbit"
-        {STATELESS}
-        "#
-        ),
-        [],
-        None,
-    )
+fn postgres_database_url_comes_from_environment_and_is_redacted() {
+    let from_environment = load([(
+        "ORBIT_DATABASE_URL",
+        "postgres://orbit:hunter2@db.internal:5432/orbit",
+    )])
     .unwrap();
     assert_eq!(
-        from_toml.data.database_url.as_deref(),
+        from_environment.data.database_url.as_deref(),
         Some("postgres://orbit:hunter2@db.internal:5432/orbit")
     );
-    assert!(!format!("{from_toml:?}").contains("hunter2"));
-    let database = orbit_platform::DatabaseConfig::for_data(&from_toml.data);
-    assert_eq!(database.path, from_toml.data.database);
-    assert_eq!(database.postgres_url, from_toml.data.database_url);
+    assert!(!format!("{from_environment:?}").contains("hunter2"));
+    let database = orbit_platform::DatabaseConfig::for_data(&from_environment.data);
+    assert_eq!(database.path, from_environment.data.database);
+    assert_eq!(database.postgres_url, from_environment.data.database_url);
     assert!(!format!("{database:?}").contains("hunter2"));
     assert_eq!(
         orbit_platform::redact_database_url("postgres://orbit:hunter2@db.internal/orbit"),
         "postgres://orbit:REDACTED@db.internal/orbit"
     );
 
-    let from_environment = load_fixture(
-        STATELESS,
-        [(
-            "ORBIT__DATA__DATABASE_URL",
-            "postgresql://orbit@127.0.0.1/orbit",
-        )],
-        None,
-    )
-    .unwrap();
+    let postgresql = load([("ORBIT_DATABASE_URL", "postgresql://orbit@127.0.0.1/orbit")]).unwrap();
     assert_eq!(
-        from_environment.data.database_url.as_deref(),
+        postgresql.data.database_url.as_deref(),
         Some("postgresql://orbit@127.0.0.1/orbit")
     );
-    assert_eq!(load_fixture("", [], None).unwrap().data.database_url, None);
-    assert!(
-        load_fixture(
-            STATELESS,
-            [("ORBIT__DATA__DATABASE_URL", "mysql://x")],
-            None
-        )
-        .is_err()
-    );
+    assert_eq!(load([]).unwrap().data.database_url, None);
+    assert!(load([("ORBIT_DATABASE_URL", "mysql://x")]).is_err());
 }
 
-/// What a Postgres configuration needs besides the URL: the key for saved secrets, so a replaced server can
-/// still read them.
-const STATELESS: &str = r#"
-[secrets]
-app_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-"#;
+const STRIPE: [(&str, &str); 3] = [
+    ("ORBIT_STRIPE_SECRET_KEY", "sk_test_123"),
+    ("ORBIT_STRIPE_WEBHOOK_SECRET", "whsec_123"),
+    (
+        "ORBIT_STRIPE_PRICES",
+        "team:price_team, business-2:price_business",
+    ),
+];
 
 #[test]
-fn postgres_needs_a_configured_app_key() {
-    let postgres = ("ORBIT__DATA__DATABASE_URL", "postgres://orbit@db/orbit");
-    assert!(load_fixture(STATELESS, [postgres], None).is_ok());
-    let error = load_fixture("", [postgres], None).unwrap_err().to_string();
-    assert!(error.contains("secrets.app_key"), "{error}");
-    // SQLite creates app.key beside its database file instead.
-    assert!(load_fixture("", [], None).is_ok());
+fn billing_is_off_by_default() {
+    assert_eq!(load([]).unwrap().billing, None);
+    assert_eq!(load([("ORBIT_CLOUD", "false")]).unwrap().billing, None);
+}
+
+#[test]
+fn cloud_mode_reads_stripe_settings_in_order() {
+    let [secret, webhook, prices] = STRIPE;
+    let cfg = load([("ORBIT_CLOUD", "true"), secret, webhook, prices]).unwrap();
+
+    let billing = cfg.billing.unwrap();
+    assert_eq!(billing.secret_key.expose(), "sk_test_123");
+    assert_eq!(billing.webhook_secret.expose(), "whsec_123");
+    assert_eq!(
+        billing.plans,
+        [
+            orbit_platform::Plan {
+                key: "team".to_owned(),
+                price_id: "price_team".to_owned()
+            },
+            orbit_platform::Plan {
+                key: "business-2".to_owned(),
+                price_id: "price_business".to_owned()
+            },
+        ]
+    );
+    assert_eq!(billing.api_base.as_str(), "https://api.stripe.com/");
+    assert!(!format!("{billing:?}").contains("sk_test_123"));
+    assert!(!format!("{billing:?}").contains("whsec_123"));
+}
+
+#[test]
+fn stripe_secrets_can_come_from_files() {
+    let secret_path = fixture_path("stripe-secret");
+    let webhook_path = fixture_path("stripe-webhook");
+    fs::write(&secret_path, "sk_test_file\n").unwrap();
+    fs::write(&webhook_path, "whsec_file\n").unwrap();
+    let secret = secret_path.to_string_lossy().into_owned();
+    let webhook = webhook_path.to_string_lossy().into_owned();
+    let result = load([
+        ("ORBIT_CLOUD", "true"),
+        ("ORBIT_STRIPE_SECRET_KEY_FILE", secret.as_str()),
+        ("ORBIT_STRIPE_WEBHOOK_SECRET_FILE", webhook.as_str()),
+        STRIPE[2],
+    ]);
+    let both = load([
+        ("ORBIT_CLOUD", "true"),
+        ("ORBIT_STRIPE_SECRET_KEY_FILE", secret.as_str()),
+        STRIPE[0],
+        STRIPE[1],
+        STRIPE[2],
+    ]);
+    let _ = fs::remove_file(secret_path);
+    let _ = fs::remove_file(webhook_path);
+
+    let billing = result.unwrap().billing.unwrap();
+    assert_eq!(billing.secret_key.expose(), "sk_test_file");
+    assert_eq!(billing.webhook_secret.expose(), "whsec_file");
+    assert!(matches!(
+        both.unwrap_err(),
+        orbit_platform::ConfigError::AmbiguousSecret { ref key } if key == "ORBIT_STRIPE_SECRET_KEY"
+    ));
+}
+
+#[test]
+fn cloud_mode_requires_every_stripe_setting() {
+    let [secret, webhook, prices] = STRIPE;
+    for (missing, env) in [
+        ("ORBIT_STRIPE_SECRET_KEY", [webhook, prices]),
+        ("ORBIT_STRIPE_WEBHOOK_SECRET", [secret, prices]),
+        ("ORBIT_STRIPE_PRICES", [secret, webhook]),
+    ] {
+        let error = load([("ORBIT_CLOUD", "true"), env[0], env[1]])
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(missing), "{error}");
+    }
+}
+
+#[test]
+fn stripe_settings_without_cloud_mode_are_rejected() {
+    for setting in STRIPE {
+        let error = load([setting]).unwrap_err().to_string();
+        assert!(
+            error.contains(setting.0) && error.contains("ORBIT_CLOUD"),
+            "{error}"
+        );
+    }
+    let error = load([("ORBIT_CLOUD", "yes")]).unwrap_err().to_string();
+    assert!(error.contains("ORBIT_CLOUD"), "{error}");
+}
+
+#[test]
+fn stripe_prices_must_be_unique_lowercase_plan_keys() {
+    let [secret, webhook, _] = STRIPE;
+    for prices in [
+        "",
+        "team",
+        "Team:price_1",
+        "team:price_1,team:price_2",
+        "team:price_1,business:price_1",
+        "te am:price_1",
+        "team:",
+    ] {
+        let error = load([
+            ("ORBIT_CLOUD", "true"),
+            secret,
+            webhook,
+            ("ORBIT_STRIPE_PRICES", prices),
+        ])
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("ORBIT_STRIPE_PRICES"), "{prices:?}: {error}");
+    }
 }

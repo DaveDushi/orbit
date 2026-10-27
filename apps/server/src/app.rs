@@ -4,15 +4,16 @@ use std::fs::{self, OpenOptions};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use axum::Router;
 use axum::serve::ListenerExt;
 use orbit_platform::{
     BackupService, BlobStoreError, Config, Database, DatabaseConfig, HealthCheck, HealthRegistry,
-    HttpLimits, IntegrityService, JobError, JobKind, JobStore, LocalBlobStore, MigrationRunner,
-    ObjectStorage, OriginPolicy, RecurringSchedule, Scheduler, TieredBlobStore, TimestampMillis,
-    UploadLimits, UploadService, Worker, WorkerConfig, run_guarded_migrations,
+    HttpLimits, IntegrityService, JobError, JobKind, JobStore, LocalBlobStore, MigrationError,
+    MigrationRunner, ObjectStorage, OriginPolicy, RecurringSchedule, Scheduler, TieredBlobStore,
+    TimestampMillis, UploadLimits, UploadService, Worker, WorkerConfig, run_guarded_migrations,
 };
 use serde_json::json;
 use thiserror::Error;
@@ -38,12 +39,15 @@ use crate::repositories::page_files::PageFileRepository;
 use crate::repositories::tasks::TaskRepository;
 use crate::repositories::workspaces::WorkspaceRepository;
 use crate::router::{ApiRoutes, production_router};
+use crate::socket_ticket::SocketTickets;
 use crate::static_assets::{FRONTEND_REVISION, StaticAssetError, StaticAssets};
 use crate::task_routes::TaskState;
 use crate::teamspace_routes::TeamspaceState;
 use crate::workspace_routes::WorkspaceState;
 
 const BACKGROUND_DRAIN: Duration = Duration::from_secs(30);
+/// How often a server checks that it still holds the database ownership lock.
+const OWNERSHIP_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 /// Hourly: deletes tokens of Notion scans not started within 24 hours.
 const NOTION_CLEANUP: &str = "notion.cleanup";
 /// Hourly: creates a backup when the saved schedule (Admin → Storage) says one is due.
@@ -61,6 +65,8 @@ pub struct App {
     object_storage: ObjectStorage,
     blob_store: TieredBlobStore,
     production_services: Option<ProductionServices>,
+    /// Set when the server stops: readiness fails, so a load balancer takes it out.
+    draining: Arc<AtomicBool>,
 }
 
 struct ProductionServices {
@@ -133,7 +139,7 @@ impl App {
             &config.data.backups,
         )?;
 
-        let database = Database::open(&DatabaseConfig::for_data(&config.data))
+        let database = Database::open(&DatabaseConfig::for_data(&config.data).shared())
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
         let migrations = MigrationRunner::embedded(env!("CARGO_PKG_VERSION"));
@@ -173,20 +179,25 @@ impl App {
         .await
         .map_err(|error| AppError::Authentication(error.to_string()))?;
 
-        let app_key = Some(
-            crate::secret_box::load_or_create_app_key(
-                config.secrets.get("app_key").map(|secret| secret.expose()),
-                &config.data.database,
-            )
-            .map_err(AppError::Config)?,
-        );
+        let app_key = config.app_key.as_ref().map(|key| *key.bytes());
+        if let Some(key) = &config.app_key
+            && config.data.database_url.is_none()
+        {
+            crate::secret_box::check_old_app_key_file(key, &config.data.database)
+                .map_err(AppError::Config)?;
+        }
         let object_storage = ObjectStorage::default();
         let storage_settings = InstanceSettingsRepository::new(database.clone())
             .storage()
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
-        crate::object_storage::apply(&object_storage, &storage_settings, app_key.as_ref())
-            .map_err(|error| AppError::Config(format!("object storage: {error}")))?;
+        crate::object_storage::apply_and_keep(
+            &database,
+            &object_storage,
+            &storage_settings,
+            app_key.as_ref(),
+        )
+        .map_err(|error| AppError::Config(format!("object storage: {error}")))?;
         let backups = BackupService::new(&config.data.backups, &config.data.attachments)
             .with_object_storage(object_storage.clone());
         let blob_store = TieredBlobStore::new(
@@ -237,17 +248,22 @@ impl App {
             },
         );
 
+        let billing = config.billing.clone().map(|billing| {
+            crate::billing::Billing::new(billing, database.clone(), &config.http.public_origin)
+        });
         let production_services = initialize_production_services(
             &database,
             backups.clone(),
             Arc::clone(&workspaces),
             integrity.clone(),
             notion_imports.clone(),
+            billing.clone(),
             config.jobs.concurrency,
         )
         .await?;
 
-        let health = health_registry(&config, &database, &integrity);
+        let draining = Arc::new(AtomicBool::new(false));
+        let health = health_registry(&config, &database, &integrity, &draining);
         if !health.readiness().await.ready {
             return Err(AppError::Readiness);
         }
@@ -268,6 +284,7 @@ impl App {
         );
         let router = metrics.instrument(production_router(
             ApiRoutes {
+                billing: billing.clone(),
                 mcp: crate::mcp::router(
                     crate::mcp::McpState::new(
                         Arc::new(ApiTokenRepository::new(database.clone())),
@@ -280,7 +297,9 @@ impl App {
                 auth: {
                     let auth = auth
                         .with_mailer(mailer.clone())
-                        .with_uploads(attachment_state.uploads.clone());
+                        .with_rate_limits(config.rate_limits)
+                        .with_uploads(attachment_state.uploads.clone())
+                        .with_billing_enabled(billing.is_some());
                     match app_key {
                         Some(app_key) => auth.with_app_key(app_key),
                         None => auth,
@@ -294,6 +313,7 @@ impl App {
                     backups.clone(),
                 )
                 .with_mailer(mailer)
+                .with_rate_limits(config.rate_limits)
                 .with_object_storage(object_storage.clone(), blob_store.clone())
                 .with_image_compressor(
                     crate::image_compression::ImageCompressor::new(
@@ -301,8 +321,10 @@ impl App {
                         attachment_state.uploads.clone(),
                     ),
                 ),
-                tasks: TaskState::new(Arc::clone(&identity), cookie_mode),
-                pages: PageState::new(Arc::clone(&identity), cookie_mode),
+                tasks: TaskState::new(Arc::clone(&identity), cookie_mode)
+                    .with_socket_tickets(app_key.as_ref().map(SocketTickets::new)),
+                pages: PageState::new(Arc::clone(&identity), cookie_mode)
+                    .with_socket_tickets(app_key.as_ref().map(SocketTickets::new)),
                 page_comments: PageCommentState::new(Arc::clone(&identity), cookie_mode),
                 page_files: PageFileState::new(
                     Arc::clone(&identity),
@@ -359,6 +381,7 @@ impl App {
             object_storage,
             blob_store,
             production_services: Some(production_services),
+            draining,
         })
     }
 
@@ -448,9 +471,18 @@ impl App {
                 .map_err(|error| error.to_string())
         });
         let database = self.database.clone();
+        let token = service_shutdown.clone();
+        services.spawn(async move { watch_database_ownership(database, token).await });
+        let database = self.database.clone();
         let scheduler = production.scheduler;
         let token = service_shutdown.clone();
         services.spawn(async move { run_scheduler_service(scheduler, database, token).await });
+        // Subscribed before HTTP starts: nothing the first clients do is missed.
+        let member = crate::cluster::join(&self.database)
+            .await
+            .map_err(|error| AppError::Background(error.to_string()))?;
+        let token = service_shutdown.clone();
+        services.spawn(async move { member.run(token).await });
         let push = crate::push::PushService::of(&self.database);
         push.set_origin(&self.config.http.public_origin);
         let token = service_shutdown.clone();
@@ -489,7 +521,16 @@ impl App {
         let mut http_result = None;
         tokio::select! {
             result = &mut server => http_result = Some(result),
-            () = shutdown.cancelled() => {}
+            () = shutdown.cancelled() => {
+                // Readiness fails first; requests in flight and new ones that the load balancer
+                // still sends are served during the delay.
+                self.draining.store(true, Ordering::SeqCst);
+                let delay = Duration::from_secs(self.config.http.shutdown_delay_seconds);
+                tokio::select! {
+                    result = &mut server => http_result = Some(result),
+                    () = tokio::time::sleep(delay) => {}
+                }
+            }
             () = integrity_failure.cancelled() => {
                 background_error = Some("weekly full database integrity check failed".to_owned());
             }
@@ -513,13 +554,25 @@ impl App {
                 }
             }
         };
-        if tokio::time::timeout(BACKGROUND_DRAIN, drain).await.is_err() {
+        let drained = tokio::time::timeout(BACKGROUND_DRAIN, drain).await.is_ok();
+        if !drained {
             abort_services(&mut services);
-            return Err(AppError::DrainTimeout);
         }
-        // Open documents: write and project every pending edit, close their sockets (1012).
-        if let Some(hub) = crate::collab::CollabHub::existing(&self.database) {
-            hub.shutdown().await;
+        // Also after a drain timeout. Open documents: write and project every pending edit, close
+        // their sockets (1012). Live sockets: close them (1012), so the clients reconnect at once.
+        let collab = async {
+            if let Some(hub) = crate::collab::CollabHub::existing(&self.database) {
+                hub.shutdown().await;
+            }
+        };
+        let live = async {
+            if let Some(hub) = crate::live::LiveHub::existing(&self.database) {
+                hub.shutdown().await;
+            }
+        };
+        tokio::join!(collab, live);
+        if !drained {
+            return Err(AppError::DrainTimeout);
         }
         http_result
             .expect("HTTP server result is recorded during drain")
@@ -606,19 +659,22 @@ fn health_registry(
     config: &Config,
     database: &Database,
     integrity: &IntegrityService,
+    draining: &Arc<AtomicBool>,
 ) -> HealthRegistry {
     let migrations_database = database.clone();
     let mut health = HealthRegistry::new().with_check(HealthCheck::Migrations, move || {
         let database = migrations_database.clone();
         async move {
-            let pending = MigrationRunner::embedded(env!("CARGO_PKG_VERSION"))
+            match MigrationRunner::embedded(env!("CARGO_PKG_VERSION"))
                 .pending(&database)
                 .await
-                .map_err(|error| error.to_string())?;
-            if pending.is_empty() {
-                Ok(())
-            } else {
-                Err("pending migrations".to_owned())
+            {
+                Ok(pending) if pending.is_empty() => Ok(()),
+                Ok(_) => Err("pending migrations".to_owned()),
+                // A newer release migrated the database during a rolling upgrade (migrations keep
+                // the previous release working); this server serves until it is replaced.
+                Err(MigrationError::SchemaNewer { .. }) => Ok(()),
+                Err(error) => Err(error.to_string()),
             }
         }
     });
@@ -663,6 +719,17 @@ fn health_registry(
         let config = checked_config.clone();
         async move { config.validate().map_err(|error| error.to_string()) }
     });
+    let draining = Arc::clone(draining);
+    health.register(HealthCheck::Accepting, move || {
+        let stopping = draining.load(Ordering::SeqCst);
+        async move {
+            if stopping {
+                Err("the server is stopping".to_owned())
+            } else {
+                Ok(())
+            }
+        }
+    });
     health
 }
 
@@ -672,12 +739,14 @@ async fn initialize_production_services(
     workspaces: Arc<WorkspaceRepository>,
     integrity: IntegrityService,
     notion_imports: NotionImportService,
+    billing: Option<crate::billing::Billing>,
     concurrency: usize,
 ) -> Result<ProductionServices, AppError> {
     let store = JobStore::new(database.clone());
     let scheduler = Scheduler::new(store.clone());
     let failure = CancellationToken::new();
     let retention_repository = Arc::clone(&workspaces);
+    let retention_database = database.clone();
     let integrity_service = integrity;
     let integrity_failure = failure.clone();
     let worker_config = WorkerConfig::new(concurrency)
@@ -685,11 +754,16 @@ async fn initialize_production_services(
     let worker = Worker::new(store, worker_config)
         .with_handler(maintenance_kind("workspace.retention"), move |_| {
             let repository = Arc::clone(&retention_repository);
+            let database = retention_database.clone();
             async move {
                 repository
                     .run_retention_maintenance()
                     .await
-                    .map_err(|_| JobError::Retryable("retention maintenance failed".to_owned()))
+                    .map_err(|_| JobError::Retryable("retention maintenance failed".to_owned()))?;
+                crate::oauth::prune_clients(&database)
+                    .await
+                    .map(|_| ())
+                    .map_err(|_| JobError::Retryable("OAuth client pruning failed".to_owned()))
             }
         })
         .and_then(|worker| {
@@ -730,6 +804,10 @@ async fn initialize_production_services(
             })
         })
         .and_then(|worker| crate::notion::import::register_jobs(worker, notion_imports))
+        .and_then(|worker| match billing {
+            Some(billing) => crate::billing::register_jobs(worker, billing),
+            None => Ok(worker),
+        })
         .map_err(|error| AppError::ProductionServices(error.to_string()))?;
 
     let now = database
@@ -737,7 +815,6 @@ async fn initialize_production_services(
         .await
         .map_err(|error| AppError::ProductionServices(error.to_string()))?;
     ensure_schedule(
-        database,
         &scheduler,
         "workspace.retention",
         Duration::from_secs(24 * 60 * 60),
@@ -753,7 +830,6 @@ async fn initialize_production_services(
         .await
         .map_err(|error| AppError::ProductionServices(error.to_string()))?;
     ensure_schedule(
-        database,
         &scheduler,
         "integrity.weekly",
         Duration::from_secs(7 * 24 * 60 * 60),
@@ -761,7 +837,6 @@ async fn initialize_production_services(
     )
     .await?;
     ensure_schedule(
-        database,
         &scheduler,
         SCHEDULED_BACKUP,
         Duration::from_secs(60 * 60),
@@ -769,7 +844,6 @@ async fn initialize_production_services(
     )
     .await?;
     ensure_schedule(
-        database,
         &scheduler,
         NOTION_CLEANUP,
         Duration::from_secs(60 * 60),
@@ -789,38 +863,24 @@ async fn initialize_production_services(
 }
 
 async fn ensure_schedule(
-    database: &Database,
     scheduler: &Scheduler,
     kind: &str,
     cadence: Duration,
     now: TimestampMillis,
 ) -> Result<(), AppError> {
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM schedules WHERE job_kind = $1")
-        .bind(kind)
-        .fetch_one(database.pool())
+    scheduler
+        .ensure(&RecurringSchedule::interval(
+            if kind == "integrity.weekly" {
+                integrity_kind()
+            } else {
+                maintenance_kind(kind)
+            },
+            json!({}),
+            cadence,
+            now,
+        ))
         .await
-        .map_err(|error| AppError::ProductionServices(error.to_string()))?;
-    if count > 1 {
-        return Err(AppError::ProductionServices(format!(
-            "multiple durable schedules exist for {kind}"
-        )));
-    }
-    if count == 0 {
-        scheduler
-            .upsert(&RecurringSchedule::interval(
-                if kind == "integrity.weekly" {
-                    integrity_kind()
-                } else {
-                    maintenance_kind(kind)
-                },
-                json!({}),
-                cadence,
-                now,
-            ))
-            .await
-            .map_err(|error| AppError::ProductionServices(error.to_string()))?;
-    }
-    Ok(())
+        .map_err(|error| AppError::ProductionServices(error.to_string()))
 }
 
 fn maintenance_kind(name: &str) -> JobKind {
@@ -851,6 +911,24 @@ async fn run_scheduler_service(
             () = shutdown.cancelled() => return Ok(()),
             () = tokio::time::sleep(Duration::from_secs(60)) => {}
         }
+    }
+}
+
+/// Stops serving when the database ownership lock is lost (e.g. a dropped Postgres connection
+/// releases it), so a restore cannot run while this server still writes.
+async fn watch_database_ownership(
+    database: Database,
+    shutdown: CancellationToken,
+) -> Result<(), String> {
+    loop {
+        tokio::select! {
+            () = shutdown.cancelled() => return Ok(()),
+            () = tokio::time::sleep(OWNERSHIP_CHECK_INTERVAL) => {}
+        }
+        database
+            .verify_ownership()
+            .await
+            .map_err(|error| error.to_string())?;
     }
 }
 
@@ -890,6 +968,7 @@ mod tests {
     fn test_config(root: &TempDir) -> Config {
         let mut config = Config {
             environment: EnvironmentMode::Development,
+            app_key: Some(orbit_platform::AppKey::new([1; 32])),
             ..Config::default()
         };
         config.data.database = root.path().join("data/orbit.sqlite");

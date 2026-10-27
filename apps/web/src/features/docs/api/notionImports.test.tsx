@@ -2,9 +2,9 @@ import { afterEach, expect, test } from 'bun:test'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import type { NotionImport } from '@/api/generated/types.gen'
+import type { NotionImport } from '@orbit/api/generated/types.gen'
 import { createApiClient } from '@/api/client'
-import { ApiProblem } from '@/api/problem'
+import { ApiProblem } from '@orbit/api/problem'
 import { queryKeys } from '@/api/queryKeys'
 import {
   createNotionImportRequest,

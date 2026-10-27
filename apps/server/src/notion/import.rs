@@ -19,13 +19,13 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 use std::time::Duration;
 
 use orbit_platform::Row;
 use orbit_platform::{
-    Backend, Database, Id, Job, JobError, JobKind, JobKindRegistrationError, JobQueue, JobStore,
-    TimestampMillis, Worker,
+    Backend, Database, Flag, Id, Job, JobError, JobKind, JobKindRegistrationError, JobQueue,
+    JobStore, TimestampMillis, Worker,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -43,6 +43,8 @@ use super::files::sanitize_file_name;
 use super::model::{BlockNode, NotionPage, normalize_id};
 pub use super::scan::{NotionImportNode, NotionImportNodeKind, NotionImportTree};
 use super::scan::{ScanControl, build_tree};
+use crate::billing::WorkspaceAccess;
+use crate::repositories::billing;
 use crate::repositories::membership;
 use crate::repositories::page_files::{PageFileRepository, page_file_url};
 use crate::repositories::page_versions::SaveOrigin;
@@ -70,7 +72,8 @@ const MAX_LISTED_IMPORTS: i64 = 20;
 const ACTIVE: &str = "('scanning', 'queued', 'importing')";
 const OPEN: &str = "('scanning', 'ready', 'queued', 'importing')";
 
-/// Both import job kinds: two at a time globally, a few retries for Notion outages.
+/// Both import job kinds: two at a time on all servers and one per workspace while another
+/// workspace waits (defaults; Admin can change them), a few retries for Notion outages.
 #[must_use]
 pub fn scan_job_kind() -> JobKind {
     notion_job_kind(SCAN_JOB)
@@ -84,6 +87,7 @@ pub fn import_job_kind() -> JobKind {
 fn notion_job_kind(name: &str) -> JobKind {
     JobKind::new(name)
         .with_concurrency_limit(2)
+        .with_workspace_limit(1)
         .with_retry_policy(
             5,
             vec![
@@ -171,33 +175,6 @@ struct Inner {
     files: PageFileRepository,
     jobs: JobQueue,
     settings: NotionImportSettings,
-    /// Imports whose `notion.import` job runs in this process right now.
-    running: Mutex<HashSet<Id>>,
-}
-
-/// Marks an import as running in this process until dropped.
-struct RunningGuard<'a> {
-    running: &'a Mutex<HashSet<Id>>,
-    import_id: Id,
-}
-
-impl<'a> RunningGuard<'a> {
-    fn enter(running: &'a Mutex<HashSet<Id>>, import_id: Id) -> Self {
-        running
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(import_id);
-        Self { running, import_id }
-    }
-}
-
-impl Drop for RunningGuard<'_> {
-    fn drop(&mut self) {
-        self.running
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(&self.import_id);
-    }
 }
 
 /// Errors of the import API.
@@ -451,7 +428,6 @@ impl NotionImportService {
                 database,
                 files,
                 settings,
-                running: Mutex::new(HashSet::new()),
             }),
         }
     }
@@ -778,7 +754,7 @@ impl NotionImportService {
         // A running job trashes its unfilled pages itself once it sees the cancellation (the
         // page it is filling right now must not be trashed under it). Otherwise (queued, or
         // waiting for a retry) clean up now.
-        if !self.is_running_here(import_id) {
+        if !self.is_running(import_id).await? {
             self.trash_unfilled_pages(import_id).await?;
         }
         self.load_view(workspace_id, user_id, import_id, false)
@@ -858,9 +834,6 @@ impl NotionImportService {
             let Ok(import_id) = id.parse::<Id>() else {
                 continue;
             };
-            if self.is_running_here(import_id) {
-                continue;
-            }
             self.fail_open_import(import_id, "The import stopped after repeated errors.")
                 .await?;
             finished += 1;
@@ -939,7 +912,6 @@ impl NotionImportService {
     /// The `notion.import` job: pass 1 creates the pages, pass 2 fills them. A failed or
     /// cancelled import trashes the pages it created but did not fill.
     pub async fn run_import(&self, import_id: Id, run: &JobRun) -> Result<(), JobError> {
-        let _running = RunningGuard::enter(&self.inner.running, import_id);
         match self.import(import_id, run).await {
             Ok(()) => {}
             Err(failure) => self.job_failure(import_id, failure, run).await?,
@@ -958,12 +930,20 @@ impl NotionImportService {
         Ok(())
     }
 
-    fn is_running_here(&self, import_id: Id) -> bool {
-        self.inner
-            .running
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .contains(&import_id)
+    /// Whether the `notion.import` job of the import runs now, on any server.
+    async fn is_running(&self, import_id: Id) -> Result<bool, ImportError> {
+        let import_id_of_job = match self.database().backend() {
+            Backend::Sqlite => "json_extract(jobs.payload_json, '$.import_id')",
+            Backend::Postgres => "(jobs.payload_json::jsonb ->> 'import_id')",
+        };
+        let Flag(running) = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT EXISTS (SELECT 1 FROM jobs WHERE jobs.kind = '{IMPORT_JOB}' \
+             AND jobs.state = 'running' AND {import_id_of_job} = $1)"
+        )))
+        .bind(import_id.to_string())
+        .fetch_one(self.database().pool())
+        .await?;
+        Ok(running)
     }
 
     /// Moves the pages that pass 1 created and pass 2 never filled (items still `created`) to
@@ -1102,6 +1082,7 @@ impl NotionImportService {
         }
         let workspace_id = parse_stored_id(row.get("workspace_id"))?;
         let user_id = parse_stored_id(row.get("user_id"))?;
+        self.ensure_writable(workspace_id).await?;
         let selection: Option<StoredSelection> = row
             .get::<Option<String>, _>("selection_json")
             .and_then(|json| serde_json::from_str(&json).ok());
@@ -1166,7 +1147,7 @@ impl NotionImportService {
             if items[index].status != "pending" {
                 continue;
             }
-            if self.should_stop(import_id, run).await? {
+            if self.should_stop(import_id, workspace_id, run).await? {
                 return stopped(run);
             }
             let parent = items[index]
@@ -1234,7 +1215,7 @@ impl NotionImportService {
             if items[index].status != "created" {
                 continue;
             }
-            if self.should_stop(import_id, run).await? {
+            if self.should_stop(import_id, workspace_id, run).await? {
                 return stopped(run);
             }
             let item = items[index].clone();
@@ -1582,16 +1563,35 @@ impl NotionImportService {
             .collect())
     }
 
-    async fn should_stop(&self, import_id: Id, run: &JobRun) -> Result<bool, Failure> {
+    /// Whether to stop before the next page; a workspace that became read-only fails the import.
+    async fn should_stop(
+        &self,
+        import_id: Id,
+        workspace_id: Id,
+        run: &JobRun,
+    ) -> Result<bool, Failure> {
         if run.cancel.is_cancelled() {
             return Ok(true);
         }
+        self.ensure_writable(workspace_id).await?;
         let status: Option<String> =
             sqlx::query_scalar("SELECT status FROM notion_imports WHERE id = $1")
                 .bind(import_id.to_string())
                 .fetch_optional(self.database().pool())
                 .await?;
         Ok(status.as_deref() != Some("importing"))
+    }
+
+    /// Orbit Cloud: a workspace without a subscription takes no imported pages.
+    async fn ensure_writable(&self, workspace_id: Id) -> Result<(), Failure> {
+        match billing::write_access(self.database(), workspace_id).await? {
+            WorkspaceAccess::Full => Ok(()),
+            WorkspaceAccess::ReadOnly => Err(Failure::Fatal(
+                "The import stopped because the workspace is read-only: it has no active \
+                 subscription."
+                    .to_owned(),
+            )),
+        }
     }
 
     async fn fail_item(

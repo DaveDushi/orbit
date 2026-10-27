@@ -1,5 +1,5 @@
 use std::net::{IpAddr, Ipv4Addr};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use axum::body::Body;
 use axum::extract::{Extension, FromRequest, FromRequestParts, Path, Query, Request, State};
@@ -13,8 +13,8 @@ use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
 use orbit_domain::WorkspaceRole;
 use orbit_platform::{
-    BackupError, BackupKind, BackupService, BackupSnapshot, ClientIp, Id, LoginThrottler,
-    ObjectStorage, PasswordError, PasswordExecutor, PasswordService, RequestId, ThrottleDecision,
+    BackupError, BackupKind, BackupService, BackupSnapshot, ClientIp, Id, JobLimits, ObjectStorage,
+    PasswordError, PasswordExecutor, PasswordService, RateLimitConfig, RequestId, ThrottleDecision,
     TieredBlobStore, TimestampMillis,
 };
 use serde::de::DeserializeOwned;
@@ -22,7 +22,9 @@ use serde::{Deserialize, Serialize};
 use tokio_stream::wrappers::ReceiverStream;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::auth_routes::throttle::SharedThrottler;
 use crate::auth_routes::{CookieMode, issued_session_cookie, request_session};
+use crate::email_quota::{self, Quota};
 use crate::image_compression::{CompressionStatus, ImageCompressor};
 use crate::mail::{self, Mailer};
 use crate::repositories::api_tokens::{
@@ -32,8 +34,9 @@ use crate::repositories::identity::{
     AdminAccountError, AdminUser, AuthenticatedSession, IdentityRepository,
 };
 use crate::repositories::instance_settings::{
-    BackupSchedule, InstanceSettingsError, InstanceSettingsRepository, PasswordChange, S3Settings,
-    SmtpSecurity, SmtpSettings, StorageSettingsError,
+    BackupSchedule, InstanceLimits, InstanceSettingsError, InstanceSettingsRepository,
+    PasswordChange, S3Settings, SmtpSecurity, SmtpSettings, StorageSettingsError,
+    adjustable_job_kinds,
 };
 use crate::repositories::workspaces::{InvitationDelivery, WorkspaceError, WorkspaceRepository};
 
@@ -45,14 +48,24 @@ pub struct WorkspaceState {
     public_origin: String,
     cookie_mode: CookieMode,
     passwords: PasswordExecutor,
-    registration_throttler: Arc<Mutex<LoginThrottler>>,
+    registration_throttler: Arc<SharedThrottler>,
     backups: Option<BackupService>,
     /// Sends invitation emails and keeps the app key for the SMTP password; `None` sends nothing.
     mailer: Option<Mailer>,
+    /// The daily caps of invitation emails.
+    rate_limits: RateLimitConfig,
     /// The running attachment and backup storage, changed by Admin → Storage.
     object_storage: Option<(ObjectStorage, TieredBlobStore)>,
     /// Makes large stored images smaller (Admin → Storage).
     image_compressor: Option<ImageCompressor>,
+}
+
+/// Open registration is throttled like sign-in, on every server of the database.
+fn registration_throttler(identity: &IdentityRepository) -> Arc<SharedThrottler> {
+    Arc::new(SharedThrottler::new(
+        "registration",
+        identity.database().clone(),
+    ))
 }
 
 impl WorkspaceState {
@@ -62,6 +75,7 @@ impl WorkspaceState {
         public_origin: String,
         cookie_mode: CookieMode,
     ) -> Self {
+        let registration_throttler = registration_throttler(&identity);
         Self {
             api_tokens: Arc::new(ApiTokenRepository::new(identity.database().clone())),
             workspaces: Arc::new(WorkspaceRepository::new(identity.database().clone())),
@@ -70,9 +84,10 @@ impl WorkspaceState {
             cookie_mode,
             passwords: PasswordExecutor::new(PasswordService::default(), 2)
                 .expect("password executor concurrency is non-zero"),
-            registration_throttler: Arc::new(Mutex::new(LoginThrottler::new())),
+            registration_throttler,
             backups: None,
             mailer: None,
+            rate_limits: RateLimitConfig::default(),
             object_storage: None,
             image_compressor: None,
         }
@@ -86,6 +101,7 @@ impl WorkspaceState {
         cookie_mode: CookieMode,
         backups: BackupService,
     ) -> Self {
+        let registration_throttler = registration_throttler(&identity);
         Self {
             api_tokens: Arc::new(ApiTokenRepository::new(identity.database().clone())),
             identity,
@@ -94,9 +110,10 @@ impl WorkspaceState {
             cookie_mode,
             passwords: PasswordExecutor::new(PasswordService::default(), 2)
                 .expect("password executor concurrency is non-zero"),
-            registration_throttler: Arc::new(Mutex::new(LoginThrottler::new())),
+            registration_throttler,
             backups: Some(backups),
             mailer: None,
+            rate_limits: RateLimitConfig::default(),
             object_storage: None,
             image_compressor: None,
         }
@@ -105,6 +122,12 @@ impl WorkspaceState {
     #[must_use]
     pub fn with_mailer(mut self, mailer: Mailer) -> Self {
         self.mailer = Some(mailer);
+        self
+    }
+
+    #[must_use]
+    pub fn with_rate_limits(mut self, rate_limits: RateLimitConfig) -> Self {
+        self.rate_limits = rate_limits;
         self
     }
 
@@ -149,6 +172,10 @@ pub fn workspace_router(state: WorkspaceState) -> Router {
             get(get_workspace)
                 .patch(rename_workspace)
                 .delete(delete_workspace),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/storage",
+            get(get_workspace_storage),
         )
         .route(
             "/api/v1/workspaces/{workspace_id}/restore",
@@ -200,6 +227,11 @@ pub fn workspace_router(state: WorkspaceState) -> Router {
         .route("/api/v1/admin/settings/smtp/test", post(send_test_email))
         .route("/api/v1/admin/settings/s3", put(save_s3).delete(remove_s3))
         .route("/api/v1/admin/settings/storage", put(save_storage_options))
+        .route("/api/v1/admin/settings/limits", put(save_limits))
+        .route(
+            "/api/v1/admin/jobs/limits",
+            get(get_job_limits).put(save_job_limits),
+        )
         .route(
             "/api/v1/admin/attachments/compress",
             post(start_image_compression),
@@ -358,6 +390,25 @@ async fn get_workspace(
     state
         .workspaces
         .get(workspace_id, session.user.id)
+        .await
+        .map(Json)
+        .map_err(|error| workspace_problem(error, instance, request_id.as_ref()))
+}
+
+/// How many bytes of files the workspace stores, and its quota. Any member may read it.
+#[utoipa::path(get, path = "/api/v1/workspaces/{workspace_id}/storage", params(("workspace_id" = String, Path)), responses((status = 200, body = crate::repositories::workspaces::WorkspaceStorage)))]
+async fn get_workspace_storage(
+    State(state): State<WorkspaceState>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<crate::repositories::workspaces::WorkspaceStorage>, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace_id}/storage");
+    let session = authenticate(&state, &headers, &instance, request_id.as_ref()).await?;
+    let workspace_id = parse_id(&workspace_id, &instance, request_id.as_ref())?;
+    state
+        .workspaces
+        .storage(workspace_id, session.user.id)
         .await
         .map(Json)
         .map_err(|error| workspace_problem(error, instance, request_id.as_ref()))
@@ -786,7 +837,7 @@ struct InvitationResponse {
     url: Option<String>,
 }
 
-#[utoipa::path(post, path = "/api/v1/workspaces/{workspace_id}/invitations", params(("workspace_id" = String, Path)), request_body = InvitationBody, responses((status = 201, body = InvitationResponse)))]
+#[utoipa::path(post, path = "/api/v1/workspaces/{workspace_id}/invitations", params(("workspace_id" = String, Path)), request_body = InvitationBody, responses((status = 201, body = InvitationResponse), (status = 429, description = "invitation_email_limit: the workspace or the inviter sent the most invitation emails allowed in 24 hours", body = ProblemBody, content_type = "application/problem+json")))]
 async fn create_invitation(
     State(state): State<WorkspaceState>,
     Path(workspace_id): Path<String>,
@@ -839,21 +890,50 @@ async fn create_invitation(
     );
     if let Some(mailer) = mailer {
         let now = TimestampMillis::now();
-        let workspace_name = state
-            .workspaces
-            .preview_invitation(&issued.token, now)
-            .await
-            .map(|preview| preview.workspace_name)
-            .unwrap_or_else(|_| "Orbit".to_owned());
-        let sent = mailer
-            .send(mail::templates::invitation(
-                &issued.invitation.email,
-                &session.user.display_name,
-                &workspace_name,
-                &link,
-            ))
-            .await;
-        if let Err(error) = sent {
+        let sent = async {
+            // Counted after the invitation was made, so a member who may not invite cannot use
+            // up the workspace's emails.
+            let quotas = [
+                Quota {
+                    scope: "invitation_workspace",
+                    subject: workspace_id.to_string(),
+                    per_day: state.rate_limits.invitation_emails_per_workspace_per_day,
+                    cooldown: std::time::Duration::ZERO,
+                },
+                Quota {
+                    scope: "invitation_inviter",
+                    subject: session.user.id.to_string(),
+                    per_day: state.rate_limits.invitation_emails_per_inviter_per_day,
+                    cooldown: std::time::Duration::ZERO,
+                },
+            ];
+            let decision = email_quota::take(state.identity.database(), &quotas, now)
+                .await
+                .map_err(|_| internal(&instance, request_id.as_ref()))?;
+            if let ThrottleDecision::RetryAfter(delay) = decision {
+                return Err(invitation_email_limited(
+                    delay,
+                    &instance,
+                    request_id.as_ref(),
+                ));
+            }
+            let workspace_name = state
+                .workspaces
+                .preview_invitation(&issued.token, now)
+                .await
+                .map(|preview| preview.workspace_name)
+                .unwrap_or_else(|_| "Orbit".to_owned());
+            mailer
+                .send(mail::templates::invitation(
+                    &issued.invitation.email,
+                    &workspace_name,
+                    &link,
+                ))
+                .await
+                .map_err(|error| email_failed(&error, &instance, request_id.as_ref()))
+        }
+        .await;
+        if let Err(problem) = sent {
             // Nobody can use an invitation whose link never arrived: take it back, so the admin can retry.
             let _ = state
                 .workspaces
@@ -865,7 +945,7 @@ async fn create_invitation(
                     now,
                 )
                 .await;
-            return Err(email_failed(&error, &instance, request_id.as_ref()));
+            return Err(problem);
         }
     }
     let url = (delivery == InvitationDelivery::Manual).then_some(link);
@@ -985,7 +1065,7 @@ async fn accept_invitation(
     ApiJson(body): ApiJson<AcceptBody>,
 ) -> Result<Response, ApiError> {
     let instance = "/api/v1/workspaces/invitations/accept";
-    if state.cookie_mode.session_token(&headers).is_some() {
+    if state.cookie_mode.session_credential(&headers).is_some() {
         let session = authenticate(&state, &headers, instance, request_id.as_ref()).await?;
         let accepted = state
             .workspaces
@@ -1021,9 +1101,8 @@ async fn accept_invitation(
         .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
     let reservation = state
         .registration_throttler
-        .lock()
-        .expect("registration throttler mutex poisoned")
         .reserve(&email, ip, TimestampMillis::now())
+        .await
         .map_err(|decision| match decision {
             ThrottleDecision::RetryAfter(delay) => {
                 invitation_throttled_problem(delay, instance, request_id.as_ref())
@@ -1042,9 +1121,8 @@ async fn accept_invitation(
     {
         state
             .registration_throttler
-            .lock()
-            .expect("registration throttler mutex poisoned")
-            .finish_failure(reservation, TimestampMillis::now());
+            .finish_failure(reservation, TimestampMillis::now())
+            .await;
         return Err(workspace_problem(error, instance, request_id.as_ref()));
     }
     let password_hash = match state.passwords.hash(password).await {
@@ -1052,9 +1130,8 @@ async fn accept_invitation(
         Err(error) => {
             state
                 .registration_throttler
-                .lock()
-                .expect("registration throttler mutex poisoned")
-                .finish_failure(reservation, TimestampMillis::now());
+                .finish_failure(reservation, TimestampMillis::now())
+                .await;
             return Err(password_problem(error, instance, request_id.as_ref()));
         }
     };
@@ -1074,17 +1151,15 @@ async fn accept_invitation(
         Err(error) => {
             state
                 .registration_throttler
-                .lock()
-                .expect("registration throttler mutex poisoned")
-                .finish_failure(reservation, TimestampMillis::now());
+                .finish_failure(reservation, TimestampMillis::now())
+                .await;
             return Err(workspace_problem(error, instance, request_id.as_ref()));
         }
     };
     state
         .registration_throttler
-        .lock()
-        .expect("registration throttler mutex poisoned")
-        .finish_success(reservation);
+        .finish_success(reservation)
+        .await;
     let cookie = issued_session_cookie(
         state.cookie_mode,
         &registered.session.token,
@@ -1470,6 +1545,27 @@ struct InstanceSettingsView {
     /// `null` until a mail server is saved.
     smtp: Option<SmtpView>,
     storage: StorageView,
+    limits: LimitsView,
+}
+
+/// Limits for a shared installation. `null` is unlimited.
+#[derive(Deserialize, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct LimitsView {
+    /// Workspaces (not in the trash) one account may own. Instance admins are not limited.
+    max_owned_workspaces: Option<u32>,
+    /// Bytes of files one workspace may store: attachments, page and chat files, emoji and stickers. A file is
+    /// counted once per workspace, however often it is attached.
+    workspace_storage_quota_bytes: Option<u64>,
+}
+
+impl From<InstanceLimits> for LimitsView {
+    fn from(limits: InstanceLimits) -> Self {
+        Self {
+            max_owned_workspaces: limits.max_owned_workspaces,
+            workspace_storage_quota_bytes: limits.workspace_storage_quota_bytes,
+        }
+    }
 }
 
 async fn settings_view(
@@ -1484,6 +1580,10 @@ async fn settings_view(
         .map_err(|_| internal(instance, request_id))?;
     let storage = repository
         .storage()
+        .await
+        .map_err(|_| internal(instance, request_id))?;
+    let limits = repository
+        .limits()
         .await
         .map_err(|_| internal(instance, request_id))?;
     let moving = state
@@ -1508,6 +1608,7 @@ async fn settings_view(
             move_error: moving.error,
             image_compression: state.image_compressor.as_ref().map(ImageCompressor::status),
         },
+        limits: limits.into(),
         registration_open: settings.registration_open,
         smtp: settings.smtp.map(|smtp| SmtpView {
             host: smtp.host,
@@ -1542,6 +1643,140 @@ async fn get_instance_settings(
     let instance = "/api/v1/admin/settings";
     require_root(&state, &headers, instance, request_id.as_ref()).await?;
     settings_view(&state, instance, request_id.as_ref()).await
+}
+
+/// The most jobs of one kind that a limit allows.
+const MAX_JOB_LIMIT: u32 = 100;
+
+/// How many jobs of one kind may run at once. `null` is no limit.
+#[derive(Serialize, ToSchema)]
+struct JobLimitView {
+    kind: String,
+    /// On all servers together.
+    concurrency: Option<u32>,
+    /// For one workspace while another workspace has a job of the kind waiting.
+    workspace_concurrency: Option<u32>,
+    default_concurrency: Option<u32>,
+    default_workspace_concurrency: Option<u32>,
+}
+
+#[derive(Serialize, ToSchema)]
+struct JobLimitsView {
+    kinds: Vec<JobLimitView>,
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct JobLimitBody {
+    kind: String,
+    /// 1 to 100, or `null` for no limit.
+    concurrency: Option<u32>,
+    /// 1 to 100, or `null` for no limit.
+    workspace_concurrency: Option<u32>,
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct JobLimitsBody {
+    /// Kinds left out keep their limits.
+    kinds: Vec<JobLimitBody>,
+}
+
+async fn job_limits_view(
+    state: &WorkspaceState,
+    instance: &str,
+    request_id: Option<&Extension<RequestId>>,
+) -> Result<Json<JobLimitsView>, ApiError> {
+    let kinds = InstanceSettingsRepository::new(state.identity.database().clone())
+        .job_limits()
+        .await
+        .map_err(|_| internal(instance, request_id))?;
+    Ok(Json(JobLimitsView {
+        kinds: kinds
+            .into_iter()
+            .map(|kind| JobLimitView {
+                kind: kind.kind,
+                concurrency: kind.limits.concurrency,
+                workspace_concurrency: kind.limits.workspace_concurrency,
+                default_concurrency: kind.defaults.concurrency,
+                default_workspace_concurrency: kind.defaults.workspace_concurrency,
+            })
+            .collect(),
+    }))
+}
+
+/// Background job limits of the kinds that customers start (Notion imports).
+#[utoipa::path(get, path = "/api/v1/admin/jobs/limits", responses((status = 200, body = JobLimitsView)))]
+async fn get_job_limits(
+    State(state): State<WorkspaceState>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<JobLimitsView>, ApiError> {
+    let instance = "/api/v1/admin/jobs/limits";
+    require_root(&state, &headers, instance, request_id.as_ref()).await?;
+    job_limits_view(&state, instance, request_id.as_ref()).await
+}
+
+/// Saves job limits. Every server uses them from its next job claim, without a restart.
+#[utoipa::path(put, path = "/api/v1/admin/jobs/limits", request_body = JobLimitsBody, responses((status = 200, body = JobLimitsView)))]
+async fn save_job_limits(
+    State(state): State<WorkspaceState>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+    ApiJson(body): ApiJson<JobLimitsBody>,
+) -> Result<Json<JobLimitsView>, ApiError> {
+    let instance = "/api/v1/admin/jobs/limits";
+    let session = require_root(&state, &headers, instance, request_id.as_ref()).await?;
+    let invalid = |detail: String| {
+        ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_job_limits",
+            "Invalid job limits",
+            detail,
+            instance,
+            request_id.as_ref(),
+        )
+    };
+    let mut limits = Vec::with_capacity(body.kinds.len());
+    for item in body.kinds {
+        let kind = adjustable_job_kinds()
+            .into_iter()
+            .find(|kind| kind.name() == item.kind)
+            .ok_or_else(|| {
+                invalid(format!(
+                    "{}: this job kind has no adjustable limits.",
+                    item.kind
+                ))
+            })?;
+        for value in [item.concurrency, item.workspace_concurrency]
+            .into_iter()
+            .flatten()
+        {
+            if !(1..=MAX_JOB_LIMIT).contains(&value) {
+                return Err(invalid(format!(
+                    "{}: enter a limit from 1 to {MAX_JOB_LIMIT}, or no limit.",
+                    item.kind
+                )));
+            }
+        }
+        limits.push((
+            kind,
+            JobLimits {
+                concurrency: item.concurrency,
+                workspace_concurrency: item.workspace_concurrency,
+            },
+        ));
+    }
+    InstanceSettingsRepository::new(state.identity.database().clone())
+        .save_job_limits(
+            session.user.id,
+            &limits,
+            request_id_value(request_id.as_ref()),
+            TimestampMillis::now(),
+        )
+        .await
+        .map_err(|_| internal(instance, request_id.as_ref()))?;
+    job_limits_view(&state, instance, request_id.as_ref()).await
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -1768,16 +2003,21 @@ async fn reload_storage(
     let Some((storage, _)) = &state.object_storage else {
         return Ok(());
     };
-    let settings = InstanceSettingsRepository::new(state.identity.database().clone())
+    let database = state.identity.database();
+    let settings = InstanceSettingsRepository::new(database.clone())
         .storage()
         .await
         .map_err(|_| internal(instance, request_id))?;
-    crate::object_storage::apply(
+    crate::object_storage::apply_and_keep(
+        database,
         storage,
         &settings,
         state.mailer.as_ref().and_then(Mailer::app_key),
     )
-    .map_err(|_| internal(instance, request_id))
+    .map_err(|_| internal(instance, request_id))?;
+    // The other servers of the database use them too.
+    crate::cluster::Cluster::of(database).send(crate::cluster::Message::StorageChanged);
+    Ok(())
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -1989,8 +2229,51 @@ struct StorageOptionsBody {
     backup_schedule: BackupSchedule,
 }
 
+/// Saves the limits of a shared installation; `null` or 0 is unlimited. A lower limit refuses new workspaces and
+/// uploads only: nothing that exists is removed.
+#[utoipa::path(put, path = "/api/v1/admin/settings/limits", request_body = LimitsView, responses((status = 200, body = InstanceSettingsView)))]
+async fn save_limits(
+    State(state): State<WorkspaceState>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+    ApiJson(body): ApiJson<LimitsView>,
+) -> Result<Json<InstanceSettingsView>, ApiError> {
+    let instance = "/api/v1/admin/settings/limits";
+    let session = require_root(&state, &headers, instance, request_id.as_ref()).await?;
+    let max_owned_workspaces = body.max_owned_workspaces.filter(|limit| *limit > 0);
+    let workspace_storage_quota_bytes = body
+        .workspace_storage_quota_bytes
+        .filter(|limit| *limit > 0);
+    if max_owned_workspaces.is_some_and(|limit| limit > 1_000_000)
+        || workspace_storage_quota_bytes.is_some_and(|limit| i64::try_from(limit).is_err())
+    {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_limits",
+            "Invalid limits",
+            "Use at most 1000000 workspaces and a storage quota that fits in 63 bits.",
+            instance,
+            request_id.as_ref(),
+        ));
+    }
+    InstanceSettingsRepository::new(state.identity.database().clone())
+        .save_limits(
+            session.user.id,
+            InstanceLimits {
+                max_owned_workspaces,
+                workspace_storage_quota_bytes,
+            },
+            request_id_value(request_id.as_ref()),
+            TimestampMillis::now(),
+        )
+        .await
+        .map_err(|_| internal(instance, request_id.as_ref()))?;
+    settings_view(&state, instance, request_id.as_ref()).await
+}
+
 /// Where attachments and backups are stored, and how often Orbit backs up by itself. Using S3 needs a saved
-/// bucket (409 `storage_not_configured`).
+/// bucket (409 `storage_not_configured`). Attachments stay in S3 while other servers use the database: each
+/// server has its own disk (409 `storage_shared`).
 #[utoipa::path(put, path = "/api/v1/admin/settings/storage", request_body = StorageOptionsBody, responses((status = 200, body = InstanceSettingsView)))]
 async fn save_storage_options(
     State(state): State<WorkspaceState>,
@@ -2000,7 +2283,24 @@ async fn save_storage_options(
 ) -> Result<Json<InstanceSettingsView>, ApiError> {
     let instance = "/api/v1/admin/settings/storage";
     let session = require_root(&state, &headers, instance, request_id.as_ref()).await?;
-    InstanceSettingsRepository::new(state.identity.database().clone())
+    let database = state.identity.database();
+    if !body.attachments_in_s3 && crate::cluster::Cluster::of(database).others() > 0 {
+        let current = InstanceSettingsRepository::new(database.clone())
+            .storage()
+            .await
+            .map_err(|_| internal(instance, request_id.as_ref()))?;
+        if current.attachments_in_s3 {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "storage_shared",
+                "Other servers use this database",
+                "Attachments stay in S3 while other servers use this database: each server has its own disk.",
+                instance,
+                request_id.as_ref(),
+            ));
+        }
+    }
+    InstanceSettingsRepository::new(database.clone())
         .save_storage_options(
             session.user.id,
             body.attachments_in_s3,
@@ -2144,11 +2444,24 @@ async fn create_backup(
         .await
         .map_err(|error| {
             tracing::error!(%error, "backup failed");
+            // Only installation admins reach this, so the cause is shown to them.
+            let (code, detail) = match error {
+                orbit_platform::BackupError::ObjectStorage(error) => (
+                    "backup_upload_failed",
+                    format!(
+                        "The backup was saved on this server, but the upload to S3 failed: {error}"
+                    ),
+                ),
+                error => (
+                    "backup_failed",
+                    format!("Orbit could not create a verified backup: {error}"),
+                ),
+            };
             ApiError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "backup_failed",
+                code,
                 "Backup failed",
-                "Orbit could not create a verified backup.",
+                detail,
                 instance,
                 request_id.as_ref(),
             )
@@ -2665,6 +2978,22 @@ fn workspace_problem(
         WorkspaceError::VersionConflict { current_version } => {
             ApiError::conflict(current_version, instance.clone(), instance, request_id)
         }
+        WorkspaceError::OwnedWorkspaceLimit { limit } => ApiError::new(
+            StatusCode::CONFLICT,
+            "workspace_limit_reached",
+            "Workspace limit reached",
+            format!(
+                "An account can own at most {limit} {}, and this account already owns that many. Delete a \
+                 workspace you own, or ask the administrator of this Orbit for a higher limit.",
+                if limit == 1 {
+                    "workspace"
+                } else {
+                    "workspaces"
+                }
+            ),
+            instance,
+            request_id,
+        ),
         WorkspaceError::Unavailable(_) | WorkspaceError::Storage(_) => ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal_error",
@@ -2689,6 +3018,23 @@ fn registration_field_problem(
         instance,
         request_id,
     )
+}
+
+fn invitation_email_limited(
+    retry_after: std::time::Duration,
+    instance: &str,
+    request_id: Option<&Extension<RequestId>>,
+) -> ApiError {
+    let mut error = ApiError::new(
+        StatusCode::TOO_MANY_REQUESTS,
+        "invitation_email_limit",
+        "Invitation email limit reached",
+        "This workspace or you sent the most invitation emails allowed in 24 hours. Try again later, or copy an invitation link instead.",
+        instance,
+        request_id,
+    );
+    error.retry_after = Some(retry_after);
+    error
 }
 
 fn invitation_throttled_problem(

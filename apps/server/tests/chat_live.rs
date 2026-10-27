@@ -16,6 +16,8 @@ use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::{self, Message as Ws};
 use tokio_util::sync::CancellationToken;
 
+mod shared_postgres;
+
 const COOKIE: &str = "orbit_session_dev";
 
 type Socket =
@@ -39,14 +41,35 @@ struct User {
 impl Server {
     /// A server with one workspace; returns it with the workspace's owner.
     async fn start() -> (Self, User) {
+        Self::start_on(None).await
+    }
+
+    /// As [`Self::start`], on the Postgres database `url` if given.
+    async fn start_on(url: Option<&str>) -> (Self, User) {
+        let mut server = Self::serve(url, String::new()).await;
+        let owner = server.setup().await;
+        (server, owner)
+    }
+
+    /// Another server of the same Postgres database, for the same workspace.
+    async fn beside(&self, url: &str) -> Self {
+        Self::serve(Some(url), self.workspace.clone()).await
+    }
+
+    async fn serve(url: Option<&str>, workspace: String) -> Self {
         let root = tempfile::tempdir().unwrap();
         let mut config = Config {
             environment: EnvironmentMode::Development,
+            app_key: Some(orbit_platform::AppKey::new([1; 32])),
             ..Config::default()
         };
         config.data.database = root.path().join("data/orbit.sqlite");
         config.data.attachments = root.path().join("data/attachments");
         config.data.backups = root.path().join("backups");
+        config.data.database_url = url.map(str::to_owned);
+        if url.is_some() {
+            config.app_key = Some(shared_postgres::APP_KEY.parse().unwrap());
+        }
         config.rate_limits.general_per_minute = 100_000;
         let app = App::build(config).await.unwrap();
         let database = app.database().clone();
@@ -57,8 +80,20 @@ impl Server {
         let task = tokio::spawn(async move {
             app.serve(listener, token).await.unwrap();
         });
+        Self {
+            base,
+            database,
+            shutdown,
+            task,
+            http: reqwest::Client::new(),
+            workspace,
+            _root: root,
+        }
+    }
 
-        let identity = IdentityRepository::new(database.clone());
+    /// Completes the setup: one workspace and its owner.
+    async fn setup(&mut self) -> User {
+        let identity = IdentityRepository::new(self.database.clone());
         let now = TimestampMillis::now();
         identity
             .store_setup_token(
@@ -83,20 +118,11 @@ impl Server {
             )
             .await
             .unwrap();
-        let server = Self {
-            base,
-            database,
-            shutdown,
-            task,
-            http: reqwest::Client::new(),
-            workspace: setup.workspace_id.to_string(),
-            _root: root,
-        };
-        let owner = User {
+        self.workspace = setup.workspace_id.to_string();
+        User {
             id: setup.user_id,
             token: setup.session.token.clone(),
-        };
-        (server, owner)
+        }
     }
 
     async fn stop(self) {
@@ -566,4 +592,88 @@ async fn a_new_or_deleted_emoji_tells_every_member_to_read_the_list_again() {
         assert_eq!(frame["event"], json!({ "type": "stickers.changed" }));
     }
     server.stop().await;
+}
+
+#[tokio::test]
+async fn servers_of_one_database_share_events_presence_and_replay() {
+    let Some(database) = shared_postgres::SharedDatabase::create().await else {
+        return; // several servers need a Postgres database
+    };
+    let (one, owner) = Server::start_on(Some(&database.url)).await;
+    let two = one.beside(&database.url).await;
+    let ada = one.user("ada", true).await;
+    let general = one.general(&owner).await;
+
+    // Ada on server one, the owner on server two: each sees the other come online.
+    let (mut ada_socket, _) = one.client(&ada).await;
+    let (owner_socket, hello) = two.client(&owner).await;
+    let epoch = hello["epoch"].as_str().unwrap().to_owned();
+    let online = |frames: &[Value], user: Id| {
+        frames.iter().any(|frame| {
+            frame["event"]["user_id"] == json!(user) && frame["event"]["status"] == "online"
+        })
+    };
+    let mut seen = Vec::new();
+    while let Some(frame) = next(&mut ada_socket).await {
+        seen.push(frame);
+    }
+    assert!(online(&seen, owner.id), "{seen:?}");
+
+    // A message written on server two reaches Ada on server one, numbered once for both.
+    two.send(&owner, &general, "Across", "x1").await;
+    let mut created = None;
+    while let Some(frame) = next(&mut ada_socket).await {
+        if frame["event"]["type"] == "message.created" {
+            created = Some(frame);
+        }
+    }
+    let created = created.expect("the event crossed servers");
+    assert_eq!(created["event"]["message"]["body"], "Across");
+    let seq = created["seq"].as_u64().unwrap();
+
+    // The owner reconnects to the other server and gets a replay, not a resync.
+    drop(owner_socket);
+    one.send(&ada, &general, "While away", "x2").await;
+    let mut socket = one
+        .socket(Some(&owner.token), &format!("?epoch={epoch}&after={seq}"))
+        .await
+        .unwrap();
+    assert_eq!(next(&mut socket).await.unwrap()["type"], "hello");
+    let mut replayed = Vec::new();
+    while let Some(frame) = next(&mut socket).await {
+        replayed.push(frame);
+    }
+    assert!(
+        replayed
+            .iter()
+            .any(|frame| frame["event"]["message"]["body"] == "While away"),
+        "{replayed:?}"
+    );
+    assert!(replayed.iter().all(|frame| frame["type"] != "resync"));
+    drop(socket);
+    drop(ada_socket);
+    one.stop().await;
+    two.stop().await;
+    database.drop().await;
+}
+
+#[tokio::test]
+async fn a_server_that_stops_closes_live_sockets_with_service_restart() {
+    let (server, owner) = Server::start().await;
+    let (mut socket, _) = server.client(&owner).await;
+    server.shutdown.cancel();
+    let close = loop {
+        match tokio::time::timeout(Duration::from_secs(10), socket.next())
+            .await
+            .expect("the close frame comes before the server stops")
+        {
+            Some(Ok(Ws::Close(frame))) => break frame,
+            Some(Ok(_)) => {}
+            other => panic!("the socket ended without a close frame: {other:?}"),
+        }
+    };
+    let close = close.expect("a close code");
+    assert_eq!(u16::from(close.code), 1012);
+    assert_eq!(close.reason.as_str(), "server restarting");
+    server.task.await.unwrap();
 }

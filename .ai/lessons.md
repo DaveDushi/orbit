@@ -11,6 +11,14 @@
 - All SQL goes through sqlx `Any`: write `$1, $2, …` (SQLite binds them by number too), import `orbit_platform::Row` (not `sqlx::Row`) so 0/1 flags decode as `bool`, decode boolean scalars as `Flag`, bind `i64` (never `bool`/`u32`), and build dynamic SQL with `SqlBuilder`. SQLite silently ignores extra bound values, so clashing `$N` numbers in `format!`-glued fragments only fail on Postgres.
 - A new SQLite migration also needs its change in the Postgres schema (`apps/server/migrations/postgres/`) and that file's entry in `runner.postgres` in `crates/platform/src/db/migrate.rs`.
 - Run the whole suite on Postgres with `ORBIT_TEST_POSTGRES_URL=postgres://orbit:orbit@127.0.0.1:15432/orbit`; each test database maps from its SQLite path.
+- No Postgres listens on 15432 after a reboot unless the persistent dev one runs: `orbit-dev-pg` (volume `orbit-dev-pg-data`, `--restart unless-stopped`, databases `orbit` for tests and `orbit_dev` for `just dev`). A `--rm` container loses all data on reboot (the dev data was lost this way on 2026-10-24). For the full test suite use `-c max_connections=300` and at least 1 GB, or connections drop mid-suite.
+
+## Several servers on one Postgres database
+- Any process-local state (maps, locks, counters, caches, "running" flags, background loops) is per server. If it must hold for every server, keep it in the database (a serialized `immediate_transaction`, `Database::try_singleton`) or send it through `crate::cluster`. Test such changes with two `App`s on one database (`apps/server/tests/shared_postgres`), and prove the test fails without the fix.
+- `immediate_transaction()` takes one advisory lock for the whole Postgres database, so every writer of the cluster waits for it. A hot counter that needs no read-then-write logic uses one atomic statement on the pool instead (`INSERT … ON CONFLICT … DO UPDATE SET n = t.n + 1 RETURNING n`, as `rate_limit_windows` does); keep per-request state of very frequent requests in memory and document that it is per server.
+
+## Jean run environments share ports
+- `jean.json` gives every worktree the same ports (web 18888, API 18080), and `just dev` uses `--strictPort`. Before you trust a run environment, check who owns the ports (`ss -ltnp | grep -E ':18080|:18888'`, then `readlink /proc/<pid>/cwd`): another worktree's Vite server can answer on 18888 with its own code (2026-10-20).
 
 ## SQLite 3.46.0 (bundled by libsqlite3-sys 0.30) FTS5 integrity false positive
 - `PRAGMA integrity_check` reports "malformed inverted index for FTS5 table …" after a row of an FTS5 table is UPDATEd twice
@@ -43,6 +51,8 @@
 - Layer/nested two-tone card surfaces are a reference pattern, not Coolify. Coolify cards = one surface + one border.
 
 ## Tooling
+- `jean.json` gives every worktree the same run ports (18888 web, 18080 API, `--strictPort`), so a second worktree's run environment cannot start while another one runs, and port 18080 can also be taken by a local VM. Check who owns the port (`ss -ltnp`, `/proc/<pid>/cwd`) before you trust a page there. Without a working run environment, build the web app and let Playwright serve `dist/` and stub `/api` with `page.route` (no extra server process) (2026-10-20).
+- Never `git stash` to compare against `main`: other sessions edit this working tree at the same time, so the stash takes their work and `stash pop` fails on their new edits. Undo your change in place (or use `git show HEAD:path`) instead (2026-10-15).
 - The release image is static musl on Alpine with no OpenSSL. Pick pure-Rust crates (rustls, RustCrypto); `webauthn-rs` 0.5 needs OpenSSL, so Orbit pins the pure-Rust 0.6 line.
 - The user-run Vite dev server (port 8888) can serve a broken module graph after files are renamed (`.tsx`→`.ts`) mid-session — pages render blank with no console errors. Verify against `aubr build` + `aubx vite preview` before debugging app code, and report the dev server needs a restart instead of touching it.
 - Probing dev-mode React modules via `import()` from a bare page fails with "@vitejs/plugin-react can't detect preamble" — that's a probe artifact, not an app error.
@@ -149,5 +159,15 @@
 ## Permissions
 - Every authorization rule lives in `crates/orbit/src/policy.rs`: `Policy::can(role, Permission)` for role rules, methods on `Actor` for rules that depend on a record (author, owner, target member). Repositories get the `Actor` from `repositories/membership.rs` inside their own transaction; they never compare role names or write their own role SQL.
 - The web app holds no rules. Workspace abilities come from `workspace.permissions` (`useCan`), installation admin from `useIsInstallationAdmin`, and per-record abilities from `can_*` flags on the record (`can_edit`, `can_delete`, `can_purge`, ...). A new gated action is a new `Permission` or `Actor` method, a flag on the record if the UI needs it, then `just api`.
-- Build workspace fixtures in web tests and e2e mocks with `testWorkspace(role)` (`src/test/workspace.ts`); its role table is generated from the server (`api/generated/rolePermissions.ts`). Hand-written literals passed to `setQueryData` or `Response.json` are untyped, so a new required field breaks them only at run time.
-- Cookie sessions are read only through `auth_routes::request_session`.
+- Build workspace fixtures in web tests and e2e mocks with `testWorkspace(role)` (`src/test/workspace.ts`); its role table is generated from the server (`packages/api/src/generated/rolePermissions.ts`). Hand-written literals passed to `setQueryData` or `Response.json` are untyped, so a new required field breaks them only at run time.
+- Sessions (cookie or `Authorization: Bearer`) are read only through `auth_routes::request_session`.
+
+## One editor schema for every client of a Y.Doc
+- A page's Y.Doc is shared by the web, the mobile editor and the server's converter. An editor with any other schema
+  (a missing block, a different prop default, no comment mark) silently drops or rewrites nodes for everyone. Build
+  every editor from `createEditorSchemas` in `packages/editor` and pass only views; `packages/editor/src/schema.test.ts`
+  checks the result against `apps/server/src/collab/blocknote-schema.json`. Never PATCH `content` of a page from a client
+  that is not the collaborative editor: it replaces the live document (the old mobile "Add text" did, 2026-10-24).
+- Expo DOM components render in a web view whose `#root` is a flex row: give the component's root `flex: 1`, or it is
+  only as wide as its content. The Expo web target renders the component inline, so the preview does not show this;
+  check the exported bundle (`expo export --platform ios`, `www.bundle/*.html`) with a fake `window.ReactNativeWebView`.

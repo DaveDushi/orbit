@@ -1,3 +1,4 @@
+import type { LabelRecord } from '@orbit/api/generated/types.gen'
 import type { StatusCategory, TaskPriority, TaskStatusDef } from '@/features/tasks/api/models'
 
 /** Status categories (workflow stages). Every status belongs to one; the glyph shape comes from it. */
@@ -56,6 +57,51 @@ export function defaultStatusOf(statuses: TaskStatusDef[], projectId: string): T
  */
 export function statusKeyOf(status: TaskStatusDef): string {
   return `${status.category}:${status.name.trim().replace(/[A-Z]+/g, (letters) => letters.toLowerCase())}`
+}
+
+/**
+ * Labels belong to one project. Same-named labels (case-insensitive, ASCII-only like SQLite `lower()` in the server's
+ * label filter) of different projects share a key, so cross-project views can merge them.
+ */
+export function labelKeyOf(label: Pick<LabelRecord, 'name'>): string {
+  return label.name.trim().replace(/[A-Z]+/g, (letters) => letters.toLowerCase())
+}
+
+/** The labels of one project. */
+export function projectLabels(labels: LabelRecord[], projectId: string): LabelRecord[] {
+  return labels.filter((label) => label.project_id === projectId)
+}
+
+/**
+ * `labelIds` for a task in `projectId`: its own labels stay, and another project's label becomes the project's label
+ * with the same key, as when a task moves. A project can hold both "Bug" and "bug": the exact name wins.
+ */
+export function matchingLabelIds(labels: LabelRecord[], labelIds: string[], projectId: string): string[] {
+  const own = projectLabels(labels, projectId)
+  const kept = labelIds.filter((id) => own.some((label) => label.id === id))
+  const mapped = labels
+    .filter((label) => label.project_id !== projectId && labelIds.includes(label.id))
+    .flatMap((foreign) => {
+      const same = own.filter((label) => labelKeyOf(label) === labelKeyOf(foreign))
+      const match = same.find((label) => label.name === foreign.name) ?? same[0]
+      return match ? [match.id] : []
+    })
+  return [...new Set([...kept, ...mapped])]
+}
+
+/**
+ * One label per key, sorted by name, and each label id → its key's representative. The representative is the oldest
+ * label (UUIDv7 ids sort by creation): the label that saved views stored before labels were copied into every project.
+ */
+export function labelRepresentatives(labels: LabelRecord[]): { labels: LabelRecord[]; representativeOf: Map<string, string> } {
+  const byKey = new Map<string, LabelRecord>()
+  for (const label of labels) {
+    const key = labelKeyOf(label)
+    const current = byKey.get(key)
+    if (!current || label.id < current.id) byKey.set(key, label)
+  }
+  const representativeOf = new Map(labels.map((label) => [label.id, byKey.get(labelKeyOf(label))!.id]))
+  return { labels: [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name)), representativeOf }
 }
 
 export const PRIORITY_LABEL: Record<TaskPriority, string> = {

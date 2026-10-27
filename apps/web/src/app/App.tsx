@@ -16,14 +16,15 @@ import { DocsPage } from '@/features/docs/pages/DocsPage'
 import { AccountLayout, AdminLayout, SettingsLayout } from '@/features/settings/pages/SettingsLayout'
 import { AdminAuditPage } from '@/features/admin/pages/AdminAuditPage'
 import { AdminBackupsPage } from '@/features/admin/pages/AdminBackupsPage'
+import { AdminJobsPage } from '@/features/admin/pages/AdminJobsPage'
 import { AdminStoragePage } from '@/features/admin/pages/AdminStoragePage'
 import { AdminSettingsPage } from '@/features/admin/pages/AdminSettingsPage'
 import { AdminUsersPage } from '@/features/admin/pages/AdminUsersPage'
 import { GeneralPage } from '@/features/settings/pages/GeneralPage'
 import { GithubPage } from '@/features/settings/pages/GithubPage'
 import { EmojiPage } from '@/features/settings/pages/EmojiPage'
-import { LabelsPage } from '@/features/settings/pages/LabelsPage'
 import { DangerZonePage } from '@/features/settings/pages/DangerZonePage'
+import { BillingPage } from '@/features/settings/pages/BillingPage'
 import { MembersPage } from '@/features/settings/pages/MembersPage'
 import { SecurityPage } from '@/features/settings/pages/SecurityPage'
 import { SessionsPage } from '@/features/settings/pages/SessionsPage'
@@ -33,6 +34,7 @@ import { StoragePage } from '@/features/settings/pages/StoragePage'
 import { NotificationsPage } from '@/features/settings/pages/NotificationsPage'
 import { ApiTokensPage } from '@/features/settings/pages/ApiTokensPage'
 import { ProfilePage } from '@/features/profile/pages/ProfilePage'
+import { AppearancePage } from '@/features/profile/pages/AppearancePage'
 import { InboxPage } from '@/features/inbox/pages/InboxPage'
 import { AuthGate, GuestGate } from '@/features/auth/AuthGate'
 import { AcceptInvitationPage } from '@/features/auth/pages/AcceptInvitationPage'
@@ -109,6 +111,7 @@ export default function App() {
               <Route path="inbox" element={<MovedTo path="/activity" />} />
               <Route path="profile" element={<AccountLayout />}>
                 <Route index element={<ProfilePage />} />
+                <Route path="appearance" element={<AppearancePage />} />
                 <Route path="notifications" element={<NotificationsPage />} />
                 <Route path="security" element={<SecurityPage />} />
                 <Route path="sessions" element={<SessionsPage />} />
@@ -121,13 +124,16 @@ export default function App() {
                 <Route path="audit" element={<AdminAuditPage />} />
                 <Route path="storage" element={<AdminStoragePage />} />
                 <Route path="backups" element={<AdminBackupsPage />} />
+                <Route path="jobs" element={<AdminJobsPage />} />
               </Route>
               <Route path="settings" element={<SettingsLayout />}>
                 <Route index element={<GeneralPage />} />
-                <Route path="labels" element={<LabelsPage />} />
+                {/* labels belong to a project now: each project's settings has them */}
+                <Route path="labels" element={<Navigate to="/tasks" replace />} />
                 <Route path="emoji" element={<EmojiPage />} />
                 <Route path="stickers" element={<StickersPage />} />
                 <Route path="github" element={<GithubPage />} />
+                <Route path="billing" element={<BillingPage />} />
                 <Route path="danger-zone" element={<DangerZonePage />} />
                 <Route path="members" element={<MembersPage />} />
                 <Route path="invitations" element={<Navigate to="/settings/members" replace />} />

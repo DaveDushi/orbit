@@ -25,7 +25,7 @@ fn openapi_generation_is_byte_stable_and_covers_public_routes() {
 
     let document: serde_json::Value = serde_json::from_str(&first).unwrap();
     assert_eq!(document["info"]["version"], CONTRACT_ID);
-    assert_eq!(document["paths"].as_object().unwrap().len(), 184);
+    assert_eq!(document["paths"].as_object().unwrap().len(), 193);
     let operation_count: usize = document["paths"]
         .as_object()
         .unwrap()
@@ -40,10 +40,11 @@ fn openapi_generation_is_byte_stable_and_covers_public_routes() {
                 .count()
         })
         .sum();
-    assert_eq!(operation_count, 236);
+    assert_eq!(operation_count, 246);
     for path in [
         "/api/v1/setup/status",
         "/api/v1/auth/me",
+        "/api/v1/auth/socket-ticket",
         "/api/v1/admin/backups",
         "/api/v1/admin/users",
         "/api/v1/admin/users/{user_id}/recovery-link",
@@ -182,7 +183,12 @@ fn openapi_generation_is_byte_stable_and_covers_public_routes() {
             vec!["cursor", "limit"],
         ),
         (
-            "/api/v1/workspaces/{workspace_id}/labels/{label_id}",
+            "/api/v1/workspaces/{workspace_id}/projects/{project_id}/labels",
+            "get",
+            vec!["cursor", "limit"],
+        ),
+        (
+            "/api/v1/workspaces/{workspace_id}/projects/{project_id}/labels/{label_id}",
             "delete",
             vec!["expected_version"],
         ),

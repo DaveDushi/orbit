@@ -1,6 +1,7 @@
 import { useTaskTarget, useVirtualTaskRows } from '@/shortcuts/taskTarget'
 import { useCommand } from '@/shortcuts/useCommand'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useScrollMemory } from '@/lib/useScrollMemory'
 import { defaultRangeExtractor, useVirtualizer, type VirtualItem } from '@tanstack/react-virtual'
 import { Calendar, Copy, Danger, Flag, Hierarchy2, LinkBroken, Loader, Add as Plus, RecordCircle, TaskSquare as SquareCheck, Tag, UserAdd, Xmark as X } from 'reicon-react'
 import { cn } from 'cn'
@@ -21,8 +22,8 @@ import { PriorityIcon } from './PriorityIcon'
 import { PRIORITY_LABEL, PRIORITY_ORDER } from '@/features/tasks/taskMeta'
 import type { Project, Task, TaskStatusDef } from '@/features/tasks/api/models'
 import type { User } from '@/features/workspaces/models'
-import type { BulkItem, LabelRecord } from '@/api/generated/types.gen'
-import { assigneeToggleUpdates, dueUpdates, labelToggleUpdates, priorityUpdates, statusUpdates } from '@/features/tasks/bulkUpdates'
+import type { BulkItem, LabelRecord } from '@orbit/api/generated/types.gen'
+import { assigneeToggleUpdates, dueUpdates, everyTaskHasLabel, labelChoices, labelToggleUpdates, priorityUpdates, statusUpdates } from '@/features/tasks/bulkUpdates'
 import { BulkTaskLimitError, MAX_BULK_TASK_UPDATES, useBulkTasks } from '@/features/tasks/api/tasks'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import { DisclosureChevron, GroupIcon } from '@/features/views/components/GroupIcon'
@@ -165,11 +166,14 @@ export function TaskList({ tasks, users, labels, statuses, projects, display, gr
   const scroller = useRef<HTMLDivElement>(null)
   const content = useRef<HTMLDivElement>(null)
   const { keepId, onFocus } = useVirtualTaskRows(lines.flatMap((line) => (line.kind === 'row' ? [line.row.task.id] : [])))
+  const savedTop = useScrollMemory(scroller, 'task-list')
   // rows that stay in the DOM out of view: the dragged row (see `renderRow`) and the row with the focus
   const kept = lines.flatMap((line, index) => (line.kind === 'row' && (line.row.task.id === keepId || line.row.task.id === drag?.taskId) ? [index] : []))
   const virtualizer = useVirtualizer({
     count: lines.length,
     getScrollElement: () => scroller.current,
+    // the list mounts where it was left (back from a task)
+    initialOffset: savedTop,
     getItemKey: (index) => lines[index].key,
     estimateSize: (index) => LINE_HEIGHT[lines[index].kind],
     overscan: 10,
@@ -356,7 +360,8 @@ export function TaskList({ tasks, users, labels, statuses, projects, display, gr
         ref={scroller}
         data-slot="task-list"
         data-virtual-scroller
-        className="h-full overflow-y-auto"
+        // a row brought into view (keyboard) stops below the sticky group and sub-group headers
+        className={cn('h-full overflow-y-auto', display.group_by !== 'none' && (display.sub_group_by !== 'none' ? 'scroll-pt-[68px]' : 'scroll-pt-9'))}
         onFocus={onFocus}
       >
         <div ref={content} className="relative" style={{ height: virtualizer.getTotalSize() }}>
@@ -456,7 +461,7 @@ function BulkBar({
   const bulkStatus = (key: string | null) => mutate(statusUpdates(tasks, statuses, key))
   const bulkPriority = (priority: Task['priority']) => mutate(priorityUpdates(tasks, priority))
   const bulkAssign = (userId: string) => mutate(assigneeToggleUpdates(tasks, userId))
-  const bulkLabel = (labelId: string) => mutate(labelToggleUpdates(tasks, labelId))
+  const bulkLabel = (label: LabelRecord) => mutate(labelToggleUpdates(tasks, labels, label))
 
   // the picker starts from the shared due range, or empty when the selection disagrees
   const [first] = tasks
@@ -538,14 +543,11 @@ function BulkBar({
         <DropdownMenu>
           <DropdownMenuTrigger render={<BulkAction icon={<Tag aria-hidden />} label="Labels" />} />
           <DropdownMenuContent side="top" align="end" className="w-auto min-w-45">
-            {labels.map((label) => {
-              const everyone = tasks.every((t) => t.labels.includes(label.id))
-              return (
-                <DropdownMenuCheckboxItem key={label.id} checked={everyone} onCheckedChange={() => bulkLabel(label.id)}>
-                  <LabelPill label={label} />
-                </DropdownMenuCheckboxItem>
-              )
-            })}
+            {labelChoices(tasks, labels).map((label) => (
+              <DropdownMenuCheckboxItem key={label.id} checked={everyTaskHasLabel(tasks, labels, label)} onCheckedChange={() => bulkLabel(label)}>
+                <LabelPill label={label} />
+              </DropdownMenuCheckboxItem>
+            ))}
           </DropdownMenuContent>
         </DropdownMenu>
         <Popover open={dueOpen} onOpenChange={toggleDue}>

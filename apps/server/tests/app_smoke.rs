@@ -16,6 +16,7 @@ use tower::ServiceExt;
 fn app_config(root: &TempDir) -> Config {
     let mut config = Config {
         environment: EnvironmentMode::Development,
+        app_key: Some(orbit_platform::AppKey::new([1; 32])),
         ..Config::default()
     };
     config.data.database = root.path().join("data/orbit.sqlite");
@@ -58,7 +59,19 @@ async fn development_app_accepts_distinct_http_origins_but_still_requires_one() 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{origin}");
     }
 
-    let missing = app.router().oneshot(login_request(None)).await.unwrap();
+    // Native clients sign in without an Origin; other mutations still need one.
+    let native = app.router().oneshot(login_request(None)).await.unwrap();
+    assert_eq!(native.status(), StatusCode::UNAUTHORIZED);
+    let missing = app
+        .router()
+        .oneshot(
+            Request::post("/api/v1/auth/recovery/request")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"email":"owner@example.com"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(missing.status(), StatusCode::FORBIDDEN);
 }
 
@@ -192,7 +205,7 @@ async fn app_build_migrates_checks_readiness_and_returns_first_run_setup_url() {
             .scalar::<i64>("SELECT MAX(version) FROM schema_migrations")
             .await
             .unwrap(),
-        46
+        56
     );
 
     let readiness = app
@@ -231,6 +244,28 @@ async fn app_build_migrates_checks_readiness_and_returns_first_run_setup_url() {
     for response in futures_util::future::join_all(checks).await {
         assert_eq!(response.unwrap().status(), StatusCode::OK);
     }
+}
+
+#[tokio::test]
+async fn stays_ready_when_a_newer_release_migrates_the_database() {
+    let root = TempDir::new().unwrap();
+    let app = App::build(app_config(&root)).await.unwrap();
+    // During a rolling upgrade the first new server applies its migrations under the old ones.
+    app.database()
+        .execute(
+            "INSERT INTO schema_migrations (version, checksum, applied_at, app_version) \
+             VALUES (999, 'newer', 0, 'newer')",
+        )
+        .await
+        .unwrap();
+
+    let readiness = app
+        .router()
+        .oneshot(Request::get("/health/ready").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(readiness.status(), StatusCode::OK);
 }
 
 #[tokio::test]
@@ -642,6 +677,36 @@ async fn graceful_shutdown_stops_http_then_drains_production_services() {
     tokio::time::timeout(std::time::Duration::from_secs(5), server)
         .await
         .expect("production services drain promptly when idle")
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_stopping_server_fails_readiness_and_serves_during_the_delay() {
+    let root = TempDir::new().unwrap();
+    let mut config = app_config(&root);
+    config.http.shutdown_delay_seconds = 1;
+    let app = App::build(config).await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let shutdown = CancellationToken::new();
+    let trigger = shutdown.clone();
+    let server = tokio::spawn(app.serve(listener, shutdown));
+    let http = reqwest::Client::new();
+    let status = |path: &'static str| {
+        let request = http.get(format!("{base}{path}"));
+        async move { request.send().await.unwrap().status().as_u16() }
+    };
+    assert_eq!(status("/health/ready").await, 200);
+
+    trigger.cancel();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(status("/health/ready").await, 503);
+    assert_eq!(status("/health/live").await, 200, "still serving");
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), server)
+        .await
+        .expect("the server stops after the delay")
         .unwrap()
         .unwrap();
 }

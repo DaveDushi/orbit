@@ -1590,3 +1590,107 @@ fn request(token: Option<&str>, body: Value) -> Request<Body> {
 async fn response_json(response: axum::response::Response) -> Value {
     serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap()
 }
+
+#[tokio::test]
+async fn integrations_do_not_write_to_a_read_only_cloud_workspace() {
+    let fixture = fixture().await;
+    let key = [7u8; 32];
+    let state = IntegrationState::new(
+        Arc::new(fixture.tokens.clone()),
+        Arc::new(TaskRepository::new((*fixture.database).clone())),
+    )
+    .with_github_settings(
+        Arc::new(IdentityRepository::new((*fixture.database).clone())),
+        CookieMode::secure(),
+        "https://orbit.test".to_owned(),
+        false,
+        Some(key),
+    );
+    let app = integration_router(state).layer(HttpPlatformLayer::new(OriginPolicy::new(
+        "https://orbit.test",
+    )));
+    let workspace = fixture.workspace_id.to_string();
+    let pool = fixture.database.pool();
+    sqlx::query("INSERT INTO github_apps (workspace_id, app_id, slug, private_key_encrypted, webhook_secret_encrypted, created_at) VALUES ($1, 77, 'orbit-test', $2, $3, 0)")
+        .bind(&workspace)
+        .bind(encrypt_for_test(&key, "private-key"))
+        .bind(encrypt_for_test(&key, "hook-secret"))
+        .execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO github_installations (installation_id, workspace_id, account_login) VALUES (1234, $1, 'acme')")
+        .bind(&workspace).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO github_project_connections (project_id, workspace_id, installation_id, repository, label) VALUES ($1, $2, 1234, 'acme/repo', 'Orbit')")
+        .bind(fixture.project_id.to_string()).bind(&workspace).execute(pool).await.unwrap();
+    let discord = fixture
+        .tokens
+        .create(
+            fixture.workspace_id,
+            fixture.user_id,
+            "Discord".to_owned(),
+            vec![fixture.project_id],
+            true,
+            true,
+            true,
+            None,
+            "create-token",
+            TimestampMillis::now(),
+        )
+        .await
+        .unwrap();
+    let issue = |number: i64| {
+        json!({"action":"opened","installation":{"id":1234,"app_id":77},"repository":{"full_name":"acme/repo"},
+            "issue":{"number":number,"title":"GitHub task","body":"","state":"open","labels":[{"name":"Orbit"}]}})
+    };
+    let tasks = || async {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tasks WHERE workspace_id = $1")
+            .bind(fixture.workspace_id.to_string())
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap()
+    };
+    let before = tasks().await;
+
+    // Orbit Cloud, no subscription: the workspace is read-only.
+    let _billing = orbit_server::billing::Billing::new(
+        orbit_platform::BillingConfig::new(
+            orbit_platform::Secret::new("sk_test_unused"),
+            orbit_platform::Secret::new("whsec_unused"),
+            vec![],
+        ),
+        (*fixture.database).clone(),
+        "https://orbit.test",
+    );
+    let dropped = app
+        .clone()
+        .oneshot(github_request("issues", issue(1), true))
+        .await
+        .unwrap();
+    assert_eq!(
+        dropped.status(),
+        StatusCode::ACCEPTED,
+        "GitHub gets a 2xx, so it keeps the hook"
+    );
+    let refused = app
+        .clone()
+        .oneshot(request(Some(&discord.token), valid_body("read-only")))
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::PAYMENT_REQUIRED);
+    assert_eq!(response_json(refused).await["code"], "workspace_read_only");
+    assert_eq!(tasks().await, before, "nothing was written");
+
+    sqlx::query("INSERT INTO workspace_subscriptions (workspace_id, stripe_customer_id, status, updated_at) VALUES ($1, 'cus_test', 'active', 0)")
+        .bind(&workspace).execute(pool).await.unwrap();
+    let synced = app
+        .clone()
+        .oneshot(github_request("issues", issue(2), true))
+        .await
+        .unwrap();
+    assert_eq!(synced.status(), StatusCode::OK);
+    let created = app
+        .clone()
+        .oneshot(request(Some(&discord.token), valid_body("subscribed")))
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+    assert_eq!(tasks().await, before + 2);
+}

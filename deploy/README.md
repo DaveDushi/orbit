@@ -6,9 +6,11 @@ Requirements: Docker Compose, a DNS hostname pointing to this host, and inbound 
 
 ```sh
 cp deploy/.env.example deploy/.env
-# Edit ORBIT_DOMAIN in deploy/.env. Do not include https://.
+# Edit deploy/.env: set ORBIT_DOMAIN (without https://) and ORBIT_APP_KEY (openssl rand -base64 32).
 docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --build
 ```
+
+Orbit reads its configuration only from `ORBIT_*` environment variables. The image sets production mode, the bind address, the data paths and `ORBIT_TRUSTED_PROXIES=0.0.0.0/0,::/0`. A container needs only `ORBIT_PUBLIC_ORIGIN` and `ORBIT_APP_KEY`. The image trusts forwarding headers from every address, so only the reverse proxy may reach port 8080. If anything else can reach it, set `ORBIT_TRUSTED_PROXIES` to the proxy network. To use Postgres, also set `ORBIT_DATABASE_URL`. Keep a copy of `ORBIT_APP_KEY` outside the server: without it, Orbit cannot read the secrets it saved. For all variables, see [Configuration](../docs/operations.md#configuration).
 
 The application port is not published. Only Caddy can reach it through the deployment network. Caddy forwards WebSocket upgrades automatically. The application runs as UID 65532 with a read-only root filesystem and separate named volumes for SQLite/attachments and backups.
 
@@ -35,37 +37,45 @@ chmod +x orbit
 ./orbit --help
 ```
 
-Copy `config/orbit.example.toml` to your deployment configuration, set your origin/proxy and writable storage paths, then run:
+Set the [`ORBIT_*` environment variables](../docs/operations.md#configuration) for the environment, the origin, the trusted proxies and the writable storage paths, then run:
 
 ```sh
-./orbit --config /etc/orbit/orbit.toml config check
-./orbit --config /etc/orbit/orbit.toml serve
+(umask 077 && openssl rand -base64 32 > /etc/orbit/app-key)  # once; keep a copy of this file off the server
+export ORBIT_ENV=production \
+  ORBIT_PUBLIC_ORIGIN=https://orbit.example.com \
+  ORBIT_TRUSTED_PROXIES=127.0.0.1/32,::1/128 \
+  ORBIT_APP_KEY_FILE=/etc/orbit/app-key \
+  ORBIT_DATABASE_PATH=/var/lib/orbit/orbit.sqlite \
+  ORBIT_ATTACHMENTS_PATH=/var/lib/orbit/attachments \
+  ORBIT_BACKUPS_PATH=/var/backups/orbit
+./orbit config check
+./orbit serve
 ```
 
 Run under an unprivileged service account and an HTTPS reverse proxy. The binary architecture matches the Docker build platform. The latest commit on `main` publishes one image manifest for `linux/amd64` and `linux/arm64` to `ghcr.io/<owner>/<repository>:<seven-character-commit-sha>`. A newer commit cancels an older image build. Each image is built and smoke-tested on a native runner; the image workflow does not use QEMU. The workflow does not create GitHub Releases or downloadable binaries. Local builds do not publish anything.
 
 ## Backups and upgrades
 
-Backups are created manually from Orbit Settings while Orbit runs. Snapshot retention keeps up to 24 snapshots from the last day, plus seven daily and four weekly buckets when enough backups exist. A backup volume on the same machine is not disaster recovery: copy it off-host, protect access, and regularly test restore into separate storage.
+Backups are created from **Admin → Backups** while Orbit runs, or automatically (hourly or daily) when the root user turns that on in **Admin → Storage**; with backups in S3 they are uploaded to the bucket. Snapshot retention keeps up to 24 snapshots from the last day, plus seven daily and four weekly buckets when enough backups exist. A backup volume on the same machine is not disaster recovery: copy it off-host, protect access, and regularly test restore into separate storage.
 
-The running server owns the database, so the CLI `backup create` works only while the app is stopped. `backup list` works at any time.
+On SQLite the running server owns the database file, so the CLI `backup create` works only while the app is stopped. On Postgres (`ORBIT_DATABASE_URL`) it also works while servers run. `backup list` works at any time.
 
 ```sh
 docker compose --env-file deploy/.env -f deploy/compose.yaml stop orbit
 docker compose --env-file deploy/.env -f deploy/compose.yaml run --rm orbit backup create
 docker compose --env-file deploy/.env -f deploy/compose.yaml start orbit
-docker compose --env-file deploy/.env -f deploy/compose.yaml exec orbit /orbit --config /etc/orbit/orbit.toml backup list
+docker compose --env-file deploy/.env -f deploy/compose.yaml exec orbit /orbit backup list
 ```
 
-Before upgrading, create and verify a backup. Keep the old image and matching backup; older binaries reject newer database schemas. Never run two app processes against one database. Stop the app before restoring. See [operations](../docs/operations.md) and [restore commands](../.ai/DEVELOPMENT.md#migration-backup-and-restore).
+Before upgrading, create and verify a backup. Keep the old image and matching backup; older binaries reject newer database schemas. On SQLite, never run two app processes against one database. On Postgres several servers can share one database; see [Orbit Cloud](../docs/operations.md#orbit-cloud-one-postgres-several-orbit-servers). Stop every app process before restoring. See [operations](../docs/operations.md) and [restore commands](../.ai/DEVELOPMENT.md#migration-backup-and-restore).
 
 ## Live task collaboration
 
-Each tab opens a session-authenticated WebSocket for its active workspace. Every successful workspace audit mutation records a notification in the same SQLite transaction. The server coalesces ordered invalidations to a high-water sequence and checks for new events every second. No resource content is sent over the socket; clients refresh through authorized HTTP endpoints.
+Each tab opens a session-authenticated WebSocket for its active workspace. Every successful workspace audit mutation records a notification in the same database transaction. The server coalesces ordered invalidations to a high-water sequence and checks for new events every second. No resource content is sent over the socket; clients refresh through authorized HTTP endpoints.
 
-Reconnects resume from the last successfully refreshed sequence. Missing, expired, or invalid cursors trigger a full workspace refresh. Event retention is seven days; persistent counters never reset when old events are pruned. Revoked/expired sessions, suspended users, and removed memberships are checked before delivery and at least once per second. This is not collaborative text merging or presence/typing.
+Reconnects resume from the last successfully refreshed sequence. Missing, expired, or invalid cursors trigger a full workspace refresh. Event retention is seven days; persistent counters never reset when old events are pruned. Revoked/expired sessions, suspended users, and removed memberships are checked before delivery and at least once per second. Chat, presence and typing use the separate live socket, and page co-editing its own socket per page.
 
-Focused text drafts and in-flight writes defer remote refresh until editing finishes. Version conflicts use the existing conflict flow rather than silently overwriting another user's write. A connection banner appears while live updates are unavailable; reconnection uses capped backoff. Invitation/recovery links are shared manually; SMTP is not required.
+Focused text drafts and in-flight writes defer remote refresh until editing finishes. Version conflicts use the existing conflict flow rather than silently overwriting another user's write. A connection banner appears while live updates are unavailable; reconnection uses capped backoff. Without SMTP (Admin → Settings → Email), invitation and recovery links are shared manually.
 
 ## Acceptance checks
 

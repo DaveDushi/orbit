@@ -85,6 +85,7 @@ impl OriginPolicy {
             uri.path(),
             "/api/v1/integrations/discord/events"
                 | "/api/v1/integrations/github/webhook"
+                | "/api/v1/billing/stripe/webhook"
                 | "/oauth/register"
                 | "/oauth/token"
                 | "/oauth/revoke"
@@ -99,11 +100,26 @@ impl OriginPolicy {
             return true;
         }
 
+        if is_ticket_socket(method, uri, headers) {
+            return true;
+        }
+
         let mut origins = headers.get_all(axum::http::header::ORIGIN).iter();
         let Some(origin) = origins.next() else {
-            // MCP clients use bearer credentials, not browser session cookies.
+            // Browsers send Origin on every POST and WebSocket upgrade, so a request without one
+            // is not a browser. Without cookies it carries no ambient authority to forge: MCP
+            // clients and native apps send a bearer secret, and native sign-in sends a password.
             // Present Origins still follow the normal policy and SDK validation.
-            return uri.path() == "/mcp";
+            if uri.path() == "/mcp" {
+                return true;
+            }
+            return !headers.contains_key(axum::http::header::COOKIE)
+                && (bearer_token(headers).is_some()
+                    || (*method == Method::POST
+                        && matches!(
+                            uri.path(),
+                            "/api/v1/auth/login" | "/api/v1/auth/login/two-factor"
+                        )));
         };
         origins.next().is_none()
             && origin.to_str().ok().is_some_and(|origin| {
@@ -114,6 +130,36 @@ impl OriginPolicy {
                 }
             })
     }
+}
+
+/// A co-editing socket opened with a socket ticket and no cookie, from any or no Origin: a
+/// browser socket in a native app's WebView sends the WebView's Origin and cannot send the
+/// session. The ticket is a short-lived secret the page obtained with the session, so the
+/// request carries no ambient authority to forge; the socket verifies it.
+fn is_ticket_socket(method: &Method, uri: &Uri, headers: &HeaderMap) -> bool {
+    *method == Method::GET
+        && headers.contains_key(axum::http::header::UPGRADE)
+        && !headers.contains_key(axum::http::header::COOKIE)
+        && uri.path().ends_with("/collab")
+        && uri
+            .query()
+            .is_some_and(|query| query.split('&').any(|pair| pair.starts_with("ticket=")))
+}
+
+/// The token of the request's single `Authorization: Bearer` header. `None` when the header is
+/// missing, repeated, of another scheme, or its token is empty or contains whitespace.
+#[must_use]
+pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    let mut values = headers.get_all(axum::http::header::AUTHORIZATION).iter();
+    let value = values.next()?;
+    if values.next().is_some() {
+        return None;
+    }
+    let (scheme, token) = value.to_str().ok()?.split_once(' ')?;
+    (scheme.eq_ignore_ascii_case("bearer")
+        && !token.is_empty()
+        && !token.chars().any(char::is_whitespace))
+    .then_some(token)
 }
 
 pub(crate) struct RequestSecurity {
@@ -258,4 +304,163 @@ fn is_valid_http_origin(origin: &str) -> bool {
         })
         && uri.path() == "/"
         && uri.query().is_none()
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::header::{AUTHORIZATION, COOKIE, ORIGIN, UPGRADE};
+    use axum::http::{HeaderMap, Method, Uri};
+
+    use super::{OriginPolicy, bearer_token};
+
+    fn permits(method: Method, path: &str, headers: &[(axum::http::HeaderName, &str)]) -> bool {
+        let mut map = HeaderMap::new();
+        for (name, value) in headers {
+            map.append(name, value.parse().unwrap());
+        }
+        OriginPolicy::new("https://orbit.test").permits(
+            &method,
+            &path.parse::<Uri>().unwrap(),
+            &map,
+        )
+    }
+
+    const TASKS: &str = "/api/v1/workspaces/w/tasks";
+
+    #[test]
+    fn bearer_without_origin_or_cookie_is_allowed() {
+        assert!(permits(
+            Method::POST,
+            TASKS,
+            &[(AUTHORIZATION, "Bearer secret")]
+        ));
+        assert!(permits(
+            Method::GET,
+            "/api/v1/live",
+            &[(AUTHORIZATION, "bearer secret"), (UPGRADE, "websocket")]
+        ));
+    }
+
+    #[test]
+    fn bearer_without_origin_but_with_a_cookie_is_rejected() {
+        assert!(!permits(
+            Method::POST,
+            TASKS,
+            &[
+                (AUTHORIZATION, "Bearer secret"),
+                (COOKIE, "__Host-orbit_session=s")
+            ]
+        ));
+    }
+
+    #[test]
+    fn bearer_with_a_foreign_origin_is_rejected() {
+        assert!(!permits(
+            Method::POST,
+            TASKS,
+            &[
+                (AUTHORIZATION, "Bearer secret"),
+                (ORIGIN, "https://evil.example")
+            ]
+        ));
+    }
+
+    #[test]
+    fn native_sign_in_without_origin_or_cookie_is_allowed() {
+        assert!(permits(Method::POST, "/api/v1/auth/login", &[]));
+        assert!(permits(Method::POST, "/api/v1/auth/login/two-factor", &[]));
+        assert!(!permits(
+            Method::POST,
+            "/api/v1/auth/login",
+            &[(COOKIE, "__Host-orbit_session=s")]
+        ));
+    }
+
+    #[test]
+    fn other_mutations_without_origin_are_rejected() {
+        assert!(!permits(Method::POST, "/api/v1/auth/recovery/request", &[]));
+        assert!(!permits(
+            Method::POST,
+            TASKS,
+            &[(AUTHORIZATION, "Basic abc")]
+        ));
+    }
+
+    const COLLAB: &str = "/api/v1/workspaces/w/pages/p/collab?v=1&epoch=e&ticket=t";
+
+    #[test]
+    fn ticket_sockets_are_allowed_from_any_or_no_origin_without_a_cookie() {
+        for origin in [None, Some("null"), Some("https://evil.example")] {
+            let mut headers = vec![(UPGRADE, "websocket")];
+            headers.extend(origin.map(|origin| (ORIGIN, origin)));
+            assert!(permits(Method::GET, COLLAB, &headers), "{origin:?}");
+        }
+        assert!(permits(
+            Method::GET,
+            "/api/v1/workspaces/w/tasks/t/collab?ticket=t&v=1",
+            &[(UPGRADE, "websocket"), (ORIGIN, "file://")]
+        ));
+    }
+
+    #[test]
+    fn ticket_sockets_keep_the_origin_rules_otherwise() {
+        let foreign = (ORIGIN, "https://evil.example");
+        let upgrade = (UPGRADE, "websocket");
+        // With a cookie.
+        assert!(!permits(
+            Method::GET,
+            COLLAB,
+            &[
+                upgrade.clone(),
+                foreign.clone(),
+                (COOKIE, "orbit_session=s")
+            ]
+        ));
+        // Without a ticket, or with a lookalike parameter.
+        for path in [
+            "/api/v1/workspaces/w/pages/p/collab?v=1&epoch=e",
+            "/api/v1/workspaces/w/pages/p/collab?v=1&xticket=t",
+            "/api/v1/workspaces/w/pages/p/collab",
+        ] {
+            assert!(
+                !permits(Method::GET, path, &[upgrade.clone(), foreign.clone()]),
+                "{path}"
+            );
+        }
+        // Another socket or a plain request.
+        assert!(!permits(
+            Method::GET,
+            "/api/v1/live?ticket=t",
+            &[upgrade.clone(), foreign.clone()]
+        ));
+        assert!(!permits(
+            Method::GET,
+            "/api/v1/workspaces/w/pages/p/collab/x?ticket=t",
+            &[upgrade.clone(), foreign.clone()]
+        ));
+        assert!(!permits(
+            Method::POST,
+            COLLAB,
+            &[(ORIGIN, "https://evil.example")]
+        ));
+        assert!(!permits(Method::POST, COLLAB, &[upgrade, foreign]));
+    }
+
+    #[test]
+    fn bearer_token_takes_exactly_one_well_formed_header() {
+        let headers = |values: &[&str]| {
+            let mut map = HeaderMap::new();
+            for value in values {
+                map.append(AUTHORIZATION, value.parse().unwrap());
+            }
+            map
+        };
+        assert_eq!(bearer_token(&headers(&["Bearer abc"])), Some("abc"));
+        assert_eq!(bearer_token(&headers(&["BEARER abc"])), Some("abc"));
+        assert_eq!(bearer_token(&headers(&["Bearer "])), None);
+        assert_eq!(bearer_token(&headers(&["Bearer a b"])), None);
+        assert_eq!(bearer_token(&headers(&["Basic abc"])), None);
+        assert_eq!(bearer_token(&headers(&["Bearer abc", "Bearer abc"])), None);
+        assert_eq!(bearer_token(&headers(&[])), None);
+    }
 }

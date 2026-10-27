@@ -497,7 +497,10 @@ async fn members_can_crud_all_task_area_resources_and_unknown_fields_are_rejecte
         .clone()
         .oneshot(json_request(
             "POST",
-            &format!("/api/v1/workspaces/{}/labels", fixture.workspace_id),
+            &format!(
+                "/api/v1/workspaces/{}/projects/{}/labels",
+                fixture.workspace_id, fixture.project_id
+            ),
             &member_cookie,
             json!({"name":"bug", "color":"#ff0000"}),
         ))
@@ -615,8 +618,9 @@ async fn members_can_crud_all_task_area_resources_and_unknown_fields_are_rejecte
         .oneshot(cookie_request(
             "DELETE",
             &format!(
-                "/api/v1/workspaces/{}/labels/{}?expected_version=0",
+                "/api/v1/workspaces/{}/projects/{}/labels/{}?expected_version=0",
                 fixture.workspace_id,
+                fixture.project_id,
                 label["id"].as_str().unwrap()
             ),
             &member_cookie,
@@ -1618,7 +1622,10 @@ async fn parent_side_scope_changes_are_rejected_by_the_database() {
             .clone()
             .oneshot(json_request(
                 "POST",
-                &format!("/api/v1/workspaces/{}/labels", fixture.workspace_id),
+                &format!(
+                    "/api/v1/workspaces/{}/projects/{}/labels",
+                    fixture.workspace_id, fixture.project_id
+                ),
                 &fixture.owner_cookie,
                 json!({"name":"scope", "color":"#112233"}),
             ))
@@ -3992,7 +3999,10 @@ async fn legacy_list_parameters_keep_their_results() {
     let (status, label) = call(
         &fixture,
         "POST",
-        &format!("/api/v1/workspaces/{}/labels", fixture.workspace_id),
+        &format!(
+            "/api/v1/workspaces/{}/projects/{}/labels",
+            fixture.workspace_id, fixture.project_id
+        ),
         Some(json!({"name": "bug", "color": "#ff0000"})),
     )
     .await;
@@ -4144,6 +4154,7 @@ fn filter_task(project: Id, status: Id, title: &str) -> CreateTask {
         status_id: status,
         title: title.to_owned(),
         description: String::new(),
+        description_json: None,
         source_url: None,
         priority: "none".to_owned(),
         position: None,
@@ -4189,6 +4200,7 @@ async fn filter_data() -> FilterData {
     let bug = repo
         .create_label(
             workspace,
+            project,
             owner,
             "bug".to_owned(),
             "#ff0000".to_owned(),
@@ -4201,6 +4213,7 @@ async fn filter_data() -> FilterData {
     let ui = repo
         .create_label(
             workspace,
+            project,
             owner,
             "ui".to_owned(),
             "#00ff00".to_owned(),
@@ -6826,4 +6839,524 @@ async fn moving_a_task_between_projects_maps_its_status_and_renumbers_it() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn labels_belong_to_one_project() {
+    let fixture = Fixture::new().await;
+    let other = create_project(&fixture, "LBL").await;
+    let other_status = status_id_by_category(&fixture, &other, "unstarted").await;
+    let labels_uri = |project: &str| {
+        format!(
+            "/api/v1/workspaces/{}/projects/{project}/labels",
+            fixture.workspace_id
+        )
+    };
+    let label = |project: String, name: &'static str| {
+        let fixture = &fixture;
+        let uri = labels_uri(&project);
+        async move {
+            let (status, label) = call(
+                fixture,
+                "POST",
+                &uri,
+                Some(json!({"name": name, "color": "#ff0000"})),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CREATED);
+            assert_eq!(label["project_id"], project);
+            id_of(&label).to_owned()
+        }
+    };
+    let bug = label(fixture.project_id.clone(), "Bug").await;
+    let docs = label(fixture.project_id.clone(), "Docs").await;
+    let other_bug = label(other.clone(), "bug").await;
+
+    // A name is unique within a project; each project lists only its own labels.
+    let (status, _) = call(
+        &fixture,
+        "POST",
+        &labels_uri(&fixture.project_id),
+        Some(json!({"name": "Bug", "color": "#00ff00"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let (_, listed) = call(&fixture, "GET", &labels_uri(&other), None).await;
+    assert_eq!(listed["items"].as_array().unwrap().len(), 1);
+    assert_eq!(id_of(&listed["items"][0]), other_bug);
+    let (_, all) = call(
+        &fixture,
+        "GET",
+        &format!("/api/v1/workspaces/{}/labels", fixture.workspace_id),
+        None,
+    )
+    .await;
+    assert_eq!(all["items"].as_array().unwrap().len(), 3);
+    let (status, _) = call(
+        &fixture,
+        "DELETE",
+        &format!("{}/{bug}?expected_version=0", labels_uri(&other)),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // A task takes only the labels of its project.
+    let tasks_uri = format!("/api/v1/workspaces/{}/tasks", fixture.workspace_id);
+    let (status, _) = call(
+        &fixture,
+        "POST",
+        &tasks_uri,
+        Some(json!({"project_id": other, "status_id": other_status, "title": "Wrong", "label_ids": [bug]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let mut created = Vec::new();
+    for (title, labels) in [("Moved", json!([bug, docs])), ("Stays", json!([bug]))] {
+        let (status, task) = call(
+            &fixture,
+            "POST",
+            &tasks_uri,
+            Some(json!({"project_id": fixture.project_id, "status_id": fixture.status_id, "title": title, "label_ids": labels})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        created.push(task);
+    }
+
+    // A moved task keeps the labels whose name the target project has (case-insensitive).
+    let (status, moved) = call(
+        &fixture,
+        "PATCH",
+        &task_uri(&fixture, id_of(&created[0])),
+        Some(json!({"expected_version": created[0]["version"], "project_id": other})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(moved["label_ids"], json!([other_bug]));
+
+    // Label filters match by name, so one project's label finds the same name everywhere.
+    let label_query = |operator: &str, labels: Value| {
+        query_body(
+            json!({"op": "and", "children": [{"field": "label", "operator": operator, "value": labels}]}),
+            "title",
+            "asc",
+            "all",
+        )
+    };
+    let (status, any) = call(
+        &fixture,
+        "POST",
+        &query_uri(&fixture),
+        Some(label_query("includes_any", json!([bug]))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(query_titles(&any), ["Moved", "Stays"]);
+    let (_, both) = call(
+        &fixture,
+        "POST",
+        &query_uri(&fixture),
+        Some(label_query("includes_all", json!([other_bug, bug]))),
+    )
+    .await;
+    assert_eq!(query_titles(&both), ["Moved", "Stays"]);
+    let (_, excluded) = call(
+        &fixture,
+        "POST",
+        &query_uri(&fixture),
+        Some(label_query("excludes", json!([other_bug]))),
+    )
+    .await;
+    assert_eq!(query_titles(&excluded), Vec::<String>::new());
+    // Views also store label keys (the name), which match case-insensitively.
+    let (_, keyed) = call(
+        &fixture,
+        "POST",
+        &query_uri(&fixture),
+        Some(label_query("includes_all", json!(["BUG", bug]))),
+    )
+    .await;
+    assert_eq!(query_titles(&keyed), ["Moved", "Stays"]);
+    let (_, unknown) = call(
+        &fixture,
+        "POST",
+        &query_uri(&fixture),
+        Some(label_query("includes_all", json!(["bug", "nothing"]))),
+    )
+    .await;
+    assert_eq!(query_titles(&unknown), Vec::<String>::new());
+
+    // Views across projects see no labels of trashed projects.
+    let trashed = create_project(&fixture, "TRS").await;
+    label(trashed.clone(), "Old").await;
+    let (status, _) = call(
+        &fixture,
+        "DELETE",
+        &format!(
+            "/api/v1/workspaces/{}/projects/{trashed}?expected_version=0",
+            fixture.workspace_id
+        ),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, all) = call(
+        &fixture,
+        "GET",
+        &format!("/api/v1/workspaces/{}/labels", fixture.workspace_id),
+        None,
+    )
+    .await;
+    assert_eq!(all["items"].as_array().unwrap().len(), 3);
+
+    // A stale label edit points the client at the project's labels.
+    let (status, conflict) = call(
+        &fixture,
+        "PATCH",
+        &format!("{}/{other_bug}", labels_uri(&other)),
+        Some(json!({"name": "bug", "color": "#ff0000", "expected_version": 9})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(
+        conflict["conflict"]["refresh"]
+            .as_str()
+            .unwrap()
+            .ends_with(&format!("/projects/{other}/labels")),
+        "{conflict}"
+    );
+
+    // A label id saved before labels were per project keeps the name it had then, so renaming
+    // the copy that kept it changes no view. Values are trimmed.
+    let legacy = Id::new_v7().to_string();
+    sqlx::query(
+        "INSERT INTO label_name_aliases (label_id, workspace_id, name) VALUES ($1, $2, 'BUG')",
+    )
+    .bind(&legacy)
+    .bind(&fixture.workspace_id)
+    .execute(fixture.database.pool())
+    .await
+    .unwrap();
+    for value in [json!([legacy]), json!(["  Bug "])] {
+        let (_, found) = call(
+            &fixture,
+            "POST",
+            &query_uri(&fixture),
+            Some(label_query("includes_any", value)),
+        )
+        .await;
+        assert_eq!(query_titles(&found), ["Moved", "Stays"]);
+    }
+
+    // A project with both "Bug" and "bug": a moved "Bug" takes the exact name only.
+    let exact = label(other.clone(), "Bug").await;
+    let (_, stays) = call(
+        &fixture,
+        "GET",
+        &task_uri(&fixture, id_of(&created[1])),
+        None,
+    )
+    .await;
+    let (status, moved) = call(
+        &fixture,
+        "PATCH",
+        &task_uri(&fixture, id_of(&created[1])),
+        Some(json!({"expected_version": stays["version"], "project_id": other})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(moved["label_ids"], json!([exact]));
+}
+
+#[tokio::test]
+async fn create_with_description_json_writes_markdown_copy() {
+    let fixture = Fixture::new().await;
+    let response = fixture
+        .app
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            &format!("/api/v1/workspaces/{}/tasks", fixture.workspace_id),
+            &fixture.owner_cookie,
+            json!({
+                "project_id": fixture.project_id,
+                "status_id": fixture.status_id,
+                "title": "Rich",
+                "description_json": [
+                    {"type": "paragraph", "content": [{"type": "text", "text": "Hi", "styles": {"bold": true}}]}
+                ],
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let task = response_json(response).await;
+    assert_eq!(task["description"], "**Hi**\n");
+    assert_eq!(task["description_json"][0]["content"][0]["text"], "Hi");
+}
+
+#[tokio::test]
+async fn update_with_both_description_fields_is_rejected() {
+    let fixture = Fixture::new().await;
+    let task = fixture.create_task("Both").await;
+    let response = fixture
+        .app
+        .clone()
+        .oneshot(json_request(
+            "PATCH",
+            &format!(
+                "/api/v1/workspaces/{}/tasks/{}",
+                fixture.workspace_id,
+                task["id"].as_str().unwrap()
+            ),
+            &fixture.owner_cookie,
+            json!({
+                "expected_version": task["version"],
+                "description": "a",
+                "description_json": [],
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn update_with_description_json_writes_markdown_copy() {
+    let fixture = Fixture::new().await;
+    let task = fixture.create_task("Json").await;
+    let response = fixture
+        .app
+        .clone()
+        .oneshot(json_request(
+            "PATCH",
+            &format!(
+                "/api/v1/workspaces/{}/tasks/{}",
+                fixture.workspace_id,
+                task["id"].as_str().unwrap()
+            ),
+            &fixture.owner_cookie,
+            json!({
+                "expected_version": task["version"],
+                "description_json": [
+                    {"type": "heading", "props": {"level": 2}, "content": [{"type": "text", "text": "Plan", "styles": {}}]},
+                    {"type": "page", "props": {"pageId": "0199a0b0-0000-7000-8000-000000000001"}}
+                ],
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let task = response_json(response).await;
+    assert_eq!(task["description"], "## Plan\n");
+    assert_eq!(
+        task["description_json"].as_array().unwrap().len(),
+        1,
+        "no page blocks in tasks"
+    );
+}
+
+async fn post_comment(fixture: &Fixture, task: &Value, body: Value) -> (StatusCode, Value) {
+    let response = fixture
+        .app
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            &format!(
+                "/api/v1/workspaces/{}/tasks/{}/comments",
+                fixture.workspace_id,
+                task["id"].as_str().unwrap()
+            ),
+            &fixture.owner_cookie,
+            body,
+        ))
+        .await
+        .unwrap();
+    (response.status(), response_json(response).await)
+}
+
+async fn comment_mentions(fixture: &Fixture, recipient: Id) -> i64 {
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM notifications WHERE recipient_user_id = $1 AND kind = 'comment_mentioned'",
+    )
+    .bind(recipient.to_string())
+    .fetch_one(fixture.database.pool())
+    .await
+    .unwrap()
+}
+
+fn mention(user: Id) -> Value {
+    json!({"type": "mention", "props": {"userId": user.to_string(), "name": "Member"}})
+}
+
+#[tokio::test]
+async fn comment_body_json_writes_markdown_and_mentions() {
+    let fixture = Fixture::new().await;
+    let task = fixture.create_task("Comments").await;
+    let (member, _) = add_member(&fixture, "mention@example.com").await;
+    let (other, _) = add_member(&fixture, "other@example.com").await;
+    let (status, comment) = post_comment(
+        &fixture,
+        &task,
+        json!({
+            "body_json": [{"type": "paragraph", "content": [
+                {"type": "text", "text": "Hi ", "styles": {}}, mention(member)
+            ]}],
+            "mentioned_user_ids": [other.to_string()],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{comment}");
+    assert_eq!(comment["body"], "Hi @Member\n");
+    assert_eq!(comment["body_json"][0]["content"][1]["type"], "mention");
+    assert_eq!(comment_mentions(&fixture, member).await, 1);
+    assert_eq!(
+        comment_mentions(&fixture, other).await,
+        0,
+        "client ids are ignored"
+    );
+}
+
+#[tokio::test]
+async fn image_only_comment_is_valid() {
+    let fixture = Fixture::new().await;
+    let task = fixture.create_task("Image").await;
+    let url = format!(
+        "/api/v1/workspaces/{}/tasks/{}/attachments/{}/download",
+        fixture.workspace_id,
+        task["id"].as_str().unwrap(),
+        Id::new_v7()
+    );
+    let (status, comment) = post_comment(
+        &fixture,
+        &task,
+        json!({"body_json": [{"type": "image", "props": {"url": url, "caption": "shot"}}]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{comment}");
+    assert!(
+        comment["body"].as_str().unwrap().contains("!["),
+        "{comment}"
+    );
+}
+
+#[tokio::test]
+async fn empty_body_json_is_rejected() {
+    let fixture = Fixture::new().await;
+    let task = fixture.create_task("Empty").await;
+    let (status, _) = post_comment(
+        &fixture,
+        &task,
+        json!({"body_json": [{"type": "paragraph", "content": [{"type": "text", "text": "  ", "styles": {}}]}]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn edit_notifies_only_new_mentions() {
+    let fixture = Fixture::new().await;
+    let task = fixture.create_task("Edit").await;
+    let (first, _) = add_member(&fixture, "first@example.com").await;
+    let (second, _) = add_member(&fixture, "second@example.com").await;
+    let (status, comment) = post_comment(
+        &fixture,
+        &task,
+        json!({"body_json": [{"type": "paragraph", "content": [mention(first)]}]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{comment}");
+    let response = fixture
+        .app
+        .clone()
+        .oneshot(json_request(
+            "PATCH",
+            &format!(
+                "/api/v1/workspaces/{}/tasks/{}/comments/{}",
+                fixture.workspace_id,
+                task["id"].as_str().unwrap(),
+                comment["id"].as_str().unwrap()
+            ),
+            &fixture.owner_cookie,
+            json!({
+                "expected_version": 0,
+                "body_json": [{"type": "paragraph", "content": [mention(first), mention(second)]}],
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(comment_mentions(&fixture, first).await, 1);
+    assert_eq!(comment_mentions(&fixture, second).await, 1);
+}
+
+#[tokio::test]
+async fn markdown_comment_body_still_works() {
+    let fixture = Fixture::new().await;
+    let task = fixture.create_task("Markdown").await;
+    let (status, comment) = post_comment(&fixture, &task, json!({"body": "plain"})).await;
+    assert_eq!(status, StatusCode::CREATED, "{comment}");
+    assert_eq!(comment["body"], "plain");
+    assert_eq!(comment["body_json"][0]["content"][0]["text"], "plain");
+}
+
+#[tokio::test]
+async fn task_lists_leave_out_description_json() {
+    let fixture = Fixture::new().await;
+    let response = fixture
+        .app
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            &format!("/api/v1/workspaces/{}/tasks", fixture.workspace_id),
+            &fixture.owner_cookie,
+            json!({
+                "project_id": fixture.project_id,
+                "status_id": fixture.status_id,
+                "title": "Rich",
+                "description_json": [{"type": "paragraph", "content": [{"type": "text", "text": "Hi", "styles": {}}]}],
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let task = response_json(response).await;
+    let id = task["id"].as_str().unwrap();
+
+    let list = fixture
+        .app
+        .clone()
+        .oneshot(cookie_request(
+            "GET",
+            &format!("/api/v1/workspaces/{}/tasks", fixture.workspace_id),
+            &fixture.owner_cookie,
+        ))
+        .await
+        .unwrap();
+    let list = response_json(list).await;
+    let item = list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == id)
+        .unwrap()
+        .clone();
+    assert_eq!(item["description_json"], Value::Null);
+    assert_eq!(item["description"], "Hi\n");
+
+    let single = fixture
+        .app
+        .clone()
+        .oneshot(cookie_request(
+            "GET",
+            &format!("/api/v1/workspaces/{}/tasks/{id}", fixture.workspace_id),
+            &fixture.owner_cookie,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response_json(single).await["description_json"][0]["content"][0]["text"],
+        "Hi"
+    );
 }

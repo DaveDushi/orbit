@@ -221,6 +221,19 @@ async fn sign_in_asks_for_a_code_once_the_authenticator_app_is_on() {
         .await;
     assert_eq!(status, StatusCode::OK, "{signed_in}");
     assert_eq!(signed_in["user"]["email"], "owner@example.com");
+    // Sent without an Origin, as a native app does: the token comes back in the body.
+    let session_token = signed_in["session_token"].as_str().unwrap();
+    let (status, me) = fixture
+        .send(
+            Request::builder()
+                .uri("/api/v1/auth/me")
+                .header(header::AUTHORIZATION, format!("Bearer {session_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(me["email"], "owner@example.com");
 
     // The challenge is used up.
     let (status, problem) = fixture
@@ -232,6 +245,62 @@ async fn sign_in_asks_for_a_code_once_the_authenticator_app_is_on() {
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(problem["code"], "invalid_two_factor_token");
+}
+
+#[tokio::test]
+async fn the_code_can_go_to_another_server_than_the_password() {
+    let fixture = Fixture::new().await;
+    let (secret, _) = fixture.enable_totp().await;
+    // A second server: its own router and in-memory state on the same database.
+    let other = auth_router(
+        AuthState::new(Arc::clone(&fixture.identity), CookieMode::secure()).with_app_key([7; 32]),
+    );
+
+    let (status, challenge) = fixture.login().await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/v1/auth/login/two-factor")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({"two_factor_token": challenge["two_factor_token"], "code": code(&secret, 0)})
+                .to_string(),
+        ))
+        .unwrap();
+    let response = other.oneshot(request).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_lockout_holds_on_every_server() {
+    let fixture = Fixture::new().await;
+    for _ in 0..5 {
+        let (status, _) = fixture
+            .post(
+                "/api/v1/auth/login",
+                None,
+                json!({"email": "owner@example.com", "password": "wrong password value"}),
+            )
+            .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+    // A second server: its own router and in-memory state on the same database.
+    let other = auth_router(AuthState::new(
+        Arc::clone(&fixture.identity),
+        CookieMode::secure(),
+    ));
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/v1/auth/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({"email": "owner@example.com", "password": PASSWORD}).to_string(),
+        ))
+        .unwrap();
+    let response = other.oneshot(request).await.unwrap();
+
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
 }
 
 #[tokio::test]

@@ -24,6 +24,7 @@ oxide-auth = "=0.6.1"
 url = "2"
 orbit-domain = { path = "../../crates/orbit" }
 orbit-platform = { path = "../../crates/platform" }
+percent-encoding = "2"
 rmcp = { version = "=3.5.0", default-features = false, features = ["server", "transport-streamable-http-server"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
@@ -34,7 +35,7 @@ tempfile = "3"
 thiserror = "2"
 totp-rs = { version = "6", default-features = false, features = ["std", "otpauth", "qr"] }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "time"] }
-tokio-util = { version = "0.7", features = ["io"] }
+tokio-util = { version = "0.7", features = ["io", "rt"] }
 tokio-stream = "0.1"
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
@@ -43,6 +44,7 @@ utoipa = { version = "5", features = ["axum_extras"] }
 webauthn-rs = { version = "=0.6.1-dev", features = ["danger-allow-state-serialisation", "conditional-ui"] }
 yrs = { version = "=0.28.0", features = ["sync"] }
 zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+pulldown-cmark = { version = "0.13", default-features = false }
 p256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
 hkdf = "0.12"
 aes-gcm = "0.10"

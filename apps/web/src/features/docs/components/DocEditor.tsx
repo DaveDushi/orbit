@@ -7,7 +7,7 @@ import { ArrowLeft, ArrowSwapHorizontal, Check, Copy, Download, MoreH as Ellipsi
 import { cn } from 'cn'
 import { apiClient, UNAUTHORIZED_EVENT } from '@/api/client'
 import { queryKeys } from '@/api/queryKeys'
-import type { Page, PageSummary, PageVersionSummary, Teamspace } from '@/api/generated/types.gen'
+import type { Page, PageSummary, PageVersionSummary, Teamspace } from '@orbit/api/generated/types.gen'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -48,10 +48,10 @@ import { lastEditedLabel, useLastEdited } from '@/features/docs/lastEdited'
 import { useRestorePageVersion } from '@/features/docs/api/pageVersions'
 import { useCurrentUser } from '@/features/auth/api'
 import { PageAutosaver, type AutosaveState, type PagePatch } from '@/features/docs/autosave'
-import { collabColor } from '@/features/docs/collab/palette'
+import { revealCollabCursor } from '@/features/docs/collab/cursor'
 import { useCollaborators } from '@/features/docs/collab/presence'
 import { PresenceAvatars } from '@/features/docs/collab/PresenceAvatars'
-import { collabStatusLabel, type CollabProblem, type CollabSession, type CollabState } from '@/features/docs/collab/session'
+import { collabProblemAction, collabStatusLabel, type CollabProblem, type CollabSession, type CollabState } from '@orbit/editor/collab/session'
 import { useCollabSession } from '@/features/docs/collab/useCollabSession'
 import { useDocPageActions } from '@/features/docs/pageActions'
 import { downloadPageMarkdown, printPage } from '@/features/docs/pageExport'
@@ -63,7 +63,9 @@ import { mentionableMembers } from '@/features/docs/comments/mentionable'
 import { pageMentionCandidates } from '@/features/docs/editor/pageMentions'
 import { useBlockDeepLink } from '@/features/docs/useBlockDeepLink'
 import { useMembers } from '@/features/workspaces/api'
+import { announceWorkspaceReadOnly, useWorkspaceReadOnly } from '@/features/workspaces/billing'
 import { Comment as CommentIcon } from 'reicon-react'
+import { loadPageEditor } from '@/features/docs/editor/loadPageEditor'
 // Type-only imports: erased at build time, so the BlockNote chunk stays lazy.
 import type { PageEditorHandle } from '@/features/docs/editor/PageEditor'
 import type { PageRef } from '@/features/docs/editor/pageEditorContext'
@@ -72,8 +74,7 @@ import { CoverSourcePanel } from './CoverSourcePanel'
 import { PageHistoryPane } from './PageHistoryPane'
 import { PageLinkDialog } from './PageLinkDialog'
 
-// BlockNote + ProseMirror are ~1 MB: load them only when a page is opened.
-const PageEditor = lazy(() => import('@/features/docs/editor/PageEditor').then((module) => ({ default: module.PageEditor })))
+const PageEditor = lazy(() => loadPageEditor().then((module) => ({ default: module.PageEditor })))
 
 const editorSpinner = (
   <div className="flex justify-center py-10" data-testid="editor-loading">
@@ -160,6 +161,9 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
   const setPageLock = useSetPageLock(workspaceId)
   /** Locked pages are read-only here (the server refuses edits too, see `POST .../lock`). */
   const locked = page.locked_at !== null
+  // Orbit Cloud without a subscription: the server drops edits, so offer none.
+  const workspaceReadOnly = useWorkspaceReadOnly()
+  const readOnly = locked || workspaceReadOnly
   usePageVisit(workspaceId, page.id)
   const restoreVersion = useRestorePageVersion(workspaceId, page.id)
   const pickResolver = useRef<((pageId: string | null) => void) | null>(null)
@@ -197,9 +201,10 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
   useEffect(() => {
     if (linkedThread) setCommentsFilter(linkedThread.resolved ? 'resolved' : 'open')
   }, [linkedThread])
-  // Only the local awareness entry: the server stamps every peer's name and color from their session.
+  // Only the local awareness entry: the server stamps every peer's name and color (unique on the page) from their
+  // session, so the color here is a placeholder. The id hides the user's own other tabs from the block markers.
   const collabUser = useMemo(
-    () => ({ name: me.data?.display_name ?? 'Me', color: collabColor(me.data?.id ?? '') }),
+    () => ({ id: me.data?.id, name: me.data?.display_name ?? 'Me', color: '#737373' }),
     [me.data?.display_name, me.data?.id],
   )
   /** Bumped after a 4409 reset (or "Reload page" on a sync error): drops the local document and reconnects. */
@@ -304,26 +309,26 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
   }
 
   const onCollabProblem = (problem: CollabProblem) => {
-    switch (problem) {
-      case 'gone':
-      case 'forbidden':
-        leavePage(problem)
+    switch (collabProblemAction(problem)) {
+      case 'leave':
+        leavePage(problem === 'gone' ? 'gone' : 'forbidden')
         break
-      case 'session':
+      case 'unauthorized':
         // The same path as any 401 from the API: clear the session and go to the login page.
         window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
         break
-      case 'reset':
+      case 'reopen':
+        void reopen()
+        break
+      case 'read-only':
+        announceWorkspaceReadOnly()
         void reopen()
         break
       case 'rate-limited':
         toast.warning('Too many changes at once. Syncing again in a few seconds.', { id: `collab-rate-${pageId}` })
         break
-      case 'too-large':
-        setNotice('too-large')
-        break
-      case 'protocol':
-        setNotice('protocol')
+      case 'notice':
+        setNotice(problem === 'too-large' ? 'too-large' : 'protocol')
         break
     }
   }
@@ -340,7 +345,8 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
 
   const collab = useCollabSession({
     workspaceId,
-    pageId,
+    kind: 'pages',
+    id: pageId,
     epoch: page.collab_epoch,
     generation,
     user: collabUser,
@@ -350,7 +356,11 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
   useEffect(() => {
     sessionRef.current = collab.session
   }, [collab.session])
-  const people = useCollaborators(collab.connection?.provider.awareness ?? null, selfId)
+  const collaborators = useCollaborators(collab.connection?.provider.awareness ?? null, selfId)
+  const people = useMemo(() => {
+    const avatars = new Map(membersQuery.data?.map((member) => [member.id, member.avatarUrl]))
+    return collaborators.map((person) => ({ ...person, avatarUrl: avatars.get(person.id) }))
+  }, [collaborators, membersQuery.data])
   const lastEdited = useLastEdited(
     page,
     collab.connection,
@@ -592,6 +602,11 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
       { onError: () => toast.error(next ? 'Could not add the page to favorites.' : 'Could not remove the page from favorites.') },
     )
   const favoriteLabel = favorite ? 'Remove from favorites' : 'Add to favorites'
+  const mentions = {
+    members: membersQuery.data ?? null,
+    candidates: pageMentionCandidates(membersQuery.data ?? [], byId.get(pageId) ?? page, selfId),
+    privatePage: (byId.get(pageId) ?? page).teamspace_id === null,
+  }
 
   return (
     <>
@@ -640,7 +655,7 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
           >
             {lastEditedLabel(lastEdited.edit, selfId, lastEdited.now)}
           </span>
-          <PresenceAvatars people={people} />
+          <PresenceAvatars people={people} onReveal={(person) => revealCollabCursor(document, person.id)} />
           <span
             className={cn(
               'flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground/70',
@@ -830,7 +845,7 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
               position={cover.position}
               onChange={changeCover}
               onUpload={uploadCover}
-              readOnly={locked}
+              readOnly={readOnly}
             />
           ) : null}
           <div className={cn('mx-auto', fullWidth ? 'max-w-none px-[30px] max-[899px]:px-0' : 'max-w-[760px]')} data-full-width={fullWidth || undefined}>
@@ -854,7 +869,7 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
                         type="button"
                         variant="ghost"
                         className="h-auto cursor-pointer rounded-xl border-0 p-0.5 text-[60px] leading-none font-normal drop-shadow-[0_1px_2px_rgb(0_0_0/0.3)] hover:bg-foreground/[0.02] disabled:opacity-100 dark:hover:bg-foreground/[0.02]"
-                        disabled={locked}
+                        disabled={readOnly}
                         aria-label="Change icon"
                       />
                     }
@@ -876,7 +891,7 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
                 </Popover>
               </div>
             ) : null}
-            {!locked && (!icon || !cover.url) ? (
+            {!readOnly && (!icon || !cover.url) ? (
               <div className="flex gap-2 pt-1.5 pb-2.5" data-print-hide="">
                 {!icon ? (
                   <Popover open={addIconOpen} onOpenChange={setAddIconOpen}>
@@ -908,7 +923,7 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
                 ) : null}
               </div>
             ) : null}
-            {!locked && !cover.url && coverPanelOpen ? (
+            {!readOnly && !cover.url && coverPanelOpen ? (
               <div className="mb-3 max-w-[420px] rounded-lg border border-border p-3" data-print-hide="">
                 <CoverSourcePanel
                   onUpload={uploadCover}
@@ -922,7 +937,7 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
             <Input
               className="mb-5 h-auto w-full rounded-none border-0 bg-transparent p-0 text-[30px] leading-[1.25] font-bold text-foreground shadow-none outline-none placeholder:text-muted-foreground/70 focus:outline-none focus-visible:ring-0 md:text-[30px] max-[899px]:mb-3.5 max-[899px]:text-[22px]! dark:bg-transparent"
               value={title}
-              readOnly={locked}
+              readOnly={readOnly}
               maxLength={500}
               placeholder="Untitled"
               aria-label="Page title"
@@ -944,7 +959,7 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
                     ref={editorRef}
                     pageId={pageId}
                     collab={{ provider: collab.connection.provider, fragment: collab.connection.fragment, user: collabUser }}
-                    editable={!lost && syncStatus !== 'error' && !locked}
+                    editable={!lost && syncStatus !== 'error' && !readOnly}
                     resolvePage={resolvePage}
                     onOpenPage={onOpenPage}
                     onCreateSubpage={onCreateSubpage}
@@ -972,17 +987,29 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
                                   : 'Could not update the thread.',
                         ),
                     }}
-                    mentions={{
-                      members: membersQuery.data ?? null,
-                      candidates: pageMentionCandidates(membersQuery.data ?? [], byId.get(pageId) ?? page, selfId),
-                      privatePage: (byId.get(pageId) ?? page).teamspace_id === null,
-                    }}
+                    mentions={mentions}
                     className="-mx-[54px] min-h-40 max-[899px]:mx-0"
                   />
                 </Suspense>
               ) : (
-                // Never bind an editor to a document before its first sync (it would be empty).
-                editorSpinner
+                // Never bind an editor to a document before its first sync (it would be empty). Until then, show the
+                // REST content read-only; the live editor replaces it with the same blocks.
+                <div data-testid="editor-preview">
+                  <Suspense fallback={editorSpinner}>
+                    <PageEditor
+                      key={`preview:${collab.key}`}
+                      pageId={`preview:${pageId}`}
+                      initialContent={page.content}
+                      editable={false}
+                      resolvePage={resolvePage}
+                      onOpenPage={onOpenPage}
+                      onCreateSubpage={onCreateSubpage}
+                      onPickPage={onPickPage}
+                      mentions={mentions}
+                      className="-mx-[54px] min-h-40 max-[899px]:mx-0"
+                    />
+                  </Suspense>
+                </div>
               )}
             </div>
           </div>

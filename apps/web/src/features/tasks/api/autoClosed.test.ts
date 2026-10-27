@@ -1,7 +1,7 @@
 import { expect, spyOn, test } from 'bun:test'
 import { QueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import type { TaskRecord } from '@/api/generated/types.gen'
+import type { TaskRecord } from '@orbit/api/generated/types.gen'
 import { queryKeys } from '@/api/queryKeys'
 import { announceAutoClosed, autoClosedMessage, autoClosedOf } from './autoClosed'
 import { keepIdentifiersTogether } from '@/lib/toast'
@@ -9,7 +9,7 @@ import { keepIdentifiersTogether } from '@/lib/toast'
 const done = (id: string) => ({ id, status_id: 'done' })
 const identifierOf = (id: string) => `ORB-${id}`
 const record = (id: string, parentId: string | null = null) => ({
-  id, workspace_id: 'ws', project_id: 'project-1', number: Number(id.slice(-4)), status_id: 'todo', title: id, description: '', position: 0, priority: 'none',
+  id, workspace_id: 'ws', project_id: 'project-1', number: Number(id.slice(-4)), status_id: 'todo', title: id, description: '', description_json: null, collab_epoch: '', position: 0, priority: 'none',
   assignee_ids: [], creator_id: 'user-1', label_ids: [], created_at: '', updated_at: '', version: 1, duplicate_of: null, blocked: false,
   parent_task_id: parentId, parent: null, sub_issue_count: 0, sub_issue_closed_count: 0,
 }) as TaskRecord

@@ -111,6 +111,8 @@ pub struct NewAttachmentReference {
     pub id: Id,
     pub task_id: Id,
     pub comment_id: Option<Id>,
+    /// A file placed in a task description or comment text: not listed with the attachments.
+    pub inline: bool,
 }
 
 impl NewAttachmentReference {
@@ -120,6 +122,7 @@ impl NewAttachmentReference {
             id: Id::new_v7(),
             task_id,
             comment_id,
+            inline: false,
         }
     }
 }
@@ -186,6 +189,8 @@ pub enum UploadError {
     FileTooLarge { limit: u64 },
     #[error("request exceeds the configured {limit}-byte limit")]
     RequestTooLarge { limit: u64 },
+    #[error("the file would take the workspace over its {limit}-byte storage quota")]
+    StorageQuotaExceeded { limit: u64 },
     #[error("attachment display name is empty, too long, or contains control characters")]
     InvalidDisplayName,
     #[error("staged upload is not in a finalizable state")]
@@ -226,8 +231,8 @@ impl UploadFinalization<'_> {
         sqlx::query(
             "INSERT INTO attachment_references (\
                 id, workspace_id, task_id, comment_id, owner_id, blob_id, display_name, media_type,\
-                byte_size, created_at\
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                byte_size, created_at, inline\
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
         )
         .bind(attachment.id.to_string())
         .bind(upload.workspace_id.to_string())
@@ -239,6 +244,7 @@ impl UploadFinalization<'_> {
         .bind(&upload.detected_media_type)
         .bind(size_i64)
         .bind(now.as_millis())
+        .bind(i64::from(attachment.inline))
         .execute(&mut **transaction)
         .await?;
 
@@ -279,6 +285,7 @@ impl UploadFinalization<'_> {
         if valid != 1 {
             return Err(UploadError::InvalidState);
         }
+        ensure_storage_quota(transaction, upload.workspace_id, &upload.sha256, size_i64).await?;
 
         let stored = match self.service.store.install(upload).await {
             Err(BlobStoreError::StagedContentChanged) => {
@@ -308,9 +315,9 @@ impl UploadFinalization<'_> {
         Ok(blob)
     }
 
-    /// Stores bytes the server already checked (a profile picture, an emoji, a sticker) as a blob of `workspace_id`,
-    /// without a pending upload. As with [`Self::finalize_blob_in_transaction`], the caller inserts its reference in
-    /// the same transaction.
+    /// Stores bytes the server already checked (an emoji, a sticker) as a blob of `workspace_id`, without a pending
+    /// upload, within the workspace's storage quota. As with [`Self::finalize_blob_in_transaction`], the caller
+    /// inserts its reference in the same transaction.
     pub async fn finalize_bytes_in_transaction(
         &self,
         transaction: &mut Transaction<'_, Any>,
@@ -318,9 +325,61 @@ impl UploadFinalization<'_> {
         bytes: &[u8],
         now: TimestampMillis,
     ) -> Result<FinalizedBlob, UploadError> {
-        let (staged, stored) = self.service.install_bytes(workspace_id, bytes).await?;
+        let size_i64 = i64::try_from(bytes.len()).map_err(|_| UploadError::SizeOverflow)?;
+        let sha256 = format!("{:x}", Sha256::digest(bytes));
+        ensure_storage_quota(transaction, workspace_id, &sha256, size_i64).await?;
+        self.finalize_unmetered_bytes_in_transaction(transaction, workspace_id, bytes, now)
+            .await
+    }
+
+    /// [`Self::finalize_bytes_in_transaction`] without the storage quota: for a profile picture (grouped under the
+    /// user id, not a workspace) and for images that already were in the database before they move to the store.
+    pub async fn finalize_unmetered_bytes_in_transaction(
+        &self,
+        transaction: &mut Transaction<'_, Any>,
+        scope_id: Id,
+        bytes: &[u8],
+        now: TimestampMillis,
+    ) -> Result<FinalizedBlob, UploadError> {
+        let (staged, stored) = self.service.install_bytes(scope_id, bytes).await?;
         record_blob(transaction, &staged, &stored.storage_key, now).await
     }
+}
+
+/// Bytes of files a workspace stores: each blob once, however many references it has. A blob stops counting
+/// when reconcile deletes it, a day after its last reference went (see [`QUARANTINE_MILLIS`]).
+pub const WORKSPACE_STORAGE_USED: &str = "SELECT CAST(COALESCE(SUM(byte_size), 0) AS BIGINT) FROM attachment_blobs WHERE workspace_id = $1";
+
+/// Refuses a new blob that would take the workspace over `instance_settings.workspace_storage_quota_bytes` (0 is
+/// unlimited). Bytes the workspace already stores cost nothing, as blobs are deduplicated per workspace. Runs in
+/// the serialized write transaction that records the blob, before the bytes go to the store, so concurrent uploads
+/// on any server cannot pass the quota together.
+async fn ensure_storage_quota(
+    transaction: &mut Transaction<'_, Any>,
+    workspace_id: Id,
+    sha256: &str,
+    size: i64,
+) -> Result<(), UploadError> {
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT workspace_storage_quota_bytes AS quota, \
+         (SELECT COUNT(*) FROM attachment_blobs WHERE workspace_id = $1 AND sha256 = $2 AND byte_size = $3) AS stored, \
+         ({WORKSPACE_STORAGE_USED}) AS used \
+         FROM instance_settings WHERE id = 1"
+    )))
+    .bind(workspace_id.to_string())
+    .bind(sha256)
+    .bind(size)
+    .fetch_one(&mut **transaction)
+    .await?;
+    let quota: i64 = row.try_get("quota")?;
+    let stored: i64 = row.try_get("stored")?;
+    let used: i64 = row.try_get("used")?;
+    if quota > 0 && stored == 0 && used.saturating_add(size) > quota {
+        return Err(UploadError::StorageQuotaExceeded {
+            limit: u64::try_from(quota).unwrap_or(u64::MAX),
+        });
+    }
+    Ok(())
 }
 
 /// Adds the `attachment_blobs` row of an installed blob, or finds the row of the same bytes.

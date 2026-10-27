@@ -1,10 +1,17 @@
 # syntax=docker/dockerfile:1.7
 ARG ORBIT_BUILD_REVISION=container
-FROM oven/bun:1.3.14-alpine AS web
+FROM oven/bun:1.4.4-alpine AS web
+WORKDIR /src
+COPY package.json bun.lock bunfig.toml ./
+COPY apps/web/package.json apps/web/
+COPY apps/mobile/package.json apps/mobile/
+COPY packages/api/package.json packages/api/
+COPY packages/editor/package.json packages/editor/
+RUN bun install --frozen-lockfile --filter web
+COPY packages/api/ packages/api/
+COPY packages/editor/ packages/editor/
+COPY apps/web/ apps/web/
 WORKDIR /src/apps/web
-COPY apps/web/package.json apps/web/bun.lock ./
-RUN bun install --frozen-lockfile
-COPY apps/web/ ./
 ARG ORBIT_BUILD_REVISION
 RUN ORBIT_BUILD_REVISION=${ORBIT_BUILD_REVISION} bun run build
 
@@ -24,12 +31,21 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 
 FROM alpine:3.23
 RUN apk add --no-cache bash ca-certificates tzdata \
-    && mkdir -p /var/lib/orbit /var/backups/orbit /etc/orbit \
-    && chown -R 65532:65532 /var/lib/orbit /var/backups/orbit /etc/orbit
+    && mkdir -p /var/lib/orbit /var/backups/orbit \
+    && chown -R 65532:65532 /var/lib/orbit /var/backups/orbit
 COPY --from=server /orbit /orbit
+# The image trusts forwarding headers from every address: it expects to run behind a proxy that is the only
+# way in. Publish port 8080 directly, or share the network with untrusted containers, and clients can fake
+# their IP address and https. Then set ORBIT_TRUSTED_PROXIES to the proxy network.
+ENV ORBIT_ENV=production \
+    ORBIT_BIND=0.0.0.0 \
+    ORBIT_TRUSTED_PROXIES=0.0.0.0/0,::/0 \
+    ORBIT_DATABASE_PATH=/var/lib/orbit/orbit.sqlite \
+    ORBIT_ATTACHMENTS_PATH=/var/lib/orbit/attachments \
+    ORBIT_BACKUPS_PATH=/var/backups/orbit
 USER 65532:65532
-VOLUME ["/var/lib/orbit", "/var/backups/orbit", "/etc/orbit"]
+VOLUME ["/var/lib/orbit", "/var/backups/orbit"]
 EXPOSE 8080
-HEALTHCHECK --interval=5s --timeout=3s --start-period=5s --retries=10 CMD ["/orbit", "--config", "/etc/orbit/orbit.toml", "healthcheck"]
-ENTRYPOINT ["/orbit", "--config", "/etc/orbit/orbit.toml"]
+HEALTHCHECK --interval=5s --timeout=3s --start-period=5s --retries=10 CMD ["/orbit", "healthcheck"]
+ENTRYPOINT ["/orbit"]
 CMD ["serve"]

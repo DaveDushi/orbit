@@ -1,7 +1,7 @@
 import { useRef, useState, type FormEvent } from 'react'
 import { SmileCircle } from 'reicon-react'
-import type { CustomEmojiRecord } from '@/api/generated/types.gen'
-import { ApiProblem } from '@/api/problem'
+import type { CustomEmojiRecord } from '@orbit/api/generated/types.gen'
+import { ApiProblem } from '@orbit/api/problem'
 import { confirmAction } from '@/components/common/confirmAction'
 import { EmptyState } from '@/components/common/EmptyState'
 import { SettingsCard } from '@/components/common/SettingsCard'
@@ -26,6 +26,7 @@ const SERVER_PROBLEMS: Record<string, string> = {
   validation_failed: 'A name has 2 to 32 characters: lower case letters, digits and underscores.',
   emoji_name_taken: 'An emoji with this name exists already. Choose another name.',
   emoji_limit_reached: 'The workspace has 200 custom emoji, which is the limit. Delete one first.',
+  storage_quota_exceeded: 'The workspace storage is full. Delete files, or ask the administrator of this Orbit for a higher quota.',
 }
 
 /** The reason in words: ours for a known code, else what the server said (with the status), else that it did not answer. */

@@ -23,6 +23,7 @@ import { useTeamspaces } from '@/features/docs/api/teamspaces'
 import { descendantsOf, dropOnSpace, landingPage, pageTitle, spaceKey, spaceLabel, type SpaceKey } from '@/features/docs/pageTree'
 import { cn } from 'cn'
 import { DocEditor, type DocEditorControl } from '@/features/docs/components/DocEditor'
+import { preloadPageEditor } from '@/features/docs/editor/loadPageEditor'
 import { DocTree } from '@/features/docs/components/DocTree'
 import { DocPageActionsContext, type DocPageActions } from '@/features/docs/pageActions'
 import { NotionImportPane } from './NotionImportPane'
@@ -66,6 +67,10 @@ export function DocsPage({ view = 'page' }: { view?: 'page' | 'trash' | 'import'
     activeIdRef.current = activeId
     locationKeyRef.current = location.key
   })
+  // Download the editor while the page itself loads, not after its socket has synced.
+  useEffect(() => {
+    preloadPageEditor()
+  }, [])
   const markGone = (id: string) => setGone({ id, key: locationKeyRef.current })
 
   const createFirstPage = () => {

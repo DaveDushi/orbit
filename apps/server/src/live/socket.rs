@@ -6,12 +6,14 @@
 //! which the client cannot tell from a network failure. After it the connection is checked
 //! again every 15 seconds, so a removed member, a suspended account and an ended session lose
 //! it. Every heartbeat the server also sends a WebSocket ping, which a browser answers on its
-//! own: a connection that stays silent for more than two heartbeats is closed.
+//! own: a connection that stays silent for more than two heartbeats is closed. A server that
+//! stops closes every connection with 1012 (service restart); the client reconnects.
 //!
 //! The frames a client may send are `{"type":"typing","conversation_id":…,"thread_root_id":…}`
 //! and `{"type":"activity","idle":…,"away":…}`: `idle` when the tab has had no input for a while,
 //! `away` when its window has been out of focus for a while.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::Router;
@@ -24,6 +26,7 @@ use orbit_platform::{Id, TimestampMillis};
 use serde::Deserialize;
 use serde_json::json;
 
+use super::events;
 use super::hub::HEARTBEAT;
 use crate::auth_routes::request_session;
 use crate::chat_routes::ChatState;
@@ -119,6 +122,8 @@ async fn serve(
     user_id: Id,
     resume: Resume,
 ) {
+    // Dropped at the end, after the close frame.
+    let _serving = state.hub.serving();
     let database = state.identity.database().clone();
     // A failed read shows the member as online; the next status change corrects it.
     let status = state
@@ -126,13 +131,7 @@ async fn serve(
         .status(user_id, TimestampMillis::now())
         .await
         .unwrap_or_default();
-    let mut attached = state.hub.connect(
-        workspace_id,
-        user_id,
-        status.clone(),
-        resume.epoch.as_deref(),
-        resume.after,
-    );
+    let mut attached = state.hub.connect(workspace_id, user_id, status.clone());
     let connection_id = attached.id;
     // A status change between the read and the connect did not reach the hub: the user had no
     // status there yet. One after the connect does, so the status is read once more.
@@ -141,16 +140,27 @@ async fn serve(
     {
         state.hub.correct_status(user_id, &current);
     }
-    let close = run(
-        &mut socket,
-        &state,
-        &database,
-        workspace_id,
-        session_id,
-        user_id,
-        &mut attached,
-    )
-    .await;
+    // Read after the connection was added: an event after `newest` reaches it as a frame.
+    let close = match opening(&database, workspace_id, user_id, &resume, &attached).await {
+        Ok(opening) => {
+            state.hub.start_delivery(workspace_id, opening.newest).await;
+            run(
+                &mut socket,
+                &state,
+                &database,
+                workspace_id,
+                session_id,
+                user_id,
+                &mut attached,
+                opening,
+            )
+            .await
+        }
+        Err(error) => {
+            tracing::warn!(error = %error, "live socket opening");
+            Some((close::OVERLOADED, "try again"))
+        }
+    };
     state.hub.disconnect(workspace_id, connection_id, user_id);
     let frame = close.map(|(code, reason)| CloseFrame {
         code,
@@ -159,7 +169,60 @@ async fn serve(
     let _ = send(&mut socket, Message::Close(frame)).await;
 }
 
+/// What a connection gets first.
+struct Opening {
+    hello: String,
+    /// The events the client missed; `None` when they are not all kept (the client must resync).
+    replay: Option<Vec<Arc<str>>>,
+    /// The number of the newest event when the connection opened.
+    newest: u64,
+}
+
+async fn opening(
+    database: &orbit_platform::Database,
+    workspace_id: Id,
+    user_id: Id,
+    resume: &Resume,
+    attached: &super::hub::Attached,
+) -> Result<Opening, sqlx::Error> {
+    let pool = database.pool();
+    let epoch = events::epoch(pool).await?;
+    let (oldest, newest) = events::range(pool, workspace_id).await?;
+    // A replay is complete only if the oldest kept event is at or before the first one the
+    // client has not seen.
+    let replay = match resume.after {
+        Some(after)
+            if resume.epoch.as_deref() == Some(epoch.as_str())
+                && after <= newest
+                && (after == newest || oldest <= after + 1) =>
+        {
+            Some(
+                events::after(pool, workspace_id, after)
+                    .await?
+                    .into_iter()
+                    .filter(|event| event.recipients.includes(user_id))
+                    .map(|event| event.frame)
+                    .collect(),
+            )
+        }
+        _ => None,
+    };
+    let hello = json!({
+        "type": "hello",
+        "epoch": epoch,
+        "seq": newest,
+        "presence": attached.presence,
+    })
+    .to_string();
+    Ok(Opening {
+        hello,
+        replay,
+        newest,
+    })
+}
+
 /// Serves one connection until it ends; returns the close code to send, if any.
+#[allow(clippy::too_many_arguments)]
 async fn run(
     socket: &mut WebSocket,
     state: &ChatState,
@@ -168,11 +231,12 @@ async fn run(
     session_id: Id,
     user_id: Id,
     attached: &mut super::hub::Attached,
+    opening: Opening,
 ) -> Option<(u16, &'static str)> {
-    if !send_text(socket, attached.hello.clone()).await {
+    if !send_text(socket, opening.hello).await {
         return None;
     }
-    match attached.replay.take() {
+    match opening.replay {
         Some(missed) => {
             for frame in missed {
                 if !send_text(socket, frame.to_string()).await {
@@ -194,11 +258,15 @@ async fn run(
     let mut allowance = FRAMES_PER_SECOND;
     let mut second = Instant::now();
     let mut heard = tokio::time::Instant::now();
+    let stopping = state.hub.stopping();
     loop {
         tokio::select! {
+            () = stopping.cancelled() => return Some((close::RESTART, "server restarting")),
             frame = attached.frames.recv() => match frame {
+                // The hello or the replay had it.
+                Some(frame) if frame.seq.is_some_and(|seq| seq <= opening.newest) => {}
                 Some(frame) => {
-                    if !send_text(socket, frame.to_string()).await {
+                    if !send_text(socket, frame.text.to_string()).await {
                         return None;
                     }
                 }
@@ -238,7 +306,7 @@ async fn run(
                         }
                         Ok(ClientFrame::Activity { idle, away }) => {
                             state.hub.set_idle(workspace_id, attached.id, user_id, idle);
-                            state.hub.set_away(workspace_id, attached.id, away);
+                            state.hub.set_away(workspace_id, attached.id, user_id, away);
                             continue;
                         }
                         Err(_) => return Some((close::BAD_MESSAGE, "unknown frame")),

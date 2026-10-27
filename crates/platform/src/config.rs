@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fmt;
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -8,29 +8,35 @@ use std::str::FromStr;
 
 use axum::http::Uri;
 use ipnet::IpNet;
-use serde::Deserialize;
 use thiserror::Error;
 
 const MAX_SECRET_FILE_BYTES: u64 = 64 * 1024;
-const HTTP_PORT_ENV: &str = "ORBIT__HTTP__PORT";
-const HTTP_BIND_ENV: &str = "ORBIT__HTTP__BIND";
-const HTTP_PUBLIC_ORIGIN_ENV: &str = "ORBIT__HTTP__PUBLIC_ORIGIN";
-const HTTP_TRUSTED_PROXIES_ENV: &str = "ORBIT__HTTP__TRUSTED_PROXIES";
-const ENVIRONMENT_ENV: &str = "ORBIT__ENVIRONMENT";
-const DATA_DATABASE_ENV: &str = "ORBIT__DATA__DATABASE";
-const DATA_DATABASE_URL_ENV: &str = "ORBIT__DATA__DATABASE_URL";
-const DATA_ATTACHMENTS_ENV: &str = "ORBIT__DATA__ATTACHMENTS";
-const DATA_BACKUPS_ENV: &str = "ORBIT__DATA__BACKUPS";
-const JOBS_CONCURRENCY_ENV: &str = "ORBIT__JOBS__CONCURRENCY";
-const UPLOADS_MAX_FILE_BYTES_ENV: &str = "ORBIT__UPLOADS__MAX_FILE_BYTES";
-const UPLOADS_MAX_REQUEST_BYTES_ENV: &str = "ORBIT__UPLOADS__MAX_REQUEST_BYTES";
-const METRICS_LISTEN_ENV: &str = "ORBIT__METRICS__LISTEN";
-const RATE_AUTH_ENV: &str = "ORBIT__RATE_LIMITS__AUTHENTICATION_PER_MINUTE";
-const RATE_RECOVERY_ENV: &str = "ORBIT__RATE_LIMITS__RECOVERY_PER_MINUTE";
-const RATE_INVITATION_ENV: &str = "ORBIT__RATE_LIMITS__INVITATION_PER_MINUTE";
-const RATE_UPLOAD_ENV: &str = "ORBIT__RATE_LIMITS__UPLOAD_PER_MINUTE";
-const RATE_GENERAL_ENV: &str = "ORBIT__RATE_LIMITS__GENERAL_PER_MINUTE";
-const SECRETS_ENV_PREFIX: &str = "ORBIT__SECRETS__";
+const HTTP_PORT_ENV: &str = "ORBIT_PORT";
+const HTTP_BIND_ENV: &str = "ORBIT_BIND";
+const HTTP_PUBLIC_ORIGIN_ENV: &str = "ORBIT_PUBLIC_ORIGIN";
+const HTTP_TRUSTED_PROXIES_ENV: &str = "ORBIT_TRUSTED_PROXIES";
+const HTTP_SHUTDOWN_DELAY_ENV: &str = "ORBIT_SHUTDOWN_DELAY_SECONDS";
+const ENVIRONMENT_ENV: &str = "ORBIT_ENV";
+const DATA_DATABASE_ENV: &str = "ORBIT_DATABASE_PATH";
+const DATA_DATABASE_URL_ENV: &str = "ORBIT_DATABASE_URL";
+const DATA_ATTACHMENTS_ENV: &str = "ORBIT_ATTACHMENTS_PATH";
+const DATA_BACKUPS_ENV: &str = "ORBIT_BACKUPS_PATH";
+const JOBS_CONCURRENCY_ENV: &str = "ORBIT_JOBS_CONCURRENCY";
+const UPLOADS_MAX_FILE_BYTES_ENV: &str = "ORBIT_UPLOAD_MAX_FILE_BYTES";
+const UPLOADS_MAX_REQUEST_BYTES_ENV: &str = "ORBIT_UPLOAD_MAX_REQUEST_BYTES";
+const METRICS_LISTEN_ENV: &str = "ORBIT_METRICS_LISTEN";
+const RATE_LIMITS_ENV_PREFIX: &str = "ORBIT_RATE_LIMIT_";
+const APP_KEY_ENV: &str = "ORBIT_APP_KEY";
+const APP_KEY_FILE_ENV: &str = "ORBIT_APP_KEY_FILE";
+const CLOUD_ENV: &str = "ORBIT_CLOUD";
+const STRIPE_SECRET_KEY_ENV: &str = "ORBIT_STRIPE_SECRET_KEY";
+const STRIPE_SECRET_KEY_FILE_ENV: &str = "ORBIT_STRIPE_SECRET_KEY_FILE";
+const STRIPE_WEBHOOK_SECRET_ENV: &str = "ORBIT_STRIPE_WEBHOOK_SECRET";
+const STRIPE_WEBHOOK_SECRET_FILE_ENV: &str = "ORBIT_STRIPE_WEBHOOK_SECRET_FILE";
+const STRIPE_PRICES_ENV: &str = "ORBIT_STRIPE_PRICES";
+const STRIPE_API_BASE: &str = "https://api.stripe.com";
+/// Variables that scripts and tests use, not the server.
+const IGNORED_ENV_PREFIXES: [&str; 2] = ["ORBIT_DEV_", "ORBIT_TEST_"];
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Config {
@@ -41,7 +47,11 @@ pub struct Config {
     pub uploads: UploadConfig,
     pub metrics: MetricsConfig,
     pub rate_limits: RateLimitConfig,
-    pub secrets: BTreeMap<String, Secret>,
+    /// The key for secrets saved in the database (`ORBIT_APP_KEY`). Required: [`Config::validate`]
+    /// refuses a configuration without it.
+    pub app_key: Option<AppKey>,
+    /// Stripe billing for Orbit Cloud (`ORBIT_CLOUD=true`); `None` on a self-hosted server.
+    pub billing: Option<BillingConfig>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -81,6 +91,9 @@ pub struct HttpConfig {
     pub port: u16,
     pub public_origin: String,
     pub trusted_proxies: Vec<IpNet>,
+    /// How long the server still serves after a stop signal while `/health/ready` reports 503,
+    /// so a load balancer takes it out first.
+    pub shutdown_delay_seconds: u64,
 }
 
 impl Default for HttpConfig {
@@ -90,6 +103,7 @@ impl Default for HttpConfig {
             port: 8080,
             public_origin: "http://127.0.0.1:8080".to_owned(),
             trusted_proxies: Vec::new(),
+            shutdown_delay_seconds: 0,
         }
     }
 }
@@ -182,6 +196,9 @@ pub struct MetricsConfig {
     pub listen: Option<SocketAddr>,
 }
 
+/// `ORBIT_RATE_LIMIT_<FIELD>`. The `*_per_minute` limits apply to each client IP address, each credential
+/// (session or token) and, multiplied by `workspace_multiplier`, each workspace. The email limits
+/// hold for every server of the database.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RateLimitConfig {
     pub authentication_per_minute: u32,
@@ -189,6 +206,13 @@ pub struct RateLimitConfig {
     pub invitation_per_minute: u32,
     pub upload_per_minute: u32,
     pub general_per_minute: u32,
+    pub workspace_multiplier: u32,
+    /// The time between two registration or password reset emails to one address.
+    pub account_email_cooldown_seconds: u32,
+    /// Registration and password reset emails to one address in 24 hours.
+    pub account_emails_per_day: u32,
+    pub invitation_emails_per_workspace_per_day: u32,
+    pub invitation_emails_per_inviter_per_day: u32,
 }
 
 impl Default for RateLimitConfig {
@@ -199,14 +223,235 @@ impl Default for RateLimitConfig {
             invitation_per_minute: 60,
             upload_per_minute: 120,
             general_per_minute: 600,
+            workspace_multiplier: 10,
+            account_email_cooldown_seconds: 60,
+            account_emails_per_day: 5,
+            invitation_emails_per_workspace_per_day: 100,
+            invitation_emails_per_inviter_per_day: 50,
         }
     }
 }
 
+impl RateLimitConfig {
+    /// The setting named `name` (the lowercase rest of its `ORBIT_RATE_LIMIT_` variable).
+    fn setting_mut(&mut self, name: &str) -> Option<&mut u32> {
+        Some(match name {
+            "authentication_per_minute" => &mut self.authentication_per_minute,
+            "recovery_per_minute" => &mut self.recovery_per_minute,
+            "invitation_per_minute" => &mut self.invitation_per_minute,
+            "upload_per_minute" => &mut self.upload_per_minute,
+            "general_per_minute" => &mut self.general_per_minute,
+            "workspace_multiplier" => &mut self.workspace_multiplier,
+            "account_email_cooldown_seconds" => &mut self.account_email_cooldown_seconds,
+            "account_emails_per_day" => &mut self.account_emails_per_day,
+            "invitation_emails_per_workspace_per_day" => {
+                &mut self.invitation_emails_per_workspace_per_day
+            }
+            "invitation_emails_per_inviter_per_day" => {
+                &mut self.invitation_emails_per_inviter_per_day
+            }
+            _ => return None,
+        })
+    }
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        let invalid = |key, detail: &str| {
+            Err(ConfigError::InvalidSetting {
+                key,
+                detail: detail.to_owned(),
+            })
+        };
+        let per_minute = [
+            self.authentication_per_minute,
+            self.recovery_per_minute,
+            self.invitation_per_minute,
+            self.upload_per_minute,
+            self.general_per_minute,
+        ];
+        if per_minute.contains(&0) {
+            return invalid(
+                "ORBIT_RATE_LIMIT_*",
+                "all endpoint-class limits must be positive",
+            );
+        }
+        if per_minute.into_iter().any(|limit| limit > 1_000_000) {
+            return invalid(
+                "ORBIT_RATE_LIMIT_*",
+                "endpoint-class limits cannot exceed 1000000 per minute",
+            );
+        }
+        if !(1..=1_000).contains(&self.workspace_multiplier) {
+            return invalid(
+                "ORBIT_RATE_LIMIT_WORKSPACE_MULTIPLIER",
+                "must be between 1 and 1000",
+            );
+        }
+        if self.account_email_cooldown_seconds > 86_400 {
+            return invalid(
+                "ORBIT_RATE_LIMIT_ACCOUNT_EMAIL_COOLDOWN_SECONDS",
+                "cannot exceed 86400 seconds",
+            );
+        }
+        let per_day = [
+            self.account_emails_per_day,
+            self.invitation_emails_per_workspace_per_day,
+            self.invitation_emails_per_inviter_per_day,
+        ];
+        if per_day
+            .into_iter()
+            .any(|limit| !(1..=100_000).contains(&limit))
+        {
+            return invalid(
+                "ORBIT_RATE_LIMIT_*",
+                "daily email limits must be between 1 and 100000",
+            );
+        }
+        Ok(())
+    }
+}
+
+/// The 32-byte key that encrypts secrets saved in the database. Set as base64 in `ORBIT_APP_KEY`.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct AppKey([u8; 32]);
+
+impl AppKey {
+    #[must_use]
+    pub const fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    #[must_use]
+    pub const fn bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl FromStr for AppKey {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        use base64::Engine as _;
+
+        base64::engine::general_purpose::STANDARD
+            .decode(value.trim())
+            .ok()
+            .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+            .map(Self)
+            .ok_or(())
+    }
+}
+
+impl fmt::Debug for AppKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("[REDACTED]")
+    }
+}
+
+/// Orbit Cloud billing: every workspace needs a Stripe subscription to write.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BillingConfig {
+    pub secret_key: Secret,
+    pub webhook_secret: Secret,
+    /// The plans offered, in `ORBIT_STRIPE_PRICES` order. Never empty, keys are unique.
+    pub plans: Vec<Plan>,
+    /// The Stripe API. Only tests change it.
+    pub api_base: url::Url,
+}
+
+impl BillingConfig {
+    #[must_use]
+    pub fn new(secret_key: Secret, webhook_secret: Secret, plans: Vec<Plan>) -> Self {
+        Self {
+            secret_key,
+            webhook_secret,
+            plans,
+            api_base: url::Url::parse(STRIPE_API_BASE).expect("the Stripe API base is a URL"),
+        }
+    }
+
+    #[must_use]
+    pub fn plan(&self, key: &str) -> Option<&Plan> {
+        self.plans.iter().find(|plan| plan.key == key)
+    }
+
+    #[must_use]
+    pub fn plan_for_price(&self, price_id: &str) -> Option<&Plan> {
+        self.plans.iter().find(|plan| plan.price_id == price_id)
+    }
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        let invalid = |detail: String| {
+            Err(ConfigError::InvalidSetting {
+                key: STRIPE_PRICES_ENV,
+                detail,
+            })
+        };
+        if self.plans.is_empty() {
+            return invalid("must name at least one plan".to_owned());
+        }
+        for (index, plan) in self.plans.iter().enumerate() {
+            if !valid_plan_key(&plan.key) {
+                return invalid(format!(
+                    "plan key {:?} must be 1 to 32 lowercase letters, digits or hyphens",
+                    plan.key
+                ));
+            }
+            if plan.price_id.is_empty() || plan.price_id.contains(char::is_whitespace) {
+                return invalid(format!("plan {:?} needs a Stripe price id", plan.key));
+            }
+            if self.plans[..index]
+                .iter()
+                .any(|other| other.key == plan.key)
+            {
+                return invalid(format!("plan {:?} is listed twice", plan.key));
+            }
+            if self.plans[..index]
+                .iter()
+                .any(|other| other.price_id == plan.price_id)
+            {
+                return invalid(format!("price {:?} is listed twice", plan.price_id));
+            }
+        }
+        if self.secret_key.expose().is_empty() {
+            return Err(ConfigError::InvalidSetting {
+                key: STRIPE_SECRET_KEY_ENV,
+                detail: "must not be empty".to_owned(),
+            });
+        }
+        if self.webhook_secret.expose().is_empty() {
+            return Err(ConfigError::InvalidSetting {
+                key: STRIPE_WEBHOOK_SECRET_ENV,
+                detail: "must not be empty".to_owned(),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// A plan a workspace can subscribe to: its key in Orbit and its Stripe price.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Plan {
+    pub key: String,
+    pub price_id: String,
+}
+
+fn valid_plan_key(key: &str) -> bool {
+    (1..=32).contains(&key.len())
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+/// A secret string (an API key) that `Debug` never prints.
 #[derive(Clone, Eq, PartialEq)]
 pub struct Secret(String);
 
 impl Secret {
+    #[must_use]
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
     #[must_use]
     pub fn expose(&self) -> &str {
         &self.0
@@ -219,28 +464,70 @@ impl fmt::Debug for Secret {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ConfigOverride {
-    pub http_port: Option<u16>,
+/// The billing variables, collected before they are checked together.
+#[derive(Default)]
+struct BillingEnvironment {
+    cloud: bool,
+    secret_key: Option<String>,
+    webhook_secret: Option<String>,
+    prices: Option<String>,
 }
 
-#[derive(Clone, Eq, PartialEq)]
-pub struct ConfigSources {
-    pub path: PathBuf,
-    pub env: BTreeMap<String, String>,
-    pub cli: ConfigOverride,
+impl BillingEnvironment {
+    fn into_config(self) -> Result<Option<BillingConfig>, ConfigError> {
+        let missing = |key: &'static str| ConfigError::InvalidSetting {
+            key,
+            detail: "is required when ORBIT_CLOUD is true".to_owned(),
+        };
+        if !self.cloud {
+            let set = [
+                (STRIPE_SECRET_KEY_ENV, self.secret_key.is_some()),
+                (STRIPE_WEBHOOK_SECRET_ENV, self.webhook_secret.is_some()),
+                (STRIPE_PRICES_ENV, self.prices.is_some()),
+            ];
+            return match set.into_iter().find(|(_, set)| *set) {
+                Some((key, _)) => Err(ConfigError::InvalidSetting {
+                    key,
+                    detail: "is only used with ORBIT_CLOUD=true".to_owned(),
+                }),
+                None => Ok(None),
+            };
+        }
+        let secret_key = self
+            .secret_key
+            .ok_or_else(|| missing(STRIPE_SECRET_KEY_ENV))?;
+        let webhook_secret = self
+            .webhook_secret
+            .ok_or_else(|| missing(STRIPE_WEBHOOK_SECRET_ENV))?;
+        let prices = self.prices.ok_or_else(|| missing(STRIPE_PRICES_ENV))?;
+        let plans = prices
+            .split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+            .map(|entry| {
+                let (key, price_id) =
+                    entry
+                        .split_once(':')
+                        .ok_or_else(|| ConfigError::InvalidSetting {
+                            key: STRIPE_PRICES_ENV,
+                            detail: format!("{entry:?} must be plan:price_id"),
+                        })?;
+                Ok(Plan {
+                    key: key.trim().to_owned(),
+                    price_id: price_id.trim().to_owned(),
+                })
+            })
+            .collect::<Result<Vec<_>, ConfigError>>()?;
+        Ok(Some(BillingConfig::new(
+            Secret::new(secret_key.trim()),
+            Secret::new(webhook_secret.trim()),
+            plans,
+        )))
+    }
 }
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    #[error("failed to read configuration file {path}: {source}")]
-    ReadConfig {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-    #[error("invalid configuration file {path}")]
-    ParseConfig { path: PathBuf },
     #[error("invalid value for {key}: {value}")]
     InvalidEnvironment { key: String, value: String },
     #[error("invalid configuration setting {key}: {detail}")]
@@ -265,29 +552,6 @@ pub enum ConfigError {
 }
 
 impl Config {
-    pub fn load(sources: ConfigSources) -> Result<Self, ConfigError> {
-        let contents =
-            fs::read_to_string(&sources.path).map_err(|source| ConfigError::ReadConfig {
-                path: sources.path.clone(),
-                source,
-            })?;
-        let raw: RawConfig = toml::from_str(&contents).map_err(|_| ConfigError::ParseConfig {
-            path: sources.path.clone(),
-        })?;
-        let uses_default_origin = raw.http.public_origin.is_none();
-        let mut config = raw.into_config()?;
-
-        apply_environment(&mut config, &sources.env)?;
-        if let Some(port) = sources.cli.http_port {
-            config.http.port = port;
-        }
-        if uses_default_origin && !sources.env.contains_key(HTTP_PUBLIC_ORIGIN_ENV) {
-            config.http.public_origin = default_public_origin(config.http.bind, config.http.port);
-        }
-        config.validate()?;
-        Ok(config)
-    }
-
     pub fn from_environment(env: BTreeMap<String, String>) -> Result<Self, ConfigError> {
         let mut config = Self::default();
         apply_environment(&mut config, &env)?;
@@ -312,7 +576,7 @@ impl Config {
             });
         if !valid_origin {
             return Err(ConfigError::InvalidSetting {
-                key: "http.public_origin",
+                key: HTTP_PUBLIC_ORIGIN_ENV,
                 detail: "must be an absolute http or https origin without a path or query"
                     .to_owned(),
             });
@@ -320,31 +584,34 @@ impl Config {
         match self.environment {
             EnvironmentMode::Unspecified => {
                 return Err(ConfigError::InvalidSetting {
-                    key: "environment",
+                    key: ENVIRONMENT_ENV,
                     detail: "must be explicitly set to development or production".to_owned(),
                 });
             }
             EnvironmentMode::Development if !self.http.bind.is_loopback() => {
                 return Err(ConfigError::InvalidSetting {
-                    key: "http.bind",
+                    key: HTTP_BIND_ENV,
                     detail: "development mode must bind to a loopback address".to_owned(),
                 });
             }
             EnvironmentMode::Development if !self.http.trusted_proxies.is_empty() => {
                 return Err(ConfigError::InvalidSetting {
-                    key: "http.trusted_proxies",
+                    key: HTTP_TRUSTED_PROXIES_ENV,
                     detail: "development mode does not accept trusted proxies".to_owned(),
                 });
             }
             EnvironmentMode::Production if !self.http.public_origin.starts_with("https://") => {
                 return Err(ConfigError::InvalidSetting {
-                    key: "http.public_origin",
-                    detail: "production mode requires an https public origin".to_owned(),
+                    key: HTTP_PUBLIC_ORIGIN_ENV,
+                    detail: format!(
+                        "production mode requires an https public origin, got {:?}",
+                        self.http.public_origin
+                    ),
                 });
             }
             EnvironmentMode::Production if self.http.trusted_proxies.is_empty() => {
                 return Err(ConfigError::InvalidSetting {
-                    key: "http.trusted_proxies",
+                    key: HTTP_TRUSTED_PROXIES_ENV,
                     detail:
                         "production mode requires at least one trusted proxy for the HTTPS boundary"
                             .to_owned(),
@@ -356,230 +623,46 @@ impl Config {
             && !(url.starts_with("postgres://") || url.starts_with("postgresql://"))
         {
             return Err(ConfigError::InvalidSetting {
-                key: "data.database_url",
+                key: DATA_DATABASE_URL_ENV,
                 detail: "must be a postgres:// or postgresql:// URL".to_owned(),
             });
         }
-        // With Postgres the database lives on another host and the server can be replaced, so the key
-        // for saved secrets (the S3 secret among them) must come from the configuration, not an
-        // `app.key` file on this server's disk.
-        if self.data.database_url.is_some() && !self.secrets.contains_key("app_key") {
+        if self.app_key.is_none() {
             return Err(ConfigError::InvalidSetting {
-                key: "secrets.app_key",
-                detail: "a Postgres database (data.database_url) needs secrets.app_key \
-                         (base64 of 32 random bytes): the server keeps no app.key file"
+                key: APP_KEY_ENV,
+                detail: "is required: create it with `openssl rand -base64 32` and keep a copy \
+                         outside the server, because saved secrets cannot be read without it"
                     .to_owned(),
             });
         }
         if self.jobs.concurrency == 0 {
             return Err(ConfigError::InvalidSetting {
-                key: "jobs.concurrency",
+                key: JOBS_CONCURRENCY_ENV,
                 detail: "must be positive".to_owned(),
             });
         }
         if self.uploads.max_file_bytes == 0 {
             return Err(ConfigError::InvalidSetting {
-                key: "uploads.max_file_bytes",
+                key: UPLOADS_MAX_FILE_BYTES_ENV,
                 detail: "must be positive".to_owned(),
             });
         }
         if self.uploads.max_request_bytes < self.uploads.max_file_bytes {
             return Err(ConfigError::InvalidSetting {
-                key: "uploads.max_request_bytes",
-                detail: "must be at least uploads.max_file_bytes".to_owned(),
+                key: UPLOADS_MAX_REQUEST_BYTES_ENV,
+                detail: "must be at least ORBIT_UPLOAD_MAX_FILE_BYTES".to_owned(),
             });
         }
-        let rate_limits = [
-            self.rate_limits.authentication_per_minute,
-            self.rate_limits.recovery_per_minute,
-            self.rate_limits.invitation_per_minute,
-            self.rate_limits.upload_per_minute,
-            self.rate_limits.general_per_minute,
-        ];
-        if rate_limits.contains(&0) {
+        if self.http.shutdown_delay_seconds > 300 {
             return Err(ConfigError::InvalidSetting {
-                key: "rate_limits",
-                detail: "all endpoint-class limits must be positive".to_owned(),
+                key: HTTP_SHUTDOWN_DELAY_ENV,
+                detail: "the delay cannot exceed 300 seconds".to_owned(),
             });
         }
-        if rate_limits.into_iter().any(|limit| limit > 1_000_000) {
-            return Err(ConfigError::InvalidSetting {
-                key: "rate_limits",
-                detail: "endpoint-class limits cannot exceed 1000000 per minute".to_owned(),
-            });
-        }
-        Ok(())
-    }
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
-struct RawConfig {
-    environment: String,
-    http: RawHttpConfig,
-    data: RawDataConfig,
-    jobs: RawJobsConfig,
-    uploads: RawUploadConfig,
-    metrics: RawMetricsConfig,
-    rate_limits: RawRateLimitConfig,
-    secrets: BTreeMap<String, String>,
-}
-
-impl RawConfig {
-    fn into_config(self) -> Result<Config, ConfigError> {
-        let bind = parse_setting("http.bind", &self.http.bind)?;
-        let trusted_proxies = self
-            .http
-            .trusted_proxies
-            .iter()
-            .map(|value| parse_setting("http.trusted_proxies", value))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Config {
-            environment: parse_setting("environment", &self.environment)?,
-            http: HttpConfig {
-                bind,
-                port: self.http.port,
-                public_origin: self
-                    .http
-                    .public_origin
-                    .unwrap_or_else(|| default_public_origin(bind, self.http.port)),
-                trusted_proxies,
-            },
-            data: DataConfig {
-                database: self.data.database,
-                database_url: self.data.database_url.filter(|url| !url.is_empty()),
-                attachments: self.data.attachments,
-                backups: self.data.backups,
-            },
-            jobs: JobsConfig {
-                concurrency: self.jobs.concurrency,
-            },
-            uploads: UploadConfig {
-                max_file_bytes: self.uploads.max_file_bytes,
-                max_request_bytes: self.uploads.max_request_bytes,
-            },
-            metrics: MetricsConfig {
-                listen: self
-                    .metrics
-                    .listen
-                    .as_deref()
-                    .map(|value| parse_setting("metrics.listen", value))
-                    .transpose()?,
-            },
-            rate_limits: RateLimitConfig {
-                authentication_per_minute: self.rate_limits.authentication_per_minute,
-                recovery_per_minute: self.rate_limits.recovery_per_minute,
-                invitation_per_minute: self.rate_limits.invitation_per_minute,
-                upload_per_minute: self.rate_limits.upload_per_minute,
-                general_per_minute: self.rate_limits.general_per_minute,
-            },
-            secrets: self
-                .secrets
-                .into_iter()
-                .map(|(name, value)| (name, Secret(value)))
-                .collect(),
-        })
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct RawHttpConfig {
-    bind: String,
-    port: u16,
-    public_origin: Option<String>,
-    trusted_proxies: Vec<String>,
-}
-
-impl Default for RawHttpConfig {
-    fn default() -> Self {
-        let defaults = HttpConfig::default();
-        Self {
-            bind: defaults.bind.to_string(),
-            port: defaults.port,
-            public_origin: None,
-            trusted_proxies: Vec::new(),
-        }
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct RawDataConfig {
-    database: PathBuf,
-    database_url: Option<String>,
-    attachments: PathBuf,
-    backups: PathBuf,
-}
-
-impl Default for RawDataConfig {
-    fn default() -> Self {
-        let defaults = DataConfig::default();
-        Self {
-            database: defaults.database,
-            database_url: defaults.database_url,
-            attachments: defaults.attachments,
-            backups: defaults.backups,
-        }
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct RawJobsConfig {
-    concurrency: usize,
-}
-
-impl Default for RawJobsConfig {
-    fn default() -> Self {
-        Self {
-            concurrency: JobsConfig::default().concurrency,
-        }
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct RawUploadConfig {
-    max_file_bytes: u64,
-    max_request_bytes: u64,
-}
-
-impl Default for RawUploadConfig {
-    fn default() -> Self {
-        let defaults = UploadConfig::default();
-        Self {
-            max_file_bytes: defaults.max_file_bytes,
-            max_request_bytes: defaults.max_request_bytes,
-        }
-    }
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
-struct RawMetricsConfig {
-    listen: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct RawRateLimitConfig {
-    authentication_per_minute: u32,
-    recovery_per_minute: u32,
-    invitation_per_minute: u32,
-    upload_per_minute: u32,
-    general_per_minute: u32,
-}
-
-impl Default for RawRateLimitConfig {
-    fn default() -> Self {
-        let defaults = RateLimitConfig::default();
-        Self {
-            authentication_per_minute: defaults.authentication_per_minute,
-            recovery_per_minute: defaults.recovery_per_minute,
-            invitation_per_minute: defaults.invitation_per_minute,
-            upload_per_minute: defaults.upload_per_minute,
-            general_per_minute: defaults.general_per_minute,
+        self.rate_limits.validate()?;
+        match &self.billing {
+            Some(billing) => billing.validate(),
+            None => Ok(()),
         }
     }
 }
@@ -588,17 +671,18 @@ fn apply_environment(
     config: &mut Config,
     environment: &BTreeMap<String, String>,
 ) -> Result<(), ConfigError> {
-    for key in environment.keys() {
-        if let Some(secret_name) = key
-            .strip_prefix(SECRETS_ENV_PREFIX)
-            .and_then(|name| name.strip_suffix("_FILE"))
-        {
-            let direct_key = format!("{SECRETS_ENV_PREFIX}{secret_name}");
-            if environment.contains_key(&direct_key) {
-                return Err(ConfigError::AmbiguousSecret { key: direct_key });
-            }
+    for key in [
+        APP_KEY_ENV,
+        STRIPE_SECRET_KEY_ENV,
+        STRIPE_WEBHOOK_SECRET_ENV,
+    ] {
+        if environment.contains_key(key) && environment.contains_key(&format!("{key}_FILE")) {
+            return Err(ConfigError::AmbiguousSecret {
+                key: key.to_owned(),
+            });
         }
     }
+    let mut billing = BillingEnvironment::default();
 
     for (key, value) in environment {
         if key == ENVIRONMENT_ENV {
@@ -619,6 +703,8 @@ fn apply_environment(
                 .filter(|value| !value.is_empty())
                 .map(|value| parse_environment(key, value))
                 .collect::<Result<Vec<_>, _>>()?;
+        } else if key == HTTP_SHUTDOWN_DELAY_ENV {
+            config.http.shutdown_delay_seconds = parse_environment(key, value)?;
         } else if key == DATA_DATABASE_ENV {
             config.data.database = PathBuf::from(value);
         } else if key == DATA_DATABASE_URL_ENV {
@@ -635,33 +721,37 @@ fn apply_environment(
             config.uploads.max_request_bytes = parse_environment(key, value)?;
         } else if key == METRICS_LISTEN_ENV {
             config.metrics.listen = Some(parse_environment(key, value)?);
-        } else if key == RATE_AUTH_ENV {
-            config.rate_limits.authentication_per_minute = parse_environment(key, value)?;
-        } else if key == RATE_RECOVERY_ENV {
-            config.rate_limits.recovery_per_minute = parse_environment(key, value)?;
-        } else if key == RATE_INVITATION_ENV {
-            config.rate_limits.invitation_per_minute = parse_environment(key, value)?;
-        } else if key == RATE_UPLOAD_ENV {
-            config.rate_limits.upload_per_minute = parse_environment(key, value)?;
-        } else if key == RATE_GENERAL_ENV {
-            config.rate_limits.general_per_minute = parse_environment(key, value)?;
-        } else if let Some(secret_name) = key.strip_prefix(SECRETS_ENV_PREFIX) {
-            apply_secret(config, key, secret_name, value)?;
-        } else if key.starts_with("ORBIT__") {
+        } else if let Some(setting) = key
+            .strip_prefix(RATE_LIMITS_ENV_PREFIX)
+            .and_then(|name| config.rate_limits.setting_mut(&name.to_ascii_lowercase()))
+        {
+            *setting = parse_environment(key, value)?;
+        } else if key == APP_KEY_ENV {
+            config.app_key = Some(parse_app_key(value)?);
+        } else if key == APP_KEY_FILE_ENV {
+            config.app_key = Some(parse_app_key(&read_secret_file(key, Path::new(value))?)?);
+        } else if key == CLOUD_ENV {
+            billing.cloud = parse_environment(key, value)?;
+        } else if key == STRIPE_SECRET_KEY_ENV {
+            billing.secret_key = Some(value.clone());
+        } else if key == STRIPE_SECRET_KEY_FILE_ENV {
+            billing.secret_key = Some(read_secret_file(key, Path::new(value))?);
+        } else if key == STRIPE_WEBHOOK_SECRET_ENV {
+            billing.webhook_secret = Some(value.clone());
+        } else if key == STRIPE_WEBHOOK_SECRET_FILE_ENV {
+            billing.webhook_secret = Some(read_secret_file(key, Path::new(value))?);
+        } else if key == STRIPE_PRICES_ENV {
+            billing.prices = Some(value.clone());
+        } else if key.starts_with("ORBIT_")
+            && !IGNORED_ENV_PREFIXES
+                .iter()
+                .any(|prefix| key.starts_with(prefix))
+        {
             return Err(ConfigError::UnknownEnvironment(key.clone()));
         }
     }
+    config.billing = billing.into_config()?;
     Ok(())
-}
-
-fn parse_setting<T>(key: &'static str, value: &str) -> Result<T, ConfigError>
-where
-    T: std::str::FromStr,
-{
-    value.parse().map_err(|_| ConfigError::InvalidSetting {
-        key,
-        detail: format!("invalid value {value}"),
-    })
 }
 
 fn parse_environment<T>(key: &str, value: &str) -> Result<T, ConfigError>
@@ -683,33 +773,6 @@ fn display_ip(address: IpAddr) -> String {
 
 fn default_public_origin(bind: IpAddr, port: u16) -> String {
     format!("http://{}:{port}", display_ip(bind))
-}
-
-fn apply_secret(
-    config: &mut Config,
-    key: &str,
-    secret_name: &str,
-    value: &str,
-) -> Result<(), ConfigError> {
-    if let Some(name) = secret_name.strip_suffix("_FILE") {
-        if name.is_empty() {
-            return Err(ConfigError::UnknownEnvironment(key.to_owned()));
-        }
-        let path = Path::new(value);
-        let mut secret = read_secret_file(key, path)?;
-        remove_one_trailing_line_ending(&mut secret);
-        config
-            .secrets
-            .insert(name.to_ascii_lowercase(), Secret(secret));
-    } else {
-        if secret_name.is_empty() {
-            return Err(ConfigError::UnknownEnvironment(key.to_owned()));
-        }
-        config
-            .secrets
-            .insert(secret_name.to_ascii_lowercase(), Secret(value.to_owned()));
-    }
-    Ok(())
 }
 
 fn read_secret_file(key: &str, path: &Path) -> Result<String, ConfigError> {
@@ -755,10 +818,10 @@ fn read_secret_file(key: &str, path: &Path) -> Result<String, ConfigError> {
     })
 }
 
-fn remove_one_trailing_line_ending(value: &mut String) {
-    if value.ends_with("\r\n") {
-        value.truncate(value.len() - 2);
-    } else if value.ends_with('\n') {
-        value.pop();
-    }
+/// Unlike [`parse_environment`], the error does not repeat the value: it is a secret.
+fn parse_app_key(value: &str) -> Result<AppKey, ConfigError> {
+    value.parse().map_err(|()| ConfigError::InvalidSetting {
+        key: APP_KEY_ENV,
+        detail: "must be base64 of 32 bytes (`openssl rand -base64 32`)".to_owned(),
+    })
 }

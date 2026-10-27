@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { ApiProblem } from '@/api/problem'
+import { ApiProblem } from '@orbit/api/problem'
 import { UnsavedBar } from '@/components/common/UnsavedBar'
 import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
