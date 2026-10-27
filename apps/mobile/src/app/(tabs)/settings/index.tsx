@@ -1,4 +1,4 @@
-import { storageFileLabel } from '@orbit/api/storage'
+import { canDeleteStorageFile, storageFileLabel } from '@orbit/api/storage'
 import type { StorageFile } from '@orbit/api/generated/types.gen'
 import { router } from 'expo-router'
 import { useState } from 'react'
@@ -7,7 +7,7 @@ import { View } from 'react-native'
 import { ConfirmDialog, type ConfirmRequest } from '../../../components/settings/Dialog'
 import { ACCOUNT_NAV, Note, RowIcon, RowText, SettingsCard, SettingsRow, SettingsShell, WORKSPACE_NAV } from '../../../components/settings/Shell'
 import { formatBytes, storageUse } from '../../../data/account-api'
-import { useMemberWrites, useRenameWorkspace, useWorkspaceStorage } from '../../../hooks/account'
+import { useDeleteStorageFile, useMemberWrites, useRenameWorkspace, useWorkspaceStorage } from '../../../hooks/account'
 import { useOrbit } from '../../../orbit-context'
 import { useMembers } from '../../../queries'
 import { errorMessage } from '../../../session-context'
@@ -21,7 +21,8 @@ import { Button, Icon, Input, Text } from '../../../ui'
 export default function GeneralScreen() {
   const { workspace, session, user, signOut } = useOrbit()
   const { colors } = useTheme()
-  const storage = useWorkspaceStorage()
+  const [fileLimit, setFileLimit] = useState(10)
+  const storage = useWorkspaceStorage(fileLimit)
   const [signingOut, setSigningOut] = useState(false)
   const [signOutError, setSignOutError] = useState<string | null>(null)
 
@@ -35,7 +36,14 @@ export default function GeneralScreen() {
         actions={workspace.permissions.includes('storage.manage') ? <Button label="Use your own bucket" variant="outline" size="sm" onPress={() => router.push('/settings/file-storage')} /> : undefined}
       >
         {storage.data ? <StorageBar {...storageUse(storage.data)} /> : <Note error={storage.isError}>{storage.isError ? 'Storage use could not be loaded.' : 'Loading storage…'}</Note>}
-        {storage.data?.largest_files.length ? <LargestFiles files={storage.data.largest_files} /> : null}
+        {storage.data?.largest_files.length ? (
+          <LargestFiles
+            files={storage.data.largest_files}
+            more={storage.data.file_count - storage.data.largest_files.length}
+            loading={storage.isFetching}
+            onMore={() => setFileLimit((limit) => Math.min(limit + 25, 500))}
+          />
+        ) : null}
       </SettingsCard>
 
       <SettingsCard title="Account" description={`${user.email} on ${session.server}`} flush>
@@ -105,25 +113,51 @@ function StorageBar({ label, fraction }: { label: string; fraction: number | nul
   )
 }
 
-/** Only admins get these from the server. */
-function LargestFiles({ files }: { files: StorageFile[] }) {
+/** Only admins get these from the server; they can delete a file (not one of an emoji or sticker). */
+function LargestFiles({ files, more, loading, onMore }: { files: StorageFile[]; more: number; loading: boolean; onMore: () => void }) {
+  const deleteFile = useDeleteStorageFile()
+  const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
   return (
     <View className="mt-5 gap-2">
       <Text className="text-[13px] font-medium">Largest files</Text>
+      {deleteFile.isError ? <Note error>The file could not be deleted. {errorMessage(deleteFile.error)}</Note> : null}
       <View className="rounded-lg border border-border">
         {files.map((file, index) => {
           const { name, where } = storageFileLabel(file)
           return (
-            <View key={index} className={`flex-row items-center gap-3 px-3 py-2 ${index > 0 ? 'border-t border-border' : ''}`}>
+            <View key={file.id} className={`flex-row items-center gap-3 px-3 py-2 ${index > 0 ? 'border-t border-border' : ''}`}>
               <View className="flex-1 gap-0.5">
                 <Text className="text-[13px]" numberOfLines={1}>{name}</Text>
                 <Text className="text-xs text-muted-foreground" numberOfLines={1}>{where}</Text>
               </View>
               <Text className="text-[13px] text-muted-foreground tabular-nums">{formatBytes(file.byte_size)}</Text>
+              {canDeleteStorageFile(file) ? (
+                <Button
+                  label="Delete"
+                  variant="ghost"
+                  size="sm"
+                  disabled={deleteFile.isPending}
+                  onPress={() =>
+                    setConfirm({
+                      title: `Delete ${name}?`,
+                      description: 'It frees its storage at once. Tasks, pages and messages that use it show “Deleted file” instead. You cannot undo this.',
+                      confirmLabel: 'Delete',
+                      danger: true,
+                      onConfirm: () => deleteFile.mutate(file.id),
+                    })
+                  }
+                />
+              ) : null}
             </View>
           )
         })}
       </View>
+      {more > 0 ? (
+        <View className="items-start">
+          <Button label={`Show more (${more} more ${more === 1 ? 'file' : 'files'})`} variant="ghost" size="sm" loading={loading} onPress={onMore} />
+        </View>
+      ) : null}
+      <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />
     </View>
   )
 }

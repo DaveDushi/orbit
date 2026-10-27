@@ -73,12 +73,24 @@ export async function collabTicket(client: OrbitClient): Promise<TicketResult> {
   }
 }
 
+/** An Orbit file (`/api/…`) an admin deleted: the server answers 410. */
+export async function fileDeleted(server: string, token: string, url: string): Promise<boolean> {
+  if (!url.startsWith('/api/')) return false
+  try {
+    const response = await fetch(`${server}${url}`, { method: 'HEAD', headers: { Authorization: `Bearer ${token}` } })
+    return response.status === 410
+  } catch {
+    return false
+  }
+}
+
 /** An Orbit file (`/api/…`, which needs the session) as a data URL, for the page editor's web view; `null` when it fails. */
 export async function fileDataUrl(server: string, token: string, url: string): Promise<string | null> {
   if (!url.startsWith('/api/')) return null
   try {
     const response = await fetch(`${server}${url}`, { headers: { Authorization: `Bearer ${token}` } })
-    if (!response.ok) return null
+    // 410: an admin deleted the file, and the body is a "Deleted file" image to show in its place
+    if (!response.ok && response.status !== 410) return null
     const blob = await response.blob()
     return await new Promise((resolve) => {
       const reader = new FileReader()

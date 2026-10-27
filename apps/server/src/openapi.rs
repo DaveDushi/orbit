@@ -66,6 +66,7 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::workspace_routes::list_workspaces,
         crate::workspace_routes::get_workspace,
         crate::workspace_routes::get_workspace_storage,
+        crate::workspace_routes::delete_storage_file,
         crate::workspace_routes::get_workspace_bucket,
         crate::workspace_routes::save_workspace_bucket,
         crate::workspace_routes::remove_workspace_bucket,
@@ -569,7 +570,7 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             workspace_resource_errors(&mut responses);
             add_code(&mut responses, "409", "workspace_limit_reached");
         }
-        "delete_workspace" => workspace_resource_errors(&mut responses),
+        "delete_workspace" | "delete_storage_file" => workspace_resource_errors(&mut responses),
         "create_invitation" => {
             add_code(&mut responses, "403", "workspace_action_forbidden");
             add_code(&mut responses, "404", "workspace_resource_not_found");

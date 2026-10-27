@@ -313,6 +313,7 @@ impl App {
                 .with_mailer(mailer)
                 .with_rate_limits(config.rate_limits)
                 .with_object_storage(object_storage.clone(), blob_store.clone())
+                .with_uploads(attachment_state.uploads.clone())
                 .with_image_compressor(
                     crate::image_compression::ImageCompressor::new(
                         database.clone(),

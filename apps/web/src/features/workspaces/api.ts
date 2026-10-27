@@ -1,4 +1,4 @@
-import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient, type createApiClient } from '@/api/client'
 import { fetchAllPages } from '@/api/pagination'
 import { queryKeys } from '@/api/queryKeys'
@@ -9,6 +9,7 @@ import {
   changeMemberRole,
   createInvitation,
   createWorkspace,
+  deleteStorageFile,
   deleteWorkspace,
   getWorkspaceBucket,
   getWorkspaceStorage,
@@ -110,14 +111,27 @@ export function useInvitations(workspaceId: string | null) {
   })
 }
 
-/** Bytes of files the workspace stores, and its quota (`null` is unlimited). */
-export function useWorkspaceStorage(workspaceId: string) {
+/** Bytes of files the workspace stores, and its quota (`null` is unlimited); admins also get the `files` largest. */
+export function useWorkspaceStorage(workspaceId: string, files = 10) {
   return useQuery({
-    queryKey: queryKeys.workspaceStorage(workspaceId),
+    queryKey: [...queryKeys.workspaceStorage(workspaceId), files],
+    // the longer list shows the shorter one while it loads
+    placeholderData: keepPreviousData,
     queryFn: async () => {
-      const { data } = await getWorkspaceStorage({ client: apiClient, path: { workspace_id: workspaceId }, throwOnError: true })
+      const { data } = await getWorkspaceStorage({ client: apiClient, path: { workspace_id: workspaceId }, query: { files }, throwOnError: true })
       return required(data, 'Workspace storage response was empty.')
     },
+  })
+}
+
+/** Deletes a stored file for an admin; where it was used, it then shows as a deleted file. */
+export function useDeleteStorageFile(workspaceId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (fileId: string) => {
+      await deleteStorageFile({ client: apiClient, path: { workspace_id: workspaceId, file_id: fileId }, throwOnError: true })
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.workspaceStorage(workspaceId) }),
   })
 }
 

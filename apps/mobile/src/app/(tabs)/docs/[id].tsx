@@ -11,7 +11,7 @@ import { IconDialog } from '../../../components/docs/IconDialog'
 import PageEditor, { type PageCardInfo, type PageEditorProps, type PageEditorRef } from '../../../components/docs/PageEditor.dom'
 import { ActionSheet, ConfirmDialog, type ConfirmRequest, PromptDialog, type PromptRequest, type SheetAction } from '../../../components/settings/Dialog'
 import { absoluteUrl, pageTitle, trashPrompt, validCoverUrl, visibleThreads } from '../../../data/docs'
-import { collabTicket, fileDataUrl } from '../../../data/docs-api'
+import { collabTicket, fileDataUrl, fileDeleted } from '../../../data/docs-api'
 import { keys } from '../../../data/keys'
 import * as api from '../../../data/orbit'
 import { BLOCK_KINDS, type BlockKind, type EditorCommand, type FormatState, IDLE_FORMAT, PROBLEM_RESPONSES, type ProblemResponse, whileMounted } from '../../../data/page-editor'
@@ -343,6 +343,7 @@ const EditorView = memo(function EditorView({ ref, pageId, epoch, generation, ed
     () => ({
       getTicket: whileMounted(mounted, () => collabTicket(client)),
       loadFile: whileMounted(mounted, (url: string) => fileDataUrl(session.server, session.token, url)),
+      fileDeleted: whileMounted(mounted, (url: string) => fileDeleted(session.server, session.token, url)),
       openPage: whileMounted(mounted, async (target: string) => router.push(`/docs/${target}`)),
       openUrl: whileMounted(mounted, async (url: string) => void Linking.openURL(url).catch(() => {})),
       onStatus: whileMounted(mounted, async (state: CollabState) => latest.current.onStatus(state)),

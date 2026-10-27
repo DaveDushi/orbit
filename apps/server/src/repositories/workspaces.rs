@@ -6,8 +6,9 @@ use orbit_domain::{Actor, MembershipDenied, Permission, Policy, WorkspaceDefault
 use orbit_platform::{
     AttachmentMutationCoordinator, BLOB_REFERENCE_COUNT, BlobStore, BlobStoreError, Database, Id,
     IssuedSession, Job, JobError, JobKind, JobKindRegistrationError, JobStore, LocalBlobStore,
-    RecurringSchedule, Row, ScheduleError, Scheduler, TimestampMillis, WORKSPACE_STORAGE_USED,
-    Worker, WorkerConfig, WorkerError, generate_opaque_token, normalize_email,
+    RecurringSchedule, Row, ScheduleError, Scheduler, TimestampMillis, UploadError, UploadService,
+    WORKSPACE_STORAGE_USED, Worker, WorkerConfig, WorkerError, generate_opaque_token,
+    normalize_email,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -171,13 +172,19 @@ pub struct WorkspaceStorage {
     pub used_bytes: u64,
     /// `null` is unlimited.
     pub quota_bytes: Option<u64>,
-    /// The files that use the most storage, largest first. Empty unless the caller may update the workspace.
+    /// The files that use the most storage, largest first (as many as asked for). Empty unless the caller may update
+    /// the workspace.
     pub largest_files: Vec<StorageFile>,
+    /// How many files the workspace stores; `0` unless the caller may update the workspace.
+    pub file_count: u64,
 }
 
 /// One stored file (blob) of a workspace.
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct StorageFile {
+    /// For `DELETE /api/v1/workspaces/{workspace_id}/storage/files/{file_id}`.
+    #[schema(value_type = String)]
+    pub id: Id,
     pub byte_size: u64,
     /// `null` when the file is only used in private places, or no longer used (it stops counting soon).
     pub name: Option<String>,
@@ -204,8 +211,8 @@ pub enum StorageFileUseKind {
     Private,
 }
 
-/// How many files `WorkspaceStorage::largest_files` lists.
-const LARGEST_FILES: i64 = 10;
+/// How many files `WorkspaceStorage::largest_files` lists at most.
+pub const MAX_LARGEST_FILES: u32 = 500;
 
 /// Every use of the largest blobs of workspace `$1`, largest blob first. Names in private places are `NULL`.
 const LARGEST_FILE_USES: &str = "SELECT b.id AS blob_id, b.byte_size, u.kind, u.file_name, u.title \
@@ -222,7 +229,8 @@ const LARGEST_FILE_USES: &str = "SELECT b.id AS blob_id, b.byte_size, u.kind, u.
        UNION ALL SELECT blob_id, 'emoji', name, NULL FROM custom_emoji WHERE workspace_id = $1 AND blob_id IS NOT NULL \
        UNION ALL SELECT blob_id, 'sticker', name, NULL FROM custom_stickers WHERE workspace_id = $1 AND blob_id IS NOT NULL \
      ) u ON u.blob_id = b.id \
-     WHERE b.id IN (SELECT id FROM attachment_blobs WHERE workspace_id = $1 ORDER BY byte_size DESC, id LIMIT $2) \
+     WHERE b.id IN (SELECT id FROM attachment_blobs WHERE workspace_id = $1 AND deleted_at IS NULL \
+       ORDER BY byte_size DESC, id LIMIT $2) \
      ORDER BY b.byte_size DESC, b.id, u.kind, u.title, u.file_name";
 
 #[derive(Debug, Error)]
@@ -415,23 +423,33 @@ impl WorkspaceRepository {
         workspace_from_row(row)
     }
 
+    /// `file_limit`: how many of the largest files to list (at most [`MAX_LARGEST_FILES`]).
     pub async fn storage(
         &self,
         workspace_id: Id,
         actor_id: Id,
+        file_limit: u32,
     ) -> Result<WorkspaceStorage, WorkspaceError> {
         let workspace = self.get(workspace_id, actor_id).await?;
         let row = sqlx::query(sqlx::AssertSqlSafe(format!(
-            "SELECT ({WORKSPACE_STORAGE_USED}) AS used, workspace_storage_quota_bytes AS quota \
+            "SELECT ({WORKSPACE_STORAGE_USED}) AS used, workspace_storage_quota_bytes AS quota, \
+             (SELECT COUNT(*) FROM attachment_blobs WHERE workspace_id = $1 AND deleted_at IS NULL) AS files \
              FROM instance_settings WHERE id = 1"
         )))
         .bind(workspace_id.to_string())
         .fetch_one(self.database.pool())
         .await?;
-        let largest_files = if workspace.permissions.contains(&Permission::WorkspaceUpdate) {
-            self.largest_files(workspace_id).await?
+        let admin = workspace.permissions.contains(&Permission::WorkspaceUpdate);
+        let largest_files = if admin {
+            self.largest_files(workspace_id, file_limit.min(MAX_LARGEST_FILES))
+                .await?
         } else {
             Vec::new()
+        };
+        let file_count = if admin {
+            u64::try_from(row.get::<i64, _>("files")).unwrap_or(0)
+        } else {
+            0
         };
         Ok(WorkspaceStorage {
             used_bytes: u64::try_from(row.get::<i64, _>("used")).unwrap_or(0),
@@ -439,13 +457,18 @@ impl WorkspaceRepository {
                 .ok()
                 .filter(|quota| *quota > 0),
             largest_files,
+            file_count,
         })
     }
 
-    async fn largest_files(&self, workspace_id: Id) -> Result<Vec<StorageFile>, WorkspaceError> {
+    async fn largest_files(
+        &self,
+        workspace_id: Id,
+        limit: u32,
+    ) -> Result<Vec<StorageFile>, WorkspaceError> {
         let rows = sqlx::query(LARGEST_FILE_USES)
             .bind(workspace_id.to_string())
-            .bind(LARGEST_FILES)
+            .bind(i64::from(limit))
             .fetch_all(self.database.pool())
             .await?;
         let mut files: Vec<(String, StorageFile)> = Vec::new();
@@ -453,6 +476,7 @@ impl WorkspaceRepository {
             let blob_id: String = row.get("blob_id");
             if files.last().is_none_or(|(id, _)| *id != blob_id) {
                 let file = StorageFile {
+                    id: blob_id.parse().map_err(|_| WorkspaceError::Conflict)?,
                     byte_size: u64::try_from(row.get::<i64, _>("byte_size")).unwrap_or(0),
                     name: None,
                     uses: Vec::new(),
@@ -483,6 +507,50 @@ impl WorkspaceRepository {
             }
         }
         Ok(files.into_iter().map(|(_, file)| file).collect())
+    }
+
+    /// Deletes a stored file of the workspace for an admin (see [`UploadService::delete_blob`]): the tasks, pages
+    /// and chat messages that use it keep their reference and show "Deleted file".
+    pub async fn delete_storage_file(
+        &self,
+        uploads: &UploadService,
+        workspace_id: Id,
+        actor_id: Id,
+        file_id: Id,
+        request_id: &str,
+    ) -> Result<(), WorkspaceError> {
+        let workspace = self.get(workspace_id, actor_id).await?;
+        if !workspace.permissions.contains(&Permission::WorkspaceUpdate) {
+            return Err(WorkspaceError::Forbidden);
+        }
+        let deleted = uploads
+            .delete_blob(workspace_id, file_id)
+            .await
+            .map_err(|error| match error {
+                UploadError::Database(error) => WorkspaceError::Unavailable(error),
+                UploadError::BlobStore(error) => WorkspaceError::Storage(error),
+                _ => WorkspaceError::Conflict,
+            })?;
+        if !deleted {
+            return Err(WorkspaceError::NotFound);
+        }
+        let now = self.database.database_now().await?;
+        let mut transaction = self.database.immediate_transaction().await?;
+        audit::record(
+            &mut transaction,
+            workspace_id,
+            Some(actor_id),
+            "storage_file.deleted",
+            AuditOutcome::Success,
+            "storage_file",
+            Some(file_id),
+            request_id,
+            json!({}),
+            now,
+        )
+        .await?;
+        transaction.commit().await?;
+        Ok(())
     }
 
     pub async fn rename(

@@ -91,6 +91,10 @@ export type AttachmentRecord = {
     byte_size: number;
     comment_id?: string | null;
     created_at: string;
+    /**
+     * An admin deleted the stored file: show "Deleted file"; its download is a "Deleted file" image (410).
+     */
+    deleted: boolean;
     display_name: string;
     id: string;
     media_type: string;
@@ -425,6 +429,10 @@ export type ChatFileDownload = Blob | File;
  * A file of a message.
  */
 export type ChatFileRecord = {
+    /**
+     * An admin deleted the stored file: show "Deleted file"; `url` serves a "Deleted file" image (410).
+     */
+    deleted: boolean;
     file_name: string;
     height: number | null;
     id: string;
@@ -2994,6 +3002,10 @@ export type StickerRecord = {
 export type StorageFile = {
     byte_size: number;
     /**
+     * For `DELETE /api/v1/workspaces/{workspace_id}/storage/files/{file_id}`.
+     */
+    id: string;
+    /**
      * `null` when the file is only used in private places, or no longer used (it stops counting soon).
      */
     name?: string | null;
@@ -3590,7 +3602,12 @@ export type WorkspaceRole = 'owner' | 'admin' | 'member';
  */
 export type WorkspaceStorage = {
     /**
-     * The files that use the most storage, largest first. Empty unless the caller may update the workspace.
+     * How many files the workspace stores; `0` unless the caller may update the workspace.
+     */
+    file_count: number;
+    /**
+     * The files that use the most storage, largest first (as many as asked for). Empty unless the caller may update
+     * the workspace.
      */
     largest_files: Array<StorageFile>;
     /**
@@ -15381,7 +15398,12 @@ export type GetWorkspaceStorageData = {
     path: {
         workspace_id: string;
     };
-    query?: never;
+    query?: {
+        /**
+         * How many of the largest files to list for an admin: 1 to 500 (default 10).
+         */
+        files?: number;
+    };
     url: '/api/v1/workspaces/{workspace_id}/storage';
 };
 
@@ -15609,6 +15631,65 @@ export type SaveWorkspaceBucketResponses = {
 };
 
 export type SaveWorkspaceBucketResponse = SaveWorkspaceBucketResponses[keyof SaveWorkspaceBucketResponses];
+
+export type DeleteStorageFileData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        file_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/storage/files/{file_id}';
+};
+
+export type DeleteStorageFileErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden, workspace_action_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * workspace_resource_not_found
+     */
+    404: WorkspaceProblem;
+    /**
+     * contract_mismatch, workspace_conflict, conflict
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type DeleteStorageFileError = DeleteStorageFileErrors[keyof DeleteStorageFileErrors];
+
+export type DeleteStorageFileResponses = {
+    204: void;
+};
+
+export type DeleteStorageFileResponse = DeleteStorageFileResponses[keyof DeleteStorageFileResponses];
 
 export type ListTasksData = {
     body?: never;

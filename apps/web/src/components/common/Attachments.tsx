@@ -42,8 +42,8 @@ export function Attachments({
   const [viewerImage, setViewerImage] = useState<Attachment | null>(null)
   if (attachments.length === 0) return null
 
-  const images = attachments.filter(isImage)
-  const otherFiles = attachments.filter((att) => !isImage(att))
+  const images = attachments.filter((att) => isImage(att) && !att.deleted)
+  const otherFiles = attachments.filter((att) => !isImage(att) || att.deleted)
   const single = images.length === 1
 
   return (
@@ -96,7 +96,15 @@ export function Attachments({
         <div className="flex max-w-md flex-col gap-2">
           {otherFiles.map((att) => (
             <span key={att.id} className="group relative block">
-              <a href={att.url} download={att.fileName} className="group/card flex items-center gap-3 rounded-lg border border-border bg-background p-3 text-muted-foreground shadow-sm transition-colors hover:bg-muted">
+              {att.deleted ? (
+                <span data-slot="attachment-deleted" className="flex items-center gap-3 rounded-lg border border-dashed border-border p-3 text-muted-foreground">
+                  <Paperclip className="size-10 shrink-0 opacity-50" />
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="text-sm font-medium">Deleted file</span>
+                    <span className="truncate text-xs">{att.fileName} · an admin deleted it</span>
+                  </span>
+                </span>
+              ) : <a href={att.url} download={att.fileName} className="group/card flex items-center gap-3 rounded-lg border border-border bg-background p-3 text-muted-foreground shadow-sm transition-colors hover:bg-muted">
                 <Paperclip className="size-10 shrink-0" />
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate text-sm font-medium text-foreground">{att.fileName}</span>
@@ -105,7 +113,7 @@ export function Attachments({
                 <span className="transition-opacity duration-150 group-focus-visible/card:opacity-100 hover-fine:opacity-0 hover-fine:group-hover/card:opacity-100">
                   <Download className="size-5" />
                 </span>
-              </a>
+              </a>}
               {onRemove ? (
                 <RemoveAttachmentButton attachment={att} onRemove={onRemove} />
               ) : null}

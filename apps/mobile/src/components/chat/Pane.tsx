@@ -103,7 +103,7 @@ export function MessagePreview({
           <View className="flex-row items-center gap-1">
             <Icon name="attach" size={13} color={colors.mutedForeground} />
             <Text numberOfLines={1} className="text-[12px] shrink text-muted-foreground">
-              {files === 1 ? message.attachments[0]!.file_name : `${files} files`}
+              {files === 1 ? (message.attachments[0]!.deleted ? 'Deleted file' : message.attachments[0]!.file_name) : `${files} files`}
             </Text>
           </View>
         ) : null}

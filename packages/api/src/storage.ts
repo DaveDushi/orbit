@@ -7,6 +7,11 @@ export function storageFileLabel(file: StorageFile): { name: string; where: stri
   return { name: file.name ?? 'Private file', where: places.join(', ') }
 }
 
+/** Emoji and stickers are deleted on their own settings pages, not as a stored file. */
+export function canDeleteStorageFile(file: StorageFile): boolean {
+  return file.uses.every((use) => use.kind !== 'emoji' && use.kind !== 'sticker')
+}
+
 function usePlace(use: StorageFileUse): string {
   switch (use.kind) {
     case 'task': return `Task “${use.title || 'Untitled'}”`

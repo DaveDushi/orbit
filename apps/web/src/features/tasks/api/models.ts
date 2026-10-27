@@ -33,6 +33,8 @@ export interface Attachment {
   mimeType: string
   fileSize: number
   url: string
+  /** An admin deleted the stored file. */
+  deleted?: boolean
 }
 
 export interface TaskComment {
@@ -278,6 +280,7 @@ export function taskFromRecord(
     url: attachment.comment_id
       ? `/api/v1/workspaces/${attachment.workspace_id}/tasks/${attachment.task_id}/comments/${attachment.comment_id}/attachments/${attachment.id}/download`
       : `/api/v1/workspaces/${attachment.workspace_id}/tasks/${attachment.task_id}/attachments/${attachment.id}/download`,
+    deleted: attachment.deleted,
   })
   const priority: TaskPriority = ['none', 'low', 'medium', 'high', 'urgent'].includes(record.priority)
     ? record.priority as TaskPriority
