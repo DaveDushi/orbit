@@ -35,7 +35,11 @@ export function drawerAreaOf(pathname: string, areas: Record<SettingsArea, reado
 const SECTIONS: Record<SettingsArea, { label: string; hrefs?: readonly string[] }[]> = {
   workspace: [{ label: 'Workspace' }],
   account: [{ label: 'Account' }],
-  admin: [{ label: 'Instance' }],
+  admin: [
+    { label: 'Instance' },
+    { label: 'Data', hrefs: ['/settings/admin/storage', '/settings/admin/backups'] },
+    { label: 'Monitoring', hrefs: ['/settings/admin/audit', '/settings/admin/jobs'] },
+  ],
 }
 
 /** An area's links grouped under the web's section labels, in the web's section order; empty sections are left out. */

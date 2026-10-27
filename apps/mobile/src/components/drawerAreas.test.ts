@@ -43,7 +43,11 @@ describe('drawerSections', () => {
     expect(drawerSections('workspace', areas.workspace)).toEqual([
       { label: 'Workspace', items: [{ href: '/settings' }, { href: '/settings/members' }] },
     ])
-    expect(drawerSections('admin', areas.admin)).toEqual([{ label: 'Instance', items: areas.admin }])
+    expect(drawerSections('admin', areas.admin)).toEqual([
+      { label: 'Instance', items: [{ href: '/settings/admin' }, { href: '/settings/admin/users' }] },
+      { label: 'Data', items: [{ href: '/settings/admin/storage' }] },
+      { label: 'Monitoring', items: [{ href: '/settings/admin/audit' }] },
+    ])
   })
 })
 

@@ -16,7 +16,9 @@ import { DocsPage } from '@/features/docs/pages/DocsPage'
 import { AccountLayout, AdminLayout, SettingsLayout } from '@/features/settings/pages/SettingsLayout'
 import { AdminAuditPage } from '@/features/admin/pages/AdminAuditPage'
 import { AdminBackupsPage } from '@/features/admin/pages/AdminBackupsPage'
+import { AdminEmailPage } from '@/features/admin/pages/AdminEmailPage'
 import { AdminJobsPage } from '@/features/admin/pages/AdminJobsPage'
+import { AdminLimitsPage } from '@/features/admin/pages/AdminLimitsPage'
 import { AdminStoragePage } from '@/features/admin/pages/AdminStoragePage'
 import { AdminSettingsPage } from '@/features/admin/pages/AdminSettingsPage'
 import { AdminUsersPage } from '@/features/admin/pages/AdminUsersPage'
@@ -121,6 +123,8 @@ export default function App() {
               <Route path="admin" element={<AdminLayout />}>
                 <Route index element={<AdminSettingsPage />} />
                 <Route path="users" element={<AdminUsersPage />} />
+                <Route path="email" element={<AdminEmailPage />} />
+                <Route path="limits" element={<AdminLimitsPage />} />
                 <Route path="audit" element={<AdminAuditPage />} />
                 <Route path="storage" element={<AdminStoragePage />} />
                 <Route path="backups" element={<AdminBackupsPage />} />
