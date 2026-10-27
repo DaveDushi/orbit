@@ -3606,8 +3606,8 @@ export type WorkspaceStorage = {
      */
     file_count: number;
     /**
-     * The files that use the most storage, largest first (as many as asked for). Empty unless the caller may update
-     * the workspace.
+     * One page of the files that use the most storage, largest first. Empty unless the caller may update the
+     * workspace.
      */
     largest_files: Array<StorageFile>;
     /**
@@ -15403,6 +15403,10 @@ export type GetWorkspaceStorageData = {
          * How many of the largest files to list for an admin: 1 to 500 (default 10).
          */
         files?: number;
+        /**
+         * How many of the largest files to skip first, for the next pages (default 0).
+         */
+        offset?: number;
     };
     url: '/api/v1/workspaces/{workspace_id}/storage';
 };

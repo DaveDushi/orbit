@@ -26415,6 +26415,17 @@
             }
           },
           {
+            "name": "offset",
+            "in": "query",
+            "description": "How many of the largest files to skip first, for the next pages (default 0).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
             "name": "workspace_id",
             "in": "path",
             "required": true,
@@ -42947,7 +42958,7 @@
             "items": {
               "$ref": "#/components/schemas/StorageFile"
             },
-            "description": "The files that use the most storage, largest first (as many as asked for). Empty unless the caller may update\nthe workspace."
+            "description": "One page of the files that use the most storage, largest first. Empty unless the caller may update the\nworkspace."
           },
           "quota_bytes": {
             "type": [

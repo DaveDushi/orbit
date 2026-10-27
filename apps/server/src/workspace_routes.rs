@@ -423,6 +423,8 @@ async fn get_workspace(
 struct StorageQuery {
     /// How many of the largest files to list for an admin: 1 to 500 (default 10).
     files: Option<u32>,
+    /// How many of the largest files to skip first, for the next pages (default 0).
+    offset: Option<u32>,
 }
 
 /// How many bytes of files the workspace stores, and its quota. Any member may read it.
@@ -439,7 +441,12 @@ async fn get_workspace_storage(
     let workspace_id = parse_id(&workspace_id, &instance, request_id.as_ref())?;
     state
         .workspaces
-        .storage(workspace_id, session.user.id, query.files.unwrap_or(10).max(1))
+        .storage(
+            workspace_id,
+            session.user.id,
+            query.files.unwrap_or(10).max(1),
+            query.offset.unwrap_or(0),
+        )
         .await
         .map(Json)
         .map_err(|error| workspace_problem(error, instance, request_id.as_ref()))

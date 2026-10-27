@@ -46,6 +46,7 @@ import type {
 } from '@orbit/api/generated/types.gen'
 
 import type { MemberRecord, OrbitClient, User, WorkspaceRecord } from './orbit'
+import { STORAGE_FILES_PAGE } from '@orbit/api/storage'
 
 export type { InvitationRecord, NotificationPrefs, SessionRecord, TotpSetup, TwoFactorStatus, WorkspaceBucketView, WorkspaceStorage }
 
@@ -180,9 +181,9 @@ export async function renameWorkspace(client: OrbitClient, workspace: Pick<Works
   return (await renameWorkspaceRequest({ client, path: { workspace_id: workspace.id }, body: { name, expected_version: workspace.version }, throwOnError: true })).data
 }
 
-/** `files`: how many of the largest files an admin gets. */
-export async function workspaceStorage(client: OrbitClient, workspaceId: string, files: number): Promise<WorkspaceStorage> {
-  return (await getWorkspaceStorage({ client, path: { workspace_id: workspaceId }, query: { files }, throwOnError: true })).data
+/** Admins also get one page of the largest files, from `offset`. */
+export async function workspaceStorage(client: OrbitClient, workspaceId: string, offset: number): Promise<WorkspaceStorage> {
+  return (await getWorkspaceStorage({ client, path: { workspace_id: workspaceId }, query: { files: STORAGE_FILES_PAGE, offset }, throwOnError: true })).data
 }
 
 /** Deletes a stored file for an admin; where it was used, it then shows as a deleted file. */

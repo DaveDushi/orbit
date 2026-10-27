@@ -1088,7 +1088,7 @@ async fn uploads_stay_within_the_workspace_storage_quota() {
     let workspace_id: Id = fixture.workspace_id.parse().unwrap();
     let owner_id: Id = fixture.owner_id.parse().unwrap();
     let workspaces = WorkspaceRepository::new((*fixture.database).clone());
-    let storage = workspaces.storage(workspace_id, owner_id, 10).await.unwrap();
+    let storage = workspaces.storage(workspace_id, owner_id, 10, 0).await.unwrap();
     assert_eq!(
         (storage.used_bytes, storage.quota_bytes),
         (0, Some(1_000_000_000))
@@ -1171,7 +1171,7 @@ async fn uploads_stay_within_the_workspace_storage_quota() {
     }
     assert_eq!(
         workspaces
-            .storage(workspace_id, owner_id, 10)
+            .storage(workspace_id, owner_id, 10, 0)
             .await
             .unwrap()
             .used_bytes,
@@ -1218,7 +1218,7 @@ async fn uploads_stay_within_the_workspace_storage_quota() {
         .unwrap();
     assert_eq!(
         workspaces
-            .storage(workspace_id, owner_id, 10)
+            .storage(workspace_id, owner_id, 10, 0)
             .await
             .unwrap()
             .used_bytes,
@@ -1231,7 +1231,7 @@ async fn uploads_stay_within_the_workspace_storage_quota() {
         .unwrap();
     assert_eq!(
         workspaces
-            .storage(workspace_id, owner_id, 10)
+            .storage(workspace_id, owner_id, 10, 0)
             .await
             .unwrap()
             .quota_bytes,
@@ -1291,7 +1291,7 @@ async fn admins_see_the_largest_files_and_private_names_stay_hidden() {
     .unwrap();
 
     let workspaces = WorkspaceRepository::new((*fixture.database).clone());
-    let storage = workspaces.storage(workspace_id, owner_id, 10).await.unwrap();
+    let storage = workspaces.storage(workspace_id, owner_id, 10, 0).await.unwrap();
     assert_eq!(
         without_ids(serde_json::to_value(&storage.largest_files).unwrap()),
         json!([
@@ -1325,7 +1325,7 @@ async fn admins_see_the_largest_files_and_private_names_stay_hidden() {
     .execute(fixture.database.pool())
     .await
     .unwrap();
-    let storage = workspaces.storage(workspace_id, member_id, 10).await.unwrap();
+    let storage = workspaces.storage(workspace_id, member_id, 10, 0).await.unwrap();
     assert_eq!(storage.used_bytes, 15_000 + 2000 + PNG.len() as u64);
     assert!(storage.largest_files.is_empty());
 }
@@ -1347,7 +1347,7 @@ async fn admins_delete_a_stored_file_and_its_attachments_say_so() {
         StatusCode::CREATED
     );
     let workspaces = WorkspaceRepository::new((*fixture.database).clone());
-    let storage = workspaces.storage(workspace_id, owner_id, 10).await.unwrap();
+    let storage = workspaces.storage(workspace_id, owner_id, 10, 0).await.unwrap();
     let file_id = storage.largest_files[0].id;
     assert_eq!(storage.largest_files[0].byte_size, 2000);
 
@@ -1373,7 +1373,7 @@ async fn admins_delete_a_stored_file_and_its_attachments_say_so() {
     assert_eq!(again.status(), StatusCode::NOT_FOUND);
 
     // It stops counting at once and leaves the list; the attachment stays and says it was deleted.
-    let storage = workspaces.storage(workspace_id, owner_id, 10).await.unwrap();
+    let storage = workspaces.storage(workspace_id, owner_id, 10, 0).await.unwrap();
     assert_eq!(storage.used_bytes, PNG.len() as u64);
     assert_eq!(storage.largest_files.len(), 1);
     let list = fixture
@@ -1445,7 +1445,7 @@ async fn admins_delete_a_stored_file_and_its_attachments_say_so() {
     );
     assert_eq!(
         workspaces
-            .storage(workspace_id, owner_id, 10)
+            .storage(workspace_id, owner_id, 10, 0)
             .await
             .unwrap()
             .used_bytes,
@@ -1479,7 +1479,7 @@ async fn admins_delete_a_stored_file_and_its_attachments_say_so() {
 }
 
 #[tokio::test]
-async fn admins_list_as_many_of_the_largest_files_as_they_ask_for() {
+async fn admins_page_through_the_largest_files() {
     let fixture = Fixture::new(UploadLimits::default()).await;
     for size in 1..=12_usize {
         assert_eq!(
@@ -1511,6 +1511,14 @@ async fn admins_list_as_many_of_the_largest_files_as_they_ask_for() {
     let first = storage("").await;
     assert_eq!(first["file_count"], 12);
     assert_eq!(first["largest_files"].as_array().unwrap().len(), 10);
+    let second = storage("?offset=10").await;
+    let second: Vec<&str> = second["largest_files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(second, ["file-2.bin", "file-1.bin"]);
     let all = storage("?files=25").await;
     let names: Vec<&str> = all["largest_files"]
         .as_array()
@@ -1532,7 +1540,7 @@ async fn members_cannot_delete_stored_files() {
         StatusCode::CREATED
     );
     let workspaces = WorkspaceRepository::new((*fixture.database).clone());
-    let file_id = workspaces.storage(workspace_id, owner_id, 10).await.unwrap().largest_files[0].id;
+    let file_id = workspaces.storage(workspace_id, owner_id, 10, 0).await.unwrap().largest_files[0].id;
     let member_id = Id::new_v7();
     let now = TimestampMillis::now().as_millis();
     sqlx::query(
@@ -1565,7 +1573,7 @@ async fn members_cannot_delete_stored_files() {
         Err(orbit_server::repositories::workspaces::WorkspaceError::Forbidden)
     ));
     assert_eq!(
-        workspaces.storage(workspace_id, owner_id, 10).await.unwrap().used_bytes,
+        workspaces.storage(workspace_id, owner_id, 10, 0).await.unwrap().used_bytes,
         2000
     );
 }

@@ -155,11 +155,11 @@ export function useTwoFactorWrites() {
   }
 }
 
-export function useWorkspaceStorage(files = 10) {
+export function useWorkspaceStorage(offset = 0) {
   const { client, workspaceId } = useOrbit()
   return useQuery({
-    queryKey: [...account.accountKeys.storage(workspaceId), files],
-    queryFn: () => account.workspaceStorage(client, workspaceId, files),
+    queryKey: [...account.accountKeys.storage(workspaceId), offset],
+    queryFn: () => account.workspaceStorage(client, workspaceId, offset),
     placeholderData: keepPreviousData,
   })
 }

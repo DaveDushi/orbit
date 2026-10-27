@@ -1,4 +1,4 @@
-import { canDeleteStorageFile, storageFileLabel } from '@orbit/api/storage'
+import { canDeleteStorageFile, storageFileLabel, storageFilesPage } from '@orbit/api/storage'
 import type { StorageFile } from '@orbit/api/generated/types.gen'
 import { router } from 'expo-router'
 import { useState } from 'react'
@@ -21,8 +21,12 @@ import { Button, Icon, Input, Text } from '../../../ui'
 export default function GeneralScreen() {
   const { workspace, session, user, signOut } = useOrbit()
   const { colors } = useTheme()
-  const [fileLimit, setFileLimit] = useState(10)
-  const storage = useWorkspaceStorage(fileLimit)
+  const [offset, setOffset] = useState(0)
+  const storage = useWorkspaceStorage(offset)
+  const files = storage.data?.largest_files ?? []
+  const page = storageFilesPage(offset, files.length, storage.data?.file_count ?? 0)
+  // a delete emptied the last page: go back one
+  if (storage.data && !storage.isPlaceholderData && files.length === 0 && page.previous !== null) setOffset(page.previous)
   const [signingOut, setSigningOut] = useState(false)
   const [signOutError, setSignOutError] = useState<string | null>(null)
 
@@ -36,13 +40,8 @@ export default function GeneralScreen() {
         actions={workspace.permissions.includes('storage.manage') ? <Button label="Use your own bucket" variant="outline" size="sm" onPress={() => router.push('/settings/file-storage')} /> : undefined}
       >
         {storage.data ? <StorageBar {...storageUse(storage.data)} /> : <Note error={storage.isError}>{storage.isError ? 'Storage use could not be loaded.' : 'Loading storage…'}</Note>}
-        {storage.data?.largest_files.length ? (
-          <LargestFiles
-            files={storage.data.largest_files}
-            more={storage.data.file_count - storage.data.largest_files.length}
-            loading={storage.isFetching}
-            onMore={() => setFileLimit((limit) => Math.min(limit + 25, 500))}
-          />
+        {files.length ? (
+          <LargestFiles files={files} page={page} loading={storage.isFetching} onPage={setOffset} />
         ) : null}
       </SettingsCard>
 
@@ -114,7 +113,7 @@ function StorageBar({ label, fraction }: { label: string; fraction: number | nul
 }
 
 /** Only admins get these from the server; they can delete a file (not one of an emoji or sticker). */
-function LargestFiles({ files, more, loading, onMore }: { files: StorageFile[]; more: number; loading: boolean; onMore: () => void }) {
+function LargestFiles({ files, page, loading, onPage }: { files: StorageFile[]; page: ReturnType<typeof storageFilesPage>; loading: boolean; onPage: (offset: number) => void }) {
   const deleteFile = useDeleteStorageFile()
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
   return (
@@ -152,9 +151,11 @@ function LargestFiles({ files, more, loading, onMore }: { files: StorageFile[]; 
           )
         })}
       </View>
-      {more > 0 ? (
-        <View className="items-start">
-          <Button label={`Show more (${more} more ${more === 1 ? 'file' : 'files'})`} variant="ghost" size="sm" loading={loading} onPress={onMore} />
+      {page.previous !== null || page.next !== null ? (
+        <View className="flex-row items-center gap-2">
+          <Text className="flex-1 text-xs text-muted-foreground tabular-nums">{page.label}</Text>
+          <Button label="Previous" variant="outline" size="sm" disabled={page.previous === null || loading} onPress={() => page.previous !== null && onPage(page.previous)} />
+          <Button label="Next" variant="outline" size="sm" disabled={page.next === null || loading} onPress={() => page.next !== null && onPage(page.next)} />
         </View>
       ) : null}
       <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />

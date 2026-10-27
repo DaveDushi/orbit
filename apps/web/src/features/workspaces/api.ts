@@ -23,6 +23,7 @@ import {
   revokeInvitation,
   transferOwnership,
 } from '@orbit/api/generated/sdk.gen'
+import { STORAGE_FILES_PAGE } from '@orbit/api/storage'
 import type { AcceptBody, InvitationBody, MemberRecord, RoleBody, S3Body, WorkspaceBucketView, WorkspaceRecord } from '@orbit/api/generated/types.gen'
 import type { User } from './models'
 
@@ -111,14 +112,15 @@ export function useInvitations(workspaceId: string | null) {
   })
 }
 
-/** Bytes of files the workspace stores, and its quota (`null` is unlimited); admins also get the `files` largest. */
-export function useWorkspaceStorage(workspaceId: string, files = 10) {
+/** Bytes of files the workspace stores, and its quota (`null` is unlimited); admins also get a page of the largest
+    files, from `offset`. */
+export function useWorkspaceStorage(workspaceId: string, offset = 0) {
   return useQuery({
-    queryKey: [...queryKeys.workspaceStorage(workspaceId), files],
-    // the longer list shows the shorter one while it loads
+    queryKey: [...queryKeys.workspaceStorage(workspaceId), offset],
+    // the page stays while the next one loads
     placeholderData: keepPreviousData,
     queryFn: async () => {
-      const { data } = await getWorkspaceStorage({ client: apiClient, path: { workspace_id: workspaceId }, query: { files }, throwOnError: true })
+      const { data } = await getWorkspaceStorage({ client: apiClient, path: { workspace_id: workspaceId }, query: { files: STORAGE_FILES_PAGE, offset }, throwOnError: true })
       return required(data, 'Workspace storage response was empty.')
     },
   })

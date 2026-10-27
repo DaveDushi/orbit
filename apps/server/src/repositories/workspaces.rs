@@ -172,8 +172,8 @@ pub struct WorkspaceStorage {
     pub used_bytes: u64,
     /// `null` is unlimited.
     pub quota_bytes: Option<u64>,
-    /// The files that use the most storage, largest first (as many as asked for). Empty unless the caller may update
-    /// the workspace.
+    /// One page of the files that use the most storage, largest first. Empty unless the caller may update the
+    /// workspace.
     pub largest_files: Vec<StorageFile>,
     /// How many files the workspace stores; `0` unless the caller may update the workspace.
     pub file_count: u64,
@@ -211,7 +211,7 @@ pub enum StorageFileUseKind {
     Private,
 }
 
-/// How many files `WorkspaceStorage::largest_files` lists at most.
+/// How many files one page of `WorkspaceStorage::largest_files` lists at most.
 pub const MAX_LARGEST_FILES: u32 = 500;
 
 /// Every use of the largest blobs of workspace `$1`, largest blob first. Names in private places are `NULL`.
@@ -230,7 +230,7 @@ const LARGEST_FILE_USES: &str = "SELECT b.id AS blob_id, b.byte_size, u.kind, u.
        UNION ALL SELECT blob_id, 'sticker', name, NULL FROM custom_stickers WHERE workspace_id = $1 AND blob_id IS NOT NULL \
      ) u ON u.blob_id = b.id \
      WHERE b.id IN (SELECT id FROM attachment_blobs WHERE workspace_id = $1 AND deleted_at IS NULL \
-       ORDER BY byte_size DESC, id LIMIT $2) \
+       ORDER BY byte_size DESC, id LIMIT $2 OFFSET $3) \
      ORDER BY b.byte_size DESC, b.id, u.kind, u.title, u.file_name";
 
 #[derive(Debug, Error)]
@@ -423,12 +423,13 @@ impl WorkspaceRepository {
         workspace_from_row(row)
     }
 
-    /// `file_limit`: how many of the largest files to list (at most [`MAX_LARGEST_FILES`]).
+    /// Lists `file_limit` of the largest files (at most [`MAX_LARGEST_FILES`]), after skipping `file_offset`.
     pub async fn storage(
         &self,
         workspace_id: Id,
         actor_id: Id,
         file_limit: u32,
+        file_offset: u32,
     ) -> Result<WorkspaceStorage, WorkspaceError> {
         let workspace = self.get(workspace_id, actor_id).await?;
         let row = sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -441,7 +442,7 @@ impl WorkspaceRepository {
         .await?;
         let admin = workspace.permissions.contains(&Permission::WorkspaceUpdate);
         let largest_files = if admin {
-            self.largest_files(workspace_id, file_limit.min(MAX_LARGEST_FILES))
+            self.largest_files(workspace_id, file_limit.min(MAX_LARGEST_FILES), file_offset)
                 .await?
         } else {
             Vec::new()
@@ -465,10 +466,12 @@ impl WorkspaceRepository {
         &self,
         workspace_id: Id,
         limit: u32,
+        offset: u32,
     ) -> Result<Vec<StorageFile>, WorkspaceError> {
         let rows = sqlx::query(LARGEST_FILE_USES)
             .bind(workspace_id.to_string())
             .bind(i64::from(limit))
+            .bind(i64::from(offset))
             .fetch_all(self.database.pool())
             .await?;
         let mut files: Vec<(String, StorageFile)> = Vec::new();

@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import type { StorageFile } from '@orbit/api/generated/types.gen'
-import { canDeleteStorageFile, storageFileLabel } from '@orbit/api/storage'
+import { canDeleteStorageFile, storageFileLabel, storageFilesPage } from '@orbit/api/storage'
 import { toast } from 'sonner'
 import { cn } from 'cn'
 import { Link } from 'react-router'
@@ -66,9 +66,12 @@ export function GeneralPage() {
 /** How much of its storage quota the workspace uses. Every member sees it; admins also see (and can delete) the
     largest files. */
 function StorageCard({ workspaceId }: { workspaceId: string }) {
-  const [fileLimit, setFileLimit] = useState(10)
-  const storage = useWorkspaceStorage(workspaceId, fileLimit)
-  const moreFiles = (storage.data?.file_count ?? 0) - (storage.data?.largest_files.length ?? 0)
+  const [offset, setOffset] = useState(0)
+  const storage = useWorkspaceStorage(workspaceId, offset)
+  const files = storage.data?.largest_files ?? []
+  const page = storageFilesPage(offset, files.length, storage.data?.file_count ?? 0)
+  // a delete emptied the last page: go back one
+  if (storage.data && !storage.isPlaceholderData && files.length === 0 && page.previous !== null) setOffset(page.previous)
   const deleteFile = useDeleteStorageFile(workspaceId)
   const used = storage.data?.used_bytes ?? 0
   const quota = storage.data?.quota_bytes ?? null
@@ -120,10 +123,12 @@ function StorageCard({ workspaceId }: { workspaceId: string }) {
               )
             })}
           </ul>
-          {moreFiles > 0 ? (
-            <Button variant="ghost" size="sm" className="self-start" disabled={storage.isFetching} onClick={() => setFileLimit((limit) => Math.min(limit + 25, 500))}>
-              Show more ({moreFiles} more {moreFiles === 1 ? 'file' : 'files'})
-            </Button>
+          {page.previous !== null || page.next !== null ? (
+            <div className="flex items-center gap-2">
+              <span className="mr-auto text-xs text-muted-foreground tabular-nums">{page.label}</span>
+              <Button variant="outline" size="sm" disabled={page.previous === null || storage.isFetching} onClick={() => page.previous !== null && setOffset(page.previous)}>Previous</Button>
+              <Button variant="outline" size="sm" disabled={page.next === null || storage.isFetching} onClick={() => page.next !== null && setOffset(page.next)}>Next</Button>
+            </div>
           ) : null}
         </div>
       ) : null}
