@@ -15,36 +15,19 @@ WORKDIR /src/apps/web
 ARG ORBIT_BUILD_REVISION
 RUN ORBIT_BUILD_REVISION=${ORBIT_BUILD_REVISION} bun run build
 
-# rustc on Alpine uses the slow musl allocator and builds about 2x slower. Build on Debian and target musl,
-# so the binary stays static.
-FROM rust:1.97.1-slim-bookworm AS chef
-RUN apt-get update && apt-get install -y --no-install-recommends musl-tools && rm -rf /var/lib/apt/lists/*
+FROM rust:1.97.1-alpine AS server
+RUN apk add --no-cache musl-dev
 WORKDIR /src
-COPY rust-toolchain.toml ./
-RUN rustup target add "$(uname -m)-unknown-linux-musl" \
-    && cargo install cargo-chef --locked --version 0.1.78
-
-FROM chef AS planner
-COPY Cargo.toml Cargo.lock ./
-COPY crates/ crates/
-COPY apps/server/ apps/server/
-RUN cargo chef prepare --recipe-path recipe.json
-
-# The dependency layer changes only when the recipe (manifests and Cargo.lock) changes, so the layer cache
-# keeps it between CI runs.
-FROM chef AS server
-COPY --from=planner /src/recipe.json recipe.json
-RUN cargo chef cook --locked --release -p orbit-server --target "$(uname -m)-unknown-linux-musl" \
-    --recipe-path recipe.json
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates/ crates/
 COPY apps/server/ apps/server/
 COPY --from=web /src/apps/web/dist/ apps/web/dist/
 ARG ORBIT_BUILD_REVISION
-RUN target="$(uname -m)-unknown-linux-musl" \
-    && ORBIT_BUILD_REVISION=${ORBIT_BUILD_REVISION} \
-    cargo build --locked --release -p orbit-server --target "$target" \
-    && cp "target/$target/release/orbit" /orbit
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/src/target,sharing=locked \
+    ORBIT_BUILD_REVISION=${ORBIT_BUILD_REVISION} \
+    cargo build --locked --release -p orbit-server \
+    && cp target/release/orbit /orbit
 
 FROM alpine:3.23
 RUN apk add --no-cache bash ca-certificates tzdata \
