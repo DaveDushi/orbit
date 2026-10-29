@@ -14,6 +14,13 @@ struct ServerView: View {
         // `interactive-widget=resizes-content` asks.
         WebView(webView: session.webView)
             .ignoresSafeArea(.container)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if let error = session.sharingError {
+                    Text(error).font(.caption).padding(8)
+                        .frame(maxWidth: .infinity)
+                        .background(Color(.secondarySystemBackground))
+                }
+            }
             .overlay {
                 if let message = session.loadError {
                     ContentUnavailableView {
@@ -32,7 +39,7 @@ struct ServerView: View {
     }
 }
 
-private struct WebView: UIViewRepresentable {
+struct WebView: UIViewRepresentable {
     let webView: WKWebView
 
     func makeUIView(context: Context) -> WKWebView { webView }

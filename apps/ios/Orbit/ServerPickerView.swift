@@ -3,7 +3,7 @@ import SwiftUI
 struct ServerPickerView: View {
     @EnvironmentObject private var store: ServerStore
     @State private var address = ""
-    @State private var checking = false
+    @State private var connection: Server?
     @State private var error: String?
 
     var body: some View {
@@ -18,13 +18,13 @@ struct ServerPickerView: View {
                         .submitLabel(.go)
                         .onSubmit(connect)
                     Button(action: connect) {
-                        if checking {
+                        if connection != nil {
                             ProgressView()
                         } else {
                             Text("Connect")
                         }
                     }
-                    .disabled(checking || address.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(connection != nil || address.trimmingCharacters(in: .whitespaces).isEmpty)
                 } header: {
                     Text("Server address")
                 } footer: {
@@ -48,24 +48,28 @@ struct ServerPickerView: View {
             }
             .navigationTitle("Connect to Orbit")
         }
+        .alert("Couldn't forget server", isPresented: Binding(
+            get: { store.removalError != nil }, set: { if !$0 { store.removalError = nil } }
+        )) {
+            Button("OK", role: .cancel) { store.removalError = nil }
+        } message: {
+            Text(store.removalError ?? "")
+        }
+        .sheet(item: $connection) { server in
+            ServerConnectionView(server: server, isNew: !store.servers.contains { $0.id == server.id }) { verified in
+                connection = nil
+                store.open(verified)
+            }
+        }
     }
 
     private func connect() {
-        guard !checking else { return }
+        guard connection == nil else { return }
         guard let origin = ServerAddress.origin(from: address) else {
             error = "Enter an https address, like orbit.example.com."
             return
         }
-        checking = true
         error = nil
-        Task {
-            defer { checking = false }
-            do {
-                let reached = try await ServerAddress.verify(origin)
-                store.open(reached)
-            } catch let failure {
-                error = failure.localizedDescription
-            }
-        }
+        connection = store.candidate(for: origin)
     }
 }
