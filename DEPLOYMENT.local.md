@@ -3,7 +3,7 @@
 Private team trial; upstream explicitly labels Orbit alpha, not production-ready.
 
 - Canonical URL: https://orbit.wellrox.com/
-- The original exe.dev hostname still reaches nginx, but browser writes must originate from the canonical URL.
+- The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
 - Source: DaveDushi/orbit, local merge commit 6af5e606b79b8f6ff6201dda1e64fc42434edbb5
   (fork commit bdaaecf plus these deployment notes).
 - Binary extracted from the image built locally on this VM from that commit
@@ -28,8 +28,8 @@ origin policy as well as generated application links. Changing DNS alone does
 not update it: a mismatched origin makes sign-in fail with
 `The request origin is not allowed.`
 
-nginx's `/etc/nginx/conf.d/orbit.conf` names both the custom domain and original
-exe.dev hostname. After changing the domain, validate the application config
+nginx's `/etc/nginx/conf.d/orbit.conf` names both the custom domain and the
+exe.dev hostname `wellrox-orbit.exe.xyz`. After changing the domain, validate the application config
 and nginx config, restart `orbit.service`, and reload `nginx.service`.
 Keep production origin checks and the existing trusted-proxy policy enabled.
 The original pre-domain application config is saved locally at
@@ -51,6 +51,18 @@ validation (400 for an empty body), while an unrelated origin still receives
 403 `origin_forbidden`. Both services are active. This verifies origin handling,
 not a successful authenticated login through the public domain.
 
+### VM rename (October 29, 2026)
+
+The exe.dev VM was renamed from `victor-vs-isolani` to `wellrox-orbit`.
+The DNS CNAME for `orbit.wellrox.com` now points to `wellrox-orbit.exe.xyz`,
+and nginx `server_name` names the new hostname. The public URL resolves and
+redirects to the exe.dev login page.
+
+If `orbit.wellrox.com` does not resolve, this is **not** normal. First check
+that its CNAME target is `wellrox-orbit.exe.xyz` (`getent hosts orbit.wellrox.com`).
+If the VM is renamed again, update the CNAME, nginx `server_name` and the
+`share add` command above.
+
 ## First login and team access
 
 The one-time setup link is stored in /home/exedev/orbit-setup-link.txt (mode 600).
@@ -58,7 +70,7 @@ Open it to create the root account, then create your workspace and project.
 Do not share this setup link with teammates.
 
 Two access layers apply:
-1. Grant teammates exe.dev **Web** access (`share add victor-vs-isolani team`, or individual emails). Do not grant Root access just to use Orbit.
+1. Grant teammates exe.dev **Web** access (`share add wellrox-orbit team`, or individual emails). Do not grant Root access just to use Orbit.
 2. Invite them to your Orbit workspace; share Orbit's invitation links directly.
 
 SMTP is optional, configured in Admin → Settings → Email. Without SMTP,
@@ -139,8 +151,9 @@ with the HTTPS forwarding header passed: liveness, all readiness checks,
 completed setup, matching embedded revision, frontend and three referenced
 assets, HSTS/CSP, unauthenticated API rejection (401), canonical-origin login
 body validation (400), and unrelated-origin rejection (403). No recent service
-warnings. `orbit.wellrox.com` does not resolve from this VM, so public-domain
-access and authenticated browser workflows were not tested.
+warnings. `orbit.wellrox.com` did not resolve at that time because its CNAME
+still pointed to the old VM name (fixed after the rename below), so
+public-domain access and authenticated browser workflows were not tested.
 
 The previous executable is `/usr/local/bin/orbit-45df05b`. Rollback requires
 the matching snapshot above, because the live schema advanced.
