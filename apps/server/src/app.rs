@@ -274,6 +274,26 @@ impl App {
         for proxy in &config.http.trusted_proxies {
             origin_policy = origin_policy.trust_proxy(*proxy);
         }
+        let agent = crate::agent::AgentConfig::from_env().map_err(AppError::Config)?;
+        if agent.is_some() {
+            let bot = crate::agent::bot::ensure(&database)
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?;
+            crate::agent::bot::join_workspaces(&database, bot)
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?;
+        }
+        let agent = crate::agent::AgentState::new(
+            agent,
+            ChatState::new(
+                Arc::clone(&identity),
+                attachment_state.uploads.clone(),
+                cookie_mode,
+            ),
+            Arc::clone(&identity),
+            cookie_mode,
+            app_key,
+        );
         let metrics = Metrics::default();
         let oauth = crate::oauth::OAuthState::new(
             Arc::clone(&identity),
@@ -355,6 +375,7 @@ impl App {
                     attachment_state.uploads.clone(),
                     cookie_mode,
                 ),
+                agent,
             },
             health,
             assets,

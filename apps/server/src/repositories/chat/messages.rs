@@ -332,6 +332,14 @@ impl ChatRepository {
         .await?;
         insert_mention_rows(&mut tx, &message, &mentioned).await?;
         adjust_mentions(&mut tx, &message, &mentioned, 1).await?;
+        crate::agent::inputs::record(
+            &mut tx,
+            workspace_id,
+            conversation_id,
+            access.conversation.kind == ConversationKind::Dm,
+            &message,
+        )
+        .await?;
         events.conversation(
             conversation_id,
             ChatEvent::MessageCreated {

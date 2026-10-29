@@ -41,6 +41,7 @@ pub struct ApiRoutes {
     pub integrations: IntegrationState,
     pub imports: ImportState,
     pub chat: ChatState,
+    pub agent: crate::agent::AgentState,
 }
 
 pub fn production_router(
@@ -55,6 +56,8 @@ pub fn production_router(
     let csp_script_hash = assets.csp_script_hash().to_owned();
     let session_cookie = api.auth.cookie_mode().session_cookie_name();
     let database = api.auth.database().clone();
+    let agent_scope =
+        axum::middleware::from_fn_with_state(database.clone(), crate::agent::scope::layer);
     let realtime = crate::realtime::router(api.tasks.clone());
     let views = view_router(api.tasks.clone());
     let identity = std::sync::Arc::clone(&api.tasks.identity);
@@ -76,6 +79,7 @@ pub fn production_router(
         .merge(import_router(api.imports))
         .merge(crate::live::socket::live_router(api.chat.clone()))
         .merge(chat_router(api.chat))
+        .merge(crate::agent::router(api.agent))
         .merge(
             Router::new()
                 .route("/health/live", get(liveness))
@@ -97,7 +101,7 @@ pub fn production_router(
         ),
         None => router,
     };
-    router.layer({
+    router.layer(agent_scope).layer({
         let layer = HttpPlatformLayer::new(origin_policy)
             .with_contract_id(crate::openapi::CONTRACT_ID)
             .with_limits(limits)

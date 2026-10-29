@@ -12,12 +12,34 @@ services:
     environment:
       ORBIT_ENV: production
       ORBIT_PUBLIC_ORIGIN: https://${ORBIT_DOMAIN:?Set ORBIT_DOMAIN in deploy/.env}
-      ORBIT_TRUSTED_PROXIES: 172.30.0.2/32
+      # The agent sidecar (172.30.0.3) is trusted like the proxy: it sends X-Forwarded-Proto: https.
+      ORBIT_TRUSTED_PROXIES: 172.30.0.2/32,172.30.0.3/32
       ORBIT_APP_KEY: ${ORBIT_APP_KEY:?Set ORBIT_APP_KEY in deploy/.env}
+      # Team agent (docs/agent.md). Leave ORBIT_AGENT_SECRET empty to keep the agent off.
+      ORBIT_AGENT_URL: ${ORBIT_AGENT_SECRET:+http://172.30.0.3:8790}
+      ORBIT_AGENT_SECRET: ${ORBIT_AGENT_SECRET:-}
     volumes:
       - orbit-data:/var/lib/orbit
       - orbit-backups:/var/backups/orbit
     networks: [backend]
+  agent:
+    build:
+      context: ../apps/agent
+    image: ${ORBIT_AGENT_IMAGE:-orbit-agent:local}
+    restart: unless-stopped
+    profiles: [agent]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      ORBIT_URL: http://orbit:8080
+      ORBIT_PUBLIC_URL: https://${ORBIT_DOMAIN:?Set ORBIT_DOMAIN in deploy/.env}
+      ORBIT_FORWARDED_PROTO: https
+      ORBIT_AGENT_SECRET: ${ORBIT_AGENT_SECRET:-}
+    volumes:
+      - agent-data:/var/lib/orbit-agent
+    networks:
+      backend:
+        ipv4_address: 172.30.0.3
   proxy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -37,6 +59,7 @@ networks:
       config:
         - subnet: 172.30.0.0/24
 volumes:
+  agent-data:
   orbit-data:
   orbit-backups:
   caddy-data:

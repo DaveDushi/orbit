@@ -38,6 +38,7 @@ import { ApiTokensPage } from '@/features/settings/pages/ApiTokensPage'
 import { FileStoragePage } from '@/features/settings/pages/FileStoragePage'
 import { ProfilePage } from '@/features/profile/pages/ProfilePage'
 import { AppearancePage } from '@/features/profile/pages/AppearancePage'
+import { AgentPage } from '@/features/agent/AgentPage'
 import { InboxPage } from '@/features/inbox/pages/InboxPage'
 import { AuthGate, GuestGate } from '@/features/auth/AuthGate'
 import { AcceptInvitationPage } from '@/features/auth/pages/AcceptInvitationPage'
@@ -120,6 +121,7 @@ export default function App() {
                 <Route path="sessions" element={<SessionsPage />} />
                 <Route path="shortcuts" element={<ShortcutsPage />} />
                 <Route path="storage" element={<StoragePage />} />
+                <Route path="agent" element={<AgentPage />} />
               </Route>
               <Route path="admin" element={<AdminLayout />}>
                 <Route index element={<AdminSettingsPage />} />
