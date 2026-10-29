@@ -31,6 +31,8 @@ export type ThreadState = {
 	toolCalls: number;
 	/** The memory section of the current run (the wake view read at its start), as the model sees it. */
 	memory?: string | null;
+	/** The integration tools section of the current run (the driver's tools, read at its start). */
+	integrations?: string | null;
 	/** Summaries Orbit asked this thread's runs to write: `scope:lo-hi` → claim. */
 	claims?: Record<string, string>;
 };
