@@ -10,6 +10,7 @@ import { defineExtension, defineTool, hook, section, ToolTask } from "@earendil-
 import type { ToolExecutionApi, ToolExecutionResult } from "@earendil-works/pi-durable";
 
 import { blocksToMarkdown, markdownToBlocks, type Block } from "./blocks.ts";
+import { compactionHook, type CompactWith } from "./compaction.ts";
 import { ThreadDoc, type ThreadState } from "./docs.ts";
 import { canReadPrivate, dueText, fenced, lineText, type DueSummary, type MemoryLine, type MemoryScope } from "./memory.ts";
 import { namesToTokens, tokensToNames, type Person } from "./mentions.ts";
@@ -21,6 +22,8 @@ export type ToolDeps = {
 	readonly maxToolCalls: number;
 	/** The bot's user id, once Orbit told it. */
 	botUserId(): string | undefined;
+	/** Who writes compaction summaries; absent: Pi, with the conversation's model. */
+	readonly compactWith?: CompactWith;
 };
 
 type Api = ToolExecutionApi;
@@ -572,6 +575,8 @@ export function orbitExtension(toolDeps: ToolDeps) {
 					return undefined;
 				},
 			}),
+			// In this extension, which every conversation selects, so existing conversations get it too.
+			...(toolDeps.compactWith ? [compactionHook(toolDeps.compactWith)] : []),
 		],
 	});
 }

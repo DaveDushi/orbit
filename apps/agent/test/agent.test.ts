@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { createServer, type Server } from "node:http";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -184,7 +185,7 @@ class MemoryOrbit extends FakeOrbit {
 	}
 }
 
-function config(orbit: FakeOrbit, dataDir: string): Config {
+function config(orbit: FakeOrbit, dataDir: string, compactTokens = 250_000, compactModel?: string): Config {
 	return {
 		orbitUrl: orbit.url,
 		publicUrl: "https://orbit.test",
@@ -198,6 +199,9 @@ function config(orbit: FakeOrbit, dataDir: string): Config {
 		maxRunsPerUser: 3,
 		maxToolCallsPerRun: 40,
 		memoryTokens: 3_000,
+		compactTokens,
+		compactModel,
+		compactThinking: "high",
 	};
 }
 
@@ -337,6 +341,48 @@ test("memory: private notes stay in the driver's DM, team notes reach later thre
 		await until("the private answer", () => progressOf(orbit, back).startsWith("From memory:"));
 		assert.match(progressOf(orbit, back), /Ann drinks tea/);
 		assert.ok(orbit.reads.every((read) => read.endsWith(ANN) || read.startsWith("team:")), JSON.stringify(orbit.reads));
+	} finally {
+		await agent.stop();
+		orbit.server.close();
+	}
+});
+
+test("compaction: a conversation over the threshold is summarized by the compaction model, and the next run still works and has its memory", async () => {
+	const orbit = new MemoryOrbit();
+	current = orbit;
+	await orbit.listen();
+	const dataDir = mkdtempSync(join(tmpdir(), "agent-"));
+	// The mock model's window is 200k; a 2k threshold makes a few long messages enough.
+	const agent = new Agent(config(orbit, dataDir, 2_000, "gpt-6-luna"), new OrbitClient(config(orbit, "")));
+	await agent.open();
+	await agent.start();
+	const DM = id();
+	const inDm = { conversation_id: DM, conversation_kind: "dm", conversation_name: "", conversation_members: 2, root_message_id: null, thread_key: DM };
+	/** The summaries of the conversation's compactions. */
+	const summaries = () => {
+		const db = new DatabaseSync(join(dataDir, "pi.sqlite"), { readOnly: true });
+		try {
+			return (db.prepare("SELECT json_extract(record, '$.model[0].content[0].text') AS text FROM entries WHERE json_extract(record, '$.kind') = 'pi.compaction'").all() as { text: string }[]).map((row) => row.text);
+		} finally {
+			db.close();
+		}
+	};
+	try {
+		const tea = orbit.add({ ...inDm, author_id: ANN, author_name: "Ann", kind: "instruction", body: 'remember privately "Ann drinks tea, no sugar"' });
+		await until("the private note", () => progressOf(orbit, tea).startsWith("Done (memory_note)"));
+		for (let index = 0; summaries().length === 0; index++) {
+			assert.ok(index < 8, "no compaction after 8 long messages");
+			const long = orbit.add({ ...inDm, author_id: ANN, author_name: "Ann", kind: "instruction", body: `Notes ${index}: ${"lorem ipsum dolor sit amet ".repeat(150)}` });
+			await until(`long message ${index}`, () => progressOf(orbit, long).startsWith("(mock model) I read:"));
+			await until("the idle thread", () => orbit.threads.get(DM)?.status === "idle");
+		}
+		// Written by the compaction model, not the conversation's model (gpt-test).
+		assert.match(summaries()[0], /mock summary by gpt-6-luna/);
+
+		// The run after the compaction still works and still sees Ann's memory in its system prompt.
+		const back = orbit.add({ ...inDm, author_id: ANN, author_name: "Ann", kind: "instruction", body: 'what do you remember about "tea"' });
+		await until("the answer after the compaction", () => progressOf(orbit, back).startsWith("From memory:"));
+		assert.match(progressOf(orbit, back), /Ann drinks tea/);
 	} finally {
 		await agent.stop();
 		orbit.server.close();
