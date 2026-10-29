@@ -440,6 +440,11 @@ impl MigrationRunner {
                     include_str!("../../../../apps/server/migrations/0062_agent.sql"),
                     false,
                 ),
+                Migration::new(
+                    63,
+                    include_str!("../../../../apps/server/migrations/0063_agent_memory.sql"),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -519,21 +524,22 @@ impl MigrationRunner {
             ),
             Migration::new(
                 60,
-                include_str!(
-                    "../../../../apps/server/migrations/postgres/0060_deleted_files.sql"
-                ),
+                include_str!("../../../../apps/server/migrations/postgres/0060_deleted_files.sql"),
                 false,
             ),
             Migration::new(
                 61,
-                include_str!(
-                    "../../../../apps/server/migrations/postgres/0061_drop_pronouns.sql"
-                ),
+                include_str!("../../../../apps/server/migrations/postgres/0061_drop_pronouns.sql"),
                 false,
             ),
             Migration::new(
                 62,
                 include_str!("../../../../apps/server/migrations/postgres/0062_agent.sql"),
+                false,
+            ),
+            Migration::new(
+                63,
+                include_str!("../../../../apps/server/migrations/postgres/0063_agent_memory.sql"),
                 false,
             ),
         ];

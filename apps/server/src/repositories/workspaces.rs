@@ -1514,6 +1514,8 @@ impl WorkspaceRepository {
             .bind(expected_version as i64)
             .execute(&mut *transaction)
             .await?;
+        // Their private agent memory here is about them alone.
+        crate::agent::memory::drop_private(&mut transaction, workspace_id, target.user_id).await?;
         audit::record(
             &mut transaction,
             workspace_id,
