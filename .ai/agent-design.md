@@ -11,8 +11,8 @@ answers. Read it before you change `apps/agent`, `apps/server/src/agent/` or the
 - **The sidecar (Node, `apps/agent`)** runs Pi Durable (`@earendil-works/pi-durable` 1.4.0, `pi-ai` 1.4.0,
   `chord` 1.4.0, exact pins). It owns transcripts and runs. It has no shell, no file tools and no database access. Its
   only tools call Orbit's public API with a bearer session of one user.
-- **The agent in chat** is one bot user (`Orbit Agent`, no password, no sessions) with a membership in every
-  workspace. People `@`-mention it like a teammate. It answers in the thread and edits one progress message while it
+- **The agent in chat** is one bot user (named `Orbit Agent` until an installation admin renames it in Admin → AI
+  agent; no password, no sessions) with a membership in every workspace. People `@`-mention it like a teammate. It answers in the thread and edits one progress message while it
   works.
 - **ChatGPT** sign-in is the OpenAI Codex device-code flow from pi-ai (`openai-codex` provider). It works on a remote
   server: the user opens `auth.openai.com/codex/device` on any device and types the code.
@@ -118,6 +118,23 @@ flow in pi-ai binds port 1455 and allows one login at a time, so we do not use i
 - Each run is limited to 40 tool calls (a `beforeTool` hook blocks more).
 - The agent cannot send what it reads outside Orbit: it has no web or e-mail tool.
 
+### 8a. Name and team instructions
+
+- **One name.** The agent is one bot user for the installation, so it has one name, and that display name is its
+  `@handle` (Orbit has no separate handles). A rename refuses a name that another account already has (trimmed, any case):
+  `namesToTokens` would turn `@Name` into a mention of that person. Every account counts, not only the members of
+  the bot's workspaces, because the bot joins a new workspace only on the sidecar's next poll. The check and the
+  update run in one `immediate_transaction`. A member who later takes the agent's name is not refused (see open
+  decisions below).
+- **No editable base prompt.** The rules and the built-in "About Orbit" text are code. The only editable layer is
+  each workspace's team instructions (owners and admins, `workspace.update`), placed after About Orbit in a block that
+  says they cannot override the rules. Its text cannot close the block early. There is no installation-wide and no
+  personal layer.
+- **Delivery.** `GET /api/internal/agent/inputs` returns `bot_name`, and each input has `team_instructions`. The
+  sidecar stores both in the thread's `orbit.thread` document when a run starts; the prompt sections read them from
+  there, so they stay the same during a run (Pi resends only changed sections) and change with the next run.
+- **Scope.** Agent sessions cannot reach `/api/v1/workspaces/{id}/agent` (denied segment) or `/api/v1/admin/agent`.
+
 ### 9. Rate limits
 
 - ChatGPT limits: pi-ai retries with backoff (`retry.maxRetries = 3`). A run that still fails ends with a message in
@@ -161,6 +178,8 @@ tests, the account settings navigation and routes in the web and mobile apps. `a
   (`AGENT_MODEL`). Pi marks the `openai-codex` provider "legacy" (superseded by Sign in with ChatGPT, which needs a
   localhost callback). If OpenAI turns the Codex device flow off, switch to the paste-the-redirect-URL flow.
 - The bot user shows in member lists. Removing it from a workspace turns the agent off there.
+- A person can still set their own display name to the agent's name (profile, sign-up, invitations). Then `@Name` in
+  the agent's answers is ambiguous. Refusing that everywhere a name is set is not built yet.
 
 ## Memory
 

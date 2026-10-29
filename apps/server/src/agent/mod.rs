@@ -11,6 +11,7 @@ mod memory_routes;
 mod routes;
 pub mod scope;
 pub(crate) mod sessions;
+pub mod settings;
 
 use std::sync::Arc;
 

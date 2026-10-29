@@ -21,6 +21,7 @@ import { namesToTokens, splitBody, tokensToNames, type Person } from "./mentions
 import { mockModels } from "./mock.ts";
 import { PROVIDER, PeopleModels, routedModels } from "./models.ts";
 import type { OrbitClient, PendingInput } from "./orbit.ts";
+import { DEFAULT_AGENT_NAME } from "./prompt.ts";
 import { orbitExtension } from "./tools.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -107,6 +108,8 @@ export class Agent {
 	#harness!: Harness;
 	#root!: Conversation;
 	botUserId: string | undefined;
+	/** The bot's name in Orbit; an installation admin can change it. */
+	botName = DEFAULT_AGENT_NAME;
 	/** Pi provider session id → the person who pays for that conversation's requests. */
 	readonly #payers = new Map<string, string>();
 	readonly #threads = new Map<string, ConversationId>();
@@ -206,6 +209,11 @@ export class Agent {
 				continue;
 			}
 			this.botUserId = response.bot_user_id;
+			if (response.bot_name && response.bot_name !== this.botName) {
+				// A rename: the cached names would still turn "@Old Name" into a mention of the agent.
+				this.botName = response.bot_name;
+				this.#names.clear();
+			}
 			const blocked = new Set<string>();
 			let progressed = false;
 			for (const input of response.inputs) {
@@ -376,6 +384,8 @@ export class Agent {
 			doc.waitingFor = null;
 			doc.toolCalls = 0;
 			doc.run = { inputId: input.message_id, submissionId: null, progressMessageId, startedAt: Date.now() };
+			doc.agentName = this.botName;
+			doc.teamInstructions = input.team_instructions ?? "";
 		}, context);
 		// Orbit issues agent sessions only to the driver of a running thread: set it before any tool runs.
 		await this.#orbit.updateThread(input.thread_key, this.#threadUpdate(state, "running", driverId, null));

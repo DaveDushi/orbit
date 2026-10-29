@@ -26,7 +26,7 @@ function show() {
   return render(<QueryClientProvider client={client}><AgentPage /></QueryClientProvider>)
 }
 
-const base = { enabled: true as const, online: true, can_connect: true, bot_user_id: 'bot', login: null }
+const base = { enabled: true as const, online: true, can_connect: true, bot_user_id: 'bot', name: 'Ada', login: null }
 const disconnected = { connected: false, invalid: false, account_id: null, connected_at: null }
 
 test('connect shows the device code, then the connection', async () => {

@@ -6,6 +6,10 @@ import {
   forgetAgentMemorySummary,
   readAgentMemories,
   readAgentMemoryWake,
+  readAgentIdentity,
+  readTeamInstructions,
+  saveAgentName,
+  saveTeamInstructions,
   readAgentStatus,
   startChatgptLogin,
   type AgentMemoryScope,
@@ -79,5 +83,40 @@ export function useForgetAgentMemorySummary(scope: AgentMemoryScope) {
   return useMutation({
     mutationFn: ({ lo, hi }: { lo: number; hi: number }) => forgetAgentMemorySummary(client, workspaceId, scope, lo, hi),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: memoryKey(workspaceId) }),
+  })
+}
+
+const identityKey = ['agent', 'identity'] as const
+
+/** Admin → AI agent: the agent's name. Installation admins only. */
+export function useAgentIdentity() {
+  const { client } = useOrbit()
+  return useQuery({ queryKey: identityKey, queryFn: () => readAgentIdentity(client) })
+}
+
+export function useSaveAgentName() {
+  const { client } = useOrbit()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (name: string) => saveAgentName(client, name),
+    onSuccess: (identity) => queryClient.setQueryData(identityKey, identity),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: key }),
+  })
+}
+
+const teamKey = (workspaceId: string) => ['agent', 'team', workspaceId] as const
+
+/** Workspace settings → AI agent: the team instructions. Every member reads them. */
+export function useTeamInstructions() {
+  const { client, workspaceId } = useOrbit()
+  return useQuery({ queryKey: teamKey(workspaceId), queryFn: () => readTeamInstructions(client, workspaceId) })
+}
+
+export function useSaveTeamInstructions() {
+  const { client, workspaceId } = useOrbit()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (instructions: string) => saveTeamInstructions(client, workspaceId, instructions),
+    onSuccess: (saved) => queryClient.setQueryData(teamKey(workspaceId), saved),
   })
 }

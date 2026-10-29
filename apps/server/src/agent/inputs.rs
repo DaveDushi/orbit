@@ -205,6 +205,8 @@ pub struct PendingInput {
     pub kind: String,
     pub body: String,
     pub created_at: i64,
+    /// The workspace's team instructions (`settings`), empty when it has none.
+    pub team_instructions: String,
 }
 
 /// The oldest unacknowledged inputs, in message order.
@@ -215,13 +217,14 @@ pub(crate) async fn pending(
     let rows = sqlx::query(
         "SELECT i.message_id, i.workspace_id, i.conversation_id, i.thread_key, i.root_message_id, \
          i.author_id, i.kind, i.created_at, u.display_name, m.body, c.kind AS conversation_kind, \
-         c.name AS conversation_name, \
+         c.name AS conversation_name, t.body AS team_instructions, \
          (SELECT COUNT(*) FROM chat_members cm WHERE cm.conversation_id = i.conversation_id) \
          AS conversation_members \
          FROM agent_inputs i \
          JOIN chat_messages m ON m.id = i.message_id \
          JOIN chat_conversations c ON c.id = i.conversation_id \
          JOIN users u ON u.id = i.author_id \
+         LEFT JOIN agent_team_instructions t ON t.workspace_id = i.workspace_id \
          WHERE i.acked_at IS NULL ORDER BY i.message_id LIMIT $1",
     )
     .bind(limit)
@@ -243,6 +246,9 @@ pub(crate) async fn pending(
             kind: row.get("kind"),
             body: row.get("body"),
             created_at: row.get("created_at"),
+            team_instructions: row
+                .get::<Option<String>, _>("team_instructions")
+                .unwrap_or_default(),
         })
         .collect())
 }

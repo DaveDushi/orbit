@@ -29,6 +29,9 @@ export type ThreadState = {
 	/** Set by `ask_teammate`: the run ends and the thread waits for an answer. */
 	waitingFor: string | null;
 	toolCalls: number;
+	/** The agent's name and the workspace's team instructions, read at the start of the current run. */
+	agentName?: string;
+	teamInstructions?: string;
 	/** The memory section of the current run (the wake view read at its start), as the model sees it. */
 	memory?: string | null;
 	/** Summaries Orbit asked this thread's runs to write: `scope:lo-hi` → claim. */

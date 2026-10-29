@@ -30,6 +30,8 @@ export type AgentStatus =
       /** The server can store a sign-in (it has an app key). */
       can_connect: boolean
       bot_user_id: string | null
+      /** The agent's name, which is also its @handle in chat. */
+      name: string
       chatgpt: AgentConnection
       login: AgentLogin | null
     }
@@ -126,4 +128,43 @@ export async function forgetAgentMemorySummary(client: Client, workspaceId: stri
 export function agentMemorySourcePath(source: AgentMemorySource | null): string | null {
   if (!source?.conversation_id) return null
   return source.root_message_id ? `/chat/${source.conversation_id}/thread/${source.root_message_id}` : `/chat/${source.conversation_id}`
+}
+
+/** Admin → AI agent: the agent's one name for the whole installation (installation admins only). */
+export interface AgentIdentity {
+  name: string
+  bot_user_id: string | null
+  min_name_chars: number
+  max_name_chars: number
+}
+
+export async function readAgentIdentity(client: Client): Promise<AgentIdentity> {
+  const { data } = await client.get({ url: '/api/v1/admin/agent', throwOnError: true })
+  return data as AgentIdentity
+}
+
+/** Renames the agent. 409 `agent_name_taken` when a member already has the name. */
+export async function saveAgentName(client: Client, name: string): Promise<AgentIdentity> {
+  const { data } = await client.put({ url: '/api/v1/admin/agent', body: { name }, headers: { 'Content-Type': 'application/json' }, throwOnError: true })
+  return data as AgentIdentity
+}
+
+/** Workspace settings → AI agent: instructions for every run in the workspace. Every member reads them. */
+export interface TeamInstructions {
+  instructions: string
+  /** Owners and admins. */
+  can_edit: boolean
+  max_chars: number
+  updated_at: number | null
+  updated_by_name: string | null
+}
+
+export async function readTeamInstructions(client: Client, workspaceId: string): Promise<TeamInstructions> {
+  const { data } = await client.get({ url: `/api/v1/workspaces/${workspaceId}/agent`, throwOnError: true })
+  return data as TeamInstructions
+}
+
+export async function saveTeamInstructions(client: Client, workspaceId: string, instructions: string): Promise<TeamInstructions> {
+  const { data } = await client.put({ url: `/api/v1/workspaces/${workspaceId}/agent`, body: { instructions }, headers: { 'Content-Type': 'application/json' }, throwOnError: true })
+  return data as TeamInstructions
 }
