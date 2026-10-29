@@ -435,6 +435,11 @@ impl MigrationRunner {
                     include_str!("../../../../apps/server/migrations/0061_drop_pronouns.sql"),
                     false,
                 ),
+                Migration::new(
+                    62,
+                    include_str!("../../../../apps/server/migrations/0062_agent.sql"),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -524,6 +529,11 @@ impl MigrationRunner {
                 include_str!(
                     "../../../../apps/server/migrations/postgres/0061_drop_pronouns.sql"
                 ),
+                false,
+            ),
+            Migration::new(
+                62,
+                include_str!("../../../../apps/server/migrations/postgres/0062_agent.sql"),
                 false,
             ),
         ];

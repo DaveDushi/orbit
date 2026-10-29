@@ -66,7 +66,7 @@ impl ChatState {
     /// from before the write's transaction until the events are out, so the events of a
     /// workspace are published in commit order. The caller runs in a task of its own
     /// ([`detached`]), so nothing stops this between the commit and the events.
-    async fn publish<T>(
+    pub(crate) async fn publish<T>(
         &self,
         workspace_id: Id,
         actor_id: Id,
