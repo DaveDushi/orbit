@@ -116,6 +116,8 @@ fn unrelated_environment_file_pairs_are_ignored() {
         ("ORBIT_PORT", "8080"),
         ("ORBIT_DEV_API_PORT", "18080"),
         ("ORBIT_TEST_POSTGRES_URL", "postgres://test"),
+        ("ORBIT_AGENT_URL", "http://127.0.0.1:8790"),
+        ("ORBIT_AGENT_SECRET_FILE", "/etc/orbit/agent-secret"),
         ("EDITOR", "vim"),
         ("EDITOR_FILE", "/tmp/editor"),
     ])

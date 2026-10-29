@@ -35,8 +35,6 @@ export type ThreadUpdate = {
 	readonly waiting_for_user_id: string | null;
 };
 
-const SECRET_HEADER = "x-orbit-agent-secret";
-
 /** Orbit's internal agent API (shared secret) and its public API as one person (agent session). */
 export class OrbitClient {
 	readonly #config: Config;
@@ -64,7 +62,8 @@ export class OrbitClient {
 	}
 
 	internal(method: string, path: string, body?: unknown): Promise<unknown> {
-		return this.#fetch(method, `/api/internal/agent${path}`, { [SECRET_HEADER]: this.#config.secret }, body, `${method} ${path}`);
+		// A bearer request without Origin passes Orbit's origin policy, as native clients do.
+		return this.#fetch(method, `/api/internal/agent${path}`, { authorization: `Bearer ${this.#config.secret}` }, body, `${method} ${path}`);
 	}
 
 	async pendingInputs(waitSeconds: number): Promise<{ bot_user_id: string; inputs: PendingInput[] }> {

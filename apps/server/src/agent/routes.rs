@@ -1,8 +1,9 @@
 //! HTTP routes of the agent.
 //!
 //! - `/api/v1/agent…`: the signed-in person's ChatGPT connection (session cookie).
-//! - `/api/internal/agent/…`: the sidecar only, with the shared secret in `x-orbit-agent-secret`.
-//!   Not in the public OpenAPI contract.
+//! - `/api/internal/agent/…`: the sidecar only, with the shared secret as `Authorization: Bearer`
+//!   (a bearer request without `Origin` passes the platform's origin policy, as native clients do).
+//!   Not in the public OpenAPI contract. Orbit calls the sidecar with `x-orbit-agent-secret`.
 
 use std::time::Duration;
 
@@ -240,10 +241,9 @@ fn sidecar_only(
     let Some(config) = &state.config else {
         return Err(off(uri, request_id));
     };
-    let given = headers
-        .get(SECRET_HEADER)
-        .map(|value| value.as_bytes())
-        .unwrap_or_default();
+    let given = orbit_platform::bearer_token(headers)
+        .unwrap_or_default()
+        .as_bytes();
     let expected = config.secret.as_bytes();
     let same = given.len() == expected.len()
         && given

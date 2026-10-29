@@ -73,7 +73,7 @@ class FakeOrbit {
 	async route(method: string, url: string, headers: Record<string, unknown>, body: any): Promise<[number, unknown]> {
 		const path = url.split("?")[0];
 		if (path.startsWith("/api/internal/agent/")) {
-			if (headers["x-orbit-agent-secret"] !== SECRET) return [401, { code: "authentication_required" }];
+			if (headers.authorization !== `Bearer ${SECRET}`) return [401, { code: "authentication_required" }];
 			const rest = path.slice("/api/internal/agent".length);
 			let match: RegExpExecArray | null;
 			if (rest === "/inputs") {
@@ -176,7 +176,7 @@ test("each run acts as its driver; an answer does not lend the answerer's permis
 		await until("Ann's answer", () => progressOf(orbit, first).startsWith("Done (create_task)"));
 		assert.ok(orbit.calls.length > 0);
 		assert.ok(orbit.calls.every((call) => call.as === ANN), JSON.stringify(orbit.calls));
-		assert.equal(orbit.threads.get(thread)?.status, "idle");
+		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
 
 		// Ann's run asks Bob; Bob's plain reply is an answer: the run still acts as Ann.
 		const asking = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> ask @Bob "Which title?"` });
@@ -237,7 +237,7 @@ test("a run interrupted by a restart is finished by the next process, once", asy
 		await until("the answer after the restart", () => progressOf(orbit, input).startsWith("Done (create_task)"));
 		await until("the acknowledgement", () => orbit.queue.every((queued) => queued.acked));
 		assert.equal(orbit.calls.filter((call) => call.method === "POST" && call.path === "/tasks").length, 1);
-		assert.equal(orbit.threads.get(thread)?.status, "idle");
+		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
 	} finally {
 		await second.stop();
 		orbit.server.close();

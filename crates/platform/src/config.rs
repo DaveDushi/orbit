@@ -39,8 +39,9 @@ const TRIAL_TASKS_ENV: &str = "ORBIT_TRIAL_TASKS";
 const TRIAL_PAGES_ENV: &str = "ORBIT_TRIAL_PAGES";
 const TRIAL_MEMBERS_ENV: &str = "ORBIT_TRIAL_MEMBERS";
 const STRIPE_API_BASE: &str = "https://api.stripe.com";
-/// Variables that scripts and tests use, not the server.
-const IGNORED_ENV_PREFIXES: [&str; 2] = ["ORBIT_DEV_", "ORBIT_TEST_"];
+/// Variables that scripts and tests use, not the server, and the team agent's settings, which
+/// `apps/server/src/agent` reads itself (`ORBIT_AGENT_URL`, `ORBIT_AGENT_SECRET`).
+const IGNORED_ENV_PREFIXES: [&str; 3] = ["ORBIT_DEV_", "ORBIT_TEST_", "ORBIT_AGENT_"];
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Config {

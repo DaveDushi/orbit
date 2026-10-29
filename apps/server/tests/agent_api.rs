@@ -192,7 +192,7 @@ impl Fixture {
         self.request(
             method,
             &format!("/api/internal/agent{path}"),
-            ("x-orbit-agent-secret", SECRET),
+            ("authorization", &format!("Bearer {SECRET}")),
             body,
         )
         .await
@@ -277,7 +277,7 @@ async fn internal_routes_need_the_secret() {
             .request(
                 "GET",
                 "/api/internal/agent/inputs",
-                ("x-orbit-agent-secret", secret),
+                ("authorization", &format!("Bearer {secret}")),
                 None,
             )
             .await;
