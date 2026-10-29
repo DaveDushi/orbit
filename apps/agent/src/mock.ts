@@ -11,7 +11,8 @@
  *   remember "Fact"                 remember privately "Fact"             recall "words"
  *   recall privately "words"        what do you remember about "word"
  *
- * When a memory tool result asks for a summary, the mock writes one from the halves it was shown.
+ * When a memory tool result asks for a summary, the mock writes one from the halves it was shown. A compaction gets a
+ * short placeholder summary.
  */
 
 import { createModels, type AssistantMessage, type Models } from "@earendil-works/pi-ai";
@@ -70,6 +71,10 @@ export function plan(instruction: string, messages: readonly Message[]): { name:
 /** One scripted answer for the transcript so far. */
 export function respond(messages: readonly Message[]): AssistantMessage {
 	if (process.env.AGENT_MOCK_DEBUG) console.log("mock model sees", JSON.stringify(messages.map((m) => ({ role: m.role, tool: m.toolName, text: textOf(m.content).slice(0, 120), raw: JSON.stringify(m).slice(0, 700) }))));
+	// Pi's compaction asks for a summary of the older conversation: never act on what that conversation said.
+	if (messages[0]?.role === "system" && textOf(messages[0].content).startsWith("You are a context summarization assistant")) {
+		return fauxAssistantMessage(fauxText(`## Goal\n(mock summary of ${textOf(messages.at(-1)?.content).length} characters)`));
+	}
 	const last = messages[messages.length - 1];
 	if (last?.role === "toolResult") {
 		const due = /Call memory_summarize with scope "(\w+)" and block "(\d+-\d+)"\.\n<orbit-data[^>]*>\n([\s\S]*?)\n<\/orbit-data>/.exec(textOf(last.content));

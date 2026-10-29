@@ -13,6 +13,7 @@ import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-code
 import { createRegistry, Harness, ProviderDoc, watchEvents, type AgentEvent, type Conversation, type ConversationId, type SettledSubmissionRecord, type SubmissionId } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 
+import { compactionSettings } from "./compaction.ts";
 import type { Config } from "./config.ts";
 import { IndexDoc, ThreadDoc, type ThreadState } from "./docs.ts";
 import { loadWake } from "./memory.ts";
@@ -155,6 +156,7 @@ export class Agent {
 					retry: { maxRetries: 3 },
 					toolExecution: "sequential",
 					afterFailedRun: "continue",
+					compaction: compactionSettings(models.getModels(), this.#config.compactTokens),
 					progress: { partialIntervalMs: 300, outputIntervalMs: 300 },
 				},
 			},

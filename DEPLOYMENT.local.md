@@ -97,6 +97,7 @@ The team agent (`@Orbit Agent` in chat, Account → AI agent) is a Node sidecar 
   `ORBIT_FORWARDED_PROTO=https`, and the same `ORBIT_AGENT_SECRET`. Defaults are kept for
   `AGENT_PORT` (8790), `AGENT_MODEL`, `AGENT_MAX_RUNS_PER_USER`, `AGENT_MAX_TOOL_CALLS` and
   `AGENT_MEMORY_TOKENS` (3000; the memory read at the start of each run, `0` turns it off).
+  `AGENT_COMPACT_TOKENS` keeps its default (250000; a conversation is summarized at about 250k tokens).
   `AGENT_MOCK` is not set.
 - To change the secret: write a new value (`openssl rand -hex 32`) into both files, then
   restart `orbit` and `orbit-agent`.

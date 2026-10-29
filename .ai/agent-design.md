@@ -279,3 +279,30 @@ their ancestors.
 
 Several Orbit servers on Postgres share one memory; backups and restore include it; the same permission code reads it.
 The sidecar stays stateless for memory.
+
+## Compaction
+
+Status: built on branch `agent-compaction` (2026-10-29). Code: `apps/agent/src/compaction.ts`.
+
+The main list of a DM with the agent is one Pi conversation forever, and a busy thread can grow without end. Pi
+Durable compacts on its own, but relative to the model's window: for `gpt-6.1-sol` (500k) only near 451k
+(background) and 484k (blocking). Orbit compacts at a fixed size instead, `AGENT_COMPACT_TOKENS` (default 250000):
+
+- **Numbers.** Above 250k tokens of context a compaction starts in the background; the run goes on, and the summary
+  is placed at the next turn boundary. Above 270k a request waits for it. The last 40k tokens (at most half the
+  threshold) stay word for word, so the recent part of a thread (a few tool results and answers) is not paraphrased.
+  These are Pi `modelOverrides` for each model in the catalog whose own threshold is higher; models with a 272k window
+  keep Pi's defaults (they already compact near 223k).
+- **Why 250k.** Every request of a run sends the whole context again, on the driver's ChatGPT plan. 250k instead of
+  450k nearly halves what each request costs and how long it takes, and the 270k blocking point keeps each request
+  under the model's 272k price tier (pi-ai lists double input cost above it). Models also use a long context less
+  well; a summary plus 40k recent tokens keeps what matters for the next instruction.
+- **Who pays.** The summarization request carries the conversation's provider session id, so `routedModels` sends it
+  to the payer of the conversation: the driver of the newest run. It is one request of about 210k input tokens (no
+  prompt cache) per compaction. Its output limit is Pi's `0.8 * reserveTokens`, capped by the model's `maxTokens`
+  (128k); Pi's summary prompt keeps it short.
+- **What is kept.** The summary (Pi's structured prompt: goal, progress, decisions, next steps), the recent 40k, and
+  the system prompt: after a compaction Pi writes one complete baseline with every section (`orbit`,
+  `orbit-context`, `orbit-memory`) and it leads the context. The memory wake view is read again at each run start,
+  so compaction never loses memory. Older entries stay in `pi.sqlite`; only the model's view shrinks.
+
