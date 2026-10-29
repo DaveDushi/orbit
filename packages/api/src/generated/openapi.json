@@ -3607,7 +3607,7 @@
         "tags": [
           "crate::auth_routes"
         ],
-        "summary": "What the sign-in pages offer. Public.",
+        "summary": "What the sign-in pages offer and which optional instance features are on. Public.",
         "operationId": "auth_options",
         "parameters": [
           {
@@ -33600,6 +33600,17 @@
             "type": "boolean",
             "description": "A mail server is saved: password reset links and invitations go out by email."
           },
+          "embedded_app": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EmbeddedApp",
+                "description": "Another web app shown on the Apps page in an iframe; absent unless the operator configured one."
+              }
+            ]
+          },
           "passkeys_enabled": {
             "type": "boolean",
             "description": "People can add passkeys and sign in with them (the public origin is a domain name)."
@@ -36026,6 +36037,21 @@
           }
         },
         "additionalProperties": false
+      },
+      "EmbeddedApp": {
+        "type": "object",
+        "required": [
+          "label",
+          "url"
+        ],
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
       },
       "EnableTotpBody": {
         "type": "object",

@@ -129,6 +129,7 @@ export type AuthOptions = {
      * A mail server is saved: password reset links and invitations go out by email.
      */
     email_enabled: boolean;
+    embedded_app?: null | EmbeddedApp;
     /**
      * People can add passkeys and sign in with them (the public origin is a domain name).
      */
@@ -1055,6 +1056,11 @@ export type DuplicatePageBody = {
      * Also copy the page's live sub-pages (the whole subtree, in order). Defaults to `false`.
      */
     include_children?: boolean;
+};
+
+export type EmbeddedApp = {
+    label: string;
+    url: string;
 };
 
 export type EnableTotpBody = {

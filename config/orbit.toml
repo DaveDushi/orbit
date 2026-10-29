@@ -1,0 +1,13 @@
+environment = "development"
+
+[http]
+bind = "127.0.0.1"
+port = 18080
+public_origin = "http://127.0.0.1:18888"
+trusted_proxies = []
+
+[data]
+database = "/home/david/.local/share/orbit-trial/orbit.sqlite"
+attachments = "/home/david/.local/share/orbit-trial/attachments"
+backups = "/home/david/.local/share/orbit-trial/backups"
+

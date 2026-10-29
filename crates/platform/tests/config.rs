@@ -330,6 +330,88 @@ fn public_origin_must_be_an_http_origin_without_path_or_query() {
 }
 
 #[test]
+fn embedded_app_is_off_by_default_and_needs_label_and_url() {
+    assert_eq!(load([]).unwrap().embed, None);
+
+    let cfg = load([
+        ("ORBIT_EMBED_LABEL", "Products"),
+        (
+            "ORBIT_EMBED_URL",
+            "https://Products.example.com:8443/app?x=1",
+        ),
+    ])
+    .unwrap();
+    let embed = cfg.embed.unwrap();
+    assert_eq!(embed.label, "Products");
+    assert_eq!(embed.url, "https://Products.example.com:8443/app?x=1");
+    assert_eq!(
+        embed.origin().as_deref(),
+        Some("https://products.example.com:8443")
+    );
+
+    for half in [
+        ("ORBIT_EMBED_LABEL", "Products"),
+        ("ORBIT_EMBED_URL", "https://products.example.com"),
+    ] {
+        let error = load([half]).unwrap_err();
+        assert!(error.to_string().contains("ORBIT_EMBED_*"), "{error}");
+    }
+}
+
+#[test]
+fn embedded_app_url_must_be_https_outside_development() {
+    let production = |url: &str| {
+        load([
+            ("ORBIT_ENV", "production"),
+            ("ORBIT_PUBLIC_ORIGIN", "https://orbit.example"),
+            ("ORBIT_TRUSTED_PROXIES", "127.0.0.1/32"),
+            ("ORBIT_EMBED_LABEL", "Products"),
+            ("ORBIT_EMBED_URL", url),
+        ])
+    };
+    assert!(production("https://products.example.com").is_ok());
+    for url in [
+        "http://products.example.com",
+        "products.example.com",
+        "/products",
+        "javascript:alert(1)",
+        "https://user@products.example.com",
+        "https://",
+    ] {
+        let error = production(url).unwrap_err();
+        assert!(
+            error.to_string().contains("ORBIT_EMBED_URL"),
+            "{url}: {error}"
+        );
+    }
+
+    let development = load([
+        ("ORBIT_EMBED_LABEL", "Products"),
+        ("ORBIT_EMBED_URL", "http://127.0.0.1:3000"),
+    ])
+    .unwrap();
+    assert_eq!(
+        development.embed.unwrap().origin().as_deref(),
+        Some("http://127.0.0.1:3000")
+    );
+}
+
+#[test]
+fn embedded_app_label_must_be_short_and_not_blank() {
+    let embed = |label: &str| {
+        load([
+            ("ORBIT_EMBED_LABEL", label),
+            ("ORBIT_EMBED_URL", "https://products.example.com"),
+        ])
+    };
+    for label in ["   ", &"x".repeat(41)] {
+        let error = embed(label).unwrap_err();
+        assert!(error.to_string().contains("ORBIT_EMBED_LABEL"), "{error}");
+    }
+    assert!(embed(&"x".repeat(40)).is_ok());
+}
+
+#[test]
 fn notion_import_has_no_operator_settings() {
     // The Notion API origin and request rate are fixed in the client (api.notion.com, 180/min):
     // the old keys are unknown settings now, like any typo.

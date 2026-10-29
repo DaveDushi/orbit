@@ -43,6 +43,7 @@ pub struct ApiRoutes {
     pub chat: ChatState,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn production_router(
     api: ApiRoutes,
     health: HealthRegistry,
@@ -51,6 +52,7 @@ pub fn production_router(
     limits: HttpLimits,
     rate_limits: RateLimitConfig,
     require_secure_transport: bool,
+    embed_origin: Option<String>,
 ) -> Router {
     let csp_script_hash = assets.csp_script_hash().to_owned();
     let session_cookie = api.auth.cookie_mode().session_cookie_name();
@@ -98,13 +100,16 @@ pub fn production_router(
         None => router,
     };
     router.layer({
-        let layer = HttpPlatformLayer::new(origin_policy)
+        let mut layer = HttpPlatformLayer::new(origin_policy)
             .with_contract_id(crate::openapi::CONTRACT_ID)
             .with_limits(limits)
             .with_rate_limits(rate_limits)
             .with_session_cookie(session_cookie)
             .with_shared_rate_limits(database)
             .with_csp_script_hash(csp_script_hash);
+        if let Some(origin) = embed_origin {
+            layer = layer.with_frame_source(origin);
+        }
         if require_secure_transport {
             layer.require_secure_transport()
         } else {

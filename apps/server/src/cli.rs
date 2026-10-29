@@ -1182,6 +1182,12 @@ pub fn redacted_config(config: &Config) -> String {
         Some(listen) => lines.push(format!("ORBIT_METRICS_LISTEN={listen}")),
         None => lines.push("# ORBIT_METRICS_LISTEN is not set: metrics are disabled".to_owned()),
     }
+    if let Some(embed) = &config.embed {
+        lines.extend([
+            format!("ORBIT_EMBED_LABEL={}", embed.label),
+            format!("ORBIT_EMBED_URL={}", embed.url),
+        ]);
+    }
     if config.app_key.is_some() {
         lines.push("ORBIT_APP_KEY=[REDACTED]".to_owned());
     }

@@ -22,7 +22,7 @@ use rate_limit::RateLimiter;
 pub use limits::HttpLimits;
 pub use request_id::RequestId;
 pub use security::{ClientIp, OriginPolicy, RequestTransport, bearer_token};
-use security::{add_security_headers, inspect_request, strip_forwarding_headers};
+use security::{CspSources, add_security_headers, inspect_request, strip_forwarding_headers};
 
 /// Applies Orbit's request identity, proxy, origin, limit, and response policy.
 #[derive(Clone, Debug)]
@@ -30,7 +30,7 @@ pub struct HttpPlatformLayer {
     origin_policy: OriginPolicy,
     limits: HttpLimits,
     contract_id: Option<String>,
-    csp_script_hash: Option<String>,
+    csp: CspSources,
     rate_limiter: RateLimiter,
     secure_transport_required: bool,
 }
@@ -42,7 +42,7 @@ impl HttpPlatformLayer {
             origin_policy,
             limits: HttpLimits::default(),
             contract_id: None,
-            csp_script_hash: None,
+            csp: CspSources::default(),
             rate_limiter: RateLimiter::default(),
             secure_transport_required: false,
         }
@@ -62,7 +62,14 @@ impl HttpPlatformLayer {
 
     #[must_use]
     pub fn with_csp_script_hash(mut self, hash: impl Into<String>) -> Self {
-        self.csp_script_hash = Some(hash.into());
+        self.csp.script_hash = Some(hash.into());
+        self
+    }
+
+    /// Lets pages frame this origin (`scheme://host[:port]`) as well as YouTube.
+    #[must_use]
+    pub fn with_frame_source(mut self, origin: impl Into<String>) -> Self {
+        self.csp.frame_source = Some(origin.into());
         self
     }
 
@@ -103,7 +110,7 @@ impl<S> Layer<S> for HttpPlatformLayer {
             origin_policy: self.origin_policy.clone(),
             limits: self.limits,
             contract_id: self.contract_id.clone(),
-            csp_script_hash: self.csp_script_hash.clone(),
+            csp: self.csp.clone(),
             rate_limiter: self.rate_limiter.clone(),
             secure_transport_required: self.secure_transport_required,
             readiness: InnerReadiness::Checking,
@@ -124,7 +131,7 @@ pub struct HttpPlatformService<S> {
     origin_policy: OriginPolicy,
     limits: HttpLimits,
     contract_id: Option<String>,
-    csp_script_hash: Option<String>,
+    csp: CspSources,
     rate_limiter: RateLimiter,
     secure_transport_required: bool,
     readiness: InnerReadiness,
@@ -137,7 +144,7 @@ impl<S: Clone> Clone for HttpPlatformService<S> {
             origin_policy: self.origin_policy.clone(),
             limits: self.limits,
             contract_id: self.contract_id.clone(),
-            csp_script_hash: self.csp_script_hash.clone(),
+            csp: self.csp.clone(),
             rate_limiter: self.rate_limiter.clone(),
             secure_transport_required: self.secure_transport_required,
             readiness: InnerReadiness::Checking,
@@ -179,7 +186,7 @@ where
         let policy = self.origin_policy.clone();
         let limits = self.limits;
         let contract_id = self.contract_id.clone();
-        let csp_script_hash = self.csp_script_hash.clone();
+        let csp = self.csp.clone();
         let rate_limiter = self.rate_limiter.clone();
         let secure_transport_required = self.secure_transport_required;
 
@@ -204,7 +211,7 @@ where
                         ),
                         &request_id,
                         false,
-                        csp_script_hash.as_deref(),
+                        &csp,
                     ));
                 }
             };
@@ -221,7 +228,7 @@ where
                     ),
                     &request_id,
                     false,
-                    csp_script_hash.as_deref(),
+                    &csp,
                 ));
             }
 
@@ -237,7 +244,7 @@ where
                     ),
                     &request_id,
                     transport.is_secure(),
-                    csp_script_hash.as_deref(),
+                    &csp,
                 ));
             }
 
@@ -258,7 +265,7 @@ where
                     ),
                     &request_id,
                     transport.is_secure(),
-                    csp_script_hash.as_deref(),
+                    &csp,
                 ));
             }
 
@@ -287,7 +294,7 @@ where
                     response,
                     &request_id,
                     transport.is_secure(),
-                    csp_script_hash.as_deref(),
+                    &csp,
                 ));
             }
 
@@ -296,7 +303,7 @@ where
                     too_large_response(&request_id, request.uri().path()),
                     &request_id,
                     transport.is_secure(),
-                    csp_script_hash.as_deref(),
+                    &csp,
                 ));
             }
 
@@ -310,7 +317,7 @@ where
                     Problem::internal(request_id.as_str(), request.uri().path()).into_response(),
                     &request_id,
                     transport.is_secure(),
-                    csp_script_hash.as_deref(),
+                    &csp,
                 ));
             }
 
@@ -341,7 +348,7 @@ where
                         Problem::internal(request_id.as_str(), &instance).into_response(),
                         &request_id,
                         transport.is_secure(),
-                        csp_script_hash.as_deref(),
+                        &csp,
                     ));
                 }
             };
@@ -357,7 +364,7 @@ where
                 response,
                 &request_id,
                 transport.is_secure(),
-                csp_script_hash.as_deref(),
+                &csp,
             ))
         })
     }
@@ -420,13 +427,13 @@ fn finish_response(
     mut response: AxumResponse,
     request_id: &RequestId,
     secure: bool,
-    csp_script_hash: Option<&str>,
+    csp: &CspSources,
 ) -> AxumResponse {
     let request_id = HeaderValue::from_str(request_id.as_str())
         .expect("validated request IDs are valid header values");
     response
         .headers_mut()
         .insert(HeaderName::from_static("x-request-id"), request_id);
-    add_security_headers(response.headers_mut(), secure, csp_script_hash);
+    add_security_headers(response.headers_mut(), secure, csp);
     response
 }

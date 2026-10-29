@@ -26,6 +26,8 @@ Orbit reads its configuration only from environment variables that start with `O
 | `ORBIT_UPLOAD_MAX_REQUEST_BYTES` | `104857600` (100 MiB) | |
 | `ORBIT_METRICS_LISTEN` | none (metrics off) | A private listener, for example `127.0.0.1:9090`. Never send it through the public site. |
 | `ORBIT_RATE_LIMIT_*` | see notes | Request limits and email caps. See [Request limits and email caps](#request-limits-and-email-caps). |
+| `ORBIT_EMBED_LABEL` | none | Shows another web app in an Orbit page, under this label (1 to 40 characters). Set it together with `ORBIT_EMBED_URL`. |
+| `ORBIT_EMBED_URL` | none | The URL of that app. Production requires `https://`. Its server must allow framing by the public origin (CSP `frame-ancestors`). |
 | `ORBIT_APP_KEY` | none | **Required.** The key for saved secrets: base64 of 32 random bytes. |
 | `ORBIT_APP_KEY_FILE` | none | The path of a file that contains the app key, instead of `ORBIT_APP_KEY`. Do not set both. |
 | `ORBIT_CLOUD` | `false` | `true` turns on Stripe billing for Orbit Cloud and requires the three Stripe variables below. See [Billing (Orbit Cloud)](#billing-orbit-cloud). |

@@ -38,6 +38,9 @@ const TRIAL_DAYS_ENV: &str = "ORBIT_TRIAL_DAYS";
 const TRIAL_TASKS_ENV: &str = "ORBIT_TRIAL_TASKS";
 const TRIAL_PAGES_ENV: &str = "ORBIT_TRIAL_PAGES";
 const TRIAL_MEMBERS_ENV: &str = "ORBIT_TRIAL_MEMBERS";
+const EMBED_LABEL_ENV: &str = "ORBIT_EMBED_LABEL";
+const EMBED_URL_ENV: &str = "ORBIT_EMBED_URL";
+const MAX_EMBED_LABEL_CHARS: usize = 40;
 const STRIPE_API_BASE: &str = "https://api.stripe.com";
 /// Variables that scripts and tests use, not the server.
 const IGNORED_ENV_PREFIXES: [&str; 2] = ["ORBIT_DEV_", "ORBIT_TEST_"];
@@ -56,6 +59,8 @@ pub struct Config {
     pub app_key: Option<AppKey>,
     /// Stripe billing for Orbit Cloud (`ORBIT_CLOUD=true`); `None` on a self-hosted server.
     pub billing: Option<BillingConfig>,
+    /// Another web app shown in an Orbit page (`ORBIT_EMBED_LABEL` and `ORBIT_EMBED_URL`).
+    pub embed: Option<EmbedConfig>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -503,6 +508,67 @@ fn valid_plan_key(key: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
+/// Another web app that Orbit shows in an iframe page.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct EmbedConfig {
+    pub label: String,
+    pub url: String,
+}
+
+impl EmbedConfig {
+    /// `scheme://host[:port]` of the URL, for the CSP `frame-src`; `None` unless the URL is an
+    /// absolute http(s) URL with a host.
+    #[must_use]
+    pub fn origin(&self) -> Option<String> {
+        let uri = self.url.parse::<Uri>().ok()?;
+        let scheme = uri
+            .scheme_str()
+            .filter(|scheme| matches!(*scheme, "http" | "https"))?;
+        let authority = uri.authority()?;
+        let host = authority.host();
+        let valid_host = !host.is_empty()
+            && !authority.as_str().contains('@')
+            && host
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '[' | ']' | ':'));
+        if !valid_host {
+            return None;
+        }
+        let port = authority
+            .port_u16()
+            .map(|port| format!(":{port}"))
+            .unwrap_or_default();
+        Some(format!("{scheme}://{}{port}", host.to_ascii_lowercase()))
+    }
+
+    fn validate(&self, environment: EnvironmentMode) -> Result<(), ConfigError> {
+        if self.label.is_empty() || self.url.is_empty() {
+            return Err(ConfigError::InvalidSetting {
+                key: "ORBIT_EMBED_*",
+                detail: "set both ORBIT_EMBED_LABEL and ORBIT_EMBED_URL, or neither".to_owned(),
+            });
+        }
+        let label = self.label.trim();
+        if label.is_empty() || label.chars().count() > MAX_EMBED_LABEL_CHARS {
+            return Err(ConfigError::InvalidSetting {
+                key: EMBED_LABEL_ENV,
+                detail: format!("must be 1 to {MAX_EMBED_LABEL_CHARS} characters"),
+            });
+        }
+        let insecure =
+            !self.url.starts_with("https://") && environment != EnvironmentMode::Development;
+        if insecure || self.origin().is_none() {
+            return Err(ConfigError::InvalidSetting {
+                key: EMBED_URL_ENV,
+                detail:
+                    "must be an absolute https URL with a host (development mode also accepts http)"
+                        .to_owned(),
+            });
+        }
+        Ok(())
+    }
+}
+
 /// A secret string (an API key) that `Debug` never prints.
 #[derive(Clone, Eq, PartialEq)]
 pub struct Secret(String);
@@ -755,6 +821,9 @@ impl Config {
             });
         }
         self.rate_limits.validate()?;
+        if let Some(embed) = &self.embed {
+            embed.validate(self.environment)?;
+        }
         match &self.billing {
             Some(billing) => billing.validate(),
             None => Ok(()),
@@ -816,6 +885,10 @@ fn apply_environment(
             config.uploads.max_request_bytes = parse_environment(key, value)?;
         } else if key == METRICS_LISTEN_ENV {
             config.metrics.listen = Some(parse_environment(key, value)?);
+        } else if key == EMBED_LABEL_ENV {
+            config.embed.get_or_insert_with(EmbedConfig::default).label = value.clone();
+        } else if key == EMBED_URL_ENV {
+            config.embed.get_or_insert_with(EmbedConfig::default).url = value.clone();
         } else if let Some(setting) = key
             .strip_prefix(RATE_LIMITS_ENV_PREFIX)
             .and_then(|name| config.rate_limits.setting_mut(&name.to_ascii_lowercase()))

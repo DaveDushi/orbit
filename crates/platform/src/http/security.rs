@@ -255,16 +255,26 @@ fn forwarded_transport(headers: &HeaderMap) -> Result<Option<RequestTransport>, 
     Ok(transport)
 }
 
-pub(crate) fn add_security_headers(
-    headers: &mut HeaderMap,
-    secure: bool,
-    csp_script_hash: Option<&str>,
-) {
-    let script_source = csp_script_hash
+/// Sources the Content-Security-Policy allows on top of Orbit's fixed policy.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct CspSources {
+    pub script_hash: Option<String>,
+    pub frame_source: Option<String>,
+}
+
+pub(crate) fn add_security_headers(headers: &mut HeaderMap, secure: bool, csp: &CspSources) {
+    let script_source = csp
+        .script_hash
+        .as_ref()
         .map(|hash| format!("script-src 'self' '{hash}'; "))
         .unwrap_or_else(|| "script-src 'self'; ".to_owned());
+    let frame_source = csp
+        .frame_source
+        .as_ref()
+        .map(|source| format!(" {source}"))
+        .unwrap_or_default();
     let policy = format!(
-        "default-src 'self'; {script_source}style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src https://www.youtube-nocookie.com; media-src 'self' https://video.twimg.com; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self' https://github.com"
+        "default-src 'self'; {script_source}style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src https://www.youtube-nocookie.com{frame_source}; media-src 'self' https://video.twimg.com; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self' https://github.com"
     );
     headers.insert(
         CONTENT_SECURITY_POLICY,

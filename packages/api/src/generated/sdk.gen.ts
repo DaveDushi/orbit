@@ -424,7 +424,7 @@ export const updateMe = <ThrowOnError extends boolean = false>(options: Options<
 });
 
 /**
- * What the sign-in pages offer. Public.
+ * What the sign-in pages offer and which optional instance features are on. Public.
  */
 export const authOptions = <ThrowOnError extends boolean = false>(options?: Options<AuthOptionsData, ThrowOnError>): RequestResult<AuthOptionsResponses, AuthOptionsErrors, ThrowOnError> => (options?.client ?? client).get<AuthOptionsResponses, AuthOptionsErrors, ThrowOnError>({ url: '/api/v1/auth/options', ...options });
 

@@ -293,11 +293,14 @@ impl App {
                 ),
                 oauth: crate::oauth::router(oauth),
                 auth: {
-                    let auth = auth
+                    let mut auth = auth
                         .with_mailer(mailer.clone())
                         .with_rate_limits(config.rate_limits)
                         .with_uploads(attachment_state.uploads.clone())
                         .with_billing_enabled(billing.is_some());
+                    if let Some(embed) = &config.embed {
+                        auth = auth.with_embedded_app(embed.label.trim(), &embed.url);
+                    }
                     match app_key {
                         Some(app_key) => auth.with_app_key(app_key),
                         None => auth,
@@ -365,6 +368,10 @@ impl App {
             },
             config.rate_limits,
             config.environment == orbit_platform::EnvironmentMode::Production,
+            config
+                .embed
+                .as_ref()
+                .and_then(orbit_platform::EmbedConfig::origin),
         ));
 
         Ok(Self {

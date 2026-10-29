@@ -753,6 +753,29 @@ async fn csp_allows_only_the_verified_bootstrap_hash_and_local_image_variants() 
 }
 
 #[tokio::test]
+async fn csp_frames_the_configured_embed_origin_and_still_refuses_to_be_framed() {
+    let app = Router::new()
+        .route("/", get(|| async { StatusCode::OK }))
+        .layer(
+            HttpPlatformLayer::new(OriginPolicy::new("https://orbit.test"))
+                .with_frame_source("https://products.example.com"),
+        );
+
+    let response = app
+        .oneshot(Request::get("/").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let csp = response.headers()[CONTENT_SECURITY_POLICY]
+        .to_str()
+        .unwrap();
+    assert!(
+        csp.contains("frame-src https://www.youtube-nocookie.com https://products.example.com; "),
+        "{csp}"
+    );
+    assert!(csp.contains("frame-ancestors 'none'"));
+}
+
+#[tokio::test]
 async fn production_boundary_rejects_requests_without_verified_https_transport() {
     let app = Router::new()
         .route("/", get(|| async { StatusCode::OK }))

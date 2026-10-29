@@ -180,6 +180,7 @@ pub struct AuthState {
     uploads: Option<UploadService>,
     /// Orbit Cloud billing is on (`ORBIT_CLOUD`).
     billing_enabled: bool,
+    embedded_app: Option<EmbeddedApp>,
 }
 
 impl AuthState {
@@ -204,6 +205,15 @@ impl AuthState {
     #[must_use]
     pub fn with_uploads(mut self, uploads: UploadService) -> Self {
         self.uploads = Some(uploads);
+        self
+    }
+
+    #[must_use]
+    pub fn with_embedded_app(mut self, label: &str, url: &str) -> Self {
+        self.embedded_app = Some(EmbeddedApp {
+            label: label.to_owned(),
+            url: url.to_owned(),
+        });
         self
     }
 
@@ -279,6 +289,7 @@ impl AuthState {
             pending,
             uploads: None,
             billing_enabled: false,
+            embedded_app: None,
         }
     }
 }
@@ -1521,9 +1532,17 @@ struct AuthOptions {
     passkeys_enabled: bool,
     /// Orbit Cloud: workspaces need a subscription (Settings → Billing) to be writable.
     billing_enabled: bool,
+    /// Another web app shown on the Apps page in an iframe; absent unless the operator configured one.
+    embedded_app: Option<EmbeddedApp>,
 }
 
-/// What the sign-in pages offer. Public.
+#[derive(Clone, Serialize, ToSchema)]
+struct EmbeddedApp {
+    label: String,
+    url: String,
+}
+
+/// What the sign-in pages offer and which optional instance features are on. Public.
 #[utoipa::path(get, path = "/api/v1/auth/options", responses((status = 200, body = AuthOptions)))]
 async fn auth_options(
     State(state): State<AuthState>,
@@ -1539,6 +1558,7 @@ async fn auth_options(
         email_enabled,
         passkeys_enabled: state.webauthn.is_some(),
         billing_enabled: state.billing_enabled,
+        embedded_app: state.embedded_app.clone(),
     }))
 }
 
@@ -2206,6 +2226,41 @@ mod tests {
         let output = format!("{setup:?}");
         assert!(output.contains("[REDACTED]"));
         assert!(!output.contains(secret));
+    }
+
+    #[tokio::test]
+    async fn auth_options_report_the_embedded_app_only_when_configured() {
+        let database = TestDatabase::new().await.unwrap();
+        let repository = Arc::new(IdentityRepository::new((*database).clone()));
+        let options = |state: AuthState| async move {
+            let response = auth_router(state)
+                .oneshot(
+                    Request::get("/api/v1/auth/options")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            serde_json::from_slice::<Value>(&body(response).await).unwrap()
+        };
+
+        let plain = options(AuthState::new(
+            Arc::clone(&repository),
+            CookieMode::secure(),
+        ))
+        .await;
+        assert!(plain["embedded_app"].is_null(), "{plain}");
+
+        let configured = options(
+            AuthState::new(repository, CookieMode::secure())
+                .with_embedded_app("Products", "https://products.example.com/app"),
+        )
+        .await;
+        assert_eq!(
+            configured["embedded_app"],
+            json!({"label": "Products", "url": "https://products.example.com/app"})
+        );
     }
 
     #[tokio::test]
