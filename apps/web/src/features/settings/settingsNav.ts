@@ -1,8 +1,9 @@
 import { useContext, type ComponentType } from 'react'
-import { ArchiveBox, Brush, Card, Chart, ClipboardText, CloudConnection, Cpu, SecurityUser, Driver, Key, Keyboard, Link2, Lock, Notification as Bell, Setting2 as Settings, ShieldTick as ShieldCheck, SmileCircle, Sms as Mail, Sticker, Danger as TriangleAlert, User, People as Users } from 'reicon-react'
+import { ArchiveBox, Brush, MagicStar, Card, Chart, ClipboardText, CloudConnection, Cpu, SecurityUser, Driver, Key, Keyboard, Link2, Lock, Notification as Bell, Setting2 as Settings, ShieldTick as ShieldCheck, SmileCircle, Sms as Mail, Sticker, Danger as TriangleAlert, User, People as Users } from 'reicon-react'
 import type { Permission } from '@orbit/api/generated/types.gen'
 import { WorkspaceContext } from '@/features/workspaces/workspaceContext'
 import { useBillingEnabled } from '@/features/workspaces/billing'
+import { useAgentStatus } from '@/features/agent/api'
 
 export interface SettingsNavItem {
   to: string
@@ -13,6 +14,8 @@ export interface SettingsNavItem {
   permission?: Permission
   /** Shown only in Orbit Cloud (billing on). */
   cloud?: boolean
+  /** Shown only when the server runs the team agent. */
+  agent?: boolean
 }
 
 export interface SettingsNavSection {
@@ -80,6 +83,7 @@ const AREAS: Record<SettingsAreaName, SettingsArea> = {
           { to: '/profile/sessions', label: 'Sessions', icon: ShieldCheck },
           { to: '/profile/shortcuts', label: 'Keyboard shortcuts', icon: Keyboard },
           { to: '/profile/storage', label: 'Storage', icon: Driver },
+          { to: '/profile/agent', label: 'AI agent', icon: MagicStar, agent: true },
         ],
       },
     ],
@@ -130,11 +134,12 @@ export function settingsAreaOf(pathname: string): SettingsAreaName | null {
 export function useSettingsArea(name: SettingsAreaName): SettingsArea {
   const permissions = useContext(WorkspaceContext)?.workspace.permissions ?? []
   const cloud = useBillingEnabled()
+  const agent = useAgentStatus().data?.enabled === true
   const area = AREAS[name]
   const sections = area.sections
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) => (!item.permission || permissions.includes(item.permission)) && (!item.cloud || cloud)),
+      items: section.items.filter((item) => (!item.permission || permissions.includes(item.permission)) && (!item.cloud || cloud) && (!item.agent || agent)),
     }))
     .filter((section) => section.items.length > 0)
   return { ...area, sections }

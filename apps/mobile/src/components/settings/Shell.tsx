@@ -3,6 +3,7 @@ import type { Permission } from '@orbit/api/generated/types.gen'
 import type { ReactNode } from 'react'
 import { KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, Switch, View } from 'react-native'
 
+import { useAgentEnabled } from '../../hooks/agent'
 import { useOrbit } from '../../orbit-context'
 import { alpha, cssColors, setSchemePreference, useLayout, useTheme } from '../../theme'
 import { Icon, type IconName, IconButton, PaneHeader, SafeAreaView, Text } from '../../ui'
@@ -14,6 +15,8 @@ export interface SettingsNavItem {
   icon: IconName
   /** Shown only to roles that hold this permission. */
   permission?: Permission
+  /** Shown only when the server runs the team agent. */
+  agent?: boolean
 }
 
 /**
@@ -26,9 +29,9 @@ export const WORKSPACE_NAV: readonly SettingsNavItem[] = [
   { href: '/settings/members', label: 'Members', icon: 'people' },
 ]
 
-/** The links of `nav` this workspace role may open. */
-export function allowedNav<T extends SettingsNavItem>(nav: readonly T[], permissions: readonly Permission[]): T[] {
-  return nav.filter((item) => !item.permission || permissions.includes(item.permission))
+/** The links of `nav` this workspace role may open; the agent's page only when the server runs the agent. */
+export function allowedNav<T extends SettingsNavItem>(nav: readonly T[], permissions: readonly Permission[], agent = false): T[] {
+  return nav.filter((item) => (!item.permission || permissions.includes(item.permission)) && (!item.agent || agent))
 }
 
 export const ACCOUNT_NAV: readonly SettingsNavItem[] = [
@@ -37,6 +40,7 @@ export const ACCOUNT_NAV: readonly SettingsNavItem[] = [
   { href: '/settings/notifications', label: 'Notifications', icon: 'bell' },
   { href: '/settings/security', label: 'Security', icon: 'lock' },
   { href: '/settings/sessions', label: 'Sessions', icon: 'shield' },
+  { href: '/settings/agent', label: 'AI agent', icon: 'magicStar', agent: true },
 ]
 
 /** The web's Admin pages in its order; General is the area's first page, as `/admin` is on the web. */
@@ -62,6 +66,7 @@ export function SettingsShell({ title, nav, children, refreshing, onRefresh }: {
   const pathname = usePathname()
   const newUi = useLayout() === 'new'
   const { workspace } = useOrbit()
+  const agent = useAgentEnabled()
   const muted = alpha(colors.mutedForeground, 0.7)
   return (
     <SafeAreaView edges={['top', 'left', 'right']} className="flex-1 bg-background">
@@ -84,7 +89,7 @@ export function SettingsShell({ title, nav, children, refreshing, onRefresh }: {
         >
           {newUi ? null : (
             <View accessibilityRole="tablist" accessibilityLabel={title} className="flex-row flex-wrap gap-0.5 py-3 border-t border-b border-border">
-              {allowedNav(nav, workspace.permissions).map((item) => {
+              {allowedNav(nav, workspace.permissions, agent).map((item) => {
                 const active = pathname === item.href
                 return (
                   <Pressable
