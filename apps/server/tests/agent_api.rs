@@ -283,6 +283,15 @@ async fn internal_routes_need_the_secret() {
             .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
+    let (status, value) = fixture
+        .internal(
+            "GET",
+            &format!("/workspaces/{}/people", fixture.workspace_id),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(value["people"][0]["name"], "Owner");
     // A person's session is not the secret either.
     let (status, _) = fixture
         .request(

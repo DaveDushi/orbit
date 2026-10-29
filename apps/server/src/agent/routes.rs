@@ -11,7 +11,7 @@ use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post, put};
 use axum::{Json, Router};
-use orbit_platform::{Id, RequestId};
+use orbit_platform::{Id, RequestId, Row};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -48,6 +48,10 @@ pub fn router(state: AgentState) -> Router {
             patch(edit_message),
         )
         .route("/api/internal/agent/sessions", post(issue_session))
+        .route(
+            "/api/internal/agent/workspaces/{workspace_id}/people",
+            get(list_people),
+        )
         .route(
             "/api/internal/agent/credentials/{user_id}",
             get(read_credential)
@@ -456,6 +460,38 @@ async fn edit_message(
         }
         Err(_) => Err(unavailable(&uri, &request_id)),
     }
+}
+
+/// The workspace's members (id and name), to turn `<@id>` tokens into names and back.
+async fn list_people(
+    State(state): State<AgentState>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+) -> Result<Json<Value>, ApiError> {
+    sidecar_only(&state, &headers, &uri, &request_id)?;
+    let workspace_id = id_of(&workspace_id, &uri, &request_id)?;
+    let rows = sqlx::query(
+        "SELECT users.id, users.display_name FROM memberships \
+         JOIN users ON users.id = memberships.user_id \
+         WHERE memberships.workspace_id = $1 AND users.suspended_at IS NULL \
+         ORDER BY users.display_name",
+    )
+    .bind(workspace_id.to_string())
+    .fetch_all(state.database().pool())
+    .await
+    .map_err(|_| unavailable(&uri, &request_id))?;
+    let people: Vec<Value> = rows
+        .iter()
+        .map(|row| {
+            json!({
+                "id": row.get::<String, _>("id"),
+                "name": row.get::<String, _>("display_name"),
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "people": people })))
 }
 
 #[derive(Deserialize)]
