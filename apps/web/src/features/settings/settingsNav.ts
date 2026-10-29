@@ -1,5 +1,5 @@
 import { useContext, type ComponentType } from 'react'
-import { ArchiveBox, Book, Brush, MagicStar, Card, Chart, ClipboardText, CloudConnection, Cpu, SecurityUser, Driver, Key, Keyboard, Link2, Lock, Notification as Bell, Setting2 as Settings, ShieldTick as ShieldCheck, SmileCircle, Sms as Mail, Sticker, Danger as TriangleAlert, User, People as Users } from 'reicon-react'
+import { ArchiveBox, Book, Brush, Category, MagicStar, Card, Chart, ClipboardText, CloudConnection, Cpu, SecurityUser, Driver, Key, Keyboard, Link2, Lock, Notification as Bell, Setting2 as Settings, ShieldTick as ShieldCheck, SmileCircle, Sms as Mail, Sticker, Danger as TriangleAlert, User, People as Users } from 'reicon-react'
 import type { Permission } from '@orbit/api/generated/types.gen'
 import { WorkspaceContext } from '@/features/workspaces/workspaceContext'
 import { useBillingEnabled } from '@/features/workspaces/billing'
@@ -58,6 +58,7 @@ const AREAS: Record<SettingsAreaName, SettingsArea> = {
           { to: '/settings/file-storage', label: 'File storage', icon: CloudConnection, permission: 'storage.manage' },
           { to: '/settings/github', label: 'GitHub', icon: Link2 },
           { to: '/settings/api-tokens', label: 'API tokens', icon: Key, permission: 'api_tokens.manage' },
+          { to: '/settings/agent-tools', label: 'Agent tools', icon: Category, permission: 'integrations.manage', agent: true },
         ],
       },
       {
