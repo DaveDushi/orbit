@@ -7,13 +7,14 @@
  *   create task "Title"            rename task <id|it> to "Title"       move task <id|it> to <Status>
  *   create page "Title" with "Text"   append "Text" to page <id|it>       read page <id|it>
  *   search tasks "words"            list projects                         read messages
- *   ask @Name "Question"
+ *   ask @Name "Question"           show prompt (answers with the system prompt, to check names and team instructions)
  *   remember "Fact"                 remember privately "Fact"             recall "words"
  *   recall privately "words"        what do you remember about "word"
  *   use <integration>__<tool> with {"json": "arguments"}
  *
  * An answer "yes" to an approval question calls the last integration tool again with the same arguments.
- * When a memory tool result asks for a summary, the mock writes one from the halves it was shown.
+ * When a memory tool result asks for a summary, the mock writes one from the halves it was shown. A compaction gets a
+ * short placeholder summary.
  */
 
 import { createModels, type AssistantMessage, type JsonObject, type Models } from "@earendil-works/pi-ai";
@@ -35,6 +36,22 @@ function textOf(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
 	return content.map((part: { type?: string; text?: string }) => (part.type === "text" ? (part.text ?? "") : "")).join("");
+}
+
+/** The current system prompt: the system messages replayed in order (later ones replace sections by name). */
+function systemPrompt(messages: readonly Message[]): string {
+	const base: string[] = [];
+	const sections = new Map<string, string>();
+	for (const message of messages) {
+		if (message.role !== "system") continue;
+		const text = textOf(message.content);
+		if (text) base.push(text);
+		for (const [key, value] of Object.entries(message.sections ?? {})) {
+			if (value === null) sections.delete(key);
+			else sections.set(key, value);
+		}
+	}
+	return [...base, ...sections.values()].join("\n\n");
 }
 
 /** The newest id of a created or read task or page in the tool results, for "it". */
@@ -94,8 +111,12 @@ export function plan(instruction: string, messages: readonly Message[]): { name:
 }
 
 /** One scripted answer for the transcript so far. */
-export function respond(messages: readonly Message[]): AssistantMessage {
+export function respond(messages: readonly Message[], modelId = "mock"): AssistantMessage {
 	if (process.env.AGENT_MOCK_DEBUG) console.log("mock model sees", JSON.stringify(messages.map((m) => ({ role: m.role, tool: m.toolName, text: textOf(m.content).slice(0, 120), raw: JSON.stringify(m).slice(0, 700) }))));
+	// Pi's compaction asks for a summary of the older conversation: never act on what that conversation said.
+	if (messages[0]?.role === "system" && textOf(messages[0].content).startsWith("You are a context summarization assistant")) {
+		return fauxAssistantMessage(fauxText(`## Goal\n(mock summary by ${modelId} of ${textOf(messages.at(-1)?.content).length} characters)`));
+	}
 	const last = messages[messages.length - 1];
 	if (last?.role === "toolResult") {
 		const due = /Call memory_summarize with scope "(\w+)" and block "(\d+-\d+)"\.\n<orbit-data[^>]*>\n([\s\S]*?)\n<\/orbit-data>/.exec(textOf(last.content));
@@ -108,6 +129,9 @@ export function respond(messages: readonly Message[]): AssistantMessage {
 		return fauxAssistantMessage(fauxText(last.isError ? `I could not do that. ${short}` : `Done (${last.toolName}).\n\n\`\`\`\n${short}\n\`\`\``));
 	}
 	const instruction = textOf(messages.filter((message) => message.role === "user").at(-1)?.content);
+	if (/show (?:the )?(?:system )?prompt/i.test(instruction)) {
+		return fauxAssistantMessage(fauxText(systemPrompt(messages)));
+	}
 	const asked = /what do you remember about "([^"]+)"/i.exec(instruction);
 	if (asked) {
 		const found = memoryLines(messages).filter((line) => line.toLowerCase().includes(asked[1].toLowerCase()));
@@ -118,10 +142,11 @@ export function respond(messages: readonly Message[]): AssistantMessage {
 	return fauxAssistantMessage(fauxToolCall(call.name, call.args as JsonObject), { stopReason: "toolUse" });
 }
 
-/** A `Models` whose only model is a scripted one under the ChatGPT provider's id. */
-export function mockModels(modelId: string): Models {
-	const faux = fauxProvider({ provider: PROVIDER, models: [{ id: modelId, contextWindow: 200_000, maxTokens: 8_000 }], tokensPerSecond: 400 });
-	const factory = (context: { messages: readonly unknown[] }) => respond(context.messages as Message[]);
+/** A `Models` with scripted models under the ChatGPT provider's id: the conversation's and the compaction model. */
+export function mockModels(modelId: string, compactModelId?: string): Models {
+	const ids = [...new Set([modelId, compactModelId ?? modelId])];
+	const faux = fauxProvider({ provider: PROVIDER, models: ids.map((id) => ({ id, contextWindow: 200_000, maxTokens: 8_000 })), tokensPerSecond: 400 });
+	const factory = (context: { messages: readonly unknown[] }, _options: unknown, _state: unknown, model: { id: string }) => respond(context.messages as Message[], model.id);
 	faux.setResponses(Array.from({ length: 1_000 }, () => factory));
 	const models = createModels();
 	models.setProvider(faux.provider);

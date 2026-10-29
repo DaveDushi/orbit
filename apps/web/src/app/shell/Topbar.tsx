@@ -97,6 +97,7 @@ function crumbsFor(pathname: string, folderParam: string | null, state: AppState
       else if (id === 'backups') crumbs.push({ label: 'Backups' })
       else if (id === 'storage') crumbs.push({ label: 'Storage' })
       else if (id === 'users') crumbs.push({ label: 'Users' })
+      else if (id === 'agent') crumbs.push({ label: 'AI agent' })
       else crumbs.push({ label: 'General' })
       return { crumbs }
     }
@@ -106,6 +107,7 @@ function crumbsFor(pathname: string, folderParam: string | null, state: AppState
       else if (id === 'github') crumbs.push({ label: 'GitHub' })
       else if (id === 'sessions') crumbs.push({ label: 'Sessions' })
       else if (id === 'danger-zone') crumbs.push({ label: 'Danger zone' })
+      else if (id === 'agent') crumbs.push({ label: 'AI agent' })
       return { crumbs }
     }
     default:

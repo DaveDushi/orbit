@@ -13,6 +13,7 @@ mod outbound;
 mod routes;
 pub mod scope;
 pub(crate) mod sessions;
+pub mod settings;
 
 use std::sync::Arc;
 

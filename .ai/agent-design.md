@@ -11,8 +11,8 @@ answers. Read it before you change `apps/agent`, `apps/server/src/agent/` or the
 - **The sidecar (Node, `apps/agent`)** runs Pi Durable (`@earendil-works/pi-durable` 1.4.0, `pi-ai` 1.4.0,
   `chord` 1.4.0, exact pins). It owns transcripts and runs. It has no shell, no file tools and no database access. Its
   only tools call Orbit's public API with a bearer session of one user.
-- **The agent in chat** is one bot user (`Orbit Agent`, no password, no sessions) with a membership in every
-  workspace. People `@`-mention it like a teammate. It answers in the thread and edits one progress message while it
+- **The agent in chat** is one bot user (named `Orbit Agent` until an installation admin renames it in Admin → AI
+  agent; no password, no sessions) with a membership in every workspace. People `@`-mention it like a teammate. It answers in the thread and edits one progress message while it
   works.
 - **ChatGPT** sign-in is the OpenAI Codex device-code flow from pi-ai (`openai-codex` provider). It works on a remote
   server: the user opens `auth.openai.com/codex/device` on any device and types the code.
@@ -122,6 +122,23 @@ flow in pi-ai binds port 1455 and allows one login at a time, so we do not use i
   every write needs the driver's "yes" checked by Orbit. It still has no general web, fetch or e-mail tool. See
   "Integrations" below (I1–I8).
 
+### 8a. Name and team instructions
+
+- **One name.** The agent is one bot user for the installation, so it has one name, and that display name is its
+  `@handle` (Orbit has no separate handles). A rename refuses a name that another account already has (trimmed, any case):
+  `namesToTokens` would turn `@Name` into a mention of that person. Every account counts, not only the members of
+  the bot's workspaces, because the bot joins a new workspace only on the sidecar's next poll. The check and the
+  update run in one `immediate_transaction`. A member who later takes the agent's name is not refused (see open
+  decisions below).
+- **No editable base prompt.** The rules and the built-in "About Orbit" text are code. The only editable layer is
+  each workspace's team instructions (owners and admins, `workspace.update`), placed after About Orbit in a block that
+  says they cannot override the rules. Its text cannot close the block early. There is no installation-wide and no
+  personal layer.
+- **Delivery.** `GET /api/internal/agent/inputs` returns `bot_name`, and each input has `team_instructions`. The
+  sidecar stores both in the thread's `orbit.thread` document when a run starts; the prompt sections read them from
+  there, so they stay the same during a run (Pi resends only changed sections) and change with the next run.
+- **Scope.** Agent sessions cannot reach `/api/v1/workspaces/{id}/agent` (denied segment) or `/api/v1/admin/agent`.
+
 ### 9. Rate limits
 
 - ChatGPT limits: pi-ai retries with backoff (`retry.maxRetries = 3`). A run that still fails ends with a message in
@@ -165,6 +182,8 @@ tests, the account settings navigation and routes in the web and mobile apps. `a
   (`AGENT_MODEL`). Pi marks the `openai-codex` provider "legacy" (superseded by Sign in with ChatGPT, which needs a
   localhost callback). If OpenAI turns the Codex device flow off, switch to the paste-the-redirect-URL flow.
 - The bot user shows in member lists. Removing it from a workspace turns the agent off there.
+- A person can still set their own display name to the agent's name (profile, sign-up, invitations). Then `@Name` in
+  the agent's answers is ambiguous. Refusing that everywhere a name is set is not built yet.
 
 ## Memory
 
@@ -284,12 +303,48 @@ their ancestors.
 Several Orbit servers on Postgres share one memory; backups and restore include it; the same permission code reads it.
 The sidecar stays stateless for memory.
 
+## Compaction
+
+Status: built on branch `agent-compaction` (2026-10-29). Code: `apps/agent/src/compaction.ts`.
+
+The main list of a DM with the agent is one Pi conversation forever, and a busy thread can grow without end. Pi
+Durable compacts on its own, but relative to the model's window: for `gpt-6.1-sol` (500k) only near 451k
+(background) and 484k (blocking). Orbit compacts at a fixed size instead, `AGENT_COMPACT_TOKENS` (default 250000):
+
+- **Numbers.** Above 250k tokens of context a compaction starts in the background; the run goes on, and the summary
+  is placed at the next turn boundary. Above 270k a request waits for it. The last 40k tokens (at most half the
+  threshold) stay word for word, so the recent part of a thread (a few tool results and answers) is not paraphrased.
+  These are Pi `modelOverrides` for each model in the catalog whose own threshold is higher; models with a 272k window
+  keep Pi's defaults (they already compact near 223k).
+- **Why 250k.** Every request of a run sends the whole context again, on the driver's ChatGPT plan. 250k instead of
+  450k nearly halves what each request costs and how long it takes, and the 270k blocking point keeps each request
+  under the model's 272k price tier (pi-ai lists double input cost above it). Models also use a long context less
+  well; a summary plus 40k recent tokens keeps what matters for the next instruction.
+- **Who pays.** The summarization request carries the conversation's provider session id, so `routedModels` sends it
+  to the payer of the conversation: the driver of the newest run. It is one request of about 210k input tokens (no
+  prompt cache) per compaction.
+- **Summary model.** A `beforeCompact` hook in the `orbit` extension (every conversation selects it) writes the
+  summary with `AGENT_COMPACT_MODEL` (`gpt-6-luna`) and `AGENT_COMPACT_THINKING` (`high`), not with the
+  conversation's model. Luna's input costs about 1/20 of Sol's on the driver's plan, and the summary needs reading
+  more than reasoning; high thinking keeps its quality. Pi 1.4.0 has no compaction-model setting and does not export
+  its summary prompt, so `compaction.ts` has a short equivalent with the same sections and Pi's `instructions`. The
+  request has the same session id, so the same payer. When the source plus 30k (thinking and summary) does not fit
+  Luna's 272k window, or the request fails after 2 retries, the hook returns nothing and Pi summarizes with the
+  conversation's model as before (Pi's output limit there: `0.8 * reserveTokens`, capped at the model's 128k). The
+  result, or the fallback, is memoized on the compaction task (`api.memo`), so a hook that runs again after a
+  restart does not ask again. Pi does not count a hook's request in `pi.usage`; Orbit does not read it.
+- **What is kept.** The summary (Pi's structured prompt: goal, progress, decisions, next steps), the recent 40k, and
+  the system prompt: after a compaction Pi writes one complete baseline with every section (`orbit`,
+  `orbit-context`, `orbit-memory`) and it leads the context. The memory wake view is read again at each run start,
+  so compaction never loses memory. Older entries stay in `pi.sqlite`; only the model's view shrinks.
+
+
 ## Integrations
 
 Status: built on branch `agent-integrations` (2026-10-29). Owners and admins give the agent tools outside Orbit:
 **remote MCP servers** (Streamable HTTP) and **HTTP APIs** (base URL + one auth header). No CLI connector and no
 shell. Code: `apps/server/src/agent/integrations.rs` (settings, routes, approvals), `apps/server/src/agent/outbound.rs`
-(the external calls), migration `0064_agent_integrations.sql` (renumber it if another branch merges a `0064` first),
+(the external calls), migration `0065_agent_integrations.sql`,
 `apps/agent/src/integrations.ts`, `apps/web/src/features/agentIntegrations/`.
 
 ```text

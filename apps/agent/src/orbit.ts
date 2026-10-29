@@ -26,6 +26,8 @@ export type PendingInput = {
 	readonly kind: "instruction" | "answer" | "steer";
 	readonly body: string;
 	readonly created_at: number;
+	/** The workspace's team instructions; empty when it has none. */
+	readonly team_instructions: string;
 };
 
 export type ThreadUpdate = {
@@ -68,8 +70,9 @@ export class OrbitClient {
 		return this.#fetch(method, `/api/internal/agent${path}`, { authorization: `Bearer ${this.#config.secret}` }, body, `${method} ${path}`);
 	}
 
-	async pendingInputs(waitSeconds: number): Promise<{ bot_user_id: string; inputs: PendingInput[] }> {
-		return (await this.internal("GET", `/inputs?wait=${waitSeconds}`)) as { bot_user_id: string; inputs: PendingInput[] };
+	/** The queued inputs, and the bot's id and current name. */
+	async pendingInputs(waitSeconds: number): Promise<{ bot_user_id: string; bot_name: string; inputs: PendingInput[] }> {
+		return (await this.internal("GET", `/inputs?wait=${waitSeconds}`)) as { bot_user_id: string; bot_name: string; inputs: PendingInput[] };
 	}
 
 	async acknowledge(messageId: string): Promise<void> {

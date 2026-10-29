@@ -21,7 +21,7 @@ export function AgentPage() {
 
   return <SettingsCard
     title="AI agent"
-    description="Mention @Orbit Agent in a chat thread to give it work. It acts with your permissions in Orbit, and your ChatGPT account pays for the runs you start."
+    description={`Mention @${agent.name} in a chat thread to give it work. It acts with your permissions in Orbit, and your ChatGPT account pays for the runs you start.`}
   >
     <div className="flex flex-col items-start gap-3">
       {!agent.online ? <p role="status" className="text-sm text-destructive">The agent service is offline. Mentions wait until it is back.</p> : null}

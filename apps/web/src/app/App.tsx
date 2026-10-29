@@ -39,6 +39,8 @@ import { FileStoragePage } from '@/features/settings/pages/FileStoragePage'
 import { ProfilePage } from '@/features/profile/pages/ProfilePage'
 import { AppearancePage } from '@/features/profile/pages/AppearancePage'
 import { AgentPage } from '@/features/agent/AgentPage'
+import { AgentNamePage } from '@/features/agent/AgentNamePage'
+import { TeamInstructionsPage } from '@/features/agent/TeamInstructionsPage'
 import { MemoryPage as AgentMemoryPage } from '@/features/agent/MemoryPage'
 import { AgentToolsPage } from '@/features/agentIntegrations/AgentToolsPage'
 import { InboxPage } from '@/features/inbox/pages/InboxPage'
@@ -135,6 +137,7 @@ export default function App() {
                 <Route path="storage" element={<AdminStoragePage />} />
                 <Route path="backups" element={<AdminBackupsPage />} />
                 <Route path="jobs" element={<AdminJobsPage />} />
+                <Route path="agent" element={<AgentNamePage />} />
               </Route>
               <Route path="settings" element={<SettingsLayout />}>
                 <Route index element={<GeneralPage />} />
@@ -146,6 +149,7 @@ export default function App() {
                 <Route path="billing" element={<BillingPage />} />
                 <Route path="danger-zone" element={<DangerZonePage />} />
                 <Route path="members" element={<MembersPage />} />
+                <Route path="agent" element={<TeamInstructionsPage />} />
                 <Route path="invitations" element={<Navigate to="/settings/members" replace />} />
                 {/* these moved to the account settings; old links and bookmarks still work */}
                 <Route path="sessions" element={<MovedTo path="/profile/sessions" />} />

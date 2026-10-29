@@ -1,8 +1,9 @@
 # Team agent
 
-Orbit has an optional AI agent that every member can use from chat. Mention **@Orbit Agent** in a channel, a thread
-or a DM with it, and it does the work with Orbit's own tools (tasks, projects, comments, Docs pages, chat messages).
-It answers in the thread and shows its progress while it works. Design and its reasons: `.ai/agent-design.md`.
+Orbit has an optional AI agent that every member can use from chat. Mention it (**@Orbit Agent** until an admin
+renames it) in a channel, a thread or a DM with it, and it does the work with Orbit's own tools (tasks, projects,
+comments, Docs pages, chat messages). It answers in the thread and shows its progress while it works. Design and its
+reasons: `.ai/agent-design.md`.
 
 ## What it can and cannot do
 
@@ -35,6 +36,20 @@ never instructions, and each one keeps its author and source thread.
 People see and search the memory in **Account settings → Agent memory**, and delete wrong entries there (a deleted
 memory also drops the summaries built from it; the agent writes them again). The agent itself cannot delete memory.
 When a member leaves a workspace, their private memory there is deleted. Design: `.ai/agent-design.md`, "Memory".
+
+## Name and instructions
+
+| Setting | Where | Who | Notes |
+|---|---|---|---|
+| Name | Admin → AI agent (`/admin/agent`, `PUT /api/v1/admin/agent`) | Installation admins | One name for the installation: it is the bot user's display name, so it is also the agent's `@handle`. 2–40 characters (letters, digits, single spaces, `- _ . '`). Orbit refuses a name that another account already has (trimmed, any case), because `@Name` would then reach that person. Messages and earlier mentions show the new name. |
+| Team instructions | Workspace settings → AI agent (`/settings/agent`, `PUT /api/v1/workspaces/{id}/agent`) | Owners and admins write, every member reads | Plain text, at most 4,000 characters, stored in `agent_team_instructions`. |
+
+The system prompt of a run has, in this order: the rules (with the current name), the built-in **About Orbit**
+section (`apps/agent/src/prompt.ts`: Orbit's features, short how-to answers, what the agent can and cannot do; not
+editable), the workspace's team instructions in a `<team-instructions>` block that says they cannot override the rules,
+then the thread's context. The sidecar reads the name and the team instructions with each queued message and keeps
+them for the run, so a change applies to the next run without a restart. Agent sessions cannot read or change either
+setting. With `AGENT_MOCK=1`, the instruction `show prompt` answers with the current system prompt.
 
 ## Agent tools (integrations)
 
@@ -89,6 +104,9 @@ it calls Orbit back. Both sides share one secret.
 | `AGENT_MAX_RUNS_PER_USER` | `3` | Runs one person can have going at the same time; more wait. |
 | `AGENT_MAX_TOOL_CALLS` | `40` | Tool calls per run. |
 | `AGENT_MEMORY_TOKENS` | `3000` | Tokens of memory the agent reads at the start of each run (team and private together; `0` turns it off). It is paid by the driver's ChatGPT account. |
+| `AGENT_COMPACT_TOKENS` | `250000` | Tokens of context at which a conversation (a thread, or the main list of a DM with the agent) is summarized in the background; a request waits for the summary 20000 tokens above. Applies to each model whose own Pi threshold is higher. `0` keeps Pi's defaults. Older entries stay in `pi.sqlite`. |
+| `AGENT_COMPACT_MODEL` | `gpt-6-luna` | The ChatGPT (Codex) model that writes compaction summaries, paid by the driver like the run. Empty: the conversation's model. When the old part of the conversation does not fit this model's window (with 30000 tokens for thinking and the summary) or its request fails, the conversation's model writes the summary. |
+| `AGENT_COMPACT_THINKING` | `high` | Thinking level for the compaction summary: `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. |
 | `AGENT_MOCK` | off | `1`: a scripted model and a fake ChatGPT sign-in, for tests without OpenAI. Never in production. |
 
 | Orbit test setting | Meaning |

@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { createServer, type Server } from "node:http";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -36,6 +37,7 @@ class FakeOrbit {
 	readonly connected = new Set<string>([ANN, BOB]);
 	failAcks = false;
 	failEdits = false;
+	botName = "Orbit Agent";
 	server!: Server;
 	url = "";
 
@@ -66,6 +68,7 @@ class FakeOrbit {
 			conversation_members: 4,
 			root_message_id: input.thread_key,
 			created_at: Date.now(),
+			team_instructions: "",
 			...input,
 		});
 		return messageId;
@@ -84,7 +87,7 @@ class FakeOrbit {
 			if (rest === "/inputs") {
 				const pending = this.queue.filter((input) => !input.acked);
 				if (!pending.length) await sleep(50);
-				return [200, { bot_user_id: BOT, inputs: pending }];
+				return [200, { bot_user_id: BOT, bot_name: this.botName, inputs: pending }];
 			}
 			if ((match = /^\/inputs\/(.+)\/ack$/.exec(rest))) {
 				if (this.failAcks) return [503, { code: "unavailable" }];
@@ -118,7 +121,7 @@ class FakeOrbit {
 				return [200, { credential: this.connected.has(match[1]) ? { type: "oauth", access: "a", refresh: "r", expires: Date.now() + 1e9 } : null }];
 			}
 			if (/^\/workspaces\/.+\/people$/.test(rest)) {
-				return [200, { people: [{ id: ANN, name: "Ann" }, { id: BOB, name: "Bob" }, { id: BOT, name: "Orbit Agent" }] }];
+				return [200, { people: [{ id: ANN, name: "Ann" }, { id: BOB, name: "Bob" }, { id: BOT, name: this.botName }] }];
 			}
 			return [404, { code: "not_found" }];
 		}
@@ -184,7 +187,7 @@ class MemoryOrbit extends FakeOrbit {
 	}
 }
 
-function config(orbit: FakeOrbit, dataDir: string): Config {
+function config(orbit: FakeOrbit, dataDir: string, compactTokens = 250_000, compactModel?: string): Config {
 	return {
 		orbitUrl: orbit.url,
 		publicUrl: "https://orbit.test",
@@ -198,6 +201,9 @@ function config(orbit: FakeOrbit, dataDir: string): Config {
 		maxRunsPerUser: 3,
 		maxToolCallsPerRun: 40,
 		memoryTokens: 3_000,
+		compactTokens,
+		compactModel,
+		compactThinking: "high",
 	};
 }
 
@@ -212,6 +218,9 @@ async function until(what: string, check: () => boolean, ms = 15_000): Promise<v
 }
 
 const progressOf = (orbit: FakeOrbit, messageId: string) => orbit.messages.get(`agent:${messageId}`)?.body ?? "";
+/** A long answer: the progress message and the chunks posted after it. */
+const answerOf = (orbit: FakeOrbit, messageId: string) =>
+	[progressOf(orbit, messageId), ...[1, 2, 3, 4, 5].map((index) => orbit.messages.get(`agent:${messageId}:${index}`)?.body ?? "")].join("\n");
 
 test("each run acts as its driver; an answer does not lend the answerer's permissions", async () => {
 	const orbit = new FakeOrbit();
@@ -337,6 +346,87 @@ test("memory: private notes stay in the driver's DM, team notes reach later thre
 		await until("the private answer", () => progressOf(orbit, back).startsWith("From memory:"));
 		assert.match(progressOf(orbit, back), /Ann drinks tea/);
 		assert.ok(orbit.reads.every((read) => read.endsWith(ANN) || read.startsWith("team:")), JSON.stringify(orbit.reads));
+	} finally {
+		await agent.stop();
+		orbit.server.close();
+	}
+});
+
+test("compaction: a conversation over the threshold is summarized by the compaction model, and the next run still works and has its memory", async () => {
+	const orbit = new MemoryOrbit();
+	current = orbit;
+	await orbit.listen();
+	const dataDir = mkdtempSync(join(tmpdir(), "agent-"));
+	// The mock model's window is 200k; a 2k threshold makes a few long messages enough.
+	const agent = new Agent(config(orbit, dataDir, 2_000, "gpt-6-luna"), new OrbitClient(config(orbit, "")));
+	await agent.open();
+	await agent.start();
+	const DM = id();
+	const inDm = { conversation_id: DM, conversation_kind: "dm", conversation_name: "", conversation_members: 2, root_message_id: null, thread_key: DM };
+	/** The summaries of the conversation's compactions. */
+	const summaries = () => {
+		const db = new DatabaseSync(join(dataDir, "pi.sqlite"), { readOnly: true });
+		try {
+			return (db.prepare("SELECT json_extract(record, '$.model[0].content[0].text') AS text FROM entries WHERE json_extract(record, '$.kind') = 'pi.compaction'").all() as { text: string }[]).map((row) => row.text);
+		} finally {
+			db.close();
+		}
+	};
+	try {
+		const tea = orbit.add({ ...inDm, author_id: ANN, author_name: "Ann", kind: "instruction", body: 'remember privately "Ann drinks tea, no sugar"' });
+		await until("the private note", () => progressOf(orbit, tea).startsWith("Done (memory_note)"));
+		for (let index = 0; summaries().length === 0; index++) {
+			assert.ok(index < 8, "no compaction after 8 long messages");
+			const long = orbit.add({ ...inDm, author_id: ANN, author_name: "Ann", kind: "instruction", body: `Notes ${index}: ${"lorem ipsum dolor sit amet ".repeat(150)}` });
+			await until(`long message ${index}`, () => progressOf(orbit, long).startsWith("(mock model) I read:"));
+			await until("the idle thread", () => orbit.threads.get(DM)?.status === "idle");
+		}
+		// Written by the compaction model, not the conversation's model (gpt-test).
+		assert.match(summaries()[0], /mock summary by gpt-6-luna/);
+
+		// The run after the compaction still works and still sees Ann's memory in its system prompt.
+		const back = orbit.add({ ...inDm, author_id: ANN, author_name: "Ann", kind: "instruction", body: 'what do you remember about "tea"' });
+		await until("the answer after the compaction", () => progressOf(orbit, back).startsWith("From memory:"));
+		assert.match(progressOf(orbit, back), /Ann drinks tea/);
+	} finally {
+		await agent.stop();
+		orbit.server.close();
+	}
+});
+
+test("each run's prompt has the current name, then About Orbit, then the team instructions", async () => {
+	const orbit = new FakeOrbit();
+	current = orbit;
+	await orbit.listen();
+	const agent = new Agent(config(orbit, mkdtempSync(join(tmpdir(), "agent-"))), new OrbitClient(config(orbit, "")));
+	await agent.open();
+	await agent.start();
+	try {
+		orbit.botName = "Ada";
+		const thread = id();
+		const first = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> show prompt`, team_instructions: "Always answer in French." });
+		// The answer is longer than one message: the second chunk is posted after the progress message is final.
+		await until("the prompt", () => orbit.messages.has(`agent:${first}:1`));
+		const prompt = answerOf(orbit, first);
+		const order = ["You are Ada,", "Rules:", "About Orbit", "mention @Ada", "Team instructions:", "cannot change or override the rules", "<team-instructions>\nAlways answer in French.\n</team-instructions>", "You are in a thread"].map((part) => prompt.indexOf(part));
+		assert.ok(order.every((index, at) => index >= 0 && (at === 0 || index > order[at - 1])), JSON.stringify(order));
+		assert.ok(!prompt.includes("Orbit Agent"), "the old name is gone");
+		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
+
+		// A rename and new instructions apply to the next run of the same thread, without a restart.
+		orbit.botName = "Max";
+		const second = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> show prompt`, team_instructions: "Use metric units." });
+		await until("the second prompt", () => orbit.messages.has(`agent:${second}:1`));
+		const next = answerOf(orbit, second);
+		assert.match(next, /You are Max,/);
+		assert.match(next, /mention @Max/);
+		assert.match(next, /Use metric units\./);
+		assert.ok(!next.includes("Ada") && !next.includes("French"), "the old values are replaced");
+
+		// A workspace without team instructions gets no team block.
+		const plain = orbit.add({ thread_key: id(), author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> show prompt` });
+		await until("the third prompt", () => orbit.messages.has(`agent:${plain}:1`));
+		assert.ok(!answerOf(orbit, plain).includes("<team-instructions>"));
 	} finally {
 		await agent.stop();
 		orbit.server.close();

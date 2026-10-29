@@ -29,6 +29,9 @@ export type ThreadState = {
 	/** Set by `ask_teammate`: the run ends and the thread waits for an answer. */
 	waitingFor: string | null;
 	toolCalls: number;
+	/** The agent's name and the workspace's team instructions, read at the start of the current run. */
+	agentName?: string;
+	teamInstructions?: string;
 	/** The memory section of the current run (the wake view read at its start), as the model sees it. */
 	memory?: string | null;
 	/** The integration tools section of the current run (the driver's tools, read at its start). */

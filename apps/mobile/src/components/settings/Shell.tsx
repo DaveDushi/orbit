@@ -27,6 +27,7 @@ export const WORKSPACE_NAV: readonly SettingsNavItem[] = [
   { href: '/settings', label: 'General', icon: 'settings' },
   { href: '/settings/file-storage', label: 'File storage', icon: 'cloudConnection', permission: 'storage.manage' },
   { href: '/settings/members', label: 'Members', icon: 'people' },
+  { href: '/settings/agent-instructions', label: 'AI agent', icon: 'magicStar', agent: true },
 ]
 
 /** The links of `nav` this workspace role may open; the agent's page only when the server runs the agent. */
@@ -50,6 +51,7 @@ export const ADMIN_NAV: readonly SettingsNavItem[] = [
   { href: '/settings/admin/users', label: 'Users', icon: 'people' },
   { href: '/settings/admin/email', label: 'Email', icon: 'mail' },
   { href: '/settings/admin/limits', label: 'Limits', icon: 'chart' },
+  { href: '/settings/admin/agent', label: 'AI agent', icon: 'magicStar', agent: true },
   { href: '/settings/admin/storage', label: 'Storage', icon: 'cloudConnection' },
   { href: '/settings/admin/backups', label: 'Backups', icon: 'archiveBox' },
   { href: '/settings/admin/audit', label: 'Audit log', icon: 'clipboardText' },
