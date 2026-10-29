@@ -618,3 +618,425 @@ async fn credentials_are_sealed_and_only_the_status_reaches_the_person() {
         .await;
     assert_eq!(value["chatgpt"]["connected"], false);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Memory.
+
+impl Fixture {
+    /// An agent session of `member`, who drives a run in #general.
+    async fn agent_session(&self, member: &Member) -> String {
+        let (bot, _) = self.pending().await;
+        let general = self.general().await;
+        let mention = self
+            .send(member, &general, &format!("<@{bot}> remember"), None)
+            .await;
+        self.set_thread(&mention, &general, "running", member).await;
+        let (status, session) = self
+            .internal(
+                "POST",
+                "/sessions",
+                Some(
+                    json!({ "user_id": member.id.to_string(), "workspace_id": self.workspace_id }),
+                ),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{session}");
+        format!("Bearer {}", session["token"].as_str().unwrap())
+    }
+
+    async fn memory(
+        &self,
+        auth: (&str, &str),
+        method: &str,
+        rest: &str,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        let uri = format!(
+            "/api/v1/workspaces/{}/agent-memory/{rest}",
+            self.workspace_id
+        );
+        self.request(method, &uri, auth, body).await
+    }
+
+    async fn note(&self, member: &Member, scope: &str, body: &str) -> Value {
+        let (status, value) = self
+            .memory(
+                ("cookie", &member.cookie),
+                "POST",
+                scope,
+                Some(json!({ "body": body })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{value}");
+        value
+    }
+
+    async fn wake(&self, member: &Member, scope: &str, bytes: usize) -> Value {
+        let (status, value) = self
+            .memory(
+                ("cookie", &member.cookie),
+                "GET",
+                &format!("{scope}/wake?bytes={bytes}"),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{value}");
+        value
+    }
+
+    async fn summarize(&self, member: &Member, block: &str, claim: &Value, body: &str) -> Value {
+        let (status, value) = self
+            .memory(
+                ("cookie", &member.cookie),
+                "POST",
+                "team/summaries",
+                Some(json!({ "block": block, "claim": claim, "body": body })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{value}");
+        value
+    }
+}
+
+#[tokio::test]
+async fn private_memory_is_only_its_owners_and_team_memory_only_the_workspaces() {
+    let fixture = Fixture::new().await;
+    let member = fixture.add_member("member").await;
+    let owner = fixture.owner.clone();
+    fixture
+        .note(&owner, "team", "Releases ship on Thursdays")
+        .await;
+    fixture
+        .note(&owner, "private", "Owner prefers short answers")
+        .await;
+    fixture
+        .note(&member, "private", "Member is on leave in May")
+        .await;
+
+    // Every member reads the team memory; `private` is always the caller's own.
+    let (_, team) = fixture
+        .memory(("cookie", &member.cookie), "GET", "team", None)
+        .await;
+    assert_eq!(team["items"][0]["body"], "Releases ship on Thursdays");
+    assert_eq!(team["items"][0]["author_name"], "Owner");
+    assert_eq!(team["can_delete"], false);
+    let (_, mine) = fixture
+        .memory(("cookie", &member.cookie), "GET", "private", None)
+        .await;
+    assert_eq!(mine["items"].as_array().unwrap().len(), 1);
+    assert_eq!(mine["items"][0]["body"], "Member is on leave in May");
+    assert_eq!(mine["can_delete"], true);
+    let view = fixture.wake(&member, "private", 4_000).await;
+    assert!(!view["text"].as_str().unwrap().contains("Owner prefers"));
+    let (_, search) = fixture
+        .memory(
+            ("cookie", &member.cookie),
+            "GET",
+            "private?query=short%20answers",
+            None,
+        )
+        .await;
+    assert_eq!(search["items"].as_array().unwrap().len(), 0);
+
+    // A member cannot delete team memory; the owner can. Nobody reaches another's private one.
+    let (status, _) = fixture
+        .memory(
+            ("cookie", &member.cookie),
+            "DELETE",
+            "team/memories/0",
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = fixture
+        .memory(
+            ("cookie", &member.cookie),
+            "DELETE",
+            "private/memories/1",
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "the member has only #0");
+
+    // Outsiders and other workspaces get nothing.
+    let outsider = fixture.add_member("outsider").await;
+    sqlx::query("DELETE FROM memberships WHERE user_id = $1")
+        .bind(outsider.id.to_string())
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    for rest in ["team", "team/wake", "private"] {
+        let (status, _) = fixture
+            .memory(("cookie", &outsider.cookie), "GET", rest, None)
+            .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{rest}");
+    }
+    let (status, _) = fixture
+        .request(
+            "GET",
+            &format!("/api/v1/workspaces/{}/agent-memory/team", Id::new_v7()),
+            ("cookie", &member.cookie),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // The agent acts as its driver: it reads the driver's private memory, never the owner's,
+    // notes with the driver as author, and cannot delete.
+    let bearer = fixture.agent_session(&member).await;
+    let agent = ("authorization", bearer.as_str());
+    let (status, view) = fixture
+        .memory(agent, "GET", "private/wake?bytes=4000", None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    assert!(view["text"].as_str().unwrap().contains("on leave in May"));
+    assert!(!view["text"].as_str().unwrap().contains("Owner prefers"));
+    let general = fixture.general().await;
+    let (status, noted) = fixture
+        .memory(
+            agent,
+            "POST",
+            "team",
+            Some(json!({ "body": "Staging is at staging.example.com", "source": { "conversation_id": general } })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{noted}");
+    let (_, team) = fixture
+        .memory(("cookie", &owner.cookie), "GET", "team", None)
+        .await;
+    assert_eq!(team["items"][0]["author_id"], member.id.to_string());
+    assert_eq!(team["items"][0]["source"]["conversation_id"], general);
+    for rest in [
+        "private/memories/0",
+        "team/memories/0",
+        "team/summaries/0-1",
+    ] {
+        let (status, value) = fixture.memory(agent, "DELETE", rest, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{rest}");
+        assert_eq!(value["code"], "agent_scope");
+    }
+    // A source from another workspace is refused.
+    let (status, _) = fixture
+        .memory(
+            agent,
+            "POST",
+            "team",
+            Some(json!({ "body": "x", "source": { "conversation_id": Id::new_v7().to_string() } })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn summaries_are_claimed_once_and_deleting_a_memory_drops_its_summaries() {
+    let fixture = Fixture::new().await;
+    let owner = fixture.owner.clone();
+    let member = fixture.add_member("member").await;
+
+    assert_eq!(
+        fixture
+            .note(&owner, "team", "m0 deploys use blue-green")
+            .await["due"],
+        Value::Null
+    );
+    let first = fixture
+        .note(&owner, "team", "m1 the API freeze is on Friday")
+        .await;
+    assert_eq!(first["position"], 1);
+    assert_eq!(
+        (first["due"]["lo"].clone(), first["due"]["hi"].clone()),
+        (json!(0), json!(1))
+    );
+    assert_eq!(
+        first["due"]["halves"][1]["body"],
+        "m1 the API freeze is on Friday"
+    );
+    let claim_a = first["due"]["claim"].clone();
+
+    // While #0-1 is claimed, nobody else is asked for it.
+    assert_eq!(
+        fixture.note(&member, "team", "m2 Ann owns billing").await["due"],
+        Value::Null
+    );
+    let third = fixture.note(&member, "team", "m3 Bob owns search").await;
+    assert_eq!(third["due"]["lo"], 2);
+    let claim_b = third["due"]["claim"].clone();
+
+    // Only the claim's holder saves; #0-3 waits for both halves.
+    let wrong = fixture.summarize(&member, "0-1", &claim_b, "stolen").await;
+    assert_eq!(wrong["saved"], false);
+    let saved = fixture
+        .summarize(&owner, "0-1", &claim_a, "S01 blue-green; freeze Friday")
+        .await;
+    assert_eq!(saved["saved"], true);
+    assert_eq!(saved["due"], Value::Null, "#2-3 is claimed by the member");
+    let saved = fixture
+        .summarize(&member, "2-3", &claim_b, "S23 Ann billing, Bob search")
+        .await;
+    assert_eq!(saved["saved"], true);
+    assert_eq!(saved["due"]["lo"], 0);
+    assert_eq!(saved["due"]["hi"], 3);
+    let top = fixture
+        .summarize(
+            &member,
+            "0-3",
+            &saved["due"]["claim"],
+            "S03 process and owners",
+        )
+        .await;
+    assert_eq!(top["saved"], true);
+    let again = fixture
+        .summarize(&member, "0-3", &saved["due"]["claim"], "twice")
+        .await;
+    assert_eq!(again["saved"], false, "a claim is used once");
+
+    // A big budget reads every memory; a small one reads the summary.
+    let full = fixture.wake(&owner, "team", 4_000).await;
+    assert_eq!(full["lines"].as_array().unwrap().len(), 4);
+    let small = fixture.wake(&owner, "team", 40).await;
+    assert_eq!(small["text"], "#0-3 S03 process and owners");
+    let (_, zoom) = fixture
+        .memory(("cookie", &owner.cookie), "GET", "team/summaries/0-3", None)
+        .await;
+    assert_eq!(zoom["lines"][0]["body"], "S01 blue-green; freeze Friday");
+    assert_eq!(zoom["lines"][1]["body"], "S23 Ann billing, Bob search");
+
+    // Deleting #1 erases it and drops #0-1 and #0-3, which come due again.
+    let (status, _) = fixture
+        .memory(("cookie", &owner.cookie), "DELETE", "team/memories/1", None)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let body: String = sqlx::query_scalar(
+        "SELECT m.body FROM agent_memories m JOIN agent_memory_scopes s ON s.id = m.scope_id \
+         WHERE s.owner_user_id IS NULL AND m.position = 1",
+    )
+    .fetch_one(fixture.database.pool())
+    .await
+    .unwrap();
+    assert_eq!(body, "");
+    let view = fixture.wake(&owner, "team", 200).await;
+    let text = view["text"].as_str().unwrap();
+    assert!(
+        text.contains("m0 deploys") && text.contains("m3 Bob"),
+        "{text}"
+    );
+    assert!(!text.contains("freeze") && !text.contains("S03"), "{text}");
+    let (_, list) = fixture
+        .memory(("cookie", &owner.cookie), "GET", "team", None)
+        .await;
+    assert_eq!(list["items"].as_array().unwrap().len(), 3);
+    let next = fixture
+        .note(&owner, "team", "m4 the office closes at 6")
+        .await;
+    assert_eq!(
+        (next["due"]["lo"].clone(), next["due"]["hi"].clone()),
+        (json!(0), json!(1))
+    );
+    assert_eq!(next["due"]["halves"][1]["body"], "(deleted)");
+
+    // Forgetting a summary drops it and its parents.
+    let (status, _) = fixture
+        .memory(
+            ("cookie", &owner.cookie),
+            "DELETE",
+            "team/summaries/2-3",
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let left: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM agent_memory_summaries WHERE body IS NOT NULL")
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap();
+    assert_eq!(left, 0);
+}
+
+#[tokio::test]
+async fn parallel_notes_get_every_position_once_and_each_block_one_claim() {
+    let fixture = Fixture::new().await;
+    let member = fixture.add_member("member").await;
+    let people = [fixture.owner.clone(), member];
+    let mut jobs = Vec::new();
+    for index in 0..24 {
+        let app = fixture.app.clone();
+        let cookie = people[index % 2].cookie.clone();
+        let uri = format!(
+            "/api/v1/workspaces/{}/agent-memory/team",
+            fixture.workspace_id
+        );
+        jobs.push(tokio::spawn(async move {
+            let request = Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header("cookie", cookie)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "body": format!("fact {index}") }).to_string(),
+                ))
+                .unwrap();
+            let response = app.oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            serde_json::from_slice::<Value>(&bytes).unwrap()
+        }));
+    }
+    let mut positions = Vec::new();
+    let mut claimed = Vec::new();
+    for job in jobs {
+        let noted = job.await.unwrap();
+        positions.push(noted["position"].as_u64().unwrap());
+        if noted["due"].is_object() {
+            claimed.push((
+                noted["due"]["lo"].as_u64().unwrap(),
+                noted["due"]["hi"].as_u64().unwrap(),
+            ));
+        }
+    }
+    positions.sort_unstable();
+    assert_eq!(positions, (0..24).collect::<Vec<_>>());
+    let mut unique = claimed.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(unique.len(), claimed.len(), "{claimed:?}");
+    // All 12 pairs were handed out, each once.
+    assert_eq!(unique.iter().filter(|(lo, hi)| hi - lo == 1).count(), 12);
+}
+
+#[tokio::test]
+async fn a_member_who_leaves_loses_their_private_memory_and_the_team_keeps_theirs() {
+    let fixture = Fixture::new().await;
+    let member = fixture.add_member("member").await;
+    fixture.note(&member, "private", "member's own note").await;
+    fixture.note(&member, "team", "a work fact").await;
+    let membership: String = sqlx::query_scalar("SELECT id FROM memberships WHERE user_id = $1")
+        .bind(member.id.to_string())
+        .fetch_one(fixture.database.pool())
+        .await
+        .unwrap();
+    orbit_server::repositories::workspaces::WorkspaceRepository::new((*fixture.database).clone())
+        .remove_member(
+            fixture.workspace_id.parse().unwrap(),
+            membership.parse().unwrap(),
+            fixture.owner.id,
+            0,
+            "test",
+            TimestampMillis::now(),
+        )
+        .await
+        .unwrap();
+    let private: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM agent_memories m JOIN agent_memory_scopes s ON s.id = m.scope_id \
+         WHERE s.owner_user_id = $1",
+    )
+    .bind(member.id.to_string())
+    .fetch_one(fixture.database.pool())
+    .await
+    .unwrap();
+    assert_eq!(private, 0);
+    let (_, team) = fixture
+        .memory(("cookie", &fixture.owner.cookie), "GET", "team", None)
+        .await;
+    assert_eq!(team["items"][0]["body"], "a work fact");
+    assert_eq!(team["items"][0]["author_name"], "member");
+}

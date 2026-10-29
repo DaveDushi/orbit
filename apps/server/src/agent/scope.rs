@@ -55,6 +55,10 @@ pub fn allows(workspace_id: &str, method: &Method, path: &str) -> bool {
     if segment == "members" {
         return method == Method::GET;
     }
+    // The agent notes and reads memory; only people delete it.
+    if segment == "agent-memory" {
+        return method != Method::DELETE;
+    }
     true
 }
 
@@ -151,6 +155,8 @@ mod tests {
             (Method::GET, "/chat/threads/abc"),
             (Method::GET, "/members"),
             (Method::GET, ""),
+            (Method::POST, "/agent-memory/team"),
+            (Method::GET, "/agent-memory/private/wake"),
         ] {
             assert!(allows(WORKSPACE, &method, &path(rest)), "{method} {rest}");
         }
@@ -170,6 +176,8 @@ mod tests {
             (Method::POST, "/imports/notion"),
             (Method::PATCH, ""),
             (Method::DELETE, ""),
+            (Method::DELETE, "/agent-memory/team/memories/3"),
+            (Method::DELETE, "/agent-memory/private/summaries/0-1"),
         ] {
             assert!(!allows(WORKSPACE, &method, &path(rest)), "{method} {rest}");
         }

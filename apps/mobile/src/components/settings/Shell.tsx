@@ -41,6 +41,7 @@ export const ACCOUNT_NAV: readonly SettingsNavItem[] = [
   { href: '/settings/security', label: 'Security', icon: 'lock' },
   { href: '/settings/sessions', label: 'Sessions', icon: 'shield' },
   { href: '/settings/agent', label: 'AI agent', icon: 'magicStar', agent: true },
+  { href: '/settings/agent-memory', label: 'Agent memory', icon: 'book', agent: true },
 ]
 
 /** The web's Admin pages in its order; General is the area's first page, as `/admin` is on the web. */

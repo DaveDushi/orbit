@@ -19,6 +19,8 @@ export type Config = {
 	readonly forwardedProto: string | undefined;
 	readonly maxRunsPerUser: number;
 	readonly maxToolCallsPerRun: number;
+	/** Tokens of memory shown at the start of each run (team and private together); 0 turns it off. */
+	readonly memoryTokens: number;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -38,5 +40,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 		forwardedProto: env.ORBIT_FORWARDED_PROTO || undefined,
 		maxRunsPerUser: Number(env.AGENT_MAX_RUNS_PER_USER ?? 3),
 		maxToolCallsPerRun: Number(env.AGENT_MAX_TOOL_CALLS ?? 40),
+		memoryTokens: Number(env.AGENT_MEMORY_TOKENS ?? 3_000),
 	};
 }

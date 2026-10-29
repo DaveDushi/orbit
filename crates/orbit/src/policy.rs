@@ -47,10 +47,13 @@ pub enum Permission {
     /// Connect the workspace's own S3 bucket for its files.
     #[serde(rename = "storage.manage")]
     StorageManage,
+    /// Delete memories and summaries of the agent's team memory.
+    #[serde(rename = "agent_memory.manage")]
+    AgentMemoryManage,
 }
 
 impl Permission {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::WorkspaceUpdate,
         Self::WorkspaceDelete,
         Self::WorkspaceTransfer,
@@ -65,6 +68,7 @@ impl Permission {
         Self::ChatManage,
         Self::BillingManage,
         Self::StorageManage,
+        Self::AgentMemoryManage,
     ];
 }
 
@@ -130,6 +134,16 @@ impl Actor {
     #[must_use]
     pub fn can_delete_chat_message(self, author_id: Id) -> bool {
         self.user_id == author_id || self.can(Permission::ChatManage)
+    }
+
+    /// The team memory is the workspace's: owners and admins clean it up. A private memory is its
+    /// owner's alone (`owner` is `Some` for it).
+    #[must_use]
+    pub fn can_delete_agent_memory(self, owner: Option<Id>) -> bool {
+        match owner {
+            Some(owner) => self.user_id == owner,
+            None => self.can(Permission::AgentMemoryManage),
+        }
     }
 
     /// A private page is visible to its owner alone, so whoever sees one may delete it forever.
@@ -231,7 +245,8 @@ impl Policy {
             | Permission::ViewsManageShared
             | Permission::CommentsModerate
             | Permission::ChatManage
-            | Permission::StorageManage => {
+            | Permission::StorageManage
+            | Permission::AgentMemoryManage => {
                 matches!(role, WorkspaceRole::Owner | WorkspaceRole::Admin)
             }
         }

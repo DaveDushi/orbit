@@ -13,6 +13,9 @@
 - Run the whole suite on Postgres with `ORBIT_TEST_POSTGRES_URL=postgres://orbit:orbit@127.0.0.1:15432/orbit`; each test database maps from its SQLite path.
 - No Postgres listens on 15432 after a reboot unless the persistent dev one runs: `orbit-dev-pg` (volume `orbit-dev-pg-data`, `--restart unless-stopped`, databases `orbit` for tests and `orbit_dev` for `just dev`). A `--rm` container loses all data on reboot (the dev data was lost this way on 2026-10-24). For the full test suite use `-c max_connections=300` and at least 1 GB, or connections drop mid-suite.
 
+## Team agent transcripts are shared per thread
+- One Pi conversation serves a whole chat thread, so anything a run reads (tool results, prompt sections) stays in the transcript for the next driver of that thread. Data that only one person may see (their private agent memory) is read only where that person is alone with the agent (a DM of two); see `.ai/agent-design.md`, "Memory", M2.
+
 ## Settings and internal callers
 - Orbit refuses to start on an unknown `ORBIT_*` environment variable. A new setting needs its key in `crates/platform/src/config.rs` (or an ignored prefix there, as `ORBIT_AGENT_` for the agent), or the server will not boot (2026-10-29).
 - The origin policy refuses a write without `Origin` unless it carries `Authorization: Bearer` (and no cookie). A server-to-server caller (a sidecar, a script) sends its secret as a bearer token. Route tests that skip `HttpPlatformLayer` do not see this: check such callers against a running server.
