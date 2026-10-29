@@ -7,12 +7,13 @@
 import type { Context } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool, hook, section, ToolTask } from "@earendil-works/pi-durable";
-import type { ToolExecutionApi, ToolExecutionResult } from "@earendil-works/pi-durable";
+import type { PromptInput, ToolExecutionApi, ToolExecutionResult } from "@earendil-works/pi-durable";
 
 import { blocksToMarkdown, markdownToBlocks, type Block } from "./blocks.ts";
 import { ThreadDoc, type ThreadState } from "./docs.ts";
 import { namesToTokens, tokensToNames, type Person } from "./mentions.ts";
 import { OrbitError, type OrbitClient } from "./orbit.ts";
+import { aboutOrbit, DEFAULT_AGENT_NAME, teamInstructionsBlock } from "./prompt.ts";
 
 export type ToolDeps = {
 	readonly orbit: OrbitClient;
@@ -426,7 +427,7 @@ export const ORBIT_TOOLS = [
 	askTeammate,
 ];
 
-const PROMPT = `You are Orbit Agent, a teammate inside Orbit (tasks, Docs pages, chat). You work in a chat thread.
+const PROMPT = (name: string) => `You are ${name}, a teammate inside Orbit (tasks, Docs pages, chat). You work in a chat thread.
 
 Rules:
 - You act for one person per run, the driver. Every tool acts with the driver's Orbit permissions. If Orbit refuses, say so plainly; never try to work around it.
@@ -436,6 +437,10 @@ Rules:
 - When only a teammate can give missing information, call ask_teammate once, then stop.
 - Answer briefly in Markdown. Mention people as @Name. Link tasks and pages you created or changed.`;
 
+async function agentName(input: PromptInput, context: Context): Promise<string> {
+	return (await input.read.snapshot(ThreadDoc, input.conversationId, context))?.agentName || DEFAULT_AGENT_NAME;
+}
+
 /** The Orbit extension: tools, the system prompt, the per-run tool-call limit. */
 export function orbitExtension(toolDeps: ToolDeps) {
 	currentDeps = toolDeps;
@@ -443,7 +448,10 @@ export function orbitExtension(toolDeps: ToolDeps) {
 		name: "orbit",
 		tools: ORBIT_TOOLS,
 		sections: [
-			section("orbit", () => PROMPT, { tag: false }),
+			// The name and the team instructions are read at the start of each run (`Agent.#startRun`).
+			section("orbit", async (input, context) => PROMPT(await agentName(input, context)), { tag: false }),
+			section("orbit-about", async (input, context) => aboutOrbit(await agentName(input, context)), { tag: false }),
+			section("orbit-team", async (input, context) => teamInstructionsBlock((await input.read.snapshot(ThreadDoc, input.conversationId, context))?.teamInstructions), { tag: false }),
 			section("orbit-context", async (input, context) => {
 				const state = await input.read.snapshot(ThreadDoc, input.conversationId, context);
 				if (!state?.workspaceId) return undefined;

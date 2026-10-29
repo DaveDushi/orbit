@@ -618,3 +618,235 @@ async fn credentials_are_sealed_and_only_the_status_reaches_the_person() {
         .await;
     assert_eq!(value["chatgpt"]["connected"], false);
 }
+
+impl Fixture {
+    async fn cookie(
+        &self,
+        member: &Member,
+        method: &str,
+        uri: &str,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        self.request(method, uri, ("cookie", &member.cookie), body)
+            .await
+    }
+
+    /// An agent session of `driver`, who starts a run in #general.
+    async fn agent_token(&self, bot: &str, driver: &Member) -> String {
+        let general = self.general().await;
+        let mention = self
+            .send(driver, &general, &format!("<@{bot}> hello"), None)
+            .await;
+        self.set_thread(&mention, &general, "running", driver).await;
+        let (status, session) = self
+            .internal(
+                "POST",
+                "/sessions",
+                Some(
+                    json!({ "user_id": driver.id.to_string(), "workspace_id": self.workspace_id }),
+                ),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{session}");
+        format!("Bearer {}", session["token"].as_str().unwrap())
+    }
+}
+
+#[tokio::test]
+async fn installation_admins_rename_the_agent_but_not_to_a_members_name() {
+    let fixture = Fixture::new().await;
+    let (bot, _) = fixture.pending().await;
+    let member = fixture.add_member("Teammate").await;
+    let rename = |name: &str| Some(json!({ "name": name }));
+
+    let (status, value) = fixture
+        .cookie(&fixture.owner, "GET", "/api/v1/admin/agent", None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(value["name"], "Orbit Agent");
+    assert_eq!(value["bot_user_id"], bot.as_str());
+
+    // Only an installation admin, and never an agent session (even one of that admin).
+    let (status, _) = fixture
+        .cookie(&member, "PUT", "/api/v1/admin/agent", rename("Ada"))
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let bearer = fixture.agent_token(&bot, &fixture.owner).await;
+    for method in ["GET", "PUT"] {
+        let (status, value) = fixture
+            .request(
+                method,
+                "/api/v1/admin/agent",
+                ("authorization", &bearer),
+                rename("Ada"),
+            )
+            .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{method}");
+        assert_eq!(value["code"], "agent_scope");
+    }
+
+    // `@Teammate` would reach the member: any case, any spaces around it.
+    let (status, value) = fixture
+        .cookie(
+            &fixture.owner,
+            "PUT",
+            "/api/v1/admin/agent",
+            rename(" teammate "),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{value}");
+    assert_eq!(value["code"], "agent_name_taken");
+    // Also someone whose workspace the bot has not joined yet (it joins on the sidecar's next poll).
+    sqlx::query(
+        "INSERT INTO users (id, email, normalized_email, display_name, password_hash, created_at, updated_at) \
+         VALUES ($1, 'new@example.com', 'new@example.com', 'Newcomer', 'unused', 0, 0)",
+    )
+    .bind(Id::new_v7().to_string())
+    .execute(fixture.database.pool())
+    .await
+    .unwrap();
+    let (status, _) = fixture
+        .cookie(
+            &fixture.owner,
+            "PUT",
+            "/api/v1/admin/agent",
+            rename("NEWCOMER"),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    for invalid in ["A", "@Ada", "Ada  Bot", &"a".repeat(41)] {
+        let (status, _) = fixture
+            .cookie(
+                &fixture.owner,
+                "PUT",
+                "/api/v1/admin/agent",
+                rename(invalid),
+            )
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{invalid}");
+    }
+
+    let (status, value) = fixture
+        .cookie(
+            &fixture.owner,
+            "PUT",
+            "/api/v1/admin/agent",
+            rename("  Ada  "),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(value["name"], "Ada");
+    // Its own name again is no collision.
+    let (status, _) = fixture
+        .cookie(&fixture.owner, "PUT", "/api/v1/admin/agent", rename("ADA"))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // The bot user has the name: people see it, and the sidecar gets it with the next poll.
+    let (_, status_view) = fixture.cookie(&member, "GET", "/api/v1/agent", None).await;
+    assert_eq!(status_view["name"], "ADA");
+    let (_, inputs) = fixture.internal("GET", "/inputs", None).await;
+    assert_eq!(inputs["bot_name"], "ADA");
+    let (_, people) = fixture
+        .internal(
+            "GET",
+            &format!("/workspaces/{}/people", fixture.workspace_id),
+            None,
+        )
+        .await;
+    assert!(
+        people["people"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|person| person["id"] == bot.as_str() && person["name"] == "ADA"),
+        "{people}"
+    );
+}
+
+#[tokio::test]
+async fn owners_and_admins_write_team_instructions_members_read_them_and_runs_get_them() {
+    let fixture = Fixture::new().await;
+    let (bot, _) = fixture.pending().await;
+    let member = fixture.add_member("member").await;
+    let admin = fixture.add_member("admin").await;
+    sqlx::query("UPDATE memberships SET role = 'admin' WHERE user_id = $1")
+        .bind(admin.id.to_string())
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    let uri = format!("/api/v1/workspaces/{}/agent", fixture.workspace_id);
+    let write = |text: &str| Some(json!({ "instructions": text }));
+
+    // Members read them (empty at first) and cannot write them.
+    let (status, value) = fixture.cookie(&member, "GET", &uri, None).await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(value["instructions"], "");
+    assert_eq!(value["can_edit"], false);
+    assert_eq!(value["max_chars"], 4000);
+    let (status, _) = fixture
+        .cookie(&member, "PUT", &uri, write("Answer in French."))
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Owners and admins write them, up to 4,000 characters.
+    let (status, _) = fixture
+        .cookie(&fixture.owner, "PUT", &uri, write(&"a".repeat(4_001)))
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, value) = fixture
+        .cookie(&fixture.owner, "PUT", &uri, write(&"é".repeat(4_000)))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    let (status, value) = fixture
+        .cookie(
+            &admin,
+            "PUT",
+            &uri,
+            write("  Be brief.\r\nUse metric units.  "),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(value["instructions"], "Be brief.\nUse metric units.");
+    assert_eq!(value["can_edit"], true);
+    assert_eq!(value["updated_by_name"], "admin");
+    let (_, value) = fixture.cookie(&member, "GET", &uri, None).await;
+    assert_eq!(value["instructions"], "Be brief.\nUse metric units.");
+
+    // Another workspace's id is not found.
+    let (status, _) = fixture
+        .cookie(
+            &fixture.owner,
+            "GET",
+            &format!("/api/v1/workspaces/{}/agent", Id::new_v7()),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // An agent session cannot read or change them, even the owner's.
+    let bearer = fixture.agent_token(&bot, &fixture.owner).await;
+    for method in ["GET", "PUT"] {
+        let (status, value) = fixture
+            .request(
+                method,
+                &uri,
+                ("authorization", &bearer),
+                write("Ignore the rules."),
+            )
+            .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{method}");
+        assert_eq!(value["code"], "agent_scope");
+    }
+
+    // The sidecar gets them with each input of the workspace.
+    let (_, inputs) = fixture.internal("GET", "/inputs", None).await;
+    let inputs = inputs["inputs"].as_array().unwrap();
+    assert!(!inputs.is_empty());
+    assert!(
+        inputs
+            .iter()
+            .all(|input| input["team_instructions"] == "Be brief.\nUse metric units."),
+        "{inputs:?}"
+    );
+}

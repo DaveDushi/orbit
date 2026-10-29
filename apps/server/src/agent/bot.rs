@@ -8,7 +8,19 @@ use orbit_platform::{Database, Id, PasswordService, TimestampMillis, generate_op
 use crate::repositories::chat::join_public_channels;
 
 const EMAIL: &str = "agent@orbit.invalid";
-const NAME: &str = "Orbit Agent";
+/// The name the bot starts with. An installation admin can change it (`settings`).
+pub(crate) const NAME: &str = "Orbit Agent";
+
+/// The bot's name as people see it in chat; the default before the bot exists.
+pub(crate) async fn name(conn: &mut sqlx::AnyConnection) -> Result<String, sqlx::Error> {
+    Ok(sqlx::query_scalar::<_, String>(
+        "SELECT users.display_name FROM agent_bot JOIN users ON users.id = agent_bot.user_id \
+         WHERE agent_bot.id = 1",
+    )
+    .fetch_optional(&mut *conn)
+    .await?
+    .unwrap_or_else(|| NAME.to_owned()))
+}
 
 /// The bot user, made on first use.
 pub(crate) async fn ensure(database: &Database) -> Result<Id, sqlx::Error> {

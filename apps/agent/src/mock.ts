@@ -7,7 +7,7 @@
  *   create task "Title"            rename task <id|it> to "Title"       move task <id|it> to <Status>
  *   create page "Title" with "Text"   append "Text" to page <id|it>       read page <id|it>
  *   search tasks "words"            list projects                         read messages
- *   ask @Name "Question"
+ *   ask @Name "Question"           show prompt (answers with the system prompt, to check names and team instructions)
  */
 
 import { createModels, type AssistantMessage, type Models } from "@earendil-works/pi-ai";
@@ -15,12 +15,28 @@ import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@ear
 
 import { PROVIDER } from "./models.ts";
 
-type Message = { role: string; content?: unknown; toolName?: string; isError?: boolean };
+type Message = { role: string; content?: unknown; toolName?: string; isError?: boolean; sections?: Record<string, string | null> };
 
 function textOf(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
 	return content.map((part: { type?: string; text?: string }) => (part.type === "text" ? (part.text ?? "") : "")).join("");
+}
+
+/** The current system prompt: the system messages replayed in order (later ones replace sections by name). */
+function systemPrompt(messages: readonly Message[]): string {
+	const base: string[] = [];
+	const sections = new Map<string, string>();
+	for (const message of messages) {
+		if (message.role !== "system") continue;
+		const text = textOf(message.content);
+		if (text) base.push(text);
+		for (const [key, value] of Object.entries(message.sections ?? {})) {
+			if (value === null) sections.delete(key);
+			else sections.set(key, value);
+		}
+	}
+	return [...base, ...sections.values()].join("\n\n");
 }
 
 /** The newest id of a created or read task or page in the tool results, for "it". */
@@ -63,6 +79,9 @@ export function respond(messages: readonly Message[]): AssistantMessage {
 		return fauxAssistantMessage(fauxText(last.isError ? `I could not do that. ${short}` : `Done (${last.toolName}).\n\n\`\`\`\n${short}\n\`\`\``));
 	}
 	const instruction = textOf(messages.filter((message) => message.role === "user").at(-1)?.content);
+	if (/show (?:the )?(?:system )?prompt/i.test(instruction)) {
+		return fauxAssistantMessage(fauxText(systemPrompt(messages)));
+	}
 	const call = plan(instruction, messages);
 	if (!call) return fauxAssistantMessage(fauxText(`(mock model) I read: ${instruction.slice(0, 300)}`));
 	return fauxAssistantMessage(fauxToolCall(call.name, call.args), { stopReason: "toolUse" });

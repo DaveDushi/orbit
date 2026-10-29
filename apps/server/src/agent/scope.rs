@@ -16,8 +16,9 @@ use sha2::{Digest, Sha256};
 pub const TOKEN_PREFIX: &str = "orbit-agent.";
 
 /// Workspace route segments an agent session never reaches: credentials, integrations, access,
-/// data export and administration.
-const DENIED: [&str; 9] = [
+/// data export, administration, and the agent's own team instructions.
+const DENIED: [&str; 10] = [
+    "agent",
     "api-tokens",
     "audit",
     "github",
@@ -170,6 +171,8 @@ mod tests {
             (Method::POST, "/imports/notion"),
             (Method::PATCH, ""),
             (Method::DELETE, ""),
+            (Method::GET, "/agent"),
+            (Method::PUT, "/agent"),
         ] {
             assert!(!allows(WORKSPACE, &method, &path(rest)), "{method} {rest}");
         }
@@ -177,6 +180,7 @@ mod tests {
             "/api/v1/auth/me",
             "/api/v1/auth/password",
             "/api/v1/admin/users",
+            "/api/v1/admin/agent",
             "/api/v1/workspaces",
             "/api/v1/workspaces/0199c3a0-0000-7000-8000-000000000002/tasks",
             "/api/v1/workspaces/0199c3a0-0000-7000-8000-0000000000012/tasks",

@@ -63,7 +63,8 @@ pub fn router(state: AgentState) -> Router {
             "/api/internal/agent/credentials/{user_id}/invalid",
             post(invalidate_credential),
         )
-        .with_state(state)
+        .with_state(state.clone())
+        .merge(super::settings::router(state))
 }
 
 fn error(
@@ -126,6 +127,9 @@ async fn agent_status(
     let bot_user_id = inputs::bot_user_id(&mut conn)
         .await
         .map_err(|_| unavailable(&uri, &request_id))?;
+    let name = bot::name(&mut conn)
+        .await
+        .map_err(|_| unavailable(&uri, &request_id))?;
     drop(conn);
     let chatgpt = credentials::status(state.database(), session.user.id)
         .await
@@ -136,6 +140,7 @@ async fn agent_status(
         "online": login.is_some(),
         "can_connect": state.app_key.is_some(),
         "bot_user_id": bot_user_id.map(|id| id.to_string()),
+        "name": name,
         "chatgpt": chatgpt,
         "login": login.and_then(|value| value.get("login").cloned()).unwrap_or(Value::Null),
     })))
@@ -283,8 +288,8 @@ struct InputsQuery {
     wait: u64,
 }
 
-/// The queued inputs, oldest first. Waits up to `wait` seconds for one. Also puts the bot into
-/// workspaces made since the last call.
+/// The queued inputs, oldest first, and the bot's current name. Waits up to `wait` seconds for an
+/// input. Also puts the bot into workspaces made since the last call.
 async fn list_inputs(
     State(state): State<AgentState>,
     headers: HeaderMap,
@@ -306,8 +311,17 @@ async fn list_inputs(
             .await
             .map_err(|_| unavailable(&uri, &request_id))?;
         if !pending.is_empty() || tokio::time::Instant::now() >= deadline {
+            let mut conn = database
+                .pool()
+                .acquire()
+                .await
+                .map_err(|_| unavailable(&uri, &request_id))?;
+            let name = bot::name(&mut conn)
+                .await
+                .map_err(|_| unavailable(&uri, &request_id))?;
             return Ok(Json(json!({
                 "bot_user_id": bot.to_string(),
+                "bot_name": name,
                 "inputs": pending,
             })));
         }

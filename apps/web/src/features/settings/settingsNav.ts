@@ -42,6 +42,7 @@ const AREAS: Record<SettingsAreaName, SettingsArea> = {
         items: [
           { to: '/settings', label: 'General', icon: Settings, end: true },
           { to: '/settings/members', label: 'Members', icon: Users },
+          { to: '/settings/agent', label: 'AI agent', icon: MagicStar, agent: true },
           { to: '/settings/billing', label: 'Billing', icon: Card, cloud: true },
         ],
       },
@@ -100,6 +101,7 @@ const AREAS: Record<SettingsAreaName, SettingsArea> = {
           { to: '/admin/users', label: 'Users', icon: Users },
           { to: '/admin/email', label: 'Email', icon: Mail },
           { to: '/admin/limits', label: 'Limits', icon: Chart },
+          { to: '/admin/agent', label: 'AI agent', icon: MagicStar, agent: true },
         ],
       },
       {

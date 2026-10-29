@@ -1,6 +1,6 @@
 /** The team agent's queries and writes for the signed-in person (the web's `features/agent/api.ts`). */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { disconnectChatgpt, readAgentStatus, startChatgptLogin } from '@orbit/api/agent'
+import { disconnectChatgpt, readAgentIdentity, readAgentStatus, readTeamInstructions, saveAgentName, saveTeamInstructions, startChatgptLogin } from '@orbit/api/agent'
 
 import { useOrbit } from '../orbit-context'
 
@@ -34,4 +34,39 @@ export function useDisconnectChatgpt() {
   const { client } = useOrbit()
   const queryClient = useQueryClient()
   return useMutation({ mutationFn: () => disconnectChatgpt(client), onSettled: () => void queryClient.invalidateQueries({ queryKey: key }) })
+}
+
+const identityKey = ['agent', 'identity'] as const
+
+/** Admin → AI agent: the agent's name. Installation admins only. */
+export function useAgentIdentity() {
+  const { client } = useOrbit()
+  return useQuery({ queryKey: identityKey, queryFn: () => readAgentIdentity(client) })
+}
+
+export function useSaveAgentName() {
+  const { client } = useOrbit()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (name: string) => saveAgentName(client, name),
+    onSuccess: (identity) => queryClient.setQueryData(identityKey, identity),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: key }),
+  })
+}
+
+const teamKey = (workspaceId: string) => ['agent', 'team', workspaceId] as const
+
+/** Workspace settings → AI agent: the team instructions. Every member reads them. */
+export function useTeamInstructions() {
+  const { client, workspaceId } = useOrbit()
+  return useQuery({ queryKey: teamKey(workspaceId), queryFn: () => readTeamInstructions(client, workspaceId) })
+}
+
+export function useSaveTeamInstructions() {
+  const { client, workspaceId } = useOrbit()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (instructions: string) => saveTeamInstructions(client, workspaceId, instructions),
+    onSuccess: (saved) => queryClient.setQueryData(teamKey(workspaceId), saved),
+  })
 }

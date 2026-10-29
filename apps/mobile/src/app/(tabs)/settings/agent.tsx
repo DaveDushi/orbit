@@ -5,7 +5,7 @@ import { useAgentStatus, useDisconnectChatgpt, useStartChatgptLogin } from '../.
 import { Button, Text } from '../../../ui'
 
 const TITLE = 'AI agent'
-const DESCRIPTION = 'Mention @Orbit Agent in a chat thread to give it work. It acts with your permissions in Orbit, and your ChatGPT account pays for the runs you start.'
+const description = (name: string) => `Mention @${name} in a chat thread to give it work. It acts with your permissions in Orbit, and your ChatGPT account pays for the runs you start.`
 
 /** The web's Account → AI agent page: connect the person's own ChatGPT account with a device code. */
 export default function AgentScreen() {
@@ -25,7 +25,7 @@ export default function AgentScreen() {
           <Note>The agent is not set up on this server. Ask your administrator to start it.</Note>
         </SettingsCard>
       ) : (
-        <SettingsCard title={TITLE} description={DESCRIPTION}>
+        <SettingsCard title={TITLE} description={description(agent.name)}>
           <View className="items-start gap-3">
             {!agent.online ? <Note error>The agent service is offline. Mentions wait until it is back.</Note> : null}
             {agent.chatgpt.connected && !agent.chatgpt.invalid ? (
