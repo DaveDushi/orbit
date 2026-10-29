@@ -56,7 +56,25 @@ test:
     cargo test --workspace
     cd apps/web && bun run test
     cd packages/api && bun run test
+    just agent-test
     cd packages/editor && bun run test && bun run typecheck
+
+# The team agent sidecar (apps/agent, Node 22.19+) with the mock model, against `just dev`. Orbit needs
+# ORBIT_AGENT_URL=http://127.0.0.1:8790 and both need ORBIT_AGENT_SECRET (put them in .env.local). See docs/agent.md.
+agent:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -f .env.local ]; then
+        set -a
+        source .env.local
+        set +a
+    fi
+    cd apps/agent
+    [ -d node_modules ] || npm ci --no-audit --no-fund
+    ORBIT_URL="${ORBIT_URL:-http://127.0.0.1:${ORBIT_DEV_API_PORT:-8080}}" AGENT_MOCK="${AGENT_MOCK:-1}" node src/main.ts
+
+agent-test:
+    cd apps/agent && ([ -d node_modules ] || npm ci --no-audit --no-fund) && npm run typecheck && npm test
 
 version-check:
     #!/usr/bin/env bash
@@ -78,6 +96,7 @@ check:
     cd apps/web && bun run lint
     cd apps/web && bun run test
     cd packages/api && bun run test
+    just agent-test
     cd packages/editor && bun run test && bun run typecheck
     cd apps/mobile && bunx tsc --noEmit
     just api-check

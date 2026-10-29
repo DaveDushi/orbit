@@ -1,0 +1,30 @@
+# The team agent sidecar (apps/agent) next to orbit.service. See docs/agent.md.
+# Install: copy apps/agent to /opt/orbit-agent, run `npm ci --omit=dev` there, put the settings in
+# /etc/orbit/agent.env (mode 0600), then `systemctl enable --now orbit-agent`.
+[Unit]
+Description=Orbit team agent (Pi Durable sidecar)
+After=network.target orbit.service
+Wants=orbit.service
+
+[Service]
+Type=simple
+User=orbit-agent
+Group=orbit-agent
+WorkingDirectory=/opt/orbit-agent
+EnvironmentFile=/etc/orbit/agent.env
+Environment=AGENT_DATA_DIR=/var/lib/orbit-agent
+ExecStart=/usr/bin/node src/main.ts
+# A failed Pi harness exits the process; Pi resumes its runs when it starts again.
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/orbit-agent
+StateDirectory=orbit-agent
+
+[Install]
+WantedBy=multi-user.target

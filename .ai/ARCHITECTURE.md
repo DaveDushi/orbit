@@ -14,6 +14,8 @@ The Cargo workspace has three crates with one-way dependencies:
 
 Chat (`repositories/chat/`, `chat_routes/`) keeps each member's unread count as counters that change in the transaction of the message, and makes no audit rows, so a message does not trigger a workspace refetch. `live/` is the live socket of a workspace (`GET /api/v1/workspaces/{id}/live`): an in-memory hub numbers events, keeps the newest 1,000 for a client that reconnects, and knows who is online. A chat write holds the hub's write lock from before its transaction until its events are published, so events go out in commit order.
 
+The team agent (`apps/server/src/agent/`, the Node sidecar `apps/agent`, `docs/agent.md`, `.ai/agent-design.md`) is optional and off without `ORBIT_AGENT_URL`. A chat send queues messages for the agent (`agent_inputs`) in its own transaction; the sidecar runs them on Pi Durable and acts through short agent sessions of the driving person, which `agent::scope` limits to the work routes of one workspace.
+
 The public router records bounded request counters. When `ORBIT_METRICS_LISTEN` is configured, a separate private listener exposes those identifier-free Prometheus metrics; it is disabled by default and never mounts `/metrics` on the public listener.
 
 On shutdown, the HTTP server stops accepting new connections and drains active requests. Orbit then cancels retention and attachment reconciliation services. Durable job handlers get up to 30 seconds to finish before local tasks are aborted and leases recover naturally.

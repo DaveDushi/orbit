@@ -4,6 +4,7 @@
 
 - Rust 1.97.1 from `rust-toolchain.toml`
 - Bun 1.4.4 or later
+- Node 22.19 or later, only for the team agent sidecar (`apps/agent`, see `docs/agent.md`)
 - Just
 - Docker only for OCI builds
 
