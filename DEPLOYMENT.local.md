@@ -4,9 +4,11 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The original exe.dev hostname still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, upstream commit 45df05b8e74084033abbfe7ea9210ac5d4292412.
-- Binary extracted from the upstream coollabsio/orbit image for the identical full commit.
-- Image digest: sha256:60fb9473cd50fdb38116cbf9371c3ddf0e7c4617ae630c9069730ad4837e0673
+- Source: DaveDushi/orbit, local merge commit 6af5e606b79b8f6ff6201dda1e64fc42434edbb5
+  (fork commit bdaaecf plus these deployment notes).
+- Binary extracted from the image built locally on this VM from that commit
+  (`orbit:6af5e60`); the fork commit has no published upstream image.
+- Image ID: sha256:5c7fce9295c0c31f62414b36c6c468aff5963f582fbd19be8a0c07c0d4cfe472
 - Executable: /usr/local/bin/orbit; unprivileged system user: orbit.
 - Config: /etc/orbit/orbit.env (production mode); registration remains closed in instance settings.
 - Environment-only startup: /etc/systemd/system/orbit.service.d/environment.conf.
@@ -109,6 +111,39 @@ sudo systemctl start orbit
 ```
 
 ## Verification performed
+
+### October 29, 2026 upgrade (locally built image)
+
+Merged seven new commits from `origin/main`, through `bdaaecf`. That last
+commit (pronouns removal) exists only on the DaveDushi/orbit fork, whose
+GitHub Actions are off, so no registry publishes an image for it. The image
+was therefore built locally from merge commit `6af5e60` with
+`docker build --build-arg ORBIT_BUILD_REVISION=<full sha> -t orbit:6af5e60 .`
+(as `ci.yml` does), and `deploy/smoke.sh orbit:6af5e60` passed before the
+binary was extracted. The live `/orbit-build.json` confirms revision `6af5e60`.
+
+Stopped Orbit, created and verified snapshot
+`01a187bd-84d4-7706-83ad-a94be5865254` with the old CLI, and rehearsed
+migrations 60–61 against a copy in `/var/lib/orbit/rehearsal-6af5e60-FoxSJS`.
+Integrity and foreign-key checks passed, with counts unchanged. Applied the
+same two migrations to the live database and restarted. Live quick-check and
+foreign-key checks pass; counts remain 5 users, 1 workspace, 2 projects,
+10 tasks and 12 attachment blobs.
+
+Migration 61 drops `users.pronouns`; old values exist only in the snapshot
+above. Migration 60 adds `attachment_blobs.deleted_at` for admin file
+deletion. Stripe was not configured; cloud billing remains disabled.
+
+Orbit and nginx are active and enabled. Verification through local nginx
+with the HTTPS forwarding header passed: liveness, all readiness checks,
+completed setup, matching embedded revision, frontend and three referenced
+assets, HSTS/CSP, unauthenticated API rejection (401), canonical-origin login
+body validation (400), and unrelated-origin rejection (403). No recent service
+warnings. `orbit.wellrox.com` does not resolve from this VM, so public-domain
+access and authenticated browser workflows were not tested.
+
+The previous executable is `/usr/local/bin/orbit-45df05b`. Rollback requires
+the matching snapshot above, because the live schema advanced.
 
 ### October 27, 2026 evening upgrade
 
