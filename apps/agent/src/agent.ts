@@ -15,6 +15,7 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 
 import type { Config } from "./config.ts";
 import { IndexDoc, ThreadDoc, type ThreadState } from "./docs.ts";
+import { loadWake } from "./memory.ts";
 import { namesToTokens, splitBody, tokensToNames, type Person } from "./mentions.ts";
 import { mockModels } from "./mock.ts";
 import { PROVIDER, PeopleModels, routedModels } from "./models.ts";
@@ -52,6 +53,10 @@ const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
 	read_messages: () => "Reading messages",
 	search_messages: (args) => `Searching messages for “${args.query}”`,
 	ask_teammate: (args) => `Asking ${args.person}`,
+	memory_note: (args) => `Remembering (${args.scope})`,
+	memory_summarize: () => "Summarizing memory",
+	memory_recall: (args) => `Searching memory for “${args.query}”`,
+	memory_zoom: () => "Reading older memory",
 };
 
 /** Edits the run's progress message at most every 1.5 s with the steps so far and the text being written. */
@@ -259,6 +264,7 @@ export class Agent {
 						conversationId: input.conversation_id,
 						conversationName: input.conversation_name,
 						conversationKind: input.conversation_kind,
+						conversationMembers: input.conversation_members,
 						rootMessageId: input.root_message_id,
 					});
 					// The provider session id exists from the start, so its payer can be known before a request.
@@ -370,6 +376,12 @@ export class Agent {
 		}, context);
 		// Orbit issues agent sessions only to the driver of a running thread: set it before any tool runs.
 		await this.#orbit.updateThread(input.thread_key, this.#threadUpdate(state, "running", driverId, null));
+		const memory = await this.#memoryFor({ ...state, conversationMembers: input.conversation_members, driverId, driverName });
+		await conversation.commit(async (tx) => {
+			const doc = await tx.doc(ThreadDoc, conversation.id);
+			doc.conversationMembers = input.conversation_members;
+			doc.memory = memory;
+		}, context);
 		const submission = await conversation.submit({ type: "input", content, requestId: input.message_id }, context);
 		await conversation.commit(async (tx) => {
 			const doc = await tx.doc(ThreadDoc, conversation.id);
@@ -377,6 +389,16 @@ export class Agent {
 		}, context);
 		this.#watch(input.thread_key, conversation.id);
 		await this.#orbit.acknowledge(input.message_id);
+	}
+
+	/** The run's memory section, read as the driver. A failure only costs the run its memory. */
+	async #memoryFor(state: ThreadState & { driverId: string }): Promise<string | null> {
+		try {
+			return await loadWake((method, path) => this.#orbit.asUser(state.driverId, state.workspaceId, method, path), state, this.#config.memoryTokens);
+		} catch (error) {
+			console.warn("agent: reading memory failed", String(error));
+			return null;
+		}
 	}
 
 	/** Streams a run's progress and posts its answer. Safe to run again: the answer is an edit. */

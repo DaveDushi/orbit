@@ -63,11 +63,16 @@ class FakeOrbit {
 			conversation_id: CHANNEL,
 			conversation_kind: "public",
 			conversation_name: "general",
+			conversation_members: 4,
 			root_message_id: input.thread_key,
 			created_at: Date.now(),
 			...input,
 		});
 		return messageId;
+	}
+
+	async memoryRoute(_method: string, _scope: string, _rest: string, _url: string, _user: string, _body: unknown): Promise<[number, unknown]> {
+		return [404, { code: "not_found" }];
 	}
 
 	async route(method: string, url: string, headers: Record<string, unknown>, body: any): Promise<[number, unknown]> {
@@ -122,6 +127,8 @@ class FakeOrbit {
 		if (!path.startsWith(prefix) || !token) return [401, { code: "authentication_required" }];
 		const rest = path.slice(prefix.length);
 		this.calls.push({ method, path: rest, as: token });
+		const memory = /^\/agent-memory\/(team|private)(\/.*)?$/.exec(rest);
+		if (memory) return this.memoryRoute(method, memory[1], memory[2] ?? "", url, token, body);
 		if (rest === "/projects") return [200, { items: [{ id: "p1", key: "ORB", name: "General" }] }];
 		if (rest === "/projects/p1/statuses") return [200, { items: [{ id: "s1", name: "Todo", position: 0 }] }];
 		if (rest === "/members") return [200, { items: [{ user_id: ANN, display_name: "Ann" }, { user_id: BOB, display_name: "Bob" }] }];
@@ -129,6 +136,49 @@ class FakeOrbit {
 			// Bob may not create tasks here; Ann may.
 			if (token === BOB) return [403, { code: "forbidden" }];
 			return [201, { id: id(), number: 1, project_id: "p1", status_id: "s1", title: body.title, priority: "none", assignee_ids: [], version: 1 }];
+		}
+		return [404, { code: "not_found" }];
+	}
+}
+
+type Note = { position: number; body: string; author: string; source: unknown };
+
+/** Orbit's memory, as far as the agent sees it: one log per scope, a summary due after every second note. */
+class MemoryOrbit extends FakeOrbit {
+	readonly notes = new Map<string, Note[]>();
+	readonly summaries = new Map<string, string>();
+	readonly claims = new Map<string, string>();
+	/** Scopes whose wake view or search was read, as `scope:user`. */
+	readonly reads: string[] = [];
+
+	async memoryRoute(method: string, scope: string, rest: string, url: string, user: string, body: any): Promise<[number, unknown]> {
+		const key = scope === "team" ? "team" : `private:${user}`;
+		const log = this.notes.get(key) ?? [];
+		this.notes.set(key, log);
+		const line = (note: Note) => ({ lo: note.position, hi: note.position, body: note.body, author_name: note.author === ANN ? "Ann" : "Bob", created_at: "2026-10-29T10:00:00.000Z" });
+		if (rest === "" && method === "POST") {
+			const note = { position: log.length, body: body.body, author: user, source: body.source };
+			log.push(note);
+			let due = null;
+			if (log.length % 2 === 0) {
+				const lo = log.length - 2;
+				const claim = `claim-${key}-${lo}`;
+				this.claims.set(`${key}:${lo}-${lo + 1}`, claim);
+				due = { lo, hi: lo + 1, claim, halves: log.slice(lo).map(line), remaining: 0 };
+			}
+			return [200, { position: note.position, due }];
+		}
+		if (rest === "/summaries" && method === "POST") {
+			const saved = this.claims.get(`${key}:${body.block}`) === body.claim;
+			if (saved) this.summaries.set(`${key}:${body.block}`, body.body);
+			return [200, { saved, due: null }];
+		}
+		if (rest === "/wake" || (rest === "" && method === "GET")) {
+			this.reads.push(`${scope}:${user}`);
+			const query = new URL(url, "http://x").searchParams.get("query")?.toLowerCase();
+			const lines = log.filter((note) => !query || note.body.toLowerCase().includes(query)).map(line);
+			if (rest === "") return [200, { items: lines.map((item) => ({ position: item.lo, body: item.body, author_name: item.author_name, created_at: item.created_at })) }];
+			return [200, { total: log.length, lines, text: lines.map((item) => `#${item.lo} (2026-10-29, ${item.author_name}) ${item.body}`).join("\n") }];
 		}
 		return [404, { code: "not_found" }];
 	}
@@ -147,6 +197,7 @@ function config(orbit: FakeOrbit, dataDir: string): Config {
 		forwardedProto: undefined,
 		maxRunsPerUser: 3,
 		maxToolCallsPerRun: 40,
+		memoryTokens: 3_000,
 	};
 }
 
@@ -240,6 +291,54 @@ test("a run interrupted by a restart is finished by the next process, once", asy
 		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
 	} finally {
 		await second.stop();
+		orbit.server.close();
+	}
+});
+
+test("memory: private notes stay in the driver's DM, team notes reach later threads, due summaries are written", async () => {
+	const orbit = new MemoryOrbit();
+	current = orbit;
+	await orbit.listen();
+	const agent = new Agent(config(orbit, mkdtempSync(join(tmpdir(), "agent-"))), new OrbitClient(config(orbit, "")));
+	await agent.open();
+	await agent.start();
+	const DM = id();
+	const inDm = { conversation_id: DM, conversation_kind: "dm", conversation_name: "", conversation_members: 2, root_message_id: null };
+	try {
+		// In Ann's DM with the agent: a private note, then two team notes; the second makes #0-1 due.
+		const dmThread = DM;
+		const tea = orbit.add({ ...inDm, thread_key: dmThread, author_id: ANN, author_name: "Ann", kind: "instruction", body: 'remember privately "Ann drinks tea, no sugar"' });
+		await until("the private note", () => progressOf(orbit, tea).startsWith("Done (memory_note)"));
+		assert.deepEqual(orbit.notes.get(`private:${ANN}`)?.map((note) => [note.body, note.author]), [["Ann drinks tea, no sugar", ANN]]);
+		assert.deepEqual(orbit.notes.get(`private:${ANN}`)?.[0].source, { conversation_id: DM, root_message_id: null });
+
+		const channel = id();
+		const one = orbit.add({ thread_key: channel, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> remember "Deploys happen on Thursday"` });
+		await until("the first team note", () => progressOf(orbit, one).startsWith("Done (memory_note)"));
+		await until("the idle thread", () => orbit.threads.get(channel)?.status === "idle");
+		const two = orbit.add({ thread_key: channel, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> remember "The staging URL is staging.orbit.test"` });
+		await until("the summary", () => progressOf(orbit, two).startsWith("Done (memory_summarize)"));
+		assert.match(orbit.summaries.get("team:0-1") ?? "", /^Summary: Deploys happen on Thursday; The staging URL/);
+
+		// A new thread by Bob reads the team memory; nobody's private memory is read in a shared channel.
+		orbit.reads.length = 0;
+		const later = orbit.add({ thread_key: id(), author_id: BOB, author_name: "Bob", kind: "instruction", body: `<@${BOT}> what do you remember about "thursday"` });
+		await until("the answer from memory", () => progressOf(orbit, later).startsWith("From memory:"));
+		assert.match(progressOf(orbit, later), /Deploys happen on Thursday/);
+		const annInChannel = orbit.add({ thread_key: id(), author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> what do you remember about "tea"` });
+		await until("Ann's answer in the channel", () => progressOf(orbit, annInChannel).length > 20 && !progressOf(orbit, annInChannel).startsWith("⏳"));
+		assert.match(progressOf(orbit, annInChannel), /I remember nothing about “tea”/);
+		const recall = orbit.add({ thread_key: id(), author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> recall privately "tea"` });
+		await until("the refused recall", () => progressOf(orbit, recall).startsWith("I could not do that"));
+		assert.ok(!orbit.reads.some((read) => read.startsWith("private:")), JSON.stringify(orbit.reads));
+
+		// Back in her DM, Ann's private memory is there.
+		const back = orbit.add({ ...inDm, thread_key: dmThread, author_id: ANN, author_name: "Ann", kind: "instruction", body: 'what do you remember about "tea"' });
+		await until("the private answer", () => progressOf(orbit, back).startsWith("From memory:"));
+		assert.match(progressOf(orbit, back), /Ann drinks tea/);
+		assert.ok(orbit.reads.every((read) => read.endsWith(ANN) || read.startsWith("team:")), JSON.stringify(orbit.reads));
+	} finally {
+		await agent.stop();
 		orbit.server.close();
 	}
 });

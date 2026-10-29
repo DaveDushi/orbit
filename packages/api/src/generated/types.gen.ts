@@ -2445,7 +2445,7 @@ export type PasswordConfirmationBody = {
  * A workspace capability that depends on the member's role. Actions open to
  * every member (tasks, projects, attachments, docs) are not listed here.
  */
-export type Permission = 'workspace.update' | 'workspace.delete' | 'workspace.transfer' | 'members.manage' | 'audit.view' | 'api_tokens.manage' | 'integrations.manage' | 'teamspaces.delete' | 'pages.purge' | 'views.manage_shared' | 'comments.moderate' | 'chat.manage' | 'billing.manage' | 'storage.manage';
+export type Permission = 'workspace.update' | 'workspace.delete' | 'workspace.transfer' | 'members.manage' | 'audit.view' | 'api_tokens.manage' | 'integrations.manage' | 'teamspaces.delete' | 'pages.purge' | 'views.manage_shared' | 'comments.moderate' | 'chat.manage' | 'billing.manage' | 'storage.manage' | 'agent_memory.manage';
 
 export type PlanInterval = 'month' | 'year';
 
