@@ -1035,7 +1035,10 @@ mod tests {
         let mut next = 0;
         for &(lo, size) in blocks {
             assert_eq!(lo, next, "{blocks:?}");
-            assert!(size.is_power_of_two() && lo.is_multiple_of(size), "{blocks:?}");
+            assert!(
+                size.is_power_of_two() && lo.is_multiple_of(size),
+                "{blocks:?}"
+            );
             next = lo + size;
         }
         assert_eq!(next, total, "{blocks:?}");
