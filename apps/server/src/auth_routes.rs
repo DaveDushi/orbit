@@ -952,7 +952,6 @@ struct UpdateMeBody {
     display_name: String,
     /// The optional parts: absent leaves the part as it is, an empty text removes it.
     title: Option<String>,
-    pronouns: Option<String>,
     timezone: Option<String>,
     bio: Option<String>,
     phone: Option<String>,
@@ -960,7 +959,6 @@ struct UpdateMeBody {
 
 const MAX_PHONE_CHARS: usize = 32;
 const MAX_TITLE_CHARS: usize = 80;
-const MAX_PRONOUNS_CHARS: usize = 40;
 const MAX_TIMEZONE_CHARS: usize = 64;
 const MAX_BIO_CHARS: usize = 500;
 
@@ -1024,7 +1022,6 @@ async fn update_me(
     let changes = (|| {
         Ok(ProfileChanges {
             title: profile_part(body.title, MAX_TITLE_CHARS, any)?,
-            pronouns: profile_part(body.pronouns, MAX_PRONOUNS_CHARS, any)?,
             timezone: profile_part(body.timezone, MAX_TIMEZONE_CHARS, timezone_shaped)?,
             bio: profile_part(body.bio, MAX_BIO_CHARS, any)?,
             phone: profile_part(body.phone, MAX_PHONE_CHARS, phone_shaped)?,
@@ -1035,7 +1032,7 @@ async fn update_me(
             StatusCode::UNPROCESSABLE_ENTITY,
             "invalid_profile",
             "Invalid profile",
-            "The title may have 80 characters, the pronouns 40, the time zone 64, the bio 500 and the phone number 32 (digits, spaces and + - ( ) . only).",
+            "The title may have 80 characters, the time zone 64, the bio 500 and the phone number 32 (digits, spaces and + - ( ) . only).",
             instance,
             request_id.as_ref(),
         )

@@ -26404,6 +26404,28 @@
         "operationId": "get_workspace_storage",
         "parameters": [
           {
+            "name": "files",
+            "in": "query",
+            "description": "How many of the largest files to list for an admin: 1 to 500 (default 10).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "How many of the largest files to skip first, for the next pages (default 0).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
             "name": "workspace_id",
             "in": "path",
             "required": true,
@@ -26875,6 +26897,132 @@
           },
           "409": {
             "description": "contract_mismatch",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "internal_error or another documented stable code",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/storage/files/{file_id}": {
+      "delete": {
+        "tags": [
+          "crate::workspace_routes"
+        ],
+        "summary": "Deletes a stored file (one of the storage's largest files) for an admin. Tasks, pages and chat messages keep\ntheir link to it, which then says \"Deleted file\".",
+        "operationId": "delete_storage_file",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Orbit-Contract",
+            "in": "header",
+            "description": "Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "400": {
+            "description": "invalid_proxy_headers",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "origin_forbidden, workspace_action_forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "workspace_resource_not_found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "contract_mismatch, workspace_conflict, conflict",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -33474,7 +33622,8 @@
           "display_name",
           "media_type",
           "byte_size",
-          "created_at"
+          "created_at",
+          "deleted"
         ],
         "properties": {
           "byte_size": {
@@ -33491,6 +33640,10 @@
           "created_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "deleted": {
+            "type": "boolean",
+            "description": "An admin deleted the stored file: show \"Deleted file\"; its download is a \"Deleted file\" image (410)."
           },
           "display_name": {
             "type": "string"
@@ -34471,9 +34624,14 @@
           "mime_type",
           "size_bytes",
           "width",
-          "height"
+          "height",
+          "deleted"
         ],
         "properties": {
+          "deleted": {
+            "type": "boolean",
+            "description": "An admin deleted the stored file: show \"Deleted file\"; `url` serves a \"Deleted file\" image (410)."
+          },
           "file_name": {
             "type": "string"
           },
@@ -36961,12 +37119,6 @@
             "description": "The caller's private note about this member; nobody else can read it."
           },
           "phone": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "pronouns": {
             "type": [
               "string",
               "null"
@@ -39889,12 +40041,6 @@
             ],
             "description": "As the user wrote it; not verified."
           },
-          "pronouns": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "timezone": {
             "type": [
               "string",
@@ -41160,6 +41306,7 @@
         "type": "object",
         "description": "One stored file (blob) of a workspace.",
         "required": [
+          "id",
           "byte_size",
           "uses"
         ],
@@ -41168,6 +41315,10 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "For `DELETE /api/v1/workspaces/{workspace_id}/storage/files/{file_id}`."
           },
           "name": {
             "type": [
@@ -42335,12 +42486,6 @@
               "null"
             ]
           },
-          "pronouns": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "timezone": {
             "type": [
               "string",
@@ -42780,15 +42925,22 @@
         "description": "How many bytes of files a workspace stores, and its quota.",
         "required": [
           "used_bytes",
-          "largest_files"
+          "largest_files",
+          "file_count"
         ],
         "properties": {
+          "file_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many files the workspace stores; `0` unless the caller may update the workspace.",
+            "minimum": 0
+          },
           "largest_files": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/StorageFile"
             },
-            "description": "The files that use the most storage, largest first. Empty unless the caller may update the workspace."
+            "description": "One page of the files that use the most storage, largest first. Empty unless the caller may update the\nworkspace."
           },
           "quota_bytes": {
             "type": [

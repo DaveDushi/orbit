@@ -191,6 +191,12 @@ impl StripeClient {
                     ("line_items[0][quantity]", "1"),
                     ("client_reference_id", &workspace),
                     ("subscription_data[metadata][workspace_id]", &workspace),
+                    // Stripe Tax: Checkout asks for the billing address (and a VAT id) and saves
+                    // them on the customer, which has no address before the first checkout.
+                    ("automatic_tax[enabled]", "true"),
+                    ("customer_update[address]", "auto"),
+                    ("customer_update[name]", "auto"),
+                    ("tax_id_collection[enabled]", "true"),
                     ("success_url", request.success_url),
                     ("cancel_url", request.cancel_url),
                 ],

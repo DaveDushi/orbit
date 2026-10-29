@@ -24,13 +24,13 @@ test('a note goes out only when it differs from the saved one; empty text remove
   expect(noteToSave('old', '  ')).toBe('')
 })
 
-const saved = { display_name: 'Ada', title: 'Engineer', pronouns: null, phone: null, timezone: 'Europe/London', bio: 'Hello' }
+const saved = { display_name: 'Ada', title: 'Engineer', phone: null, timezone: 'Europe/London', bio: 'Hello' }
 
 test('a profile save has the name and only the parts that changed; an emptied part goes as empty text', () => {
-  const form = { name: 'Ada', title: 'Engineer', pronouns: '', phone: '', timezone: 'Europe/London', bio: 'Hello' }
+  const form = { name: 'Ada', title: 'Engineer', phone: '', timezone: 'Europe/London', bio: 'Hello' }
   expect(profileChanges(saved, form)).toBeNull()
   expect(profileChanges(saved, { ...form, title: ' Engineer ' })).toBeNull()
-  expect(profileChanges(saved, { ...form, pronouns: 'she/her' })).toEqual({ display_name: 'Ada', pronouns: 'she/her' })
+  expect(profileChanges(saved, { ...form, title: 'Designer' })).toEqual({ display_name: 'Ada', title: 'Designer' })
   expect(profileChanges(saved, { ...form, name: 'Ada L', bio: '', timezone: '' })).toEqual({ display_name: 'Ada L', bio: '', timezone: '' })
   expect(profileChanges(saved, { ...form, name: '  ', title: 'CTO' })).toBeNull()
 })

@@ -237,7 +237,7 @@ export default function TaskScreen() {
   const descriptionText = markdownToText(description.text)
   const taskFiles: ShownFile[] = [
     ...description.files.map((file) => ({ key: file.path, ...file })),
-    ...(attachments.data ?? []).map((record) => ({ key: record.id, name: record.display_name, path: attachmentPath(record), image: isImageType(record.media_type), size: record.byte_size })),
+    ...(attachments.data ?? []).map((record) => ({ key: record.id, name: record.display_name, path: attachmentPath(record), image: isImageType(record.media_type), size: record.byte_size, deleted: record.deleted })),
   ]
   const taskLabels = (labels.data ?? []).filter((label) => current.label_ids.includes(label.id))
   const children = subIssues.data ?? []
@@ -258,7 +258,7 @@ export default function TaskScreen() {
   }
   const filesOf = (comment: api.CommentRecord): ShownFile[] => [
     ...splitInlineFiles(comment.body).files.map((file) => ({ key: file.path, ...file })),
-    ...(commentFiles.get(comment.id) ?? []).map((record) => ({ key: record.id, name: record.display_name, path: attachmentPath(record), image: isImageType(record.media_type), size: record.byte_size })),
+    ...(commentFiles.get(comment.id) ?? []).map((record) => ({ key: record.id, name: record.display_name, path: attachmentPath(record), image: isImageType(record.media_type), size: record.byte_size, deleted: record.deleted })),
   ]
   const uploading = draftFiles.some((file) => !file.path)
   const readyFiles = draftFiles.flatMap((file) => (file.path ? [{ name: file.name, path: file.path, image: file.image }] : []))

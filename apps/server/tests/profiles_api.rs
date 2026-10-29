@@ -154,7 +154,6 @@ async fn profile_parts_are_checked_kept_when_absent_and_removed_when_empty() {
     let (status, me) = patch(json!({
         "display_name": "Owner",
         "title": "  Staff engineer ",
-        "pronouns": "they/them",
         "timezone": "Europe/Budapest",
         "bio": "Writes parsers.",
         "phone": " +36 (30) 123-4567 ",
@@ -166,11 +165,11 @@ async fn profile_parts_are_checked_kept_when_absent_and_removed_when_empty() {
     assert_eq!(me["phone"], "+36 (30) 123-4567");
 
     // An older client sends the name only: the other parts stay. An empty text removes a part.
-    let (_, me) = patch(json!({ "display_name": "Owner Two", "pronouns": "" })).await;
+    let (_, me) = patch(json!({ "display_name": "Owner Two", "phone": "" })).await;
     assert_eq!(me["display_name"], "Owner Two");
     assert_eq!(me["title"], "Staff engineer");
     assert_eq!(me["bio"], "Writes parsers.");
-    assert!(me["pronouns"].is_null());
+    assert!(me["phone"].is_null());
 
     for invalid in [
         json!({ "display_name": "Owner", "title": "x".repeat(81) }),

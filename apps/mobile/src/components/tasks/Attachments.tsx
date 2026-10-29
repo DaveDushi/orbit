@@ -15,6 +15,8 @@ export interface ShownFile {
   path?: string
   image: boolean
   size?: number
+  /** An admin deleted the stored file: it shows as "Deleted file" and does not open. */
+  deleted?: boolean
 }
 
 /**
@@ -36,8 +38,8 @@ export function Attachments({ files, onRemove }: { files: readonly ShownFile[]; 
       setOpening(null)
     }
   }
-  const images = files.filter((file) => file.image)
-  const others = files.filter((file) => !file.image)
+  const images = files.filter((file) => file.image && !file.deleted)
+  const others = files.filter((file) => !file.image || file.deleted)
   return (
     <View className="gap-1.5 mt-1.5">
       {images.length > 0 ? (
@@ -47,7 +49,9 @@ export function Attachments({ files, onRemove }: { files: readonly ShownFile[]; 
           ))}
         </View>
       ) : null}
-      {others.map((file) => (
+      {others.map((file) => file.deleted ? (
+        <DeletedChip key={file.key} name={file.name} />
+      ) : (
         <FileChip key={file.key} file={file} opening={opening === file.key} onPress={() => void open(file)} onRemove={onRemove && (() => onRemove(file.key))} />
       ))}
     </View>
@@ -87,6 +91,17 @@ function FileChip({ file, opening, onPress, onRemove }: { file: ShownFile; openi
         {file.size !== undefined ? <Text className="text-[12px] text-muted-foreground">{fileSize(file.size)}</Text> : null}
       </Pressable>
       {onRemove ? <RemoveButton name={file.name} onPress={onRemove} center /> : null}
+    </View>
+  )
+}
+
+function DeletedChip({ name }: { name: string }) {
+  const { colors } = useTheme()
+  return (
+    <View accessibilityLabel={`Deleted file ${name}`} className="self-start max-w-full min-h-9 flex-row items-center gap-2 px-2.5 rounded-md border border-dashed border-border">
+      <Icon name="documentDownload" size={16} color={colors.mutedForeground} />
+      <Text className="font-noto-medium text-[13px] text-muted-foreground">Deleted file</Text>
+      <Text numberOfLines={1} className="text-[12px] text-muted-foreground shrink">{name}</Text>
     </View>
   )
 }

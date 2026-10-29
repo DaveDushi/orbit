@@ -1,6 +1,6 @@
 import type { AuthUserResponse, UpdateMeBody } from '@orbit/api/generated/types.gen'
 
-export const PROFILE_LIMITS = { title: 80, pronouns: 40, phone: 32, bio: 500, note: 1000 } as const
+export const PROFILE_LIMITS = { title: 80, phone: 32, bio: 500, note: 1000 } as const
 
 /** "3:42 PM local time" in the member's zone; `null` when the zone is missing or not a zone this browser knows. */
 export function localTimeLabel(timezone: string | null | undefined, now: Date | number = Date.now(), locale?: string): string | null {
@@ -48,19 +48,17 @@ export function noteToSave(saved: string | null | undefined, draft: string): str
 export interface ProfileForm {
   name: string
   title: string
-  pronouns: string
   phone: string
   timezone: string
   bio: string
 }
 
-type ProfileSource = Pick<AuthUserResponse, 'display_name' | 'title' | 'pronouns' | 'phone' | 'timezone' | 'bio'>
+type ProfileSource = Pick<AuthUserResponse, 'display_name' | 'title' | 'phone' | 'timezone' | 'bio'>
 
 export function profileFormOf(user: ProfileSource | null | undefined): ProfileForm {
   return {
     name: user?.display_name ?? '',
     title: user?.title ?? '',
-    pronouns: user?.pronouns ?? '',
     phone: user?.phone ?? '',
     timezone: user?.timezone ?? '',
     bio: user?.bio ?? '',
@@ -69,10 +67,10 @@ export function profileFormOf(user: ProfileSource | null | undefined): ProfileFo
 
 /** The form as it is saved: trimmed text. */
 function settled(form: ProfileForm): ProfileForm {
-  return { name: form.name.trim(), title: form.title.trim(), pronouns: form.pronouns.trim(), phone: form.phone.trim(), timezone: form.timezone, bio: form.bio.trim() }
+  return { name: form.name.trim(), title: form.title.trim(), phone: form.phone.trim(), timezone: form.timezone, bio: form.bio.trim() }
 }
 
-const OPTIONAL_PARTS = ['title', 'pronouns', 'phone', 'timezone', 'bio'] as const
+const OPTIONAL_PARTS = ['title', 'phone', 'timezone', 'bio'] as const
 
 /** The form differs from the saved profile (an emptied name too, though that cannot be saved). */
 export function profileDirty(user: ProfileSource | null | undefined, form: ProfileForm): boolean {

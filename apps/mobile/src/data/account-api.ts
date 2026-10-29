@@ -8,6 +8,7 @@ import {
   changeMemberRole,
   changePassword as changePasswordRequest,
   createInvitation,
+  deleteStorageFile as deleteStorageFileRequest,
   disableTwoFactor,
   enableTotp,
   getNotificationPreferences,
@@ -45,6 +46,7 @@ import type {
 } from '@orbit/api/generated/types.gen'
 
 import type { MemberRecord, OrbitClient, User, WorkspaceRecord } from './orbit'
+import { STORAGE_FILES_PAGE } from '@orbit/api/storage'
 
 export type { InvitationRecord, NotificationPrefs, SessionRecord, TotpSetup, TwoFactorStatus, WorkspaceBucketView, WorkspaceStorage }
 
@@ -179,8 +181,14 @@ export async function renameWorkspace(client: OrbitClient, workspace: Pick<Works
   return (await renameWorkspaceRequest({ client, path: { workspace_id: workspace.id }, body: { name, expected_version: workspace.version }, throwOnError: true })).data
 }
 
-export async function workspaceStorage(client: OrbitClient, workspaceId: string): Promise<WorkspaceStorage> {
-  return (await getWorkspaceStorage({ client, path: { workspace_id: workspaceId }, throwOnError: true })).data
+/** Admins also get one page of the largest files, from `offset`. */
+export async function workspaceStorage(client: OrbitClient, workspaceId: string, offset: number): Promise<WorkspaceStorage> {
+  return (await getWorkspaceStorage({ client, path: { workspace_id: workspaceId }, query: { files: STORAGE_FILES_PAGE, offset }, throwOnError: true })).data
+}
+
+/** Deletes a stored file for an admin; where it was used, it then shows as a deleted file. */
+export async function deleteStorageFile(client: OrbitClient, workspaceId: string, fileId: string): Promise<void> {
+  await deleteStorageFileRequest({ client, path: { workspace_id: workspaceId, file_id: fileId }, throwOnError: true })
 }
 
 /** The File storage page: the workspace's own S3 bucket for attachments. */

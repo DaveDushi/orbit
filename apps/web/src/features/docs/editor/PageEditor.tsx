@@ -31,6 +31,7 @@ import { ImageZoomButton } from './ImageZoomButton'
 import { internalPageLinkId, isSafeLinkHref, linkMentions, pastedFilesToCopy, toEditorContent, toStoredContent, type FileScope, type FileToCopy } from './content'
 import { insertPageBlock } from './pageBlockCommands'
 import { PageEditorContext, type PageEditorContextValue, type PageRef } from './pageEditorContext'
+import { watchDeletedFiles } from '@orbit/editor/deletedFiles'
 import type { PageEditorInstance } from '@orbit/editor/schema'
 import { EDITOR_BLOCK_TYPES, markdownToTaskBlocks, pageEditorSchema, TASK_EDITOR_BLOCK_TYPES, taskEditorSchema } from './schema'
 import { getPageSlashMenuItems, getTaskSlashMenuItems } from './slashMenu'
@@ -160,6 +161,7 @@ export function PageEditor(props: PageEditorProps) {
   return <PageEditorInner key={props.pageId} {...props} />
 }
 
+const isDeletedFile = (url: string) => fetch(url, { method: 'HEAD' }).then((response) => response.status === 410)
 const noPage = () => null
 const noPicker = () => Promise.resolve(null)
 const noSubpage = () => Promise.reject(new Error('sub-pages are not available here'))
@@ -323,6 +325,9 @@ function PageEditorInner({
   useEffect(() => {
     latest.setEditor(editor)
   }, [latest, editor])
+
+  // A file an admin deleted answers 410: its file block says so.
+  useEffect(() => watchDeletedFiles(editor, isDeletedFile), [editor])
 
   // a comment needs selected text to attach to; the key works from inside the editor
   useCommand('docs.comment', collab && comments ? () => editor.getExtension(CommentsExtension)?.startPendingComment() : null, { available: () => editor.getSelectedText().trim() !== '' })

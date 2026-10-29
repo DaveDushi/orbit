@@ -425,6 +425,16 @@ impl MigrationRunner {
                     include_str!("../../../../apps/server/migrations/0059_storage_quota_1gb.sql"),
                     false,
                 ),
+                Migration::new(
+                    60,
+                    include_str!("../../../../apps/server/migrations/0060_deleted_files.sql"),
+                    false,
+                ),
+                Migration::new(
+                    61,
+                    include_str!("../../../../apps/server/migrations/0061_drop_pronouns.sql"),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -499,6 +509,20 @@ impl MigrationRunner {
                 59,
                 include_str!(
                     "../../../../apps/server/migrations/postgres/0059_storage_quota_1gb.sql"
+                ),
+                false,
+            ),
+            Migration::new(
+                60,
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0060_deleted_files.sql"
+                ),
+                false,
+            ),
+            Migration::new(
+                61,
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0061_drop_pronouns.sql"
                 ),
                 false,
             ),

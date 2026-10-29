@@ -15,7 +15,7 @@ use orbit_domain::WorkspaceRole;
 use orbit_platform::{
     BackupError, BackupKind, BackupService, BackupSnapshot, ClientIp, Id, JobLimits, ObjectStorage,
     PasswordError, PasswordExecutor, PasswordService, RateLimitConfig, RequestId, ThrottleDecision,
-    TieredBlobStore, TimestampMillis,
+    TieredBlobStore, TimestampMillis, UploadService,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -60,6 +60,8 @@ pub struct WorkspaceState {
     object_storage: Option<(ObjectStorage, TieredBlobStore)>,
     /// Makes large stored images smaller (Admin → Storage).
     image_compressor: Option<ImageCompressor>,
+    /// Deletes stored files for workspace admins; `None` refuses to.
+    uploads: Option<UploadService>,
 }
 
 /// Open registration is throttled like sign-in, on every server of the database.
@@ -92,6 +94,7 @@ impl WorkspaceState {
             rate_limits: RateLimitConfig::default(),
             object_storage: None,
             image_compressor: None,
+            uploads: None,
         }
     }
 
@@ -118,6 +121,7 @@ impl WorkspaceState {
             rate_limits: RateLimitConfig::default(),
             object_storage: None,
             image_compressor: None,
+            uploads: None,
         }
     }
 
@@ -136,6 +140,12 @@ impl WorkspaceState {
     #[must_use]
     pub fn with_object_storage(mut self, storage: ObjectStorage, store: TieredBlobStore) -> Self {
         self.object_storage = Some((storage, store));
+        self
+    }
+
+    #[must_use]
+    pub fn with_uploads(mut self, uploads: UploadService) -> Self {
+        self.uploads = Some(uploads);
         self
     }
 
@@ -178,6 +188,10 @@ pub fn workspace_router(state: WorkspaceState) -> Router {
         .route(
             "/api/v1/workspaces/{workspace_id}/storage",
             get(get_workspace_storage),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/storage/files/{file_id}",
+            delete(delete_storage_file),
         )
         .route(
             "/api/v1/workspaces/{workspace_id}/storage/bucket",
@@ -403,11 +417,22 @@ async fn get_workspace(
         .map_err(|error| workspace_problem(error, instance, request_id.as_ref()))
 }
 
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+#[serde(deny_unknown_fields)]
+struct StorageQuery {
+    /// How many of the largest files to list for an admin: 1 to 500 (default 10).
+    files: Option<u32>,
+    /// How many of the largest files to skip first, for the next pages (default 0).
+    offset: Option<u32>,
+}
+
 /// How many bytes of files the workspace stores, and its quota. Any member may read it.
-#[utoipa::path(get, path = "/api/v1/workspaces/{workspace_id}/storage", params(("workspace_id" = String, Path)), responses((status = 200, body = crate::repositories::workspaces::WorkspaceStorage)))]
+#[utoipa::path(get, path = "/api/v1/workspaces/{workspace_id}/storage", params(StorageQuery, ("workspace_id" = String, Path)), responses((status = 200, body = crate::repositories::workspaces::WorkspaceStorage)))]
 async fn get_workspace_storage(
     State(state): State<WorkspaceState>,
     Path(workspace_id): Path<String>,
+    ApiQuery(query): ApiQuery<StorageQuery>,
     headers: HeaderMap,
     request_id: Option<Extension<RequestId>>,
 ) -> Result<Json<crate::repositories::workspaces::WorkspaceStorage>, ApiError> {
@@ -416,9 +441,44 @@ async fn get_workspace_storage(
     let workspace_id = parse_id(&workspace_id, &instance, request_id.as_ref())?;
     state
         .workspaces
-        .storage(workspace_id, session.user.id)
+        .storage(
+            workspace_id,
+            session.user.id,
+            query.files.unwrap_or(10).max(1),
+            query.offset.unwrap_or(0),
+        )
         .await
         .map(Json)
+        .map_err(|error| workspace_problem(error, instance, request_id.as_ref()))
+}
+
+/// Deletes a stored file (one of the storage's largest files) for an admin. Tasks, pages and chat messages keep
+/// their link to it, which then says "Deleted file".
+#[utoipa::path(delete, path = "/api/v1/workspaces/{workspace_id}/storage/files/{file_id}", params(("workspace_id" = String, Path), ("file_id" = String, Path)), responses((status = 204)))]
+async fn delete_storage_file(
+    State(state): State<WorkspaceState>,
+    Path((workspace_id, file_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<StatusCode, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace_id}/storage/files/{file_id}");
+    let session = authenticate(&state, &headers, &instance, request_id.as_ref()).await?;
+    let workspace_id = parse_id(&workspace_id, &instance, request_id.as_ref())?;
+    let file_id = parse_id(&file_id, &instance, request_id.as_ref())?;
+    let Some(uploads) = &state.uploads else {
+        return Err(workspace_problem(WorkspaceError::NotFound, instance, request_id.as_ref()));
+    };
+    state
+        .workspaces
+        .delete_storage_file(
+            uploads,
+            workspace_id,
+            session.user.id,
+            file_id,
+            request_id_value(request_id.as_ref()),
+        )
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
         .map_err(|error| workspace_problem(error, instance, request_id.as_ref()))
 }
 

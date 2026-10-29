@@ -1,5 +1,5 @@
 /** The account and workspace settings queries and writes, over `data/account-api.ts`. */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as ImagePicker from 'expo-image-picker'
 import { useEffect, useState } from 'react'
 import { Alert } from 'react-native'
@@ -155,9 +155,22 @@ export function useTwoFactorWrites() {
   }
 }
 
-export function useWorkspaceStorage() {
+export function useWorkspaceStorage(offset = 0) {
   const { client, workspaceId } = useOrbit()
-  return useQuery({ queryKey: account.accountKeys.storage(workspaceId), queryFn: () => account.workspaceStorage(client, workspaceId) })
+  return useQuery({
+    queryKey: [...account.accountKeys.storage(workspaceId), offset],
+    queryFn: () => account.workspaceStorage(client, workspaceId, offset),
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function useDeleteStorageFile() {
+  const { client, workspaceId } = useOrbit()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (fileId: string) => account.deleteStorageFile(client, workspaceId, fileId),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: account.accountKeys.storage(workspaceId) }),
+  })
 }
 
 export function useWorkspaceBucket() {

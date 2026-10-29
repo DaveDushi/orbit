@@ -172,7 +172,6 @@ impl UserStatus {
 pub struct ProfileFields {
     /// The job title.
     pub title: Option<String>,
-    pub pronouns: Option<String>,
     /// An IANA time zone name, such as `Europe/Budapest`.
     pub timezone: Option<String>,
     pub bio: Option<String>,
@@ -185,7 +184,6 @@ pub struct ProfileFields {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ProfileChanges {
     pub title: Option<Option<String>>,
-    pub pronouns: Option<Option<String>>,
     pub timezone: Option<Option<String>>,
     pub bio: Option<Option<String>>,
     pub phone: Option<Option<String>>,
@@ -1186,14 +1184,13 @@ impl IdentityRepository {
     /// The optional parts of the user's profile.
     pub async fn profile_fields(&self, user_id: Id) -> Result<ProfileFields, IdentityError> {
         let row =
-            sqlx::query("SELECT title, pronouns, timezone, bio, phone FROM users WHERE id = $1")
+            sqlx::query("SELECT title, timezone, bio, phone FROM users WHERE id = $1")
                 .bind(user_id.to_string())
                 .fetch_optional(self.database.pool())
                 .await?;
         Ok(
             row.map_or_else(ProfileFields::default, |row| ProfileFields {
                 title: row.get("title"),
-                pronouns: row.get("pronouns"),
                 timezone: row.get("timezone"),
                 bio: row.get("bio"),
                 phone: row.get("phone"),
@@ -1216,16 +1213,14 @@ impl IdentityRepository {
         let mut update = sqlx::query(
             "UPDATE users SET display_name = $1, \
              title = CASE WHEN $2 THEN $3 ELSE title END, \
-             pronouns = CASE WHEN $4 THEN $5 ELSE pronouns END, \
-             timezone = CASE WHEN $6 THEN $7 ELSE timezone END, \
-             bio = CASE WHEN $8 THEN $9 ELSE bio END, \
-             phone = CASE WHEN $10 THEN $11 ELSE phone END, \
-             updated_at = $12, version = version + 1 WHERE id = $13",
+             timezone = CASE WHEN $4 THEN $5 ELSE timezone END, \
+             bio = CASE WHEN $6 THEN $7 ELSE bio END, \
+             phone = CASE WHEN $8 THEN $9 ELSE phone END, \
+             updated_at = $10, version = version + 1 WHERE id = $11",
         )
         .bind(display_name);
         for part in [
             &changes.title,
-            &changes.pronouns,
             &changes.timezone,
             &changes.bio,
             &changes.phone,

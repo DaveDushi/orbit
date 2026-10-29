@@ -56,6 +56,7 @@ export function toAttachment(record: ChatFileRecord): Attachment {
     mimeType: record.mime_type,
     fileSize: record.size_bytes,
     url: record.url,
+    deleted: record.deleted,
     ...(record.width !== null && record.height !== null ? { width: record.width, height: record.height } : {}),
   }
 }

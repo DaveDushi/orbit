@@ -1,4 +1,4 @@
-import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient, type createApiClient } from '@/api/client'
 import { fetchAllPages } from '@/api/pagination'
 import { queryKeys } from '@/api/queryKeys'
@@ -9,6 +9,7 @@ import {
   changeMemberRole,
   createInvitation,
   createWorkspace,
+  deleteStorageFile,
   deleteWorkspace,
   getWorkspaceBucket,
   getWorkspaceStorage,
@@ -22,6 +23,7 @@ import {
   revokeInvitation,
   transferOwnership,
 } from '@orbit/api/generated/sdk.gen'
+import { STORAGE_FILES_PAGE } from '@orbit/api/storage'
 import type { AcceptBody, InvitationBody, MemberRecord, RoleBody, S3Body, WorkspaceBucketView, WorkspaceRecord } from '@orbit/api/generated/types.gen'
 import type { User } from './models'
 
@@ -110,14 +112,28 @@ export function useInvitations(workspaceId: string | null) {
   })
 }
 
-/** Bytes of files the workspace stores, and its quota (`null` is unlimited). */
-export function useWorkspaceStorage(workspaceId: string) {
+/** Bytes of files the workspace stores, and its quota (`null` is unlimited); admins also get a page of the largest
+    files, from `offset`. */
+export function useWorkspaceStorage(workspaceId: string, offset = 0) {
   return useQuery({
-    queryKey: queryKeys.workspaceStorage(workspaceId),
+    queryKey: [...queryKeys.workspaceStorage(workspaceId), offset],
+    // the page stays while the next one loads
+    placeholderData: keepPreviousData,
     queryFn: async () => {
-      const { data } = await getWorkspaceStorage({ client: apiClient, path: { workspace_id: workspaceId }, throwOnError: true })
+      const { data } = await getWorkspaceStorage({ client: apiClient, path: { workspace_id: workspaceId }, query: { files: STORAGE_FILES_PAGE, offset }, throwOnError: true })
       return required(data, 'Workspace storage response was empty.')
     },
+  })
+}
+
+/** Deletes a stored file for an admin; where it was used, it then shows as a deleted file. */
+export function useDeleteStorageFile(workspaceId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (fileId: string) => {
+      await deleteStorageFile({ client: apiClient, path: { workspace_id: workspaceId, file_id: fileId }, throwOnError: true })
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.workspaceStorage(workspaceId) }),
   })
 }
 

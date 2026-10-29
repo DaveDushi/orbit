@@ -4,28 +4,26 @@ import type { UpdateMeBody, User } from './orbit'
 export interface ProfileForm {
   name: string
   title: string
-  pronouns: string
   phone: string
   timezone: string
   bio: string
 }
 
-type ProfileSource = Pick<User, 'display_name' | 'title' | 'pronouns' | 'phone' | 'timezone' | 'bio'>
+type ProfileSource = Pick<User, 'display_name' | 'title' | 'phone' | 'timezone' | 'bio'>
 
 export function profileFormOf(user: ProfileSource): ProfileForm {
-  return { name: user.display_name, title: user.title ?? '', pronouns: user.pronouns ?? '', phone: user.phone ?? '', timezone: user.timezone ?? '', bio: user.bio ?? '' }
+  return { name: user.display_name, title: user.title ?? '', phone: user.phone ?? '', timezone: user.timezone ?? '', bio: user.bio ?? '' }
 }
 
 const settled = (form: ProfileForm): ProfileForm => ({
   name: form.name.trim(),
   title: form.title.trim(),
-  pronouns: form.pronouns.trim(),
   phone: form.phone.trim(),
   timezone: form.timezone.trim(),
   bio: form.bio.trim(),
 })
 
-const OPTIONAL_PARTS = ['title', 'pronouns', 'phone', 'timezone', 'bio'] as const
+const OPTIONAL_PARTS = ['title', 'phone', 'timezone', 'bio'] as const
 
 /** A digit, and only digits, spaces and `+ - ( ) .`. */
 export const phoneValid = (phone: string) => /\d/.test(phone) && /^[\d +().-]+$/.test(phone)

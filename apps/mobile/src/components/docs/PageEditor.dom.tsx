@@ -12,6 +12,7 @@ import { commentMarks } from '@orbit/editor/commentMarks'
 import { CollabSession, type CollabProblem, type CollabState } from '@orbit/editor/collab/session'
 import { collabSocket, COLLAB_FRAGMENT } from '@orbit/editor/collab/target'
 import { ticketWebSocket, type TicketResult } from '@orbit/editor/collab/ticketSocket'
+import { watchDeletedFiles } from '@orbit/editor/deletedFiles'
 import { CALLOUT_DEFAULT_EMOJI, createEditorSchemas, type PageEditorInstance } from '@orbit/editor/schema'
 import { type DOMImperativeFactory, useDOMImperativeHandle } from 'expo/dom'
 import { createContext, type CSSProperties, type Ref, use, useEffect, useRef, useState } from 'react'
@@ -65,6 +66,8 @@ export interface PageEditorProps {
   getTicket: () => Promise<TicketResult>
   /** The data URL of an Orbit file (`/api/…`, which needs the session); `null` when it cannot be loaded. */
   loadFile: (url: string) => Promise<string | null>
+  /** An Orbit file an admin deleted (it answers 410): its file block says "Deleted file". */
+  fileDeleted: (url: string) => Promise<boolean>
   openPage: (pageId: string) => Promise<void>
   openUrl: (url: string) => Promise<void>
   onStatus: (state: CollabState) => Promise<void>
@@ -291,6 +294,8 @@ function Editor({ connection, editable, theme, server, actions, editorRef }: Edi
       },
     }),
   )
+
+  useEffect(() => watchDeletedFiles(editor, (url) => actions.current.fileDeleted(url)), [editor])
 
   useEffect(() => {
     editorRef.current = editor

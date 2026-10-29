@@ -171,8 +171,8 @@ export function Attachments({ files, hasText }: { files: readonly ChatFileRecord
   const image = useServerImage()
   const { width: screen } = useWindowDimensions()
   const [viewing, setViewing] = useState<ChatFileRecord | null>(null)
-  const images = files.filter(isImage)
-  const others = files.filter((file) => !isImage(file))
+  const images = files.filter((file) => isImage(file) && !file.deleted)
+  const others = files.filter((file) => !isImage(file) || file.deleted)
   const maxWidth = Math.min(screen - 12 - 30 - 8 - 12, 512)
   const single = images.length === 1 ? images[0] : undefined
   const singleSize = single?.width && single.height ? fit(single.width, single.height, maxWidth, 300) : { width: maxWidth, height: 200 }
@@ -240,6 +240,17 @@ function useOpenFile() {
 function FileCard({ file }: { file: ChatFileRecord }) {
   const { colors } = useTheme()
   const { open, opening } = useOpenFile()
+  if (file.deleted) {
+    return (
+      <View accessibilityLabel={`Deleted file ${file.file_name}`} className="max-w-112 flex-row items-center gap-3 p-3 rounded-lg border border-dashed border-border">
+        <Icon name="attach" size={28} color={colors.mutedForeground} />
+        <View className="flex-1 min-w-0">
+          <Text className="font-noto-medium text-[14px] leading-[20px] text-muted-foreground">Deleted file</Text>
+          <Text numberOfLines={1} className="text-[12px] leading-[16px] text-muted-foreground">{file.file_name} · an admin deleted it</Text>
+        </View>
+      </View>
+    )
+  }
   return (
     <Pressable
       accessibilityRole="button"

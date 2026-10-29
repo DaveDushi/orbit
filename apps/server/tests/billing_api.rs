@@ -598,6 +598,10 @@ async fn a_workspace_without_a_subscription_is_read_only_after_its_trial_until_i
             "subscription_data[metadata][workspace_id]",
             server.workspace_id.clone(),
         ),
+        ("automatic_tax[enabled]", "true".to_owned()),
+        ("customer_update[address]", "auto".to_owned()),
+        ("customer_update[name]", "auto".to_owned()),
+        ("tax_id_collection[enabled]", "true".to_owned()),
         (
             "success_url",
             "http://127.0.0.1:8080/settings/billing?checkout=success".to_owned(),

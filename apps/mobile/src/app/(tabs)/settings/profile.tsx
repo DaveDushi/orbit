@@ -44,7 +44,6 @@ export default function ProfileScreen() {
           <Input label="Name" required value={form.name} onChangeText={(name) => set({ name })} autoComplete="name" />
           <Input label="Email" value={user.email} editable={false} />
           <Input label="Title" value={form.title} onChangeText={(title) => set({ title })} placeholder="Product designer" maxLength={100} />
-          <Input label="Pronouns" value={form.pronouns} onChangeText={(pronouns) => set({ pronouns })} placeholder="she/her" maxLength={40} />
           <Input
             label="Phone number"
             value={form.phone}
