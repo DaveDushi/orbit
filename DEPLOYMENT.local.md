@@ -4,19 +4,20 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, local merge commit 6af5e606b79b8f6ff6201dda1e64fc42434edbb5
-  (fork commit bdaaecf plus these deployment notes).
+- Source: DaveDushi/orbit, local merge commit 59e35f7f568340230da6f7e054909eac530b4868
+  (`main` with the `team-agent` branch merged).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:6af5e60`); the fork commit has no published upstream image.
-- Image ID: sha256:5c7fce9295c0c31f62414b36c6c468aff5963f582fbd19be8a0c07c0d4cfe472
+  (`orbit:59e35f7`); fork commits have no published upstream image.
+- Image ID: sha256:3e288dd0657cefb9dd15b4822e8bdc4e5d90ab9235c90bc302372690f189227a
 - Executable: /usr/local/bin/orbit; unprivileged system user: orbit.
 - Config: /etc/orbit/orbit.env (production mode); registration remains closed in instance settings.
 - Environment-only startup: /etc/systemd/system/orbit.service.d/environment.conf.
 - Legacy TOML is retained at /etc/orbit/orbit.toml for the old binary and rollback only.
 - SQLite, attachments, encryption key: /var/lib/orbit/ (mode 700).
 - Local backups: /var/backups/orbit/ (mode 700).
-- systemd: orbit.service and nginx.service, enabled at boot.
-- nginx listens on 8000; Orbit listens only on loopback port 8080.
+- systemd: orbit.service, orbit-agent.service and nginx.service, enabled at boot.
+- nginx listens on 8000; Orbit listens only on loopback port 8080; the team agent
+  sidecar listens only on loopback port 8790 (see "Team agent sidecar").
 - exe.dev terminates TLS and authenticates private web access; nginx forwards its HTTPS transport header. Orbit trusts only loopback.
 - nginx access logging is disabled for this app to avoid logging invitation/setup tokens.
 
@@ -76,10 +77,51 @@ Two access layers apply:
 SMTP is optional, configured in Admin → Settings → Email. Without SMTP,
 share invitation links manually. Registration remains closed.
 
+## Team agent sidecar
+
+The team agent (`@Orbit Agent` in chat, Account → AI agent) is a Node sidecar from
+`apps/agent` (design: `.ai/agent-design.md`, operations: `docs/agent.md`).
+
+- Service: `orbit-agent.service`, user `orbit-agent` (no access to `/var/lib/orbit`),
+  `Restart=always`, started after `orbit.service`. Unit from `deploy/orbit-agent.service`;
+  the drop-in `/etc/systemd/system/orbit-agent.service.d/node.conf` points `ExecStart` at
+  `/opt/orbit-node/bin/node` (Node 24.11, a copy; the distro has no Node 22.19+) and sets
+  the data directory mode to 0700.
+- Code: `/opt/orbit-agent` (copy of `apps/agent` with `npm ci --omit=dev`), owned by root.
+- Data: `/var/lib/orbit-agent/pi.sqlite` (Pi Durable transcripts and runs, no tokens).
+  Orbit's backups do not include it; back it up together with Orbit's data.
+- Orbit settings in `/etc/orbit/orbit.env`: `ORBIT_AGENT_URL=http://127.0.0.1:8790` and
+  `ORBIT_AGENT_SECRET` (64 hex characters). Without `ORBIT_AGENT_URL` the feature is off.
+- Sidecar settings in `/etc/orbit/agent.env` (root, mode 600): `ORBIT_URL=http://127.0.0.1:8000`
+  (through local nginx), `ORBIT_PUBLIC_URL=https://orbit.wellrox.com`,
+  `ORBIT_FORWARDED_PROTO=https`, and the same `ORBIT_AGENT_SECRET`. Defaults are kept for
+  `AGENT_PORT` (8790), `AGENT_MODEL`, `AGENT_MAX_RUNS_PER_USER` and `AGENT_MAX_TOOL_CALLS`.
+  `AGENT_MOCK` is not set.
+- To change the secret: write a new value (`openssl rand -hex 32`) into both files, then
+  restart `orbit` and `orbit-agent`.
+- Each user connects their own ChatGPT account in Account → AI agent (device code).
+  Their tokens are sealed with the app key in Orbit's database (`agent_credentials`).
+
+```sh
+sudo systemctl status orbit-agent
+sudo journalctl -u orbit-agent -n 100 --no-pager
+curl -fsS http://127.0.0.1:8790/health           # {"ok":true,"mock":false}
+sudo systemctl restart orbit-agent                # safe at any time; Pi resumes runs
+sudo systemctl stop orbit-agent                   # mentions stay queued in Orbit
+sudo systemctl disable --now orbit-agent          # keep it off after reboot
+```
+
+To update the sidecar code: copy `apps/agent` (`package.json`, `package-lock.json`,
+`tsconfig.json`, `src`) to `/opt/orbit-agent`, run `npm ci --omit=dev` there, and restart
+`orbit-agent`.
+
+To turn the feature off completely: `systemctl disable --now orbit-agent`, remove the two
+`ORBIT_AGENT_*` lines from `/etc/orbit/orbit.env`, and restart `orbit`.
+
 ## Health and logs
 
 ```sh
-sudo systemctl status orbit nginx
+sudo systemctl status orbit orbit-agent nginx
 sudo journalctl -u orbit -n 100 --no-pager
 curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
 ```
@@ -123,6 +165,50 @@ sudo systemctl start orbit
 ```
 
 ## Verification performed
+
+### October 29, 2026 upgrade: team agent
+
+Merged the `team-agent` branch (6 commits, through `bbb3fcb`) into `main` without
+conflicts (merge `59e35f7`). Checks on the merge passed: clippy, 960 Rust tests (with
+`agent_api`), `api-check`, web build/lint, the agent typecheck and tests, packages, and the
+mobile typecheck. Not clean before this merge and not caused by it: `cargo fmt --check`
+reports drift in upstream files, and two timing-dependent tests in
+`apps/web/src/features/tasks/components/TaskList.test.tsx` also fail on the branch alone.
+
+Built `orbit:59e35f7` locally (as `ci.yml`), and `deploy/smoke.sh` passed. Stopped Orbit,
+created and verified snapshot `01a18843-5e7f-70d2-8ef7-e2148acabd35`
+(`/var/backups/orbit/snapshots/01a18843-5e7f-70d2-8ef7-e2148acabd35`) with the old CLI,
+and rehearsed migration 62 (`0062_agent.sql`) in
+`/var/lib/orbit/rehearsal-59e35f7-WGf9zU`. Applied it live: schema version 62,
+quick-check and foreign-key checks pass, counts unchanged (5 users, 1 workspace,
+2 projects, 10 tasks, 12 blobs, 228 chat messages). Orbit created the `Orbit Agent` bot
+user and its workspace membership at start.
+
+Installed the sidecar as described in "Team agent sidecar" with a new secret (not the test
+instance's). Verified: Orbit readiness (all checks), revision `59e35f7`, frontend and
+assets, HSTS/CSP, origin checks (400/403), `/api/v1/agent` rejects unauthenticated
+requests (401), the sidecar health reports `mock: false`, the sidecar accepts Orbit's
+secret on `/login/<user>` (the call behind the "online" state) and rejects requests
+without it, Orbit's internal agent API accepts the sidecar's secret and rejects a wrong
+one, and https://orbit.wellrox.com/ answers 307 to the exe.dev login. nginx did not
+change. A signed-in check of Account → AI agent, a ChatGPT connection and an agent run
+were not tested from this VM.
+
+Rollback (this changes data; preserve the current database first):
+
+```sh
+sudo systemctl disable --now orbit-agent
+sudo systemctl stop orbit
+sudo cp -p /etc/orbit/orbit.env.before-agent /etc/orbit/orbit.env
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-6af5e60 backup verify 01a18843-5e7f-70d2-8ef7-e2148acabd35 && /usr/local/bin/orbit-6af5e60 backup restore 01a18843-5e7f-70d2-8ef7-e2148acabd35'
+sudo install -m 755 /usr/local/bin/orbit-6af5e60 /usr/local/bin/orbit
+sudo systemctl start orbit
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+```
+
+The previous executable is `/usr/local/bin/orbit-6af5e60`; the previous Orbit
+environment is `/etc/orbit/orbit.env.before-agent`. Chat, tasks and ChatGPT
+connections made after the snapshot are lost by a restore.
 
 ### October 29, 2026 upgrade (locally built image)
 
