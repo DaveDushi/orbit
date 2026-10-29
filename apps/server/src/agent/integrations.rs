@@ -1112,22 +1112,28 @@ enum Action {
 
 /// JSON with object keys in sorted order, so equal arguments always hash the same.
 pub(crate) fn canonical(value: &Value) -> String {
-    fn sorted(value: &Value) -> Value {
-        match value {
-            Value::Object(map) => {
-                let mut keys: Vec<&String> = map.keys().collect();
-                keys.sort();
-                let mut result = Map::new();
-                for key in keys {
-                    result.insert(key.clone(), sorted(&map[key]));
-                }
-                Value::Object(result)
-            }
-            Value::Array(items) => Value::Array(items.iter().map(sorted).collect()),
-            other => other.clone(),
-        }
-    }
     sorted(value).to_string()
+}
+
+/// As [`canonical`], one key per line, for the driver to read.
+fn readable(value: &Value) -> String {
+    serde_json::to_string_pretty(&sorted(value)).unwrap_or_else(|_| canonical(value))
+}
+
+fn sorted(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let mut result = Map::new();
+            for key in keys {
+                result.insert(key.clone(), sorted(&map[key]));
+            }
+            Value::Object(result)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(sorted).collect()),
+        other => other.clone(),
+    }
 }
 
 fn hash(text: &str) -> String {
@@ -1225,15 +1231,15 @@ impl Action {
             Self::Mcp {
                 tool, arguments, ..
             } => format!(
-                "{} → {tool} with arguments {}",
+                "{} → {tool} with arguments\n{}",
                 integration.name,
-                canonical(arguments)
+                readable(arguments)
             ),
             Self::Api {
                 method, url, body, ..
             } => {
                 let body = body.as_ref().map_or_else(String::new, |body| {
-                    format!(" with body {}", canonical(body))
+                    format!(" with body\n{}", readable(body))
                 });
                 format!("{}: {method} {url}{body}", integration.name)
             }

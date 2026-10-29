@@ -60,7 +60,8 @@ const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
 	memory_summarize: () => "Summarizing memory",
 	memory_recall: (args) => `Searching memory for “${args.query}”`,
 	memory_zoom: () => "Reading older memory",
-	use_integration: (args) => `Using ${args.tool}`,
+	// The steps are shown in italics, where `_` would start or end the emphasis.
+	use_integration: (args) => `Using ${String(args.tool).replace("__", " → ").replaceAll("_", " ")}`,
 };
 
 /** Edits the run's progress message at most every 1.5 s with the steps so far and the text being written. */
