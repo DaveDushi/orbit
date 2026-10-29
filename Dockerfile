@@ -16,6 +16,7 @@ ARG ORBIT_BUILD_REVISION
 RUN ORBIT_BUILD_REVISION=${ORBIT_BUILD_REVISION} bun run build
 
 FROM rust:1.97.1-alpine AS server
+ENV CARGO_BUILD_JOBS=1
 RUN apk add --no-cache musl-dev
 WORKDIR /src
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./

@@ -1,5 +1,121 @@
 # Deploy Orbit
 
+## Shared build VM operator setup
+
+This is opt-in Linux/systemd VM infrastructure, not a requirement for ordinary developers or CI.
+It isolates heavy Orbit builds from Jean and other interactive services. The shared
+`orbit-builds.slice` has `MemoryHigh=3G` (soft pressure), `MemoryMax=4G` (aggregate hard ceiling),
+and low CPU/IO weights. All guarded commands share one host-wide flock across users and worktrees.
+Do not put Jean in this slice or restart it to recover build memory.
+
+From the repository root, as an operator with sudo:
+
+```sh
+sudo install -m 0755 scripts/build-limited.sh /usr/local/bin/orbit-build
+sudo install -m 0755 scripts/docker-build-guard.sh /usr/local/bin/docker
+sudo install -m 0644 deploy/orbit-builds.slice /etc/systemd/system/orbit-builds.slice
+sudo install -d -o root -g root -m 0755 /var/lib/orbit-builds
+sudo touch /var/lib/orbit-builds/build.lock
+sudo chown root:root /var/lib/orbit-builds/build.lock
+sudo chmod 0666 /var/lib/orbit-builds/build.lock
+sudo systemctl daemon-reload
+sudo systemctl start orbit-builds.slice
+```
+
+Never remove or replace the lock while any guard is running. Its root-owned parent directory prevents
+unprivileged replacement; mode 0666 allows both root and exedev to open the same inode.
+The helper requires Bash, util-linux `flock`, systemd supporting `--expand-environment=no`, and
+passwordless `sudo -E systemd-run` for non-root callers. The command drops back to its original numeric
+UID/GID before execution, retaining cwd, stdio, environment, and exit status. It forwards normal
+termination signals while retaining the lock until the child exits. These are cooperative resource
+controls for trusted VM users, not a security sandbox. Do not grant untrusted users unrestricted sudo.
+Missing setup or scope creation failures fail closed; they never silently run an unguarded build.
+
+Merge (do not overwrite unrelated existing configuration) the following into **both**
+`/root/.cargo/config.toml` and `/home/exedev/.cargo/config.toml`:
+
+```toml
+[build]
+jobs = 1
+rustc-wrapper = "/usr/local/bin/orbit-build"
+```
+
+Keep `/usr/local/bin` ahead of `/usr/bin` in both users' `PATH`. The installed Cargo wrapper catches
+raw Cargo compiler invocations, including probes, but wrap whole native build/check/test recipes with
+`orbit-build` as well so Cargo, linkers, and test processes share the same scope/lock. The reentry
+marker is set only inside that scope, so nested Cargo/rustc wrappers do not deadlock. Do not set
+`ORBIT_DEV_BUILD_GUARD_ACTIVE` yourself or override the jobs/wrapper configuration.
+With raw Cargo, the small Cargo parent remains outside the slice and individual compiler invocations
+are serialized; `orbit-build cargo test …` also caps the test executables and the whole Cargo process.
+
+### Isolated Docker worker
+
+Limiting the Docker client does **not** limit daemon-side compilers. Use a dedicated, explicitly
+managed BuildKit container and a Buildx **remote** builder. Do not rely on the docker-container driver's
+`cgroup-parent` option on a host using Docker's systemd cgroup driver.
+
+```sh
+sudo install -m 0644 deploy/buildkitd.toml /etc/orbit-buildkit.toml
+sudo install -m 0644 deploy/orbit-buildkit.service /etc/systemd/system/orbit-buildkit.service
+sudo /usr/bin/docker volume create orbit-buildkit-state
+sudo /usr/bin/docker create --name orbit-buildkit --restart=no --privileged \
+  --cgroup-parent=orbit-builds.slice --memory=4g --memory-swap=4g \
+  -v orbit-buildkit-state:/var/lib/buildkit \
+  -v /etc/orbit-buildkit.toml:/etc/buildkit/buildkitd.toml:ro \
+  moby/buildkit:v0.26.2
+sudo systemctl daemon-reload
+sudo systemctl enable --now orbit-buildkit.service
+sudo -H /usr/bin/docker buildx create --name orbit-limited --driver remote \
+  docker-container://orbit-buildkit
+sudo -H -u exedev /usr/bin/docker buildx create --name orbit-limited --driver remote \
+  docker-container://orbit-buildkit
+sudo -H /usr/bin/docker buildx inspect orbit-limited --bootstrap
+sudo -H -u exedev /usr/bin/docker buildx inspect orbit-limited --bootstrap
+```
+
+Creation commands are one-time steps: inspect existing containers/builders instead of recreating
+them blindly. The privileged worker is dedicated to trusted local builds; expose no BuildKit TCP port.
+Systemd owns restart behavior (`--restart=no` on the container). `--memory-swap=4g` equals its 4 GiB
+memory limit, disabling additional swap allowance. BuildKit schedules one OCI build operation at a
+time. Its GC settings reserve 512 MB, target at most 2 GB cache, and aim for 2 GB free disk; these are
+GC targets, **not hard disk quotas**. The first build has a cold, independent cache and may take longer.
+
+After changing BuildKit config, restart `orbit-buildkit.service`. Container memory/cgroup/image changes
+require stopping the service and deliberately recreating the container with the same state volume.
+Do not remove `orbit-buildkit-state` unless intentionally discarding the build cache.
+
+### Run and verify
+
+```sh
+orbit-build cargo test --workspace
+just limited cargo build --release --workspace
+docker build --build-arg ORBIT_BUILD_REVISION="$(git rev-parse HEAD)" -t orbit:local .
+docker buildx build --builder=orbit-limited --load -t orbit:local .
+# Explicit equivalent, without relying on the installed Docker PATH wrapper:
+orbit-build /usr/bin/docker buildx build --builder=orbit-limited --load -t orbit:local .
+
+systemctl show orbit-builds.slice -p ControlGroup -p MemoryHigh -p MemoryMax -p MemoryCurrent
+sudo /usr/bin/docker inspect orbit-buildkit \
+  --format '{{.HostConfig.CgroupParent}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}'
+pid=$(sudo /usr/bin/docker inspect orbit-buildkit --format '{{.State.Pid}}')
+sudo cat "/proc/$pid/cgroup"
+bash scripts/test-build-guards.sh
+```
+
+The worker's actual cgroup must be below `/orbit.slice/orbit-builds.slice/` (normally a
+`docker-…scope` child), not just the Docker client. Inspect a running native compiler's
+`/proc/<pid>/cgroup` too. Verify both root and exedev, and confirm simultaneous guarded commands
+serialize. The Docker PATH wrapper routes `docker build` and `docker buildx build` through the
+same lock and forces `orbit-limited`; conflicting explicit `--builder` values are rejected.
+`docker build` adds `--load` unless explicit `--output`/`-o`, `--push`, or `--load` options are present;
+`docker buildx build` retains your export options unchanged. Other Docker commands pass through unchanged.
+The unprivileged mock suite requires Bash and Python 3; it does not access Docker or systemd.
+
+Do not bypass the wrapper with `/usr/bin/docker build`, alternate builders, Docker global-option
+forms such as `docker --context … build`, or Compose builds. For Compose, first build/tag the image
+using the limited builder, then run `docker compose up` **without** `--build`. Wrapping Compose alone
+does not guarantee that its daemon-side worker is isolated.
+
 ## Docker with HTTPS
 
 Requirements: Docker Compose, a DNS hostname pointing to this host, and inbound TCP ports 80/443 for Caddy certificate issuance. The example uses a dedicated `172.30.0.0/24` Docker network. Change both its proxy address and the trusted-proxy setting if that subnet conflicts with your host.

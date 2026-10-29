@@ -55,6 +55,45 @@ ORBIT_TEST_POSTGRES_URL=postgres://orbit:orbit@127.0.0.1:15432/orbit cargo test 
 cd apps/web && bun run lint && bun run test && bun run build
 ```
 
+## Shared build VM resource limits
+
+The portable repository defaults to one Cargo job (`.cargo/config.toml`); the Docker Rust build stage
+also sets `CARGO_BUILD_JOBS=1`. Normal developer recipes remain unchanged. On the configured shared
+Linux VM, use the installed helper for **all heavy native builds, checks, and tests**:
+
+```bash
+orbit-build cargo test --workspace
+orbit-build just build
+just limited cargo build --release --workspace
+docker build -t orbit:local .
+docker buildx build --builder=orbit-limited --load -t orbit:local .
+```
+
+`orbit-build` (the installed `scripts/build-limited.sh`) serializes heavy commands across users and
+worktrees via `/var/lib/orbit-builds/build.lock`. It runs them in `orbit-builds.slice`, separate from
+Jean, with an aggregate 3 GiB soft / 4 GiB hard memory budget. It preserves the invoking UID/GID, cwd,
+environment, stdio, status, and normal termination signals, and forces `CARGO_BUILD_JOBS=1`.
+The inherited reentry marker prevents nested Cargo/rustc wrappers from reacquiring the lock.
+Do not set that marker yourself, override job limits, or restart Jean for build memory pressure.
+
+Both root and exedev have a global Cargo `rustc-wrapper` pointing to the helper as a backstop for raw
+Cargo commands. This serializes individual compiler invocations (including probes); the small Cargo
+parent stays outside the slice. Guard the whole Cargo invocation so linkers, tests, and all children
+are capped too. The helper fails explicitly when VM prerequisites are unavailable; use normal recipes
+on other machines, not this opt-in helper. `just limited` forwards its arguments to the helper.
+
+The VM's installed Docker PATH wrapper sends `docker build` and `docker buildx build` through the
+same lock and dedicated `orbit-limited` builder, rejecting conflicting builder flags. The actual
+BuildKit container, not merely the client, is in the memory-limited slice. `docker build` loads the
+image unless explicit export/load/push options are supplied; with `buildx build`, choose `--load`,
+`--push`, or `--output` yourself. The first build has a cold, separate cache. Do not use alternate
+builders, `/usr/bin/docker build`, Docker global-option forms (`docker --context … build`), or Compose
+`--build` to bypass this setup. Build/tag with the limited builder, then run Compose without `--build`.
+
+Operator setup, tracked systemd units and BuildKit configuration, and verification commands are in
+[`deploy/README.md`](../deploy/README.md#shared-build-vm-operator-setup). The mock regression suite needs
+no privileged services: `bash scripts/test-build-guards.sh`.
+
 ## Native production build
 
 Build the frontend first because Cargo embeds `apps/web/dist`:
