@@ -299,8 +299,17 @@ Durable compacts on its own, but relative to the model's window: for `gpt-6.1-so
   well; a summary plus 40k recent tokens keeps what matters for the next instruction.
 - **Who pays.** The summarization request carries the conversation's provider session id, so `routedModels` sends it
   to the payer of the conversation: the driver of the newest run. It is one request of about 210k input tokens (no
-  prompt cache) per compaction. Its output limit is Pi's `0.8 * reserveTokens`, capped by the model's `maxTokens`
-  (128k); Pi's summary prompt keeps it short.
+  prompt cache) per compaction.
+- **Summary model.** A `beforeCompact` hook in the `orbit` extension (every conversation selects it) writes the
+  summary with `AGENT_COMPACT_MODEL` (`gpt-6-luna`) and `AGENT_COMPACT_THINKING` (`high`), not with the
+  conversation's model. Luna's input costs about 1/20 of Sol's on the driver's plan, and the summary needs reading
+  more than reasoning; high thinking keeps its quality. Pi 1.4.0 has no compaction-model setting and does not export
+  its summary prompt, so `compaction.ts` has a short equivalent with the same sections and Pi's `instructions`. The
+  request has the same session id, so the same payer. When the source plus 30k (thinking and summary) does not fit
+  Luna's 272k window, or the request fails after 2 retries, the hook returns nothing and Pi summarizes with the
+  conversation's model as before (Pi's output limit there: `0.8 * reserveTokens`, capped at the model's 128k). The
+  result, or the fallback, is memoized on the compaction task (`api.memo`), so a hook that runs again after a
+  restart does not ask again. Pi does not count a hook's request in `pi.usage`; Orbit does not read it.
 - **What is kept.** The summary (Pi's structured prompt: goal, progress, decisions, next steps), the recent 40k, and
   the system prompt: after a compaction Pi writes one complete baseline with every section (`orbit`,
   `orbit-context`, `orbit-memory`) and it leads the context. The memory wake view is read again at each run start,

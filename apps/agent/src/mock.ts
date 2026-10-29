@@ -69,11 +69,11 @@ export function plan(instruction: string, messages: readonly Message[]): { name:
 }
 
 /** One scripted answer for the transcript so far. */
-export function respond(messages: readonly Message[]): AssistantMessage {
+export function respond(messages: readonly Message[], modelId = "mock"): AssistantMessage {
 	if (process.env.AGENT_MOCK_DEBUG) console.log("mock model sees", JSON.stringify(messages.map((m) => ({ role: m.role, tool: m.toolName, text: textOf(m.content).slice(0, 120), raw: JSON.stringify(m).slice(0, 700) }))));
 	// Pi's compaction asks for a summary of the older conversation: never act on what that conversation said.
 	if (messages[0]?.role === "system" && textOf(messages[0].content).startsWith("You are a context summarization assistant")) {
-		return fauxAssistantMessage(fauxText(`## Goal\n(mock summary of ${textOf(messages.at(-1)?.content).length} characters)`));
+		return fauxAssistantMessage(fauxText(`## Goal\n(mock summary by ${modelId} of ${textOf(messages.at(-1)?.content).length} characters)`));
 	}
 	const last = messages[messages.length - 1];
 	if (last?.role === "toolResult") {
@@ -97,10 +97,11 @@ export function respond(messages: readonly Message[]): AssistantMessage {
 	return fauxAssistantMessage(fauxToolCall(call.name, call.args), { stopReason: "toolUse" });
 }
 
-/** A `Models` whose only model is a scripted one under the ChatGPT provider's id. */
-export function mockModels(modelId: string): Models {
-	const faux = fauxProvider({ provider: PROVIDER, models: [{ id: modelId, contextWindow: 200_000, maxTokens: 8_000 }], tokensPerSecond: 400 });
-	const factory = (context: { messages: readonly unknown[] }) => respond(context.messages as Message[]);
+/** A `Models` with scripted models under the ChatGPT provider's id: the conversation's and the compaction model. */
+export function mockModels(modelId: string, compactModelId?: string): Models {
+	const ids = [...new Set([modelId, compactModelId ?? modelId])];
+	const faux = fauxProvider({ provider: PROVIDER, models: ids.map((id) => ({ id, contextWindow: 200_000, maxTokens: 8_000 })), tokensPerSecond: 400 });
+	const factory = (context: { messages: readonly unknown[] }, _options: unknown, _state: unknown, model: { id: string }) => respond(context.messages as Message[], model.id);
 	faux.setResponses(Array.from({ length: 1_000 }, () => factory));
 	const models = createModels();
 	models.setProvider(faux.provider);

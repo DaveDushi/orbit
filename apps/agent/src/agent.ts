@@ -136,11 +136,12 @@ export class Agent {
 				publicUrl: this.#config.publicUrl,
 				maxToolCalls: this.#config.maxToolCallsPerRun,
 				botUserId: () => this.botUserId,
+				compactWith: this.#config.compactModel ? { model: this.#config.compactModel, thinking: this.#config.compactThinking } : undefined,
 			}),
 		);
 		let models: Models;
 		if (this.#config.mock) {
-			models = mockModels(this.#config.model);
+			models = mockModels(this.#config.model, this.#config.compactModel);
 		} else {
 			const base = createModels();
 			base.setProvider(openaiCodexProvider());
