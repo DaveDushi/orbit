@@ -9,6 +9,9 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 - Binary extracted from the image built locally on this VM from that commit
   (`orbit:1a80ba8`); fork commits have no published upstream image.
 - Image ID: sha256:93214f663ed4d799d5eb904c96027540f7648d3bce497d4fd8737e5ba9deaa5c
+- Team agent sidecar code (`/opt/orbit-agent`): local merge commit 01cd6b063677412a0dbfee591f9806bf44c3909c
+  (`main` with the `agent-compaction` branch merged). Orbit's binary did not change: that
+  merge changes only `apps/agent` and docs.
 - Executable: /usr/local/bin/orbit; unprivileged system user: orbit.
 - Config: /etc/orbit/orbit.env (production mode); registration remains closed in instance settings.
 - Environment-only startup: /etc/systemd/system/orbit.service.d/environment.conf.
@@ -174,6 +177,40 @@ sudo systemctl start orbit
 ```
 
 ## Verification performed
+
+### October 29, 2026 upgrade: agent compaction (sidecar only)
+
+Merged the `agent-compaction` branch (2 commits, through `9d2d551`, based on `ae06487`)
+into `main` without conflicts (merge `01cd6b0`). It changes only `apps/agent` and docs, so
+Orbit's binary (`orbit:1a80ba8`), its database and nginx did not change. On merged `main`:
+the sidecar typecheck and its 20 tests passed.
+
+Stopped `orbit-agent`. Saved its data as
+`/var/backups/orbit-agent/orbit-agent-before-01cd6b0.tgz` and the old code as
+`/opt/orbit-agent.before-01cd6b0`. Installed the new code (`src` with `compaction.ts`,
+`package.json`, `package-lock.json`, `tsconfig.json`). `package.json` and
+`package-lock.json` did not change and this VM has no `npm`, so `node_modules` is the
+installed production copy. Started `orbit-agent`. `/etc/orbit/agent.env` did not change:
+the defaults apply (`AGENT_COMPACT_TOKENS` 250000, `AGENT_COMPACT_MODEL` `gpt-6-luna`,
+`AGENT_COMPACT_THINKING` `high`).
+
+Verified: `orbit`, `orbit-agent` and nginx are active; Orbit readiness (all checks); the
+sidecar started with the new settings and polls Orbit's queue without errors; sidecar health
+`mock: false`; the internal agent API answers 200 with the sidecar's secret and 401 without
+it; `/api/v1/agent` 401; https://orbit.wellrox.com/ answers 307 to the exe.dev login.
+`pi.sqlite` is the same before and after (5 conversations, 39 entries, no open tasks); no
+conversation is near 250k tokens yet, so no compaction ran. An agent run in chat needs a
+signed-in person and their ChatGPT account and was not tested from this VM.
+
+Rollback (sidecar only; agent work after the deploy is lost):
+
+```sh
+sudo systemctl stop orbit-agent
+sudo rm -rf /opt/orbit-agent && sudo cp -a /opt/orbit-agent.before-01cd6b0 /opt/orbit-agent
+sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-01cd6b0.tgz
+sudo systemctl start orbit-agent
+curl -fsS http://127.0.0.1:8790/health
+```
 
 ### October 29, 2026 upgrade: agent memory
 
