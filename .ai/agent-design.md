@@ -44,8 +44,9 @@ agent thread in it. The sidecar caches the token until one minute before expiry.
 
 - must exist in `agent_sessions` (else 401), and
 - may only call `/api/v1/workspaces/{its workspace}/…`, and
-- may not call these workspace routes: `api-tokens`, `service-accounts`, `integrations`, `members`, `invitations`,
-  `transfer-ownership`, `export`, `imports`, `billing`, `storage`, `audit`, and `DELETE` on the workspace itself.
+- may not call these workspace routes: `agent-integrations`, `api-tokens`, `audit`, `github`, `imports`,
+  `invitations`, `live`, `restore`, `storage`, `transfer-ownership`, any write on `members`, `DELETE` on
+  `agent-memory`, and any write on the workspace itself (`agent::scope::DENIED`).
 
 So the agent cannot change the password, e-mail, 2FA, passkeys or sessions, cannot mint long-lived API tokens, cannot
 touch another workspace, and cannot reach the installation admin routes, even when the user is an admin. "Full
@@ -114,9 +115,12 @@ flow in pi-ai binds port 1455 and allows one login at a time, so we do not use i
 - Tools return data in fenced blocks labelled as untrusted content. The system prompt says that only the driver's
   messages are instructions; text from tasks, docs and other messages is data.
 - The blast radius is the driver's own Orbit access in one workspace, minus the denied routes (section 2). No shell,
-  no network tool, no delete tool, no posting outside the current thread, no access to other workspaces.
+  no delete tool, no posting outside the current thread, no access to other workspaces.
 - Each run is limited to 40 tool calls (a `beforeTool` hook blocks more).
-- The agent cannot send what it reads outside Orbit: it has no web or e-mail tool.
+- **Changed with integrations (2026-10-29):** "no internet" is no longer the whole defence. The agent can now reach
+  the outside, but only through the agent tools that owners and admins set up, with Orbit making each call, and
+  every write needs the driver's "yes" checked by Orbit. It still has no general web, fetch or e-mail tool. See
+  "Integrations" below (I1–I8).
 
 ### 9. Rate limits
 
@@ -279,3 +283,122 @@ their ancestors.
 
 Several Orbit servers on Postgres share one memory; backups and restore include it; the same permission code reads it.
 The sidecar stays stateless for memory.
+
+## Integrations
+
+Status: built on branch `agent-integrations` (2026-10-29). Owners and admins give the agent tools outside Orbit:
+**remote MCP servers** (Streamable HTTP) and **HTTP APIs** (base URL + one auth header). No CLI connector and no
+shell. Code: `apps/server/src/agent/integrations.rs` (settings, routes, approvals), `apps/server/src/agent/outbound.rs`
+(the external calls), migration `0064_agent_integrations.sql` (renumber it if another branch merges a `0064` first),
+`apps/agent/src/integrations.ts`, `apps/web/src/features/agentIntegrations/`.
+
+```text
+admin (cookie) ──► /workspaces/{id}/agent-integrations ── sealed credential, roles, tools/methods ──► agent_integrations
+sidecar (driver's agent session) ──► /workspaces/{id}/agent-tools[/call] ──► Orbit checks role, tool, thread, approval
+                                                                               └──► Orbit ──HTTPS──► MCP server / API
+```
+
+### Model
+
+- One **integration** per external service, in one workspace: kind (`mcp` | `http`), name, **slug** (the tool
+  prefix), URL, one credential (header name + value, sealed with `ORBIT_APP_KEY` in `secret_box`), the **roles**
+  that may use it, and the MCP tools that are on (with a snapshot of the server's `tools/list`) or the HTTP methods
+  that are allowed.
+- The agent sees `<slug>__<tool>` (MCP) or `<slug>__api_request` (HTTP) in a prompt section that the sidecar reads
+  as the driver at the start of each run, and calls them through **one** Pi tool, `use_integration(tool, arguments)`.
+  Pi Durable's tools are a static registry stored by name in each conversation; one tool per external tool would
+  need extensions installed at run time and present again before every resume, and the shared thread transcript
+  would mix the tool sets of different drivers. One fixed tool plus a per-run section avoids both.
+- No MCP client crate: Orbit speaks the small part of Streamable HTTP it needs (`initialize`,
+  `notifications/initialized`, `tools/list`, `tools/call`, JSON or SSE answers, `Mcp-Session-Id`) on its own
+  `reqwest` 0.12 client. rmcp's client transport pulls in `reqwest` 0.13 (a second HTTP and TLS stack) and its own
+  connection handling, where Orbit must control address checks, redirects and byte limits.
+
+### Grilling: questions and answers
+
+#### I1. Who can set them up, who can use them?
+
+- Admin routes (`/workspaces/{id}/agent-integrations…`) need `integrations.manage` (owners and admins) and a normal
+  session: `agent::scope` denies the segment to agent sessions, and the handler checks again. Others get 403,
+  non-members 404.
+- Agent routes (`/workspaces/{id}/agent-tools…`) accept only an **agent session of that workspace** (a person's
+  cookie gets 403, so nobody can use the shared credential past the agent and its approvals). The call also needs a
+  **running** `agent_threads` row for the given conversation and root whose driver is the caller.
+- The driver's **current role** must be in the integration's roles, for listing and for every call.
+
+#### I2. Credential leakage
+
+- The credential is sealed at rest; the admin API returns only `secret_set` and the header name. Leaving `secret`
+  out of an update keeps it; `""` removes it.
+- The sidecar never sees it: it calls Orbit with the driver's agent session; Orbit opens the credential for the one
+  external request (`HeaderValue::set_sensitive`, `Debug` redacted) and never logs it.
+- Errors given to the agent and the audit log carry no URL query, no body and no credential.
+- A credential can still leak through the *service*: a tool that echoes request headers, or a write that stores data
+  somewhere public. Admins should use tokens with the smallest scope. One credential is shared by everyone in the
+  allowed roles: it acts the same for each of them, and the service sees one identity.
+
+#### I3. Exfiltration through write tools
+
+The new risk: a prompt injection (from a task, page, message or a tool result) makes the agent send Orbit content
+to the outside. Answers:
+
+- Writes (an MCP tool without `readOnlyHint: true`, an HTTP method other than GET/HEAD) run only with the
+  **driver's approval**, enforced in Orbit (I4). The approval question shows the exact action and arguments, so the
+  driver sees what leaves Orbit.
+- MCP tools are off until an admin turns them on (read-only ones are on after the first test).
+- Remaining gap: **reads can carry data too** (a GET with Orbit text in the query or path, a "read-only" MCP tool
+  whose arguments reach the server). Admins choose the services; the prompt says to send Orbit content only when the
+  driver asked for exactly that. This is a rule for the model, not a hard check. A server can also lie about
+  `readOnlyHint`; admins enable only tools of servers they trust.
+
+#### I4. Approvals: why they cannot be faked
+
+- An approval row is bound to the **driver, the conversation and thread root, the integration, the tool and the
+  SHA-256 of the canonical arguments** (object keys sorted). It lives 30 minutes and is used once (`used_at`, in an
+  `immediate_transaction`).
+- Orbit grants it only when the driver posted a message in that thread **after** the approval was made whose first
+  word (after mentions) is `yes`, `approve` or `approved`. Orbit reads this from `chat_messages` itself: the model
+  and the sidecar cannot write a message as the driver (the bot posts as the bot).
+- Other members' replies never count, changed arguments make a new approval, a used or expired one makes a new one.
+- Flow: the call answers `approval_required` with the exact action; the sidecar posts the question to the driver and
+  ends the run waiting for them (the `ask_teammate` path). The driver's reply starts the next run; the model calls
+  the same tool with the same arguments, and Orbit finds the yes. No approval state lives in the sidecar.
+- In a shared thread, a teammate can still answer the question with words that make the model try again; Orbit then
+  answers `approval_required` again.
+
+#### I5. Injection from tool output and descriptions
+
+- Tool results and the tool list (names and descriptions come from the external server) are inside
+  `<orbit-data source="integration …">` fences, and the prompt says they are data. Output is cut at 12,000
+  characters by the sidecar and 1 MiB by Orbit.
+- An injected run is still limited to the driver's permissions, the enabled tools, the approvals and 40 tool calls.
+
+#### I6. SSRF
+
+- URLs: HTTPS only, no user info, no fragment, IP literals must be public (`orbit_platform::is_public_ip`: loopback,
+  private, link-local incl. `169.254.169.254`, shared, reserved, IPv4-mapped and NAT64 forms are refused). Checked
+  when saved and again before each call.
+- Host names: the client's resolver refuses a host if **any** of its addresses is not public, at connect time, so a
+  DNS rebind cannot pass. No redirects are followed and no proxy is used.
+- HTTP paths: refused when they do not start with `/`, start with `//`, contain `..` or `.` segments, `%2e`, `%2f`,
+  `%5c`, `%00`, `\`, `?`, `#`, control characters or `://`; after joining, scheme, host, port and the base path
+  prefix are compared again. Query values are encoded by Orbit.
+- `ORBIT_AGENT_INTEGRATION_TEST_HOSTS` lets listed hosts use HTTP and local addresses, for local tests only (logged
+  as a warning at start). Never in production.
+
+#### I7. Limits and audit
+
+- 30 s per external request (5 s to connect), 1 MiB per answer (an HTTP answer is cut and marked `truncated`, an MCP
+  answer over the limit fails), 64 KiB of arguments, 50 integrations per workspace, 20 pages of `tools/list`.
+- Each MCP call opens and ends its own session (initialize, call, `DELETE`), so no state lives between runs.
+- Audit: `agent_integration.create|update|delete|test|call` with the actor (the driver for calls), the integration
+  and for calls the tool or method, path and status, never bodies, arguments, query strings or secrets.
+
+#### I8. What happens when things change
+
+- Removing an integration deletes its approvals; the next run of the agent no longer lists it. A run in progress gets
+  404 for it.
+- A changed MCP URL clears the tool snapshot and the enabled tools until the next test. A tool that disappears from
+  the server at a test is turned off.
+- A role change of a member applies at the next call. A changed app key makes the credential unreadable: the test
+  and the calls say so, and an admin enters it again.
