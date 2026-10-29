@@ -6,17 +6,21 @@
 pub(crate) mod bot;
 pub(crate) mod credentials;
 pub mod inputs;
+mod integrations;
 pub mod memory;
 mod memory_routes;
+mod outbound;
 mod routes;
 pub mod scope;
 pub(crate) mod sessions;
 
 use std::sync::Arc;
 
-/// The agent's routes: the sidecar's, the ChatGPT connection, and the memory.
+/// The agent's routes: the sidecar's, the ChatGPT connection, the memory and the integrations.
 pub fn router(state: AgentState) -> axum::Router {
-    routes::router(state.clone()).merge(memory_routes::router(state))
+    routes::router(state.clone())
+        .merge(memory_routes::router(state.clone()))
+        .merge(integrations::router(state))
 }
 
 use crate::auth_routes::CookieMode;
@@ -78,6 +82,8 @@ pub struct AgentState {
     /// Seals the ChatGPT credentials; without it nobody can connect.
     pub(crate) app_key: Option<[u8; 32]>,
     pub(crate) http: reqwest::Client,
+    /// Calls to the integrations' MCP servers and HTTP APIs.
+    pub(crate) outbound: outbound::Outbound,
 }
 
 impl AgentState {
@@ -99,7 +105,15 @@ impl AgentState {
                 .timeout(std::time::Duration::from_secs(20))
                 .build()
                 .unwrap_or_default(),
+            outbound: outbound::Outbound::new(outbound::TestHosts::from_env()),
         }
+    }
+
+    /// Lets integrations reach these hosts over plain HTTP and on local addresses: for tests only.
+    #[must_use]
+    pub fn with_integration_test_hosts(mut self, hosts: &[&str]) -> Self {
+        self.outbound = outbound::Outbound::new(outbound::TestHosts::new(hosts.iter().copied()));
+        self
     }
 
     pub(crate) fn database(&self) -> &orbit_platform::Database {
