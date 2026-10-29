@@ -1370,7 +1370,6 @@ export type MemberProfile = {
      */
     note?: string | null;
     phone?: string | null;
-    pronouns?: string | null;
     /**
      * An IANA time zone name.
      */
@@ -2514,7 +2513,6 @@ export type ProfileFields = {
      * As the user wrote it; not verified.
      */
     phone?: string | null;
-    pronouns?: string | null;
     /**
      * An IANA time zone name, such as `Europe/Budapest`.
      */
@@ -3432,7 +3430,6 @@ export type UpdateMeBody = {
     bio?: string | null;
     display_name: string;
     phone?: string | null;
-    pronouns?: string | null;
     timezone?: string | null;
     /**
      * The optional parts: absent leaves the part as it is, an empty text removes it.

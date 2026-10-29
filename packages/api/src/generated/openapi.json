@@ -37124,12 +37124,6 @@
               "null"
             ]
           },
-          "pronouns": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "timezone": {
             "type": [
               "string",
@@ -40047,12 +40041,6 @@
             ],
             "description": "As the user wrote it; not verified."
           },
-          "pronouns": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "timezone": {
             "type": [
               "string",
@@ -42493,12 +42481,6 @@
             "type": "string"
           },
           "phone": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "pronouns": {
             "type": [
               "string",
               "null"

@@ -195,10 +195,6 @@ export function ProfilePage() {
                     <FieldLabel htmlFor="profile-title">Title</FieldLabel>
                     <Input id="profile-title" maxLength={PROFILE_LIMITS.title} placeholder="Product designer" value={form.title} onChange={(e) => set({ title: e.target.value })} />
                   </Field>
-                  <Field>
-                    <FieldLabel htmlFor="profile-pronouns">Pronouns</FieldLabel>
-                    <Input id="profile-pronouns" maxLength={PROFILE_LIMITS.pronouns} placeholder="she/her" value={form.pronouns} onChange={(e) => set({ pronouns: e.target.value })} />
-                  </Field>
                   <Field data-invalid={phoneInvalid || undefined}>
                     <FieldLabel htmlFor="profile-phone">Phone number</FieldLabel>
                     <Input

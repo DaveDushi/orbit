@@ -177,7 +177,6 @@ function ProfileCard({ userId, name, action, onClose }: { userId: string; name: 
         <div className="flex min-w-0 flex-1 flex-col gap-0.5 pt-1">
           <p className="text-base leading-snug font-semibold wrap-anywhere">
             {member.name}
-            {profile?.pronouns ? <span className="ml-1.5 text-[13px] font-normal text-muted-foreground">{profile.pronouns}</span> : null}
           </p>
           {profile?.title ? <p className="text-[13px] text-muted-foreground wrap-anywhere">{profile.title}</p> : null}
           {custom.emoji !== null || custom.text !== null ? (

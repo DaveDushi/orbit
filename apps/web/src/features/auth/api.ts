@@ -226,7 +226,7 @@ export function useCompleteRecovery() {
 }
 
 /**
- * Saves the profile. The body has the name and only the optional parts (title, pronouns, time zone, bio) that changed:
+ * Saves the profile. The body has the name and only the optional parts (title, phone, time zone, bio) that changed:
  * an absent part stays as it is, an empty text removes it (`profileChanges` builds it).
  */
 export function useUpdateProfile() {

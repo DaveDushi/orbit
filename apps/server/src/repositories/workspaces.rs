@@ -50,7 +50,6 @@ pub struct MemberProfile {
     pub user_id: Id,
     /// The job title.
     pub title: Option<String>,
-    pub pronouns: Option<String>,
     /// An IANA time zone name.
     pub timezone: Option<String>,
     pub bio: Option<String>,
@@ -666,7 +665,7 @@ impl WorkspaceRepository {
     ) -> Result<MemberProfile, WorkspaceError> {
         require_actor(self.database.pool(), workspace_id, actor_id).await?;
         let row = sqlx::query(
-            "SELECT users.title, users.pronouns, users.timezone, users.bio, users.phone, \
+            "SELECT users.title, users.timezone, users.bio, users.phone, \
              user_notes.body AS note \
              FROM memberships JOIN users ON users.id = memberships.user_id \
              LEFT JOIN user_notes ON user_notes.subject_id = users.id AND user_notes.author_id = $1 \
@@ -681,7 +680,6 @@ impl WorkspaceRepository {
         Ok(MemberProfile {
             user_id,
             title: row.get("title"),
-            pronouns: row.get("pronouns"),
             timezone: row.get("timezone"),
             bio: row.get("bio"),
             phone: row.get("phone"),
