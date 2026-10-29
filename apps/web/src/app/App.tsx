@@ -41,6 +41,7 @@ import { AppearancePage } from '@/features/profile/pages/AppearancePage'
 import { AgentPage } from '@/features/agent/AgentPage'
 import { AgentNamePage } from '@/features/agent/AgentNamePage'
 import { TeamInstructionsPage } from '@/features/agent/TeamInstructionsPage'
+import { MemoryPage as AgentMemoryPage } from '@/features/agent/MemoryPage'
 import { InboxPage } from '@/features/inbox/pages/InboxPage'
 import { AuthGate, GuestGate } from '@/features/auth/AuthGate'
 import { AcceptInvitationPage } from '@/features/auth/pages/AcceptInvitationPage'
@@ -124,6 +125,7 @@ export default function App() {
                 <Route path="shortcuts" element={<ShortcutsPage />} />
                 <Route path="storage" element={<StoragePage />} />
                 <Route path="agent" element={<AgentPage />} />
+                <Route path="agent-memory" element={<AgentMemoryPage />} />
               </Route>
               <Route path="admin" element={<AdminLayout />}>
                 <Route index element={<AdminSettingsPage />} />

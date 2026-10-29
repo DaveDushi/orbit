@@ -442,8 +442,13 @@ impl MigrationRunner {
                 ),
                 Migration::new(
                     63,
+                    include_str!("../../../../apps/server/migrations/0063_agent_memory.sql"),
+                    false,
+                ),
+                Migration::new(
+                    64,
                     include_str!(
-                        "../../../../apps/server/migrations/0063_agent_team_instructions.sql"
+                        "../../../../apps/server/migrations/0064_agent_team_instructions.sql"
                     ),
                     false,
                 ),
@@ -541,8 +546,13 @@ impl MigrationRunner {
             ),
             Migration::new(
                 63,
+                include_str!("../../../../apps/server/migrations/postgres/0063_agent_memory.sql"),
+                false,
+            ),
+            Migration::new(
+                64,
                 include_str!(
-                    "../../../../apps/server/migrations/postgres/0063_agent_team_instructions.sql"
+                    "../../../../apps/server/migrations/postgres/0064_agent_team_instructions.sql"
                 ),
                 false,
             ),

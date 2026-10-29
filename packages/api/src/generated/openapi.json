@@ -39879,7 +39879,8 @@
           "comments.moderate",
           "chat.manage",
           "billing.manage",
-          "storage.manage"
+          "storage.manage",
+          "agent_memory.manage"
         ]
       },
       "PlanInterval": {
@@ -42984,7 +42985,8 @@
       "views.manage_shared",
       "comments.moderate",
       "chat.manage",
-      "storage.manage"
+      "storage.manage",
+      "agent_memory.manage"
     ],
     "member": [],
     "owner": [
@@ -43001,7 +43003,8 @@
       "comments.moderate",
       "chat.manage",
       "billing.manage",
-      "storage.manage"
+      "storage.manage",
+      "agent_memory.manage"
     ]
   }
 }

@@ -4,11 +4,11 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, local merge commit 59e35f7f568340230da6f7e054909eac530b4868
-  (`main` with the `team-agent` branch merged).
+- Source: DaveDushi/orbit, local merge commit 1a80ba807e3e0eb3e7f3d296491ff275c8e60ebb
+  (`main` with the `agent-memory` branch merged).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:59e35f7`); fork commits have no published upstream image.
-- Image ID: sha256:3e288dd0657cefb9dd15b4822e8bdc4e5d90ab9235c90bc302372690f189227a
+  (`orbit:1a80ba8`); fork commits have no published upstream image.
+- Image ID: sha256:93214f663ed4d799d5eb904c96027540f7648d3bce497d4fd8737e5ba9deaa5c
 - Executable: /usr/local/bin/orbit; unprivileged system user: orbit.
 - Config: /etc/orbit/orbit.env (production mode); registration remains closed in instance settings.
 - Environment-only startup: /etc/systemd/system/orbit.service.d/environment.conf.
@@ -95,12 +95,16 @@ The team agent (`@Orbit Agent` in chat, Account → AI agent) is a Node sidecar 
 - Sidecar settings in `/etc/orbit/agent.env` (root, mode 600): `ORBIT_URL=http://127.0.0.1:8000`
   (through local nginx), `ORBIT_PUBLIC_URL=https://orbit.wellrox.com`,
   `ORBIT_FORWARDED_PROTO=https`, and the same `ORBIT_AGENT_SECRET`. Defaults are kept for
-  `AGENT_PORT` (8790), `AGENT_MODEL`, `AGENT_MAX_RUNS_PER_USER` and `AGENT_MAX_TOOL_CALLS`.
+  `AGENT_PORT` (8790), `AGENT_MODEL`, `AGENT_MAX_RUNS_PER_USER`, `AGENT_MAX_TOOL_CALLS` and
+  `AGENT_MEMORY_TOKENS` (3000; the memory read at the start of each run, `0` turns it off).
   `AGENT_MOCK` is not set.
 - To change the secret: write a new value (`openssl rand -hex 32`) into both files, then
   restart `orbit` and `orbit-agent`.
 - Each user connects their own ChatGPT account in Account → AI agent (device code).
   Their tokens are sealed with the app key in Orbit's database (`agent_credentials`).
+- Agent memory (team memory per workspace, private memory per person) is in Orbit's
+  database (`agent_memory_*` tables, migration 63), so Orbit's backups include it. People
+  see and delete entries in Account settings → Agent memory.
 
 ```sh
 sudo systemctl status orbit-agent
@@ -111,9 +115,12 @@ sudo systemctl stop orbit-agent                   # mentions stay queued in Orbi
 sudo systemctl disable --now orbit-agent          # keep it off after reboot
 ```
 
-To update the sidecar code: copy `apps/agent` (`package.json`, `package-lock.json`,
-`tsconfig.json`, `src`) to `/opt/orbit-agent`, run `npm ci --omit=dev` there, and restart
-`orbit-agent`.
+To update the sidecar code: stop `orbit-agent`, keep the old copy
+(`/opt/orbit-agent.before-<sha>`) and a copy of its data
+(`tar -C /var/lib -czf /var/backups/orbit-agent/orbit-agent-before-<sha>.tgz orbit-agent`),
+copy `apps/agent` (`package.json`, `package-lock.json`, `tsconfig.json`, `src`) to a new
+directory, run `npm ci --omit=dev` there, move it to `/opt/orbit-agent`, and start
+`orbit-agent` after `orbit`.
 
 To turn the feature off completely: `systemctl disable --now orbit-agent`, remove the two
 `ORBIT_AGENT_*` lines from `/etc/orbit/orbit.env`, and restart `orbit`.
@@ -165,6 +172,49 @@ sudo systemctl start orbit
 ```
 
 ## Verification performed
+
+### October 29, 2026 upgrade: agent memory
+
+Merged the `agent-memory` branch (6 commits, through `75eb8a1`, based on `59e35f7`) into
+`main` without conflicts (merge `1a80ba8`). The merged tree is the tested branch plus
+this file only. The branch session ran the full suite (Rust on SQLite and Postgres,
+sidecar, web, mobile, clippy, api-check). On merged `main`: the sidecar typecheck and its
+8 tests passed, the release image `orbit:1a80ba8` built, and `deploy/smoke.sh` passed.
+
+Stopped `orbit-agent` and `orbit`. Created and verified snapshot
+`01a188ce-c5bf-74d5-96d8-8db0e32cdef2`
+(`/var/backups/orbit/snapshots/01a188ce-c5bf-74d5-96d8-8db0e32cdef2`) with the old CLI.
+Saved the sidecar data as `/var/backups/orbit-agent/orbit-agent-before-1a80ba8.tgz` and
+the old sidecar code as `/opt/orbit-agent.before-1a80ba8`. Rehearsed migration 63
+(`0063_agent_memory.sql`) in `/var/lib/orbit/rehearsal-1a80ba8-DwOWZ4`, then applied it
+live: schema version 63, quick-check and foreign-key checks pass, counts unchanged
+(6 users, 1 workspace, 2 projects, 10 tasks, 12 blobs, 266 chat messages, 2 ChatGPT
+connections, 12 agent inputs). Installed the new sidecar code (with `memory.ts`).
+
+Orbit, the sidecar and nginx are active. Verified: readiness (all checks), revision
+`1a80ba8`, frontend and assets, origin checks (400/403), the agent memory routes
+(`/api/v1/workspaces/<id>/agent-memory/{team,private}` and `.../wake`) answer 401
+without a session (an unknown route answers 404), `/api/v1/agent` 401, sidecar health
+`mock: false`, the internal agent API accepts the sidecar's secret, and
+https://orbit.wellrox.com/ answers 307 to the exe.dev login. nginx did not change.
+A signed-in check of Account settings → Agent memory and an agent run with memory were
+not tested from this VM.
+
+Rollback (an older binary cannot read a version 63 database; preserve the current
+database first; memory and chat written after the snapshot are lost):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-59e35f7 backup verify 01a188ce-c5bf-74d5-96d8-8db0e32cdef2 && /usr/local/bin/orbit-59e35f7 backup restore 01a188ce-c5bf-74d5-96d8-8db0e32cdef2'
+sudo install -m 755 /usr/local/bin/orbit-59e35f7 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo cp -a /opt/orbit-agent.before-1a80ba8 /opt/orbit-agent
+sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-1a80ba8.tgz
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+```
+
+The previous executable is `/usr/local/bin/orbit-59e35f7`. `/etc/orbit/orbit.env` and
+`/etc/orbit/agent.env` did not change.
 
 ### October 29, 2026 upgrade: team agent
 

@@ -6,6 +6,8 @@
 pub(crate) mod bot;
 pub(crate) mod credentials;
 pub mod inputs;
+pub mod memory;
+mod memory_routes;
 mod routes;
 pub mod scope;
 pub(crate) mod sessions;
@@ -13,7 +15,10 @@ pub mod settings;
 
 use std::sync::Arc;
 
-pub use routes::router;
+/// The agent's routes: the sidecar's, the ChatGPT connection, and the memory.
+pub fn router(state: AgentState) -> axum::Router {
+    routes::router(state.clone()).merge(memory_routes::router(state))
+}
 
 use crate::auth_routes::CookieMode;
 use crate::chat_routes::ChatState;

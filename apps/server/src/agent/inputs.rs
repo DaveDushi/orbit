@@ -196,6 +196,8 @@ pub struct PendingInput {
     pub conversation_id: String,
     pub conversation_kind: String,
     pub conversation_name: String,
+    /// People in the conversation, the bot included: a DM of 2 is the author alone with the agent.
+    pub conversation_members: i64,
     pub thread_key: String,
     pub root_message_id: Option<String>,
     pub author_id: String,
@@ -215,7 +217,9 @@ pub(crate) async fn pending(
     let rows = sqlx::query(
         "SELECT i.message_id, i.workspace_id, i.conversation_id, i.thread_key, i.root_message_id, \
          i.author_id, i.kind, i.created_at, u.display_name, m.body, c.kind AS conversation_kind, \
-         c.name AS conversation_name, t.body AS team_instructions \
+         c.name AS conversation_name, t.body AS team_instructions, \
+         (SELECT COUNT(*) FROM chat_members cm WHERE cm.conversation_id = i.conversation_id) \
+         AS conversation_members \
          FROM agent_inputs i \
          JOIN chat_messages m ON m.id = i.message_id \
          JOIN chat_conversations c ON c.id = i.conversation_id \
@@ -234,6 +238,7 @@ pub(crate) async fn pending(
             conversation_id: row.get("conversation_id"),
             conversation_kind: row.get("conversation_kind"),
             conversation_name: row.get("conversation_name"),
+            conversation_members: row.get("conversation_members"),
             thread_key: row.get("thread_key"),
             root_message_id: row.get("root_message_id"),
             author_id: row.get("author_id"),

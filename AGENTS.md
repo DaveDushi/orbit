@@ -2,6 +2,21 @@
 
 Read [`.ai/README.md`](.ai/README.md) first: it lists the project guides in order.
 
+## Shared build VM resource controls
+
+On the configured Linux VM (`/etc/systemd/system/orbit-builds.slice` exists), run heavy native commands
+through `orbit-build`, for example `orbit-build cargo test --workspace` or `orbit-build just build`.
+Never bypass the guard, increase Cargo jobs, run parallel heavy builds, or build in Jean's cgroup.
+The shared lock serializes builds across users/worktrees; the separate slice has a 3 GiB soft / 4 GiB hard
+memory budget. Cargo's installed rustc wrapper is a backstop, not a substitute for guarding the whole build.
+Use `docker build` / `docker buildx build --builder=orbit-limited` through the installed Docker guard, or
+`orbit-build /usr/bin/docker buildx build --builder=orbit-limited --load ...`.
+Do not use alternate builders, `/usr/bin/docker build`, or Compose `--build`: build the image with the
+limited builder first, then run Compose without `--build`. Do not restart Jean to manage build memory.
+See [the development guide](.ai/DEVELOPMENT.md#shared-build-vm-resource-limits) and
+[the VM operator runbook](deploy/README.md#shared-build-vm-operator-setup).
+Other developer machines keep the normal portable recipes; `just limited …` is an explicit VM-only helper.
+
 ## Apps
 
 The repo root is one Bun workspace: `apps/web` (Vite) and `apps/mobile` (Expo, see [`apps/mobile/AGENTS.md`](apps/mobile/AGENTS.md)).

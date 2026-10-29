@@ -17,6 +17,8 @@ export type PendingInput = {
 	readonly conversation_id: string;
 	readonly conversation_kind: string;
 	readonly conversation_name: string;
+	/** People in the conversation, the agent included. */
+	readonly conversation_members: number;
 	readonly thread_key: string;
 	readonly root_message_id: string | null;
 	readonly author_id: string;

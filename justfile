@@ -162,3 +162,8 @@ build:
 release-image tag="orbit:milestone-1":
     docker build --build-arg ORBIT_BUILD_REVISION="$(git rev-parse HEAD)" -t "{{ tag }}" .
     docker run --rm "{{ tag }}" --help
+
+# Opt-in shared Linux build VM helper; ordinary developer recipes remain portable.
+[positional-arguments]
+limited +command:
+    scripts/build-limited.sh "$@"

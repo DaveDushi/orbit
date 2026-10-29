@@ -13,6 +13,9 @@
 - Run the whole suite on Postgres with `ORBIT_TEST_POSTGRES_URL=postgres://orbit:orbit@127.0.0.1:15432/orbit`; each test database maps from its SQLite path.
 - No Postgres listens on 15432 after a reboot unless the persistent dev one runs: `orbit-dev-pg` (volume `orbit-dev-pg-data`, `--restart unless-stopped`, databases `orbit` for tests and `orbit_dev` for `just dev`). A `--rm` container loses all data on reboot (the dev data was lost this way on 2026-10-24). For the full test suite use `-c max_connections=300` and at least 1 GB, or connections drop mid-suite.
 
+## Team agent transcripts are shared per thread
+- One Pi conversation serves a whole chat thread, so anything a run reads (tool results, prompt sections) stays in the transcript for the next driver of that thread. Data that only one person may see (their private agent memory) is read only where that person is alone with the agent (a DM of two); see `.ai/agent-design.md`, "Memory", M2.
+
 ## Settings and internal callers
 - Orbit refuses to start on an unknown `ORBIT_*` environment variable. A new setting needs its key in `crates/platform/src/config.rs` (or an ignored prefix there, as `ORBIT_AGENT_` for the agent), or the server will not boot (2026-10-29).
 - The origin policy refuses a write without `Origin` unless it carries `Authorization: Bearer` (and no cookie). A server-to-server caller (a sidecar, a script) sends its secret as a bearer token. Route tests that skip `HttpPlatformLayer` do not see this: check such callers against a running server.
@@ -67,7 +70,7 @@
 - The production CSP is `style-src 'self'`: a library that adds a `<style>` at runtime (Sonner, Mermaid) works on the Vite dev server and loses its styles in production. Put the rules in `index.css` or a constructed style sheet (`document.adoptedStyleSheets`), and test a production build served with the server's CSP header.
 - Typecheck the web app with `bunx tsc -b` (what `build` runs). `tsc --noEmit -p .` checks nothing: the root `tsconfig.json` only has references, so it passes on broken code.
 - `cargo test --workspace` stops at the first failing test binary; use `--no-fail-fast` to see the whole suite.
-- On the shared VM, run heavy builds (cargo, `expo export`) through `/usr/local/bin/orbit-build <command>` (one global lock, a memory-limited slice); builds outside it can be stopped. Give every cargo call of a worktree the same `CARGO_PROFILE_*`/`CARGO_INCREMENTAL` values: a change rebuilds everything (2 GB more on 2026-10-29). To rerun built tests, run `target/debug/deps/<test>-<hash>` directly.
+- Give every cargo call of a worktree the same `CARGO_PROFILE_*`/`CARGO_INCREMENTAL` values (run it through `orbit-build`, see `AGENTS.md`): a change rebuilds everything (2 GB more on 2026-10-29). To rerun built tests, run `target/debug/deps/<test>-<hash>` directly.
 - Playwright rewrites the tracked `apps/web/test-results/.last-run.json` on every run — restore it with `git checkout --` and never commit it.
 - If the Agent Browser fails with a `SingletonLock: File exists` profile error, another session holds the profile. Do not delete the lock; drive the dev server with `playwright-core` from `apps/web/node_modules` instead (script in `/tmp`).
 - If Playwright's pinned headless shell is not installed, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to an installed one under `~/.cache/ms-playwright/` (`playwright.config.ts` reads it) instead of downloading browsers.

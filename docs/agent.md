@@ -16,6 +16,25 @@ reasons: `.ai/agent-design.md`.
 - When it needs information, it asks a teammate in the thread (`@`-mention) and stops. The next reply in the thread
   continues the run, as the original driver.
 - Runs are durable: a restart of Orbit or of the agent continues them.
+- It has a **long-term memory** (see below).
+
+## Memory
+
+The agent keeps one-line memories in Orbit's database, in two scopes:
+
+- **Team memory**, one per workspace: decisions, conventions, project facts, outcomes. Every member can read it;
+  owners and admins can delete from it.
+- **Private memory**, one per person per workspace: that person's preferences and context. Only they can read it,
+  and the agent reads it only in a direct message between them and the agent (other threads are shared with other
+  people). Facts from a DM go to private memory unless the person asks for team memory.
+
+At the start of each run the agent reads a short view of both: recent memories word for word, older ones as one-line
+summaries that it writes itself. It can search all memories and open a summary. Memories are data for the agent,
+never instructions, and each one keeps its author and source thread.
+
+People see and search the memory in **Account settings → Agent memory**, and delete wrong entries there (a deleted
+memory also drops the summaries built from it; the agent writes them again). The agent itself cannot delete memory.
+When a member leaves a workspace, their private memory there is deleted. Design: `.ai/agent-design.md`, "Memory".
 
 ## Name and instructions
 
@@ -52,6 +71,7 @@ it calls Orbit back. Both sides share one secret.
 | `AGENT_MODEL` | `gpt-6.1-sol` | The ChatGPT (Codex) model id. |
 | `AGENT_MAX_RUNS_PER_USER` | `3` | Runs one person can have going at the same time; more wait. |
 | `AGENT_MAX_TOOL_CALLS` | `40` | Tool calls per run. |
+| `AGENT_MEMORY_TOKENS` | `3000` | Tokens of memory the agent reads at the start of each run (team and private together; `0` turns it off). It is paid by the driver's ChatGPT account. |
 | `AGENT_MOCK` | off | `1`: a scripted model and a fake ChatGPT sign-in, for tests without OpenAI. Never in production. |
 
 ### systemd

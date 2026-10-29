@@ -19,6 +19,8 @@ export type ThreadState = {
 	conversationId: string;
 	conversationName: string;
 	conversationKind: string;
+	/** People in the conversation, the agent included. Absent in threads made before memory existed. */
+	conversationMembers?: number;
 	/** `null`: the agent answers in the main list of a DM with it. */
 	rootMessageId: string | null;
 	driverId: string | null;
@@ -30,6 +32,10 @@ export type ThreadState = {
 	/** The agent's name and the workspace's team instructions, read at the start of the current run. */
 	agentName?: string;
 	teamInstructions?: string;
+	/** The memory section of the current run (the wake view read at its start), as the model sees it. */
+	memory?: string | null;
+	/** Summaries Orbit asked this thread's runs to write: `scope:lo-hi` → claim. */
+	claims?: Record<string, string>;
 };
 
 export const ThreadDoc = defineDoc<ThreadState>({

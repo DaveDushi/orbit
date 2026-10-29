@@ -8,6 +8,10 @@
  *   create page "Title" with "Text"   append "Text" to page <id|it>       read page <id|it>
  *   search tasks "words"            list projects                         read messages
  *   ask @Name "Question"           show prompt (answers with the system prompt, to check names and team instructions)
+ *   remember "Fact"                 remember privately "Fact"             recall "words"
+ *   recall privately "words"        what do you remember about "word"
+ *
+ * When a memory tool result asks for a summary, the mock writes one from the halves it was shown.
  */
 
 import { createModels, type AssistantMessage, type Models } from "@earendil-works/pi-ai";
@@ -16,6 +20,14 @@ import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@ear
 import { PROVIDER } from "./models.ts";
 
 type Message = { role: string; content?: unknown; toolName?: string; isError?: boolean; sections?: Record<string, string | null> };
+
+/** The lines of every memory block in the system prompt, newest section last. */
+function memoryLines(messages: readonly Message[]): string[] {
+	// Pi sends prompt sections as system entries; only the changed ones each time.
+	const system = messages.filter((message) => message.role === "system").flatMap((message) => Object.values(message.sections ?? {}).map(String));
+	const blocks = system.join("\n").match(/<orbit-data source="(?:team|private) memory">\n[\s\S]*?\n<\/orbit-data>/g) ?? [];
+	return blocks.flatMap((block) => block.split("\n").slice(1, -1));
+}
 
 function textOf(content: unknown): string {
 	if (typeof content === "string") return content;
@@ -66,6 +78,8 @@ export function plan(instruction: string, messages: readonly Message[]): { name:
 	if (/list projects/i.test(instruction)) return { name: "list_projects", args: {} };
 	if (/read messages/i.test(instruction)) return { name: "read_messages", args: {} };
 	if ((match = /ask @([\w .-]+?) "([^"]+)"/i.exec(instruction))) return { name: "ask_teammate", args: { person: match[1], question: match[2] } };
+	if ((match = /remember (privately )?"([^"]+)"/i.exec(instruction))) return { name: "memory_note", args: { scope: match[1] ? "private" : "team", text: match[2] } };
+	if ((match = /recall (privately )?"([^"]+)"/i.exec(instruction))) return { name: "memory_recall", args: { scope: match[1] ? "private" : "team", query: match[2] } };
 	return undefined;
 }
 
@@ -74,6 +88,11 @@ export function respond(messages: readonly Message[]): AssistantMessage {
 	if (process.env.AGENT_MOCK_DEBUG) console.log("mock model sees", JSON.stringify(messages.map((m) => ({ role: m.role, tool: m.toolName, text: textOf(m.content).slice(0, 120), raw: JSON.stringify(m).slice(0, 700) }))));
 	const last = messages[messages.length - 1];
 	if (last?.role === "toolResult") {
+		const due = /Call memory_summarize with scope "(\w+)" and block "(\d+-\d+)"\.\n<orbit-data[^>]*>\n([\s\S]*?)\n<\/orbit-data>/.exec(textOf(last.content));
+		if (due) {
+			const summary = `Summary: ${due[3].split("\n").map((line) => line.replace(/^#\S+ (\([^)]*\) )?/, "")).join("; ")}`;
+			return fauxAssistantMessage(fauxToolCall("memory_summarize", { scope: due[1], block: due[2], text: Buffer.from(summary).subarray(0, 270).toString() }), { stopReason: "toolUse" });
+		}
 		const result = textOf(last.content).replace(/<\/?orbit-data[^>]*>/g, "").trim();
 		const short = result.length > 900 ? `${result.slice(0, 900)}…` : result;
 		return fauxAssistantMessage(fauxText(last.isError ? `I could not do that. ${short}` : `Done (${last.toolName}).\n\n\`\`\`\n${short}\n\`\`\``));
@@ -81,6 +100,11 @@ export function respond(messages: readonly Message[]): AssistantMessage {
 	const instruction = textOf(messages.filter((message) => message.role === "user").at(-1)?.content);
 	if (/show (?:the )?(?:system )?prompt/i.test(instruction)) {
 		return fauxAssistantMessage(fauxText(systemPrompt(messages)));
+	}
+	const asked = /what do you remember about "([^"]+)"/i.exec(instruction);
+	if (asked) {
+		const found = memoryLines(messages).filter((line) => line.toLowerCase().includes(asked[1].toLowerCase()));
+		return fauxAssistantMessage(fauxText(found.length ? `From memory:\n${found.join("\n")}` : `I remember nothing about “${asked[1]}”.`));
 	}
 	const call = plan(instruction, messages);
 	if (!call) return fauxAssistantMessage(fauxText(`(mock model) I read: ${instruction.slice(0, 300)}`));

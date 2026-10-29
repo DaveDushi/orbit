@@ -51,6 +51,85 @@ export async function disconnectChatgpt(client: Client): Promise<void> {
   await client.delete({ url: '/api/v1/agent/chatgpt', throwOnError: true })
 }
 
+/** `team`: the workspace's memory, every member reads it. `private`: the signed-in person's own. */
+export type AgentMemoryScope = 'team' | 'private'
+
+/** Where a memory came from: a chat thread, or the main list of a DM with the agent. */
+export interface AgentMemorySource {
+  conversation_id: string | null
+  root_message_id: string | null
+}
+
+export interface AgentMemory {
+  position: number
+  body: string
+  author_id: string | null
+  author_name: string | null
+  created_at: string
+  source: AgentMemorySource | null
+}
+
+export interface AgentMemoryPage {
+  items: AgentMemory[]
+  /** Pass as `before` for older memories. */
+  next_before: number | null
+  /** The person may delete memories and summaries of this scope. */
+  can_delete: boolean
+}
+
+/** A line of what the agent reads: a memory (`lo === hi`) or the summary of memories `lo`–`hi`. */
+export interface AgentMemoryLine {
+  lo: number
+  hi: number
+  body: string
+  author_name: string | null
+  created_at: string | null
+}
+
+export interface AgentMemoryWake {
+  total: number
+  lines: AgentMemoryLine[]
+  text: string
+}
+
+const memoryUrl = (workspaceId: string, scope: AgentMemoryScope) => `/api/v1/workspaces/${workspaceId}/agent-memory/${scope}`
+
+/** Memories, newest first; with `query`, only those containing every word. */
+export async function readAgentMemories(
+  client: Client,
+  workspaceId: string,
+  scope: AgentMemoryScope,
+  options: { query?: string; before?: number | null } = {},
+): Promise<AgentMemoryPage> {
+  const params = new URLSearchParams({ limit: '50' })
+  if (options.query?.trim()) params.set('query', options.query.trim())
+  if (options.before != null) params.set('before', String(options.before))
+  const { data } = await client.get({ url: `${memoryUrl(workspaceId, scope)}?${params}`, throwOnError: true })
+  return data as AgentMemoryPage
+}
+
+/** What a run of the agent reads from this memory, in about `bytes` bytes. */
+export async function readAgentMemoryWake(client: Client, workspaceId: string, scope: AgentMemoryScope, bytes = 12_000): Promise<AgentMemoryWake> {
+  const { data } = await client.get({ url: `${memoryUrl(workspaceId, scope)}/wake?bytes=${bytes}`, throwOnError: true })
+  return data as AgentMemoryWake
+}
+
+/** Erases a memory; the summaries built from it are written again. */
+export async function deleteAgentMemory(client: Client, workspaceId: string, scope: AgentMemoryScope, position: number): Promise<void> {
+  await client.delete({ url: `${memoryUrl(workspaceId, scope)}/memories/${position}`, throwOnError: true })
+}
+
+/** Drops the summary of memories `lo`–`hi` (and those built from it); the agent writes it again. */
+export async function forgetAgentMemorySummary(client: Client, workspaceId: string, scope: AgentMemoryScope, lo: number, hi: number): Promise<void> {
+  await client.delete({ url: `${memoryUrl(workspaceId, scope)}/summaries/${lo}-${hi}`, throwOnError: true })
+}
+
+/** The chat link of a memory's source thread. */
+export function agentMemorySourcePath(source: AgentMemorySource | null): string | null {
+  if (!source?.conversation_id) return null
+  return source.root_message_id ? `/chat/${source.conversation_id}/thread/${source.root_message_id}` : `/chat/${source.conversation_id}`
+}
+
 /** Admin → AI agent: the agent's one name for the whole installation (installation admins only). */
 export interface AgentIdentity {
   name: string
