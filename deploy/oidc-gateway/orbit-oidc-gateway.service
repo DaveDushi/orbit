@@ -1,0 +1,16 @@
+[Unit]
+Description=Public door to Orbit for Cloudflare Access (only POST /oauth/token and GET /oauth/jwks)
+After=network.target
+
+[Service]
+ExecStart=/usr/sbin/nginx -e stderr -p /run/orbit-oidc-gateway/ -c /etc/orbit-oidc-gateway/nginx.conf
+DynamicUser=yes
+RuntimeDirectory=orbit-oidc-gateway
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

@@ -48,6 +48,12 @@ What: admins add custom web apps; each gets a sidebar entry, `/apps/<slug>` with
 
 **`Sec-Fetch-Dest` absent or forged** only changes login to an error or back; there is no access either way.
 
+## Public gateway for Cloudflare (`deploy/oidc-gateway/`)
+
+nginx, because the machine already has it, it needs no new code to maintain, and `$request_uri` gives the raw request line to compare. It is its own process and unit, so turning it off touches nothing else. Header forwarding is an allow-list: a list of headers to strip would miss a new one. Plain strings in an nginx `map` ignore case, so the rules are regular expressions (`test.sh` caught this). Orbit only trusts the gateway as it trusts any configured proxy (`X-Forwarded-For`, `X-Forwarded-Proto`, `X-Request-Id`, read in `crates/platform/src/http/security.rs`). It reads no `X-ExeDev-*` header anywhere.
+
+**exe.dev.** Per [its docs](https://exe.dev/docs/proxy), only one port can be public and other ports need access to the VM; `share port` changes the target of the root URL. So "Orbit on the root URL, gateway public on another port" appears impossible. The options: (a) the gateway takes the root URL and Orbit moves to `https://<vm>.exe.xyz:<port>/`, which changes `ORBIT_PUBLIC_ORIGIN` (issuer, MCP `resource`, passkey origin, saved mobile server addresses); (b) the gateway runs on a second, public VM, which must reach Orbit privately; (c) a Cloudflare Tunnel from this VM to the gateway, with no exe.dev change. Option (a) also avoids a non-standard port in Cloudflare's URLs, which its docs do not confirm.
+
 ## Not in v1
 
 App bridge script, health status, hosting, restarts, deploys, frames on mobile, refresh tokens, key rotation (JWKS already returns a list).

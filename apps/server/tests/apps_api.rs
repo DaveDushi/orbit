@@ -672,7 +672,17 @@ async fn sign_in_gives_a_signed_id_token_and_userinfo() {
     assert!(tokens.get("refresh_token").is_none());
     assert_eq!(tokens["token_type"], "Bearer");
 
-    let claims = verify(tokens["id_token"].as_str().unwrap(), &fixture.jwk().await);
+    let jwk = fixture.jwk().await;
+    // Public values only: a private RSA key would also have d, p, q, dp, dq and qi.
+    let mut fields: Vec<&str> = jwk
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    fields.sort_unstable();
+    assert_eq!(fields, ["alg", "e", "kid", "kty", "n", "use"]);
+    let claims = verify(tokens["id_token"].as_str().unwrap(), &jwk);
     assert_eq!(claims["iss"], ORIGIN);
     assert_eq!(claims["aud"], client.id.as_str());
     assert_eq!(claims["sub"], member.id.to_string());

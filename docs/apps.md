@@ -112,25 +112,70 @@ Copy the client ID and the secret.
 | --- | --- |
 | App ID | The client ID from Orbit |
 | Client secret | The secret from Orbit |
-| Auth URL | `https://orbit.example.com/oauth/authorize` |
-| Token URL | `https://orbit.example.com/oauth/token` |
-| Certificate URL | `https://orbit.example.com/oauth/jwks` |
+| Auth URL | `<Orbit address>/oauth/authorize`: the browser goes here |
+| Token URL | `<public address>/oauth/token`: Cloudflare's servers call this |
+| Certificate URL | `<public address>/oauth/jwks`: Cloudflare's servers call this |
 | Proof Key for Code Exchange (PKCE) | On |
 | Email claim | `email` (the default scopes `openid email profile` include it) |
 
+`<Orbit address>` is `ORBIT_PUBLIC_ORIGIN`. The ID token's `iss` is always this address, also when the Token URL is on another address. `<public address>` is the gateway below if Orbit is behind a login, else the same as `<Orbit address>`.
+
 **3. In the Access application** of `products.wellrox.com`, choose this login method and a policy. Add `workspace_role` under OIDC Claims if a policy needs the role.
 
-**Which addresses must be public.** Cloudflare's servers call Orbit without a browser session, so nothing in front of Orbit may ask them to sign in:
+**Which addresses must be public.** Cloudflare's servers call Orbit without a browser session, so nothing may ask them to sign in:
 
 | Path | Called by | Must be public |
 | --- | --- | --- |
-| `/oauth/token` | Cloudflare's servers (`POST`) | Yes |
-| `/oauth/jwks` | Cloudflare's servers | Yes |
-| `/.well-known/openid-configuration` | Other OpenID Connect clients, setup tools | Yes for a standard client |
-| `/oauth/userinfo` | Other OpenID Connect clients | Yes for a standard client |
-| `/oauth/authorize`, `/login` and the web app | The person's browser | Reachable by the person. A login proxy in front of them breaks sign-in in a frame, because a proxy's login page usually refuses frames. |
+| `POST /oauth/token` | Cloudflare's servers | Yes |
+| `GET /oauth/jwks` | Cloudflare's servers | Yes |
+| `/oauth/authorize`, `/login`, the web app | The person's browser | No, if everyone who uses the app can pass the login in front of Orbit |
 
-None of these paths gives data without a secret or a token: discovery and JWKS hold only public values.
+Cloudflare's documentation names only these URLs: you enter them yourself, so it does not need discovery, and it does not mention userinfo. Other OpenID Connect clients may also need `/.well-known/openid-configuration` and `/oauth/userinfo`.
+
+### A public gateway when Orbit is behind a login
+
+If a login proxy protects Orbit and has no setting per path, run the gateway in [`deploy/oidc-gateway/`](../deploy/oidc-gateway/) on a port of its own. It is a separate nginx process that allows exactly `POST /oauth/token` and `GET /oauth/jwks` and gives a 404 for everything else, without calling Orbit. It compares the raw request line, so encoded or traversal paths do not match. It forwards only `Content-Type`, `Content-Length`, `Authorization`, and its own `X-Forwarded-For` and `X-Forwarded-Proto`: no cookie, no `Origin`, no header of the login proxy. It keeps no access log and no body on disk.
+
+Orbit gives these requests no extra trust. A valid client secret is still needed for a token, and the existing limit of 30 token requests a minute per client address applies. The gateway passes the last `X-Forwarded-For` entry as the client address, which must be the entry that the proxy in front adds. If all requests counted as one address, one attacker could use up the 30 requests and stop sign-in for everyone until the next minute.
+
+**Deploy:**
+
+```sh
+sudo mkdir -p /etc/orbit-oidc-gateway
+sudo cp deploy/oidc-gateway/nginx.conf /etc/orbit-oidc-gateway/nginx.conf
+# Set the two values in that file: `listen` (8400) and the Orbit address in `proxy_pass` (127.0.0.1:8080).
+sudo cp deploy/oidc-gateway/orbit-oidc-gateway.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now orbit-oidc-gateway
+```
+
+Orbit's `ORBIT_TRUSTED_PROXIES` must contain the address the gateway connects from (`127.0.0.1/32` here). Do not add the proxy in front to it. Then make the port public at the proxy.
+
+**Check it** from outside, with the public address:
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' "$PUBLIC/oauth/jwks"              # 200
+curl -s -o /dev/null -w '%{http_code}\n' "$PUBLIC/login"                   # 404
+curl -s -o /dev/null -w '%{http_code}\n' --path-as-is "$PUBLIC/oauth/../api/v1/auth/me"  # 404
+# The proxy must add the real client last. A forged value must not avoid the limit: at about
+# the 31st request this prints 429. If it never does, stop: the client address can be forged.
+for i in $(seq 35); do curl -s -o /dev/null -w '%{http_code} ' -X POST -H "X-Forwarded-For: 198.51.100.$i" -d x=1 "$PUBLIC/oauth/token"; done
+```
+
+**Test the rules** on any machine with `deploy/oidc-gateway/test.sh`.
+
+**Turn it off:** make the port private again at the proxy, then:
+
+```sh
+sudo systemctl disable --now orbit-oidc-gateway
+sudo rm /etc/systemd/system/orbit-oidc-gateway.service
+sudo rm -r /etc/orbit-oidc-gateway
+sudo systemctl daemon-reload
+```
+
+Sign-in through Cloudflare stops at once. Nothing else in Orbit changes.
+
+**On exe.dev.** Its proxy forwards ports 3000 to 9999, and only one port can be public. That one port is the one set with `share port`, which also serves the root URL (`https://<vm>.exe.xyz/`). Other ports stay at `https://<vm>.exe.xyz:<port>/` for people with access to the VM. So the gateway cannot simply be public next to an Orbit on the root URL: read [`.ai/apps-design.md`](../.ai/apps-design.md), "exe.dev".
 
 **In a frame.** Access makes the sign-in pass through `edusi.cloudflareaccess.com`, which Orbit allows because it is the origin of the redirect URI. Access must also allow frames: see `allow_iframe` in the Access application. If the app is on another site than Orbit, its `CF_Authorization` cookie is a third-party cookie in the frame. Set the cookie's SameSite setting to None in the Access application, or set the app to **In a new tab**. Orbit cannot change these settings, and Access may refuse to show its own pages in a frame; test this with your account.
 
