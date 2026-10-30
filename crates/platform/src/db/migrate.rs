@@ -465,9 +465,14 @@ impl MigrationRunner {
                     false,
                 ),
                 Migration::new(
-                    69,
+                    67,
+                    include_str!("../../../../apps/server/migrations/0067_workspace_apps.sql"),
+                    false,
+                ),
+                Migration::new(
+                    68,
                     include_str!(
-                        "../../../../apps/server/migrations/0069_agent_integration_oauth.sql"
+                        "../../../../apps/server/migrations/0068_agent_integration_oauth.sql"
                     ),
                     false,
                 ),
@@ -590,9 +595,14 @@ impl MigrationRunner {
                 false,
             ),
             Migration::new(
-                69,
+                67,
+                include_str!("../../../../apps/server/migrations/postgres/0067_workspace_apps.sql"),
+                false,
+            ),
+            Migration::new(
+                68,
                 include_str!(
-                    "../../../../apps/server/migrations/postgres/0069_agent_integration_oauth.sql"
+                    "../../../../apps/server/migrations/postgres/0068_agent_integration_oauth.sql"
                 ),
                 false,
             ),

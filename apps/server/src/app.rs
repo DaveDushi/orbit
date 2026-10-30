@@ -295,11 +295,19 @@ impl App {
             app_key,
         );
         let metrics = Metrics::default();
+        let apps = crate::apps::AppsState::new(
+            Arc::clone(&identity),
+            cookie_mode,
+            &config.http.public_origin,
+            app_key,
+            config.environment == orbit_platform::EnvironmentMode::Development,
+        );
         let oauth = crate::oauth::OAuthState::new(
             Arc::clone(&identity),
             cookie_mode,
             &config.http.public_origin,
-        );
+        )
+        .with_apps(apps.clone());
         let router = metrics.instrument(production_router(
             ApiRoutes {
                 billing: billing.clone(),
@@ -312,6 +320,7 @@ impl App {
                     &config.http.public_origin,
                 ),
                 oauth: crate::oauth::router(oauth),
+                apps: crate::apps::router(apps),
                 auth: {
                     let auth = auth
                         .with_mailer(mailer.clone())

@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
+import { useEffect } from 'react'
 import { Navigate, Outlet, useSearchParams } from 'react-router'
 import { createApiClient } from '@/api/client'
 import { LoadingScreen } from '@/components/common/LoadingScreen'
 import { firstLoadFailed } from '@/lib/connection'
 import { authGateState } from './authState'
 import { currentUserQueryOptions, useCurrentUser, useSetupStatus } from './api'
-import { oauthLoginDestination } from './oauth'
+import { appSignInDestination, oauthLoginDestination } from './oauth'
 import { OrbitUnavailable } from '@/components/common/OrbitUnavailable'
 
 export function AuthGate() {
@@ -33,6 +34,11 @@ const guestSessionClient = createApiClient()
 export function GuestGate() {
   const [params] = useSearchParams()
   const user = useQuery({ ...currentUserQueryOptions(guestSessionClient), retry: false })
+  const appSignIn = user.data ? appSignInDestination(params.get('return_to')) : null
+  useEffect(() => {
+    if (appSignIn) window.location.replace(appSignIn)
+  }, [appSignIn])
+  if (appSignIn) return <LoadingScreen />
   if (user.data) return <Navigate to={oauthLoginDestination(params.get('return_to'))} replace />
   if (user.isPending) return <LoadingScreen />
   return <Outlet />

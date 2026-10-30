@@ -393,7 +393,7 @@ sidecar (driver's agent session) ──► /workspaces/{id}/agent-tools[/call] �
 - The sidecar never sees it: it calls Orbit with the driver's agent session; Orbit opens the credential for the one
   external request (`HeaderValue::set_sensitive`, `Debug` redacted) and never logs it.
 - Errors given to the agent and the audit log carry no URL query, no body and no credential.
-- HTTP APIs can use OAuth client credentials (`apps/server/src/agent/oauth.rs`, migration `0069`): a sealed client
+- HTTP APIs can use OAuth client credentials (`apps/server/src/agent/oauth.rs`, migration `0068`): a sealed client
   ID and secret in `oauth_sealed_client`, the token only in memory. A new base or token URL needs the client again,
   so an admin who cannot read it cannot send it elsewhere. User docs: `docs/agent.md`.
 - A credential can still leak through the *service*: a tool that echoes request headers, or a write that stores data

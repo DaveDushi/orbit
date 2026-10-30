@@ -29,6 +29,7 @@ pub struct ApiRoutes {
     pub billing: Option<crate::billing::Billing>,
     pub mcp: Router,
     pub oauth: Router,
+    pub apps: Router,
     pub auth: AuthState,
     pub workspaces: WorkspaceState,
     pub tasks: TaskState,
@@ -65,6 +66,7 @@ pub fn production_router(
     let router = auth_router(api.auth)
         .merge(api.mcp)
         .merge(api.oauth)
+        .merge(api.apps)
         .merge(realtime)
         .merge(workspace_router(api.workspaces))
         .merge(task_router(api.tasks))

@@ -9,7 +9,7 @@ import { initialLoginValues } from '@/features/auth/authState'
 import { AuthForm, AuthInput } from '@/features/auth/components/AuthForm'
 import { isPasskeyCancel, passkeysSupported } from '@/features/auth/passkey'
 
-import { oauthLoginDestination } from '@/features/auth/oauth'
+import { appSignInDestination, oauthLoginDestination } from '@/features/auth/oauth'
 
 export function LoginPage() {
   const [params] = useSearchParams()
@@ -26,7 +26,11 @@ export function LoginPage() {
   const codeId = useId()
   // Why the code step ended (expired or used-up challenge), shown on the password step.
   const [returnError, setReturnError] = useState<Error | null>(null)
-  const signedIn = () => navigate(oauthLoginDestination(params.get('return_to')), { replace: true })
+  const signedIn = () => {
+    const appSignIn = appSignInDestination(params.get('return_to'))
+    if (appSignIn) window.location.replace(appSignIn)
+    else void navigate(oauthLoginDestination(params.get('return_to')), { replace: true })
+  }
 
   const backToPassword = (error: Error | null = null) => {
     setTwoFactorToken(null)

@@ -748,7 +748,7 @@ async fn csp_allows_only_the_verified_bootstrap_hash_and_local_image_variants() 
     assert!(!csp.contains("http:"));
     assert_eq!(
         csp,
-        "default-src 'self'; script-src 'self' 'sha256-YWJj'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src https://www.youtube-nocookie.com; media-src 'self' https://video.twimg.com; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self' https://github.com"
+        "default-src 'self'; script-src 'self' 'sha256-YWJj'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'self' https://www.youtube-nocookie.com; media-src 'self' https://video.twimg.com; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self' https://github.com"
     );
 }
 
@@ -885,5 +885,24 @@ async fn oauth_protocol_and_mcp_requests_are_rate_limited_without_session_origin
     assert_eq!(
         app.oneshot(request("POST", "/mcp")).await.unwrap().status(),
         StatusCode::TOO_MANY_REQUESTS
+    );
+}
+
+#[tokio::test]
+async fn a_response_with_its_own_csp_keeps_it() {
+    let app = axum::Router::new()
+        .route(
+            "/own",
+            axum::routing::get(|| async {
+                ([(CONTENT_SECURITY_POLICY, "frame-ancestors 'self'")], "own")
+            }),
+        )
+        .layer(orbit_platform::HttpPlatformLayer::new(OriginPolicy::new(
+            "https://orbit.test",
+        )));
+    let response = app.oneshot(request("GET", "/own")).await.unwrap();
+    assert_eq!(
+        response.headers()[CONTENT_SECURITY_POLICY],
+        "frame-ancestors 'self'"
     );
 }

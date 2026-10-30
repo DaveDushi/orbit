@@ -50,10 +50,13 @@ pub enum Permission {
     /// Delete memories and summaries of the agent's team memory.
     #[serde(rename = "agent_memory.manage")]
     AgentMemoryManage,
+    /// Add, change and remove the workspace's custom web apps and their sign-in clients.
+    #[serde(rename = "apps.manage")]
+    AppsManage,
 }
 
 impl Permission {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::WorkspaceUpdate,
         Self::WorkspaceDelete,
         Self::WorkspaceTransfer,
@@ -69,6 +72,7 @@ impl Permission {
         Self::BillingManage,
         Self::StorageManage,
         Self::AgentMemoryManage,
+        Self::AppsManage,
     ];
 }
 
@@ -246,7 +250,8 @@ impl Policy {
             | Permission::CommentsModerate
             | Permission::ChatManage
             | Permission::StorageManage
-            | Permission::AgentMemoryManage => {
+            | Permission::AgentMemoryManage
+            | Permission::AppsManage => {
                 matches!(role, WorkspaceRole::Owner | WorkspaceRole::Admin)
             }
         }
