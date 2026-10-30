@@ -1516,6 +1516,8 @@ impl WorkspaceRepository {
             .await?;
         // Their private agent memory here is about them alone.
         crate::agent::memory::drop_private(&mut transaction, workspace_id, target.user_id).await?;
+        // Their sign-ins to the workspace's apps end here.
+        crate::apps::revoke_member(&mut transaction, workspace_id, target.user_id).await?;
         audit::record(
             &mut transaction,
             workspace_id,

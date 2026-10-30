@@ -89,6 +89,7 @@ impl OriginPolicy {
                 | "/oauth/register"
                 | "/oauth/token"
                 | "/oauth/revoke"
+                | "/oauth/userinfo"
         ) {
             return true;
         }
@@ -264,12 +265,15 @@ pub(crate) fn add_security_headers(
         .map(|hash| format!("script-src 'self' '{hash}'; "))
         .unwrap_or_else(|| "script-src 'self'; ".to_owned());
     let policy = format!(
-        "default-src 'self'; {script_source}style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src https://www.youtube-nocookie.com; media-src 'self' https://video.twimg.com; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self' https://github.com"
+        "default-src 'self'; {script_source}style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'self' https://www.youtube-nocookie.com; media-src 'self' https://video.twimg.com; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self' https://github.com"
     );
-    headers.insert(
-        CONTENT_SECURITY_POLICY,
-        HeaderValue::from_str(&policy).expect("validated CSP values form a valid header"),
-    );
+    // A response may carry its own, stricter policy (the wrapper document of a workspace app).
+    if !headers.contains_key(CONTENT_SECURITY_POLICY) {
+        headers.insert(
+            CONTENT_SECURITY_POLICY,
+            HeaderValue::from_str(&policy).expect("validated CSP values form a valid header"),
+        );
+    }
     headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     headers.insert(
         REFERRER_POLICY,

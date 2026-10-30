@@ -4,8 +4,9 @@ use std::borrow::Cow;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 
+use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Extension, Form, Path, Query, Request, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{delete, get, post};
@@ -47,6 +48,8 @@ pub struct OAuthState {
     cookie_mode: CookieMode,
     origin: String,
     resource: String,
+    /// The sign-in clients of workspace apps, which share `/oauth/authorize` and `/oauth/token`.
+    apps: Option<crate::apps::AppsState>,
 }
 
 impl OAuthState {
@@ -58,7 +61,14 @@ impl OAuthState {
             cookie_mode,
             resource: format!("{origin}/mcp"),
             origin,
+            apps: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_apps(mut self, apps: crate::apps::AppsState) -> Self {
+        self.apps = Some(apps);
+        self
     }
 
     pub fn challenge(&self) -> String {
@@ -396,8 +406,16 @@ struct AuthorizationRequest {
 }
 async fn authorize(
     State(state): State<OAuthState>,
-    Query(input): Query<AuthorizationRequest>,
-) -> Result<Redirect, OAuthError> {
+    headers: HeaderMap,
+    uri: Uri,
+) -> Result<Response, OAuthError> {
+    if let Some(apps) = &state.apps
+        && crate::apps::is_app_client(uri.query().unwrap_or_default())
+    {
+        return Ok(crate::apps::oidc::authorize(apps, &headers, uri.query().unwrap_or_default()).await);
+    }
+    let Query(input) = Query::<AuthorizationRequest>::try_from_uri(&uri)
+        .map_err(|_| OAuthError::invalid("invalid_request"))?;
     if input.response_type != "code"
         || input.code_challenge_method != "S256"
         || input.code_challenge.len() != 43
@@ -448,10 +466,7 @@ async fn authorize(
         .bind(&id).bind(&input.client_id).bind(&input.redirect_uri).bind(&input.state).bind(pkce)
         .bind(&state.resource).bind(now + REQUEST_MILLIS).execute(&mut *tx).await?;
     tx.commit().await?;
-    Ok(Redirect::to(&format!(
-        "{}/oauth/consent?request={id}",
-        state.origin
-    )))
+    Ok(Redirect::to(&format!("{}/oauth/consent?request={id}", state.origin)).into_response())
 }
 
 async fn user(state: &OAuthState, headers: &HeaderMap) -> Result<Id, OAuthError> {
@@ -594,8 +609,17 @@ struct TokenRequest {
 }
 async fn token(
     State(state): State<OAuthState>,
-    Form(input): Form<TokenRequest>,
-) -> Result<Json<Value>, OAuthError> {
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, OAuthError> {
+    if let Some(apps) = &state.apps
+        && (crate::apps::oidc::uses_basic_auth(&headers)
+            || crate::apps::is_app_client(&String::from_utf8_lossy(&body)))
+    {
+        return Ok(crate::apps::oidc::token(apps, &headers, &body).await);
+    }
+    let Form(input) = Form::<TokenRequest>::from_bytes(&body)
+        .map_err(|_| OAuthError::invalid("invalid_request"))?;
     if input
         .resource
         .as_ref()
@@ -693,7 +717,8 @@ async fn token(
     tx.commit().await?;
     Ok(Json(
         json!({"access_token": access, "token_type": "Bearer", "expires_in": ACCESS_SECONDS, "refresh_token": refresh, "scope": SCOPE}),
-    ))
+    )
+    .into_response())
 }
 
 #[derive(Deserialize)]

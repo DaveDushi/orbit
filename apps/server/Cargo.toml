@@ -21,6 +21,9 @@ http-body-util = "0.1"
 include_dir = "0.7"
 mime_guess = "2"
 oxide-auth = "=0.6.1"
+# RS256 for OpenID Connect ID tokens: `rsa` only makes the key (ring cannot), `ring` signs with it.
+ring = "0.17"
+rsa = "0.9"
 url = "2"
 orbit-domain = { path = "../../crates/orbit" }
 orbit-platform = { path = "../../crates/platform" }
