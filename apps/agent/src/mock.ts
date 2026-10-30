@@ -8,6 +8,7 @@
  *   create page "Title" with "Text"   append "Text" to page <id|it>       read page <id|it>
  *   search tasks "words"            list projects                         read messages
  *   ask @Name "Question"           show prompt (answers with the system prompt, to check names and team instructions)
+ *   show model (answers with the run's model and thinking level)
  *   remember "Fact"                 remember privately "Fact"             recall "words"
  *   recall privately "words"        what do you remember about "word"
  *   use <integration>__<tool> with {"json": "arguments"}
@@ -20,7 +21,7 @@
 import { createModels, type AssistantMessage, type JsonObject, type Models } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 
-import { PROVIDER } from "./models.ts";
+import { codexModels, PROVIDER } from "./models.ts";
 
 type Message = { role: string; content?: unknown; toolName?: string; isError?: boolean; sections?: Record<string, string | null> };
 
@@ -111,7 +112,7 @@ export function plan(instruction: string, messages: readonly Message[]): { name:
 }
 
 /** One scripted answer for the transcript so far. */
-export function respond(messages: readonly Message[], modelId = "mock"): AssistantMessage {
+export function respond(messages: readonly Message[], modelId = "mock", thinking?: string): AssistantMessage {
 	if (process.env.AGENT_MOCK_DEBUG) console.log("mock model sees", JSON.stringify(messages.map((m) => ({ role: m.role, tool: m.toolName, text: textOf(m.content).slice(0, 120), raw: JSON.stringify(m).slice(0, 700) }))));
 	// Pi's compaction asks for a summary of the older conversation: never act on what that conversation said.
 	if (messages[0]?.role === "system" && textOf(messages[0].content).startsWith("You are a context summarization assistant")) {
@@ -129,6 +130,9 @@ export function respond(messages: readonly Message[], modelId = "mock"): Assista
 		return fauxAssistantMessage(fauxText(last.isError ? `I could not do that. ${short}` : `Done (${last.toolName}).\n\n\`\`\`\n${short}\n\`\`\``));
 	}
 	const instruction = textOf(messages.filter((message) => message.role === "user").at(-1)?.content);
+	if (/show (?:the )?model/i.test(instruction)) {
+		return fauxAssistantMessage(fauxText(`Model: ${modelId}, thinking: ${thinking ?? "default"}`));
+	}
 	if (/show (?:the )?(?:system )?prompt/i.test(instruction)) {
 		return fauxAssistantMessage(fauxText(systemPrompt(messages)));
 	}
@@ -144,9 +148,11 @@ export function respond(messages: readonly Message[], modelId = "mock"): Assista
 
 /** A `Models` with scripted models under the ChatGPT provider's id: the conversation's and the compaction model. */
 export function mockModels(modelId: string, compactModelId?: string): Models {
-	const ids = [...new Set([modelId, compactModelId ?? modelId])];
-	const faux = fauxProvider({ provider: PROVIDER, models: ids.map((id) => ({ id, contextWindow: 200_000, maxTokens: 8_000 })), tokensPerSecond: 400 });
-	const factory = (context: { messages: readonly unknown[] }, _options: unknown, _state: unknown, model: { id: string }) => respond(context.messages as Message[], model.id);
+	// Every ChatGPT model too, so a model chosen in Admin → AI agent runs.
+	const ids = [...new Set([modelId, compactModelId ?? modelId, ...codexModels().map((model) => model.id)])];
+	const faux = fauxProvider({ provider: PROVIDER, models: ids.map((id) => ({ id, contextWindow: 200_000, maxTokens: 8_000, reasoning: true })), tokensPerSecond: 400 });
+	const factory = (context: { messages: readonly unknown[] }, options: { reasoning?: string } | undefined, _state: unknown, model: { id: string }) =>
+		respond(context.messages as Message[], model.id, options?.reasoning);
 	faux.setResponses(Array.from({ length: 1_000 }, () => factory));
 	const models = createModels();
 	models.setProvider(faux.provider);

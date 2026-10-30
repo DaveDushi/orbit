@@ -37,19 +37,22 @@ People see and search the memory in **Account settings → Agent memory**, and d
 memory also drops the summaries built from it; the agent writes them again). The agent itself cannot delete memory.
 When a member leaves a workspace, their private memory there is deleted. Design: `.ai/agent-design.md`, "Memory".
 
-## Name and instructions
+## Name, model and instructions
 
 | Setting | Where | Who | Notes |
 |---|---|---|---|
 | Name | Admin → AI agent (`/admin/agent`, `PUT /api/v1/admin/agent`) | Installation admins | One name for the installation: it is the bot user's display name, so it is also the agent's `@handle`. 2–40 characters (letters, digits, single spaces, `- _ . '`). Orbit refuses a name that another account already has (trimmed, any case), because `@Name` would then reach that person. Messages and earlier mentions show the new name. |
+| Model and thinking level | Admin → AI agent (`PUT /api/v1/admin/agent/model`) | Installation admins | One choice for the installation, stored in `agent_model_settings`. The model list comes from the sidecar (its ChatGPT (Codex) models); Orbit refuses any other model, and a model can only be saved while the sidecar answers. Thinking: `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. **Default** (`null`) is `AGENT_MODEL` and Pi's default thinking level. Compaction keeps `AGENT_COMPACT_MODEL`/`AGENT_COMPACT_THINKING`. |
 | Team instructions | Workspace settings → AI agent (`/settings/agent`, `PUT /api/v1/workspaces/{id}/agent`) | Owners and admins write, every member reads | Plain text, at most 4,000 characters, stored in `agent_team_instructions`. |
 
 The system prompt of a run has, in this order: the rules (with the current name), the built-in **About Orbit**
 section (`apps/agent/src/prompt.ts`: Orbit's features, short how-to answers, what the agent can and cannot do; not
 editable), the workspace's team instructions in a `<team-instructions>` block that says they cannot override the rules,
-then the thread's context. The sidecar reads the name and the team instructions with each queued message and keeps
-them for the run, so a change applies to the next run without a restart. Agent sessions cannot read or change either
-setting. With `AGENT_MOCK=1`, the instruction `show prompt` answers with the current system prompt.
+then the thread's context. The sidecar reads the name, the model choice and the team instructions with each queued
+message and keeps them for the run, so a change applies to the next run without a restart (a run already going keeps
+its model). If the saved model is not one this sidecar knows (another version), the run uses `AGENT_MODEL` and the
+sidecar logs a warning. Agent sessions cannot read or change these settings. With `AGENT_MOCK=1`, the instruction
+`show prompt` answers with the current system prompt, and `show model` with the run's model and thinking level.
 
 ## Agent tools (integrations)
 
@@ -100,7 +103,7 @@ it calls Orbit back. Both sides share one secret.
 | `ORBIT_FORWARDED_PROTO` | none | Set `https` when Orbit runs in production on loopback: Orbit accepts the header only from a trusted proxy address (`ORBIT_TRUSTED_PROXIES` must contain the agent's address, for example `127.0.0.1/32`). |
 | `AGENT_HOST`, `AGENT_PORT` | `127.0.0.1`, `8790` | Where the agent listens. Keep it on loopback or a private network. |
 | `AGENT_DATA_DIR` | `./data` | Pi Durable's SQLite file (`pi.sqlite`): transcripts and runs. Back it up with Orbit's data. |
-| `AGENT_MODEL` | `gpt-6.1-sol` | The ChatGPT (Codex) model id. |
+| `AGENT_MODEL` | `gpt-6.1-sol` | The ChatGPT (Codex) model id of runs while Admin → AI agent has **Default**. |
 | `AGENT_MAX_RUNS_PER_USER` | `3` | Runs one person can have going at the same time; more wait. |
 | `AGENT_MAX_TOOL_CALLS` | `40` | Tool calls per run. |
 | `AGENT_MEMORY_TOKENS` | `3000` | Tokens of memory the agent reads at the start of each run (team and private together; `0` turns it off). It is paid by the driver's ChatGPT account. |

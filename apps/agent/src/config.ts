@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 
-const THINKING: readonly ThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+export const THINKING: readonly ThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
 /** The sidecar's settings, from the environment. See docs/agent.md. */
 export type Config = {
@@ -16,7 +16,7 @@ export type Config = {
 	readonly host: string;
 	readonly port: number;
 	readonly dataDir: string;
-	/** The ChatGPT (Codex) model id. */
+	/** The ChatGPT (Codex) model id of runs when an installation admin has chosen none (Admin → AI agent). */
 	readonly model: string;
 	/** A scripted model and a fake ChatGPT sign-in, for tests without OpenAI. */
 	readonly mock: boolean;

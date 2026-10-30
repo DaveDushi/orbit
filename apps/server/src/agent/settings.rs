@@ -1,7 +1,7 @@
-//! The agent's settings that people change: its name (the bot user's display name, one for the
-//! installation, set by an installation admin) and each workspace's team instructions (set by
-//! the workspace's owners and admins, read by every member). The sidecar reads both for each run
-//! (`routes::list_inputs`). Agent sessions reach neither: `scope` refuses `/agent` of a workspace
+//! The agent's settings that people change: its name (the bot user's display name) and its model
+//! and thinking level (one for the installation, set by an installation admin), and each
+//! workspace's team instructions (set by the workspace's owners and admins, read by every
+//! member). The sidecar reads them for each run (`routes::list_inputs`). Agent sessions reach neither: `scope` refuses `/agent` of a workspace
 //! and every `/api/v1/admin` route. Like the other agent routes, these are not in the OpenAPI
 //! contract.
 
@@ -25,6 +25,8 @@ type RequestIdExtension = Option<Extension<RequestId>>;
 pub const MIN_NAME_CHARS: usize = 2;
 pub const MAX_NAME_CHARS: usize = 40;
 pub const MAX_INSTRUCTIONS_CHARS: usize = 4_000;
+/// Pi's thinking levels without `off`, which is its default; the CHECK of `agent_model_settings`.
+pub const THINKING_LEVELS: [&str; 6] = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
 /// The trimmed name, or why it cannot be the agent's name. The name is the agent's @handle: the
 /// sidecar turns `@Name` in its answers into a mention, so it has only word characters and single
@@ -132,6 +134,7 @@ async fn rename(
 pub fn router(state: AgentState) -> Router {
     Router::new()
         .route("/api/v1/admin/agent", get(read_agent).put(save_agent))
+        .route("/api/v1/admin/agent/model", get(read_model).put(save_model))
         .route(
             "/api/v1/workspaces/{workspace_id}/agent",
             get(read_team).put(save_team),
@@ -298,6 +301,178 @@ async fn save_agent(
         Err(RenameError::Database(error)) => return Err(unavailable(&error, &uri, &request_id)),
     }
     agent_view(state.database())
+        .await
+        .map(Json)
+        .map_err(|error| unavailable(&error, &uri, &request_id))
+}
+
+// ---------------------------------------------------------------------------------------------
+// The model and thinking level: Admin → AI agent.
+
+/// The saved choice; `None` is the sidecar's default.
+pub(crate) async fn model_choice(
+    conn: &mut AnyConnection,
+) -> Result<(Option<String>, Option<String>), sqlx::Error> {
+    let row = sqlx::query("SELECT model, thinking FROM agent_model_settings WHERE id = 1")
+        .fetch_optional(&mut *conn)
+        .await?;
+    Ok(row.map_or((None, None), |row| (row.get("model"), row.get("thinking"))))
+}
+
+/// What the sidecar offers: its default model and every model of the ChatGPT (Codex) provider.
+#[derive(Deserialize, Serialize)]
+struct SidecarModels {
+    default_model: String,
+    models: Vec<ModelOption>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct ModelOption {
+    id: String,
+    name: String,
+}
+
+/// The sidecar's models; `None` when it does not answer.
+async fn sidecar_models(state: &AgentState) -> Option<SidecarModels> {
+    let config = state.config.as_ref()?;
+    let response = state
+        .http
+        .get(format!("{}/models", config.url))
+        .header(super::routes::SECRET_HEADER, &config.secret)
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        tracing::warn!(status = %response.status(), "agent sidecar models route");
+        return None;
+    }
+    response.json().await.ok()
+}
+
+#[derive(Serialize)]
+struct ModelView {
+    model: Option<String>,
+    thinking: Option<String>,
+    /// `None` when the sidecar is offline: then only "default" can be saved.
+    available: Option<SidecarModels>,
+    thinking_levels: [&'static str; 6],
+    updated_at: Option<i64>,
+    updated_by_name: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModelBody {
+    model: Option<String>,
+    thinking: Option<String>,
+}
+
+async fn model_view(state: &AgentState) -> Result<ModelView, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT s.model, s.thinking, s.updated_at, u.display_name FROM agent_model_settings s \
+         LEFT JOIN users u ON u.id = s.updated_by WHERE s.id = 1",
+    )
+    .fetch_optional(state.database().pool())
+    .await?;
+    Ok(ModelView {
+        model: row.as_ref().and_then(|row| row.get("model")),
+        thinking: row.as_ref().and_then(|row| row.get("thinking")),
+        available: sidecar_models(state).await,
+        thinking_levels: THINKING_LEVELS,
+        updated_at: row.as_ref().map(|row| row.get("updated_at")),
+        updated_by_name: row.and_then(|row| row.get("display_name")),
+    })
+}
+
+async fn read_model(
+    State(state): State<AgentState>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+) -> Result<Json<ModelView>, ApiError> {
+    installation_admin(&state, &headers, &uri, &request_id).await?;
+    model_view(&state)
+        .await
+        .map(Json)
+        .map_err(|error| unavailable(&error, &uri, &request_id))
+}
+
+/// Sets the model and thinking level of every run from now on; `null` is the default. A model must
+/// be one the sidecar offers now, so it must answer unless the model goes back to the default.
+async fn save_model(
+    State(state): State<AgentState>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+    ApiJson(body): ApiJson<ModelBody>,
+) -> Result<Json<ModelView>, ApiError> {
+    let admin = installation_admin(&state, &headers, &uri, &request_id).await?;
+    let thinking = body.thinking.filter(|level| !level.is_empty());
+    if thinking
+        .as_deref()
+        .is_some_and(|level| !THINKING_LEVELS.contains(&level))
+    {
+        return Err(invalid(
+            "The thinking level must be minimal, low, medium, high, xhigh or max.",
+            &uri,
+            &request_id,
+        ));
+    }
+    let model = body
+        .model
+        .map(|model| model.trim().to_owned())
+        .filter(|model| !model.is_empty());
+    if let Some(model) = &model {
+        let available = sidecar_models(&state).await.ok_or_else(|| {
+            problem(
+                StatusCode::BAD_GATEWAY,
+                "agent_offline",
+                "The agent service is offline, so the model cannot be checked. Try again when it runs.",
+                &uri,
+                &request_id,
+            )
+        })?;
+        if !available.models.iter().any(|option| &option.id == model) {
+            return Err(invalid(
+                "The agent does not know this model.",
+                &uri,
+                &request_id,
+            ));
+        }
+    }
+    let database = state.database();
+    async {
+        let mut tx = database.immediate_transaction().await?;
+        let now = TimestampMillis::now();
+        sqlx::query(
+            "INSERT INTO agent_model_settings (id, model, thinking, updated_by, updated_at) \
+             VALUES (1, $1, $2, $3, $4) ON CONFLICT (id) DO UPDATE SET model = excluded.model, \
+             thinking = excluded.thinking, updated_by = excluded.updated_by, \
+             updated_at = excluded.updated_at",
+        )
+        .bind(model.as_deref())
+        .bind(thinking.as_deref())
+        .bind(admin.to_string())
+        .bind(now.as_millis())
+        .execute(&mut *tx)
+        .await?;
+        audit::record_global(
+            &mut tx,
+            Some(admin),
+            "agent.model_changed",
+            AuditOutcome::Success,
+            "agent",
+            None,
+            request_id_value(request_id.as_ref()),
+            json!({ "model": model, "thinking": thinking }),
+            now,
+        )
+        .await?;
+        tx.commit().await
+    }
+    .await
+    .map_err(|error| unavailable(&error, &uri, &request_id))?;
+    model_view(&state)
         .await
         .map(Json)
         .map_err(|error| unavailable(&error, &uri, &request_id))

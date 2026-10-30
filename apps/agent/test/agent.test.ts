@@ -38,6 +38,9 @@ class FakeOrbit {
 	failAcks = false;
 	failEdits = false;
 	botName = "Orbit Agent";
+	/** Admin → AI agent: the model and thinking level of new runs. */
+	model: string | null = null;
+	thinking: string | null = null;
 	server!: Server;
 	url = "";
 
@@ -87,7 +90,7 @@ class FakeOrbit {
 			if (rest === "/inputs") {
 				const pending = this.queue.filter((input) => !input.acked);
 				if (!pending.length) await sleep(50);
-				return [200, { bot_user_id: BOT, bot_name: this.botName, inputs: pending }];
+				return [200, { bot_user_id: BOT, bot_name: this.botName, model: this.model, thinking: this.thinking, inputs: pending }];
 			}
 			if ((match = /^\/inputs\/(.+)\/ack$/.exec(rest))) {
 				if (this.failAcks) return [503, { code: "unavailable" }];
@@ -427,6 +430,39 @@ test("each run's prompt has the current name, then About Orbit, then the team in
 		const plain = orbit.add({ thread_key: id(), author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> show prompt` });
 		await until("the third prompt", () => orbit.messages.has(`agent:${plain}:1`));
 		assert.ok(!answerOf(orbit, plain).includes("<team-instructions>"));
+	} finally {
+		await agent.stop();
+		orbit.server.close();
+	}
+});
+
+test("each new run takes the chosen model and thinking level, and an unknown model falls back to the default", async () => {
+	const orbit = new FakeOrbit();
+	current = orbit;
+	await orbit.listen();
+	const agent = new Agent(config(orbit, mkdtempSync(join(tmpdir(), "agent-"))), new OrbitClient(config(orbit, "")));
+	await agent.open();
+	await agent.start();
+	const thread = id();
+	const ask = async () => {
+		const input = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> show model` });
+		await until("the answer", () => /^Model: /.test(progressOf(orbit, input)));
+		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
+		return progressOf(orbit, input);
+	};
+	try {
+		assert.equal(await ask(), "Model: gpt-test, thinking: default");
+		// A change applies to the next run of the same thread, without a restart.
+		orbit.model = "gpt-6-luna";
+		orbit.thinking = "xhigh";
+		assert.equal(await ask(), "Model: gpt-6-luna, thinking: xhigh");
+		// A model or level this sidecar does not know (another version of Orbit saved it): the defaults.
+		orbit.model = "gpt-nope";
+		orbit.thinking = "extreme";
+		assert.equal(await ask(), "Model: gpt-test, thinking: default");
+		orbit.model = null;
+		orbit.thinking = "low";
+		assert.equal(await ask(), "Model: gpt-test, thinking: low");
 	} finally {
 		await agent.stop();
 		orbit.server.close();

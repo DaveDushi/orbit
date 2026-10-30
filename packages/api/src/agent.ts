@@ -149,6 +149,44 @@ export async function saveAgentName(client: Client, name: string): Promise<Agent
   return data as AgentIdentity
 }
 
+/** Admin → AI agent: the model and thinking level of every run. `null` is the agent's default. */
+export interface AgentModelSettings {
+  model: string | null
+  thinking: string | null
+  /** What the agent offers now; `null` when it is offline (then only the default model can be saved). */
+  available: { default_model: string; models: { id: string; name: string }[] } | null
+  thinking_levels: string[]
+  updated_at: number | null
+  updated_by_name: string | null
+}
+
+/** The value of the "default" choice in a picker; the API stores it as `null`. */
+export const AGENT_DEFAULT_CHOICE = 'default'
+
+/** The model and thinking choices of a picker. A saved model stays listed while the agent is offline or no longer offers it. */
+export function agentModelChoices(settings: AgentModelSettings): { models: { value: string; label: string }[]; levels: { value: string; label: string }[] } {
+  const available = settings.available
+  const defaultName = available?.models.find((option) => option.id === available.default_model)?.name ?? available?.default_model
+  const models = [
+    { value: AGENT_DEFAULT_CHOICE, label: defaultName ? `Default (${defaultName})` : 'Default' },
+    ...(available?.models ?? []).map((option) => ({ value: option.id, label: option.name })),
+  ]
+  if (settings.model && !models.some((option) => option.value === settings.model)) models.push({ value: settings.model, label: settings.model })
+  const levels = [{ value: AGENT_DEFAULT_CHOICE, label: 'Default' }, ...settings.thinking_levels.map((level) => ({ value: level, label: level }))]
+  return { models, levels }
+}
+
+export async function readAgentModel(client: Client): Promise<AgentModelSettings> {
+  const { data } = await client.get({ url: '/api/v1/admin/agent/model', throwOnError: true })
+  return data as AgentModelSettings
+}
+
+/** 422 for a model the agent does not offer or an unknown thinking level; 502 `agent_offline` for a model while the agent is offline. */
+export async function saveAgentModel(client: Client, choice: { model: string | null; thinking: string | null }): Promise<AgentModelSettings> {
+  const { data } = await client.put({ url: '/api/v1/admin/agent/model', body: choice, headers: { 'Content-Type': 'application/json' }, throwOnError: true })
+  return data as AgentModelSettings
+}
+
 /** Workspace settings → AI agent: instructions for every run in the workspace. Every member reads them. */
 export interface TeamInstructions {
   instructions: string

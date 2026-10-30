@@ -30,6 +30,15 @@ export type PendingInput = {
 	readonly team_instructions: string;
 };
 
+export type PendingInputs = {
+	readonly bot_user_id: string;
+	readonly bot_name: string;
+	/** Chosen by an installation admin; `null` (or absent from an older Orbit): the sidecar's default. */
+	readonly model?: string | null;
+	readonly thinking?: string | null;
+	readonly inputs: PendingInput[];
+};
+
 export type ThreadUpdate = {
 	readonly workspace_id: string;
 	readonly conversation_id: string;
@@ -70,9 +79,9 @@ export class OrbitClient {
 		return this.#fetch(method, `/api/internal/agent${path}`, { authorization: `Bearer ${this.#config.secret}` }, body, `${method} ${path}`);
 	}
 
-	/** The queued inputs, and the bot's id and current name. */
-	async pendingInputs(waitSeconds: number): Promise<{ bot_user_id: string; bot_name: string; inputs: PendingInput[] }> {
-		return (await this.internal("GET", `/inputs?wait=${waitSeconds}`)) as { bot_user_id: string; bot_name: string; inputs: PendingInput[] };
+	/** The queued inputs, the bot's id and current name, and the model and thinking level of new runs (`null`: default). */
+	async pendingInputs(waitSeconds: number): Promise<PendingInputs> {
+		return (await this.internal("GET", `/inputs?wait=${waitSeconds}`)) as PendingInputs;
 	}
 
 	async acknowledge(messageId: string): Promise<void> {
