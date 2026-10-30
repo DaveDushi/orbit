@@ -194,6 +194,7 @@ mod tests {
             "/api/v1/auth/password",
             "/api/v1/admin/users",
             "/api/v1/admin/agent",
+            "/api/v1/admin/agent/model",
             "/api/v1/workspaces",
             "/api/v1/workspaces/0199c3a0-0000-7000-8000-000000000002/tasks",
             "/api/v1/workspaces/0199c3a0-0000-7000-8000-0000000000012/tasks",

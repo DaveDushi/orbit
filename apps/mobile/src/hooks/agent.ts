@@ -7,7 +7,9 @@ import {
   readAgentMemories,
   readAgentMemoryWake,
   readAgentIdentity,
+  readAgentModel,
   readTeamInstructions,
+  saveAgentModel,
   saveAgentName,
   saveTeamInstructions,
   readAgentStatus,
@@ -101,6 +103,23 @@ export function useSaveAgentName() {
     mutationFn: (name: string) => saveAgentName(client, name),
     onSuccess: (identity) => queryClient.setQueryData(identityKey, identity),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: key }),
+  })
+}
+
+const modelKey = ['agent', 'model'] as const
+
+/** Admin → AI agent: the model and thinking level. Installation admins only. */
+export function useAgentModel() {
+  const { client } = useOrbit()
+  return useQuery({ queryKey: modelKey, queryFn: () => readAgentModel(client) })
+}
+
+export function useSaveAgentModel() {
+  const { client } = useOrbit()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (choice: { model: string | null; thinking: string | null }) => saveAgentModel(client, choice),
+    onSuccess: (saved) => queryClient.setQueryData(modelKey, saved),
   })
 }
 

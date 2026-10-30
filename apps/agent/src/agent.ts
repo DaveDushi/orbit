@@ -10,17 +10,18 @@ import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels, type Models } from "@earendil-works/pi-ai";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
-import { createRegistry, Harness, ProviderDoc, watchEvents, type AgentEvent, type Conversation, type ConversationId, type SettledSubmissionRecord, type SubmissionId } from "@earendil-works/pi-durable";
+import type { ThinkingLevel } from "@earendil-works/pi-ai";
+import { configure, createRegistry, Harness, ProviderDoc, watchEvents, type AgentEvent, type Conversation, type ConversationId, type SettledSubmissionRecord, type SubmissionId } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 
 import { compactionSettings } from "./compaction.ts";
-import type { Config } from "./config.ts";
+import { THINKING, type Config } from "./config.ts";
 import { IndexDoc, ThreadDoc, type ThreadState } from "./docs.ts";
 import { loadIntegrations } from "./integrations.ts";
 import { loadWake } from "./memory.ts";
 import { namesToTokens, splitBody, tokensToNames, type Person } from "./mentions.ts";
 import { mockModels } from "./mock.ts";
-import { PROVIDER, PeopleModels, routedModels } from "./models.ts";
+import { codexModels, PROVIDER, PeopleModels, routedModels } from "./models.ts";
 import type { OrbitClient, PendingInput } from "./orbit.ts";
 import { DEFAULT_AGENT_NAME } from "./prompt.ts";
 import { orbitExtension } from "./tools.ts";
@@ -113,6 +114,8 @@ export class Agent {
 	botUserId: string | undefined;
 	/** The bot's name in Orbit; an installation admin can change it. */
 	botName = DEFAULT_AGENT_NAME;
+	/** The model and thinking level an installation admin chose for new runs, from Orbit's queue; `null`: default. */
+	choice: { model: string | null; thinking: string | null } = { model: null, thinking: null };
 	/** Pi provider session id → the person who pays for that conversation's requests. */
 	readonly #payers = new Map<string, string>();
 	readonly #threads = new Map<string, ConversationId>();
@@ -212,6 +215,7 @@ export class Agent {
 				continue;
 			}
 			this.botUserId = response.bot_user_id;
+			this.choice = { model: response.model ?? null, thinking: response.thinking ?? null };
 			if (response.bot_name && response.bot_name !== this.botName) {
 				// A rename: the cached names would still turn "@Old Name" into a mention of the agent.
 				this.botName = response.bot_name;
@@ -389,6 +393,8 @@ export class Agent {
 			doc.run = { inputId: input.message_id, submissionId: null, progressMessageId, startedAt: Date.now() };
 			doc.agentName = this.botName;
 			doc.teamInstructions = input.team_instructions ?? "";
+			// Each run takes the model chosen now; a run already going keeps its own.
+			await configure(tx, conversation.id, this.#runModel());
 		}, context);
 		// Orbit issues agent sessions only to the driver of a running thread: set it before any tool runs.
 		await this.#orbit.updateThread(input.thread_key, this.#threadUpdate(state, "running", driverId, null));
@@ -410,6 +416,22 @@ export class Agent {
 		}, context);
 		this.#watch(input.thread_key, conversation.id);
 		await this.#orbit.acknowledge(input.message_id);
+	}
+
+	/**
+	 * The model and thinking level of a new run: the installation admin's choice, or the defaults (`AGENT_MODEL`, Pi's
+	 * thinking level). Orbit checks the choice against this sidecar's models, but a sidecar of another version may
+	 * not have it: then the run takes the default.
+	 */
+	#runModel(): { model: { provider: string; modelId: string }; thinkingLevel: ThinkingLevel | null } {
+		const { model, thinking } = this.choice;
+		let modelId = this.#config.model;
+		if (model && codexModels().some((known) => known.id === model)) modelId = model;
+		else if (model) console.warn(`agent: the chosen model ${model} is not a ChatGPT (Codex) model here; this run uses ${modelId}`);
+		let thinkingLevel: ThinkingLevel | null = null;
+		if (thinking && THINKING.includes(thinking as ThinkingLevel)) thinkingLevel = thinking as ThinkingLevel;
+		else if (thinking) console.warn(`agent: the chosen thinking level ${thinking} is unknown; this run uses the default`);
+		return { model: { provider: PROVIDER, modelId }, thinkingLevel };
 	}
 
 	/** The run's memory section, read as the driver. A failure only costs the run its memory. */

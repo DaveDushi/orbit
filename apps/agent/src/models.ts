@@ -14,6 +14,13 @@ import type { OrbitClient } from "./orbit.ts";
 /** pi-ai's ChatGPT (Codex) provider; its OAuth flow has a device-code login. */
 export const PROVIDER = "openai-codex";
 
+/** The ChatGPT (Codex) models an installation admin can choose for runs (Admin → AI agent). */
+export function codexModels(): { id: string; name: string }[] {
+	return openaiCodexProvider()
+		.getModels()
+		.map((model) => ({ id: model.id, name: model.name }));
+}
+
 /** A person's credential, stored sealed in Orbit. `modify` calls are serialized per person. */
 export class OrbitCredentialStore implements CredentialStore {
 	readonly #orbit: OrbitClient;

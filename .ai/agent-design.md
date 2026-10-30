@@ -138,6 +138,11 @@ flow in pi-ai binds port 1455 and allows one login at a time, so we do not use i
   sidecar stores both in the thread's `orbit.thread` document when a run starts; the prompt sections read them from
   there, so they stay the same during a run (Pi resends only changed sections) and change with the next run.
 - **Scope.** Agent sessions cannot reach `/api/v1/workspaces/{id}/agent` (denied segment) or `/api/v1/admin/agent`.
+- **Model.** An installation admin picks the conversation model and thinking level (one row, `agent_model_settings`;
+  `null` = `AGENT_MODEL` and Pi's default). Orbit asks the sidecar (`GET /models`, shared secret) which ChatGPT models
+  exist and refuses others, so only "default" can be saved while the sidecar is offline. `GET …/inputs` returns
+  `model` and `thinking`; the sidecar applies them with Pi's `configure()` in the commit that starts each run, and falls
+  back to the default (with a log line) for a model it does not know. Compaction keeps its own env settings.
 
 ### 9. Rate limits
 

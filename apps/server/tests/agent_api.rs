@@ -39,6 +39,11 @@ struct Member {
 
 impl Fixture {
     async fn new() -> Self {
+        // Nothing listens here: the login routes see an offline sidecar.
+        Self::with_sidecar("http://127.0.0.1:9").await
+    }
+
+    async fn with_sidecar(sidecar_url: &str) -> Self {
         let database = TestDatabase::new().await.unwrap();
         let identity = Arc::new(IdentityRepository::new((*database).clone()));
         let now = TimestampMillis::now();
@@ -75,8 +80,7 @@ impl Fixture {
         let chat = ChatState::new(Arc::clone(&identity), uploads, CookieMode::secure());
         let agent = AgentState::new(
             Some(AgentConfig {
-                // Nothing listens here: the login routes see an offline sidecar.
-                url: "http://127.0.0.1:9".to_owned(),
+                url: sidecar_url.to_owned(),
                 secret: SECRET.to_owned(),
             }),
             chat.clone(),
@@ -1254,4 +1258,153 @@ async fn owners_and_admins_write_team_instructions_members_read_them_and_runs_ge
             .all(|input| input["team_instructions"] == "Be brief.\nUse metric units."),
         "{inputs:?}"
     );
+}
+
+/// A sidecar that answers only `GET /models`, and only with the secret.
+async fn fake_sidecar() -> String {
+    use axum::routing::get;
+    let app = axum::Router::new().route(
+        "/models",
+        get(|headers: axum::http::HeaderMap| async move {
+            if headers
+                .get("x-orbit-agent-secret")
+                .is_none_or(|value| value != SECRET)
+            {
+                return (StatusCode::UNAUTHORIZED, axum::Json(json!({})));
+            }
+            (
+                StatusCode::OK,
+                axum::Json(json!({
+                    "default_model": "gpt-6.1-sol",
+                    "models": [
+                        { "id": "gpt-6.1-sol", "name": "GPT-6.1 Sol" },
+                        { "id": "gpt-6-luna", "name": "GPT-6 Luna" },
+                    ],
+                })),
+            )
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    url
+}
+
+#[tokio::test]
+async fn installation_admins_pick_the_model_and_thinking_level_and_runs_get_them() {
+    let fixture = Fixture::with_sidecar(&fake_sidecar().await).await;
+    fixture.pending().await;
+    let member = fixture.add_member("Teammate").await;
+    let workspace_admin = fixture.add_member("Wadmin").await;
+    sqlx::query("UPDATE memberships SET role = 'admin' WHERE user_id = $1")
+        .bind(workspace_admin.id.to_string())
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    let path = "/api/v1/admin/agent/model";
+    let choose = |model: Option<&str>, thinking: Option<&str>| {
+        Some(json!({ "model": model, "thinking": thinking }))
+    };
+
+    // Nothing saved: the sidecar's default, and the list it offers.
+    let (status, value) = fixture.cookie(&fixture.owner, "GET", path, None).await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(value["model"], Value::Null);
+    assert_eq!(value["thinking"], Value::Null);
+    assert_eq!(value["available"]["default_model"], "gpt-6.1-sol");
+    assert_eq!(value["available"]["models"][1]["id"], "gpt-6-luna");
+    let (_, inputs) = fixture.internal("GET", "/inputs", None).await;
+    assert_eq!(inputs["model"], Value::Null);
+    assert_eq!(inputs["thinking"], Value::Null);
+
+    // Only an installation admin: not a workspace admin, a member, or an agent session.
+    for person in [&member, &workspace_admin] {
+        for method in ["GET", "PUT"] {
+            let (status, _) = fixture
+                .cookie(person, method, path, choose(Some("gpt-6-luna"), None))
+                .await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{method}");
+        }
+    }
+    let bearer = fixture.agent_session(&fixture.owner).await;
+    for method in ["GET", "PUT"] {
+        let (status, value) = fixture
+            .request(
+                method,
+                path,
+                ("authorization", &bearer),
+                choose(Some("gpt-6-luna"), None),
+            )
+            .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{method}");
+        assert_eq!(value["code"], "agent_scope");
+    }
+
+    // A model the sidecar does not offer, and an unknown thinking level ("off" is the default).
+    for (model, thinking) in [
+        (Some("gpt-4"), None),
+        (Some("gpt-6-luna"), Some("off")),
+        (None, Some("HIGH")),
+    ] {
+        let (status, value) = fixture
+            .cookie(&fixture.owner, "PUT", path, choose(model, thinking))
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{value}");
+    }
+
+    let (status, value) = fixture
+        .cookie(
+            &fixture.owner,
+            "PUT",
+            path,
+            choose(Some(" gpt-6-luna "), Some("xhigh")),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(value["model"], "gpt-6-luna");
+    assert_eq!(value["thinking"], "xhigh");
+    assert_eq!(value["updated_by_name"], "Owner");
+    let (_, value) = fixture.cookie(&fixture.owner, "GET", path, None).await;
+    assert_eq!(value["model"], "gpt-6-luna");
+    // The sidecar gets them with its next poll, for every new run.
+    let (_, inputs) = fixture.internal("GET", "/inputs", None).await;
+    assert_eq!(inputs["model"], "gpt-6-luna");
+    assert_eq!(inputs["thinking"], "xhigh");
+
+    // Back to the defaults.
+    let (status, value) = fixture
+        .cookie(&fixture.owner, "PUT", path, choose(None, None))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    let (_, inputs) = fixture.internal("GET", "/inputs", None).await;
+    assert_eq!(inputs["model"], Value::Null);
+    assert_eq!(inputs["thinking"], Value::Null);
+}
+
+#[tokio::test]
+async fn an_offline_sidecar_allows_only_the_default_model() {
+    let fixture = Fixture::new().await;
+    let path = "/api/v1/admin/agent/model";
+    let (status, value) = fixture.cookie(&fixture.owner, "GET", path, None).await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(value["available"], Value::Null);
+    let (status, value) = fixture
+        .cookie(
+            &fixture.owner,
+            "PUT",
+            path,
+            Some(json!({ "model": "gpt-6-luna", "thinking": null })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{value}");
+    let (status, value) = fixture
+        .cookie(
+            &fixture.owner,
+            "PUT",
+            path,
+            Some(json!({ "model": null, "thinking": "low" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(value["thinking"], "low");
 }

@@ -22,7 +22,7 @@ use crate::push::PushService;
 use crate::repositories::chat::SendInput;
 use crate::task_routes::{ApiError, authenticate_session};
 
-const SECRET_HEADER: &str = "x-orbit-agent-secret";
+pub(super) const SECRET_HEADER: &str = "x-orbit-agent-secret";
 
 type RequestIdExtension = Option<Extension<RequestId>>;
 
@@ -288,7 +288,8 @@ struct InputsQuery {
     wait: u64,
 }
 
-/// The queued inputs, oldest first, and the bot's current name. Waits up to `wait` seconds for an
+/// The queued inputs, oldest first, the bot's current name and the model and thinking level of new
+/// runs (`null`: the sidecar's default). Waits up to `wait` seconds for an
 /// input. Also puts the bot into workspaces made since the last call.
 async fn list_inputs(
     State(state): State<AgentState>,
@@ -319,9 +320,14 @@ async fn list_inputs(
             let name = bot::name(&mut conn)
                 .await
                 .map_err(|_| unavailable(&uri, &request_id))?;
+            let (model, thinking) = super::settings::model_choice(&mut conn)
+                .await
+                .map_err(|_| unavailable(&uri, &request_id))?;
             return Ok(Json(json!({
                 "bot_user_id": bot.to_string(),
                 "bot_name": name,
+                "model": model,
+                "thinking": thinking,
                 "inputs": pending,
             })));
         }
