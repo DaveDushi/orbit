@@ -18,13 +18,13 @@ Changes apply at once, without a restart. On a phone, the Orbit app lists these 
 
 ## Allow Orbit to frame the app
 
-To open inside Orbit, the app must send this header on its pages, with Orbit's origin:
+To open inside Orbit, the app must let Orbit frame it. Send this header on its pages, with Orbit's origin:
 
 ```
 Content-Security-Policy: frame-ancestors https://orbit.example.com
 ```
 
-Remove any `X-Frame-Options` header. Orbit cannot detect reliably that an app refused the frame, so the page always has **Open in a new tab** in its header.
+Remove any `X-Frame-Options` header. A page with neither header can be framed by every site, so add the header even if the frame works without it. Orbit cannot detect reliably that an app refused the frame, so the page always has **Open in a new tab** in its header.
 
 In the frame, the app can run scripts, use forms, open popups and download files. It cannot navigate the Orbit page. The camera, microphone, location and payment features are off.
 
@@ -91,6 +91,48 @@ const person = tokens.claims()
 ```
 
 [`scripts/apps-demo/server.mjs`](../scripts/apps-demo/server.mjs) is a complete small app without packages, which also shows the `login_required` case.
+
+## Protect an app with Cloudflare Access
+
+An app behind [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/integrations/identity-providers/generic-oidc/) needs no code: Access uses Orbit as a generic OpenID Connect provider, and people sign in to the app with their Orbit account. In this example, the app is `products.wellrox.com` and the Access team is `edusi`.
+
+**1. In Orbit**, add the app with the address `https://products.wellrox.com`, and this redirect URI:
+
+```
+https://edusi.cloudflareaccess.com/cdn-cgi/access/callback
+```
+
+Copy the client ID and the secret.
+
+**2. In Cloudflare**, go to Zero Trust → Settings → Authentication → Add new → OpenID Connect:
+
+| Cloudflare field | Value |
+| --- | --- |
+| App ID | The client ID from Orbit |
+| Client secret | The secret from Orbit |
+| Auth URL | `https://orbit.example.com/oauth/authorize` |
+| Token URL | `https://orbit.example.com/oauth/token` |
+| Certificate URL | `https://orbit.example.com/oauth/jwks` |
+| Proof Key for Code Exchange (PKCE) | On |
+| Email claim | `email` (the default scopes `openid email profile` include it) |
+
+**3. In the Access application** of `products.wellrox.com`, choose this login method and a policy. Add `workspace_role` under OIDC Claims if a policy needs the role.
+
+**Which addresses must be public.** Cloudflare's servers call Orbit without a browser session, so nothing in front of Orbit may ask them to sign in:
+
+| Path | Called by | Must be public |
+| --- | --- | --- |
+| `/oauth/token` | Cloudflare's servers (`POST`) | Yes |
+| `/oauth/jwks` | Cloudflare's servers | Yes |
+| `/.well-known/openid-configuration` | Other OpenID Connect clients, setup tools | Yes for a standard client |
+| `/oauth/userinfo` | Other OpenID Connect clients | Yes for a standard client |
+| `/oauth/authorize`, `/login` and the web app | The person's browser | Reachable by the person. A login proxy in front of them breaks sign-in in a frame, because a proxy's login page usually refuses frames. |
+
+None of these paths gives data without a secret or a token: discovery and JWKS hold only public values.
+
+**In a frame.** Access makes the sign-in pass through `edusi.cloudflareaccess.com`, which Orbit allows because it is the origin of the redirect URI. Access must also allow frames and send its cookie in them: see `allow_iframe` and the cookie settings of the Access application. If the app is on another site than Orbit, browsers may block these cookies. In that case, set the app to **In a new tab**. Orbit cannot change these settings, and Access may refuse to show its own pages in a frame; test this with your account.
+
+**A removed member** loses Orbit sign-in at once, but the Access session lasts for its own session duration. Keep that duration short.
 
 ## Limits
 

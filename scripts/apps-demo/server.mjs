@@ -17,7 +17,7 @@ const b64url = (buffer) => buffer.toString('base64url')
 const page = (res, body, headers = {}) => {
   res.writeHead(200, {
     'content-type': 'text/html; charset=utf-8',
-    // Which pages may frame this app. Without this header, or with another origin, the frame is refused.
+    // Which pages may frame this app: only Orbit.
     'content-security-policy': `frame-ancestors ${FRAME_ANCESTORS}`,
     ...headers,
   })

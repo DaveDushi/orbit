@@ -618,7 +618,7 @@ async fn token(
     {
         return Ok(crate::apps::oidc::token(apps, &headers, &body).await);
     }
-    let Form(input) = Form::<TokenRequest>::from_bytes(&body)
+    let input: TokenRequest = serde_urlencoded::from_bytes(&body)
         .map_err(|_| OAuthError::invalid("invalid_request"))?;
     if input
         .resource

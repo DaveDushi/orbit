@@ -126,8 +126,8 @@ fn generate_key(app_key: &[u8; 32]) -> Option<(String, Vec<u8>, String)> {
     let key = rsa::RsaPrivateKey::new(&mut rng, 2048).ok()?;
     let pkcs8 = key.to_pkcs8_der().ok()?;
     let pair = RsaKeyPair::from_pkcs8(pkcs8.as_bytes()).ok()?;
-    let modulus: Vec<u8> = pair.public().modulus().be_bytes().collect();
-    let exponent: Vec<u8> = pair.public().exponent().be_bytes().collect();
+    let public = ring::rsa::PublicKeyComponents::<Vec<u8>>::from(pair.public());
+    let (modulus, exponent) = (public.n, public.e);
     let kid = URL_SAFE_NO_PAD.encode(&Sha256::digest(&modulus)[..16]);
     let jwk = json!({"kty": "RSA", "use": "sig", "alg": "RS256", "kid": kid,
         "n": URL_SAFE_NO_PAD.encode(modulus), "e": URL_SAFE_NO_PAD.encode(exponent)});
@@ -266,9 +266,9 @@ async fn app_by_client(
     state: &AppsState,
     client_id: &str,
 ) -> Result<Option<WorkspaceApp>, sqlx::Error> {
-    let row = sqlx::query(&format!(
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM workspace_apps WHERE oidc_client_id = $1"
-    ))
+    )))
     .bind(client_id)
     .fetch_optional(state.database.pool())
     .await?;
@@ -650,7 +650,7 @@ async fn userinfo(State(state): State<AppsState>, headers: HeaderMap) -> Respons
         let Some(row) = row else {
             return Ok(None);
         };
-        let app = sqlx::query(&format!("SELECT {COLUMNS} FROM workspace_apps WHERE id = $1"))
+        let app = sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {COLUMNS} FROM workspace_apps WHERE id = $1")))
             .bind(row.get::<String, _>("app_id"))
             .fetch_one(state.database.pool())
             .await?;

@@ -352,7 +352,7 @@ impl Fixture {
     }
 
     async fn count(&self, table: &str, app_id: &str) -> i64 {
-        sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE app_id = $1"))
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table} WHERE app_id = $1")))
             .bind(app_id)
             .fetch_one(self.database.pool())
             .await
@@ -441,7 +441,7 @@ async fn only_owners_and_admins_manage_and_the_secret_shows_once() {
     assert_eq!(patched.status, StatusCode::OK);
     assert!(patched.json().get("client_secret").is_none());
     let seen: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM audit_logs WHERE workspace_id = $1 AND action LIKE 'app.%'",
+        "SELECT COUNT(*) FROM audit_events WHERE workspace_id = $1 AND action LIKE 'app.%'",
     )
     .bind(&fixture.workspace)
     .fetch_one(fixture.database.pool())
@@ -793,14 +793,15 @@ async fn a_bad_client_redirect_or_person_never_gets_a_code() {
     assert!(framed.location().as_str().starts_with(CALLBACK));
 
     // A suspended person.
-    let suspended = fixture.user("suspended", Some("owner")).await;
-    let code = fixture.authorize(&suspended, &client).await.param("code").unwrap();
+    let suspended = fixture.user("suspended", Some("member")).await;
+    let open = fixture.add_app("Open", &["owner", "member"]).await;
+    let code = fixture.authorize(&suspended, &open).await.param("code").unwrap();
     sqlx::query("UPDATE users SET suspended_at = 1 WHERE id = $1")
         .bind(suspended.id.to_string())
         .execute(fixture.database.pool())
         .await
         .unwrap();
-    assert_eq!(fixture.redeem(&client, &code).await.status, StatusCode::BAD_REQUEST);
+    assert_eq!(fixture.redeem(&open, &code).await.status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -1110,4 +1111,96 @@ async fn removal_deletion_and_a_role_change_end_access() {
     assert_eq!(fixture.redeem(&client, &pending).await.status, StatusCode::UNAUTHORIZED);
     let reauthorize = fixture.authorize(&fixture.owner, &client).await;
     assert_eq!(reauthorize.status, StatusCode::BAD_REQUEST);
+}
+
+/// Cloudflare Access as a client: it knows only the Auth, Token and Certificate URLs, a client id
+/// and a secret, may or may not use PKCE, and reads the person from the ID token. The app behind it
+/// has no code for this, so its origin and the callback's origin must both be allowed in the frame.
+#[tokio::test]
+async fn cloudflare_access_signs_in_as_a_generic_oidc_client() {
+    const ACCESS_CALLBACK: &str = "https://edusi.cloudflareaccess.com/cdn-cgi/access/callback";
+    let fixture = Fixture::new().await;
+    let member = fixture.user("member", Some("member")).await;
+    let created = fixture
+        .api(
+            "POST",
+            "/workspace-apps",
+            &fixture.owner,
+            Some(json!({"name": "Products", "url": "https://products.wellrox.com",
+                "allowed_roles": ["member"], "redirect_uris": [ACCESS_CALLBACK]})),
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.text);
+    let created = created.json();
+    let client_id = created["sign_in"]["client_id"].as_str().unwrap();
+    let secret = created["client_secret"].as_str().unwrap();
+
+    // Both ways Access can be set up: without and with PKCE.
+    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(VERIFIER));
+    for pkce in [false, true] {
+        let mut request = vec![
+            ("client_id", client_id),
+            ("response_type", "code"),
+            ("redirect_uri", ACCESS_CALLBACK),
+            ("scope", "openid email profile"),
+            ("state", "access-state"),
+        ];
+        if pkce {
+            request.push(("code_challenge", challenge.as_str()));
+            request.push(("code_challenge_method", "S256"));
+        }
+        let answer = fixture.authorize_with(Some(&member), &request).await;
+        assert_eq!(answer.status, StatusCode::SEE_OTHER, "{}", answer.text);
+        assert!(answer.location().as_str().starts_with(ACCESS_CALLBACK));
+        assert_eq!(answer.param("state").unwrap(), "access-state");
+        let code = answer.param("code").unwrap();
+
+        // A server-to-server call: no cookie and no Origin header.
+        let mut fields = vec![
+            ("grant_type", "authorization_code"),
+            ("client_id", client_id),
+            ("client_secret", secret),
+            ("code", code.as_str()),
+            ("redirect_uri", ACCESS_CALLBACK),
+        ];
+        if pkce {
+            fields.push(("code_verifier", VERIFIER));
+        }
+        let tokens = fixture.token(&fields).await;
+        assert_eq!(tokens.status, StatusCode::OK, "{}", tokens.text);
+        let claims = verify(
+            tokens.json()["id_token"].as_str().unwrap(),
+            &fixture.jwk().await,
+        );
+        assert_eq!(claims["iss"], ORIGIN);
+        assert_eq!(claims["aud"], client_id);
+        assert_eq!(claims["email"], "member@example.com");
+        assert_eq!(claims["sub"], member.id.to_string());
+    }
+
+    // A role the app does not allow gets an error at Access's callback, never a code.
+    let refused = fixture
+        .authorize_with(
+            Some(&fixture.owner),
+            &[
+                ("client_id", client_id),
+                ("response_type", "code"),
+                ("redirect_uri", ACCESS_CALLBACK),
+                ("scope", "openid email profile"),
+            ],
+        )
+        .await;
+    assert_eq!(refused.param("error").unwrap(), "access_denied");
+    assert!(refused.param("code").is_none());
+
+    // The frame may pass through the app, Access and Orbit, and nothing else.
+    let frame = fixture.api("GET", "/apps/products/frame", &member, None).await;
+    assert_eq!(frame.status, StatusCode::OK);
+    let policy = frame.headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert!(
+        policy.contains(
+            "frame-src https://products.wellrox.com 'self' https://edusi.cloudflareaccess.com;"
+        ),
+        "{policy}"
+    );
 }

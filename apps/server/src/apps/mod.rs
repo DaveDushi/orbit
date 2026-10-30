@@ -313,9 +313,9 @@ impl WorkspaceApp {
 }
 
 async fn load_all(database: &Database, workspace_id: Id) -> Result<Vec<WorkspaceApp>, sqlx::Error> {
-    let rows = sqlx::query(&format!(
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM workspace_apps WHERE workspace_id = $1 ORDER BY lower(name), id"
-    ))
+    )))
     .bind(workspace_id.to_string())
     .fetch_all(database.pool())
     .await?;
@@ -329,10 +329,10 @@ pub(crate) async fn revoke_member(
     user_id: Id,
 ) -> Result<(), sqlx::Error> {
     for table in ["app_oidc_tokens", "app_oidc_codes"] {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM {table} WHERE user_id = $1 AND app_id IN \
              (SELECT id FROM workspace_apps WHERE workspace_id = $2)"
-        ))
+        )))
         .bind(user_id.to_string())
         .bind(workspace_id.to_string())
         .execute(&mut **tx)
@@ -343,7 +343,7 @@ pub(crate) async fn revoke_member(
 
 async fn revoke_app(tx: &mut Transaction<'_, Any>, app_id: &str) -> Result<(), sqlx::Error> {
     for table in ["app_oidc_tokens", "app_oidc_codes"] {
-        sqlx::query(&format!("DELETE FROM {table} WHERE app_id = $1"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {table} WHERE app_id = $1")))
             .bind(app_id)
             .execute(&mut **tx)
             .await?;
@@ -460,9 +460,9 @@ async fn frame(
     request_id: RequestIdExtension,
 ) -> Result<Response, ApiError> {
     let (actor, workspace_id) = member(&state, &headers, &workspace_id, &uri, &request_id).await?;
-    let row = sqlx::query(&format!(
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM workspace_apps WHERE workspace_id = $1 AND slug = $2"
-    ))
+    )))
     .bind(workspace_id.to_string())
     .bind(&slug)
     .fetch_optional(state.database.pool())
@@ -777,9 +777,9 @@ async fn load_one(
     uri: &Uri,
     request_id: &RequestIdExtension,
 ) -> Result<WorkspaceApp, ApiError> {
-    let row = sqlx::query(&format!(
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {COLUMNS} FROM workspace_apps WHERE workspace_id = $1 AND id = $2"
-    ))
+    )))
     .bind(workspace_id.to_string())
     .bind(app_id)
     .fetch_optional(state.database.pool())
