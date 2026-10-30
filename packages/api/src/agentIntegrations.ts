@@ -28,7 +28,16 @@ export interface AgentIntegration {
   kind: AgentIntegrationKind
   url: string
   auth_header: string | null
-  /** A secret is saved. Orbit never sends it back. */
+  /** `header`: a fixed credential. `oauth`: Orbit gets the token with a client ID and secret. */
+  auth_type: 'none' | 'header' | 'oauth'
+  oauth_token_url: string | null
+  /** HTTP: what Test does a GET of, below the base URL. */
+  test_path: string | null
+  /** HTTP: the one path where a GraphQL query can run without the driver's approval. */
+  graphql_read_path: string | null
+  /** Off by default. Mutations and other POST paths always need approval. */
+  graphql_reads_enabled: boolean
+  /** A secret or an OAuth client is saved. Orbit never sends them back. */
   secret_set: boolean
   allowed_roles: AgentIntegrationRole[]
   allowed_methods: AgentIntegrationMethod[]
@@ -45,7 +54,10 @@ export interface AgentIntegrationList {
   can_keep_secrets: boolean
 }
 
-/** A change. Leave `secret` out to keep the saved one; `''` removes it. */
+/**
+ * A change. Leave `secret` out to keep the saved one; `''` removes it. A fixed secret and an OAuth client exclude each
+ * other. A new `url` or `oauth_token_url` of an OAuth integration needs `oauth_client_id` and `oauth_client_secret` again.
+ */
 export interface AgentIntegrationInput {
   name?: string
   slug?: string
@@ -53,6 +65,12 @@ export interface AgentIntegrationInput {
   url?: string
   auth_header?: string
   secret?: string
+  oauth_token_url?: string
+  oauth_client_id?: string
+  oauth_client_secret?: string
+  test_path?: string
+  graphql_read_path?: string
+  graphql_reads_enabled?: boolean
   allowed_roles?: AgentIntegrationRole[]
   enabled_tools?: string[]
   allowed_methods?: AgentIntegrationMethod[]
@@ -86,7 +104,7 @@ export async function deleteAgentIntegration(client: Client, workspaceId: string
   await client.delete({ url: `${base(workspaceId)}/${id}`, throwOnError: true })
 }
 
-/** MCP: reads the server's tools. HTTP: a GET of the base URL. */
+/** MCP: reads the server's tools. HTTP: a GET of the test path or the base URL. OAuth: a new token, and a GET only of a test path. */
 export async function testAgentIntegration(client: Client, workspaceId: string, id: string): Promise<AgentIntegrationTest> {
   const { data } = await client.post({ url: `${base(workspaceId)}/${id}/test`, throwOnError: true })
   return data as AgentIntegrationTest
