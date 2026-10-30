@@ -4,14 +4,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, local merge commit 1a80ba807e3e0eb3e7f3d296491ff275c8e60ebb
-  (`main` with the `agent-memory` branch merged).
+- Source: DaveDushi/orbit, local merge commit 51c303545462520228a900283aaf499e293e93bd
+  (`main` with the `agent-settings` branch merged).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:1a80ba8`); fork commits have no published upstream image.
-- Image ID: sha256:93214f663ed4d799d5eb904c96027540f7648d3bce497d4fd8737e5ba9deaa5c
-- Team agent sidecar code (`/opt/orbit-agent`): local merge commit 01cd6b063677412a0dbfee591f9806bf44c3909c
-  (`main` with the `agent-compaction` branch merged). Orbit's binary did not change: that
-  merge changes only `apps/agent` and docs.
+  (`orbit:51c3035`); fork commits have no published upstream image.
+- Image ID: sha256:7fce9944f674cfdc7c72685af36db7e040a17192f4f526f170ea65cf41f184fa
+- Team agent sidecar code (`/opt/orbit-agent`): the same merge commit 51c3035.
 - Executable: /usr/local/bin/orbit; unprivileged system user: orbit.
 - Config: /etc/orbit/orbit.env (production mode); registration remains closed in instance settings.
 - Environment-only startup: /etc/systemd/system/orbit.service.d/environment.conf.
@@ -82,7 +80,8 @@ share invitation links manually. Registration remains closed.
 
 ## Team agent sidecar
 
-The team agent (`@Orbit Agent` in chat, Account → AI agent) is a Node sidecar from
+The team agent (`@Orbit Agent` in chat until an installation admin renames it in Admin → AI agent; Account → AI agent)
+is a Node sidecar from
 `apps/agent` (design: `.ai/agent-design.md`, operations: `docs/agent.md`).
 
 - Service: `orbit-agent.service`, user `orbit-agent` (no access to `/var/lib/orbit`),
@@ -177,6 +176,48 @@ sudo systemctl start orbit
 ```
 
 ## Verification performed
+
+### October 29, 2026 upgrade: agent name and team instructions
+
+Merged the `agent-settings` branch (through `f5f68e1`, which already contains `main` up to `de26aa6`) into `main`
+(merge `51c3035`). The merged tree is the tested branch plus `docs/donna-migration.md` (`21a3323`). The branch
+session ran the sidecar, web, mobile (with the iOS `expo export`), clippy, `api-check`, and Rust tests on SQLite and
+Postgres. On merged `main`: the sidecar typecheck and its 22 tests passed; `agent_api` (11), `database` (43) and
+`backup` (21) passed on SQLite (same Rust code as the branch build); the image `orbit:51c3035` built with the
+limited builder and `deploy/smoke.sh` passed.
+
+Stopped `orbit-agent` and `orbit`. Created and verified snapshot `01a1893b-753a-7113-9e6f-a98aae29cf64`
+(`/var/backups/orbit/snapshots/01a1893b-753a-7113-9e6f-a98aae29cf64`) with the old CLI. Saved the sidecar data as
+`/var/backups/orbit-agent/orbit-agent-before-51c3035.tgz`, the old sidecar code as `/opt/orbit-agent.before-51c3035`
+and the old executable as `/usr/local/bin/orbit-1a80ba8`. Rehearsed migration 64
+(`0064_agent_team_instructions.sql`, a new table only) in `/var/lib/orbit/rehearsal-51c3035-e2Uksg`, then applied it
+live: schema version 64, quick-check and foreign-key checks pass, counts unchanged (6 users, 1 workspace,
+2 projects, 10 tasks, 340 chat messages, 21 agent inputs, 3 ChatGPT connections). Installed the new sidecar code
+(`src` with `prompt.ts`); `package.json` and `package-lock.json` did not change, so `node_modules` is the installed
+copy. `/etc/orbit/orbit.env`, `/etc/orbit/agent.env` and nginx did not change.
+
+Verified: `orbit`, `orbit-agent` and nginx are active; readiness (all checks); revision `51c3035`; the sidecar polls
+without errors and its health reports `mock: false`; the internal agent API returns `bot_name` "Orbit Agent" with the
+sidecar's secret and 401 without it; `/api/v1/admin/agent`, `/api/v1/workspaces/<id>/agent` and `/api/v1/agent`
+answer 401 without a session; origin checks (400/403); the frontend serves `/admin/agent`;
+https://orbit.wellrox.com/ answers 307 to the exe.dev login. Admin → AI agent, Workspace settings → AI agent and
+Account → AI agent were checked signed in on a copy of the migrated production database served by the new binary
+(no production session was created; the copy was deleted): they load and show the name "Orbit Agent". The name is
+unchanged and no team instructions are set. An agent run with team instructions needs a person's ChatGPT account
+and was not tested from this VM. Stripe was not configured.
+
+Rollback (an older binary cannot read a version 64 database; preserve the current database first; work after the
+snapshot is lost):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-1a80ba8 backup verify 01a1893b-753a-7113-9e6f-a98aae29cf64 && /usr/local/bin/orbit-1a80ba8 backup restore 01a1893b-753a-7113-9e6f-a98aae29cf64'
+sudo install -m 755 /usr/local/bin/orbit-1a80ba8 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo cp -a /opt/orbit-agent.before-51c3035 /opt/orbit-agent
+sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-51c3035.tgz
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+```
 
 ### October 29, 2026 upgrade: agent compaction (sidecar only)
 
