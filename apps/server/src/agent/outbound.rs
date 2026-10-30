@@ -15,6 +15,8 @@ use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use serde_json::{Value, json};
 use url::{Host, Url};
 
+use super::oauth::{AccessToken, OAuthClient};
+
 /// Whole call, including the answer.
 const TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -36,6 +38,11 @@ pub(crate) enum OutboundError {
     Protocol(String),
     #[error("the MCP server returned an error: {0}")]
     Remote(String),
+    /// Only the HTTP status, a short OAuth error code or a network reason: never the body.
+    #[error("the token request failed: {0}")]
+    Token(String),
+    #[error("the token request worked, but the API refused the test request with HTTP {0}")]
+    TokenWorkedApiRefused(u16),
 }
 
 /// The hosts that skip the address check (lower case, no port).
@@ -292,6 +299,56 @@ impl Outbound {
             body,
             truncated,
         })
+    }
+
+    /// The OAuth client credentials grant: a new token, and `expires_in` when the answer has it.
+    /// As every call here: checked URL, no redirects (a 3xx is a failure), time and size limits.
+    pub(crate) async fn client_credentials(
+        &self,
+        token_url: &Url,
+        client: &OAuthClient,
+    ) -> Result<(AccessToken, Option<u64>), OutboundError> {
+        let token_url = check_url(token_url.as_str(), &self.test_hosts)?;
+        let form = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("grant_type", "client_credentials")
+            .append_pair("client_id", &client.client_id)
+            .append_pair("client_secret", &client.client_secret)
+            .finish();
+        let request = self
+            .client
+            .post(token_url)
+            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header("accept", "application/json")
+            .body(form);
+        let failed = OutboundError::Token;
+        let response = self.send(request).await.map_err(|error| match error {
+            OutboundError::Network(reason) => failed(reason),
+            other => other,
+        })?;
+        let status = response.status();
+        let (bytes, _) = read_limited(response, true)
+            .await
+            .map_err(|error| failed(error.to_string()))?;
+        let answer: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        if !status.is_success() {
+            let code = answer
+                .get("error")
+                .and_then(Value::as_str)
+                .filter(|code| oauth_error_code(code))
+                .map_or_else(String::new, |code| format!(" ({code})"));
+            return Err(failed(format!("HTTP {}{code}", status.as_u16())));
+        }
+        let token = answer
+            .get("access_token")
+            .and_then(Value::as_str)
+            .filter(|token| {
+                !token.is_empty() && token.len() <= 8_192 && HeaderValue::from_str(token).is_ok()
+            })
+            .ok_or_else(|| failed("the answer has no usable access_token".to_owned()))?;
+        Ok((
+            AccessToken::new(token.to_owned()),
+            answer.get("expires_in").and_then(Value::as_u64),
+        ))
     }
 
     /// The tools of an MCP server (`tools/list`, all pages up to 20).
@@ -565,6 +622,14 @@ async fn read_limited(
     Ok((bytes, false))
 }
 
+/// `^[a-z_]{1,64}$`: safe to show, like `shop_not_permitted`.
+fn oauth_error_code(code: &str) -> bool {
+    (1..=64).contains(&code.len())
+        && code
+            .chars()
+            .all(|character| character.is_ascii_lowercase() || character == '_')
+}
+
 fn network_reason(error: &reqwest::Error) -> String {
     if error.is_timeout() {
         return "timeout".to_owned();
@@ -579,10 +644,18 @@ fn network_reason(error: &reqwest::Error) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{TestHosts, check_url, join_api_url};
+    use super::{TestHosts, check_url, join_api_url, oauth_error_code};
 
     fn base(raw: &str) -> url::Url {
         url::Url::parse(raw).unwrap()
+    }
+
+    #[test]
+    fn only_short_lowercase_oauth_error_codes_are_shown() {
+        assert!(oauth_error_code("shop_not_permitted"));
+        for bad in ["", "Invalid", "a b", "a-b", "secret123", &"a".repeat(65)] {
+            assert!(!oauth_error_code(bad), "{bad}");
+        }
     }
 
     #[test]

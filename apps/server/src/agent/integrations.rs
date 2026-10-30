@@ -25,7 +25,8 @@ use sha2::{Digest, Sha256};
 use url::Url;
 
 use super::AgentState;
-use super::outbound::{Credential, OutboundError, check_url, join_api_url};
+use super::oauth::{AccessToken, OAuthClient};
+use super::outbound::{ApiAnswer, Credential, OutboundError, check_url, join_api_url};
 use crate::audit::{self, AuditOutcome};
 use crate::repositories::membership;
 use crate::secret_box::{decrypt_secret, encrypt_secret};
@@ -39,6 +40,7 @@ const METHODS: [&str; 6] = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"];
 pub(crate) const SEPARATOR: &str = "__";
 /// The one tool of an HTTP API integration.
 const API_TOOL: &str = "api_request";
+const DEFAULT_AUTH_HEADER: &str = "Authorization";
 /// How long the driver has to answer "yes", and how long that answer counts.
 pub(crate) const APPROVAL_LIFETIME_MS: i64 = 30 * 60 * 1_000;
 const MAX_INTEGRATIONS: i64 = 50;
@@ -120,6 +122,12 @@ struct Integration {
     url: String,
     auth_header: Option<String>,
     sealed_secret: Option<Vec<u8>>,
+    /// OAuth client credentials: where to get the token, and the sealed [`OAuthClient`]. Apart
+    /// from `sealed_secret`, so an older binary sends no credential after a rollback.
+    oauth_token_url: Option<String>,
+    oauth_sealed_client: Option<Vec<u8>>,
+    /// HTTP: what Test does a GET of, below the base URL, without a leading `/`.
+    test_path: Option<String>,
     allowed_roles: Vec<String>,
     enabled_tools: Vec<String>,
     allowed_methods: Vec<String>,
@@ -130,8 +138,9 @@ struct Integration {
     updated_at: i64,
 }
 
-const COLUMNS: &str = "id, slug, name, kind, url, auth_header, sealed_secret, allowed_roles, \
-     enabled_tools, allowed_methods, tools, tools_checked_at, created_at, updated_at";
+const COLUMNS: &str = "id, slug, name, kind, url, auth_header, sealed_secret, oauth_token_url, \
+     oauth_sealed_client, test_path, allowed_roles, enabled_tools, allowed_methods, tools, \
+     tools_checked_at, created_at, updated_at";
 
 fn strings(json: &str) -> Vec<String> {
     serde_json::from_str(json).unwrap_or_default()
@@ -147,6 +156,9 @@ impl Integration {
             url: row.get("url"),
             auth_header: row.get("auth_header"),
             sealed_secret: row.get("sealed_secret"),
+            oauth_token_url: row.get("oauth_token_url"),
+            oauth_sealed_client: row.get("oauth_sealed_client"),
+            test_path: row.get("test_path"),
             allowed_roles: strings(&row.get::<String, _>("allowed_roles")),
             enabled_tools: strings(&row.get::<String, _>("enabled_tools")),
             allowed_methods: strings(&row.get::<String, _>("allowed_methods")),
@@ -184,6 +196,29 @@ impl Integration {
             name: name.clone(),
             value,
         }))
+    }
+
+    fn uses_oauth(&self) -> bool {
+        self.oauth_token_url.is_some() && self.oauth_sealed_client.is_some()
+    }
+
+    /// The token URL and the open client, only for the call that needs them.
+    fn oauth(&self, key: Option<&[u8; 32]>) -> Result<Option<(Url, OAuthClient)>, &'static str> {
+        let (Some(token_url), Some(sealed)) = (&self.oauth_token_url, &self.oauth_sealed_client)
+        else {
+            return Ok(None);
+        };
+        let key = key.ok_or("The server has no ORBIT_APP_KEY to open the credential.")?;
+        let cannot_open = "The saved client cannot be opened. Enter it again.";
+        let client = decrypt_secret(key, sealed).map_err(|()| cannot_open)?;
+        let client = serde_json::from_str(&client).map_err(|_| cannot_open)?;
+        let token_url = Url::parse(token_url).map_err(|_| "The token URL is not valid.")?;
+        Ok(Some((token_url, client)))
+    }
+
+    /// The header of a call with `token`. An older binary may have cleared `auth_header`.
+    fn token_credential(&self, token: &AccessToken) -> Credential {
+        token.credential(self.auth_header.as_deref().unwrap_or(DEFAULT_AUTH_HEADER))
     }
 }
 
@@ -276,6 +311,11 @@ struct IntegrationView {
     kind: String,
     url: String,
     auth_header: Option<String>,
+    /// `none`, `header` (a fixed credential) or `oauth` (client credentials).
+    auth_type: &'static str,
+    oauth_token_url: Option<String>,
+    test_path: Option<String>,
+    /// The fixed secret or the OAuth client is saved.
     secret_set: bool,
     allowed_roles: Vec<String>,
     allowed_methods: Vec<String>,
@@ -295,7 +335,16 @@ impl From<&Integration> for IntegrationView {
             kind: integration.kind.clone(),
             url: integration.url.clone(),
             auth_header: integration.auth_header.clone(),
-            secret_set: integration.sealed_secret.is_some(),
+            auth_type: if integration.uses_oauth() {
+                "oauth"
+            } else if integration.sealed_secret.is_some() {
+                "header"
+            } else {
+                "none"
+            },
+            oauth_token_url: integration.oauth_token_url.clone(),
+            test_path: integration.test_path.clone(),
+            secret_set: integration.sealed_secret.is_some() || integration.uses_oauth(),
             allowed_roles: integration.allowed_roles.clone(),
             allowed_methods: integration.allowed_methods.clone(),
             tools: integration.tools.as_ref().map(|tools| {
@@ -403,6 +452,13 @@ struct Input {
     auth_header: Option<String>,
     /// Absent keeps the saved secret, `""` removes it.
     secret: Option<String>,
+    /// `""` removes the OAuth client. With a new value, the client ID and secret must come too.
+    oauth_token_url: Option<String>,
+    /// Never sent back: a change of the base or token URL needs both again.
+    oauth_client_id: Option<String>,
+    oauth_client_secret: Option<String>,
+    /// `""` removes it.
+    test_path: Option<String>,
     allowed_roles: Option<Vec<String>>,
     enabled_tools: Option<Vec<String>>,
     allowed_methods: Option<Vec<String>>,
@@ -464,6 +520,132 @@ fn subset(values: &[String], allowed: &[&str]) -> Option<Vec<String>> {
     Some(result)
 }
 
+struct OAuthInput {
+    token_url: Option<String>,
+    client_id: Option<String>,
+    client_secret: Option<String>,
+}
+
+impl OAuthInput {
+    fn is_given(&self) -> bool {
+        self.token_url.as_deref().is_some_and(|url| !url.is_empty())
+            || self.client_id.is_some()
+            || self.client_secret.is_some()
+    }
+}
+
+/// The OAuth part of [`apply`], after the base URL. An admin cannot read the client, so a change
+/// of where it (or a token) goes needs a new client.
+fn apply_oauth(
+    state: &AgentState,
+    current: Option<&Integration>,
+    next: &mut Integration,
+    input: OAuthInput,
+    header_given: bool,
+    uri: &Uri,
+    request_id: &RequestIdExtension,
+) -> Result<(), ApiError> {
+    if input.token_url.as_deref() == Some("") {
+        if input.client_id.is_some() || input.client_secret.is_some() {
+            return Err(invalid(
+                "An OAuth client needs a token URL.",
+                uri,
+                request_id,
+            ));
+        }
+        next.oauth_token_url = None;
+        next.oauth_sealed_client = None;
+        return Ok(());
+    }
+    if input.is_given() && next.kind != "http" {
+        return Err(invalid(
+            "Only HTTP APIs have OAuth client credentials.",
+            uri,
+            request_id,
+        ));
+    }
+    if let Some(raw) = &input.token_url {
+        let url = check_url(raw, state.outbound.test_hosts()).map_err(|error| match error {
+            OutboundError::Refused(detail) => invalid(detail, uri, request_id),
+            _ => invalid("The token URL is not valid.", uri, request_id),
+        })?;
+        if raw.len() > 2_048 {
+            return Err(invalid("The token URL is too long.", uri, request_id));
+        }
+        next.oauth_token_url = Some(url.to_string());
+    }
+    let new_client = match (input.client_id, input.client_secret) {
+        (None, None) => None,
+        (Some(id), Some(secret)) if !id.trim().is_empty() && !secret.trim().is_empty() => {
+            Some(OAuthClient {
+                client_id: id.trim().to_owned(),
+                client_secret: secret.trim().to_owned(),
+            })
+        }
+        _ => {
+            return Err(invalid(
+                "Enter both the client ID and the client secret.",
+                uri,
+                request_id,
+            ));
+        }
+    };
+    let was_oauth = current.is_some_and(Integration::uses_oauth);
+    if let Some(client) = new_client {
+        if next.oauth_token_url.is_none() {
+            return Err(invalid("Enter the token URL.", uri, request_id));
+        }
+        if client.client_id.len() + client.client_secret.len() > 8_192 {
+            return Err(invalid(
+                "The client ID and secret must be at most 8 KiB.",
+                uri,
+                request_id,
+            ));
+        }
+        let key = state.app_key.as_ref().ok_or_else(|| {
+            problem(
+                StatusCode::CONFLICT,
+                "app_key_missing",
+                "The server has no ORBIT_APP_KEY, so it cannot keep a secret.",
+                uri,
+                request_id,
+            )
+        })?;
+        let json = serde_json::to_string(&client)
+            .map_err(|_| invalid("The client cannot be sealed.", uri, request_id))?;
+        next.oauth_sealed_client = Some(
+            encrypt_secret(key, &json)
+                .map_err(|()| invalid("The client cannot be sealed.", uri, request_id))?,
+        );
+        next.sealed_secret = None;
+        if !was_oauth && !header_given {
+            next.auth_header = None;
+        }
+    } else if next.oauth_token_url.is_some() {
+        let moved = current.is_some_and(|current| {
+            current.url != next.url || current.oauth_token_url != next.oauth_token_url
+        });
+        if moved || next.oauth_sealed_client.is_none() {
+            return Err(invalid(
+                "A new base URL or token URL needs the client ID and secret again.",
+                uri,
+                request_id,
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// What Test does a GET of: the test path below the base URL, else the base URL.
+fn test_url(integration: &Integration) -> Result<Url, OutboundError> {
+    let base = Url::parse(&integration.url)
+        .map_err(|_| OutboundError::Refused("The URL is not valid."))?;
+    match &integration.test_path {
+        Some(path) => join_api_url(&base, &format!("/{path}"), &[]),
+        None => Ok(base),
+    }
+}
+
 /// The integration after `input`, checked. `current` is `None` on create.
 fn apply(
     state: &AgentState,
@@ -481,6 +663,9 @@ fn apply(
         url: String::new(),
         auth_header: None,
         sealed_secret: None,
+        oauth_token_url: None,
+        oauth_sealed_client: None,
+        test_path: None,
         allowed_roles: ROLES.iter().map(|role| (*role).to_owned()).collect(),
         enabled_tools: Vec::new(),
         allowed_methods: vec!["GET".to_owned()],
@@ -489,7 +674,8 @@ fn apply(
         created_at: now,
         updated_at: now,
     });
-    next.updated_at = now;
+    // Strictly newer, also in the same millisecond: it is part of the token cache's key.
+    next.updated_at = current.map_or(now, |current| now.max(current.updated_at + 1));
     if current.is_none() {
         let kind = input.kind.as_deref().unwrap_or_default();
         if !matches!(kind, "mcp" | "http") {
@@ -549,6 +735,7 @@ fn apply(
     if next.url.is_empty() {
         return Err(invalid("Enter the URL.", uri, request_id));
     }
+    let header_given = input.auth_header.is_some();
     if let Some(header) = input.auth_header {
         let header = header.trim();
         if header.is_empty() {
@@ -563,6 +750,24 @@ fn apply(
                 request_id,
             ));
         }
+    }
+    let current_uses_oauth = current.is_some_and(Integration::uses_oauth);
+    let oauth_input = OAuthInput {
+        token_url: input.oauth_token_url,
+        client_id: input.oauth_client_id,
+        client_secret: input.oauth_client_secret,
+    };
+    if input
+        .secret
+        .as_ref()
+        .is_some_and(|secret| !secret.is_empty())
+        && oauth_input.is_given()
+    {
+        return Err(invalid(
+            "Choose a fixed credential or OAuth client credentials, not both.",
+            uri,
+            request_id,
+        ));
     }
     if let Some(secret) = input.secret {
         if secret.is_empty() {
@@ -588,13 +793,42 @@ fn apply(
                 encrypt_secret(key, &secret)
                     .map_err(|()| invalid("The secret cannot be sealed.", uri, request_id))?,
             );
-            if next.auth_header.is_none() {
-                next.auth_header = Some("Authorization".to_owned());
+            if next.auth_header.is_none() || (current_uses_oauth && !header_given) {
+                next.auth_header = Some(DEFAULT_AUTH_HEADER.to_owned());
             }
+            next.oauth_token_url = None;
+            next.oauth_sealed_client = None;
         }
     }
-    if next.sealed_secret.is_none() {
+    apply_oauth(
+        state,
+        current,
+        &mut next,
+        oauth_input,
+        header_given,
+        uri,
+        request_id,
+    )?;
+    if next.uses_oauth() {
+        next.auth_header
+            .get_or_insert_with(|| DEFAULT_AUTH_HEADER.to_owned());
+    } else if next.sealed_secret.is_none() {
         next.auth_header = None;
+    }
+    if let Some(path) = input.test_path {
+        if next.kind != "http" {
+            return Err(invalid("Only HTTP APIs have a test path.", uri, request_id));
+        }
+        let path = path.trim();
+        next.test_path =
+            (!path.is_empty()).then(|| path.strip_prefix('/').unwrap_or(path).to_owned());
+    }
+    if next.test_path.is_some() && test_url(&next).is_err() {
+        return Err(invalid(
+            "The test path must stay below the base URL.",
+            uri,
+            request_id,
+        ));
     }
     if let Some(roles) = input.allowed_roles {
         next.allowed_roles = subset(&roles, &ROLES)
@@ -672,14 +906,15 @@ async fn save(
     sqlx::query(
         "INSERT INTO agent_integrations (id, workspace_id, slug, name, kind, url, auth_header, \
          sealed_secret, allowed_roles, enabled_tools, allowed_methods, tools, tools_checked_at, \
-         created_by, created_at, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) \
+         created_by, created_at, updated_at, oauth_token_url, oauth_sealed_client, test_path) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) \
          ON CONFLICT (id) DO UPDATE SET slug = excluded.slug, name = excluded.name, \
          url = excluded.url, auth_header = excluded.auth_header, \
          sealed_secret = excluded.sealed_secret, allowed_roles = excluded.allowed_roles, \
          enabled_tools = excluded.enabled_tools, allowed_methods = excluded.allowed_methods, \
          tools = excluded.tools, tools_checked_at = excluded.tools_checked_at, \
-         updated_at = excluded.updated_at",
+         updated_at = excluded.updated_at, oauth_token_url = excluded.oauth_token_url, \
+         oauth_sealed_client = excluded.oauth_sealed_client, test_path = excluded.test_path",
     )
     .bind(&integration.id)
     .bind(workspace_id.to_string())
@@ -697,6 +932,9 @@ async fn save(
     .bind(user.to_string())
     .bind(integration.created_at)
     .bind(integration.updated_at)
+    .bind(&integration.oauth_token_url)
+    .bind(&integration.oauth_sealed_client)
+    .bind(&integration.test_path)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -777,7 +1015,7 @@ async fn update(
         .await
         .map_err(unavailable(&uri, &request_id))?
         .ok_or_else(|| not_found(&uri, &request_id))?;
-    let secret_changed = input.secret.is_some();
+    let secret_changed = input.secret.is_some() || input.oauth_client_secret.is_some();
     let integration = apply(&state, Some(&current), input, &uri, &request_id)?;
     if !save(state.database(), workspace_id, user, &integration, false)
         .await
@@ -816,6 +1054,7 @@ async fn remove(
     if deleted.rows_affected() == 0 {
         return Err(not_found(&uri, &request_id));
     }
+    state.tokens.forget(&integration_id);
     record(
         state.database(),
         workspace_id,
@@ -858,7 +1097,8 @@ fn keep_tool(tool: &Value) -> Option<Value> {
 }
 
 /// MCP: reads the tools and keeps them (the first time, read-only tools are turned on). HTTP: a
-/// GET of the base URL.
+/// GET of the test path, or else of the base URL. OAuth: always a new token, and a GET only of a
+/// test path (the base URL can answer 404 on a working API).
 async fn test(
     State(state): State<AgentState>,
     Path((workspace_id, integration_id)): Path<(String, String)>,
@@ -871,8 +1111,11 @@ async fn test(
         .await
         .map_err(unavailable(&uri, &request_id))?
         .ok_or_else(|| not_found(&uri, &request_id))?;
-    let credential = match integration.credential(state.app_key.as_ref()) {
-        Ok(credential) => credential,
+    let opened = integration
+        .credential(state.app_key.as_ref())
+        .and_then(|credential| Ok((credential, integration.oauth(state.app_key.as_ref())?)));
+    let (credential, oauth) = match opened {
+        Ok(opened) => opened,
         Err(detail) => {
             return Ok(Json(
                 json!({ "ok": false, "detail": detail, "integration": IntegrationView::from(&integration) }),
@@ -906,21 +1149,30 @@ async fn test(
             }
             Err(error) => Err(error),
         }
+    } else if let Some((token_url, client)) = &oauth {
+        test_oauth(&state, &integration, token_url, client).await
     } else {
-        state
-            .outbound
-            .api_request(&url, reqwest::Method::GET, None, credential.as_ref())
-            .await
-            .and_then(|answer| {
-                if answer.status < 400 {
-                    Ok(format!(
-                        "Connected. GET of the base URL answered HTTP {}.",
-                        answer.status
-                    ))
-                } else {
-                    Err(OutboundError::Status(answer.status))
-                }
-            })
+        let target = integration
+            .test_path
+            .as_deref()
+            .map_or_else(|| "the base URL".to_owned(), str::to_owned);
+        match test_url(&integration) {
+            Ok(test_url) => state
+                .outbound
+                .api_request(&test_url, reqwest::Method::GET, None, credential.as_ref())
+                .await
+                .and_then(|answer| {
+                    if answer.status < 400 {
+                        Ok(format!(
+                            "Connected. GET of {target} answered HTTP {}.",
+                            answer.status
+                        ))
+                    } else {
+                        Err(OutboundError::Status(answer.status))
+                    }
+                }),
+            Err(error) => Err(error),
+        }
     };
     let ok = outcome.is_ok();
     record(
@@ -944,6 +1196,40 @@ async fn test(
         "detail": detail,
         "integration": IntegrationView::from(&integration),
     })))
+}
+
+/// Test of an OAuth integration: a new token (not from the cache, which it does not change), then
+/// the test path if there is one.
+async fn test_oauth(
+    state: &AgentState,
+    integration: &Integration,
+    token_url: &Url,
+    client: &OAuthClient,
+) -> Result<String, OutboundError> {
+    let (token, _) = state.outbound.client_credentials(token_url, client).await?;
+    let Some(path) = &integration.test_path else {
+        return Ok(
+            "The token request worked. The API was not called: set a test path to check it."
+                .to_owned(),
+        );
+    };
+    let answer = state
+        .outbound
+        .api_request(
+            &test_url(integration)?,
+            reqwest::Method::GET,
+            None,
+            Some(&integration.token_credential(&token)),
+        )
+        .await?;
+    if answer.status < 400 {
+        Ok(format!(
+            "The token request worked. GET of {path} answered HTTP {}.",
+            answer.status
+        ))
+    } else {
+        Err(OutboundError::TokenWorkedApiRefused(answer.status))
+    }
 }
 
 fn capitalized(text: &str) -> String {
@@ -1360,6 +1646,37 @@ pub(crate) async fn approve(
     Ok(Approval::Needed { id, expires_at })
 }
 
+/// One API call with the OAuth token. On a 401: one new token and one retry, within the same
+/// approval. A 403 or a failed token request is not retried.
+async fn api_request_with_token(
+    state: &AgentState,
+    integration: &Integration,
+    (token_url, client): &(Url, OAuthClient),
+    (url, method): (&Url, &reqwest::Method),
+    body: Option<&Value>,
+) -> Result<ApiAnswer, OutboundError> {
+    let key = (integration.id.as_str(), integration.updated_at);
+    let oauth = (token_url, client);
+    let token = state.tokens.get(&state.outbound, key, oauth, None).await?;
+    let credential = integration.token_credential(&token);
+    let answer = state
+        .outbound
+        .api_request(url, method.clone(), body, Some(&credential))
+        .await?;
+    if answer.status != 401 {
+        return Ok(answer);
+    }
+    let token = state
+        .tokens
+        .get(&state.outbound, key, oauth, Some(&token))
+        .await?;
+    let credential = integration.token_credential(&token);
+    state
+        .outbound
+        .api_request(url, method.clone(), body, Some(&credential))
+        .await
+}
+
 async fn call(
     State(state): State<AgentState>,
     Path(workspace_id): Path<String>,
@@ -1444,17 +1761,21 @@ async fn call(
             })));
         }
     }
+    let credential_problem = |detail| {
+        problem(
+            StatusCode::CONFLICT,
+            "agent_integration_credential",
+            detail,
+            &uri,
+            &request_id,
+        )
+    };
     let credential = integration
         .credential(state.app_key.as_ref())
-        .map_err(|detail| {
-            problem(
-                StatusCode::CONFLICT,
-                "agent_integration_credential",
-                detail,
-                &uri,
-                &request_id,
-            )
-        })?;
+        .map_err(credential_problem)?;
+    let oauth = integration
+        .oauth(state.app_key.as_ref())
+        .map_err(credential_problem)?;
     let (outcome, mut metadata) = match &action {
         Action::Mcp {
             tool, arguments, ..
@@ -1473,10 +1794,24 @@ async fn call(
             path,
             body: payload,
         } => {
-            let result = state
-                .outbound
-                .api_request(url, method.clone(), payload.as_ref(), credential.as_ref())
-                .await;
+            let result = match &oauth {
+                Some(oauth) => {
+                    api_request_with_token(
+                        &state,
+                        &integration,
+                        oauth,
+                        (url, method),
+                        payload.as_ref(),
+                    )
+                    .await
+                }
+                None => {
+                    state
+                        .outbound
+                        .api_request(url, method.clone(), payload.as_ref(), credential.as_ref())
+                        .await
+                }
+            };
             let status = result.as_ref().ok().map(|answer| answer.status);
             (
                 result.map(|answer| json!({ "status": "ok", "response": answer })),

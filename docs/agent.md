@@ -58,7 +58,7 @@ sidecar logs a warning. Agent sessions cannot read or change these settings. Wit
 
 Owners and admins can give the agent tools outside Orbit in **Workspace settings → Agent tools**:
 
-- **Remote MCP server**: the server's Streamable HTTP URL (for example Cloudflare's or Shopify's MCP server). Press
+- **Remote MCP server**: the server's Streamable HTTP URL (for example Cloudflare's MCP server). Press
   **Test** to read its tools, then turn on the tools the agent may use. Tools the server marks read-only are on at
   first; the others are off until an admin turns them on.
 - **HTTP API**: a base URL. The agent gets one tool, `<prefix>__api_request` (method, path, query, JSON body). Every
@@ -69,6 +69,41 @@ Each integration has **one shared credential**: a header name (default `Authoriz
 `Bearer <token>`. Orbit seals it with `ORBIT_APP_KEY`, never shows it again, and never gives it to the agent
 service: Orbit makes every call itself, as the driver of the run. Choose which **roles** (owners, admins, members)
 may use each integration. The agent sees the tools as `<prefix>__<tool>`.
+
+**OAuth client credentials (HTTP APIs).** For an API whose tokens expire, choose **OAuth client credentials** in the
+form: token URL, client ID, client secret, the header for the token (default `Authorization`) and an optional test
+path. Orbit sends `grant_type=client_credentials` with the client ID and secret to the token URL and uses the token
+from the answer. In `Authorization` the value is `Bearer <token>`; in another header, the bare token. A fixed
+credential and an OAuth client exclude each other: setting one clears the other. MCP servers cannot use OAuth clients.
+
+- Orbit reads `expires_in` from the answer and renews 60 seconds before expiry. If `expires_in` is missing or at most
+  60, the token serves one call only. The token stays in the memory of each server, so a restart asks for a new one.
+- On a 401 from the API, Orbit gets a new token and retries once, also for a write that the driver approved (no second
+  approval). It does not retry on a 403 or on a failed token request.
+- The token request has the same limits as other calls (below), and a 3xx is a failure. An error shows only the HTTP
+  status and a short OAuth error code, such as `shop_not_permitted`.
+- **A new base URL or token URL needs the client ID and secret again.** So an admin who cannot read the secret cannot
+  send it, or a token, to another host. The token URL can be on another host than the base URL.
+
+**Test** does a GET of the optional test path, which stays below the base URL. An OAuth integration always gets a new
+token. With no test path, Test reports that the token request worked and does not call the API. With a test path, an
+answer below 400 is a pass; otherwise Test shows the status and says that the token worked but the API refused. A
+fixed credential with no test path does a GET of the base URL.
+
+**Example: Shopify Admin API.** Your app and the store must be in the same Shopify organization, or the token request
+fails with `shop_not_permitted`.
+
+| Field | Value |
+|---|---|
+| Base URL | `https://STORE.myshopify.com/admin/api/2026-10` |
+| Token URL | `https://STORE.myshopify.com/admin/oauth/access_token` |
+| Token header | `X-Shopify-Access-Token` |
+| Test path | `shop.json` |
+
+The form fills in the last three when the base URL host ends in `.myshopify.com`. Shopify's tokens end after 24 hours;
+Orbit renews them. **Shopify's GraphQL Admin API uses POST also for reads, so each GraphQL read asks the driver for
+approval.** Orbit does not treat any POST as a read. Shopify's REST Admin API is legacy, but its GET requests run
+without a question.
 
 **Writes need the driver's approval.** An MCP tool that is not marked read-only, and an HTTP method other than GET
 or HEAD, runs only after the agent asked the driver in the thread with the exact action and arguments and the
@@ -145,7 +180,9 @@ docker compose -f deploy/compose.yaml --profile agent up -d --build
 - Orbit stores each person's ChatGPT credential sealed with `ORBIT_APP_KEY` (`agent_credentials`). Without an app key
   nobody can connect. Disconnecting deletes it.
 - Agent tools and their sealed credentials are in `agent_integrations`; the driver's approvals of writes in
-  `agent_integration_approvals`. Removing an integration deletes both.
+  `agent_integration_approvals`. Removing an integration deletes both. An OAuth client ID and secret are sealed
+  together in `oauth_sealed_client`, apart from `sealed_secret`. OAuth access tokens are never written to the
+  database: they stay in the memory of each server.
 - The agent stores transcripts in `AGENT_DATA_DIR`. It stores no tokens.
 - One agent process owns its data directory. Several Orbit servers on one Postgres database can share one agent.
 

@@ -880,3 +880,686 @@ async fn local_and_private_addresses_are_refused_without_the_test_setting() {
     );
     assert!(seen.lock().unwrap().is_empty());
 }
+
+// ---------------------------------------------------------------------------------------------
+// OAuth client credentials.
+
+const CLIENT_ID: &str = "plain-client-id-1234";
+const CLIENT_SECRET: &str = "plain-client-secret-5678";
+
+/// One API call the fake saw.
+#[derive(Clone, Debug)]
+struct ApiCall {
+    method: String,
+    path: String,
+    shopify: Option<String>,
+    authorization: Option<String>,
+}
+
+/// A local token server and API. `{count}` in the token answer is the number of the request.
+struct FakeOAuth {
+    base: String,
+    token_url: String,
+    token_requests: AtomicU64,
+    token_forms: Mutex<Vec<String>>,
+    token_answer: Mutex<(StatusCode, String)>,
+    redirect_followed: AtomicU64,
+    /// Tokens the API refuses with 401.
+    refused: Mutex<Vec<String>>,
+    api_status: Mutex<StatusCode>,
+    api_calls: Mutex<Vec<ApiCall>>,
+    /// API calls wait here, so that concurrent calls overlap.
+    barrier: Mutex<Option<Arc<tokio::sync::Barrier>>>,
+}
+
+fn token_answer(expires_in: Option<Value>) -> (StatusCode, String) {
+    let mut answer = json!({ "access_token": "tok-{count}", "scope": "read_products" });
+    if let Some(expires_in) = expires_in {
+        answer["expires_in"] = expires_in;
+    }
+    (StatusCode::OK, answer.to_string())
+}
+
+async fn fake_oauth() -> Arc<FakeOAuth> {
+    async fn token(State(fake): State<Arc<FakeOAuth>>, body: String) -> Response {
+        let count = fake.token_requests.fetch_add(1, Ordering::SeqCst) + 1;
+        fake.token_forms.lock().unwrap().push(body);
+        // Long enough that a second concurrent request would start while this one runs.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let (status, answer) = fake.token_answer.lock().unwrap().clone();
+        let answer = answer.replace("{count}", &count.to_string());
+        (
+            status,
+            [
+                (header::CONTENT_TYPE, "application/json"),
+                (header::LOCATION, "/elsewhere"),
+            ],
+            answer,
+        )
+            .into_response()
+    }
+    async fn elsewhere(State(fake): State<Arc<FakeOAuth>>) -> axum::Json<Value> {
+        fake.redirect_followed.fetch_add(1, Ordering::SeqCst);
+        axum::Json(json!({ "access_token": "from-the-redirect", "expires_in": 86399 }))
+    }
+    async fn api(
+        State(fake): State<Arc<FakeOAuth>>,
+        method: axum::http::Method,
+        uri: Uri,
+        headers: HeaderMap,
+    ) -> Response {
+        let read = |name: &str| {
+            headers
+                .get(name)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned)
+        };
+        let call = ApiCall {
+            method: method.to_string(),
+            path: uri.path().to_owned(),
+            shopify: read("x-shopify-access-token"),
+            authorization: read("authorization"),
+        };
+        fake.api_calls.lock().unwrap().push(call.clone());
+        let barrier = fake.barrier.lock().unwrap().clone();
+        if let Some(barrier) = barrier {
+            barrier.wait().await;
+        }
+        let token = call
+            .shopify
+            .or(call
+                .authorization
+                .map(|value| value.trim_start_matches("Bearer ").to_owned()))
+            .unwrap_or_default();
+        if fake.refused.lock().unwrap().contains(&token) {
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
+        let status = *fake.api_status.lock().unwrap();
+        (status, axum::Json(json!({ "shop": "demo" }))).into_response()
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let root = format!("http://{}", listener.local_addr().unwrap());
+    let fake = Arc::new(FakeOAuth {
+        base: format!("{root}/admin/api/2026-10"),
+        token_url: format!("{root}/admin/oauth/access_token"),
+        token_requests: AtomicU64::new(0),
+        token_forms: Mutex::default(),
+        token_answer: Mutex::new(token_answer(Some(json!(86399)))),
+        redirect_followed: AtomicU64::new(0),
+        refused: Mutex::default(),
+        api_status: Mutex::new(StatusCode::OK),
+        api_calls: Mutex::default(),
+        barrier: Mutex::default(),
+    });
+    let router = axum::Router::new()
+        .route("/admin/oauth/access_token", post(token))
+        .route("/elsewhere", any(elsewhere))
+        .route("/admin/api/{*rest}", any(api))
+        .with_state(Arc::clone(&fake));
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    fake
+}
+
+impl FakeOAuth {
+    fn tokens(&self) -> u64 {
+        self.token_requests.load(Ordering::SeqCst)
+    }
+
+    fn calls(&self) -> Vec<ApiCall> {
+        self.api_calls.lock().unwrap().clone()
+    }
+
+    fn input(&self) -> Value {
+        json!({
+            "kind": "http",
+            "name": "Shop",
+            "url": self.base,
+            "auth_header": "X-Shopify-Access-Token",
+            "oauth_token_url": self.token_url,
+            "oauth_client_id": CLIENT_ID,
+            "oauth_client_secret": CLIENT_SECRET,
+            "allowed_methods": ["GET", "POST"],
+        })
+    }
+}
+
+async fn oauth_fixture() -> (Fixture, Arc<FakeOAuth>, String) {
+    let fixture = Fixture::new(&["127.0.0.1"]).await;
+    let fake = fake_oauth().await;
+    let (status, created) = fixture
+        .admin(&fixture.owner, "POST", "", Some(fake.input()))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let id = created["id"].as_str().unwrap().to_owned();
+    (fixture, fake, id)
+}
+
+fn read_call() -> Value {
+    json!({ "method": "GET", "path": "/shop.json" })
+}
+
+#[tokio::test]
+async fn a_cached_token_is_reused_and_renewed_60_seconds_before_expiry() {
+    let (fixture, fake, _) = oauth_fixture().await;
+    let (general, root, bearer) = fixture.run(&fixture.owner).await;
+    let thread = (general.as_str(), root.as_str());
+    // 62 seconds: usable for 2 seconds.
+    *fake.token_answer.lock().unwrap() = token_answer(Some(json!(62)));
+    for _ in 0..2 {
+        let (_, read) = fixture
+            .call(&bearer, thread, "shop__api_request", read_call())
+            .await;
+        assert_eq!(read["response"]["status"], 200, "{read}");
+    }
+    assert_eq!(fake.tokens(), 1);
+    assert_eq!(fake.calls()[1].shopify.as_deref(), Some("tok-1"));
+    assert_eq!(fake.calls()[1].authorization, None);
+    let form = fake.token_forms.lock().unwrap()[0].clone();
+    assert!(form.contains("grant_type=client_credentials"), "{form}");
+    assert!(form.contains(&format!("client_id={CLIENT_ID}")), "{form}");
+    assert!(!form.contains("scope"), "{form}");
+
+    tokio::time::sleep(std::time::Duration::from_millis(2_100)).await;
+    fixture
+        .call(&bearer, thread, "shop__api_request", read_call())
+        .await;
+    assert_eq!(fake.tokens(), 2);
+    assert_eq!(fake.calls()[2].shopify.as_deref(), Some("tok-2"));
+}
+
+#[tokio::test]
+async fn a_token_without_a_usable_expiry_serves_one_call() {
+    let (fixture, fake, _) = oauth_fixture().await;
+    let (general, root, bearer) = fixture.run(&fixture.owner).await;
+    let thread = (general.as_str(), root.as_str());
+    let mut expected = 0;
+    for expires_in in [None, Some(json!(60)), Some(json!(1)), Some(json!("soon"))] {
+        *fake.token_answer.lock().unwrap() = token_answer(expires_in);
+        for _ in 0..2 {
+            let (_, read) = fixture
+                .call(&bearer, thread, "shop__api_request", read_call())
+                .await;
+            assert_eq!(read["response"]["status"], 200, "{read}");
+            expected += 1;
+            assert_eq!(fake.tokens(), expected);
+        }
+    }
+    // A long life is cached.
+    *fake.token_answer.lock().unwrap() = token_answer(Some(json!(3600)));
+    for _ in 0..3 {
+        fixture
+            .call(&bearer, thread, "shop__api_request", read_call())
+            .await;
+    }
+    assert_eq!(fake.tokens(), expected + 1);
+}
+
+#[tokio::test]
+async fn a_401_renews_and_retries_once_also_for_an_approved_write() {
+    let (fixture, fake, _) = oauth_fixture().await;
+    let (general, root, bearer) = fixture.run(&fixture.owner).await;
+    let thread = (general.as_str(), root.as_str());
+
+    // The first token is refused: a new one, and the retry works.
+    fake.refused.lock().unwrap().push("tok-1".to_owned());
+    let (_, read) = fixture
+        .call(&bearer, thread, "shop__api_request", read_call())
+        .await;
+    assert_eq!(read["response"]["status"], 200, "{read}");
+    assert_eq!(fake.tokens(), 2);
+    assert_eq!(fake.calls().len(), 2);
+
+    // An approved write that gets a 401 is sent again with no second approval.
+    let write = json!({ "method": "POST", "path": "/orders.json", "body": { "item": "mug" } });
+    let (_, asked) = fixture
+        .call(&bearer, thread, "shop__api_request", write.clone())
+        .await;
+    assert_eq!(asked["status"], "approval_required", "{asked}");
+    fixture
+        .send(&fixture.owner, &general, "yes", Some(&root))
+        .await;
+    fake.refused.lock().unwrap().push("tok-2".to_owned());
+    let (_, done) = fixture
+        .call(&bearer, thread, "shop__api_request", write)
+        .await;
+    assert_eq!(done["response"]["status"], 200, "{done}");
+    assert_eq!(fake.tokens(), 3);
+    let posts = fake
+        .calls()
+        .into_iter()
+        .filter(|call| call.method == "POST")
+        .count();
+    assert_eq!(posts, 2);
+
+    // Still 401 with the new token: that failure comes back, with no more tries.
+    for token in ["tok-3", "tok-4"] {
+        fake.refused.lock().unwrap().push(token.to_owned());
+    }
+    let before = fake.calls().len();
+    let (_, read) = fixture
+        .call(&bearer, thread, "shop__api_request", read_call())
+        .await;
+    assert_eq!(read["response"]["status"], 401, "{read}");
+    assert_eq!(fake.calls().len(), before + 2);
+    assert_eq!(fake.tokens(), 4);
+
+    // A 403 is not retried.
+    *fake.api_status.lock().unwrap() = StatusCode::FORBIDDEN;
+    let before = (fake.calls().len(), fake.tokens());
+    let (_, read) = fixture
+        .call(&bearer, thread, "shop__api_request", read_call())
+        .await;
+    assert_eq!(read["response"]["status"], 403, "{read}");
+    assert_eq!(fake.calls().len(), before.0 + 1);
+    *fake.api_status.lock().unwrap() = StatusCode::OK;
+
+    // A failed token request is not retried: the call fails with its reason.
+    fake.refused.lock().unwrap().push("tok-5".to_owned());
+    *fake.token_answer.lock().unwrap() = (
+        StatusCode::BAD_REQUEST,
+        json!({ "error": "invalid_client", "error_description": "details-not-to-show" })
+            .to_string(),
+    );
+    let (tokens, calls) = (fake.tokens(), fake.calls().len());
+    let (_, failed) = fixture
+        .call(&bearer, thread, "shop__api_request", read_call())
+        .await;
+    assert_eq!(failed["status"], "failed", "{failed}");
+    assert!(
+        failed["detail"]
+            .as_str()
+            .unwrap()
+            .contains("invalid_client"),
+        "{failed}"
+    );
+    assert!(!failed.to_string().contains("details-not-to-show"));
+    assert_eq!(fake.tokens(), tokens + 1);
+    assert_eq!(fake.calls().len(), calls + 1);
+}
+
+#[tokio::test]
+async fn concurrent_calls_make_one_token_request_and_concurrent_401s_one_renewal() {
+    let (fixture, fake, _) = oauth_fixture().await;
+    let (general, root, bearer) = fixture.run(&fixture.owner).await;
+    let thread = (general.as_str(), root.as_str());
+
+    let first = fixture.call(&bearer, thread, "shop__api_request", read_call());
+    let second = fixture.call(&bearer, thread, "shop__api_request", read_call());
+    let (first, second) = tokio::join!(first, second);
+    assert_eq!(first.1["response"]["status"], 200, "{}", first.1);
+    assert_eq!(second.1["response"]["status"], 200, "{}", second.1);
+    assert_eq!(fake.tokens(), 1);
+
+    // Both calls hold tok-1 when the API refuses it.
+    fake.refused.lock().unwrap().push("tok-1".to_owned());
+    *fake.barrier.lock().unwrap() = Some(Arc::new(tokio::sync::Barrier::new(2)));
+    let first = fixture.call(&bearer, thread, "shop__api_request", read_call());
+    let second = fixture.call(&bearer, thread, "shop__api_request", read_call());
+    let (first, second) = tokio::join!(first, second);
+    assert_eq!(first.1["response"]["status"], 200, "{}", first.1);
+    assert_eq!(second.1["response"]["status"], 200, "{}", second.1);
+    assert_eq!(fake.tokens(), 2, "two 401s, one renewal");
+}
+
+#[tokio::test]
+async fn a_config_change_drops_the_cached_token() {
+    let (fixture, fake, id) = oauth_fixture().await;
+    let (general, root, bearer) = fixture.run(&fixture.owner).await;
+    let thread = (general.as_str(), root.as_str());
+    fixture
+        .call(&bearer, thread, "shop__api_request", read_call())
+        .await;
+    let (status, value) = fixture
+        .admin(
+            &fixture.owner,
+            "PATCH",
+            &format!("/{id}"),
+            Some(json!({ "name": "Renamed shop" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    fixture
+        .call(&bearer, thread, "shop__api_request", read_call())
+        .await;
+    assert_eq!(fake.tokens(), 2);
+}
+
+#[tokio::test]
+async fn the_client_and_the_token_stay_sealed_and_out_of_every_view() {
+    let (fixture, fake, id) = oauth_fixture().await;
+    let (general, root, bearer) = fixture.run(&fixture.owner).await;
+    let thread = (general.as_str(), root.as_str());
+    fixture
+        .call(&bearer, thread, "shop__api_request", read_call())
+        .await;
+
+    let (sealed, secret, url): (Vec<u8>, Option<Vec<u8>>, String) = {
+        use orbit_platform::Row;
+        let row = sqlx::query(
+            "SELECT oauth_sealed_client, sealed_secret, oauth_token_url \
+             FROM agent_integrations WHERE id = $1",
+        )
+        .bind(&id)
+        .fetch_one(fixture.database.pool())
+        .await
+        .unwrap();
+        (
+            row.get("oauth_sealed_client"),
+            row.get("sealed_secret"),
+            row.get("oauth_token_url"),
+        )
+    };
+    let sealed = String::from_utf8_lossy(&sealed).into_owned();
+    assert!(!sealed.contains(CLIENT_ID) && !sealed.contains(CLIENT_SECRET));
+    assert_eq!(secret, None, "OAuth data is not in sealed_secret");
+    assert_eq!(url, fake.token_url);
+
+    let (_, listed) = fixture.admin(&fixture.owner, "GET", "", None).await;
+    assert_eq!(listed["items"][0]["auth_type"], "oauth");
+    assert_eq!(listed["items"][0]["secret_set"], true);
+    assert_eq!(listed["items"][0]["oauth_token_url"], fake.token_url);
+    let (_, tested) = fixture
+        .admin(&fixture.owner, "POST", &format!("/{id}/test"), None)
+        .await;
+    let (_, tools) = fixture.tools(&bearer).await;
+    assert_eq!(tools["tools"][0]["name"], "shop__api_request");
+    assert!(!tools.to_string().contains("oauth/access_token"), "{tools}");
+    let audited: Vec<String> = sqlx::query_scalar(
+        "SELECT metadata_json FROM audit_events WHERE action LIKE 'agent_integration.%'",
+    )
+    .fetch_all(fixture.database.pool())
+    .await
+    .unwrap();
+    assert!(audited.len() >= 3, "{audited:?}");
+    let texts = [
+        listed.to_string(),
+        tested.to_string(),
+        tools.to_string(),
+        audited.join("\n"),
+    ];
+    for text in texts {
+        for hidden in [CLIENT_ID, CLIENT_SECRET, "tok-1", "tok-2"] {
+            assert!(!text.contains(hidden), "{hidden} in {text}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_new_base_or_token_url_needs_a_new_client() {
+    let (fixture, fake, id) = oauth_fixture().await;
+    let path = format!("/{id}");
+    let elsewhere = "http://127.0.0.1:9/steal";
+    for change in [
+        json!({ "url": elsewhere }),
+        json!({ "oauth_token_url": elsewhere }),
+        json!({ "url": elsewhere, "oauth_client_id": "other" }),
+        json!({ "url": elsewhere, "oauth_client_secret": "other" }),
+        json!({ "url": elsewhere, "oauth_client_id": "", "oauth_client_secret": "" }),
+    ] {
+        let (status, value) = fixture
+            .admin(&fixture.owner, "PATCH", &path, Some(change.clone()))
+            .await;
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{change}: {value}"
+        );
+    }
+    let (_, listed) = fixture.admin(&fixture.owner, "GET", "", None).await;
+    assert_eq!(listed["items"][0]["url"], fake.base);
+    assert_eq!(listed["items"][0]["oauth_token_url"], fake.token_url);
+
+    // The same URLs are no change, and a change with a new client is allowed.
+    let (status, value) = fixture
+        .admin(
+            &fixture.owner,
+            "PATCH",
+            &path,
+            Some(json!({ "url": fake.base, "oauth_token_url": fake.token_url })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    let (status, value) = fixture
+        .admin(
+            &fixture.owner,
+            "PATCH",
+            &path,
+            Some(json!({
+                "oauth_token_url": elsewhere,
+                "oauth_client_id": "new-id",
+                "oauth_client_secret": "new-secret",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(value["oauth_token_url"], elsewhere);
+}
+
+#[tokio::test]
+async fn oauth_is_http_only_and_excludes_a_fixed_credential() {
+    let (fixture, fake, id) = oauth_fixture().await;
+    let path = format!("/{id}");
+    let mut mcp = fake.input();
+    mcp["kind"] = json!("mcp");
+    mcp.as_object_mut().unwrap().remove("allowed_methods");
+    let (status, value) = fixture.admin(&fixture.owner, "POST", "", Some(mcp)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{value}");
+
+    // Fixed replaces OAuth: the client is gone, the header is the default again.
+    let (status, value) = fixture
+        .admin(
+            &fixture.owner,
+            "PATCH",
+            &path,
+            Some(json!({ "secret": API_KEY })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(value["auth_type"], "header");
+    assert_eq!(value["auth_header"], "Authorization");
+    assert_eq!(value["oauth_token_url"], Value::Null);
+    let client: Option<Vec<u8>> =
+        sqlx::query_scalar("SELECT oauth_sealed_client FROM agent_integrations WHERE id = $1")
+            .bind(&id)
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap();
+    assert_eq!(client, None);
+
+    // OAuth replaces fixed; without a header, the token goes in `Authorization` as a bearer token.
+    let (status, value) = fixture
+        .admin(
+            &fixture.owner,
+            "PATCH",
+            &path,
+            Some(json!({
+                "oauth_token_url": fake.token_url,
+                "oauth_client_id": CLIENT_ID,
+                "oauth_client_secret": CLIENT_SECRET,
+                "test_path": "/shop.json",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(value["auth_type"], "oauth");
+    assert_eq!(value["test_path"], "shop.json");
+    let secret: Option<Vec<u8>> =
+        sqlx::query_scalar("SELECT sealed_secret FROM agent_integrations WHERE id = $1")
+            .bind(&id)
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap();
+    assert_eq!(secret, None);
+    let (_, tested) = fixture
+        .admin(&fixture.owner, "POST", &format!("{path}/test"), None)
+        .await;
+    assert_eq!(tested["ok"], true, "{tested}");
+    assert_eq!(
+        fake.calls().last().unwrap().authorization.as_deref(),
+        Some("Bearer tok-1")
+    );
+}
+
+#[tokio::test]
+async fn a_token_redirect_or_an_oversize_token_answer_is_refused() {
+    let (fixture, fake, id) = oauth_fixture().await;
+    let path = format!("/{id}/test");
+    *fake.token_answer.lock().unwrap() = (
+        StatusCode::FOUND,
+        json!({ "access_token": "not-this-one", "error": "Has Upper Case" }).to_string(),
+    );
+    let (_, tested) = fixture.admin(&fixture.owner, "POST", &path, None).await;
+    assert_eq!(tested["ok"], false, "{tested}");
+    let detail = tested["detail"].as_str().unwrap();
+    assert!(detail.contains("HTTP 302"), "{tested}");
+    assert!(!detail.contains("Upper"), "{tested}");
+    assert_eq!(fake.redirect_followed.load(Ordering::SeqCst), 0);
+
+    *fake.token_answer.lock().unwrap() = (
+        StatusCode::OK,
+        json!({ "access_token": "x".repeat(1024 * 1024 + 1) }).to_string(),
+    );
+    let (_, tested) = fixture.admin(&fixture.owner, "POST", &path, None).await;
+    assert_eq!(tested["ok"], false, "{tested}");
+    assert!(
+        tested["detail"].as_str().unwrap().contains("1 MiB"),
+        "{tested}"
+    );
+
+    *fake.token_answer.lock().unwrap() = (
+        StatusCode::BAD_REQUEST,
+        json!({ "error": "shop_not_permitted", "error_description": "not-to-show" }).to_string(),
+    );
+    let (_, tested) = fixture.admin(&fixture.owner, "POST", &path, None).await;
+    assert_eq!(tested["ok"], false, "{tested}");
+    let detail = tested["detail"].as_str().unwrap();
+    assert!(detail.contains("HTTP 400") && detail.contains("shop_not_permitted"));
+    assert!(!tested.to_string().contains("not-to-show"), "{tested}");
+    assert!(fake.calls().is_empty(), "the API was not called");
+}
+
+#[tokio::test]
+async fn test_reports_the_token_and_the_test_path_apart() {
+    let (fixture, fake, id) = oauth_fixture().await;
+    let path = format!("/{id}");
+    let test = format!("{path}/test");
+
+    // Token works, no test path: the API is not called.
+    let (_, tested) = fixture.admin(&fixture.owner, "POST", &test, None).await;
+    assert_eq!(tested["ok"], true, "{tested}");
+    assert!(
+        tested["detail"]
+            .as_str()
+            .unwrap()
+            .contains("API was not called"),
+        "{tested}"
+    );
+    assert!(fake.calls().is_empty());
+
+    // A test path that leaves the base is refused.
+    for escape in [
+        "../secret",
+        "..",
+        "%2e%2e/x",
+        "/../x",
+        "//evil.example.com/x",
+        "a?b=1",
+    ] {
+        let (status, value) = fixture
+            .admin(
+                &fixture.owner,
+                "PATCH",
+                &path,
+                Some(json!({ "test_path": escape })),
+            )
+            .await;
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{escape}: {value}"
+        );
+    }
+
+    let (status, value) = fixture
+        .admin(
+            &fixture.owner,
+            "PATCH",
+            &path,
+            Some(json!({ "test_path": "shop.json" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+
+    // Every Test gets a new token and leaves the cache alone.
+    let before = fake.tokens();
+    let (_, tested) = fixture.admin(&fixture.owner, "POST", &test, None).await;
+    assert_eq!(tested["ok"], true, "{tested}");
+    assert_eq!(fake.tokens(), before + 1);
+    let call = fake.calls().last().unwrap().clone();
+    assert_eq!(call.method, "GET");
+    assert_eq!(call.path, "/admin/api/2026-10/shop.json");
+    fixture.admin(&fixture.owner, "POST", &test, None).await;
+    assert_eq!(fake.tokens(), before + 2);
+
+    // The API refuses: the text says the token worked.
+    *fake.api_status.lock().unwrap() = StatusCode::FORBIDDEN;
+    let (_, tested) = fixture.admin(&fixture.owner, "POST", &test, None).await;
+    assert_eq!(tested["ok"], false, "{tested}");
+    let detail = tested["detail"].as_str().unwrap();
+    assert!(
+        detail.contains("403") && detail.contains("token request worked"),
+        "{tested}"
+    );
+
+    // The token request fails: no call of the API.
+    let calls = fake.calls().len();
+    *fake.token_answer.lock().unwrap() = (StatusCode::UNAUTHORIZED, "{}".to_owned());
+    let (_, tested) = fixture.admin(&fixture.owner, "POST", &test, None).await;
+    assert_eq!(tested["ok"], false, "{tested}");
+    assert!(
+        tested["detail"].as_str().unwrap().contains("HTTP 401"),
+        "{tested}"
+    );
+    assert_eq!(fake.calls().len(), calls);
+}
+
+#[tokio::test]
+async fn a_fixed_credential_tests_the_base_url_or_its_test_path() {
+    let fixture = Fixture::new(&["127.0.0.1"]).await;
+    let (api, seen) = fake_api().await;
+    let (_, created) = fixture
+        .admin(
+            &fixture.owner,
+            "POST",
+            "",
+            Some(json!({ "kind": "http", "name": "Fixed", "url": api, "auth_header": "X-Api-Key", "secret": API_KEY })),
+        )
+        .await;
+    assert_eq!(created["auth_type"], "header");
+    let id = created["id"].as_str().unwrap();
+    let (_, tested) = fixture
+        .admin(&fixture.owner, "POST", &format!("/{id}/test"), None)
+        .await;
+    assert_eq!(tested["ok"], true, "{tested}");
+    assert!(tested["detail"].as_str().unwrap().contains("base URL"));
+    assert_eq!(seen.lock().unwrap()[0]["uri"], "/api/v1");
+
+    let (status, value) = fixture
+        .admin(
+            &fixture.owner,
+            "PATCH",
+            &format!("/{id}"),
+            Some(json!({ "test_path": "me" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    let (_, tested) = fixture
+        .admin(&fixture.owner, "POST", &format!("/{id}/test"), None)
+        .await;
+    assert_eq!(tested["ok"], true, "{tested}");
+    let line = seen.lock().unwrap()[1].clone();
+    assert_eq!(line["uri"], "/api/v1/me");
+    assert_eq!(line["auth"], API_KEY);
+}
