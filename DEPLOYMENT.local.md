@@ -4,12 +4,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, local merge commit 6808e1b1a773a2d0b9fdbf24d5b9c6930ea73c84
-  (`main` with the `orbit-apps` branch merged).
+- Source: DaveDushi/orbit, local merge commit ab45847
+  (`main` with the `agent-oauth-client-credentials` branch merged).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:6808e1b`); fork commits have no published upstream image.
-- Image ID: sha256:b0592e2e51bbc16a296afe08d714621dc0d82acd8879465ba7fa5f30b6f3be4e
-- Team agent sidecar code (`/opt/orbit-agent`): merge commit aedbc85. `apps/agent` did not change in 6808e1b.
+  (`orbit:ab45847`); fork commits have no published upstream image.
+- Image ID: sha256:6848846184ed8b8ba6aebd7524638ae2b8a32cf78fc5d895bd0bd09e7de0244d
+- Team agent sidecar code (`/opt/orbit-agent`): merge commit aedbc85. `apps/agent` did not change in 6808e1b or ab45847.
 - OIDC gateway: `orbit-oidc-gateway.service`, nginx on `127.0.0.1:8400`, config in `/etc/orbit-oidc-gateway/`
   (see `docs/apps.md`). `cloudflared` is NOT installed.
 - Executable: /usr/local/bin/orbit; unprivileged system user: orbit.
@@ -183,6 +183,47 @@ sudo systemctl start orbit
 ```
 
 ## Verification performed
+
+### October 30, 2026 upgrade: OAuth client credentials and GraphQL reads for agent tools
+
+Merged `agent-oauth-client-credentials` (`9677f60`) into `main` (merge `ab45847`; only this file differs from the tested
+branch). Tests on this code are in the branch's report: `agent_integrations` (17), `agent_api` (13), `app_smoke` (18),
+platform `backup` (21) and `database` (43) on SQLite and Postgres; the agent unit tests (27), Clippy, web typecheck and
+lint, and the browser e2e on SQLite. After the last small fix (two joined `if` statements), the server tests were rerun
+on SQLite and `agent_integrations` on Postgres; `agent_api`, `app_smoke`, `backup` and `database` on Postgres were not
+rerun, and nothing was rerun on the merge, because its code is the same. The full workspace suite was not run. The image
+`orbit:ab45847` built with the limited builder and `deploy/smoke.sh` passed.
+
+Stopped `orbit-agent` and `orbit`. Counts before: schema 67, 6 users, 1 workspace, 3 projects, 61 tasks, 31 pages, 43
+attachment blobs, 390 chat messages, 40 agent inputs, 0 integrations. Created and verified snapshot
+`01a18d0e-d881-7468-8557-5724f1fea800` (`/var/backups/orbit/snapshots/01a18d0e-d881-7468-8557-5724f1fea800`) with the old
+CLI. Saved the sidecar data as `/var/backups/orbit-agent/orbit-agent-before-ab45847.tgz`. Sidecar code did not change. The
+old executable is `/usr/local/bin/orbit-6808e1b`, and the new one is also kept as `/usr/local/bin/orbit-ab45847`. Rehearsed
+migration 68 (`0068_agent_integration_oauth.sql`, five new columns on `agent_integrations`) on a copy in
+`/var/lib/orbit/rehearsal-ab45847-AfA1Rk` (deleted afterwards): quick-check and foreign-key checks pass, counts unchanged.
+Applied it live: schema version 68, quick-check and foreign-key checks pass, all counts unchanged. `/etc/orbit/orbit.env`,
+`/etc/orbit/agent.env` and nginx did not change. No new setting is needed.
+
+Verified: `orbit`, `orbit-agent`, nginx and `orbit-oidc-gateway` are active; readiness (all checks); sidecar listens; no
+error in the `orbit` log; `/settings/agent-tools` answers 200 and the agent-integrations API answers 401 with no session;
+https://orbit.wellrox.com/ answers 307 to the exe.dev login. Workspace settings → Agent tools was checked signed in, in a
+browser on loopback, against a copy of the migrated production database served by the new binary (a session was added and
+the push subscriptions removed in the copy only; the copy was deleted): the HTTP form has the OAuth choice, and a
+`.myshopify.com` base URL fills in the token URL, header, test path and GraphQL path, with no page errors. The form was not
+saved. The live signed-in page, a real Shopify call and an agent run with a tool were **not** tested: they need a person's
+login and credentials. No credential was added: production has 0 integrations.
+
+Rollback (an older binary cannot read a version 68 database; preserve the current database first; work after the snapshot
+is lost):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-6808e1b backup verify 01a18d0e-d881-7468-8557-5724f1fea800 && /usr/local/bin/orbit-6808e1b backup restore 01a18d0e-d881-7468-8557-5724f1fea800'
+sudo install -m 755 /usr/local/bin/orbit-6808e1b /usr/local/bin/orbit
+sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-ab45847.tgz
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+```
 
 ### October 30, 2026 upgrade: Orbit Apps and Sign in with Orbit
 
