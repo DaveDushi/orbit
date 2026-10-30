@@ -48,6 +48,12 @@ What: admins add custom web apps; each gets a sidebar entry, `/apps/<slug>` with
 
 **`Sec-Fetch-Dest` absent or forged** only changes login to an error or back; there is no access either way.
 
+## Apps behind a login that refuses frames
+
+Refused frames cannot be detected from the parent, so nothing is built on detection: **Sign in to app** is always in the header of an embedded app. `signInPopup.ts` opens the popup at `about:blank` and sets `opener = null` before it navigates, so Orbit has a handle for `closed` and the login page has no way back to Orbit. A login page with `Cross-Origin-Opener-Policy` makes `closed` true at once, so the first reload can be too early. The frame therefore also reloads on the first return to the Orbit page after that. Reload stays as the manual way out. The popup is not sandboxed, because it is a top-level page.
+
+Measured in Chromium (`scripts/apps-demo/e2e.mjs`, with a stand-in for Access on its own origin whose answers all send `X-Frame-Options: DENY` and `frame-ancestors 'none'`): a redirect that refuses frames does not stop the frame, only a final page does. So Instant Auth works in the frame, and Orbit's own `frame-ancestors 'none'` on the `/oauth/authorize` redirect does no harm. A real Access can behave differently, for example with a page instead of a redirect in the chain.
+
 ## Public gateway for Cloudflare (`deploy/oidc-gateway/`)
 
 nginx, because the machine already has it, it needs no new code to maintain, and `$request_uri` gives the raw request line to compare. It is its own process and unit, so turning it off touches nothing else. Header forwarding is an allow-list: a list of headers to strip would miss a new one. Plain strings in an nginx `map` ignore case, so the rules are regular expressions (`test.sh` caught this). Orbit only trusts the gateway as it trusts any configured proxy (`X-Forwarded-For`, `X-Forwarded-Proto`, `X-Request-Id`, read in `crates/platform/src/http/security.rs`). It reads no `X-ExeDev-*` header anywhere.
