@@ -819,7 +819,10 @@ fn page_file_routes_are_documented() {
             "file_name",
             "mime_type",
             "size_bytes",
-            "created_at"
+            "created_at",
+            "version",
+            "kind",
+            "can_edit"
         ])
     );
 }

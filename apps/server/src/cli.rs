@@ -90,12 +90,17 @@ pub enum Command {
         #[arg(long, value_enum)]
         kind: orbit_server::file_parse::FileKind,
         #[arg(long)]
+        tab_separated: bool,
+        #[arg(long)]
         sheet: Option<String>,
         #[arg(long)]
         offset: u64,
         #[arg(long)]
         limit: u64,
     },
+    /// Internal: changes cells of a workbook from stdin in a limited process (see `file_parse`).
+    #[command(hide = true)]
+    PatchXlsx,
     SetupToken {
         #[command(subcommand)]
         command: SetupTokenCommand,
@@ -182,10 +187,14 @@ pub async fn run(cli: Cli, env: BTreeMap<String, String>) -> Result<String, CliE
     match &cli.command {
         Command::ParseFile {
             kind,
+            tab_separated,
             sheet,
             offset,
             limit,
-        } => orbit_server::file_parse::run_child(*kind, sheet.clone(), *offset, *limit)
+        } => orbit_server::file_parse::run_child(*kind, *tab_separated, sheet.clone(), *offset, *limit)
+            .map(|()| String::new())
+            .map_err(|error| CliError::Operation(error.to_string())),
+        Command::PatchXlsx => orbit_server::file_parse::run_patch_child()
             .map(|()| String::new())
             .map_err(|error| CliError::Operation(error.to_string())),
         Command::Serve { listen, origin } => serve(config()?, *listen, origin.as_deref()).await,

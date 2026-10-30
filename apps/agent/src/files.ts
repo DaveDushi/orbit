@@ -18,6 +18,7 @@ export type FileContent = {
 	sheet: string | null;
 	rows: string[][] | null;
 	row_numbers: number[] | null;
+	formula_cells?: string[];
 	text: string | null;
 	next_offset: number | null;
 	no_text: boolean;
@@ -47,6 +48,7 @@ export function fileReadText(content: FileContent, offset: number): string {
 			lines.push(fitted);
 			size += fitted.length + 1;
 		}
+		if (content.formula_cells?.length) about.formula_cells = content.formula_cells;
 		return `${JSON.stringify({ ...about, next_offset: next })}\n${lines.join("\n")}`;
 	}
 	return `${JSON.stringify({ ...about, next_offset: content.next_offset })}\n${content.text ?? ""}`;

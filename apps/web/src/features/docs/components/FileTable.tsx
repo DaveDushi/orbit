@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
+import { cn } from 'cn'
 import { Button } from '@/components/ui/button'
 
 const ROW_HEIGHT = 30
@@ -13,6 +14,11 @@ export function columnName(index: number): string {
   return name
 }
 
+/** The 0-based column of letters such as `AA`. */
+export function columnIndex(name: string): number {
+  return [...name].reduce((sum, letter) => sum * 26 + letter.charCodeAt(0) - 64, 0) - 1
+}
+
 /**
  * A table of a file's rows that draws only the visible ones, so a large sheet stays fast. With `onChange` the cells are
  * inputs. `onReachEnd` asks for the next part.
@@ -20,12 +26,15 @@ export function columnName(index: number): string {
 export function FileTable({
   rows,
   rowNumbers,
+  readOnlyCell,
   onChange,
   onRemoveRow,
   onReachEnd,
 }: {
   rows: string[][]
   rowNumbers?: number[]
+  /** A cell that stays text while the others are inputs, such as a formula. */
+  readOnlyCell?: (row: number, column: number) => boolean
   onChange?: (row: number, column: number, value: string) => void
   onRemoveRow?: (row: number) => void
   onReachEnd?: () => void
@@ -73,10 +82,10 @@ export function FileTable({
                   {rowNumbers?.[item.index] ?? item.index + 1}
                 </span>
                 {Array.from({ length: columns }, (_, column) =>
-                  onChange ? (
+                  onChange && !readOnlyCell?.(item.index, column) ? (
                     <input
                       key={column}
-                      aria-label={`${columnName(column)}${item.index + 1}`}
+                      aria-label={`${columnName(column)}${rowNumbers?.[item.index] ?? item.index + 1}`}
                       className="h-full shrink-0 border-r border-border bg-transparent px-2 outline-none focus:bg-accent"
                       style={{ width: COLUMN_WIDTH }}
                       value={row[column] ?? ''}
@@ -85,7 +94,8 @@ export function FileTable({
                   ) : (
                     <span
                       key={column}
-                      className="flex shrink-0 items-center truncate border-r border-border px-2"
+                      className={cn('flex shrink-0 items-center truncate border-r border-border px-2', onChange && 'bg-muted/60 text-muted-foreground')}
+                      data-read-only-cell={onChange ? `${columnName(column)}${rowNumbers?.[item.index] ?? item.index + 1}` : undefined}
                       style={{ width: COLUMN_WIDTH }}
                       title={row[column] || undefined}
                     >

@@ -70,12 +70,10 @@ impl Fixture {
             limits,
         );
         let app = page_router(PageState::new(Arc::clone(&identity), CookieMode::secure())).merge(
-            page_file_router(PageFileState::new(
-                Arc::clone(&identity),
-                uploads.clone(),
-                CookieMode::secure(),
-            )
-            .with_parser(env!("CARGO_BIN_EXE_orbit"))),
+            page_file_router(
+                PageFileState::new(Arc::clone(&identity), uploads.clone(), CookieMode::secure())
+                    .with_parser(env!("CARGO_BIN_EXE_orbit")),
+            ),
         );
         Self {
             _root: root,
@@ -565,6 +563,20 @@ async fn purged_pages_release_their_blobs_for_reconciliation() {
         .await;
     assert_eq!(remaining["title"], "Second");
 
+    // Old versions hold blobs with the same RESTRICT.
+    let (_, text) = fixture
+        .upload(&owner, id_of(&second), "a.txt", b"one")
+        .await;
+    let (status, _) = fixture
+        .save(
+            &owner,
+            id_of(&second),
+            id_of(&text),
+            json!({"expected_version": 1, "text": "two"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+
     // Purging the workspace removes the remaining rows and blobs without tripping the
     // page_files -> attachment_blobs RESTRICT.
     sqlx::query("UPDATE workspaces SET deleted_at = $1 WHERE id = $2")
@@ -578,8 +590,14 @@ async fn purged_pages_release_their_blobs_for_reconciliation() {
         .await
         .unwrap();
     assert_eq!(summary.workspaces_purged, 1);
-    assert_eq!(summary.attachment_blobs_purged, 1);
+    assert_eq!(summary.attachment_blobs_purged, 3);
     assert_eq!(fixture.count("SELECT COUNT(*) FROM page_files").await, 0);
+    assert_eq!(
+        fixture
+            .count("SELECT COUNT(*) FROM page_file_versions")
+            .await,
+        0
+    );
     assert_eq!(
         fixture.count("SELECT COUNT(*) FROM attachment_blobs").await,
         0
@@ -940,6 +958,31 @@ fn xlsx(rows: usize) -> Vec<u8> {
     output.into_inner()
 }
 
+/// A workbook whose first sheet holds one row with these cells.
+fn xlsx_with_cell(cells: &str) -> Vec<u8> {
+    use std::io::{Cursor, Read, Write};
+    let source = xlsx(1);
+    let mut archive = zip::ZipArchive::new(Cursor::new(source)).unwrap();
+    let mut output = Cursor::new(Vec::new());
+    let mut zip = zip::ZipWriter::new(&mut output);
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        let name = entry.name().to_owned();
+        let mut body = String::new();
+        entry.read_to_string(&mut body).unwrap();
+        if name == "xl/worksheets/sheet1.xml" {
+            body = format!(
+                r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">{cells}</row></sheetData></worksheet>"#
+            );
+        }
+        zip.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(body.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap();
+    output.into_inner()
+}
+
 fn zip_bomb() -> Vec<u8> {
     use std::io::Write;
     let mut output = std::io::Cursor::new(Vec::new());
@@ -968,13 +1011,7 @@ impl Fixture {
         format!("{}/{file}", self.files_uri(page))
     }
 
-    async fn save(
-        &self,
-        cookie: &str,
-        page: &str,
-        file: &str,
-        body: Value,
-    ) -> (StatusCode, Value) {
+    async fn save(&self, cookie: &str, page: &str, file: &str, body: Value) -> (StatusCode, Value) {
         self.call(
             cookie,
             "PUT",
@@ -1025,10 +1062,32 @@ async fn a_save_makes_a_version_and_a_stale_save_overwrites_nothing() {
     );
 
     // Text that looks like a page stays a text file that can change.
+    // A tsv file keeps its tabs, whatever its text looks like.
+    let (page3, tsv) = fixture.page_with_file("data.tsv", b"a,b,c\td\n").await;
+    let (status, saved) = fixture
+        .save(
+            &owner,
+            &page3,
+            &tsv,
+            json!({"expected_version": 1, "rows": [["x,y", "z"]]}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let tsv_uri = fixture.file_uri(&page3, &tsv);
+    assert_eq!(
+        body_bytes(fixture.download(&owner, &tsv_uri).await).await,
+        b"x,y\tz\n"
+    );
+
     let (page2, text) = fixture.page_with_file("note.md", b"plain").await;
     let html = String::from_utf8_lossy(HTML).into_owned();
     let (status, saved) = fixture
-        .save(&owner, &page2, &text, json!({"expected_version": 1, "text": html}))
+        .save(
+            &owner,
+            &page2,
+            &text,
+            json!({"expected_version": 1, "text": html}),
+        )
         .await;
     assert_eq!(status, StatusCode::OK, "{saved}");
     assert_eq!(saved["kind"], "text");
@@ -1086,7 +1145,7 @@ async fn a_save_makes_a_version_and_a_stale_save_overwrites_nothing() {
         fixture
             .count("SELECT COUNT(*) FROM audit_events WHERE action = 'page.file_saved'")
             .await,
-        1
+        3
     );
 }
 
@@ -1172,7 +1231,7 @@ async fn spreadsheets_and_pdfs_read_in_parts_and_do_not_change() {
         .await;
     assert_eq!(status, StatusCode::OK, "{first}");
     assert_eq!(first["file"]["kind"], "sheet");
-    assert_eq!(first["file"]["can_edit"], false);
+    assert_eq!(first["file"]["can_edit"], true);
     assert_eq!(first["sheets"], json!(["Plan", "Other"]));
     assert_eq!(first["sheet"], "Plan");
     assert_eq!(first["rows"][0], json!(["name 1", "", "1"]));
@@ -1201,14 +1260,30 @@ async fn spreadsheets_and_pdfs_read_in_parts_and_do_not_change() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(missing["code"], "file_unreadable");
 
+    // An xlsx changes cell by cell only; a whole-file write would lose the workbook.
     for body in [
         json!({"expected_version": 1, "text": "a,b\n"}),
         json!({"expected_version": 1, "rows": [["a"]]}),
     ] {
         let (status, refused) = fixture.save(&owner, &page, &file, body).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
-        assert_eq!(refused["code"], "file_not_editable");
+        assert_eq!(refused["code"], "validation_failed");
     }
+    let (_, xls) = fixture
+        .upload(&owner, &page, "old.xls", b"\xd0\xcf\x11\xe0 legacy")
+        .await;
+    assert_eq!(xls["kind"], "legacy_sheet");
+    assert_eq!(xls["can_edit"], false);
+    let (status, refused) = fixture
+        .save(
+            &owner,
+            &page,
+            id_of(&xls),
+            json!({"expected_version": 1, "edits": [{"cell": "A1", "value": "x"}]}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert_eq!(refused["code"], "file_not_editable");
     let (_, pdf) = fixture
         .upload(&owner, &page, "a.pdf", b"%PDF-1.7 not really")
         .await;
@@ -1240,6 +1315,95 @@ async fn spreadsheets_and_pdfs_read_in_parts_and_do_not_change() {
 }
 
 #[tokio::test]
+async fn xlsx_cells_change_through_the_child_with_versions_and_permissions() {
+    let fixture = Fixture::new(UploadLimits::default()).await;
+    let owner = fixture.owner_cookie.clone();
+    let member = fixture
+        .add_member(&fixture.workspace_id, "member@example.com")
+        .await;
+    let (page, file) = fixture.page_with_file("plan.xlsx", &xlsx(3)).await;
+    let uri = fixture.file_uri(&page, &file);
+    let edit = |cell: &str, value: &str, version: u64| json!({"expected_version": version, "sheet": "Plan", "edits": [{"cell": cell, "value": value}]});
+
+    let (status, saved) = fixture
+        .save(&member, &page, &file, edit("A2", "changed", 1))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["version"], 2);
+    let (_, content) = fixture
+        .call(&owner, "GET", &format!("{uri}/content"), None)
+        .await;
+    assert_eq!(content["rows"][1], json!(["changed", "", "2"]));
+
+    // A stale save changes nothing.
+    let (status, conflict) = fixture
+        .save(&owner, &page, &file, edit("A2", "lost", 1))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{conflict}");
+
+    // A formula cell is refused, with its name, and the file stays.
+    let (_, formula) = fixture
+        .upload(
+            &owner,
+            &page,
+            "formula.xlsx",
+            &xlsx_with_cell(r#"<c r="A1"><f>1+1</f><v>2</v></c>"#),
+        )
+        .await;
+    let (_, shown) = fixture
+        .call(
+            &owner,
+            "GET",
+            &format!("{}/content", fixture.file_uri(&page, id_of(&formula))),
+            None,
+        )
+        .await;
+    assert_eq!(shown["formula_cells"], json!(["A1"]));
+    let (status, refused) = fixture
+        .save(&owner, &page, id_of(&formula), edit("A1", "9", 1))
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert_eq!(refused["code"], "cell_read_only");
+    assert!(refused["detail"].as_str().unwrap().contains("A1"));
+
+    // Locked: no change, and a stranger sees nothing.
+    let lock = format!("{}/{page}/lock", fixture.pages_uri());
+    fixture
+        .call(&owner, "POST", &lock, Some(json!({"locked": true})))
+        .await;
+    let (status, _) = fixture
+        .save(&member, &page, &file, edit("A2", "locked", 2))
+        .await;
+    assert_eq!(status, StatusCode::LOCKED);
+    fixture
+        .call(&owner, "POST", &lock, Some(json!({"locked": false})))
+        .await;
+    sqlx::query("DELETE FROM memberships WHERE user_id = (SELECT id FROM users WHERE email = 'member@example.com')")
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    let (status, _) = fixture
+        .save(&member, &page, &file, edit("A2", "stranger", 2))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // The first version comes back, whole.
+    let (status, restored) = fixture
+        .call(
+            &owner,
+            "POST",
+            &format!("{uri}/versions/1/restore"),
+            Some(json!({"expected_version": 2})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{restored}");
+    let (_, content) = fixture
+        .call(&owner, "GET", &format!("{uri}/content"), None)
+        .await;
+    assert_eq!(content["rows"][1][0], "name 2");
+}
+
+#[tokio::test]
 async fn crafted_files_hit_a_limit_in_the_child_process() {
     let fixture = Fixture::new(UploadLimits::default()).await;
     let owner = fixture.owner_cookie.clone();
@@ -1268,7 +1432,11 @@ async fn crafted_files_hit_a_limit_in_the_child_process() {
                 None,
             )
             .await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{name}: {refused}");
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{name}: {refused}"
+        );
         assert_eq!(refused["code"], "file_unreadable");
     }
 }
@@ -1296,7 +1464,12 @@ async fn old_versions_keep_their_blobs_until_the_file_goes() {
         .unwrap();
     let later = TimestampMillis::now().as_millis() + 2 * DAY_MILLIS;
     assert_eq!(
-        fixture.uploads.reconcile(later).await.unwrap().deleted_blobs,
+        fixture
+            .uploads
+            .reconcile(later)
+            .await
+            .unwrap()
+            .deleted_blobs,
         0
     );
     let uri = fixture.file_uri(&page, &file);
@@ -1314,9 +1487,19 @@ async fn old_versions_keep_their_blobs_until_the_file_goes() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{purged}");
-    assert_eq!(fixture.count("SELECT COUNT(*) FROM page_file_versions").await, 0);
     assert_eq!(
-        fixture.uploads.reconcile(later).await.unwrap().deleted_blobs,
+        fixture
+            .count("SELECT COUNT(*) FROM page_file_versions")
+            .await,
+        0
+    );
+    assert_eq!(
+        fixture
+            .uploads
+            .reconcile(later)
+            .await
+            .unwrap()
+            .deleted_blobs,
         2
     );
     assert_eq!(fixture.store.blobs().await.unwrap().len(), 0);
@@ -1336,7 +1519,9 @@ async fn html_and_svg_uploads_stay_downloads_and_are_not_text_to_edit() {
         assert_eq!(content["file"]["kind"], "other");
         assert_eq!(content["file"]["can_edit"], false);
         let response = fixture.download(&owner, &uri).await;
-        let disposition = response.headers()[header::CONTENT_DISPOSITION].to_str().unwrap();
+        let disposition = response.headers()[header::CONTENT_DISPOSITION]
+            .to_str()
+            .unwrap();
         assert!(disposition.starts_with("attachment"), "{disposition}");
         assert_eq!(response.headers()["x-content-type-options"], "nosniff");
     }

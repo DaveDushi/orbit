@@ -4,7 +4,7 @@
 //! page's files are readable by every member, a private page's only by its owner, and a trashed
 //! page's by nobody.
 //!
-//! `csv`, `tsv` and text files can change. Each change makes a new blob, moves the replaced one to
+//! `csv`, `tsv`, text and `xlsx` files can change. Each change makes a new blob, moves the replaced one to
 //! `page_file_versions` (a person can restore it), and needs the version it was based on, so a stale
 //! save answers a conflict and overwrites nothing.
 
@@ -20,7 +20,7 @@ use utoipa::ToSchema;
 
 use super::pages::visible;
 use crate::audit::{self, AuditOutcome};
-use crate::file_parse::{self, FileKind, MAX_EDIT_BYTES};
+use crate::file_parse::{self, FileKind};
 
 /// A file attached to a page.
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -41,7 +41,7 @@ pub struct PageFile {
     /// Starts at 1; each save or restore adds one. Send it back as `expected_version`.
     pub version: u64,
     pub kind: FileKind,
-    /// The kind can change here (`csv`, `tsv`, text), and the page is not locked.
+    /// The kind can change here (`csv`, `tsv`, text, `xlsx`), and the page is not locked.
     pub can_edit: bool,
 }
 
@@ -326,7 +326,7 @@ impl PageFileRepository {
         if !record.file.kind.editable() {
             return Err(PageFileError::NotEditable);
         }
-        if bytes.len() as u64 > MAX_EDIT_BYTES {
+        if bytes.len() as u64 > record.file.kind.max_edit_bytes() {
             return Err(PageFileError::TooLargeToEdit);
         }
         let staged = self
@@ -513,6 +513,7 @@ impl PageFileRepository {
 
     /// Puts an old version back as a new version, so the replaced one stays restorable. Records
     /// `page.file_restored`.
+    #[allow(clippy::too_many_arguments)]
     pub async fn restore(
         &self,
         workspace_id: Id,

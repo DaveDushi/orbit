@@ -14,10 +14,14 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use utoipa::ToSchema;
 
+use crate::xlsx_patch::{PatchError, PatchRequest};
+
 /// Larger files show the name and the download button.
 pub const MAX_PARSE_BYTES: u64 = 50 * 1024 * 1024;
 /// The panel and the agent edit files up to this size (they send the whole file back).
 pub const MAX_EDIT_BYTES: u64 = 2 * 1024 * 1024;
+/// A workbook changes cell by cell, so it can be larger.
+pub const MAX_EDIT_WORKBOOK_BYTES: u64 = 25 * 1024 * 1024;
 /// How many files one server parses at the same time; the others wait for [`QUEUE_WAIT`].
 pub const PARALLEL_PARSES: usize = 2;
 pub const QUEUE_WAIT: Duration = Duration::from_secs(10);
@@ -40,7 +44,10 @@ const CHILD_CPU_SECONDS: u64 = 30;
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum FileKind {
+    /// xlsx and xlsm. Cells can change.
     Sheet,
+    /// The binary xls format: read-only.
+    LegacySheet,
     Delimited,
     Text,
     Pdf,
@@ -53,7 +60,16 @@ impl FileKind {
     /// The panel and the agent can change only these kinds.
     #[must_use]
     pub const fn editable(self) -> bool {
-        matches!(self, Self::Delimited | Self::Text)
+        matches!(self, Self::Delimited | Self::Text | Self::Sheet)
+    }
+
+    /// The largest file of this kind that can change.
+    #[must_use]
+    pub const fn max_edit_bytes(self) -> u64 {
+        match self {
+            Self::Sheet => MAX_EDIT_WORKBOOK_BYTES,
+            _ => MAX_EDIT_BYTES,
+        }
     }
 }
 
@@ -82,7 +98,8 @@ pub fn classify(file_name: &str, mime_type: &str) -> FileKind {
         .map(|(_, extension)| extension.to_ascii_lowercase())
         .unwrap_or_default();
     match extension.as_str() {
-        "xlsx" | "xlsm" | "xls" => FileKind::Sheet,
+        "xlsx" | "xlsm" => FileKind::Sheet,
+        "xls" => FileKind::LegacySheet,
         "csv" | "tsv" => FileKind::Delimited,
         "docx" => FileKind::Docx,
         extension if TEXT_EXTENSIONS.contains(&extension) => FileKind::Text,
@@ -92,6 +109,8 @@ pub fn classify(file_name: &str, mime_type: &str) -> FileKind {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ParseRequest {
+    /// A `.tsv` file: tabs separate its fields, whatever its first line looks like.
+    pub tab_separated: bool,
     pub sheet: Option<String>,
     pub offset: u64,
     pub limit: u64,
@@ -105,6 +124,8 @@ pub struct Parsed {
     pub rows: Option<Vec<Vec<String>>>,
     /// The number of each row in the file, from 1; empty rows of a spreadsheet are left out.
     pub row_numbers: Option<Vec<u64>>,
+    /// The cells among `rows` that hold a formula, as `B2`. They are read-only.
+    pub formula_cells: Vec<String>,
     pub text: Option<String>,
     pub next_offset: Option<u64>,
     /// A PDF or Word file without text, such as a scan. There is no OCR.
@@ -128,7 +149,7 @@ pub enum ParseError {
 /// Parses in this process. Only the child process and tests call it.
 pub fn parse(kind: FileKind, bytes: &[u8], request: &ParseRequest) -> Result<Parsed, ParseError> {
     match kind {
-        FileKind::Sheet => parse_sheet(bytes, request),
+        FileKind::Sheet | FileKind::LegacySheet => parse_sheet(bytes, request),
         FileKind::Delimited => parse_delimited(bytes, request),
         FileKind::Text => {
             let (text, valid_utf8) = decode(bytes);
@@ -179,13 +200,14 @@ pub struct DelimitedStyle {
     pub bom: bool,
 }
 
-/// The delimiter with the most uses in the first line outside quotes.
+/// A tab for a `.tsv` file, and otherwise the delimiter with the most uses in the first line
+/// outside quotes.
 #[must_use]
-pub fn delimited_style(bytes: &[u8]) -> DelimitedStyle {
+pub fn delimited_style(bytes: &[u8], tab_separated: bool) -> DelimitedStyle {
     let bom = bytes.starts_with(b"\xef\xbb\xbf");
     let body = if bom { &bytes[3..] } else { bytes };
     let (mut counts, mut quoted, mut crlf) = ([0_usize; 4], false, false);
-    const DELIMITERS: [u8; 4] = [b',', b';', b'\t', b'|'];
+    const DELIMITERS: [u8; 4] = *b",;\t|";
     for (index, &byte) in body.iter().enumerate() {
         match byte {
             b'"' => quoted = !quoted,
@@ -210,7 +232,7 @@ pub fn delimited_style(bytes: &[u8]) -> DelimitedStyle {
         }
     }
     DelimitedStyle {
-        delimiter,
+        delimiter: if tab_separated { b'\t' } else { delimiter },
         crlf,
         bom,
     }
@@ -243,7 +265,7 @@ pub fn write_delimited(rows: &[Vec<String>], style: DelimitedStyle) -> Result<Ve
 }
 
 fn parse_delimited(bytes: &[u8], request: &ParseRequest) -> Result<Parsed, ParseError> {
-    let style = delimited_style(bytes);
+    let style = delimited_style(bytes, request.tab_separated);
     let (text, valid_utf8) = decode(bytes);
     let mut reader = csv::ReaderBuilder::new()
         .delimiter(style.delimiter)
@@ -318,13 +340,17 @@ fn parse_sheet(bytes: &[u8], request: &ParseRequest) -> Result<Parsed, ParseErro
             .map_err(|_| ParseError::Unreadable)?;
         let mut sheet_rows = SheetRows::new(request);
         let mut count = 0;
-        while let Some(cell) = cells.next_cell().map_err(|_| ParseError::Unreadable)? {
+        while let Some(cell) = cells
+            .next_cell_with_formula_metadata()
+            .map_err(|_| ParseError::Unreadable)?
+        {
             count += 1;
             if count > MAX_CELLS {
                 return Err(ParseError::Limit);
             }
-            let (row, column) = cell.get_position();
-            if !sheet_rows.add(&mut parsed, row, column, cell_text(cell.get_value())) {
+            let (row, column) = cell.pos;
+            let formula = cell.formula.is_some();
+            if !sheet_rows.add(&mut parsed, row, column, cell_text(&cell.value), formula) {
                 return Ok(parsed);
             }
         }
@@ -357,7 +383,7 @@ fn parse_sheet(bytes: &[u8], request: &ParseRequest) -> Result<Parsed, ParseErro
                 u32::try_from(row).unwrap_or(u32::MAX),
                 u32::try_from(column).unwrap_or(u32::MAX),
             );
-            if !sheet_rows.add(&mut parsed, row, column, cell_text(value)) {
+            if !sheet_rows.add(&mut parsed, row, column, cell_text(value), false) {
                 return Ok(parsed);
             }
         }
@@ -383,6 +409,8 @@ fn choose_sheet(
 struct SheetRows<'a> {
     request: &'a ParseRequest,
     current: Option<(u32, Vec<String>)>,
+    /// Columns of the formula cells of `current`.
+    formulas: Vec<u32>,
     /// How many rows with values came before `current`.
     index: u64,
     size: usize,
@@ -393,17 +421,28 @@ impl<'a> SheetRows<'a> {
         Self {
             request,
             current: None,
+            formulas: Vec::new(),
             index: 0,
             size: 0,
         }
     }
 
-    fn add(&mut self, parsed: &mut Parsed, row: u32, column: u32, value: String) -> bool {
-        if value.is_empty() {
+    fn add(
+        &mut self,
+        parsed: &mut Parsed,
+        row: u32,
+        column: u32,
+        value: String,
+        formula: bool,
+    ) -> bool {
+        if value.is_empty() && !formula {
             return true;
         }
         if self.current.as_ref().is_some_and(|(at, _)| *at != row) && !self.flush(parsed) {
             return false;
+        }
+        if formula {
+            self.formulas.push(column);
         }
         let (_, cells) = self.current.get_or_insert_with(|| (row, Vec::new()));
         let column = column as usize;
@@ -420,6 +459,7 @@ impl<'a> SheetRows<'a> {
         let Some((row, cells)) = self.current.take() else {
             return true;
         };
+        let formulas = std::mem::take(&mut self.formulas);
         let index = self.index;
         self.index += 1;
         if index < self.request.offset {
@@ -432,6 +472,11 @@ impl<'a> SheetRows<'a> {
         if let Some(number) = parsed.row_numbers.as_mut().and_then(|rows| rows.last_mut()) {
             *number = u64::from(row) + 1;
         }
+        parsed.formula_cells.extend(
+            formulas
+                .into_iter()
+                .map(|column| crate::xlsx_patch::cell_name(row + 1, column)),
+        );
         true
     }
 
@@ -470,14 +515,16 @@ fn cell_text<T: DataType>(cell: &T) -> String {
 
 /// Decompresses every entry and counts the real bytes: the sizes a zip declares can be false. A
 /// parser that opens the same entries later cannot get more than this.
-fn check_zip_limits(bytes: &[u8]) -> Result<(), ParseError> {
+pub(crate) fn check_zip_limits(bytes: &[u8]) -> Result<(), ParseError> {
     let mut archive = open_zip(bytes)?;
     if archive.len() > MAX_ZIP_ENTRIES {
         return Err(ParseError::Limit);
     }
     let mut left = MAX_UNZIPPED_BYTES;
     for index in 0..archive.len() {
-        let mut entry = archive.by_index(index).map_err(|_| ParseError::Unreadable)?;
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|_| ParseError::Unreadable)?;
         let read = std::io::copy(
             &mut Read::by_ref(&mut entry).take(left + 1),
             &mut std::io::sink(),
@@ -565,6 +612,7 @@ enum ChildAnswer {
 /// What runs in the child: bytes on stdin, the answer as JSON on stdout.
 pub fn run_child(
     kind: FileKind,
+    tab_separated: bool,
     sheet: Option<String>,
     offset: u64,
     limit: u64,
@@ -573,6 +621,7 @@ pub fn run_child(
     let mut bytes = Vec::new();
     std::io::stdin().read_to_end(&mut bytes)?;
     let request = ParseRequest {
+        tab_separated,
         sheet,
         offset,
         limit,
@@ -598,6 +647,54 @@ fn limit_this_process() {
     let _ = setrlimit(Resource::Core, limit(0));
 }
 
+/// What runs in the child for a change of cells: a JSON line with the request, then the workbook on
+/// stdin. The answer starts with `O` and the new file, or `E` and the error as JSON.
+pub fn run_patch_child() -> std::io::Result<()> {
+    limit_this_process();
+    let mut input = Vec::new();
+    std::io::stdin().read_to_end(&mut input)?;
+    let result = input
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .and_then(|end| {
+            let request = serde_json::from_slice(&input[..end]).ok()?;
+            Some(crate::xlsx_patch::patch(&input[end + 1..], &request))
+        })
+        .unwrap_or(Err(PatchError::Unreadable));
+    let mut stdout = std::io::stdout().lock();
+    match result {
+        Ok(file) => {
+            stdout.write_all(b"O")?;
+            stdout.write_all(&file)?;
+        }
+        Err(error) => {
+            stdout.write_all(b"E")?;
+            serde_json::to_writer(&mut stdout, &error)?;
+        }
+    }
+    stdout.flush()
+}
+
+/// Changes cells of a workbook in a child process of `program`.
+pub async fn patch_in_child(
+    program: &Path,
+    bytes: Vec<u8>,
+    request: &PatchRequest,
+) -> Result<Vec<u8>, PatchError> {
+    let mut input = serde_json::to_vec(request).map_err(|_| PatchError::Unreadable)?;
+    input.push(b'\n');
+    input.extend_from_slice(&bytes);
+    drop(bytes);
+    let output = run_in_child(program, &["patch-xlsx".to_owned()], input)
+        .await
+        .map_err(PatchError::from)?;
+    match output.split_first() {
+        Some((b'O', file)) => Ok(file.to_vec()),
+        Some((b'E', error)) => Err(serde_json::from_slice(error).unwrap_or(PatchError::Unreadable)),
+        _ => Err(PatchError::Unreadable),
+    }
+}
+
 /// Parses in a child process of `program`. Any failure of the child (killed at a limit, out of
 /// memory, a crash) is [`ParseError::Limit`] after the time limit and otherwise
 /// [`ParseError::Unreadable`].
@@ -607,19 +704,43 @@ pub async fn parse_in_child(
     bytes: Vec<u8>,
     request: &ParseRequest,
 ) -> Result<Parsed, ParseError> {
+    let kind = clap::ValueEnum::to_possible_value(&kind)
+        .map(|value| value.get_name().to_owned())
+        .ok_or(ParseError::Unreadable)?;
+    let mut arguments: Vec<String> = vec![
+        "parse-file".to_owned(),
+        "--kind".to_owned(),
+        kind,
+        "--offset".to_owned(),
+        request.offset.to_string(),
+        "--limit".to_owned(),
+        request.limit.to_string(),
+    ];
+    if request.tab_separated {
+        arguments.push("--tab-separated".to_owned());
+    }
+    if let Some(sheet) = &request.sheet {
+        arguments.push(format!("--sheet={sheet}"));
+    }
+    let output = run_in_child(program, &arguments, bytes).await?;
+    match serde_json::from_slice(&output) {
+        Ok(ChildAnswer::Parsed(parsed)) => Ok(*parsed),
+        Ok(ChildAnswer::Error(error)) => Err(error),
+        Err(_) => Err(ParseError::Unreadable),
+    }
+}
+
+/// Runs the child with `input` on stdin, and returns what it wrote. Any failure of the child (killed
+/// at a limit, out of memory, a crash) is [`ParseError::Limit`] after the time limit and otherwise
+/// [`ParseError::Unreadable`].
+async fn run_in_child(
+    program: &Path,
+    arguments: &[String],
+    input: Vec<u8>,
+) -> Result<Vec<u8>, ParseError> {
     let run = async {
-        let kind_argument = clap::ValueEnum::to_possible_value(&kind)
-            .map(|value| value.get_name().to_owned())
-            .ok_or(ParseError::Unreadable)?;
-        let mut command = tokio::process::Command::new(program);
-        command
-            .args(["parse-file", "--kind", &kind_argument])
-            .args(["--offset", &request.offset.to_string()])
-            .args(["--limit", &request.limit.to_string()]);
-        if let Some(sheet) = &request.sheet {
-            command.arg(format!("--sheet={sheet}"));
-        }
-        let mut child = command
+        let mut child = tokio::process::Command::new(program)
+            .args(arguments)
             .env_clear()
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -633,8 +754,8 @@ pub async fn parse_in_child(
         let mut stdin = child.stdin.take().ok_or(ParseError::Unreadable)?;
         let stdout = child.stdout.take().ok_or(ParseError::Unreadable)?;
         let writer = async move {
-            // A child that stops early closes its stdin; the answer below tells what happened.
-            let _ = stdin.write_all(&bytes).await;
+            // A child that stops early closes its stdin; its exit status tells what happened.
+            let _ = stdin.write_all(&input).await;
         };
         let reader = async move {
             let mut output = Vec::new();
@@ -644,13 +765,10 @@ pub async fn parse_in_child(
         let ((), output) = tokio::join!(writer, reader);
         let output = output.map_err(|_| ParseError::Unreadable)?;
         let status = child.wait().await.map_err(|_| ParseError::Unreadable)?;
-        if !status.success() {
-            return Err(ParseError::Unreadable);
-        }
-        match serde_json::from_slice(&output) {
-            Ok(ChildAnswer::Parsed(parsed)) => Ok(*parsed),
-            Ok(ChildAnswer::Error(error)) => Err(error),
-            Err(_) => Err(ParseError::Unreadable),
+        if status.success() {
+            Ok(output)
+        } else {
+            Err(ParseError::Unreadable)
         }
     };
     // Dropping the future kills the child (`kill_on_drop`).
@@ -665,6 +783,7 @@ mod tests {
 
     fn request(offset: u64, limit: u64) -> ParseRequest {
         ParseRequest {
+            tab_separated: false,
             sheet: None,
             offset,
             limit,
@@ -690,8 +809,9 @@ mod tests {
 
     #[test]
     fn a_save_keeps_the_csv_delimiter_quoting_and_line_ends() {
-        let original = "\u{feff}name;note\r\n\"a;b\";\"say \"\"hi\"\"\"\r\nplain;\"two\nlines\"\r\n";
-        let style = delimited_style(original.as_bytes());
+        let original =
+            "\u{feff}name;note\r\n\"a;b\";\"say \"\"hi\"\"\"\r\nplain;\"two\nlines\"\r\n";
+        let style = delimited_style(original.as_bytes(), false);
         assert_eq!(
             style,
             DelimitedStyle {
@@ -709,10 +829,12 @@ mod tests {
     }
 
     #[test]
-    fn a_tab_in_the_first_line_makes_a_tsv_and_a_quoted_delimiter_does_not_count() {
-        assert_eq!(delimited_style(b"a\tb,c\n1\t2\n").delimiter, b'\t');
-        assert_eq!(delimited_style(b"\"a;b;c\",d\n").delimiter, b',');
-        assert_eq!(delimited_style(b"one\n").delimiter, b',');
+    fn the_delimiter_comes_from_the_first_line_or_the_tsv_extension() {
+        assert_eq!(delimited_style(b"a\tb\tc,d\n", false).delimiter, b'\t');
+        assert_eq!(delimited_style(b"\"a;b;c\",d\n", false).delimiter, b',');
+        assert_eq!(delimited_style(b"one\n", false).delimiter, b',');
+        // A .tsv file stays one, also when its text has more commas than tabs.
+        assert_eq!(delimited_style(b"a,b,c\td\n", true).delimiter, b'\t');
     }
 
     #[test]
@@ -758,8 +880,11 @@ mod tests {
     fn malformed_files_are_unreadable_not_a_panic() {
         for (kind, bytes) in [
             (FileKind::Sheet, &b"PK\x03\x04 not a zip"[..]),
-            (FileKind::Sheet, &b"\xd0\xcf\x11\xe0 not a workbook"[..]),
-            (FileKind::Sheet, &b"neither"[..]),
+            (
+                FileKind::LegacySheet,
+                &b"\xd0\xcf\x11\xe0 not a workbook"[..],
+            ),
+            (FileKind::LegacySheet, &b"neither"[..]),
             (FileKind::Docx, &b"PK\x03\x04 not a zip"[..]),
             (FileKind::Pdf, &b"%PDF-1.7 not a pdf"[..]),
         ] {
@@ -783,7 +908,7 @@ mod tests {
     fn the_kind_comes_from_the_detected_type_and_the_extension() {
         let octets = "application/octet-stream";
         assert_eq!(classify("a.XLSX", octets), FileKind::Sheet);
-        assert_eq!(classify("a.xls", octets), FileKind::Sheet);
+        assert_eq!(classify("a.xls", octets), FileKind::LegacySheet);
         assert_eq!(classify("a.csv", octets), FileKind::Delimited);
         assert_eq!(classify("a.tsv", octets), FileKind::Delimited);
         assert_eq!(classify("a.txt", octets), FileKind::Text);

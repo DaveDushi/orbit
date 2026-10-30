@@ -320,6 +320,17 @@ export type CategoryRecord = {
     position: number;
 };
 
+export type CellEdit = {
+    /**
+     * The cell in A1 style, for example `B2`.
+     */
+    cell: string;
+    /**
+     * The new value. Empty clears the cell and keeps its format.
+     */
+    value: string;
+};
+
 export type ChangePasswordBody = {
     current_password: string;
     new_password: string;
@@ -1076,7 +1087,7 @@ export type EnableTotpBody = {
  * How a file is shown. Taken from the extension and the detected type: the server's detection
  * knows no spreadsheets or text formats.
  */
-export type FileKind = 'sheet' | 'delimited' | 'text' | 'pdf' | 'docx' | 'image' | 'other';
+export type FileKind = 'sheet' | 'legacy_sheet' | 'delimited' | 'text' | 'pdf' | 'docx' | 'image' | 'other';
 
 export type FilterField = 'status' | 'status_category' | 'assignee' | 'creator' | 'label' | 'priority' | 'project' | 'due_date' | 'created_at' | 'updated_at' | 'text' | 'parent' | 'sub_issues';
 
@@ -1903,7 +1914,7 @@ export type PageFavoriteList = {
  */
 export type PageFile = {
     /**
-     * The kind can change here (`csv`, `tsv`, text), and the page is not locked.
+     * The kind can change here (`csv`, `tsv`, text, `xlsx`), and the page is not locked.
      */
     can_edit: boolean;
     created_at: string;
@@ -1932,6 +1943,10 @@ export type PageFile = {
  */
 export type PageFileContent = {
     file: PageFile;
+    /**
+     * Cells among `rows` that hold a formula, as `B2`. They are read-only.
+     */
+    formula_cells: Array<string>;
     /**
      * Where the next part starts; `null` at the end.
      */
@@ -2865,11 +2880,14 @@ export type S3View = {
 
 /**
  * `text` replaces the file; for `csv` and `tsv`, `rows` writes the rows in the file's delimiter,
- * quoting and line ends.
+ * quoting and line ends; for `xlsx`, `edits` changes cells of `sheet` (default: the first) and
+ * leaves the rest of the workbook as it is.
  */
 export type SavePageFileBody = {
+    edits?: Array<CellEdit> | null;
     expected_version: number;
     rows?: Array<Array<string>> | null;
+    sheet?: string | null;
     text?: string | null;
 };
 
@@ -13373,7 +13391,7 @@ export type SavePageFileErrors = {
      */
     413: TaskProblem;
     /**
-     * file_not_editable
+     * file_not_editable, cell_read_only, file_over_limit, file_unreadable, validation_failed
      */
     422: TaskProblem;
     /**
@@ -13559,7 +13577,7 @@ export type RestorePageFileVersionErrors = {
      */
     413: TaskProblem;
     /**
-     * file_not_editable
+     * file_not_editable, cell_read_only, file_over_limit, file_unreadable, validation_failed
      */
     422: TaskProblem;
     /**

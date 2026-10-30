@@ -738,6 +738,10 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             add_code(&mut responses, "413", "file_too_large_to_edit");
             add_code(&mut responses, "413", "storage_quota_exceeded");
             add_code(&mut responses, "422", "file_not_editable");
+            add_code(&mut responses, "422", "cell_read_only");
+            add_code(&mut responses, "422", "file_over_limit");
+            add_code(&mut responses, "422", "file_unreadable");
+            add_code(&mut responses, "422", "validation_failed");
             add_code(&mut responses, "423", "page_locked");
         }
         "export_page" => {

@@ -24,6 +24,7 @@ use crate::repositories::page_files::{
     PageFile, PageFileError, PageFileRepository, PageFileVersion,
 };
 use crate::task_routes::{ApiError, authenticate_session, request_id_value};
+use crate::xlsx_patch::{CellEdit, PatchError, PatchRequest};
 
 #[derive(Clone)]
 pub struct PageFileState {
@@ -233,6 +234,8 @@ struct PageFileContent {
     sheet: Option<String>,
     rows: Option<Vec<Vec<String>>>,
     row_numbers: Option<Vec<u64>>,
+    /// Cells among `rows` that hold a formula, as `B2`. They are read-only.
+    formula_cells: Vec<String>,
     text: Option<String>,
     /// Where the next part starts; `null` at the end.
     next_offset: Option<u64>,
@@ -241,12 +244,15 @@ struct PageFileContent {
 }
 
 /// `text` replaces the file; for `csv` and `tsv`, `rows` writes the rows in the file's delimiter,
-/// quoting and line ends.
+/// quoting and line ends; for `xlsx`, `edits` changes cells of `sheet` (default: the first) and
+/// leaves the rest of the workbook as it is.
 #[derive(Deserialize, ToSchema)]
 struct SavePageFileBody {
     expected_version: u64,
     text: Option<String>,
     rows: Option<Vec<Vec<String>>>,
+    sheet: Option<String>,
+    edits: Option<Vec<CellEdit>>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -320,8 +326,12 @@ async fn get_page_file_content(
         if record.file.size_bytes > file_parse::MAX_PARSE_BYTES {
             return Err(parse_problem(ParseError::Limit, &instance, request_id));
         }
-        let rows = matches!(kind, FileKind::Sheet | FileKind::Delimited);
+        let rows = matches!(
+            kind,
+            FileKind::Sheet | FileKind::LegacySheet | FileKind::Delimited
+        );
         let request = ParseRequest {
+            tab_separated: is_tsv(&record.file.file_name),
             sheet: query.sheet,
             offset: query.offset.unwrap_or(0),
             limit: query
@@ -358,15 +368,15 @@ async fn get_page_file_content(
     };
     let mut file = record.file;
     // Bytes that are not UTF-8 would not survive an edit.
-    file.can_edit = file.can_edit
-        && file.size_bytes <= file_parse::MAX_EDIT_BYTES
-        && (parsed.valid_utf8 || !parses);
+    file.can_edit =
+        file.can_edit && file.size_bytes <= kind.max_edit_bytes() && (parsed.valid_utf8 || !parses);
     Ok(Json(PageFileContent {
         file,
         sheets: parsed.sheets,
         sheet: parsed.sheet,
         rows: parsed.rows,
         row_numbers: parsed.row_numbers,
+        formula_cells: parsed.formula_cells,
         text: parsed.text,
         next_offset: parsed.next_offset,
         no_text: parsed.no_text,
@@ -400,9 +410,61 @@ async fn save_page_file(
         .record(workspace_id, page_id, file_id, actor)
         .await
         .map_err(|error| problem(error, &instance, request_id))?;
-    let bytes = match (body.text, body.rows) {
-        (Some(text), None) if !text.contains('\0') => text.into_bytes(),
-        (None, Some(rows)) if record.file.kind == FileKind::Delimited => {
+    if !record.file.kind.editable() {
+        return Err(problem(PageFileError::NotEditable, &instance, request_id));
+    }
+    let kind = record.file.kind;
+    let bytes = match (body.text, body.rows, body.edits) {
+        (Some(text), None, None) if kind != FileKind::Sheet && !text.contains('\0') => {
+            text.into_bytes()
+        }
+        (None, None, Some(edits)) if kind == FileKind::Sheet => {
+            // Checked before the work; the save checks them again in its transaction.
+            if record.locked {
+                return Err(problem(PageFileError::Locked, &instance, request_id));
+            }
+            if record.file.version != body.expected_version {
+                return Err(problem(
+                    PageFileError::VersionConflict {
+                        current: Box::new(record.file),
+                    },
+                    &instance,
+                    request_id,
+                ));
+            }
+            if record.deleted {
+                return Err(problem(PageFileError::Deleted, &instance, request_id));
+            }
+            if record.file.size_bytes > kind.max_edit_bytes() {
+                return Err(problem(
+                    PageFileError::TooLargeToEdit,
+                    &instance,
+                    request_id,
+                ));
+            }
+            let _permit = tokio::time::timeout(file_parse::QUEUE_WAIT, state.parses.acquire())
+                .await
+                .map_err(|_| busy(&instance, request_id))?
+                .map_err(|_| internal(&instance, request_id))?;
+            let current = state
+                .files
+                .uploads()
+                .read_blob(&record.storage_key)
+                .await
+                .map_err(|error| upload_problem(error, &instance, request_id))?;
+            let program = state
+                .parser
+                .as_deref()
+                .ok_or_else(|| internal(&instance, request_id))?;
+            let request = PatchRequest {
+                sheet: body.sheet,
+                edits,
+            };
+            file_parse::patch_in_child(program, current, &request)
+                .await
+                .map_err(|error| patch_problem(error, &instance, request_id))?
+        }
+        (None, Some(rows), None) if kind == FileKind::Delimited => {
             // The file's own style; a file too large to read here cannot be saved anyway.
             if record.file.size_bytes > file_parse::MAX_EDIT_BYTES {
                 return Err(problem(
@@ -417,11 +479,9 @@ async fn save_page_file(
                 .read_blob(&record.storage_key)
                 .await
                 .map_err(|error| upload_problem(error, &instance, request_id))?;
-            file_parse::write_delimited(&rows, file_parse::delimited_style(&current))
+            let style = file_parse::delimited_style(&current, is_tsv(&record.file.file_name));
+            file_parse::write_delimited(&rows, style)
                 .map_err(|_| invalid_content(&instance, request_id))?
-        }
-        _ if !record.file.kind.editable() => {
-            return Err(problem(PageFileError::NotEditable, &instance, request_id));
         }
         _ => return Err(invalid_content(&instance, request_id)),
     };
@@ -537,6 +597,10 @@ async fn restore_page_file_version(
     Ok(Json(restored))
 }
 
+fn is_tsv(file_name: &str) -> bool {
+    file_name.to_ascii_lowercase().ends_with(".tsv")
+}
+
 fn parse_id(
     value: &str,
     instance: &str,
@@ -594,10 +658,38 @@ fn invalid_content(instance: &str, request_id: Option<&Extension<RequestId>>) ->
         StatusCode::UNPROCESSABLE_ENTITY,
         "validation_failed",
         "Validation failed",
-        "Send the file's content as `text`, or as `rows` for a csv or tsv file.",
+        "Send the file's content as `text`, as `rows` for a csv or tsv file, or as `edits` for an xlsx file.",
         instance,
         request_id,
     )
+}
+
+fn patch_problem(
+    error: PatchError,
+    instance: &str,
+    request_id: Option<&Extension<RequestId>>,
+) -> ApiError {
+    let detail = error.to_string();
+    let code = match error {
+        PatchError::Formula(_) | PatchError::TableHeader(_) | PatchError::Protected(_) => {
+            "cell_read_only"
+        }
+        PatchError::InvalidCell(_)
+        | PatchError::InvalidValue(_)
+        | PatchError::TooManyEdits
+        | PatchError::UnknownSheet => "validation_failed",
+        PatchError::Limit => "file_over_limit",
+        PatchError::Unreadable => "file_unreadable",
+    };
+    ApiError::new(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        code,
+        "File not changed",
+        "The file was not changed.",
+        instance,
+        request_id,
+    )
+    .with_detail(detail)
 }
 
 fn parse_problem(
@@ -696,7 +788,7 @@ fn problem(
             StatusCode::UNPROCESSABLE_ENTITY,
             "file_not_editable",
             "File cannot be edited",
-            "Only csv, tsv and text files can change. Spreadsheets, PDFs and other files are read-only.",
+            "Only csv, tsv, text and xlsx files can change. PDF, xls and other files are read-only.",
             instance,
             request_id,
         ),
@@ -704,7 +796,7 @@ fn problem(
             StatusCode::PAYLOAD_TOO_LARGE,
             "file_too_large_to_edit",
             "File too large to edit",
-            "Files larger than 2 MB cannot be edited here.",
+            "This file is too large to edit here (2 MB for text and csv, 25 MB for xlsx).",
             instance,
             request_id,
         ),

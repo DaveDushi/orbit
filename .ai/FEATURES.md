@@ -205,7 +205,11 @@ favorites through `/pages/favorites` (list), `/pages/{page_id}/favorite` (PUT/DE
   environment, 1.5 GB memory and 30 s CPU limits, killed after 20 s, 2 at a time per server), and checks real
   decompressed sizes (256 MB) and cell counts (5 million), so a crafted file ends one read and not the server.
   HTML and SVG uploads stay downloads and are not text to edit.
-- Editing and versions: `csv`, `tsv` and text files up to 2 MB (`can_edit`; xlsx, xls and PDF are read-only).
+- Editing and versions: `csv`, `tsv` and text files up to 2 MB, and `xlsx`/`xlsm` up to 25 MB (`can_edit`; xls and PDF are
+  read-only). `edits` on an xlsx goes through `xlsx_patch.rs` in the child process: only the edited `<c>` elements of the
+  sheet change, `workbook.xml` gets `fullCalcOnLoad`, and all other zip entries keep their compressed bytes. Formula cells,
+  array-formula ranges, table headers and protected sheets refuse (422 `cell_read_only`). Results of formulas are not
+  recalculated by Orbit, so the panel says that they can be old until the file opens in Excel.
   `PUT …/content` takes `text`, or `rows` for csv/tsv, which keeps the file's delimiter, line ends and BOM and quotes only
   what needs it. Same permission as the page's editor: every member who sees the page, and nobody while it is locked
   (423) or the workspace is read-only (402). There is no viewer role. A save needs `expected_version` (409 otherwise,

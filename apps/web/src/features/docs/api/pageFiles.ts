@@ -87,7 +87,7 @@ export async function fetchAllText(target: FileTarget): Promise<{ text: string; 
   return { text, version }
 }
 
-export type FileSave = { expected_version: number } & ({ text: string } | { rows: string[][] })
+export type FileSave = { expected_version: number } & ({ text: string } | { rows: string[][] } | { sheet?: string; edits: { cell: string; value: string }[] })
 
 export function useSaveFile(target: FileTarget) {
   const queryClient = useQueryClient()

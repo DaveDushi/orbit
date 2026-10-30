@@ -21,7 +21,7 @@ import {
   useSaveFile,
   type FileTarget,
 } from '@/features/docs/api/pageFiles'
-import { FileTable } from './FileTable'
+import { columnIndex, columnName, FileTable } from './FileTable'
 
 // pdf.js is large: its chunk and worker load only when a PDF opens.
 const PdfPages = lazy(() => import('./PdfPages'))
@@ -86,28 +86,89 @@ function EditBar({ dirty, pending, conflict, error, onSave, onCancel, onReload, 
   )
 }
 
-function SheetView({ target, first }: { target: FileTarget; first: PageFileContent }) {
+/**
+ * A workbook as a table. With `can_edit`, cells become inputs and a save sends only the changed ones: the server changes
+ * those cells and leaves the rest of the file as it is. Formula cells stay read-only.
+ */
+function SheetView({ target, first, onDirty }: { target: FileTarget; first: PageFileContent; onDirty: (dirty: boolean) => void }) {
   const [sheet, setSheet] = useState<string | undefined>(first.sheet ?? undefined)
+  const [draft, setDraft] = useState<{ edits: Map<string, string>; version: number; addedRows: number } | null>(null)
   const parts = useFileParts(target, sheet, true)
-  const rows = parts.data?.pages.flatMap((part) => part.rows ?? []) ?? []
-  const rowNumbers = parts.data?.pages.flatMap((part) => part.row_numbers ?? [])
+  const save = useSaveFile(target)
+  const loaded = parts.data?.pages.flatMap((part) => part.rows ?? []) ?? []
+  const loadedNumbers = parts.data?.pages.flatMap((part) => part.row_numbers ?? []) ?? []
+  const formulas = new Set(parts.data?.pages.flatMap((part) => part.formula_cells ?? []) ?? [])
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = parts
   const reachEnd = useCallback(() => {
     if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
   }, [hasNextPage, isFetchingNextPage, fetchNextPage])
 
+  const lastNumber = loadedNumbers.at(-1) ?? 0
+  const added = draft?.addedRows ?? 0
+  const rowNumbers = [...loadedNumbers, ...Array.from({ length: added }, (_, index) => lastNumber + index + 1)]
+  const rows = [...loaded, ...Array.from({ length: added }, () => [] as string[])].map((row, index) => {
+    if (!draft) return row
+    const next = [...row]
+    for (const [cell, value] of draft.edits) {
+      const match = /^([A-Z]+)(\d+)$/.exec(cell)
+      if (!match || Number(match[2]) !== rowNumbers[index]) continue
+      const column = columnIndex(match[1])
+      while (next.length <= column) next.push('')
+      next[column] = value
+    }
+    return next
+  })
+  const cellAt = (row: number, column: number) => `${columnName(column)}${rowNumbers[row]}`
+  const stop = () => {
+    setDraft(null)
+    onDirty(false)
+    save.reset()
+  }
+  const notice = first.file.can_edit ? (
+    <p className="shrink-0 border-b border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground" data-formula-notice="">
+      Formula cells are read-only. Formula results shown here can be old: they update when the file opens in Excel.
+    </p>
+  ) : null
+
   return (
     <>
+      {notice}
       {first.sheets.length > 1 ? (
         <Tabs className="shrink-0 gap-0 overflow-x-auto border-b border-border px-2 py-1.5" value={sheet ?? ''} onValueChange={(value) => setSheet(value as string)}>
           <TabsList>
             {first.sheets.map((name) => (
-              <TabsTrigger key={name} value={name}>
+              <TabsTrigger key={name} value={name} disabled={Boolean(draft)}>
                 {name}
               </TabsTrigger>
             ))}
           </TabsList>
         </Tabs>
+      ) : null}
+      {draft ? (
+        <EditBar
+          dirty={draft.edits.size > 0}
+          pending={save.isPending}
+          conflict={isConflict(save.error)}
+          error={save.error && !isConflict(save.error) ? problemText(save.error, 'The file could not be saved.') : null}
+          onSave={() =>
+            save.mutate(
+              { expected_version: draft.version, sheet, edits: [...draft.edits].map(([cell, value]) => ({ cell, value })) },
+              { onSuccess: stop },
+            )
+          }
+          onCancel={stop}
+          onReload={stop}
+        >
+          <Button type="button" size="sm" variant="outline" disabled={hasNextPage} onClick={() => setDraft({ ...draft, addedRows: draft.addedRows + 1 })}>
+            Add row
+          </Button>
+        </EditBar>
+      ) : first.file.can_edit ? (
+        <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+          <Button type="button" size="sm" variant="outline" onClick={() => setDraft({ edits: new Map(), version: first.file.version, addedRows: 0 })}>
+            Edit
+          </Button>
+        </div>
       ) : null}
       {parts.isError ? (
         <Centered>
@@ -118,10 +179,25 @@ function SheetView({ target, first }: { target: FileTarget; first: PageFileConte
         <Centered>
           <Spinner />
         </Centered>
-      ) : rows.length === 0 ? (
+      ) : rows.length === 0 && !draft ? (
         <Centered>This sheet is empty.</Centered>
       ) : (
-        <FileTable rows={rows} rowNumbers={rowNumbers} onReachEnd={reachEnd} />
+        <FileTable
+          rows={rows}
+          rowNumbers={rowNumbers}
+          onReachEnd={reachEnd}
+          readOnlyCell={(row, column) => formulas.has(cellAt(row, column))}
+          onChange={
+            draft
+              ? (row, column, value) => {
+                  const edits = new Map(draft.edits)
+                  edits.set(cellAt(row, column), value)
+                  setDraft({ ...draft, edits })
+                  onDirty(true)
+                }
+              : undefined
+          }
+        />
       )}
     </>
   )
@@ -374,7 +450,7 @@ export function FilePanel({
           {file?.file_name ?? 'File'}
         </span>
         {file ? <span className="shrink-0 pr-1 text-xs text-muted-foreground">{formatSize(file.size_bytes)}</span> : null}
-        {file?.kind === 'delimited' || file?.kind === 'text' ? <VersionsButton target={target} current={file.version} /> : null}
+        {file?.kind === 'delimited' || file?.kind === 'text' || file?.kind === 'sheet' ? <VersionsButton target={target} current={file.version} /> : null}
         <Tip label="Download" side="bottom">
           <a href={url} download aria-label="Download" className={cn(buttonVariants({ variant: 'ghost', size: 'icon-sm' }), 'text-muted-foreground')}>
             <Download className="size-4" />
@@ -412,8 +488,8 @@ export function FilePanel({
         <div className="flex min-h-0 flex-1 items-start justify-center overflow-auto p-3">
           <img src={url} alt={shown.file.file_name} className="max-w-full" />
         </div>
-      ) : shown.file.kind === 'sheet' ? (
-        <SheetView key={shown.file.version} target={target} first={shown} />
+      ) : shown.file.kind === 'sheet' || shown.file.kind === 'legacy_sheet' ? (
+        <SheetView key={shown.file.version} target={target} first={shown} onDirty={onDirty} />
       ) : shown.file.kind === 'delimited' ? (
         <DelimitedView target={target} first={shown} onDirty={onDirty} />
       ) : shown.file.kind === 'text' || shown.file.kind === 'docx' ? (

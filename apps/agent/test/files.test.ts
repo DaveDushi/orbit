@@ -78,15 +78,39 @@ test("read_file acts as the driver and wraps the file's text", async () => {
 	assert.match(output, /"next_offset":42/);
 });
 
-test("write_file sends the version, and Orbit's refusal of an xlsx reaches the model", async () => {
+test("write_file sends the version, and Orbit's refusal of a PDF or xls reaches the model", async () => {
 	const { calls, run } = harness(() => {
-		throw new OrbitError(422, { code: "file_not_editable", detail: "Only csv, tsv and text files can change." } as never, "PUT");
+		throw new OrbitError(422, { code: "file_not_editable", detail: "PDF, xls and other files are read-only." } as never, "PUT");
 	});
 	const result = await run("write_file", { page_id: "p1", file_id: "f1", content: "a,b\n", expected_version: 2 });
 	assert.deepEqual(calls[0].body, { expected_version: 2, text: "a,b\n" });
 	assert.equal(calls[0].method, "PUT");
 	assert.equal(result.isError, true);
-	assert.match(result.output[0].text, /Only csv, tsv and text files/);
+	assert.match(result.output[0].text, /PDF, xls and other files are read-only/);
+});
+
+test("write_file changes cells of an xlsx, and a formula cell's refusal reaches the model", async () => {
+	const { calls, run } = harness(() => {
+		throw new OrbitError(422, { code: "cell_read_only", detail: "cell C1 holds a formula, and formula cells are read-only" }, "PUT");
+	});
+	const result = await run("write_file", { page_id: "p1", file_id: "f1", sheet: "Budget", cells: [{ cell: "C1", value: "1" }], expected_version: 4 });
+	assert.deepEqual(calls[0].body, { expected_version: 4, edits: [{ cell: "C1", value: "1" }], sheet: "Budget" });
+	assert.equal(result.isError, true);
+	assert.match(result.output[0].text, /C1 holds a formula/);
+});
+
+test("write_file needs exactly one form of change", async () => {
+	const { calls, run } = harness(() => ({}));
+	for (const args of [{ expected_version: 1 }, { content: "a", cells: [{ cell: "A1", value: "b" }], expected_version: 1 }]) {
+		const result = await run("write_file", { page_id: "p1", file_id: "f1", ...args });
+		assert.equal(result.isError, true);
+	}
+	assert.equal(calls.length, 0);
+});
+
+test("a read of a workbook names its formula cells", () => {
+	const text = fileReadText(content({ file: { ...file, kind: "sheet" }, rows: [["1", "2"]], row_numbers: [1], formula_cells: ["B1"] }), 0);
+	assert.deepEqual(JSON.parse(text.split("\n")[0]).formula_cells, ["B1"]);
 });
 
 test("read_page lists the page's files", async () => {

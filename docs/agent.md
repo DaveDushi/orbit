@@ -15,7 +15,8 @@ reasons: `.ai/agent-design.md`.
 - Each person pays with **their own ChatGPT account** (Plus or Pro). They connect it in **Account settings → AI
   agent** with a device code, so it works on a remote server.
 - It reads files on Docs pages (`read_file`: spreadsheets, csv, tsv, text, PDF, Word, in parts) and changes csv, tsv and
-  text files (`write_file`). It cannot rewrite xlsx, xls or PDF files, and it has no OCR for scans. File content is
+  text files and cells of xlsx files (`write_file`; formula cells are read-only). It cannot change xls or PDF files, and
+  it has no OCR for scans. File content is
   data and never instructions. A write needs the version the agent read, is recorded with the driver's name, and keeps
   the old version, which a person can restore in the file panel.
 - When it needs information, it asks a teammate in the thread (`@`-mention) and stops. The next reply in the thread
