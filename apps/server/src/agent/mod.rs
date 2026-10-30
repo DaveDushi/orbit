@@ -5,6 +5,7 @@
 
 pub(crate) mod bot;
 pub(crate) mod credentials;
+mod graphql;
 pub mod inputs;
 mod integrations;
 pub mod memory;

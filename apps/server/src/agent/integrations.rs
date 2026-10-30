@@ -25,6 +25,7 @@ use sha2::{Digest, Sha256};
 use url::Url;
 
 use super::AgentState;
+use super::graphql;
 use super::oauth::{AccessToken, OAuthClient};
 use super::outbound::{ApiAnswer, Credential, OutboundError, check_url, join_api_url};
 use crate::audit::{self, AuditOutcome};
@@ -128,6 +129,10 @@ struct Integration {
     oauth_sealed_client: Option<Vec<u8>>,
     /// HTTP: what Test does a GET of, below the base URL, without a leading `/`.
     test_path: Option<String>,
+    /// HTTP: a POST to exactly this path (with a leading `/`) that [`graphql`] finds to be one
+    /// query runs without approval, while `graphql_reads_enabled` is on.
+    graphql_read_path: Option<String>,
+    graphql_reads_enabled: bool,
     allowed_roles: Vec<String>,
     enabled_tools: Vec<String>,
     allowed_methods: Vec<String>,
@@ -139,7 +144,7 @@ struct Integration {
 }
 
 const COLUMNS: &str = "id, slug, name, kind, url, auth_header, sealed_secret, oauth_token_url, \
-     oauth_sealed_client, test_path, allowed_roles, enabled_tools, allowed_methods, tools, \
+     oauth_sealed_client, test_path, graphql_read_path, graphql_reads_enabled, allowed_roles, enabled_tools, allowed_methods, tools, \
      tools_checked_at, created_at, updated_at";
 
 fn strings(json: &str) -> Vec<String> {
@@ -159,6 +164,8 @@ impl Integration {
             oauth_token_url: row.get("oauth_token_url"),
             oauth_sealed_client: row.get("oauth_sealed_client"),
             test_path: row.get("test_path"),
+            graphql_read_path: row.get("graphql_read_path"),
+            graphql_reads_enabled: row.get("graphql_reads_enabled"),
             allowed_roles: strings(&row.get::<String, _>("allowed_roles")),
             enabled_tools: strings(&row.get::<String, _>("enabled_tools")),
             allowed_methods: strings(&row.get::<String, _>("allowed_methods")),
@@ -315,6 +322,8 @@ struct IntegrationView {
     auth_type: &'static str,
     oauth_token_url: Option<String>,
     test_path: Option<String>,
+    graphql_read_path: Option<String>,
+    graphql_reads_enabled: bool,
     /// The fixed secret or the OAuth client is saved.
     secret_set: bool,
     allowed_roles: Vec<String>,
@@ -344,6 +353,8 @@ impl From<&Integration> for IntegrationView {
             },
             oauth_token_url: integration.oauth_token_url.clone(),
             test_path: integration.test_path.clone(),
+            graphql_read_path: integration.graphql_read_path.clone(),
+            graphql_reads_enabled: integration.graphql_reads_enabled,
             secret_set: integration.sealed_secret.is_some() || integration.uses_oauth(),
             allowed_roles: integration.allowed_roles.clone(),
             allowed_methods: integration.allowed_methods.clone(),
@@ -459,6 +470,9 @@ struct Input {
     oauth_client_secret: Option<String>,
     /// `""` removes it.
     test_path: Option<String>,
+    /// `""` removes it, which needs `graphql_reads_enabled` off.
+    graphql_read_path: Option<String>,
+    graphql_reads_enabled: Option<bool>,
     allowed_roles: Option<Vec<String>>,
     enabled_tools: Option<Vec<String>>,
     allowed_methods: Option<Vec<String>>,
@@ -666,6 +680,8 @@ fn apply(
         oauth_token_url: None,
         oauth_sealed_client: None,
         test_path: None,
+        graphql_read_path: None,
+        graphql_reads_enabled: false,
         allowed_roles: ROLES.iter().map(|role| (*role).to_owned()).collect(),
         enabled_tools: Vec::new(),
         allowed_methods: vec!["GET".to_owned()],
@@ -830,6 +846,42 @@ fn apply(
             request_id,
         ));
     }
+    if (input.graphql_read_path.is_some() || input.graphql_reads_enabled.is_some())
+        && next.kind != "http"
+    {
+        return Err(invalid(
+            "Only HTTP APIs have GraphQL reads.",
+            uri,
+            request_id,
+        ));
+    }
+    if let Some(path) = input.graphql_read_path {
+        let path = path.trim();
+        next.graphql_read_path =
+            (!path.is_empty()).then(|| format!("/{}", path.strip_prefix('/').unwrap_or(path)));
+    }
+    if let Some(enabled) = input.graphql_reads_enabled {
+        next.graphql_reads_enabled = enabled;
+    }
+    if next.graphql_reads_enabled && next.graphql_read_path.is_none() {
+        return Err(invalid(
+            "Enter the GraphQL path before you turn on reads without approval.",
+            uri,
+            request_id,
+        ));
+    }
+    if let Some(path) = &next.graphql_read_path {
+        let below_base = Url::parse(&next.url)
+            .ok()
+            .is_some_and(|base| join_api_url(&base, path, &[]).is_ok());
+        if !below_base {
+            return Err(invalid(
+                "The GraphQL path must stay below the base URL.",
+                uri,
+                request_id,
+            ));
+        }
+    }
     if let Some(roles) = input.allowed_roles {
         next.allowed_roles = subset(&roles, &ROLES)
             .ok_or_else(|| invalid("Roles are owner, admin and member.", uri, request_id))?;
@@ -906,15 +958,18 @@ async fn save(
     sqlx::query(
         "INSERT INTO agent_integrations (id, workspace_id, slug, name, kind, url, auth_header, \
          sealed_secret, allowed_roles, enabled_tools, allowed_methods, tools, tools_checked_at, \
-         created_by, created_at, updated_at, oauth_token_url, oauth_sealed_client, test_path) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) \
+         created_by, created_at, updated_at, oauth_token_url, oauth_sealed_client, test_path, \
+         graphql_read_path, graphql_reads_enabled) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21) \
          ON CONFLICT (id) DO UPDATE SET slug = excluded.slug, name = excluded.name, \
          url = excluded.url, auth_header = excluded.auth_header, \
          sealed_secret = excluded.sealed_secret, allowed_roles = excluded.allowed_roles, \
          enabled_tools = excluded.enabled_tools, allowed_methods = excluded.allowed_methods, \
          tools = excluded.tools, tools_checked_at = excluded.tools_checked_at, \
          updated_at = excluded.updated_at, oauth_token_url = excluded.oauth_token_url, \
-         oauth_sealed_client = excluded.oauth_sealed_client, test_path = excluded.test_path",
+         oauth_sealed_client = excluded.oauth_sealed_client, test_path = excluded.test_path, \
+         graphql_read_path = excluded.graphql_read_path, \
+         graphql_reads_enabled = excluded.graphql_reads_enabled",
     )
     .bind(&integration.id)
     .bind(workspace_id.to_string())
@@ -935,6 +990,8 @@ async fn save(
     .bind(&integration.oauth_token_url)
     .bind(&integration.oauth_sealed_client)
     .bind(&integration.test_path)
+    .bind(&integration.graphql_read_path)
+    .bind(i64::from(integration.graphql_reads_enabled))
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -1305,8 +1362,18 @@ fn agent_tools_of(integration: &Integration) -> Vec<AgentTool> {
             name: format!("{}{SEPARATOR}{API_TOOL}", integration.slug),
             integration: integration.name.clone(),
             description: format!(
-                "Send one request to the {} HTTP API. The path is below its base URL {}.",
-                integration.name, integration.url
+                "Send one request to the {} HTTP API. The path is below its base URL {}.{}",
+                integration.name,
+                integration.url,
+                match (
+                    &integration.graphql_read_path,
+                    integration.graphql_reads_enabled
+                ) {
+                    (Some(path), true) => format!(
+                        " A POST to {path} with one GraphQL query (no mutation) needs no approval."
+                    ),
+                    _ => String::new(),
+                }
             ),
             input_schema: json!({
                 "type": "object",
@@ -1509,6 +1576,25 @@ impl Action {
                 !matches!(*method, reqwest::Method::GET | reqwest::Method::HEAD)
             }
         }
+    }
+
+    /// A POST to the integration's exact GraphQL path, with the setting on, whose body is one
+    /// query. Only what Orbit will send counts: this very body, and no URL query.
+    fn graphql_read(&self, integration: &Integration) -> bool {
+        let Self::Api {
+            method,
+            url,
+            path,
+            body,
+        } = self
+        else {
+            return false;
+        };
+        integration.graphql_reads_enabled
+            && integration.graphql_read_path.as_deref() == Some(path.as_str())
+            && *method == reqwest::Method::POST
+            && url.query().is_none()
+            && body.as_ref().is_some_and(graphql::is_read_only_request)
     }
 
     /// The exact action, as the driver approves it.
@@ -1740,7 +1826,9 @@ async fn call(
         }
     };
     let describe = action.describe(&integration);
-    if action.write() {
+    let graphql_read = action.graphql_read(&integration);
+    let needs_approval = action.write() && !graphql_read;
+    if needs_approval {
         let arguments_hash = hash(&canonical(&body.arguments));
         let approval = approve(
             database,
@@ -1820,7 +1908,10 @@ async fn call(
         }
     };
     metadata["integration"] = json!(integration.slug);
-    metadata["approved"] = json!(action.write());
+    metadata["approved"] = json!(needs_approval);
+    if graphql_read {
+        metadata["graphql_read_without_approval"] = json!(true);
+    }
     if let Err(error) = &outcome {
         metadata["error"] = json!(error.to_string().chars().take(200).collect::<String>());
     }

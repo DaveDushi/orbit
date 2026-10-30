@@ -1564,3 +1564,220 @@ async fn a_fixed_credential_tests_the_base_url_or_its_test_path() {
     assert_eq!(line["uri"], "/api/v1/me");
     assert_eq!(line["auth"], API_KEY);
 }
+
+#[tokio::test]
+async fn graphql_reads_skip_approval_only_when_the_setting_the_path_and_the_parser_agree() {
+    let (fixture, fake, id) = oauth_fixture().await;
+    let path = format!("/{id}");
+    let (general, root, bearer) = fixture.run(&fixture.owner).await;
+    let thread = (general.as_str(), root.as_str());
+    let read = |path: &str, query: &str| json!({ "method": "POST", "path": path, "body": { "query": query } });
+    let shop = "query { shop { name } }";
+    let call = |arguments: Value| fixture.call(&bearer, thread, "shop__api_request", arguments);
+    let posts = || {
+        fake.calls()
+            .iter()
+            .filter(|call| call.method == "POST")
+            .count()
+    };
+
+    // Off by default, also with the path saved.
+    let (_, listed) = fixture.admin(&fixture.owner, "GET", "", None).await;
+    assert_eq!(listed["items"][0]["graphql_reads_enabled"], false);
+    assert_eq!(listed["items"][0]["graphql_read_path"], Value::Null);
+    let (status, value) = fixture
+        .admin(
+            &fixture.owner,
+            "PATCH",
+            &path,
+            Some(json!({ "graphql_read_path": "graphql.json" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(value["graphql_read_path"], "/graphql.json");
+    assert_eq!(value["graphql_reads_enabled"], false);
+    let (_, off) = call(read("/graphql.json", shop)).await;
+    assert_eq!(off["status"], "approval_required", "{off}");
+
+    let (status, value) = fixture
+        .admin(
+            &fixture.owner,
+            "PATCH",
+            &path,
+            Some(json!({ "graphql_reads_enabled": true })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(value["graphql_reads_enabled"], true);
+
+    // A read runs at once, once.
+    let (_, done) = call(read("/graphql.json", shop)).await;
+    assert_eq!(done["status"], "ok", "{done}");
+    assert_eq!(posts(), 1);
+    assert_eq!(
+        fake.calls().last().unwrap().path,
+        "/admin/api/2026-10/graphql.json"
+    );
+
+    // Everything else asks, and sends nothing.
+    for (case, arguments) in [
+        ("another path", read("/other.json", shop)),
+        ("another form of the path", read("/graphql.json/", shop)),
+        (
+            "a mutation",
+            read("/graphql.json", "mutation { deleteAll }"),
+        ),
+        (
+            "a mutation after a query",
+            read("/graphql.json", "query { a } mutation { deleteAll }"),
+        ),
+        (
+            "a mutation in a fragment",
+            read(
+                "/graphql.json",
+                "query { ...H } fragment H on Mutation { deleteAll }",
+            ),
+        ),
+        ("no parse", read("/graphql.json", "query {")),
+        (
+            "two operations with operationName",
+            json!({ "method": "POST", "path": "/graphql.json", "body": {
+                "query": "query A { a } mutation B { b }", "operationName": "A" } }),
+        ),
+        (
+            "a persisted query id",
+            json!({ "method": "POST", "path": "/graphql.json", "body": {
+                "query": shop, "documentId": "abc" } }),
+        ),
+        (
+            "a URL query",
+            json!({ "method": "POST", "path": "/graphql.json", "query": { "op": "x" },
+                "body": { "query": shop } }),
+        ),
+        (
+            "a non-string query",
+            json!({ "method": "POST", "path": "/graphql.json", "body": { "query": 1 } }),
+        ),
+        (
+            "no body",
+            json!({ "method": "POST", "path": "/graphql.json" }),
+        ),
+    ] {
+        let (_, asked) = call(arguments).await;
+        assert_eq!(asked["status"], "approval_required", "{case}: {asked}");
+    }
+    assert_eq!(posts(), 1, "nothing unapproved left Orbit");
+
+    // A GET stays as before.
+    let (_, get) = call(json!({ "method": "GET", "path": "/graphql.json" })).await;
+    assert_eq!(get["status"], "ok", "{get}");
+
+    // The audit entry marks the read, and has no body and no secret.
+    let audited: Vec<String> = sqlx::query_scalar(
+        "SELECT metadata_json FROM audit_events WHERE action = 'agent_integration.call' \
+         ORDER BY occurred_at, id",
+    )
+    .fetch_all(fixture.database.pool())
+    .await
+    .unwrap();
+    assert_eq!(audited.len(), 2, "{audited:?}");
+    let entry: Value = serde_json::from_str(&audited[0]).unwrap();
+    assert_eq!(entry["graphql_read_without_approval"], true, "{entry}");
+    assert_eq!(entry["approved"], false, "{entry}");
+    assert_eq!(entry["method"], "POST");
+    assert_eq!(entry["path"], "/graphql.json");
+    assert_eq!(entry["status"], 200);
+    for hidden in ["name }", "query {", CLIENT_ID, CLIENT_SECRET, "tok-1"] {
+        assert!(!audited[0].contains(hidden), "{hidden} in {}", audited[0]);
+    }
+    let get_entry: Value = serde_json::from_str(&audited[1]).unwrap();
+    assert_eq!(
+        get_entry["graphql_read_without_approval"],
+        Value::Null,
+        "{get_entry}"
+    );
+
+    // Roles stay: a role that may not use the integration cannot read through it.
+    let member = fixture.add_user("member", Some("member")).await;
+    let (status, _) = fixture
+        .admin(
+            &fixture.owner,
+            "PATCH",
+            &path,
+            Some(json!({ "allowed_roles": ["owner"] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (member_general, member_root, member_bearer) = fixture.run(&member).await;
+    let (status, value) = fixture
+        .call(
+            &member_bearer,
+            (&member_general, &member_root),
+            "shop__api_request",
+            read("/graphql.json", shop),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{value}");
+
+    // Off again: approval again.
+    fixture
+        .admin(
+            &fixture.owner,
+            "PATCH",
+            &path,
+            Some(json!({ "graphql_reads_enabled": false })),
+        )
+        .await;
+    let (_, off) = call(read("/graphql.json", shop)).await;
+    assert_eq!(off["status"], "approval_required", "{off}");
+}
+
+#[tokio::test]
+async fn the_graphql_setting_is_checked_when_it_is_saved() {
+    let (fixture, fake, id) = oauth_fixture().await;
+    let path = format!("/{id}");
+    for change in [
+        json!({ "graphql_reads_enabled": true }),
+        json!({ "graphql_read_path": "../graphql" }),
+        json!({ "graphql_read_path": "//evil.example.com/graphql" }),
+        json!({ "graphql_read_path": "graphql?x=1" }),
+    ] {
+        let (status, value) = fixture
+            .admin(&fixture.owner, "PATCH", &path, Some(change.clone()))
+            .await;
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{change}: {value}"
+        );
+    }
+    // The path cannot go while the setting is on.
+    let (status, _) = fixture
+        .admin(
+            &fixture.owner,
+            "PATCH",
+            &path,
+            Some(json!({ "graphql_read_path": "/graphql.json", "graphql_reads_enabled": true })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = fixture
+        .admin(
+            &fixture.owner,
+            "PATCH",
+            &path,
+            Some(json!({ "graphql_read_path": "" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    // MCP has no GraphQL reads.
+    let (status, value) = fixture
+        .admin(
+            &fixture.owner,
+            "POST",
+            "",
+            Some(json!({ "kind": "mcp", "name": "Mcp", "url": fake.base, "graphql_read_path": "/g" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{value}");
+}

@@ -29,6 +29,7 @@ const AUTH_TYPES = [
 ] as const
 const SHOPIFY_HEADER = 'X-Shopify-Access-Token'
 const SHOPIFY_TEST_PATH = 'shop.json'
+const SHOPIFY_GRAPHQL_PATH = '/graphql.json'
 const ROLES: AgentIntegrationRole[] = ['owner', 'admin', 'member']
 const METHODS: AgentIntegrationMethod[] = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE']
 
@@ -75,6 +76,7 @@ function AddIntegration({ canKeepSecrets }: { canKeepSecrets: boolean }) {
   const [clientId, setClientId] = useState('')
   const [clientSecret, setClientSecret] = useState('')
   const [testPath, setTestPath] = useState('')
+  const [graphqlPath, setGraphqlPath] = useState('')
   const oauth = kind === 'http' && authType === 'oauth'
   const oauthIncomplete = oauth && (!tokenUrl.trim() || !clientId.trim() || !clientSecret.trim())
 
@@ -86,6 +88,8 @@ function AddIntegration({ canKeepSecrets }: { canKeepSecrets: boolean }) {
     if (!after && header === SHOPIFY_HEADER) setHeader('Authorization')
     if (after && !testPath) setTestPath(SHOPIFY_TEST_PATH)
     if (!after && testPath === SHOPIFY_TEST_PATH) setTestPath('')
+    if (after && !graphqlPath) setGraphqlPath(SHOPIFY_GRAPHQL_PATH)
+    if (!after && graphqlPath === SHOPIFY_GRAPHQL_PATH) setGraphqlPath('')
   }
 
   function changeUrl(next: string) {
@@ -106,6 +110,7 @@ function AddIntegration({ canKeepSecrets }: { canKeepSecrets: boolean }) {
       name: name.trim(),
       url: url.trim(),
       allowed_roles: roles,
+      ...(kind === 'http' && graphqlPath.trim() ? { graphql_read_path: graphqlPath.trim() } : {}),
       ...(oauth
         ? { auth_header: header.trim() || 'Authorization', oauth_token_url: tokenUrl.trim(), oauth_client_id: clientId.trim(), oauth_client_secret: clientSecret.trim(), ...(testPath.trim() ? { test_path: testPath.trim() } : {}) }
         : secret ? { auth_header: header.trim() || 'Authorization', secret } : {}),
@@ -117,6 +122,7 @@ function AddIntegration({ canKeepSecrets }: { canKeepSecrets: boolean }) {
     setClientId('')
     setClientSecret('')
     setTestPath('')
+    setGraphqlPath('')
     setHeader('Authorization')
     // An MCP server's tools are known only after a test.
     if (created.kind === 'mcp') {
@@ -171,6 +177,7 @@ function AddIntegration({ canKeepSecrets }: { canKeepSecrets: boolean }) {
             <FieldDescription>{canKeepSecrets ? 'The full header value, for example “Bearer <token>”. Shared by everyone who may use this tool. Orbit never shows it again.' : 'This server has no ORBIT_APP_KEY, so it cannot keep secrets.'}</FieldDescription>
           </Field>
         </>}
+        {kind === 'http' ? <Field className="min-[900px]:col-span-2"><FieldLabel htmlFor="agent-tool-graphql-path">GraphQL path</FieldLabel><Input id="agent-tool-graphql-path" value={graphqlPath} maxLength={2048} onChange={(event) => setGraphqlPath(event.target.value)} placeholder="/graphql" /><FieldDescription>Optional. After you add the tool, a switch can let GraphQL reads at this exact path run without approval. It is off until you turn it on.</FieldDescription></Field> : null}
         <RolesField value={roles} onChange={setRoles} />
         <Button className="justify-self-start" type="submit" disabled={create.isPending || test.isPending || !name.trim() || !url.trim() || roles.length === 0 || oauthIncomplete}>Add</Button>
         {create.isError ? <p className="text-destructive min-[900px]:col-span-2" role="alert">{message(create.error, 'The tool could not be added.')}</p> : null}
@@ -195,6 +202,7 @@ function IntegrationCard({ integration }: { integration: AgentIntegration }) {
   const [clientId, setClientId] = useState('')
   const [clientSecret, setClientSecret] = useState('')
   const [testPath, setTestPath] = useState(integration.test_path ?? '')
+  const [graphqlPath, setGraphqlPath] = useState(integration.graphql_read_path ?? '')
   const oauth = integration.auth_type === 'oauth'
   const enabled = integration.tools?.filter((tool) => tool.enabled).map((tool) => tool.name) ?? []
 
@@ -260,6 +268,22 @@ function IntegrationCard({ integration }: { integration: AgentIntegration }) {
           </Field>
           <Button variant="outline" type="submit" disabled={testPath.trim() === (integration.test_path ?? '') || update.isPending}>Save test path</Button>
         </form>
+      </SettingsRow> : null}
+      {integration.kind === 'http' ? <SettingsRow>
+        <form className="flex w-full flex-wrap items-end gap-2" onSubmit={(event) => { event.preventDefault(); save({ graphql_read_path: graphqlPath.trim() }, 'GraphQL path saved') }}>
+          <Field className="min-w-60 flex-1">
+            <FieldLabel htmlFor={`agent-tool-graphql-path-${integration.id}`}>GraphQL path</FieldLabel>
+            <Input id={`agent-tool-graphql-path-${integration.id}`} value={graphqlPath} maxLength={2048} onChange={(event) => setGraphqlPath(event.target.value)} placeholder="/graphql" />
+          </Field>
+          <Button variant="outline" type="submit" disabled={graphqlPath.trim() === (integration.graphql_read_path ?? '') || update.isPending}>Save GraphQL path</Button>
+        </form>
+      </SettingsRow> : null}
+      {integration.kind === 'http' ? <SettingsRow className="flex-nowrap">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="text-[13px] font-medium text-foreground">Run GraphQL reads without approval</span>
+          <span className="text-xs text-muted-foreground/70">Only one query at exactly the GraphQL path. Mutations and other POST paths still need a yes. Reads can return customer data to the agent and the thread.{integration.graphql_reads_enabled && !integration.allowed_methods.includes('POST') ? ' Allow POST below, or the agent cannot send them.' : ''}</span>
+        </div>
+        <Switch aria-label="Run GraphQL reads without approval" checked={integration.graphql_reads_enabled} disabled={update.isPending || !integration.graphql_read_path} onCheckedChange={(on) => save({ graphql_reads_enabled: on })} />
       </SettingsRow> : null}
       {integration.kind === 'http' ? <SettingsRow>
         <FieldSet className="flex-row flex-wrap gap-[18px]">

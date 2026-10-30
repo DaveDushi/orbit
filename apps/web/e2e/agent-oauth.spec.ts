@@ -75,6 +75,7 @@ test.describe('agent tools: OAuth client credentials', () => {
     await expect(page.getByLabel('Token URL')).toHaveValue('https://demo-store.myshopify.com/admin/oauth/access_token')
     await expect(page.getByLabel('Token header')).toHaveValue('X-Shopify-Access-Token')
     await expect(page.getByLabel('Test path')).toHaveValue('shop.json')
+    await expect(page.getByLabel('GraphQL path')).toHaveValue('/graphql.json')
     await page.screenshot({ path: `${shots}/2-shopify-preset.png` })
 
     // The preset leaves with the Shopify URL. The saved integration talks to the fake server.
@@ -83,6 +84,8 @@ test.describe('agent tools: OAuth client credentials', () => {
     await page.getByLabel('Token URL').fill(`${origin}/admin/oauth/access_token`)
     await page.getByLabel('Token header').fill('X-Shopify-Access-Token')
     await page.getByLabel('Test path').fill('shop.json')
+    await expect(page.getByLabel('GraphQL path')).toHaveValue('')
+    await page.getByLabel('GraphQL path').fill('/graphql.json')
     await page.getByLabel(/Client ID/).fill('good-client')
     await page.getByLabel(/Client secret/).fill('good-secret')
     await page.getByRole('button', { name: 'Add', exact: true }).click()
@@ -108,6 +111,21 @@ test.describe('agent tools: OAuth client credentials', () => {
     await expect(page.locator('body')).not.toContainText('cannot be performed')
     await page.waitForTimeout(600) // the toast's animation
     await page.screenshot({ path: `${shots}/5-test-failure.png` })
+
+    // The preset fills in the path only. The switch stays off until the admin turns it on.
+    const graphqlReads = page.getByRole('switch', { name: 'Run GraphQL reads without approval' })
+    await expect(graphqlReads).not.toBeChecked()
+    await page.reload()
+    await expect(graphqlReads).not.toBeChecked()
+    await page.screenshot({ path: `${shots}/6-graphql-reads-off.png` })
+    await graphqlReads.click()
+    await expect(graphqlReads).toBeChecked()
+    await page.getByRole('checkbox', { name: 'POST' }).click()
+    await expect(page.getByRole('checkbox', { name: 'POST' })).toBeChecked()
+    await page.reload()
+    await expect(graphqlReads).toBeChecked()
+    await expect(page.getByRole('checkbox', { name: 'POST' })).toBeChecked()
+    await page.screenshot({ path: `${shots}/7-graphql-reads-on.png` })
 
     // Ends with the client that works, for a look at a test instance afterwards.
     await page.getByLabel('Replace client ID').fill('good-client')

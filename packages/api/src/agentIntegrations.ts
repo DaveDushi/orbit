@@ -33,6 +33,10 @@ export interface AgentIntegration {
   oauth_token_url: string | null
   /** HTTP: what Test does a GET of, below the base URL. */
   test_path: string | null
+  /** HTTP: the one path where a GraphQL query can run without the driver's approval. */
+  graphql_read_path: string | null
+  /** Off by default. Mutations and other POST paths always need approval. */
+  graphql_reads_enabled: boolean
   /** A secret or an OAuth client is saved. Orbit never sends them back. */
   secret_set: boolean
   allowed_roles: AgentIntegrationRole[]
@@ -65,6 +69,8 @@ export interface AgentIntegrationInput {
   oauth_client_id?: string
   oauth_client_secret?: string
   test_path?: string
+  graphql_read_path?: string
+  graphql_reads_enabled?: boolean
   allowed_roles?: AgentIntegrationRole[]
   enabled_tools?: string[]
   allowed_methods?: AgentIntegrationMethod[]
