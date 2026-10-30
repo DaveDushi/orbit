@@ -1,21 +1,28 @@
 //! Docs page files: `POST .../pages/{page_id}/files` (multipart, one `file` field) and
-//! `GET .../pages/{page_id}/files/{file_id}` (download). Access follows the page's visibility.
+//! `GET .../pages/{page_id}/files/{file_id}` (download), and for the preview panel and the agent:
+//! the file's content in parts, saving, and its versions. Access follows the page's visibility.
 
 use std::io;
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::extract::{DefaultBodyLimit, Extension, Path, Request, State};
+use axum::extract::{DefaultBodyLimit, Extension, Path, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use orbit_platform::{BlobStoreError, Id, RequestId, UploadError, UploadService};
+use serde::{Deserialize, Serialize};
+use tokio::sync::Semaphore;
 use utoipa::ToSchema;
 
 use crate::attachment_routes::{StageFailure, download_response, stage_single_file};
 use crate::auth_routes::CookieMode;
+use crate::file_parse::{self, FileKind, ParseError, ParseRequest, Parsed};
 use crate::repositories::identity::IdentityRepository;
-use crate::repositories::page_files::{PageFile, PageFileError, PageFileRepository};
+use crate::repositories::page_files::{
+    PageFile, PageFileError, PageFileRepository, PageFileVersion,
+};
 use crate::task_routes::{ApiError, authenticate_session, request_id_value};
 
 #[derive(Clone)]
@@ -23,6 +30,10 @@ pub struct PageFileState {
     identity: Arc<IdentityRepository>,
     files: Arc<PageFileRepository>,
     cookie_mode: CookieMode,
+    /// The program that parses in a child process: this one (`orbit parse-file`).
+    parser: Option<PathBuf>,
+    /// Per server, like every limit of one process.
+    parses: Arc<Semaphore>,
 }
 
 impl PageFileState {
@@ -39,7 +50,16 @@ impl PageFileState {
             )),
             identity,
             cookie_mode,
+            parser: std::env::current_exe().ok(),
+            parses: Arc::new(Semaphore::new(file_parse::PARALLEL_PARSES)),
         }
+    }
+
+    /// Tests run in a test binary, which cannot be the parser.
+    #[must_use]
+    pub fn with_parser(mut self, program: impl Into<PathBuf>) -> Self {
+        self.parser = Some(program.into());
+        self
     }
 
     /// The repository behind the routes (also used for server-side imports).
@@ -55,11 +75,27 @@ pub fn page_file_router(state: PageFileState) -> Router {
     Router::new()
         .route(
             "/api/v1/workspaces/{workspace_id}/pages/{page_id}/files",
-            post(upload_page_file),
+            post(upload_page_file).get(list_page_files),
         )
         .route(
             "/api/v1/workspaces/{workspace_id}/pages/{page_id}/files/{file_id}",
             get(download_page_file),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/pages/{page_id}/files/{file_id}/content",
+            get(get_page_file_content).put(save_page_file),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/pages/{page_id}/files/{file_id}/versions",
+            get(list_page_file_versions),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/pages/{page_id}/files/{file_id}/versions/{version}",
+            get(download_page_file_version),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/pages/{page_id}/files/{file_id}/versions/{version}/restore",
+            post(restore_page_file_version),
         )
         // Multipart stays streaming; this bounds boundaries, headers, and ignored fields too.
         .layer(DefaultBodyLimit::max(request_limit))
@@ -166,6 +202,341 @@ async fn download_page_file(
     download_response(download).ok_or_else(|| internal(&instance, request_id))
 }
 
+#[derive(Serialize, ToSchema)]
+struct PageFileList {
+    items: Vec<PageFile>,
+}
+
+#[derive(Serialize, ToSchema)]
+struct PageFileVersionList {
+    items: Vec<PageFileVersion>,
+}
+
+/// Which part of a file to read. `offset` and `limit` count rows for spreadsheets and delimited
+/// text, and characters otherwise. PDF text is read only with `extract`: the panel shows the pages
+/// themselves.
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+struct ContentQuery {
+    sheet: Option<String>,
+    offset: Option<u64>,
+    limit: Option<u64>,
+    extract: Option<bool>,
+}
+
+/// A file and one part of its content.
+#[derive(Serialize, ToSchema)]
+struct PageFileContent {
+    file: PageFile,
+    /// Sheet names of a workbook.
+    sheets: Vec<String>,
+    sheet: Option<String>,
+    rows: Option<Vec<Vec<String>>>,
+    row_numbers: Option<Vec<u64>>,
+    text: Option<String>,
+    /// Where the next part starts; `null` at the end.
+    next_offset: Option<u64>,
+    /// A PDF or Word file without text, such as a scan.
+    no_text: bool,
+}
+
+/// `text` replaces the file; for `csv` and `tsv`, `rows` writes the rows in the file's delimiter,
+/// quoting and line ends.
+#[derive(Deserialize, ToSchema)]
+struct SavePageFileBody {
+    expected_version: u64,
+    text: Option<String>,
+    rows: Option<Vec<Vec<String>>>,
+}
+
+#[derive(Deserialize, ToSchema)]
+struct RestorePageFileBody {
+    expected_version: u64,
+}
+
+#[utoipa::path(get, path = "/api/v1/workspaces/{workspace_id}/pages/{page_id}/files", params(("workspace_id" = String, Path), ("page_id" = String, Path)), responses((status = 200, body = PageFileList)))]
+async fn list_page_files(
+    State(state): State<PageFileState>,
+    Path((workspace, page)): Path<(String, String)>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<PageFileList>, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace}/pages/{page}/files");
+    let request_id = request_id.as_ref();
+    let session = authenticate_session(
+        &state.identity,
+        state.cookie_mode,
+        &headers,
+        &instance,
+        request_id,
+    )
+    .await?;
+    let workspace_id = parse_id(&workspace, &instance, request_id)?;
+    let page_id = parse_id(&page, &instance, request_id)?;
+    let items = state
+        .files
+        .list(workspace_id, page_id, session.user.id)
+        .await
+        .map_err(|error| problem(error, &instance, request_id))?;
+    Ok(Json(PageFileList { items }))
+}
+
+#[utoipa::path(get, path = "/api/v1/workspaces/{workspace_id}/pages/{page_id}/files/{file_id}/content", params(("workspace_id" = String, Path), ("page_id" = String, Path), ("file_id" = String, Path), ContentQuery), responses((status = 200, body = PageFileContent)))]
+async fn get_page_file_content(
+    State(state): State<PageFileState>,
+    Path((workspace, page, file)): Path<(String, String, String)>,
+    Query(query): Query<ContentQuery>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<PageFileContent>, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace}/pages/{page}/files/{file}/content");
+    let request_id = request_id.as_ref();
+    let session = authenticate_session(
+        &state.identity,
+        state.cookie_mode,
+        &headers,
+        &instance,
+        request_id,
+    )
+    .await?;
+    let workspace_id = parse_id(&workspace, &instance, request_id)?;
+    let page_id = parse_id(&page, &instance, request_id)?;
+    let file_id = parse_id(&file, &instance, request_id)?;
+    let record = state
+        .files
+        .record(workspace_id, page_id, file_id, session.user.id)
+        .await
+        .map_err(|error| problem(error, &instance, request_id))?;
+    if record.deleted {
+        return Err(problem(PageFileError::Deleted, &instance, request_id));
+    }
+    let kind = record.file.kind;
+    let parses = match kind {
+        FileKind::Image | FileKind::Other => false,
+        FileKind::Pdf => query.extract.unwrap_or(false),
+        _ => true,
+    };
+    let parsed = if parses {
+        if record.file.size_bytes > file_parse::MAX_PARSE_BYTES {
+            return Err(parse_problem(ParseError::Limit, &instance, request_id));
+        }
+        let rows = matches!(kind, FileKind::Sheet | FileKind::Delimited);
+        let request = ParseRequest {
+            sheet: query.sheet,
+            offset: query.offset.unwrap_or(0),
+            limit: query
+                .limit
+                .unwrap_or(if rows { 200 } else { 50_000 })
+                .clamp(
+                    1,
+                    if rows {
+                        file_parse::MAX_ROWS_PER_READ
+                    } else {
+                        file_parse::MAX_CHARS_PER_READ
+                    },
+                ),
+        };
+        let _permit = tokio::time::timeout(file_parse::QUEUE_WAIT, state.parses.acquire())
+            .await
+            .map_err(|_| busy(&instance, request_id))?
+            .map_err(|_| internal(&instance, request_id))?;
+        let bytes = state
+            .files
+            .uploads()
+            .read_blob(&record.storage_key)
+            .await
+            .map_err(|error| upload_problem(error, &instance, request_id))?;
+        let program = state
+            .parser
+            .as_deref()
+            .ok_or_else(|| internal(&instance, request_id))?;
+        file_parse::parse_in_child(program, kind, bytes, &request)
+            .await
+            .map_err(|error| parse_problem(error, &instance, request_id))?
+    } else {
+        Parsed::default()
+    };
+    let mut file = record.file;
+    // Bytes that are not UTF-8 would not survive an edit.
+    file.can_edit = file.can_edit
+        && file.size_bytes <= file_parse::MAX_EDIT_BYTES
+        && (parsed.valid_utf8 || !parses);
+    Ok(Json(PageFileContent {
+        file,
+        sheets: parsed.sheets,
+        sheet: parsed.sheet,
+        rows: parsed.rows,
+        row_numbers: parsed.row_numbers,
+        text: parsed.text,
+        next_offset: parsed.next_offset,
+        no_text: parsed.no_text,
+    }))
+}
+
+#[utoipa::path(put, path = "/api/v1/workspaces/{workspace_id}/pages/{page_id}/files/{file_id}/content", params(("workspace_id" = String, Path), ("page_id" = String, Path), ("file_id" = String, Path)), request_body = SavePageFileBody, responses((status = 200, body = PageFile)))]
+async fn save_page_file(
+    State(state): State<PageFileState>,
+    Path((workspace, page, file)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+    Json(body): Json<SavePageFileBody>,
+) -> Result<Json<PageFile>, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace}/pages/{page}/files/{file}/content");
+    let request_id = request_id.as_ref();
+    let session = authenticate_session(
+        &state.identity,
+        state.cookie_mode,
+        &headers,
+        &instance,
+        request_id,
+    )
+    .await?;
+    let workspace_id = parse_id(&workspace, &instance, request_id)?;
+    let page_id = parse_id(&page, &instance, request_id)?;
+    let file_id = parse_id(&file, &instance, request_id)?;
+    let actor = session.user.id;
+    let record = state
+        .files
+        .record(workspace_id, page_id, file_id, actor)
+        .await
+        .map_err(|error| problem(error, &instance, request_id))?;
+    let bytes = match (body.text, body.rows) {
+        (Some(text), None) if !text.contains('\0') => text.into_bytes(),
+        (None, Some(rows)) if record.file.kind == FileKind::Delimited => {
+            // The file's own style; a file too large to read here cannot be saved anyway.
+            if record.file.size_bytes > file_parse::MAX_EDIT_BYTES {
+                return Err(problem(
+                    PageFileError::TooLargeToEdit,
+                    &instance,
+                    request_id,
+                ));
+            }
+            let current = state
+                .files
+                .uploads()
+                .read_blob(&record.storage_key)
+                .await
+                .map_err(|error| upload_problem(error, &instance, request_id))?;
+            file_parse::write_delimited(&rows, file_parse::delimited_style(&current))
+                .map_err(|_| invalid_content(&instance, request_id))?
+        }
+        _ if !record.file.kind.editable() => {
+            return Err(problem(PageFileError::NotEditable, &instance, request_id));
+        }
+        _ => return Err(invalid_content(&instance, request_id)),
+    };
+    let saved = state
+        .files
+        .save(
+            workspace_id,
+            page_id,
+            file_id,
+            actor,
+            body.expected_version,
+            &bytes,
+            request_id_value(request_id),
+        )
+        .await
+        .map_err(|error| problem(error, &instance, request_id))?;
+    Ok(Json(saved))
+}
+
+#[utoipa::path(get, path = "/api/v1/workspaces/{workspace_id}/pages/{page_id}/files/{file_id}/versions", params(("workspace_id" = String, Path), ("page_id" = String, Path), ("file_id" = String, Path)), responses((status = 200, body = PageFileVersionList)))]
+async fn list_page_file_versions(
+    State(state): State<PageFileState>,
+    Path((workspace, page, file)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<PageFileVersionList>, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace}/pages/{page}/files/{file}/versions");
+    let request_id = request_id.as_ref();
+    let session = authenticate_session(
+        &state.identity,
+        state.cookie_mode,
+        &headers,
+        &instance,
+        request_id,
+    )
+    .await?;
+    let workspace_id = parse_id(&workspace, &instance, request_id)?;
+    let page_id = parse_id(&page, &instance, request_id)?;
+    let file_id = parse_id(&file, &instance, request_id)?;
+    let items = state
+        .files
+        .versions(workspace_id, page_id, file_id, session.user.id)
+        .await
+        .map_err(|error| problem(error, &instance, request_id))?;
+    Ok(Json(PageFileVersionList { items }))
+}
+
+#[utoipa::path(get, path = "/api/v1/workspaces/{workspace_id}/pages/{page_id}/files/{file_id}/versions/{version}", params(("workspace_id" = String, Path), ("page_id" = String, Path), ("file_id" = String, Path), ("version" = u64, Path)), responses((status = 200, body = PageFileDownload, content_type = "application/octet-stream")))]
+async fn download_page_file_version(
+    State(state): State<PageFileState>,
+    Path((workspace, page, file, version)): Path<(String, String, String, u64)>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Response, ApiError> {
+    let instance =
+        format!("/api/v1/workspaces/{workspace}/pages/{page}/files/{file}/versions/{version}");
+    let request_id = request_id.as_ref();
+    let session = authenticate_session(
+        &state.identity,
+        state.cookie_mode,
+        &headers,
+        &instance,
+        request_id,
+    )
+    .await?;
+    let workspace_id = parse_id(&workspace, &instance, request_id)?;
+    let page_id = parse_id(&page, &instance, request_id)?;
+    let file_id = parse_id(&file, &instance, request_id)?;
+    let download = state
+        .files
+        .download_version(workspace_id, page_id, file_id, version, session.user.id)
+        .await
+        .map_err(|error| problem(error, &instance, request_id))?;
+    download_response(download).ok_or_else(|| internal(&instance, request_id))
+}
+
+#[utoipa::path(post, path = "/api/v1/workspaces/{workspace_id}/pages/{page_id}/files/{file_id}/versions/{version}/restore", params(("workspace_id" = String, Path), ("page_id" = String, Path), ("file_id" = String, Path), ("version" = u64, Path)), request_body = RestorePageFileBody, responses((status = 200, body = PageFile)))]
+async fn restore_page_file_version(
+    State(state): State<PageFileState>,
+    Path((workspace, page, file, version)): Path<(String, String, String, u64)>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+    Json(body): Json<RestorePageFileBody>,
+) -> Result<Json<PageFile>, ApiError> {
+    let instance = format!(
+        "/api/v1/workspaces/{workspace}/pages/{page}/files/{file}/versions/{version}/restore"
+    );
+    let request_id = request_id.as_ref();
+    let session = authenticate_session(
+        &state.identity,
+        state.cookie_mode,
+        &headers,
+        &instance,
+        request_id,
+    )
+    .await?;
+    let workspace_id = parse_id(&workspace, &instance, request_id)?;
+    let page_id = parse_id(&page, &instance, request_id)?;
+    let file_id = parse_id(&file, &instance, request_id)?;
+    let restored = state
+        .files
+        .restore(
+            workspace_id,
+            page_id,
+            file_id,
+            version,
+            session.user.id,
+            body.expected_version,
+            request_id_value(request_id),
+        )
+        .await
+        .map_err(|error| problem(error, &instance, request_id))?;
+    Ok(Json(restored))
+}
+
 fn parse_id(
     value: &str,
     instance: &str,
@@ -202,6 +573,60 @@ fn too_large(instance: &str, request_id: Option<&Extension<RequestId>>) -> ApiEr
         "upload_too_large",
         "Upload too large",
         "The upload exceeds the configured size limit.",
+        instance,
+        request_id,
+    )
+}
+
+fn busy(instance: &str, request_id: Option<&Extension<RequestId>>) -> ApiError {
+    ApiError::new(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "file_busy",
+        "Try again",
+        "The server is reading other files. Try again in a moment.",
+        instance,
+        request_id,
+    )
+}
+
+fn invalid_content(instance: &str, request_id: Option<&Extension<RequestId>>) -> ApiError {
+    ApiError::new(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "validation_failed",
+        "Validation failed",
+        "Send the file's content as `text`, or as `rows` for a csv or tsv file.",
+        instance,
+        request_id,
+    )
+}
+
+fn parse_problem(
+    error: ParseError,
+    instance: &str,
+    request_id: Option<&Extension<RequestId>>,
+) -> ApiError {
+    let (code, title, detail) = match error {
+        ParseError::Limit => (
+            "file_over_limit",
+            "File too large to read",
+            "This file is too large or too complex to read here. Download it to open it.",
+        ),
+        ParseError::Unreadable => (
+            "file_unreadable",
+            "File cannot be read",
+            "This file is damaged or protected, or its format is not supported. Download it to open it.",
+        ),
+        ParseError::UnknownSheet => (
+            "file_unreadable",
+            "No such sheet",
+            "The workbook has no sheet with this name.",
+        ),
+    };
+    ApiError::new(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        code,
+        title,
+        detail,
         instance,
         request_id,
     )
@@ -262,5 +687,42 @@ fn problem(
         PageFileError::NotFound => not_found(instance, request_id),
         PageFileError::Upload(error) => upload_problem(error, instance, request_id),
         PageFileError::Database(_) => internal(instance, request_id),
+        PageFileError::VersionConflict { current } => ApiError::version_conflict(
+            serde_json::to_value(&*current).unwrap_or_default(),
+            instance.to_owned(),
+            request_id,
+        ),
+        PageFileError::NotEditable => ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "file_not_editable",
+            "File cannot be edited",
+            "Only csv, tsv and text files can change. Spreadsheets, PDFs and other files are read-only.",
+            instance,
+            request_id,
+        ),
+        PageFileError::TooLargeToEdit => ApiError::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "file_too_large_to_edit",
+            "File too large to edit",
+            "Files larger than 2 MB cannot be edited here.",
+            instance,
+            request_id,
+        ),
+        PageFileError::Locked => ApiError::new(
+            StatusCode::LOCKED,
+            "page_locked",
+            "Page locked",
+            "The page is locked. Unlock it to change its files.",
+            instance,
+            request_id,
+        ),
+        PageFileError::Deleted => ApiError::new(
+            StatusCode::GONE,
+            "file_deleted",
+            "File deleted",
+            "An admin deleted this stored file.",
+            instance,
+            request_id,
+        ),
     }
 }

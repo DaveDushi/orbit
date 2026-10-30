@@ -464,6 +464,13 @@ impl MigrationRunner {
                     ),
                     false,
                 ),
+                Migration::new(
+                    68,
+                    include_str!(
+                        "../../../../apps/server/migrations/0068_page_file_versions.sql"
+                    ),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -579,6 +586,13 @@ impl MigrationRunner {
                 66,
                 include_str!(
                     "../../../../apps/server/migrations/postgres/0066_agent_model_settings.sql"
+                ),
+                false,
+            ),
+            Migration::new(
+                68,
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0068_page_file_versions.sql"
                 ),
                 false,
             ),

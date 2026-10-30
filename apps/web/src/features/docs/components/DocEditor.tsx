@@ -57,11 +57,13 @@ import { useCollabSession } from '@/features/docs/collab/useCollabSession'
 import { useDocPageActions } from '@/features/docs/pageActions'
 import { downloadPageMarkdown, printPage } from '@/features/docs/pageExport'
 import { PRIVATE_SPACE, ancestorsOf, pageTitle, removeSubtree, spaceKey, spaceLabel, teamspaceSpace, type SpaceKey } from '@/features/docs/pageTree'
+import { confirmAction } from '@/components/common/confirmAction'
 import { dayLabel, timeOfDay } from '@/lib/format'
 import { threadCounts, usePageThreads } from '@/features/docs/comments/api'
 import { CommentsPanel, type CommentsFilter } from '@/features/docs/comments/CommentsPanel'
 import { mentionableMembers } from '@/features/docs/comments/mentionable'
 import { pageMentionCandidates } from '@/features/docs/editor/pageMentions'
+import { fileTargetOf, type FileTarget } from '@/features/docs/api/pageFiles'
 import { useBlockDeepLink } from '@/features/docs/useBlockDeepLink'
 import { useMembers } from '@/features/workspaces/api'
 import { announceWorkspaceReadOnly, useWorkspaceReadOnly } from '@/features/workspaces/billing'
@@ -72,6 +74,7 @@ import type { PageEditorHandle } from '@/features/docs/editor/PageEditor'
 import type { PageRef } from '@/features/docs/editor/pageEditorContext'
 import { CoverBanner } from './CoverBanner'
 import { CoverSourcePanel } from './CoverSourcePanel'
+import { FilePanel } from './FilePanel'
 import { PageHistoryPane } from './PageHistoryPane'
 import { PageLinkDialog } from './PageLinkDialog'
 
@@ -178,6 +181,18 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
   const counts = threadCounts(threadsQuery.data)
   const membersQuery = useMembers(workspaceId)
   const [commentsOpen, setCommentsOpen] = useState(false)
+  const [openFile, setOpenFile] = useState<FileTarget | null>(null)
+  const fileDirty = useRef(false)
+  /** Changes the panel's file (or closes it), after asking when that would lose an edit. */
+  const switchFile = async (next: FileTarget | null) => {
+    if (fileDirty.current) {
+      const discard = await confirmAction({ title: 'Discard your changes?', description: 'Your changes to this file are not saved.', confirmLabel: 'Discard', danger: true })
+      if (!discard) return false
+      fileDirty.current = false
+    }
+    setOpenFile(next)
+    return true
+  }
   const [commentsFilter, setCommentsFilter] = useState<CommentsFilter>('open')
   const [commentsList, setCommentsList] = useState<HTMLDivElement | null>(null)
   const [searchParams, setSearchParams] = useSearchParams()
@@ -687,7 +702,11 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
               aria-label={counts.open > 0 ? `Comments (${counts.open} open)` : 'Comments'}
               aria-pressed={commentsOpen}
               data-comments-toggle=""
-              onClick={() => setCommentsOpen((open) => !open)}
+              onClick={() => {
+                void switchFile(null).then((switched) => {
+                  if (switched) setCommentsOpen((open) => !open)
+                })
+              }}
             >
               <CommentIcon className="size-4" />
               {counts.open > 0 ? (
@@ -951,7 +970,19 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
                 }
               }}
             />
-            <div onBlur={() => void saver.flush()}>
+            <div
+              onBlur={() => void saver.flush()}
+              onClick={(event) => {
+                // A file block of this page opens beside it. Outside links and empty blocks keep their own behavior.
+                const block = (event.target as Element).closest('.bn-block-content[data-content-type="file"]')
+                const target = fileTargetOf(block?.getAttribute('data-url'))
+                if (target?.pageId !== pageId || target.workspaceId !== workspaceId) return
+                if (target.fileId === openFile?.fileId) return
+                void switchFile(target).then((switched) => {
+                  if (switched) setCommentsOpen(false)
+                })
+              }}
+            >
               {collab.connection && collab.state.ready ? (
                 <Suspense fallback={editorSpinner}>
                   <PageEditor
@@ -1015,6 +1046,7 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
             </div>
           </div>
         </div>
+        {openFile?.pageId === pageId ? <FilePanel key={openFile.fileId} target={openFile} readOnly={readOnly || lost} onDirty={(dirty) => (fileDirty.current = dirty)} onClose={() => void switchFile(null)} /> : null}
         {commentsOpen ? (
           <CommentsPanel
             filter={commentsFilter}

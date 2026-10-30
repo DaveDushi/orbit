@@ -1072,6 +1072,12 @@ export type EnableTotpBody = {
     code: string;
 };
 
+/**
+ * How a file is shown. Taken from the extension and the detected type: the server's detection
+ * knows no spreadsheets or text formats.
+ */
+export type FileKind = 'sheet' | 'delimited' | 'text' | 'pdf' | 'docx' | 'image' | 'other';
+
 export type FilterField = 'status' | 'status_category' | 'assignee' | 'creator' | 'label' | 'priority' | 'project' | 'due_date' | 'created_at' | 'updated_at' | 'text' | 'parent' | 'sub_issues';
 
 /**
@@ -1896,9 +1902,14 @@ export type PageFavoriteList = {
  * A file attached to a page.
  */
 export type PageFile = {
+    /**
+     * The kind can change here (`csv`, `tsv`, text), and the page is not locked.
+     */
+    can_edit: boolean;
     created_at: string;
     file_name: string;
     id: string;
+    kind: FileKind;
     /**
      * Detected from the file's bytes, not taken from the client.
      */
@@ -1910,12 +1921,59 @@ export type PageFile = {
      * usable as an image `src`, a file link, or the page's `cover_url`.
      */
     url: string;
+    /**
+     * Starts at 1; each save or restore adds one. Send it back as `expected_version`.
+     */
+    version: number;
+};
+
+/**
+ * A file and one part of its content.
+ */
+export type PageFileContent = {
+    file: PageFile;
+    /**
+     * Where the next part starts; `null` at the end.
+     */
+    next_offset?: number | null;
+    /**
+     * A PDF or Word file without text, such as a scan.
+     */
+    no_text: boolean;
+    row_numbers?: Array<number> | null;
+    rows?: Array<Array<string>> | null;
+    sheet?: string | null;
+    /**
+     * Sheet names of a workbook.
+     */
+    sheets: Array<string>;
+    text?: string | null;
 };
 
 export type PageFileDownload = Blob | File;
 
+export type PageFileList = {
+    items: Array<PageFile>;
+};
+
 export type PageFileUploadBody = {
     file: Blob | File;
+};
+
+/**
+ * One version of a page file, the current one too.
+ */
+export type PageFileVersion = {
+    created_at: string;
+    created_by?: string | null;
+    created_by_name?: string | null;
+    current: boolean;
+    size_bytes: number;
+    version: number;
+};
+
+export type PageFileVersionList = {
+    items: Array<PageFileVersion>;
 };
 
 export type PageList = {
@@ -2754,6 +2812,10 @@ export type RestoreBody = {
     expected_version: number;
 };
 
+export type RestorePageFileBody = {
+    expected_version: number;
+};
+
 export type RoleBody = 'owner' | 'admin' | 'member';
 
 export type RoleChangeBody = {
@@ -2799,6 +2861,16 @@ export type S3View = {
      */
     prefix: string;
     region: string;
+};
+
+/**
+ * `text` replaces the file; for `csv` and `tsv`, `rows` writes the rows in the file's delimiter,
+ * quoting and line ends.
+ */
+export type SavePageFileBody = {
+    expected_version: number;
+    rows?: Array<Array<string>> | null;
+    text?: string | null;
 };
 
 export type SavedViewRecord = {
@@ -13007,6 +13079,61 @@ export type AddPageFavoriteResponses = {
 
 export type AddPageFavoriteResponse = AddPageFavoriteResponses[keyof AddPageFavoriteResponses];
 
+export type ListPageFilesData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        page_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/pages/{page_id}/files';
+};
+
+export type ListPageFilesErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * page_file_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type ListPageFilesError = ListPageFilesErrors[keyof ListPageFilesErrors];
+
+export type ListPageFilesResponses = {
+    200: PageFileList;
+};
+
+export type ListPageFilesResponse = ListPageFilesResponses[keyof ListPageFilesResponses];
+
 export type UploadPageFileData = {
     body: PageFileUploadBody;
     headers?: {
@@ -13125,6 +13252,337 @@ export type DownloadPageFileResponses = {
 };
 
 export type DownloadPageFileResponse = DownloadPageFileResponses[keyof DownloadPageFileResponses];
+
+export type GetPageFileContentData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        page_id: string;
+        file_id: string;
+    };
+    query?: {
+        sheet?: string;
+        offset?: number;
+        limit?: number;
+        extract?: boolean;
+    };
+    url: '/api/v1/workspaces/{workspace_id}/pages/{page_id}/files/{file_id}/content';
+};
+
+export type GetPageFileContentErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * page_file_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * file_deleted
+     */
+    410: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * file_over_limit, file_unreadable
+     */
+    422: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * file_busy
+     */
+    503: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type GetPageFileContentError = GetPageFileContentErrors[keyof GetPageFileContentErrors];
+
+export type GetPageFileContentResponses = {
+    200: PageFileContent;
+};
+
+export type GetPageFileContentResponse = GetPageFileContentResponses[keyof GetPageFileContentResponses];
+
+export type SavePageFileData = {
+    body: SavePageFileBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        page_id: string;
+        file_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/pages/{page_id}/files/{file_id}/content';
+};
+
+export type SavePageFileErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * page_file_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: TaskProblem;
+    /**
+     * file_deleted
+     */
+    410: TaskProblem;
+    /**
+     * request_too_large, file_too_large_to_edit, storage_quota_exceeded
+     */
+    413: TaskProblem;
+    /**
+     * file_not_editable
+     */
+    422: TaskProblem;
+    /**
+     * page_locked
+     */
+    423: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type SavePageFileError = SavePageFileErrors[keyof SavePageFileErrors];
+
+export type SavePageFileResponses = {
+    200: PageFile;
+};
+
+export type SavePageFileResponse = SavePageFileResponses[keyof SavePageFileResponses];
+
+export type ListPageFileVersionsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        page_id: string;
+        file_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/pages/{page_id}/files/{file_id}/versions';
+};
+
+export type ListPageFileVersionsErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * page_file_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type ListPageFileVersionsError = ListPageFileVersionsErrors[keyof ListPageFileVersionsErrors];
+
+export type ListPageFileVersionsResponses = {
+    200: PageFileVersionList;
+};
+
+export type ListPageFileVersionsResponse = ListPageFileVersionsResponses[keyof ListPageFileVersionsResponses];
+
+export type DownloadPageFileVersionData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        page_id: string;
+        file_id: string;
+        version: number;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/pages/{page_id}/files/{file_id}/versions/{version}';
+};
+
+export type DownloadPageFileVersionErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * page_file_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type DownloadPageFileVersionError = DownloadPageFileVersionErrors[keyof DownloadPageFileVersionErrors];
+
+export type DownloadPageFileVersionResponses = {
+    200: PageFileDownload;
+};
+
+export type DownloadPageFileVersionResponse = DownloadPageFileVersionResponses[keyof DownloadPageFileVersionResponses];
+
+export type RestorePageFileVersionData = {
+    body: RestorePageFileBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        page_id: string;
+        file_id: string;
+        version: number;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/pages/{page_id}/files/{file_id}/versions/{version}/restore';
+};
+
+export type RestorePageFileVersionErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * page_file_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: TaskProblem;
+    /**
+     * file_deleted
+     */
+    410: TaskProblem;
+    /**
+     * request_too_large, file_too_large_to_edit, storage_quota_exceeded
+     */
+    413: TaskProblem;
+    /**
+     * file_not_editable
+     */
+    422: TaskProblem;
+    /**
+     * page_locked
+     */
+    423: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type RestorePageFileVersionError = RestorePageFileVersionErrors[keyof RestorePageFileVersionErrors];
+
+export type RestorePageFileVersionResponses = {
+    200: PageFile;
+};
+
+export type RestorePageFileVersionResponse = RestorePageFileVersionResponses[keyof RestorePageFileVersionResponses];
 
 export type SetPageLockData = {
     body: PageLockBody;

@@ -470,9 +470,9 @@ async fn read_file(
         .download(workspace_id, page_id, file_id, actor_id)
         .await
         .map_err(|error| match error {
-            PageFileError::NotFound => PageExportError::NotFound,
             PageFileError::Database(error) => PageExportError::Unavailable(error),
             PageFileError::Upload(error) => PageExportError::Io(error.to_string()),
+            _ => PageExportError::NotFound,
         })?;
     let mut bytes = Vec::new();
     download

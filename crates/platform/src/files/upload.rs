@@ -17,19 +17,21 @@ use crate::{
 const HOUR_MILLIS: i64 = 60 * 60 * 1000;
 const QUARANTINE_MILLIS: i64 = 24 * HOUR_MILLIS;
 const SNIFF_BYTES: usize = 8 * 1024;
-/// References to one blob (bind its id twice): task/comment attachments, docs page files, chat
-/// files, profile pictures, custom emoji and stickers. The second parameter is used for all of the
+/// References to one blob (bind its id twice): task/comment attachments, docs page files and their
+/// old versions, chat files, profile pictures, custom emoji and stickers. The second parameter is used for all of the
 /// newer tables.
 pub const BLOB_REFERENCE_COUNT: &str = "SELECT (SELECT COUNT(*) FROM attachment_references WHERE blob_id = $1) \
      + (SELECT COUNT(*) FROM page_files WHERE blob_id = $2) \
+     + (SELECT COUNT(*) FROM page_file_versions WHERE blob_id = $2) \
      + (SELECT COUNT(*) FROM chat_message_files WHERE blob_id = $2) \
      + (SELECT COUNT(*) FROM user_avatars WHERE blob_id = $2) \
      + (SELECT COUNT(*) FROM custom_emoji WHERE blob_id = $2) \
      + (SELECT COUNT(*) FROM custom_stickers WHERE blob_id = $2)";
 /// Every table that references blobs by `blob_id`.
-const BLOB_REFERENCE_TABLES: [&str; 6] = [
+const BLOB_REFERENCE_TABLES: [&str; 7] = [
     "attachment_references",
     "page_files",
+    "page_file_versions",
     "chat_message_files",
     "user_avatars",
     "custom_emoji",
@@ -743,6 +745,7 @@ impl UploadService {
             for (table, name, media, size) in [
                 ("attachment_references", "display_name", "media_type", "byte_size"),
                 ("page_files", "file_name", "mime_type", "size_bytes"),
+                ("page_file_versions", "file_name", "mime_type", "size_bytes"),
                 ("chat_message_files", "file_name", "mime_type", "size_bytes"),
             ] {
                 let references =

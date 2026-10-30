@@ -221,6 +221,10 @@ const LARGEST_FILE_USES: &str = "SELECT b.id AS blob_id, b.byte_size, u.kind, u.
        UNION ALL SELECT f.blob_id, CASE WHEN p.owner_id IS NULL THEN 'page' ELSE 'private' END, \
          CASE WHEN p.owner_id IS NULL THEN f.file_name END, CASE WHEN p.owner_id IS NULL THEN p.title END \
          FROM page_files f JOIN pages p ON p.id = f.page_id WHERE f.workspace_id = $1 \
+       UNION SELECT v.blob_id, CASE WHEN p.owner_id IS NULL THEN 'page' ELSE 'private' END, \
+         CASE WHEN p.owner_id IS NULL THEN v.file_name END, CASE WHEN p.owner_id IS NULL THEN p.title END \
+         FROM page_file_versions v JOIN page_files f ON f.id = v.page_file_id \
+         JOIN pages p ON p.id = f.page_id WHERE v.workspace_id = $1 \
        UNION ALL SELECT f.blob_id, CASE WHEN c.kind = 'public' THEN 'channel' ELSE 'private' END, \
          CASE WHEN c.kind = 'public' THEN f.file_name END, CASE WHEN c.kind = 'public' THEN c.name END \
          FROM chat_message_files f LEFT JOIN chat_conversations c ON c.id = f.conversation_id \
@@ -2045,7 +2049,7 @@ impl WorkspaceRepository {
                     .rows_affected();
             // Page files and chat files hold their blobs with ON DELETE RESTRICT, so they go
             // before the blobs.
-            for table in ["page_files", "chat_message_files"] {
+            for table in ["page_file_versions", "page_files", "chat_message_files"] {
                 attachment_references_purged += sqlx::query(sqlx::AssertSqlSafe(format!(
                     "DELETE FROM {table} WHERE workspace_id = $1"
                 )))

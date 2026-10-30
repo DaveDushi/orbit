@@ -25,7 +25,7 @@ fn openapi_generation_is_byte_stable_and_covers_public_routes() {
 
     let document: serde_json::Value = serde_json::from_str(&first).unwrap();
     assert_eq!(document["info"]["version"], CONTRACT_ID);
-    assert_eq!(document["paths"].as_object().unwrap().len(), 195);
+    assert_eq!(document["paths"].as_object().unwrap().len(), 199);
     let operation_count: usize = document["paths"]
         .as_object()
         .unwrap()
@@ -40,7 +40,7 @@ fn openapi_generation_is_byte_stable_and_covers_public_routes() {
                 .count()
         })
         .sum();
-    assert_eq!(operation_count, 250);
+    assert_eq!(operation_count, 256);
     for path in [
         "/api/v1/setup/status",
         "/api/v1/auth/me",
@@ -72,6 +72,10 @@ fn openapi_generation_is_byte_stable_and_covers_public_routes() {
         "/api/v1/workspaces/{workspace_id}/pages/favorites/{page_id}/move",
         "/api/v1/workspaces/{workspace_id}/pages/{page_id}/files",
         "/api/v1/workspaces/{workspace_id}/pages/{page_id}/files/{file_id}",
+        "/api/v1/workspaces/{workspace_id}/pages/{page_id}/files/{file_id}/content",
+        "/api/v1/workspaces/{workspace_id}/pages/{page_id}/files/{file_id}/versions",
+        "/api/v1/workspaces/{workspace_id}/pages/{page_id}/files/{file_id}/versions/{version}",
+        "/api/v1/workspaces/{workspace_id}/pages/{page_id}/files/{file_id}/versions/{version}/restore",
         "/api/v1/workspaces/{workspace_id}/pages/{page_id}/export",
         "/api/v1/workspaces/{workspace_id}/pages/{page_id}/versions",
         "/api/v1/workspaces/{workspace_id}/pages/{page_id}/versions/{version_id}",

@@ -84,6 +84,18 @@ pub enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Internal: reads one page file from stdin in a limited process (see `file_parse`).
+    #[command(hide = true)]
+    ParseFile {
+        #[arg(long, value_enum)]
+        kind: orbit_server::file_parse::FileKind,
+        #[arg(long)]
+        sheet: Option<String>,
+        #[arg(long)]
+        offset: u64,
+        #[arg(long)]
+        limit: u64,
+    },
     SetupToken {
         #[command(subcommand)]
         command: SetupTokenCommand,
@@ -168,6 +180,14 @@ pub enum CliError {
 pub async fn run(cli: Cli, env: BTreeMap<String, String>) -> Result<String, CliError> {
     let config = || effective_config(&cli, env.clone());
     match &cli.command {
+        Command::ParseFile {
+            kind,
+            sheet,
+            offset,
+            limit,
+        } => orbit_server::file_parse::run_child(*kind, sheet.clone(), *offset, *limit)
+            .map(|()| String::new())
+            .map_err(|error| CliError::Operation(error.to_string())),
         Command::Serve { listen, origin } => serve(config()?, *listen, origin.as_deref()).await,
         Command::Healthcheck => healthcheck(healthcheck_address(&config()?)),
         Command::Config { command } => Ok(config_command(&config()?, command)),

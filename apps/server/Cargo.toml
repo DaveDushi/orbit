@@ -11,6 +11,12 @@ path = "src/main.rs"
 [dependencies]
 axum = { version = "0.8", features = ["multipart", "ws"] }
 base64 = "0.22"
+calamine = { version = "0.37", features = ["dates"] }
+chrono = { version = "0.4", default-features = false }
+csv = "1.4"
+pdf-extract = "0.12"
+quick-xml = "0.42"
+rustix = { version = "1", features = ["process"] }
 chacha20poly1305 = "0.10"
 clap = { version = "4", features = ["derive"] }
 futures-util = "0.3"
@@ -34,7 +40,7 @@ sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio",
 tempfile = "3"
 thiserror = "2"
 totp-rs = { version = "6", default-features = false, features = ["std", "otpauth", "qr"] }
-tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "time"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["io", "rt"] }
 tokio-stream = "0.1"
 tower = { version = "0.5", features = ["util"] }

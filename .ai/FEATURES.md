@@ -197,6 +197,21 @@ favorites through `/pages/favorites` (list), `/pages/{page_id}/favorite` (PUT/DE
   audits `page.file_added`. Rows (`page_files`, migration 0025) go with the page (trash purge, teamspace/workspace
   delete) and quarantine the blob; reconciliation reclaims blobs no task attachment or page file references.
   `PageFileRepository::create_from_bytes` attaches server-held bytes (Notion import) through the same checks.
+- File panel (`FilePanel`, web only for now): a click on a file block of the page opens the file beside the page, with
+  a download button. PDFs show real pages (`pdfjs-dist`, its own lazy chunk; a bundled same-origin worker, no CSP change),
+  sheets a table with sheet tabs that loads in parts, text and images directly, `docx` read-only text, other types the
+  name and a download. `GET …/files/{id}/content` reads one part (rows or characters; `extract=true` for PDF text);
+  `file_parse.rs` is the only parser, shared with the agent. It runs in a child process (`orbit parse-file`, no
+  environment, 1.5 GB memory and 30 s CPU limits, killed after 20 s, 2 at a time per server), and checks real
+  decompressed sizes (256 MB) and cell counts (5 million), so a crafted file ends one read and not the server.
+  HTML and SVG uploads stay downloads and are not text to edit.
+- Editing and versions: `csv`, `tsv` and text files up to 2 MB (`can_edit`; xlsx, xls and PDF are read-only).
+  `PUT …/content` takes `text`, or `rows` for csv/tsv, which keeps the file's delimiter, line ends and BOM and quotes only
+  what needs it. Same permission as the page's editor: every member who sees the page, and nobody while it is locked
+  (423) or the workspace is read-only (402). There is no viewer role. A save needs `expected_version` (409 otherwise,
+  nothing overwritten), makes a new blob and moves the old one to `page_file_versions` (migration 0068), which holds its
+  blob like a page file does; `…/versions` lists them, `…/versions/{n}/restore` puts one back as a new version. Audited
+  `page.file_saved` / `page.file_restored`. Duplicates and exports take the current version only.
 - Header: breadcrumbs prefixed with the space (teamspace name, or a lock + "Private"; the mobile top bar too), presence
   avatars and the sync status (see "Real-time co-editing, web" below; a failed title/icon/cover save shows Save failed +
   Retry or Conflict instead), page menu with "Move to" (teamspaces + Private, current disabled; moves to
