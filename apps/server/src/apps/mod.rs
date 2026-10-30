@@ -192,10 +192,13 @@ pub fn check_redirect_uri(
     orbit_origin: &str,
     allow_http: bool,
 ) -> Result<(), &'static str> {
-    let url = check_app_url(raw, orbit_origin, allow_http)
-        .map_err(|_| "Each redirect URI must be an https:// address that is not on Orbit's own origin.")?;
+    let url = check_app_url(raw, orbit_origin, allow_http).map_err(
+        |_| "Each redirect URI must be an https:// address that is not on Orbit's own origin.",
+    )?;
     if url.as_str() != raw {
-        return Err("Write each redirect URI in its normal form, with a path (for example https://app.example.com/callback).");
+        return Err(
+            "Write each redirect URI in its normal form, with a path (for example https://app.example.com/callback).",
+        );
     }
     if url.fragment().is_some()
         || url
@@ -343,10 +346,12 @@ pub(crate) async fn revoke_member(
 
 async fn revoke_app(tx: &mut Transaction<'_, Any>, app_id: &str) -> Result<(), sqlx::Error> {
     for table in ["app_oidc_tokens", "app_oidc_codes"] {
-        sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {table} WHERE app_id = $1")))
-            .bind(app_id)
-            .execute(&mut **tx)
-            .await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM {table} WHERE app_id = $1"
+        )))
+        .bind(app_id)
+        .execute(&mut **tx)
+        .await?;
     }
     Ok(())
 }
@@ -595,7 +600,11 @@ fn apply(
     if let Some(name) = input.name {
         let name = name.trim();
         if name.is_empty() || name.chars().count() > 80 {
-            return Err(invalid("Give the app a name of up to 80 characters.", uri, request_id));
+            return Err(invalid(
+                "Give the app a name of up to 80 characters.",
+                uri,
+                request_id,
+            ));
         }
         name.clone_into(&mut app.name);
     }
@@ -650,7 +659,11 @@ fn apply(
     let mut secret = None;
     if let Some(uris) = input.redirect_uris {
         if uris.len() > MAX_REDIRECT_URIS {
-            return Err(invalid("An app has at most 10 redirect URIs.", uri, request_id));
+            return Err(invalid(
+                "An app has at most 10 redirect URIs.",
+                uri,
+                request_id,
+            ));
         }
         for redirect in &uris {
             check_redirect_uri(redirect, &state.origin, state.allow_http)
@@ -853,9 +866,17 @@ async fn create(
             .await
             .map_err(unavailable(&uri, &request_id))?;
     }
-    if !save(&state, actor, workspace_id, &app, true, "app.created", &request_id)
-        .await
-        .map_err(unavailable(&uri, &request_id))?
+    if !save(
+        &state,
+        actor,
+        workspace_id,
+        &app,
+        true,
+        "app.created",
+        &request_id,
+    )
+    .await
+    .map_err(unavailable(&uri, &request_id))?
     {
         return Err(conflict(&uri, &request_id));
     }
@@ -882,9 +903,17 @@ async fn update(
             .await
             .map_err(unavailable(&uri, &request_id))?;
     }
-    if !save(&state, actor, workspace_id, &app, false, "app.updated", &request_id)
-        .await
-        .map_err(unavailable(&uri, &request_id))?
+    if !save(
+        &state,
+        actor,
+        workspace_id,
+        &app,
+        false,
+        "app.updated",
+        &request_id,
+    )
+    .await
+    .map_err(unavailable(&uri, &request_id))?
     {
         return Err(conflict(&uri, &request_id));
     }
@@ -907,7 +936,15 @@ async fn remove(
             .bind(&app.id)
             .execute(&mut *tx)
             .await?;
-        audit_app(&mut tx, workspace_id, actor, "app.deleted", &app, &request_id).await?;
+        audit_app(
+            &mut tx,
+            workspace_id,
+            actor,
+            "app.deleted",
+            &app,
+            &request_id,
+        )
+        .await?;
         tx.commit().await
     }
     .await;
@@ -936,15 +973,25 @@ async fn rotate_secret(
     app.updated_at = TimestampMillis::now().as_millis();
     let result = async {
         let mut tx = state.database.immediate_transaction().await?;
-        sqlx::query("UPDATE workspace_apps SET oidc_secret_hash = $1, updated_at = $2 WHERE id = $3")
-            .bind(&app.secret_hash)
-            .bind(app.updated_at)
-            .bind(&app.id)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "UPDATE workspace_apps SET oidc_secret_hash = $1, updated_at = $2 WHERE id = $3",
+        )
+        .bind(&app.secret_hash)
+        .bind(app.updated_at)
+        .bind(&app.id)
+        .execute(&mut *tx)
+        .await?;
         // A rotation usually means a leak: what the old secret obtained ends too.
         revoke_app(&mut tx, &app.id).await?;
-        audit_app(&mut tx, workspace_id, actor, "app.secret_rotated", &app, &request_id).await?;
+        audit_app(
+            &mut tx,
+            workspace_id,
+            actor,
+            "app.secret_rotated",
+            &app,
+            &request_id,
+        )
+        .await?;
         tx.commit().await
     }
     .await;
@@ -1009,7 +1056,7 @@ mod tests {
         assert!(!html.contains("<script"));
         assert!(!html.contains("<b>"));
         assert!(html.contains("&lt;b&gt;&quot;Bad&quot; &amp; &#39;name&#39;&lt;/b&gt;"));
-        assert!(html.contains("x=%22%3E%3Cscript%3E&amp;y=&#39;z"), "{html}");
+        assert!(html.contains("x=%22%3E%3Cscript%3E&amp;y=%27z"), "{html}");
         assert_eq!(
             frame_csp(&app, &[], false).unwrap(),
             "default-src 'none'; style-src 'unsafe-inline'; frame-src https://app.example.com; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"
@@ -1028,7 +1075,9 @@ mod tests {
             true,
         )
         .unwrap();
-        assert!(policy.contains("frame-src https://app.example.com 'self' https://auth.example.com;"));
+        assert!(
+            policy.contains("frame-src https://app.example.com 'self' https://auth.example.com;")
+        );
         // A stored address with a CSP separator in the host is refused, not written.
         let unsafe_host = Url::parse("https://a;b.example.com/").unwrap();
         assert!(frame_csp(&unsafe_host, &[], false).is_none());

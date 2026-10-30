@@ -48,7 +48,7 @@ createServer(async (req, res) => {
   }
   if (url.pathname === '/auth/callback') {
     const error = url.searchParams.get('error')
-    // Orbit answers login_required when it cannot show its login: inside a frame.
+    // Orbit answers login_required when it cannot show its login: inside a frame, without a session.
     if (error) {
       return page(res, `<h1>Demo app</h1><p id="signin-error">Sign-in said: <b>${esc(error)}</b></p>
         <p><a href="/auth/start" target="_blank" rel="noopener">Sign in with Orbit in a new tab</a></p>`)
@@ -69,13 +69,19 @@ createServer(async (req, res) => {
     const info = await (await fetch(discovery.userinfo_endpoint, { headers: { authorization: `Bearer ${tokens.access_token}` } })).json()
     const id = b64url(randomBytes(24))
     sessions.set(id, info)
-    res.writeHead(302, { location: '/', 'set-cookie': `demo_session=${id}; HttpOnly; SameSite=Lax; Path=/` })
+    res.writeHead(302, { location: '/?signed_in=1', 'set-cookie': `demo_session=${id}; HttpOnly; SameSite=Lax; Path=/` })
     return res.end()
   }
   if (user) {
     return page(res, `<h1>Demo app</h1><p id="who">Signed in as <b>${esc(user.name)}</b> (${esc(user.email)})</p>
       <p>Role in the workspace: <b id="role">${esc(user.workspace_role)}</b></p>`)
   }
+  // Signed in a moment ago, and the cookie did not come back: the browser blocks it in a frame of
+  // another site. Signing in again would loop forever.
+  if (url.searchParams.has('signed_in')) {
+    return page(res, `<h1>Demo app</h1><p id="cookie-blocked">Your browser blocks this app's cookie in a frame.</p>
+      <p><a href="/auth/start" target="_blank" rel="noopener">Open the app in a new tab</a></p>`)
+  }
   res.writeHead(302, { location: '/auth/start' })
   res.end()
-}).listen(Number(PORT), '127.0.0.1', () => console.log(`demo app on ${APP_URL}`))
+}).listen(Number(PORT), new URL(APP_URL).hostname, () => console.log(`demo app on ${APP_URL}`))

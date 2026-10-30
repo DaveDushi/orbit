@@ -412,7 +412,9 @@ async fn authorize(
     if let Some(apps) = &state.apps
         && crate::apps::is_app_client(uri.query().unwrap_or_default())
     {
-        return Ok(crate::apps::oidc::authorize(apps, &headers, uri.query().unwrap_or_default()).await);
+        return Ok(
+            crate::apps::oidc::authorize(apps, &headers, uri.query().unwrap_or_default()).await,
+        );
     }
     let Query(input) = Query::<AuthorizationRequest>::try_from_uri(&uri)
         .map_err(|_| OAuthError::invalid("invalid_request"))?;
@@ -618,8 +620,8 @@ async fn token(
     {
         return Ok(crate::apps::oidc::token(apps, &headers, &body).await);
     }
-    let input: TokenRequest = serde_urlencoded::from_bytes(&body)
-        .map_err(|_| OAuthError::invalid("invalid_request"))?;
+    let input: TokenRequest =
+        serde_urlencoded::from_bytes(&body).map_err(|_| OAuthError::invalid("invalid_request"))?;
     if input
         .resource
         .as_ref()

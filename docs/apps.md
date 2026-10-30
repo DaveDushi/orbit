@@ -30,12 +30,14 @@ In the frame, the app can run scripts, use forms, open popups and download files
 
 ## Use a subdomain of the same domain
 
-Host the app on a subdomain of Orbit's domain: for Orbit at `orbit.example.com`, use `reports.example.com`. This matters for sign-in in the frame:
+Host the app on a subdomain of Orbit's domain: for Orbit at `orbit.example.com`, use `reports.example.com`. This decides whether the app's **own** cookies work in the frame:
 
-- **Same site** (`reports.example.com`): the browser sends Orbit's session cookie in the frame, and the app's own cookies work. Sign-in is silent.
-- **Other site** (`reports.other.net`): the browser sends no Orbit cookie in the frame, and most browsers also block the app's own cookies there. Orbit cannot show its login in a frame either. Orbit answers the app with `error=login_required`; the app must offer a link that signs in at the top level, in a new tab. Or set the app to **In a new tab**, which always works.
+- **Same site** (`reports.example.com`): the app's cookies work. Sign-in in the frame is silent.
+- **Other site** (`reports.other.net`): Orbit is the top page, so its session cookie is sent and "Sign in with Orbit" succeeds, but the browser treats the app's cookies as third-party. A `SameSite=Lax` session cookie never comes back, and an app that signs in again each time loops forever. Then choose one of these:
+  - Set the app to **In a new tab**. This always works.
+  - Set the app's session cookie to `SameSite=None; Secure; Partitioned`, on HTTPS. Browsers with strict third-party cookie settings can still block it.
 
-A person who is not signed in to Orbit also gets `login_required` in the frame on a subdomain, but Orbit's own page already asks them to sign in first.
+If a person has no Orbit session when the frame signs in (it ended in another tab), Orbit cannot show its login in a frame. It answers the app with `error=login_required`, so the app can offer a link that signs in at the top level. Without a frame, Orbit sends the person to its login and back.
 
 ## Add "Sign in with Orbit"
 
@@ -90,7 +92,7 @@ const tokens = await client.authorizationCodeGrant(config, currentUrl, {
 const person = tokens.claims()
 ```
 
-[`scripts/apps-demo/server.mjs`](../scripts/apps-demo/server.mjs) is a complete small app without packages, which also shows the `login_required` case.
+[`scripts/apps-demo/server.mjs`](../scripts/apps-demo/server.mjs) is a complete small app without packages. It also handles `login_required` and a blocked cookie.
 
 ## Protect an app with Cloudflare Access
 
@@ -130,7 +132,7 @@ Copy the client ID and the secret.
 
 None of these paths gives data without a secret or a token: discovery and JWKS hold only public values.
 
-**In a frame.** Access makes the sign-in pass through `edusi.cloudflareaccess.com`, which Orbit allows because it is the origin of the redirect URI. Access must also allow frames and send its cookie in them: see `allow_iframe` and the cookie settings of the Access application. If the app is on another site than Orbit, browsers may block these cookies. In that case, set the app to **In a new tab**. Orbit cannot change these settings, and Access may refuse to show its own pages in a frame; test this with your account.
+**In a frame.** Access makes the sign-in pass through `edusi.cloudflareaccess.com`, which Orbit allows because it is the origin of the redirect URI. Access must also allow frames: see `allow_iframe` in the Access application. If the app is on another site than Orbit, its `CF_Authorization` cookie is a third-party cookie in the frame. Set the cookie's SameSite setting to None in the Access application, or set the app to **In a new tab**. Orbit cannot change these settings, and Access may refuse to show its own pages in a frame; test this with your account.
 
 **A removed member** loses Orbit sign-in at once, but the Access session lasts for its own session duration. Keep that duration short.
 

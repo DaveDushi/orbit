@@ -360,9 +360,8 @@ function SettingsAreaNav({ area, onNavigate, onBack }: { area: SettingsAreaName;
 }
 
 /** The workspace's custom apps this person may open. Shows nothing while there are none. */
-function AppLinks({ onNavigate }: { onNavigate?: () => void }) {
+function AppLinks({ workspaceId, onNavigate }: { workspaceId: string; onNavigate?: () => void }) {
   const collapsed = useContext(SidebarNavCollapsed)
-  const workspaceId = useContext(WorkspaceContext)?.workspace.id ?? ''
   const apps = useApps(workspaceId).data ?? []
   if (apps.length === 0) return null
   return (
@@ -408,6 +407,7 @@ export function SidebarNav({
   pageListRef?: (element: HTMLDivElement | null) => void
 }) {
   const location = useLocation()
+  const workspaceId = useContext(WorkspaceContext)?.workspace.id
   const pageArea: SidebarArea | null = contextual ? (settingsAreaOf(location.pathname) ?? (isTasksPath(location.pathname) ? 'tasks' : null)) : null
   // the area whose Back was pressed in the drawer: the main menu shows until the page moves to another area
   const [mainMenuFor, setMainMenuFor] = useState<SidebarArea | null>(null)
@@ -520,7 +520,7 @@ export function SidebarNav({
                   ) : (
                     <SidebarNavComingSoon key={link.to} icon={link.icon} label={link.label} />
                   ))}
-                  <AppLinks onNavigate={onNavigate} />
+                  {workspaceId ? <AppLinks workspaceId={workspaceId} onNavigate={onNavigate} /> : null}
                   <SidebarSection label="Personal" collapsed={collapsed} />
                   <SidebarNavItem to={activityPath} icon={Bell} label="Activity" unread={inboxUnread} onClick={onNavigate} />
                   {/* the new UI keeps these in the Tasks area */}

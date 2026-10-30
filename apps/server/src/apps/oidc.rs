@@ -256,7 +256,10 @@ fn person_claims(
             .ok()
             .and_then(|id| avatar_url(id, person.avatar_at))
         {
-            claims.insert("picture".to_owned(), json!(format!("{}{path}", state.origin)));
+            claims.insert(
+                "picture".to_owned(),
+                json!(format!("{}{path}", state.origin)),
+            );
         }
     }
     claims
@@ -331,9 +334,16 @@ pub(crate) async fn authorize(state: &AppsState, headers: &HeaderMap, raw_query:
     }
     let client_state = param("state");
     let fail = |code: &str| {
-        back_to_client(state, &redirect_uri, client_state.as_deref(), &[("error", code)])
+        back_to_client(
+            state,
+            &redirect_uri,
+            client_state.as_deref(),
+            &[("error", code)],
+        )
     };
-    if client_state.as_ref().is_some_and(|value| value.len() > 2048)
+    if client_state
+        .as_ref()
+        .is_some_and(|value| value.len() > 2048)
         || param("nonce").is_some_and(|value| value.len() > 512)
     {
         return fail("invalid_request");
@@ -425,7 +435,12 @@ pub(crate) async fn authorize(state: &AppsState, headers: &HeaderMap, raw_query:
         tracing::warn!(%error, "OpenID Connect authorize");
         return fail("temporarily_unavailable");
     }
-    back_to_client(state, &redirect_uri, client_state.as_deref(), &[("code", &code)])
+    back_to_client(
+        state,
+        &redirect_uri,
+        client_state.as_deref(),
+        &[("code", &code)],
+    )
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -519,7 +534,10 @@ async fn issue(
     }
     let bad_grant = || oauth_error(StatusCode::BAD_REQUEST, "invalid_grant");
     if field("grant_type") != Some("authorization_code") {
-        return Ok(oauth_error(StatusCode::BAD_REQUEST, "unsupported_grant_type"));
+        return Ok(oauth_error(
+            StatusCode::BAD_REQUEST,
+            "unsupported_grant_type",
+        ));
     }
     let (Some(code), Some(redirect_uri)) = (field("code"), field("redirect_uri")) else {
         return Ok(oauth_error(StatusCode::BAD_REQUEST, "invalid_request"));
@@ -529,7 +547,10 @@ async fn issue(
 
     // Getting the key may make it, which is slow: that happens before the writers' lock is taken.
     let Some((kid, key)) = signing_key(state).await else {
-        return Ok(oauth_error(StatusCode::SERVICE_UNAVAILABLE, "temporarily_unavailable"));
+        return Ok(oauth_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "temporarily_unavailable",
+        ));
     };
 
     let mut tx = state.database.immediate_transaction().await?;
@@ -586,12 +607,18 @@ async fn issue(
     claims.insert("aud".to_owned(), json!(client_id));
     claims.insert("iat".to_owned(), json!(now / 1000));
     claims.insert("exp".to_owned(), json!(now / 1000 + TOKEN_SECONDS));
-    claims.insert("at_hash".to_owned(), json!(URL_SAFE_NO_PAD.encode(&digest[..16])));
+    claims.insert(
+        "at_hash".to_owned(),
+        json!(URL_SAFE_NO_PAD.encode(&digest[..16])),
+    );
     if let Some(nonce) = nonce {
         claims.insert("nonce".to_owned(), json!(nonce));
     }
     let Some(id_token) = sign_jwt(&kid, &key, &Value::Object(claims)) else {
-        return Ok(oauth_error(StatusCode::INTERNAL_SERVER_ERROR, "server_error"));
+        return Ok(oauth_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "server_error",
+        ));
     };
     sqlx::query("DELETE FROM app_oidc_tokens WHERE expires_at <= $1")
         .bind(now)
@@ -650,10 +677,12 @@ async fn userinfo(State(state): State<AppsState>, headers: HeaderMap) -> Respons
         let Some(row) = row else {
             return Ok(None);
         };
-        let app = sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {COLUMNS} FROM workspace_apps WHERE id = $1")))
-            .bind(row.get::<String, _>("app_id"))
-            .fetch_one(state.database.pool())
-            .await?;
+        let app = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT {COLUMNS} FROM workspace_apps WHERE id = $1"
+        )))
+        .bind(row.get::<String, _>("app_id"))
+        .fetch_one(state.database.pool())
+        .await?;
         let app = WorkspaceApp::from_row(&app);
         let user_id: String = row.get("user_id");
         let scope: String = row.get("scope");

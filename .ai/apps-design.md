@@ -22,6 +22,8 @@ What: admins add custom web apps; each gets a sidebar entry, `/apps/<slug>` with
 
 **An app reads Orbit?** `allow-same-origin` would be dangerous if the frame had Orbit's origin. So `check_app_url` refuses Orbit's origin (normalized by the URL parser, ports included), and the frame route checks again, in case the public origin changed. Without `allow-top-navigation`, the app cannot replace the Orbit page.
 
+**Silent sign-in in a frame.** Because the cookie is sent, a page that frames an app sends the visitor through `/oauth/authorize` without a click. Only Orbit can frame the wrapper, and an app's redirect URIs are exact, so this gives a code only to an app the admin approved.
+
 **Can the frame load an Orbit page?** With sign-in on, the wrapper's `frame-src` has `'self'`, because the sign-in redirect passes through `/oauth/authorize`. A redirect loads no document, and each final Orbit answer has `frame-ancestors 'none'`, except the wrapper itself, which holds only another frame of an allowed app. Test in the browser.
 
 **CSP or HTML injection through an app URL.** The URL parser allows `;`, `,` and `'` in a host. `plain_host` allows only letters, digits, `.` and `-`, so nothing can start a new directive. All text in the wrapper is HTML-escaped. Tests: `the_wrapper_escapes_html…`, `app_urls_are_https…`.
@@ -36,7 +38,9 @@ What: admins add custom web apps; each gets a sidebar entry, `/apps/<slug>` with
 
 **Code theft.** Codes last 60 s, are stored hashed and work once; a second use deletes the first token. The secret is checked first, and PKCE is checked if the request used it. A wrong try does not use up the code.
 
-**Frames and login.** Orbit cannot show login in a frame. A request with `Sec-Fetch-Dest: iframe` and no session gets `login_required` at the redirect URI instead of a blank refused frame. Cross-site frames get no cookie (`SameSite=Lax`), so a subdomain is the advice. The header only chooses the friendlier answer: it grants nothing.
+**Frames and login.** Orbit cannot show login in a frame. A request with `Sec-Fetch-Dest: iframe` and no session gets `login_required` at the redirect URI instead of a blank refused frame. The header only chooses the friendlier answer: it grants nothing.
+
+**Cookies in a frame (measured in Chromium, `scripts/apps-demo/e2e.mjs`).** The first design assumed Orbit's `SameSite=Lax` cookie is not sent in a cross-site frame. That is wrong here: Orbit is the top page, so its request in the frame is same-site with every ancestor and the cookie is sent. The cookie that fails is the app's own, which is third-party under Orbit. A cross-site app with a Lax session cookie therefore loops: sign-in succeeds, the cookie is dropped, it signs in again. So a subdomain remains the advice, for this reason. Orbit cannot detect the loop: a frame reports nothing to its parent. The page keeps "Open in a new tab".
 
 **CORS on `/oauth/authorize`.** The MCP layer sends `Access-Control-Allow-Origin: *` on it, and app clients now read a cookie there. A cross-site `fetch` gets no Lax cookie, and a same-site one with credentials cannot read a `*` answer. The code in a redirect is not exposed.
 

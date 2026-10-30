@@ -131,11 +131,7 @@ impl Fixture {
                     .fetch_one(database.pool())
                     .await
                     .unwrap();
-                (
-                    row.get("kid"),
-                    row.get("sealed_key"),
-                    row.get("public_jwk"),
-                )
+                (row.get("kid"), row.get("sealed_key"), row.get("public_jwk"))
             })
             .await;
         sqlx::query(
@@ -352,11 +348,13 @@ impl Fixture {
     }
 
     async fn count(&self, table: &str, app_id: &str) -> i64 {
-        sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table} WHERE app_id = $1")))
-            .bind(app_id)
-            .fetch_one(self.database.pool())
-            .await
-            .unwrap()
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM {table} WHERE app_id = $1"
+        )))
+        .bind(app_id)
+        .fetch_one(self.database.pool())
+        .await
+        .unwrap()
     }
 }
 
@@ -364,17 +362,12 @@ impl Fixture {
 fn verify(jwt: &str, jwk: &Value) -> Value {
     let parts: Vec<&str> = jwt.split('.').collect();
     assert_eq!(parts.len(), 3);
-    let header: Value =
-        serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[0]).unwrap()).unwrap();
+    let header: Value = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[0]).unwrap()).unwrap();
     assert_eq!(header["alg"], "RS256");
     assert_eq!(header["kid"], jwk["kid"]);
     let key = RsaPublicKeyComponents {
-        n: URL_SAFE_NO_PAD
-            .decode(jwk["n"].as_str().unwrap())
-            .unwrap(),
-        e: URL_SAFE_NO_PAD
-            .decode(jwk["e"].as_str().unwrap())
-            .unwrap(),
+        n: URL_SAFE_NO_PAD.decode(jwk["n"].as_str().unwrap()).unwrap(),
+        e: URL_SAFE_NO_PAD.decode(jwk["e"].as_str().unwrap()).unwrap(),
     };
     key.verify(
         &RSA_PKCS1_2048_8192_SHA256,
@@ -402,7 +395,10 @@ async fn only_owners_and_admins_manage_and_the_secret_shows_once() {
             .await;
         assert_eq!(answer.status, status);
         assert_eq!(
-            fixture.api("GET", "/workspace-apps", user, None).await.status,
+            fixture
+                .api("GET", "/workspace-apps", user, None)
+                .await
+                .status,
             status
         );
     }
@@ -475,7 +471,9 @@ async fn bad_urls_and_orbits_own_origin_are_refused() {
             "POST",
             "/workspace-apps",
             &fixture.owner,
-            Some(json!({"name": "Bad", "url": APP_URL, "redirect_uris": ["https://orbit.test/cb"]})),
+            Some(
+                json!({"name": "Bad", "url": APP_URL, "redirect_uris": ["https://orbit.test/cb"]}),
+            ),
         )
         .await;
     assert_eq!(answer.status, StatusCode::UNPROCESSABLE_ENTITY);
@@ -507,7 +505,10 @@ async fn the_list_and_the_frame_follow_roles_and_the_frame_has_its_own_csp() {
     assert_eq!(items["items"].as_array().unwrap().len(), 1);
     assert_eq!(items["items"][0]["slug"], "everyone");
     assert_eq!(
-        fixture.api("GET", "/apps/admins/frame", &member, None).await.status,
+        fixture
+            .api("GET", "/apps/admins/frame", &member, None)
+            .await
+            .status,
         StatusCode::NOT_FOUND
     );
     for path in ["/apps", "/apps/everyone/frame"] {
@@ -537,7 +538,10 @@ async fn the_list_and_the_frame_follow_roles_and_the_frame_has_its_own_csp() {
     let policy = frame.headers[header::CONTENT_SECURITY_POLICY]
         .to_str()
         .unwrap();
-    assert!(policy.contains("frame-src https://app.example.com;"), "{policy}");
+    assert!(
+        policy.contains("frame-src https://app.example.com;"),
+        "{policy}"
+    );
     assert!(policy.contains("frame-ancestors 'self'"));
     assert!(policy.contains("default-src 'none'"));
     assert!(!policy.contains("script-src"));
@@ -566,7 +570,10 @@ async fn the_list_and_the_frame_follow_roles_and_the_frame_has_its_own_csp() {
         .await;
     assert_eq!(opened.status, StatusCode::CREATED);
     assert_eq!(
-        fixture.api("GET", "/apps/tab/frame", &fixture.owner, None).await.status,
+        fixture
+            .api("GET", "/apps/tab/frame", &fixture.owner, None)
+            .await
+            .status,
         StatusCode::NOT_FOUND
     );
 }
@@ -613,8 +620,14 @@ async fn agent_sessions_reach_no_app_route() {
     for path in [
         format!("/api/v1/workspaces/{}/apps", fixture.workspace),
         format!("/api/v1/workspaces/{}/workspace-apps", fixture.workspace),
-        format!("/api/v1/workspaces/{}/apps/{}/frame", fixture.workspace, client.slug),
-        format!("/oauth/authorize?client_id={}&response_type=code&scope=openid&redirect_uri={CALLBACK}", client.id),
+        format!(
+            "/api/v1/workspaces/{}/apps/{}/frame",
+            fixture.workspace, client.slug
+        ),
+        format!(
+            "/oauth/authorize?client_id={}&response_type=code&scope=openid&redirect_uri={CALLBACK}",
+            client.id
+        ),
     ] {
         let answer = fixture
             .send(
@@ -787,7 +800,11 @@ async fn a_bad_client_redirect_or_person_never_gets_a_code() {
     let top = fixture.send(request(false)).await;
     assert_eq!(top.status, StatusCode::SEE_OTHER);
     assert_eq!(top.location().path(), "/login");
-    assert!(top.param("return_to").unwrap().starts_with("/oauth/authorize?client_id="));
+    assert!(
+        top.param("return_to")
+            .unwrap()
+            .starts_with("/oauth/authorize?client_id=")
+    );
     let framed = fixture.send(request(true)).await;
     assert_eq!(framed.param("error").unwrap(), "login_required");
     assert!(framed.location().as_str().starts_with(CALLBACK));
@@ -795,13 +812,20 @@ async fn a_bad_client_redirect_or_person_never_gets_a_code() {
     // A suspended person.
     let suspended = fixture.user("suspended", Some("member")).await;
     let open = fixture.add_app("Open", &["owner", "member"]).await;
-    let code = fixture.authorize(&suspended, &open).await.param("code").unwrap();
+    let code = fixture
+        .authorize(&suspended, &open)
+        .await
+        .param("code")
+        .unwrap();
     sqlx::query("UPDATE users SET suspended_at = 1 WHERE id = $1")
         .bind(suspended.id.to_string())
         .execute(fixture.database.pool())
         .await
         .unwrap();
-    assert_eq!(fixture.redeem(&open, &code).await.status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        fixture.redeem(&open, &code).await.status,
+        StatusCode::BAD_REQUEST
+    );
 }
 
 #[tokio::test]
@@ -810,7 +834,11 @@ async fn a_code_works_once_with_its_verifier_secret_and_redirect() {
     let client = fixture.add_app("Report", &["owner"]).await;
     let other = fixture.add_app("Other", &["owner"]).await;
     let owner = &fixture.owner;
-    let code = fixture.authorize(owner, &client).await.param("code").unwrap();
+    let code = fixture
+        .authorize(owner, &client)
+        .await
+        .param("code")
+        .unwrap();
     let grant = |code: &str, secret: &str, verifier: &str, redirect: &str, id: &str| {
         vec![
             ("grant_type".to_owned(), "authorization_code".to_owned()),
@@ -838,7 +866,14 @@ async fn a_code_works_once_with_its_verifier_secret_and_redirect() {
     assert_eq!(answer.json()["error"], "invalid_client");
     let answer = send(grant(&code, &other.secret, VERIFIER, CALLBACK, &other.id)).await;
     assert_eq!(answer.json()["error"], "invalid_grant");
-    let answer = send(grant(&code, &client.secret, &wrong_verifier, CALLBACK, &client.id)).await;
+    let answer = send(grant(
+        &code,
+        &client.secret,
+        &wrong_verifier,
+        CALLBACK,
+        &client.id,
+    ))
+    .await;
     assert_eq!(answer.json()["error"], "invalid_grant");
     let answer = send(grant(
         &code,
@@ -855,11 +890,21 @@ async fn a_code_works_once_with_its_verifier_secret_and_redirect() {
     let access = first.json()["access_token"].as_str().unwrap().to_owned();
     assert_eq!(fixture.userinfo(&access).await.status, StatusCode::OK);
     // The second use fails and ends the token of the first.
-    assert_eq!(fixture.redeem(&client, &code).await.status, StatusCode::BAD_REQUEST);
-    assert_eq!(fixture.userinfo(&access).await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        fixture.redeem(&client, &code).await.status,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        fixture.userinfo(&access).await.status,
+        StatusCode::UNAUTHORIZED
+    );
 
     // A code made with PKCE needs the verifier; one made without it refuses a verifier.
-    let code = fixture.authorize(owner, &client).await.param("code").unwrap();
+    let code = fixture
+        .authorize(owner, &client)
+        .await
+        .param("code")
+        .unwrap();
     let answer = fixture
         .token(&[
             ("grant_type", "authorization_code"),
@@ -884,11 +929,21 @@ async fn a_code_works_once_with_its_verifier_secret_and_redirect() {
     assert_eq!(rotated.status, StatusCode::OK, "{}", rotated.text);
     assert!(rotated.json()["client_secret"].as_str().unwrap() != client.secret);
     assert_eq!(
-        fixture.userinfo(tokens["access_token"].as_str().unwrap()).await.status,
+        fixture
+            .userinfo(tokens["access_token"].as_str().unwrap())
+            .await
+            .status,
         StatusCode::UNAUTHORIZED
     );
-    let code = fixture.authorize(owner, &client).await.param("code").unwrap();
-    assert_eq!(fixture.redeem(&client, &code).await.status, StatusCode::UNAUTHORIZED);
+    let code = fixture
+        .authorize(owner, &client)
+        .await
+        .param("code")
+        .unwrap();
+    assert_eq!(
+        fixture.redeem(&client, &code).await.status,
+        StatusCode::UNAUTHORIZED
+    );
 }
 
 #[tokio::test]
@@ -1016,7 +1071,10 @@ async fn app_tokens_and_mcp_tokens_never_cross_over() {
     );
     // A session token is not an app token either.
     let session = fixture.owner.cookie.split('=').nth(1).unwrap();
-    assert_eq!(fixture.userinfo(session).await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        fixture.userinfo(session).await.status,
+        StatusCode::UNAUTHORIZED
+    );
     // /oauth/register cannot make a client with sign-in rights: it gives no secret.
     assert!(registered.json().get("client_secret").is_none());
 }
@@ -1039,7 +1097,10 @@ async fn removal_deletion_and_a_role_change_end_access() {
         )
         .await;
     assert_eq!(changed.status, StatusCode::OK);
-    assert_eq!(fixture.userinfo(access).await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        fixture.userinfo(access).await.status,
+        StatusCode::UNAUTHORIZED
+    );
     fixture
         .api(
             "PATCH",
@@ -1051,7 +1112,11 @@ async fn removal_deletion_and_a_role_change_end_access() {
     assert_eq!(fixture.userinfo(access).await.status, StatusCode::OK);
 
     // A removed member: tokens and pending codes are deleted, not only refused.
-    let pending = fixture.authorize(&member, &client).await.param("code").unwrap();
+    let pending = fixture
+        .authorize(&member, &client)
+        .await
+        .param("code")
+        .unwrap();
     let row = sqlx::query("SELECT id, version FROM memberships WHERE user_id = $1")
         .bind(member.id.to_string())
         .fetch_one(fixture.database.pool())
@@ -1072,8 +1137,14 @@ async fn removal_deletion_and_a_role_change_end_access() {
         .unwrap();
     assert_eq!(fixture.count("app_oidc_tokens", &client.app_id).await, 0);
     assert_eq!(fixture.count("app_oidc_codes", &client.app_id).await, 0);
-    assert_eq!(fixture.userinfo(access).await.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(fixture.redeem(&client, &pending).await.status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        fixture.userinfo(access).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        fixture.redeem(&client, &pending).await.status,
+        StatusCode::BAD_REQUEST
+    );
 
     // Turning sign-in off removes the client and what it gave out.
     let off = fixture.add_app("Off", &["owner"]).await;
@@ -1092,7 +1163,11 @@ async fn removal_deletion_and_a_role_change_end_access() {
 
     // A deleted app: client, codes and tokens go.
     let tokens = fixture.sign_in(&fixture.owner, &client).await;
-    let pending = fixture.authorize(&fixture.owner, &client).await.param("code").unwrap();
+    let pending = fixture
+        .authorize(&fixture.owner, &client)
+        .await
+        .param("code")
+        .unwrap();
     let deleted = fixture
         .api(
             "DELETE",
@@ -1105,10 +1180,16 @@ async fn removal_deletion_and_a_role_change_end_access() {
     assert_eq!(fixture.count("app_oidc_tokens", &client.app_id).await, 0);
     assert_eq!(fixture.count("app_oidc_codes", &client.app_id).await, 0);
     assert_eq!(
-        fixture.userinfo(tokens["access_token"].as_str().unwrap()).await.status,
+        fixture
+            .userinfo(tokens["access_token"].as_str().unwrap())
+            .await
+            .status,
         StatusCode::UNAUTHORIZED
     );
-    assert_eq!(fixture.redeem(&client, &pending).await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        fixture.redeem(&client, &pending).await.status,
+        StatusCode::UNAUTHORIZED
+    );
     let reauthorize = fixture.authorize(&fixture.owner, &client).await;
     assert_eq!(reauthorize.status, StatusCode::BAD_REQUEST);
 }
@@ -1126,8 +1207,10 @@ async fn cloudflare_access_signs_in_as_a_generic_oidc_client() {
             "POST",
             "/workspace-apps",
             &fixture.owner,
-            Some(json!({"name": "Products", "url": "https://products.wellrox.com",
-                "allowed_roles": ["member"], "redirect_uris": [ACCESS_CALLBACK]})),
+            Some(
+                json!({"name": "Products", "url": "https://products.wellrox.com",
+                "allowed_roles": ["member"], "redirect_uris": [ACCESS_CALLBACK]}),
+            ),
         )
         .await;
     assert_eq!(created.status, StatusCode::CREATED, "{}", created.text);
@@ -1194,9 +1277,13 @@ async fn cloudflare_access_signs_in_as_a_generic_oidc_client() {
     assert!(refused.param("code").is_none());
 
     // The frame may pass through the app, Access and Orbit, and nothing else.
-    let frame = fixture.api("GET", "/apps/products/frame", &member, None).await;
+    let frame = fixture
+        .api("GET", "/apps/products/frame", &member, None)
+        .await;
     assert_eq!(frame.status, StatusCode::OK);
-    let policy = frame.headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    let policy = frame.headers[header::CONTENT_SECURITY_POLICY]
+        .to_str()
+        .unwrap();
     assert!(
         policy.contains(
             "frame-src https://products.wellrox.com 'self' https://edusi.cloudflareaccess.com;"

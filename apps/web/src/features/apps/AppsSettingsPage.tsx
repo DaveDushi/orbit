@@ -1,5 +1,5 @@
 import { toast } from 'sonner'
-import { useState, type FormEvent } from 'react'
+import { createElement, useState, type FormEvent } from 'react'
 import { Link } from 'react-router'
 import { Copy } from 'reicon-react'
 import type { AppOpenMode, AppRole, ManagedApp } from '@orbit/api/apps'
@@ -151,7 +151,7 @@ function AppCard({ app, canSignIn, onSecret }: { app: ManagedApp; canSignIn: boo
   const rotate = useRotateManagedAppSecret(workspace.id)
   const [redirects, setRedirects] = useState(app.sign_in?.redirect_uris.join('\n') ?? '')
   const [url, setUrl] = useState(app.url)
-  const Icon = appIcon(app.icon)
+  const icon = createElement(appIcon(app.icon))
 
   const save = (input: Parameters<typeof update.mutate>[0]['input'], done?: string) =>
     update.mutate({ id: app.id, input }, {
@@ -169,7 +169,7 @@ function AppCard({ app, canSignIn, onSecret }: { app: ManagedApp; canSignIn: boo
   return <SettingsCard title={app.name} description={`/apps/${app.slug}`} actions={actions} flush>
     <div className="flex flex-col divide-y">
       <SettingsRow className="flex-nowrap">
-        <RowIcon><Icon /></RowIcon>
+        <RowIcon>{icon}</RowIcon>
         <form className="flex min-w-0 flex-1 items-end gap-2" onSubmit={(event) => { event.preventDefault(); if (url.trim() !== app.url) save({ url: url.trim() }, 'Address saved') }}>
           <Field className="min-w-0 flex-1"><FieldLabel htmlFor={`app-url-${app.id}`}>Address</FieldLabel><Input id={`app-url-${app.id}`} value={url} maxLength={2048} onChange={(event) => setUrl(event.target.value)} /></Field>
           <Button variant="outline" type="submit" disabled={update.isPending || !url.trim() || url.trim() === app.url}>Save</Button>
