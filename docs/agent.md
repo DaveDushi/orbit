@@ -63,7 +63,7 @@ sidecar logs a warning. Agent sessions cannot read or change these settings. Wit
 
 Owners and admins can give the agent tools outside Orbit in **Workspace settings → Agent tools**:
 
-- **Remote MCP server**: the server's Streamable HTTP URL (for example Cloudflare's or Shopify's MCP server). Press
+- **Remote MCP server**: the server's Streamable HTTP URL (for example Cloudflare's MCP server). Press
   **Test** to read its tools, then turn on the tools the agent may use. Tools the server marks read-only are on at
   first; the others are off until an admin turns them on.
 - **HTTP API**: a base URL. The agent gets one tool, `<prefix>__api_request` (method, path, query, JSON body). Every
@@ -75,8 +75,57 @@ Each integration has **one shared credential**: a header name (default `Authoriz
 service: Orbit makes every call itself, as the driver of the run. Choose which **roles** (owners, admins, members)
 may use each integration. The agent sees the tools as `<prefix>__<tool>`.
 
+**OAuth client credentials (HTTP APIs).** For an API whose tokens expire, choose **OAuth client credentials** in the
+form: token URL, client ID, client secret, the header for the token (default `Authorization`) and an optional test
+path. Orbit sends `grant_type=client_credentials` with the client ID and secret to the token URL and uses the token
+from the answer. In `Authorization` the value is `Bearer <token>`; in another header, the bare token. A fixed
+credential and an OAuth client exclude each other: setting one clears the other. MCP servers cannot use OAuth clients.
+
+- Orbit reads `expires_in` from the answer and renews 60 seconds before expiry. If `expires_in` is missing or at most
+  60, the token serves one call only. The token stays in the memory of each server, so a restart asks for a new one.
+- On a 401 from the API, Orbit gets a new token and retries once, also for a write that the driver approved (no second
+  approval). It does not retry on a 403 or on a failed token request.
+- The token request has the same limits as other calls (below), and a 3xx is a failure. An error shows only the HTTP
+  status and a short OAuth error code, such as `shop_not_permitted`.
+- **A new base URL or token URL needs the client ID and secret again.** So an admin who cannot read the secret cannot
+  send it, or a token, to another host. The token URL can be on another host than the base URL.
+
+**Test** does a GET of the optional test path, which stays below the base URL. An OAuth integration always gets a new
+token. With no test path, Test reports that the token request worked and does not call the API. With a test path, an
+answer below 400 is a pass; otherwise Test shows the status and says that the token worked but the API refused. A
+fixed credential with no test path does a GET of the base URL.
+
+**Example: Shopify Admin API.** Your app and the store must be in the same Shopify organization, or the token request
+fails with `shop_not_permitted`.
+
+| Field | Value |
+|---|---|
+| Base URL | `https://STORE.myshopify.com/admin/api/2026-10` |
+| Token URL | `https://STORE.myshopify.com/admin/oauth/access_token` |
+| Token header | `X-Shopify-Access-Token` |
+| Test path | `shop.json` |
+
+The form fills in the last three when the base URL host ends in `.myshopify.com`. Shopify's tokens end after 24 hours;
+Orbit renews them. Shopify's GraphQL Admin API uses POST also for reads, and its REST Admin API is legacy. To use
+GraphQL with no question for each read, allow POST and turn on **Run GraphQL reads without approval** (below). The form
+fills in the path `/graphql.json`, but the switch stays off until you turn it on.
+
+**GraphQL reads without approval (HTTP APIs).** This setting is off by default, per integration. When it is on, a POST
+to the one exact **GraphQL path** runs without the driver's approval only if Orbit's own GraphQL parser finds a read in
+the body that it sends. It does not trust what the agent says. All these cases still need approval:
+
+- the body is not a JSON object, the query is missing or is not a string, or the query does not parse;
+- the document has more than one operation, or an operation that is not a query, or a directive on the operation;
+- a fragment is on `Mutation` or `Subscription`, or the document has schema definitions;
+- the body has a key other than `query`, `variables` and `operationName` (for example a persisted query id), or
+  `operationName` is not the name of the operation;
+- the request has a URL query, or goes to any other path. Every other POST needs approval as before.
+
+Each such call is in the audit log with `graphql_read_without_approval: true` and `approved: false`, and with no body.
+Roles do not change: only the roles you chose can use the integration.
+
 **Writes need the driver's approval.** An MCP tool that is not marked read-only, and an HTTP method other than GET
-or HEAD, runs only after the agent asked the driver in the thread with the exact action and arguments and the
+or HEAD (except a GraphQL read with the setting above), runs only after the agent asked the driver in the thread with the exact action and arguments and the
 driver answered **yes**. Orbit checks this itself: the approval is bound to the driver, the thread, the tool and the
 arguments, works once, and ends after 30 minutes. A teammate's "yes" does not count.
 
@@ -89,6 +138,10 @@ by someone else. The agent is told to treat it as data, but it is a language mod
 content out of Orbit; the approval step shows you exactly what goes out, so read it before you say yes. Give the
 agent credentials with the smallest scope the service offers (read-only tokens where you can), and turn on only the
 tools you need. A shared credential acts the same for every member who may use it: choose the roles with care.
+**GraphQL reads without approval can return customer data** (orders, names, addresses) with no question to anyone. The
+result goes to the agent, and from there into the thread and the model provider. The data is what the credential's
+scopes allow, so give it only the scopes you want the agent to read. Orbit checks the query, not the service: if a
+service runs a side effect from a query, Orbit cannot see it.
 
 ## Running it
 
@@ -150,7 +203,9 @@ docker compose -f deploy/compose.yaml --profile agent up -d --build
 - Orbit stores each person's ChatGPT credential sealed with `ORBIT_APP_KEY` (`agent_credentials`). Without an app key
   nobody can connect. Disconnecting deletes it.
 - Agent tools and their sealed credentials are in `agent_integrations`; the driver's approvals of writes in
-  `agent_integration_approvals`. Removing an integration deletes both.
+  `agent_integration_approvals`. Removing an integration deletes both. An OAuth client ID and secret are sealed
+  together in `oauth_sealed_client`, apart from `sealed_secret`. OAuth access tokens are never written to the
+  database: they stay in the memory of each server.
 - The agent stores transcripts in `AGENT_DATA_DIR`. It stores no tokens.
 - One agent process owns its data directory. Several Orbit servers on one Postgres database can share one agent.
 

@@ -23,10 +23,26 @@ const KINDS = [
   { value: 'mcp', label: 'Remote MCP server' },
   { value: 'http', label: 'HTTP API' },
 ] as const
+const AUTH_TYPES = [
+  { value: 'header', label: 'Fixed header credential' },
+  { value: 'oauth', label: 'OAuth client credentials' },
+] as const
+const SHOPIFY_HEADER = 'X-Shopify-Access-Token'
+const SHOPIFY_TEST_PATH = 'shop.json'
+const SHOPIFY_GRAPHQL_PATH = '/graphql.json'
 const ROLES: AgentIntegrationRole[] = ['owner', 'admin', 'member']
 const METHODS: AgentIntegrationMethod[] = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE']
 
 const message = (error: unknown, fallback: string) => (error instanceof Error && error.message ? error.message : fallback)
+/** The token URL of a Shopify store's base URL. Shopify is only a preset: the values stay editable. */
+function shopifyTokenUrl(url: string) {
+  try {
+    const { host } = new URL(url.trim())
+    return host.endsWith('.myshopify.com') ? `https://${host}/admin/oauth/access_token` : null
+  } catch {
+    return null
+  }
+}
 const toggled = <T,>(list: readonly T[], value: T, on: boolean) => (on ? [...list, value] : list.filter((item) => item !== value))
 
 /** Workspace settings → Agent tools: MCP servers and HTTP APIs the team agent may call. Owners and admins only. */
@@ -55,20 +71,59 @@ function AddIntegration({ canKeepSecrets }: { canKeepSecrets: boolean }) {
   const [header, setHeader] = useState('Authorization')
   const [secret, setSecret] = useState('')
   const [roles, setRoles] = useState<AgentIntegrationRole[]>(['owner', 'admin', 'member'])
+  const [authType, setAuthType] = useState<'header' | 'oauth'>('header')
+  const [tokenUrl, setTokenUrl] = useState('')
+  const [clientId, setClientId] = useState('')
+  const [clientSecret, setClientSecret] = useState('')
+  const [testPath, setTestPath] = useState('')
+  const [graphqlPath, setGraphqlPath] = useState('')
+  const oauth = kind === 'http' && authType === 'oauth'
+  const oauthIncomplete = oauth && (!tokenUrl.trim() || !clientId.trim() || !clientSecret.trim())
+
+  /** Fills in or takes back the Shopify values, and leaves what the admin typed. */
+  function applyPreset(before: string | null, after: string | null) {
+    if (before === after) return
+    if (!tokenUrl || tokenUrl === before) setTokenUrl(after ?? '')
+    if (after && header === 'Authorization') setHeader(SHOPIFY_HEADER)
+    if (!after && header === SHOPIFY_HEADER) setHeader('Authorization')
+    if (after && !testPath) setTestPath(SHOPIFY_TEST_PATH)
+    if (!after && testPath === SHOPIFY_TEST_PATH) setTestPath('')
+    if (after && !graphqlPath) setGraphqlPath(SHOPIFY_GRAPHQL_PATH)
+    if (!after && graphqlPath === SHOPIFY_GRAPHQL_PATH) setGraphqlPath('')
+  }
+
+  function changeUrl(next: string) {
+    setUrl(next)
+    if (oauth) applyPreset(shopifyTokenUrl(url), shopifyTokenUrl(next))
+  }
+
+  function changeAuthType(next: 'header' | 'oauth') {
+    setAuthType(next)
+    applyPreset(next === 'oauth' ? null : shopifyTokenUrl(url), next === 'oauth' ? shopifyTokenUrl(url) : null)
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault()
-    if (!name.trim() || !url.trim() || roles.length === 0) return
+    if (!name.trim() || !url.trim() || roles.length === 0 || oauthIncomplete) return
     const created = await create.mutateAsync({
       kind,
       name: name.trim(),
       url: url.trim(),
       allowed_roles: roles,
-      ...(secret ? { auth_header: header.trim() || 'Authorization', secret } : {}),
+      ...(kind === 'http' && graphqlPath.trim() ? { graphql_read_path: graphqlPath.trim() } : {}),
+      ...(oauth
+        ? { auth_header: header.trim() || 'Authorization', oauth_token_url: tokenUrl.trim(), oauth_client_id: clientId.trim(), oauth_client_secret: clientSecret.trim(), ...(testPath.trim() ? { test_path: testPath.trim() } : {}) }
+        : secret ? { auth_header: header.trim() || 'Authorization', secret } : {}),
     })
     setName('')
     setUrl('')
     setSecret('')
+    setTokenUrl('')
+    setClientId('')
+    setClientSecret('')
+    setTestPath('')
+    setGraphqlPath('')
+    setHeader('Authorization')
     // An MCP server's tools are known only after a test.
     if (created.kind === 'mcp') {
       const result = await test.mutateAsync(created.id)
@@ -90,17 +145,41 @@ function AddIntegration({ canKeepSecrets }: { canKeepSecrets: boolean }) {
         <Field><FieldLabel htmlFor="agent-tool-name">Name <RequiredMark /></FieldLabel><Input id="agent-tool-name" value={name} maxLength={80} onChange={(event) => setName(event.target.value)} placeholder={kind === 'mcp' ? 'Cloudflare' : 'Shopify'} /></Field>
         <Field className="min-[900px]:col-span-2">
           <FieldLabel htmlFor="agent-tool-url">{kind === 'mcp' ? 'Server URL' : 'Base URL'} <RequiredMark /></FieldLabel>
-          <Input id="agent-tool-url" value={url} maxLength={2048} onChange={(event) => setUrl(event.target.value)} placeholder={kind === 'mcp' ? 'https://mcp.example.com/mcp' : 'https://api.example.com/v1'} />
+          <Input id="agent-tool-url" value={url} maxLength={2048} onChange={(event) => changeUrl(event.target.value)} placeholder={kind === 'mcp' ? 'https://mcp.example.com/mcp' : 'https://api.example.com/v1'} />
           <FieldDescription>{kind === 'mcp' ? 'The Streamable HTTP endpoint of the server.' : 'Every request of the agent stays below this URL.'} HTTPS only; local and private addresses are refused.</FieldDescription>
         </Field>
-        <Field><FieldLabel htmlFor="agent-tool-header">Credential header</FieldLabel><Input id="agent-tool-header" value={header} maxLength={100} onChange={(event) => setHeader(event.target.value)} /></Field>
-        <Field>
-          <FieldLabel htmlFor="agent-tool-secret">Secret</FieldLabel>
-          <PasswordInput id="agent-tool-secret" value={secret} autoComplete="off" disabled={!canKeepSecrets} onChange={(event) => setSecret(event.target.value)} placeholder="Bearer …" />
-          <FieldDescription>{canKeepSecrets ? 'The full header value, for example “Bearer <token>”. Shared by everyone who may use this tool. Orbit never shows it again.' : 'This server has no ORBIT_APP_KEY, so it cannot keep secrets.'}</FieldDescription>
-        </Field>
+        {kind === 'http' ? <Field className="min-[900px]:col-span-2">
+          <FieldLabel htmlFor="agent-tool-auth">Credential</FieldLabel>
+          <Select items={AUTH_TYPES} value={authType} onValueChange={(value) => changeAuthType(value as 'header' | 'oauth')}>
+            <SelectTrigger id="agent-tool-auth" aria-label="Credential"><SelectValue /></SelectTrigger>
+            <SelectContent>{AUTH_TYPES.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
+          </Select>
+        </Field> : null}
+        {oauth ? <>
+          <Field className="min-[900px]:col-span-2">
+            <FieldLabel htmlFor="agent-tool-token-url">Token URL <RequiredMark /></FieldLabel>
+            <Input id="agent-tool-token-url" value={tokenUrl} maxLength={2048} onChange={(event) => setTokenUrl(event.target.value)} placeholder="https://api.example.com/oauth/token" />
+            <FieldDescription>Orbit gets the access token here and renews it. It can be on another host than the base URL.</FieldDescription>
+          </Field>
+          <Field><FieldLabel htmlFor="agent-tool-client-id">Client ID <RequiredMark /></FieldLabel><Input id="agent-tool-client-id" value={clientId} autoComplete="off" disabled={!canKeepSecrets} onChange={(event) => setClientId(event.target.value)} /></Field>
+          <Field>
+            <FieldLabel htmlFor="agent-tool-client-secret">Client secret <RequiredMark /></FieldLabel>
+            <PasswordInput id="agent-tool-client-secret" value={clientSecret} autoComplete="off" disabled={!canKeepSecrets} onChange={(event) => setClientSecret(event.target.value)} />
+            <FieldDescription>{canKeepSecrets ? 'Orbit never shows the client ID or secret again.' : 'This server has no ORBIT_APP_KEY, so it cannot keep secrets.'}</FieldDescription>
+          </Field>
+          <Field><FieldLabel htmlFor="agent-tool-header">Token header</FieldLabel><Input id="agent-tool-header" value={header} maxLength={100} onChange={(event) => setHeader(event.target.value)} /><FieldDescription>In Authorization, the value is “Bearer &lt;token&gt;”. In other headers, the bare token.</FieldDescription></Field>
+          <Field><FieldLabel htmlFor="agent-tool-test-path">Test path</FieldLabel><Input id="agent-tool-test-path" value={testPath} maxLength={2048} onChange={(event) => setTestPath(event.target.value)} placeholder="me" /><FieldDescription>Below the base URL. Test does a GET of it. Empty: Test checks only the token.</FieldDescription></Field>
+        </> : <>
+          <Field><FieldLabel htmlFor="agent-tool-header">Credential header</FieldLabel><Input id="agent-tool-header" value={header} maxLength={100} onChange={(event) => setHeader(event.target.value)} /></Field>
+          <Field>
+            <FieldLabel htmlFor="agent-tool-secret">Secret</FieldLabel>
+            <PasswordInput id="agent-tool-secret" value={secret} autoComplete="off" disabled={!canKeepSecrets} onChange={(event) => setSecret(event.target.value)} placeholder="Bearer …" />
+            <FieldDescription>{canKeepSecrets ? 'The full header value, for example “Bearer <token>”. Shared by everyone who may use this tool. Orbit never shows it again.' : 'This server has no ORBIT_APP_KEY, so it cannot keep secrets.'}</FieldDescription>
+          </Field>
+        </>}
+        {kind === 'http' ? <Field className="min-[900px]:col-span-2"><FieldLabel htmlFor="agent-tool-graphql-path">GraphQL path</FieldLabel><Input id="agent-tool-graphql-path" value={graphqlPath} maxLength={2048} onChange={(event) => setGraphqlPath(event.target.value)} placeholder="/graphql" /><FieldDescription>Optional. After you add the tool, a switch can let GraphQL reads at this exact path run without approval. It is off until you turn it on.</FieldDescription></Field> : null}
         <RolesField value={roles} onChange={setRoles} />
-        <Button className="justify-self-start" type="submit" disabled={create.isPending || test.isPending || !name.trim() || !url.trim() || roles.length === 0}>Add</Button>
+        <Button className="justify-self-start" type="submit" disabled={create.isPending || test.isPending || !name.trim() || !url.trim() || roles.length === 0 || oauthIncomplete}>Add</Button>
         {create.isError ? <p className="text-destructive min-[900px]:col-span-2" role="alert">{message(create.error, 'The tool could not be added.')}</p> : null}
       </FieldGrid>
     </form>
@@ -120,6 +199,11 @@ function IntegrationCard({ integration }: { integration: AgentIntegration }) {
   const test = useTestAgentIntegration(workspace.id)
   const remove = useDeleteAgentIntegration(workspace.id)
   const [secret, setSecret] = useState('')
+  const [clientId, setClientId] = useState('')
+  const [clientSecret, setClientSecret] = useState('')
+  const [testPath, setTestPath] = useState(integration.test_path ?? '')
+  const [graphqlPath, setGraphqlPath] = useState(integration.graphql_read_path ?? '')
+  const oauth = integration.auth_type === 'oauth'
   const enabled = integration.tools?.filter((tool) => tool.enabled).map((tool) => tool.name) ?? []
 
   const save = (input: Parameters<typeof update.mutate>[0]['input'], done?: string) =>
@@ -147,13 +231,26 @@ function IntegrationCard({ integration }: { integration: AgentIntegration }) {
         <RowIcon>{integration.kind === 'mcp' ? <Category /> : <Code />}</RowIcon>
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <code className="text-[13px] [overflow-wrap:anywhere] text-foreground">{integration.url}</code>
-          <span className="text-xs text-muted-foreground/70">{integration.secret_set ? `Credential set in ${integration.auth_header}` : 'No credential'} · changed {relativeTime(new Date(integration.updated_at).toISOString())}</span>
+          {oauth ? <code className="text-xs [overflow-wrap:anywhere] text-muted-foreground">Token URL: {integration.oauth_token_url}</code> : null}
+          <span className="text-xs text-muted-foreground/70">{oauth ? `OAuth client credentials, token in ${integration.auth_header}` : integration.secret_set ? `Credential set in ${integration.auth_header}` : 'No credential'} · changed {relativeTime(new Date(integration.updated_at).toISOString())}</span>
         </div>
       </SettingsRow>
       <SettingsRow>
         <RolesField value={integration.allowed_roles} onChange={(roles) => { if (roles.length) save({ allowed_roles: roles }) }} />
       </SettingsRow>
-      <SettingsRow>
+      {oauth ? <SettingsRow>
+        <form className="flex w-full flex-wrap items-end gap-2" onSubmit={(event) => { event.preventDefault(); if (clientId.trim() && clientSecret.trim()) save({ oauth_client_id: clientId.trim(), oauth_client_secret: clientSecret.trim() }, 'Client replaced'); setClientId(''); setClientSecret('') }}>
+          <Field className="min-w-48 flex-1">
+            <FieldLabel htmlFor={`agent-tool-client-id-${integration.id}`}>Replace client ID</FieldLabel>
+            <Input id={`agent-tool-client-id-${integration.id}`} value={clientId} autoComplete="off" onChange={(event) => setClientId(event.target.value)} placeholder="Saved; type to replace" />
+          </Field>
+          <Field className="min-w-48 flex-1">
+            <FieldLabel htmlFor={`agent-tool-client-secret-${integration.id}`}>Replace client secret</FieldLabel>
+            <PasswordInput id={`agent-tool-client-secret-${integration.id}`} value={clientSecret} autoComplete="off" onChange={(event) => setClientSecret(event.target.value)} placeholder="Saved; type to replace" />
+          </Field>
+          <Button variant="outline" type="submit" disabled={!clientId.trim() || !clientSecret.trim() || update.isPending}>Save client</Button>
+        </form>
+      </SettingsRow> : <SettingsRow>
         <form className="flex w-full flex-wrap items-end gap-2" onSubmit={(event) => { event.preventDefault(); if (secret) save({ secret, auth_header: integration.auth_header ?? 'Authorization' }, 'Secret replaced'); setSecret('') }}>
           <Field className="min-w-60 flex-1">
             <FieldLabel htmlFor={`agent-tool-secret-${integration.id}`}>Replace secret</FieldLabel>
@@ -162,7 +259,32 @@ function IntegrationCard({ integration }: { integration: AgentIntegration }) {
           <Button variant="outline" type="submit" disabled={!secret || update.isPending}>Save secret</Button>
           {integration.secret_set ? <Button variant="ghost" type="button" disabled={update.isPending} onClick={() => save({ secret: '' }, 'Secret removed')}>Remove secret</Button> : null}
         </form>
-      </SettingsRow>
+      </SettingsRow>}
+      {integration.kind === 'http' ? <SettingsRow>
+        <form className="flex w-full flex-wrap items-end gap-2" onSubmit={(event) => { event.preventDefault(); save({ test_path: testPath.trim() }, 'Test path saved') }}>
+          <Field className="min-w-60 flex-1">
+            <FieldLabel htmlFor={`agent-tool-test-path-${integration.id}`}>Test path</FieldLabel>
+            <Input id={`agent-tool-test-path-${integration.id}`} value={testPath} maxLength={2048} onChange={(event) => setTestPath(event.target.value)} placeholder={oauth ? 'Empty: Test checks only the token' : 'Empty: Test does a GET of the base URL'} />
+          </Field>
+          <Button variant="outline" type="submit" disabled={testPath.trim() === (integration.test_path ?? '') || update.isPending}>Save test path</Button>
+        </form>
+      </SettingsRow> : null}
+      {integration.kind === 'http' ? <SettingsRow>
+        <form className="flex w-full flex-wrap items-end gap-2" onSubmit={(event) => { event.preventDefault(); save({ graphql_read_path: graphqlPath.trim() }, 'GraphQL path saved') }}>
+          <Field className="min-w-60 flex-1">
+            <FieldLabel htmlFor={`agent-tool-graphql-path-${integration.id}`}>GraphQL path</FieldLabel>
+            <Input id={`agent-tool-graphql-path-${integration.id}`} value={graphqlPath} maxLength={2048} onChange={(event) => setGraphqlPath(event.target.value)} placeholder="/graphql" />
+          </Field>
+          <Button variant="outline" type="submit" disabled={graphqlPath.trim() === (integration.graphql_read_path ?? '') || update.isPending}>Save GraphQL path</Button>
+        </form>
+      </SettingsRow> : null}
+      {integration.kind === 'http' ? <SettingsRow className="flex-nowrap">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="text-[13px] font-medium text-foreground">Run GraphQL reads without approval</span>
+          <span className="text-xs text-muted-foreground/70">Only one query at exactly the GraphQL path. Mutations and other POST paths still need a yes. Reads can return customer data to the agent and the thread.{integration.graphql_reads_enabled && !integration.allowed_methods.includes('POST') ? ' Allow POST below, or the agent cannot send them.' : ''}</span>
+        </div>
+        <Switch aria-label="Run GraphQL reads without approval" checked={integration.graphql_reads_enabled} disabled={update.isPending || !integration.graphql_read_path} onCheckedChange={(on) => save({ graphql_reads_enabled: on })} />
+      </SettingsRow> : null}
       {integration.kind === 'http' ? <SettingsRow>
         <FieldSet className="flex-row flex-wrap gap-[18px]">
           <FieldLegend variant="label">Allowed methods</FieldLegend>
