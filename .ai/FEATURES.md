@@ -481,6 +481,10 @@ turns its routes, navigation and shortcuts off.
 - Sessions lists the current account's active devices. It shows device/browser and last active only, with controls to revoke any non-current session.
 - Chat administration remains separate at `/chat/settings`.
 
+## Apps
+
+Owners and admins add custom web apps in Workspace settings → Apps (`docs/apps.md`, `.ai/apps-design.md`). Each has allowed roles, an icon and an open mode. Members with an allowed role get a sidebar section "Apps" and `/apps/:slug`: a full-size frame of a same-origin wrapper document with its own CSP, plus Reload and Open in a new tab. `new_tab` apps open directly from the sidebar. Others get a 404; agent sessions are refused. With redirect URIs set, the app is an OpenID Connect client on Orbit's OAuth server: secret shown once, no consent screen, tokens that work only at `/oauth/userinfo`. Mobile lists the apps in Settings and opens the browser.
+
 ## Mobile presentation
 
 - Tasks, Docs, Mail, Chat, DMs, and Inbox use their own compact headers instead of the global topbar.
