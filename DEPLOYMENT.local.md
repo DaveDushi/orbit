@@ -4,12 +4,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, local merge commit 29c694cd495000cd62a0e0ba7b53cc42bc573209
-  (`main` with the `agent-integrations` branch merged).
+- Source: DaveDushi/orbit, local merge commit aedbc85e1c4f06939e31280c0e5a481822291b95
+  (`main` with the `agent-model-setting` branch merged).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:29c694c`); fork commits have no published upstream image.
-- Image ID: sha256:d11ba31eebb7a9accb29aafcf6b448e06db30d184743bcd503f894734f2c0f9c
-- Team agent sidecar code (`/opt/orbit-agent`): the same merge commit 29c694c.
+  (`orbit:aedbc85`); fork commits have no published upstream image.
+- Image ID: sha256:5f136c84e6b20a9f4e3f1914307131395e5a3cf5ed09c1c924bdb27a552ac592
+- Team agent sidecar code (`/opt/orbit-agent`): the same merge commit aedbc85.
 - Executable: /usr/local/bin/orbit; unprivileged system user: orbit.
 - Config: /etc/orbit/orbit.env (production mode); registration remains closed in instance settings.
 - Environment-only startup: /etc/systemd/system/orbit.service.d/environment.conf.
@@ -181,6 +181,59 @@ sudo systemctl start orbit
 ```
 
 ## Verification performed
+
+### October 30, 2026 upgrade: agent model and thinking level
+
+Merged the `agent-model-setting` branch (`c65ffc4`, which contains `main` up to `c4ca69c`) into `main` (merge
+`aedbc85`); the merged tree equals the tested branch. Tests on this code: sidecar typecheck and 24 tests; web
+typecheck, lint and build; mobile typecheck and 135 tests; `agent_api` (13), `app_smoke` (18) and `backup` (21) on
+SQLite and Postgres; platform `database` (43) on Postgres. Platform `database` on SQLite is intermittent:
+`page_search_migration_backfills_and_tracks_pages` fails with "malformed inverted index for FTS5 table
+main.page_search" (the `PRAGMA integrity_check` false positive in `.ai/lessons.md`). `c4ca69c` shows the same failure
+(run 7 of a series stopped at the first failure; another session measured 3 of 15 full runs on both trees), so it does
+not come from this change; the test is not changed yet. The iOS bundle was not checked (no Metro server). The image
+`orbit:aedbc85` built with the limited builder and `deploy/smoke.sh` passed.
+
+Rehearsed migration 66 (`0066_agent_model_settings.sql`, one new table) on a copy in
+`/var/lib/orbit/rehearsal-aedbc85-T3zWkq` (deleted afterwards). Stopped `orbit-agent` and `orbit`. Counts before:
+schema 65, 6 users, 1 workspace, 2 projects, 15 tasks, 18 pages, 15 attachment blobs, 370 chat messages, 35 agent
+inputs, 3 ChatGPT connections, 0 agent memories, 0 integrations, 0 team instructions. Created and verified snapshot
+`01a18c0f-83d8-72b8-b885-2b44c623a630` (`/var/backups/orbit/snapshots/01a18c0f-83d8-72b8-b885-2b44c623a630`) with the old CLI. Saved the sidecar data as
+`/var/backups/orbit-agent/orbit-agent-before-aedbc85.tgz` and the old sidecar code as
+`/opt/orbit-agent.before-aedbc85`; the old executable is `/usr/local/bin/orbit-29c694c` and the new one is also kept
+as `/usr/local/bin/orbit-aedbc85`. Applied migration 66 live: schema version 66, quick-check and foreign-key checks
+pass, all counts unchanged. Installed the new sidecar `src`; `package.json`, `package-lock.json` and `tsconfig.json`
+did not change. `/etc/orbit/orbit.env`, `/etc/orbit/agent.env` and nginx did not change.
+
+Incident during this deploy: the sidecar did not start for about 30 seconds after the switch (09:06 to 09:07 UTC)
+because `/opt/orbit-agent/node_modules` was empty. At 07:32 UTC, `rm -rf` on a path with a trailing slash went through a
+worktree symlink to that directory; the running sidecar did not show it until it restarted. Restored from
+`/opt/orbit-agent.before-29c694c` (same lockfile, also identical to the `before-51c3035` copy), in `/opt/orbit-agent` and
+in `/opt/orbit-agent.before-aedbc85`. No input was queued in that time.
+
+Verified: `orbit`, `orbit-agent` and nginx are active; readiness (all checks); revision `aedbc85`; sidecar health
+`mock: false`; sidecar `/models` lists 7 models with default `gpt-6.1-sol` and answers 401 without the secret; the
+internal inputs route gives `model: null, thinking: null` with the secret and 401 without it;
+`/api/v1/admin/agent/model` answers 401 without a session and 403 for a foreign origin; `agent_model_settings` is empty,
+so runs keep `gpt-6.1-sol` with no thinking level; https://orbit.wellrox.com/ answers 307 to the exe.dev login. Admin → AI
+agent was checked signed in, in a browser on loopback, against a copy of the migrated production database served by the
+new binary with the mock sidecar (a session was added and the push subscriptions removed in the copy only; the copy was
+deleted): the page shows "Default (GPT-6.1 Sol)" and thinking "Default", and a mock run answered `Model: gpt-6.1-sol,
+thinking: default`. A real agent run on production and the live signed-in page were **not** tested from this VM: they
+need a person's login and ChatGPT account. Stripe was not configured.
+
+Rollback (an older binary cannot read a version 66 database; preserve the current database first; work after the
+snapshot is lost):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-29c694c backup verify 01a18c0f-83d8-72b8-b885-2b44c623a630 && /usr/local/bin/orbit-29c694c backup restore 01a18c0f-83d8-72b8-b885-2b44c623a630'
+sudo install -m 755 /usr/local/bin/orbit-29c694c /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo cp -a /opt/orbit-agent.before-aedbc85 /opt/orbit-agent
+sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-aedbc85.tgz
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+```
 
 ### October 30, 2026 upgrade: agent tools (integrations)
 
