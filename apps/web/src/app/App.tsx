@@ -43,6 +43,8 @@ import { AgentNamePage } from '@/features/agent/AgentNamePage'
 import { TeamInstructionsPage } from '@/features/agent/TeamInstructionsPage'
 import { MemoryPage as AgentMemoryPage } from '@/features/agent/MemoryPage'
 import { AgentToolsPage } from '@/features/agentIntegrations/AgentToolsPage'
+import { AppPage } from '@/features/apps/AppPage'
+import { AppsSettingsPage } from '@/features/apps/AppsSettingsPage'
 import { InboxPage } from '@/features/inbox/pages/InboxPage'
 import { AuthGate, GuestGate } from '@/features/auth/AuthGate'
 import { AcceptInvitationPage } from '@/features/auth/pages/AcceptInvitationPage'
@@ -92,6 +94,7 @@ export default function App() {
           <Route element={<WorkspaceProvider><Outlet /></WorkspaceProvider>}>
             <Route element={<AppShell />}>
               <Route index element={<HomePage />} />
+              <Route path="apps/:slug" element={<AppPage />} />
               <Route path="tasks" element={<TasksPage />} />
               <Route path="tasks/projects/:projectId/settings" element={<ProjectSettingsPage />} />
               <Route path="tasks/:taskId" element={<TasksPage />} />
@@ -158,6 +161,7 @@ export default function App() {
                 <Route path="api-tokens" element={<ApiTokensPage />} />
                 <Route path="file-storage" element={<FileStoragePage />} />
                 <Route path="agent-tools" element={<AgentToolsPage />} />
+                <Route path="apps" element={<AppsSettingsPage />} />
               </Route>
               <Route path="*" element={<Navigate to="/tasks" replace />} />
             </Route>

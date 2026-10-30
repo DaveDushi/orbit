@@ -1,8 +1,10 @@
 import { canDeleteStorageFile, storageFileLabel, storageFilesPage } from '@orbit/api/storage'
 import type { StorageFile } from '@orbit/api/generated/types.gen'
 import { router } from 'expo-router'
+import { readApps } from '@orbit/api/apps'
+import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { View } from 'react-native'
+import { Linking, View } from 'react-native'
 
 import { ConfirmDialog, type ConfirmRequest } from '../../../components/settings/Dialog'
 import { ACCOUNT_NAV, Note, RowIcon, RowText, SettingsCard, SettingsRow, SettingsShell, WORKSPACE_NAV } from '../../../components/settings/Shell'
@@ -44,6 +46,8 @@ export default function GeneralScreen() {
           <LargestFiles files={files} page={page} loading={storage.isFetching} onPage={setOffset} />
         ) : null}
       </SettingsCard>
+
+      <AppsCard />
 
       <SettingsCard title="Account" description={`${user.email} on ${session.server}`} flush>
         {ACCOUNT_NAV.map((item, index) => (
@@ -109,6 +113,25 @@ function StorageBar({ label, fraction }: { label: string; fraction: number | nul
         </View>
       ) : null}
     </View>
+  )
+}
+
+/** The workspace's custom web apps this person may open. On a phone they open in the browser, not in a frame. */
+function AppsCard() {
+  const { client, workspaceId } = useOrbit()
+  const { colors } = useTheme()
+  const apps = useQuery({ queryKey: ['apps', workspaceId], queryFn: () => readApps(client, workspaceId) })
+  if (!apps.data?.length) return null
+  return (
+    <SettingsCard title="Apps" description="Open in your browser." flush>
+      {apps.data.map((app, index) => (
+        <SettingsRow key={app.slug} first={index === 0} label={`Open ${app.name}`} onPress={() => void Linking.openURL(app.url)}>
+          <RowIcon icon="category" />
+          <RowText title={app.name} />
+          <Icon name="chevronRight" size={14} color={colors.mutedForeground} />
+        </SettingsRow>
+      ))}
+    </SettingsCard>
   )
 }
 
