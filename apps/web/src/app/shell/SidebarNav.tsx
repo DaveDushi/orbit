@@ -15,6 +15,8 @@ import { useProjects } from '@/features/tasks/api/projects'
 import { NewProjectModal } from '@/features/tasks/components/NewProjectModal'
 import { savedViewsQueryOptions } from '@/features/views/api/views'
 import { WorkspaceContext } from '@/features/workspaces/workspaceContext'
+import { useApps } from '@/features/apps/api'
+import { appIcon } from '@/features/apps/appIcons'
 import { settingsAreaOf, useSettingsArea, type SettingsAreaName } from '@/features/settings/settingsNav'
 import { chatEnabled, docsHidden } from './productNavigation'
 import { hostsPageList } from './sidebarSlot'
@@ -357,6 +359,22 @@ function SettingsAreaNav({ area, onNavigate, onBack }: { area: SettingsAreaName;
   )
 }
 
+/** The workspace's custom apps this person may open. Shows nothing while there are none. */
+function AppLinks({ onNavigate }: { onNavigate?: () => void }) {
+  const collapsed = useContext(SidebarNavCollapsed)
+  const workspaceId = useContext(WorkspaceContext)?.workspace.id ?? ''
+  const apps = useApps(workspaceId).data ?? []
+  if (apps.length === 0) return null
+  return (
+    <>
+      <SidebarSection label="Apps" collapsed={collapsed} />
+      {apps.map((app) => app.open_mode === 'new_tab'
+        ? <SidebarNavItem key={app.slug} to={app.url} target="_blank" rel="noopener noreferrer" active={false} icon={appIcon(app.icon)} label={app.name} aria-label={`${app.name}, opens in a new tab`} onClick={onNavigate} />
+        : <SidebarNavItem key={app.slug} to={`/apps/${app.slug}`} icon={appIcon(app.icon)} label={app.name} onClick={onNavigate} />)}
+    </>
+  )
+}
+
 /** Grouped sidebar navigation — shared by the desktop sidebar and the mobile drawer. */
 export function SidebarNav({
   onNavigate,
@@ -502,6 +520,7 @@ export function SidebarNav({
                   ) : (
                     <SidebarNavComingSoon key={link.to} icon={link.icon} label={link.label} />
                   ))}
+                  <AppLinks onNavigate={onNavigate} />
                   <SidebarSection label="Personal" collapsed={collapsed} />
                   <SidebarNavItem to={activityPath} icon={Bell} label="Activity" unread={inboxUnread} onClick={onNavigate} />
                   {/* the new UI keeps these in the Tasks area */}
