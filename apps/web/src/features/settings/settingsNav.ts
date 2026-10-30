@@ -60,6 +60,7 @@ const AREAS: Record<SettingsAreaName, SettingsArea> = {
           { to: '/settings/github', label: 'GitHub', icon: Link2 },
           { to: '/settings/api-tokens', label: 'API tokens', icon: Key, permission: 'api_tokens.manage' },
           { to: '/settings/agent-tools', label: 'Agent tools', icon: Category, permission: 'integrations.manage', agent: true },
+          { to: '/settings/apps', label: 'Apps', icon: Category, permission: 'apps.manage' },
         ],
       },
       {

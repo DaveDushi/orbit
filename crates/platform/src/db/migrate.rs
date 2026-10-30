@@ -465,9 +465,14 @@ impl MigrationRunner {
                     false,
                 ),
                 Migration::new(
-                    68,
+                    67,
+                    include_str!("../../../../apps/server/migrations/0067_workspace_apps.sql"),
+                    false,
+                ),
+                Migration::new(
+                    69,
                     include_str!(
-                        "../../../../apps/server/migrations/0068_page_file_versions.sql"
+                        "../../../../apps/server/migrations/0069_page_file_versions.sql"
                     ),
                     false,
                 ),
@@ -590,9 +595,14 @@ impl MigrationRunner {
                 false,
             ),
             Migration::new(
-                68,
+                67,
+                include_str!("../../../../apps/server/migrations/postgres/0067_workspace_apps.sql"),
+                false,
+            ),
+            Migration::new(
+                69,
                 include_str!(
-                    "../../../../apps/server/migrations/postgres/0068_page_file_versions.sql"
+                    "../../../../apps/server/migrations/postgres/0069_page_file_versions.sql"
                 ),
                 false,
             ),

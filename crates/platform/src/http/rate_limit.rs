@@ -297,7 +297,11 @@ pub(super) fn endpoint_class(method: &Method, path: &str) -> Option<EndpointClas
     ) {
         return Some(EndpointClass::Authentication);
     }
-    if path == "/mcp" || path.starts_with("/.well-known/oauth-") {
+    if matches!(
+        path,
+        "/mcp" | "/oauth/jwks" | "/oauth/userinfo" | "/.well-known/openid-configuration"
+    ) || path.starts_with("/.well-known/oauth-")
+    {
         return Some(EndpointClass::General);
     }
     if path != "/api" && !path.starts_with("/api/") {
@@ -327,6 +331,25 @@ mod tests {
     use super::*;
 
     const TASKS: &str = "/api/v1/tasks";
+
+    #[test]
+    fn the_public_openid_endpoints_are_limited() {
+        assert_eq!(
+            endpoint_class(&Method::POST, "/oauth/token"),
+            Some(EndpointClass::Authentication)
+        );
+        for path in [
+            "/oauth/jwks",
+            "/oauth/userinfo",
+            "/.well-known/openid-configuration",
+        ] {
+            assert_eq!(
+                endpoint_class(&Method::GET, path),
+                Some(EndpointClass::General),
+                "{path}"
+            );
+        }
+    }
 
     async fn permits(limiter: &RateLimiter, ip: IpAddr, method: &Method, path: &str) -> bool {
         limiter

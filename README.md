@@ -54,4 +54,5 @@ Claude, Codex, or Grok, see [docs/mcp.md](docs/mcp.md).
 
 - [Deployment and operations](docs/operations.md)
 - [MCP server and client setup](docs/mcp.md)
+- [Apps: your own web apps in Orbit, with one login](docs/apps.md)
 - [GitHub integration](docs/github.md)

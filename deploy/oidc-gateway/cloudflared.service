@@ -1,0 +1,20 @@
+[Unit]
+Description=Cloudflare Tunnel to the Orbit OIDC gateway (remotely-managed)
+After=network-online.target orbit-oidc-gateway.service
+Wants=network-online.target
+
+[Service]
+# Holds TUNNEL_TOKEN (mode 600, root). The token is never on a command line. Keep the log level at
+# its default: `debug` logs request URLs and headers.
+EnvironmentFile=/etc/orbit-oidc-gateway/tunnel.env
+ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run
+DynamicUser=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

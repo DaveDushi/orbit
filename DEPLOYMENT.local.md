@@ -4,12 +4,14 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, local merge commit aedbc85e1c4f06939e31280c0e5a481822291b95
-  (`main` with the `agent-model-setting` branch merged).
+- Source: DaveDushi/orbit, local merge commit 6808e1b1a773a2d0b9fdbf24d5b9c6930ea73c84
+  (`main` with the `orbit-apps` branch merged).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:aedbc85`); fork commits have no published upstream image.
-- Image ID: sha256:5f136c84e6b20a9f4e3f1914307131395e5a3cf5ed09c1c924bdb27a552ac592
-- Team agent sidecar code (`/opt/orbit-agent`): the same merge commit aedbc85.
+  (`orbit:6808e1b`); fork commits have no published upstream image.
+- Image ID: sha256:b0592e2e51bbc16a296afe08d714621dc0d82acd8879465ba7fa5f30b6f3be4e
+- Team agent sidecar code (`/opt/orbit-agent`): merge commit aedbc85. `apps/agent` did not change in 6808e1b.
+- OIDC gateway: `orbit-oidc-gateway.service`, nginx on `127.0.0.1:8400`, config in `/etc/orbit-oidc-gateway/`
+  (see `docs/apps.md`). `cloudflared` is NOT installed.
 - Executable: /usr/local/bin/orbit; unprivileged system user: orbit.
 - Config: /etc/orbit/orbit.env (production mode); registration remains closed in instance settings.
 - Environment-only startup: /etc/systemd/system/orbit.service.d/environment.conf.
@@ -181,6 +183,49 @@ sudo systemctl start orbit
 ```
 
 ## Verification performed
+
+### October 30, 2026 upgrade: Orbit Apps and Sign in with Orbit
+
+Merged `orbit-apps` (`34a1eb5`) into `main` (merge `6808e1b`; only this file differs from the tested branch). Tests on this
+code are in the branch's report. The full workspace suite was not run. Platform `database` was run once in full, with one
+schema check failing; that check was fixed and rerun alone. The real Cloudflare sign-in, Safari and the iOS bundle were not checked. The image `orbit:6808e1b` built with the
+limited builder and `deploy/smoke.sh` passed. An earlier build stopped when the VM rebooted at about 11:01 UTC, which also
+grew the disk to 40 GB. A backup from 10:49 UTC (`01a18c6e-41ff-7553-ad0f-89f91fef3183`) is older than the one below: do not
+use it for rollback.
+
+Stopped `orbit-agent` and `orbit`. Counts before: schema 66, 6 users, 1 workspace, 3 projects, 61 tasks, 31 pages, 43
+attachment blobs, 381 chat messages, 40 agent inputs, 0 integrations. Created and verified snapshot
+`01a18c97-844c-7482-998d-618f250d27be` (`/var/backups/orbit/snapshots/01a18c97-844c-7482-998d-618f250d27be`) with the old
+CLI. Saved the sidecar data as `/var/backups/orbit-agent/orbit-agent-before-6808e1b.tgz`. Sidecar code did not change, so
+no new code copy was made. The old executable is `/usr/local/bin/orbit-aedbc85`, and the new one is also kept as
+`/usr/local/bin/orbit-6808e1b`. Rehearsed migration 67 (`0067_workspace_apps.sql`, four new tables) on a copy in
+`/var/lib/orbit/rehearsal-6808e1b-*` (deleted afterwards): quick-check and foreign-key checks pass. Applied it live: schema
+version 67, quick-check and foreign-key checks pass, all counts unchanged. `/etc/orbit/orbit.env`, `/etc/orbit/agent.env` and
+the main nginx did not change.
+
+Verified: `orbit`, `orbit-agent` and nginx are active; readiness (all checks); revision `6808e1b`; sidecar listens;
+discovery 200 with issuer `https://orbit.wellrox.com`; `/oauth/jwks` 200 with no keys yet (the first app with sign-in makes
+the key); the apps routes and userinfo answer 401 without a session or token; a foreign origin write 403; MCP metadata 200;
+the global CSP has `frame-src 'self' https://www.youtube-nocookie.com` and `frame-ancestors 'none'`;
+https://orbit.wellrox.com/ answers 307 to the exe.dev login. The signed-in Apps page and a real sign-in were **not** tested
+on production from this VM: they need a person's login.
+
+Gateway: installed per `docs/apps.md`, tunnel section, step 2. Local checks on `127.0.0.1:8400`: `/oauth/jwks` 200,
+`POST /oauth/token` 401 with a wrong client, and 404 for `/login`, `/`, `/api/v1/auth/me`, `/oauth/authorize`, traversal,
+encoded paths and `GET /oauth/token`. `cloudflared` is on hold: not installed, no tunnel. The Products app is not added yet.
+
+Rollback (an older binary cannot read a version 67 database; preserve the current database first; work after the snapshot
+is lost):
+
+```sh
+sudo systemctl disable --now orbit-oidc-gateway
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-aedbc85 backup verify 01a18c97-844c-7482-998d-618f250d27be && /usr/local/bin/orbit-aedbc85 backup restore 01a18c97-844c-7482-998d-618f250d27be'
+sudo install -m 755 /usr/local/bin/orbit-aedbc85 /usr/local/bin/orbit
+sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-6808e1b.tgz
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+```
 
 ### October 30, 2026 upgrade: agent model and thinking level
 

@@ -41041,7 +41041,8 @@
           "chat.manage",
           "billing.manage",
           "storage.manage",
-          "agent_memory.manage"
+          "agent_memory.manage",
+          "apps.manage"
         ]
       },
       "PlanInterval": {
@@ -44192,7 +44193,8 @@
       "comments.moderate",
       "chat.manage",
       "storage.manage",
-      "agent_memory.manage"
+      "agent_memory.manage",
+      "apps.manage"
     ],
     "member": [],
     "owner": [
@@ -44210,7 +44212,8 @@
       "chat.manage",
       "billing.manage",
       "storage.manage",
-      "agent_memory.manage"
+      "agent_memory.manage",
+      "apps.manage"
     ]
   }
 }

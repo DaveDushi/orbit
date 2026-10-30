@@ -209,7 +209,7 @@ favorites through `/pages/favorites` (list), `/pages/{page_id}/favorite` (PUT/DE
   `PUT …/content` takes `text`, or `rows` for csv/tsv, which keeps the file's delimiter, line ends and BOM and quotes only
   what needs it. Same permission as the page's editor: every member who sees the page, and nobody while it is locked
   (423) or the workspace is read-only (402). There is no viewer role. A save needs `expected_version` (409 otherwise,
-  nothing overwritten), makes a new blob and moves the old one to `page_file_versions` (migration 0068), which holds its
+  nothing overwritten), makes a new blob and moves the old one to `page_file_versions` (migration 0069), which holds its
   blob like a page file does; `…/versions` lists them, `…/versions/{n}/restore` puts one back as a new version. Audited
   `page.file_saved` / `page.file_restored`. Duplicates and exports take the current version only.
 - Header: breadcrumbs prefixed with the space (teamspace name, or a lock + "Private"; the mobile top bar too), presence
@@ -495,6 +495,10 @@ turns its routes, navigation and shortcuts off.
 - Workspace creation, members, invitations, fixed roles, ownership transfer, and sessions use persistent APIs.
 - Sessions lists the current account's active devices. It shows device/browser and last active only, with controls to revoke any non-current session.
 - Chat administration remains separate at `/chat/settings`.
+
+## Apps
+
+Owners and admins add custom web apps in Workspace settings → Apps (`docs/apps.md`, `.ai/apps-design.md`). Each has allowed roles, an icon and an open mode. Members with an allowed role get a sidebar section "Apps" and `/apps/:slug`: a full-size frame of a same-origin wrapper document with its own CSP, plus Reload and Open in a new tab. `new_tab` apps open directly from the sidebar. Others get a 404; agent sessions are refused. With redirect URIs set, the app is an OpenID Connect client on Orbit's OAuth server: secret shown once, no consent screen, tokens that work only at `/oauth/userinfo`. Mobile lists the apps in Settings and opens the browser.
 
 ## Mobile presentation
 

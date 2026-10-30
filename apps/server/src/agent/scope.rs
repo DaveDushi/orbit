@@ -17,10 +17,11 @@ pub const TOKEN_PREFIX: &str = "orbit-agent.";
 
 /// Workspace route segments an agent session never reaches: credentials, integrations, access,
 /// data export, administration, the agent's own team instructions and its integrations.
-const DENIED: [&str; 11] = [
+const DENIED: [&str; 13] = [
     "agent",
     "agent-integrations",
     "api-tokens",
+    "apps",
     "audit",
     "github",
     "imports",
@@ -29,6 +30,7 @@ const DENIED: [&str; 11] = [
     "restore",
     "storage",
     "transfer-ownership",
+    "workspace-apps",
 ];
 
 /// Whether an agent session of `workspace_id` may make this request.
@@ -189,6 +191,10 @@ mod tests {
             (Method::DELETE, "/agent-memory/private/summaries/0-1"),
             (Method::GET, "/agent-integrations"),
             (Method::POST, "/agent-integrations/abc/test"),
+            (Method::GET, "/apps"),
+            (Method::GET, "/apps/demo/frame"),
+            (Method::GET, "/workspace-apps"),
+            (Method::POST, "/workspace-apps/abc/rotate-secret"),
         ] {
             assert!(!allows(WORKSPACE, &method, &path(rest)), "{method} {rest}");
         }
