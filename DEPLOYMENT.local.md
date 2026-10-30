@@ -4,12 +4,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, local merge commit 51c303545462520228a900283aaf499e293e93bd
-  (`main` with the `agent-settings` branch merged).
+- Source: DaveDushi/orbit, local merge commit 29c694cd495000cd62a0e0ba7b53cc42bc573209
+  (`main` with the `agent-integrations` branch merged).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:51c3035`); fork commits have no published upstream image.
-- Image ID: sha256:7fce9944f674cfdc7c72685af36db7e040a17192f4f526f170ea65cf41f184fa
-- Team agent sidecar code (`/opt/orbit-agent`): the same merge commit 51c3035.
+  (`orbit:29c694c`); fork commits have no published upstream image.
+- Image ID: sha256:d11ba31eebb7a9accb29aafcf6b448e06db30d184743bcd503f894734f2c0f9c
+- Team agent sidecar code (`/opt/orbit-agent`): the same merge commit 29c694c.
 - Executable: /usr/local/bin/orbit; unprivileged system user: orbit.
 - Config: /etc/orbit/orbit.env (production mode); registration remains closed in instance settings.
 - Environment-only startup: /etc/systemd/system/orbit.service.d/environment.conf.
@@ -109,6 +109,11 @@ is a Node sidecar from
 - Agent memory (team memory per workspace, private memory per person) is in Orbit's
   database (`agent_memory_*` tables, migration 63), so Orbit's backups include it. People
   see and delete entries in Account settings → Agent memory.
+- Agent tools (remote MCP servers and HTTP APIs) are set up by workspace owners and admins in
+  Workspace settings → Agent tools (`agent_integrations`, migration 65). Orbit keeps each tool's
+  credential sealed with the app key and makes every external call itself (HTTPS, public
+  addresses only); writes need the driver's "yes" in the thread. None is set up yet.
+  `ORBIT_AGENT_INTEGRATION_TEST_HOSTS` is for local tests only and must stay unset here.
 
 ```sh
 sudo systemctl status orbit-agent
@@ -176,6 +181,51 @@ sudo systemctl start orbit
 ```
 
 ## Verification performed
+
+### October 30, 2026 upgrade: agent tools (integrations)
+
+Merged the `agent-integrations` branch (through `b9fef38`, which already contains `main` up to `dcf4b8a`) into
+`main` (merge `29c694c`); the merged tree equals the tested branch. The branch session ran, on the code of this
+tree: clippy (`-D warnings`), `agent_integrations` (4, with local fake MCP and HTTP servers), `agent_api` (11),
+`app_smoke` (18), platform `database` (43) and `backup` (21) on SQLite and Postgres; the sidecar typecheck and its
+23 tests; the web typecheck, lint and build; and a browser run on a local test instance (owner page, approval
+question, a teammate's "yes" refused, the driver's "yes" runs the write once). The image `orbit:29c694c` built with
+the limited builder and `deploy/smoke.sh` passed.
+
+Stopped `orbit-agent` and `orbit`. Counts before: schema 64, 6 users, 1 workspace, 2 projects, 15 tasks,
+18 pages, 15 attachment blobs, 370 chat messages, 35 agent inputs, 3 ChatGPT connections, 0 agent memories.
+Created and verified snapshot `01a18b85-244e-75b7-a046-a1314f0b8b07`
+(`/var/backups/orbit/snapshots/01a18b85-244e-75b7-a046-a1314f0b8b07`) with the old CLI. Saved the sidecar data as
+`/var/backups/orbit-agent/orbit-agent-before-29c694c.tgz` and the old sidecar code as
+`/opt/orbit-agent.before-29c694c`; the old executable is `/usr/local/bin/orbit-51c3035` and the new one is also
+kept as `/usr/local/bin/orbit-29c694c`. Rehearsed migration 65 (`0065_agent_integrations.sql`, two new tables) in
+`/var/lib/orbit/rehearsal-29c694c-1J8f4d`, then applied it live: schema version 65, quick-check and foreign-key
+checks pass, all counts unchanged. Installed the new sidecar `src` (with `integrations.ts`); `package.json`,
+`package-lock.json` and `tsconfig.json` did not change. `/etc/orbit/orbit.env`, `/etc/orbit/agent.env` and nginx
+did not change.
+
+Verified: `orbit`, `orbit-agent` and nginx are active; readiness (all checks); revision `29c694c`; sidecar health
+`mock: false`; the internal agent API answers 200 with the sidecar's secret and 401 without it;
+`/api/v1/workspaces/<id>/agent-integrations`, `.../agent-tools`, `.../agent` and `/api/v1/agent` answer 401 without
+a session; origin checks (400/403); the frontend serves `/settings/agent-tools`; https://orbit.wellrox.com/
+answers 307/401 to the exe.dev login. Workspace settings → Agent tools was checked signed in, in a browser on the
+URL `https://orbit.wellrox.com`, against a copy of the migrated production database served by the new binary (a
+session was added to the copy only; no SMTP or S3 is configured; the copy was deleted): the page and its
+navigation link load without errors. No agent tool is set up in production; an agent run with one needs a
+person's ChatGPT account and was not tested from this VM. Stripe was not configured.
+
+Rollback (an older binary cannot read a version 65 database; preserve the current database first; work after the
+snapshot is lost):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-51c3035 backup verify 01a18b85-244e-75b7-a046-a1314f0b8b07 && /usr/local/bin/orbit-51c3035 backup restore 01a18b85-244e-75b7-a046-a1314f0b8b07'
+sudo install -m 755 /usr/local/bin/orbit-51c3035 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo cp -a /opt/orbit-agent.before-29c694c /opt/orbit-agent
+sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-29c694c.tgz
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+```
 
 ### October 29, 2026 upgrade: agent name and team instructions
 
