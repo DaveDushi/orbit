@@ -32,10 +32,12 @@ async function signIn(page: Page) {
   await page.goto(setupUrl)
   await page.getByLabel('Your name').fill('Orbit Owner')
   await page.getByLabel('Email').fill('owner@orbit.test')
-  await page.getByLabel('Password').fill(password)
+  await page.getByLabel('Password', { exact: true }).fill(password)
   await page.getByRole('button', { name: 'Create root account' }).click()
+  // The root user lands in Admin, with no workspace yet.
+  await page.getByRole('link', { name: 'Create workspace' }).click()
   await page.getByLabel('Workspace name').fill('Foundation')
-  await page.getByRole('button', { name: 'Create workspace' }).click()
+  await page.getByRole('button', { name: 'Create workspace' }).last().click()
   await page.getByLabel('Project name').fill('Launch')
   await page.getByRole('button', { name: 'Create project' }).click()
   await expect(page).toHaveURL(/\/tasks(?:\?|$)/)
@@ -43,18 +45,20 @@ async function signIn(page: Page) {
 
 test.describe('agent tools: OAuth client credentials', () => {
   test.skip(!process.env.ORBIT_AGENT_OAUTH_E2E, 'needs its own server: see the top of this file')
-  let fake: Server
+  let fake: Server | undefined
   let origin: string
 
   test.beforeAll(async () => {
+    // A fake server that outlives the test keeps the saved integration usable on a test instance.
+    if (process.env.ORBIT_E2E_FAKE_ORIGIN) { origin = process.env.ORBIT_E2E_FAKE_ORIGIN; return }
     fake = fakeOAuth()
     await new Promise<void>((resolve) => fake.listen(0, '127.0.0.1', resolve))
     origin = `http://127.0.0.1:${(fake.address() as AddressInfo).port}`
   })
-  test.afterAll(() => { fake.close() })
+  test.afterAll(() => { fake?.close() })
 
   test('setup form, Shopify preset, save and Test', async ({ page }) => {
-    await page.setViewportSize({ width: 1280, height: 1100 })
+    await page.setViewportSize({ width: 1280, height: 1500 })
     await signIn(page)
     await page.goto('/settings/agent-tools')
 
@@ -91,15 +95,24 @@ test.describe('agent tools: OAuth client credentials', () => {
 
     await card.getByRole('button', { name: 'Test', exact: true }).click()
     await expect(page.getByText('The token request worked. GET of shop.json answered HTTP 200.')).toBeVisible()
+    await page.waitForTimeout(600) // the toast's animation
     await page.screenshot({ path: `${shots}/4-test-success.png` })
 
     await page.getByLabel('Replace client ID').fill('other-client')
     await page.getByLabel('Replace client secret').fill('other-secret')
     await page.getByRole('button', { name: 'Save client' }).click()
     await expect(page.getByText('Client replaced')).toBeVisible()
+    await page.reload() // no older toasts over the result
     await card.getByRole('button', { name: 'Test', exact: true }).click()
     await expect(page.getByText(/HTTP 400 \(shop_not_permitted\)/)).toBeVisible()
     await expect(page.locator('body')).not.toContainText('cannot be performed')
+    await page.waitForTimeout(600) // the toast's animation
     await page.screenshot({ path: `${shots}/5-test-failure.png` })
+
+    // Ends with the client that works, for a look at a test instance afterwards.
+    await page.getByLabel('Replace client ID').fill('good-client')
+    await page.getByLabel('Replace client secret').fill('good-secret')
+    await page.getByRole('button', { name: 'Save client' }).click()
+    await expect(page.getByText('Client replaced')).toBeVisible()
   })
 })

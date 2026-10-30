@@ -1145,7 +1145,8 @@ async fn a_401_renews_and_retries_once_also_for_an_approved_write() {
     assert_eq!(fake.calls().len(), before + 2);
     assert_eq!(fake.tokens(), 4);
 
-    // A 403 is not retried.
+    // A 403 is not retried. The API accepts tok-4 again, which is still cached.
+    fake.refused.lock().unwrap().clear();
     *fake.api_status.lock().unwrap() = StatusCode::FORBIDDEN;
     let before = (fake.calls().len(), fake.tokens());
     let (_, read) = fixture
@@ -1156,7 +1157,7 @@ async fn a_401_renews_and_retries_once_also_for_an_approved_write() {
     *fake.api_status.lock().unwrap() = StatusCode::OK;
 
     // A failed token request is not retried: the call fails with its reason.
-    fake.refused.lock().unwrap().push("tok-5".to_owned());
+    fake.refused.lock().unwrap().push("tok-4".to_owned());
     *fake.token_answer.lock().unwrap() = (
         StatusCode::BAD_REQUEST,
         json!({ "error": "invalid_client", "error_description": "details-not-to-show" })
