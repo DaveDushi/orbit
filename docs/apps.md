@@ -113,12 +113,12 @@ Copy the client ID and the secret.
 | App ID | The client ID from Orbit |
 | Client secret | The secret from Orbit |
 | Auth URL | `<Orbit address>/oauth/authorize`: the browser goes here |
-| Token URL | `<public address>/oauth/token`: Cloudflare's servers call this |
-| Certificate URL | `<public address>/oauth/jwks`: Cloudflare's servers call this |
+| Token URL | `https://orbit-oidc.wellrox.com/oauth/token`: Cloudflare's servers call this, through the tunnel below |
+| Certificate URL | `https://orbit-oidc.wellrox.com/oauth/jwks`: Cloudflare's servers call this, through the tunnel below |
 | Proof Key for Code Exchange (PKCE) | On |
 | Email claim | `email` (the default scopes `openid email profile` include it) |
 
-`<Orbit address>` is `ORBIT_PUBLIC_ORIGIN`. The ID token's `iss` is always this address, also when the Token URL is on another address. `<public address>` is the gateway below if Orbit is behind a login, else the same as `<Orbit address>`.
+`<Orbit address>` is `ORBIT_PUBLIC_ORIGIN`, which stays behind its login. If Orbit has no login in front of it, use that address for all three URLs and skip the tunnel. The ID token's `iss` is always `ORBIT_PUBLIC_ORIGIN`, whichever host served the token. Cloudflare's [generic OIDC documentation](https://developers.cloudflare.com/cloudflare-one/integrations/identity-providers/generic-oidc/) has no issuer field and does not say if it checks `iss`, so only a real sign-in proves this.
 
 **3. In the Access application** of `products.wellrox.com`, choose this login method and a policy. Add `workspace_role` under OIDC Claims if a policy needs the role.
 
@@ -126,56 +126,104 @@ Copy the client ID and the secret.
 
 | Path | Called by | Must be public |
 | --- | --- | --- |
-| `POST /oauth/token` | Cloudflare's servers | Yes |
-| `GET /oauth/jwks` | Cloudflare's servers | Yes |
+| `POST /oauth/token` | Cloudflare's servers | Yes, through the tunnel |
+| `GET /oauth/jwks` | Cloudflare's servers | Yes, through the tunnel |
 | `/oauth/authorize`, `/login`, the web app | The person's browser | No, if everyone who uses the app can pass the login in front of Orbit |
 
 Cloudflare's documentation names only these URLs: you enter them yourself, so it does not need discovery, and it does not mention userinfo. Other OpenID Connect clients may also need `/.well-known/openid-configuration` and `/oauth/userinfo`.
 
-### A public gateway when Orbit is behind a login
+### Reach Orbit through a Cloudflare Tunnel when it is behind a login
 
-If a login proxy protects Orbit and has no setting per path, run the gateway in [`deploy/oidc-gateway/`](../deploy/oidc-gateway/) on a port of its own. It is a separate nginx process that allows exactly `POST /oauth/token` and `GET /oauth/jwks` and gives a 404 for everything else, without calling Orbit. It compares the raw request line, so encoded or traversal paths do not match. It forwards only `Content-Type`, `Content-Length`, `Authorization`, and its own `X-Forwarded-For` and `X-Forwarded-Proto`: no cookie, no `Origin`, no header of the login proxy. It keeps no access log and no body on disk.
+If a login proxy protects Orbit, Cloudflare's servers cannot reach it. Run [`deploy/oidc-gateway/`](../deploy/oidc-gateway/) on the machine: `cloudflared` opens an outbound connection to Cloudflare, and calls a small nginx gateway on `127.0.0.1:8400`. Orbit's address and its login stay as they are.
 
-Orbit gives these requests no extra trust. A valid client secret is still needed for a token, and the existing limit of 30 token requests a minute per client address applies. The gateway passes the last `X-Forwarded-For` entry as the client address, which must be the entry that the proxy in front adds. If all requests counted as one address, one attacker could use up the 30 requests and stop sign-in for everyone until the next minute.
+The gateway allows exactly `POST /oauth/token` and `GET /oauth/jwks`, and gives a 404 for everything else without calling Orbit. It compares the raw request line, so encoded or traversal paths do not match. It forwards only `Content-Type`, `Content-Length`, `Authorization`, and its own `X-Forwarded-For` and `X-Forwarded-Proto`. It keeps no access log and no body on disk. Orbit gives these requests no extra trust: a token still needs a valid client secret.
 
-**Deploy:**
+**The limit of 30 token requests a minute.** Orbit counts per client address, and the gateway takes that address only from `CF-Connecting-IP`, which Cloudflare's edge sets. `X-Forwarded-For` is ignored, because Cloudflare keeps what the caller wrote there. Each sign-in makes one token request, and the caller is Cloudflare's servers. So:
+
+- Expect at most 30 sign-ins a minute through Access, if Cloudflare calls from one address. More can get a 429, and the person sees a login error from Access until the next minute. `ORBIT_RATE_LIMIT_AUTHENTICATION_PER_MINUTE` changes this limit, but also the limit of Orbit's other sign-in routes.
+- A stranger who calls `orbit-oidc.wellrox.com` counts against their own address, so they should not use up Cloudflare's 30. Cloudflare's docs do not state which address its own Access calls carry, so only a real sign-in shows this.
+- A request without one valid `CF-Connecting-IP` counts as the gateway's own address, and all such requests share one limit. This should not happen through the tunnel.
+
+**1. Check the outbound port.** `cloudflared` needs port 7844 outbound, on TCP (HTTP/2) or UDP (QUIC). This starts no tunnel:
+
+```sh
+dig +short A region1.v2.argotunnel.com
+nc -vz -w 3 198.41.192.167 7844    # TCP
+nc -uvz -w 3 198.41.192.167 7844   # UDP (a success here is weak: UDP has no handshake)
+```
+
+**2. Deploy the gateway:**
 
 ```sh
 sudo mkdir -p /etc/orbit-oidc-gateway
 sudo cp deploy/oidc-gateway/nginx.conf /etc/orbit-oidc-gateway/nginx.conf
-# Set the two values in that file: `listen` (8400) and the Orbit address in `proxy_pass` (127.0.0.1:8080).
+# If Orbit is not on 127.0.0.1:8080, change the address in `proxy_pass`.
 sudo cp deploy/oidc-gateway/orbit-oidc-gateway.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now orbit-oidc-gateway
 ```
 
-Orbit's `ORBIT_TRUSTED_PROXIES` must contain the address the gateway connects from (`127.0.0.1/32` here). Do not add the proxy in front to it. Then make the port public at the proxy.
+Orbit's `ORBIT_TRUSTED_PROXIES` must contain `127.0.0.1/32`, or the limit counts all callers as one address, and Orbit refuses the request as not HTTPS.
 
-**Check it** from outside, with the public address:
+**3. Create the tunnel in Cloudflare:**
+
+1. Go to **Networking** > **Tunnels** > **Create a tunnel**. Name it `orbit-oidc`, and select **Create Tunnel**.
+2. Copy only the token from the install command that the page shows. Do not run that command: it puts the token on a command line.
+3. On the **Routes** tab, select **Add route** > **Published application**. Subdomain `orbit-oidc`, domain `wellrox.com`, **Service URL** `http://127.0.0.1:8400`. Add no other route.
+4. Turn on **Always Use HTTPS** for the domain, or check that it is on already.
+
+**4. Install `cloudflared` with its unit:**
 
 ```sh
-curl -s -o /dev/null -w '%{http_code}\n' "$PUBLIC/oauth/jwks"              # 200
-curl -s -o /dev/null -w '%{http_code}\n' "$PUBLIC/login"                   # 404
-curl -s -o /dev/null -w '%{http_code}\n' --path-as-is "$PUBLIC/oauth/../api/v1/auth/me"  # 404
-# The proxy must add the real client last. A forged value must not avoid the limit: at about
-# the 31st request this prints 429. If it never does, stop: the client address can be forged.
-for i in $(seq 35); do curl -s -o /dev/null -w '%{http_code} ' -X POST -H "X-Forwarded-For: 198.51.100.$i" -d x=1 "$PUBLIC/oauth/token"; done
+sudo mkdir -p --mode=0755 /usr/share/keyrings
+curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main' | sudo tee /etc/apt/sources.list.d/cloudflared.list
+sudo apt-get update && sudo apt-get install cloudflared
+
+# The token never goes on a command line or into a shell history.
+sudo install -m 600 -o root -g root /dev/null /etc/orbit-oidc-gateway/tunnel.env
+read -rs TOKEN && printf 'TUNNEL_TOKEN=%s\n' "$TOKEN" | sudo tee /etc/orbit-oidc-gateway/tunnel.env >/dev/null; unset TOKEN
+
+sudo cp deploy/oidc-gateway/cloudflared.service /etc/systemd/system/orbit-oidc-tunnel.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now orbit-oidc-tunnel
 ```
 
-**Test the rules** on any machine with `deploy/oidc-gateway/test.sh`.
+Keep the log level at its default. At `debug`, `cloudflared` logs request URLs and headers.
 
-**Turn it off:** make the port private again at the proxy, then:
+**5. Check from outside**, on a machine that is not this one:
 
 ```sh
-sudo systemctl disable --now orbit-oidc-gateway
-sudo rm /etc/systemd/system/orbit-oidc-gateway.service
+PUBLIC=https://orbit-oidc.wellrox.com
+curl -s -o /dev/null -w '%{http_code}\n' "$PUBLIC/oauth/jwks"                            # 200
+curl -s -o /dev/null -w '%{http_code}\n' -X POST -d x=1 "$PUBLIC/oauth/token"            # 401 or 400, from Orbit
+curl -s -o /dev/null -w '%{http_code}\n' "$PUBLIC/"                                      # 404
+curl -s -o /dev/null -w '%{http_code}\n' "$PUBLIC/login"                                 # 404
+curl -s -o /dev/null -w '%{http_code}\n' "$PUBLIC/oauth/authorize"                       # 404
+curl -s -o /dev/null -w '%{http_code}\n' "$PUBLIC/api/v1/auth/me"                        # 404
+curl -s -o /dev/null -w '%{http_code}\n' --path-as-is "$PUBLIC/oauth/../api/v1/auth/me"  # 404
+# A forged address must not avoid the limit: 429 at about the 31st line.
+for i in $(seq 35); do curl -s -o /dev/null -w '%{http_code} ' -X POST -H "X-Forwarded-For: 198.51.100.$i" -H "CF-Connecting-IP: 198.51.100.$i" -d x=1 "$PUBLIC/oauth/token"; done
+```
+
+Cloudflare can normalize a path before it reaches the gateway, or refuse a forged header itself. Either is fine as long as Orbit's other routes do not answer. A 429 stops further token calls from that address for the rest of the minute.
+
+**Test the gateway's rules** on any machine with `deploy/oidc-gateway/test.sh`.
+
+**Turn it off:**
+
+```sh
+sudo systemctl disable --now orbit-oidc-tunnel orbit-oidc-gateway
+sudo rm /etc/systemd/system/orbit-oidc-tunnel.service /etc/systemd/system/orbit-oidc-gateway.service
 sudo rm -r /etc/orbit-oidc-gateway
 sudo systemctl daemon-reload
 ```
 
-Sign-in through Cloudflare stops at once. Nothing else in Orbit changes.
+Then delete the tunnel in **Networking** > **Tunnels**, and the DNS record of `orbit-oidc.wellrox.com`. Sign-in through Access stops at once. Nothing else in Orbit changes.
 
-**On exe.dev.** Its proxy forwards ports 3000 to 9999, and only one port can be public. That one port is the one set with `share port`, which also serves the root URL (`https://<vm>.exe.xyz/`). Other ports stay at `https://<vm>.exe.xyz:<port>/` for people with access to the VM. So the gateway cannot simply be public next to an Orbit on the root URL: read [`.ai/apps-design.md`](../.ai/apps-design.md), "exe.dev".
+**Limits.** The token alone can run this tunnel, so keep it secret, and replace it in Cloudflare if it leaks. Anyone who can edit the tunnel in Cloudflare can add a route to another local address, such as Orbit itself, which skips the gateway. So keep that dashboard access small.
+
+**On exe.dev.** A tunnel changes no exe.dev setting, and needs no public port. Its [docs](https://exe.dev/docs/internet-access) have no rule that names tunnels, and the default egress policy `all` does not restrict outbound traffic. The policy `integrations` blocks the public internet, so it would stop the tunnel. The [terms](https://exe.dev/docs/terms-of-service) do not name tunnels either; section 2.2 forbids to "bypass the measures we may use to prevent or restrict access to the Service", so ask exe.dev if you are not sure.
 
 ### Run the app inside Orbit behind Access
 

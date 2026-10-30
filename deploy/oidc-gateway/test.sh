@@ -24,7 +24,9 @@ class Handler(BaseHTTPRequestHandler):
 HTTPServer(('127.0.0.1', $backend), Handler).serve_forever()
 PY
 python3 "$work/backend.py" & pids+=($!)
-sed -e "s/listen 8400;/listen 127.0.0.1:$gateway;/" -e "s#http://127.0.0.1:8080#http://127.0.0.1:$backend#" "$here/nginx.conf" >"$work/nginx.conf"
+grep -q '^        listen 127.0.0.1:8400;$' "$here/nginx.conf" || { echo 'FAILED - the gateway must listen on loopback only'; exit 1; }
+[ "$(grep -c '^ *listen ' "$here/nginx.conf")" = 1 ] || { echo 'FAILED - the gateway must have one listener'; exit 1; }
+sed -e "s/listen 127.0.0.1:8400;/listen 127.0.0.1:$gateway;/" -e "s#http://127.0.0.1:8080#http://127.0.0.1:$backend#" "$here/nginx.conf" >"$work/nginx.conf"
 nginx -e stderr -p "$work/" -c "$work/nginx.conf" 2>"$work/error.log" & pids+=($!)
 for _ in $(seq 50); do curl -s -o /dev/null "http://127.0.0.1:$gateway/" && break; sleep 0.1; done
 
@@ -71,7 +73,8 @@ curl -s -o /dev/null -X POST "$url/oauth/token" -u 'client:secret-value' -d 'cod
     -H 'Cookie: __Host-orbit_session=stolen' -H 'Origin: https://evil.example' -H 'X-Request-Id: forged' \
     -H 'X-Forwarded-Host: evil.example' -H 'X-Forwarded-Proto: http' -H 'Forwarded: for=1.1.1.1' \
     -H 'X-Real-IP: 1.1.1.1' -H 'Upgrade: websocket' -H 'User-Agent: secret-agent' \
-    -H 'X-Forwarded-For: 198.51.100.7, 203.0.113.9'
+    -H 'X-Forwarded-For: 198.51.100.7, 198.51.100.8' -H 'CF-Connecting-IP: 203.0.113.9' \
+    -H 'CF-Ray: abc' -H 'Cf-Access-Jwt-Assertion: forged'
 python3 - "$work/seen.jsonl" <<'PY' || failed=1
 import base64, json, sys
 last = json.loads(open(sys.argv[1]).read().splitlines()[-1])
@@ -82,15 +85,16 @@ want = {'host': 'orbit-oidc-gateway', 'connection': 'close', 'content-type': 'ap
 want.pop('connection'); h.pop('connection', None)
 assert h == want, f'headers at Orbit: {h}'
 assert last['body'] == 'code=abc' and last['line'] == 'POST /oauth/token', last
-print('ok - only the allow-listed headers reach Orbit, and the last X-Forwarded-For entry is the client')
+print('ok - only the allow-listed headers reach Orbit, and the client is CF-Connecting-IP, not X-Forwarded-For')
 PY
-for value in 'not-an-address' '203.0.113.9, <script>' ''; do
-    curl -s -o /dev/null "$url/oauth/jwks" -H "X-Forwarded-For: $value"
+# A forged X-Forwarded-For never counts, with or without a valid CF-Connecting-IP.
+for value in 'not-an-address' '203.0.113.9, 203.0.113.10' '<script>' ''; do
+    curl -s -o /dev/null "$url/oauth/jwks" -H "CF-Connecting-IP: $value" -H 'X-Forwarded-For: 198.51.100.7'
     python3 - "$work/seen.jsonl" <<'PY' || failed=1
 import json, sys
 last = json.loads(open(sys.argv[1]).read().splitlines()[-1])
 assert last['headers']['x-forwarded-for'] == '127.0.0.1', last['headers']
-print('ok - a bad X-Forwarded-For falls back to the connection address')
+print('ok - without one valid CF-Connecting-IP the client is the connection, not a forged value')
 PY
 done
 

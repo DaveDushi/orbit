@@ -1,5 +1,5 @@
 [Unit]
-Description=Public door to Orbit for Cloudflare Access (only POST /oauth/token and GET /oauth/jwks)
+Description=Local gateway for Cloudflare Access (only POST /oauth/token and GET /oauth/jwks)
 After=network.target
 
 [Service]

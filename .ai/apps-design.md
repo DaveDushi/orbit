@@ -58,7 +58,13 @@ Measured in Chromium (`scripts/apps-demo/e2e.mjs`, with a stand-in for Access on
 
 nginx, because the machine already has it, it needs no new code to maintain, and `$request_uri` gives the raw request line to compare. It is its own process and unit, so turning it off touches nothing else. Header forwarding is an allow-list: a list of headers to strip would miss a new one. Plain strings in an nginx `map` ignore case, so the rules are regular expressions (`test.sh` caught this). Orbit only trusts the gateway as it trusts any configured proxy (`X-Forwarded-For`, `X-Forwarded-Proto`, `X-Request-Id`, read in `crates/platform/src/http/security.rs`). It reads no `X-ExeDev-*` header anywhere.
 
-**exe.dev.** Per [its docs](https://exe.dev/docs/proxy), only one port can be public and other ports need access to the VM; `share port` changes the target of the root URL. So "Orbit on the root URL, gateway public on another port" appears impossible. The options: (a) the gateway takes the root URL and Orbit moves to `https://<vm>.exe.xyz:<port>/`, which changes `ORBIT_PUBLIC_ORIGIN` (issuer, MCP `resource`, passkey origin, saved mobile server addresses); (b) the gateway runs on a second, public VM, which must reach Orbit privately; (c) a Cloudflare Tunnel from this VM to the gateway, with no exe.dev change. Option (a) also avoids a non-standard port in Cloudflare's URLs, which its docs do not confirm.
+**Tunnel, decided by the user.** Cloudflare's servers reach the gateway through a remotely-managed Cloudflare Tunnel (`cloudflared.service`, token in a mode 600 environment file) to `127.0.0.1:8400`, with the hostname `orbit-oidc.wellrox.com`. Orbit stays behind the exe.dev login, and no exe.dev setting changes. We rejected the gateway on exe.dev's root URL (it changes `ORBIT_PUBLIC_ORIGIN`) and a second VM.
+
+**Client address.** Only `CF-Connecting-IP` counts. Cloudflare's docs say it holds the client address on edge-to-origin traffic, and `X-Forwarded-For` keeps what the caller sent, so that header is ignored. They do not say in so many words that the edge overwrites a forged `CF-Connecting-IP`, nor what it holds on Access's own calls to an identity provider: the outside check in `docs/apps.md` tests the first, and only a real sign-in shows the second. Without a valid value, the request counts as the gateway: it still works, and it cannot choose its address. We chose this over a refusal because a wrong guess about Access's calls would otherwise break every sign-in, with only a 404 to explain it.
+
+**Issuer.** `iss` stays `ORBIT_PUBLIC_ORIGIN`. OpenID Connect lets the token endpoint be on another host. Cloudflare's form has no issuer field and its docs do not say if it checks `iss`.
+
+**Remaining risk.** The token runs the tunnel, and a Cloudflare dashboard user can add a route around the gateway. See `docs/apps.md`.
 
 ## Not in v1
 
