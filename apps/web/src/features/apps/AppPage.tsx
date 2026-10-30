@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { appFrameUrl } from '@orbit/api/apps'
 import { Pane, PaneHeader, PaneTitle } from '@/components/common/Pane'
@@ -7,6 +7,7 @@ import { useAgentStatus } from '@/features/agent/api'
 import { useCan } from '@/features/workspaces/permissions'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import { useApps } from './api'
+import { openSignInPopup, watchSignInPopup } from './signInPopup'
 
 /** `/apps/:slug`: one workspace app in a full-size frame, or a link when the app opens in its own tab. */
 export function AppPage() {
@@ -18,6 +19,17 @@ export function AppPage() {
   // A new key loads the frame again.
   const [reloads, setReloads] = useState(0)
   const app = apps.data?.find((item) => item.slug === slug)
+  const [popupBlocked, setPopupBlocked] = useState(false)
+  const stopWatching = useRef<(() => void) | null>(null)
+  useEffect(() => () => stopWatching.current?.(), [])
+
+  const signIn = () => {
+    if (!app) return
+    stopWatching.current?.()
+    const popup = openSignInPopup(window, app.url)
+    setPopupBlocked(popup === null)
+    if (popup) stopWatching.current = watchSignInPopup(window, popup, () => setReloads((count) => count + 1))
+  }
 
   if (apps.isPending) return <Pane />
   if (!app) {
@@ -37,13 +49,16 @@ export function AppPage() {
         <PaneTitle render={<h1 className="m-0" />}>{app.name}</PaneTitle>
         <div className="ml-auto flex items-center gap-2">
           {canSetUpTools && agent ? <Button variant="ghost" size="sm" nativeButton={false} render={<Link to="/settings/agent-tools" />}>Agent tools</Button> : null}
+          {embedded ? <Button variant="outline" size="sm" type="button" onClick={signIn}>Sign in to app</Button> : null}
           {embedded ? <Button variant="outline" size="sm" type="button" onClick={() => setReloads((count) => count + 1)}>Reload</Button> : null}
           {openInTab}
         </div>
       </PaneHeader>
       {embedded ? (
         <>
-          <p className="m-0 border-b px-3 py-1.5 text-xs text-muted-foreground">If the app stays empty or asks you to sign in, it may refuse to run in a frame here. Open it in a new tab.</p>
+          <p className="m-0 border-b px-3 py-1.5 text-xs text-muted-foreground" role={popupBlocked ? 'alert' : undefined}>
+            {popupBlocked ? 'Your browser blocked the sign-in window. Allow pop-ups for Orbit, then try again.' : 'If the app stays empty, use Sign in to app. Sign in once in the window that opens, then close it: the app reloads here.'}
+          </p>
           <iframe key={reloads} data-slot="app-frame" className="min-h-0 w-full flex-1 border-0" src={appFrameUrl(workspace.id, app.slug)} title={app.name} />
         </>
       ) : (

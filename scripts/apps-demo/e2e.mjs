@@ -99,9 +99,20 @@ await addApp({ name: 'Cross Site', url: cross, redirect: `${cross}/auth/callback
 const second = await secretShown()
 await addApp({ name: 'Admins Only', url: 'http://127.0.0.1:4209', adminsOnly: true })
 await addApp({ name: 'Own Tab', url: `${same}/`, newTab: true })
+// Behind a stand-in for Cloudflare Access on its own origin, whose answers refuse frames.
+const guarded = [
+  { name: 'Behind Access', slug: 'behind-access', app: 4210, access: 4211, env: 'INSTANT' },
+  { name: 'Login Gate', slug: 'login-gate', app: 4212, access: 4213, env: 'GATE' },
+  { name: 'Gate With COOP', slug: 'gate-with-coop', app: 4214, access: 4215, env: 'COOP' },
+]
+const guardedSecrets = {}
+for (const item of guarded) {
+  await addApp({ name: item.name, url: `http://127.0.0.1:${item.app}`, redirect: `http://127.0.0.1:${item.access}/callback` })
+  guardedSecrets[item.env] = (await secretShown()).value
+}
 const items = await clients()
 const idOf = (name) => items.find((item) => item.name === name).sign_in.client_id
-writeFileSync(demoEnv, `SAME_ID=${idOf('Demo App')}\nSAME_SECRET=${first.value}\nCROSS_ID=${idOf('Cross Site')}\nCROSS_SECRET=${second.value}\n`, { mode: 0o600 })
+writeFileSync(demoEnv, `SAME_ID=${idOf('Demo App')}\nSAME_SECRET=${first.value}\nCROSS_ID=${idOf('Cross Site')}\nCROSS_SECRET=${second.value}\n${guarded.map((item) => `${item.env}_ID=${idOf(item.name)}\n${item.env}_SECRET=${guardedSecrets[item.env]}\n`).join('')}`, { mode: 0o600 })
 execFileSync(startDemo, { stdio: 'ignore' })
 await new Promise((resolve) => setTimeout(resolve, 1500))
 
@@ -125,9 +136,9 @@ await shot(mp, '05-app-in-frame-signed-in-as-member')
 await mp.getByRole('button', { name: 'Reload' }).click()
 await demo.locator('#who').waitFor()
 check(await mp.getByText('Open in a new tab', { exact: true }).getAttribute('href') === `${same}/`, 'Open in a new tab goes to the app')
-check(await mp.getByText('Open it in a new tab').count() === 1, 'the help text shows')
-await mp.getByText('Open it in a new tab').evaluate((el) => { el.style.outline = '2px solid #f2458f' })
-await shot(mp, '06-open-in-a-new-tab-help')
+check(await mp.getByText('use Sign in to app').count() === 1, 'the help text shows')
+await mp.getByText('use Sign in to app').evaluate((el) => { el.style.outline = '2px solid #f2458f' })
+await shot(mp, '06-sign-in-control-and-help')
 
 // The real framing: the wrapper's own CSP, in the browser.
 const frameResponse = await mp.request.get(`${ORBIT}/api/v1/workspaces/${workspaceId}/apps/demo-app/frame`)
@@ -160,6 +171,55 @@ const [popup] = await Promise.all([mp.context().waitForEvent('page'), crossFrame
 await popup.locator('#who').waitFor({ timeout: 15000 })
 check((await popup.locator('#who').textContent()).includes('Mia Member'), 'a top-level sign-in in a new tab works')
 await popup.close()
+
+// Instant Auth: the frame passes through the login's origin and Orbit, and each of those answers
+// refuses frames on its redirect. The browser checks frame refusal only on the final page, so it works.
+await mp.goto(`${ORBIT}/apps/behind-access`)
+const instantFrame = mp.frameLocator('iframe[data-slot=app-frame]').frameLocator('iframe')
+await instantFrame.locator('#who').waitFor({ timeout: 15000 })
+check((await instantFrame.locator('#who').textContent()).includes('Mia Member'), 'Instant Auth signs in inside the frame, through redirects that refuse frames')
+await shot(mp, '11-instant-auth-signed-in-in-frame')
+
+// A login page that refuses frames: the frame fails, the popup signs in, the frame reloads.
+await mp.goto(`${ORBIT}/apps/login-gate`)
+const gateFrame = mp.frameLocator('iframe[data-slot=app-frame]').frameLocator('iframe')
+await mp.waitForTimeout(2500)
+check(await gateFrame.locator('#who').count() === 0 && await gateFrame.locator('#sign-in').count() === 0, 'the browser refuses the login page in the frame')
+await shot(mp, '12-login-refused-in-frame')
+const [gatePopup] = await Promise.all([mp.context().waitForEvent('page'), mp.getByRole('button', { name: 'Sign in to app' }).click()])
+await gatePopup.locator('#sign-in').waitFor({ timeout: 15000 })
+check(await gatePopup.evaluate(() => window.opener === null), 'the login page in the popup cannot reach Orbit through opener')
+await shot(gatePopup, '13-popup-login-page')
+await gatePopup.locator('#sign-in').click()
+await gatePopup.locator('#who').waitFor({ timeout: 15000 })
+await gatePopup.close()
+await gateFrame.locator('#who').waitFor({ timeout: 15000 })
+check((await gateFrame.locator('#who').textContent()).includes('Mia Member'), 'after the popup closes, the frame reloads and shows the signed-in person')
+await shot(mp, '14-frame-signed-in-after-popup')
+
+// COOP on the login page: the popup looks closed at once. The frame must still get there.
+await mp.goto(`${ORBIT}/apps/gate-with-coop`)
+const coopFrame = mp.frameLocator('iframe[data-slot=app-frame]').frameLocator('iframe')
+const [coopPopup] = await Promise.all([mp.context().waitForEvent('page'), mp.getByRole('button', { name: 'Sign in to app' }).click()])
+await coopPopup.locator('#sign-in').waitFor({ timeout: 15000 })
+await mp.waitForTimeout(1500) // the early reload, if the browser reports the popup as closed
+await coopPopup.locator('#sign-in').click()
+await coopPopup.locator('#who').waitFor({ timeout: 15000 })
+await coopPopup.close()
+await mp.evaluate(() => window.dispatchEvent(new Event('focus'))) // back on the Orbit page
+await coopFrame.locator('#who').waitFor({ timeout: 15000 })
+check((await coopFrame.locator('#who').textContent()).includes('Mia Member'), 'with COOP on the login page, the return to Orbit reloads the frame')
+await shot(mp, '15-frame-signed-in-after-coop-popup')
+await mp.getByRole('button', { name: 'Reload' }).click()
+await coopFrame.locator('#who').waitFor({ timeout: 15000 })
+check(true, 'the manual Reload stays as the way out')
+
+// A blocked popup.
+await mp.evaluate(() => { window.open = () => null })
+await mp.getByRole('button', { name: 'Sign in to app' }).click()
+await mp.getByRole('alert').filter({ hasText: 'blocked the sign-in window' }).waitFor()
+check(true, 'a blocked popup says what to do')
+await shot(mp, '16-popup-blocked')
 
 // Not signed in at all: to Orbit's login and back to the app.
 const fresh = await browser.newContext({ viewport: { width: 1400, height: 900 } })
