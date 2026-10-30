@@ -16,6 +16,7 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { compactionSettings } from "./compaction.ts";
 import type { Config } from "./config.ts";
 import { IndexDoc, ThreadDoc, type ThreadState } from "./docs.ts";
+import { loadIntegrations } from "./integrations.ts";
 import { loadWake } from "./memory.ts";
 import { namesToTokens, splitBody, tokensToNames, type Person } from "./mentions.ts";
 import { mockModels } from "./mock.ts";
@@ -59,6 +60,8 @@ const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
 	memory_summarize: () => "Summarizing memory",
 	memory_recall: (args) => `Searching memory for “${args.query}”`,
 	memory_zoom: () => "Reading older memory",
+	// The steps are shown in italics, where `_` would start or end the emphasis.
+	use_integration: (args) => `Using ${String(args.tool).replace("__", " → ").replaceAll("_", " ")}`,
 };
 
 /** Edits the run's progress message at most every 1.5 s with the steps so far and the text being written. */
@@ -390,10 +393,15 @@ export class Agent {
 		// Orbit issues agent sessions only to the driver of a running thread: set it before any tool runs.
 		await this.#orbit.updateThread(input.thread_key, this.#threadUpdate(state, "running", driverId, null));
 		const memory = await this.#memoryFor({ ...state, conversationMembers: input.conversation_members, driverId, driverName });
+		const integrations = await loadIntegrations((method, path) => this.#orbit.asUser(driverId, state.workspaceId, method, path)).catch((error: unknown) => {
+			console.warn("agent: reading integration tools failed", String(error));
+			return null;
+		});
 		await conversation.commit(async (tx) => {
 			const doc = await tx.doc(ThreadDoc, conversation.id);
 			doc.conversationMembers = input.conversation_members;
 			doc.memory = memory;
+			doc.integrations = integrations;
 		}, context);
 		const submission = await conversation.submit({ type: "input", content, requestId: input.message_id }, context);
 		await conversation.commit(async (tx) => {

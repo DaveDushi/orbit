@@ -9,8 +9,9 @@ reasons: `.ai/agent-design.md`.
 
 - It acts **as the person who gives the instruction** (the driver), with that person's permissions in one workspace.
   Anything that person cannot do, the agent cannot do either.
-- It has **no shell, no file system, no internet and no delete tool**. It cannot change accounts, API tokens,
-  members, invitations, integrations, storage or workspace settings: Orbit refuses those routes for agent sessions.
+- It has **no shell, no file system and no delete tool**. Its only way to the internet is the **agent tools** that
+  workspace owners and admins set up (see below). It cannot change accounts, API tokens, members, invitations,
+  integrations, agent tools, storage or workspace settings: Orbit refuses those routes for agent sessions.
 - Each person pays with **their own ChatGPT account** (Plus or Pro). They connect it in **Account settings → AI
   agent** with a device code, so it works on a remote server.
 - When it needs information, it asks a teammate in the thread (`@`-mention) and stops. The next reply in the thread
@@ -50,6 +51,37 @@ then the thread's context. The sidecar reads the name and the team instructions 
 them for the run, so a change applies to the next run without a restart. Agent sessions cannot read or change either
 setting. With `AGENT_MOCK=1`, the instruction `show prompt` answers with the current system prompt.
 
+## Agent tools (integrations)
+
+Owners and admins can give the agent tools outside Orbit in **Workspace settings → Agent tools**:
+
+- **Remote MCP server**: the server's Streamable HTTP URL (for example Cloudflare's or Shopify's MCP server). Press
+  **Test** to read its tools, then turn on the tools the agent may use. Tools the server marks read-only are on at
+  first; the others are off until an admin turns them on.
+- **HTTP API**: a base URL. The agent gets one tool, `<prefix>__api_request` (method, path, query, JSON body). Every
+  request stays below the base URL: Orbit refuses `..`, encoded dots and slashes, other hosts and absolute URLs.
+  Choose the allowed methods (GET only at first).
+
+Each integration has **one shared credential**: a header name (default `Authorization`) and its value, for example
+`Bearer <token>`. Orbit seals it with `ORBIT_APP_KEY`, never shows it again, and never gives it to the agent
+service: Orbit makes every call itself, as the driver of the run. Choose which **roles** (owners, admins, members)
+may use each integration. The agent sees the tools as `<prefix>__<tool>`.
+
+**Writes need the driver's approval.** An MCP tool that is not marked read-only, and an HTTP method other than GET
+or HEAD, runs only after the agent asked the driver in the thread with the exact action and arguments and the
+driver answered **yes**. Orbit checks this itself: the approval is bound to the driver, the thread, the tool and the
+arguments, works once, and ends after 30 minutes. A teammate's "yes" does not count.
+
+Limits: HTTPS only; Orbit refuses hosts that resolve to loopback, private, link-local or metadata addresses, follows
+no redirects, waits at most 30 seconds and reads at most 1 MiB of an answer. Every external call is in the audit log
+(`agent_integration.call`: tool, method, path, status; no bodies, no secrets).
+
+**Risks to know.** Whatever the agent reads (tasks, pages, messages, tool results) could carry instructions written
+by someone else. The agent is told to treat it as data, but it is a language model. A write tool can send Orbit
+content out of Orbit; the approval step shows you exactly what goes out, so read it before you say yes. Give the
+agent credentials with the smallest scope the service offers (read-only tokens where you can), and turn on only the
+tools you need. A shared credential acts the same for every member who may use it: choose the roles with care.
+
 ## Running it
 
 The agent is a small Node service (`apps/agent`, Node 22.19 or later) next to Orbit. Orbit calls it on loopback, and
@@ -76,6 +108,10 @@ it calls Orbit back. Both sides share one secret.
 | `AGENT_COMPACT_MODEL` | `gpt-6-luna` | The ChatGPT (Codex) model that writes compaction summaries, paid by the driver like the run. Empty: the conversation's model. When the old part of the conversation does not fit this model's window (with 30000 tokens for thinking and the summary) or its request fails, the conversation's model writes the summary. |
 | `AGENT_COMPACT_THINKING` | `high` | Thinking level for the compaction summary: `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. |
 | `AGENT_MOCK` | off | `1`: a scripted model and a fake ChatGPT sign-in, for tests without OpenAI. Never in production. |
+
+| Orbit test setting | Meaning |
+|---|---|
+| `ORBIT_AGENT_INTEGRATION_TEST_HOSTS` | Comma-separated hosts that agent tools may reach over plain HTTP and on local addresses, for local tests with fake servers (for example `127.0.0.1`). **Never set it in production**: it turns off the address check for those hosts. Orbit logs a warning when it is set. |
 
 ### systemd
 
@@ -105,6 +141,8 @@ docker compose -f deploy/compose.yaml --profile agent up -d --build
 
 - Orbit stores each person's ChatGPT credential sealed with `ORBIT_APP_KEY` (`agent_credentials`). Without an app key
   nobody can connect. Disconnecting deletes it.
+- Agent tools and their sealed credentials are in `agent_integrations`; the driver's approvals of writes in
+  `agent_integration_approvals`. Removing an integration deletes both.
 - The agent stores transcripts in `AGENT_DATA_DIR`. It stores no tokens.
 - One agent process owns its data directory. Several Orbit servers on one Postgres database can share one agent.
 

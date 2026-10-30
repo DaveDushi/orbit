@@ -10,12 +10,14 @@
  *   ask @Name "Question"           show prompt (answers with the system prompt, to check names and team instructions)
  *   remember "Fact"                 remember privately "Fact"             recall "words"
  *   recall privately "words"        what do you remember about "word"
+ *   use <integration>__<tool> with {"json": "arguments"}
  *
+ * An answer "yes" to an approval question calls the last integration tool again with the same arguments.
  * When a memory tool result asks for a summary, the mock writes one from the halves it was shown. A compaction gets a
  * short placeholder summary.
  */
 
-import { createModels, type AssistantMessage, type Models } from "@earendil-works/pi-ai";
+import { createModels, type AssistantMessage, type JsonObject, type Models } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 
 import { PROVIDER } from "./models.ts";
@@ -63,8 +65,19 @@ function lastId(messages: readonly Message[], kind: "task" | "page"): string | u
 	return undefined;
 }
 
+/** The newest call of `name` that the model made, for "yes" to an approval. */
+function lastCall(messages: readonly Message[], name: string): Record<string, unknown> | undefined {
+	for (let index = messages.length - 1; index >= 0; index--) {
+		const message = messages[index];
+		if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+		const call = (message.content as { type?: string; name?: string; arguments?: Record<string, unknown> }[]).find((part) => part.type === "toolCall" && part.name === name);
+		if (call) return call.arguments;
+	}
+	return undefined;
+}
+
 /** The tool call that the newest instruction asks for, or `undefined` when it asks for none. */
-export function plan(instruction: string, messages: readonly Message[]): { name: string; args: { [key: string]: string } } | undefined {
+export function plan(instruction: string, messages: readonly Message[]): { name: string; args: { [key: string]: unknown } } | undefined {
 	const target = (value: string, kind: "task" | "page"): string => (/^(it|that)$/i.test(value) ? lastId(messages, kind) : value) ?? value;
 	let match: RegExpExecArray | null;
 	if ((match = /create (?:a )?task "([^"]+)"/i.exec(instruction))) return { name: "create_task", args: { title: match[1] } };
@@ -81,6 +94,19 @@ export function plan(instruction: string, messages: readonly Message[]): { name:
 	if ((match = /ask @([\w .-]+?) "([^"]+)"/i.exec(instruction))) return { name: "ask_teammate", args: { person: match[1], question: match[2] } };
 	if ((match = /remember (privately )?"([^"]+)"/i.exec(instruction))) return { name: "memory_note", args: { scope: match[1] ? "private" : "team", text: match[2] } };
 	if ((match = /recall (privately )?"([^"]+)"/i.exec(instruction))) return { name: "memory_recall", args: { scope: match[1] ? "private" : "team", query: match[2] } };
+	if ((match = /use (\w+__[\w.-]+)(?: with (\{[\s\S]*\}))?\s*$/i.exec(instruction))) {
+		let parsed: unknown = {};
+		try {
+			parsed = JSON.parse(match[2] ?? "{}");
+		} catch {
+			return undefined;
+		}
+		return { name: "use_integration", args: { tool: match[1], arguments: parsed } };
+	}
+	if (/^Answer from [^\n]*\n\s*(yes|approved?)\b/i.test(instruction)) {
+		const again = lastCall(messages, "use_integration");
+		if (again) return { name: "use_integration", args: again };
+	}
 	return undefined;
 }
 
@@ -113,7 +139,7 @@ export function respond(messages: readonly Message[], modelId = "mock"): Assista
 	}
 	const call = plan(instruction, messages);
 	if (!call) return fauxAssistantMessage(fauxText(`(mock model) I read: ${instruction.slice(0, 300)}`));
-	return fauxAssistantMessage(fauxToolCall(call.name, call.args), { stopReason: "toolUse" });
+	return fauxAssistantMessage(fauxToolCall(call.name, call.args as JsonObject), { stopReason: "toolUse" });
 }
 
 /** A `Models` with scripted models under the ChatGPT provider's id: the conversation's and the compaction model. */

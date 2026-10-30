@@ -42,6 +42,7 @@ import { AgentPage } from '@/features/agent/AgentPage'
 import { AgentNamePage } from '@/features/agent/AgentNamePage'
 import { TeamInstructionsPage } from '@/features/agent/TeamInstructionsPage'
 import { MemoryPage as AgentMemoryPage } from '@/features/agent/MemoryPage'
+import { AgentToolsPage } from '@/features/agentIntegrations/AgentToolsPage'
 import { InboxPage } from '@/features/inbox/pages/InboxPage'
 import { AuthGate, GuestGate } from '@/features/auth/AuthGate'
 import { AcceptInvitationPage } from '@/features/auth/pages/AcceptInvitationPage'
@@ -156,6 +157,7 @@ export default function App() {
                 <Route path="notifications" element={<MovedTo path="/profile/notifications" />} />
                 <Route path="api-tokens" element={<ApiTokensPage />} />
                 <Route path="file-storage" element={<FileStoragePage />} />
+                <Route path="agent-tools" element={<AgentToolsPage />} />
               </Route>
               <Route path="*" element={<Navigate to="/tasks" replace />} />
             </Route>
