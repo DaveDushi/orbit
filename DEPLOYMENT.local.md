@@ -4,12 +4,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, local merge commit ab45847
-  (`main` with the `agent-oauth-client-credentials` branch merged).
+- Source: DaveDushi/orbit, commit 857ce8e48f5e7647cd2521c323ca4c93cc6c38eb
+  (`main` fast-forwarded to the `docs-file-preview` branch).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:ab45847`); fork commits have no published upstream image.
-- Image ID: sha256:6848846184ed8b8ba6aebd7524638ae2b8a32cf78fc5d895bd0bd09e7de0244d
-- Team agent sidecar code (`/opt/orbit-agent`): merge commit aedbc85. `apps/agent` did not change in 6808e1b or ab45847.
+  (`orbit:857ce8e`); fork commits have no published upstream image.
+- Image ID: sha256:2834863f1f64723a3dca9537e88ac8e84e01bb63c58babd8d94fb534f7ed75c2
+- Team agent sidecar code (`/opt/orbit-agent`): commit 857ce8e.
 - OIDC gateway: `orbit-oidc-gateway.service`, nginx on `127.0.0.1:8400`, config in `/etc/orbit-oidc-gateway/`
   (see `docs/apps.md`). `cloudflared` is NOT installed.
 - Executable: /usr/local/bin/orbit; unprivileged system user: orbit.
@@ -183,6 +183,54 @@ sudo systemctl start orbit
 ```
 
 ## Verification performed
+
+### October 31, 2026 upgrade: open and edit files on Docs pages
+
+Fast-forwarded `main` to `docs-file-preview` (`857ce8e`, 4 commits). No new setting; `/etc/orbit/orbit.env`,
+`/etc/orbit/agent.env` and nginx did not change. New crates: calamine, csv, pdf-extract, rustix; new frontend package:
+pdfjs-dist. The server now starts itself as a limited child process through `current_exe` to parse files
+(`parse-file`, `patch-xlsx`), so **restart `orbit` directly after any binary swap**.
+
+Order: backup `01a192d9-627d-7790-84d0-ad361e2bc82e` (verified) while stopped; Orbit started again. Rehearsal before the
+merge: the first try with the test instance's binary stopped with "migration 68 is not known" and changed nothing, because
+that binary is older than `main`. `orbit:857ce8e` was then built from a clean `git archive` of the commit with
+`orbit-build /usr/bin/docker buildx build --builder=orbit-limited --load`, and migration 69 was rehearsed with it. After the
+merge, the image was built again from `main` (a full compile, about 35 minutes with one job), and `deploy/smoke.sh` passed.
+
+At the switch: stopped `orbit-agent` and `orbit`, created and verified the final snapshot
+`01a19321-ed03-722e-86e5-cb29bc6227b1` (`/var/backups/orbit/snapshots/01a19321-ed03-722e-86e5-cb29bc6227b1`; use this one for
+rollback), saved the sidecar data as `/var/backups/orbit-agent/orbit-agent-before-857ce8e.tgz` and the old sidecar code as
+`/opt/orbit-agent.before-857ce8e`, and rehearsed migration 69 again on a copy of it. The rehearsal copies are deleted.
+Applied it live: schema 69. Counts before and after: 6 users, 1 workspace, 3 projects, 61 tasks, 31 pages, 28 page files,
+43 blobs, 396 chat messages, 40 agent inputs, 31 `page_search` rows, with the same hash of all `page_search` rows. The old
+executable is `/usr/local/bin/orbit-ab45847`, and the new one is also kept as `/usr/local/bin/orbit-857ce8e`.
+
+Verified: `orbit`, `orbit-agent`, nginx and `orbit-oidc-gateway` are active with no restarts; readiness (all checks);
+revision `857ce8e`; sidecar `mock: false`; live quick-check and foreign-key checks pass; 28 page files at version 1 and 0 file
+versions; FTS5 `integrity-check` passes on a copy of the final snapshot; a `page_search` query returns rows. The page file
+list, file, content and versions routes answer 401 without a session, and restore answers 403 from a foreign origin and 415
+with no session and no body (an unknown route answers 404). Frontend assets and the PDF worker asset answer 200, and the CSP
+is unchanged (`default-src 'self'` covers the same-origin worker). Canonical login 400, foreign 403;
+https://orbit.wellrox.com/ answers 307 to the exe.dev login. No warnings in the logs. The sidecar's tests pass on this tree.
+The `parse-file` child ran as user `orbit` with the service's sandbox settings on a read-only copy of every stored file of
+these types, and all parsed: 3 `.xlsx`, 5 `.csv`, 9 `.pdf`, 6 `.docx`. Only output shape was inspected.
+
+**Not** verified: the signed-in file panel in a browser, PDF rendering, saving a cell or restoring a version on a real file
+(`patch-xlsx`), any real `.xlsm` file (production has none), and an agent run with the file tools on a real model.
+The server test suite was not rerun on `main`, because the tree equals the tested branch.
+
+Rollback (an older binary cannot read a version 69 database; preserve the current database first; work after the snapshot
+is lost):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-ab45847 backup verify 01a19321-ed03-722e-86e5-cb29bc6227b1 && /usr/local/bin/orbit-ab45847 backup restore 01a19321-ed03-722e-86e5-cb29bc6227b1'
+sudo install -m 755 /usr/local/bin/orbit-ab45847 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo cp -a /opt/orbit-agent.before-857ce8e /opt/orbit-agent
+sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-857ce8e.tgz
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+```
 
 ### October 30, 2026 upgrade: OAuth client credentials and GraphQL reads for agent tools
 
