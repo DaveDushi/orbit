@@ -182,6 +182,56 @@ chmod 600 /home/exedev/orbit-setup-link.txt
 sudo systemctl start orbit
 ```
 
+## Deploy steps
+
+Only one deploy can run on this VM. `orbit-deploy` (`scripts/deploy-guard.sh`, setup in `deploy/README.md`) holds the
+lock from the merge to `main` through the verified switch. It is separate from the `orbit-build` lock. Run every step
+below through `orbit-deploy run`. A step that runs outside it is not protected.
+
+```sh
+orbit-deploy status                               # first, see if a deploy is running
+orbit-deploy begin '<sha>: <what is deployed>'    # prints <id>; exit 75 if a deploy is running
+orbit-deploy disk                                 # before the merge; exit 73 below 3 GiB free
+
+# A rehearsal build before the merge is also part of the deploy: begin before it.
+orbit-deploy run <id> -- git -C /home/exedev/orbit merge <branch>
+orbit-deploy build <id> -- orbit-build /usr/bin/docker buildx build --builder=orbit-limited --load \
+  --build-arg ORBIT_BUILD_REVISION=<full sha> -t orbit:<sha> .
+orbit-deploy run <id> -- deploy/smoke.sh orbit:<sha>
+orbit-deploy run <id> -- sudo systemctl stop orbit-agent orbit
+orbit-deploy run <id> -- sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; orbit backup create'
+# Also through `run`: backup verify, migration rehearsal on a copy, copy of the sidecar data and code,
+# keep the old executable as /usr/local/bin/orbit-<old sha>, install the new one as orbit and orbit-<sha>.
+orbit-deploy run <id> -- sudo systemctl start orbit
+orbit-deploy run <id> -- sudo systemctl start orbit-agent
+orbit-deploy run <id> -- curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+
+orbit-deploy end <id>                             # only after all the checks pass
+```
+
+- Every shell needs the `<id>`. Do not lose it. `orbit-deploy status` shows it.
+- If a deploy fails, keep the lock while you repair or roll back. Run `end` after production is verified.
+- The lock stays through a pause of up to 2 hours with no running step. A step of any length keeps it. To extend a
+  pause, run `orbit-deploy run <id> -- true`. After the 2 hours, or after a holder crash or reboot, the lock is free and
+  `run` and `build` refuse with exit 75.
+- If `begin` or `status` says "the previous deploy did not end", production can be half switched. Check the services,
+  the revision and the schema before you continue.
+- Do not delete the lock file. To release the lock of a dead session, read the `<id>` from `status`, check production,
+  and run `orbit-deploy end <id>`.
+- Put each new upgrade section first under "Verification performed", with its rollback command. Cleanup reads the
+  first `install -m 755 /usr/local/bin/orbit-<sha> /usr/local/bin/orbit` line in this file as the rollback copy.
+
+Cleanup of old binaries and images, after a verified deploy:
+
+```sh
+sudo orbit-deploy cleanup           # shows the list, removes nothing
+sudo orbit-deploy cleanup --apply   # removes the list; refused during a deploy
+```
+
+Cleanup keeps the installed binary, the running process's binary, the rollback copy and the 3 newest other copies, and
+the images with these names. After cleanup, the rollback commands of older upgrades below can name a binary that is gone.
+It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
+
 ## Verification performed
 
 ### October 31, 2026 upgrade: open and edit files on Docs pages
