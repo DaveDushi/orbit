@@ -45,7 +45,11 @@ impl HttpLimits {
                     .to_ascii_lowercase()
                     .starts_with("multipart/form-data")
             });
-        if multipart {
+        // Saving an edited page file sends the whole text as JSON: its route has its own limit.
+        let page_file_save = request.method() == Method::PUT
+            && request.uri().path().contains("/files/")
+            && request.uri().path().ends_with("/content");
+        if multipart || page_file_save {
             self.max_body_bytes
         } else {
             self.max_other_body_bytes.min(self.max_body_bytes)
@@ -66,7 +70,10 @@ impl HttpLimits {
             || multipart
             || path.starts_with("/api/v1/admin/")
             || path.ends_with("/download")
-            || path.ends_with("/export");
+            || path.ends_with("/export")
+            // An agent tool call can wait for a token, the API and one retry, each up to 30 seconds.
+            || path.ends_with("/agent-tools/call")
+            || (path.contains("/agent-integrations/") && path.ends_with("/test"));
         self.request_timeout.filter(|_| !long)
     }
 
@@ -111,6 +118,26 @@ mod tests {
     }
 
     #[test]
+    fn saving_a_page_file_may_exceed_the_json_limit() {
+        let limits = HttpLimits {
+            max_body_bytes: 100 * 1024 * 1024,
+            ..HttpLimits::default()
+        };
+        let save = Request::builder()
+            .method("PUT")
+            .uri("/api/v1/workspaces/w/pages/p/files/f/content")
+            .body(())
+            .unwrap();
+        assert_eq!(limits.body_limit(&save), limits.max_body_bytes);
+        let task = Request::builder()
+            .method("PUT")
+            .uri("/api/v1/workspaces/w/tasks/t")
+            .body(())
+            .unwrap();
+        assert_eq!(limits.body_limit(&task), limits.max_other_body_bytes);
+    }
+
+    #[test]
     fn long_running_and_streaming_requests_have_no_request_timeout() {
         let limits = HttpLimits::default();
         let request = |method: &str, path: &str, header: Option<(&str, &str)>| {
@@ -144,6 +171,12 @@ mod tests {
             request("POST", "/api/v1/admin/backups", None),
             request("GET", "/api/v1/workspaces/w/exports/e/download", None),
             request("GET", "/api/v1/workspaces/w/pages/p/export", None),
+            request("POST", "/api/v1/workspaces/w/agent-tools/call", None),
+            request(
+                "POST",
+                "/api/v1/workspaces/w/agent-integrations/i/test",
+                None,
+            ),
         ] {
             assert!(
                 limits.request_timeout(&excluded).is_none(),

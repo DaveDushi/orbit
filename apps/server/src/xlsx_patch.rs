@@ -943,7 +943,11 @@ pub(crate) mod tests {
         (0..archive.len())
             .map(|index| {
                 let mut entry = archive.by_index_raw(index).unwrap();
-                let (name, crc, size) = (entry.name().unwrap().into_owned(), entry.crc32(), entry.size());
+                let (name, crc, size) = (
+                    entry.name().unwrap().into_owned(),
+                    entry.crc32(),
+                    entry.size(),
+                );
                 let mut raw = Vec::new();
                 entry.read_to_end(&mut raw).unwrap();
                 (name, crc, size, raw)
