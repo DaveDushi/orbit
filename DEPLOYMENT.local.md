@@ -4,11 +4,11 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, commit 857ce8e48f5e7647cd2521c323ca4c93cc6c38eb
-  (`main` fast-forwarded to the `docs-file-preview` branch).
+- Source: DaveDushi/orbit, commit 6a817b941a89c7b7c2f6ea6312fb92b2e41f83a9
+  (`main` fast-forwarded to the `docs-file-panel-resize` branch).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:857ce8e`); fork commits have no published upstream image.
-- Image ID: sha256:2834863f1f64723a3dca9537e88ac8e84e01bb63c58babd8d94fb534f7ed75c2
+  (`orbit:6a817b9`); fork commits have no published upstream image.
+- Image ID: sha256:224792ed736c174a8f525bf18e29f45fa7a48002e2cba0ffbabd81950e40192c
 - Team agent sidecar code (`/opt/orbit-agent`): commit 857ce8e.
 - OIDC gateway: `orbit-oidc-gateway.service`, nginx on `127.0.0.1:8400`, config in `/etc/orbit-oidc-gateway/`
   (see `docs/apps.md`). `cloudflared` is NOT installed.
@@ -233,6 +233,48 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 1, 2026 upgrade: resize the file panel on Docs pages
+
+Fast-forwarded `main` to `docs-file-panel-resize` (`6a817b9`, 3 commits): a divider between a page and its open file, and a
+full screen button in the panel header. Web only: no migration (schema stays 69), no new setting, no server or `apps/agent`
+change. `/etc/orbit/orbit.env`, `/etc/orbit/agent.env`, nginx and the sidecar code did not change, and the sidecar was only
+restarted around the switch.
+
+Checks before the merge, on `6a817b9`: `FileSplit.test.ts` (7), web typecheck, oxlint on the changed files; the browser tests
+in `apps/web/e2e/file-panel.spec.ts` ran against an isolated instance built from `f41e235`, which differs only in that test
+file: the two older tests once and the divider test 5 times, all pass. One earlier run on `f41e235` failed because the test
+read the panel width during its 150ms transition (`duration-150` gives `transition: all`); the test now polls, with the same
+limits. Only Chromium, on SQLite. The server test suite was not run, because no server code changed.
+
+`orbit:6a817b9` was built from a clean `git archive` of `main` with
+`orbit-build /usr/bin/docker buildx build --builder=orbit-limited --load` (about 35 minutes), and `deploy/smoke.sh` passed.
+
+At the switch: stopped `orbit-agent` and `orbit`, created and verified snapshot `01a19791-b271-735b-a6b0-52db18317043`
+(`/var/backups/orbit/snapshots/01a19791-b271-735b-a6b0-52db18317043`) with the old CLI, installed the binary, and started `orbit`
+directly after the swap, then `orbit-agent`. The old executable is `/usr/local/bin/orbit-857ce8e` (checked equal to the running
+one before the swap), and the new one is also kept as `/usr/local/bin/orbit-6a817b9`.
+
+Verified: `orbit`, `orbit-agent`, nginx and `orbit-oidc-gateway` are active with no restarts; readiness 200 (all checks); the
+installed binary's hash equals the one from the image; revision `6a817b9` is in the binary and in the served
+`/assets/index-BSfbUl0T.js`, with "Exit full screen", "Resize file panel" and `orbit:file_panel_share`; sidecar `mock: false`;
+`/api/v1/auth/me` answers 401 with no session, with HSTS; canonical login 400, foreign 403; https://orbit.wellrox.com/ answers
+307 to the exe.dev login. No errors in the log. `deploy/verify-production.sh` passes against `http://127.0.0.1:8000` with the
+`X-Forwarded-Proto: https` header. On the public origin it stops at the auth check with 307, because the exe.dev gate answers
+before Orbit; this does not depend on the Orbit binary.
+
+**Not** verified: the signed-in divider and button on production (it needs a person's login; the browser tests ran only on the
+test instance), and browsers other than Chromium. Known cosmetic point: during a drag the panel edge follows the divider with
+a small lag (at normal speed a median of 11px and a maximum of 34px, 0 at rest), from the same transition.
+
+Rollback (no migration, so the old binary reads this database; the snapshot is not needed):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-857ce8e /usr/local/bin/orbit
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+```
 
 ### October 31, 2026 upgrade: open and edit files on Docs pages
 

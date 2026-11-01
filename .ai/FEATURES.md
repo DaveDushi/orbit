@@ -198,7 +198,12 @@ favorites through `/pages/favorites` (list), `/pages/{page_id}/favorite` (PUT/DE
   delete) and quarantine the blob; reconciliation reclaims blobs no task attachment or page file references.
   `PageFileRepository::create_from_bytes` attaches server-held bytes (Notion import) through the same checks.
 - File panel (`FilePanel`, web only for now): a click on a file block of the page opens the file beside the page, with
-  a download button. PDFs show real pages (`pdfjs-dist`, its own lazy chunk; a bundled same-origin worker, no CSP change),
+  a download button. From 1100px up, a divider (`FileSplit`) moves over the full width of the row: drag, arrow keys, double click for the
+  default. Under 240px a side snaps away and stays mounted (edits and scroll stay), and the divider stays at the edge. The
+  size is a share of the row in local storage (one per browser). A click on a file while the saved size hides files opens
+  it at the default size. A full screen button in the panel header
+  fills the row (the app sidebar stays), and a second click restores the size from before; after a drag to full width it
+  restores the default. Below 1100px the panel is an overlay with no divider and no button. PDFs show real pages (`pdfjs-dist`, its own lazy chunk; a bundled same-origin worker, no CSP change),
   sheets a table with sheet tabs that loads in parts, text and images directly, `docx` read-only text, other types the
   name and a download. `GET …/files/{id}/content` reads one part (rows or characters; `extract=true` for PDF text);
   `file_parse.rs` is the only parser, shared with the agent. It runs in a child process (`orbit parse-file`, no
