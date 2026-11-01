@@ -165,7 +165,7 @@ test('the divider moves over the full row, keeps edits and scroll, and the size 
   const pageColumn = page.locator('[data-print-root]')
   const row = page.locator('[data-file-split]')
   const divider = page.getByRole('separator', { name: 'Resize file panel' })
-  const left = async (target = divider) => (await target.boundingBox())!.x
+  const left = async () => (await divider.boundingBox())!.x
   const dragTo = async (x: number, steps = 8) => {
     const box = (await divider.boundingBox())!
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
@@ -179,7 +179,7 @@ test('the divider moves over the full row, keeps edits and scroll, and the size 
   await fileBlock(page, 'sample.csv').click()
   await expect(panel.getByText('Alpha; Inc', { exact: true })).toBeVisible()
   const startRow = await rowBox()
-  expect(Math.abs((await panel.boundingBox())!.width - Math.min(startRow.width * 0.52, 760))).toBeLessThan(2)
+  await expect.poll(async () => Math.abs((await panel.boundingBox())!.width - Math.min(startRow.width * 0.52, 760))).toBeLessThan(2)
   await shot(page, '20-resize-default')
 
   // An unsaved edit and the page's scroll survive both hidden states.
@@ -192,8 +192,8 @@ test('the divider moves over the full row, keeps edits and scroll, and the size 
   // File full width, and no text was selected on the way over the page.
   await dragTo(startRow.x + 100)
   await expect(pageColumn).toBeHidden()
-  expect((await panel.boundingBox())!.width).toBeGreaterThan(startRow.width - 12)
-  expect(await left()).toBe(startRow.x)
+  await expect.poll(async () => (await panel.boundingBox())!.width).toBeGreaterThan(startRow.width - 12)
+  await expect.poll(left).toBe(startRow.x)
   expect(await page.evaluate(() => window.getSelection()?.toString())).toBe('')
   await expect(panel.getByLabel('B2', { exact: true })).toHaveValue('unsaved edit')
   await shot(page, '21-resize-file-full-width')
@@ -204,9 +204,13 @@ test('the divider moves over the full row, keeps edits and scroll, and the size 
   await expect(panel).toBeHidden()
   await expect(panel).toBeAttached()
   await expect(divider).toBeVisible()
-  const edge = (await divider.boundingBox())!
-  expect(Math.abs(edge.x + edge.width - (startRow.x + startRow.width))).toBeLessThan(1)
-  expect((await pageColumn.boundingBox())!.width).toBeGreaterThan(startRow.width - 12)
+  await expect
+    .poll(async () => {
+      const edge = (await divider.boundingBox())!
+      return Math.abs(edge.x + edge.width - (startRow.x + startRow.width))
+    })
+    .toBeLessThan(1)
+  await expect.poll(async () => (await pageColumn.boundingBox())!.width).toBeGreaterThan(startRow.width - 12)
   expect(await pageColumn.evaluate((element) => element.scrollTop)).toBe(scrolled)
   await shot(page, '22-resize-page-full-width')
 
@@ -214,55 +218,55 @@ test('the divider moves over the full row, keeps edits and scroll, and the size 
   await dragTo(startRow.x + startRow.width / 2)
   await expect(panel.getByLabel('B2', { exact: true })).toHaveValue('unsaved edit')
   expect(await pageColumn.evaluate((element) => element.scrollTop)).toBe(scrolled)
-  expect(Math.abs((await left()) - (startRow.x + startRow.width / 2))).toBeLessThan(10)
+  await expect.poll(async () => Math.abs((await left()) - (startRow.x + startRow.width / 2))).toBeLessThan(10)
 
   // A size that hides the file is not used to open one. The file is the same one: its edit stays.
   await dragTo(startRow.x + startRow.width - 50)
   await pageColumn.evaluate((element) => element.scrollTo(0, 0))
   await fileBlock(page, 'sample.csv').click()
   await expect(panel.getByLabel('B2', { exact: true })).toHaveValue('unsaved edit')
-  expect(Math.abs((await panel.boundingBox())!.width - Math.min(startRow.width * 0.52, 760))).toBeLessThan(2)
+  await expect.poll(async () => Math.abs((await panel.boundingBox())!.width - Math.min(startRow.width * 0.52, 760))).toBeLessThan(2)
 
   // The full screen button: an unsaved edit stays, and a second click goes back.
   await dragTo(startRow.x + 400)
   const beforeFull = await left()
   await panel.getByRole('button', { name: 'Full screen', exact: true }).click()
   await expect(pageColumn).toBeHidden()
-  expect((await panel.boundingBox())!.width).toBeGreaterThan(startRow.width - 12)
+  await expect.poll(async () => (await panel.boundingBox())!.width).toBeGreaterThan(startRow.width - 12)
   await expect(panel.getByLabel('B2', { exact: true })).toHaveValue('unsaved edit')
   await shot(page, '27-full-screen-button')
   await panel.getByRole('button', { name: 'Exit full screen' }).click()
   await expect(pageColumn).toBeVisible()
-  expect(Math.abs((await left()) - beforeFull)).toBeLessThan(2)
+  await expect.poll(async () => Math.abs((await left()) - beforeFull)).toBeLessThan(2)
   await expect(panel.getByLabel('B2', { exact: true })).toHaveValue('unsaved edit')
   // After a drag to full width the button shows the same state, and goes to the default size.
   await dragTo(startRow.x)
   await panel.getByRole('button', { name: 'Exit full screen' }).click()
-  expect(Math.abs((await panel.boundingBox())!.width - Math.min(startRow.width * 0.52, 760))).toBeLessThan(2)
+  await expect.poll(async () => Math.abs((await panel.boundingBox())!.width - Math.min(startRow.width * 0.52, 760))).toBeLessThan(2)
 
   // Keys, then a double click for the default.
   const before = await left()
   await divider.focus()
   await page.keyboard.press('ArrowLeft')
-  expect(Math.abs((await left()) - (before - 16))).toBeLessThan(2)
+  await expect.poll(async () => Math.abs((await left()) - (before - 16))).toBeLessThan(2)
   await divider.dblclick()
-  expect(Math.abs((await left()) - before)).toBeLessThan(2)
+  await expect.poll(async () => Math.abs((await left()) - before)).toBeLessThan(2)
 
   await panel.getByRole('button', { name: 'Cancel' }).click()
 
   // The size stays after a reload, and a close keeps it for the next open.
   const wide = startRow.x + 300
   await dragTo(wide)
-  expect(Math.abs((await left()) - wide)).toBeLessThan(10)
+  await expect.poll(async () => Math.abs((await left()) - wide)).toBeLessThan(10)
   await page.reload()
   await fileBlock(page, 'sample.csv').click()
   await expect(panel.getByText('Alpha; Inc', { exact: true })).toBeVisible()
-  expect(Math.abs((await left()) - wide)).toBeLessThan(10)
+  await expect.poll(async () => Math.abs((await left()) - wide)).toBeLessThan(10)
   await panel.getByRole('button', { name: 'Close file' }).click()
   await expect(panel).toHaveCount(0)
   await expect(divider).toHaveCount(0)
   await fileBlock(page, 'sample.csv').click()
-  expect(Math.abs((await left()) - wide)).toBeLessThan(10)
+  await expect.poll(async () => Math.abs((await left()) - wide)).toBeLessThan(10)
 
   // A reload in full screen stays there, and the second click still goes back to the size from before.
   await panel.getByRole('button', { name: 'Full screen', exact: true }).click()
@@ -270,7 +274,7 @@ test('the divider moves over the full row, keeps edits and scroll, and the size 
   await fileBlock(page, 'sample.csv').click()
   await expect(pageColumn).toBeHidden()
   await panel.getByRole('button', { name: 'Exit full screen' }).click()
-  expect(Math.abs((await left()) - wide)).toBeLessThan(10)
+  await expect.poll(async () => Math.abs((await left()) - wide)).toBeLessThan(10)
 
   // Saved full width: a close brings the page back, and a reopen shows the file full width.
   await dragTo(startRow.x)
@@ -294,7 +298,7 @@ test('the divider moves over the full row, keeps edits and scroll, and the size 
   await page.reload()
   await fileBlock(page, 'sample.pdf').click()
   await expect(panel).toBeVisible()
-  expect(Math.abs((await panel.boundingBox())!.width - Math.min(startRow.width * 0.52, 760))).toBeLessThan(2)
+  await expect.poll(async () => Math.abs((await panel.boundingBox())!.width - Math.min(startRow.width * 0.52, 760))).toBeLessThan(2)
 
   // PDF: one jump of the pointer lands on the canvas. Capture keeps the drag, and the canvas does not take it.
   const canvas = panel.locator('[data-pdf-page="1"]')
@@ -306,9 +310,9 @@ test('the divider moves over the full row, keeps edits and scroll, and the size 
   await page.mouse.down()
   const overCanvas = canvasBox.x + 120
   await page.mouse.move(overCanvas, y)
-  expect(Math.abs((await left()) - overCanvas)).toBeLessThan(10)
+  await expect.poll(async () => Math.abs((await left()) - overCanvas)).toBeLessThan(10)
   await page.mouse.move(overCanvas + 60, y)
-  expect(Math.abs((await left()) - (overCanvas + 60))).toBeLessThan(10)
+  await expect.poll(async () => Math.abs((await left()) - (overCanvas + 60))).toBeLessThan(10)
   await page.mouse.up()
   // The redraw waits for the rest, and then fits the new width.
   await expect.poll(() => canvas.evaluate((element: HTMLCanvasElement) => Math.abs(element.width - element.clientWidth * devicePixelRatio) < 4)).toBe(true)
@@ -340,9 +344,13 @@ test('the divider moves over the full row, keeps edits and scroll, and the size 
   await expect(comments).toBeVisible()
   await dragTo(0)
   await expect(pageColumn).toBeHidden()
-  const commentsBox = (await comments.boundingBox())!
-  expect(commentsBox.x + commentsBox.width).toBeLessThanOrEqual(1500)
-  expect(commentsBox.width).toBe(340)
+  await expect.poll(async () => (await comments.boundingBox())!.width).toBe(340)
+  await expect
+    .poll(async () => {
+      const box = (await comments.boundingBox())!
+      return box.x + box.width
+    })
+    .toBeLessThanOrEqual(1500)
   await expect(panel).toBeVisible()
   await shot(page, '25-resize-with-comments')
   await comments.getByRole('button', { name: 'Close comments' }).click()
