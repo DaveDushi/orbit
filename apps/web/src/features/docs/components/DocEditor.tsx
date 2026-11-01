@@ -75,6 +75,7 @@ import type { PageRef } from '@/features/docs/editor/pageEditorContext'
 import { CoverBanner } from './CoverBanner'
 import { CoverSourcePanel } from './CoverSourcePanel'
 import { FilePanel } from './FilePanel'
+import { FileSplit, type FileSplitHandle } from './FileSplit'
 import { PageHistoryPane } from './PageHistoryPane'
 import { PageLinkDialog } from './PageLinkDialog'
 
@@ -183,6 +184,7 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
   const [commentsOpen, setCommentsOpen] = useState(false)
   const [openFile, setOpenFile] = useState<FileTarget | null>(null)
   const fileDirty = useRef(false)
+  const fileSplit = useRef<FileSplitHandle>(null)
   /** Changes the panel's file (or closes it), after asking when that would lose an edit. */
   const switchFile = async (next: FileTarget | null) => {
     if (fileDirty.current) {
@@ -857,7 +859,8 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
           </div>
         ) : null}
         <div className="relative flex min-h-0 min-w-0 flex-1">
-        <div data-print-root="" className="min-h-0 flex-1 overflow-y-auto px-6 pt-8 pb-24 max-[899px]:px-3 max-[899px]:pt-[18px] max-[899px]:pb-14">
+        <FileSplit ref={fileSplit} open={openFile?.pageId === pageId}>
+        <div data-print-root="" className="min-h-0 flex-1 overflow-y-auto px-6 pt-8 pb-24 max-[899px]:px-3 max-[899px]:pt-[18px] max-[899px]:pb-14 min-[1100px]:group-data-[split=file]/split:invisible min-[1100px]:group-data-[split=file]/split:absolute min-[1100px]:group-data-[split=file]/split:inset-y-0 min-[1100px]:group-data-[split=file]/split:left-0 min-[1100px]:group-data-[split=file]/split:w-1/2">
           {cover.url ? (
             <CoverBanner
               key={`${cover.url}:${cover.position ?? ''}`}
@@ -977,6 +980,7 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
                 const block = (event.target as Element).closest('.bn-block-content[data-content-type="file"]')
                 const target = fileTargetOf(block?.getAttribute('data-url'))
                 if (target?.pageId !== pageId || target.workspaceId !== workspaceId) return
+                fileSplit.current?.reveal()
                 if (target.fileId === openFile?.fileId) return
                 void switchFile(target).then((switched) => {
                   if (switched) setCommentsOpen(false)
@@ -1047,6 +1051,7 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
           </div>
         </div>
         {openFile?.pageId === pageId ? <FilePanel key={openFile.fileId} target={openFile} readOnly={readOnly || lost} onDirty={(dirty) => (fileDirty.current = dirty)} onClose={() => void switchFile(null)} /> : null}
+        </FileSplit>
         {commentsOpen ? (
           <CommentsPanel
             filter={commentsFilter}

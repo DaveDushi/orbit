@@ -4,15 +4,15 @@ Add the web apps you build to Orbit, so that your team has one place to open the
 
 ## Add an app
 
-Workspace settings → **Apps** (owners and admins).
+Workspace settings → **Apps** (owners and admins) lists the apps. **Add app** asks only for the name, the address and who can see it. Select an app to change the rest.
 
 | Field | What it does |
 | --- | --- |
 | Name, icon | The entry in the sidebar. |
 | Address | An absolute `https://` URL without a user name or password. Orbit refuses its own origin: an app must have its own host name. |
 | Opens | **Inside Orbit**: a full-size frame at `/apps/<slug>`. **In a new tab**: the sidebar entry opens the address directly. |
-| Who may open it | The roles that see the entry. Other members get a 404. The agent cannot use apps. |
-| Redirect URIs | Turn on "Sign in with Orbit". Leave them empty if the app has its own login. |
+| Who can see it | The roles that see the entry. Other members get a 404. The agent cannot use apps. |
+| Sign in with Orbit | On: enter the redirect URIs. Leave it off if the app has its own login. |
 
 Changes apply at once, without a restart. On a phone, the Orbit app lists these apps in Settings and opens them in the browser.
 
@@ -41,7 +41,7 @@ If a person has no Orbit session when the frame signs in (it ended in another ta
 
 ## Add "Sign in with Orbit"
 
-Enter the app's redirect URI, then copy the values from the app's card. The client secret shows **only once**. **Make a new secret** replaces it, and ends all tokens of the app.
+Turn on **Sign in with Orbit**, enter the app's redirect URI, then copy the values from the **Sign-in** section of the app's settings. The client secret shows **only once**. **Make a new secret** replaces it, and ends all tokens of the app.
 
 | Setting | Value |
 | --- | --- |
@@ -104,7 +104,7 @@ An app behind [Cloudflare Access](https://developers.cloudflare.com/cloudflare-o
 https://edusi.cloudflareaccess.com/cdn-cgi/access/callback
 ```
 
-Copy the client ID and the secret.
+Copy the client ID and the secret from the app's settings.
 
 **2. In Cloudflare**, go to Zero Trust → Settings → Authentication → Add new → OpenID Connect:
 
@@ -202,11 +202,13 @@ curl -s -o /dev/null -w '%{http_code}\n' "$PUBLIC/login"                        
 curl -s -o /dev/null -w '%{http_code}\n' "$PUBLIC/oauth/authorize"                       # 404
 curl -s -o /dev/null -w '%{http_code}\n' "$PUBLIC/api/v1/auth/me"                        # 404
 curl -s -o /dev/null -w '%{http_code}\n' --path-as-is "$PUBLIC/oauth/../api/v1/auth/me"  # 404
-# A forged address must not avoid the limit: 429 at about the 31st line.
-for i in $(seq 35); do curl -s -o /dev/null -w '%{http_code} ' -X POST -H "X-Forwarded-For: 198.51.100.$i" -H "CF-Connecting-IP: 198.51.100.$i" -d x=1 "$PUBLIC/oauth/token"; done
+# A forged X-Forwarded-For must not avoid the limit: the first 429 comes at about the 31st request.
+for i in $(seq 35); do curl -s -o /dev/null -w '%{http_code} ' -X POST -H "X-Forwarded-For: 198.51.100.$i" -d x=1 "$PUBLIC/oauth/token"; done
 ```
 
-Cloudflare can normalize a path before it reaches the gateway, or refuse a forged header itself. Either is fine as long as Orbit's other routes do not answer. A 429 stops further token calls from that address for the rest of the minute.
+Run the limit check at the start of a minute, and last: a 429 stops further token calls from that address for the rest of the minute. Measured on `orbit-oidc.wellrox.com`: 400 for requests 1 to 30, 429 for requests 31 to 35.
+
+Do not put `CF-Connecting-IP` in this check. Cloudflare refuses a request with a forged `CF-Connecting-IP` at its edge, with 403 and `error code: 1000`, so the request never reaches the gateway. Cloudflare can also normalize a path before it reaches the gateway. Both are fine as long as Orbit's other routes do not answer.
 
 **Test the gateway's rules** on any machine with `deploy/oidc-gateway/test.sh`.
 
@@ -244,7 +246,27 @@ If a person has no Orbit session when the frame reaches `/oauth/authorize`, Orbi
 | `CF_Authorization` on `<team>.cloudflareaccess.com` | Access | A third-party cookie in the frame (`SameSite=None`), always. If a browser blocks it, Instant Auth in the frame can fail. Then use **Sign in to app**. | The same. |
 | The login cookie of a proxy in front of Orbit, such as exe.dev | The proxy | Needed for every step on Orbit's address. If the proxy's cookie is `SameSite=Lax` or looser, it should behave like Orbit's. Without it, the proxy's login page is refused in the frame; open Orbit again in the top page. | The same. |
 
-**Safari** blocks third-party cookies by default. Expect the team-domain cookie to fail there, and on different sites the app's cookie too: use one domain, and test with your own account. Orbit's own tests run only in Chromium.
+**Check the login first.** If the frame stays white, open the app's address in a private window. If you see Cloudflare's "Sign in" page (for example "Email, Send login code"), Access is not using Instant Auth with Orbit as its only login method: that page always refuses frames, on every browser. Fix the Access application as in step 1.
+
+**The bar with the actions** shows only if something did not load. A page cannot tell a working frame from a refused one, so the app says it loaded, with one line:
+
+```html
+<script>
+  if (window.top !== window) window.top.postMessage({ type: 'orbit:app-ready' }, 'https://orbit.wellrox.com')
+</script>
+```
+
+Put it in the page the app shows after sign-in, with your Orbit address. In a single-page app, run the same line once when the app has rendered. Orbit accepts it only from the app's frame and the app's origin, and it only hides the bar. Outside a frame, the line does nothing.
+
+- **With the signal:** the frame takes the full height. The actions are in a small **…** button in the corner: **Sign in to app**, **Reload**, **Open in a new tab**, and on a phone also **Menu**.
+- **Without a signal within 8 seconds** (an app without the line, or a refused frame): the bar and its help text show. A late signal hides the bar again. **Sign in** and **Reload** start the same rule again.
+
+On a phone the bar has one row: the menu, the app's name, **Sign in**, **Open**, and a menu with **Reload**.
+
+**Safari and every iOS browser** block third-party cookies by default. What that means depends on the app's address:
+
+- **The app on the same site as Orbit** (`orbit.wellrox.com` and `products.wellrox.com`): the app's own `CF_Authorization` is not third-party in the frame, so a popup's sign-in should count in the frame. Only the Access cookies on `<team>.cloudflareaccess.com` are third-party. So the first sign-in inside the frame may fail on the callback, and **Sign in** in the popup is the way out; after it, the frame should work while the app's cookie lasts. Only a real iPhone can prove these points. Orbit's tests run only in Chromium.
+- **The app on another site:** its own cookies are third-party too, so the frame can stay signed out even after a popup sign-in. Use **Open**, or set the app to **In a new tab**.
 
 **A removed member** loses Orbit sign-in at once, but the Access session lasts for its own session duration. Keep that duration short.
 

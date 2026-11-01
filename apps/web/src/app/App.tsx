@@ -163,7 +163,7 @@ export default function App() {
                 <Route path="notifications" element={<MovedTo path="/profile/notifications" />} />
                 <Route path="api-tokens" element={<ApiTokensPage />} />
                 <Route path="file-storage" element={<FileStoragePage />} />
-                <Route path="apps" element={<AppsSettingsPage />} />
+                <Route path="apps/*" element={<AppsSettingsPage />} />
               </Route>
               <Route path="*" element={<Navigate to="/tasks" replace />} />
             </Route>

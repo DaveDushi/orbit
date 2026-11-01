@@ -94,6 +94,10 @@ Operator setup, tracked systemd units and BuildKit configuration, and verificati
 [`deploy/README.md`](../deploy/README.md#shared-build-vm-operator-setup). The mock regression suite needs
 no privileged services: `bash scripts/test-build-guards.sh`.
 
+`orbit-deploy` (the installed `scripts/deploy-guard.sh`) is a separate lock for production deploys on the VM, with a
+disk check before builds and a cleanup of old binaries and images. The steps are in `DEPLOYMENT.local.md`. Its mock
+tests: `bash scripts/test-deploy-guard.sh`.
+
 ## Native production build
 
 Build the frontend first because Cargo embeds `apps/web/dist`:

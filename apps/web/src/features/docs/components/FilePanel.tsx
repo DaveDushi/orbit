@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useState } from 'react'
-import { Download, History, Xmark as X } from 'reicon-react'
+import { Download, History, Maximize4, Minimize, Xmark as X } from 'reicon-react'
 import { cn } from 'cn'
 import { ApiProblem } from '@orbit/api/problem'
 import type { PageFileContent } from '@orbit/api/generated/types.gen'
@@ -22,6 +22,7 @@ import {
   type FileTarget,
 } from '@/features/docs/api/pageFiles'
 import { columnIndex, columnName, FileTable } from './FileTable'
+import { useFileFullScreen } from './FileSplit'
 
 // pdf.js is large: its chunk and worker load only when a PDF opens.
 const PdfPages = lazy(() => import('./PdfPages'))
@@ -416,6 +417,19 @@ function VersionsButton({ target, current }: { target: FileTarget; current: numb
   )
 }
 
+/** Fills the content row, as a drag of the divider does. Below 1100px there is no divider and no button. */
+function FullScreenButton() {
+  const { fullScreen, toggle } = useFileFullScreen()
+  const label = fullScreen ? 'Exit full screen' : 'Full screen'
+  return (
+    <Tip label={label} side="bottom">
+      <Button type="button" variant="ghost" size="icon-sm" className="text-muted-foreground max-[1099px]:hidden" aria-label={label} onClick={toggle}>
+        {fullScreen ? <Minimize className="size-4" /> : <Maximize4 className="size-4" />}
+      </Button>
+    </Tip>
+  )
+}
+
 /** A file of the page in a panel beside it: its pages, table or text, and a download button. */
 export function FilePanel({
   target,
@@ -443,7 +457,7 @@ export function FilePanel({
       aria-label="File"
       data-file-panel=""
       data-print-hide=""
-      className="flex w-[min(52%,760px)] min-w-[360px] shrink-0 animate-in flex-col border-l border-border bg-background duration-150 ease-out fade-in max-[1099px]:absolute max-[1099px]:inset-y-0 max-[1099px]:right-0 max-[1099px]:z-20 max-[1099px]:w-[min(100%,640px)] max-[1099px]:shadow-xl max-[599px]:w-full max-[599px]:min-w-0 motion-reduce:animate-none"
+      className="flex w-[calc(var(--file-share)*100%)] shrink-0 animate-in flex-col border-l border-border bg-background duration-150 ease-out fade-in max-[1099px]:absolute max-[1099px]:inset-y-0 max-[1099px]:right-0 max-[1099px]:z-20 max-[1099px]:w-[min(100%,640px)] max-[1099px]:min-w-[360px] max-[1099px]:shadow-xl max-[599px]:w-full max-[599px]:min-w-0 motion-reduce:animate-none min-[1100px]:group-data-[split=file]/split:border-l-0 min-[1100px]:group-data-[split=page]/split:invisible min-[1100px]:group-data-[split=page]/split:absolute min-[1100px]:group-data-[split=page]/split:inset-y-0 min-[1100px]:group-data-[split=page]/split:right-0 min-[1100px]:group-data-[split=page]/split:w-1/2"
     >
       <div className="flex h-12 shrink-0 items-center gap-1 border-b border-border pr-2 pl-3">
         <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground" title={file?.file_name}>
@@ -456,6 +470,7 @@ export function FilePanel({
             <Download className="size-4" />
           </a>
         </Tip>
+        <FullScreenButton />
         <Tip label="Close" side="bottom">
           <Button type="button" variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label="Close file" onClick={onClose}>
             <X className="size-4" />

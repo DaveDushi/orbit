@@ -384,6 +384,10 @@
 
   html[data-print-doc] [data-print-root] {
     display: block !important;
+    /* The divider can hide the page on screen; it still prints. */
+    visibility: visible !important;
+    position: static !important;
+    width: auto !important;
     height: auto !important;
     overflow: visible !important;
     padding: 0 !important;

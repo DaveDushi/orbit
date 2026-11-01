@@ -4,11 +4,11 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, commit 857ce8e48f5e7647cd2521c323ca4c93cc6c38eb
-  (`main` fast-forwarded to the `docs-file-preview` branch).
+- Source: DaveDushi/orbit, `main` at f005d4bbd8262a005e86532e518841e4277a368f
+  (fast-forward to the `orbit-apps` branch).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:857ce8e`); fork commits have no published upstream image.
-- Image ID: sha256:2834863f1f64723a3dca9537e88ac8e84e01bb63c58babd8d94fb534f7ed75c2
+  (`orbit:f005d4b`); fork commits have no published upstream image.
+- Image ID: sha256:a3d6e7553c25892a2be99134c74396e715178c90ab26cfeb26acb39519f68ff3
 - Team agent sidecar code (`/opt/orbit-agent`): commit 857ce8e.
 - OIDC gateway: `orbit-oidc-gateway.service`, nginx on `127.0.0.1:8400`, config in `/etc/orbit-oidc-gateway/`
   (see `docs/apps.md`). `cloudflared` is NOT installed.
@@ -182,7 +182,162 @@ chmod 600 /home/exedev/orbit-setup-link.txt
 sudo systemctl start orbit
 ```
 
+## Deploy steps
+
+Only one deploy can run on this VM. `orbit-deploy` (`scripts/deploy-guard.sh`, setup in `deploy/README.md`) holds the
+lock from the merge to `main` through the verified switch. It is separate from the `orbit-build` lock. Run every step
+below through `orbit-deploy run`. A step that runs outside it is not protected.
+
+```sh
+orbit-deploy status                               # first, see if a deploy is running
+orbit-deploy begin '<sha>: <what is deployed>'    # prints <id>; exit 75 if a deploy is running
+orbit-deploy disk                                 # before the merge; exit 73 below 3 GiB free
+
+# A rehearsal build before the merge is also part of the deploy: begin before it, and build with
+# `orbit-deploy image <id> <branch sha>`. A fast-forward merge then reuses that image.
+orbit-deploy run <id> -- git -C /home/exedev/orbit merge <branch>
+orbit-deploy image <id> main                      # skips the build if a clean image of this exact commit exists
+orbit-deploy run <id> -- deploy/smoke.sh orbit:<sha>
+orbit-deploy run <id> -- sudo systemctl stop orbit-agent orbit
+orbit-deploy run <id> -- sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; orbit backup create'
+# Also through `run`: backup verify, migration rehearsal on a copy, copy of the sidecar data and code,
+# keep the old executable as /usr/local/bin/orbit-<old sha>, install the new one as orbit and orbit-<sha>.
+orbit-deploy run <id> -- sudo systemctl start orbit
+orbit-deploy run <id> -- sudo systemctl start orbit-agent
+orbit-deploy run <id> -- curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+
+orbit-deploy end <id>                             # only after all the checks pass
+```
+
+- `orbit-deploy image` builds from a clean `git archive` of the commit and labels the image. It reuses `orbit:<sha>`
+  only if that label has the same full commit. A real merge commit has another sha, so it builds. An image with no
+  label (all images from before this change, or a manual build) is built again. **Always run the smoke test.**
+- Every shell needs the `<id>`. Do not lose it. `orbit-deploy status` shows it.
+- If a deploy fails, keep the lock while you repair or roll back. Run `end` after production is verified.
+- The lock stays through a pause of up to 2 hours with no running step. A step of any length keeps it. To extend a
+  pause, run `orbit-deploy run <id> -- true`. After the 2 hours, or after a holder crash or reboot, the lock is free and
+  `run` and `build` refuse with exit 75.
+- If `begin` or `status` says "the previous deploy did not end", production can be half switched. Check the services,
+  the revision and the schema before you continue.
+- Do not delete the lock file. To release the lock of a dead session, read the `<id>` from `status`, check production,
+  and run `orbit-deploy end <id>`.
+- Put each new upgrade section first under "Verification performed", with its rollback command. Cleanup reads the
+  first `install -m 755 /usr/local/bin/orbit-<sha> /usr/local/bin/orbit` line in this file as the rollback copy.
+
+Cleanup of old binaries and images, after a verified deploy:
+
+```sh
+sudo orbit-deploy cleanup           # shows the list, removes nothing
+sudo orbit-deploy cleanup --apply   # removes the list; refused during a deploy
+```
+
+Cleanup keeps the installed binary, the running process's binary, the rollback copy and the 3 newest other copies, and
+the images with these names. After cleanup, the rollback commands of older upgrades below can name a binary that is gone.
+It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
+
 ## Verification performed
+
+### November 1, 2026 tools: deploy lock and BuildKit cache (no deploy)
+
+Fast-forwarded `main` to `dba6934`: deploy tools and docs only, so no image build and no binary switch. Production stays on
+`f005d4b`. Installed `/usr/local/bin/orbit-deploy` and the lock `/var/lib/orbit-deploys/deploy.lock` (root, mode 0666), and the
+new `/etc/orbit-buildkit.toml` (6 GB cache limit, explicit GC rules). The earlier config is
+`/etc/orbit-buildkit.toml.before-deploy-lock`. Restarted `orbit-buildkit` under the build lock at 16:16 UTC.
+
+Verified: `buildx inspect` shows 4 GC rules at 6 GiB; `orbit-buildkit-state` is kept (832 MB before and after); the `orbit-limited`
+builder answers; as root and as exedev, a second `begin` is refused (exit 75), and the lock is released after `end`; cleanup
+dry-run only; `orbit`, `orbit-agent`, nginx and `orbit-oidc-gateway` are active with revision `f005d4b` and readiness (all checks).
+**Not** verified: a real build with the new rules or a warm build, a real `orbit-deploy image` (mock tests only), a reboot, and
+GC under low disk. The real cleanup was not run.
+
+Rollback of the config (only when no build runs) and of the tool (only when no deploy runs):
+
+```sh
+sudo install -m 0644 /etc/orbit-buildkit.toml.before-deploy-lock /etc/orbit-buildkit.toml
+sudo flock -n /var/lib/orbit-builds/build.lock systemctl restart orbit-buildkit.service
+flock -n /var/lib/orbit-deploys/deploy.lock sudo rm /usr/local/bin/orbit-deploy
+```
+
+### November 1, 2026 upgrade: Orbit Apps on phones, the app bar and a clearer Settings → Apps
+
+Fast-forwarded `main` to `orbit-apps` (`f005d4b`, 12 commits) at 15:34:35 UTC: the app page's phone layout, the bar that hides on
+the app's ready signal (`orbit:app-ready`, see `docs/apps.md`), and the Settings → Apps redesign. Web, docs and test scripts only:
+no migration (schema stays 69), no new setting, no server or `apps/agent` change. `/etc/orbit/orbit.env`, `/etc/orbit/agent.env`,
+nginx, the OIDC gateway, the tunnel and the sidecar code did not change, and the sidecar was only restarted around the switch.
+
+Checks before the merge, on `f005d4b` with `main` `e136805` merged: web typecheck, oxlint on the changed areas, tests for apps,
+shell and auth (101), and the browser tests in `scripts/apps-demo/` against an isolated instance: `e2e-settings.mjs` (66),
+`e2e.mjs` (25) and `e2e-mobile.mjs` (118). Only Chromium, on SQLite. The phone runs use a phone identity, not real WebKit. The
+server test suite and the full workspace suite were not run, because no server code changed.
+
+`orbit:f005d4b` was built from a clean `git archive` of `main` with
+`orbit-build /usr/bin/docker buildx build --builder=orbit-limited --load` (15:34:35 to 16:13:41 UTC, 39 minutes), and
+`deploy/smoke.sh` passed. The extracted binary has the revision and the new web code.
+
+At the switch: stopped `orbit-agent` and `orbit`, created and verified snapshot `01a197e3-de77-754a-8b09-b4339a5d48d6`
+(`/var/backups/orbit/snapshots/01a197e3-de77-754a-8b09-b4339a5d48d6`) with the old CLI, installed the binary at 16:14:15 UTC,
+and started `orbit`, then `orbit-agent`; ready at 16:14:17 UTC. The old executable is `/usr/local/bin/orbit-6a817b9` (checked equal
+to the running one before the swap), and the new one is also kept as `/usr/local/bin/orbit-f005d4b`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` are active; readiness 200 (all checks) on
+loopback; revision `f005d4b`; the served JS has the new code; counts unchanged (6 users, 1 workspace, 3 projects, 62 tasks, 31
+pages, 42 blobs, 427 chat messages, 54 agent inputs, 1 integration), quick-check and foreign-key checks pass; the
+`product-development` row of `workspace_apps` (client ID, redirect URI, roles, open mode, `updated_at`) is byte-equal before and
+after; the apps route answers 401 without a session and a foreign origin write 403; https://orbit.wellrox.com/ answers 307 to the
+exe.dev login; through the tunnel `/oauth/jwks` 200 with one key of public fields and `/login` 404. A signed-in test on production and
+a test on a real iPhone were **not** done from this VM: they need a person's login and device. The bar on the Products app stays
+until its owner adds the ready snippet from `docs/apps.md`.
+
+Rollback (no schema change, so the old binary can read the database; the snapshot is needed only if data is damaged):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-6a817b9 /usr/local/bin/orbit
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+```
+
+### November 1, 2026 upgrade: resize the file panel on Docs pages
+
+Fast-forwarded `main` to `docs-file-panel-resize` (`6a817b9`, 3 commits): a divider between a page and its open file, and a
+full screen button in the panel header. Web only: no migration (schema stays 69), no new setting, no server or `apps/agent`
+change. `/etc/orbit/orbit.env`, `/etc/orbit/agent.env`, nginx and the sidecar code did not change, and the sidecar was only
+restarted around the switch.
+
+Checks before the merge, on `6a817b9`: `FileSplit.test.ts` (7), web typecheck, oxlint on the changed files; the browser tests
+in `apps/web/e2e/file-panel.spec.ts` ran against an isolated instance built from `f41e235`, which differs only in that test
+file: the two older tests once and the divider test 5 times, all pass. One earlier run on `f41e235` failed because the test
+read the panel width during its 150ms transition (`duration-150` gives `transition: all`); the test now polls, with the same
+limits. Only Chromium, on SQLite. The server test suite was not run, because no server code changed.
+
+`orbit:6a817b9` was built from a clean `git archive` of `main` with
+`orbit-build /usr/bin/docker buildx build --builder=orbit-limited --load` (about 35 minutes), and `deploy/smoke.sh` passed.
+
+At the switch: stopped `orbit-agent` and `orbit`, created and verified snapshot `01a19791-b271-735b-a6b0-52db18317043`
+(`/var/backups/orbit/snapshots/01a19791-b271-735b-a6b0-52db18317043`) with the old CLI, installed the binary, and started `orbit`
+directly after the swap, then `orbit-agent`. The old executable is `/usr/local/bin/orbit-857ce8e` (checked equal to the running
+one before the swap), and the new one is also kept as `/usr/local/bin/orbit-6a817b9`.
+
+Verified: `orbit`, `orbit-agent`, nginx and `orbit-oidc-gateway` are active with no restarts; readiness 200 (all checks); the
+installed binary's hash equals the one from the image; revision `6a817b9` is in the binary and in the served
+`/assets/index-BSfbUl0T.js`, with "Exit full screen", "Resize file panel" and `orbit:file_panel_share`; sidecar `mock: false`;
+`/api/v1/auth/me` answers 401 with no session, with HSTS; canonical login 400, foreign 403; https://orbit.wellrox.com/ answers
+307 to the exe.dev login. No errors in the log. `deploy/verify-production.sh` passes against `http://127.0.0.1:8000` with the
+`X-Forwarded-Proto: https` header. On the public origin it stops at the auth check with 307, because the exe.dev gate answers
+before Orbit; this does not depend on the Orbit binary.
+
+**Not** verified: the signed-in divider and button on production (it needs a person's login; the browser tests ran only on the
+test instance), and browsers other than Chromium. Known cosmetic point: during a drag the panel edge follows the divider with
+a small lag (at normal speed a median of 11px and a maximum of 34px, 0 at rest), from the same transition.
+
+Rollback (no migration, so the old binary reads this database; the snapshot is not needed):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-857ce8e /usr/local/bin/orbit
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+```
 
 ### October 31, 2026 upgrade: open and edit files on Docs pages
 

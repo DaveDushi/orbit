@@ -22,7 +22,19 @@ sudo systemctl daemon-reload
 sudo systemctl start orbit-builds.slice
 ```
 
-Never remove or replace the lock while any guard is running. Its root-owned parent directory prevents
+The deploy lock is separate. It allows only one production deploy at a time, and it also checks disk before a build
+and cleans up old binaries and images (steps in `DEPLOYMENT.local.md`):
+
+```sh
+sudo install -m 0755 scripts/deploy-guard.sh /usr/local/bin/orbit-deploy
+sudo install -d -o root -g root -m 0755 /var/lib/orbit-deploys
+sudo touch /var/lib/orbit-deploys/deploy.lock
+sudo chown root:root /var/lib/orbit-deploys/deploy.lock
+sudo chmod 0666 /var/lib/orbit-deploys/deploy.lock
+bash scripts/test-deploy-guard.sh
+```
+
+Never remove or replace either lock while any guard is running. The build lock's root-owned parent directory prevents
 unprivileged replacement; mode 0666 allows both root and exedev to open the same inode.
 The helper requires Bash, util-linux `flock`, systemd supporting `--expand-environment=no`, and
 passwordless `sudo -E systemd-run` for non-root callers. The command drops back to its original numeric
@@ -77,8 +89,12 @@ Creation commands are one-time steps: inspect existing containers/builders inste
 them blindly. The privileged worker is dedicated to trusted local builds; expose no BuildKit TCP port.
 Systemd owns restart behavior (`--restart=no` on the container). `--memory-swap=4g` equals its 4 GiB
 memory limit, disabling additional swap allowance. BuildKit schedules one OCI build operation at a
-time. Its GC settings reserve 512 MB, target at most 2 GB cache, and aim for 2 GB free disk; these are
+time. Its GC rules reserve 512 MB, target at most 6 GB cache, and aim for 2 GB free disk; these are
 GC targets, **not hard disk quotas**. The first build has a cold, independent cache and may take longer.
+A cold build needs about 2.4 GB in the cargo target cache mount, and later builds compile only Orbit's own
+crates. The limit must stay above that size: a 2 GB limit removed the whole mount after each build. The rules
+are explicit because BuildKit's default first rule also removes cache mounts unused for 48 hours when they use
+more than 512 MB. If `docker buildx du` shows the cache near 6 GB, the mount can go again; raise the limit.
 
 After changing BuildKit config, restart `orbit-buildkit.service`. Container memory/cgroup/image changes
 require stopping the service and deliberately recreating the container with the same state volume.
