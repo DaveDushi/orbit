@@ -77,6 +77,8 @@ for (const [name, viewport] of devices) {
     const height = await frameHeight(page)
     check(height >= viewport.height - 72, `${kind} ${name}: the frame has ${height} of ${viewport.height} px`)
     check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${kind} ${name}: no sideways scroll without the bar`)
+    const corner = await page.getByRole('button', { name: 'App actions' }).evaluate((el) => { const style = getComputedStyle(el); return { background: style.backgroundColor, opacity: style.opacity } })
+    check(!/rgba\(.*, 0(\.\d+)?\)|transparent|\/ 0(\.\d+)?\)/.test(corner.background) && corner.opacity === '1', `${kind} ${name}: the corner button is solid on a white app (${corner.background})`)
     await page.screenshot({ path: `${out}/${kind}-${name}-ready-no-bar.png` })
     await page.getByRole('button', { name: 'App actions' }).click()
     await page.getByRole('menuitem', { name: 'Menu' }).waitFor({ timeout: 3000 }) // the menu opens with an animation

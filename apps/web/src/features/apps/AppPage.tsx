@@ -116,7 +116,7 @@ function AppView({ app, workspaceId }: { app: WorkspaceApp; workspaceId: string 
           {/* with the bar hidden the actions stay one tap away, and on a phone also the navigation drawer */}
           {showBar ? null : (
             <DropdownMenu>
-              <DropdownMenuTrigger render={<Button type="button" variant="outline" size="icon-sm" className="absolute right-5 bottom-3 z-10 bg-background/90 opacity-70 transition-opacity hover:opacity-100 focus-visible:opacity-100" aria-label="App actions" />}>
+              <DropdownMenuTrigger render={<Button type="button" variant="outline" size="icon-sm" className="absolute right-5 bottom-3 z-10 bg-background text-foreground shadow-md hover:bg-muted dark:bg-background dark:hover:bg-muted" aria-label="App actions" />}>
                 <MoreHorizontal className="size-4" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" side="top" className="min-w-44">
