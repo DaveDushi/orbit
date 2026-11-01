@@ -4,11 +4,11 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, commit 6a817b941a89c7b7c2f6ea6312fb92b2e41f83a9
-  (`main` fast-forwarded to the `docs-file-panel-resize` branch).
+- Source: DaveDushi/orbit, `main` at f005d4bbd8262a005e86532e518841e4277a368f
+  (fast-forward to the `orbit-apps` branch).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:6a817b9`); fork commits have no published upstream image.
-- Image ID: sha256:224792ed736c174a8f525bf18e29f45fa7a48002e2cba0ffbabd81950e40192c
+  (`orbit:f005d4b`); fork commits have no published upstream image.
+- Image ID: sha256:a3d6e7553c25892a2be99134c74396e715178c90ab26cfeb26acb39519f68ff3
 - Team agent sidecar code (`/opt/orbit-agent`): commit 857ce8e.
 - OIDC gateway: `orbit-oidc-gateway.service`, nginx on `127.0.0.1:8400`, config in `/etc/orbit-oidc-gateway/`
   (see `docs/apps.md`). `cloudflared` is NOT installed.
@@ -236,6 +236,45 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 1, 2026 upgrade: Orbit Apps on phones, the app bar and a clearer Settings → Apps
+
+Fast-forwarded `main` to `orbit-apps` (`f005d4b`, 12 commits) at 15:34:35 UTC: the app page's phone layout, the bar that hides on
+the app's ready signal (`orbit:app-ready`, see `docs/apps.md`), and the Settings → Apps redesign. Web, docs and test scripts only:
+no migration (schema stays 69), no new setting, no server or `apps/agent` change. `/etc/orbit/orbit.env`, `/etc/orbit/agent.env`,
+nginx, the OIDC gateway, the tunnel and the sidecar code did not change, and the sidecar was only restarted around the switch.
+
+Checks before the merge, on `f005d4b` with `main` `e136805` merged: web typecheck, oxlint on the changed areas, tests for apps,
+shell and auth (101), and the browser tests in `scripts/apps-demo/` against an isolated instance: `e2e-settings.mjs` (66),
+`e2e.mjs` (25) and `e2e-mobile.mjs` (118). Only Chromium, on SQLite. The phone runs use a phone identity, not real WebKit. The
+server test suite and the full workspace suite were not run, because no server code changed.
+
+`orbit:f005d4b` was built from a clean `git archive` of `main` with
+`orbit-build /usr/bin/docker buildx build --builder=orbit-limited --load` (15:34:35 to 16:13:41 UTC, 39 minutes), and
+`deploy/smoke.sh` passed. The extracted binary has the revision and the new web code.
+
+At the switch: stopped `orbit-agent` and `orbit`, created and verified snapshot `01a197e3-de77-754a-8b09-b4339a5d48d6`
+(`/var/backups/orbit/snapshots/01a197e3-de77-754a-8b09-b4339a5d48d6`) with the old CLI, installed the binary at 16:14:15 UTC,
+and started `orbit`, then `orbit-agent`; ready at 16:14:17 UTC. The old executable is `/usr/local/bin/orbit-6a817b9` (checked equal
+to the running one before the swap), and the new one is also kept as `/usr/local/bin/orbit-f005d4b`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` are active; readiness 200 (all checks) on
+loopback; revision `f005d4b`; the served JS has the new code; counts unchanged (6 users, 1 workspace, 3 projects, 62 tasks, 31
+pages, 42 blobs, 427 chat messages, 54 agent inputs, 1 integration), quick-check and foreign-key checks pass; the
+`product-development` row of `workspace_apps` (client ID, redirect URI, roles, open mode, `updated_at`) is byte-equal before and
+after; the apps route answers 401 without a session and a foreign origin write 403; https://orbit.wellrox.com/ answers 307 to the
+exe.dev login; through the tunnel `/oauth/jwks` 200 with one key of public fields and `/login` 404. A signed-in test on production and
+a test on a real iPhone were **not** done from this VM: they need a person's login and device. The bar on the Products app stays
+until its owner adds the ready snippet from `docs/apps.md`.
+
+Rollback (no schema change, so the old binary can read the database; the snapshot is needed only if data is damaged):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-6a817b9 /usr/local/bin/orbit
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+```
 
 ### November 1, 2026 upgrade: resize the file panel on Docs pages
 
