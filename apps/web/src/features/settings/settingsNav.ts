@@ -104,6 +104,7 @@ const AREAS: Record<SettingsAreaName, SettingsArea> = {
           { to: '/profile/notifications', label: 'Notifications', icon: Bell },
           { to: '/profile/security', label: 'Security', icon: Lock },
           { to: '/profile/sessions', label: 'Sessions', icon: ShieldCheck },
+          { to: '/profile/agentic', label: 'Agentic', icon: MagicStar },
           { to: '/profile/shortcuts', label: 'Keyboard shortcuts', icon: Keyboard },
           { to: '/profile/storage', label: 'Storage', icon: Driver },
           { to: '/profile/agent', label: 'Agent', icon: MagicStar, agent: true, tabs: ACCOUNT_AGENT_TABS },

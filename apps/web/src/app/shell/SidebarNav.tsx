@@ -4,7 +4,7 @@ import { useBindings } from '@/shortcuts/useCommand'
 import { createContext, Fragment, useContext, useEffect, useState, type ComponentType, type ReactNode } from 'react'
 import { Link, useLocation, useMatch, useNavigate, useResolvedPath, type LinkProps } from 'react-router'
 import { cva, type VariantProps } from 'class-variance-authority'
-import { Calendar, ChevronDown, CalendarTick, Danger, SecurityUser, Home2 as Home, Layer, Notification as Bell, Message as MessageSquare, DocumentText as FileText, Search4 as Search, Setting2 as Settings, Sms as Mail, Star, TaskSquare as SquareCheck, Timer, Folder, Add as Plus, Trash } from 'reicon-react'
+import { Calendar, ChevronDown, CalendarTick, Danger, SecurityUser, Home2 as Home, Layer, Notification as Bell, Message as MessageSquare, DocumentText as FileText, Search4 as Search, Setting2 as Settings, Sms as Mail, Star, TaskSquare as SquareCheck, Timer, Folder, Add as Plus, Trash, MagicStar } from 'reicon-react'
 import { cn } from 'cn'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
@@ -523,6 +523,8 @@ export function SidebarNav({
                   {workspaceId ? <AppLinks workspaceId={workspaceId} onNavigate={onNavigate} /> : null}
                   <SidebarSection label="Personal" collapsed={collapsed} />
                   <SidebarNavItem to={activityPath} icon={Bell} label="Activity" unread={inboxUnread} onClick={onNavigate} />
+                  {/* connect AI clients (MCP); kept here so people find it without opening their account settings */}
+                  <SidebarNavItem to="/profile/agentic" icon={MagicStar} label="Agentic" onClick={onNavigate} />
                   {/* the new UI keeps these in the Tasks area */}
                   {contextual ? null : TASK_PRESETS.map((preset) => (
                     <SidebarNavItem key={preset.view} to={taskViewPath(preset.view)} active={taskViewActive(preset.view)} icon={preset.icon} label={preset.label} onClick={onNavigate} />
