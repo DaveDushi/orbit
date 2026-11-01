@@ -202,11 +202,13 @@ curl -s -o /dev/null -w '%{http_code}\n' "$PUBLIC/login"                        
 curl -s -o /dev/null -w '%{http_code}\n' "$PUBLIC/oauth/authorize"                       # 404
 curl -s -o /dev/null -w '%{http_code}\n' "$PUBLIC/api/v1/auth/me"                        # 404
 curl -s -o /dev/null -w '%{http_code}\n' --path-as-is "$PUBLIC/oauth/../api/v1/auth/me"  # 404
-# A forged address must not avoid the limit: 429 at about the 31st line.
-for i in $(seq 35); do curl -s -o /dev/null -w '%{http_code} ' -X POST -H "X-Forwarded-For: 198.51.100.$i" -H "CF-Connecting-IP: 198.51.100.$i" -d x=1 "$PUBLIC/oauth/token"; done
+# A forged X-Forwarded-For must not avoid the limit: the first 429 comes at about the 31st request.
+for i in $(seq 35); do curl -s -o /dev/null -w '%{http_code} ' -X POST -H "X-Forwarded-For: 198.51.100.$i" -d x=1 "$PUBLIC/oauth/token"; done
 ```
 
-Cloudflare can normalize a path before it reaches the gateway, or refuse a forged header itself. Either is fine as long as Orbit's other routes do not answer. A 429 stops further token calls from that address for the rest of the minute.
+Run the limit check at the start of a minute, and last: a 429 stops further token calls from that address for the rest of the minute. Measured on `orbit-oidc.wellrox.com`: 400 for requests 1 to 30, 429 for requests 31 to 35.
+
+Do not put `CF-Connecting-IP` in this check. Cloudflare refuses a request with a forged `CF-Connecting-IP` at its edge, with 403 and `error code: 1000`, so the request never reaches the gateway. Cloudflare can also normalize a path before it reaches the gateway. Both are fine as long as Orbit's other routes do not answer.
 
 **Test the gateway's rules** on any machine with `deploy/oidc-gateway/test.sh`.
 
