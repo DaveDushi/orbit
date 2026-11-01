@@ -79,6 +79,7 @@ for (const [name, viewport] of devices) {
     check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${kind} ${name}: no sideways scroll without the bar`)
     await page.screenshot({ path: `${out}/${kind}-${name}-ready-no-bar.png` })
     await page.getByRole('button', { name: 'App actions' }).click()
+    await page.getByRole('menuitem', { name: 'Menu' }).waitFor({ timeout: 3000 }) // the menu opens with an animation
     for (const item of ['Menu', 'Sign in to app', 'Reload', 'Open in a new tab']) check(await page.getByRole('menuitem', { name: item }).isVisible(), `${kind} ${name}: ${item} is in the corner menu`)
     await page.screenshot({ path: `${out}/${kind}-${name}-ready-corner-menu.png` })
     await page.getByRole('menuitem', { name: 'Menu' }).click()
@@ -91,6 +92,9 @@ for (const [name, viewport] of devices) {
     const gate = page.frameLocator('iframe[data-slot=app-frame]').frameLocator('iframe')
     await page.waitForTimeout(2000)
     check(await page.locator('iframe[data-slot=app-frame]').count() === 1 && await gate.locator('#who').count() === 0, `${kind} ${name}: the refused login stays blank in the frame`)
+    check(await page.locator('[data-slot=pane-header]').count() === 0, `${kind} ${name}: the bar waits while the frame may still load`)
+    await page.locator('[data-slot=pane-header]').waitFor({ timeout: 12000 })
+    check(true, `${kind} ${name}: a refused frame gets the bar after the timeout`)
     await fits(page, `${kind} ${name}, blank frame`)
     await page.screenshot({ path: `${out}/${kind}-${name}-blank-frame.png` })
     const [popup] = await Promise.all([page.context().waitForEvent('page'), page.getByRole('button', { name: 'Sign in to app' }).filter({ visible: true }).click()])
