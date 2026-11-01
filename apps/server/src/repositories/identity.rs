@@ -214,6 +214,10 @@ pub enum RootChangeError {
 }
 
 /// Why the root user's action on another account was refused.
+/// The stored hash of a deleted account: a well-formed hash of nothing, so no password verifies against it.
+pub(super) const NO_PASSWORD: &str =
+    "$argon2id$v=19$m=19456,t=2,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
 #[derive(Debug, Error)]
 pub enum AdminAccountError {
     #[error("only the installation administrator may manage accounts")]
@@ -228,6 +232,12 @@ pub enum AdminAccountError {
     OwnAccount,
     #[error("the account is suspended")]
     Suspended,
+    #[error("the account was deleted")]
+    Deleted,
+    #[error("the account already has this email")]
+    SameEmail,
+    #[error("another account has this email")]
+    EmailTaken,
     #[error("identity repository is unavailable")]
     Unavailable(#[from] sqlx::Error),
 }
@@ -243,6 +253,8 @@ pub struct AdminUser {
     /// Can open Admin: the root user and the instance admins the root user chose.
     pub admin: bool,
     pub suspended: bool,
+    /// The person deleted their account: it is anonymized and can never sign in or be reinstated.
+    pub deleted: bool,
     /// Sign-in asks for an authenticator app code. An admin can turn it off for a user who lost the device.
     pub two_factor: bool,
     #[schema(value_type = String, format = DateTime)]
@@ -860,7 +872,7 @@ impl IdentityRepository {
                  THEN 0 ELSE 1 END AS root_rank, \
                1 - users.installation_admin AS admin_rank FROM users) \
              SELECT keyed.id, keyed.email, keyed.display_name, keyed.installation_admin, keyed.suspended_at, \
-             keyed.created_at, 1 - keyed.root_rank AS root, \
+             keyed.deleted_at, keyed.created_at, 1 - keyed.root_rank AS root, \
              EXISTS (SELECT 1 FROM user_totp WHERE user_totp.user_id = keyed.id \
                AND user_totp.enabled_at IS NOT NULL) AS two_factor, \
              (SELECT MAX(sessions.last_activity_at) FROM sessions WHERE sessions.user_id = keyed.id) \
@@ -890,6 +902,7 @@ impl IdentityRepository {
                 root: row.get::<i64, _>("root") == 1,
                 admin: row.get::<i64, _>("installation_admin") == 1,
                 suspended: row.get::<Option<i64>, _>("suspended_at").is_some(),
+                deleted: row.get::<Option<i64>, _>("deleted_at").is_some(),
                 two_factor: row.get::<bool, _>("two_factor"),
                 created_at: TimestampMillis::from_millis(row.get("created_at")),
                 last_active_at: row
@@ -904,8 +917,9 @@ impl IdentityRepository {
         Ok((users, next))
     }
 
-    /// Stores a one-time recovery token for another account, issued from the Admin area. An admin's own password
-    /// changes in Profile, which asks for the current password; a recovery link would skip that.
+    /// Stores a one-time recovery token for another account, issued from the Admin area, and returns the account's
+    /// email. An admin's own password changes in Profile, which asks for the current password; a recovery link would
+    /// skip that.
     pub async fn issue_recovery_token_as_admin(
         &self,
         actor_id: Id,
@@ -913,7 +927,7 @@ impl IdentityRepository {
         token: &str,
         expires_at: TimestampMillis,
         request_id: &str,
-    ) -> Result<(), AdminAccountError> {
+    ) -> Result<String, AdminAccountError> {
         let now = self.database.database_now().await?;
         let mut transaction = self.database.immediate_transaction().await?;
         if !Self::is_active_admin(&mut transaction, actor_id).await? {
@@ -923,13 +937,12 @@ impl IdentityRepository {
             return Err(AdminAccountError::OwnAccount);
         }
         Self::may_manage(&mut transaction, actor_id, user_id).await?;
-        let suspended_at =
-            sqlx::query_scalar::<_, Option<i64>>("SELECT suspended_at FROM users WHERE id = $1")
-                .bind(user_id.to_string())
-                .fetch_optional(&mut *transaction)
-                .await?
-                .ok_or(AdminAccountError::NotFound)?;
-        if suspended_at.is_some() {
+        let account = sqlx::query("SELECT email, suspended_at FROM users WHERE id = $1")
+            .bind(user_id.to_string())
+            .fetch_optional(&mut *transaction)
+            .await?
+            .ok_or(AdminAccountError::NotFound)?;
+        if account.get::<Option<i64>, _>("suspended_at").is_some() {
             return Err(AdminAccountError::Suspended);
         }
         insert_recovery_token(
@@ -953,7 +966,7 @@ impl IdentityRepository {
         )
         .await?;
         transaction.commit().await?;
-        Ok(())
+        Ok(account.get("email"))
     }
 
     /// Makes an account an instance admin, or takes that back. Only the root user may, and never for the root account.
@@ -1038,11 +1051,13 @@ impl IdentityRepository {
         if initialized == 0 {
             return Err(RootChangeError::SetupIncomplete);
         }
-        let target = sqlx::query("SELECT id, suspended_at FROM users WHERE normalized_email = $1")
-            .bind(normalize_email(email))
-            .fetch_optional(&mut *transaction)
-            .await?
-            .ok_or(RootChangeError::NotFound)?;
+        let target = sqlx::query(
+            "SELECT id, suspended_at FROM users WHERE normalized_email = $1 AND deleted_at IS NULL",
+        )
+        .bind(normalize_email(email))
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or(RootChangeError::NotFound)?;
         let target_id: String = target.get("id");
         let reinstated = target.get::<Option<i64>, _>("suspended_at").is_some();
         let previous = sqlx::query_scalar::<_, Option<String>>(
@@ -1100,7 +1115,7 @@ impl IdentityRepository {
             != 0)
     }
 
-    async fn is_root_account(
+    pub(super) async fn is_root_account(
         transaction: &mut Transaction<'_, Any>,
         user_id: Id,
     ) -> Result<bool, sqlx::Error> {
@@ -1122,6 +1137,15 @@ impl IdentityRepository {
     ) -> Result<(), AdminAccountError> {
         if Self::is_root_account(transaction, target_id).await? {
             return Err(AdminAccountError::RootAccount);
+        }
+        let deleted = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM users WHERE id = $1 AND deleted_at IS NOT NULL",
+        )
+        .bind(target_id.to_string())
+        .fetch_one(&mut **transaction)
+        .await?;
+        if deleted != 0 {
+            return Err(AdminAccountError::Deleted);
         }
         let target_admin =
             sqlx::query_scalar::<_, i64>("SELECT installation_admin FROM users WHERE id = $1")

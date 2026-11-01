@@ -53,10 +53,13 @@ pub enum Permission {
     /// Add, change and remove the workspace's custom web apps and their sign-in clients.
     #[serde(rename = "apps.manage")]
     AppsManage,
+    /// Export the whole workspace as a ZIP archive and download its exports.
+    #[serde(rename = "workspace.export")]
+    WorkspaceExport,
 }
 
 impl Permission {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::WorkspaceUpdate,
         Self::WorkspaceDelete,
         Self::WorkspaceTransfer,
@@ -73,6 +76,7 @@ impl Permission {
         Self::StorageManage,
         Self::AgentMemoryManage,
         Self::AppsManage,
+        Self::WorkspaceExport,
     ];
 }
 
@@ -251,7 +255,8 @@ impl Policy {
             | Permission::ChatManage
             | Permission::StorageManage
             | Permission::AgentMemoryManage
-            | Permission::AppsManage => {
+            | Permission::AppsManage
+            | Permission::WorkspaceExport => {
                 matches!(role, WorkspaceRole::Owner | WorkspaceRole::Admin)
             }
         }

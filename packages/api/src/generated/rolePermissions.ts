@@ -16,7 +16,8 @@ export const ROLE_PERMISSIONS: Record<WorkspaceRole, Permission[]> = {
     "chat.manage",
     "storage.manage",
     "agent_memory.manage",
-    "apps.manage"
+    "apps.manage",
+    "workspace.export"
   ],
   "member": [],
   "owner": [
@@ -35,6 +36,7 @@ export const ROLE_PERMISSIONS: Record<WorkspaceRole, Permission[]> = {
     "billing.manage",
     "storage.manage",
     "agent_memory.manage",
-    "apps.manage"
+    "apps.manage",
+    "workspace.export"
   ]
 }

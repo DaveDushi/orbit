@@ -584,3 +584,75 @@ async fn invitation_emails_have_daily_caps_per_workspace_and_per_inviter() {
     assert_eq!(body["code"], "invitation_email_limit");
     assert_eq!(sent(&outbox, 3).await.len(), 3);
 }
+
+/// Turns Orbit Cloud billing on for the fixture's database.
+fn enable_cloud(fixture: &Fixture) -> orbit_server::billing::Billing {
+    orbit_server::billing::Billing::new(
+        orbit_platform::BillingConfig::new(
+            orbit_platform::Secret::new("sk_test_unused"),
+            orbit_platform::Secret::new("whsec_unused"),
+            vec![],
+        ),
+        fixture.identity.database().clone(),
+        ORIGIN,
+    )
+}
+
+#[tokio::test]
+async fn orbit_cloud_keeps_its_mail_server_and_needs_it_for_registration() {
+    let fixture = fixture().await;
+    let _billing = enable_cloud(&fixture);
+    let app = &router(
+        &fixture.identity,
+        Some(Mailer::new(
+            fixture.identity.database().clone(),
+            Some([9; 32]),
+            ORIGIN,
+        )),
+    );
+    let root = Some(fixture.root_cookie.as_str());
+
+    let (status, body) = call(
+        app,
+        "PUT",
+        "/api/v1/admin/settings/registration",
+        root,
+        Some(json!({"open": true})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["code"], "email_not_configured");
+
+    let (status, _) = call(
+        app,
+        "PUT",
+        "/api/v1/admin/settings/smtp",
+        root,
+        Some(smtp_body()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body) = call(app, "DELETE", "/api/v1/admin/settings/smtp", root, None).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["code"], "smtp_required");
+    assert_eq!(
+        body["detail"],
+        "Orbit Cloud needs a mail server. Save a different one instead."
+    );
+    let (_, settings) = call(app, "GET", "/api/v1/admin/settings", root, None).await;
+    assert_eq!(settings["smtp"]["host"], "smtp.example.com");
+
+    let mut replacement = smtp_body();
+    replacement["host"] = json!("mail.example.net");
+    let (status, body) = call(
+        app,
+        "PUT",
+        "/api/v1/admin/settings/smtp",
+        root,
+        Some(replacement),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["smtp"]["host"], "mail.example.net");
+}
+

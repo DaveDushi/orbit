@@ -483,6 +483,16 @@ impl MigrationRunner {
                     ),
                     false,
                 ),
+                Migration::new(
+                    70,
+                    include_str!("../../../../apps/server/migrations/0070_account_lifecycle.sql"),
+                    false,
+                ),
+                Migration::new(
+                    71,
+                    include_str!("../../../../apps/server/migrations/0071_workspace_exports.sql"),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -617,6 +627,20 @@ impl MigrationRunner {
                 69,
                 include_str!(
                     "../../../../apps/server/migrations/postgres/0069_page_file_versions.sql"
+                ),
+                false,
+            ),
+            Migration::new(
+                70,
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0070_account_lifecycle.sql"
+                ),
+                false,
+            ),
+            Migration::new(
+                71,
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0071_workspace_exports.sql"
                 ),
                 false,
             ),

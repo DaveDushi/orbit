@@ -57,6 +57,11 @@ pub struct SubscriptionSnapshot {
 /// with its trial, so writers outside the guard need no [`crate::billing::Billing`].
 struct BillingOn(TrialConfig);
 
+/// Whether this server runs Orbit Cloud billing.
+pub(crate) fn enabled(database: &Database) -> bool {
+    database.existing_extension::<BillingOn>().is_some()
+}
+
 /// Turns the read-only rule on for `database`; [`write_access`] answers `Full` until then.
 pub(crate) fn enable(database: &Database, trial: TrialConfig) {
     database.extension(|| BillingOn(trial));
