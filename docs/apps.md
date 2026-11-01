@@ -246,6 +246,10 @@ If a person has no Orbit session when the frame reaches `/oauth/authorize`, Orbi
 | `CF_Authorization` on `<team>.cloudflareaccess.com` | Access | A third-party cookie in the frame (`SameSite=None`), always. If a browser blocks it, Instant Auth in the frame can fail. Then use **Sign in to app**. | The same. |
 | The login cookie of a proxy in front of Orbit, such as exe.dev | The proxy | Needed for every step on Orbit's address. If the proxy's cookie is `SameSite=Lax` or looser, it should behave like Orbit's. Without it, the proxy's login page is refused in the frame; open Orbit again in the top page. | The same. |
 
+**Check the login first.** If the frame stays white, open the app's address in a private window. If you see Cloudflare's "Sign in" page (for example "Email, Send login code"), Access is not using Instant Auth with Orbit as its only login method: that page always refuses frames, on every browser. Fix the Access application as in step 1.
+
+**On a phone** the page has one header row: the menu, the app's name, **Open**, and a menu with **Sign in to app** and **Reload**. **Safari and every iOS browser** show **Open <app>** first, not the frame, because they block third-party cookies by default and the page cannot detect a failed frame. **Try inside Orbit** shows the frame and the browser remembers this per app.
+
 **Safari** blocks third-party cookies by default. Expect the team-domain cookie to fail there, and on different sites the app's cookie too: use one domain, and test with your own account. Orbit's own tests run only in Chromium.
 
 **A removed member** loses Orbit sign-in at once, but the Access session lasts for its own session duration. Keep that duration short.
