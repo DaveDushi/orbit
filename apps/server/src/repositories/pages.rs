@@ -347,6 +347,10 @@ pub enum PageError {
     /// Deleting teamspace pages forever needs a workspace owner or admin.
     #[error("page action is not permitted")]
     Forbidden,
+    /// Moving teamspace pages created by others into a private space needs a workspace owner
+    /// or admin.
+    #[error("page action is not permitted")]
+    MoveToPrivateForbidden,
     /// Only pages in the trash (trashed directly) can be deleted forever.
     #[error("page is not in the trash")]
     NotTrashed,
@@ -797,7 +801,7 @@ impl PageRepository {
         now: TimestampMillis,
     ) -> Result<PageRecord, PageError> {
         let mut tx = self.database.immediate_transaction().await?;
-        require_access_tx(&mut tx, workspace_id, actor_id).await?;
+        let actor = require_access_tx(&mut tx, workspace_id, actor_id).await?;
         let current = page_in_tx(&mut tx, workspace_id, page_id, actor_id, false).await?;
         check_version(expected_version, current.version, &current)?;
         if parent_id == Some(page_id) {
@@ -813,6 +817,16 @@ impl PageRepository {
             Some(current_space),
         )
         .await?;
+        let to_private = matches!(
+            (current_space, space),
+            (PageSpace::Teamspace(_), PageSpace::Private(_))
+        );
+        if to_private
+            && !actor
+                .can_move_pages_to_private(created_whole_subtree(&mut tx, page_id, actor_id).await?)
+        {
+            return Err(PageError::MoveToPrivateForbidden);
+        }
         if let Some(parent_id) = parent_id
             && is_ancestor(&mut tx, page_id, parent_id).await?
         {
@@ -861,6 +875,21 @@ impl PageRepository {
             now,
         )
         .await?;
+        if let (true, Some(teamspace_id)) = (to_private, current.teamspace_id) {
+            audit::record(
+                &mut tx,
+                workspace_id,
+                Some(actor_id),
+                "page.moved_to_private",
+                AuditOutcome::Success,
+                "page",
+                Some(page_id),
+                request_id,
+                json!({"from_teamspace_id": teamspace_id.to_string()}),
+                now,
+            )
+            .await?;
+        }
         let updated_by_user = user_in_tx(&mut tx, actor_id).await?;
         tx.commit().await?;
         // A page (and its subtree) moved into someone's private space closes other editors.
@@ -2292,6 +2321,28 @@ async fn resolve_space(
         .await?
         .map(PageSpace::Teamspace)
         .ok_or(PageError::TeamspaceNotFound)
+}
+
+/// Whether `actor_id` created the page and every descendant, trashed ones too (they move along).
+async fn created_whole_subtree(
+    tx: &mut Transaction<'_, Any>,
+    page_id: Id,
+    actor_id: Id,
+) -> Result<bool, PageError> {
+    let others: i64 = sqlx::query_scalar(
+        "WITH RECURSIVE subtree(id) AS ( \
+             SELECT $1 \
+             UNION ALL \
+             SELECT pages.id FROM pages JOIN subtree ON pages.parent_id = subtree.id \
+         ) \
+         SELECT CAST(COUNT(*) AS BIGINT) FROM pages \
+         WHERE id IN (SELECT id FROM subtree) AND creator_id != $2",
+    )
+    .bind(page_id.to_string())
+    .bind(actor_id.to_string())
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(others == 0)
 }
 
 /// Moves every descendant (trashed ones too, so a later restore stays consistent) into `space`,

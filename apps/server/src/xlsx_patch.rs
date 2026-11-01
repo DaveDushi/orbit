@@ -838,7 +838,7 @@ pub fn patch(bytes: &[u8], request: &PatchRequest) -> Result<Vec<u8>, PatchError
     let mut writer = zip::ZipWriter::new(&mut output);
     for index in 0..archive.len() {
         let entry = archive.by_index_raw(index)?;
-        let entry_name = entry.name().to_owned();
+        let entry_name = entry.name()?.into_owned();
         let new_text = if entry_name == sheet_path {
             Some(&new_sheet)
         } else if entry_name == workbook_path {

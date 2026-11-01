@@ -478,9 +478,7 @@ impl MigrationRunner {
                 ),
                 Migration::new(
                     69,
-                    include_str!(
-                        "../../../../apps/server/migrations/0069_page_file_versions.sql"
-                    ),
+                    include_str!("../../../../apps/server/migrations/0069_page_file_versions.sql"),
                     false,
                 ),
                 Migration::new(

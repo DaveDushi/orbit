@@ -191,9 +191,15 @@ pub async fn run(cli: Cli, env: BTreeMap<String, String>) -> Result<String, CliE
             sheet,
             offset,
             limit,
-        } => orbit_server::file_parse::run_child(*kind, *tab_separated, sheet.clone(), *offset, *limit)
-            .map(|()| String::new())
-            .map_err(|error| CliError::Operation(error.to_string())),
+        } => orbit_server::file_parse::run_child(
+            *kind,
+            *tab_separated,
+            sheet.clone(),
+            *offset,
+            *limit,
+        )
+        .map(|()| String::new())
+        .map_err(|error| CliError::Operation(error.to_string())),
         Command::PatchXlsx => orbit_server::file_parse::run_patch_child()
             .map(|()| String::new())
             .map_err(|error| CliError::Operation(error.to_string())),
@@ -262,7 +268,15 @@ fn write_openapi(output: &Path) -> Result<String, CliError> {
 
 fn config_command(config: &Config, command: &ConfigCommand) -> String {
     match command {
-        ConfigCommand::Check => "configuration is valid".to_owned(),
+        ConfigCommand::Check => std::iter::once("configuration is valid".to_owned())
+            .chain(
+                config
+                    .warnings()
+                    .into_iter()
+                    .map(|warning| format!("warning: {warning}")),
+            )
+            .collect::<Vec<_>>()
+            .join("\n"),
         ConfigCommand::Show => redacted_config(config),
     }
 }
@@ -1265,8 +1279,8 @@ mod tests {
 
     use super::{
         BackupCommand, Cli, Command, ConfigCommand, MigrateCommand, SetupTokenCommand,
-        failure_message, healthcheck, parent_directory, redacted_config, remove_sidecars, run,
-        validate_reset_paths,
+        config_command, failure_message, healthcheck, parent_directory, redacted_config,
+        remove_sidecars, run, validate_reset_paths,
     };
 
     fn environment(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
@@ -1289,6 +1303,25 @@ mod tests {
             ("ORBIT_PUBLIC_ORIGIN", "https://orbit.example"),
             ("ORBIT_TRUSTED_PROXIES", "127.0.0.1/32"),
         ])
+    }
+
+    #[test]
+    fn config_check_prints_warnings_after_the_valid_line() {
+        let mut config = Config::default();
+        config.http.trusted_proxies = vec!["0.0.0.0/0".parse().unwrap()];
+        let output = config_command(&config, &ConfigCommand::Check);
+        let mut lines = output.lines();
+        assert_eq!(lines.next(), Some("configuration is valid"));
+        assert!(
+            lines.next().is_some_and(
+                |line| line.starts_with("warning: ORBIT_TRUSTED_PROXIES contains 0.0.0.0/0")
+            ),
+            "{output}"
+        );
+        assert_eq!(
+            config_command(&Config::default(), &ConfigCommand::Check),
+            "configuration is valid"
+        );
     }
 
     #[test]

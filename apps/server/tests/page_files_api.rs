@@ -967,7 +967,7 @@ fn xlsx_with_cell(cells: &str) -> Vec<u8> {
     let mut zip = zip::ZipWriter::new(&mut output);
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).unwrap();
-        let name = entry.name().to_owned();
+        let name = entry.name().unwrap().into_owned();
         let mut body = String::new();
         entry.read_to_string(&mut body).unwrap();
         if name == "xl/worksheets/sheet1.xml" {

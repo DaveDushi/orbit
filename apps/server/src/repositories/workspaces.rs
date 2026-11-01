@@ -531,14 +531,15 @@ impl WorkspaceRepository {
         if !workspace.permissions.contains(&Permission::WorkspaceUpdate) {
             return Err(WorkspaceError::Forbidden);
         }
-        let deleted = uploads
-            .delete_blob(workspace_id, file_id)
-            .await
-            .map_err(|error| match error {
-                UploadError::Database(error) => WorkspaceError::Unavailable(error),
-                UploadError::BlobStore(error) => WorkspaceError::Storage(error),
-                _ => WorkspaceError::Conflict,
-            })?;
+        let deleted =
+            uploads
+                .delete_blob(workspace_id, file_id)
+                .await
+                .map_err(|error| match error {
+                    UploadError::Database(error) => WorkspaceError::Unavailable(error),
+                    UploadError::BlobStore(error) => WorkspaceError::Storage(error),
+                    _ => WorkspaceError::Conflict,
+                })?;
         if !deleted {
             return Err(WorkspaceError::NotFound);
         }
@@ -1527,6 +1528,13 @@ impl WorkspaceRepository {
         crate::agent::memory::drop_private(&mut transaction, workspace_id, target.user_id).await?;
         // Their sign-ins to the workspace's apps end here.
         crate::apps::revoke_member(&mut transaction, workspace_id, target.user_id).await?;
+        crate::workspace_export::expire_for_user(
+            &mut transaction,
+            Some(workspace_id),
+            target.user_id,
+            now,
+        )
+        .await?;
         audit::record(
             &mut transaction,
             workspace_id,

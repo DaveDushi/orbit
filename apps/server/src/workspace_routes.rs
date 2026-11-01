@@ -470,7 +470,11 @@ async fn delete_storage_file(
     let workspace_id = parse_id(&workspace_id, &instance, request_id.as_ref())?;
     let file_id = parse_id(&file_id, &instance, request_id.as_ref())?;
     let Some(uploads) = &state.uploads else {
-        return Err(workspace_problem(WorkspaceError::NotFound, instance, request_id.as_ref()));
+        return Err(workspace_problem(
+            WorkspaceError::NotFound,
+            instance,
+            request_id.as_ref(),
+        ));
     };
     state
         .workspaces
@@ -1665,11 +1669,18 @@ fn email_failed(
     instance: &str,
     request_id: Option<&Extension<RequestId>>,
 ) -> ApiError {
+    tracing::warn!(%error, "email could not be sent");
+    // The SMTP server's own text stays in the log.
+    let cause = match error {
+        mail::MailError::Smtp(_) => "the SMTP connection or delivery failed".to_owned(),
+        mail::MailError::Address(_) => "an email address is invalid".to_owned(),
+        error => error.to_string(),
+    };
     ApiError::new(
         StatusCode::BAD_GATEWAY,
         "email_failed",
         "Email failed",
-        format!("The email could not be sent: {error}"),
+        format!("The email could not be sent: {cause}"),
         instance,
         request_id,
     )
@@ -2156,15 +2167,16 @@ async fn send_test_email(
 }
 
 fn storage_unreachable(
-    error: impl std::fmt::Display,
+    error: orbit_platform::S3Error,
     instance: &str,
     request_id: Option<&Extension<RequestId>>,
 ) -> ApiError {
+    tracing::warn!(%error, "bucket check failed");
     ApiError::new(
         StatusCode::BAD_GATEWAY,
         "storage_unreachable",
         "Storage unreachable",
-        format!("Orbit could not use the bucket: {error}"),
+        format!("Orbit could not use the bucket: {}", error.summary()),
         instance,
         request_id,
     )
@@ -2910,17 +2922,19 @@ async fn create_backup(
         .await
         .map_err(|error| {
             tracing::error!(%error, "backup failed");
-            // Only installation admins reach this, so the cause is shown to them.
+            // A short cause; the full error is in the log above.
             let (code, detail) = match error {
                 orbit_platform::BackupError::ObjectStorage(error) => (
                     "backup_upload_failed",
                     format!(
-                        "The backup was saved on this server, but the upload to S3 failed: {error}"
+                        "The backup was saved on this server, but the upload to S3 failed: {}",
+                        error.summary()
                     ),
                 ),
-                error => (
+                _ => (
                     "backup_failed",
-                    format!("Orbit could not create a verified backup: {error}"),
+                    "Orbit could not create a verified backup. The server log has the cause."
+                        .to_owned(),
                 ),
             };
             ApiError::new(

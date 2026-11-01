@@ -1078,6 +1078,14 @@ fn page_problem(
             instance,
             request_id,
         ),
+        PageError::MoveToPrivateForbidden => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "workspace_action_forbidden",
+            "Workspace action forbidden",
+            "Only workspace owners and administrators may move teamspace pages that others created into a private space.",
+            instance,
+            request_id,
+        ),
         PageError::NotTrashed => ApiError::new(
             StatusCode::CONFLICT,
             "page_not_trashed",
