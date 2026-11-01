@@ -193,10 +193,10 @@ orbit-deploy status                               # first, see if a deploy is ru
 orbit-deploy begin '<sha>: <what is deployed>'    # prints <id>; exit 75 if a deploy is running
 orbit-deploy disk                                 # before the merge; exit 73 below 3 GiB free
 
-# A rehearsal build before the merge is also part of the deploy: begin before it.
+# A rehearsal build before the merge is also part of the deploy: begin before it, and build with
+# `orbit-deploy image <id> <branch sha>`. A fast-forward merge then reuses that image.
 orbit-deploy run <id> -- git -C /home/exedev/orbit merge <branch>
-orbit-deploy build <id> -- orbit-build /usr/bin/docker buildx build --builder=orbit-limited --load \
-  --build-arg ORBIT_BUILD_REVISION=<full sha> -t orbit:<sha> .
+orbit-deploy image <id> main                      # skips the build if a clean image of this exact commit exists
 orbit-deploy run <id> -- deploy/smoke.sh orbit:<sha>
 orbit-deploy run <id> -- sudo systemctl stop orbit-agent orbit
 orbit-deploy run <id> -- sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; orbit backup create'
@@ -209,6 +209,9 @@ orbit-deploy run <id> -- curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.
 orbit-deploy end <id>                             # only after all the checks pass
 ```
 
+- `orbit-deploy image` builds from a clean `git archive` of the commit and labels the image. It reuses `orbit:<sha>`
+  only if that label has the same full commit. A real merge commit has another sha, so it builds. An image with no
+  label (all images from before this change, or a manual build) is built again. **Always run the smoke test.**
 - Every shell needs the `<id>`. Do not lose it. `orbit-deploy status` shows it.
 - If a deploy fails, keep the lock while you repair or roll back. Run `end` after production is verified.
 - The lock stays through a pause of up to 2 hours with no running step. A step of any length keeps it. To extend a

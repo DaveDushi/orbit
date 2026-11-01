@@ -1,6 +1,28 @@
 [worker.oci]
 max-parallelism = 1
 gc = true
+
+# Explicit rules, because BuildKit's default first rule removes cache mounts unused for 48 hours when they use
+# more than 512 MB, at any maxUsedSpace. The cargo target mount alone is about 2.4 GB.
+# Cache mounts are therefore not in this first rule.
+[[worker.oci.gcpolicy]]
+filters = ["type==source.local", "type==source.git.checkout"]
+keepDuration = "48h"
+maxUsedSpace = "512MB"
+
+[[worker.oci.gcpolicy]]
+keepDuration = "1440h"
 reservedSpace = "512MB"
-maxUsedSpace = "2GB"
+maxUsedSpace = "6GB"
+minFreeSpace = "2GB"
+
+[[worker.oci.gcpolicy]]
+reservedSpace = "512MB"
+maxUsedSpace = "6GB"
+minFreeSpace = "2GB"
+
+[[worker.oci.gcpolicy]]
+all = true
+reservedSpace = "512MB"
+maxUsedSpace = "6GB"
 minFreeSpace = "2GB"

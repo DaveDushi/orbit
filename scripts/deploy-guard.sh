@@ -10,7 +10,8 @@ set -euo pipefail
 
 readonly lock_path=/var/lib/orbit-deploys/deploy.lock
 readonly bin_dir=/usr/local/bin
-readonly deployment_file=/home/exedev/orbit/DEPLOYMENT.local.md
+readonly repo_path=/home/exedev/orbit
+readonly deployment_file=$repo_path/DEPLOYMENT.local.md
 readonly docker_root=/var/lib/docker
 # The holder exits after this time with no running step, so that a deploy
 # session that crashes cannot keep the lock until the next reboot.
@@ -20,6 +21,7 @@ readonly poll_seconds=2
 # A cold build needs about 2.4 GB. The rest is margin for the running services.
 readonly min_free_kb=3145728
 readonly keep_old=3
+readonly clean_label=org.orbit.clean-revision
 readonly status_busy=75 status_low_disk=73
 
 die() {
@@ -38,6 +40,7 @@ Usage: orbit-deploy begin <what is deployed>     take the lock, print the deploy
        orbit-deploy status                       show who holds the lock
        orbit-deploy run <id> -- command ...      run one deploy step under the lock
        orbit-deploy build <id> -- command ...    check the disk, then run the build
+       orbit-deploy image <id> <commit>          reuse or build the clean orbit:<sha> image of the commit
        orbit-deploy disk                         check free disk only
        orbit-deploy end <id>                     release the lock
        orbit-deploy cleanup [--apply]            show (or do) the old binary and image cleanup
@@ -142,6 +145,31 @@ cmd_run() {
     shift 2
     "$@" || status=$?
     exit "$status"
+}
+
+# Only cmd_build_clean sets the label, so a tag alone never proves a clean build,
+# and an image of another commit or from a dirty tree is never reused.
+cmd_image() {
+    local id=$1 commit=$2 full tag
+    require_held "$id"
+    full=$(git -C "$repo_path" rev-parse --verify "$commit^{commit}") || die "unknown commit: $commit."
+    tag=orbit:${full:0:7}
+    if [[ "$(docker image inspect --format "{{ index .Config.Labels \"$clean_label\" }}" "$tag" 2>/dev/null)" == "$full" ]]; then
+        printf 'orbit-deploy: reusing %s: a clean build of %s. Build skipped; still run the smoke test.\n' "$tag" "$full" >&2
+        return 0
+    fi
+    check_disk
+    cmd_run "$id" -- "$(readlink -f "$0")" _build_clean "$full" "$tag"
+}
+
+cmd_build_clean() {
+    local full=$1 tag=$2
+    # Not local: the trap runs after this function returns.
+    context=$(mktemp -d)
+    trap 'rm -rf "$context"' EXIT
+    git -C "$repo_path" archive "$full" | tar -x -C "$context"
+    orbit-build docker buildx build --builder=orbit-limited --load \
+        --build-arg "ORBIT_BUILD_REVISION=$full" --label "$clean_label=$full" -t "$tag" "$context"
 }
 
 cmd_end() {
@@ -273,6 +301,8 @@ case "$command" in
         fi
         cmd_run "$@"
         ;;
+    image) (( $# == 2 )) || usage; cmd_image "$1" "$2" ;;
+    _build_clean) cmd_build_clean "$@" ;;
     disk) (( $# == 0 )) || usage; check_disk; printf 'disk ok\n' ;;
     end) (( $# == 1 )) || usage; cmd_end "$1" ;;
     cleanup) cmd_cleanup "$@" ;;

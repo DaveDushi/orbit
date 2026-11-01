@@ -4,9 +4,9 @@ set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d)
 trap 'kill "${running_pid:-}" 2>/dev/null || true; rm -rf "$tmp"' EXIT
-mkdir -p "$tmp/mock" "$tmp/bins" "$tmp/guards"
+mkdir -p "$tmp/mock" "$tmp/bins" "$tmp/guards" "$tmp/repo"
 export GUARD_TEST_TMP="$tmp" MOCK_DF_KB=99999999 MOCK_MAIN_PID=0
-touch "$tmp/deploy.lock" "$tmp/log" "$tmp/images"
+touch "$tmp/deploy.lock" "$tmp/log" "$tmp/images" "$tmp/labels"
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 pass() { printf 'ok: %s\n' "$*"; }
@@ -43,9 +43,28 @@ cat >"$tmp/mock/docker" <<'MOCK'
 #!/usr/bin/env bash
 case "$1" in
     images) cat "$GUARD_TEST_TMP/images" ;;
+    image)
+        # The label of the tag, from a "tag label" file, as docker image inspect prints it.
+        [[ $2 == inspect && $3 == --format ]] || exit 90
+        [[ $4 == *org.orbit.clean-revision* ]] || exit 90
+        line=$(grep "^$5 " "$GUARD_TEST_TMP/labels") || exit 1
+        printf '%s\n' "${line#* }"
+        ;;
+    buildx)
+        printf 'docker %s\n' "$*" >>"$GUARD_TEST_TMP/log"
+        context=${!#}
+        [[ -f "$context/source.txt" && ! -e "$context/dirty.txt" ]] || exit 91
+        cat "$context/source.txt" >>"$GUARD_TEST_TMP/log"
+        [[ ${MOCK_BUILD_FAIL:-0} == 0 ]] || exit 7
+        ;;
     rmi) printf 'rmi %s\n' "$2" >>"$GUARD_TEST_TMP/log" ;;
     *) exit 90 ;;
 esac
+MOCK
+cat >"$tmp/mock/orbit-build" <<'MOCK'
+#!/usr/bin/env bash
+printf 'orbit-build\n' >>"$GUARD_TEST_TMP/log"
+exec "$@"
 MOCK
 chmod +x "$tmp/mock/"*
 export PATH="$tmp/mock:$PATH"
@@ -54,6 +73,7 @@ export PATH="$tmp/mock:$PATH"
 make_guard() {
     sed -e "s|^readonly lock_path=.*|readonly lock_path=$tmp/deploy.lock|" \
         -e "s|^readonly bin_dir=.*|readonly bin_dir=$tmp/bins|" \
+        -e "s|^readonly repo_path=.*|readonly repo_path=$tmp/repo|" \
         -e "s|^readonly deployment_file=.*|readonly deployment_file=$tmp/DEPLOYMENT.local.md|" \
         -e "s|^readonly docker_root=.*|readonly docker_root=$tmp/docker-root|" \
         -e "s|^readonly lease_seconds=.*|readonly lease_seconds=$2|" \
@@ -147,6 +167,68 @@ expect_status 0 "$guard" end "$disk_id"
 expect_status 75 "$guard" build "$disk_id" -- touch "$tmp/low-ran"
 [[ ! -e "$tmp/low-ran" ]] || fail 'the build ran without the lock'
 pass 'the disk check stops a build below 3 GiB, on either path or if df fails, and a build needs the lock'
+
+# --- Image reuse ---
+git -C "$tmp/repo" init -q -b main
+printf 'first\n' >"$tmp/repo/source.txt"
+git -C "$tmp/repo" add source.txt
+git -C "$tmp/repo" -c user.name=t -c user.email=t@t commit -qm first
+first_sha=$(git -C "$tmp/repo" rev-parse HEAD)
+printf 'second\n' >"$tmp/repo/source.txt"
+git -C "$tmp/repo" -c user.name=t -c user.email=t@t commit -qam second
+second_sha=$(git -C "$tmp/repo" rev-parse HEAD)
+# Uncommitted work must not reach the build.
+printf 'dirty\n' >"$tmp/repo/source.txt"
+touch "$tmp/repo/dirty.txt"
+second_tag=orbit:${second_sha:0:7}
+image_id=$("$guard" begin 'image test')
+built() { grep -q '^docker buildx' "$tmp/log"; }
+
+: >"$tmp/log"
+expect_status 0 "$guard" image "$image_id" main
+built || fail 'no image: it did not build'
+grep -q '^orbit-build$' "$tmp/log" || fail 'the build did not use orbit-build'
+grep -q -- '--builder=orbit-limited' "$tmp/log" || fail 'the build did not use the limited builder'
+grep -q -- "ORBIT_BUILD_REVISION=$second_sha" "$tmp/log" || fail 'wrong revision argument'
+grep -q -- "--label org.orbit.clean-revision=$second_sha" "$tmp/log" || fail 'no clean label'
+grep -q -- "-t $second_tag" "$tmp/log" || fail 'wrong tag'
+grep -qx second "$tmp/log" || fail 'the build did not use the committed source'
+pass 'an image that does not exist is built from a clean archive of the commit'
+
+printf '%s %s\n' "$second_tag" "$second_sha" >"$tmp/labels"
+: >"$tmp/log"
+MOCK_DF_KB=1 expect_status 0 "$guard" image "$image_id" main
+built && fail 'a clean image of the exact commit was built again'
+stderr_has 'still run the smoke test'
+pass 'a clean image of the exact commit is reused, with no disk need'
+
+# A real merge commit has another sha, so another tag.
+: >"$tmp/log"
+expect_status 0 "$guard" image "$image_id" "$first_sha"
+built || fail 'another commit did not build'
+grep -q -- "-t orbit:${first_sha:0:7}" "$tmp/log" || fail 'another commit used the wrong tag'
+grep -qx first "$tmp/log" || fail 'another commit used the wrong source'
+pass 'another commit still builds'
+
+for label in '<no value>' "$first_sha" ''; do
+    printf '%s %s\n' "$second_tag" "$label" >"$tmp/labels"
+    : >"$tmp/log"
+    expect_status 0 "$guard" image "$image_id" "$second_sha"
+    built || fail "a tag with the label '$label' was reused"
+done
+pass 'a tag with no label, an empty label or the label of another commit is not reused'
+
+: >"$tmp/labels"
+MOCK_DF_KB=1 expect_status 73 "$guard" image "$image_id" main
+MOCK_BUILD_FAIL=1 expect_status 7 "$guard" image "$image_id" main
+expect_status 1 "$guard" image "$image_id" no-such-commit
+stderr_has 'unknown commit'
+expect_status 0 "$guard" end "$image_id"
+: >"$tmp/log"
+printf '%s %s\n' "$second_tag" "$second_sha" >"$tmp/labels"
+expect_status 75 "$guard" image "$image_id" main
+built && fail 'a build ran without the lock'
+pass 'image stops on low disk, keeps a build failure status, and needs the lock'
 
 # --- Cleanup ---
 # Newest to oldest. aaaaaaa is installed, bbbbbbb is the old process that has not

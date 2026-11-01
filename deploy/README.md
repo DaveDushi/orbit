@@ -89,8 +89,12 @@ Creation commands are one-time steps: inspect existing containers/builders inste
 them blindly. The privileged worker is dedicated to trusted local builds; expose no BuildKit TCP port.
 Systemd owns restart behavior (`--restart=no` on the container). `--memory-swap=4g` equals its 4 GiB
 memory limit, disabling additional swap allowance. BuildKit schedules one OCI build operation at a
-time. Its GC settings reserve 512 MB, target at most 2 GB cache, and aim for 2 GB free disk; these are
+time. Its GC rules reserve 512 MB, target at most 6 GB cache, and aim for 2 GB free disk; these are
 GC targets, **not hard disk quotas**. The first build has a cold, independent cache and may take longer.
+A cold build needs about 2.4 GB in the cargo target cache mount, and later builds compile only Orbit's own
+crates. The limit must stay above that size: a 2 GB limit removed the whole mount after each build. The rules
+are explicit because BuildKit's default first rule also removes cache mounts unused for 48 hours when they use
+more than 512 MB. If `docker buildx du` shows the cache near 6 GB, the mount can go again; raise the limit.
 
 After changing BuildKit config, restart `orbit-buildkit.service`. Container memory/cgroup/image changes
 require stopping the service and deliberately recreating the container with the same state volume.
