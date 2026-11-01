@@ -248,9 +248,12 @@ If a person has no Orbit session when the frame reaches `/oauth/authorize`, Orbi
 
 **Check the login first.** If the frame stays white, open the app's address in a private window. If you see Cloudflare's "Sign in" page (for example "Email, Send login code"), Access is not using Instant Auth with Orbit as its only login method: that page always refuses frames, on every browser. Fix the Access application as in step 1.
 
-**On a phone** the page has one header row: the menu, the app's name, **Open**, and a menu with **Sign in to app** and **Reload**. **Safari and every iOS browser** show **Open <app>** first, not the frame, because they block third-party cookies by default and the page cannot detect a failed frame. **Try inside Orbit** shows the frame and the browser remembers this per app.
+**On a phone** the frame comes first, as on every browser. The header has one row: the menu, the app's name, **Sign in**, **Open**, and a menu with **Reload**. If the frame is blank, **Sign in** or **Open** is the way out.
 
-**Safari** blocks third-party cookies by default. Expect the team-domain cookie to fail there, and on different sites the app's cookie too: use one domain, and test with your own account. Orbit's own tests run only in Chromium.
+**Safari and every iOS browser** block third-party cookies by default. What that means depends on the app's address:
+
+- **The app on the same site as Orbit** (`orbit.wellrox.com` and `products.wellrox.com`): the app's own `CF_Authorization` is not third-party in the frame, so a popup's sign-in should count in the frame. Only the Access cookies on `<team>.cloudflareaccess.com` are third-party. So the first sign-in inside the frame may fail on the callback, and **Sign in** in the popup is the way out; after it, the frame should work while the app's cookie lasts. Only a real iPhone can prove these points. Orbit's tests run only in Chromium.
+- **The app on another site:** its own cookies are third-party too, so the frame can stay signed out even after a popup sign-in. Use **Open**, or set the app to **In a new tab**.
 
 **A removed member** loses Orbit sign-in at once, but the Access session lasts for its own session duration. Keep that duration short.
 

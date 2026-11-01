@@ -9,7 +9,6 @@ import { useAgentStatus } from '@/features/agent/api'
 import { useCan } from '@/features/workspaces/permissions'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import { useApps } from './api'
-import { blocksCookiesInFrames, chooseFrame, hasChosenFrame } from './framedSignIn'
 import { openSignInPopup, watchSignInPopup } from './signInPopup'
 
 /** `/apps/:slug`: one workspace app in a full-size frame, or a link when the app opens in its own tab. */
@@ -41,11 +40,10 @@ function AppView({ app, workspaceId }: { app: WorkspaceApp; workspaceId: string 
   const [popupBlocked, setPopupBlocked] = useState(false)
   // On a phone the help shows only while it is of use: the sign-in has started, or the popup was blocked.
   const [signingIn, setSigningIn] = useState(false)
-  const [frameChosen, setFrameChosen] = useState(() => hasChosenFrame(workspaceId, app.slug) || !blocksCookiesInFrames(navigator))
   const stopWatching = useRef<(() => void) | null>(null)
   useEffect(() => () => stopWatching.current?.(), [])
 
-  const embedded = app.open_mode === 'embed' && frameChosen
+  const embedded = app.open_mode === 'embed'
   const reload = () => {
     setSigningIn(false)
     setReloads((count) => count + 1)
@@ -58,8 +56,8 @@ function AppView({ app, workspaceId }: { app: WorkspaceApp; workspaceId: string 
     if (popup) stopWatching.current = watchSignInPopup(window, popup, reload)
   }
 
-  const openInTab = (label: string, className?: string, variant: 'outline' | 'default' = 'outline', size: 'sm' | 'default' = 'sm') => (
-    <Button variant={variant} size={size} className={className} nativeButton={false} render={<a href={app.url} target="_blank" rel="noopener noreferrer" />}>{label}</Button>
+  const openInTab = (label: string) => (
+    <Button variant="outline" size="sm" nativeButton={false} render={<a href={app.url} target="_blank" rel="noopener noreferrer" />}>{label}</Button>
   )
   return (
     <Pane>
@@ -68,7 +66,7 @@ function AppView({ app, workspaceId }: { app: WorkspaceApp; workspaceId: string 
           <Menu className="size-[18px]" />
         </Button>
         <PaneTitle className="min-w-0" render={<h1 className="m-0" />}>{app.name}</PaneTitle>
-        {/* a phone has room for one action: the rest go in the menu */}
+        {/* a phone keeps the two ways out of a blank frame in the header: the rest go in the menu */}
         <div className="ml-auto flex shrink-0 items-center gap-2 max-[899px]:hidden">
           {showTools ? <Button variant="ghost" size="sm" nativeButton={false} render={<Link to="/settings/agent-tools" />}>Agent tools</Button> : null}
           {embedded ? <Button variant="outline" size="sm" type="button" onClick={signIn}>Sign in to app</Button> : null}
@@ -76,6 +74,7 @@ function AppView({ app, workspaceId }: { app: WorkspaceApp; workspaceId: string 
           {openInTab('Open in a new tab')}
         </div>
         <div className="ml-auto hidden shrink-0 items-center gap-1 max-[899px]:flex">
+          {embedded ? <Button variant="outline" size="sm" type="button" aria-label="Sign in to app" onClick={signIn}>Sign in</Button> : null}
           {openInTab('Open')}
           {embedded || showTools ? (
             <DropdownMenu>
@@ -83,7 +82,6 @@ function AppView({ app, workspaceId }: { app: WorkspaceApp; workspaceId: string 
                 <MoreHorizontal className="size-4" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-40">
-                {embedded ? <DropdownMenuItem onClick={signIn}>Sign in to app</DropdownMenuItem> : null}
                 {embedded ? <DropdownMenuItem onClick={reload}>Reload</DropdownMenuItem> : null}
                 {showTools ? <DropdownMenuItem onClick={() => void navigate('/settings/agent-tools')}>Agent tools</DropdownMenuItem> : null}
               </DropdownMenuContent>
@@ -100,21 +98,8 @@ function AppView({ app, workspaceId }: { app: WorkspaceApp; workspaceId: string 
         </>
       ) : (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-          {app.open_mode === 'embed' ? (
-            <>
-              <p className="m-0 max-w-sm text-muted-foreground">This browser can block sign-in inside Orbit, so {app.name} opens in its own tab.</p>
-              {openInTab(`Open ${app.name}`, 'max-w-full truncate', 'default', 'default')}
-              <Button variant="ghost" size="sm" type="button" onClick={() => {
-                chooseFrame(workspaceId, app.slug)
-                setFrameChosen(true)
-              }}>Try inside Orbit</Button>
-            </>
-          ) : (
-            <>
-              <p className="m-0 text-muted-foreground">This app opens in its own tab.</p>
-              {openInTab('Open in a new tab')}
-            </>
-          )}
+          <p className="m-0 text-muted-foreground">This app opens in its own tab.</p>
+          {openInTab('Open in a new tab')}
         </div>
       )}
     </Pane>
