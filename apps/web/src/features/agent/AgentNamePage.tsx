@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { FieldGrid } from '@/features/settings/components/SettingsParts'
 import { useAgentIdentity, useAgentModel, useAgentStatus, useSaveAgentModel, useSaveAgentName } from './api'
 
-/** Admin → Agent: the agent's one name for the installation, which is also its @handle in chat, and its model. */
+/** Agentic → Admin: the agent's one name for the installation, which is also its @handle in chat, and its model. */
 export function AgentNamePage() {
   const identity = useAgentIdentity()
   const model = useAgentModel()

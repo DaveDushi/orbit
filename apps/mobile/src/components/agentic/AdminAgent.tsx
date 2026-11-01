@@ -1,19 +1,19 @@
 import { useState } from 'react'
 import { Pressable, View } from 'react-native'
 
-import { AdminShell, FieldLabel, Note, SettingsCard } from '../../../../components/settings/Shell'
+import { FieldLabel, Note, SettingsCard } from '../settings/Shell'
 import { AGENT_DEFAULT_CHOICE as DEFAULT, agentModelChoices, type AgentIdentity, type AgentModelSettings } from '@orbit/api/agent'
-import { useAgentIdentity, useAgentModel, useSaveAgentModel, useSaveAgentName } from '../../../../hooks/agent'
-import { errorMessage } from '../../../../session-context'
-import { useTheme } from '../../../../theme'
-import { Button, Icon, Input, PickerSheet, Text } from '../../../../ui'
+import { useAgentIdentity, useAgentModel, useSaveAgentModel, useSaveAgentName } from '../../hooks/agent'
+import { errorMessage } from '../../session-context'
+import { useTheme } from '../../theme'
+import { Button, Icon, Input, PickerSheet, Text } from '../../ui'
 
-/** The web's Admin → Agent: the agent's one name for the installation, which is also its @handle in chat, and its model. */
-export default function AdminAgentScreen() {
+/** The web's Agentic → Admin: the agent's one name for the installation, which is also its @handle in chat, and its model. */
+export function AdminAgent() {
   const identity = useAgentIdentity()
   const model = useAgentModel()
   return (
-    <AdminShell refreshing={identity.isRefetching || model.isRefetching} onRefresh={() => { void identity.refetch(); void model.refetch() }}>
+    <>
       {identity.isPending || model.isPending ? <SettingsCard title="Agent"><Note>Loading the agent settings…</Note></SettingsCard> : null}
       {identity.isError || model.isError ? (
         <SettingsCard title="Agent">
@@ -25,7 +25,7 @@ export default function AdminAgentScreen() {
       ) : null}
       {identity.data ? <NameCard identity={identity.data} /> : null}
       {model.data ? <ModelCard key={`${model.data.model}/${model.data.thinking}`} settings={model.data} /> : null}
-    </AdminShell>
+    </>
   )
 }
 

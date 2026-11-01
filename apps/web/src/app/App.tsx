@@ -14,7 +14,7 @@ import { TasksPage } from '@/features/tasks/pages/TasksPage'
 import { HomePage } from '@/features/home/pages/HomePage'
 import { TaskTrashPage } from '@/features/tasks/pages/TaskTrashPage'
 import { DocsPage } from '@/features/docs/pages/DocsPage'
-import { AccountLayout, AdminLayout, SettingsLayout } from '@/features/settings/pages/SettingsLayout'
+import { AccountLayout, AdminLayout, AgenticLayout, SettingsLayout } from '@/features/settings/pages/SettingsLayout'
 import { AdminAuditPage } from '@/features/admin/pages/AdminAuditPage'
 import { AdminBackupsPage } from '@/features/admin/pages/AdminBackupsPage'
 import { AdminEmailPage } from '@/features/admin/pages/AdminEmailPage'
@@ -32,7 +32,7 @@ import { BillingPage } from '@/features/settings/pages/BillingPage'
 import { MembersPage } from '@/features/settings/pages/MembersPage'
 import { SecurityPage } from '@/features/settings/pages/SecurityPage'
 import { SessionsPage } from '@/features/settings/pages/SessionsPage'
-import { AgenticPage } from '@/features/settings/pages/AgenticPage'
+import { AgenticAdmin, AgenticTabs, AgenticWorkspace, AgenticYou } from '@/features/settings/pages/AgenticPage'
 import { ShortcutsPage } from '@/features/settings/pages/ShortcutsPage'
 import { StickersPage } from '@/features/settings/pages/StickersPage'
 import { StoragePage } from '@/features/settings/pages/StoragePage'
@@ -41,12 +41,6 @@ import { ApiTokensPage } from '@/features/settings/pages/ApiTokensPage'
 import { FileStoragePage } from '@/features/settings/pages/FileStoragePage'
 import { ProfilePage } from '@/features/profile/pages/ProfilePage'
 import { AppearancePage } from '@/features/profile/pages/AppearancePage'
-import { AgentPage } from '@/features/agent/AgentPage'
-import { AgentTabs } from '@/features/agent/AgentTabs'
-import { AgentNamePage } from '@/features/agent/AgentNamePage'
-import { TeamInstructionsPage } from '@/features/agent/TeamInstructionsPage'
-import { MemoryPage as AgentMemoryPage } from '@/features/agent/MemoryPage'
-import { AgentToolsPage } from '@/features/agentIntegrations/AgentToolsPage'
 import { AppPage } from '@/features/apps/AppPage'
 import { AppsSettingsPage } from '@/features/apps/AppsSettingsPage'
 import { InboxPage } from '@/features/inbox/pages/InboxPage'
@@ -120,20 +114,25 @@ export default function App() {
               <Route path="dm/*" element={<Navigate to={chatEnabled ? '/chat' : '/tasks'} replace />} />
               <Route path="activity" element={<InboxPage />} />
               <Route path="inbox" element={<MovedTo path="/activity" />} />
+              <Route path="agentic" element={<AgenticLayout />}>
+                <Route element={<AgenticTabs />}>
+                  <Route index element={<AgenticYou />} />
+                  <Route path="workspace" element={<AgenticWorkspace />} />
+                  <Route path="admin" element={<AgenticAdmin />} />
+                </Route>
+              </Route>
               <Route path="profile" element={<AccountLayout />}>
                 <Route index element={<ProfilePage />} />
                 <Route path="appearance" element={<AppearancePage />} />
                 <Route path="notifications" element={<NotificationsPage />} />
                 <Route path="security" element={<SecurityPage />} />
                 <Route path="sessions" element={<SessionsPage />} />
-                <Route path="agentic" element={<AgenticPage />} />
+                <Route path="agentic" element={<MovedTo path="/agentic" />} />
                 <Route path="shortcuts" element={<ShortcutsPage />} />
                 <Route path="storage" element={<StoragePage />} />
-                <Route path="agent" element={<AgentTabs area="profile" />}>
-                  <Route index element={<AgentPage />} />
-                  <Route path="memory" element={<AgentMemoryPage />} />
-                </Route>
-                <Route path="agent-memory" element={<MovedTo path="/profile/agent/memory" />} />
+                {/* the Agentic page has these now; old links, bookmarks and agent messages still work */}
+                <Route path="agent/*" element={<MovedTo path="/agentic" />} />
+                <Route path="agent-memory" element={<MovedTo path="/agentic" />} />
               </Route>
               <Route path="admin" element={<AdminLayout />}>
                 <Route index element={<AdminSettingsPage />} />
@@ -144,7 +143,7 @@ export default function App() {
                 <Route path="storage" element={<AdminStoragePage />} />
                 <Route path="backups" element={<AdminBackupsPage />} />
                 <Route path="jobs" element={<AdminJobsPage />} />
-                <Route path="agent" element={<AgentNamePage />} />
+                <Route path="agent" element={<MovedTo path="/agentic/admin" />} />
               </Route>
               <Route path="settings" element={<SettingsLayout />}>
                 <Route index element={<GeneralPage />} />
@@ -157,11 +156,8 @@ export default function App() {
                 <Route path="export" element={<ExportPage />} />
                 <Route path="danger-zone" element={<DangerZonePage />} />
                 <Route path="members" element={<MembersPage />} />
-                <Route path="agent" element={<AgentTabs area="settings" />}>
-                  <Route index element={<TeamInstructionsPage />} />
-                  <Route path="tools" element={<AgentToolsPage />} />
-                </Route>
-                <Route path="agent-tools" element={<MovedTo path="/settings/agent/tools" />} />
+                <Route path="agent/*" element={<MovedTo path="/agentic/workspace" />} />
+                <Route path="agent-tools" element={<MovedTo path="/agentic/workspace" />} />
                 <Route path="invitations" element={<Navigate to="/settings/members" replace />} />
                 {/* these moved to the account settings; old links and bookmarks still work */}
                 <Route path="sessions" element={<MovedTo path="/profile/sessions" />} />

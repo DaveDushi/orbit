@@ -47,14 +47,14 @@ function shopifyTokenUrl(url: string) {
 const DOCS_URL = 'https://github.com/DaveDushi/orbit/blob/main/docs/agent.md#agent-tools-integrations'
 const toggled = <T,>(list: readonly T[], value: T, on: boolean) => (on ? [...list, value] : list.filter((item) => item !== value))
 
-/** Workspace settings → Agent → Tools: MCP servers and HTTP APIs the team agent may call. Owners and admins only. */
+/** Agentic → Workspace → Tools: MCP servers and HTTP APIs the team agent may call. Owners and admins only. */
 export function AgentToolsPage() {
   const { workspace } = useWorkspace()
   const canManage = useCan('integrations.manage')
   const integrations = useAgentIntegrations(workspace.id, canManage)
   const [adding, setAdding] = useState(false)
 
-  if (!canManage) return <SettingsCard title="Tools"><p className="m-0 text-muted-foreground">Only workspace owners and administrators can set up agent tools.</p></SettingsCard>
+  if (!canManage) return null
 
   const items = integrations.data?.items
   return <SettingsCard

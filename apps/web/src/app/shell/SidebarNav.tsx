@@ -523,8 +523,8 @@ export function SidebarNav({
                   {workspaceId ? <AppLinks workspaceId={workspaceId} onNavigate={onNavigate} /> : null}
                   <SidebarSection label="Personal" collapsed={collapsed} />
                   <SidebarNavItem to={activityPath} icon={Bell} label="Activity" unread={inboxUnread} onClick={onNavigate} />
-                  {/* connect AI clients (MCP); kept here so people find it without opening their account settings */}
-                  <SidebarNavItem to="/profile/agentic" icon={MagicStar} label="Agentic" onClick={onNavigate} />
+                  {/* every AI setting, by role: one link for everybody, so it does not belong to one settings area */}
+                  <SidebarNavItem to="/agentic" icon={MagicStar} label="Agentic" onClick={onNavigate} />
                   {/* the new UI keeps these in the Tasks area */}
                   {contextual ? null : TASK_PRESETS.map((preset) => (
                     <SidebarNavItem key={preset.view} to={taskViewPath(preset.view)} active={taskViewActive(preset.view)} icon={preset.icon} label={preset.label} onClick={onNavigate} />

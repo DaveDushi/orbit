@@ -12,7 +12,7 @@ import { useAgentStatus, useSaveTeamInstructions, useTeamInstructions } from './
 /** Characters as the server counts them (code points, not UTF-16 units). */
 const characters = (text: string) => [...text.replace(/\r\n/g, '\n').trim()].length
 
-/** Workspace settings → Agent → General: the team's instructions for every agent run in this workspace. */
+/** Agentic → Workspace: the team's instructions for every agent run in this workspace. */
 export function TeamInstructionsPage() {
   const { workspace } = useWorkspace()
   const team = useTeamInstructions(workspace.id)

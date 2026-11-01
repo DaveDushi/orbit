@@ -3,7 +3,7 @@ import { SettingsCard } from '@/components/common/SettingsCard'
 import { loadFailed } from '@/lib/connection'
 import { useAgentStatus, useDisconnectChatgpt, useStartChatgptLogin } from './api'
 
-/** Account → Agent → Settings: connect the person's own ChatGPT account, which pays for the agent runs they start. */
+/** Agentic → You: connect the person's own ChatGPT account, which pays for the agent runs they start. */
 export function AgentPage() {
   const status = useAgentStatus()
   const start = useStartChatgptLogin()

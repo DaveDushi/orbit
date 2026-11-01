@@ -1,15 +1,72 @@
-import { Link } from 'react-router'
+import { Link, Navigate, Outlet, useLocation, useNavigate } from 'react-router'
 import { mcpClientCommands, mcpUrl } from '@orbit/api/mcp'
 import { SettingsCard } from '@/components/common/SettingsCard'
 import { CopyCodeButton } from '@/components/common/CopyCodeButton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { AgentNamePage } from '@/features/agent/AgentNamePage'
+import { AgentPage } from '@/features/agent/AgentPage'
+import { MemoryPage } from '@/features/agent/MemoryPage'
+import { TeamInstructionsPage } from '@/features/agent/TeamInstructionsPage'
+import { useAgentStatus } from '@/features/agent/api'
+import { AgentToolsPage } from '@/features/agentIntegrations/AgentToolsPage'
+import { useCurrentUser } from '@/features/auth/api'
 import { OAuthConnections } from '@/features/auth/components/OAuthConnections'
+import { AGENTIC_TABS, agenticTabsView } from '../settingsNav'
 
-/** Account view: connect AI clients to Orbit's scoped MCP server, and see the connected ones. */
-export function AgenticPage() {
+/** The page's sections by role, as tabs. One tab needs no bar. Each section keeps the access check it always had. */
+export function AgenticTabs() {
+  const { pathname, search, hash } = useLocation()
+  const navigate = useNavigate()
+  const user = useCurrentUser()
+  const status = useAgentStatus()
+  // Both answers decide the tabs, so a redirect must wait for them.
+  if (status.isPending || user.isPending) return null
+  const { tabs, current, redirect } = agenticTabsView(AGENTIC_TABS, user.data?.installation_admin === true, status.data?.enabled === true, pathname)
+  if (redirect) return <Navigate to={{ pathname: redirect, search, hash }} replace />
+  if (tabs.length < 2 || !current || !tabs.includes(current)) return <Outlet />
+  return (
+    <Tabs className="gap-5" value={current.to} onValueChange={(to) => void navigate(to as string)}>
+      <TabsList variant="line" className="min-h-10 w-full justify-start gap-1.5 border-b group-data-horizontal/tabs:h-auto">
+        {tabs.map((tab) => <TabsTrigger key={tab.to} value={tab.to} className="h-7 flex-none px-2.5 text-[13px]">{tab.label}</TabsTrigger>)}
+      </TabsList>
+      <TabsContent value={current.to} className="flex min-w-0 flex-col gap-6"><Outlet /></TabsContent>
+    </Tabs>
+  )
+}
+
+/** What belongs to the signed-in person: the agent's ChatGPT sign-in and memory (when the server runs it), and MCP clients. */
+export function AgenticYou() {
+  const agent = useAgentStatus().data?.enabled === true
+  return (
+    <>
+      {agent ? <AgentPage /> : null}
+      <McpSetup />
+      <OAuthConnections />
+      {agent ? <MemoryPage /> : null}
+    </>
+  )
+}
+
+/** The team's instructions, which every member reads, and the tools, which only `integrations.manage` sees. */
+export function AgenticWorkspace() {
+  return (
+    <>
+      <TeamInstructionsPage />
+      <AgentToolsPage />
+    </>
+  )
+}
+
+/** The agent's name and model for the whole instance. */
+export function AgenticAdmin() {
+  return <AgentNamePage />
+}
+
+function McpSetup() {
   const url = mcpUrl(window.location.origin)
   return (
     <>
-      <SettingsCard title="MCP server" description="AI clients such as Claude, Codex and Grok can use tasks and read docs and chat through this address. Sign in with your Orbit account and select the workspace, projects and permissions.">
+      <SettingsCard title="MCP server" description="AI clients such as Claude, Codex and Grok can use tasks and read docs and chat through this address. Sign in with your Orbit account and select the workspace, the projects and the permissions.">
         <CodeBlock text={url} />
       </SettingsCard>
       <SettingsCard title="Connect a client" description="Run the command for your client in a terminal. Then sign in to Orbit in the browser, select the projects and permissions, then allow access.">
@@ -27,7 +84,6 @@ export function AgenticPage() {
           </p>
         </div>
       </SettingsCard>
-      <OAuthConnections />
     </>
   )
 }

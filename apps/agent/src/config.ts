@@ -16,7 +16,7 @@ export type Config = {
 	readonly host: string;
 	readonly port: number;
 	readonly dataDir: string;
-	/** The ChatGPT (Codex) model id of runs when an installation admin has chosen none (Admin → AI agent). */
+	/** The ChatGPT (Codex) model id of runs when an installation admin has chosen none (Agentic → Admin). */
 	readonly model: string;
 	/** A scripted model and a fake ChatGPT sign-in, for tests without OpenAI. */
 	readonly mock: boolean;

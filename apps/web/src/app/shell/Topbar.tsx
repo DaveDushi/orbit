@@ -76,6 +76,8 @@ function crumbsFor(pathname: string, taskNavigation: TaskNavigation, docs: DocsN
       return { crumbs: [{ label: 'Chat', to: '/chat' }] }
     case 'views':
       return { crumbs: [{ label: 'Tasks', to: '/tasks' }, { label: 'Views', to: '/views' }] }
+    case 'agentic':
+      return { crumbs: [{ label: 'Agentic' }] }
     case 'activity':
       return { crumbs: [{ label: 'Activity' }] }
     case 'profile':
@@ -86,7 +88,6 @@ function crumbsFor(pathname: string, taskNavigation: TaskNavigation, docs: DocsN
       else if (id === 'backups') crumbs.push({ label: 'Backups' })
       else if (id === 'storage') crumbs.push({ label: 'Storage' })
       else if (id === 'users') crumbs.push({ label: 'Users' })
-      else if (id === 'agent') crumbs.push({ label: 'Agent' })
       else crumbs.push({ label: 'General' })
       return { crumbs }
     }
@@ -96,7 +97,6 @@ function crumbsFor(pathname: string, taskNavigation: TaskNavigation, docs: DocsN
       else if (id === 'github') crumbs.push({ label: 'GitHub' })
       else if (id === 'sessions') crumbs.push({ label: 'Sessions' })
       else if (id === 'danger-zone') crumbs.push({ label: 'Danger zone' })
-      else if (id === 'agent') crumbs.push({ label: 'Agent' })
       return { crumbs }
     }
     default:

@@ -83,7 +83,7 @@ function AppView({ app, workspaceId }: { app: WorkspaceApp; workspaceId: string 
           <PaneTitle className="min-w-0" render={<h1 className="m-0" />}>{app.name}</PaneTitle>
           {/* a phone keeps the two ways out of a blank frame in the header: the rest go in the menu */}
           <div className="ml-auto flex shrink-0 items-center gap-2 max-[899px]:hidden">
-            {showTools ? <Button variant="ghost" size="sm" nativeButton={false} render={<Link to="/settings/agent/tools" />}>Agent tools</Button> : null}
+            {showTools ? <Button variant="ghost" size="sm" nativeButton={false} render={<Link to="/agentic/workspace" />}>Agent tools</Button> : null}
             {embedded ? <Button variant="outline" size="sm" type="button" onClick={signIn}>Sign in to app</Button> : null}
             {embedded ? <Button variant="outline" size="sm" type="button" onClick={reload}>Reload</Button> : null}
             {openInTab('Open in a new tab')}
@@ -98,7 +98,7 @@ function AppView({ app, workspaceId }: { app: WorkspaceApp; workspaceId: string 
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="min-w-40">
                   {embedded ? <DropdownMenuItem onClick={reload}>Reload</DropdownMenuItem> : null}
-                  {showTools ? <DropdownMenuItem onClick={() => void navigate('/settings/agent/tools')}>Agent tools</DropdownMenuItem> : null}
+                  {showTools ? <DropdownMenuItem onClick={() => void navigate('/agentic/workspace')}>Agent tools</DropdownMenuItem> : null}
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : null}
@@ -124,7 +124,7 @@ function AppView({ app, workspaceId }: { app: WorkspaceApp; workspaceId: string 
                 <DropdownMenuItem onClick={signIn}>Sign in to app</DropdownMenuItem>
                 <DropdownMenuItem onClick={reload}>Reload</DropdownMenuItem>
                 <DropdownMenuItem render={<a href={app.url} target="_blank" rel="noopener noreferrer" />}>Open in a new tab</DropdownMenuItem>
-                {showTools ? <DropdownMenuItem onClick={() => void navigate('/settings/agent/tools')}>Agent tools</DropdownMenuItem> : null}
+                {showTools ? <DropdownMenuItem onClick={() => void navigate('/agentic/workspace')}>Agent tools</DropdownMenuItem> : null}
               </DropdownMenuContent>
             </DropdownMenu>
           )}

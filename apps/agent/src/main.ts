@@ -33,7 +33,7 @@ const server = createServer((request, response) => {
 	const url = new URL(request.url ?? "/", "http://agent");
 	if (url.pathname === "/health") return send(response, 200, { ok: true, mock: config.mock });
 	if (!authorized(request)) return send(response, 401, { error: "unauthorized" });
-	// Admin → AI agent: what an installation admin can choose; Orbit refuses any other model.
+	// Agentic → Admin: what an installation admin can choose; Orbit refuses any other model.
 	if (url.pathname === "/models" && request.method === "GET") return send(response, 200, { default_model: config.model, models: codexModels() });
 	const login = /^\/login\/([0-9a-f-]{36})$/.exec(url.pathname);
 	if (!login) return send(response, 404, { error: "not found" });

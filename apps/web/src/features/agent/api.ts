@@ -84,7 +84,7 @@ export function useForgetAgentMemorySummary(workspaceId: string, scope: AgentMem
 
 const identityKey = ['agent', 'identity'] as const
 
-/** Admin → AI agent: the agent's name. Installation admins only. */
+/** Agentic → Admin: the agent's name. Installation admins only. */
 export function useAgentIdentity() {
   return useQuery({ queryKey: identityKey, queryFn: () => readAgentIdentity(apiClient) })
 }
@@ -101,7 +101,7 @@ export function useSaveAgentName() {
 
 const modelKey = ['agent', 'model'] as const
 
-/** Admin → AI agent: the model and thinking level. Installation admins only. */
+/** Agentic → Admin: the model and thinking level. Installation admins only. */
 export function useAgentModel() {
   return useQuery({ queryKey: modelKey, queryFn: () => readAgentModel(apiClient) })
 }
@@ -116,7 +116,7 @@ export function useSaveAgentModel() {
 
 const teamKey = (workspaceId: string) => ['agent', 'team', workspaceId] as const
 
-/** Workspace settings → AI agent: the team instructions. Every member reads them. */
+/** Agentic → Workspace: the team instructions. Every member reads them. */
 export function useTeamInstructions(workspaceId: string) {
   return useQuery({ queryKey: teamKey(workspaceId), queryFn: () => readTeamInstructions(apiClient, workspaceId) })
 }

@@ -15,7 +15,7 @@ import { Avatar, CountBadge, Icon, type IconName, IconButton, PickerSheet } from
 import { AccountMenu } from './AccountMenu'
 import { NewProjectSheet } from './NewProjectSheet'
 import { DRAWER_AREA_TITLES, type DrawerArea, drawerAreaOf, drawerSections, TASK_PRESETS, tasksHref } from './drawerAreas'
-import { ACCOUNT_NAV, ADMIN_NAV, allowedNav, navActive, WORKSPACE_NAV } from './settings/Shell'
+import { ACCOUNT_NAV, ADMIN_NAV, allowedNav, WORKSPACE_NAV } from './settings/Shell'
 import { useAgentEnabled } from '../hooks/agent'
 
 const DrawerContext = createContext<(() => void) | null>(null)
@@ -261,7 +261,7 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
                 <Fragment key={section.label}>
                   <Section label={section.label} />
                   {section.items.map((item) => (
-                    <NavRow key={item.href} link={{ label: item.label, icon: item.icon, href: item.href, active: navActive(item, pathname) }} onPress={() => go(item.href)} />
+                    <NavRow key={item.href} link={{ label: item.label, icon: item.icon, href: item.href, active: pathname === item.href }} onPress={() => go(item.href)} />
                   ))}
                 </Fragment>
               ))}

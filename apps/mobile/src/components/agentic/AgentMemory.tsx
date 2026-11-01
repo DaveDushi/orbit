@@ -3,12 +3,12 @@ import { Alert, View } from 'react-native'
 import { type Href, router } from 'expo-router'
 import type { AgentMemoryScope, AgentMemorySource } from '@orbit/api/agent'
 
-import { ACCOUNT_NAV, AgentTabs, Note, RowText, Segmented, SettingsCard, SettingsRow, SettingsShell } from '../../../../components/settings/Shell'
-import { relativeAgo } from '../../../../data/format'
-import { useAgentMemories, useAgentMemoryWake, useAgentStatus, useDeleteAgentMemory, useForgetAgentMemorySummary } from '../../../../hooks/agent'
-import { useOrbit } from '../../../../orbit-context'
-import { errorMessage } from '../../../../session-context'
-import { Button, IconButton, Input } from '../../../../ui'
+import { Note, RowText, Segmented, SettingsCard, SettingsRow } from '../settings/Shell'
+import { relativeAgo } from '../../data/format'
+import { useAgentMemories, useAgentMemoryWake, useAgentStatus, useDeleteAgentMemory, useForgetAgentMemorySummary } from '../../hooks/agent'
+import { useOrbit } from '../../orbit-context'
+import { errorMessage } from '../../session-context'
+import { Button, IconButton, Input } from '../../ui'
 
 const SCOPES = [
   { value: 'team', label: 'Team' },
@@ -22,7 +22,7 @@ function sourceHref(source: AgentMemorySource | null): string | null {
 }
 
 /** The web's Account → Agent → Memory tab: what the agent remembers in this workspace, for the team and for you. */
-export default function AgentMemoryScreen() {
+export function AgentMemory() {
   const { workspace } = useOrbit()
   const status = useAgentStatus()
   const [scope, setScope] = useState<AgentMemoryScope>('team')
@@ -49,17 +49,16 @@ export default function AgentMemoryScreen() {
 
   if (status.data && !status.data.enabled) {
     return (
-      <SettingsShell title="Account settings" nav={ACCOUNT_NAV}>
+    <>
         <SettingsCard title="Agent">
           <Note>The agent is not set up on this server.</Note>
         </SettingsCard>
-      </SettingsShell>
+      </>
     )
   }
 
   return (
-    <SettingsShell title="Account settings" nav={ACCOUNT_NAV} refreshing={memories.isRefetching} onRefresh={() => void memories.refetch()}>
-      <AgentTabs current="/settings/agent/memory" />
+    <>
       <SettingsCard
         title="Memories"
         description={
@@ -103,6 +102,6 @@ export default function AgentMemoryScreen() {
           {forget.isError ? <View className="p-4"><Note error>{errorMessage(forget.error)}</Note></View> : null}
         </SettingsCard>
       ) : null}
-    </SettingsShell>
+    </>
   )
 }

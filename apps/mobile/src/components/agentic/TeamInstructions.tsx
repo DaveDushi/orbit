@@ -2,23 +2,23 @@ import { useState } from 'react'
 import { View } from 'react-native'
 
 import type { TeamInstructions } from '@orbit/api/agent'
-import { Note, SettingsCard, SettingsShell, WORKSPACE_NAV } from '../../../components/settings/Shell'
-import { useAgentStatus, useSaveTeamInstructions, useTeamInstructions } from '../../../hooks/agent'
-import { useOrbit } from '../../../orbit-context'
-import { errorMessage } from '../../../session-context'
-import { Button, Input, Text } from '../../../ui'
+import { Note, SettingsCard, } from '../settings/Shell'
+import { useAgentStatus, useSaveTeamInstructions, useTeamInstructions } from '../../hooks/agent'
+import { useOrbit } from '../../orbit-context'
+import { errorMessage } from '../../session-context'
+import { Button, Input, Text } from '../../ui'
 
 /** Characters as the server counts them (code points, not UTF-16 units). */
 const characters = (text: string) => [...text.replace(/\r\n/g, '\n').trim()].length
 
 /** The web's Workspace settings → Agent → General: the team's instructions for every agent run in this workspace. */
-export default function AgentInstructionsScreen() {
+export function TeamInstructions() {
   const { workspaceId } = useOrbit()
   const team = useTeamInstructions()
   const status = useAgentStatus().data
   const name = status?.enabled ? status.name : 'the agent'
   return (
-    <SettingsShell title="Settings" nav={WORKSPACE_NAV} refreshing={team.isRefetching} onRefresh={() => void team.refetch()}>
+    <>
       {team.isPending ? <SettingsCard title="Team instructions"><Note>Loading the team instructions…</Note></SettingsCard> : null}
       {team.isError ? (
         <SettingsCard title="Team instructions">
@@ -30,7 +30,7 @@ export default function AgentInstructionsScreen() {
       ) : null}
       {/* a new field for another workspace */}
       {team.data ? <TeamCard key={workspaceId} team={team.data} agentName={name} /> : null}
-    </SettingsShell>
+    </>
   )
 }
 

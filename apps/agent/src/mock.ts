@@ -148,7 +148,7 @@ export function respond(messages: readonly Message[], modelId = "mock", thinking
 
 /** A `Models` with scripted models under the ChatGPT provider's id: the conversation's and the compaction model. */
 export function mockModels(modelId: string, compactModelId?: string): Models {
-	// Every ChatGPT model too, so a model chosen in Admin → AI agent runs.
+	// Every ChatGPT model too, so a model chosen in Agentic → Admin runs.
 	const ids = [...new Set([modelId, compactModelId ?? modelId, ...codexModels().map((model) => model.id)])];
 	const faux = fauxProvider({ provider: PROVIDER, models: ids.map((id) => ({ id, contextWindow: 200_000, maxTokens: 8_000, reasoning: true })), tokensPerSecond: 400 });
 	const factory = (context: { messages: readonly unknown[] }, options: { reasoning?: string } | undefined, _state: unknown, model: { id: string }) =>

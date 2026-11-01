@@ -38,7 +38,7 @@ class FakeOrbit {
 	failAcks = false;
 	failEdits = false;
 	botName = "Orbit Agent";
-	/** Admin → AI agent: the model and thinking level of new runs. */
+	/** Agentic → Admin: the model and thinking level of new runs. */
 	model: string | null = null;
 	thinking: string | null = null;
 	server!: Server;

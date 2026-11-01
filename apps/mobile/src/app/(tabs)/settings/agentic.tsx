@@ -1,26 +1,62 @@
+import { useState } from 'react'
 import { mcpClientCommands, mcpUrl } from '@orbit/api/mcp'
 import { View } from 'react-native'
 
-import { ACCOUNT_NAV, Note, RowIcon, RowText, SettingsCard, SettingsRow, SettingsShell } from '../../../components/settings/Shell'
+import { AdminAgent } from '../../../components/agentic/AdminAgent'
+import { AgentConnection } from '../../../components/agentic/AgentConnection'
+import { AgentMemory } from '../../../components/agentic/AgentMemory'
+import { TeamInstructions } from '../../../components/agentic/TeamInstructions'
+import { Note, RowIcon, RowText, Segmented, SettingsCard, SettingsRow, SettingsShell } from '../../../components/settings/Shell'
 import { useDisconnectOAuth, useOAuthConnections } from '../../../hooks/account'
+import { useAgentEnabled } from '../../../hooks/agent'
 import { useOrbit } from '../../../orbit-context'
 import { errorMessage } from '../../../session-context'
 import { Button, Text } from '../../../ui'
 
+type Section = 'you' | 'workspace' | 'admin'
+
 /**
- * The web's Agentic page: the MCP server address, the command that adds it to each client, and the connected clients.
- * The commands run on a computer, so a long press selects them; the app has no clipboard module.
+ * The web's Agentic page: every AI setting, in sections by role. Each section keeps its own access check. Agent tools
+ * are set up on the web; this app has no screen for them.
  */
 export default function AgenticScreen() {
+  const { user } = useOrbit()
+  const agent = useAgentEnabled()
+  const connections = useOAuthConnections()
+  const [picked, setPicked] = useState<Section>('you')
+  const sections: { value: Section; label: string }[] = [
+    { value: 'you', label: 'You' },
+    ...(agent ? [{ value: 'workspace' as const, label: 'Workspace' }] : []),
+    ...(agent && user.installation_admin ? [{ value: 'admin' as const, label: 'Admin' }] : []),
+  ]
+  const section = sections.some((option) => option.value === picked) ? picked : 'you'
+
+  return (
+    <SettingsShell title="Agentic" nav={[]} refreshing={connections.isRefetching} onRefresh={() => void connections.refetch()}>
+      {sections.length > 1 ? <Segmented label="Section" value={section} options={sections} onChange={setPicked} /> : null}
+      {section === 'you' ? (
+        <>
+          {agent ? <AgentConnection /> : null}
+          <McpSetup />
+          {agent ? <AgentMemory /> : null}
+        </>
+      ) : null}
+      {section === 'workspace' ? <TeamInstructions /> : null}
+      {section === 'admin' ? <AdminAgent /> : null}
+    </SettingsShell>
+  )
+}
+
+/** The commands run on a computer, so a long press selects them; the app has no clipboard module. */
+function McpSetup() {
   const { session } = useOrbit()
   const connections = useOAuthConnections()
   const disconnect = useDisconnectOAuth()
   const url = mcpUrl(session.server)
   const list = connections.data ?? []
-
   return (
-    <SettingsShell title="Account settings" nav={ACCOUNT_NAV} refreshing={connections.isRefetching} onRefresh={() => void connections.refetch()}>
-      <SettingsCard title="MCP server" description="AI clients such as Claude, Codex and Grok can use tasks and read docs and chat through this address. Sign in with your Orbit account and select the workspace, projects and permissions.">
+    <>
+      <SettingsCard title="MCP server" description="AI clients such as Claude, Codex and Grok can use tasks and read docs and chat through this address. Sign in with your Orbit account and select the workspace, the projects and the permissions.">
         <Code text={url} />
       </SettingsCard>
 
@@ -37,7 +73,7 @@ export default function AgenticScreen() {
         </View>
       </SettingsCard>
 
-      <SettingsCard title="Connected apps" description="MCP clients with approved Orbit access. Disconnecting an app stops its access and refresh tokens." flush>
+      <SettingsCard title="Connected apps" description="MCP clients you approved. Disconnecting an app stops its access and refresh tokens." flush>
         {connections.isPending ? <View className="p-4"><Note>Loading connections…</Note></View> : null}
         {connections.isError ? <View className="p-4"><Note error>Connections could not be loaded.</Note></View> : null}
         {connections.data && list.length === 0 ? <View className="p-4"><Note>No connected apps.</Note></View> : null}
@@ -50,7 +86,7 @@ export default function AgenticScreen() {
         ))}
         {disconnect.isError ? <View className="p-4"><Note error>The app could not be disconnected. {errorMessage(disconnect.error)}</Note></View> : null}
       </SettingsCard>
-    </SettingsShell>
+    </>
   )
 }
 

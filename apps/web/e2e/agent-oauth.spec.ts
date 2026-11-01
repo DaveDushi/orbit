@@ -60,7 +60,7 @@ test.describe('agent tools: OAuth client credentials', () => {
   test('setup form, Shopify preset, save and Test', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 1500 })
     await signIn(page)
-    await page.goto('/settings/agent/tools')
+    await page.goto('/agentic/workspace')
     await page.getByRole('button', { name: 'Add tool' }).click()
 
     await page.getByRole('combobox', { name: 'Kind' }).click()

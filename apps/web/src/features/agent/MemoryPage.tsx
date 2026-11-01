@@ -15,7 +15,7 @@ import { useAgentMemories, useAgentMemoryWake, useDeleteAgentMemory, useForgetAg
 
 type Pending = { kind: 'memory'; position: number } | { kind: 'summary'; lo: number; hi: number }
 
-/** Account → Agent → Memory: what the agent remembers in the current workspace, for the team and for you. */
+/** Agentic → You: what the agent remembers in the current workspace, for the team and for you. */
 export function MemoryPage() {
   const { workspace } = useWorkspace()
   const status = useAgentStatus()

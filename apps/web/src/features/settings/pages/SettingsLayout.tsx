@@ -1,12 +1,13 @@
 import { useContext } from 'react'
 import { Navigate, NavLink, Outlet, useLocation } from 'react-router'
+import { MagicStar } from 'reicon-react'
 import { cn } from 'cn'
 import { buttonVariants } from '@/components/ui/button'
 import { Pane, PaneHeader, PaneTitle } from '@/components/common/Pane'
 import { WorkspaceContext } from '@/features/workspaces/workspaceContext'
 import { useIsInstallationAdmin } from '@/features/workspaces/permissions'
 import { useNewUi } from '@/lib/themeContext'
-import { useSettingsArea, type SettingsAreaName } from '../settingsNav'
+import { useSettingsArea, type SettingsAreaName, type SettingsNavItem, type SettingsNavSection } from '../settingsNav'
 
 /** The workspace's settings. */
 export function SettingsLayout() {
@@ -24,12 +25,20 @@ export function AdminLayout() {
   return <SettingsShell area="admin" />
 }
 
+/** The Agentic page: reached from the app sidebar, so it has no area links of its own. */
+export function AgenticLayout() {
+  return <SettingsFrame title="Agentic" icon={MagicStar} sections={[]} />
+}
+
 /**
  * Coolify `x-settings.layout`: sticky sub-navigation (210px) + content column. In the new UI the desktop app sidebar
  * and the mobile drawer show this area's links (`SidebarNav`), so there the page has no sub-navigation of its own.
  */
 function SettingsShell({ area }: { area: SettingsAreaName }) {
-  const { title, icon: Icon, sections } = useSettingsArea(area)
+  return <SettingsFrame {...useSettingsArea(area)} />
+}
+
+function SettingsFrame({ title, icon: Icon, sections }: { title: string; icon: SettingsNavItem['icon']; sections: SettingsNavSection[] }) {
   const newUi = useNewUi()
   const { pathname } = useLocation()
   // the link NavLink marks as current; the longest match wins, so `/settings/members` beats `/settings`
@@ -38,7 +47,7 @@ function SettingsShell({ area }: { area: SettingsAreaName }) {
     .filter((item) => pathname === item.to || (!item.end && pathname.startsWith(`${item.to}/`)))
     .sort((a, b) => b.to.length - a.to.length)[0]
   // the new UI's app sidebar shows these links (`SidebarNav`); the classic one does not
-  const inAppShell = useContext(WorkspaceContext) !== null && newUi
+  const inAppShell = (useContext(WorkspaceContext) !== null && newUi) || sections.length === 0
   return (
     <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
       <Pane className="relative">

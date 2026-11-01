@@ -1,22 +1,21 @@
 import { Linking, View } from 'react-native'
 
-import { ACCOUNT_NAV, AgentTabs, Note, SettingsCard, SettingsShell } from '../../../../components/settings/Shell'
-import { useAgentStatus, useDisconnectChatgpt, useStartChatgptLogin } from '../../../../hooks/agent'
-import { Button, Text } from '../../../../ui'
+import { Note, SettingsCard } from '../settings/Shell'
+import { useAgentStatus, useDisconnectChatgpt, useStartChatgptLogin } from '../../hooks/agent'
+import { Button, Text } from '../../ui'
 
 const TITLE = 'Agent'
 const description = (name: string) => `Mention @${name} in a chat thread to give it work. It acts with your permissions in Orbit, and your ChatGPT account pays for the runs you start.`
 
 /** The web's Account → Agent → Settings tab: connect the person's own ChatGPT account with a device code. */
-export default function AgentScreen() {
+export function AgentConnection() {
   const status = useAgentStatus()
   const start = useStartChatgptLogin()
   const disconnect = useDisconnectChatgpt()
   const agent = status.data
 
   return (
-    <SettingsShell title="Account settings" nav={ACCOUNT_NAV} refreshing={status.isRefetching} onRefresh={() => void status.refetch()}>
-      {agent?.enabled ? <AgentTabs current="/settings/agent" /> : null}
+    <>
       {!agent ? (
         <SettingsCard title={TITLE}>
           {status.isError ? <Note error>The agent settings are not available.</Note> : <Note>Loading the agent settings…</Note>}
@@ -57,6 +56,6 @@ export default function AgentScreen() {
           </View>
         </SettingsCard>
       )}
-    </SettingsShell>
+    </>
   )
 }
