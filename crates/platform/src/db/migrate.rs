@@ -469,6 +469,20 @@ impl MigrationRunner {
                     include_str!("../../../../apps/server/migrations/0067_workspace_apps.sql"),
                     false,
                 ),
+                Migration::new(
+                    68,
+                    include_str!(
+                        "../../../../apps/server/migrations/0068_agent_integration_oauth.sql"
+                    ),
+                    false,
+                ),
+                Migration::new(
+                    69,
+                    include_str!(
+                        "../../../../apps/server/migrations/0069_page_file_versions.sql"
+                    ),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -590,6 +604,20 @@ impl MigrationRunner {
             Migration::new(
                 67,
                 include_str!("../../../../apps/server/migrations/postgres/0067_workspace_apps.sql"),
+                false,
+            ),
+            Migration::new(
+                68,
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0068_agent_integration_oauth.sql"
+                ),
+                false,
+            ),
+            Migration::new(
+                69,
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0069_page_file_versions.sql"
+                ),
                 false,
             ),
         ];

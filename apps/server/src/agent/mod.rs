@@ -5,10 +5,12 @@
 
 pub(crate) mod bot;
 pub(crate) mod credentials;
+mod graphql;
 pub mod inputs;
 mod integrations;
 pub mod memory;
 mod memory_routes;
+mod oauth;
 mod outbound;
 mod routes;
 pub mod scope;
@@ -85,6 +87,8 @@ pub struct AgentState {
     pub(crate) http: reqwest::Client,
     /// Calls to the integrations' MCP servers and HTTP APIs.
     pub(crate) outbound: outbound::Outbound,
+    /// The integrations' OAuth access tokens, only in memory.
+    pub(crate) tokens: oauth::TokenCache,
 }
 
 impl AgentState {
@@ -107,6 +111,7 @@ impl AgentState {
                 .build()
                 .unwrap_or_default(),
             outbound: outbound::Outbound::new(outbound::TestHosts::from_env()),
+            tokens: oauth::TokenCache::default(),
         }
     }
 

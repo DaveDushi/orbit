@@ -201,6 +201,12 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::page_routes::list_recent_pages,
         crate::page_file_routes::upload_page_file,
         crate::page_file_routes::download_page_file,
+        crate::page_file_routes::list_page_files,
+        crate::page_file_routes::get_page_file_content,
+        crate::page_file_routes::save_page_file,
+        crate::page_file_routes::list_page_file_versions,
+        crate::page_file_routes::download_page_file_version,
+        crate::page_file_routes::restore_page_file_version,
         crate::page_comment_routes::list_page_threads,
         crate::page_comment_routes::create_page_thread,
         crate::page_comment_routes::delete_page_thread,
@@ -714,7 +720,30 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             add_code(&mut responses, "413", "storage_quota_exceeded");
             add_code(&mut responses, "422", "validation_failed");
         }
-        "download_page_file" => add_code(&mut responses, "404", "page_file_not_found"),
+        "download_page_file"
+        | "download_page_file_version"
+        | "list_page_files"
+        | "list_page_file_versions" => add_code(&mut responses, "404", "page_file_not_found"),
+        "get_page_file_content" => {
+            add_code(&mut responses, "404", "page_file_not_found");
+            add_code(&mut responses, "410", "file_deleted");
+            add_code(&mut responses, "422", "file_over_limit");
+            add_code(&mut responses, "422", "file_unreadable");
+            add_code(&mut responses, "503", "file_busy");
+        }
+        "save_page_file" | "restore_page_file_version" => {
+            add_code(&mut responses, "404", "page_file_not_found");
+            add_code(&mut responses, "409", "conflict");
+            add_code(&mut responses, "410", "file_deleted");
+            add_code(&mut responses, "413", "file_too_large_to_edit");
+            add_code(&mut responses, "413", "storage_quota_exceeded");
+            add_code(&mut responses, "422", "file_not_editable");
+            add_code(&mut responses, "422", "cell_read_only");
+            add_code(&mut responses, "422", "file_over_limit");
+            add_code(&mut responses, "422", "file_unreadable");
+            add_code(&mut responses, "422", "validation_failed");
+            add_code(&mut responses, "423", "page_locked");
+        }
         "export_page" => {
             add_code(&mut responses, "404", "page_not_found");
             add_code(&mut responses, "413", "export_too_many_pages");
@@ -1305,7 +1334,7 @@ fn teamspace_errors(operation_id: &str, responses: &mut BTreeMap<&'static str, V
 fn add_download_media_types(operation_id: &str, operation: &mut utoipa::openapi::path::Operation) {
     let schema = match operation_id {
         "download_task_attachment" | "download_comment_attachment" => "AttachmentDownload",
-        "download_page_file" => "PageFileDownload",
+        "download_page_file" | "download_page_file_version" => "PageFileDownload",
         "download_chat_file" => "ChatFileDownload",
         _ => return,
     };

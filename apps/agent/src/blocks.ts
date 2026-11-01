@@ -56,6 +56,9 @@ export function blocksToMarkdown(blocks: readonly Block[], depth = 0): string {
 			case "divider":
 				lines.push("---");
 				break;
+			case "file":
+				lines.push(`${indent}[file: ${block.props?.name ?? "unnamed"}]`);
+				break;
 			default:
 				lines.push(`${indent}${text}`);
 		}

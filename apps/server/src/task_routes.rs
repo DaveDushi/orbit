@@ -2441,7 +2441,8 @@ pub(crate) struct ProblemBody {
     title: &'static str,
     status: u16,
     code: &'static str,
-    detail: &'static str,
+    #[schema(value_type = String)]
+    detail: std::borrow::Cow<'static, str>,
     instance: String,
     request_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2486,7 +2487,7 @@ impl ApiError {
                 title,
                 status: status.as_u16(),
                 code,
-                detail,
+                detail: detail.into(),
                 instance: instance.into(),
                 request_id: request_id
                     .map(|Extension(value)| value.as_str().to_owned())
@@ -2495,6 +2496,12 @@ impl ApiError {
                 path: None,
             }),
         }
+    }
+
+    /// Replaces the detail with text known only at run time, such as the name of a cell.
+    pub(crate) fn with_detail(mut self, detail: String) -> Self {
+        self.body.detail = detail.into();
+        self
     }
 
     pub(crate) fn version_conflict(

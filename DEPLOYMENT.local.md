@@ -4,12 +4,14 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, local merge commit 29c694cd495000cd62a0e0ba7b53cc42bc573209
-  (`main` with the `agent-integrations` branch merged).
+- Source: DaveDushi/orbit, commit 857ce8e48f5e7647cd2521c323ca4c93cc6c38eb
+  (`main` fast-forwarded to the `docs-file-preview` branch).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:29c694c`); fork commits have no published upstream image.
-- Image ID: sha256:d11ba31eebb7a9accb29aafcf6b448e06db30d184743bcd503f894734f2c0f9c
-- Team agent sidecar code (`/opt/orbit-agent`): the same merge commit 29c694c.
+  (`orbit:857ce8e`); fork commits have no published upstream image.
+- Image ID: sha256:2834863f1f64723a3dca9537e88ac8e84e01bb63c58babd8d94fb534f7ed75c2
+- Team agent sidecar code (`/opt/orbit-agent`): commit 857ce8e.
+- OIDC gateway: `orbit-oidc-gateway.service`, nginx on `127.0.0.1:8400`, config in `/etc/orbit-oidc-gateway/`
+  (see `docs/apps.md`). `cloudflared` is NOT installed.
 - Executable: /usr/local/bin/orbit; unprivileged system user: orbit.
 - Config: /etc/orbit/orbit.env (production mode); registration remains closed in instance settings.
 - Environment-only startup: /etc/systemd/system/orbit.service.d/environment.conf.
@@ -181,6 +183,191 @@ sudo systemctl start orbit
 ```
 
 ## Verification performed
+
+### October 31, 2026 upgrade: open and edit files on Docs pages
+
+Fast-forwarded `main` to `docs-file-preview` (`857ce8e`, 4 commits). No new setting; `/etc/orbit/orbit.env`,
+`/etc/orbit/agent.env` and nginx did not change. New crates: calamine, csv, pdf-extract, rustix; new frontend package:
+pdfjs-dist. The server now starts itself as a limited child process through `current_exe` to parse files
+(`parse-file`, `patch-xlsx`), so **restart `orbit` directly after any binary swap**.
+
+Order: backup `01a192d9-627d-7790-84d0-ad361e2bc82e` (verified) while stopped; Orbit started again. Rehearsal before the
+merge: the first try with the test instance's binary stopped with "migration 68 is not known" and changed nothing, because
+that binary is older than `main`. `orbit:857ce8e` was then built from a clean `git archive` of the commit with
+`orbit-build /usr/bin/docker buildx build --builder=orbit-limited --load`, and migration 69 was rehearsed with it. After the
+merge, the image was built again from `main` (a full compile, about 35 minutes with one job), and `deploy/smoke.sh` passed.
+
+At the switch: stopped `orbit-agent` and `orbit`, created and verified the final snapshot
+`01a19321-ed03-722e-86e5-cb29bc6227b1` (`/var/backups/orbit/snapshots/01a19321-ed03-722e-86e5-cb29bc6227b1`; use this one for
+rollback), saved the sidecar data as `/var/backups/orbit-agent/orbit-agent-before-857ce8e.tgz` and the old sidecar code as
+`/opt/orbit-agent.before-857ce8e`, and rehearsed migration 69 again on a copy of it. The rehearsal copies are deleted.
+Applied it live: schema 69. Counts before and after: 6 users, 1 workspace, 3 projects, 61 tasks, 31 pages, 28 page files,
+43 blobs, 396 chat messages, 40 agent inputs, 31 `page_search` rows, with the same hash of all `page_search` rows. The old
+executable is `/usr/local/bin/orbit-ab45847`, and the new one is also kept as `/usr/local/bin/orbit-857ce8e`.
+
+Verified: `orbit`, `orbit-agent`, nginx and `orbit-oidc-gateway` are active with no restarts; readiness (all checks);
+revision `857ce8e`; sidecar `mock: false`; live quick-check and foreign-key checks pass; 28 page files at version 1 and 0 file
+versions; FTS5 `integrity-check` passes on a copy of the final snapshot; a `page_search` query returns rows. The page file
+list, file, content and versions routes answer 401 without a session, and restore answers 403 from a foreign origin and 415
+with no session and no body (an unknown route answers 404). Frontend assets and the PDF worker asset answer 200, and the CSP
+is unchanged (`default-src 'self'` covers the same-origin worker). Canonical login 400, foreign 403;
+https://orbit.wellrox.com/ answers 307 to the exe.dev login. No warnings in the logs. The sidecar's tests pass on this tree.
+The `parse-file` child ran as user `orbit` with the service's sandbox settings on a read-only copy of every stored file of
+these types, and all parsed: 3 `.xlsx`, 5 `.csv`, 9 `.pdf`, 6 `.docx`. Only output shape was inspected.
+
+**Not** verified: the signed-in file panel in a browser, PDF rendering, saving a cell or restoring a version on a real file
+(`patch-xlsx`), any real `.xlsm` file (production has none), and an agent run with the file tools on a real model.
+The server test suite was not rerun on `main`, because the tree equals the tested branch.
+
+Rollback (an older binary cannot read a version 69 database; preserve the current database first; work after the snapshot
+is lost):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-ab45847 backup verify 01a19321-ed03-722e-86e5-cb29bc6227b1 && /usr/local/bin/orbit-ab45847 backup restore 01a19321-ed03-722e-86e5-cb29bc6227b1'
+sudo install -m 755 /usr/local/bin/orbit-ab45847 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo cp -a /opt/orbit-agent.before-857ce8e /opt/orbit-agent
+sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-857ce8e.tgz
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+```
+
+### October 30, 2026 upgrade: OAuth client credentials and GraphQL reads for agent tools
+
+Merged `agent-oauth-client-credentials` (`9677f60`) into `main` (merge `ab45847`; only this file differs from the tested
+branch). Tests on this code are in the branch's report: `agent_integrations` (17), `agent_api` (13), `app_smoke` (18),
+platform `backup` (21) and `database` (43) on SQLite and Postgres; the agent unit tests (27), Clippy, web typecheck and
+lint, and the browser e2e on SQLite. After the last small fix (two joined `if` statements), the server tests were rerun
+on SQLite and `agent_integrations` on Postgres; `agent_api`, `app_smoke`, `backup` and `database` on Postgres were not
+rerun, and nothing was rerun on the merge, because its code is the same. The full workspace suite was not run. The image
+`orbit:ab45847` built with the limited builder and `deploy/smoke.sh` passed.
+
+Stopped `orbit-agent` and `orbit`. Counts before: schema 67, 6 users, 1 workspace, 3 projects, 61 tasks, 31 pages, 43
+attachment blobs, 390 chat messages, 40 agent inputs, 0 integrations. Created and verified snapshot
+`01a18d0e-d881-7468-8557-5724f1fea800` (`/var/backups/orbit/snapshots/01a18d0e-d881-7468-8557-5724f1fea800`) with the old
+CLI. Saved the sidecar data as `/var/backups/orbit-agent/orbit-agent-before-ab45847.tgz`. Sidecar code did not change. The
+old executable is `/usr/local/bin/orbit-6808e1b`, and the new one is also kept as `/usr/local/bin/orbit-ab45847`. Rehearsed
+migration 68 (`0068_agent_integration_oauth.sql`, five new columns on `agent_integrations`) on a copy in
+`/var/lib/orbit/rehearsal-ab45847-AfA1Rk` (deleted afterwards): quick-check and foreign-key checks pass, counts unchanged.
+Applied it live: schema version 68, quick-check and foreign-key checks pass, all counts unchanged. `/etc/orbit/orbit.env`,
+`/etc/orbit/agent.env` and nginx did not change. No new setting is needed.
+
+Verified: `orbit`, `orbit-agent`, nginx and `orbit-oidc-gateway` are active; readiness (all checks); sidecar listens; no
+error in the `orbit` log; `/settings/agent-tools` answers 200 and the agent-integrations API answers 401 with no session;
+https://orbit.wellrox.com/ answers 307 to the exe.dev login. Workspace settings → Agent tools was checked signed in, in a
+browser on loopback, against a copy of the migrated production database served by the new binary (a session was added and
+the push subscriptions removed in the copy only; the copy was deleted): the HTTP form has the OAuth choice, and a
+`.myshopify.com` base URL fills in the token URL, header, test path and GraphQL path, with no page errors. The form was not
+saved. The live signed-in page, a real Shopify call and an agent run with a tool were **not** tested: they need a person's
+login and credentials. No credential was added: production has 0 integrations.
+
+Rollback (an older binary cannot read a version 68 database; preserve the current database first; work after the snapshot
+is lost):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-6808e1b backup verify 01a18d0e-d881-7468-8557-5724f1fea800 && /usr/local/bin/orbit-6808e1b backup restore 01a18d0e-d881-7468-8557-5724f1fea800'
+sudo install -m 755 /usr/local/bin/orbit-6808e1b /usr/local/bin/orbit
+sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-ab45847.tgz
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+```
+
+### October 30, 2026 upgrade: Orbit Apps and Sign in with Orbit
+
+Merged `orbit-apps` (`34a1eb5`) into `main` (merge `6808e1b`; only this file differs from the tested branch). Tests on this
+code are in the branch's report. The full workspace suite was not run. Platform `database` was run once in full, with one
+schema check failing; that check was fixed and rerun alone. The real Cloudflare sign-in, Safari and the iOS bundle were not checked. The image `orbit:6808e1b` built with the
+limited builder and `deploy/smoke.sh` passed. An earlier build stopped when the VM rebooted at about 11:01 UTC, which also
+grew the disk to 40 GB. A backup from 10:49 UTC (`01a18c6e-41ff-7553-ad0f-89f91fef3183`) is older than the one below: do not
+use it for rollback.
+
+Stopped `orbit-agent` and `orbit`. Counts before: schema 66, 6 users, 1 workspace, 3 projects, 61 tasks, 31 pages, 43
+attachment blobs, 381 chat messages, 40 agent inputs, 0 integrations. Created and verified snapshot
+`01a18c97-844c-7482-998d-618f250d27be` (`/var/backups/orbit/snapshots/01a18c97-844c-7482-998d-618f250d27be`) with the old
+CLI. Saved the sidecar data as `/var/backups/orbit-agent/orbit-agent-before-6808e1b.tgz`. Sidecar code did not change, so
+no new code copy was made. The old executable is `/usr/local/bin/orbit-aedbc85`, and the new one is also kept as
+`/usr/local/bin/orbit-6808e1b`. Rehearsed migration 67 (`0067_workspace_apps.sql`, four new tables) on a copy in
+`/var/lib/orbit/rehearsal-6808e1b-*` (deleted afterwards): quick-check and foreign-key checks pass. Applied it live: schema
+version 67, quick-check and foreign-key checks pass, all counts unchanged. `/etc/orbit/orbit.env`, `/etc/orbit/agent.env` and
+the main nginx did not change.
+
+Verified: `orbit`, `orbit-agent` and nginx are active; readiness (all checks); revision `6808e1b`; sidecar listens;
+discovery 200 with issuer `https://orbit.wellrox.com`; `/oauth/jwks` 200 with no keys yet (the first app with sign-in makes
+the key); the apps routes and userinfo answer 401 without a session or token; a foreign origin write 403; MCP metadata 200;
+the global CSP has `frame-src 'self' https://www.youtube-nocookie.com` and `frame-ancestors 'none'`;
+https://orbit.wellrox.com/ answers 307 to the exe.dev login. The signed-in Apps page and a real sign-in were **not** tested
+on production from this VM: they need a person's login.
+
+Gateway: installed per `docs/apps.md`, tunnel section, step 2. Local checks on `127.0.0.1:8400`: `/oauth/jwks` 200,
+`POST /oauth/token` 401 with a wrong client, and 404 for `/login`, `/`, `/api/v1/auth/me`, `/oauth/authorize`, traversal,
+encoded paths and `GET /oauth/token`. `cloudflared` is on hold: not installed, no tunnel. The Products app is not added yet.
+
+Rollback (an older binary cannot read a version 67 database; preserve the current database first; work after the snapshot
+is lost):
+
+```sh
+sudo systemctl disable --now orbit-oidc-gateway
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-aedbc85 backup verify 01a18c97-844c-7482-998d-618f250d27be && /usr/local/bin/orbit-aedbc85 backup restore 01a18c97-844c-7482-998d-618f250d27be'
+sudo install -m 755 /usr/local/bin/orbit-aedbc85 /usr/local/bin/orbit
+sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-6808e1b.tgz
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+```
+
+### October 30, 2026 upgrade: agent model and thinking level
+
+Merged the `agent-model-setting` branch (`c65ffc4`, which contains `main` up to `c4ca69c`) into `main` (merge
+`aedbc85`); the merged tree equals the tested branch. Tests on this code: sidecar typecheck and 24 tests; web
+typecheck, lint and build; mobile typecheck and 135 tests; `agent_api` (13), `app_smoke` (18) and `backup` (21) on
+SQLite and Postgres; platform `database` (43) on Postgres. Platform `database` on SQLite is intermittent:
+`page_search_migration_backfills_and_tracks_pages` fails with "malformed inverted index for FTS5 table
+main.page_search" (the `PRAGMA integrity_check` false positive in `.ai/lessons.md`). `c4ca69c` shows the same failure
+(run 7 of a series stopped at the first failure; another session measured 3 of 15 full runs on both trees), so it does
+not come from this change; the test is not changed yet. The iOS bundle was not checked (no Metro server). The image
+`orbit:aedbc85` built with the limited builder and `deploy/smoke.sh` passed.
+
+Rehearsed migration 66 (`0066_agent_model_settings.sql`, one new table) on a copy in
+`/var/lib/orbit/rehearsal-aedbc85-T3zWkq` (deleted afterwards). Stopped `orbit-agent` and `orbit`. Counts before:
+schema 65, 6 users, 1 workspace, 2 projects, 15 tasks, 18 pages, 15 attachment blobs, 370 chat messages, 35 agent
+inputs, 3 ChatGPT connections, 0 agent memories, 0 integrations, 0 team instructions. Created and verified snapshot
+`01a18c0f-83d8-72b8-b885-2b44c623a630` (`/var/backups/orbit/snapshots/01a18c0f-83d8-72b8-b885-2b44c623a630`) with the old CLI. Saved the sidecar data as
+`/var/backups/orbit-agent/orbit-agent-before-aedbc85.tgz` and the old sidecar code as
+`/opt/orbit-agent.before-aedbc85`; the old executable is `/usr/local/bin/orbit-29c694c` and the new one is also kept
+as `/usr/local/bin/orbit-aedbc85`. Applied migration 66 live: schema version 66, quick-check and foreign-key checks
+pass, all counts unchanged. Installed the new sidecar `src`; `package.json`, `package-lock.json` and `tsconfig.json`
+did not change. `/etc/orbit/orbit.env`, `/etc/orbit/agent.env` and nginx did not change.
+
+Incident during this deploy: the sidecar did not start for about 30 seconds after the switch (09:06 to 09:07 UTC)
+because `/opt/orbit-agent/node_modules` was empty. At 07:32 UTC, `rm -rf` on a path with a trailing slash went through a
+worktree symlink to that directory; the running sidecar did not show it until it restarted. Restored from
+`/opt/orbit-agent.before-29c694c` (same lockfile, also identical to the `before-51c3035` copy), in `/opt/orbit-agent` and
+in `/opt/orbit-agent.before-aedbc85`. No input was queued in that time.
+
+Verified: `orbit`, `orbit-agent` and nginx are active; readiness (all checks); revision `aedbc85`; sidecar health
+`mock: false`; sidecar `/models` lists 7 models with default `gpt-6.1-sol` and answers 401 without the secret; the
+internal inputs route gives `model: null, thinking: null` with the secret and 401 without it;
+`/api/v1/admin/agent/model` answers 401 without a session and 403 for a foreign origin; `agent_model_settings` is empty,
+so runs keep `gpt-6.1-sol` with no thinking level; https://orbit.wellrox.com/ answers 307 to the exe.dev login. Admin → AI
+agent was checked signed in, in a browser on loopback, against a copy of the migrated production database served by the
+new binary with the mock sidecar (a session was added and the push subscriptions removed in the copy only; the copy was
+deleted): the page shows "Default (GPT-6.1 Sol)" and thinking "Default", and a mock run answered `Model: gpt-6.1-sol,
+thinking: default`. A real agent run on production and the live signed-in page were **not** tested from this VM: they
+need a person's login and ChatGPT account. Stripe was not configured.
+
+Rollback (an older binary cannot read a version 66 database; preserve the current database first; work after the
+snapshot is lost):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-29c694c backup verify 01a18c0f-83d8-72b8-b885-2b44c623a630 && /usr/local/bin/orbit-29c694c backup restore 01a18c0f-83d8-72b8-b885-2b44c623a630'
+sudo install -m 755 /usr/local/bin/orbit-29c694c /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo cp -a /opt/orbit-agent.before-aedbc85 /opt/orbit-agent
+sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-aedbc85.tgz
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+```
 
 ### October 30, 2026 upgrade: agent tools (integrations)
 
