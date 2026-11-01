@@ -1,7 +1,9 @@
-import { useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from 'react'
+import { createContext, useContext, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type Ref } from 'react'
 import { cn } from 'cn'
 
 const STORAGE_KEY = 'orbit:file_panel_share'
+/** The size to go back to from the full screen button. It stays over a reload, as full screen does. */
+const BEFORE_FULL_KEY = 'orbit:file_panel_share_before_full'
 /** Below this size a side is of no use, so the divider snaps to the edge and hides it. */
 export const FILE_SPLIT_MIN = 240
 const KEY_STEP = 16
@@ -54,9 +56,27 @@ export function revealFileShare(share: number | null): number | null {
   return share === 0 ? null : share
 }
 
-function storedShare(): number | null {
-  return parseFileShare(window.localStorage.getItem(STORAGE_KEY))
+/**
+ * The full screen button, from `saved` and the size saved before full screen. Going in keeps the size; coming out
+ * uses it. A drag to full width leaves no size to go back to, so that comes out at the default (null).
+ */
+export function toggleFullFile(saved: number | null, before: number | null): { saved: number | null; before: number | null } {
+  return saved === 1 ? { saved: before, before: null } : { saved: 1, before: saved }
 }
+
+function storedShare(key = STORAGE_KEY): number | null {
+  return parseFileShare(window.localStorage.getItem(key))
+}
+
+function store(key: string, share: number | null) {
+  if (share === null) window.localStorage.removeItem(key)
+  else window.localStorage.setItem(key, String(share))
+}
+
+const FileFullScreenContext = createContext<{ fullScreen: boolean; toggle: () => void }>({ fullScreen: false, toggle: () => {} })
+
+/** For the panel's header. Only a change of this value renders the panel again, so a drag does not. */
+export const useFileFullScreen = () => useContext(FileFullScreenContext)
 
 /**
  * The page column and the open file, with a divider between them. From 1100px up it moves over the full width of this
@@ -70,12 +90,18 @@ export function FileSplit({ open, ref, children }: { open: boolean; ref: Ref<Fil
   const [width, setWidth] = useState(0)
   const [dragging, setDragging] = useState(false)
 
-  const save = (next: number | null) => {
+  /** A size chosen with the divider replaces the one saved before full screen. */
+  const save = (next: number | null, before: number | null = null) => {
     setSaved(next)
-    if (next === null) window.localStorage.removeItem(STORAGE_KEY)
-    else window.localStorage.setItem(STORAGE_KEY, String(next))
+    store(STORAGE_KEY, next)
+    store(BEFORE_FULL_KEY, before)
   }
-  useImperativeHandle(ref, () => ({ reveal: () => save(revealFileShare(storedShare())) }), [])
+  useImperativeHandle(ref, () => ({
+    reveal: () => {
+      const stored = storedShare()
+      if (revealFileShare(stored) !== stored) save(null)
+    },
+  }), [])
 
   useLayoutEffect(() => {
     const row = rowRef.current
@@ -88,6 +114,17 @@ export function FileSplit({ open, ref, children }: { open: boolean; ref: Ref<Fil
 
   const share = fitFileShare(saved, width)
   const split = !open ? undefined : share === 0 ? 'page' : share === 1 ? 'file' : 'both'
+  const fullScreen = share === 1
+  const fullScreenValue = useMemo(
+    () => ({
+      fullScreen,
+      toggle: () => {
+        const next = toggleFullFile(storedShare(), storedShare(BEFORE_FULL_KEY))
+        save(next.saved, next.before)
+      },
+    }),
+    [fullScreen],
+  )
 
   function startDrag(event: React.PointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return
@@ -120,7 +157,7 @@ export function FileSplit({ open, ref, children }: { open: boolean; ref: Ref<Fil
       style={{ '--file-share': share } as React.CSSProperties}
       className="group/split relative flex min-h-0 min-w-0 flex-1 data-dragging:cursor-col-resize data-dragging:select-none min-[1100px]:data-[split=file]:pl-2 min-[1100px]:data-[split=page]:pr-2"
     >
-      {children}
+      <FileFullScreenContext.Provider value={fullScreenValue}>{children}</FileFullScreenContext.Provider>
       {split ? (
         <div
           role="separator"

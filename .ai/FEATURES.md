@@ -201,7 +201,9 @@ favorites through `/pages/favorites` (list), `/pages/{page_id}/favorite` (PUT/DE
   a download button. From 1100px up, a divider (`FileSplit`) moves over the full width of the row: drag, arrow keys, double click for the
   default. Under 240px a side snaps away and stays mounted (edits and scroll stay), and the divider stays at the edge. The
   size is a share of the row in local storage (one per browser). A click on a file while the saved size hides files opens
-  it at the default size. Below 1100px the panel is an overlay with no divider. PDFs show real pages (`pdfjs-dist`, its own lazy chunk; a bundled same-origin worker, no CSP change),
+  it at the default size. A full screen button in the panel header
+  fills the row (the app sidebar stays), and a second click restores the size from before; after a drag to full width it
+  restores the default. Below 1100px the panel is an overlay with no divider and no button. PDFs show real pages (`pdfjs-dist`, its own lazy chunk; a bundled same-origin worker, no CSP change),
   sheets a table with sheet tabs that loads in parts, text and images directly, `docx` read-only text, other types the
   name and a download. `GET …/files/{id}/content` reads one part (rows or characters; `extract=true` for PDF text);
   `file_parse.rs` is the only parser, shared with the agent. It runs in a child process (`orbit parse-file`, no

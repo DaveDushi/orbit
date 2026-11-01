@@ -223,6 +223,23 @@ test('the divider moves over the full row, keeps edits and scroll, and the size 
   await expect(panel.getByLabel('B2', { exact: true })).toHaveValue('unsaved edit')
   expect(Math.abs((await panel.boundingBox())!.width - Math.min(startRow.width * 0.52, 760))).toBeLessThan(2)
 
+  // The full screen button: an unsaved edit stays, and a second click goes back.
+  await dragTo(startRow.x + 400)
+  const beforeFull = await left()
+  await panel.getByRole('button', { name: 'Full screen', exact: true }).click()
+  await expect(pageColumn).toBeHidden()
+  expect((await panel.boundingBox())!.width).toBeGreaterThan(startRow.width - 12)
+  await expect(panel.getByLabel('B2', { exact: true })).toHaveValue('unsaved edit')
+  await shot(page, '27-full-screen-button')
+  await panel.getByRole('button', { name: 'Exit full screen' }).click()
+  await expect(pageColumn).toBeVisible()
+  expect(Math.abs((await left()) - beforeFull)).toBeLessThan(2)
+  await expect(panel.getByLabel('B2', { exact: true })).toHaveValue('unsaved edit')
+  // After a drag to full width the button shows the same state, and goes to the default size.
+  await dragTo(startRow.x)
+  await panel.getByRole('button', { name: 'Exit full screen' }).click()
+  expect(Math.abs((await panel.boundingBox())!.width - Math.min(startRow.width * 0.52, 760))).toBeLessThan(2)
+
   // Keys, then a double click for the default.
   const before = await left()
   await divider.focus()
@@ -245,6 +262,14 @@ test('the divider moves over the full row, keeps edits and scroll, and the size 
   await expect(panel).toHaveCount(0)
   await expect(divider).toHaveCount(0)
   await fileBlock(page, 'sample.csv').click()
+  expect(Math.abs((await left()) - wide)).toBeLessThan(10)
+
+  // A reload in full screen stays there, and the second click still goes back to the size from before.
+  await panel.getByRole('button', { name: 'Full screen', exact: true }).click()
+  await page.reload()
+  await fileBlock(page, 'sample.csv').click()
+  await expect(pageColumn).toBeHidden()
+  await panel.getByRole('button', { name: 'Exit full screen' }).click()
   expect(Math.abs((await left()) - wide)).toBeLessThan(10)
 
   // Saved full width: a close brings the page back, and a reopen shows the file full width.
@@ -325,6 +350,7 @@ test('the divider moves over the full row, keeps edits and scroll, and the size 
   // Below 1100px: the overlay from before, with no divider, and the page is not hidden by a saved full width.
   await page.setViewportSize({ width: 1000, height: 800 })
   await expect(divider).toBeHidden()
+  await expect(panel.getByRole('button', { name: /full screen/i })).toBeHidden()
   await expect(pageColumn).toBeVisible()
   await expect.poll(async () => (await panel.boundingBox())!.width).toBe(640)
   await shot(page, '26-resize-narrow-overlay')

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useState } from 'react'
-import { Download, History, Xmark as X } from 'reicon-react'
+import { Download, History, Maximize4, Minimize, Xmark as X } from 'reicon-react'
 import { cn } from 'cn'
 import { ApiProblem } from '@orbit/api/problem'
 import type { PageFileContent } from '@orbit/api/generated/types.gen'
@@ -22,6 +22,7 @@ import {
   type FileTarget,
 } from '@/features/docs/api/pageFiles'
 import { columnIndex, columnName, FileTable } from './FileTable'
+import { useFileFullScreen } from './FileSplit'
 
 // pdf.js is large: its chunk and worker load only when a PDF opens.
 const PdfPages = lazy(() => import('./PdfPages'))
@@ -416,6 +417,19 @@ function VersionsButton({ target, current }: { target: FileTarget; current: numb
   )
 }
 
+/** Fills the content row, as a drag of the divider does. Below 1100px there is no divider and no button. */
+function FullScreenButton() {
+  const { fullScreen, toggle } = useFileFullScreen()
+  const label = fullScreen ? 'Exit full screen' : 'Full screen'
+  return (
+    <Tip label={label} side="bottom">
+      <Button type="button" variant="ghost" size="icon-sm" className="text-muted-foreground max-[1099px]:hidden" aria-label={label} onClick={toggle}>
+        {fullScreen ? <Minimize className="size-4" /> : <Maximize4 className="size-4" />}
+      </Button>
+    </Tip>
+  )
+}
+
 /** A file of the page in a panel beside it: its pages, table or text, and a download button. */
 export function FilePanel({
   target,
@@ -456,6 +470,7 @@ export function FilePanel({
             <Download className="size-4" />
           </a>
         </Tip>
+        <FullScreenButton />
         <Tip label="Close" side="bottom">
           <Button type="button" variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label="Close file" onClick={onClose}>
             <X className="size-4" />
