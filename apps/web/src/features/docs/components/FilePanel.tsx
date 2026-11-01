@@ -443,7 +443,7 @@ export function FilePanel({
       aria-label="File"
       data-file-panel=""
       data-print-hide=""
-      className="flex w-[min(52%,760px)] min-w-[360px] shrink-0 animate-in flex-col border-l border-border bg-background duration-150 ease-out fade-in max-[1099px]:absolute max-[1099px]:inset-y-0 max-[1099px]:right-0 max-[1099px]:z-20 max-[1099px]:w-[min(100%,640px)] max-[1099px]:shadow-xl max-[599px]:w-full max-[599px]:min-w-0 motion-reduce:animate-none"
+      className="flex w-[calc(var(--file-share)*100%)] shrink-0 animate-in flex-col border-l border-border bg-background duration-150 ease-out fade-in max-[1099px]:absolute max-[1099px]:inset-y-0 max-[1099px]:right-0 max-[1099px]:z-20 max-[1099px]:w-[min(100%,640px)] max-[1099px]:min-w-[360px] max-[1099px]:shadow-xl max-[599px]:w-full max-[599px]:min-w-0 motion-reduce:animate-none min-[1100px]:group-data-[split=file]/split:border-l-0 min-[1100px]:group-data-[split=page]/split:invisible min-[1100px]:group-data-[split=page]/split:absolute min-[1100px]:group-data-[split=page]/split:inset-y-0 min-[1100px]:group-data-[split=page]/split:right-0 min-[1100px]:group-data-[split=page]/split:w-1/2"
     >
       <div className="flex h-12 shrink-0 items-center gap-1 border-b border-border pr-2 pl-3">
         <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground" title={file?.file_name}>

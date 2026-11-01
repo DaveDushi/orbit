@@ -87,9 +87,18 @@ export function PdfPages({ url, onError }: { url: string; onError: () => void })
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
-    const observer = new ResizeObserver(([entry]) => setWidth(Math.floor(entry.contentRect.width)))
+    // The canvases scale with CSS at once; they draw again only when a drag of the divider rests.
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const observer = new ResizeObserver(([entry]) => {
+      const next = Math.floor(entry.contentRect.width)
+      clearTimeout(timer)
+      timer = setTimeout(() => setWidth(next), 150)
+    })
     observer.observe(container)
-    return () => observer.disconnect()
+    return () => {
+      clearTimeout(timer)
+      observer.disconnect()
+    }
   }, [])
 
   return (
