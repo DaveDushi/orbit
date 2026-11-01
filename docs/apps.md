@@ -248,7 +248,20 @@ If a person has no Orbit session when the frame reaches `/oauth/authorize`, Orbi
 
 **Check the login first.** If the frame stays white, open the app's address in a private window. If you see Cloudflare's "Sign in" page (for example "Email, Send login code"), Access is not using Instant Auth with Orbit as its only login method: that page always refuses frames, on every browser. Fix the Access application as in step 1.
 
-**On a phone** the frame comes first, as on every browser. The header has one row: the menu, the app's name, **Sign in**, **Open**, and a menu with **Reload**. If the frame is blank, **Sign in** or **Open** is the way out.
+**The bar with the actions** shows only if something did not load. A page cannot tell a working frame from a refused one, so the app says it loaded, with one line:
+
+```html
+<script>
+  if (window.top !== window) window.top.postMessage({ type: 'orbit:app-ready' }, 'https://orbit.wellrox.com')
+</script>
+```
+
+Put it in the page the app shows after sign-in, with your Orbit address. In a single-page app, run the same line once when the app has rendered. Orbit accepts it only from the app's frame and the app's origin, and it only hides the bar. Outside a frame, the line does nothing.
+
+- **With the signal:** the frame takes the full height. The actions are in a small **…** button in the corner: **Sign in to app**, **Reload**, **Open in a new tab**, and on a phone also **Menu**.
+- **Without a signal within 8 seconds** (an app without the line, or a refused frame): the bar and its help text show. A late signal hides the bar again. **Sign in** and **Reload** start the same rule again.
+
+On a phone the bar has one row: the menu, the app's name, **Sign in**, **Open**, and a menu with **Reload**.
 
 **Safari and every iOS browser** block third-party cookies by default. What that means depends on the app's address:
 

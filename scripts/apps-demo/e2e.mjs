@@ -104,6 +104,7 @@ const guarded = [
   { name: 'Behind Access', slug: 'behind-access', app: 4210, access: 4211, env: 'INSTANT' },
   { name: 'Login Gate', slug: 'login-gate', app: 4212, access: 4213, env: 'GATE' },
   { name: 'Gate With COOP', slug: 'gate-with-coop', app: 4214, access: 4215, env: 'COOP' },
+  { name: 'Ready App', slug: 'ready-app', app: 4216, access: 4217, env: 'READY' },
 ]
 const guardedSecrets = {}
 for (const item of guarded) {
@@ -136,7 +137,8 @@ await shot(mp, '05-app-in-frame-signed-in-as-member')
 await mp.getByRole('button', { name: 'Reload' }).click()
 await demo.locator('#who').waitFor()
 check(await mp.getByText('Open in a new tab', { exact: true }).getAttribute('href') === `${same}/`, 'Open in a new tab goes to the app')
-check(await mp.getByText('use Sign in to app').count() === 1, 'the help text shows')
+await mp.getByText('use Sign in to app').waitFor()
+check(true, 'without a signal from the app, the help text shows after the timeout')
 await mp.getByText('use Sign in to app').evaluate((el) => { el.style.outline = '2px solid #f2458f' })
 await shot(mp, '06-sign-in-control-and-help')
 
@@ -144,6 +146,25 @@ await shot(mp, '06-sign-in-control-and-help')
 const frameResponse = await mp.request.get(`${ORBIT}/api/v1/workspaces/${workspaceId}/apps/demo-app/frame`)
 const policy = frameResponse.headers()['content-security-policy']
 check(policy.includes('frame-ancestors \'self\'') && policy.includes(`frame-src ${same}`), `the wrapper has its own CSP: ${policy}`)
+
+// An app that sends the ready signal: no bar, the whole height, and the actions in the corner.
+await mp.goto(`${ORBIT}/apps/ready-app`)
+const readyFrame = mp.frameLocator('iframe[data-slot=app-frame]').frameLocator('iframe')
+await readyFrame.locator('#who').waitFor({ timeout: 15000 })
+await mp.waitForTimeout(9000) // past the timeout
+check(await mp.locator('[data-slot=pane-header]').count() === 0, 'an app with the signal shows no bar')
+check(await mp.locator('[data-slot=app-frame]').evaluate((el) => el.getBoundingClientRect().height === el.parentElement.getBoundingClientRect().height), 'the frame takes the full height')
+await shot(mp, '17-ready-app-without-bar')
+await mp.getByRole('button', { name: 'App actions' }).click()
+await mp.getByRole('menuitem', { name: 'Reload' }).click()
+await readyFrame.locator('#who').waitFor({ timeout: 15000 })
+await mp.waitForTimeout(9000)
+check(await mp.locator('[data-slot=pane-header]').count() === 0, 'after a Reload the same rule holds')
+// A message from Orbit's own page is not the app's signal.
+await mp.goto(`${ORBIT}/apps/demo-app`)
+await mp.evaluate(() => window.postMessage({ type: 'orbit:app-ready' }, '*'))
+await mp.locator('[data-slot=pane-header]').waitFor({ timeout: 12000 })
+check(true, 'a forged message does not hide the bar')
 
 // A role that is not allowed: a 404 at the API, and the same page as an unknown app.
 const denied = await mp.request.get(`${ORBIT}/api/v1/workspaces/${workspaceId}/apps/admins-only/frame`)

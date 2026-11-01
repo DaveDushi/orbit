@@ -8,7 +8,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 
-const { ORBIT_ISSUER, CLIENT_ID, CLIENT_SECRET, APP_URL, FRAME_ANCESTORS, PORT = '4202', ACCESS_URL, ACCESS_MODE, ACCESS_COOP } = process.env
+const { ORBIT_ISSUER, CLIENT_ID, CLIENT_SECRET, APP_URL, FRAME_ANCESTORS, PORT = '4202', ACCESS_URL, ACCESS_MODE, ACCESS_COOP, READY_SIGNAL } = process.env
 // With ACCESS_URL, a stand-in for Cloudflare Access guards the app on its own origin, and it is the
 // OpenID Connect client. ACCESS_MODE=instant redirects straight to Orbit (Instant Auth); ACCESS_MODE=page
 // shows a login page. All its answers refuse frames, as the real one does.
@@ -117,7 +117,8 @@ createServer(async (req, res) => {
   }
   if (user) {
     return page(res, `<h1>Demo app</h1><p id="who">Signed in as <b>${esc(user.name)}</b> (${esc(user.email)})</p>
-      <p>Role in the workspace: <b id="role">${esc(user.workspace_role)}</b></p>`)
+      <p>Role in the workspace: <b id="role">${esc(user.workspace_role)}</b></p>
+      ${READY_SIGNAL ? `<script>if (window.top !== window) window.top.postMessage({ type: 'orbit:app-ready' }, ${JSON.stringify(ORBIT_ISSUER)})</script>` : ''}`)
   }
   // Signed in a moment ago, and the cookie did not come back: the browser blocks it in a frame of
   // another site. Signing in again would loop forever.
