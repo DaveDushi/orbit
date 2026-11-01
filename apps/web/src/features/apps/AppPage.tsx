@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
-import { Menu, MoreH as MoreHorizontal } from 'reicon-react'
+import { Menu, MoreH as MoreHorizontal, Xmark as X } from 'reicon-react'
 import { appFrameUrl, type WorkspaceApp } from '@orbit/api/apps'
 import { Pane, PaneHeader, PaneTitle } from '@/components/common/Pane'
 import { Button } from '@/components/ui/button'
@@ -9,6 +9,7 @@ import { useAgentStatus } from '@/features/agent/api'
 import { useCan } from '@/features/workspaces/permissions'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import { useApps } from './api'
+import { appBarView, readAppBarClosed, rememberAppBarClosed } from './appBar'
 import { watchAppReady } from './appReady'
 import { openSignInPopup, watchSignInPopup } from './signInPopup'
 
@@ -28,7 +29,7 @@ export function AppPage() {
       </Pane>
     )
   }
-  return <AppView key={app.slug} app={app} workspaceId={workspace.id} />
+  return <AppView key={`${workspace.id}:${app.slug}`} app={app} workspaceId={workspace.id} />
 }
 
 function AppView({ app, workspaceId }: { app: WorkspaceApp; workspaceId: string }) {
@@ -42,6 +43,7 @@ function AppView({ app, workspaceId }: { app: WorkspaceApp; workspaceId: string 
   const [signingIn, setSigningIn] = useState(false)
   // Did the app say it loaded? `null`: not yet, and the time to say so has not ended.
   const [ready, setReady] = useState<boolean | null>(null)
+  const [closed, setClosed] = useState(() => readAppBarClosed(window, workspaceId, app.slug))
   const frameRef = useRef<HTMLIFrameElement>(null)
   const stopWatching = useRef<(() => void) | null>(null)
   useEffect(() => () => stopWatching.current?.(), [])
@@ -53,8 +55,11 @@ function AppView({ app, workspaceId }: { app: WorkspaceApp; workspaceId: string 
     return watchAppReady(window as never, new URL(app.url).origin, () => frameRef.current?.contentWindow?.frames[0], () => setReady(true), () => setReady(false))
   }, [embedded, app.url, reloads])
 
-  // The bar is for when something did not load. Without a signal in time it shows, so no blank page lacks a way out.
-  const showBar = !embedded || ready === false || signingIn || popupBlocked
+  const { bar: showBar, notice } = appBarView({ embedded, ready, signingIn, popupBlocked, closed })
+  const closeBar = () => {
+    rememberAppBarClosed(window, workspaceId, app.slug)
+    setClosed(true)
+  }
   const reload = () => {
     setSigningIn(false)
     setPopupBlocked(false)
@@ -103,13 +108,18 @@ function AppView({ app, workspaceId }: { app: WorkspaceApp; workspaceId: string 
               </DropdownMenu>
             ) : null}
           </div>
+          {embedded ? (
+            <Button type="button" variant="ghost" size="icon-sm" className="shrink-0 text-muted-foreground" aria-label="Close bar" onClick={closeBar}>
+              <X className="size-4" />
+            </Button>
+          ) : null}
         </PaneHeader>
       ) : null}
       {embedded ? (
         <>
-          {showBar ? (
-            <p className="m-0 border-b px-3 py-1.5 text-xs text-muted-foreground" role={popupBlocked ? 'alert' : undefined}>
-              {popupBlocked ? 'Your browser blocked the sign-in window. Allow pop-ups for Orbit, then try again.' : 'If the app stays empty, use Sign in to app. Sign in once in the window that opens, then close it: the app reloads here.'}
+          {notice ? (
+            <p className="m-0 border-b px-3 py-1.5 text-xs text-muted-foreground" role={notice === 'popup-blocked' ? 'alert' : undefined}>
+              {notice === 'popup-blocked' ? 'Your browser blocked the sign-in window. Allow pop-ups for Orbit, then try again.' : 'If the app stays empty, use Sign in to app. Sign in once in the window that opens, then close it: the app reloads here.'}
             </p>
           ) : null}
           <iframe ref={frameRef} key={reloads} data-slot="app-frame" className="min-h-0 w-full flex-1 border-0" src={appFrameUrl(workspaceId, app.slug)} title={app.name} />
