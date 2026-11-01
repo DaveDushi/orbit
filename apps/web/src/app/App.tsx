@@ -161,7 +161,7 @@ export default function App() {
                 <Route path="api-tokens" element={<ApiTokensPage />} />
                 <Route path="file-storage" element={<FileStoragePage />} />
                 <Route path="agent-tools" element={<AgentToolsPage />} />
-                <Route path="apps" element={<AppsSettingsPage />} />
+                <Route path="apps/*" element={<AppsSettingsPage />} />
               </Route>
               <Route path="*" element={<Navigate to="/tasks" replace />} />
             </Route>

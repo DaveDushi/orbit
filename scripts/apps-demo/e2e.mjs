@@ -56,25 +56,27 @@ async function signedIn(person) {
 const owner = await signedIn('owner')
 const { page } = owner
 await page.goto(`${ORBIT}/settings/apps`)
-await page.getByRole('heading', { name: 'Add an app' }).or(page.getByText('Add an app', { exact: true })).first().waitFor()
+await page.getByRole('button', { name: 'Add app' }).waitFor()
 await shot(page, '01-apps-settings-empty')
 
 async function addApp({ name, url, redirect, adminsOnly, newTab }) {
-  await page.locator('#app-name').fill(name)
-  await page.locator('#app-url').fill(url)
-  await page.locator('#app-redirects').fill(redirect ?? '')
-  if (adminsOnly) await page.getByRole('checkbox', { name: 'members' }).first().click()
+  await page.goto(`${ORBIT}/settings/apps`)
+  await page.getByRole('button', { name: 'Add app' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.locator('#app-name').fill(name)
+  await dialog.locator('#app-url').fill(url)
+  if (adminsOnly) await dialog.getByRole('checkbox', { name: 'members' }).click()
+  if (redirect) {
+    await dialog.getByRole('switch').click()
+    await dialog.locator('#app-redirects').fill(redirect)
+  }
+  await dialog.getByRole('button', { name: 'Add app' }).click()
+  await dialog.waitFor({ state: 'hidden' })
   if (newTab) {
+    await page.getByRole('link', { name: `Settings of ${name}` }).click()
     await page.locator('#app-mode').click()
     await page.getByRole('option', { name: 'In a new tab' }).click()
-  }
-  await page.getByRole('button', { name: 'Add', exact: true }).click()
-  await page.getByText(name, { exact: true }).first().waitFor()
-  await page.locator('#app-name').and(page.locator('[value=""]')).waitFor()
-  if (adminsOnly) await page.getByRole('checkbox', { name: 'members' }).first().click()
-  if (newTab) {
-    await page.locator('#app-mode').click()
-    await page.getByRole('option', { name: 'Inside Orbit' }).click()
+    await page.getByText('Saved').first().waitFor()
   }
 }
 async function secretShown() {

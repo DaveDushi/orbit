@@ -4,15 +4,15 @@ Add the web apps you build to Orbit, so that your team has one place to open the
 
 ## Add an app
 
-Workspace settings → **Apps** (owners and admins).
+Workspace settings → **Apps** (owners and admins) lists the apps. **Add app** asks only for the name, the address and who can see it. Select an app to change the rest.
 
 | Field | What it does |
 | --- | --- |
 | Name, icon | The entry in the sidebar. |
 | Address | An absolute `https://` URL without a user name or password. Orbit refuses its own origin: an app must have its own host name. |
 | Opens | **Inside Orbit**: a full-size frame at `/apps/<slug>`. **In a new tab**: the sidebar entry opens the address directly. |
-| Who may open it | The roles that see the entry. Other members get a 404. The agent cannot use apps. |
-| Redirect URIs | Turn on "Sign in with Orbit". Leave them empty if the app has its own login. |
+| Who can see it | The roles that see the entry. Other members get a 404. The agent cannot use apps. |
+| Sign in with Orbit | On: enter the redirect URIs. Leave it off if the app has its own login. |
 
 Changes apply at once, without a restart. On a phone, the Orbit app lists these apps in Settings and opens them in the browser.
 
@@ -41,7 +41,7 @@ If a person has no Orbit session when the frame signs in (it ended in another ta
 
 ## Add "Sign in with Orbit"
 
-Enter the app's redirect URI, then copy the values from the app's card. The client secret shows **only once**. **Make a new secret** replaces it, and ends all tokens of the app.
+Turn on **Sign in with Orbit**, enter the app's redirect URI, then copy the values from the **Sign-in** section of the app's settings. The client secret shows **only once**. **Make a new secret** replaces it, and ends all tokens of the app.
 
 | Setting | Value |
 | --- | --- |
@@ -104,7 +104,7 @@ An app behind [Cloudflare Access](https://developers.cloudflare.com/cloudflare-o
 https://edusi.cloudflareaccess.com/cdn-cgi/access/callback
 ```
 
-Copy the client ID and the secret.
+Copy the client ID and the secret from the app's settings.
 
 **2. In Cloudflare**, go to Zero Trust → Settings → Authentication → Add new → OpenID Connect:
 
