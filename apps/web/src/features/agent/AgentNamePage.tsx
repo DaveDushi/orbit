@@ -8,14 +8,16 @@ import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { FieldGrid } from '@/features/settings/components/SettingsParts'
-import { useAgentIdentity, useAgentModel, useSaveAgentModel, useSaveAgentName } from './api'
+import { useAgentIdentity, useAgentModel, useAgentStatus, useSaveAgentModel, useSaveAgentName } from './api'
 
-/** Admin → AI agent: the agent's one name for the installation, which is also its @handle in chat, and its model. */
+/** Admin → Agent: the agent's one name for the installation, which is also its @handle in chat, and its model. */
 export function AgentNamePage() {
   const identity = useAgentIdentity()
   const model = useAgentModel()
-  if (identity.isPending || model.isPending) return <SettingsCard title="AI agent"><p role="status">Loading the agent settings…</p></SettingsCard>
-  if (identity.isError || model.isError) return <SettingsCard title="AI agent"><p role="alert">The agent settings could not be loaded. <Button variant="ghost" onClick={() => { void identity.refetch(); void model.refetch() }}>Retry</Button></p></SettingsCard>
+  const status = useAgentStatus().data
+  if (status?.enabled === false) return <SettingsCard title="Agent">The agent is not set up on this server.</SettingsCard>
+  if (identity.isPending || model.isPending) return <SettingsCard title="Agent"><p role="status">Loading the agent settings…</p></SettingsCard>
+  if (identity.isError || model.isError) return <SettingsCard title="Agent"><p role="alert">The agent settings could not be loaded. <Button variant="ghost" onClick={() => { void identity.refetch(); void model.refetch() }}>Retry</Button></p></SettingsCard>
   // Remount on save so the fields show what the server stored.
   return (
     <>
@@ -43,7 +45,7 @@ function ModelCard({ settings }: { settings: AgentModelSettings }) {
 
   return (
     <form onSubmit={submit}>
-      <SettingsCard title="Model" description="The ChatGPT model and thinking level of every new run, in every workspace. More thinking gives better answers, but they are slower and use more of the driver's ChatGPT limits.">
+      <SettingsCard title="Model" description="For every new run, in every workspace. More thinking gives better answers, but they are slower and use more of the driver's ChatGPT limits.">
         <FieldGrid>
           <Field>
             <FieldLabel htmlFor="agent-model">Model</FieldLabel>
@@ -88,10 +90,10 @@ function NameCard({ identity }: { identity: AgentIdentity }) {
 
   return (
     <form onSubmit={submit}>
-      <SettingsCard title="AI agent" description="One name for the agent in every workspace. People mention it as @Name in chat, and its messages and earlier mentions show the new name. It cannot be the name of another person in Orbit.">
+      <SettingsCard title="Name" description="One name in every workspace. People mention it as @Name in chat, and its messages and earlier mentions show the new name. It cannot be the name of another person in Orbit.">
         <FieldGrid>
           <Field>
-            <FieldLabel htmlFor="agent-name">Name</FieldLabel>
+            <FieldLabel className="sr-only" htmlFor="agent-name">Name</FieldLabel>
             <Input id="agent-name" required maxLength={identity.max_name_chars} value={name} onChange={(event) => { save.reset(); setName(event.target.value) }} />
             <FieldDescription>{identity.min_name_chars} to {identity.max_name_chars} characters: letters, digits, single spaces and - _ . '</FieldDescription>
           </Field>

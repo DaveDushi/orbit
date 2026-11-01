@@ -12,14 +12,15 @@ import { useAgentStatus, useSaveTeamInstructions, useTeamInstructions } from './
 /** Characters as the server counts them (code points, not UTF-16 units). */
 const characters = (text: string) => [...text.replace(/\r\n/g, '\n').trim()].length
 
-/** Workspace settings → AI agent: the team's instructions for every agent run in this workspace. */
+/** Workspace settings → Agent → General: the team's instructions for every agent run in this workspace. */
 export function TeamInstructionsPage() {
   const { workspace } = useWorkspace()
   const team = useTeamInstructions(workspace.id)
   const status = useAgentStatus().data
   const name = status?.enabled ? status.name : 'the agent'
-  if (team.isPending) return <SettingsCard title="AI agent"><p role="status">Loading the team instructions…</p></SettingsCard>
-  if (team.isError) return <SettingsCard title="AI agent"><p role="alert">The team instructions could not be loaded. <Button variant="ghost" onClick={() => void team.refetch()}>Retry</Button></p></SettingsCard>
+  if (status?.enabled === false) return <SettingsCard title="Agent">The agent is not set up on this server.</SettingsCard>
+  if (team.isPending) return <SettingsCard title="Team instructions"><p role="status">Loading the team instructions…</p></SettingsCard>
+  if (team.isError) return <SettingsCard title="Team instructions"><p role="alert">The team instructions could not be loaded. <Button variant="ghost" onClick={() => void team.refetch()}>Retry</Button></p></SettingsCard>
   // Remount on save and on a workspace switch so the field shows what the server stored.
   return <TeamCard key={`${workspace.id}:${team.data.updated_at}`} workspaceId={workspace.id} team={team.data} agentName={name} />
 }
@@ -30,11 +31,11 @@ function TeamCard({ workspaceId, team, agentName }: { workspaceId: string; team:
   const count = characters(text)
   const tooLong = count > team.max_chars
   const changed = text.replace(/\r\n/g, '\n').trim() !== team.instructions
-  const description = `Instructions that @${agentName} follows in every run in this workspace, for example your language, tone or conventions. Every member can read them. They cannot override the agent's built-in safety rules.`
+  const description = `@${agentName} follows these in every run in this workspace. Every member can read them. They cannot override the agent's built-in safety rules.`
 
   if (!team.can_edit) {
     return (
-      <SettingsCard title="AI agent" description={description}>
+      <SettingsCard title="Team instructions" description={description}>
         {team.instructions
           ? <p className="text-sm whitespace-pre-wrap text-foreground">{team.instructions}</p>
           : <p className="text-sm text-muted-foreground">This workspace has no team instructions.</p>}
@@ -51,9 +52,9 @@ function TeamCard({ workspaceId, team, agentName }: { workspaceId: string; team:
 
   return (
     <form onSubmit={submit}>
-      <SettingsCard title="AI agent" description={description}>
+      <SettingsCard title="Team instructions" description={description}>
         <Field>
-          <FieldLabel htmlFor="team-instructions">Team instructions</FieldLabel>
+          <FieldLabel className="sr-only" htmlFor="team-instructions">Team instructions</FieldLabel>
           <Textarea id="team-instructions" className="min-h-40" aria-invalid={tooLong || undefined} placeholder="For example: Answer in German. Our sprints start on Mondays." value={text} onChange={(event) => { save.reset(); setText(event.target.value) }} />
           <FieldDescription>
             <span className={tooLong ? 'text-destructive' : undefined}>{count.toLocaleString()} / {team.max_chars.toLocaleString()} characters</span>

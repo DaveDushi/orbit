@@ -17,7 +17,12 @@ export interface SettingsNavItem {
   permission?: Permission
   /** Shown only when the server runs the team agent. */
   agent?: boolean
+  /** The page has sub-tabs below this address, so the link stays active on them. */
+  nested?: boolean
 }
+
+/** The link of the page at `pathname`. */
+export const navActive = (item: SettingsNavItem, pathname: string) => pathname === item.href || (item.nested === true && pathname.startsWith(`${item.href}/`))
 
 /**
  * The web's settings areas at phone size. API tokens, Emoji, Stickers, GitHub and Billing are desktop setup work, and
@@ -27,7 +32,7 @@ export const WORKSPACE_NAV: readonly SettingsNavItem[] = [
   { href: '/settings', label: 'General', icon: 'settings' },
   { href: '/settings/file-storage', label: 'File storage', icon: 'cloudConnection', permission: 'storage.manage' },
   { href: '/settings/members', label: 'Members', icon: 'people' },
-  { href: '/settings/agent-instructions', label: 'AI agent', icon: 'magicStar', agent: true },
+  { href: '/settings/agent-instructions', label: 'Agent', icon: 'magicStar', agent: true },
 ]
 
 /** The links of `nav` this workspace role may open; the agent's page only when the server runs the agent. */
@@ -41,8 +46,7 @@ export const ACCOUNT_NAV: readonly SettingsNavItem[] = [
   { href: '/settings/notifications', label: 'Notifications', icon: 'bell' },
   { href: '/settings/security', label: 'Security', icon: 'lock' },
   { href: '/settings/sessions', label: 'Sessions', icon: 'shield' },
-  { href: '/settings/agent', label: 'AI agent', icon: 'magicStar', agent: true },
-  { href: '/settings/agent-memory', label: 'Agent memory', icon: 'book', agent: true },
+  { href: '/settings/agent', label: 'Agent', icon: 'magicStar', agent: true, nested: true },
 ]
 
 /** The web's Admin pages in its order; General is the area's first page, as `/admin` is on the web. */
@@ -51,7 +55,7 @@ export const ADMIN_NAV: readonly SettingsNavItem[] = [
   { href: '/settings/admin/users', label: 'Users', icon: 'people' },
   { href: '/settings/admin/email', label: 'Email', icon: 'mail' },
   { href: '/settings/admin/limits', label: 'Limits', icon: 'chart' },
-  { href: '/settings/admin/agent', label: 'AI agent', icon: 'magicStar', agent: true },
+  { href: '/settings/admin/agent', label: 'Agent', icon: 'magicStar', agent: true },
   { href: '/settings/admin/storage', label: 'Storage', icon: 'cloudConnection' },
   { href: '/settings/admin/backups', label: 'Backups', icon: 'archiveBox' },
   { href: '/settings/admin/audit', label: 'Audit log', icon: 'clipboardText' },
@@ -93,7 +97,7 @@ export function SettingsShell({ title, nav, children, refreshing, onRefresh }: {
           {newUi ? null : (
             <View accessibilityRole="tablist" accessibilityLabel={title} className="flex-row flex-wrap gap-0.5 py-3 border-t border-b border-border">
               {allowedNav(nav, workspace.permissions, agent).map((item) => {
-                const active = pathname === item.href
+                const active = navActive(item, pathname)
                 return (
                   <Pressable
                     key={item.href}
@@ -265,6 +269,16 @@ export function Segmented<T extends string>({ value, options, onChange, label }:
       })}
     </View>
   )
+}
+
+const AGENT_TABS = [
+  { value: '/settings/agent', label: 'Settings' },
+  { value: '/settings/agent/memory', label: 'Memory' },
+] as const
+
+/** The web's sub-tabs of Account settings → Agent. */
+export function AgentTabs({ current }: { current: (typeof AGENT_TABS)[number]['value'] }) {
+  return <Segmented label="Agent" value={current} options={AGENT_TABS} onChange={(href) => router.replace(href)} />
 }
 
 /** A quiet status or error line inside a card. */

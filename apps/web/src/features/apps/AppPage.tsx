@@ -48,7 +48,7 @@ export function AppPage() {
       <PaneHeader>
         <PaneTitle render={<h1 className="m-0" />}>{app.name}</PaneTitle>
         <div className="ml-auto flex items-center gap-2">
-          {canSetUpTools && agent ? <Button variant="ghost" size="sm" nativeButton={false} render={<Link to="/settings/agent-tools" />}>Agent tools</Button> : null}
+          {canSetUpTools && agent ? <Button variant="ghost" size="sm" nativeButton={false} render={<Link to="/settings/agent/tools" />}>Agent tools</Button> : null}
           {embedded ? <Button variant="outline" size="sm" type="button" onClick={signIn}>Sign in to app</Button> : null}
           {embedded ? <Button variant="outline" size="sm" type="button" onClick={() => setReloads((count) => count + 1)}>Reload</Button> : null}
           {openInTab}

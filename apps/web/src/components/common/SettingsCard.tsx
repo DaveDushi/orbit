@@ -10,7 +10,7 @@ export function SettingsCard({
   children,
 }: {
   title: string
-  description?: string
+  description?: React.ReactNode
   actions?: React.ReactNode
   flush?: boolean
   className?: string

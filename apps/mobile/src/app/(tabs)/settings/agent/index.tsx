@@ -1,13 +1,13 @@
 import { Linking, View } from 'react-native'
 
-import { ACCOUNT_NAV, Note, SettingsCard, SettingsShell } from '../../../components/settings/Shell'
-import { useAgentStatus, useDisconnectChatgpt, useStartChatgptLogin } from '../../../hooks/agent'
-import { Button, Text } from '../../../ui'
+import { ACCOUNT_NAV, AgentTabs, Note, SettingsCard, SettingsShell } from '../../../../components/settings/Shell'
+import { useAgentStatus, useDisconnectChatgpt, useStartChatgptLogin } from '../../../../hooks/agent'
+import { Button, Text } from '../../../../ui'
 
-const TITLE = 'AI agent'
+const TITLE = 'Agent'
 const description = (name: string) => `Mention @${name} in a chat thread to give it work. It acts with your permissions in Orbit, and your ChatGPT account pays for the runs you start.`
 
-/** The web's Account → AI agent page: connect the person's own ChatGPT account with a device code. */
+/** The web's Account → Agent → Settings tab: connect the person's own ChatGPT account with a device code. */
 export default function AgentScreen() {
   const status = useAgentStatus()
   const start = useStartChatgptLogin()
@@ -16,6 +16,7 @@ export default function AgentScreen() {
 
   return (
     <SettingsShell title="Account settings" nav={ACCOUNT_NAV} refreshing={status.isRefetching} onRefresh={() => void status.refetch()}>
+      {agent?.enabled ? <AgentTabs current="/settings/agent" /> : null}
       {!agent ? (
         <SettingsCard title={TITLE}>
           {status.isError ? <Note error>The agent settings are not available.</Note> : <Note>Loading the agent settings…</Note>}
@@ -25,7 +26,7 @@ export default function AgentScreen() {
           <Note>The agent is not set up on this server. Ask your administrator to start it.</Note>
         </SettingsCard>
       ) : (
-        <SettingsCard title={TITLE} description={description(agent.name)}>
+        <SettingsCard title="ChatGPT connection" description={description(agent.name)}>
           <View className="items-start gap-3">
             {!agent.online ? <Note error>The agent service is offline. Mentions wait until it is back.</Note> : null}
             {agent.chatgpt.connected && !agent.chatgpt.invalid ? (

@@ -60,7 +60,8 @@ test.describe('agent tools: OAuth client credentials', () => {
   test('setup form, Shopify preset, save and Test', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 1500 })
     await signIn(page)
-    await page.goto('/settings/agent-tools')
+    await page.goto('/settings/agent/tools')
+    await page.getByRole('button', { name: 'Add tool' }).click()
 
     await page.getByRole('combobox', { name: 'Kind' }).click()
     await page.getByRole('option', { name: 'HTTP API' }).click()
@@ -82,6 +83,7 @@ test.describe('agent tools: OAuth client credentials', () => {
     await baseUrl.fill(`${origin}/admin/api/2026-10`)
     await expect(page.getByLabel('Token URL')).toHaveValue('')
     await page.getByLabel('Token URL').fill(`${origin}/admin/oauth/access_token`)
+    await page.locator('summary', { hasText: 'Advanced' }).click()
     await page.getByLabel('Token header').fill('X-Shopify-Access-Token')
     await page.getByLabel('Test path').fill('shop.json')
     await expect(page.getByLabel('GraphQL path')).toHaveValue('')
@@ -90,7 +92,9 @@ test.describe('agent tools: OAuth client credentials', () => {
     await page.getByLabel(/Client secret/).fill('good-secret')
     await page.getByRole('button', { name: 'Add', exact: true }).click()
 
-    const card = page.locator('[data-slot="card"], section').filter({ hasText: 'tools named shopify__' }).first()
+    const card = page.locator('[data-slot="integration-row"]').filter({ hasText: 'Shopify' })
+    const edit = () => page.getByRole('button', { name: 'Edit Shopify' }).click()
+    await edit()
     await expect(page.getByText('OAuth client credentials, token in X-Shopify-Access-Token')).toBeVisible()
     await page.getByText('OAuth client credentials, token in X-Shopify-Access-Token').scrollIntoViewIfNeeded()
     await page.screenshot({ path: `${shots}/3-saved-integration.png` })
@@ -106,6 +110,7 @@ test.describe('agent tools: OAuth client credentials', () => {
     await page.getByRole('button', { name: 'Save client' }).click()
     await expect(page.getByText('Client replaced')).toBeVisible()
     await page.reload() // no older toasts over the result
+    await edit()
     await card.getByRole('button', { name: 'Test', exact: true }).click()
     await expect(page.getByText(/HTTP 400 \(shop_not_permitted\)/)).toBeVisible()
     await expect(page.locator('body')).not.toContainText('cannot be performed')
@@ -116,6 +121,7 @@ test.describe('agent tools: OAuth client credentials', () => {
     const graphqlReads = page.getByRole('switch', { name: 'Run GraphQL reads without approval' })
     await expect(graphqlReads).not.toBeChecked()
     await page.reload()
+    await edit()
     await expect(graphqlReads).not.toBeChecked()
     await page.screenshot({ path: `${shots}/6-graphql-reads-off.png` })
     await graphqlReads.click()
@@ -123,6 +129,7 @@ test.describe('agent tools: OAuth client credentials', () => {
     await page.getByRole('checkbox', { name: 'POST' }).click()
     await expect(page.getByRole('checkbox', { name: 'POST' })).toBeChecked()
     await page.reload()
+    await edit()
     await expect(graphqlReads).toBeChecked()
     await expect(page.getByRole('checkbox', { name: 'POST' })).toBeChecked()
     await page.screenshot({ path: `${shots}/7-graphql-reads-on.png` })

@@ -3,24 +3,24 @@ import { SettingsCard } from '@/components/common/SettingsCard'
 import { loadFailed } from '@/lib/connection'
 import { useAgentStatus, useDisconnectChatgpt, useStartChatgptLogin } from './api'
 
-/** Account → AI agent: connect the person's own ChatGPT account, which pays for the agent runs they start. */
+/** Account → Agent → Settings: connect the person's own ChatGPT account, which pays for the agent runs they start. */
 export function AgentPage() {
   const status = useAgentStatus()
   const start = useStartChatgptLogin()
   const disconnect = useDisconnectChatgpt()
 
-  if (loadFailed(status)) return <SettingsCard title="AI agent">The agent settings are not available.</SettingsCard>
-  if (status.data === undefined) return <SettingsCard title="AI agent">Loading the agent settings.</SettingsCard>
+  if (loadFailed(status)) return <SettingsCard title="Agent">The agent settings are not available.</SettingsCard>
+  if (status.data === undefined) return <SettingsCard title="Agent">Loading the agent settings.</SettingsCard>
   const agent = status.data
   if (!agent.enabled) {
-    return <SettingsCard title="AI agent">The agent is not set up on this server. Ask your administrator to start it.</SettingsCard>
+    return <SettingsCard title="Agent">The agent is not set up on this server. Ask your administrator to start it.</SettingsCard>
   }
   const { chatgpt, login } = agent
   const connected = chatgpt.connected && !chatgpt.invalid
   const pending = !connected && login?.state === 'pending' && login.user_code
 
   return <SettingsCard
-    title="AI agent"
+    title="ChatGPT connection"
     description={`Mention @${agent.name} in a chat thread to give it work. It acts with your permissions in Orbit, and your ChatGPT account pays for the runs you start.`}
   >
     <div className="flex flex-col items-start gap-3">

@@ -11,7 +11,7 @@ import { Button, Input, Text } from '../../../ui'
 /** Characters as the server counts them (code points, not UTF-16 units). */
 const characters = (text: string) => [...text.replace(/\r\n/g, '\n').trim()].length
 
-/** The web's Workspace settings → AI agent: the team's instructions for every agent run in this workspace. */
+/** The web's Workspace settings → Agent → General: the team's instructions for every agent run in this workspace. */
 export default function AgentInstructionsScreen() {
   const { workspaceId } = useOrbit()
   const team = useTeamInstructions()
@@ -19,9 +19,9 @@ export default function AgentInstructionsScreen() {
   const name = status?.enabled ? status.name : 'the agent'
   return (
     <SettingsShell title="Settings" nav={WORKSPACE_NAV} refreshing={team.isRefetching} onRefresh={() => void team.refetch()}>
-      {team.isPending ? <SettingsCard title="AI agent"><Note>Loading the team instructions…</Note></SettingsCard> : null}
+      {team.isPending ? <SettingsCard title="Team instructions"><Note>Loading the team instructions…</Note></SettingsCard> : null}
       {team.isError ? (
-        <SettingsCard title="AI agent">
+        <SettingsCard title="Team instructions">
           <View className="flex-row items-center gap-2">
             <Note error>The team instructions could not be loaded.</Note>
             <Button label="Retry" variant="ghost" onPress={() => void team.refetch()} />
@@ -40,11 +40,11 @@ function TeamCard({ team, agentName }: { team: TeamInstructions; agentName: stri
   const count = characters(text)
   const tooLong = count > team.max_chars
   const changed = text.replace(/\r\n/g, '\n').trim() !== team.instructions
-  const description = `Instructions that @${agentName} follows in every run in this workspace, for example your language, tone or conventions. Every member can read them. They cannot override the agent's built-in safety rules.`
+  const description = `@${agentName} follows these in every run in this workspace. Every member can read them. They cannot override the agent's built-in safety rules.`
 
   if (!team.can_edit) {
     return (
-      <SettingsCard title="AI agent" description={description}>
+      <SettingsCard title="Team instructions" description={description}>
         <View className="gap-3">
           {team.instructions ? <Text selectable className="text-sm">{team.instructions}</Text> : <Note>This workspace has no team instructions.</Note>}
           <Note>Only owners and admins can change them.</Note>
@@ -55,10 +55,10 @@ function TeamCard({ team, agentName }: { team: TeamInstructions; agentName: stri
 
   const changedBy = team.updated_at ? ` · Last changed by ${team.updated_by_name ?? 'a former member'} on ${new Date(team.updated_at).toLocaleDateString()}` : ''
   return (
-    <SettingsCard title="AI agent" description={description}>
+    <SettingsCard title="Team instructions" description={description}>
       <View className="gap-4">
         <Input
-          label="Team instructions"
+          accessibilityLabel="Team instructions"
           multiline
           placeholder="For example: Answer in German. Our sprints start on Mondays."
           value={text}

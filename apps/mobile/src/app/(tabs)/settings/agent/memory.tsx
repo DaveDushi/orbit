@@ -3,12 +3,12 @@ import { Alert, View } from 'react-native'
 import { type Href, router } from 'expo-router'
 import type { AgentMemoryScope, AgentMemorySource } from '@orbit/api/agent'
 
-import { ACCOUNT_NAV, Note, RowText, Segmented, SettingsCard, SettingsRow, SettingsShell } from '../../../components/settings/Shell'
-import { relativeAgo } from '../../../data/format'
-import { useAgentMemories, useAgentMemoryWake, useAgentStatus, useDeleteAgentMemory, useForgetAgentMemorySummary } from '../../../hooks/agent'
-import { useOrbit } from '../../../orbit-context'
-import { errorMessage } from '../../../session-context'
-import { Button, IconButton, Input } from '../../../ui'
+import { ACCOUNT_NAV, AgentTabs, Note, RowText, Segmented, SettingsCard, SettingsRow, SettingsShell } from '../../../../components/settings/Shell'
+import { relativeAgo } from '../../../../data/format'
+import { useAgentMemories, useAgentMemoryWake, useAgentStatus, useDeleteAgentMemory, useForgetAgentMemorySummary } from '../../../../hooks/agent'
+import { useOrbit } from '../../../../orbit-context'
+import { errorMessage } from '../../../../session-context'
+import { Button, IconButton, Input } from '../../../../ui'
 
 const SCOPES = [
   { value: 'team', label: 'Team' },
@@ -21,7 +21,7 @@ function sourceHref(source: AgentMemorySource | null): string | null {
   return source.root_message_id ? `/chat/thread/${source.root_message_id}` : `/chat/${source.conversation_id}`
 }
 
-/** The web's Account → Agent memory page: what the agent remembers in this workspace, for the team and for you. */
+/** The web's Account → Agent → Memory tab: what the agent remembers in this workspace, for the team and for you. */
 export default function AgentMemoryScreen() {
   const { workspace } = useOrbit()
   const status = useAgentStatus()
@@ -50,7 +50,7 @@ export default function AgentMemoryScreen() {
   if (status.data && !status.data.enabled) {
     return (
       <SettingsShell title="Account settings" nav={ACCOUNT_NAV}>
-        <SettingsCard title="Agent memory">
+        <SettingsCard title="Agent">
           <Note>The agent is not set up on this server.</Note>
         </SettingsCard>
       </SettingsShell>
@@ -59,8 +59,9 @@ export default function AgentMemoryScreen() {
 
   return (
     <SettingsShell title="Account settings" nav={ACCOUNT_NAV} refreshing={memories.isRefetching} onRefresh={() => void memories.refetch()}>
+      <AgentTabs current="/settings/agent/memory" />
       <SettingsCard
-        title="Agent memory"
+        title="Memories"
         description={
           scope === 'team'
             ? `What the agent remembers for everyone in ${workspace.name}. Every member can read it; owners and admins can delete from it.`

@@ -8,15 +8,15 @@ import { errorMessage } from '../../../../session-context'
 import { useTheme } from '../../../../theme'
 import { Button, Icon, Input, PickerSheet, Text } from '../../../../ui'
 
-/** The web's Admin → AI agent: the agent's one name for the installation, which is also its @handle in chat, and its model. */
+/** The web's Admin → Agent: the agent's one name for the installation, which is also its @handle in chat, and its model. */
 export default function AdminAgentScreen() {
   const identity = useAgentIdentity()
   const model = useAgentModel()
   return (
     <AdminShell refreshing={identity.isRefetching || model.isRefetching} onRefresh={() => { void identity.refetch(); void model.refetch() }}>
-      {identity.isPending || model.isPending ? <SettingsCard title="AI agent"><Note>Loading the agent settings…</Note></SettingsCard> : null}
+      {identity.isPending || model.isPending ? <SettingsCard title="Agent"><Note>Loading the agent settings…</Note></SettingsCard> : null}
       {identity.isError || model.isError ? (
-        <SettingsCard title="AI agent">
+        <SettingsCard title="Agent">
           <View className="flex-row items-center gap-2">
             <Note error>The agent settings could not be loaded.</Note>
             <Button label="Retry" variant="ghost" onPress={() => { void identity.refetch(); void model.refetch() }} />
@@ -36,7 +36,7 @@ function ModelCard({ settings }: { settings: AgentModelSettings }) {
   const changed = model !== (settings.model ?? DEFAULT) || thinking !== (settings.thinking ?? DEFAULT)
   const { models, levels } = agentModelChoices(settings)
   return (
-    <SettingsCard title="Model" description="The ChatGPT model and thinking level of every new run, in every workspace. More thinking gives better answers, but they are slower and use more of the driver's ChatGPT limits.">
+    <SettingsCard title="Model" description="For every new run, in every workspace. More thinking gives better answers, but they are slower and use more of the driver's ChatGPT limits.">
       <View className="gap-4">
         <Choice label="Model" value={model} options={models} onChange={(value) => { save.reset(); setModel(value) }} />
         {settings.available ? null : <Note>The agent service is offline, so only the default model can be chosen now.</Note>}
@@ -88,10 +88,10 @@ function NameCard({ identity }: { identity: AgentIdentity }) {
   const [name, setName] = useState(identity.name)
   const changed = name.trim() !== identity.name
   return (
-    <SettingsCard title="AI agent" description="One name for the agent in every workspace. People mention it as @Name in chat, and its messages and earlier mentions show the new name. It cannot be the name of another person in Orbit.">
+    <SettingsCard title="Name" description="One name in every workspace. People mention it as @Name in chat, and its messages and earlier mentions show the new name. It cannot be the name of another person in Orbit.">
       <View className="gap-4">
         <Input
-          label="Name"
+          accessibilityLabel="Name"
           autoCapitalize="words"
           autoCorrect={false}
           maxLength={identity.max_name_chars}

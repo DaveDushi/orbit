@@ -3,7 +3,8 @@ import { useEffect } from 'react'
 import { ConfirmationModalHost } from '@/components/common/ConfirmationModal'
 import { Toaster } from '@/components/ui/sonner'
 import { NewVersionNotice } from '@/app/NewVersionNotice'
-import { Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router'
+import { Navigate, Outlet, Route, Routes, useNavigate } from 'react-router'
+import { MovedTo } from '@/app/MovedTo'
 import { setAppNavigate } from '@/lib/navigateBridge'
 import { AppShell } from '@/app/shell/AppShell'
 import { chatEnabled } from '@/app/shell/productNavigation'
@@ -39,6 +40,7 @@ import { FileStoragePage } from '@/features/settings/pages/FileStoragePage'
 import { ProfilePage } from '@/features/profile/pages/ProfilePage'
 import { AppearancePage } from '@/features/profile/pages/AppearancePage'
 import { AgentPage } from '@/features/agent/AgentPage'
+import { AgentTabs } from '@/features/agent/AgentTabs'
 import { AgentNamePage } from '@/features/agent/AgentNamePage'
 import { TeamInstructionsPage } from '@/features/agent/TeamInstructionsPage'
 import { MemoryPage as AgentMemoryPage } from '@/features/agent/MemoryPage'
@@ -58,12 +60,6 @@ import { WorkspaceProvider } from '@/features/workspaces/WorkspaceProvider'
 import { ViewsPage } from '@/features/views/ViewsPage'
 
 /** Hands the router's navigate function to non-component code (markdown links). */
-/** A page that has a new address: goes there and keeps the query and the hash. */
-function MovedTo({ path }: { path: string }) {
-  const { search, hash } = useLocation()
-  return <Navigate to={{ pathname: path, search, hash }} replace />
-}
-
 function NavigateBridge() {
   const navigate = useNavigate()
   useEffect(() => {
@@ -128,8 +124,11 @@ export default function App() {
                 <Route path="sessions" element={<SessionsPage />} />
                 <Route path="shortcuts" element={<ShortcutsPage />} />
                 <Route path="storage" element={<StoragePage />} />
-                <Route path="agent" element={<AgentPage />} />
-                <Route path="agent-memory" element={<AgentMemoryPage />} />
+                <Route path="agent" element={<AgentTabs area="profile" />}>
+                  <Route index element={<AgentPage />} />
+                  <Route path="memory" element={<AgentMemoryPage />} />
+                </Route>
+                <Route path="agent-memory" element={<MovedTo path="/profile/agent/memory" />} />
               </Route>
               <Route path="admin" element={<AdminLayout />}>
                 <Route index element={<AdminSettingsPage />} />
@@ -152,7 +151,11 @@ export default function App() {
                 <Route path="billing" element={<BillingPage />} />
                 <Route path="danger-zone" element={<DangerZonePage />} />
                 <Route path="members" element={<MembersPage />} />
-                <Route path="agent" element={<TeamInstructionsPage />} />
+                <Route path="agent" element={<AgentTabs area="settings" />}>
+                  <Route index element={<TeamInstructionsPage />} />
+                  <Route path="tools" element={<AgentToolsPage />} />
+                </Route>
+                <Route path="agent-tools" element={<MovedTo path="/settings/agent/tools" />} />
                 <Route path="invitations" element={<Navigate to="/settings/members" replace />} />
                 {/* these moved to the account settings; old links and bookmarks still work */}
                 <Route path="sessions" element={<MovedTo path="/profile/sessions" />} />
@@ -160,7 +163,6 @@ export default function App() {
                 <Route path="notifications" element={<MovedTo path="/profile/notifications" />} />
                 <Route path="api-tokens" element={<ApiTokensPage />} />
                 <Route path="file-storage" element={<FileStoragePage />} />
-                <Route path="agent-tools" element={<AgentToolsPage />} />
                 <Route path="apps" element={<AppsSettingsPage />} />
               </Route>
               <Route path="*" element={<Navigate to="/tasks" replace />} />

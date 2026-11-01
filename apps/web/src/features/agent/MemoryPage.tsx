@@ -15,7 +15,7 @@ import { useAgentMemories, useAgentMemoryWake, useDeleteAgentMemory, useForgetAg
 
 type Pending = { kind: 'memory'; position: number } | { kind: 'summary'; lo: number; hi: number }
 
-/** Account → Agent memory: what the agent remembers in the current workspace, for the team and for you. */
+/** Account → Agent → Memory: what the agent remembers in the current workspace, for the team and for you. */
 export function MemoryPage() {
   const { workspace } = useWorkspace()
   const status = useAgentStatus()
@@ -29,7 +29,7 @@ export function MemoryPage() {
   const forget = useForgetAgentMemorySummary(workspace.id, scope)
 
   if (status.data && !status.data.enabled) {
-    return <SettingsCard title="Agent memory">The agent is not set up on this server.</SettingsCard>
+    return <SettingsCard title="Agent">The agent is not set up on this server.</SettingsCard>
   }
   const pages = memories.data?.pages ?? []
   const items = pages.flatMap((page) => page.items)
@@ -39,7 +39,7 @@ export function MemoryPage() {
   return (
     <>
       <SettingsCard
-        title="Agent memory"
+        title="Memories"
         description={
           scope === 'team'
             ? `What the agent remembers for everyone in ${workspace.name}. Every member can read it; owners and admins can delete from it.`
