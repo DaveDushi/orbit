@@ -237,6 +237,27 @@ It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-ag
 
 ## Verification performed
 
+### November 1, 2026 tools: deploy lock and BuildKit cache (no deploy)
+
+Fast-forwarded `main` to `dba6934`: deploy tools and docs only, so no image build and no binary switch. Production stays on
+`f005d4b`. Installed `/usr/local/bin/orbit-deploy` and the lock `/var/lib/orbit-deploys/deploy.lock` (root, mode 0666), and the
+new `/etc/orbit-buildkit.toml` (6 GB cache limit, explicit GC rules). The earlier config is
+`/etc/orbit-buildkit.toml.before-deploy-lock`. Restarted `orbit-buildkit` under the build lock at 16:16 UTC.
+
+Verified: `buildx inspect` shows 4 GC rules at 6 GiB; `orbit-buildkit-state` is kept (832 MB before and after); the `orbit-limited`
+builder answers; as root and as exedev, a second `begin` is refused (exit 75), and the lock is released after `end`; cleanup
+dry-run only; `orbit`, `orbit-agent`, nginx and `orbit-oidc-gateway` are active with revision `f005d4b` and readiness (all checks).
+**Not** verified: a real build with the new rules or a warm build, a real `orbit-deploy image` (mock tests only), a reboot, and
+GC under low disk. The real cleanup was not run.
+
+Rollback of the config (only when no build runs) and of the tool (only when no deploy runs):
+
+```sh
+sudo install -m 0644 /etc/orbit-buildkit.toml.before-deploy-lock /etc/orbit-buildkit.toml
+sudo flock -n /var/lib/orbit-builds/build.lock systemctl restart orbit-buildkit.service
+flock -n /var/lib/orbit-deploys/deploy.lock sudo rm /usr/local/bin/orbit-deploy
+```
+
 ### November 1, 2026 upgrade: Orbit Apps on phones, the app bar and a clearer Settings → Apps
 
 Fast-forwarded `main` to `orbit-apps` (`f005d4b`, 12 commits) at 15:34:35 UTC: the app page's phone layout, the bar that hides on
