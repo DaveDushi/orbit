@@ -111,7 +111,7 @@ for (const view of views) {
   await page.screenshot({ path: `${out}/${name}-8-app-settings-remove.png` })
 
   // Back to the list.
-  await page.getByRole('link', { name: 'All apps' }).click()
+  await page.getByText('All apps', { exact: true }).click()
   await page.getByRole('link', { name: `Settings of ${app}`, exact: true }).waitFor()
   await page.waitForTimeout(300)
   await fits(page, `${name} list`)
@@ -130,10 +130,11 @@ for (const view of views) {
   const next = (await page.locator('section', { hasText: 'Orbit shows it only this once' }).last().locator('code').first().textContent()).trim()
   check(next !== secret, `${name}: a new secret shows once`)
   await page.getByRole('button', { name: 'Done' }).click()
-  await page.locator('#app-sign-in').click()
+  await page.getByRole('switch', { name: 'Sign in with Orbit' }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Turn off' }).click()
   await page.getByText('Sign-in turned off').waitFor()
-  check(await page.getByText('Client ID').count() === 0, `${name}: turning sign-in off removes the client`)
+  await page.getByText('Client ID', { exact: true }).waitFor({ state: 'hidden', timeout: 8000 }) // the list refreshes after the answer
+  check(true, `${name}: turning sign-in off removes the client`)
   await page.getByRole('button', { name: 'Remove', exact: true }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Remove' }).click()
   await page.waitForURL('**/settings/apps')
