@@ -93,7 +93,7 @@ function RolesField({ value, onChange }: { value: AppRole[]; onChange: (roles: A
 function RedirectsField({ id, value, onChange }: { id: string; value: string; onChange: (text: string) => void }) {
   return <Field>
     <FieldLabel htmlFor={id}>Redirect URIs</FieldLabel>
-    <Textarea id={id} value={value} rows={2} onChange={(event) => onChange(event.target.value)} placeholder="https://reports.example.com/auth/callback" />
+    <Textarea className="field-sizing-fixed" id={id} value={value} rows={2} onChange={(event) => onChange(event.target.value)} placeholder="https://reports.example.com/auth/callback" />
     <FieldDescription>Where Orbit sends people back after they sign in. One per line, exactly as the app sends them.</FieldDescription>
   </Field>
 }
@@ -131,7 +131,7 @@ function AddApp({ canSignIn, onClose, onSecret }: { canSignIn: boolean; onClose:
   }
 
   return <Modal title="Add app" onClose={onClose}>
-    <form className="flex flex-col gap-4" onSubmit={(event) => { void submit(event).catch(() => undefined) }}>
+    <form className="flex min-w-0 flex-col gap-4" onSubmit={(event) => { void submit(event).catch(() => undefined) }}>
       <Field><FieldLabel htmlFor="app-name">Name <RequiredMark /></FieldLabel><Input id="app-name" value={name} maxLength={80} onChange={(event) => setName(event.target.value)} placeholder="Reports" /></Field>
       <Field>
         <FieldLabel htmlFor="app-url">Address <RequiredMark /></FieldLabel>

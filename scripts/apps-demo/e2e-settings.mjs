@@ -36,8 +36,8 @@ async function open([, viewport, phone]) {
 async function fits(page, label) {
   const { scroll, width } = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: window.innerWidth }))
   check(scroll <= width, `${label}: no sideways scroll (${scroll} of ${width})`)
-  const overflow = await page.evaluate(() => [...document.querySelectorAll('[data-slot=pane] section, [role=dialog]')].some((el) => el.scrollWidth > el.clientWidth + 1))
-  check(!overflow, `${label}: nothing is wider than its card`)
+  const wide = await page.evaluate(() => [...document.querySelectorAll('[data-slot=pane] section, [role=dialog]')].filter((el) => el.scrollWidth > el.clientWidth + 1).map((el) => `${el.tagName} ${el.scrollWidth}>${el.clientWidth}: ${[...el.querySelectorAll('*')].filter((child) => child.getBoundingClientRect().right > el.getBoundingClientRect().right + 1).map((child) => child.tagName + '.' + child.getAttribute('data-slot')).slice(0, 4)}`))
+  check(wide.length === 0, `${label}: nothing is wider than its card ${wide}`)
 }
 
 // The list with no apps, on every size, and the add flow before anything exists.
