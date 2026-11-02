@@ -76,11 +76,21 @@ const AREAS: Record<SettingsAreaName, SettingsArea> = {
         label: 'Account',
         items: [
           { to: '/profile', label: 'Profile', icon: User, end: true },
-          { to: '/profile/appearance', label: 'Appearance', icon: Brush },
-          { to: '/profile/notifications', label: 'Notifications', icon: Bell },
           { to: '/profile/security', label: 'Security', icon: Lock },
           { to: '/profile/sessions', label: 'Sessions', icon: ShieldCheck },
+        ],
+      },
+      {
+        label: 'Preferences',
+        items: [
+          { to: '/profile/appearance', label: 'Appearance', icon: Brush },
+          { to: '/profile/notifications', label: 'Notifications', icon: Bell },
           { to: '/profile/shortcuts', label: 'Keyboard shortcuts', icon: Keyboard },
+        ],
+      },
+      {
+        label: 'Advanced',
+        items: [
           { to: '/profile/storage', label: 'Storage', icon: Driver },
         ],
       },
