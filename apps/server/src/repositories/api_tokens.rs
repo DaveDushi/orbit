@@ -43,6 +43,8 @@ pub enum ApiTokenScope {
     Write,
     DocsRead,
     ChatRead,
+    /// MCP task writes (`tasks:write`). Not the REST `write` flag, which older tokens have by default.
+    TasksWrite,
     Mcp,
 }
 
@@ -264,9 +266,11 @@ impl ApiTokenRepository {
                 .get::<String, _>("mcp_scopes")
                 .split_whitespace()
                 .any(|s| s == "chat:read"),
-            ApiTokenScope::Mcp => {
-                can_read || can_write || !row.get::<String, _>("mcp_scopes").is_empty()
-            }
+            ApiTokenScope::TasksWrite => row
+                .get::<String, _>("mcp_scopes")
+                .split_whitespace()
+                .any(|s| s == "tasks:write"),
+            ApiTokenScope::Mcp => can_read || !row.get::<String, _>("mcp_scopes").is_empty(),
         };
         if !allowed {
             return Err(ApiTokenError::Forbidden);
@@ -312,6 +316,12 @@ impl ApiTokenRepository {
                 (
                     row.get::<String, _>("mcp_scopes").contains("chat:read"),
                     ApiTokenScope::ChatRead,
+                ),
+                (
+                    row.get::<String, _>("mcp_scopes")
+                        .split_whitespace()
+                        .any(|s| s == "tasks:write"),
+                    ApiTokenScope::TasksWrite,
                 ),
             ]
             .into_iter()

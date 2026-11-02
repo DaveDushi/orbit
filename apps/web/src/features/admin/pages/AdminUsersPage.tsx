@@ -147,7 +147,7 @@ export function AdminUsersPage() {
                 {user.workspace_count} {user.workspace_count === 1 ? 'workspace' : 'workspaces'} · {user.last_active_at ? `Active ${new Date(user.last_active_at).toLocaleDateString()}` : 'Never signed in'}
               </span>
               <div className="flex w-24 justify-end">
-                {user.deleted || (user.id !== viewerId && !manageable(user)) ? null : (
+                {user.deleted || !manageable(user) ? null : (
                   <DropdownMenu>
                     <DropdownMenuTrigger render={<Button variant="outline" size="sm" className="text-[11px]" aria-label={`Manage ${user.display_name}`} />}>
                       Manage

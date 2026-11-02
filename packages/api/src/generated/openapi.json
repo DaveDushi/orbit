@@ -35485,7 +35485,8 @@
           "read",
           "write",
           "docs:read",
-          "chat:read"
+          "chat:read",
+          "tasks:write"
         ]
       },
       "AttachmentComment": {

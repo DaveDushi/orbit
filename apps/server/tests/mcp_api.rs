@@ -372,7 +372,8 @@ async fn bearer_credentials_are_required_and_checked_on_every_request() {
         .oneshot(request(Some(&issued.token), "tools/list", json!({})))
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
+    // The REST `write` flag alone, which older tokens have by default, gives no MCP access.
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
     let listing = fixture.rpc("tools/list", json!({})).await;
     assert!(listing.get("error").is_none(), "{listing}");
     fixture
@@ -676,7 +677,20 @@ async fn task_writes_require_scope_and_versions_and_stay_in_granted_projects() {
         )
         .await;
     assert!(denied.get("error").is_some(), "{denied}");
+    // The REST `write` flag, ticked by default on older tokens, gives no MCP writes.
     sqlx::query("UPDATE api_tokens SET can_write = 1 WHERE id = $1")
+        .bind(f.token_id.to_string())
+        .execute(f.database.pool())
+        .await
+        .unwrap();
+    let rest_write = f
+        .tool(
+            "update_task",
+            json!({"task_id": f.task, "expected_version": current.version, "title": "Changed"}),
+        )
+        .await;
+    assert!(rest_write.get("error").is_some(), "{rest_write}");
+    sqlx::query("UPDATE api_tokens SET mcp_scopes = 'tasks:write' WHERE id = $1")
         .bind(f.token_id.to_string())
         .execute(f.database.pool())
         .await

@@ -328,7 +328,7 @@ fn write_definition<T: JsonSchema>(
 }
 fn required_scope(name: &str) -> ApiTokenScope {
     match name {
-        "create_task" | "update_task" | "delete_task" => ApiTokenScope::Write,
+        "create_task" | "update_task" | "delete_task" => ApiTokenScope::TasksWrite,
         "list_docs" | "get_doc" => ApiTokenScope::DocsRead,
         "list_conversations" | "list_messages" | "get_thread" => ApiTokenScope::ChatRead,
         _ => ApiTokenScope::Read,

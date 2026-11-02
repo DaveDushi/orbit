@@ -800,7 +800,7 @@ async fn optional_scopes_need_consent_and_survive_refresh() {
         .unwrap();
     for scope in [
         ApiTokenScope::Read,
-        ApiTokenScope::Write,
+        ApiTokenScope::TasksWrite,
         ApiTokenScope::DocsRead,
         ApiTokenScope::ChatRead,
     ] {

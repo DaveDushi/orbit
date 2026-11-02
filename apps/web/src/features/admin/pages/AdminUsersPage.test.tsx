@@ -48,14 +48,12 @@ function renderPage(requests: string[] = [], viewer: { id: string; root: boolean
   return render(<QueryClientProvider client={client}><AdminUsersPage /><Toaster /></QueryClientProvider>)
 }
 
-test('the root user can only change their own email and a suspended account can only be reinstated or renamed', async () => {
+test('the root user has no menu on their own row and a suspended account can only be reinstated or renamed', async () => {
   const view = renderPage()
   await view.findByText('Root Person')
   expect(view.getByText('Root')).toBeTruthy()
   expect(view.getByText('Suspended')).toBeTruthy()
-  fireEvent.click(view.getByRole('button', { name: 'Manage Root Person' }))
-  await view.findByRole('menuitem', { name: 'Change email' })
-  expect(view.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Change email'])
+  expect(view.queryAllByRole('button', { name: 'Manage Root Person' })).toHaveLength(0)
   view.unmount()
 
   const again = renderPage()
@@ -118,11 +116,10 @@ test('only the root user manages admins; an admin cannot open the menu of anothe
   expect(admin.queryAllByRole('menuitem', { name: 'Make admin' })).toHaveLength(0)
   admin.unmount()
 
+  // an admin changes their own email in Profile, with their password
   const own = renderPage([], { id: 'user-4', root: false })
   await own.findByText('Cy')
-  fireEvent.click(own.getByRole('button', { name: 'Manage Cy' }))
-  await own.findByRole('menuitem', { name: 'Change email' })
-  expect(own.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Change email'])
+  expect(own.queryAllByRole('button', { name: 'Manage Cy' })).toHaveLength(0)
 })
 
 test('an account with two-factor sign-in shows it and the admin can reset it after confirming', async () => {

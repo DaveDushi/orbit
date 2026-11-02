@@ -635,6 +635,9 @@ enum ApiTokenScope {
     DocsRead,
     #[serde(rename = "chat:read")]
     ChatRead,
+    /// MCP task writes; `write` is the REST API's.
+    #[serde(rename = "tasks:write")]
+    TasksWrite,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -696,10 +699,12 @@ async fn create_api_token(
         || project_ids.is_empty()
         || body.scopes.is_empty()
         || (body.service_account
-            && body
-                .scopes
-                .iter()
-                .any(|s| matches!(s, ApiTokenScope::DocsRead | ApiTokenScope::ChatRead)))
+            && body.scopes.iter().any(|s| {
+                matches!(
+                    s,
+                    ApiTokenScope::DocsRead | ApiTokenScope::ChatRead | ApiTokenScope::TasksWrite
+                )
+            }))
     {
         return Err(ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -724,6 +729,7 @@ async fn create_api_token(
         .filter_map(|s| match s {
             ApiTokenScope::DocsRead => Some("docs:read"),
             ApiTokenScope::ChatRead => Some("chat:read"),
+            ApiTokenScope::TasksWrite => Some("tasks:write"),
             _ => None,
         })
         .collect::<Vec<_>>()
@@ -1655,12 +1661,21 @@ async fn change_user_email(
             session.user.id,
             user_id,
             email,
-            (session.user.id == user_id).then_some(session.id),
             request_id_value(rid),
             TimestampMillis::now(),
         )
         .await
-        .map_err(|error| admin_account_problem(error, &instance, rid))?;
+        .map_err(|error| match error {
+            AdminAccountError::OwnAccount => ApiError::new(
+                StatusCode::FORBIDDEN,
+                "own_account",
+                "Own account",
+                "Change your own email in Account settings → Profile, which asks for your password.",
+                &instance,
+                rid,
+            ),
+            error => admin_account_problem(error, &instance, rid),
+        })?;
     let old_address_notice = mail::templates::email_changed(&changed.old_email, &changed.new_email);
     match notice {
         AccountNotice::Cloud(mailer) => {

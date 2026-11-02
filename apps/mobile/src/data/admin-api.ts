@@ -166,13 +166,13 @@ export async function changeEmail(client: OrbitClient, userId: string, email: st
 export type AdminAction = 'change-email' | 'make-admin' | 'remove-admin' | 'recovery-link' | 'reset-two-factor' | 'suspend' | 'reinstate'
 
 /**
- * The web's Manage menu: nobody manages the root account, their own or a deleted one, except that an admin may
- * change their own email; only the root user manages instance admins. A suspended account can only be reinstated
+ * The web's Manage menu: nobody manages the root account, their own or a deleted one (an admin changes their own
+ * email in Profile, with their password); only the root user manages instance admins. A suspended account can only be reinstated
  * (or get another email).
  */
 export function adminActions(user: AdminUser, viewer: { id: string; root: boolean }): AdminAction[] {
   if (user.deleted) return []
-  if (user.id === viewer.id) return ['change-email']
+  if (user.id === viewer.id) return []
   if (user.root || (user.admin && !viewer.root)) return []
   const admin: AdminAction[] = viewer.root ? (user.admin ? ['remove-admin'] : user.suspended ? [] : ['make-admin']) : []
   if (user.suspended) return ['change-email', ...admin, 'reinstate']

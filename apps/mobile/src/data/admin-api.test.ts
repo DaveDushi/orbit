@@ -42,8 +42,8 @@ const admin = { id: 'admin', root: false }
 
 test('nobody manages the root account, their own (but its email), or (unless root) another admin', () => {
   expect(adminActions(user({ root: true }), root)).toEqual([])
-  expect(adminActions(user({ id: 'admin', admin: true }), admin)).toEqual(['change-email'])
-  expect(adminActions(user({ id: 'root', root: true, admin: true }), { id: 'root', root: true })).toEqual(['change-email'])
+  expect(adminActions(user({ id: 'admin', admin: true }), admin)).toEqual([])
+  expect(adminActions(user({ id: 'root', root: true, admin: true }), { id: 'root', root: true })).toEqual([])
   expect(adminActions(user({ admin: true }), admin)).toEqual([])
 })
 

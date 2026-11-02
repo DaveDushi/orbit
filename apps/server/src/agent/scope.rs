@@ -17,12 +17,13 @@ pub const TOKEN_PREFIX: &str = "orbit-agent.";
 
 /// Workspace route segments an agent session never reaches: credentials, integrations, access,
 /// data export, administration, the agent's own team instructions and its integrations.
-const DENIED: [&str; 13] = [
+const DENIED: [&str; 14] = [
     "agent",
     "agent-integrations",
     "api-tokens",
     "apps",
     "audit",
+    "exports",
     "github",
     "imports",
     "invitations",
@@ -183,6 +184,8 @@ mod tests {
             (Method::POST, "/transfer-ownership"),
             (Method::PUT, "/storage/bucket"),
             (Method::POST, "/imports/notion"),
+            (Method::POST, "/exports"),
+            (Method::GET, "/exports/abc/download"),
             (Method::PATCH, ""),
             (Method::DELETE, ""),
             (Method::GET, "/agent"),

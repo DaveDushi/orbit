@@ -168,6 +168,20 @@ impl IdentityRepository {
                 .execute(&mut *transaction)
                 .await?;
         }
+        // A running Notion import stops, and its sealed Notion token goes.
+        sqlx::query(
+            "UPDATE notion_imports SET status = 'cancelled', token_ciphertext = NULL, updated_at = $1 \
+             WHERE user_id = $2 AND status IN ('scanning', 'ready', 'queued', 'importing')",
+        )
+        .bind(now.as_millis())
+        .bind(&id)
+        .execute(&mut *transaction)
+        .await?;
+        // Private pages are the person's alone; their files, versions and comments go with them.
+        sqlx::query("DELETE FROM pages WHERE owner_id = $1")
+            .bind(&id)
+            .execute(&mut *transaction)
+            .await?;
         sqlx::query(
             "UPDATE api_tokens SET revoked_at = $1 WHERE created_by = $2 \
              AND service_account_id IS NULL AND revoked_at IS NULL",
@@ -289,15 +303,14 @@ impl IdentityRepository {
     }
 
     /// Changes an account's email from the Admin area, with no link: for instances without a mail server, or a
-    /// person who lost the old address. Any admin may change their own email; for other accounts the rules of
-    /// `may_manage` apply. Every session of the account is revoked except `keep_session` (the admin's own when they
-    /// change their own email).
+    /// person who lost the old address. Never the admin's own email: that needs their password in Profile, so a
+    /// stolen admin session cannot take the account. For other accounts the rules of `may_manage` apply. Every
+    /// session of the account is revoked.
     pub async fn change_email_as_admin(
         &self,
         actor_id: Id,
         user_id: Id,
         email: &str,
-        keep_session: Option<Id>,
         request_id: &str,
         now: TimestampMillis,
     ) -> Result<EmailChanged, AdminAccountError> {
@@ -305,9 +318,10 @@ impl IdentityRepository {
         if !Self::is_active_admin(&mut transaction, actor_id).await? {
             return Err(AdminAccountError::Forbidden);
         }
-        if actor_id != user_id {
-            Self::may_manage(&mut transaction, actor_id, user_id).await?;
+        if actor_id == user_id {
+            return Err(AdminAccountError::OwnAccount);
         }
+        Self::may_manage(&mut transaction, actor_id, user_id).await?;
         let old_email = sqlx::query_scalar::<_, String>("SELECT email FROM users WHERE id = $1")
             .bind(user_id.to_string())
             .fetch_optional(&mut *transaction)
@@ -325,7 +339,7 @@ impl IdentityRepository {
             .apply_email_change(
                 &mut transaction,
                 &change,
-                keep_session,
+                None,
                 EmailChangedBy::Admin(actor_id),
                 request_id,
                 now,

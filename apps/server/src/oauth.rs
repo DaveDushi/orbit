@@ -125,7 +125,7 @@ impl OAuthState {
                 let extra: String = row.get("mcp_scopes");
                 let mut scopes = vec![ApiTokenScope::Read];
                 for (name, scope) in [
-                    ("tasks:write", ApiTokenScope::Write),
+                    ("tasks:write", ApiTokenScope::TasksWrite),
                     ("docs:read", ApiTokenScope::DocsRead),
                     ("chat:read", ApiTokenScope::ChatRead),
                 ] {

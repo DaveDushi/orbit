@@ -887,7 +887,7 @@ async fn an_admin_email_change_is_refused_for_bad_addresses_other_people_and_del
 }
 
 #[tokio::test]
-async fn an_admin_email_change_notifies_the_old_address_and_keeps_an_admins_own_session() {
+async fn an_admin_email_change_notifies_the_old_address_and_never_changes_the_admins_own() {
     let fixture = Fixture::new(true).await;
     let (ada, _) = fixture
         .add_user("ada@example.com", Some(PASSWORD), true)
@@ -921,23 +921,30 @@ async fn an_admin_email_change_notifies_the_old_address_and_keeps_an_admins_own_
             .session_token(root_id.parse().unwrap(), "root@example.com")
             .await
     );
+    // A stolen admin session must not move the admin's own account to another address: that needs the
+    // password, in Profile.
     let own = fixture
         .admin_change_email(&fixture.root_cookie, &root_id, "root@new.example")
         .await;
-    assert_eq!(own.status, StatusCode::NO_CONTENT, "{}", own.body);
+    assert_eq!(
+        (own.status, own.code()),
+        (StatusCode::FORBIDDEN, "own_account"),
+        "{}",
+        own.body
+    );
     let me = fixture
         .send("GET", "/api/v1/auth/me", Some(&fixture.root_cookie), None)
         .await;
     assert_eq!(
         (me.status, me.body["email"].as_str()),
-        (StatusCode::OK, Some("root@new.example"))
+        (StatusCode::OK, Some("root@example.com"))
     );
     assert_eq!(
         fixture
             .send("GET", "/api/v1/auth/me", Some(&other), None)
             .await
             .status,
-        StatusCode::UNAUTHORIZED
+        StatusCode::OK
     );
 }
 
@@ -1232,6 +1239,30 @@ async fn deleting_an_account_removes_its_agent_and_app_sign_ins() {
     .execute(pool)
     .await
     .unwrap();
+    let page = Id::new_v7().to_string();
+    sqlx::query(
+        "INSERT INTO pages (id, workspace_id, owner_id, title, position, creator_id, updated_by, version, created_at, updated_at) \
+         VALUES ($1, $2, $3, 'Diary', 0, $3, $3, 0, $4, $4)",
+    )
+    .bind(&page)
+    .bind(&fixture.workspace_id)
+    .bind(ada.to_string())
+    .bind(now)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO notion_imports (id, workspace_id, user_id, status, token_ciphertext, created_at, updated_at) \
+         VALUES ($1, $2, $3, 'importing', $4, $5, $5)",
+    )
+    .bind(Id::new_v7().to_string())
+    .bind(&fixture.workspace_id)
+    .bind(ada.to_string())
+    .bind(vec![7_u8; 40])
+    .bind(now)
+    .execute(pool)
+    .await
+    .unwrap();
     let response = fixture
         .send(
             "DELETE",
@@ -1241,6 +1272,21 @@ async fn deleting_an_account_removes_its_agent_and_app_sign_ins() {
         )
         .await;
     assert_eq!(response.status, StatusCode::NO_CONTENT, "{}", response.body);
+    for (sql, expected) in [
+        ("SELECT COUNT(*) FROM pages WHERE owner_id = $1", 0),
+        (
+            "SELECT COUNT(*) FROM notion_imports WHERE user_id = $1 \
+             AND (status <> 'cancelled' OR token_ciphertext IS NOT NULL)",
+            0,
+        ),
+    ] {
+        let count = sqlx::query_scalar::<_, i64>(sql)
+            .bind(ada.to_string())
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert_eq!(count, expected, "{sql}");
+    }
     let private = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM agent_memory_scopes WHERE owner_user_id = $1",
     )

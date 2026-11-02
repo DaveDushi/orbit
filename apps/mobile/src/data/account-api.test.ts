@@ -94,13 +94,10 @@ function server(reply: { status: number; body?: unknown }) {
   return { client, sent }
 }
 
-test('an email change sends the new address, and the password only when there is one', async () => {
+test('an email change sends the new address and the password', async () => {
   const withPassword = server({ status: 202, body: { detail: 'We sent a link.' } })
   await requestEmailChange(withPassword.client, 'new@orbit.test', 'secret')
   expect(withPassword.sent).toEqual([{ method: 'POST', url: 'https://orbit.test/api/v1/auth/me/email', body: { email: 'new@orbit.test', password: 'secret' } }])
-  const without = server({ status: 202, body: { detail: 'We sent a link.' } })
-  await requestEmailChange(without.client, 'new@orbit.test')
-  expect(without.sent[0].body).toEqual({ email: 'new@orbit.test' })
 })
 
 const problem = (status: number, code: string, extra: object = {}) => ({ type: 'about:blank', title: 'Refused', status, code, detail: `The ${code} detail.`, instance: '/api/v1/auth/me', request_id: 'r', ...extra })

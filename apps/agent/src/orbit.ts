@@ -1,6 +1,12 @@
 import type { Config } from "./config.ts";
 
 /** An Orbit answer that is not 2xx. `problem` is Orbit's Problem Details body when it sent one. */
+/**
+ * How long a request to Orbit may take. A tool call may wait for a token, the API, a new token and one retry, each up
+ * to 30 seconds on Orbit's side, and Orbit does not time it out; the rest answer well within 40 seconds.
+ */
+export const requestTimeoutMs = (path: string) => (path.endsWith("/agent-tools/call") ? 130_000 : 40_000);
+
 export class OrbitError extends Error {
 	readonly status: number;
 	readonly problem: { code?: string; detail?: string } | undefined;
@@ -66,7 +72,7 @@ export class OrbitClient {
 				...(body === undefined ? {} : { "content-type": "application/json" }),
 			},
 			body: body === undefined ? undefined : JSON.stringify(body),
-			signal: AbortSignal.timeout(40_000),
+			signal: AbortSignal.timeout(requestTimeoutMs(path)),
 		});
 		const text = await response.text();
 		const parsed = text ? safeJson(text) : undefined;
