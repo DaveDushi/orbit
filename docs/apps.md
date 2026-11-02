@@ -260,8 +260,9 @@ Put it in the page the app shows after sign-in, with your Orbit address. In a si
 
 - **With the signal:** the frame takes the full height. The actions are in a small **…** button in the corner: **Sign in to app**, **Reload**, **Open in a new tab**, and on a phone also **Menu**.
 - **Without a signal within 8 seconds** (an app without the line, or a refused frame): the bar and its help text show. A late signal hides the bar again. **Sign in** and **Reload** start the same rule again.
+- **Closed by hand:** the **X** in the bar hides the bar and its help text, for example for an app that you cannot change. The frame takes the full height, and the actions are in the **…** button, as with the signal. This browser remembers the choice per workspace and app, so the bar stays closed after a reload, on the next open, and when **Sign in** or **Reload** start the rule again. If the browser blocks the sign-in popup, the page still says so, above the frame. To get the bar back, delete the `orbit:app-bar-closed:<workspace>:<app>` entry from the browser's local storage.
 
-On a phone the bar has one row: the menu, the app's name, **Sign in**, **Open**, and a menu with **Reload**.
+On a phone the bar has one row: the menu, the app's name, **Sign in**, **Open**, a menu with **Reload**, and the **X**.
 
 **Safari and every iOS browser** block third-party cookies by default. What that means depends on the app's address:
 
