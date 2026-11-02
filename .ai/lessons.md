@@ -76,6 +76,8 @@
 - If Playwright's pinned headless shell is not installed, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to an installed one under `~/.cache/ms-playwright/` (`playwright.config.ts` reads it) instead of downloading browsers.
 - Under bun + happy-dom, a failing `toBeNull()` on an element or a failing `waitFor` on a full page can exhaust a 4 GB memory cap with no output. Assert negatives by count and keep rendered page tests focused.
 - happy-dom has no layout, so a TanStack Virtual list mounts no rows in tests. Put `data-virtual-scroller` on the scroll element: `src/test/dom.ts` gives it a height (and each `data-index` line 1px). Positions in such tests are line indexes in px.
+- An `IntersectionObserver` with the default root (the window) is clipped by every scrolling ancestor first, so its `rootMargin` does nothing inside a scrolling pane. Pass the pane as `root` (`PdfPages.tsx`, 2026-11-02).
+- Measure web CPU and memory with `scripts/perf/` (seed, measure, e2e; results and method in `.ai/web-perf.md`) and compare a before and an after run of the same script.
 - Tailwind v4 emits variant rules in its own order, not class order: two `data-[…]:` variants that set the same property (e.g. `top`) at equal specificity can resolve the wrong way. Make such variants mutually exclusive instead of relying on override order.
 
 ## HTML5 drag and drop: never unmount the drag source on dragstart
