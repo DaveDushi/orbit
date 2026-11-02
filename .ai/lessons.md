@@ -69,6 +69,7 @@
 - Browser-default `text-align: center` on `<button>` inherits into child spans — the base reset must set `text-align: left` on buttons.
 - The production CSP is `style-src 'self'`: a library that adds a `<style>` at runtime (Sonner, Mermaid) works on the Vite dev server and loses its styles in production. Put the rules in `index.css` or a constructed style sheet (`document.adoptedStyleSheets`), and test a production build served with the server's CSP header.
 - Typecheck the web app with `bunx tsc -b` (what `build` runs). `tsc --noEmit -p .` checks nothing: the root `tsconfig.json` only has references, so it passes on broken code.
+- The `orbit` CLI logs to stdout (sqlx prints Postgres notices at INFO). A command whose stdout is data for scripts must log to stderr: add it to `Cli::output_is_data` (`cli.rs`), as `orbit improvements` does. A test that runs the CLI must drop its own `ORBIT_*` variables, or Orbit refuses to start.
 - `cargo test --workspace` stops at the first failing test binary; use `--no-fail-fast` to see the whole suite.
 - Give every cargo call of a worktree the same `CARGO_PROFILE_*`/`CARGO_INCREMENTAL` values (run it through `orbit-build`, see `AGENTS.md`): a change rebuilds everything (2 GB more on 2026-10-29). To rerun built tests, run `target/debug/deps/<test>-<hash>` directly.
 - Playwright rewrites the tracked `apps/web/test-results/.last-run.json` on every run — restore it with `git checkout --` and never commit it.

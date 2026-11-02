@@ -38,6 +38,14 @@ pub struct Cli {
     command: Command,
 }
 
+impl Cli {
+    /// Whether stdout carries data that scripts read (`orbit improvements --json`), so logs go to stderr.
+    #[must_use]
+    pub fn output_is_data(&self) -> bool {
+        matches!(self.command, Command::Improvements { .. })
+    }
+}
+
 #[derive(Debug, Subcommand)]
 pub enum Command {
     Serve {
@@ -104,6 +112,11 @@ pub enum Command {
     SetupToken {
         #[command(subcommand)]
         command: SetupTokenCommand,
+    },
+    /// Change requests from "Suggest a change", for the agent that builds them (docs/improvements.md).
+    Improvements {
+        #[command(subcommand)]
+        command: orbit_server::improvements::ImprovementsCommand,
     },
 }
 
@@ -217,6 +230,7 @@ pub async fn run(cli: Cli, env: BTreeMap<String, String>) -> Result<String, CliE
         Command::Root { command } => root(config()?, command).await,
         Command::Openapi { output } => write_openapi(output),
         Command::SetupToken { command } => setup_token(config()?, command).await,
+        Command::Improvements { command } => improvements(config()?, command).await,
     }
 }
 
@@ -576,6 +590,17 @@ async fn root(config: Config, command: &RootCommand) -> Result<String, CliError>
             })
         }
     }
+}
+
+async fn improvements(
+    config: Config,
+    command: &orbit_server::improvements::ImprovementsCommand,
+) -> Result<String, CliError> {
+    let database = open_database(&config.data).await?;
+    migrate_unless_shared(&config, &database).await?;
+    orbit_server::improvements::run_command(&database, command)
+        .await
+        .map_err(operation)
 }
 
 async fn recovery_link(
@@ -1444,6 +1469,40 @@ mod tests {
 
         assert_eq!(cli.attachment_max_file_bytes, Some(1024));
         assert_eq!(cli.attachment_max_request_bytes, Some(4096));
+    }
+
+    #[test]
+    fn parses_the_improvements_commands() {
+        use orbit_server::improvements::{ImprovementsCommand, Status};
+        let parse =
+            |args: &[&str]| Cli::try_parse_from([&["orbit", "improvements"], args].concat());
+        assert!(matches!(
+            parse(&["list", "--status", "new", "--json"])
+                .unwrap()
+                .command,
+            Command::Improvements {
+                command: ImprovementsCommand::List {
+                    status: Some(Status::New),
+                    json: true
+                }
+            }
+        ));
+        assert!(matches!(
+            parse(&[
+                "update", "id", "--status", "building", "--note", "On it", "--link", "feat/x"
+            ])
+            .unwrap()
+            .command,
+            Command::Improvements {
+                command: ImprovementsCommand::Update {
+                    status: Status::Building,
+                    json: false,
+                    ..
+                }
+            }
+        ));
+        assert!(parse(&["update", "id", "--status", "done"]).is_err());
+        assert!(parse(&["update", "id"]).is_err());
     }
 
     #[test]

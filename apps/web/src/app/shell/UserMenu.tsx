@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
-import { Brush, ChevronDown, Logout as LogOut, User } from 'reicon-react'
+import { Brush, ChevronDown, Logout as LogOut, MessageEdit, User } from 'reicon-react'
 import { cn } from 'cn'
 import { Button } from '@/components/ui/button'
 import {
@@ -18,6 +18,8 @@ import { CustomStatusDialog } from '@/features/realtime/components/CustomStatusD
 import { CustomStatusText } from '@/features/realtime/components/CustomStatusText'
 import { StatusMenuItems } from '@/features/realtime/components/StatusMenuItems'
 import { useOwnStatus } from '@/features/realtime/useOwnStatus'
+import { useImprovementsEnabled } from '@/features/improvements/api'
+import { SuggestChangeDialog } from '@/features/improvements/SuggestChangeDialog'
 
 /** Signed-in profile and account actions shared by both sidebars. */
 export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
@@ -29,6 +31,9 @@ export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
   const status = useOwnStatus()
   const hasCustomStatus = status.emoji !== null || status.text !== null
   const [editingStatus, setEditingStatus] = useState(false)
+  // installation admins only, while the switch in Admin → General is on
+  const canSuggest = useImprovementsEnabled()
+  const [suggesting, setSuggesting] = useState(false)
 
   const userName = me?.display_name ?? 'Account'
 
@@ -87,6 +92,12 @@ export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
             <Brush />
             Appearance
           </DropdownMenuItem>
+          {canSuggest ? (
+            <DropdownMenuItem onClick={() => setSuggesting(true)}>
+              <MessageEdit />
+              Suggest a change
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuSeparator />
           {/* data-danger, not variant="destructive": the preset menu popup forces destructive items to the accent color */}
           <DropdownMenuItem
@@ -103,6 +114,7 @@ export function UserMenu({ collapsed = false }: { collapsed?: boolean }) {
         </DropdownMenuContent>
       </DropdownMenu>
       {editingStatus ? <CustomStatusDialog onClose={() => setEditingStatus(false)} /> : null}
+      {suggesting ? <SuggestChangeDialog onClose={() => setSuggesting(false)} /> : null}
     </>
   )
 }

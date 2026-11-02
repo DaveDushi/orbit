@@ -435,6 +435,10 @@ impl App {
                     cookie_mode,
                 ),
                 agent,
+                improvements: crate::improvements::ImprovementState::new(
+                    Arc::clone(&identity),
+                    cookie_mode,
+                ),
             },
             health,
             assets,

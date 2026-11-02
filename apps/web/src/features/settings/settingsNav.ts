@@ -1,8 +1,9 @@
 import { useContext, type ComponentType } from 'react'
-import { ArchiveBox, Brush, DocumentDownload, Category, Card, Chart, ClipboardText, CloudConnection, Cpu, SecurityUser, Driver, Key, Keyboard, Link2, Lock, Notification as Bell, Setting2 as Settings, ShieldTick as ShieldCheck, SmileCircle, Sms as Mail, Sticker, Danger as TriangleAlert, User, People as Users } from 'reicon-react'
+import { ArchiveBox, Brush, DocumentDownload, Category, Card, Chart, ClipboardText, CloudConnection, Cpu, SecurityUser, Driver, Key, Keyboard, LampCharge, Link2, Lock, Notification as Bell, Setting2 as Settings, ShieldTick as ShieldCheck, SmileCircle, Sms as Mail, Sticker, Danger as TriangleAlert, User, People as Users } from 'reicon-react'
 import type { Permission } from '@orbit/api/generated/types.gen'
 import { WorkspaceContext } from '@/features/workspaces/workspaceContext'
 import { useBillingEnabled } from '@/features/workspaces/billing'
+import { useImprovementsEnabled } from '@/features/improvements/api'
 
 export interface SettingsNavItem {
   to: string
@@ -13,6 +14,8 @@ export interface SettingsNavItem {
   permission?: Permission
   /** Shown only in Orbit Cloud (billing on). */
   cloud?: boolean
+  /** Shown only while Suggest a change is on (Admin → General). */
+  improvements?: boolean
 }
 
 export interface SettingsNavSection {
@@ -98,6 +101,7 @@ const AREAS: Record<SettingsAreaName, SettingsArea> = {
           { to: '/admin/users', label: 'Users', icon: Users },
           { to: '/admin/email', label: 'Email', icon: Mail },
           { to: '/admin/limits', label: 'Limits', icon: Chart },
+          { to: '/admin/feedback', label: 'Feedback & fixes', icon: LampCharge, improvements: true },
         ],
       },
       {
@@ -159,11 +163,12 @@ export function agenticTabsView(tabs: readonly AgenticTab[], instanceAdmin: bool
 export function useSettingsArea(name: SettingsAreaName): SettingsArea {
   const permissions = useContext(WorkspaceContext)?.workspace.permissions ?? []
   const cloud = useBillingEnabled()
+  const improvements = useImprovementsEnabled()
   const area = AREAS[name]
   const sections = area.sections
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) => (!item.permission || permissions.includes(item.permission)) && (!item.cloud || cloud)),
+      items: section.items.filter((item) => (!item.permission || permissions.includes(item.permission)) && (!item.cloud || cloud) && (!item.improvements || improvements)),
     }))
     .filter((section) => section.items.length > 0)
   return { ...area, sections }
