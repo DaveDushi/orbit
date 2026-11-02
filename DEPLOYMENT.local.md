@@ -82,7 +82,7 @@ share invitation links manually. Registration remains closed.
 
 ## Team agent sidecar
 
-The team agent (`@Orbit Agent` in chat until an installation admin renames it in Admin → AI agent; Account → AI agent)
+The team agent (`@Orbit Agent` in chat until an installation admin renames it in Agentic → Admin)
 is a Node sidecar from
 `apps/agent` (design: `.ai/agent-design.md`, operations: `docs/agent.md`).
 
@@ -106,13 +106,13 @@ is a Node sidecar from
   `AGENT_MOCK` is not set.
 - To change the secret: write a new value (`openssl rand -hex 32`) into both files, then
   restart `orbit` and `orbit-agent`.
-- Each user connects their own ChatGPT account in Account → AI agent (device code).
+- Each user connects their own ChatGPT account in Agentic → You (device code).
   Their tokens are sealed with the app key in Orbit's database (`agent_credentials`).
 - Agent memory (team memory per workspace, private memory per person) is in Orbit's
   database (`agent_memory_*` tables, migration 63), so Orbit's backups include it. People
-  see and delete entries in Account settings → Agent memory.
+  see and delete entries in Agentic → You.
 - Agent tools (remote MCP servers and HTTP APIs) are set up by workspace owners and admins in
-  Workspace settings → Agent tools (`agent_integrations`, migration 65). Orbit keeps each tool's
+  Agentic → Workspace (`agent_integrations`, migration 65). Orbit keeps each tool's
   credential sealed with the app key and makes every external call itself (HTTPS, public
   addresses only); writes need the driver's "yes" in the thread. None is set up yet.
   `ORBIT_AGENT_INTEGRATION_TEST_HOSTS` is for local tests only and must stay unset here.
@@ -236,6 +236,62 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 2, 2026 upgrade: upstream port, the Agentic page and the app bar X button
+
+Merged `agent-settings-cleanup` (`11b1e7d`, fast-forward) and `app-bar-close-button` (`e1e862a`) into `main`: merge commit
+`b051881`. Contents: the Agentic page (`/agentic`, one menu item with You, Workspace and Admin sections; old agent addresses
+redirect), hand-ported upstream `coollabsio/orbit` commits `536c5ac2` (self-hosted security hardening), `c77aea9c`, `a60784da`
+(scoped MCP), `2a431ab1` (account deletion, email change, workspace exports) and `5cb47ec0`, and the X that closes an app's bar.
+Migrations 70 (`0070_account_lifecycle.sql`), 71 (`0071_workspace_exports.sql`) and 72 (`0072_mcp_permissions.sql`), all
+additive. No new `ORBIT_*` setting; `/etc/orbit/orbit.env`, `/etc/orbit/agent.env` and nginx did not change. `apps/agent`
+changed (messages and prompt name Agentic and link to `/agentic`), so the sidecar code was updated.
+
+Behavior changes the user accepted: an app's sign-in tabs escape the frame sandbox (Orbit now sends
+`Cross-Origin-Opener-Policy: same-origin-allow-popups`, and no `X-Frame-Options` on the app frame wrapper, which has its own
+CSP); admins cannot change their own email on the Admin route (Profile, with the password); MCP task writes need the new
+`tasks:write` token scope, and the REST `write` flag gives no MCP access (production had 0 API tokens and 0 OAuth grants). New
+HTTP limits: request headers within 30 seconds, 60-second request timeout and a 2 MiB JSON body cap outside uploads, exports,
+downloads, admin routes, page file saves and agent tool calls. Keep a proxy's upstream keep-alive under 30 seconds (nginx here
+uses no upstream keep-alive).
+
+Checks on merged `main` before the build: web typecheck, oxlint, web tests for apps, settings, agent, admin and shell (174).
+The branch was tested before (server tests on SQLite and Postgres, `scripts/apps-demo/e2e.mjs` 27 checks in Chromium).
+`orbit:b051881` was built with `orbit-deploy image` (13:41:25 to 14:24:29 UTC, 43 minutes) and `deploy/smoke.sh` passed.
+
+At the switch: stopped `orbit-agent` and `orbit` at 14:24:59 UTC, created and verified snapshot
+`01a19ca6-3215-7153-8920-36185614b8ab` (`/var/backups/orbit/snapshots/01a19ca6-3215-7153-8920-36185614b8ab`) with the old CLI,
+rehearsed migrations 70 to 72 on a copy in `/var/lib/orbit/rehearsal-b051881-GV96hC` (3 applied, schema 72, quick-check and
+foreign-key checks pass, counts unchanged; deleted afterwards), saved the sidecar data as
+`/var/backups/orbit-agent/orbit-agent-before-b051881.tgz` and the old sidecar code as `/opt/orbit-agent.before-b051881`, installed
+the new sidecar (`npm ci --omit=dev`, same 53 modules) and the binary, and started `orbit` (ready 14:25:41 UTC), then
+`orbit-agent`. The old executable is `/usr/local/bin/orbit-f005d4b` (checked equal to the installed one before the swap); the new
+one is also kept as `/usr/local/bin/orbit-b051881`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` active, no restarts; readiness (all
+checks); `/orbit-build.json` revision `b051881`; sidecar `mock: false`; schema 72; live quick-check and foreign-key checks pass;
+counts unchanged (6 users, 1 workspace, 3 projects, 62 tasks, 31 pages, 28 page files, 42 blobs, 429 chat messages, 54 agent
+inputs, 1 integration); no new warning or error in the logs (the existing "allowed origin without a port" warning stays);
+`/agentic`, `/settings/agent-tools` and `/apps/product-development` answer 200 and, signed out, go to `/login`; the served
+bundle has the X button ("Close bar") and the `/agentic/workspace` links; the app shell answers COOP
+`same-origin-allow-popups` with `X-Frame-Options: DENY`; https://orbit.wellrox.com/ answers 307 to the exe.dev login; the OIDC
+gateway answers `/oauth/jwks` 200 and `/login` 404 on loopback. The frame wrapper headers (no `X-Frame-Options`, own CSP) were
+checked with the deployed binary on an isolated instance, because production needs a signed-in session for it.
+**Not** verified on production: any signed-in page (the Agentic sections, the redirect targets, the X button on the Products
+app, a sign-in popup), the tunnel's public host, and a real agent run.
+
+Rollback (an older binary cannot read a version 72 database; preserve the current database first; work after the snapshot is
+lost):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-f005d4b backup verify 01a19ca6-3215-7153-8920-36185614b8ab && /usr/local/bin/orbit-f005d4b backup restore 01a19ca6-3215-7153-8920-36185614b8ab'
+sudo install -m 755 /usr/local/bin/orbit-f005d4b /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo cp -a /opt/orbit-agent.before-b051881 /opt/orbit-agent
+sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-b051881.tgz
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+```
 
 ### November 1, 2026 tools: deploy lock and BuildKit cache (no deploy)
 
