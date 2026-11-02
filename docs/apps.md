@@ -92,7 +92,7 @@ const tokens = await client.authorizationCodeGrant(config, currentUrl, {
 const person = tokens.claims()
 ```
 
-[`scripts/apps-demo/server.mjs`](../scripts/apps-demo/server.mjs) is a complete small app without packages. It also handles `login_required` and a blocked cookie.
+[`scripts/apps-demo/server.mjs`](../scripts/apps-demo/server.mjs) is a complete small app without packages. It also handles `login_required` and a blocked cookie. In Orbit's frame, `login_required` comes from a small Orbit page that tells Orbit (so it shows the card "Sign in to <app>") and then goes to the redirect URI; the app sees the same callback as with the redirect.
 
 ## Protect an app with Cloudflare Access
 
@@ -256,11 +256,15 @@ If a person has no Orbit session when the frame reaches `/oauth/authorize`, Orbi
 </script>
 ```
 
-Put it in the page the app shows after sign-in, with your Orbit address. In a single-page app, run the same line once when the app has rendered. Orbit accepts it only from the app's frame and the app's origin, and it only hides the bar. Outside a frame, the line does nothing.
+Put it in the page the app shows after sign-in, with your Orbit address. In a single-page app, run the same line once when the app has rendered. Orbit accepts it only from the app's frame and the app's origin, and it only hides the bar and the card. Outside a frame, the line does nothing.
 
 - **With the signal:** the frame takes the full height. The actions are in a small **…** button in the corner: **Sign in to app**, **Reload**, **Open in a new tab**, and on a phone also **Menu**.
 - **Without a signal within 8 seconds** (an app without the line, or a refused frame): the bar and its help text show. A late signal hides the bar again. **Sign in** and **Reload** start the same rule again.
-- **Closed by hand:** the **X** in the bar hides the bar and its help text, for example for an app that you cannot change. The frame takes the full height, and the actions are in the **…** button, as with the signal. This browser remembers the choice per workspace and app, so the bar stays closed after a reload, on the next open, and when **Sign in** or **Reload** start the rule again. If the browser blocks the sign-in popup, the page still says so, above the frame. To get the bar back, delete the `orbit:app-bar-closed:<workspace>:<app>` entry from the browser's local storage.
+- **The card "Sign in to <app>"** shows over the frame when Orbit knows that the app failed to load. It has a line with the reason and **Sign in to app**, **Open in a new tab**, **Reload** and **Show the app** (which hides the card until the next failure). With the bar open, the card replaces the help text; it also shows with the bar closed. A late signal hides it at once. It shows in three cases:
+  - **Orbit asked for a sign-in.** The app's "Sign in with Orbit" reached Orbit in the frame without an Orbit session (or with `prompt=login`). Orbit tells its own page, then sends the frame to the app's redirect URI with `error=login_required`, as before. A top-level request still gets the redirect.
+  - **The frame went to a login that Orbit does not allow.** The app sent the frame to an origin that is not the app, a redirect URI or Orbit (see [Limits](#limits)).
+  - **An app that sent the signal before is silent.** If the app sent the signal in this browser before, Orbit expects it again: no signal 3 seconds after the frame's last page load (or 8 seconds if no page loads) is a failure. The browser keeps this per workspace and app (`orbit:app-ready-seen:<workspace>:<app>`). An app that never sent the signal keeps the bar and help text, with no card.
+- **Closed by hand:** the **X** in the bar hides the bar and its help text, for example for an app that you cannot change. The frame takes the full height, and the actions are in the **…** button, as with the signal. This browser remembers the choice per workspace and app, so the bar stays closed after a reload, on the next open, and when **Sign in** or **Reload** start the rule again. The card does not change this choice. If the browser blocks the sign-in popup, the page still says so, in the card or above the frame. To get the bar back, delete the `orbit:app-bar-closed:<workspace>:<app>` entry from the browser's local storage.
 
 On a phone the bar has one row: the menu, the app's name, **Sign in**, **Open**, a menu with **Reload**, and the **X**.
 
@@ -277,5 +281,5 @@ On a phone the bar has one row: the menu, the app's name, **Sign in**, **Open**,
 - **The app's own session is the app's.** When a member is removed or a role is no longer allowed, Orbit deletes or refuses their tokens at once, and they cannot sign in again. A session the app already made lasts until the app ends it. Keep app sessions short, or check `/oauth/userinfo` while the token lasts.
 - **Removing an app** deletes its client and tokens. The app itself keeps running.
 - **`prompt=login` is not supported**: Orbit answers `login_required`. `max_age`, `request` and `request_uri` are not supported.
-- **The frame passes only through the app, its redirect URIs and Orbit.** An app that signs in through another identity provider inside the frame is blocked; use **Sign in to app**, or add that provider's callback as a redirect URI.
+- **The frame passes only through the app, its redirect URIs and Orbit.** An app that signs in through another identity provider inside the frame is blocked, and Orbit shows the card "Sign in to <app>"; use **Sign in to app**, or add that provider's callback as a redirect URI.
 - **The server needs `ORBIT_APP_KEY`** for sign-in: it seals the signing key. Without it, apps still open, without sign-in. If the key changes, sign-in stops until you restore it.

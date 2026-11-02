@@ -113,7 +113,8 @@ for (const [name, viewport] of devices) {
   }
 }
 
-// A long name must shrink, not push the actions off the screen.
+// A long name must shrink, not push the actions off the screen. This app has no sign-in, so its redirect to Orbit is
+// refused in the frame, and the card "Sign in to <app>" also shows.
 const [, adminEmail, adminPassword] = readFileSync(logins, 'utf8').split('\n')[0].split(' ')
 const login = await fetch(`${ORBIT}/api/v1/auth/login`, { method: 'POST', headers: { origin: ORBIT, 'content-type': 'application/json' }, body: JSON.stringify({ email: adminEmail, password: adminPassword }) })
 const cookie = login.headers.get('set-cookie').split(';')[0]
@@ -121,7 +122,7 @@ const workspaces = await (await fetch(`${ORBIT}/api/v1/workspaces`, { headers: {
 await fetch(`${ORBIT}/api/v1/workspaces/${(workspaces.items ?? workspaces)[0].id}/workspace-apps`, { method: 'POST', headers: { origin: ORBIT, cookie, 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Product Development Workspace Analytics Dashboard', url: 'http://127.0.0.1:4202/' }) })
 const long = await open({ width: 320, height: 568 }, ANDROID)
 await long.goto(`${ORBIT}/apps/product-development-workspace-analytics`)
-await long.getByRole('heading', { name: /Product Development Workspace/ }).waitFor({ timeout: 12000 })
+await long.getByRole('heading', { name: 'Product Development Workspace Analytics Dashboard', exact: true }).waitFor({ timeout: 12000 })
 await fits(long, '320 wide, long name')
 await long.screenshot({ path: `${out}/phone-320-long-name.png` })
 await long.context().close()

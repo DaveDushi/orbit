@@ -288,10 +288,13 @@ pub(crate) fn add_security_headers(
         HeaderName::from_static("cross-origin-opener-policy"),
         HeaderValue::from_static("same-origin-allow-popups"),
     );
-    headers.insert(
-        REFERRER_POLICY,
-        HeaderValue::from_static("strict-origin-when-cross-origin"),
-    );
+    // A response may also set a stricter one (the framed `login_required` page of app sign-in).
+    if !headers.contains_key(REFERRER_POLICY) {
+        headers.insert(
+            REFERRER_POLICY,
+            HeaderValue::from_static("strict-origin-when-cross-origin"),
+        );
+    }
     headers.insert(
         HeaderName::from_static("permissions-policy"),
         HeaderValue::from_static("camera=(), microphone=(), geolocation=(), payment=()"),
@@ -326,7 +329,7 @@ fn is_valid_http_origin(origin: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use axum::http::header::{AUTHORIZATION, COOKIE, ORIGIN, UPGRADE};
-    use axum::http::header::{CONTENT_SECURITY_POLICY, X_FRAME_OPTIONS};
+    use axum::http::header::{CONTENT_SECURITY_POLICY, REFERRER_POLICY, X_FRAME_OPTIONS};
     use axum::http::{HeaderMap, HeaderValue, Method, Uri};
 
     use super::{OriginPolicy, add_security_headers, bearer_token};
@@ -349,9 +352,11 @@ mod tests {
             CONTENT_SECURITY_POLICY,
             HeaderValue::from_static("frame-ancestors 'self'"),
         );
+        headers.insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
         add_security_headers(&mut headers, true, None);
         assert_eq!(headers[CONTENT_SECURITY_POLICY], "frame-ancestors 'self'");
         assert!(!headers.contains_key(X_FRAME_OPTIONS));
+        assert_eq!(headers[REFERRER_POLICY], "no-referrer");
     }
 
     fn permits(method: Method, path: &str, headers: &[(axum::http::HeaderName, &str)]) -> bool {

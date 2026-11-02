@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useReducer, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { Menu, MoreH as MoreHorizontal, Xmark as X } from 'reicon-react'
 import { appFrameUrl, type WorkspaceApp } from '@orbit/api/apps'
@@ -9,8 +9,8 @@ import { useAgentStatus } from '@/features/agent/api'
 import { useCan } from '@/features/workspaces/permissions'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import { useApps } from './api'
-import { appBarView, readAppBarClosed, rememberAppBarClosed } from './appBar'
-import { watchAppReady } from './appReady'
+import { type AppCard, appBarView, initialAppFrame, nextAppFrame, readAppBarClosed, readAppKnownReady, rememberAppBarClosed, rememberAppKnownReady } from './appBar'
+import { type AppWatch, startAppFrame, watchAppReady } from './appReady'
 import { openSignInPopup, watchSignInPopup } from './signInPopup'
 
 /** `/apps/:slug`: one workspace app in a full-size frame, or a link when the app opens in its own tab. */
@@ -39,38 +39,48 @@ function AppView({ app, workspaceId }: { app: WorkspaceApp; workspaceId: string 
   const showTools = canSetUpTools && agent
   // A new key loads the frame again, and the rule below starts again.
   const [reloads, setReloads] = useState(0)
-  const [popupBlocked, setPopupBlocked] = useState(false)
-  const [signingIn, setSigningIn] = useState(false)
-  // Did the app say it loaded? `null`: not yet, and the time to say so has not ended.
-  const [ready, setReady] = useState<boolean | null>(null)
+  const [state, dispatch] = useReducer(nextAppFrame, initialAppFrame)
   const [closed, setClosed] = useState(() => readAppBarClosed(window, workspaceId, app.slug))
   const frameRef = useRef<HTMLIFrameElement>(null)
+  const watch = useRef<AppWatch | null>(null)
   const stopWatching = useRef<(() => void) | null>(null)
   useEffect(() => () => stopWatching.current?.(), [])
 
   const embedded = app.open_mode === 'embed'
   useEffect(() => {
     if (!embedded) return undefined
-    // The app runs in the wrapper document's one frame.
-    return watchAppReady(window as never, new URL(app.url).origin, () => frameRef.current?.contentWindow?.frames[0], () => setReady(true), () => setReady(false))
-  }, [embedded, app.url, reloads])
+    // The app runs in the wrapper document's one frame. Read each time: the first signal makes the app known.
+    const current = watchAppReady(
+      window as never,
+      { appOrigin: new URL(app.url).origin, orbitOrigin: window.location.origin, frame: () => frameRef.current?.contentWindow?.frames[0], knownReady: readAppKnownReady(window, workspaceId, app.slug) },
+      () => {
+        rememberAppKnownReady(window, workspaceId, app.slug)
+        dispatch({ type: 'ready' })
+      },
+      (failure) => dispatch({ type: 'failed', failure }),
+    )
+    watch.current = current
+    return () => {
+      current.stop()
+      watch.current = null
+    }
+  }, [embedded, app.url, app.slug, workspaceId, reloads])
+  // The wrapper has loaded: listen to its frame, then start it.
+  const startFrame = () => startAppFrame(frameRef.current?.contentDocument, { loaded: () => watch.current?.loaded(), blocked: () => watch.current?.blocked() })
 
-  const { bar: showBar, notice } = appBarView({ embedded, ready, signingIn, popupBlocked, closed })
+  const { bar: showBar, notice, card } = appBarView({ embedded, closed, ...state })
   const closeBar = () => {
     rememberAppBarClosed(window, workspaceId, app.slug)
     setClosed(true)
   }
   const reload = () => {
-    setSigningIn(false)
-    setPopupBlocked(false)
-    setReady(null)
+    dispatch({ type: 'reload' })
     setReloads((count) => count + 1)
   }
   const signIn = () => {
     stopWatching.current?.()
     const popup = openSignInPopup(window, app.url)
-    setPopupBlocked(popup === null)
-    setSigningIn(popup !== null)
+    dispatch({ type: 'sign-in', opened: popup !== null })
     if (popup) stopWatching.current = watchSignInPopup(window, popup, reload)
   }
   const openMenu = () => window.dispatchEvent(new CustomEvent('open-sidebar'))
@@ -122,7 +132,10 @@ function AppView({ app, workspaceId }: { app: WorkspaceApp; workspaceId: string 
               {notice === 'popup-blocked' ? 'Your browser blocked the sign-in window. Allow pop-ups for Orbit, then try again.' : 'If the app stays empty, use Sign in to app. Sign in once in the window that opens, then close it: the app reloads here.'}
             </p>
           ) : null}
-          <iframe ref={frameRef} key={reloads} data-slot="app-frame" className="min-h-0 w-full flex-1 border-0" src={appFrameUrl(workspaceId, app.slug)} title={app.name} />
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            <iframe ref={frameRef} key={reloads} data-slot="app-frame" className="min-h-0 w-full flex-1 border-0" src={appFrameUrl(workspaceId, app.slug)} title={app.name} onLoad={startFrame} />
+            {card ? <SignInCard name={app.name} url={app.url} reason={card} popupBlocked={state.popupBlocked} onSignIn={signIn} onReload={reload} onShowApp={() => dispatch({ type: 'show-app' })} /> : null}
+          </div>
           {/* with the bar hidden the actions stay one tap away, and on a phone also the navigation drawer */}
           {showBar ? null : (
             <DropdownMenu>
@@ -146,5 +159,33 @@ function AppView({ app, workspaceId }: { app: WorkspaceApp; workspaceId: string 
         </div>
       )}
     </Pane>
+  )
+}
+
+const CARD_REASONS: Record<AppCard, (name: string) => string> = {
+  'login-required': (name) => `${name} asked you to sign in, and its login cannot open inside Orbit.`,
+  'frame-blocked': (name) => `${name} tried to open a login page that Orbit does not allow in the frame.`,
+  silent: (name) => `${name} did not finish loading. It may need you to sign in.`,
+}
+
+/** Over the empty frame when the app failed to load: the ways out, with the most likely one first. */
+function SignInCard({ name, url, reason, popupBlocked, onSignIn, onReload, onShowApp }: { name: string; url: string; reason: AppCard; popupBlocked: boolean; onSignIn: () => void; onReload: () => void; onShowApp: () => void }) {
+  const id = useId()
+  return (
+    <div data-slot="app-sign-in-card" className="absolute inset-0 z-10 grid place-items-center bg-background/35 p-4">
+      <div role="alertdialog" aria-labelledby={`${id}-title`} aria-describedby={`${id}-reason`} className="w-full max-w-[360px] rounded-xl border bg-card p-5 text-center text-card-foreground shadow-xl">
+        <h2 id={`${id}-title`} className="m-0 text-[15px] font-semibold">Sign in to {name}</h2>
+        <p id={`${id}-reason`} className="m-0 mt-1.5 text-[13px] text-muted-foreground">{CARD_REASONS[reason](name)}</p>
+        {popupBlocked ? <p role="alert" className="m-0 mt-2 text-[13px] text-destructive">Your browser blocked the sign-in window. Allow pop-ups for Orbit, then try again.</p> : null}
+        <div className="mt-4 flex flex-wrap justify-center gap-2">
+          <Button type="button" onClick={onSignIn}>Sign in to app</Button>
+          <Button variant="outline" nativeButton={false} render={<a href={url} target="_blank" rel="noopener noreferrer" />}>Open in a new tab</Button>
+        </div>
+        <div className="mt-2 flex flex-wrap justify-center gap-2">
+          <Button type="button" variant="ghost" size="sm" className="text-muted-foreground" onClick={onReload}>Reload</Button>
+          <Button type="button" variant="ghost" size="sm" className="text-muted-foreground" onClick={onShowApp}>Show the app</Button>
+        </div>
+      </div>
+    </div>
   )
 }

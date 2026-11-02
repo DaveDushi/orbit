@@ -547,7 +547,12 @@ async fn the_list_and_the_frame_follow_roles_and_the_frame_has_its_own_csp() {
     assert!(!policy.contains("script-src"));
     assert!(!frame.text.contains("<script"));
     assert!(!frame.text.contains("<b>"));
-    assert!(frame.text.contains("src=\"https://app.example.com/home\""));
+    // `data-src`: the Orbit page sets `src` once it listens to the frame.
+    assert!(
+        frame
+            .text
+            .contains("<iframe data-src=\"https://app.example.com/home\"")
+    );
 
     // The global policy never names an app: leaked host names, and a stale cache of them.
     let other = fixture
@@ -816,8 +821,11 @@ async fn a_bad_client_redirect_or_person_never_gets_a_code() {
             .starts_with("/oauth/authorize?client_id=")
     );
     let framed = fixture.send(request(true)).await;
-    assert_eq!(framed.param("error").unwrap(), "login_required");
-    assert!(framed.location().as_str().starts_with(CALLBACK));
+    assert_eq!(framed.status, StatusCode::OK);
+    assert!(!framed.headers.contains_key(header::LOCATION));
+    assert!(framed.text.contains(&format!(
+        "content=\"{CALLBACK}?error=login_required&amp;iss="
+    )));
 
     // A suspended person.
     let suspended = fixture.user("suspended", Some("member")).await;
@@ -1300,4 +1308,108 @@ async fn cloudflare_access_signs_in_as_a_generic_oidc_client() {
         ),
         "{policy}"
     );
+}
+
+/// In Orbit's frame, `login_required` is a page that tells the Orbit page, then goes to the same
+/// callback. It has one constant script (allowed by its hash), and the app's `state` only as text.
+#[tokio::test]
+async fn a_framed_login_required_tells_orbit_and_goes_back_to_the_app() {
+    let fixture = Fixture::new().await;
+    let client = fixture.add_app("Report", &["owner"]).await;
+    let state = "s\"><script>alert(1)</script>&x='y";
+    let request = |frame: bool, redirect: &str, prompt: &str| {
+        let query: String = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("client_id", &client.id)
+            .append_pair("response_type", "code")
+            .append_pair("scope", "openid")
+            .append_pair("redirect_uri", redirect)
+            .append_pair("state", state)
+            .append_pair("prompt", prompt)
+            .finish();
+        let mut builder = Request::get(format!("/oauth/authorize?{query}"));
+        if frame {
+            builder = builder.header("sec-fetch-dest", "iframe");
+        }
+        builder.body(Body::empty()).unwrap()
+    };
+
+    let page = fixture.send(request(true, CALLBACK, "")).await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert_eq!(
+        page.headers[header::CONTENT_TYPE],
+        "text/html; charset=utf-8"
+    );
+    assert_eq!(page.headers[header::CACHE_CONTROL], "no-store");
+    assert_eq!(page.headers[header::REFERRER_POLICY], "no-referrer");
+    assert!(!page.headers.contains_key(header::X_FRAME_OPTIONS));
+    let policy = page.headers[header::CONTENT_SECURITY_POLICY]
+        .to_str()
+        .unwrap();
+    let script = page
+        .text
+        .split_once("<script>")
+        .and_then(|(_, rest)| rest.split_once("</script>"))
+        .map(|(script, _)| script)
+        .unwrap();
+    let hash = STANDARD.encode(Sha256::digest(script.as_bytes()));
+    assert_eq!(
+        policy,
+        format!(
+            "default-src 'none'; script-src 'sha256-{hash}'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"
+        )
+    );
+    // The message goes only to Orbit's origin and carries nothing of the sign-in.
+    assert!(
+        script.contains("top.postMessage({ type: 'orbit:app-login-required' }, location.origin)")
+    );
+    assert!(!script.contains("state") && !script.contains("code") && !script.contains("http"));
+    // The state is only text in an attribute: one script tag, no raw quote or tag of it.
+    assert_eq!(page.text.matches("<script").count(), 1);
+    assert!(!page.text.contains("alert(1)</script>"));
+    let content = page
+        .text
+        .split_once("<meta name=\"orbit-redirect\" content=\"")
+        .and_then(|(_, rest)| rest.split_once('"'))
+        .map(|(content, _)| content)
+        .unwrap();
+    assert!(!content.contains(['<', '>', '\'']));
+    let target = url::Url::parse(
+        &content
+            .replace("&#39;", "'")
+            .replace("&quot;", "\"")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&amp;", "&"),
+    )
+    .unwrap();
+    assert_eq!(target.as_str().split('?').next().unwrap(), CALLBACK);
+    let param = |name: &str| {
+        target
+            .query_pairs()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.into_owned())
+    };
+    assert_eq!(param("error").unwrap(), "login_required");
+    assert_eq!(param("state").unwrap(), state);
+    assert_eq!(param("iss").unwrap(), ORIGIN);
+    assert!(param("code").is_none());
+
+    // prompt=login in a frame is the same answer.
+    let again = fixture.send(request(true, CALLBACK, "login")).await;
+    assert_eq!(again.status, StatusCode::OK);
+    assert!(again.text.contains("orbit-redirect"));
+
+    // A top-level request keeps the redirect (prompt=none: no login page either).
+    let top = fixture.send(request(false, CALLBACK, "none")).await;
+    assert_eq!(top.status, StatusCode::SEE_OTHER);
+    assert_eq!(top.param("error").unwrap(), "login_required");
+    assert_eq!(top.param("state").unwrap(), state);
+
+    // A redirect URI that is not registered gets neither the page nor a redirect.
+    let bad = fixture
+        .send(request(true, "https://evil.example.com/callback", ""))
+        .await;
+    assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+    assert!(!bad.headers.contains_key(header::LOCATION));
+    assert!(!bad.text.contains("orbit-redirect"));
 }

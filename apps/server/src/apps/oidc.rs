@@ -290,16 +290,14 @@ fn oauth_error(status: StatusCode, code: &str) -> Response {
         .into_response()
 }
 
-/// Back to the app's registered redirect URI, with the parameters of the answer.
-fn back_to_client(
+/// The app's registered redirect URI, with the parameters of the answer.
+fn callback_url(
     state: &AppsState,
     redirect_uri: &str,
     client_state: Option<&str>,
     pairs: &[(&str, &str)],
-) -> Response {
-    let Ok(mut callback) = Url::parse(redirect_uri) else {
-        return oauth_error(StatusCode::INTERNAL_SERVER_ERROR, "server_error");
-    };
+) -> Option<Url> {
+    let mut callback = Url::parse(redirect_uri).ok()?;
     {
         let mut query = callback.query_pairs_mut();
         for (name, value) in pairs {
@@ -310,7 +308,49 @@ fn back_to_client(
         }
         query.append_pair("iss", &state.origin);
     }
-    Redirect::to(callback.as_str()).into_response()
+    Some(callback)
+}
+
+/// Back to the app's registered redirect URI, with the parameters of the answer.
+fn back_to_client(
+    state: &AppsState,
+    redirect_uri: &str,
+    client_state: Option<&str>,
+    pairs: &[(&str, &str)],
+) -> Response {
+    match callback_url(state, redirect_uri, client_state, pairs) {
+        Some(callback) => Redirect::to(callback.as_str()).into_response(),
+        None => oauth_error(StatusCode::INTERNAL_SERVER_ERROR, "server_error"),
+    }
+}
+
+/// Constant, so the page's CSP allows it by hash. Only to Orbit's own origin (the frame's
+/// ancestors are all Orbit: `frame-ancestors 'self'`), with no state, code or address.
+const LOGIN_REQUIRED_SCRIPT: &str = "top.postMessage({ type: 'orbit:app-login-required' }, location.origin)\n\
+     location.replace(document.querySelector('meta[name=orbit-redirect]').content)";
+
+/// `login_required` for an app in Orbit's frame: tells the Orbit page (which shows "Sign in to
+/// <app>"), then goes to the same callback as the redirect would.
+fn framed_login_required(callback: &Url) -> Response {
+    let hash = STANDARD.encode(Sha256::digest(LOGIN_REQUIRED_SCRIPT.as_bytes()));
+    let policy = format!(
+        "default-src 'none'; script-src 'sha256-{hash}'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"
+    );
+    let target = super::escape_html(callback.as_str());
+    let body = format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Sign in</title>\
+         <meta name=\"orbit-redirect\" content=\"{target}\"><script>{LOGIN_REQUIRED_SCRIPT}</script></head></html>"
+    );
+    (
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8".to_owned()),
+            (header::CONTENT_SECURITY_POLICY, policy),
+            (header::CACHE_CONTROL, "no-store".to_owned()),
+            (header::REFERRER_POLICY, "no-referrer".to_owned()),
+        ],
+        body,
+    )
+        .into_response()
 }
 
 pub(crate) async fn authorize(state: &AppsState, headers: &HeaderMap, raw_query: &str) -> Response {
@@ -340,6 +380,23 @@ pub(crate) async fn authorize(state: &AppsState, headers: &HeaderMap, raw_query:
             client_state.as_deref(),
             &[("error", code)],
         )
+    };
+    // A frame cannot show Orbit's login (frame-ancestors 'none'), and a cross-site frame gets no
+    // session cookie at all. The app must offer a top-level sign-in, and Orbit's page says so.
+    let in_frame = headers
+        .get("sec-fetch-dest")
+        .is_some_and(|value| value == "iframe");
+    let login_required = || {
+        let callback = callback_url(
+            state,
+            &redirect_uri,
+            client_state.as_deref(),
+            &[("error", "login_required")],
+        );
+        match callback {
+            Some(callback) if in_frame => framed_login_required(&callback),
+            _ => fail("login_required"),
+        }
     };
     if client_state
         .as_ref()
@@ -381,16 +438,11 @@ pub(crate) async fn authorize(state: &AppsState, headers: &HeaderMap, raw_query:
     let prompts: Vec<&str> = prompt.split(' ').collect();
     if prompts.contains(&"login") {
         // Orbit cannot make a signed-in person sign in again here: say so, do not pretend.
-        return fail("login_required");
+        return login_required();
     }
     let Some(session) = request_session(&state.identity, state.cookie_mode, headers).await else {
-        // A frame cannot show Orbit's login (frame-ancestors 'none'), and a cross-site frame gets
-        // no session cookie at all. The app must offer a top-level sign-in.
-        let in_frame = headers
-            .get("sec-fetch-dest")
-            .is_some_and(|value| value == "iframe");
         if in_frame || prompts.contains(&"none") {
-            return fail("login_required");
+            return login_required();
         }
         let path_and_query = format!("/oauth/authorize?{raw_query}");
         let target: String =

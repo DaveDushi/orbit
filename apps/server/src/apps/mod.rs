@@ -232,7 +232,8 @@ fn escape_html(text: &str) -> String {
 }
 
 /// The CSP of the wrapper document. With sign-in on, the frame also passes through Orbit's own
-/// `/oauth/authorize` (only a redirect: every other Orbit answer has `frame-ancestors 'none'`) and
+/// `/oauth/authorize` (a redirect, or the framed `login_required` page with `frame-ancestors 'self'`;
+/// every other Orbit answer has `frame-ancestors 'none'`) and
 /// through the origins of the redirect URIs. `None` when an address is not safe to write.
 pub fn frame_csp(app: &Url, redirect_uris: &[String], sign_in: bool) -> Option<String> {
     let mut sources = vec![app.origin().ascii_serialization()];
@@ -255,14 +256,16 @@ pub fn frame_csp(app: &Url, redirect_uris: &[String], sign_in: bool) -> Option<S
     ))
 }
 
-/// The script-free document with one full-size frame of the app.
+/// The script-free document with one full-size frame of the app. The frame has `data-src`, not
+/// `src`: the Orbit page (same origin) first listens to the frame's `load` and to the
+/// `securitypolicyviolation` of a refused navigation, then sets `src` (`appReady.ts`).
 pub fn frame_html(name: &str, app: &Url) -> String {
     let name = escape_html(name);
     let src = escape_html(app.as_str());
     format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>{name}</title>\
          <style>html,body{{margin:0;height:100%}}iframe{{display:block;border:0;width:100%;height:100%}}</style></head>\
-         <body><iframe src=\"{src}\" title=\"{name}\" sandbox=\"{SANDBOX}\" referrerpolicy=\"strict-origin\"></iframe></body></html>"
+         <body><iframe data-src=\"{src}\" title=\"{name}\" sandbox=\"{SANDBOX}\" referrerpolicy=\"strict-origin\"></iframe></body></html>"
     )
 }
 
@@ -1059,6 +1062,12 @@ mod tests {
         assert!(!html.contains("<b>"));
         assert!(html.contains("&lt;b&gt;&quot;Bad&quot; &amp; &#39;name&#39;&lt;/b&gt;"));
         assert!(html.contains("x=%22%3E%3Cscript%3E&amp;y=%27z"), "{html}");
+        // The Orbit page sets `src` after it listens: the document itself starts nothing.
+        assert!(
+            html.contains("<iframe data-src=\"https://app.example.com/a?"),
+            "{html}"
+        );
+        assert!(!html.contains(" src="), "{html}");
         assert_eq!(
             frame_csp(&app, &[], false).unwrap(),
             "default-src 'none'; style-src 'unsafe-inline'; frame-src https://app.example.com; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"

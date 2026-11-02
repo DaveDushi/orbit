@@ -113,9 +113,17 @@ for (const item of guarded) {
   await addApp({ name: item.name, url: `http://127.0.0.1:${item.app}`, redirect: `http://127.0.0.1:${item.access}/callback` })
   guardedSecrets[item.env] = (await secretShown()).value
 }
+// For the sign-in card (e2e-card.mjs): Orbit answers login_required in the frame (the app asks for prompt=login),
+// a login on an origin that the frame does not allow (4220, no sign-in with Orbit), and a slow app with the signal.
+await addApp({ name: 'Prompt Login', url: 'http://127.0.0.1:4218', redirect: 'http://127.0.0.1:4218/auth/callback' })
+guardedSecrets.PROMPT = (await secretShown()).value
+await addApp({ name: 'Other Login', url: 'http://127.0.0.1:4219' })
+await addApp({ name: 'Slow Ready', url: 'http://127.0.0.1:4221', redirect: 'http://127.0.0.1:4221/auth/callback' })
+guardedSecrets.SLOW = (await secretShown()).value
+const signInApps = [...guarded, { name: 'Prompt Login', env: 'PROMPT' }, { name: 'Slow Ready', env: 'SLOW' }]
 const items = await clients()
 const idOf = (name) => items.find((item) => item.name === name).sign_in.client_id
-writeFileSync(demoEnv, `SAME_ID=${idOf('Demo App')}\nSAME_SECRET=${first.value}\nCROSS_ID=${idOf('Cross Site')}\nCROSS_SECRET=${second.value}\n${guarded.map((item) => `${item.env}_ID=${idOf(item.name)}\n${item.env}_SECRET=${guardedSecrets[item.env]}\n`).join('')}`, { mode: 0o600 })
+writeFileSync(demoEnv, `SAME_ID=${idOf('Demo App')}\nSAME_SECRET=${first.value}\nCROSS_ID=${idOf('Cross Site')}\nCROSS_SECRET=${second.value}\n${signInApps.map((item) => `${item.env}_ID=${idOf(item.name)}\n${item.env}_SECRET=${guardedSecrets[item.env]}\n`).join('')}`, { mode: 0o600 })
 execFileSync(startDemo, { stdio: 'ignore' })
 await new Promise((resolve) => setTimeout(resolve, 1500))
 

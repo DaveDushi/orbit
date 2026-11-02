@@ -8,10 +8,12 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 
-const { ORBIT_ISSUER, CLIENT_ID, CLIENT_SECRET, APP_URL, FRAME_ANCESTORS, PORT = '4202', ACCESS_URL, ACCESS_MODE, ACCESS_COOP, READY_SIGNAL } = process.env
+const { ORBIT_ISSUER, CLIENT_ID, CLIENT_SECRET, APP_URL, FRAME_ANCESTORS, PORT = '4202', ACCESS_URL, ACCESS_MODE, ACCESS_COOP, READY_SIGNAL, READY_DELAY = '0', PROMPT } = process.env
 // With ACCESS_URL, a stand-in for Cloudflare Access guards the app on its own origin, and it is the
 // OpenID Connect client. ACCESS_MODE=instant redirects straight to Orbit (Instant Auth); ACCESS_MODE=page
 // shows a login page. All its answers refuse frames, as the real one does.
+// READY_SIGNAL=1 sends Orbit's ready signal, READY_DELAY milliseconds after the page (a slow single-page app).
+// PROMPT=login asks Orbit for a new login, which it answers with login_required (in a frame: Orbit's card).
 const redirectUri = ACCESS_URL ? `${ACCESS_URL}/callback` : `${APP_URL}/auth/callback`
 const cookieName = `demo_session_${PORT}`
 const tickets = new Map()
@@ -40,6 +42,7 @@ const signInUrl = async () => {
   url.search = new URLSearchParams({
     client_id: CLIENT_ID, response_type: 'code', redirect_uri: redirectUri, scope: 'openid profile email',
     state, nonce, code_challenge: b64url(createHash('sha256').update(verifier).digest()), code_challenge_method: 'S256',
+    ...(PROMPT ? { prompt: PROMPT } : {}),
   })
   return url.href
 }
@@ -118,7 +121,7 @@ createServer(async (req, res) => {
   if (user) {
     return page(res, `<h1>Demo app</h1><p id="who">Signed in as <b>${esc(user.name)}</b> (${esc(user.email)})</p>
       <p>Role in the workspace: <b id="role">${esc(user.workspace_role)}</b></p>
-      ${READY_SIGNAL ? `<script>if (window.top !== window) window.top.postMessage({ type: 'orbit:app-ready' }, ${JSON.stringify(ORBIT_ISSUER)})</script>` : ''}`)
+      ${READY_SIGNAL ? `<script>setTimeout(() => { if (window.top !== window) window.top.postMessage({ type: 'orbit:app-ready' }, ${JSON.stringify(ORBIT_ISSUER)}) }, ${Number(READY_DELAY)})</script>` : ''}`)
   }
   // Signed in a moment ago, and the cookie did not come back: the browser blocks it in a frame of
   // another site. Signing in again would loop forever.
