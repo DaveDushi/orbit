@@ -39,8 +39,10 @@ const MAX_REDIRECT_URIS: usize = 10;
 /// The client id of every app starts with this; `/oauth/register` only makes `orbit-client-…`.
 pub(crate) const CLIENT_PREFIX: &str = "orbit-app-";
 /// What the app's frame may do. `allow-same-origin` is safe only because the app's origin is never
-/// Orbit's: the URL rules refuse that, and the frame route checks it again.
-const SANDBOX: &str = "allow-scripts allow-same-origin allow-forms allow-popups allow-downloads";
+/// Orbit's: the URL rules refuse that, and the frame route checks it again. The app's sign-in tabs
+/// are normal tabs (`allow-popups-to-escape-sandbox`): a sandboxed tab cannot load a page with
+/// `Cross-Origin-Opener-Policy`, which Orbit's own sign-in pages send.
+const SANDBOX: &str = "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads";
 
 #[derive(Clone)]
 pub struct AppsState {

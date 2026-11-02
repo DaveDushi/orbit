@@ -268,20 +268,25 @@ pub(crate) fn add_security_headers(
     let policy = format!(
         "default-src 'self'; {script_source}style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'self' https://www.youtube-nocookie.com; media-src 'self' https://video.twimg.com; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self' https://github.com"
     );
-    // A response may carry its own, stricter policy (the wrapper document of a workspace app).
-    if !headers.contains_key(CONTENT_SECURITY_POLICY) {
+    // A response may carry its own policy (the wrapper document of a workspace app, which Orbit
+    // frames itself). Its `frame-ancestors` decides framing then, so it gets no `X-Frame-Options`.
+    if headers.contains_key(CONTENT_SECURITY_POLICY) {
+        headers.remove(X_FRAME_OPTIONS);
+    } else {
         headers.insert(
             CONTENT_SECURITY_POLICY,
             HeaderValue::from_str(&policy).expect("validated CSP values form a valid header"),
         );
+        // For browsers without CSP `frame-ancestors`.
+        headers.insert(X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
     }
     headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
-    // For browsers without CSP `frame-ancestors`. Provider sign-in is a full-page redirect, not a
-    // popup, so `same-origin` breaks no opener.
-    headers.insert(X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    // No other site keeps a handle to an Orbit window. `allow-popups`: Orbit keeps its handle to
+    // the app sign-in popup (`signInPopup.ts` watches it close), and apps framed in Orbit can open
+    // their own sign-in tabs; `same-origin` broke both in Chromium.
     headers.insert(
         HeaderName::from_static("cross-origin-opener-policy"),
-        HeaderValue::from_static("same-origin"),
+        HeaderValue::from_static("same-origin-allow-popups"),
     );
     headers.insert(
         REFERRER_POLICY,
@@ -321,7 +326,8 @@ fn is_valid_http_origin(origin: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use axum::http::header::{AUTHORIZATION, COOKIE, ORIGIN, UPGRADE};
-    use axum::http::{HeaderMap, Method, Uri};
+    use axum::http::header::{CONTENT_SECURITY_POLICY, X_FRAME_OPTIONS};
+    use axum::http::{HeaderMap, HeaderValue, Method, Uri};
 
     use super::{OriginPolicy, add_security_headers, bearer_token};
 
@@ -330,7 +336,22 @@ mod tests {
         let mut headers = HeaderMap::new();
         add_security_headers(&mut headers, true, None);
         assert_eq!(headers["x-frame-options"], "DENY");
-        assert_eq!(headers["cross-origin-opener-policy"], "same-origin");
+        assert_eq!(
+            headers["cross-origin-opener-policy"],
+            "same-origin-allow-popups"
+        );
+    }
+
+    #[test]
+    fn a_response_with_its_own_policy_decides_its_framing() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static("frame-ancestors 'self'"),
+        );
+        add_security_headers(&mut headers, true, None);
+        assert_eq!(headers[CONTENT_SECURITY_POLICY], "frame-ancestors 'self'");
+        assert!(!headers.contains_key(X_FRAME_OPTIONS));
     }
 
     fn permits(method: Method, path: &str, headers: &[(axum::http::HeaderName, &str)]) -> bool {

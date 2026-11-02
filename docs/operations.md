@@ -324,6 +324,7 @@ Set them with `ORBIT_RATE_LIMIT_<KEY>`, the key in upper case (for example `ORBI
 - **Invitation emails:** an email invitation over a cap is taken back and answered with `429 invitation_email_limit` and `Retry-After`. Invitation links (`"delivery": "manual"`) have no cap. The subject is always "You have been invited to Orbit"; the body names the workspace on one line, in quotes, without control or direction characters, and at most 60 characters long. The inviter's name is not in the email.
 - Values: the per-minute limits 1 to 1,000,000; `workspace_multiplier` 1 to 1000; the cooldown 0 to 86,400 seconds; the daily caps 1 to 100,000.
 - **Fixed HTTP limits:** a client must send a request's headers within 30 seconds, or Orbit closes the connection. A request that has no response after 60 seconds gets `408 request_timeout`; WebSockets, uploads, downloads, exports and the Admin routes have no such limit. A request body may be at most 2 MiB, except a `multipart/form-data` upload, which may be up to `ORBIT_UPLOAD_MAX_REQUEST_BYTES`. Give the reverse proxy timeouts at least this long.
+- **Reverse proxy keep-alive:** keep the proxy's idle timeout for upstream connections to Orbit under 30 seconds. Orbit closes a connection that sends no request headers for 30 seconds, and a proxy that reuses such a connection gets an error.
 
 ## Monitoring and operational ownership
 
