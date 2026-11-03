@@ -7,24 +7,40 @@ function ensureWorker() {
   GlobalWorkerOptions.workerPort ??= new Worker(new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url), { type: 'module' })
 }
 
-/** One page, drawn when it comes near the visible part of the panel. */
+/**
+ * One page, drawn while it is within one panel height of the visible part of the panel. A page that scrolls farther
+ * away gives its bitmap back (its size stays from CSS), so a long PDF holds only a few pages in memory.
+ */
 function PdfPage({ pdf, number, width }: { pdf: PDFDocumentProxy; number: number; width: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [near, setNear] = useState(false)
   const [ratio, setRatio] = useState(1.414)
+  /** The canvas holds a page bitmap (not the empty default one). */
+  const drawn = useRef(false)
 
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const observer = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting) setNear(true)
-    }, { rootMargin: '800px' })
+    // The root is the scrolling panel: the margin of the default root (the window) cannot reach past the panel's clip.
+    const observer = new IntersectionObserver(([entry]) => setNear(entry.isIntersecting), {
+      root: canvas.closest('[data-pdf-pages]')?.parentElement,
+      rootMargin: '100% 0px',
+    })
     observer.observe(canvas)
     return () => observer.disconnect()
   }, [])
 
   useEffect(() => {
-    if (!near || width <= 0) return
+    if (!near) {
+      const canvas = canvasRef.current
+      if (canvas && drawn.current) {
+        canvas.width = 0
+        canvas.height = 0
+        drawn.current = false
+      }
+      return
+    }
+    if (width <= 0) return
     let render: ReturnType<Awaited<ReturnType<PDFDocumentProxy['getPage']>>['render']> | undefined
     let stopped = false
     void pdf.getPage(number).then((page) => {
@@ -36,6 +52,7 @@ function PdfPage({ pdf, number, width }: { pdf: PDFDocumentProxy; number: number
       const viewport = page.getViewport({ scale: (width / plain.width) * pixels })
       canvas.width = Math.floor(viewport.width)
       canvas.height = Math.floor(viewport.height)
+      drawn.current = true
       render = page.render({ canvas, viewport })
       render.promise.catch(() => {})
     })

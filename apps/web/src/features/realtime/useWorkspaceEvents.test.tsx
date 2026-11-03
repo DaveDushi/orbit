@@ -129,6 +129,59 @@ test('a failed workspace refresh backs off instead of retrying every 250 ms', as
   }
 })
 
+test('the flush timer runs only while a refresh waits: an event behind a focused draft is refreshed after the blur', async () => {
+  const originalWebSocket = globalThis.WebSocket
+  const { setInterval: originalSetInterval, clearInterval: originalClearInterval } = globalThis
+  let socket: { onmessage: ((event: MessageEvent) => void) | null } | undefined
+  class FakeWebSocket {
+    onmessage: ((event: MessageEvent) => void) | null = null
+    constructor() { socket = this }
+    close() {}
+  }
+  globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket
+  const timers = new Set<unknown>()
+  globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => {
+    const timer = originalSetInterval(...args)
+    timers.add(timer)
+    return timer
+  }) as typeof setInterval
+  globalThis.clearInterval = ((timer: Parameters<typeof clearInterval>[0]) => {
+    timers.delete(timer)
+    originalClearInterval(timer)
+  }) as typeof clearInterval
+  const client = new QueryClient()
+  const invalidate = mock(async () => {})
+  client.invalidateQueries = invalidate as typeof client.invalidateQueries
+  const input = document.createElement('input')
+  document.body.append(input)
+
+  try {
+    const view = renderHook(() => useWorkspaceEvents('workspace-1'), {
+      wrapper: ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+    })
+    expect(timers.size).toBe(0)
+    input.focus()
+    act(() => socket?.onmessage?.(new MessageEvent('message', {
+      data: '{"version":1,"kind":"workspace.changed","sequence":"1"}',
+    })))
+    await settleRefresh()
+    expect(invalidate).toHaveBeenCalledTimes(0)
+    expect(timers.size).toBe(1)
+    input.blur()
+    await settleRefresh()
+    expect(invalidate).toHaveBeenCalledTimes(1)
+    await settleRefresh()
+    expect(timers.size).toBe(0)
+    view.unmount()
+  } finally {
+    input.remove()
+    globalThis.WebSocket = originalWebSocket
+    globalThis.setInterval = originalSetInterval
+    globalThis.clearInterval = originalClearInterval
+    client.clear()
+  }
+})
+
 test('any workspace event refreshes saved views and task queries but never view preferences', async () => {
   const originalWebSocket = globalThis.WebSocket
   let socket: { onmessage: ((event: MessageEvent) => void) | null } | undefined

@@ -40,11 +40,19 @@ export function useWorkspaceEvents(workspaceId: string) {
     let refreshing = false
     let nextRefresh = 0
     let refreshDelay = 1000
+    /** Retries a refresh that has to wait (a focused draft, a write, the backoff). It runs only while one is pending. */
+    let flush: ReturnType<typeof setInterval> | undefined
     setConnected(false)
 
     const refresh = async () => {
+      if (disposed || refreshing) return
+      if (pending === undefined) {
+        clearInterval(flush)
+        flush = undefined
+        return
+      }
       // Remote edits must not remount a focused draft or race optimistic writes.
-      if (disposed || pending === undefined || refreshing || Date.now() < nextRefresh || client.isMutating() > 0) return
+      if (Date.now() < nextRefresh || client.isMutating() > 0) return
       if (focusedDraftBlocksRefresh()) return
       refreshing = true
       const next = pending
@@ -97,6 +105,7 @@ export function useWorkspaceEvents(workspaceId: string) {
         pending = event.sequence
         pendingWorkspaces ||= event.kind === 'resync_required' || event.workspaces_changed === true
         pendingProfile ||= event.kind === 'resync_required' || event.profile_changed === true
+        flush ??= setInterval(() => { void refresh() }, 250)
         void refresh()
       }
       const current = socket
@@ -137,7 +146,6 @@ export function useWorkspaceEvents(workspaceId: string) {
     window.addEventListener('online', reconnect)
     // The tab is visible again or Retry: only a socket that waits for its retry starts again.
     const stopWatching = watchReconnect(reconnectNow)
-    const flush = setInterval(() => { void refresh() }, 250)
     connect()
     return () => {
       disposed = true
