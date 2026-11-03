@@ -4,11 +4,11 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at f005d4bbd8262a005e86532e518841e4277a368f
-  (fast-forward to the `orbit-apps` branch).
+- Source: DaveDushi/orbit, `main` at effa521452767a45cfaf097327d0f3b2ea053a84
+  (merge of `app-signin-card` and `web-perf`, November 3, 2026).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:f005d4b`); fork commits have no published upstream image.
-- Image ID: sha256:a3d6e7553c25892a2be99134c74396e715178c90ab26cfeb26acb39519f68ff3
+  (`orbit:effa521`); fork commits have no published upstream image.
+- Image ID: sha256:a1afb2dbd85391bbc76ca3a510d7b6e50a7a4174d0fedade6d1970a6cc8efe27
 - Team agent sidecar code (`/opt/orbit-agent`): commit 857ce8e.
 - OIDC gateway: `orbit-oidc-gateway.service`, nginx on `127.0.0.1:8400`, config in `/etc/orbit-oidc-gateway/`
   (see `docs/apps.md`). `cloudflared` is NOT installed.
@@ -236,6 +236,53 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 3, 2026 upgrade: the app sign-in card and lighter Docs PDFs
+
+Merged `app-signin-card` (`dbceae5`, fast-forward) and `web-perf` (`b2d9d90`) into `main`: merge commit `effa521`. Contents: a
+"Sign in to <app>" card when an embedded app does not load (frame blocked, or the app's sign-in needs Orbit login); `PdfPages`
+frees the bitmaps of PDF pages off screen; the realtime flush timer runs only while a refresh waits (report: `.ai/web-perf.md`).
+Server code changed too (`apps/server/src/apps/{mod,oidc}.rs`, `crates/platform/src/http/security.rs`): the security layer keeps
+a response's own `Referrer-Policy` (the framed `login_required` page sends `no-referrer`); other pages still get
+`strict-origin-when-cross-origin`. No migration (schema stays 72), no new setting, no `apps/agent` change. `/etc/orbit/orbit.env`,
+`/etc/orbit/agent.env`, nginx, the OIDC gateway and the tunnel did not change; the sidecar was only restarted.
+
+Before the merge, 347 tracked files and some folders in this checkout belonged to root (earlier git runs as root), so git as
+exedev could not update them. They now belong to exedev again (list: `/root/deploy-signin-perf/root-owned.txt`); the merge ran as
+exedev. `apps/web/dist`, `target` and `apps/server/backups` were not changed.
+
+Checks on merged `main` before the build: web typecheck, oxlint (warnings only), web unit tests (1533 pass), and
+`cargo test -p orbit-server --test apps_api` on SQLite (11). The branches were tested before (`apps_api` on SQLite and Postgres,
+`scripts/apps-demo/e2e-card.mjs` in Chromium, `useWorkspaceEvents` tests). `orbit:effa521` was built with `orbit-deploy image`
+(10:09:58 to 10:24:18 UTC, 14 minutes, warm cache) and `deploy/smoke.sh` passed. The extracted binary has revision `effa521`;
+`orbit config check` with it passed.
+
+At the switch: stopped `orbit-agent` and `orbit` at 10:25:06 UTC, created and verified snapshot
+`01a1a0f0-ecdf-7172-9d3c-15331f8851e5` (`/var/backups/orbit/snapshots/01a1a0f0-ecdf-7172-9d3c-15331f8851e5`) with the old CLI,
+saved the sidecar data as `/var/backups/orbit-agent/orbit-agent-before-effa521.tgz` (the sidecar code did not change, so no code
+copy), installed the binary at 10:25:14 UTC and started `orbit` (ready 10:25:16 UTC), then `orbit-agent`. The old executable is
+`/usr/local/bin/orbit-b051881` (checked equal to the installed and running one before the swap); the new one is also kept as
+`/usr/local/bin/orbit-effa521`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` active, no restarts; readiness (all checks);
+`/orbit-build.json` revision `effa521`; sidecar `mock: false`; schema 72; live quick-check and foreign-key checks pass; counts
+unchanged (6 users, 1 workspace, 3 projects, 62 tasks, 32 pages, 28 page files, 42 blobs, 474 chat messages, 72 agent inputs, 1
+integration, 2 apps); no new warning or error in the logs; the served bundle has the card (`app-sign-in-card`); `/login` answers
+`Referrer-Policy: strict-origin-when-cross-origin`, COOP `same-origin-allow-popups` and `X-Frame-Options: DENY`; the OIDC gateway
+answers `/oauth/jwks` 200 and `/login` 404 on loopback. Chromium (desktop 1440×900 and a phone identity 390×844) through nginx:
+`/login`, `/recovery`, `/register`, `/setup`, `/accept-invitation` and `/confirm-email` answer 200 with no horizontal overflow;
+`/apps/product-development` and `/agentic` go to `/login`; https://orbit.wellrox.com/ goes to the exe.dev login. Screenshots:
+`/root/deploy-signin-perf/shots/`. Each page logs two CSP inline-style errors; `orbit:b051881` logs the same two, so they are not
+new. **Not** verified on production: any signed-in page (the card on a real app, a PDF page), and real WebKit on a phone.
+
+Rollback (no schema change, so the old binary can read the database; the snapshot is needed only if data is damaged):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-b051881 /usr/local/bin/orbit
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+```
 
 ### November 2, 2026 upgrade: upstream port, the Agentic page and the app bar X button
 
