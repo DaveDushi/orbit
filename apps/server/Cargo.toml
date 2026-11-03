@@ -43,6 +43,7 @@ serde_urlencoded = "0.7"
 sha2 = "0.10"
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite"] }
 tempfile = "3"
+zstd = "0.14"
 thiserror = "2"
 totp-rs = { version = "6", default-features = false, features = ["std", "otpauth", "qr"] }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
@@ -70,4 +71,5 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 orbit-platform = { path = "../../crates/platform", features = ["test-support"] }
 sqlx = { version = "0.9", default-features = false, features = ["postgres"] }
 tempfile = "3"
+zstd = "0.14"
 tokio-tungstenite = "0.29"
