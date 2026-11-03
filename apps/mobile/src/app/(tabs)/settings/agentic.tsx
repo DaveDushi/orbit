@@ -81,7 +81,7 @@ function McpSetup() {
         {list.map((connection, index) => (
           <SettingsRow key={connection.id} first={index === 0}>
             <RowIcon icon="magicStar" />
-            <RowText title={connection.client_name} subtitle={`${connection.workspace_name} · ${connection.scope} · ${connection.project_names.join(', ')}`} />
+            <RowText title={connection.client_name} subtitle={`${connection.workspace_name} · ${connection.scope} · ${connection.project_names.join(', ')} · Connected ${connectedAt(connection.created_at)}`} />
             <Button label="Disconnect" variant="ghost" size="sm" disabled={disconnect.isPending} onPress={() => disconnect.mutate(connection.id)} />
           </SettingsRow>
         ))}
@@ -90,6 +90,8 @@ function McpSetup() {
     </>
   )
 }
+
+const connectedAt = (millis: number) => new Date(millis).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 
 function Code({ text }: { text: string }) {
   return (
