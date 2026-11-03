@@ -27,6 +27,7 @@ export interface SettingsNavItem {
 export const WORKSPACE_NAV: readonly SettingsNavItem[] = [
   { href: '/settings', label: 'General', icon: 'settings' },
   { href: '/settings/file-storage', label: 'File storage', icon: 'cloudConnection' },
+  { href: '/settings/workspace-agentic', label: 'Agentic', icon: 'magicStar' },
   { href: '/settings/members', label: 'Members', icon: 'people' },
 ]
 
@@ -41,6 +42,7 @@ export const ACCOUNT_NAV: readonly SettingsNavItem[] = [
   { href: '/settings/sessions', label: 'Sessions', icon: 'shield' },
   { href: '/settings/appearance', label: 'Appearance', icon: 'brush' },
   { href: '/settings/notifications', label: 'Notifications', icon: 'bell' },
+  { href: '/settings/agentic', label: 'Agentic', icon: 'magicStar' },
 ]
 
 /** The web's Admin pages in its order; General is the area's first page, as `/admin` is on the web. */

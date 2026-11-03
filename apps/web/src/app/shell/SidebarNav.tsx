@@ -4,7 +4,7 @@ import { useBindings } from '@/shortcuts/useCommand'
 import { createContext, Fragment, useContext, useEffect, useState, type ComponentType, type ReactNode } from 'react'
 import { Link, useLocation, useMatch, useNavigate, useResolvedPath, type LinkProps } from 'react-router'
 import { cva, type VariantProps } from 'class-variance-authority'
-import { Calendar, ChevronDown, CalendarTick, Danger, SecurityUser, Home2 as Home, Layer, Message as MessageSquare, DocumentText as FileText, Search4 as Search, Setting2 as Settings, Sms as Mail, Star, TaskSquare as SquareCheck, Timer, Folder, Add as Plus, Trash, MagicStar } from 'reicon-react'
+import { Calendar, ChevronDown, CalendarTick, Danger, SecurityUser, Home2 as Home, Layer, Message as MessageSquare, DocumentText as FileText, Search4 as Search, Setting2 as Settings, Sms as Mail, Star, TaskSquare as SquareCheck, Timer, Folder, Add as Plus, Trash } from 'reicon-react'
 import { cn } from 'cn'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
@@ -522,13 +522,15 @@ export function SidebarNav({
                     <SidebarNavComingSoon key={link.to} icon={link.icon} label={link.label} />
                   ))}
                   {workspaceId ? <AppLinks workspaceId={workspaceId} onNavigate={onNavigate} /> : null}
-                  <SidebarSection label="Personal" collapsed={collapsed} />
-                  {/* every AI setting, by role: one link for everybody, so it does not belong to one settings area */}
-                  <SidebarNavItem to="/agentic" icon={MagicStar} label="Agentic" onClick={onNavigate} />
                   {/* the new UI keeps these in the Tasks area */}
-                  {contextual ? null : TASK_PRESETS.map((preset) => (
-                    <SidebarNavItem key={preset.view} to={taskViewPath(preset.view)} active={taskViewActive(preset.view)} icon={preset.icon} label={preset.label} onClick={onNavigate} />
-                  ))}
+                  {contextual ? null : (
+                    <>
+                      <SidebarSection label="Personal" collapsed={collapsed} />
+                      {TASK_PRESETS.map((preset) => (
+                        <SidebarNavItem key={preset.view} to={taskViewPath(preset.view)} active={taskViewActive(preset.view)} icon={preset.icon} label={preset.label} onClick={onNavigate} />
+                      ))}
+                    </>
+                  )}
                   <SidebarSection label="Manage" collapsed={collapsed} />
                   <SidebarNavItem to="/settings" icon={Settings} label="Settings" onClick={onNavigate} />
                   {isRoot ? (

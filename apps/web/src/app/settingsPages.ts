@@ -1,5 +1,5 @@
 // The pages of one lazy chunk (see App.tsx).
-export { AccountLayout, AdminLayout, AgenticLayout, SettingsLayout } from '@/features/settings/pages/SettingsLayout'
+export { AccountLayout, AdminLayout, SettingsLayout } from '@/features/settings/pages/SettingsLayout'
 export { AdminAuditPage } from '@/features/admin/pages/AdminAuditPage'
 export { AdminBackupsPage } from '@/features/admin/pages/AdminBackupsPage'
 export { AdminEmailPage } from '@/features/admin/pages/AdminEmailPage'

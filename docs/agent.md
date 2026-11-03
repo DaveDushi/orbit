@@ -44,7 +44,7 @@ At the start of each run the agent reads a short view of both: recent memories w
 summaries that it writes itself. It can search all memories and open a summary. Memories are data for the agent,
 never instructions, and each one keeps its author and source thread.
 
-People see and search the memory in **Agentic → You**, and delete wrong entries there (a deleted
+People see and search the memory in **Account settings → Agentic**, and delete wrong entries there (a deleted
 memory also drops the summaries built from it; the agent writes them again). The agent itself cannot delete memory.
 When a member leaves a workspace, their private memory there is deleted. Design: `.ai/agent-design.md`, "Memory".
 
@@ -52,9 +52,9 @@ When a member leaves a workspace, their private memory there is deleted. Design:
 
 | Setting | Where | Who | Notes |
 |---|---|---|---|
-| Name | Agentic → Admin (`/agentic/admin`, `PUT /api/v1/admin/agent`) | Installation admins | One name for the installation: it is the bot user's display name, so it is also the agent's `@handle`. 2–40 characters (letters, digits, single spaces, `- _ . '`). Orbit refuses a name that another account already has (trimmed, any case), because `@Name` would then reach that person. Messages and earlier mentions show the new name. |
+| Name | Agentic → Admin (`/settings/agentic/admin`, `PUT /api/v1/admin/agent`) | Installation admins | One name for the installation: it is the bot user's display name, so it is also the agent's `@handle`. 2–40 characters (letters, digits, single spaces, `- _ . '`). Orbit refuses a name that another account already has (trimmed, any case), because `@Name` would then reach that person. Messages and earlier mentions show the new name. |
 | Model and thinking level | Agentic → Admin (`PUT /api/v1/admin/agent/model`) | Installation admins | One choice for the installation, stored in `agent_model_settings`. The model list comes from the sidecar (its ChatGPT (Codex) models); Orbit refuses any other model, and a model can only be saved while the sidecar answers. Thinking: `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. **Default** (`null`) is `AGENT_MODEL` and Pi's default thinking level. Compaction keeps `AGENT_COMPACT_MODEL`/`AGENT_COMPACT_THINKING`. |
-| Team instructions | Agentic → Workspace (`/agentic/workspace`, `PUT /api/v1/workspaces/{id}/agent`) | Owners and admins write, every member reads | Plain text, at most 4,000 characters, stored in `agent_team_instructions`. |
+| Team instructions | Agentic → Workspace (`/settings/agentic/workspace`, `PUT /api/v1/workspaces/{id}/agent`) | Owners and admins write, every member reads | Plain text, at most 4,000 characters, stored in `agent_team_instructions`. |
 
 The system prompt of a run has, in this order: the rules (with the current name), the built-in **About Orbit**
 section (`apps/agent/src/prompt.ts`: Orbit's features, short how-to answers, what the agent can and cannot do; not
@@ -67,7 +67,7 @@ sidecar logs a warning. Agent sessions cannot read or change these settings. Wit
 
 ## Agent tools (integrations)
 
-Owners and admins can give the agent tools outside Orbit in **Agentic → Workspace**:
+Owners and admins can give the agent tools outside Orbit in **Settings → Agentic → Workspace**:
 
 - **Remote MCP server**: the server's Streamable HTTP URL (for example Cloudflare's MCP server). Press
   **Test** to read its tools, then turn on the tools the agent may use. Tools the server marks read-only are on at

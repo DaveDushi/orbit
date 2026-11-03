@@ -278,7 +278,7 @@ On a phone the bar has one row: the menu, the app's name, **Sign in**, **Open**,
 
 ## Limits
 
-- **Tokens give no access to Orbit.** The access token works only at `/oauth/userinfo`, for 10 minutes. There are no refresh tokens. To let the agent call an app, add it in **Agentic → Workspace**; an app's page links there for admins.
+- **Tokens give no access to Orbit.** The access token works only at `/oauth/userinfo`, for 10 minutes. There are no refresh tokens. To let the agent call an app, add it in **Settings → Agentic → Workspace**; an app's page links there for admins.
 - **The app's own session is the app's.** When a member is removed or a role is no longer allowed, Orbit deletes or refuses their tokens at once, and they cannot sign in again. A session the app already made lasts until the app ends it. Keep app sessions short, or check `/oauth/userinfo` while the token lasts.
 - **Removing an app** deletes its client and tokens. The app itself keeps running.
 - **`prompt=login` is not supported**: Orbit answers `login_required`. `max_age`, `request` and `request_uri` are not supported.

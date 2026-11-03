@@ -353,8 +353,8 @@ export class Agent {
 		if (!credential) {
 			const body =
 				kind === "answer"
-					? `<@${driverId}> I need your ChatGPT connection to continue. Connect it in [Agentic](${this.#config.publicUrl}/agentic), then mention me again.`
-					: `<@${driverId}> To use me, connect your ChatGPT account first: [Agentic](${this.#config.publicUrl}/agentic). Then mention me again.`;
+					? `<@${driverId}> I need your ChatGPT connection to continue. Connect it in [Agentic](${this.#config.publicUrl}/profile/agentic), then mention me again.`
+					: `<@${driverId}> To use me, connect your ChatGPT account first: [Agentic](${this.#config.publicUrl}/profile/agentic). Then mention me again.`;
 			await this.#orbit.postMessage({ workspaceId: input.workspace_id, conversationId: input.conversation_id, rootMessageId: state.rootMessageId, body, nonce: `agent:${input.message_id}` });
 			await this.#orbit.updateThread(input.thread_key, this.#threadUpdate(state, "idle", state.driverId, null));
 			await this.#orbit.acknowledge(input.message_id);
@@ -500,7 +500,7 @@ export class Agent {
 			const detail = `${settled.reason ?? "stopped"}${settled.detail ? `: ${typeof settled.detail === "string" ? settled.detail : JSON.stringify(settled.detail)}` : ""}`;
 			if (/oauth|auth|401|refresh|api key/i.test(detail) && state.driverId) {
 				await this.#orbit.invalidateCredential(state.driverId).catch(() => undefined);
-				return `⚠️ <@${state.driverId}> your ChatGPT sign-in no longer works. Connect again in [Agentic](${this.#config.publicUrl}/agentic), then mention me again.${footer}`;
+				return `⚠️ <@${state.driverId}> your ChatGPT sign-in no longer works. Connect again in [Agentic](${this.#config.publicUrl}/profile/agentic), then mention me again.${footer}`;
 			}
 			return `⚠️ I could not finish: ${detail.slice(0, 600)}. Mention me to try again.${footer}`;
 		}

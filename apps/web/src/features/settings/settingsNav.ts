@@ -1,5 +1,5 @@
 import { useContext, type ComponentType } from 'react'
-import { ArchiveBox, Brush, DocumentDownload, Category, Card, Chart, ClipboardText, CloudConnection, Cpu, SecurityUser, Driver, Key, Keyboard, LampCharge, Link2, Lock, Notification as Bell, Setting2 as Settings, ShieldTick as ShieldCheck, SmileCircle, Sms as Mail, Sticker, Danger as TriangleAlert, User, People as Users } from 'reicon-react'
+import { ArchiveBox, Brush, DocumentDownload, Category, Card, Chart, ClipboardText, CloudConnection, Cpu, SecurityUser, Driver, Key, Keyboard, LampCharge, Link2, Lock, MagicStar, Notification as Bell, Setting2 as Settings, ShieldTick as ShieldCheck, SmileCircle, Sms as Mail, Sticker, Danger as TriangleAlert, User, People as Users } from 'reicon-react'
 import type { Permission } from '@orbit/api/generated/types.gen'
 import { WorkspaceContext } from '@/features/workspaces/workspaceContext'
 import { useBillingEnabled } from '@/features/workspaces/billing'
@@ -57,6 +57,7 @@ const AREAS: Record<SettingsAreaName, SettingsArea> = {
         items: [
           { to: '/settings/file-storage', label: 'File storage', icon: CloudConnection },
           { to: '/settings/github', label: 'GitHub', icon: Link2 },
+          { to: '/settings/agentic', label: 'Agentic', icon: MagicStar },
           { to: '/settings/api-tokens', label: 'API tokens', icon: Key, permission: 'api_tokens.manage' },
           { to: '/settings/apps', label: 'Apps', icon: Category, permission: 'apps.manage' },
         ],
@@ -94,6 +95,7 @@ const AREAS: Record<SettingsAreaName, SettingsArea> = {
       {
         label: 'Advanced',
         items: [
+          { to: '/profile/agentic', label: 'Agentic', icon: MagicStar },
           { to: '/profile/storage', label: 'Storage', icon: Driver },
         ],
       },
@@ -153,9 +155,9 @@ export interface AgenticTab {
 }
 
 export const AGENTIC_TABS: readonly AgenticTab[] = [
-  { to: '/agentic', label: 'You' },
-  { to: '/agentic/workspace', label: 'Workspace', agent: true },
-  { to: '/agentic/admin', label: 'Admin', agent: true, instanceAdmin: true },
+  { to: '/settings/agentic', label: 'You' },
+  { to: '/settings/agentic/workspace', label: 'Workspace', agent: true },
+  { to: '/settings/agentic/admin', label: 'Admin', agent: true, instanceAdmin: true },
 ]
 
 /**

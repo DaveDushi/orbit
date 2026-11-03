@@ -38,7 +38,6 @@ const DocsPage = lazy(() => loadDocs().then((module) => ({ default: module.DocsP
 const DrivePage = lazy(() => loadDrive().then((module) => ({ default: module.DrivePage })))
 const AccountLayout = lazy(() => loadSettings().then((module) => ({ default: module.AccountLayout })))
 const AdminLayout = lazy(() => loadSettings().then((module) => ({ default: module.AdminLayout })))
-const AgenticLayout = lazy(() => loadSettings().then((module) => ({ default: module.AgenticLayout })))
 const SettingsLayout = lazy(() => loadSettings().then((module) => ({ default: module.SettingsLayout })))
 const AdminAuditPage = lazy(() => loadSettings().then((module) => ({ default: module.AdminAuditPage })))
 const AdminBackupsPage = lazy(() => loadSettings().then((module) => ({ default: module.AdminBackupsPage })))
@@ -82,7 +81,7 @@ const ViewsPage = lazy(() => loadTasks().then((module) => ({ default: module.Vie
 const startPath = window.location.pathname
 const startAreas: Record<string, () => Promise<unknown>> = {
   '': loadHome, tasks: loadTasks, 'tasks-trash': loadTasks, views: loadTasks, docs: loadDocs, drive: loadDrive, chat: loadChat, apps: loadApps,
-  activity: loadInbox, onboarding: loadOnboarding, agentic: loadSettings, profile: loadSettings, admin: loadSettings, settings: loadSettings,
+  activity: loadInbox, onboarding: loadOnboarding, profile: loadSettings, admin: loadSettings, settings: loadSettings,
 }
 const signedInStart = !/^\/(setup|login|recovery|register|oauth|accept-invitation|confirm-email|s)(\/|$)/.test(startPath)
 const startPage = signedInStart ? startAreas[startPath.split('/')[1]]?.() : undefined
@@ -157,25 +156,22 @@ export default function App() {
               <Route path="dm/*" element={<Navigate to={chatEnabled ? '/chat' : '/tasks'} replace />} />
               <Route path="activity" element={<InboxPage />} />
               <Route path="inbox" element={<MovedTo path="/activity" />} />
-              <Route path="agentic" element={<AgenticLayout />}>
-                <Route element={<AgenticTabs />}>
-                  <Route index element={<AgenticYou />} />
-                  <Route path="workspace" element={<AgenticWorkspace />} />
-                  <Route path="admin" element={<AgenticAdmin />} />
-                </Route>
-              </Route>
+              {/* the Agentic page moved to the workspace settings; old links, bookmarks and agent messages still work */}
+              <Route path="agentic/*" element={<MovedTo path="/settings/agentic" />} />
+              <Route path="agentic/workspace" element={<MovedTo path="/settings/agentic/workspace" />} />
+              <Route path="agentic/admin" element={<MovedTo path="/settings/agentic/admin" />} />
               <Route path="profile" element={<AccountLayout />}>
                 <Route index element={<ProfilePage />} />
                 <Route path="appearance" element={<AppearancePage />} />
                 <Route path="notifications" element={<NotificationsPage />} />
                 <Route path="security" element={<SecurityPage />} />
                 <Route path="sessions" element={<SessionsPage />} />
-                <Route path="agentic" element={<MovedTo path="/agentic" />} />
+                <Route path="agentic" element={<AgenticYou />} />
                 <Route path="shortcuts" element={<ShortcutsPage />} />
                 <Route path="storage" element={<StoragePage />} />
                 {/* the Agentic page has these now; old links, bookmarks and agent messages still work */}
-                <Route path="agent/*" element={<MovedTo path="/agentic" />} />
-                <Route path="agent-memory" element={<MovedTo path="/agentic" />} />
+                <Route path="agent/*" element={<MovedTo path="/profile/agentic" />} />
+                <Route path="agent-memory" element={<MovedTo path="/profile/agentic" />} />
               </Route>
               <Route path="admin" element={<AdminLayout />}>
                 <Route index element={<AdminSettingsPage />} />
@@ -187,7 +183,7 @@ export default function App() {
                 <Route path="backups" element={<AdminBackupsPage />} />
                 <Route path="jobs" element={<AdminJobsPage />} />
                 <Route path="feedback" element={<FeedbackPage />} />
-                <Route path="agent" element={<MovedTo path="/agentic/admin" />} />
+                <Route path="agent" element={<MovedTo path="/settings/agentic/admin" />} />
               </Route>
               <Route path="settings" element={<SettingsLayout />}>
                 <Route index element={<GeneralPage />} />
@@ -196,12 +192,17 @@ export default function App() {
                 <Route path="emoji" element={<EmojiPage />} />
                 <Route path="stickers" element={<StickersPage />} />
                 <Route path="github" element={<GithubPage />} />
+                <Route path="agentic" element={<AgenticTabs />}>
+                  <Route index element={<AgenticYou />} />
+                  <Route path="workspace" element={<AgenticWorkspace />} />
+                  <Route path="admin" element={<AgenticAdmin />} />
+                </Route>
                 <Route path="billing" element={<BillingPage />} />
                 <Route path="export" element={<ExportPage />} />
                 <Route path="danger-zone" element={<DangerZonePage />} />
                 <Route path="members" element={<MembersPage />} />
-                <Route path="agent/*" element={<MovedTo path="/agentic/workspace" />} />
-                <Route path="agent-tools" element={<MovedTo path="/agentic/workspace" />} />
+                <Route path="agent/*" element={<MovedTo path="/settings/agentic/workspace" />} />
+                <Route path="agent-tools" element={<MovedTo path="/settings/agentic/workspace" />} />
                 <Route path="invitations" element={<Navigate to="/settings/members" replace />} />
                 {/* these moved to the account settings; old links and bookmarks still work */}
                 <Route path="sessions" element={<MovedTo path="/profile/sessions" />} />

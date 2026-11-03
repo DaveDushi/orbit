@@ -166,7 +166,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       { id: 'nav_settings', icon: Settings, title: 'Go to Settings', meta: 'Navigation', to: '/settings', command: 'nav.settings', keywords: 'settings preferences' },
       { id: 'nav_members', icon: Users, title: 'Go to Members', meta: 'Navigation', to: '/settings/members', keywords: 'members invitations people' },
       { id: 'nav_sessions', icon: ShieldCheck, title: 'Go to Sessions', meta: 'Navigation', to: '/profile/sessions', keywords: 'sessions devices' },
-      { id: 'nav_agentic', icon: MagicStar, title: 'Go to Agentic', meta: 'Navigation', to: '/agentic', keywords: 'agentic agent mcp ai claude codex grok chatgpt memory tools connected apps' },
+      { id: 'nav_agentic', icon: MagicStar, title: 'Go to Agentic', meta: 'Navigation', to: '/settings/agentic', keywords: 'agentic agent mcp ai claude codex grok chatgpt memory tools connected apps' },
       { id: 'nav_notifications', icon: Settings, title: 'Go to Notification settings', meta: 'Navigation', to: '/profile/notifications', keywords: 'notifications push sounds alerts' },
       { id: 'nav_trash', icon: Trash2, title: 'Go to Task trash', meta: 'Navigation', to: '/tasks-trash', command: 'nav.trash', keywords: 'trash deleted tasks' },
       { id: 'nav_page_trash', icon: Trash2, title: 'Go to Page trash', meta: 'Navigation', to: '/docs/trash', keywords: 'trash deleted pages docs' },

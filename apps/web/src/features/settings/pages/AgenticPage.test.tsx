@@ -42,12 +42,12 @@ function show(role: Role, instanceAdmin: boolean, enabled: boolean, path: string
         <MemoryRouter initialEntries={[path]}>
           <Where />
           <Routes>
-            <Route path="agentic" element={<AgenticTabs />}>
+            <Route path="settings/agentic" element={<AgenticTabs />}>
               <Route index element={<AgenticYou />} />
               <Route path="workspace" element={<AgenticWorkspace />} />
               <Route path="admin" element={<AgenticAdmin />} />
             </Route>
-            <Route path="settings/agent-tools" element={<MovedTo path="/agentic/workspace" />} />
+            <Route path="settings/agent-tools" element={<MovedTo path="/settings/agentic/workspace" />} />
           </Routes>
         </MemoryRouter>
       </WorkspaceContext.Provider>
@@ -58,12 +58,12 @@ function show(role: Role, instanceAdmin: boolean, enabled: boolean, path: string
 
 test('You shows MCP setup to every role, and agent sections only when the agent runs', async () => {
   for (const role of ['owner', 'admin', 'member'] as const) {
-    const on = show(role, false, true, '/agentic')
+    const on = show(role, false, true, '/settings/agentic')
     expect(await on.view.findByText('MCP server')).toBeTruthy()
     expect(await on.view.findByText('ChatGPT connection')).toBeTruthy()
     expect(await on.view.findByText('Memories')).toBeTruthy()
     cleanup()
-    const off = show(role, false, false, '/agentic')
+    const off = show(role, false, false, '/settings/agentic')
     expect(await off.view.findByText('MCP server')).toBeTruthy()
     expect(off.view.queryAllByText('ChatGPT connection')).toHaveLength(0)
     expect(off.view.queryAllByRole('tab')).toHaveLength(0)
@@ -73,29 +73,29 @@ test('You shows MCP setup to every role, and agent sections only when the agent 
 
 test('Workspace shows Tools to owners and admins; members read instructions and never call the tools API', async () => {
   for (const role of ['owner', 'admin'] as const) {
-    const { view } = show(role, false, true, '/agentic/workspace')
+    const { view } = show(role, false, true, '/settings/agentic/workspace')
     expect(await view.findByText('Connected services')).toBeTruthy()
     cleanup()
   }
-  const { view, asked } = show('member', false, true, '/agentic/workspace')
+  const { view, asked } = show('member', false, true, '/settings/agentic/workspace')
   expect(await view.findByText('Team instructions')).toBeTruthy()
   expect(view.queryAllByText('Connected services')).toHaveLength(0)
   expect(asked.some((url) => url.endsWith('/agent-integrations'))).toBe(false)
 })
 
 test('Admin opens only for an instance admin, whatever the workspace role', async () => {
-  const admin = show('member', true, true, '/agentic/admin')
+  const admin = show('member', true, true, '/settings/agentic/admin')
   await admin.view.findByRole('heading', { name: 'Name' })
-  expect(admin.view.getByTestId('where').textContent).toBe('/agentic/admin')
+  expect(admin.view.getByTestId('where').textContent).toBe('/settings/agentic/admin')
   cleanup()
-  const other = show('owner', false, true, '/agentic/admin')
+  const other = show('owner', false, true, '/settings/agentic/admin')
   await other.view.findByText('MCP server')
-  expect(other.view.getByTestId('where').textContent).toBe('/agentic')
+  expect(other.view.getByTestId('where').textContent).toBe('/settings/agentic')
   expect(other.view.queryAllByRole('tab', { name: 'Admin' })).toHaveLength(0)
 })
 
 test('an old address keeps its query and hash', async () => {
   const { view } = show('owner', false, true, '/settings/agent-tools?from=app#add')
   await view.findByText('Connected services')
-  expect(view.getByTestId('where').textContent).toBe('/agentic/workspace?from=app#add')
+  expect(view.getByTestId('where').textContent).toBe('/settings/agentic/workspace?from=app#add')
 })
