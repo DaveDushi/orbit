@@ -52,7 +52,7 @@ const AREAS: Record<SettingsAreaName, SettingsArea> = {
       {
         label: 'Integrations',
         items: [
-          { to: '/settings/file-storage', label: 'File storage', icon: CloudConnection, permission: 'storage.manage' },
+          { to: '/settings/file-storage', label: 'File storage', icon: CloudConnection },
           { to: '/settings/github', label: 'GitHub', icon: Link2 },
           { to: '/settings/api-tokens', label: 'API tokens', icon: Key, permission: 'api_tokens.manage' },
           { to: '/settings/apps', label: 'Apps', icon: Category, permission: 'apps.manage' },
