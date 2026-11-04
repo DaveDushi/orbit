@@ -88,6 +88,7 @@ function crumbsFor(pathname: string, taskNavigation: TaskNavigation, docs: DocsN
       else if (id === 'backups') crumbs.push({ label: 'Backups' })
       else if (id === 'storage') crumbs.push({ label: 'Storage' })
       else if (id === 'users') crumbs.push({ label: 'Users' })
+      else if (id === 'feedback') crumbs.push({ label: 'Feedback & fixes' })
       else crumbs.push({ label: 'General' })
       return { crumbs }
     }

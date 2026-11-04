@@ -33,8 +33,9 @@ function date(value: string) {
 export function FeedbackPage() {
   const settings = useImprovementSettings()
   if (settings.isPending) return <SettingsCard title="Feedback & fixes"><p role="status">Loading…</p></SettingsCard>
+  if (settings.isError) return <SettingsCard title="Feedback & fixes"><p role="alert">Settings could not be loaded. <Button variant="ghost" onClick={() => void settings.refetch()}>Retry</Button></p></SettingsCard>
   // the page is there only while the switch is on (Admin → General)
-  if (!settings.data?.enabled) return <Navigate to="/admin" replace />
+  if (!settings.data.enabled) return <Navigate to="/admin" replace />
   return <FeedbackList />
 }
 

@@ -29,6 +29,8 @@ async function signIn(page: Page, who: { email: string; password: string }) {
 }
 
 async function shot(page: Page, name: string) {
+  // dialogs and menus fade in: wait until no animation runs, or the picture shows a half-drawn frame
+  await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== 'running'))
   await page.screenshot({ path: `${shots}/${name}.png` })
 }
 
@@ -155,5 +157,54 @@ test.describe('Suggest a change', () => {
     const status = await memberPage.evaluate(async () => (await fetch('/api/v1/admin/improvements')).status)
     expect(status).toBe(403)
     await memberContext.close()
+  })
+
+  test('on a phone: send from the drawer, then the switch off hides everything', async ({ browser }) => {
+    const context = await browser.newContext({ baseURL: test.info().project.use.baseURL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+    const page = await context.newPage()
+    await signIn(page, account(process.env.ORBIT_E2E_ADMIN))
+    const origin = { Origin: new URL(page.url()).origin }
+    expect((await page.request.put('/api/v1/admin/improvements/settings', { data: { enabled: true }, headers: origin })).ok()).toBe(true)
+    await page.goto('/tasks')
+    const run = Date.now().toString(36)
+    const text = `Bigger tap targets in the task list. (${run})`
+
+    await page.getByRole('button', { name: 'Menu', exact: true }).click()
+    await page.getByRole('button', { name: /^Account menu for / }).click()
+    await shot(page, '12-phone-menu')
+    await page.getByRole('menuitem', { name: 'Suggest a change' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Suggest a change' })
+    await dialog.getByLabel('What should change?').fill(text)
+    await shot(page, '13-phone-dialog')
+    await dialog.getByRole('button', { name: 'Send' }).click()
+    await expect(dialog).toHaveCount(0)
+
+    await page.goto('/admin/feedback')
+    await expect(page.locator('[data-slot="settings-row"]', { hasText: text })).toContainText('New')
+    await expect(page.locator('header nav').first()).toContainText('Feedback & fixes')
+    await shot(page, '14-phone-page')
+
+    // Switch off: no menu item, no page, and sending answers 404.
+    await page.goto('/admin')
+    const toggle = page.getByRole('switch', { name: 'Suggest a change' })
+    await toggle.click()
+    await expect(toggle).not.toBeChecked()
+    await shot(page, '15-phone-switch-off')
+    await page.goto('/admin/feedback')
+    await expect(page).toHaveURL(/\/admin$/)
+    await page.goto('/tasks')
+    await page.getByRole('button', { name: 'Menu', exact: true }).click()
+    await page.getByRole('button', { name: /^Account menu for / }).click()
+    await expect(page.getByRole('menuitem', { name: 'Appearance' })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: 'Suggest a change' })).toHaveCount(0)
+    await shot(page, '16-phone-menu-switch-off')
+    const send = await page.request.post('/api/v1/admin/improvements', {
+      data: { text: 'Off', context: { path: '/tasks', viewport: '390x844', revision: 'development' } },
+      headers: origin,
+    })
+    expect(send.status()).toBe(404)
+    // The list stays for the admins.
+    expect((await page.request.get('/api/v1/admin/improvements')).status()).toBe(200)
+    await context.close()
   })
 })

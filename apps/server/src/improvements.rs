@@ -112,6 +112,14 @@ pub struct ImprovementRequest {
     pub updated_at: TimestampMillis,
 }
 
+impl ImprovementRequest {
+    /// Withdrawn by an admin in the app (`withdraw`), not declined by the agent.
+    #[must_use]
+    pub fn withdrawn(&self) -> bool {
+        self.status == Status::Declined && self.note.as_deref() == Some(WITHDRAWN_NOTE)
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ImprovementError {
     #[error("{0}")]
@@ -120,17 +128,25 @@ pub enum ImprovementError {
     NotFound,
     #[error("only a new request can be withdrawn")]
     NotNew,
+    #[error("an admin withdrew this request: it cannot change any more")]
+    Withdrawn,
     #[error(transparent)]
     Database(#[from] sqlx::Error),
 }
 
-/// Line breaks as `\n`, no space around the text, no control characters but line breaks and tabs.
+/// Bidirectional overrides and isolates: they reorder what a terminal or a reviewer sees.
+fn is_bidi_control(c: char) -> bool {
+    matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+}
+
+/// Line breaks as `\n`, no space around the text, no control characters but line breaks and tabs,
+/// and no bidirectional overrides.
 fn clean_text(raw: &str) -> Result<String, &'static str> {
     let text = raw.replace("\r\n", "\n");
     let text = text.trim();
     if text
         .chars()
-        .any(|c| c.is_control() && c != '\n' && c != '\t')
+        .any(|c| (c.is_control() && c != '\n' && c != '\t') || is_bidi_control(c))
     {
         return Err("The text may not contain control characters.");
     }
@@ -278,7 +294,7 @@ pub async fn set_enabled(
         Some(actor_id),
         "instance.improvements_changed",
         AuditOutcome::Success,
-        "instance",
+        "installation",
         None,
         request_id,
         json!({ "enabled": enabled }),
@@ -384,6 +400,10 @@ pub async fn update(
     let now = TimestampMillis::now();
     let mut tx = database.immediate_transaction().await?;
     let current = find(&mut tx, id).await?.ok_or(ImprovementError::NotFound)?;
+    // An agent working from an older list must not bring back what an admin took back.
+    if current.withdrawn() {
+        return Err(ImprovementError::Withdrawn);
+    }
     let note = note.unwrap_or(current.note.clone());
     let link = link.unwrap_or(current.link.clone());
     sqlx::query(
@@ -700,7 +720,7 @@ async fn withdraw_route(
             &uri,
             &request_id,
         ),
-        ImprovementError::NotNew => problem(
+        ImprovementError::NotNew | ImprovementError::Withdrawn => problem(
             StatusCode::CONFLICT,
             "improvement_not_new",
             "The agent has picked up this request already, so it can no longer be withdrawn.",
@@ -824,6 +844,11 @@ mod tests {
         );
         assert!(checked_text(" \n\t ").is_err());
         assert!(checked_text("a\u{0007}b").is_err());
+        // Escape sequences and bidi overrides would change what a terminal shows.
+        assert!(checked_text("a\u{001b}[2Jb").is_err());
+        assert!(checked_text("fix \u{202E}txt.exe").is_err());
+        assert!(checked_note("ok \u{2066}hidden\u{2069}").is_err());
+        assert_eq!(checked_text("שלום Orbit").unwrap(), "שלום Orbit");
         // Characters, not bytes.
         assert!(checked_text(&"é".repeat(MAX_TEXT_CHARS)).is_ok());
         assert!(checked_text(&"a".repeat(MAX_TEXT_CHARS + 1)).is_err());

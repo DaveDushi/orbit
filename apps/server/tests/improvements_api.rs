@@ -276,6 +276,14 @@ async fn admins_send_requests_only_while_the_switch_is_on() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(value["enabled"], true);
     assert_eq!(fixture.audited("instance.improvements_changed").await, 1);
+    let resource: String = fixture
+        .db()
+        .scalar(
+            "SELECT resource_type FROM audit_events WHERE action = 'instance.improvements_changed'",
+        )
+        .await
+        .unwrap();
+    assert_eq!(resource, "installation", "as the other instance settings");
 
     // The limits.
     let mut invalid = vec![
@@ -558,6 +566,37 @@ async fn the_cli_lists_by_status_and_updates_with_a_stable_json_shape() {
     .await
     .unwrap();
     assert_eq!(plain, format!("{newer} is declined"));
+
+    // A request an admin withdrew stays withdrawn, even for an agent working from an older list.
+    let (_, taken_back) = fixture
+        .admin_call("POST", PATH, Some(request("Taken back")))
+        .await;
+    let taken_back = taken_back["id"].as_str().unwrap().to_owned();
+    let (status, _) = fixture
+        .admin_call("POST", &format!("{PATH}/{taken_back}/withdraw"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(matches!(
+        run_command(
+            fixture.db(),
+            &update(&taken_back, Status::Building, None, None)
+        )
+        .await,
+        Err(ImprovementError::Withdrawn)
+    ));
+    let still: Value = serde_json::from_str(
+        &run_command(fixture.db(), &list(Some(Status::Declined)))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        still
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["id"] == taken_back.as_str() && item["note"] == "Withdrawn")
+    );
 
     // Every status change is in the audit log, as the operator's.
     let changes: Vec<(Option<String>, String, String)> = sqlx::query_as(
