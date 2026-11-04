@@ -4,12 +4,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at effa521452767a45cfaf097327d0f3b2ea053a84
-  (merge of `app-signin-card` and `web-perf`, November 3, 2026).
+- Source: DaveDushi/orbit, `main` at 5b643467cfc2b17857b2455f101585684eb47111
+  (merges of `upstream-port-1103`, `improvement-requests`, `app-bar-immediate` and `agent-chat-files`, November 4, 2026).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:effa521`); fork commits have no published upstream image.
-- Image ID: sha256:a1afb2dbd85391bbc76ca3a510d7b6e50a7a4174d0fedade6d1970a6cc8efe27
-- Team agent sidecar code (`/opt/orbit-agent`): commit 857ce8e.
+  (`orbit:5b64346`); fork commits have no published upstream image.
+- Image ID: sha256:559b5e329d59545c457155f3dd76684881ee4ab6394f1f038e58e7a18f4896da
+- Team agent sidecar code (`/opt/orbit-agent`): commit 5b64346.
 - OIDC gateway: `orbit-oidc-gateway.service`, nginx on `127.0.0.1:8400`, config in `/etc/orbit-oidc-gateway/`
   (see `docs/apps.md`). `cloudflared` is NOT installed.
 - Executable: /usr/local/bin/orbit; unprivileged system user: orbit.
@@ -236,6 +236,68 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 4, 2026 upgrade: upstream port, Suggest a change, the app bar at once and files in agent chats
+
+Merged into `main` (`01ba182`): `upstream-port-1103` (`059ffa6`, 22 commits, fast-forward), `improvement-requests` (`4063977`;
+merge `bf80423`), `app-bar-immediate` (`2288998`, as it is; merge `71abb2e`) and `agent-chat-files` (`d60c3b0`; merge `1d26e4a`),
+then `5b64346` (rustfmt import order, already wrong on the port branch). Conflicts: the schema version (73 vs 74) in `backup.rs`
+and the tests, resolved to 74 with migration 73 before 74 in `migrate.rs`; `Topbar.tsx` kept the port's new phone bar (the
+other branch only added a breadcrumb label that the port removed); `.ai/lessons.md` kept both sides without the obsolete
+`.last-run.json` line; the OpenAPI document and `packages/api` were generated again from the merged code (208 paths, 267
+operations; new: `GET /api/v1/workspaces/{workspace_id}/chat/files/{file_id}/content`). Migrations 73
+(`0073_improvement_requests.sql`, additive; the feature is off until an admin turns it on) and 74
+(`0074_confirm_setup_owner_email.sql`: sets `email_verified_at` of the setup owner, 1 user here). No new `ORBIT_*` setting;
+`/etc/orbit/orbit.env`, `/etc/orbit/agent.env`, nginx, the OIDC gateway and the tunnel did not change. `apps/agent` changed
+(6 source files), so the sidecar code was updated.
+
+Checks on merged `main`: on SQLite and Postgres, platform `backup` (23) and `database` (44), and server `openapi_contract` (17),
+`app_smoke` (18), `improvements_api` (5), `chat_api` (29, 1 ignored), `agent_api` (13), `storage_api` (4) and
+`backup_items_api` (8); `cargo fmt --check`; `cargo clippy --workspace --all-targets -D warnings`; web `tsc -b`, oxlint
+(warnings only) and 288 tests (the changed test files and the apps, shell and chat folders); `packages/api` (10); sidecar
+typecheck and 40 tests.
+
+Build: the first `orbit-deploy image` (11:15 UTC) stalled at `MemoryHigh=3G` of `orbit-builds.slice` (the release compile of
+`orbit-server` needs about 2.8 GB; rustc spent its time in memory reclaim) and was cancelled at 13:13 UTC. With the user's
+approval, `MemoryHigh` was set to 4G for the build only (`systemctl set-property --runtime`); the second build (13:48 UTC) was
+stopped by a VM restart at about 13:59 UTC (the VM came back with 16 GB). The third build, as the transient unit
+`orbit-deploy-5b64346.service`, ran 14:00:18 to 14:02:40 UTC (the compile from the second build was in the cache mount), and
+`MemoryHigh` went back to 3G after it. `deploy/smoke.sh` passed; the extracted binary has revision `5b64346`, both migrations
+and the new route, and `orbit config check` passed with it.
+
+At the switch: stopped `orbit-agent` and `orbit` at 14:06:34 UTC, created and verified snapshot
+`01a1a6e2-0eb8-7703-b833-e9d3ae786020` (`/var/backups/orbit/snapshots/01a1a6e2-0eb8-7703-b833-e9d3ae786020`) with the old CLI,
+rehearsed the migrations on a copy in `/var/lib/orbit/rehearsal-5b64346-tcR8Ko` (2 applied, schema 74, quick-check and
+foreign-key checks pass, counts unchanged; deleted afterwards), saved the sidecar data as
+`/var/backups/orbit-agent/orbit-agent-before-5b64346.tgz`, moved the old sidecar code to `/opt/orbit-agent.before-5b64346` and
+the new one (`npm ci --omit=dev`, same 53 modules) to `/opt/orbit-agent`, installed the binary at 14:06:52 UTC and started
+`orbit` (ready 14:06:59 UTC), then `orbit-agent`. The old executable is `/usr/local/bin/orbit-effa521` (checked equal to the
+installed one before the swap); the new one is also kept as `/usr/local/bin/orbit-5b64346`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` active, no restarts; readiness (all
+checks); `/orbit-build.json` revision `5b64346`; schema 74 (73 and 74 applied); live quick-check and foreign-key checks pass;
+counts unchanged (6 users, 1 workspace, 3 projects, 63 tasks, 32 pages, 28 page files, 43 blobs, 508 chat messages, 80 agent
+inputs, 1 integration, 2 apps); 0 improvement requests and the feature off; no new warning or error in the logs; the sidecar
+runs from the new `/opt/orbit-agent` with `mock: false`. Signed out, the new chat file route answers 401 (an unknown path 404
+`route_not_found`). Chromium (desktop 1440×900 and a phone identity 390×844) through nginx: the signed-out pages answer 200
+with no horizontal overflow, the app and Agentic pages go to `/login`, https://orbit.wellrox.com/ goes to the exe.dev login,
+and the two CSP inline-style errors of earlier versions are gone. On an isolated development instance of the same image
+(seed data, deleted afterwards): an unknown chat file answers 404 `chat_not_found`; an embedded app that answers after 20 s
+shows its bar after 0.4 s on desktop and phone; Admin → Feedback & fixes opens. Screenshots: `/root/deploy-1104/shots/`.
+**Not** verified on production: any signed-in page, a real agent run with a chat file, and real WebKit on a phone.
+
+Rollback (an older binary cannot read a version 74 database; preserve the current database first; work after the snapshot is
+lost):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-effa521 backup verify 01a1a6e2-0eb8-7703-b833-e9d3ae786020 && /usr/local/bin/orbit-effa521 backup restore 01a1a6e2-0eb8-7703-b833-e9d3ae786020'
+sudo install -m 755 /usr/local/bin/orbit-effa521 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo cp -a /opt/orbit-agent.before-5b64346 /opt/orbit-agent
+sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-5b64346.tgz
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+```
 
 ### November 3, 2026 upgrade: the app sign-in card and lighter Docs PDFs
 
