@@ -78,7 +78,8 @@ impl Fixture {
         );
         let app = chat_router(
             ChatState::new(Arc::clone(&identity), uploads.clone(), CookieMode::secure())
-                .with_link_previews(LinkPreviewer::new(link_previews)),
+                .with_link_previews(LinkPreviewer::new(link_previews))
+                .with_parser(env!("CARGO_BIN_EXE_orbit")),
         );
         Self {
             _root: root,
@@ -1632,6 +1633,156 @@ async fn a_file_is_its_uploaders_until_a_message_takes_it() {
         .await
         .unwrap();
     assert_eq!(files, 0);
+}
+
+#[tokio::test]
+async fn the_content_of_a_sent_file_is_for_the_readers_of_its_message_only() {
+    let fixture = Fixture::new().await;
+    let ada = fixture.add_member("ada").await;
+    let bob = fixture.add_member("bob").await;
+    let general = fixture.general().await;
+    let secret = fixture
+        .channel(&fixture.owner, "secret", "private", &[&ada])
+        .await;
+    let csv: String = (1..=5).map(|row| format!("item {row},{row}\n")).collect();
+    let content = |file: &Value| format!("/files/{}/content", file["id"].as_str().unwrap());
+    let not_found = |(status, problem): (StatusCode, Value)| {
+        assert_eq!(status, StatusCode::NOT_FOUND, "{problem}");
+        assert_eq!(problem["code"], "chat_not_found");
+    };
+
+    // An upload that waits for its message: not even its uploader reads its content.
+    let spec = fixture.upload(&ada, "spec.csv", csv.as_bytes()).await;
+    not_found(fixture.call(&ada, "GET", &content(&spec), None).await);
+
+    // Sent in a public channel: every member reads it in parts, with the page file query.
+    fixture
+        .send_with(
+            &ada,
+            &general,
+            json!({ "body": "specs", "file_ids": [spec["id"]] }),
+        )
+        .await;
+    let part = fixture
+        .ok(&bob, "GET", &format!("{}?limit=2", content(&spec)), None)
+        .await;
+    assert_eq!(part["file"]["kind"], "delimited");
+    assert_eq!(part["file"]["file_name"], "spec.csv");
+    assert_eq!(part["file"]["conversation_id"], general.as_str());
+    assert_eq!(part["rows"], json!([["item 1", "1"], ["item 2", "2"]]));
+    assert_eq!(part["row_numbers"], json!([1, 2]));
+    assert_eq!(part["next_offset"], 2);
+    let last = fixture
+        .ok(
+            &bob,
+            "GET",
+            &format!("{}?offset=4&limit=2", content(&spec)),
+            None,
+        )
+        .await;
+    assert_eq!(last["rows"], json!([["item 5", "5"]]));
+    assert!(last["next_offset"].is_null());
+
+    // An image has no text to read.
+    let plan = fixture.upload(&ada, "plan.png", PNG).await;
+    fixture
+        .send_with(
+            &ada,
+            &general,
+            json!({ "body": "", "file_ids": [plan["id"]] }),
+        )
+        .await;
+    let image = fixture.ok(&bob, "GET", &content(&plan), None).await;
+    assert_eq!(image["file"]["kind"], "image");
+    assert!(image["rows"].is_null() && image["text"].is_null());
+
+    // A private channel and a DM: their members only. Others get the answer of an unknown id.
+    let hidden = fixture.upload(&ada, "secret.csv", csv.as_bytes()).await;
+    let sent = fixture
+        .send_with(
+            &ada,
+            &secret,
+            json!({ "body": "", "file_ids": [hidden["id"]] }),
+        )
+        .await;
+    fixture
+        .ok(&fixture.owner, "GET", &content(&hidden), None)
+        .await;
+    not_found(fixture.call(&bob, "GET", &content(&hidden), None).await);
+    not_found(
+        fixture
+            .call(
+                &bob,
+                "GET",
+                &format!("/files/{}/content", Id::new_v7()),
+                None,
+            )
+            .await,
+    );
+    let dm = fixture
+        .ok(
+            &ada,
+            "POST",
+            "/dms",
+            Some(json!({ "user_ids": [fixture.owner.id.to_string()] })),
+        )
+        .await;
+    let dm_file = fixture.upload(&ada, "dm.csv", csv.as_bytes()).await;
+    fixture
+        .send_with(
+            &ada,
+            dm["result"]["id"].as_str().unwrap(),
+            json!({ "body": "", "file_ids": [dm_file["id"]] }),
+        )
+        .await;
+    fixture
+        .ok(&fixture.owner, "GET", &content(&dm_file), None)
+        .await;
+    not_found(fixture.call(&bob, "GET", &content(&dm_file), None).await);
+
+    // Another workspace of the same person does not have the file.
+    let other = WorkspaceRepository::new((*fixture.database).clone())
+        .create(
+            fixture.owner.id,
+            "Other".to_owned(),
+            "chat-file-test",
+            TimestampMillis::now(),
+        )
+        .await
+        .unwrap()
+        .id;
+    let elsewhere = format!(
+        "/api/v1/workspaces/{other}/chat/files/{}/content",
+        spec["id"].as_str().unwrap()
+    );
+    assert_eq!(
+        fixture.download(&fixture.owner, &elsewhere).await,
+        StatusCode::NOT_FOUND
+    );
+
+    // A deleted message takes its files with it.
+    let message = sent["result"]["id"].as_str().unwrap();
+    fixture
+        .ok(&ada, "DELETE", &format!("/messages/{message}"), None)
+        .await;
+    not_found(fixture.call(&ada, "GET", &content(&hidden), None).await);
+    // Also when the message stays as "deleted" because it has replies.
+    let root = fixture
+        .send_with(
+            &ada,
+            &general,
+            json!({ "body": "", "file_ids": [
+            fixture.upload(&ada, "root.csv", csv.as_bytes()).await["id"]
+        ] }),
+        )
+        .await;
+    let root_id = root["result"]["id"].as_str().unwrap();
+    let root_file = root["result"]["attachments"][0].clone();
+    fixture.reply(&bob, &general, root_id, "noted").await;
+    fixture
+        .ok(&ada, "DELETE", &format!("/messages/{root_id}"), None)
+        .await;
+    not_found(fixture.call(&bob, "GET", &content(&root_file), None).await);
 }
 
 #[tokio::test]

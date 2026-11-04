@@ -399,6 +399,19 @@ export type ChatChannelUpdateBody = {
     topic?: string | null;
 };
 
+/**
+ * A chat file as its content shows it. Chat files have no versions and are read-only.
+ */
+export type ChatContentFile = {
+    conversation_id: string;
+    file_name: string;
+    id: string;
+    kind: FileKind;
+    message_id: string;
+    mime_type: string;
+    size_bytes: number;
+};
+
 export type ChatConversationCursorBody = {
     conversation_id: string;
     last_read_message_id?: string | null;
@@ -458,6 +471,33 @@ export type ChatEvent = {
 export type ChatEvents = {
     events: Array<ChatEvent>;
     seq: number;
+};
+
+/**
+ * A chat file and one part of its content: the fields of a Docs page file's content.
+ */
+export type ChatFileContent = {
+    file: ChatContentFile;
+    /**
+     * Cells among `rows` that hold a formula, as `B2`.
+     */
+    formula_cells: Array<string>;
+    /**
+     * Where the next part starts; `null` at the end.
+     */
+    next_offset?: number | null;
+    /**
+     * A PDF or Word file without text, such as a scan.
+     */
+    no_text: boolean;
+    row_numbers?: Array<number> | null;
+    rows?: Array<Array<string>> | null;
+    sheet?: string | null;
+    /**
+     * Sheet names of a workbook.
+     */
+    sheets: Array<string>;
+    text?: string | null;
 };
 
 export type ChatFileDownload = Blob | File;
@@ -10206,6 +10246,78 @@ export type DownloadChatFileResponses = {
 };
 
 export type DownloadChatFileResponse = DownloadChatFileResponses[keyof DownloadChatFileResponses];
+
+export type GetChatFileContentData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        file_id: string;
+    };
+    query?: {
+        sheet?: string;
+        offset?: number;
+        limit?: number;
+        extract?: boolean;
+    };
+    url: '/api/v1/workspaces/{workspace_id}/chat/files/{file_id}/content';
+};
+
+export type GetChatFileContentErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * chat_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * file_deleted
+     */
+    410: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * file_over_limit, file_unreadable
+     */
+    422: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * file_busy
+     */
+    503: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type GetChatFileContentError = GetChatFileContentErrors[keyof GetChatFileContentErrors];
+
+export type GetChatFileContentResponses = {
+    200: ChatFileContent;
+};
+
+export type GetChatFileContentResponse = GetChatFileContentResponses[keyof GetChatFileContentResponses];
 
 export type GetChatLinkPreviewData = {
     body?: never;

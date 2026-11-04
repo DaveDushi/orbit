@@ -12,6 +12,7 @@
  *   remember "Fact"                 remember privately "Fact"             recall "words"
  *   recall privately "words"        what do you remember about "word"
  *   use <integration>__<tool> with {"json": "arguments"}
+ *   read the files (reads every file sent with the message, one read_chat_file call each, then reports them all)
  *
  * An answer "yes" to an approval question calls the last integration tool again with the same arguments.
  * When a memory tool result asks for a summary, the mock writes one from the halves it was shown. A compaction gets a
@@ -77,6 +78,24 @@ function lastCall(messages: readonly Message[], name: string): Record<string, un
 	return undefined;
 }
 
+/** The newest user message's index. */
+function lastUser(messages: readonly Message[]): number {
+	return messages.findLastIndex((message) => message.role === "user");
+}
+
+/** The ids of the files sent with the newest message that this run has not read yet. */
+function unreadFiles(instruction: string, messages: readonly Message[]): string[] {
+	const ids = [...instruction.matchAll(/file_id ([0-9a-f-]{36})/g)].map((match) => match[1]);
+	const read = new Set(
+		messages
+			.slice(lastUser(messages))
+			.flatMap((message) => (message.role === "assistant" && Array.isArray(message.content) ? (message.content as { type?: string; name?: string; arguments?: { file_id?: string } }[]) : []))
+			.filter((part) => part.type === "toolCall" && part.name === "read_chat_file")
+			.map((part) => part.arguments?.file_id),
+	);
+	return ids.filter((id) => !read.has(id));
+}
+
 /** The tool call that the newest instruction asks for, or `undefined` when it asks for none. */
 export function plan(instruction: string, messages: readonly Message[]): { name: string; args: { [key: string]: unknown } } | undefined {
 	const target = (value: string, kind: "task" | "page"): string => (/^(it|that)$/i.test(value) ? lastId(messages, kind) : value) ?? value;
@@ -92,6 +111,10 @@ export function plan(instruction: string, messages: readonly Message[]): { name:
 	if ((match = /search tasks "([^"]+)"/i.exec(instruction))) return { name: "search_tasks", args: { query: match[1] } };
 	if (/list projects/i.test(instruction)) return { name: "list_projects", args: {} };
 	if (/read messages/i.test(instruction)) return { name: "read_messages", args: {} };
+	if (/read (?:the )?(?:chat )?files/i.test(instruction)) {
+		const [next] = unreadFiles(instruction, messages);
+		return next ? { name: "read_chat_file", args: { file_id: next } } : undefined;
+	}
 	if ((match = /ask @([\w .-]+?) "([^"]+)"/i.exec(instruction))) return { name: "ask_teammate", args: { person: match[1], question: match[2] } };
 	if ((match = /remember (privately )?"([^"]+)"/i.exec(instruction))) return { name: "memory_note", args: { scope: match[1] ? "private" : "team", text: match[2] } };
 	if ((match = /recall (privately )?"([^"]+)"/i.exec(instruction))) return { name: "memory_recall", args: { scope: match[1] ? "private" : "team", query: match[2] } };
@@ -124,6 +147,17 @@ export function respond(messages: readonly Message[], modelId = "mock", thinking
 		if (due) {
 			const summary = `Summary: ${due[3].split("\n").map((line) => line.replace(/^#\S+ (\([^)]*\) )?/, "")).join("; ")}`;
 			return fauxAssistantMessage(fauxToolCall("memory_summarize", { scope: due[1], block: due[2], text: Buffer.from(summary).subarray(0, 270).toString() }), { stopReason: "toolUse" });
+		}
+		if (last.toolName === "read_chat_file") {
+			const instruction = textOf(messages[lastUser(messages)]?.content);
+			const next = plan(instruction, messages);
+			if (next) return fauxAssistantMessage(fauxToolCall(next.name, next.args as JsonObject), { stopReason: "toolUse" });
+			const reads = messages.slice(lastUser(messages)).filter((message) => message.role === "toolResult" && message.toolName === "read_chat_file");
+			const parts = reads.map((message) => {
+				const text = textOf(message.content).replace(/<\/?orbit-data[^>]*>/g, "").trim();
+				return `\`\`\`\n${text.length > 600 ? `${text.slice(0, 600)}…` : text}\n\`\`\``;
+			});
+			return fauxAssistantMessage(fauxText(`Done (\`read_chat_file\` ×${reads.length}).\n\n${parts.join("\n\n")}`));
 		}
 		const result = textOf(last.content).replace(/<\/?orbit-data[^>]*>/g, "").trim();
 		const short = result.length > 900 ? `${result.slice(0, 900)}…` : result;

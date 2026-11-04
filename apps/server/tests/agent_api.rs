@@ -527,11 +527,30 @@ async fn agent_sessions_act_as_the_driver_and_only_on_work_routes() {
         ("DELETE", "/api/v1/agent/chatgpt".to_owned()),
         ("GET", format!("/api/v1/workspaces/{}/tasks", Id::new_v7())),
         ("POST", format!("/api/v1/workspaces/{workspace}/api-tokens")),
+        // Chat files: the agent reads their content only, and never uploads or downloads.
+        ("POST", format!("/api/v1/workspaces/{workspace}/chat/files")),
+        (
+            "GET",
+            format!("/api/v1/workspaces/{workspace}/chat/files/{}", Id::new_v7()),
+        ),
     ] {
         let (status, value) = fixture.request(method, &path, auth, None).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{method} {path}");
         assert_eq!(value["code"], "agent_scope");
     }
+    let (status, value) = fixture
+        .request(
+            "GET",
+            &format!(
+                "/api/v1/workspaces/{workspace}/chat/files/{}/content",
+                Id::new_v7()
+            ),
+            auth,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{value}");
+    assert_eq!(value["code"], "chat_not_found");
     // A made-up agent token is refused before any route.
     let (status, _) = fixture
         .request(

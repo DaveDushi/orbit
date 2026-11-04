@@ -64,6 +64,14 @@ pub fn allows(workspace_id: &str, method: &Method, path: &str) -> bool {
     if segment == "agent-memory" {
         return method != Method::DELETE;
     }
+    // Chat files: the agent reads their content, and never uploads or downloads them.
+    if let Some(file) = rest.strip_prefix("chat/files") {
+        return method == Method::GET
+            && file
+                .strip_prefix('/')
+                .and_then(|file| file.strip_suffix("/content"))
+                .is_some_and(|id| !id.is_empty() && !id.contains('/'));
+    }
     true
 }
 
@@ -161,6 +169,8 @@ mod tests {
             (Method::PUT, "/pages/abc/files/def/content"),
             (Method::POST, "/tasks/abc/comments"),
             (Method::GET, "/chat/threads/abc"),
+            (Method::GET, "/chat/files/abc/content"),
+            (Method::GET, "/chat/conversations/abc/files"),
             (Method::GET, "/members"),
             (Method::GET, ""),
             (Method::POST, "/agent-memory/team"),
@@ -198,6 +208,13 @@ mod tests {
             (Method::GET, "/apps/demo/frame"),
             (Method::GET, "/workspace-apps"),
             (Method::POST, "/workspace-apps/abc/rotate-secret"),
+            (Method::GET, "/chat/files/abc"),
+            (Method::POST, "/chat/files"),
+            (Method::GET, "/chat/files"),
+            (Method::PUT, "/chat/files/abc/content"),
+            (Method::GET, "/chat/files//content"),
+            (Method::GET, "/chat/files/abc/def/content"),
+            (Method::GET, "/chat/filesabc/content"),
         ] {
             assert!(!allows(WORKSPACE, &method, &path(rest)), "{method} {rest}");
         }

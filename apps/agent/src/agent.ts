@@ -17,6 +17,7 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { compactionSettings } from "./compaction.ts";
 import { THINKING, type Config } from "./config.ts";
 import { IndexDoc, ThreadDoc, type ThreadState } from "./docs.ts";
+import { withMessageFiles } from "./files.ts";
 import { loadIntegrations } from "./integrations.ts";
 import { loadWake } from "./memory.ts";
 import { namesToTokens, splitBody, tokensToNames, type Person } from "./mentions.ts";
@@ -52,6 +53,7 @@ const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
 	list_pages: () => "Reading the pages list",
 	search_pages: (args) => `Searching pages for “${args.query}”`,
 	read_page: () => "Reading a page",
+	read_chat_file: () => "Reading a chat file",
 	create_page: (args) => `Creating page “${args.title}”`,
 	update_page: () => "Updating a page",
 	read_messages: () => "Reading messages",
@@ -307,7 +309,7 @@ export class Agent {
 		const conversation = await this.#conversationFor(input);
 		const state = (await this.#harness.snapshot(ThreadDoc, conversation.id, context)) as ThreadState;
 		const people = await this.peopleOf(input.workspace_id);
-		const text = tokensToNames(input.body, people);
+		const text = withMessageFiles(tokensToNames(input.body, people), input.files);
 
 		// This input started the current run before a restart: finish what is missing.
 		if (state.run?.inputId === input.message_id) {

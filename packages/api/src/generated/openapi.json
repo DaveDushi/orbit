@@ -14039,6 +14039,195 @@
         ]
       }
     },
+    "/api/v1/workspaces/{workspace_id}/chat/files/{file_id}/content": {
+      "get": {
+        "tags": [
+          "crate::chat_routes::files"
+        ],
+        "summary": "One part of a file of a sent message, as rows or text, with the query of a Docs page file's\ncontent. Only for a person who can read the message; an upload that waits for its message\nand a file of a deleted message are not found.",
+        "operationId": "get_chat_file_content",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sheet",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "extract",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "X-Orbit-Contract",
+            "in": "header",
+            "description": "Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatFileContent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_proxy_headers",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "chat_not_found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "contract_mismatch",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "file_deleted",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "file_over_limit, file_unreadable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "file_busy",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "internal_error or another documented stable code",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/chat/link-preview": {
       "get": {
         "tags": [
@@ -36348,6 +36537,43 @@
         },
         "additionalProperties": false
       },
+      "ChatContentFile": {
+        "type": "object",
+        "description": "A chat file as its content shows it. Chat files have no versions and are read-only.",
+        "required": [
+          "id",
+          "file_name",
+          "mime_type",
+          "kind",
+          "size_bytes",
+          "message_id",
+          "conversation_id"
+        ],
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "file_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FileKind"
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "ChatConversationCursorBody": {
         "type": "object",
         "required": [
@@ -36608,6 +36834,83 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "ChatFileContent": {
+        "type": "object",
+        "description": "A chat file and one part of its content: the fields of a Docs page file's content.",
+        "required": [
+          "file",
+          "sheets",
+          "formula_cells",
+          "no_text"
+        ],
+        "properties": {
+          "file": {
+            "$ref": "#/components/schemas/ChatContentFile"
+          },
+          "formula_cells": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Cells among `rows` that hold a formula, as `B2`."
+          },
+          "next_offset": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Where the next part starts; `null` at the end.",
+            "minimum": 0
+          },
+          "no_text": {
+            "type": "boolean",
+            "description": "A PDF or Word file without text, such as a scan."
+          },
+          "row_numbers": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          "rows": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "sheet": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sheets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Sheet names of a workbook."
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

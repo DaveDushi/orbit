@@ -11,6 +11,7 @@ pub mod collab;
 mod email_quota;
 pub mod export;
 pub mod export_routes;
+pub mod file_content;
 pub mod file_parse;
 pub mod image_compression;
 pub mod import_routes;

@@ -71,6 +71,7 @@
 - Typecheck the web app with `bunx tsc -b` (what `build` runs). `tsc --noEmit -p .` checks nothing: the root `tsconfig.json` only has references, so it passes on broken code.
 - `cargo test --workspace` stops at the first failing test binary; use `--no-fail-fast` to see the whole suite.
 - Give every cargo call of a worktree the same `CARGO_PROFILE_*`/`CARGO_INCREMENTAL` values (run it through `orbit-build`, see `AGENTS.md`): a change rebuilds everything (2 GB more on 2026-10-29). To rerun built tests, run `target/debug/deps/<test>-<hash>` directly.
+- On the shared VM, `node` and `npm` are not on `PATH`: use `/root/.local/node/bin` (Node 24, with npm) for `apps/agent` (`just agent-test` needs it).
 - Playwright rewrites the tracked `apps/web/test-results/.last-run.json` on every run — restore it with `git checkout --` and never commit it.
 - If the Agent Browser fails with a `SingletonLock: File exists` profile error, another session holds the profile. Do not delete the lock; drive the dev server with `playwright-core` from `apps/web/node_modules` instead (script in `/tmp`).
 - If Playwright's pinned headless shell is not installed, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to an installed one under `~/.cache/ms-playwright/` (`playwright.config.ts` reads it) instead of downloading browsers.
