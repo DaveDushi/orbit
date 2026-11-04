@@ -4,15 +4,17 @@ import { type AppFrameEvent, type AppFrameState, appBarView, initialAppFrame, ne
 const open = { embedded: true, ...initialAppFrame, closed: false }
 
 test('an open bar follows the ready rule', () => {
-  expect(appBarView(open)).toEqual({ bar: false, notice: null, card: null })
+  // While the app loads the bar shows at once, without the help line.
+  expect(appBarView(open)).toEqual({ bar: true, notice: null, card: null })
   expect(appBarView({ ...open, ready: true })).toEqual({ bar: false, notice: null, card: null })
   expect(appBarView({ ...open, ready: false })).toEqual({ bar: true, notice: 'help', card: null })
   expect(appBarView({ ...open, ready: true, signingIn: true })).toEqual({ bar: true, notice: 'help', card: null })
   expect(appBarView({ ...open, ready: true, popupBlocked: true })).toEqual({ bar: true, notice: 'popup-blocked', card: null })
 })
 
-test('a closed bar stays closed after the timeout and during a sign-in', () => {
+test('a closed bar stays closed while the app loads, after the timeout and during a sign-in', () => {
   const closed = { ...open, closed: true }
+  expect(appBarView(closed)).toEqual({ bar: false, notice: null, card: null })
   expect(appBarView({ ...closed, ready: false })).toEqual({ bar: false, notice: null, card: null })
   expect(appBarView({ ...closed, ready: false, signingIn: true })).toEqual({ bar: false, notice: null, card: null })
 })
@@ -76,7 +78,7 @@ test('the ready signal hides the card at once, also a late one', () => {
 test('Reload and Sign in hide the card and start the rule again', () => {
   const failed = run({ type: 'failed', failure: 'login-required' })
   expect(nextAppFrame(failed, { type: 'reload' })).toEqual(initialAppFrame)
-  expect(view(nextAppFrame(failed, { type: 'reload' }))).toEqual({ bar: false, notice: null, card: null })
+  expect(view(nextAppFrame(failed, { type: 'reload' }))).toEqual({ bar: true, notice: null, card: null })
   // Sign in: the card goes while the popup is open; the bar stays with the help line.
   const signingIn = nextAppFrame(failed, { type: 'sign-in', opened: true })
   expect(view(signingIn)).toEqual({ bar: true, notice: 'help', card: null })
@@ -97,6 +99,17 @@ test('Show the app hides the card until the next failure', () => {
   const shown = run({ type: 'failed', failure: 'silent' }, { type: 'show-app' })
   expect(view(shown)).toEqual({ bar: true, notice: 'help', card: null })
   expect(view(nextAppFrame(shown, { type: 'failed', failure: 'frame-blocked' })).card).toBe('frame-blocked')
+})
+
+test('the bar shows while the app loads and hides at the signal; the help line comes only after the timeout', () => {
+  expect(view(run())).toEqual({ bar: true, notice: null, card: null })
+  expect(view(run({ type: 'ready' }))).toEqual({ bar: false, notice: null, card: null })
+  expect(view(run({ type: 'failed', failure: 'timeout' }))).toEqual({ bar: true, notice: 'help', card: null })
+  // A late signal hides the bar and the help line.
+  expect(view(run({ type: 'failed', failure: 'timeout' }, { type: 'ready' }))).toEqual({ bar: false, notice: null, card: null })
+  // The person closed the bar: it stays hidden while the app loads and after the timeout.
+  expect(view(run(), true)).toEqual({ bar: false, notice: null, card: null })
+  expect(view(run({ type: 'failed', failure: 'timeout' }), true)).toEqual({ bar: false, notice: null, card: null })
 })
 
 test('a browser without storage does not break the page', () => {

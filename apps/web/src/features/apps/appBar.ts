@@ -69,13 +69,15 @@ export function nextAppFrame(state: AppFrameState, event: AppFrameEvent): AppFra
 type AppBarState = AppFrameState & { embedded: boolean; closed: boolean }
 
 /**
- * The bar is for when something did not load. Without a signal in time it shows, so no blank page lacks a way out,
- * unless the person closed it: then the corner menu has the actions. The card shows over the frame also with the bar
- * closed, and replaces the help line; a blocked popup says so in the card, or else above the frame.
+ * The bar shows while the app loads and when something did not load, so no blank page lacks a way out; the signal
+ * hides it. The person can close it: then the corner menu has the actions. The help line shows only after a failure,
+ * not while the app loads. The card shows over the frame also with the bar closed, and replaces the help line; a
+ * blocked popup says so in the card, or else above the frame.
  */
 export function appBarView({ embedded, ready, card, signingIn, popupBlocked, closed }: AppBarState): { bar: boolean; notice: 'popup-blocked' | 'help' | null; card: AppCard | null } {
-  const bar = !embedded || (!closed && (ready === false || signingIn || popupBlocked))
+  const failed = ready === false || signingIn || popupBlocked
+  const bar = !embedded || (!closed && (ready === null || failed))
   if (!embedded) return { bar, notice: null, card: null }
   if (card) return { bar, notice: null, card }
-  return { bar, notice: popupBlocked ? 'popup-blocked' : bar ? 'help' : null, card: null }
+  return { bar, notice: popupBlocked ? 'popup-blocked' : bar && failed ? 'help' : null, card: null }
 }

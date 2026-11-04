@@ -248,7 +248,7 @@ If a person has no Orbit session when the frame reaches `/oauth/authorize`, Orbi
 
 **Check the login first.** If the frame stays white, open the app's address in a private window. If you see Cloudflare's "Sign in" page (for example "Email, Send login code"), Access is not using Instant Auth with Orbit as its only login method: that page always refuses frames, on every browser. Fix the Access application as in step 1.
 
-**The bar with the actions** shows only if something did not load. A page cannot tell a working frame from a refused one, so the app says it loaded, with one line:
+**The bar with the actions** shows while the app loads, and stays if something did not load. A page cannot tell a working frame from a refused one, so the app says it loaded, with one line:
 
 ```html
 <script>
@@ -258,13 +258,14 @@ If a person has no Orbit session when the frame reaches `/oauth/authorize`, Orbi
 
 Put it in the page the app shows after sign-in, with your Orbit address. In a single-page app, run the same line once when the app has rendered. Orbit accepts it only from the app's frame and the app's origin, and it only hides the bar and the card. Outside a frame, the line does nothing.
 
-- **With the signal:** the frame takes the full height. The actions are in a small **…** button in the corner: **Sign in to app**, **Reload**, **Open in a new tab**, and on a phone also **Menu**.
-- **Without a signal within 8 seconds** (an app without the line, or a refused frame): the bar and its help text show. A late signal hides the bar again. **Sign in** and **Reload** start the same rule again.
+- **While the app loads:** the bar shows at once, without the help text.
+- **With the signal:** the bar hides and the frame takes the full height. The actions are in a small **…** button in the corner: **Sign in to app**, **Reload**, **Open in a new tab**, and on a phone also **Menu**.
+- **Without a signal within 8 seconds** (an app without the line, or a refused frame): the bar stays and its help text shows. A late signal hides the bar again. **Sign in** and **Reload** start the same rule again.
 - **The card "Sign in to <app>"** shows over the frame when Orbit knows that the app failed to load. It has a line with the reason and **Sign in to app**, **Open in a new tab**, **Reload** and **Show the app** (which hides the card until the next failure). With the bar open, the card replaces the help text; it also shows with the bar closed. A late signal hides it at once. It shows in three cases:
   - **Orbit asked for a sign-in.** The app's "Sign in with Orbit" reached Orbit in the frame without an Orbit session (or with `prompt=login`). Orbit tells its own page, then sends the frame to the app's redirect URI with `error=login_required`, as before. A top-level request still gets the redirect.
   - **The frame went to a login that Orbit does not allow.** The app sent the frame to an origin that is not the app, a redirect URI or Orbit (see [Limits](#limits)).
   - **An app that sent the signal before is silent.** If the app sent the signal in this browser before, Orbit expects it again: no signal 3 seconds after the frame's last page load (or 8 seconds if no page loads) is a failure. The browser keeps this per workspace and app (`orbit:app-ready-seen:<workspace>:<app>`). An app that never sent the signal keeps the bar and help text, with no card.
-- **Closed by hand:** the **X** in the bar hides the bar and its help text, for example for an app that you cannot change. The frame takes the full height, and the actions are in the **…** button, as with the signal. This browser remembers the choice per workspace and app, so the bar stays closed after a reload, on the next open, and when **Sign in** or **Reload** start the rule again. The card does not change this choice. If the browser blocks the sign-in popup, the page still says so, in the card or above the frame. To get the bar back, delete the `orbit:app-bar-closed:<workspace>:<app>` entry from the browser's local storage.
+- **Closed by hand:** the **X** in the bar hides the bar and its help text, for example for an app that you cannot change. The frame takes the full height, and the actions are in the **…** button, as with the signal. This browser remembers the choice per workspace and app, so the bar stays closed after a reload, on the next open (also while the app loads), and when **Sign in** or **Reload** start the rule again. The card does not change this choice. If the browser blocks the sign-in popup, the page still says so, in the card or above the frame. To get the bar back, delete the `orbit:app-bar-closed:<workspace>:<app>` entry from the browser's local storage.
 
 On a phone the bar has one row: the menu, the app's name, **Sign in**, **Open**, a menu with **Reload**, and the **X**.
 
