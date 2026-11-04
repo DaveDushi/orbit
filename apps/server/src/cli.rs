@@ -654,8 +654,11 @@ async fn improvements(
     config: Config,
     command: &orbit_server::improvements::ImprovementsCommand,
 ) -> Result<String, CliError> {
-    let database = open_database(&config.data).await?;
-    migrate_unless_shared(&config, &database).await?;
+    // Runs next to a serving Orbit, also on SQLite, so it never migrates.
+    let database = Database::open(&DatabaseConfig::for_data(&config.data).online())
+        .await
+        .map_err(operation)?;
+    require_migrated(&database).await?;
     orbit_server::improvements::run_command(&database, command)
         .await
         .map_err(operation)
@@ -710,6 +713,11 @@ async fn migrate_unless_shared(config: &Config, database: &Database) -> Result<(
     if config.data.database_url.is_none() {
         return migrate_implicitly(config, database).await;
     }
+    require_migrated(database).await
+}
+
+/// Refuses a database whose schema is not the one of this binary (older or newer).
+async fn require_migrated(database: &Database) -> Result<(), CliError> {
     let pending = MigrationRunner::embedded(env!("CARGO_PKG_VERSION"))
         .pending(database)
         .await
@@ -1171,7 +1179,7 @@ async fn saved_backup_storage(config: &Config) -> Result<ObjectStorage, CliError
     storage
 }
 
-/// Opens the database next to running servers (a Postgres database only; SQLite is always alone).
+/// Opens the database next to running servers (a Postgres database only; a SQLite database has one owner).
 async fn open_database(data: &DataConfig) -> Result<Database, CliError> {
     Database::open(&DatabaseConfig::for_data(data).shared())
         .await
@@ -2546,5 +2554,151 @@ mod tests {
 
         assert!(error.to_string().contains("development mode"));
         assert_eq!(fs::read(database).unwrap(), b"keep-me");
+    }
+
+    #[tokio::test]
+    async fn improvements_run_next_to_a_serving_orbit_that_still_owns_the_database() {
+        let root = tempfile::TempDir::new().unwrap();
+        let database_path = root.path().join("orbit.sqlite");
+        let attachments = root.path().join("attachments");
+        let backups = root.path().join("backups");
+        let env = environment(&[
+            ("ORBIT_ENV", "development"),
+            ("ORBIT_DATABASE_PATH", database_path.to_str().unwrap()),
+            ("ORBIT_ATTACHMENTS_PATH", attachments.to_str().unwrap()),
+            ("ORBIT_BACKUPS_PATH", backups.to_str().unwrap()),
+            ("ORBIT_APP_KEY", APP_KEY),
+        ]);
+        let config = Config::from_environment(env.clone()).unwrap();
+        let cli = |args: &[&str]| {
+            run(
+                Cli::try_parse_from([&["orbit"], args].concat()).unwrap(),
+                env.clone(),
+            )
+        };
+        // The lock a serving Orbit holds (`App::build`).
+        let server = Database::open(&DatabaseConfig::for_data(&config.data).shared())
+            .await
+            .unwrap();
+
+        // Before the server migrated, the CLI refuses and does not migrate under it.
+        let error = cli(&["improvements", "list", "--json"]).await.unwrap_err();
+        assert!(error.to_string().contains("needs migrations"), "{error}");
+        let applied: i64 = server
+            .scalar("SELECT COUNT(*) FROM schema_migrations")
+            .await
+            .unwrap();
+        assert_eq!(applied, 0);
+
+        MigrationRunner::embedded(env!("CARGO_PKG_VERSION"))
+            .run(&server)
+            .await
+            .unwrap();
+        let identity = IdentityRepository::new(server.clone());
+        let now = TimestampMillis::now();
+        let token = identity
+            .initialize_setup_token(now)
+            .await
+            .unwrap()
+            .unwrap()
+            .token;
+        let setup = identity
+            .complete_setup(
+                SetupRequest {
+                    token,
+                    email: "owner@example.com".to_owned(),
+                    display_name: "Owner".to_owned(),
+                    password_hash: "test-password-hash".to_owned(),
+                    workspace_name: "Orbit".to_owned(),
+                    project_name: "Tasks".to_owned(),
+                },
+                now,
+            )
+            .await
+            .unwrap();
+        let request = orbit_server::improvements::create(
+            &server,
+            setup.user_id,
+            "Show the due date on the cards.",
+            &orbit_server::improvements::RequestContext {
+                path: "/tasks".to_owned(),
+                viewport: "1440x900".to_owned(),
+                revision: "test".to_owned(),
+            },
+            "test",
+        )
+        .await
+        .unwrap();
+        let id = request.id;
+
+        let listed: serde_json::Value =
+            serde_json::from_str(&cli(&["improvements", "list", "--json"]).await.unwrap()).unwrap();
+        assert_eq!(listed[0]["id"], id.as_str());
+        assert_eq!(listed[0]["status"], "new");
+        let updated = cli(&[
+            "improvements",
+            "update",
+            &id,
+            "--status",
+            "building",
+            "--note",
+            "On it",
+        ])
+        .await
+        .unwrap();
+        assert_eq!(updated, format!("{id} is building"));
+        // The server reads the new status and the audit row of the change at once.
+        let status: String = server
+            .scalar(&format!(
+                "SELECT status FROM improvement_requests WHERE id = '{id}'"
+            ))
+            .await
+            .unwrap();
+        assert_eq!(status, "building");
+        let audited: i64 = server
+            .scalar(
+                "SELECT COUNT(*) FROM audit_events WHERE action = 'improvement.status_changed' \
+                 AND request_id = 'operator-cli'",
+            )
+            .await
+            .unwrap();
+        assert_eq!(audited, 1);
+
+        // A second server, a command that may migrate, reset and restore still wait for the server.
+        assert!(matches!(
+            Database::open(&DatabaseConfig::for_data(&config.data).shared())
+                .await
+                .unwrap_err(),
+            orbit_platform::DatabaseError::AlreadyOwned { .. }
+        ));
+        assert!(cli(&["root", "show"]).await.is_err());
+        let error = cli(&["db-reset", "--yes"]).await.unwrap_err();
+        assert!(error.to_string().contains("owned"), "{error}");
+        if !orbit_platform::testing_postgres() {
+            // The SQLite restore path.
+            let backup = BackupService::new(&config.data.backups, &config.data.attachments)
+                .create(&server)
+                .await
+                .unwrap();
+            assert!(cli(&["backup", "restore", &backup.id]).await.is_err());
+        }
+        assert_eq!(
+            cli(&["improvements", "list"])
+                .await
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
+
+        // A CLI that does not know the schema refuses it.
+        server
+            .execute(
+                "INSERT INTO schema_migrations (version, checksum, applied_at, app_version) \
+                 VALUES (999999, 'newer', 0, 'newer')",
+            )
+            .await
+            .unwrap();
+        assert!(cli(&["improvements", "list"]).await.is_err());
     }
 }

@@ -74,13 +74,17 @@ pub enum Backend {
     Postgres,
 }
 
-/// How an open holds the database against other Orbit processes. A SQLite database is always
-/// held alone; on Postgres several servers share it, and restore and reset need it alone.
+/// How an open holds the database against other Orbit processes. Restore and reset need it alone
+/// (`Exclusive`). On Postgres several servers share it (`Shared`); a SQLite database has one owner
+/// (a server or a CLI command). `Online` commands run next to the servers on both.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Access {
     #[default]
     Exclusive,
     Shared,
+    /// A CLI command next to running servers, which never owns the database (and never migrates
+    /// it): on SQLite it shares `<database>.lock` with the owner.
+    Online,
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -107,11 +111,21 @@ impl DatabaseConfig {
         }
     }
 
-    /// Lets other Orbit processes use the Postgres database at the same time (no effect on SQLite).
+    /// Lets other Orbit processes use the Postgres database at the same time; a SQLite database
+    /// still has one owner, but online commands run next to it.
     #[must_use]
     pub fn shared(self) -> Self {
         Self {
             access: Access::Shared,
+            ..self
+        }
+    }
+
+    /// For a CLI command that runs next to the servers, also on SQLite; see [`Access::Online`].
+    #[must_use]
+    pub fn online(self) -> Self {
+        Self {
+            access: Access::Online,
             ..self
         }
     }
@@ -161,13 +175,13 @@ struct DatabaseInner {
 /// What keeps other Orbit processes from opening the database while this one runs.
 #[derive(Debug)]
 enum Ownership {
-    /// The `<database>.lock` file next to the SQLite database.
-    File { _lock: File },
+    /// The lock files next to the SQLite database (see [`lock_sqlite_file`]).
+    File { _locks: Vec<File> },
     /// The connection that holds the ownership advisory lock, and in tests on Postgres also the
     /// lock file of the SQLite path the database stands in for.
     Postgres {
         connection: tokio::sync::Mutex<PgConnection>,
-        _file: Option<File>,
+        _files: Vec<File>,
     },
 }
 
@@ -256,6 +270,38 @@ pub enum DatabaseError {
 /// `fcntl` locks, so SQLite fails with "database is locked" (code 5). Symlink aliases resolve to the
 /// same lock file; hard links are refused, because SQLite does not support them.
 pub fn lock_database_ownership(path: &Path) -> Result<File, DatabaseError> {
+    let lock = open_lock_file(path, ".lock")?;
+    lock.try_lock_exclusive()
+        .map_err(|_| DatabaseError::AlreadyOwned {
+            path: path.to_owned(),
+        })?;
+    Ok(lock)
+}
+
+/// The locks that hold the SQLite database at `path` for `access`. `Exclusive` locks
+/// `<database>.lock` alone. Every other open shares it, so restore and reset wait for all of them;
+/// `Shared` also takes `<database>.owner.lock` alone, so one server (or one CLI command that
+/// may migrate) owns the database, and `Online` commands run next to it.
+fn lock_sqlite_file(path: &Path, access: Access) -> Result<Vec<File>, DatabaseError> {
+    if access == Access::Exclusive {
+        return Ok(vec![lock_database_ownership(path)?]);
+    }
+    let owned = |_| DatabaseError::AlreadyOwned {
+        path: path.to_owned(),
+    };
+    let lock = open_lock_file(path, ".lock")?;
+    FileExt::try_lock_shared(&lock).map_err(owned)?;
+    let mut locks = vec![lock];
+    if access == Access::Shared {
+        let owner = open_lock_file(path, ".owner.lock")?;
+        owner.try_lock_exclusive().map_err(owned)?;
+        locks.push(owner);
+    }
+    Ok(locks)
+}
+
+/// Opens (and creates) the lock file `<database><suffix>` next to the resolved database path.
+fn open_lock_file(path: &Path, suffix: &str) -> Result<File, DatabaseError> {
     let open_error = |source| DatabaseError::OpenOwnershipLock {
         path: path.to_owned(),
         source,
@@ -288,9 +334,9 @@ pub fn lock_database_ownership(path: &Path) -> Result<File, DatabaseError> {
     }
 
     let mut lock_path = database_path.into_os_string();
-    lock_path.push(".lock");
+    lock_path.push(suffix);
     let lock_path = PathBuf::from(lock_path);
-    let ownership_lock = OpenOptions::new()
+    OpenOptions::new()
         .create(true)
         .read(true)
         .write(true)
@@ -299,13 +345,7 @@ pub fn lock_database_ownership(path: &Path) -> Result<File, DatabaseError> {
         .map_err(|source| DatabaseError::OpenOwnershipLock {
             path: lock_path,
             source,
-        })?;
-    ownership_lock
-        .try_lock_exclusive()
-        .map_err(|_| DatabaseError::AlreadyOwned {
-            path: path.to_owned(),
-        })?;
-    Ok(ownership_lock)
+        })
 }
 
 impl Database {
@@ -327,24 +367,24 @@ impl Database {
         }
 
         if let Some(url) = &config.postgres_url {
-            return Self::open_postgres(config, url, None).await;
+            return Self::open_postgres(config, url, Vec::new()).await;
         }
         if let Some(server) = test_postgres_url() {
             let existed = config.path.exists();
-            let ownership_lock = lock_database_ownership(&config.path)?;
+            let ownership_locks = lock_sqlite_file(&config.path, config.access)?;
             let url = create_test_database(&server, &config.path, !existed)
                 .await
                 .map_err(|source| DatabaseError::OpenPostgres {
                     url: crate::redact_database_url(&server),
                     source,
                 })?;
-            return Self::open_postgres(config, &url, Some(ownership_lock)).await;
+            return Self::open_postgres(config, &url, ownership_locks).await;
         }
         Self::open_sqlite(config).await
     }
 
     async fn open_sqlite(config: &DatabaseConfig) -> Result<Self, DatabaseError> {
-        let ownership_lock = lock_database_ownership(&config.path)?;
+        let ownership_locks = lock_sqlite_file(&config.path, config.access)?;
         let open_error = |source| DatabaseError::OpenDatabase {
             path: config.path.clone(),
             source,
@@ -394,7 +434,7 @@ impl Database {
                 postgres: None,
                 path: config.path.clone(),
                 ownership: Ownership::File {
-                    _lock: ownership_lock,
+                    _locks: ownership_locks,
                 },
                 extensions: Extensions::default(),
             }),
@@ -404,7 +444,7 @@ impl Database {
     async fn open_postgres(
         config: &DatabaseConfig,
         url: &str,
-        ownership_file: Option<File>,
+        ownership_files: Vec<File>,
     ) -> Result<Self, DatabaseError> {
         let open_error = |source| DatabaseError::OpenPostgres {
             url: crate::redact_database_url(url),
@@ -419,7 +459,7 @@ impl Database {
             .map_err(open_error)?;
         let lock = match config.access {
             Access::Exclusive => POSTGRES_EXCLUSIVE_OWNERSHIP_LOCK,
-            Access::Shared => POSTGRES_SHARED_OWNERSHIP_LOCK,
+            Access::Shared | Access::Online => POSTGRES_SHARED_OWNERSHIP_LOCK,
         };
         let mut attempts = 0;
         loop {
@@ -467,7 +507,7 @@ impl Database {
                 path: config.path.clone(),
                 ownership: Ownership::Postgres {
                     connection: tokio::sync::Mutex::new(connection),
-                    _file: ownership_file,
+                    _files: ownership_files,
                 },
                 extensions: Extensions::default(),
             }),
@@ -493,7 +533,7 @@ impl Database {
     }
 
     /// Takes the lock named `name` if no other process of the database holds it: work that one
-    /// server at a time does. A SQLite database has one process, so it always gets it.
+    /// server at a time does. A SQLite database has one server, so it always gets it.
     pub async fn try_singleton(&self, name: &str) -> Result<Option<Singleton>, sqlx::Error> {
         let Some(postgres) = &self.inner.postgres else {
             return Ok(Some(Singleton(None)));
