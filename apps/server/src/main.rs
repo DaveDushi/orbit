@@ -31,8 +31,13 @@ async fn run() -> ExitCode {
     } else {
         orbit_platform::TracingFormat::Json
     };
-    let _ = orbit_platform::init_tracing(format);
-    match cli::run(cli::Cli::parse(), std::env::vars().collect()).await {
+    let cli = cli::Cli::parse();
+    let _ = if cli.output_is_data() {
+        orbit_platform::init_tracing_on_stderr(format)
+    } else {
+        orbit_platform::init_tracing(format)
+    };
+    match cli::run(cli, std::env::vars().collect()).await {
         Ok(output) => {
             if !output.is_empty() {
                 println!("{output}");

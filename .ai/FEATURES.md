@@ -545,6 +545,14 @@ turns its routes, navigation and shortcuts off.
   `README.txt`, streamed to a temp file, then stored at `exports/{ws}/{id}.zip` in the attachment tier (workspace
   bucket, installation bucket, or `<backups>/exports/`). Retention deletes it 7 days after it is ready. Layout:
   `docs/operations.md` → Workspace export. Mobile has no export screen.
+- Admin → General → Suggest a change (off by default; `docs/improvements.md`): installation admins send change
+  requests from the account menu (dialog, at most 4,000 characters, with page path, window size and build revision)
+  and follow them on Admin → Feedback & fixes (`/admin/feedback`, `features/improvements/`), where a `new` one can be
+  withdrawn. Routes `/api/v1/admin/improvements*` (`apps/server/src/improvements.rs`, not in the OpenAPI contract;
+  client `packages/api/src/improvements.ts`): admins only, agent sessions and tokens refused, sending answers 404
+  `improvements_disabled` while off. An agent on the host reads and updates them with `orbit improvements list|update`
+  (statuses `new`, `building`, `review`, `live`, `declined`). The text is untrusted and shown as plain text only. Web
+  only; mobile has neither the menu item nor the page.
 
 ## Apps
 

@@ -47,6 +47,7 @@ pub struct ApiRoutes {
     pub imports: ImportState,
     pub chat: ChatState,
     pub agent: crate::agent::AgentState,
+    pub improvements: crate::improvements::ImprovementState,
 }
 
 pub fn production_router(
@@ -88,6 +89,7 @@ pub fn production_router(
         .merge(crate::live::socket::live_router(api.chat.clone()))
         .merge(chat_router(api.chat))
         .merge(crate::agent::router(api.agent))
+        .merge(crate::improvements::router(api.improvements))
         .merge(
             Router::new()
                 .route("/health/live", get(liveness))

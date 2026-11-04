@@ -4,18 +4,24 @@ import { SettingsCard } from '@/components/common/SettingsCard'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { useInstanceSettings, useSetRegistration } from '@/features/admin/api'
+import { ImprovementsCard } from '@/features/improvements/ImprovementsCard'
 import { SettingsRow } from '@/features/settings/components/SettingsParts'
 
 function problemText(error: unknown, fallback: string) {
   return error instanceof ApiProblem ? error.detail : fallback
 }
 
-/** Instance settings: who can create an account. */
+/** Instance settings: who can create an account, and Suggest a change. */
 export function AdminSettingsPage() {
   const settings = useInstanceSettings()
   if (settings.isPending) return <SettingsCard title="General"><p role="status">Loading settings…</p></SettingsCard>
   if (settings.isError) return <SettingsCard title="General"><p role="alert">Settings could not be loaded. <Button variant="ghost" onClick={() => void settings.refetch()}>Retry</Button></p></SettingsCard>
-  return <RegistrationCard open={settings.data.registration_open} emailReady={settings.data.smtp != null} />
+  return (
+    <>
+      <RegistrationCard open={settings.data.registration_open} emailReady={settings.data.smtp != null} />
+      <ImprovementsCard />
+    </>
+  )
 }
 
 function RegistrationCard({ open, emailReady }: { open: boolean; emailReady: boolean }) {

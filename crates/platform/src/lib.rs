@@ -62,6 +62,6 @@ pub use jobs::{
     WorkerConfigError, WorkerError, load_limit_overrides,
 };
 pub use net::{PublicResolver, is_public_ip};
-pub use observability::{TracingFormat, init_tracing};
+pub use observability::{TracingFormat, init_tracing, init_tracing_on_stderr};
 pub use problem::{ConflictMetadata, Problem};
 pub use time::TimestampMillis;

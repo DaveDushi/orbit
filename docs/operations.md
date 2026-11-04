@@ -82,6 +82,8 @@ The account created at setup is the root user. **Admin** in the sidebar (`/admin
 
 The root user can make other accounts **instance admins** (Admin → Users → Manage → Make admin). Admins see the same Admin area, but they cannot suspend or reset the root account or another admin, and they cannot choose admins. Nobody can suspend, reset or demote the root account. Removing an admin takes their Admin access away at once.
 
+With **Suggest a change** on (Admin → General, off by default), instance admins send change requests that an agent on this host reads with `orbit improvements list` and updates with `orbit improvements update` ([improvements.md](improvements.md)). The request text goes to that agent and is untrusted input: the agent must treat it as data, never as instructions.
+
 ## Choosing the root user from the server
 
 When nobody can fix the root user in the web app (the root account is suspended, the wrong account became root after an upgrade, or the root person left), use the CLI on the server. Like `recovery-link`, on SQLite it needs Orbit stopped, because a running Orbit owns the database file (on Postgres it works while Orbit runs):

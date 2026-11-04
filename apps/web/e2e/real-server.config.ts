@@ -3,7 +3,7 @@ import { defineConfig, devices } from '@playwright/test'
 /** For specs that need a real server with its CSP: `ORBIT_E2E_URL=… bunx playwright test -c e2e/real-server.config.ts`. */
 export default defineConfig({
   testDir: '.',
-  testMatch: 'file-panel.spec.ts',
+  testMatch: ['file-panel.spec.ts', 'improvements.spec.ts'],
   timeout: 120_000,
   use: {
     baseURL: process.env.ORBIT_E2E_URL,

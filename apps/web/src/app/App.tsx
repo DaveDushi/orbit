@@ -23,6 +23,7 @@ import { AdminLimitsPage } from '@/features/admin/pages/AdminLimitsPage'
 import { AdminStoragePage } from '@/features/admin/pages/AdminStoragePage'
 import { AdminSettingsPage } from '@/features/admin/pages/AdminSettingsPage'
 import { AdminUsersPage } from '@/features/admin/pages/AdminUsersPage'
+import { FeedbackPage } from '@/features/improvements/FeedbackPage'
 import { GeneralPage } from '@/features/settings/pages/GeneralPage'
 import { GithubPage } from '@/features/settings/pages/GithubPage'
 import { EmojiPage } from '@/features/settings/pages/EmojiPage'
@@ -143,6 +144,7 @@ export default function App() {
                 <Route path="storage" element={<AdminStoragePage />} />
                 <Route path="backups" element={<AdminBackupsPage />} />
                 <Route path="jobs" element={<AdminJobsPage />} />
+                <Route path="feedback" element={<FeedbackPage />} />
                 <Route path="agent" element={<MovedTo path="/agentic/admin" />} />
               </Route>
               <Route path="settings" element={<SettingsLayout />}>
