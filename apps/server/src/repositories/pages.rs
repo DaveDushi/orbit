@@ -22,7 +22,8 @@ use super::tasks::{TaskError, record_mutation, require_access, require_access_tx
 use super::teamspaces::{default_teamspace, teamspace_exists};
 use super::workspaces::WorkspaceError;
 use crate::audit::{self, AuditOutcome};
-use crate::collab::{CollabError, CollabHub, CollabLock, DocKey};
+use crate::collab::sanitize::sanitize_blocks_for;
+use crate::collab::{CollabError, CollabHub, CollabLock, DocKey, DocKind, LinkPolicy};
 
 const TRASH_RETENTION_MILLIS: i64 = 30 * 24 * 60 * 60 * 1_000;
 const SEARCH_LIMIT: i64 = 20;
@@ -615,6 +616,10 @@ impl PageRepository {
         request_id: &str,
         now: TimestampMillis,
     ) -> Result<PageRecord, PageError> {
+        let mut changes = changes;
+        if let Some(content) = &mut changes.content {
+            *content = sanitize_page_blocks(content, workspace_id, page_id);
+        }
         // A content write replaces the live collaborative document too: take its room first
         // (never while a transaction is open), after a cheap visibility check.
         let mut collab = match &changes.content {
@@ -1904,6 +1909,17 @@ async fn renumber_favorites(
 /// Collects every string under a `"text"` key, in document order, joined with spaces; a mention
 /// contributes `@<name>` (so search finds who a page mentions).
 #[must_use]
+/// Blocks from a REST write or a stored version, cleaned the way the live document cleans them, so
+/// `content_json` never holds a link or file URL that the editor would drop.
+pub(crate) fn sanitize_page_blocks(content: &[Value], workspace_id: Id, page_id: Id) -> Vec<Value> {
+    let policy = LinkPolicy {
+        kind: DocKind::Page,
+        workspace_id,
+        doc_id: page_id,
+    };
+    sanitize_blocks_for(content, &policy)
+}
+
 pub fn content_text(content: &[Value]) -> String {
     let mut parts = Vec::new();
     for block in content {
