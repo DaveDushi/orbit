@@ -71,7 +71,8 @@
 - Typecheck the web app with `bunx tsc -b` (what `build` runs). `tsc --noEmit -p .` checks nothing: the root `tsconfig.json` only has references, so it passes on broken code.
 - `cargo test --workspace` stops at the first failing test binary; use `--no-fail-fast` to see the whole suite.
 - Give every cargo call of a worktree the same `CARGO_PROFILE_*`/`CARGO_INCREMENTAL` values (run it through `orbit-build`, see `AGENTS.md`): a change rebuilds everything (2 GB more on 2026-10-29). To rerun built tests, run `target/debug/deps/<test>-<hash>` directly.
-- Playwright rewrites the tracked `apps/web/test-results/.last-run.json` on every run — restore it with `git checkout --` and never commit it.
+- Disk on the shared VM: one debug build of `orbit-server` writes ~1.4 GB (the `orbit` binary ~650 MB and its rlib ~750 MB), its incremental cache ~1.3 GB, and each server test binary ~550 MB. With a few GB free, run test binaries one batch at a time, delete them after, and delete `target/debug/incremental/orbit_server-*` of your build (2026-11-04).
+- `apps/web/test-results/` (Playwright output) is ignored; never commit traces or `error-context.md` from it (an upstream commit once did).
 - If the Agent Browser fails with a `SingletonLock: File exists` profile error, another session holds the profile. Do not delete the lock; drive the dev server with `playwright-core` from `apps/web/node_modules` instead (script in `/tmp`).
 - If Playwright's pinned headless shell is not installed, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to an installed one under `~/.cache/ms-playwright/` (`playwright.config.ts` reads it) instead of downloading browsers.
 - Under bun + happy-dom, a failing `toBeNull()` on an element or a failing `waitFor` on a full page can exhaust a 4 GB memory cap with no output. Assert negatives by count and keep rendered page tests focused.
