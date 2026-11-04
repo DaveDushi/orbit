@@ -336,9 +336,6 @@ fn problem(
             tracing::warn!(%error, "backup snapshot cannot be read");
             unreadable(instance, request_id)
         }
-        BackupItemError::TrialLimit(reached) => {
-            ApiError::trial_limit(reached, instance, request_id)
-        }
         BackupItemError::Upload(UploadError::StorageQuotaExceeded { .. }) => ApiError::new(
             StatusCode::PAYLOAD_TOO_LARGE,
             "storage_quota_exceeded",

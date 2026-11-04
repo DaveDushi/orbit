@@ -17,12 +17,10 @@ use sqlx::{Any, Transaction};
 use thiserror::Error;
 use utoipa::ToSchema;
 
-use super::billing::{TrialCapacityError, TrialLimitReached, ensure_trial_capacity};
 use super::pages::{PageSpace, Remap, content_text, renumber, sibling_ids};
 use super::tasks::description_from_blocks;
 use super::teamspaces::teamspace_exists;
 use crate::audit::{self, AuditOutcome};
-use crate::billing::TrialLimit;
 
 /// At most this many items are listed.
 const ITEM_LIMIT: usize = 200;
@@ -94,21 +92,10 @@ pub enum BackupItemError {
     TeamspaceMissing,
     #[error("the snapshot cannot be read: {0}")]
     Unreadable(#[from] BackupError),
-    #[error("trial limit reached")]
-    TrialLimit(TrialLimitReached),
     #[error(transparent)]
     Upload(UploadError),
     #[error("backup item repository is unavailable")]
     Database(#[from] sqlx::Error),
-}
-
-impl From<TrialCapacityError> for BackupItemError {
-    fn from(error: TrialCapacityError) -> Self {
-        match error {
-            TrialCapacityError::Reached(reached) => Self::TrialLimit(reached),
-            TrialCapacityError::Database(error) => Self::Database(error),
-        }
-    }
 }
 
 impl From<UploadError> for BackupItemError {
@@ -459,14 +446,6 @@ impl BackupItemRepository {
         let now = self.database.database_now().await?;
         let mut tx = self.database.immediate_transaction().await?;
         require_live_workspace(&mut tx, workspace_id).await?;
-        ensure_trial_capacity(
-            &self.database,
-            &mut tx,
-            workspace_id,
-            TrialLimit::Pages,
-            i64::try_from(pages.len()).unwrap_or(i64::MAX),
-        )
-        .await?;
         let space = match (root.teamspace_id, root.owner_id) {
             (Some(teamspace), _) if teamspace_exists(&mut tx, workspace_id, teamspace).await? => {
                 PageSpace::Teamspace(teamspace)
@@ -781,7 +760,6 @@ impl BackupItemRepository {
         if !project_live {
             return Err(BackupItemError::ProjectMissing);
         }
-        ensure_trial_capacity(&self.database, &mut tx, workspace_id, TrialLimit::Tasks, 1).await?;
 
         // A duplicate status needs a relation to the original, which is not restored.
         let statuses = sqlx::query(

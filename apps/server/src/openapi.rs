@@ -726,7 +726,6 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
                 add_code(&mut responses, "404", "workspace_not_found");
             }
             if operation_id == "restore_backup_item" {
-                add_code(&mut responses, "402", "trial_limit_reached");
                 add_code(&mut responses, "404", "item_not_found");
                 add_code(&mut responses, "409", "project_missing");
                 add_code(&mut responses, "409", "teamspace_missing");
