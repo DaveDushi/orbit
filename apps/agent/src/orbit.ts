@@ -1,4 +1,5 @@
 import type { Config } from "./config.ts";
+import type { ChatFile } from "./files.ts";
 
 /** An Orbit answer that is not 2xx. `problem` is Orbit's Problem Details body when it sent one. */
 /**
@@ -34,6 +35,8 @@ export type PendingInput = {
 	readonly created_at: number;
 	/** The workspace's team instructions; empty when it has none. */
 	readonly team_instructions: string;
+	/** The message's files; absent from an older Orbit. */
+	readonly files?: readonly ChatFile[];
 };
 
 export type PendingInputs = {

@@ -19,6 +19,12 @@ reasons: `.ai/agent-design.md`.
   it has no OCR for scans. File content is
   data and never instructions. A write needs the version the agent read, is recorded with the driver's name, and keeps
   the old version, which a person can restore in the file panel.
+- It reads files that people send in chat messages (`read_chat_file`: the same file types and paging as `read_file`,
+  through `GET …/chat/files/{file_id}/content`). It sees only files of sent messages that the driver can read (a file of
+  a private channel or DM without the driver answers like an unknown file), and never files of deleted messages. It
+  cannot read images, and it cannot change, upload, download or delete chat files: agent sessions reach only the
+  content route. `read_messages` and `search_messages` show each message's files (name, id, kind), and the files of the
+  message that starts or joins a run come with that message (`files` of the run input), so no call is needed to find them.
 - When it needs information, it asks a teammate in the thread (`@`-mention) and stops. The next reply in the thread
   continues the run, as the original driver.
 - Runs are durable: a restart of Orbit or of the agent continues them.

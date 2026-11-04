@@ -2,7 +2,7 @@
 //! message that is for the agent is never lost; the sidecar reads the queue and acknowledges each
 //! row after Pi stored it.
 
-use orbit_platform::{Database, Flag, Id, Row, TimestampMillis};
+use orbit_platform::{Database, Flag, Id, Row, SqlBuilder, TimestampMillis};
 use serde::{Deserialize, Serialize};
 use sqlx::AnyConnection;
 
@@ -207,6 +207,17 @@ pub struct PendingInput {
     pub created_at: i64,
     /// The workspace's team instructions (`settings`), empty when it has none.
     pub team_instructions: String,
+    /// The message's files, so the run knows them without a call. The agent reads them with
+    /// the chat file content route.
+    pub files: Vec<InputFile>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct InputFile {
+    pub id: String,
+    pub file_name: String,
+    pub mime_type: String,
+    pub size_bytes: i64,
 }
 
 /// The oldest unacknowledged inputs, in message order.
@@ -230,7 +241,7 @@ pub(crate) async fn pending(
     .bind(limit)
     .fetch_all(database.pool())
     .await?;
-    Ok(rows
+    let mut inputs: Vec<PendingInput> = rows
         .iter()
         .map(|row| PendingInput {
             message_id: row.get("message_id"),
@@ -249,8 +260,36 @@ pub(crate) async fn pending(
             team_instructions: row
                 .get::<Option<String>, _>("team_instructions")
                 .unwrap_or_default(),
+            files: Vec::new(),
         })
-        .collect())
+        .collect();
+    if inputs.is_empty() {
+        return Ok(inputs);
+    }
+    let mut query = SqlBuilder::new(
+        "SELECT id, message_id, file_name, mime_type, size_bytes FROM chat_message_files \
+         WHERE message_id IN (",
+    );
+    let mut ids = query.separated(", ");
+    for input in &inputs {
+        ids.push_bind(input.message_id.clone());
+    }
+    query.push(") ORDER BY created_at, id");
+    for row in query.build().fetch_all(database.pool()).await? {
+        let message_id: String = row.get("message_id");
+        if let Some(input) = inputs
+            .iter_mut()
+            .find(|input| input.message_id == message_id)
+        {
+            input.files.push(InputFile {
+                id: row.get("id"),
+                file_name: row.get("file_name"),
+                mime_type: row.get("mime_type"),
+                size_bytes: row.get("size_bytes"),
+            });
+        }
+    }
+    Ok(inputs)
 }
 
 pub(crate) async fn acknowledge(database: &Database, message_id: Id) -> Result<bool, sqlx::Error> {

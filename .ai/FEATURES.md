@@ -465,6 +465,8 @@ turns its routes, navigation and shortcuts off.
 - Threads are the only reply model (side pane and full view), with follow state for each member.
 - Reactions, pins, files, mentions (`@user`, `@channel`, `@here`, `#channel`), search, the
   Unreads and Threads views, a notify level for each conversation.
+- The team agent reads chat files (`read_chat_file`) through `GET …/chat/files/{id}/content`: the page file query and
+  parser (`file_content.rs`), only files of sent, not deleted messages that the driver can read; read-only.
 - Unread and mention counts come from the server (counters, not count queries).
 - Live updates, typing and presence come over the workspace's live socket
   (`GET /api/v1/workspaces/{id}/live`).

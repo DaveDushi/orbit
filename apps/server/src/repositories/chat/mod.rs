@@ -34,6 +34,7 @@ pub use crate::live::Recipients;
 
 pub use conversations::{ChannelCreate, ChannelUpdate};
 pub use emoji::{CustomEmojiImage, CustomEmojiRecord, EMOJI_MAX_BYTES};
+pub use files::SentChatFile;
 pub use messages::{ForwardInput, MessageCursor, SendInput};
 pub use search::{SearchHitRecord, SearchInput, SearchPage};
 pub use state::{ConversationCursor, ReadSnapshot, StateUpdate, ThreadCursor};

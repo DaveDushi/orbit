@@ -1,6 +1,6 @@
 /**
- * Page files for the model: a read of one part of a file becomes text that fits in one tool result (`untrusted` cuts
- * at 12,000 characters), and says where the next part starts.
+ * Page and chat files for the model: a read of one part of a file becomes text that fits in one tool result
+ * (`untrusted` cuts at 12,000 characters), and says where the next part starts.
  */
 
 /** Text from Orbit content is data for the model, never instructions. The content cannot close its own block. */
@@ -13,7 +13,8 @@ export function untrusted(label: string, value: unknown): string {
 export const READ_CHARS = 10_000;
 
 export type FileContent = {
-	file: { id: string; file_name: string; kind: string; version: number; can_edit: boolean; size_bytes: number };
+	/** A chat file has no version and is read-only: no `version`, no `can_edit`. */
+	file: { id: string; file_name: string; kind: string; version?: number; can_edit?: boolean; size_bytes: number };
 	sheets: string[];
 	sheet: string | null;
 	rows: string[][] | null;
@@ -27,10 +28,11 @@ export type FileContent = {
 /** One part of a file as text for the model: what the file is, then its rows or text. */
 export function fileReadText(content: FileContent, offset: number): string {
 	const { file } = content;
-	const about: Record<string, unknown> = { file_id: file.id, name: file.file_name, kind: file.kind, version: file.version, can_write: file.can_edit };
+	const about: Record<string, unknown> = { file_id: file.id, name: file.file_name, kind: file.kind };
+	if (file.version !== undefined) Object.assign(about, { version: file.version, can_write: file.can_edit });
 	if (content.sheets.length) Object.assign(about, { sheets: content.sheets, sheet: content.sheet });
 	if (file.kind === "image" || file.kind === "other") {
-		return `${JSON.stringify(about)}\nThis kind of file has no text you can read. People can open or download it on the page.`;
+		return `${JSON.stringify(about)}\nThis kind of file has no text you can read (no images, no OCR). People can open or download it in Orbit.`;
 	}
 	if (content.no_text) return `${JSON.stringify(about)}\nNo text was found in this file. It may be a scan; there is no OCR, so you cannot read it.`;
 	if (content.rows) {
@@ -52,4 +54,28 @@ export function fileReadText(content: FileContent, offset: number): string {
 		return `${JSON.stringify({ ...about, next_offset: next })}\n${lines.join("\n")}`;
 	}
 	return `${JSON.stringify({ ...about, next_offset: content.next_offset })}\n${content.text ?? ""}`;
+}
+
+/** A file of a chat message, as Orbit lists it on the message. */
+export type ChatFile = { id: string; file_name: string; mime_type: string; size_bytes?: number; deleted?: boolean };
+
+/** The files of the message that starts or joins a run, after its text, so the model knows them without a call. */
+export function withMessageFiles(text: string, files: readonly ChatFile[] | undefined): string {
+	const list = chatFilesText(files);
+	if (!list) return text;
+	return `${text}\n\nFiles sent with this message (read them with read_chat_file):\n${untrusted("message files", list)}`;
+}
+
+/** A short kind for a chat file: what read_chat_file can do with it is clear from it. */
+export function chatFileKind(file: ChatFile): string {
+	if (file.mime_type.startsWith("image/")) return "image";
+	if (file.mime_type === "application/pdf") return "pdf";
+	const extension = /\.([a-z0-9]{1,8})$/i.exec(file.file_name)?.[1];
+	return extension ? extension.toLowerCase() : "file";
+}
+
+/** The files of a chat message on one line: name, id and kind. The name is the sender's text: it is data. */
+export function chatFilesText(files: readonly ChatFile[] | undefined): string {
+	if (!files?.length) return "";
+	return files.map((file) => (file.deleted ? `${file.file_name} (deleted)` : `${file.file_name} (file_id ${file.id}, ${chatFileKind(file)})`)).join("; ");
 }

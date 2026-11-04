@@ -1,4 +1,5 @@
-//! Chat files: upload (one multipart `file` field), download, and the files of a conversation.
+//! Chat files: upload (one multipart `file` field), download, the content of a sent file in
+//! parts (for the agent), and the files of a conversation.
 
 use std::io;
 
@@ -8,11 +9,13 @@ use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use orbit_platform::{BlobStoreError, RequestId, UploadError};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use super::{Call, ChatState, RequestIdExtension};
 use crate::attachment_routes::{StageFailure, download_response, stage_single_file};
+use crate::file_content::{ContentQuery, ReadError, read_problem};
+use crate::file_parse::{self, FileKind};
 use crate::repositories::chat::{ChatError, ChatFileRecord, MessageRecord};
 use crate::task_routes::{ApiError, validation};
 
@@ -29,6 +32,10 @@ pub(super) fn file_router(state: ChatState) -> Router {
         .route(
             "/api/v1/workspaces/{workspace_id}/chat/files/{file_id}",
             get(download_chat_file),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/chat/files/{file_id}/content",
+            get(get_chat_file_content),
         )
         .route(
             "/api/v1/workspaces/{workspace_id}/chat/conversations/{conversation_id}/files",
@@ -136,6 +143,105 @@ pub(crate) async fn download_chat_file(
             "the download response could not be built".to_owned(),
         )))
     })
+}
+
+/// A chat file as its content shows it. Chat files have no versions and are read-only.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ChatContentFile {
+    #[schema(value_type = String)]
+    id: orbit_platform::Id,
+    file_name: String,
+    mime_type: String,
+    kind: FileKind,
+    size_bytes: i64,
+    #[schema(value_type = String)]
+    message_id: orbit_platform::Id,
+    #[schema(value_type = String)]
+    conversation_id: orbit_platform::Id,
+}
+
+/// A chat file and one part of its content: the fields of a Docs page file's content.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ChatFileContent {
+    file: ChatContentFile,
+    /// Sheet names of a workbook.
+    sheets: Vec<String>,
+    sheet: Option<String>,
+    rows: Option<Vec<Vec<String>>>,
+    row_numbers: Option<Vec<u64>>,
+    /// Cells among `rows` that hold a formula, as `B2`.
+    formula_cells: Vec<String>,
+    text: Option<String>,
+    /// Where the next part starts; `null` at the end.
+    next_offset: Option<u64>,
+    /// A PDF or Word file without text, such as a scan.
+    no_text: bool,
+}
+
+/// One part of a file of a sent message, as rows or text, with the query of a Docs page file's
+/// content. Only for a person who can read the message; an upload that waits for its message
+/// and a file of a deleted message are not found.
+#[utoipa::path(get, path = "/api/v1/workspaces/{workspace_id}/chat/files/{file_id}/content", params(("workspace_id" = String, Path), ("file_id" = String, Path), ContentQuery), responses((status = 200, body = ChatFileContent)))]
+pub(crate) async fn get_chat_file_content(
+    State(state): State<ChatState>,
+    Path((workspace, file)): Path<(String, String)>,
+    Query(query): Query<ContentQuery>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+) -> Result<Json<ChatFileContent>, ApiError> {
+    let call = Call::enter(&state, &headers, &uri, &workspace, &request_id).await?;
+    let file_id = call.id(&file)?;
+    let sent = state
+        .chat
+        .sent_file(call.workspace_id, call.actor_id, file_id)
+        .await
+        .map_err(|error| call.problem(error))?;
+    if sent.file.deleted {
+        return Err(ApiError::new(
+            StatusCode::GONE,
+            "file_deleted",
+            "File deleted",
+            "An admin deleted this stored file.",
+            &call.instance,
+            call.request_id,
+        ));
+    }
+    let kind = file_parse::classify(&sent.file.file_name, &sent.file.mime_type);
+    let parsed = state
+        .reader
+        .read(
+            kind,
+            &sent.file.file_name,
+            u64::try_from(sent.file.size_bytes).unwrap_or(u64::MAX),
+            query,
+            state.chat.uploads().read_blob(&sent.storage_key),
+        )
+        .await
+        .map_err(|error| match error {
+            ReadError::Upload(error) => upload_problem(error, &call.instance, call.request_id),
+            error => read_problem(error, &call.instance, call.request_id),
+        })?
+        .unwrap_or_default();
+    Ok(Json(ChatFileContent {
+        file: ChatContentFile {
+            id: sent.file.id,
+            file_name: sent.file.file_name,
+            mime_type: sent.file.mime_type,
+            kind,
+            size_bytes: sent.file.size_bytes,
+            message_id: sent.message_id,
+            conversation_id: sent.conversation_id,
+        },
+        sheets: parsed.sheets,
+        sheet: parsed.sheet,
+        rows: parsed.rows,
+        row_numbers: parsed.row_numbers,
+        formula_cells: parsed.formula_cells,
+        text: parsed.text,
+        next_offset: parsed.next_offset,
+        no_text: parsed.no_text,
+    }))
 }
 
 /// The messages of a conversation that have files, newest first (at most 100).

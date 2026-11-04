@@ -23,6 +23,19 @@ const FILE_COLUMNS: &str = "id, workspace_id, message_id, file_name, mime_type, 
      EXISTS (SELECT 1 FROM attachment_blobs b WHERE b.id = chat_message_files.blob_id AND b.deleted_at IS NOT NULL) \
      AS deleted";
 
+/// `c` is a conversation that `me` (a membership of the file's workspace) can read.
+const CONVERSATION_READABLE: &str = "(c.kind = 'public' OR EXISTS (SELECT 1 FROM chat_members cm \
+     WHERE cm.conversation_id = c.id AND cm.user_id = me.user_id))";
+
+/// A file of a sent message, with where its bytes are.
+#[derive(Clone, Debug)]
+pub struct SentChatFile {
+    pub file: ChatFileRecord,
+    pub message_id: Id,
+    pub conversation_id: Id,
+    pub storage_key: String,
+}
+
 fn file_from_row(row: &AnyRow) -> Result<ChatFileRecord, ChatError> {
     let id = parse_id(row.get("id"))?;
     let workspace_id = parse_id(row.get("workspace_id"))?;
@@ -196,7 +209,7 @@ impl ChatRepository {
         let database = self.database.clone();
         self.uploads
             .download(move || async move {
-                let row = sqlx::query(
+                let row = sqlx::query(sqlx::AssertSqlSafe(format!(
                     "SELECT b.storage_key, b.deleted_at, f.mime_type, f.file_name FROM chat_message_files f \
                      JOIN attachment_blobs b ON b.id = f.blob_id AND b.workspace_id = f.workspace_id \
                      JOIN workspaces w ON w.id = f.workspace_id AND w.deleted_at IS NULL \
@@ -204,10 +217,8 @@ impl ChatRepository {
                      LEFT JOIN chat_conversations c ON c.id = f.conversation_id \
                      WHERE f.id = $2 AND f.workspace_id = $3 AND ( \
                          (f.message_id IS NULL AND f.uploaded_by = me.user_id) \
-                         OR c.kind = 'public' \
-                         OR EXISTS (SELECT 1 FROM chat_members cm \
-                                    WHERE cm.conversation_id = c.id AND cm.user_id = me.user_id))",
-                )
+                         OR {CONVERSATION_READABLE})"
+                )))
                 .bind(actor_id.to_string())
                 .bind(file_id.to_string())
                 .bind(workspace_id.to_string())
@@ -226,6 +237,41 @@ impl ChatRepository {
                 UploadError::Unauthorized => ChatError::NotFound,
                 error => ChatError::Upload(error),
             })
+    }
+
+    /// A file of a sent message that `actor_id` can read: the conversation rule of
+    /// [`Self::download_file`], but never an upload that waits for its message, and never a file
+    /// of a deleted message. Every other file is [`ChatError::NotFound`].
+    pub async fn sent_file(
+        &self,
+        workspace_id: Id,
+        actor_id: Id,
+        file_id: Id,
+    ) -> Result<SentChatFile, ChatError> {
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT f.id, f.workspace_id, f.message_id, f.conversation_id, f.file_name, f.mime_type, \
+             f.size_bytes, f.width, f.height, b.storage_key, \
+             EXISTS (SELECT 1 FROM attachment_blobs d WHERE d.id = f.blob_id AND d.deleted_at IS NOT NULL) \
+             AS deleted FROM chat_message_files f \
+             JOIN attachment_blobs b ON b.id = f.blob_id AND b.workspace_id = f.workspace_id \
+             JOIN workspaces w ON w.id = f.workspace_id AND w.deleted_at IS NULL \
+             JOIN memberships me ON me.workspace_id = f.workspace_id AND me.user_id = $1 \
+             JOIN chat_messages m ON m.id = f.message_id AND m.deleted_at IS NULL \
+             JOIN chat_conversations c ON c.id = f.conversation_id \
+             WHERE f.id = $2 AND f.workspace_id = $3 AND {CONVERSATION_READABLE}"
+        )))
+        .bind(actor_id.to_string())
+        .bind(file_id.to_string())
+        .bind(workspace_id.to_string())
+        .fetch_optional(self.database.pool())
+        .await?
+        .ok_or(ChatError::NotFound)?;
+        Ok(SentChatFile {
+            file: file_from_row(&row)?,
+            message_id: parse_id(row.get("message_id"))?,
+            conversation_id: parse_id(row.get("conversation_id"))?,
+            storage_key: row.get("storage_key"),
+        })
     }
 
     /// The messages of a conversation that have files, newest first.

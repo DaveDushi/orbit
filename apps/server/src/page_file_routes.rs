@@ -13,12 +13,12 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use orbit_platform::{BlobStoreError, Id, RequestId, UploadError, UploadService};
 use serde::{Deserialize, Serialize};
-use tokio::sync::Semaphore;
 use utoipa::ToSchema;
 
 use crate::attachment_routes::{StageFailure, download_response, stage_single_file};
 use crate::auth_routes::CookieMode;
-use crate::file_parse::{self, FileKind, ParseError, ParseRequest, Parsed};
+use crate::file_content::{ContentQuery, FileReader, ReadError, is_tsv, read_problem};
+use crate::file_parse::{self, FileKind};
 use crate::repositories::identity::IdentityRepository;
 use crate::repositories::page_files::{
     PageFile, PageFileError, PageFileRepository, PageFileVersion,
@@ -31,10 +31,7 @@ pub struct PageFileState {
     identity: Arc<IdentityRepository>,
     files: Arc<PageFileRepository>,
     cookie_mode: CookieMode,
-    /// The program that parses in a child process: this one (`orbit parse-file`).
-    parser: Option<PathBuf>,
-    /// Per server, like every limit of one process.
-    parses: Arc<Semaphore>,
+    reader: FileReader,
 }
 
 impl PageFileState {
@@ -51,15 +48,14 @@ impl PageFileState {
             )),
             identity,
             cookie_mode,
-            parser: std::env::current_exe().ok(),
-            parses: Arc::new(Semaphore::new(file_parse::PARALLEL_PARSES)),
+            reader: FileReader::new(),
         }
     }
 
     /// Tests run in a test binary, which cannot be the parser.
     #[must_use]
     pub fn with_parser(mut self, program: impl Into<PathBuf>) -> Self {
-        self.parser = Some(program.into());
+        self.reader = FileReader::with_parser(program);
         self
     }
 
@@ -213,18 +209,6 @@ struct PageFileVersionList {
     items: Vec<PageFileVersion>,
 }
 
-/// Which part of a file to read. `offset` and `limit` count rows for spreadsheets and delimited
-/// text, and characters otherwise. PDF text is read only with `extract`: the panel shows the pages
-/// themselves.
-#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
-#[into_params(parameter_in = Query)]
-struct ContentQuery {
-    sheet: Option<String>,
-    offset: Option<u64>,
-    limit: Option<u64>,
-    extract: Option<bool>,
-}
-
 /// A file and one part of its content.
 #[derive(Serialize, ToSchema)]
 struct PageFileContent {
@@ -317,55 +301,20 @@ async fn get_page_file_content(
         return Err(problem(PageFileError::Deleted, &instance, request_id));
     }
     let kind = record.file.kind;
-    let parses = match kind {
-        FileKind::Image | FileKind::Other => false,
-        FileKind::Pdf => query.extract.unwrap_or(false),
-        _ => true,
-    };
-    let parsed = if parses {
-        if record.file.size_bytes > file_parse::MAX_PARSE_BYTES {
-            return Err(parse_problem(ParseError::Limit, &instance, request_id));
-        }
-        let rows = matches!(
+    let uploads = state.files.uploads();
+    let parsed = state
+        .reader
+        .read(
             kind,
-            FileKind::Sheet | FileKind::LegacySheet | FileKind::Delimited
-        );
-        let request = ParseRequest {
-            tab_separated: is_tsv(&record.file.file_name),
-            sheet: query.sheet,
-            offset: query.offset.unwrap_or(0),
-            limit: query
-                .limit
-                .unwrap_or(if rows { 200 } else { 50_000 })
-                .clamp(
-                    1,
-                    if rows {
-                        file_parse::MAX_ROWS_PER_READ
-                    } else {
-                        file_parse::MAX_CHARS_PER_READ
-                    },
-                ),
-        };
-        let _permit = tokio::time::timeout(file_parse::QUEUE_WAIT, state.parses.acquire())
-            .await
-            .map_err(|_| busy(&instance, request_id))?
-            .map_err(|_| internal(&instance, request_id))?;
-        let bytes = state
-            .files
-            .uploads()
-            .read_blob(&record.storage_key)
-            .await
-            .map_err(|error| upload_problem(error, &instance, request_id))?;
-        let program = state
-            .parser
-            .as_deref()
-            .ok_or_else(|| internal(&instance, request_id))?;
-        file_parse::parse_in_child(program, kind, bytes, &request)
-            .await
-            .map_err(|error| parse_problem(error, &instance, request_id))?
-    } else {
-        Parsed::default()
-    };
+            &record.file.file_name,
+            record.file.size_bytes,
+            query,
+            uploads.read_blob(&record.storage_key),
+        )
+        .await
+        .map_err(|error| read_error(error, &instance, request_id))?;
+    let parses = parsed.is_some();
+    let parsed = parsed.unwrap_or_default();
     let mut file = record.file;
     // Bytes that are not UTF-8 would not survive an edit.
     file.can_edit =
@@ -442,10 +391,11 @@ async fn save_page_file(
                     request_id,
                 ));
             }
-            let _permit = tokio::time::timeout(file_parse::QUEUE_WAIT, state.parses.acquire())
+            let _permit = state
+                .reader
+                .permit()
                 .await
-                .map_err(|_| busy(&instance, request_id))?
-                .map_err(|_| internal(&instance, request_id))?;
+                .map_err(|error| read_error(error, &instance, request_id))?;
             let current = state
                 .files
                 .uploads()
@@ -453,9 +403,9 @@ async fn save_page_file(
                 .await
                 .map_err(|error| upload_problem(error, &instance, request_id))?;
             let program = state
-                .parser
-                .as_deref()
-                .ok_or_else(|| internal(&instance, request_id))?;
+                .reader
+                .parser()
+                .map_err(|error| read_error(error, &instance, request_id))?;
             let request = PatchRequest {
                 sheet: body.sheet,
                 edits,
@@ -597,10 +547,6 @@ async fn restore_page_file_version(
     Ok(Json(restored))
 }
 
-fn is_tsv(file_name: &str) -> bool {
-    file_name.to_ascii_lowercase().ends_with(".tsv")
-}
-
 fn parse_id(
     value: &str,
     instance: &str,
@@ -637,17 +583,6 @@ fn too_large(instance: &str, request_id: Option<&Extension<RequestId>>) -> ApiEr
         "upload_too_large",
         "Upload too large",
         "The upload exceeds the configured size limit.",
-        instance,
-        request_id,
-    )
-}
-
-fn busy(instance: &str, request_id: Option<&Extension<RequestId>>) -> ApiError {
-    ApiError::new(
-        StatusCode::SERVICE_UNAVAILABLE,
-        "file_busy",
-        "Try again",
-        "The server is reading other files. Try again in a moment.",
         instance,
         request_id,
     )
@@ -692,36 +627,15 @@ fn patch_problem(
     .with_detail(detail)
 }
 
-fn parse_problem(
-    error: ParseError,
+fn read_error(
+    error: ReadError,
     instance: &str,
     request_id: Option<&Extension<RequestId>>,
 ) -> ApiError {
-    let (code, title, detail) = match error {
-        ParseError::Limit => (
-            "file_over_limit",
-            "File too large to read",
-            "This file is too large or too complex to read here. Download it to open it.",
-        ),
-        ParseError::Unreadable => (
-            "file_unreadable",
-            "File cannot be read",
-            "This file is damaged or protected, or its format is not supported. Download it to open it.",
-        ),
-        ParseError::UnknownSheet => (
-            "file_unreadable",
-            "No such sheet",
-            "The workbook has no sheet with this name.",
-        ),
-    };
-    ApiError::new(
-        StatusCode::UNPROCESSABLE_ENTITY,
-        code,
-        title,
-        detail,
-        instance,
-        request_id,
-    )
+    match error {
+        ReadError::Upload(error) => upload_problem(error, instance, request_id),
+        error => read_problem(error, instance, request_id),
+    }
 }
 
 fn internal(instance: &str, request_id: Option<&Extension<RequestId>>) -> ApiError {

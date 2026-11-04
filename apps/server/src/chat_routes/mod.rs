@@ -24,6 +24,7 @@ use tracing::Instrument;
 use utoipa::ToSchema;
 
 use crate::auth_routes::CookieMode;
+use crate::file_content::FileReader;
 use crate::link_preview::LinkPreviewer;
 use crate::live::{LiveHub, NewEvent, Recipients};
 use crate::repositories::chat::{ChatError, ChatEvent, ChatRepository, Written};
@@ -37,6 +38,7 @@ pub struct ChatState {
     pub(crate) hub: LiveHub,
     pub(crate) cookie_mode: CookieMode,
     pub(crate) link_previews: Arc<LinkPreviewer>,
+    pub(crate) reader: FileReader,
 }
 
 impl ChatState {
@@ -52,7 +54,15 @@ impl ChatState {
             identity,
             cookie_mode,
             link_previews: Arc::new(LinkPreviewer::default()),
+            reader: FileReader::new(),
         }
+    }
+
+    /// Tests run in a test binary, which cannot be the file parser.
+    #[must_use]
+    pub fn with_parser(mut self, program: impl Into<std::path::PathBuf>) -> Self {
+        self.reader = FileReader::with_parser(program);
+        self
     }
 
     /// Reads link previews with `previewer` (tests name local services).

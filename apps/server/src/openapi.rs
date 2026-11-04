@@ -277,6 +277,7 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::chat_routes::state::restore_chat_read,
         crate::chat_routes::files::upload_chat_file,
         crate::chat_routes::files::download_chat_file,
+        crate::chat_routes::files::get_chat_file_content,
         crate::chat_routes::files::list_chat_files,
         crate::chat_routes::messages::list_chat_search,
         crate::chat_routes::links::get_chat_link_preview,
@@ -1303,6 +1304,13 @@ fn chat_errors(operation_id: &str, responses: &mut BTreeMap<&'static str, Vec<&'
         operation_id,
         "download_chat_file" | "get_chat_emoji_image" | "get_chat_sticker_image"
     ) {
+        return;
+    }
+    if operation_id == "get_chat_file_content" {
+        add_code(responses, "410", "file_deleted");
+        add_code(responses, "422", "file_over_limit");
+        add_code(responses, "422", "file_unreadable");
+        add_code(responses, "503", "file_busy");
         return;
     }
     if operation_id == "create_chat_emoji" {
