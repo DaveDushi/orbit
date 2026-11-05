@@ -56,10 +56,13 @@ pub enum Permission {
     /// Export the whole workspace as a ZIP archive and download its exports.
     #[serde(rename = "workspace.export")]
     WorkspaceExport,
+    /// Delete Drive files and folders forever (one trashed item, or the whole Drive trash).
+    #[serde(rename = "drive.purge")]
+    DrivePurge,
 }
 
 impl Permission {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::WorkspaceUpdate,
         Self::WorkspaceDelete,
         Self::WorkspaceTransfer,
@@ -77,6 +80,7 @@ impl Permission {
         Self::AgentMemoryManage,
         Self::AppsManage,
         Self::WorkspaceExport,
+        Self::DrivePurge,
     ];
 }
 
@@ -152,6 +156,13 @@ impl Actor {
             Some(owner) => self.user_id == owner,
             None => self.can(Permission::AgentMemoryManage),
         }
+    }
+
+    /// A Drive upload in progress belongs to the member who started it: only they send its parts,
+    /// complete it or cancel it (`started_by` is `None` when that user is gone).
+    #[must_use]
+    pub fn can_continue_drive_upload(self, started_by: Option<Id>) -> bool {
+        started_by == Some(self.user_id)
     }
 
     /// A private page is visible to its owner alone, so whoever sees one may delete it forever.
@@ -278,7 +289,8 @@ impl Policy {
             | Permission::StorageManage
             | Permission::AgentMemoryManage
             | Permission::AppsManage
-            | Permission::WorkspaceExport => {
+            | Permission::WorkspaceExport
+            | Permission::DrivePurge => {
                 matches!(role, WorkspaceRole::Owner | WorkspaceRole::Admin)
             }
         }

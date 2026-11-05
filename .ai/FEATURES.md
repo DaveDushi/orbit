@@ -556,6 +556,16 @@ turns its routes, navigation and shortcuts off.
   (statuses `new`, `building`, `review`, `live`, `declined`). The text is untrusted and shown as plain text only. Web
   only; mobile has neither the menu item nor the page.
 
+## Drive
+
+Orbit Drive (design `/root/orbit-drive-design/orbit-drive-full-design.md`, v1 in progress on `drive-core`): one drive per
+workspace, every member reads and writes. Server and API only so far (M2): migration 0075 (`drive_nodes`, `drive_blobs`,
+`drive_media`, `drive_shares`), `repositories/drive.rs`, `drive.rs` (S3 orchestration), routes under
+`/api/v1/workspaces/{id}/drive` (tree, rename, move, trash/restore of whole trees, delete forever with `drive.purge`
+(owners and admins), search, folder file lists for ZIP, download URLs, single-PUT and multipart uploads with resume).
+Bytes never pass through Orbit: presigned URLs, signed only after the membership check. Operator notes:
+`docs/operations.md` (Drive files).
+
 ## Apps
 
 Owners and admins add custom web apps in Workspace settings → Apps (`docs/apps.md`, `.ai/apps-design.md`). Each has allowed roles, an icon and an open mode. Members with an allowed role get a sidebar section "Apps" and `/apps/:slug`: a full-size frame of a same-origin wrapper document with its own CSP, plus Reload and Open in a new tab. `new_tab` apps open directly from the sidebar. Others get a 404; agent sessions are refused. With redirect URIs set, the app is an OpenID Connect client on Orbit's OAuth server: secret shown once, no consent screen, tokens that work only at `/oauth/userinfo`. Mobile lists the apps in Settings and opens the browser.

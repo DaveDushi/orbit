@@ -510,6 +510,11 @@ impl MigrationRunner {
                     ),
                     false,
                 ),
+                Migration::new(
+                    75,
+                    include_str!("../../../../apps/server/migrations/0075_drive.sql"),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -680,6 +685,11 @@ impl MigrationRunner {
                 include_str!(
                     "../../../../apps/server/migrations/postgres/0074_confirm_setup_owner_email.sql"
                 ),
+                false,
+            ),
+            Migration::new(
+                75,
+                include_str!("../../../../apps/server/migrations/postgres/0075_drive.sql"),
                 false,
             ),
         ];

@@ -802,6 +802,8 @@ async fn copy_object_copies_within_the_bucket_and_reports_a_missing_source() {
             .unwrap()
             .is_some()
     );
+    assert_eq!(bucket.size("drive/copy").await.unwrap(), Some(8));
+    assert_eq!(bucket.size("drive/missing").await.unwrap(), None);
     assert!(
         !bucket
             .copy_object("drive/missing", "drive/other")

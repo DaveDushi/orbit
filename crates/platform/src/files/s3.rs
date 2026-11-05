@@ -391,6 +391,26 @@ impl S3Bucket {
             .map_err(|_| S3Error::Response(format!("invalid Last-Modified {value}")))
     }
 
+    /// The object's size, or `None` when it does not exist.
+    pub async fn size(&self, key: &str) -> Result<Option<u64>, S3Error> {
+        let response = self
+            .request(Method::HEAD, key, &[], &[])
+            .timeout(SMALL_REQUEST_TIMEOUT)
+            .send()
+            .await?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let response = expect_success(response).await?;
+        response
+            .headers()
+            .get(CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse().ok())
+            .map(Some)
+            .ok_or_else(|| S3Error::Response("HEAD without Content-Length".to_owned()))
+    }
+
     /// Copies the object onto itself, which sets its last-modified time to now. Returns `false` when it does
     /// not exist.
     pub async fn touch(&self, key: &str) -> Result<bool, S3Error> {

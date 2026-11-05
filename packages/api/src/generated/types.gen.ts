@@ -1042,6 +1042,25 @@ export type CreateApiTokenBody = {
     service_account?: boolean;
 };
 
+export type CreateDriveDownloads = {
+    /**
+     * At most 100 file ids; ids that are not live files are left out of the answer.
+     */
+    node_ids: Array<string>;
+};
+
+export type CreateDriveFolder = {
+    name: string;
+    /**
+     * `fail` (default) or `rename`.
+     */
+    on_conflict?: OnConflict;
+    /**
+     * `null` or absent for the top level.
+     */
+    parent_id?: string | null;
+};
+
 export type CreateNotionImportBody = {
     /**
      * A Notion personal access token (recommended) or internal connection token. Validated
@@ -1209,6 +1228,158 @@ export type DisplayOptions = {
  * What a collaborative document belongs to.
  */
 export type DocKind = 'page' | 'task';
+
+/**
+ * One folder on the way from the top level to a node.
+ */
+export type DriveCrumb = {
+    id: string;
+    name: string;
+};
+
+export type DriveDownload = {
+    expires_at: string;
+    url: string;
+};
+
+export type DriveDownloadUrl = {
+    node_id: string;
+    url: string;
+};
+
+export type DriveDownloads = {
+    expires_at: string;
+    items: Array<DriveDownloadUrl>;
+};
+
+/**
+ * A node found below a folder or by a search, with the path of its folder (`""` at the top level,
+ * else `a/b`).
+ */
+export type DriveEntry = {
+    folder_path: string;
+    node: DriveNode;
+};
+
+export type DriveEntryPage = {
+    items: Array<DriveEntry>;
+    next_offset?: number | null;
+};
+
+/**
+ * A folder or file of the drive.
+ */
+export type DriveNode = {
+    created_at: string;
+    created_by?: string | null;
+    id: string;
+    kind: DriveNodeKind;
+    /**
+     * `null` for folders.
+     */
+    mime?: string | null;
+    name: string;
+    /**
+     * `null` at the top level.
+     */
+    parent_id?: string | null;
+    /**
+     * Bytes; `null` for folders.
+     */
+    size?: number | null;
+    /**
+     * Set on an item in the trash (only on the item that was trashed, not on what it contains).
+     */
+    trashed_at?: string | null;
+    updated_at: string;
+    updated_by?: string | null;
+};
+
+export type DriveNodeDetail = {
+    node: DriveNode;
+    /**
+     * The folders above the node, from the top level down.
+     */
+    path: Array<DriveCrumb>;
+};
+
+export type DriveNodeKind = 'folder' | 'file';
+
+export type DriveNodePage = {
+    items: Array<DriveNode>;
+    /**
+     * The `offset` of the next page; `null` on the last page.
+     */
+    next_offset?: number | null;
+};
+
+export type DrivePartUrl = {
+    part_number: number;
+    url: string;
+};
+
+export type DrivePartUrls = {
+    expires_at: string;
+    items: Array<DrivePartUrl>;
+};
+
+export type DriveTrashEmptied = {
+    /**
+     * Files and folders deleted forever.
+     */
+    deleted: number;
+};
+
+/**
+ * A file that a member is uploading.
+ */
+export type DriveUpload = {
+    created_at: string;
+    id: string;
+    mime: string;
+    name: string;
+    on_conflict: OnConflict;
+    parent_id?: string | null;
+    /**
+     * `null` for a single PUT; else every part but the last has this size.
+     */
+    part_size?: number | null;
+    size: number;
+};
+
+export type DriveUploadList = {
+    items: Array<DriveUploadView>;
+};
+
+/**
+ * An upload in progress. A single-PUT upload (`part_size` null) sends the whole file to `url` with one PUT;
+ * a multipart upload asks for part URLs. Either then calls `complete`.
+ */
+export type DriveUploadStarted = {
+    expires_at: string;
+    upload: DriveUploadView;
+    /**
+     * The PUT URL of a single-PUT upload.
+     */
+    url?: string | null;
+};
+
+/**
+ * What the bucket already has: after a reload the browser sends only the missing parts.
+ */
+export type DriveUploadStatus = {
+    upload: DriveUploadView;
+    uploaded_parts: Array<DriveUploadedPart>;
+};
+
+export type DriveUploadView = DriveUpload & {
+    part_count: number;
+};
+
+export type DriveUploadedPart = {
+    part_number: number;
+    size: number;
+};
 
 export type DuplicatePageBody = {
     /**
@@ -1659,6 +1830,13 @@ export type MessageRecord = {
     thread_root_id: string | null;
 };
 
+export type MoveDriveNode = {
+    /**
+     * The target folder; `null` for the top level.
+     */
+    parent_id?: string | null;
+};
+
 export type MoveFavoriteBody = {
     /**
      * Index among the caller's visible favorites; larger values move it last.
@@ -1940,6 +2118,11 @@ export type NotionImportTree = {
      */
     truncated: boolean;
 };
+
+/**
+ * What happens when the name is already used in the folder.
+ */
+export type OnConflict = 'fail' | 'rename' | 'replace';
 
 export type OrderBy = 'manual' | 'priority' | 'created' | 'updated' | 'title' | 'due_date';
 
@@ -2678,7 +2861,7 @@ export type PasswordConfirmationBody = {
  * A workspace capability that depends on the member's role. Actions open to
  * every member (tasks, projects, attachments, docs) are not listed here.
  */
-export type Permission = 'workspace.update' | 'workspace.delete' | 'workspace.transfer' | 'members.manage' | 'audit.view' | 'api_tokens.manage' | 'integrations.manage' | 'teamspaces.delete' | 'pages.purge' | 'views.manage_shared' | 'comments.moderate' | 'chat.manage' | 'billing.manage' | 'storage.manage' | 'agent_memory.manage' | 'apps.manage' | 'workspace.export';
+export type Permission = 'workspace.update' | 'workspace.delete' | 'workspace.transfer' | 'members.manage' | 'audit.view' | 'api_tokens.manage' | 'integrations.manage' | 'teamspaces.delete' | 'pages.purge' | 'views.manage_shared' | 'comments.moderate' | 'chat.manage' | 'billing.manage' | 'storage.manage' | 'agent_memory.manage' | 'apps.manage' | 'workspace.export' | 'drive.purge';
 
 export type PlanInterval = 'month' | 'year';
 
@@ -2943,6 +3126,10 @@ export type RelatedTask = {
     version: number;
 };
 
+export type RenameDriveNode = {
+    name: string;
+};
+
 export type RenameWorkspaceBody = {
     expected_version: number;
     name: string;
@@ -3191,6 +3378,13 @@ export type ShortcutsBody = {
  */
 export type ShowCompleted = 'all' | 'past_week' | 'past_month' | 'none';
 
+export type SignDriveUploadParts = {
+    /**
+     * At most 100 numbers from 1 to `part_count`.
+     */
+    part_numbers: Array<number>;
+};
+
 export type SmtpBody = {
     from_address: string;
     from_name?: string | null;
@@ -3237,6 +3431,23 @@ export type SocketTicketResponse = {
      * without a cookie.
      */
     ticket: string;
+};
+
+export type StartDriveUpload = {
+    /**
+     * Default `application/octet-stream`.
+     */
+    mime?: string | null;
+    name: string;
+    on_conflict?: OnConflict;
+    /**
+     * The target folder; `null` or absent for the top level.
+     */
+    parent_id?: string | null;
+    /**
+     * Bytes.
+     */
+    size: number;
 };
 
 export type StartNotionImportBody = {
@@ -11923,6 +12134,1107 @@ export type ReadChatThreadResponses = {
 };
 
 export type ReadChatThreadResponse = ReadChatThreadResponses[keyof ReadChatThreadResponses];
+
+export type CreateDriveDownloadsData = {
+    body: CreateDriveDownloads;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/drive/downloads';
+};
+
+export type CreateDriveDownloadsErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type CreateDriveDownloadsError = CreateDriveDownloadsErrors[keyof CreateDriveDownloadsErrors];
+
+export type CreateDriveDownloadsResponses = {
+    200: DriveDownloads;
+};
+
+export type CreateDriveDownloadsResponse = CreateDriveDownloadsResponses[keyof CreateDriveDownloadsResponses];
+
+export type CreateDriveFolderData = {
+    body: CreateDriveFolder;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/drive/folders';
+};
+
+export type CreateDriveFolderErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type CreateDriveFolderError = CreateDriveFolderErrors[keyof CreateDriveFolderErrors];
+
+export type CreateDriveFolderResponses = {
+    201: DriveNode;
+};
+
+export type CreateDriveFolderResponse = CreateDriveFolderResponses[keyof CreateDriveFolderResponses];
+
+export type ListDriveNodesData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: {
+        /**
+         * The folder; absent for the top level.
+         */
+        parent_id?: string;
+        sort?: unknown;
+        order?: unknown;
+        offset?: number;
+        /**
+         * 1 to 500, default 100.
+         */
+        limit?: number;
+    };
+    url: '/api/v1/workspaces/{workspace_id}/drive/nodes';
+};
+
+export type ListDriveNodesErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type ListDriveNodesError = ListDriveNodesErrors[keyof ListDriveNodesErrors];
+
+export type ListDriveNodesResponses = {
+    200: DriveNodePage;
+};
+
+export type ListDriveNodesResponse = ListDriveNodesResponses[keyof ListDriveNodesResponses];
+
+export type PurgeDriveNodeData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        node_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}';
+};
+
+export type PurgeDriveNodeErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type PurgeDriveNodeError = PurgeDriveNodeErrors[keyof PurgeDriveNodeErrors];
+
+export type PurgeDriveNodeResponses = {
+    204: void;
+};
+
+export type PurgeDriveNodeResponse = PurgeDriveNodeResponses[keyof PurgeDriveNodeResponses];
+
+export type GetDriveNodeData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        node_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}';
+};
+
+export type GetDriveNodeErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type GetDriveNodeError = GetDriveNodeErrors[keyof GetDriveNodeErrors];
+
+export type GetDriveNodeResponses = {
+    200: DriveNodeDetail;
+};
+
+export type GetDriveNodeResponse = GetDriveNodeResponses[keyof GetDriveNodeResponses];
+
+export type GetDriveDownloadData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        node_id: string;
+    };
+    query?: {
+        /**
+         * Let the browser show the file (preview) instead of saving it.
+         */
+        inline?: boolean;
+    };
+    url: '/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}/download';
+};
+
+export type GetDriveDownloadErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type GetDriveDownloadError = GetDriveDownloadErrors[keyof GetDriveDownloadErrors];
+
+export type GetDriveDownloadResponses = {
+    200: DriveDownload;
+};
+
+export type GetDriveDownloadResponse = GetDriveDownloadResponses[keyof GetDriveDownloadResponses];
+
+export type ListDriveFolderFilesData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        node_id: string;
+    };
+    query?: {
+        offset?: number;
+        limit?: number;
+    };
+    url: '/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}/files';
+};
+
+export type ListDriveFolderFilesErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type ListDriveFolderFilesError = ListDriveFolderFilesErrors[keyof ListDriveFolderFilesErrors];
+
+export type ListDriveFolderFilesResponses = {
+    200: DriveEntryPage;
+};
+
+export type ListDriveFolderFilesResponse = ListDriveFolderFilesResponses[keyof ListDriveFolderFilesResponses];
+
+export type MoveDriveNodeData = {
+    body: MoveDriveNode;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        node_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}/move';
+};
+
+export type MoveDriveNodeErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type MoveDriveNodeError = MoveDriveNodeErrors[keyof MoveDriveNodeErrors];
+
+export type MoveDriveNodeResponses = {
+    200: DriveNode;
+};
+
+export type MoveDriveNodeResponse = MoveDriveNodeResponses[keyof MoveDriveNodeResponses];
+
+export type RenameDriveNodeData = {
+    body: RenameDriveNode;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        node_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}/rename';
+};
+
+export type RenameDriveNodeErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type RenameDriveNodeError = RenameDriveNodeErrors[keyof RenameDriveNodeErrors];
+
+export type RenameDriveNodeResponses = {
+    200: DriveNode;
+};
+
+export type RenameDriveNodeResponse = RenameDriveNodeResponses[keyof RenameDriveNodeResponses];
+
+export type RestoreDriveNodeData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        node_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}/restore';
+};
+
+export type RestoreDriveNodeErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type RestoreDriveNodeError = RestoreDriveNodeErrors[keyof RestoreDriveNodeErrors];
+
+export type RestoreDriveNodeResponses = {
+    200: DriveNode;
+};
+
+export type RestoreDriveNodeResponse = RestoreDriveNodeResponses[keyof RestoreDriveNodeResponses];
+
+export type TrashDriveNodeData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        node_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}/trash';
+};
+
+export type TrashDriveNodeErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type TrashDriveNodeError = TrashDriveNodeErrors[keyof TrashDriveNodeErrors];
+
+export type TrashDriveNodeResponses = {
+    204: void;
+};
+
+export type TrashDriveNodeResponse = TrashDriveNodeResponses[keyof TrashDriveNodeResponses];
+
+export type SearchDriveData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: {
+        /**
+         * Part of the name, any case.
+         */
+        q?: string;
+        kind?: DriveNodeKind;
+        /**
+         * Start of the MIME type, such as `image/` or `application/pdf`.
+         */
+        mime?: string;
+        updated_after?: string;
+        updated_before?: string;
+        offset?: number;
+        limit?: number;
+    };
+    url: '/api/v1/workspaces/{workspace_id}/drive/search';
+};
+
+export type SearchDriveErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type SearchDriveError = SearchDriveErrors[keyof SearchDriveErrors];
+
+export type SearchDriveResponses = {
+    200: DriveEntryPage;
+};
+
+export type SearchDriveResponse = SearchDriveResponses[keyof SearchDriveResponses];
+
+export type ListDriveTrashData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: {
+        offset?: number;
+        limit?: number;
+    };
+    url: '/api/v1/workspaces/{workspace_id}/drive/trash';
+};
+
+export type ListDriveTrashErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type ListDriveTrashError = ListDriveTrashErrors[keyof ListDriveTrashErrors];
+
+export type ListDriveTrashResponses = {
+    200: DriveNodePage;
+};
+
+export type ListDriveTrashResponse = ListDriveTrashResponses[keyof ListDriveTrashResponses];
+
+export type EmptyDriveTrashData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/drive/trash/empty';
+};
+
+export type EmptyDriveTrashErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type EmptyDriveTrashError = EmptyDriveTrashErrors[keyof EmptyDriveTrashErrors];
+
+export type EmptyDriveTrashResponses = {
+    200: DriveTrashEmptied;
+};
+
+export type EmptyDriveTrashResponse = EmptyDriveTrashResponses[keyof EmptyDriveTrashResponses];
+
+export type ListDriveUploadsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/drive/uploads';
+};
+
+export type ListDriveUploadsErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type ListDriveUploadsError = ListDriveUploadsErrors[keyof ListDriveUploadsErrors];
+
+export type ListDriveUploadsResponses = {
+    200: DriveUploadList;
+};
+
+export type ListDriveUploadsResponse = ListDriveUploadsResponses[keyof ListDriveUploadsResponses];
+
+export type StartDriveUploadData = {
+    body: StartDriveUpload;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/drive/uploads';
+};
+
+export type StartDriveUploadErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type StartDriveUploadError = StartDriveUploadErrors[keyof StartDriveUploadErrors];
+
+export type StartDriveUploadResponses = {
+    201: DriveUploadStarted;
+};
+
+export type StartDriveUploadResponse = StartDriveUploadResponses[keyof StartDriveUploadResponses];
+
+export type CancelDriveUploadData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        upload_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/drive/uploads/{upload_id}';
+};
+
+export type CancelDriveUploadErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type CancelDriveUploadError = CancelDriveUploadErrors[keyof CancelDriveUploadErrors];
+
+export type CancelDriveUploadResponses = {
+    204: void;
+};
+
+export type CancelDriveUploadResponse = CancelDriveUploadResponses[keyof CancelDriveUploadResponses];
+
+export type GetDriveUploadData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        upload_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/drive/uploads/{upload_id}';
+};
+
+export type GetDriveUploadErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type GetDriveUploadError = GetDriveUploadErrors[keyof GetDriveUploadErrors];
+
+export type GetDriveUploadResponses = {
+    200: DriveUploadStatus;
+};
+
+export type GetDriveUploadResponse = GetDriveUploadResponses[keyof GetDriveUploadResponses];
+
+export type CompleteDriveUploadData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        upload_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/drive/uploads/{upload_id}/complete';
+};
+
+export type CompleteDriveUploadErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type CompleteDriveUploadError = CompleteDriveUploadErrors[keyof CompleteDriveUploadErrors];
+
+export type CompleteDriveUploadResponses = {
+    201: DriveNode;
+};
+
+export type CompleteDriveUploadResponse = CompleteDriveUploadResponses[keyof CompleteDriveUploadResponses];
+
+export type SignDriveUploadPartsData = {
+    body: SignDriveUploadParts;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        upload_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/drive/uploads/{upload_id}/parts';
+};
+
+export type SignDriveUploadPartsErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type SignDriveUploadPartsError = SignDriveUploadPartsErrors[keyof SignDriveUploadPartsErrors];
+
+export type SignDriveUploadPartsResponses = {
+    200: DrivePartUrls;
+};
+
+export type SignDriveUploadPartsResponse = SignDriveUploadPartsResponses[keyof SignDriveUploadPartsResponses];
 
 export type ListWorkspaceExportsData = {
     body?: never;

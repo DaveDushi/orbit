@@ -61,6 +61,8 @@ const OWNERSHIP_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 const NOTION_CLEANUP: &str = "notion.cleanup";
 /// Hourly: creates a backup when the saved schedule (Admin → Storage) says one is due.
 const SCHEDULED_BACKUP: &str = "backup.scheduled";
+/// Hourly: deletes Drive trash older than 30 days, cancels stale uploads and deletes their objects.
+const DRIVE_MAINTENANCE: &str = "drive.maintenance";
 
 pub struct App {
     config: Config,
@@ -284,8 +286,10 @@ impl App {
                 "Orbit Cloud has no mail server: email change, invitations by email, password reset and sign-up do not work until one is saved in Admin → Email"
             );
         }
+        let drive = crate::drive::DriveService::new(database.clone(), object_storage.clone());
         let production_services = initialize_production_services(
             &database,
+            drive.clone(),
             backups.clone(),
             Arc::clone(&workspaces),
             integrity.clone(),
@@ -408,6 +412,11 @@ impl App {
                 page_files: PageFileState::new(
                     Arc::clone(&identity),
                     attachment_state.uploads.clone(),
+                    cookie_mode,
+                ),
+                drive: crate::drive_routes::DriveState::new(
+                    Arc::clone(&identity),
+                    drive,
                     cookie_mode,
                 ),
                 exports: ExportState::new(
@@ -895,6 +904,7 @@ fn health_registry(
 #[allow(clippy::too_many_arguments)]
 async fn initialize_production_services(
     database: &Database,
+    drive: crate::drive::DriveService,
     backups: BackupService,
     workspaces: Arc<WorkspaceRepository>,
     integrity: IntegrityService,
@@ -969,6 +979,19 @@ async fn initialize_production_services(
                 }
             })
         })
+        .and_then(|worker| {
+            worker.with_handler(maintenance_kind(DRIVE_MAINTENANCE), move |_| {
+                let drive = drive.clone();
+                async move {
+                    drive
+                        .maintain(TimestampMillis::now())
+                        .await
+                        .map_err(|error| {
+                            JobError::Retryable(format!("Drive maintenance failed: {error}"))
+                        })
+                }
+            })
+        })
         .and_then(|worker| crate::notion::import::register_jobs(worker, notion_imports))
         .and_then(|worker| crate::workspace_export::register_job(worker, workspace_exports))
         .and_then(|worker| match billing {
@@ -1013,6 +1036,13 @@ async fn initialize_production_services(
     ensure_schedule(
         &scheduler,
         NOTION_CLEANUP,
+        Duration::from_secs(60 * 60),
+        now,
+    )
+    .await?;
+    ensure_schedule(
+        &scheduler,
+        DRIVE_MAINTENANCE,
         Duration::from_secs(60 * 60),
         now,
     )

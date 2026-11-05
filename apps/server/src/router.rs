@@ -38,6 +38,7 @@ pub struct ApiRoutes {
     pub tasks: TaskState,
     pub pages: PageState,
     pub page_files: PageFileState,
+    pub drive: crate::drive_routes::DriveState,
     pub page_comments: PageCommentState,
     pub exports: ExportState,
     pub workspace_exports: WorkspaceExportState,
@@ -79,6 +80,7 @@ pub fn production_router(
         .merge(views)
         .merge(page_router(api.pages))
         .merge(page_file_router(api.page_files))
+        .merge(crate::drive_routes::drive_router(api.drive))
         .merge(page_comment_router(api.page_comments))
         .merge(export_router(api.exports))
         .merge(workspace_export_router(api.workspace_exports))

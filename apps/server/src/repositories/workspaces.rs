@@ -2141,6 +2141,17 @@ impl WorkspaceRepository {
                     .execute(&mut *transaction)
                     .await?
                     .rows_affected();
+            // Drive nodes hold their blobs with ON DELETE RESTRICT, so they go first (shares and
+            // media cascade). The objects stay in the bucket: it may be the workspace's own one,
+            // whose settings go with the workspace.
+            for table in ["drive_nodes", "drive_blobs"] {
+                sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "DELETE FROM {table} WHERE workspace_id = $1"
+                )))
+                .bind(&workspace_id)
+                .execute(&mut *transaction)
+                .await?;
+            }
             // Tasks go before the workspace cascade: tasks.status_id is ON DELETE RESTRICT, and
             // SQLite may cascade into task_statuses first (it was rebuilt after tasks in 0021).
             sqlx::query("DELETE FROM tasks WHERE workspace_id = $1")

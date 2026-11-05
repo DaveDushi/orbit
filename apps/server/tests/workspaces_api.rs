@@ -1137,6 +1137,47 @@ async fn owner_constraint_and_durable_retention_bound_workspace_trash() {
     .execute(database.pool())
     .await
     .unwrap();
+    // Drive rows: a folder with a file (whose node holds its blob with ON DELETE RESTRICT) and a share.
+    let (drive_folder, drive_file, drive_blob) = (Id::new_v7(), Id::new_v7(), Id::new_v7());
+    sqlx::query(
+        "INSERT INTO drive_blobs (id, workspace_id, r2_key, size, mime, status, created_at, updated_at) \
+         VALUES ($1, $2, 'drive/purge', 1, 'text/plain', 'ready', $3, $3)",
+    )
+    .bind(drive_blob.to_string())
+    .bind(&setup.0)
+    .bind(old)
+    .execute(database.pool())
+    .await
+    .unwrap();
+    for (id, parent, kind, blob) in [
+        (drive_folder, None, "folder", None),
+        (drive_file, Some(drive_folder), "file", Some(drive_blob)),
+    ] {
+        sqlx::query(
+            "INSERT INTO drive_nodes (id, workspace_id, parent_id, kind, name, name_lower, blob_id, created_at, \
+             updated_at) VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $7)",
+        )
+        .bind(id.to_string())
+        .bind(&setup.0)
+        .bind(parent.map(|id: Id| id.to_string()))
+        .bind(kind)
+        .bind(format!("{kind}-name"))
+        .bind(blob.map(|id: Id| id.to_string()))
+        .bind(old)
+        .execute(database.pool())
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO drive_shares (id, workspace_id, node_id, token_hash, created_at) VALUES ($1, $2, $3, 'hash', $4)",
+    )
+    .bind(Id::new_v7().to_string())
+    .bind(&setup.0)
+    .bind(drive_file.to_string())
+    .bind(old)
+    .execute(database.pool())
+    .await
+    .unwrap();
     let trash = app
         .clone()
         .oneshot(cookie_request(
@@ -1212,6 +1253,9 @@ async fn owner_constraint_and_durable_retention_bound_workspace_trash() {
         "attachment_references",
         "attachment_blobs",
         "pending_uploads",
+        "drive_shares",
+        "drive_nodes",
+        "drive_blobs",
     ] {
         let count: i64 =
             sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
