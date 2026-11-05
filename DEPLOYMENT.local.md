@@ -4,11 +4,11 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at f3b830e762157a98ba7101748ce04c941f4f8fa6
-  (`storage-bucket-overlap` and 12 fixes since 5b64346, November 5, 2026).
+- Source: DaveDushi/orbit, `main` at 75bd825ad190de97ff24c0c5312ddce8d812014e
+  (dependency advisory fixes, precompressed web assets and lazy routes, November 5, 2026).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:f3b830e`); fork commits have no published upstream image.
-- Image ID: sha256:8188ebeb3d5cb7cd9b412b34b29a7917a66da3da67b48edef55f63725c8d76e4
+  (`orbit:75bd825`); fork commits have no published upstream image.
+- Image ID: sha256:258f0282cef266f427ba278432937a575596e34a89a1d7cf1e8a125a63b66f2e
 - Team agent sidecar code (`/opt/orbit-agent`): commit 5b64346.
 - OIDC gateway: `orbit-oidc-gateway.service`, nginx on `127.0.0.1:8400`, config in `/etc/orbit-oidc-gateway/`
   (see `docs/apps.md`). `cloudflared` is NOT installed.
@@ -236,6 +236,57 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 5, 2026 upgrade: dependency advisories, precompressed web assets and lazy routes
+
+Fast-forward of `main` from `92cf3aa6` to `75bd825` (merge of `main` into `dependency-advisories`, which holds
+`asset-compression` and `dep-advisories`). Shipped: rustls 0.23.46, rustls-webpki 0.103.16, webpki-roots 1.0.11, tokio
+1.53.3, webauthn-rs 0.6.2 (removes crypto-bigint 0.5.5; passkey sign-in uses `finish_discoverable_authentication_v2`),
+calamine 0.38, pulldown-cmark 0.13.6, zod 4.6.7 and expo 58.0.23 (web and mobile tooling); the server sends the web
+build's precompressed `.br` / `.gz` files, and the signed-in pages load on first use. `cargo audit` leaves only
+RUSTSEC-2023-0071 (rsa, no fixed version; Orbit only generates an RSA key and verifies passkey signatures, not
+affected). No migration (schema stays 74), no new `ORBIT_*` setting, no change in `apps/agent`, so the sidecar code was
+not updated.
+
+Checks on the branch (`orbit-build`): workspace build and `cargo clippy --workspace --all-targets -- -D warnings`;
+`bun install --frozen-lockfile` and the web build; SQLite: platform `object_storage` (11), server `storage_api` (6),
+`workspace_storage_api` (3), `page_files_api`, `two_factor_api` (11, with the new passkey register and sign-in test),
+`email_api`, `oauth_api`, `notion_client`, `app_smoke`, `markdown_import`, `export_markdown` and the file parser unit
+tests; Postgres: `object_storage`, `page_files_api`, `storage_api`, `workspace_storage_api`, `two_factor_api`.
+`orbit-deploy image` built `orbit:75bd825` (label `org.orbit.clean-revision` = the full commit), `deploy/smoke.sh`
+passed, a check of the image sent `content-encoding: br` and `gzip` for the entry JS and CSS (decoded bytes equal the
+plain file), and `orbit config check` passed with the extracted binary.
+
+At the switch: stopped `orbit-agent` and `orbit` at 14:40:52 UTC, created snapshot `01a1ac27-d108-727a-a1da-89e1c97c9322`
+with the old CLI (to the S3 bucket) and verified it, ran `migrate run` of the new binary on a copy in
+`/var/lib/orbit/rehearsal-75bd825-*` (0 applied, schema 74, quick-check and foreign-key checks pass, counts unchanged;
+deleted afterwards), saved the sidecar data as `/var/backups/orbit-agent/orbit-agent-before-75bd825.tgz`, installed the
+binary and started `orbit` (ready at 14:41:40), then `orbit-agent`. The old executable is `/usr/local/bin/orbit-f3b830e`
+(equal to the installed one before the swap); the new one is also kept as `/usr/local/bin/orbit-75bd825`. `vm-health`:
+`PROD_TAG=75bd825`, `ROLLBACK_TAG=f3b830e`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` active, no restarts; readiness (all
+checks); `/orbit-build.json` revision `75bd825`; schema 74; live quick-check and foreign-key checks pass; counts unchanged
+(6 users, 1 workspace, 3 projects, 63 tasks, 40 pages, 548 chat messages, 0 passkeys, 0 workspace buckets); no warning or
+error in the logs since the start. Through nginx: the entry JS is sent as br (75 kB) and gzip (88 kB) of 285 kB, both
+decode to the plain file; `passkeys_enabled` is true and a passkey sign-in starts (rpId `orbit.wellrox.com`). Outbound
+TLS of the new binary: `backup verify` of the new snapshot from R2, run on a database copy with an empty local backup
+folder. SMTP is not set up (`email_enabled` false), so no test email. `vm-health`: all OK except the nginx errors of the
+switch and `.git` files owned by root. **Not** verified on production: any signed-in page, a save in Admin → Storage, and
+a passkey added and used by a person (production has no passkeys yet).
+
+Rollback (the schema did not change, so the old binary reads the current database; restore the snapshot only if data is
+damaged):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-f3b830e /usr/local/bin/orbit
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Only if data must go back to 14:40 UTC (work after it is lost), with both services stopped:
+# sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-f3b830e backup verify 01a1ac27-d108-727a-a1da-89e1c97c9322 && /usr/local/bin/orbit-f3b830e backup restore 01a1ac27-d108-727a-a1da-89e1c97c9322'
+# sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-75bd825.tgz
+```
 
 ### November 5, 2026 upgrade: overlapping storage buckets and 12 fixes
 
