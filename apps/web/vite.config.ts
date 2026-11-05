@@ -117,6 +117,17 @@ export default defineConfig({
       },
     },
   ],
+  build: {
+    // The lazy pages share many small modules. Without this, each set of pages that shares them gets its own chunk
+    // (about 100 requests for one page). Rolldown merges a shared chunk under 100 kB into the closest one.
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [{ name: 'shared', minShareCount: 2, entriesAware: true, entriesAwareMergeThreshold: 100 * 1024 }],
+        },
+      },
+    },
+  },
   server: {
     port: 8888,
     allowedHosts: ['.ts.net'],
