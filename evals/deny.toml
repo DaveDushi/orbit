@@ -1,0 +1,44 @@
+# Minimal cargo-deny config for the evals (the repo has none). Used as: cargo deny --config evals/deny.toml check.
+[graph]
+all-features = false
+
+[advisories]
+# Unmaintained crates are reported but do not fail the check on their own.
+unmaintained = "workspace"
+yanked = "warn"
+
+[licenses]
+confidence-threshold = 0.9
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+    "MPL-2.0",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0",
+    "OpenSSL",
+]
+
+[licenses.private]
+# Workspace crates are not published.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+# Workspace crates are path dependencies without `publish = false`; cargo-deny calls them wildcards. Warn only.
+wildcards = "warn"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

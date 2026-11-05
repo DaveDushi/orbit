@@ -1,0 +1,22 @@
+# gitleaks config of the evals: the default rules, minus known false positives (triaged 2026-11-05).
+# Keep every entry narrow; a real secret must still be reported.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Built web bundles (generated from src; old ones were committed once) and mock seed data"
+paths = ['''^apps/web/dist/''', '''^apps/web/src/mock/''']
+
+[[allowlists]]
+description = "Keyboard shortcut definitions ('Alt+Shift+...') look like generic API keys"
+regexTarget = "line"
+regexes = ['''keys: '[A-Za-z+]+''']
+
+[[allowlists]]
+description = "Shell variable references and the OIDC gateway test's literal test credentials"
+regexTarget = "line"
+regexes = ['''-u "\$[A-Z_]+''', '''-u 'client:secret-value'''']
+
+[[allowlists]]
+description = "Public development app key (base64 of 'orbit-development-key-not-secret', in the justfile and docs)"
+regexes = ['''^b3JiaXQtZGV2ZWxvcG1lbnQta2V5LW5vdC1zZWNyZXQ=?$''']
