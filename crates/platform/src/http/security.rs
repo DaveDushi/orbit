@@ -265,8 +265,12 @@ pub(crate) fn add_security_headers(
     let script_source = csp_script_hash
         .map(|hash| format!("script-src 'self' '{hash}'; "))
         .unwrap_or_else(|| "script-src 'self'; ".to_owned());
+    // Drive files move between the browser and an S3 bucket with presigned URLs, and videos play from them, so
+    // fetches and media may go to any https origin (images already may). A server reached over plain http has
+    // no transport security to keep, and its bucket (a local test server) may be http too.
+    let remote = if secure { "https:" } else { "https: http:" };
     let policy = format!(
-        "default-src 'self'; {script_source}style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'self' https://www.youtube-nocookie.com; media-src 'self' https://video.twimg.com; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self' https://github.com"
+        "default-src 'self'; {script_source}style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' {remote}; frame-src 'self' https://www.youtube-nocookie.com; media-src 'self' blob: {remote}; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self' https://github.com"
     );
     // A response may carry its own policy (the wrapper document of a workspace app, which Orbit
     // frames itself). Its `frame-ancestors` decides framing then, so it gets no `X-Frame-Options`.
@@ -339,6 +343,11 @@ mod tests {
         let mut headers = HeaderMap::new();
         add_security_headers(&mut headers, true, None);
         assert_eq!(headers["x-frame-options"], "DENY");
+        // Over https, presigned bucket URLs must be https too.
+        let csp = headers[CONTENT_SECURITY_POLICY].to_str().unwrap();
+        assert!(csp.contains("connect-src 'self' https:;"));
+        assert!(csp.contains("media-src 'self' blob: https:;"));
+        assert!(!csp.contains("http:"));
         assert_eq!(
             headers["cross-origin-opener-policy"],
             "same-origin-allow-popups"

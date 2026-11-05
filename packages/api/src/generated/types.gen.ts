@@ -1323,6 +1323,8 @@ export type DrivePartUrls = {
     items: Array<DrivePartUrl>;
 };
 
+export type DriveSort = 'name' | 'updated_at' | 'size';
+
 export type DriveTrashEmptied = {
     /**
      * Files and folders deleted forever.
@@ -3432,6 +3434,8 @@ export type SocketTicketResponse = {
      */
     ticket: string;
 };
+
+export type SortOrder = 'asc' | 'desc';
 
 export type StartDriveUpload = {
     /**
@@ -12259,8 +12263,8 @@ export type ListDriveNodesData = {
          * The folder; absent for the top level.
          */
         parent_id?: string;
-        sort?: unknown;
-        order?: unknown;
+        sort?: DriveSort;
+        order?: SortOrder;
         offset?: number;
         /**
          * 1 to 500, default 100.

@@ -41918,6 +41918,14 @@
           }
         }
       },
+      "DriveSort": {
+        "type": "string",
+        "enum": [
+          "name",
+          "updated_at",
+          "size"
+        ]
+      },
       "DriveTrashEmptied": {
         "type": "object",
         "required": [
@@ -47447,6 +47455,13 @@
             "description": "Pass as the `ticket` query parameter of the co-editing socket of the requested document,\nwithout a cookie."
           }
         }
+      },
+      "SortOrder": {
+        "type": "string",
+        "enum": [
+          "asc",
+          "desc"
+        ]
       },
       "StartDriveUpload": {
         "type": "object",

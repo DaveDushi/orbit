@@ -23,6 +23,7 @@ const loadChat = () => import('@/features/chat/pages/ChatPage')
 const loadTasks = () => import('./taskPages')
 const loadHome = () => import('@/features/home/pages/HomePage')
 const loadDocs = () => import('@/features/docs/pages/DocsPage')
+const loadDrive = () => import('@/features/drive/pages/DrivePage')
 const loadSettings = () => import('./settingsPages')
 const loadApps = () => import('@/features/apps/AppPage')
 const loadInbox = () => import('@/features/inbox/pages/InboxPage')
@@ -33,6 +34,7 @@ const TasksPage = lazy(() => loadTasks().then((module) => ({ default: module.Tas
 const HomePage = lazy(() => loadHome().then((module) => ({ default: module.HomePage })))
 const TaskTrashPage = lazy(() => loadTasks().then((module) => ({ default: module.TaskTrashPage })))
 const DocsPage = lazy(() => loadDocs().then((module) => ({ default: module.DocsPage })))
+const DrivePage = lazy(() => loadDrive().then((module) => ({ default: module.DrivePage })))
 const AccountLayout = lazy(() => loadSettings().then((module) => ({ default: module.AccountLayout })))
 const AdminLayout = lazy(() => loadSettings().then((module) => ({ default: module.AdminLayout })))
 const AgenticLayout = lazy(() => loadSettings().then((module) => ({ default: module.AgenticLayout })))
@@ -78,7 +80,7 @@ const ViewsPage = lazy(() => loadTasks().then((module) => ({ default: module.Vie
 // delayed the session check by seconds (the editor still starts when the page shows it).
 const startPath = window.location.pathname
 const startAreas: Record<string, () => Promise<unknown>> = {
-  '': loadHome, tasks: loadTasks, 'tasks-trash': loadTasks, views: loadTasks, docs: loadDocs, chat: loadChat, apps: loadApps,
+  '': loadHome, tasks: loadTasks, 'tasks-trash': loadTasks, views: loadTasks, docs: loadDocs, drive: loadDrive, chat: loadChat, apps: loadApps,
   activity: loadInbox, onboarding: loadOnboarding, agentic: loadSettings, profile: loadSettings, admin: loadSettings, settings: loadSettings,
 }
 const signedInStart = !/^\/(setup|login|recovery|register|oauth|accept-invitation|confirm-email)(\/|$)/.test(startPath)
@@ -134,6 +136,9 @@ export default function App() {
               <Route path="docs/trash" element={<DocsPage view="trash" />} />
               <Route path="docs/import/:importId?" element={<DocsPage view="import" />} />
               <Route path="docs/:pageId?" element={<DocsPage />} />
+              <Route path="drive" element={<DrivePage />} />
+              <Route path="drive/trash" element={<DrivePage view="trash" />} />
+              <Route path="drive/:folderId" element={<DrivePage />} />
               <Route path="mail/*" element={<Navigate to="/tasks" replace />} />
               {chatEnabled ? (
                 <>

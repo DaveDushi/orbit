@@ -1369,3 +1369,31 @@ fn sub_issue_contract_is_documented() {
         }
     }
 }
+
+/// A `$ref` to a schema that the document does not define makes generated clients type the field as `unknown`.
+#[test]
+fn every_schema_reference_resolves() {
+    fn references<'a>(value: &'a Value, found: &mut Vec<&'a str>) {
+        match value {
+            Value::Object(map) => {
+                if let Some(Value::String(target)) = map.get("$ref") {
+                    found.push(target);
+                }
+                map.values().for_each(|value| references(value, found));
+            }
+            Value::Array(items) => items.iter().for_each(|value| references(value, found)),
+            _ => {}
+        }
+    }
+    let document: Value = serde_json::from_str(&openapi_json().unwrap()).unwrap();
+    let mut found = Vec::new();
+    references(&document, &mut found);
+    let missing: Vec<&str> = found
+        .into_iter()
+        .filter(|target| {
+            let name = target.trim_start_matches("#/components/schemas/");
+            document["components"]["schemas"].get(name).is_none()
+        })
+        .collect();
+    assert!(missing.is_empty(), "unresolved references: {missing:?}");
+}

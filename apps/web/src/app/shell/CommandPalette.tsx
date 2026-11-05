@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router'
 import { cn } from 'cn'
 import { useAppSidebarTheme } from '@/lib/customTheme'
-import { DocumentText as FileText, Home2 as Home, MagicStar, Message as MessageSquare, Notification as Bell, People as Users, Setting2 as Settings, ShieldTick as ShieldCheck, TaskSquare as SquareCheck, Trash as Trash2 } from 'reicon-react'
+import { DocumentText as FileText, Folder, Home2 as Home, MagicStar, Message as MessageSquare, Notification as Bell, People as Users, Setting2 as Settings, ShieldTick as ShieldCheck, TaskSquare as SquareCheck, Trash as Trash2 } from 'reicon-react'
 import type { IconComponent as LucideIcon } from 'reicon-react'
 import {
   Command,
@@ -155,6 +155,8 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       { id: 'nav_home', icon: Home, title: 'Go to Home', meta: 'Navigation', to: '/', keywords: 'home' },
       { id: 'nav_tasks', icon: SquareCheck, title: 'Go to Tasks', meta: 'Navigation', to: '/tasks', command: 'nav.tasks', keywords: 'tasks all' },
       { id: 'nav_docs', icon: FileText, title: 'Go to Docs', meta: 'Navigation', to: '/docs', command: 'nav.docs', keywords: 'docs pages wiki documents' },
+
+      { id: 'nav_drive', icon: Folder, title: 'Go to Drive', meta: 'Navigation', to: '/drive', keywords: 'drive files folders upload' },
       ...(chatEnabled ? [{ id: 'nav_chat', icon: MessageSquare, title: 'Go to Chat', meta: 'Navigation', to: '/chat', command: 'nav.chat' as const, keywords: 'chat messages channels' }] : []),
       { id: 'nav_inbox', icon: Bell, title: 'Go to Activity', meta: 'Navigation', to: '/activity', command: 'nav.inbox', keywords: 'activity notifications mentions inbox' },
       { id: 'nav_profile', icon: Users, title: 'Go to Profile', meta: 'Navigation', to: '/profile', command: 'nav.profile', keywords: 'profile account password name' },

@@ -18,7 +18,9 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::task_routes::ProblemBody,
         crate::workspace_routes::ProblemBody,
         crate::attachment_routes::AttachmentProblem,
-        crate::repositories::task_filter::FilterGroup
+        crate::repositories::task_filter::FilterGroup,
+        crate::repositories::drive::DriveSort,
+        crate::repositories::drive::SortOrder
     )),
     modifiers(&ProblemDetails),
     paths(

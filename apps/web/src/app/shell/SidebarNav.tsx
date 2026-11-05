@@ -25,6 +25,7 @@ const WORKSPACE_LINKS = [
   { to: '/', label: 'Home', icon: Home, enabled: true },
   { to: '/tasks', label: 'Tasks', icon: SquareCheck, enabled: true },
   { to: '/docs', label: 'Docs', icon: FileText, enabled: true },
+  { to: '/drive', label: 'Drive', icon: Folder, enabled: true },
   { to: '/chat', label: 'Chat', icon: MessageSquare, enabled: false },
   { to: '/mail', label: 'Mail', icon: Mail, enabled: false },
 ].filter((link) => !(docsHidden && link.to === '/docs'))

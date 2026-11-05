@@ -295,7 +295,8 @@ Workspace owners and admins can connect their own bucket in **Settings → File 
 
 Drive (one drive per workspace, all members read and write) stores its files in the workspace's own bucket while it is active, else in the installation's bucket; without a bucket, Drive answers `drive_storage_not_configured`. Objects are `drive/{workspace_id}/{blob_id}` under the bucket's prefix, outside `blobs/` and `backups/`, so the attachment mover and cleanup never touch them.
 
-- Browsers send and fetch the bytes directly with presigned URLs (5 minutes for downloads, 1 hour per upload part). The bucket needs a CORS rule for the Orbit origin that allows `GET`, `PUT` and `HEAD` and **exposes the `ETag` header**; without it, uploads larger than 32 MiB (sent in parts) cannot complete.
+- Browsers send and fetch the bytes directly with presigned URLs (5 minutes for downloads, 1 hour per upload part). The bucket needs a CORS rule for the Orbit origin that allows `GET`, `PUT` and `HEAD` (any request header); without it, uploads and folder ZIP downloads fail in the browser. The `ETag` header does not need to be exposed: Orbit completes multipart uploads from the bucket's own part list.
+- Orbit's Content Security Policy lets the web app fetch from and play media from any `https` origin (and `http` when Orbit itself is reached over plain http), so the bucket endpoint needs no CSP setting.
 - Add a lifecycle rule that aborts incomplete multipart uploads after 7 days as a backup; Orbit's hourly `drive.maintenance` job cancels uploads after 6 days, deletes trash older than 30 days and deletes the objects of deleted files.
 - Changing or removing the bucket does **not** move Drive objects: copy `drive/` to the new bucket first.
 - When a workspace is deleted for good, its Drive objects stay in the bucket.

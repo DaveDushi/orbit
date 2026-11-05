@@ -565,6 +565,12 @@ workspace, every member reads and writes. Server and API only so far (M2): migra
 (owners and admins), search, folder file lists for ZIP, download URLs, single-PUT and multipart uploads with resume).
 Bytes never pass through Orbit: presigned URLs, signed only after the membership check. Operator notes:
 `docs/operations.md` (Drive files).
+Web (M3): `/drive`, `/drive/:folderId`, `/drive/trash` (`features/drive/`): folder tree, breadcrumbs (drop targets),
+list/grid, sort, "Load more" paging, multi-select (Ctrl/Cmd, Shift), drag-and-drop move, files and folders dropped from
+the computer, search with type and date filters, trash (delete forever only with `drive.purge`). Upload queue
+(`uploads.ts`): 2 files at a time, 4 parts at a time, the server's one part size per file, retries, resume after a
+reload by picking the same file. Folder ZIP in the browser with `client-zip` (streamed to disk where the browser can).
+Shared logic in `packages/api/src/drive.ts`. Mobile has no Drive screen yet.
 
 ## Apps
 
