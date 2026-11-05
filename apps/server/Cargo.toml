@@ -56,7 +56,7 @@ hyper-util = { version = "0.1", features = ["server-auto", "server-graceful", "s
 tracing = "0.1"
 utoipa = { version = "5", features = ["axum_extras"] }
 # Passkeys. 0.6 is pure Rust; 0.5 needs OpenSSL, which the static musl image does not have.
-webauthn-rs = { version = "=0.6.1-dev", features = ["danger-allow-state-serialisation", "conditional-ui"] }
+webauthn-rs = { version = "=0.6.2", features = ["danger-allow-state-serialisation", "conditional-ui"] }
 yrs = { version = "=0.28.0", features = ["sync"] }
 zip = { version = "9.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 pulldown-cmark = { version = "0.13", default-features = false }
@@ -75,3 +75,4 @@ zstd = "0.14"
 tokio-tungstenite = "0.29"
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 brotli-decompressor = "6.2"
+webauthn-authenticator-rs = { version = "=0.6.2", default-features = false, features = ["softpasskey"] }

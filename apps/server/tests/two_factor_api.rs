@@ -10,6 +10,9 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use totp_rs::{Builder, Secret};
 use tower::ServiceExt;
+use webauthn_authenticator_rs::WebauthnAuthenticator;
+use webauthn_authenticator_rs::prelude::Url;
+use webauthn_authenticator_rs::softpasskey::SoftPasskey;
 
 const PASSWORD: &str = "correct horse battery";
 
@@ -582,4 +585,104 @@ async fn passkeys_need_a_domain_name() {
             "owner@example.com"
         );
     }
+}
+
+#[tokio::test]
+async fn passkey_registers_and_signs_in() {
+    let fixture = Fixture::with_state(|state| {
+        state
+            .with_app_key([7; 32])
+            .with_public_origin("https://orbit.test")
+    })
+    .await;
+    let mut authenticator = SoftPasskey::new(true);
+
+    let (status, registration) = fixture
+        .post(
+            "/api/v1/auth/passkeys/register/start",
+            Some(&fixture.cookie),
+            json!({"password": PASSWORD}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let credential = authenticator
+        .do_registration(
+            Url::parse("https://orbit.test").unwrap(),
+            serde_json::from_value(registration["options"].clone()).unwrap(),
+        )
+        .unwrap();
+    let (status, record) = fixture
+        .post(
+            "/api/v1/auth/passkeys/register/finish",
+            Some(&fixture.cookie),
+            json!({
+                "challenge_token": registration["challenge_token"],
+                "name": "Soft key",
+                "credential": credential,
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{record}");
+
+    let user_handle = &registration["options"]["publicKey"]["user"]["id"];
+
+    let (status, login) = fixture
+        .post("/api/v1/auth/passkey/login/start", None, json!({}))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let mut forged = sign_in_answer(
+        &mut authenticator,
+        login["options"].clone(),
+        &credential.id,
+        user_handle,
+    );
+    forged["response"]["signature"] = json!("AAAA");
+    let (status, problem) = fixture
+        .post(
+            "/api/v1/auth/passkey/login/finish",
+            None,
+            json!({"challenge_token": login["challenge_token"], "credential": forged}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(problem["code"], "invalid_passkey");
+
+    // The failed answer used up the challenge, so sign in with a new one.
+    let (_, login) = fixture
+        .post("/api/v1/auth/passkey/login/start", None, json!({}))
+        .await;
+    let answer = sign_in_answer(
+        &mut authenticator,
+        login["options"].clone(),
+        &credential.id,
+        user_handle,
+    );
+    let (status, signed_in) = fixture
+        .post(
+            "/api/v1/auth/passkey/login/finish",
+            None,
+            json!({"challenge_token": login["challenge_token"], "credential": answer}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{signed_in}");
+}
+
+/// What a browser answers to `options` with the soft passkey. The soft authenticator only signs for a listed
+/// credential and leaves out the user handle a discoverable passkey returns; neither is part of the signed data.
+fn sign_in_answer(
+    authenticator: &mut SoftPasskey,
+    mut options: Value,
+    credential_id: &str,
+    user_handle: &Value,
+) -> Value {
+    options["publicKey"]["allowCredentials"] = json!([{"type": "public-key", "id": credential_id}]);
+    let assertion = authenticator
+        .do_authentication(
+            Url::parse("https://orbit.test").unwrap(),
+            serde_json::from_value(options).unwrap(),
+        )
+        .unwrap();
+    let mut answer = serde_json::to_value(assertion).unwrap();
+    answer["response"]["userHandle"] = user_handle.clone();
+    answer
 }

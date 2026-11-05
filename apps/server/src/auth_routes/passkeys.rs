@@ -8,9 +8,7 @@ use orbit_platform::{ClientIp, Id, RequestId, TimestampMillis};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use utoipa::ToSchema;
-use webauthn_rs::prelude::{
-    DiscoverableKey, PublicKeyCredential, RegisterPublicKeyCredential, Url, Uuid,
-};
+use webauthn_rs::prelude::{PublicKeyCredential, RegisterPublicKeyCredential, Url, Uuid};
 use webauthn_rs::{Webauthn, WebauthnBuilder};
 
 use super::two_factor::{Pending, busy, confirm_password};
@@ -409,10 +407,10 @@ pub(super) async fn finish_passkey_login(
         record_failure(&state, None, request_id.as_ref()).await;
         return Err(rejected());
     };
-    let result = webauthn.finish_discoverable_authentication(
+    let result = webauthn.finish_discoverable_authentication_v2(
         &credential,
         *authentication,
-        &[DiscoverableKey::from(&stored.passkey)],
+        &stored.passkey,
     );
     let Ok(result) = result else {
         record_failure(&state, Some(stored.user_id), request_id.as_ref()).await;
