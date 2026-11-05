@@ -16,7 +16,6 @@ import { ConfirmEmailPage } from '@/features/auth/pages/ConfirmEmailPage'
 import { RegisterPage } from '@/features/auth/pages/RegisterPage'
 import { SetupPage } from '@/features/auth/pages/SetupPage'
 import { WorkspaceProvider } from '@/features/workspaces/WorkspaceProvider'
-import { preloadPageEditor } from '@/features/docs/editor/loadPageEditor'
 
 // The signed-in app loads on first use, one chunk per area, so the sign-in pages load only what they need.
 const loadShell = () => import('@/app/shell/AppShell')
@@ -75,14 +74,11 @@ const OnboardingPage = lazy(() => loadOnboarding().then((module) => ({ default: 
 const ViewsPage = lazy(() => loadTasks().then((module) => ({ default: module.ViewsPage })))
 
 // A signed-in start URL loads its code while the session check runs, not after it, and the shell waits for the start
-// page, so the first screen shows at once and not in parts. A doc also starts its editor now (a doc shows in it).
+// page, so the first screen shows at once and not in parts. The editor is not loaded here: on a phone its download
+// delayed the session check by seconds (the editor still starts when the page shows it).
 const startPath = window.location.pathname
-const loadDocWithEditor = () => {
-  if (startPath !== '/docs') preloadPageEditor()
-  return loadDocs()
-}
 const startAreas: Record<string, () => Promise<unknown>> = {
-  '': loadHome, tasks: loadTasks, 'tasks-trash': loadTasks, views: loadTasks, docs: loadDocWithEditor, chat: loadChat, apps: loadApps,
+  '': loadHome, tasks: loadTasks, 'tasks-trash': loadTasks, views: loadTasks, docs: loadDocs, chat: loadChat, apps: loadApps,
   activity: loadInbox, onboarding: loadOnboarding, agentic: loadSettings, profile: loadSettings, admin: loadSettings, settings: loadSettings,
 }
 const signedInStart = !/^\/(setup|login|recovery|register|oauth|accept-invitation|confirm-email)(\/|$)/.test(startPath)
