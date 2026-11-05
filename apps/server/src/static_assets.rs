@@ -1,16 +1,38 @@
+use std::collections::HashMap;
+use std::sync::LazyLock;
+
 use axum::Router;
 use axum::body::Body;
 use axum::extract::Request;
 use axum::http::{HeaderMap, Method, Response, StatusCode, header};
 use axum::routing::get;
 use base64::Engine;
-use include_dir::{Dir, include_dir};
+use include_dir::{Dir, DirEntry, include_dir};
 use orbit_platform::{Problem, RequestId};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 static FRONTEND: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/../web/dist");
+/// Every embedded file by path. `Dir::get_file` searches the whole tree (about 10,000 files with the
+/// precompressed copies), which costs milliseconds per request.
+static FRONTEND_FILES: LazyLock<HashMap<&'static str, &'static [u8]>> = LazyLock::new(|| {
+    let mut files = HashMap::new();
+    let mut dirs = vec![&FRONTEND];
+    while let Some(dir) = dirs.pop() {
+        for entry in dir.entries() {
+            match entry {
+                DirEntry::Dir(dir) => dirs.push(dir),
+                DirEntry::File(file) => {
+                    if let Some(path) = file.path().to_str() {
+                        files.insert(path, file.contents());
+                    }
+                }
+            }
+        }
+    }
+    files
+});
 pub const FRONTEND_REVISION: &str = match option_env!("ORBIT_BUILD_REVISION") {
     Some(revision) => revision,
     None => "development",
@@ -49,11 +71,11 @@ impl StaticAssets {
         expected_contract: &str,
         expected_revision: &str,
     ) -> Result<Self, StaticAssetError> {
-        let manifest = FRONTEND
-            .get_file("orbit-build.json")
+        let manifest = FRONTEND_FILES
+            .get("orbit-build.json")
             .ok_or(StaticAssetError::MissingManifest)?;
-        let manifest: BuildManifest = serde_json::from_slice(manifest.contents())
-            .map_err(|_| StaticAssetError::InvalidManifest)?;
+        let manifest: BuildManifest =
+            serde_json::from_slice(manifest).map_err(|_| StaticAssetError::InvalidManifest)?;
         if manifest.contract != expected_contract {
             return Err(StaticAssetError::ContractMismatch {
                 expected: expected_contract.to_owned(),
@@ -66,11 +88,10 @@ impl StaticAssets {
                 actual: manifest.revision,
             });
         }
-        let index = FRONTEND
-            .get_file("index.html")
+        let index = FRONTEND_FILES
+            .get("index.html")
             .ok_or(StaticAssetError::MissingIndex)?;
-        let actual_hash =
-            inline_script_hash(index.contents()).ok_or(StaticAssetError::CspHashMismatch)?;
+        let actual_hash = inline_script_hash(index).ok_or(StaticAssetError::CspHashMismatch)?;
         if manifest.csp_script_hash != actual_hash {
             return Err(StaticAssetError::CspHashMismatch);
         }
@@ -156,7 +177,7 @@ async fn serve_fallback(request: Request) -> Response<Body> {
 /// Sends the precompressed `<path>.br` or `<path>.gz` that the web build wrote when the request
 /// accepts it, else the file itself.
 fn asset_response(path: &str, immutable: bool, headers: &HeaderMap) -> Option<Response<Body>> {
-    let file = FRONTEND.get_file(path)?;
+    let file = *FRONTEND_FILES.get(path)?;
     let content_type = if path.ends_with(".html") {
         "text/html; charset=utf-8".to_owned()
     } else if path.ends_with(".css") {
@@ -183,10 +204,16 @@ fn asset_response(path: &str, immutable: bool, headers: &HeaderMap) -> Option<Re
         .header(header::CONTENT_TYPE, content_type)
         .header(header::CACHE_CONTROL, cache);
     let encodings = [
-        ("br", FRONTEND.get_file(format!("{path}.br"))),
-        ("gzip", FRONTEND.get_file(format!("{path}.gz"))),
+        (
+            "br",
+            FRONTEND_FILES.get(format!("{path}.br").as_str()).copied(),
+        ),
+        (
+            "gzip",
+            FRONTEND_FILES.get(format!("{path}.gz").as_str()).copied(),
+        ),
     ];
-    let mut contents = file.contents();
+    let mut contents = file;
     if encodings.iter().any(|(_, file)| file.is_some()) {
         response = response.header(header::VARY, "accept-encoding");
         if let Some((encoding, Some(encoded))) = encodings
@@ -194,7 +221,7 @@ fn asset_response(path: &str, immutable: bool, headers: &HeaderMap) -> Option<Re
             .find(|(encoding, file)| file.is_some() && accepts_encoding(headers, encoding))
         {
             response = response.header(header::CONTENT_ENCODING, encoding);
-            contents = encoded.contents();
+            contents = encoded;
         }
     }
     Some(
