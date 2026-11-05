@@ -1,0 +1,745 @@
+{
+  "schema": 1,
+  "commit": "5cb09be82f641757ca42457587cf26e05869f614",
+  "short": "5cb09be",
+  "branch": "asset-compression",
+  "dirty": false,
+  "date": "2026-11-05T10:33:45.164Z",
+  "duration_s": 1263,
+  "options": {
+    "perf": true,
+    "security": false,
+    "quick": false,
+    "build": true,
+    "prod": false
+  },
+  "machine": {
+    "hostname_hash": "d5df452f",
+    "cpu": "AMD EPYC 9554P 64-Core Processor",
+    "cpus": 4,
+    "memory_gb": 16,
+    "kernel": "6.12.115",
+    "bun": "1.4.4",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "cargo_build_jobs": 1,
+    "build_slice": true
+  },
+  "perf": {
+    "bundle": {
+      "entry_js": {
+        "files": [
+          "preload-helper.js",
+          "password-input.js",
+          "label.js",
+          "tooltip.js",
+          "Separator.js",
+          "DirectionContext.js",
+          "sdk.gen.js",
+          "createIcon.js",
+          "rolldown-runtime.js",
+          "api-CtD0phoj.js",
+          "dist-yMS8cMA-.js",
+          "workspaceContext.js",
+          "themeContext.js",
+          "spinner.js",
+          "Danger.js",
+          "index(yjs).js"
+        ],
+        "raw_kb": 719.5,
+        "gzip_kb": 228.2,
+        "brotli_kb": 196.9
+      },
+      "entry_css": {
+        "files": [
+          "index.css"
+        ],
+        "raw_kb": 320.3,
+        "gzip_kb": 45.7,
+        "brotli_kb": 35.2
+      },
+      "all_js": {
+        "raw_kb": 11539.2,
+        "gzip_kb": 3399.6,
+        "brotli_kb": 2820.4
+      },
+      "all_css": {
+        "raw_kb": 357.6,
+        "gzip_kb": 52.6,
+        "brotli_kb": 41.2
+      },
+      "chunk_count": 192,
+      "largest_lazy_gzip_kb": 437.6,
+      "lazy_over_100kb_gzip": [
+        {
+          "file": "elk-QONTBCTQ.js",
+          "raw_kb": 1428.5,
+          "gzip_kb": 437.6,
+          "brotli_kb": 335.7
+        },
+        {
+          "file": "pdf.worker.min.js",
+          "raw_kb": 1150.1,
+          "gzip_kb": 354.5,
+          "brotli_kb": 293.6
+        },
+        {
+          "file": "PageEditor.js",
+          "raw_kb": 891.5,
+          "gzip_kb": 262.3,
+          "brotli_kb": 216
+        },
+        {
+          "file": "src(mediabunny).js",
+          "raw_kb": 710.2,
+          "gzip_kb": 178.9,
+          "brotli_kb": 144.1
+        },
+        {
+          "file": "cytoscape.esm.js",
+          "raw_kb": 424.4,
+          "gzip_kb": 133.4,
+          "brotli_kb": 112.6
+        },
+        {
+          "file": "PdfPages.js",
+          "raw_kb": 421.4,
+          "gzip_kb": 125.5,
+          "brotli_kb": 104.4
+        },
+        {
+          "file": "chunk-NGNAAXSQ(mermaid).js",
+          "raw_kb": 614.3,
+          "gzip_kb": 122.5,
+          "brotli_kb": 102.8
+        },
+        {
+          "file": "taskPages.js",
+          "raw_kb": 324.8,
+          "gzip_kb": 102.3,
+          "brotli_kb": 81.9
+        }
+      ],
+      "top_lazy": [
+        {
+          "file": "elk-QONTBCTQ.js",
+          "raw_kb": 1428.5,
+          "gzip_kb": 437.6,
+          "brotli_kb": 335.7
+        },
+        {
+          "file": "pdf.worker.min.js",
+          "raw_kb": 1150.1,
+          "gzip_kb": 354.5,
+          "brotli_kb": 293.6
+        },
+        {
+          "file": "PageEditor.js",
+          "raw_kb": 891.5,
+          "gzip_kb": 262.3,
+          "brotli_kb": 216
+        },
+        {
+          "file": "src(mediabunny).js",
+          "raw_kb": 710.2,
+          "gzip_kb": 178.9,
+          "brotli_kb": 144.1
+        },
+        {
+          "file": "cytoscape.esm.js",
+          "raw_kb": 424.4,
+          "gzip_kb": 133.4,
+          "brotli_kb": 112.6
+        },
+        {
+          "file": "PdfPages.js",
+          "raw_kb": 421.4,
+          "gzip_kb": 125.5,
+          "brotli_kb": 104.4
+        },
+        {
+          "file": "chunk-NGNAAXSQ(mermaid).js",
+          "raw_kb": 614.3,
+          "gzip_kb": 122.5,
+          "brotli_kb": 102.8
+        },
+        {
+          "file": "taskPages.js",
+          "raw_kb": 324.8,
+          "gzip_kb": 102.3,
+          "brotli_kb": 81.9
+        },
+        {
+          "file": "settingsPages.js",
+          "raw_kb": 313,
+          "gzip_kb": 93.9,
+          "brotli_kb": 72.7
+        },
+        {
+          "file": "ChatPage.js",
+          "raw_kb": 273.3,
+          "gzip_kb": 89,
+          "brotli_kb": 71.2
+        }
+      ]
+    },
+    "pageload": {
+      "runs": 3,
+      "presets": {
+        "desktop": {
+          "viewport": {
+            "width": 1350,
+            "height": 940
+          },
+          "isMobile": false,
+          "hasTouch": false,
+          "deviceScaleFactor": 1,
+          "latency": 40,
+          "down": 10240,
+          "up": 10240,
+          "cpu": 1,
+          "settle": 3000
+        },
+        "phone": {
+          "viewport": {
+            "width": 412,
+            "height": 823
+          },
+          "isMobile": true,
+          "hasTouch": true,
+          "deviceScaleFactor": 1.75,
+          "latency": 150,
+          "down": 1638,
+          "up": 750,
+          "cpu": 4,
+          "settle": 6000
+        }
+      },
+      "pages": {
+        "login.desktop": {
+          "fcp_ms": 516,
+          "lcp_ms": 516,
+          "tbt_ms": 0,
+          "cls": 0,
+          "transfer_kb": 274.8,
+          "js_kb": 201.8,
+          "css_kb": 35.5,
+          "requests": 21
+        },
+        "home.desktop": {
+          "fcp_ms": 1324,
+          "lcp_ms": 1324,
+          "tbt_ms": 0,
+          "cls": 0.001,
+          "transfer_kb": 802.8,
+          "js_kb": 701.7,
+          "css_kb": 41.8,
+          "requests": 96
+        },
+        "app_tasks.desktop": {
+          "fcp_ms": 1460,
+          "lcp_ms": 1692,
+          "tbt_ms": 71,
+          "cls": 0.001,
+          "transfer_kb": 957.6,
+          "js_kb": 828.4,
+          "css_kb": 41.8,
+          "requests": 103
+        },
+        "docs.desktop": {
+          "fcp_ms": 1560,
+          "lcp_ms": 1992,
+          "tbt_ms": 161,
+          "cls": 0.001,
+          "transfer_kb": 864,
+          "js_kb": 758.8,
+          "css_kb": 41.8,
+          "requests": 99
+        },
+        "login.phone": {
+          "fcp_ms": 2104,
+          "lcp_ms": 2104,
+          "tbt_ms": 0,
+          "cls": 0,
+          "transfer_kb": 274.8,
+          "js_kb": 201.8,
+          "css_kb": 35.5,
+          "requests": 21
+        },
+        "home.phone": {
+          "fcp_ms": 4348,
+          "lcp_ms": 4348,
+          "tbt_ms": 0,
+          "cls": 0.002,
+          "transfer_kb": 802.8,
+          "js_kb": 701.7,
+          "css_kb": 41.8,
+          "requests": 96
+        },
+        "app_tasks.phone": {
+          "fcp_ms": 4988,
+          "lcp_ms": 5988,
+          "tbt_ms": 309,
+          "cls": 0.001,
+          "transfer_kb": 957.6,
+          "js_kb": 828.4,
+          "css_kb": 41.8,
+          "requests": 103
+        },
+        "docs.phone": {
+          "fcp_ms": 5760,
+          "lcp_ms": 6908,
+          "tbt_ms": 664,
+          "cls": 0,
+          "transfer_kb": 864.3,
+          "js_kb": 758.8,
+          "css_kb": 41.8,
+          "requests": 100
+        }
+      },
+      "console_errors": {
+        "login": [
+          "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+        ],
+        "app_tasks": [
+          "Failed to load resource: the server responded with a status of 404 (Not Found)"
+        ],
+        "docs": [
+          "Applying inline style violates the following Content Security Policy directive 'style-src 'self''. Either the 'unsafe-inline' keyword, a hash ('sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='), o"
+        ]
+      },
+      "asset_encoding": "br",
+      "checks": [
+        {
+          "id": "perf.asset-compression",
+          "category": "performance",
+          "title": "JS/CSS are served compressed (br/gzip/zstd)",
+          "result": "pass",
+          "evidence": [
+            "GET /assets/index.js with Accept-Encoding: br, gzip, zstd -> content-encoding br, content-length 103043 (379.8 kB decoded)"
+          ]
+        },
+        {
+          "id": "console.csp.login",
+          "category": "csp",
+          "title": "login: no CSP console errors",
+          "result": "pass",
+          "evidence": [
+            "none"
+          ]
+        },
+        {
+          "id": "console.csp.home",
+          "category": "csp",
+          "title": "home: no CSP console errors",
+          "result": "pass",
+          "evidence": [
+            "none"
+          ]
+        },
+        {
+          "id": "console.csp.app_tasks",
+          "category": "csp",
+          "title": "app_tasks: no CSP console errors",
+          "result": "pass",
+          "evidence": [
+            "none"
+          ]
+        },
+        {
+          "id": "console.csp.docs",
+          "category": "csp",
+          "title": "docs: no CSP console errors",
+          "result": "fail",
+          "severity": "low",
+          "fix": "Move the inline style to a stylesheet or a constructed style sheet.",
+          "evidence": [
+            "Applying inline style violates the following Content Security Policy directive 'style-src 'self''. Either the 'unsafe-inline' keyword, a hash ('sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='), o"
+          ]
+        }
+      ]
+    },
+    "latency": {
+      "requests": 500,
+      "concurrency": 10,
+      "endpoints": {
+        "health_ready": {
+          "p50_ms": 5.07,
+          "p95_ms": 9.54,
+          "p99_ms": 12.92,
+          "rps": 1714,
+          "non_200": 0
+        },
+        "index_html": {
+          "p50_ms": 0.16,
+          "p95_ms": 0.3,
+          "p99_ms": 0.86,
+          "rps": 50063,
+          "non_200": 0
+        },
+        "session_me": {
+          "p50_ms": 1.71,
+          "p95_ms": 4.21,
+          "p99_ms": 10.05,
+          "rps": 4513,
+          "non_200": 0
+        },
+        "workspace_list": {
+          "p50_ms": 0.51,
+          "p95_ms": 0.83,
+          "p99_ms": 1.07,
+          "rps": 17581,
+          "non_200": 0
+        },
+        "docs_list": {
+          "p50_ms": 2.14,
+          "p95_ms": 3.34,
+          "p99_ms": 6.57,
+          "rps": 4356,
+          "non_200": 0
+        },
+        "docs_read": {
+          "p50_ms": 0.81,
+          "p95_ms": 1.48,
+          "p99_ms": 4.44,
+          "rps": 10489,
+          "non_200": 0
+        },
+        "docs_search": {
+          "p50_ms": 1.07,
+          "p95_ms": 1.63,
+          "p99_ms": 2.09,
+          "rps": 8741,
+          "non_200": 0
+        },
+        "app_list": {
+          "p50_ms": 0.77,
+          "p95_ms": 1.07,
+          "p99_ms": 1.43,
+          "rps": 12292,
+          "non_200": 0
+        },
+        "tasks_list": {
+          "p50_ms": 20.89,
+          "p95_ms": 30.34,
+          "p99_ms": 32.37,
+          "rps": 504,
+          "non_200": 0
+        },
+        "task_read": {
+          "p50_ms": 0.91,
+          "p95_ms": 1.25,
+          "p99_ms": 1.47,
+          "rps": 10430,
+          "non_200": 0
+        },
+        "file_read": {
+          "p50_ms": 0.78,
+          "p95_ms": 1.3,
+          "p99_ms": 2.05,
+          "rps": 11522,
+          "non_200": 0
+        }
+      }
+    },
+    "server": {
+      "cold_start_ms": 145,
+      "fresh_start_ms": 155,
+      "rss_idle_mb": 61,
+      "rss_after_latency_mb": 91,
+      "rss_after_pageload_mb": 115,
+      "rss_peak_mb": 115
+    },
+    "build": {
+      "revision": "5cb09be82f641757ca42457587cf26e05869f614",
+      "web_build_seconds": 65.81,
+      "web_build_peak_rss_mb": 1827,
+      "release_build_seconds": 1034.63,
+      "release_build_peak_rss_mb": 3439,
+      "release_binary_mb": 103,
+      "cargo_jobs": 1,
+      "measured_in_this_run": true
+    }
+  },
+  "security": {
+    "summary": {
+      "checks": 5,
+      "pass": 4,
+      "fail": 1,
+      "warn": 0,
+      "skip": 0,
+      "findings_by_severity": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "info": 0
+      }
+    },
+    "checks": [
+      {
+        "id": "perf.asset-compression",
+        "category": "performance",
+        "title": "JS/CSS are served compressed (br/gzip/zstd)",
+        "result": "pass",
+        "evidence": [
+          "GET /assets/index.js with Accept-Encoding: br, gzip, zstd -> content-encoding br, content-length 103043 (379.8 kB decoded)"
+        ]
+      },
+      {
+        "id": "console.csp.login",
+        "category": "csp",
+        "title": "login: no CSP console errors",
+        "result": "pass",
+        "evidence": [
+          "none"
+        ]
+      },
+      {
+        "id": "console.csp.home",
+        "category": "csp",
+        "title": "home: no CSP console errors",
+        "result": "pass",
+        "evidence": [
+          "none"
+        ]
+      },
+      {
+        "id": "console.csp.app_tasks",
+        "category": "csp",
+        "title": "app_tasks: no CSP console errors",
+        "result": "pass",
+        "evidence": [
+          "none"
+        ]
+      },
+      {
+        "id": "console.csp.docs",
+        "category": "csp",
+        "title": "docs: no CSP console errors",
+        "result": "fail",
+        "severity": "low",
+        "fix": "Move the inline style to a stylesheet or a constructed style sheet.",
+        "evidence": [
+          "Applying inline style violates the following Content Security Policy directive 'style-src 'self''. Either the 'unsafe-inline' keyword, a hash ('sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='), o"
+        ]
+      }
+    ],
+    "findings": []
+  },
+  "errors": [],
+  "comparison": {
+    "previous": "2026-11-05-0954-0c37db7.json",
+    "over_budget": [
+      {
+        "metric": "perf.pageload.pages.docs.phone.tbt_ms",
+        "value": 664,
+        "budget": 400
+      }
+    ],
+    "budgets_not_measured": [],
+    "new_high_or_critical": [],
+    "fixed_high_or_critical": [],
+    "regressions_over_15pct": [
+      {
+        "metric": "perf.bundle.chunk_count",
+        "previous": 108,
+        "value": 192,
+        "change_pct": 77.8
+      },
+      {
+        "metric": "perf.pageload.pages.login.desktop.requests",
+        "previous": 7,
+        "value": 21,
+        "change_pct": 200
+      },
+      {
+        "metric": "perf.pageload.pages.home.desktop.requests",
+        "previous": 31,
+        "value": 96,
+        "change_pct": 209.7
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.desktop.fcp_ms",
+        "previous": 1204,
+        "value": 1460,
+        "change_pct": 21.3
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.desktop.lcp_ms",
+        "previous": 1400,
+        "value": 1692,
+        "change_pct": 20.9
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.desktop.tbt_ms",
+        "previous": 61,
+        "value": 71,
+        "change_pct": 16.4
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.desktop.requests",
+        "previous": 30,
+        "value": 103,
+        "change_pct": 243.3
+      },
+      {
+        "metric": "perf.pageload.pages.docs.desktop.fcp_ms",
+        "previous": 1160,
+        "value": 1560,
+        "change_pct": 34.5
+      },
+      {
+        "metric": "perf.pageload.pages.docs.desktop.tbt_ms",
+        "previous": 106,
+        "value": 161,
+        "change_pct": 51.9
+      },
+      {
+        "metric": "perf.pageload.pages.docs.desktop.requests",
+        "previous": 30,
+        "value": 99,
+        "change_pct": 230
+      },
+      {
+        "metric": "perf.pageload.pages.login.phone.requests",
+        "previous": 7,
+        "value": 21,
+        "change_pct": 200
+      },
+      {
+        "metric": "perf.pageload.pages.home.phone.requests",
+        "previous": 31,
+        "value": 96,
+        "change_pct": 209.7
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.phone.requests",
+        "previous": 30,
+        "value": 103,
+        "change_pct": 243.3
+      },
+      {
+        "metric": "perf.pageload.pages.docs.phone.fcp_ms",
+        "previous": 4916,
+        "value": 5760,
+        "change_pct": 17.2
+      },
+      {
+        "metric": "perf.pageload.pages.docs.phone.tbt_ms",
+        "previous": 453,
+        "value": 664,
+        "change_pct": 46.6
+      },
+      {
+        "metric": "perf.pageload.pages.docs.phone.requests",
+        "previous": 31,
+        "value": 100,
+        "change_pct": 222.6
+      }
+    ],
+    "improvements_over_15pct": [
+      {
+        "metric": "perf.bundle.entry_js.raw_kb",
+        "previous": 2744.6,
+        "value": 719.5,
+        "change_pct": -73.8
+      },
+      {
+        "metric": "perf.bundle.entry_js.gzip_kb",
+        "previous": 838.4,
+        "value": 228.2,
+        "change_pct": -72.8
+      },
+      {
+        "metric": "perf.bundle.entry_js.brotli_kb",
+        "previous": 634,
+        "value": 196.9,
+        "change_pct": -68.9
+      },
+      {
+        "metric": "perf.pageload.pages.login.desktop.fcp_ms",
+        "previous": 1028,
+        "value": 516,
+        "change_pct": -49.8
+      },
+      {
+        "metric": "perf.pageload.pages.login.desktop.lcp_ms",
+        "previous": 1028,
+        "value": 516,
+        "change_pct": -49.8
+      },
+      {
+        "metric": "perf.pageload.pages.login.desktop.transfer_kb",
+        "previous": 707.4,
+        "value": 274.8,
+        "change_pct": -61.2
+      },
+      {
+        "metric": "perf.pageload.pages.login.desktop.js_kb",
+        "previous": 634.6,
+        "value": 201.8,
+        "change_pct": -68.2
+      },
+      {
+        "metric": "perf.pageload.pages.home.desktop.transfer_kb",
+        "previous": 979.9,
+        "value": 802.8,
+        "change_pct": -18.1
+      },
+      {
+        "metric": "perf.pageload.pages.home.desktop.js_kb",
+        "previous": 879,
+        "value": 701.7,
+        "change_pct": -20.2
+      },
+      {
+        "metric": "perf.pageload.pages.login.phone.fcp_ms",
+        "previous": 4384,
+        "value": 2104,
+        "change_pct": -52
+      },
+      {
+        "metric": "perf.pageload.pages.login.phone.lcp_ms",
+        "previous": 4384,
+        "value": 2104,
+        "change_pct": -52
+      },
+      {
+        "metric": "perf.pageload.pages.login.phone.transfer_kb",
+        "previous": 707.4,
+        "value": 274.8,
+        "change_pct": -61.2
+      },
+      {
+        "metric": "perf.pageload.pages.login.phone.js_kb",
+        "previous": 634.6,
+        "value": 201.8,
+        "change_pct": -68.2
+      },
+      {
+        "metric": "perf.pageload.pages.home.phone.transfer_kb",
+        "previous": 979.9,
+        "value": 802.8,
+        "change_pct": -18.1
+      },
+      {
+        "metric": "perf.pageload.pages.home.phone.js_kb",
+        "previous": 879,
+        "value": 701.7,
+        "change_pct": -20.2
+      },
+      {
+        "metric": "perf.server.fresh_start_ms",
+        "previous": 210,
+        "value": 155,
+        "change_pct": -26.2
+      },
+      {
+        "metric": "perf.build.web_build_peak_rss_mb",
+        "previous": 2547,
+        "value": 1827,
+        "change_pct": -28.3
+      }
+    ]
+  }
+}
