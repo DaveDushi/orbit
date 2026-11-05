@@ -301,7 +301,7 @@ Drive (one drive per workspace, all members read and write) stores its files in 
 - Thumbnails and video posters are small objects next to the file (`drive/{workspace_id}/{blob_id}.thumb` and `.poster`), made by the browser; they are deleted with the file. The browser reads older images and videos (for their first thumbnail) with presigned GETs, so the CORS rule must allow `GET` from the Orbit origin.
 - Changing or removing the bucket does **not** move Drive objects: copy `drive/` to the new bucket first.
 - When a workspace is deleted for good, its Drive objects stay in the bucket.
-- Public links (`/s/<token>`): every member can make one for a file or folder; the creator, or an owner or admin (`drive.shares.manage`), turns it off, and it stops at once. Only the token's SHA-256 is stored. A folder link reaches only that folder and what is below it. A link with a password (12+ characters) gives a pass for one hour; wrong passwords are throttled per link and IP address like sign-in, and all public link requests share the sign-in request limit (`authentication_per_minute`). Downloads are redirects to 5-minute bucket URLs and are counted. Every failure answers the same "Link not available". Making and turning off links is in the audit log (`drive.share_created`, `drive.share_revoked`).
+- Public links (`/s/<token>`): every member can make one for a file or folder; the creator, or an owner or admin (`drive.shares.manage`), turns it off, and it stops at once. Only the token's SHA-256 is stored. A folder link reaches only that folder and what is below it. A link with a password (12+ characters) gives a pass for one hour; wrong passwords are throttled per link and IP address like sign-in, and password tries (`/unlock`) share the sign-in request limit (`authentication_per_minute`). Opening a link, its folders and downloads use the normal limit (`general_per_minute` per IP address), so many people behind one office address can browse a large folder. Downloads are redirects to 5-minute bucket URLs and are counted. Every failure answers the same "Link not available". Making and turning off links is in the audit log (`drive.share_created`, `drive.share_revoked`).
 
 ### Importing the wellrox-cloud files
 
@@ -366,7 +366,7 @@ Set them with `ORBIT_RATE_LIMIT_<KEY>`, the key in upper case (for example `ORBI
 
 | Key | Default | What it limits |
 |---|---|---|
-| `authentication_per_minute` | 30 | Sign-in, sessions, setup and OAuth requests. Cluster-wide. |
+| `authentication_per_minute` | 30 | Sign-in, sessions, setup and OAuth requests, and passwords of public Drive links. Cluster-wide. |
 | `recovery_per_minute` | 10 | Password reset and open registration requests. Cluster-wide. |
 | `invitation_per_minute` | 60 | Invitation requests. Cluster-wide. |
 | `upload_per_minute` | 120 | Attachment and chat file uploads. Per server. |

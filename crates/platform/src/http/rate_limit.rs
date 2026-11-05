@@ -370,9 +370,14 @@ pub(super) fn endpoint_class(method: &Method, path: &str) -> Option<EndpointClas
     if path != "/api" && !path.starts_with("/api/") {
         return None;
     }
-    // Public Drive links: anyone with a link (or guessing one) is anonymous, so they share the sign-in limit.
+    // Public Drive links: password tries share the strict sign-in limit; opening, folders and downloads are
+    // browsing, and decided here so that no word inside a random token picks another class.
     if path.starts_with("/api/v1/public/drive/") {
-        return Some(EndpointClass::Authentication);
+        return Some(if path.ends_with("/unlock") {
+            EndpointClass::Authentication
+        } else {
+            EndpointClass::General
+        });
     }
     // Both send email to an address anyone can type, so they share the strict recovery limit.
     if path.contains("/recovery") || path.contains("/auth/register") {
@@ -425,18 +430,46 @@ mod tests {
     }
 
     #[test]
-    fn public_drive_links_share_the_strict_sign_in_limit() {
-        for (method, path) in [
-            (Method::GET, "/api/v1/public/drive/shares/token"),
-            (Method::POST, "/api/v1/public/drive/shares/token/unlock"),
-            (Method::GET, "/api/v1/public/drive/shares/token/download"),
+    fn only_public_drive_link_passwords_share_the_strict_sign_in_limit() {
+        assert_eq!(
+            endpoint_class(&Method::POST, "/api/v1/public/drive/shares/token/unlock"),
+            Some(EndpointClass::Authentication)
+        );
+        // Tokens are random: words such as `setup` or `session` inside one do not change the class.
+        for path in [
+            "/api/v1/public/drive/shares/token",
+            "/api/v1/public/drive/shares/token/folder",
+            "/api/v1/public/drive/shares/token/download",
+            "/api/v1/public/drive/shares/xxsetupxxsessionxx/download",
         ] {
             assert_eq!(
-                endpoint_class(&method, path),
-                Some(EndpointClass::Authentication),
+                endpoint_class(&Method::GET, path),
+                Some(EndpointClass::General),
                 "{path}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn a_shared_office_browses_a_big_public_folder_but_password_guesses_stop() {
+        let limiter = RateLimiter::default();
+        let office = IpAddr::V4(std::net::Ipv4Addr::new(203, 0, 113, 7));
+        let link = "/api/v1/public/drive/shares/token";
+        for _ in 0..100 {
+            assert!(permits(&limiter, office, &Method::GET, &format!("{link}/folder")).await);
+            assert!(permits(&limiter, office, &Method::GET, &format!("{link}/download")).await);
+        }
+        let unlock = format!("{link}/unlock");
+        let limit = RateLimitConfig::default().authentication_per_minute;
+        for _ in 0..limit {
+            assert!(permits(&limiter, office, &Method::POST, &unlock).await);
+        }
+        assert!(
+            !permits(&limiter, office, &Method::POST, &unlock).await,
+            "password tries stop at the sign-in limit"
+        );
+        // Browsing goes on while the password tries are stopped.
+        assert!(permits(&limiter, office, &Method::GET, &format!("{link}/folder")).await);
     }
 
     async fn permits(limiter: &RateLimiter, ip: IpAddr, method: &Method, path: &str) -> bool {
