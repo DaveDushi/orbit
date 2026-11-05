@@ -1,0 +1,677 @@
+{
+  "schema": 1,
+  "commit": "49b6f143afe5cf90c4e9f10494563526064b9bb2",
+  "short": "49b6f14",
+  "branch": "asset-compression",
+  "dirty": false,
+  "date": "2026-11-05T12:02:55.784Z",
+  "duration_s": 1258,
+  "options": {
+    "perf": true,
+    "security": false,
+    "quick": false,
+    "build": true,
+    "prod": false
+  },
+  "machine": {
+    "hostname_hash": "d5df452f",
+    "cpu": "AMD EPYC 9554P 64-Core Processor",
+    "cpus": 4,
+    "memory_gb": 16,
+    "kernel": "6.12.115",
+    "bun": "1.4.4",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "cargo_build_jobs": 1,
+    "build_slice": true
+  },
+  "perf": {
+    "bundle": {
+      "entry_js": {
+        "files": [
+          "shared~index~AppPage~OnboardingPage~InboxPage~HomePage~DocsPage~ChatPage~taskPages~AppShell~kh3696x4.js",
+          "shared~index~diagram-CBK3MWTC~sankeyDiagram-SY24JHO5~xychartDiagram-4URNHDU4~quadrantDiagra~dqyjy973.js",
+          "shared~mermaid.core~pegDiagram-ECIUJNBX~abnfDiagram-WEYOIA3C~ebnfDiagram-V4P3TTPT~railroadD~h3hav6nd.js",
+          "rolldown-runtime.js",
+          "shared~index~AppPage~OnboardingPage~HomePage~DocsPage~ChatPage~taskPages~AppShell~PageEdito~ifx4xi84.js",
+          "shared~index~AppPage~OnboardingPage~DocsPage~PdfPages~ChatPage~taskPages~AppShell~PageEdito~gpec15af.js",
+          "shared~index~AppPage~OnboardingPage~InboxPage~HomePage~DocsPage~PdfPages~ChatPage~taskPages~mantolng.js",
+          "index(mermaid).js"
+        ],
+        "raw_kb": 810,
+        "gzip_kb": 253.4,
+        "brotli_kb": 219.5
+      },
+      "entry_css": {
+        "files": [
+          "index.css"
+        ],
+        "raw_kb": 320.3,
+        "gzip_kb": 45.7,
+        "brotli_kb": 35.2
+      },
+      "all_js": {
+        "raw_kb": 11547.5,
+        "gzip_kb": 3375.9,
+        "brotli_kb": 2796.5
+      },
+      "all_css": {
+        "raw_kb": 357.6,
+        "gzip_kb": 52.6,
+        "brotli_kb": 41.2
+      },
+      "chunk_count": 100,
+      "largest_lazy_gzip_kb": 437.6,
+      "lazy_over_100kb_gzip": [
+        {
+          "file": "elk-QONTBCTQ.js",
+          "raw_kb": 1428.5,
+          "gzip_kb": 437.6,
+          "brotli_kb": 335.7
+        },
+        {
+          "file": "pdf.worker.min.js",
+          "raw_kb": 1150.1,
+          "gzip_kb": 354.5,
+          "brotli_kb": 293.6
+        },
+        {
+          "file": "PageEditor.js",
+          "raw_kb": 891.6,
+          "gzip_kb": 262.2,
+          "brotli_kb": 215.9
+        },
+        {
+          "file": "src(mediabunny).js",
+          "raw_kb": 710.2,
+          "gzip_kb": 178.9,
+          "brotli_kb": 144.1
+        },
+        {
+          "file": "shared~architectureDiagram-ZHVYKT53~cose-bilkent-JH36ORCC.js",
+          "raw_kb": 424.4,
+          "gzip_kb": 133.4,
+          "brotli_kb": 112.6
+        },
+        {
+          "file": "PdfPages.js",
+          "raw_kb": 421.6,
+          "gzip_kb": 125.6,
+          "brotli_kb": 104.3
+        },
+        {
+          "file": "shared~pegDiagram-ECIUJNBX~abnfDiagram-WEYOIA3C~ebnfDiagram-V4P3TTPT~railroadDiagram-Y72NRB~gaub1phv.js",
+          "raw_kb": 614.3,
+          "gzip_kb": 122.5,
+          "brotli_kb": 102.8
+        },
+        {
+          "file": "taskPages.js",
+          "raw_kb": 324.5,
+          "gzip_kb": 102.1,
+          "brotli_kb": 81.7
+        }
+      ],
+      "top_lazy": [
+        {
+          "file": "elk-QONTBCTQ.js",
+          "raw_kb": 1428.5,
+          "gzip_kb": 437.6,
+          "brotli_kb": 335.7
+        },
+        {
+          "file": "pdf.worker.min.js",
+          "raw_kb": 1150.1,
+          "gzip_kb": 354.5,
+          "brotli_kb": 293.6
+        },
+        {
+          "file": "PageEditor.js",
+          "raw_kb": 891.6,
+          "gzip_kb": 262.2,
+          "brotli_kb": 215.9
+        },
+        {
+          "file": "src(mediabunny).js",
+          "raw_kb": 710.2,
+          "gzip_kb": 178.9,
+          "brotli_kb": 144.1
+        },
+        {
+          "file": "shared~architectureDiagram-ZHVYKT53~cose-bilkent-JH36ORCC.js",
+          "raw_kb": 424.4,
+          "gzip_kb": 133.4,
+          "brotli_kb": 112.6
+        },
+        {
+          "file": "PdfPages.js",
+          "raw_kb": 421.6,
+          "gzip_kb": 125.6,
+          "brotli_kb": 104.3
+        },
+        {
+          "file": "shared~pegDiagram-ECIUJNBX~abnfDiagram-WEYOIA3C~ebnfDiagram-V4P3TTPT~railroadDiagram-Y72NRB~gaub1phv.js",
+          "raw_kb": 614.3,
+          "gzip_kb": 122.5,
+          "brotli_kb": 102.8
+        },
+        {
+          "file": "taskPages.js",
+          "raw_kb": 324.5,
+          "gzip_kb": 102.1,
+          "brotli_kb": 81.7
+        },
+        {
+          "file": "settingsPages.js",
+          "raw_kb": 312.7,
+          "gzip_kb": 93.7,
+          "brotli_kb": 72.4
+        },
+        {
+          "file": "ChatPage.js",
+          "raw_kb": 273.1,
+          "gzip_kb": 88.8,
+          "brotli_kb": 71.2
+        }
+      ]
+    },
+    "pageload": {
+      "runs": 3,
+      "presets": {
+        "desktop": {
+          "viewport": {
+            "width": 1350,
+            "height": 940
+          },
+          "isMobile": false,
+          "hasTouch": false,
+          "deviceScaleFactor": 1,
+          "latency": 40,
+          "down": 10240,
+          "up": 10240,
+          "cpu": 1,
+          "settle": 3000
+        },
+        "phone": {
+          "viewport": {
+            "width": 412,
+            "height": 823
+          },
+          "isMobile": true,
+          "hasTouch": true,
+          "deviceScaleFactor": 1.75,
+          "latency": 150,
+          "down": 1638,
+          "up": 750,
+          "cpu": 4,
+          "settle": 6000
+        }
+      },
+      "pages": {
+        "login.desktop": {
+          "fcp_ms": 544,
+          "lcp_ms": 544,
+          "tbt_ms": 0,
+          "cls": 0,
+          "transfer_kb": 294.9,
+          "js_kb": 221.9,
+          "css_kb": 35.5,
+          "requests": 13
+        },
+        "home.desktop": {
+          "fcp_ms": 1084,
+          "lcp_ms": 1084,
+          "tbt_ms": 0,
+          "cls": 0.001,
+          "transfer_kb": 794.7,
+          "js_kb": 693.5,
+          "css_kb": 41.8,
+          "requests": 45
+        },
+        "app_tasks.desktop": {
+          "fcp_ms": 1180,
+          "lcp_ms": 1388,
+          "tbt_ms": 76,
+          "cls": 0.002,
+          "transfer_kb": 939.3,
+          "js_kb": 810,
+          "css_kb": 41.8,
+          "requests": 45
+        },
+        "docs.desktop": {
+          "fcp_ms": 1156,
+          "lcp_ms": 1912,
+          "tbt_ms": 109,
+          "cls": 0,
+          "transfer_kb": 879.1,
+          "js_kb": 773.8,
+          "css_kb": 41.8,
+          "requests": 45
+        },
+        "login.phone": {
+          "fcp_ms": 2116,
+          "lcp_ms": 2116,
+          "tbt_ms": 0,
+          "cls": 0,
+          "transfer_kb": 294.9,
+          "js_kb": 221.9,
+          "css_kb": 35.5,
+          "requests": 13
+        },
+        "home.phone": {
+          "fcp_ms": 3464,
+          "lcp_ms": 3464,
+          "tbt_ms": 0,
+          "cls": 0.002,
+          "transfer_kb": 794.7,
+          "js_kb": 693.5,
+          "css_kb": 41.8,
+          "requests": 45
+        },
+        "app_tasks.phone": {
+          "fcp_ms": 4060,
+          "lcp_ms": 4940,
+          "tbt_ms": 370,
+          "cls": 0.001,
+          "transfer_kb": 939.3,
+          "js_kb": 810,
+          "css_kb": 41.8,
+          "requests": 45
+        },
+        "docs.phone": {
+          "fcp_ms": 3920,
+          "lcp_ms": 6280,
+          "tbt_ms": 455,
+          "cls": 0,
+          "transfer_kb": 879.4,
+          "js_kb": 773.8,
+          "css_kb": 41.8,
+          "requests": 46
+        }
+      },
+      "console_errors": {
+        "login": [
+          "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+        ],
+        "app_tasks": [
+          "Failed to load resource: the server responded with a status of 404 (Not Found)"
+        ],
+        "docs": [
+          "Applying inline style violates the following Content Security Policy directive 'style-src 'self''. Either the 'unsafe-inline' keyword, a hash ('sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='), o"
+        ]
+      },
+      "asset_encoding": "br",
+      "checks": [
+        {
+          "id": "perf.asset-compression",
+          "category": "performance",
+          "title": "JS/CSS are served compressed (br/gzip/zstd)",
+          "result": "pass",
+          "evidence": [
+            "GET /assets/index.js with Accept-Encoding: br, gzip, zstd -> content-encoding br, content-length 75258 (278.1 kB decoded)"
+          ]
+        },
+        {
+          "id": "console.csp.login",
+          "category": "csp",
+          "title": "login: no CSP console errors",
+          "result": "pass",
+          "evidence": [
+            "none"
+          ]
+        },
+        {
+          "id": "console.csp.home",
+          "category": "csp",
+          "title": "home: no CSP console errors",
+          "result": "pass",
+          "evidence": [
+            "none"
+          ]
+        },
+        {
+          "id": "console.csp.app_tasks",
+          "category": "csp",
+          "title": "app_tasks: no CSP console errors",
+          "result": "pass",
+          "evidence": [
+            "none"
+          ]
+        },
+        {
+          "id": "console.csp.docs",
+          "category": "csp",
+          "title": "docs: no CSP console errors",
+          "result": "fail",
+          "severity": "low",
+          "fix": "Move the inline style to a stylesheet or a constructed style sheet.",
+          "evidence": [
+            "Applying inline style violates the following Content Security Policy directive 'style-src 'self''. Either the 'unsafe-inline' keyword, a hash ('sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='), o"
+          ]
+        }
+      ]
+    },
+    "latency": {
+      "requests": 500,
+      "concurrency": 10,
+      "endpoints": {
+        "health_ready": {
+          "p50_ms": 5.17,
+          "p95_ms": 7.74,
+          "p99_ms": 10.07,
+          "rps": 1831,
+          "non_200": 0
+        },
+        "index_html": {
+          "p50_ms": 0.12,
+          "p95_ms": 0.43,
+          "p99_ms": 0.81,
+          "rps": 54628,
+          "non_200": 0
+        },
+        "session_me": {
+          "p50_ms": 1.94,
+          "p95_ms": 4.9,
+          "p99_ms": 10.68,
+          "rps": 4030,
+          "non_200": 0
+        },
+        "workspace_list": {
+          "p50_ms": 0.63,
+          "p95_ms": 1.1,
+          "p99_ms": 1.58,
+          "rps": 14601,
+          "non_200": 0
+        },
+        "docs_list": {
+          "p50_ms": 2.28,
+          "p95_ms": 3.17,
+          "p99_ms": 3.8,
+          "rps": 4224,
+          "non_200": 0
+        },
+        "docs_read": {
+          "p50_ms": 0.94,
+          "p95_ms": 1.51,
+          "p99_ms": 1.89,
+          "rps": 9859,
+          "non_200": 0
+        },
+        "docs_search": {
+          "p50_ms": 1.18,
+          "p95_ms": 3.48,
+          "p99_ms": 3.94,
+          "rps": 7405,
+          "non_200": 0
+        },
+        "app_list": {
+          "p50_ms": 1,
+          "p95_ms": 1.44,
+          "p99_ms": 1.94,
+          "rps": 9510,
+          "non_200": 0
+        },
+        "tasks_list": {
+          "p50_ms": 23.05,
+          "p95_ms": 29.33,
+          "p99_ms": 32.05,
+          "rps": 442,
+          "non_200": 0
+        },
+        "task_read": {
+          "p50_ms": 1.05,
+          "p95_ms": 1.37,
+          "p99_ms": 1.65,
+          "rps": 9127,
+          "non_200": 0
+        },
+        "file_read": {
+          "p50_ms": 0.61,
+          "p95_ms": 1.02,
+          "p99_ms": 1.35,
+          "rps": 15071,
+          "non_200": 0
+        }
+      }
+    },
+    "server": {
+      "cold_start_ms": 147,
+      "fresh_start_ms": 207,
+      "rss_idle_mb": 61,
+      "rss_after_latency_mb": 91,
+      "rss_after_pageload_mb": 115,
+      "rss_peak_mb": 115
+    },
+    "build": {
+      "revision": "49b6f143afe5cf90c4e9f10494563526064b9bb2",
+      "web_build_seconds": 63.59,
+      "web_build_peak_rss_mb": 1892,
+      "release_build_seconds": 1032.85,
+      "release_build_peak_rss_mb": 3431,
+      "release_binary_mb": 103,
+      "cargo_jobs": 1,
+      "measured_in_this_run": true
+    }
+  },
+  "security": {
+    "summary": {
+      "checks": 5,
+      "pass": 4,
+      "fail": 1,
+      "warn": 0,
+      "skip": 0,
+      "findings_by_severity": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "info": 0
+      }
+    },
+    "checks": [
+      {
+        "id": "perf.asset-compression",
+        "category": "performance",
+        "title": "JS/CSS are served compressed (br/gzip/zstd)",
+        "result": "pass",
+        "evidence": [
+          "GET /assets/index.js with Accept-Encoding: br, gzip, zstd -> content-encoding br, content-length 75258 (278.1 kB decoded)"
+        ]
+      },
+      {
+        "id": "console.csp.login",
+        "category": "csp",
+        "title": "login: no CSP console errors",
+        "result": "pass",
+        "evidence": [
+          "none"
+        ]
+      },
+      {
+        "id": "console.csp.home",
+        "category": "csp",
+        "title": "home: no CSP console errors",
+        "result": "pass",
+        "evidence": [
+          "none"
+        ]
+      },
+      {
+        "id": "console.csp.app_tasks",
+        "category": "csp",
+        "title": "app_tasks: no CSP console errors",
+        "result": "pass",
+        "evidence": [
+          "none"
+        ]
+      },
+      {
+        "id": "console.csp.docs",
+        "category": "csp",
+        "title": "docs: no CSP console errors",
+        "result": "fail",
+        "severity": "low",
+        "fix": "Move the inline style to a stylesheet or a constructed style sheet.",
+        "evidence": [
+          "Applying inline style violates the following Content Security Policy directive 'style-src 'self''. Either the 'unsafe-inline' keyword, a hash ('sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='), o"
+        ]
+      }
+    ],
+    "findings": []
+  },
+  "errors": [],
+  "comparison": {
+    "previous": "2026-11-05-1033-5cb09be.json",
+    "over_budget": [
+      {
+        "metric": "perf.pageload.pages.docs.phone.tbt_ms",
+        "value": 455,
+        "budget": 400
+      }
+    ],
+    "budgets_not_measured": [],
+    "new_high_or_critical": [],
+    "fixed_high_or_critical": [],
+    "regressions_over_15pct": [
+      {
+        "metric": "perf.pageload.pages.app_tasks.phone.tbt_ms",
+        "previous": 309,
+        "value": 370,
+        "change_pct": 19.7
+      },
+      {
+        "metric": "perf.server.fresh_start_ms",
+        "previous": 155,
+        "value": 207,
+        "change_pct": 33.5
+      }
+    ],
+    "improvements_over_15pct": [
+      {
+        "metric": "perf.bundle.chunk_count",
+        "previous": 192,
+        "value": 100,
+        "change_pct": -47.9
+      },
+      {
+        "metric": "perf.pageload.pages.login.desktop.requests",
+        "previous": 21,
+        "value": 13,
+        "change_pct": -38.1
+      },
+      {
+        "metric": "perf.pageload.pages.home.desktop.fcp_ms",
+        "previous": 1324,
+        "value": 1084,
+        "change_pct": -18.1
+      },
+      {
+        "metric": "perf.pageload.pages.home.desktop.lcp_ms",
+        "previous": 1324,
+        "value": 1084,
+        "change_pct": -18.1
+      },
+      {
+        "metric": "perf.pageload.pages.home.desktop.requests",
+        "previous": 96,
+        "value": 45,
+        "change_pct": -53.1
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.desktop.fcp_ms",
+        "previous": 1460,
+        "value": 1180,
+        "change_pct": -19.2
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.desktop.lcp_ms",
+        "previous": 1692,
+        "value": 1388,
+        "change_pct": -18
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.desktop.requests",
+        "previous": 103,
+        "value": 45,
+        "change_pct": -56.3
+      },
+      {
+        "metric": "perf.pageload.pages.docs.desktop.fcp_ms",
+        "previous": 1560,
+        "value": 1156,
+        "change_pct": -25.9
+      },
+      {
+        "metric": "perf.pageload.pages.docs.desktop.tbt_ms",
+        "previous": 161,
+        "value": 109,
+        "change_pct": -32.3
+      },
+      {
+        "metric": "perf.pageload.pages.docs.desktop.requests",
+        "previous": 99,
+        "value": 45,
+        "change_pct": -54.5
+      },
+      {
+        "metric": "perf.pageload.pages.login.phone.requests",
+        "previous": 21,
+        "value": 13,
+        "change_pct": -38.1
+      },
+      {
+        "metric": "perf.pageload.pages.home.phone.fcp_ms",
+        "previous": 4348,
+        "value": 3464,
+        "change_pct": -20.3
+      },
+      {
+        "metric": "perf.pageload.pages.home.phone.lcp_ms",
+        "previous": 4348,
+        "value": 3464,
+        "change_pct": -20.3
+      },
+      {
+        "metric": "perf.pageload.pages.home.phone.requests",
+        "previous": 96,
+        "value": 45,
+        "change_pct": -53.1
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.phone.fcp_ms",
+        "previous": 4988,
+        "value": 4060,
+        "change_pct": -18.6
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.phone.lcp_ms",
+        "previous": 5988,
+        "value": 4940,
+        "change_pct": -17.5
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.phone.requests",
+        "previous": 103,
+        "value": 45,
+        "change_pct": -56.3
+      },
+      {
+        "metric": "perf.pageload.pages.docs.phone.fcp_ms",
+        "previous": 5760,
+        "value": 3920,
+        "change_pct": -31.9
+      },
+      {
+        "metric": "perf.pageload.pages.docs.phone.tbt_ms",
+        "previous": 664,
+        "value": 455,
+        "change_pct": -31.5
+      },
+      {
+        "metric": "perf.pageload.pages.docs.phone.requests",
+        "previous": 100,
+        "value": 46,
+        "change_pct": -54
+      }
+    ]
+  }
+}
