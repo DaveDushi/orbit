@@ -54,7 +54,9 @@ CREATE TABLE trash_entries (
   trashed_at TEXT NOT NULL,
   purge_after TEXT NOT NULL,
   trashed_by TEXT NOT NULL,
-  state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'purging', 'purged'))
+  state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'purging', 'purged')),
+  FOREIGN KEY (root_node_id) REFERENCES nodes(id),
+  FOREIGN KEY (original_parent_id) REFERENCES nodes(id)
 ) STRICT;
 CREATE TABLE folders (path TEXT PRIMARY KEY NOT NULL, parent_path TEXT, name TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL) STRICT;
 INSERT INTO nodes VALUES('root',NULL,'folder','Drive','drive',NULL,1,'2026-08-10T00:00:00.000Z','2026-08-10T00:00:00.000Z','system','system',NULL);

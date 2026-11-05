@@ -812,3 +812,52 @@ async fn copy_object_copies_within_the_bucket_and_reports_a_missing_source() {
     );
     assert!(bucket.get_bytes("drive/other").await.unwrap().is_none());
 }
+
+#[test]
+fn the_csp_follows_the_configured_buckets_and_never_plain_http() {
+    let config = |endpoint: &str, bucket: &str, path_style: bool| S3Config {
+        endpoint: endpoint.to_owned(),
+        region: "auto".to_owned(),
+        bucket: bucket.to_owned(),
+        prefix: String::new(),
+        access_key_id: "key".to_owned(),
+        secret_access_key: "secret".to_owned(),
+        path_style,
+    };
+    let storage = ObjectStorage::default();
+    let sources = storage.csp_sources();
+    assert_eq!(sources.get(), "");
+    let r2 = S3Bucket::new(config(
+        "https://account.r2.cloudflarestorage.com",
+        "wellrox-files",
+        false,
+    ))
+    .unwrap();
+    let workspace = S3Bucket::new(config("https://s3.example.com:8443", "team", true)).unwrap();
+    let local = S3Bucket::new(config("http://127.0.0.1:9000", "orbit", true)).unwrap();
+    storage.configure(ObjectStorageState {
+        bucket: Some(local),
+        workspace_buckets: [(
+            Id::new_v7().to_string(),
+            WorkspaceBucket {
+                bucket: workspace,
+                active: false,
+            },
+        )]
+        .into(),
+        ..Default::default()
+    });
+    assert_eq!(
+        sources.get(),
+        "https://s3.example.com:8443",
+        "a removed bucket still serves its files; http never"
+    );
+    storage.configure(ObjectStorageState {
+        bucket: Some(r2),
+        ..Default::default()
+    });
+    assert_eq!(
+        sources.get(),
+        "https://wellrox-files.account.r2.cloudflarestorage.com"
+    );
+}

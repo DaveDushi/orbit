@@ -259,6 +259,19 @@ impl S3Bucket {
         })
     }
 
+    /// The origin of the bucket's URLs (presigned ones too): `scheme://host[:port]`.
+    #[must_use]
+    pub fn origin(&self) -> String {
+        if self.config.path_style {
+            format!("{}://{}", self.scheme, self.authority)
+        } else {
+            format!(
+                "{}://{}.{}",
+                self.scheme, self.config.bucket, self.authority
+            )
+        }
+    }
+
     #[must_use]
     pub fn config(&self) -> &S3Config {
         &self.config

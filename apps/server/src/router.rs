@@ -39,6 +39,8 @@ pub struct ApiRoutes {
     pub pages: PageState,
     pub page_files: PageFileState,
     pub drive: crate::drive_routes::DriveState,
+    /// The bucket origins that pages may reach (Content Security Policy); they follow the storage settings.
+    pub csp_sources: orbit_platform::CspSources,
     /// Public Drive links; `None` without an app key (their passes need it).
     pub drive_shares: Option<crate::drive_share_routes::DriveShareState>,
     pub page_comments: PageCommentState,
@@ -63,6 +65,7 @@ pub fn production_router(
     require_secure_transport: bool,
 ) -> Router {
     let csp_script_hash = assets.csp_script_hash().to_owned();
+    let csp_sources = api.csp_sources.clone();
     let session_cookie = api.auth.cookie_mode().session_cookie_name();
     let database = api.auth.database().clone();
     let agent_scope =
@@ -127,7 +130,8 @@ pub fn production_router(
             .with_rate_limits(rate_limits)
             .with_session_cookie(session_cookie)
             .with_shared_rate_limits(database)
-            .with_csp_script_hash(csp_script_hash);
+            .with_csp_script_hash(csp_script_hash)
+            .with_csp_sources(csp_sources);
         if require_secure_transport {
             layer.require_secure_transport()
         } else {

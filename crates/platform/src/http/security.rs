@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr};
+use std::sync::{Arc, PoisonError, RwLock};
 
 use axum::http::header::{
     CONTENT_SECURITY_POLICY, HeaderName, HeaderValue, REFERRER_POLICY, X_CONTENT_TYPE_OPTIONS,
@@ -257,20 +258,65 @@ fn forwarded_transport(headers: &HeaderMap) -> Result<Option<RequestTransport>, 
     Ok(transport)
 }
 
-pub(crate) fn add_security_headers(
-    headers: &mut HeaderMap,
-    secure: bool,
-    csp_script_hash: Option<&str>,
-) {
-    let script_source = csp_script_hash
+/// The origins of the configured object storage buckets that pages may reach (Drive's presigned URLs): only
+/// `https://host[:port]` origins. Cloned handles share one list, which the storage settings replace at run time.
+#[derive(Clone, Debug, Default)]
+pub struct CspSources(Arc<RwLock<String>>);
+
+impl CspSources {
+    /// Replaces the list. Anything but an `https` origin of plain host characters is left out, so a setting can
+    /// neither allow plain http nor add other directives.
+    pub fn set(&self, origins: impl IntoIterator<Item = String>) {
+        let mut kept: Vec<String> = origins
+            .into_iter()
+            .filter(|origin| {
+                origin.strip_prefix("https://").is_some_and(|authority| {
+                    !authority.is_empty()
+                        && authority.chars().all(|c| {
+                            c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '[' | ']')
+                        })
+                })
+            })
+            .map(|origin| origin.to_ascii_lowercase())
+            .collect();
+        kept.sort();
+        kept.dedup();
+        *self.0.write().unwrap_or_else(PoisonError::into_inner) = kept.join(" ");
+    }
+
+    /// The origins, separated by spaces.
+    #[must_use]
+    pub fn get(&self) -> String {
+        self.0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+}
+
+/// What the Content Security Policy of a response depends on.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Csp {
+    pub(crate) script_hash: Option<String>,
+    pub(crate) sources: CspSources,
+}
+
+pub(crate) fn add_security_headers(headers: &mut HeaderMap, secure: bool, csp: &Csp) {
+    let script_source = csp
+        .script_hash
+        .as_deref()
         .map(|hash| format!("script-src 'self' '{hash}'; "))
         .unwrap_or_else(|| "script-src 'self'; ".to_owned());
-    // Drive files move between the browser and an S3 bucket with presigned URLs, and videos play from them, so
-    // fetches and media may go to any https origin (images already may). A server reached over plain http has
-    // no transport security to keep, and its bucket (a local test server) may be http too.
-    let remote = if secure { "https:" } else { "https: http:" };
+    // Drive's presigned URLs: fetches, images and media of the configured buckets only. External https images
+    // (docs covers, image blocks, link previews) and X videos in chat were allowed before Drive and stay.
+    let buckets = csp.sources.get();
+    let buckets = if buckets.is_empty() {
+        String::new()
+    } else {
+        format!(" {buckets}")
+    };
     let policy = format!(
-        "default-src 'self'; {script_source}style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' {remote}; frame-src 'self' https://www.youtube-nocookie.com; media-src 'self' blob: {remote}; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self' https://github.com"
+        "default-src 'self'; {script_source}style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https:{buckets}; connect-src 'self'{buckets}; frame-src 'self' https://www.youtube-nocookie.com; media-src 'self' blob: https://video.twimg.com{buckets}; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self' https://github.com"
     );
     // A response may carry its own policy (the wrapper document of a workspace app, which Orbit
     // frames itself). Its `frame-ancestors` decides framing then, so it gets no `X-Frame-Options`.
@@ -336,22 +382,80 @@ mod tests {
     use axum::http::header::{CONTENT_SECURITY_POLICY, REFERRER_POLICY, X_FRAME_OPTIONS};
     use axum::http::{HeaderMap, HeaderValue, Method, Uri};
 
-    use super::{OriginPolicy, add_security_headers, bearer_token};
+    use super::{Csp, CspSources, OriginPolicy, add_security_headers, bearer_token};
 
     #[test]
     fn responses_refuse_framing_and_isolate_the_opener() {
         let mut headers = HeaderMap::new();
-        add_security_headers(&mut headers, true, None);
+        add_security_headers(&mut headers, true, &Csp::default());
         assert_eq!(headers["x-frame-options"], "DENY");
-        // Over https, presigned bucket URLs must be https too.
+        // Without a bucket, pages fetch only from Orbit itself.
         let csp = headers[CONTENT_SECURITY_POLICY].to_str().unwrap();
-        assert!(csp.contains("connect-src 'self' https:;"));
-        assert!(csp.contains("media-src 'self' blob: https:;"));
-        assert!(!csp.contains("http:"));
+        assert!(csp.contains("connect-src 'self';"));
+        assert!(csp.contains("media-src 'self' blob: https://video.twimg.com;"));
         assert_eq!(
             headers["cross-origin-opener-policy"],
             "same-origin-allow-popups"
         );
+    }
+
+    fn policy(sources: &CspSources) -> String {
+        let mut headers = HeaderMap::new();
+        add_security_headers(
+            &mut headers,
+            true,
+            &Csp {
+                script_hash: None,
+                sources: sources.clone(),
+            },
+        );
+        headers[CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    #[test]
+    fn only_https_bucket_origins_reach_fetches_images_and_media() {
+        let sources = CspSources::default();
+        sources.set([
+            "https://ACCOUNT.r2.cloudflarestorage.com".to_owned(),
+            "https://files.example.com:8443".to_owned(),
+            "http://minio.local:9000".to_owned(),
+            "https://evil.example.com; script-src *".to_owned(),
+            "https://".to_owned(),
+            "https://files.example.com:8443".to_owned(),
+        ]);
+        let csp = policy(&sources);
+        let allowed = "https://account.r2.cloudflarestorage.com https://files.example.com:8443";
+        assert!(
+            csp.contains(&format!("connect-src 'self' {allowed};")),
+            "{csp}"
+        );
+        assert!(
+            csp.contains(&format!(
+                "media-src 'self' blob: https://video.twimg.com {allowed};"
+            )),
+            "{csp}"
+        );
+        assert!(
+            csp.contains(&format!("img-src 'self' data: blob: https: {allowed};")),
+            "{csp}"
+        );
+        assert!(!csp.contains("http:"), "plain http stays refused: {csp}");
+        assert!(!csp.contains("minio") && !csp.contains("evil"), "{csp}");
+        assert!(!csp.contains("connect-src 'self' https:;") && !csp.contains("connect-src *"));
+    }
+
+    #[test]
+    fn a_new_bucket_origin_applies_to_the_next_response_without_a_restart() {
+        let sources = CspSources::default();
+        let layer_copy = sources.clone();
+        assert!(policy(&layer_copy).contains("connect-src 'self';"));
+        sources.set(["https://new.example.com".to_owned()]);
+        assert!(policy(&layer_copy).contains("connect-src 'self' https://new.example.com;"));
+        sources.set([]);
+        assert!(!policy(&layer_copy).contains("new.example.com"));
     }
 
     #[test]
@@ -362,7 +466,7 @@ mod tests {
             HeaderValue::from_static("frame-ancestors 'self'"),
         );
         headers.insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
-        add_security_headers(&mut headers, true, None);
+        add_security_headers(&mut headers, true, &Csp::default());
         assert_eq!(headers[CONTENT_SECURITY_POLICY], "frame-ancestors 'self'");
         assert!(!headers.contains_key(X_FRAME_OPTIONS));
         assert_eq!(headers[REFERRER_POLICY], "no-referrer");

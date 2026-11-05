@@ -297,6 +297,79 @@ async fn production_csp_hashes_the_exact_embedded_bootstrap_text() {
 }
 
 #[tokio::test]
+async fn the_csp_allows_only_the_saved_bucket_origins_and_follows_a_new_bucket_without_restart() {
+    let root = TempDir::new().unwrap();
+    let app = App::build(app_config(&root)).await.unwrap();
+    let csp = |path: &'static str| {
+        let router = app.router();
+        async move {
+            let response = router
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            response.headers()[header::CONTENT_SECURITY_POLICY]
+                .to_str()
+                .unwrap()
+                .to_owned()
+        }
+    };
+    let before = csp("/").await;
+    assert!(before.contains("connect-src 'self';"), "{before}");
+    assert!(!before.contains("r2.cloudflarestorage.com"));
+    // Storage settings saved while Orbit runs (Admin → Storage) reach the next response.
+    let bucket = orbit_platform::S3Bucket::new(orbit_platform::S3Config {
+        endpoint: "https://account.r2.cloudflarestorage.com".to_owned(),
+        region: "auto".to_owned(),
+        bucket: "wellrox-files".to_owned(),
+        prefix: String::new(),
+        access_key_id: "key".to_owned(),
+        secret_access_key: "secret".to_owned(),
+        path_style: false,
+    })
+    .unwrap();
+    app.object_storage()
+        .configure(orbit_platform::ObjectStorageState {
+            bucket: Some(bucket),
+            ..Default::default()
+        });
+    let origin = "https://wellrox-files.account.r2.cloudflarestorage.com";
+    for path in [
+        "/",
+        "/drive",
+        "/s/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    ] {
+        let after = csp(path).await;
+        assert!(
+            after.contains(&format!("connect-src 'self' {origin};")),
+            "{path}: {after}"
+        );
+        assert!(
+            after.contains(&format!(
+                "media-src 'self' blob: https://video.twimg.com {origin};"
+            )),
+            "{path}: {after}"
+        );
+        assert!(
+            after.contains(&format!("img-src 'self' data: blob: https: {origin};")),
+            "{path}: {after}"
+        );
+        // An https origin that no setting names stays refused for fetches and media.
+        let connect: Vec<&str> = after
+            .split(';')
+            .find_map(|directive| directive.trim().strip_prefix("connect-src "))
+            .unwrap()
+            .split_whitespace()
+            .collect();
+        assert_eq!(
+            connect,
+            ["'self'", origin],
+            "{path}: no wildcard and no other origin"
+        );
+        assert!(!after.contains("http:"), "{path}: {after}");
+    }
+}
+
+#[tokio::test]
 async fn app_build_migrates_checks_readiness_and_returns_first_run_setup_url() {
     let root = TempDir::new().unwrap();
     let app = App::build(app_config(&root)).await.unwrap();

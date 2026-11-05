@@ -1198,3 +1198,43 @@ async fn thumbnails_are_kept_only_for_media_when_present_and_small_and_go_with_t
     fixture.drive.delete_objects().await.unwrap();
     assert_eq!(fixture.object_count().await, 1, "only notes.txt is left");
 }
+
+#[tokio::test]
+async fn concurrent_creates_of_one_name_give_one_item_and_a_conflict_never_a_server_error() {
+    let fixture = fixture().await;
+    let member = fixture.user("member@example.com", Some("member")).await;
+    let path = fixture.path("/folders");
+    let mut calls = Vec::new();
+    for (index, cookie) in [
+        fixture.owner.clone(),
+        member.clone(),
+        fixture.owner.clone(),
+        member,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let fixture = &fixture;
+        let path = path.clone();
+        let name = if index % 2 == 0 { "Plans" } else { "PLANS" };
+        calls.push(async move {
+            fixture
+                .call("POST", &path, Some(&cookie), Some(json!({"name": name})))
+                .await
+        });
+    }
+    let answers = futures_util::future::join_all(calls).await;
+    let created = answers
+        .iter()
+        .filter(|(status, _)| *status == StatusCode::CREATED)
+        .count();
+    assert_eq!(created, 1, "{answers:?}");
+    for (status, body) in &answers {
+        assert!(
+            *status == StatusCode::CREATED
+                || (*status == StatusCode::CONFLICT && body["code"] == "drive_name_taken"),
+            "{status} {body}"
+        );
+    }
+    assert_eq!(fixture.names(None).await.len(), 1);
+}

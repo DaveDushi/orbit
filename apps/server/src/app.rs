@@ -424,6 +424,7 @@ impl App {
                         cookie_mode,
                     )
                 }),
+                csp_sources: object_storage.csp_sources(),
                 drive: crate::drive_routes::DriveState::new(
                     Arc::clone(&identity),
                     drive,
@@ -496,6 +497,12 @@ impl App {
 
     pub fn router(&self) -> Router {
         self.router.clone()
+    }
+
+    /// The object storage settings in use; saving storage settings configures it.
+    #[must_use]
+    pub fn object_storage(&self) -> &ObjectStorage {
+        &self.object_storage
     }
 
     pub fn metrics_router(&self) -> Router {

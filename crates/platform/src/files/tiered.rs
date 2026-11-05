@@ -28,6 +28,8 @@ pub const S3_DELETE_DELAY_MILLIS: i64 = 40 * 24 * 60 * 60 * 1000;
 pub struct ObjectStorage {
     state: Arc<RwLock<ObjectStorageState>>,
     changed: Arc<Notify>,
+    /// The origins of the buckets, for the Content Security Policy of pages.
+    csp_sources: crate::CspSources,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -87,8 +89,23 @@ impl ObjectStorageState {
 
 impl ObjectStorage {
     pub fn configure(&self, state: ObjectStorageState) {
+        // Every bucket a browser may get a presigned URL of: the installation's and every workspace's, also one
+        // being removed while its files move back.
+        self.csp_sources.set(
+            state
+                .bucket
+                .iter()
+                .chain(state.workspace_buckets.values().map(|own| &own.bucket))
+                .map(S3Bucket::origin),
+        );
         *self.state.write().unwrap_or_else(PoisonError::into_inner) = state;
         self.changed.notify_one();
+    }
+
+    /// The handle the HTTP layer reads the bucket origins from; it follows every [`Self::configure`].
+    #[must_use]
+    pub fn csp_sources(&self) -> crate::CspSources {
+        self.csp_sources.clone()
     }
 
     #[must_use]
