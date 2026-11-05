@@ -82,6 +82,7 @@
 - An `IntersectionObserver` with the default root (the window) is clipped by every scrolling ancestor first, so its `rootMargin` does nothing inside a scrolling pane. Pass the pane as `root` (`PdfPages.tsx`, 2026-11-02).
 - Measure web CPU and memory with `scripts/perf/` (seed, measure, e2e; results and method in `.ai/web-perf.md`) and compare a before and an after run of the same script.
 - Tailwind v4 emits variant rules in its own order, not class order: two `data-[…]:` variants that set the same property (e.g. `top`) at equal specificity can resolve the wrong way. Make such variants mutually exclusive instead of relying on override order.
+- The fake S3 (`start_fake_s3`) does not check signatures. To prove S3 signing against a real server, run `crates/platform/tests/object_storage.rs` with `ORBIT_TEST_S3_*` against a local versitygw (`versitygw posix <dir>`; MinIO has no free image or binary any more). versitygw writes ETag quotes as `&#34;`, and a copy onto itself does not change Last-Modified there (`a_duplicate_upload_to_s3_refreshes_the_existing_object` fails on it; R2/AWS are fine).
 
 ## HTML5 drag and drop: never unmount the drag source on dragstart
 - Symptom: kanban cards went invisible while dragging and no drop indicator appeared.

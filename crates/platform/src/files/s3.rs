@@ -30,6 +30,13 @@ const LIST_BODY_BYTES: usize = 8 * 1024 * 1024;
 const SMALL_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// Reading an error body of a file transfer.
 const ERROR_BODY_TIMEOUT: Duration = Duration::from_secs(10);
+/// The longest lifetime S3 accepts for a presigned URL (7 days).
+const MAX_PRESIGN_EXPIRY: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+/// The smallest part of a multipart upload except the last (S3 and R2). R2 also wants every part except the
+/// last to have the same size.
+pub const S3_MIN_PART_BYTES: u64 = 5 * 1024 * 1024;
+/// The most parts of one multipart upload.
+pub const S3_MAX_PARTS: u32 = 10_000;
 
 /// A bucket and the key prefix under which Orbit stores its objects.
 #[derive(Clone, Eq, PartialEq)]
@@ -151,6 +158,14 @@ impl S3Error {
 pub struct S3Object {
     pub key: String,
     pub last_modified_millis: i64,
+    pub size: u64,
+}
+
+/// One uploaded part of a multipart upload. `etag` is kept as S3 sent it (with its quotes).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct S3Part {
+    pub part_number: u32,
+    pub etag: String,
     pub size: u64,
 }
 
@@ -379,15 +394,25 @@ impl S3Bucket {
     /// Copies the object onto itself, which sets its last-modified time to now. Returns `false` when it does
     /// not exist.
     pub async fn touch(&self, key: &str) -> Result<bool, S3Error> {
+        self.copy(key, key).await
+    }
+
+    /// Copies `source` to `destination` in this bucket on the server (up to 5 GiB, a single CopyObject).
+    /// Returns `false` when `source` does not exist.
+    pub async fn copy_object(&self, source: &str, destination: &str) -> Result<bool, S3Error> {
+        self.copy(source, destination).await
+    }
+
+    async fn copy(&self, source: &str, destination: &str) -> Result<bool, S3Error> {
         let source = format!(
             "/{}/{}",
             self.config.bucket,
-            uri_encode(&self.full_key(key), false)
+            uri_encode(&self.full_key(source), false)
         );
         let response = self
             .request(
                 Method::PUT,
-                key,
+                destination,
                 &[],
                 &[
                     ("x-amz-copy-source", source),
@@ -404,17 +429,11 @@ impl S3Bucket {
         }
         let body = read_text(expect_success(response).await?, SMALL_BODY_BYTES).await?;
         // S3 can report a failed copy with 200 and an <Error> body.
-        if body.contains("<Error>") {
-            return match xml_value(&body, "Code").as_deref() {
-                Some("NoSuchKey") => Ok(false),
-                code => Err(S3Error::Status {
-                    status: 200,
-                    code: code.unwrap_or_default().to_owned(),
-                    message: xml_value(&body, "Message").unwrap_or_default(),
-                }),
-            };
+        match error_in_body(&body) {
+            Some(S3Error::Status { code, .. }) if code == "NoSuchKey" => Ok(false),
+            Some(error) => Err(error),
+            None => Ok(true),
         }
-        Ok(true)
     }
 
     /// Deletes the object. A missing object is not an error.
@@ -428,6 +447,252 @@ impl S3Bucket {
             return Ok(());
         }
         expect_success(response).await.map(drop)
+    }
+
+    /// Starts a multipart upload of `key` and returns its upload id. `content_type` is stored with the object.
+    pub async fn create_multipart_upload(
+        &self,
+        key: &str,
+        content_type: &str,
+    ) -> Result<String, S3Error> {
+        let response = self
+            .request(
+                Method::POST,
+                key,
+                &[("uploads", String::new())],
+                &[("content-type", content_type.to_owned())],
+            )
+            .header(CONTENT_LENGTH, 0)
+            .timeout(SMALL_REQUEST_TIMEOUT)
+            .send()
+            .await?;
+        let body = read_text(expect_success(response).await?, SMALL_BODY_BYTES).await?;
+        xml_value(&body, "UploadId")
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| S3Error::Response("multipart upload without an UploadId".to_owned()))
+    }
+
+    /// Uploads one part from memory and returns its ETag (server-side uploads, such as an import).
+    pub async fn upload_part(
+        &self,
+        key: &str,
+        upload_id: &str,
+        part_number: u32,
+        body: Vec<u8>,
+    ) -> Result<String, S3Error> {
+        let response = self
+            .request(Method::PUT, key, &part_query(upload_id, part_number), &[])
+            .header(CONTENT_LENGTH, body.len())
+            .body(body)
+            .send()
+            .await?;
+        let response = expect_success(response).await?;
+        response
+            .headers()
+            .get(reqwest::header::ETAG)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned)
+            .ok_or_else(|| S3Error::Response("uploaded part without an ETag".to_owned()))
+    }
+
+    /// The parts uploaded so far, by part number. `None` when the upload does not exist (completed, aborted or
+    /// expired).
+    pub async fn list_parts(
+        &self,
+        key: &str,
+        upload_id: &str,
+    ) -> Result<Option<Vec<S3Part>>, S3Error> {
+        let mut parts = Vec::new();
+        let mut marker: Option<String> = None;
+        loop {
+            let mut query = vec![
+                ("uploadId", upload_id.to_owned()),
+                ("max-parts", PAGE_SIZE.to_owned()),
+            ];
+            if let Some(marker) = &marker {
+                query.push(("part-number-marker", marker.clone()));
+            }
+            let response = self
+                .request(Method::GET, key, &query, &[])
+                .timeout(SMALL_REQUEST_TIMEOUT)
+                .send()
+                .await?;
+            if response.status() == StatusCode::NOT_FOUND {
+                return Ok(None);
+            }
+            let body = read_text(expect_success(response).await?, LIST_BODY_BYTES).await?;
+            for part in xml_elements(&body, "Part") {
+                let invalid =
+                    || S3Error::Response("listed part without a number or ETag".to_owned());
+                parts.push(S3Part {
+                    part_number: xml_value(part, "PartNumber")
+                        .and_then(|value| value.parse().ok())
+                        .ok_or_else(invalid)?,
+                    etag: xml_value(part, "ETag").ok_or_else(invalid)?,
+                    size: xml_value(part, "Size")
+                        .and_then(|value| value.parse().ok())
+                        .unwrap_or(0),
+                });
+            }
+            marker = match xml_value(&body, "IsTruncated").as_deref() {
+                Some("true") => {
+                    Some(xml_value(&body, "NextPartNumberMarker").ok_or_else(|| {
+                        S3Error::Response("truncated part list without a marker".to_owned())
+                    })?)
+                }
+                _ => None,
+            };
+            if marker.is_none() {
+                parts.sort_by_key(|part| part.part_number);
+                return Ok(Some(parts));
+            }
+        }
+    }
+
+    /// Joins the parts (`(part number, ETag)`, in any order) into the object.
+    pub async fn complete_multipart_upload(
+        &self,
+        key: &str,
+        upload_id: &str,
+        parts: &[(u32, String)],
+    ) -> Result<(), S3Error> {
+        let mut parts = parts.to_vec();
+        parts.sort_by_key(|(number, _)| *number);
+        let body: String = parts
+            .iter()
+            .map(|(number, etag)| {
+                format!(
+                    "<Part><PartNumber>{number}</PartNumber><ETag>{}</ETag></Part>",
+                    xml_escape(etag)
+                )
+            })
+            .collect();
+        let body = format!("<CompleteMultipartUpload>{body}</CompleteMultipartUpload>");
+        let response = self
+            .request(
+                Method::POST,
+                key,
+                &[("uploadId", upload_id.to_owned())],
+                &[],
+            )
+            .header(CONTENT_TYPE, "application/xml")
+            .header(CONTENT_LENGTH, body.len())
+            .timeout(SMALL_REQUEST_TIMEOUT)
+            .body(body)
+            .send()
+            .await?;
+        let body = read_text(expect_success(response).await?, SMALL_BODY_BYTES).await?;
+        // S3 can report a failed completion with 200 and an <Error> body.
+        error_in_body(&body).map_or(Ok(()), Err)
+    }
+
+    /// Stops a multipart upload and deletes its parts. A missing upload is not an error.
+    pub async fn abort_multipart_upload(&self, key: &str, upload_id: &str) -> Result<(), S3Error> {
+        let response = self
+            .request(
+                Method::DELETE,
+                key,
+                &[("uploadId", upload_id.to_owned())],
+                &[],
+            )
+            .timeout(SMALL_REQUEST_TIMEOUT)
+            .send()
+            .await?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(());
+        }
+        expect_success(response).await.map(drop)
+    }
+
+    /// A URL that lets its holder read `key` until it expires. `download_name` makes the browser save the
+    /// object under that name (`Content-Disposition: attachment`); `None` lets it show the object inline.
+    pub fn presign_get(
+        &self,
+        key: &str,
+        expires: Duration,
+        download_name: Option<&str>,
+    ) -> Result<String, S3Error> {
+        let query = download_name
+            .map(|name| vec![("response-content-disposition", attachment_disposition(name))])
+            .unwrap_or_default();
+        self.presign(Method::GET, key, &query, expires, Utc::now())
+    }
+
+    /// A URL that lets its holder write `key` with one PUT until it expires.
+    pub fn presign_put(&self, key: &str, expires: Duration) -> Result<String, S3Error> {
+        self.presign(Method::PUT, key, &[], expires, Utc::now())
+    }
+
+    /// A URL that lets its holder upload one part of a multipart upload until it expires. The ETag of the
+    /// response is needed to complete the upload (the bucket's CORS rules must expose it to a browser).
+    pub fn presign_upload_part(
+        &self,
+        key: &str,
+        upload_id: &str,
+        part_number: u32,
+        expires: Duration,
+    ) -> Result<String, S3Error> {
+        self.presign(
+            Method::PUT,
+            key,
+            &part_query(upload_id, part_number),
+            expires,
+            Utc::now(),
+        )
+    }
+
+    /// A query-string signed URL (Signature V4, only the `host` header signed, unsigned payload).
+    fn presign(
+        &self,
+        method: Method,
+        key: &str,
+        query: &[(&str, String)],
+        expires: Duration,
+        now: DateTime<Utc>,
+    ) -> Result<String, S3Error> {
+        if key.is_empty() {
+            return Err(S3Error::Config(
+                "a presigned URL needs an object key".to_owned(),
+            ));
+        }
+        if expires.is_zero() || expires > MAX_PRESIGN_EXPIRY {
+            return Err(S3Error::Config(
+                "a presigned URL must expire within 7 days".to_owned(),
+            ));
+        }
+        let target = self.target(key);
+        let signing_key = self.signing_key();
+        let mut query: Vec<(String, String)> = query
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), value.clone()))
+            .collect();
+        let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
+        query.extend([
+            ("X-Amz-Algorithm".to_owned(), "AWS4-HMAC-SHA256".to_owned()),
+            (
+                "X-Amz-Credential".to_owned(),
+                format!(
+                    "{}/{}",
+                    signing_key.access_key_id,
+                    credential_scope(&signing_key, now)
+                ),
+            ),
+            ("X-Amz-Date".to_owned(), amz_date),
+            ("X-Amz-Expires".to_owned(), expires.as_secs().to_string()),
+            ("X-Amz-SignedHeaders".to_owned(), "host".to_owned()),
+        ]);
+        let query = canonical_query(&query);
+        let canonical_request = format!(
+            "{}\n{}\n{query}\nhost:{}\n\nhost\n{UNSIGNED_PAYLOAD}",
+            method.as_str(),
+            target.path,
+            target.host
+        );
+        let signature = signature(&signing_key, now, &canonical_request);
+        Ok(format!(
+            "{}?{query}&X-Amz-Signature={signature}",
+            target.url
+        ))
     }
 
     /// Every object whose key starts with `prefix`, sorted by key.
@@ -527,6 +792,14 @@ impl S3Bucket {
         }
     }
 
+    fn signing_key(&self) -> SigningKey<'_> {
+        SigningKey {
+            access_key_id: &self.config.access_key_id,
+            secret_access_key: &self.config.secret_access_key,
+            region: &self.config.region,
+        }
+    }
+
     fn request(
         &self,
         method: Method,
@@ -535,16 +808,12 @@ impl S3Bucket {
         headers: &[(&str, String)],
     ) -> reqwest::RequestBuilder {
         let target = self.target(key);
-        let mut query: Vec<(String, String)> = query
-            .iter()
-            .map(|(name, value)| (uri_encode(name, false), uri_encode(value, false)))
-            .collect();
-        query.sort();
-        let query = query
-            .into_iter()
-            .map(|(name, value)| format!("{name}={value}"))
-            .collect::<Vec<_>>()
-            .join("&");
+        let query = canonical_query(
+            &query
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), value.clone()))
+                .collect::<Vec<_>>(),
+        );
         let url = if query.is_empty() {
             target.url
         } else {
@@ -556,11 +825,7 @@ impl S3Bucket {
             .collect();
         signed.push(("host".to_owned(), target.host));
         let authorization = sign(
-            &SigningKey {
-                access_key_id: &self.config.access_key_id,
-                secret_access_key: &self.config.secret_access_key,
-                region: &self.config.region,
-            },
+            &self.signing_key(),
             method.as_str(),
             &target.path,
             &query,
@@ -645,8 +910,7 @@ fn sign(
     now: DateTime<Utc>,
 ) -> String {
     let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
-    let date = now.format("%Y%m%d").to_string();
-    headers.push(("x-amz-date".to_owned(), amz_date.clone()));
+    headers.push(("x-amz-date".to_owned(), amz_date));
     headers.push(("x-amz-content-sha256".to_owned(), payload_hash.to_owned()));
     for header in headers.iter_mut() {
         header.0 = header.0.to_ascii_lowercase();
@@ -663,26 +927,93 @@ fn sign(
         .join(";");
     let canonical_request =
         format!("{method}\n{path}\n{query}\n{canonical_headers}\n{signed_headers}\n{payload_hash}");
-    let scope = format!("{date}/{}/s3/aws4_request", key.region);
+    let signature = signature(key, now, &canonical_request);
+    format!(
+        "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={signed_headers}, Signature={signature}",
+        key.access_key_id,
+        credential_scope(key, now)
+    )
+}
+
+fn credential_scope(key: &SigningKey<'_>, now: DateTime<Utc>) -> String {
+    format!("{}/{}/s3/aws4_request", now.format("%Y%m%d"), key.region)
+}
+
+/// The hex signature of a canonical request made at `now`.
+fn signature(key: &SigningKey<'_>, now: DateTime<Utc>, canonical_request: &str) -> String {
     let string_to_sign = format!(
-        "AWS4-HMAC-SHA256\n{amz_date}\n{scope}\n{:x}",
+        "AWS4-HMAC-SHA256\n{}\n{}\n{:x}",
+        now.format("%Y%m%dT%H%M%SZ"),
+        credential_scope(key, now),
         Sha256::digest(canonical_request.as_bytes())
     );
     let mut signing_key = hmac(
         format!("AWS4{}", key.secret_access_key).as_bytes(),
-        date.as_bytes(),
+        now.format("%Y%m%d").to_string().as_bytes(),
     );
     for part in [key.region, "s3", "aws4_request"] {
         signing_key = hmac(&signing_key, part.as_bytes());
     }
-    let signature: String = hmac(&signing_key, string_to_sign.as_bytes())
+    hmac(&signing_key, string_to_sign.as_bytes())
         .iter()
         .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Name/value pairs encoded and sorted as Signature V4 wants them (also the order sent).
+fn canonical_query(query: &[(String, String)]) -> String {
+    let mut query: Vec<(String, String)> = query
+        .iter()
+        .map(|(name, value)| (uri_encode(name, false), uri_encode(value, false)))
+        .collect();
+    query.sort();
+    query
+        .into_iter()
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+fn part_query(upload_id: &str, part_number: u32) -> Vec<(&'static str, String)> {
+    vec![
+        ("partNumber", part_number.to_string()),
+        ("uploadId", upload_id.to_owned()),
+    ]
+}
+
+/// `attachment` with the name as a plain ASCII fallback and as RFC 5987 UTF-8 (`filename*`).
+fn attachment_disposition(name: &str) -> String {
+    let fallback: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_graphic() && !matches!(c, '"' | '\\' | ';' | '%') || c == ' ' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     format!(
-        "AWS4-HMAC-SHA256 Credential={}/{scope}, SignedHeaders={signed_headers}, Signature={signature}",
-        key.access_key_id
+        "attachment; filename=\"{fallback}\"; filename*=UTF-8''{}",
+        uri_encode(name, false)
     )
+}
+
+/// The error of a 200 response whose body is an S3 `<Error>` (copy and complete can fail this way).
+fn error_in_body(body: &str) -> Option<S3Error> {
+    body.contains("<Error>").then(|| S3Error::Status {
+        status: 200,
+        code: xml_value(body, "Code").unwrap_or_default(),
+        message: xml_value(body, "Message").unwrap_or_default(),
+    })
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 fn hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
@@ -725,14 +1056,48 @@ fn xml_elements<'a>(xml: &'a str, name: &str) -> Vec<&'a str> {
 }
 
 fn xml_value(xml: &str, name: &str) -> Option<String> {
-    xml_elements(xml, name).first().map(|text| {
-        text.replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&quot;", "\"")
-            .replace("&apos;", "'")
-            .replace("&#39;", "'")
-            .replace("&amp;", "&")
-    })
+    xml_elements(xml, name)
+        .first()
+        .map(|text| xml_unescape(text))
+}
+
+/// Decodes the five named entities and numeric references (`&#34;`, `&#x22;`: some servers write ETag quotes
+/// so). Anything else stays as it is.
+fn xml_unescape(text: &str) -> String {
+    let mut decoded = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find('&') {
+        decoded.push_str(&rest[..start]);
+        rest = &rest[start..];
+        let entity = rest.find(';').map(|end| (&rest[1..end], end));
+        let character = entity.and_then(|(entity, _)| match entity {
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            "amp" => Some('&'),
+            _ => entity
+                .strip_prefix("#x")
+                .or_else(|| entity.strip_prefix("#X"))
+                .map_or_else(
+                    || entity.strip_prefix('#').and_then(|n| n.parse().ok()),
+                    |hex| u32::from_str_radix(hex, 16).ok(),
+                )
+                .and_then(char::from_u32),
+        });
+        match (character, entity) {
+            (Some(character), Some((_, end))) => {
+                decoded.push(character);
+                rest = &rest[end + 1..];
+            }
+            _ => {
+                decoded.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    decoded.push_str(rest);
+    decoded
 }
 
 #[cfg(test)]
@@ -769,6 +1134,97 @@ mod tests {
             "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, \
              SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, \
              Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"
+        );
+    }
+
+    /// The example of AWS's "Authenticating Requests: Using Query Parameters" page (Signature V4).
+    #[test]
+    fn presigns_the_aws_documentation_example() {
+        let bucket = S3Bucket::new(S3Config {
+            endpoint: "https://s3.amazonaws.com".to_owned(),
+            region: "us-east-1".to_owned(),
+            bucket: "examplebucket".to_owned(),
+            prefix: String::new(),
+            access_key_id: "AKIAIOSFODNN7EXAMPLE".to_owned(),
+            secret_access_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_owned(),
+            path_style: false,
+        })
+        .unwrap();
+        let url = bucket
+            .presign(
+                Method::GET,
+                "test.txt",
+                &[],
+                Duration::from_secs(86_400),
+                Utc.with_ymd_and_hms(2013, 5, 24, 0, 0, 0).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            url,
+            "https://examplebucket.s3.amazonaws.com/test.txt\
+             ?X-Amz-Algorithm=AWS4-HMAC-SHA256\
+             &X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Fus-east-1%2Fs3%2Faws4_request\
+             &X-Amz-Date=20130524T000000Z&X-Amz-Expires=86400&X-Amz-SignedHeaders=host\
+             &X-Amz-Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404"
+        );
+        assert!(
+            bucket
+                .presign(
+                    Method::GET,
+                    "test.txt",
+                    &[],
+                    Duration::from_secs(8 * 86_400),
+                    Utc::now()
+                )
+                .is_err()
+        );
+        assert!(
+            bucket
+                .presign(Method::GET, "", &[], Duration::from_secs(60), Utc::now())
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_expired_presigned_url_is_refused() {
+        let bucket = S3Bucket::new(crate::start_fake_s3().await).unwrap();
+        bucket.put_bytes("file", b"bytes".to_vec()).await.unwrap();
+        let expired = bucket
+            .presign(
+                Method::GET,
+                "file",
+                &[],
+                Duration::from_secs(60),
+                Utc::now() - chrono::Duration::seconds(120),
+            )
+            .unwrap();
+        let fresh = bucket
+            .presign_get("file", Duration::from_secs(60), None)
+            .unwrap();
+        let client = reqwest::Client::new();
+        assert_eq!(
+            client.get(expired).send().await.unwrap().status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            client
+                .get(fresh)
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap(),
+            b"bytes".as_slice()
+        );
+    }
+
+    #[test]
+    fn download_names_keep_utf8_and_cannot_break_the_header() {
+        assert_eq!(
+            attachment_disposition("Bericht \"Q1\"; ä.pdf"),
+            "attachment; filename=\"Bericht _Q1__ _.pdf\"; \
+             filename*=UTF-8''Bericht%20%22Q1%22%3B%20%C3%A4.pdf"
         );
     }
 
@@ -871,5 +1327,9 @@ mod tests {
         assert_eq!(contents.len(), 2);
         assert_eq!(xml_value(contents[0], "Key").as_deref(), Some("a&b"));
         assert_eq!(xml_value(xml, "IsTruncated").as_deref(), Some("false"));
+        assert_eq!(
+            xml_unescape("&#34;e1&#x22; &quot;&apos;&#39;&lt;&gt; &amp;lt; & &bogus; &#xZZ;"),
+            "\"e1\" \"''<> &lt; & &bogus; &#xZZ;"
+        );
     }
 }

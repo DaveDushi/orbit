@@ -8,8 +8,8 @@ use chrono::Utc;
 use orbit_platform::{
     AttachmentMutationCoordinator, BackupService, BlobStore, Database, DatabaseConfig, Id,
     LocalBlobStore, MigrationRunner, NewAttachmentReference, ObjectStorage, ObjectStorageState,
-    S3Bucket, S3Config, TestDatabase, TieredBlobStore, UploadLimits, UploadService,
-    WorkspaceBucket, start_fake_s3,
+    S3_MIN_PART_BYTES, S3Bucket, S3Config, S3Error, TestDatabase, TieredBlobStore, UploadLimits,
+    UploadService, WorkspaceBucket, start_fake_s3,
 };
 use tokio::io::AsyncReadExt;
 
@@ -619,4 +619,194 @@ async fn the_installation_pass_keeps_files_when_a_workspace_bucket_is_the_instal
             );
         }
     }
+}
+
+const PRESIGN_LIFETIME: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// A part of the smallest size S3 accepts before the last part.
+fn full_part(fill: u8) -> Vec<u8> {
+    vec![fill; usize::try_from(S3_MIN_PART_BYTES).unwrap()]
+}
+
+/// Sends the bytes to a presigned upload URL the way a browser does (no credentials) and returns the ETag.
+async fn put_presigned(url: String, body: Vec<u8>) -> String {
+    let response = reqwest::Client::new()
+        .put(url)
+        .body(body)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    response.headers()["etag"].to_str().unwrap().to_owned()
+}
+
+#[tokio::test]
+async fn presigned_urls_upload_and_download_without_credentials() {
+    let bucket = bucket().await;
+    let upload = bucket.presign_put("drive/file", PRESIGN_LIFETIME).unwrap();
+    put_presigned(upload, b"from the browser".to_vec()).await;
+    assert_eq!(
+        bucket.get_bytes("drive/file").await.unwrap().as_deref(),
+        Some(b"from the browser".as_slice())
+    );
+
+    let download = bucket
+        .presign_get("drive/file", PRESIGN_LIFETIME, Some("Q1 Bericht ä.txt"))
+        .unwrap();
+    let response = reqwest::get(download)
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    assert_eq!(
+        response.headers()["content-disposition"].to_str().unwrap(),
+        "attachment; filename=\"Q1 Bericht _.txt\"; filename*=UTF-8''Q1%20Bericht%20%C3%A4.txt"
+    );
+    assert_eq!(
+        response.bytes().await.unwrap(),
+        b"from the browser".as_slice()
+    );
+
+    let mut tampered = bucket
+        .presign_get("drive/file", PRESIGN_LIFETIME, None)
+        .unwrap();
+    tampered.truncate(tampered.find("X-Amz-Signature=").unwrap());
+    assert!(!reqwest::get(tampered).await.unwrap().status().is_success());
+}
+
+#[tokio::test]
+async fn a_multipart_upload_resumes_from_its_listed_parts_and_completes() {
+    let bucket = bucket().await;
+    let key = "drive/video";
+    let upload_id = bucket
+        .create_multipart_upload(key, "video/mp4")
+        .await
+        .unwrap();
+    // Part 2 first: the browser sends parts in parallel, in any order.
+    let second = put_presigned(
+        bucket
+            .presign_upload_part(key, &upload_id, 2, PRESIGN_LIFETIME)
+            .unwrap(),
+        full_part(2),
+    )
+    .await;
+
+    // After a reload, the listed parts say what is left to send.
+    let listed = bucket.list_parts(key, &upload_id).await.unwrap().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        (
+            listed[0].part_number,
+            listed[0].etag.as_str(),
+            listed[0].size
+        ),
+        (2, second.as_str(), S3_MIN_PART_BYTES)
+    );
+    let first = bucket
+        .upload_part(key, &upload_id, 1, full_part(1))
+        .await
+        .unwrap();
+    let third = put_presigned(
+        bucket
+            .presign_upload_part(key, &upload_id, 3, PRESIGN_LIFETIME)
+            .unwrap(),
+        b"end".to_vec(),
+    )
+    .await;
+    assert!(bucket.get_bytes(key).await.unwrap().is_none());
+
+    bucket
+        .complete_multipart_upload(key, &upload_id, &[(3, third), (1, first), (2, second)])
+        .await
+        .unwrap();
+    let mut expected = full_part(1);
+    expected.extend(full_part(2));
+    expected.extend(b"end");
+    assert!(bucket.get_bytes(key).await.unwrap() == Some(expected));
+    assert!(bucket.list_parts(key, &upload_id).await.unwrap().is_none());
+    // Once completed, the upload is gone; aborting it is not an error.
+    bucket
+        .abort_multipart_upload(key, &upload_id)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn completing_with_a_wrong_or_too_small_part_fails_and_abort_drops_the_parts() {
+    let bucket = bucket().await;
+    let key = "drive/broken";
+    let upload_id = bucket
+        .create_multipart_upload(key, "application/octet-stream")
+        .await
+        .unwrap();
+    let small = bucket
+        .upload_part(key, &upload_id, 1, b"too small".to_vec())
+        .await
+        .unwrap();
+    let last = bucket
+        .upload_part(key, &upload_id, 2, b"last".to_vec())
+        .await
+        .unwrap();
+    let refused =
+        |result: Result<(), S3Error>| matches!(result, Err(S3Error::Status { status: 400, .. }));
+    assert!(refused(
+        bucket
+            .complete_multipart_upload(key, &upload_id, &[(1, small.clone()), (2, last.clone())])
+            .await
+    ));
+    assert!(refused(
+        bucket
+            .complete_multipart_upload(key, &upload_id, &[(1, last.clone())])
+            .await
+    ));
+    assert!(refused(
+        bucket
+            .complete_multipart_upload(key, &upload_id, &[(3, last)])
+            .await
+    ));
+
+    bucket
+        .abort_multipart_upload(key, &upload_id)
+        .await
+        .unwrap();
+    assert!(bucket.list_parts(key, &upload_id).await.unwrap().is_none());
+    assert!(bucket.get_bytes(key).await.unwrap().is_none());
+    bucket
+        .abort_multipart_upload(key, &upload_id)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn copy_object_copies_within_the_bucket_and_reports_a_missing_source() {
+    let bucket = bucket().await;
+    bucket
+        .put_bytes("drive/source name", b"original".to_vec())
+        .await
+        .unwrap();
+    assert!(
+        bucket
+            .copy_object("drive/source name", "drive/copy")
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        bucket.get_bytes("drive/copy").await.unwrap().as_deref(),
+        Some(b"original".as_slice())
+    );
+    assert!(
+        bucket
+            .get_bytes("drive/source name")
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        !bucket
+            .copy_object("drive/missing", "drive/other")
+            .await
+            .unwrap()
+    );
+    assert!(bucket.get_bytes("drive/other").await.unwrap().is_none());
 }

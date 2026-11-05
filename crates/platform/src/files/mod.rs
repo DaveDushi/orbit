@@ -16,7 +16,7 @@ use tokio::io::AsyncRead;
 pub use fake_s3::start_fake_s3;
 pub use local::LocalBlobStore;
 pub(crate) use local::TEMPORARY_DIRECTORY;
-pub use s3::{S3Bucket, S3Config, S3Error, S3Object};
+pub use s3::{S3_MAX_PARTS, S3_MIN_PART_BYTES, S3Bucket, S3Config, S3Error, S3Object, S3Part};
 pub use tiered::{
     BlobMoveStatus, ObjectStorage, ObjectStorageState, S3_DELETE_DELAY_MILLIS, TieredBlobStore,
     WorkspaceBucket,
