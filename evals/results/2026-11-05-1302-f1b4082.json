@@ -1,0 +1,1245 @@
+{
+  "schema": 1,
+  "commit": "f1b40822df54d3183a9bbe2b5e0b1d6fcdc82395",
+  "short": "f1b4082",
+  "branch": "dep-advisories",
+  "dirty": false,
+  "date": "2026-11-05T13:02:41.872Z",
+  "duration_s": 1290,
+  "options": {
+    "perf": true,
+    "security": true,
+    "quick": false,
+    "build": true,
+    "prod": false
+  },
+  "machine": {
+    "hostname_hash": "d5df452f",
+    "cpu": "AMD EPYC 9554P 64-Core Processor",
+    "cpus": 4,
+    "memory_gb": 16,
+    "kernel": "6.12.115",
+    "bun": "1.4.4",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "cargo_build_jobs": 1,
+    "build_slice": true
+  },
+  "perf": {
+    "bundle": {
+      "entry_js": {
+        "files": [
+          "shared~index~AppPage~OnboardingPage~InboxPage~HomePage~DocsPage~ChatPage~taskPages~AppShell~kh3696x4.js",
+          "shared~index~diagram-CBK3MWTC~sankeyDiagram-SY24JHO5~xychartDiagram-4URNHDU4~quadrantDiagra~dqyjy973.js",
+          "shared~mermaid.core~pegDiagram-ECIUJNBX~abnfDiagram-WEYOIA3C~ebnfDiagram-V4P3TTPT~railroadD~h3hav6nd.js",
+          "rolldown-runtime.js",
+          "shared~index~AppPage~OnboardingPage~HomePage~DocsPage~ChatPage~taskPages~AppShell~PageEdito~ifx4xi84.js",
+          "shared~index~AppPage~OnboardingPage~DocsPage~PdfPages~ChatPage~taskPages~AppShell~PageEdito~gpec15af.js",
+          "shared~index~AppPage~OnboardingPage~InboxPage~HomePage~DocsPage~PdfPages~ChatPage~taskPages~mantolng.js",
+          "index(mermaid).js"
+        ],
+        "raw_kb": 810,
+        "gzip_kb": 253.4,
+        "brotli_kb": 219.6
+      },
+      "entry_css": {
+        "files": [
+          "index.css"
+        ],
+        "raw_kb": 320.3,
+        "gzip_kb": 45.7,
+        "brotli_kb": 35.2
+      },
+      "all_js": {
+        "raw_kb": 11547.5,
+        "gzip_kb": 3375.9,
+        "brotli_kb": 2796.5
+      },
+      "all_css": {
+        "raw_kb": 357.6,
+        "gzip_kb": 52.6,
+        "brotli_kb": 41.2
+      },
+      "chunk_count": 100,
+      "largest_lazy_gzip_kb": 437.6,
+      "lazy_over_100kb_gzip": [
+        {
+          "file": "elk-QONTBCTQ.js",
+          "raw_kb": 1428.5,
+          "gzip_kb": 437.6,
+          "brotli_kb": 335.7
+        },
+        {
+          "file": "pdf.worker.min.js",
+          "raw_kb": 1150.1,
+          "gzip_kb": 354.5,
+          "brotli_kb": 293.6
+        },
+        {
+          "file": "PageEditor.js",
+          "raw_kb": 891.6,
+          "gzip_kb": 262.2,
+          "brotli_kb": 216
+        },
+        {
+          "file": "src(mediabunny).js",
+          "raw_kb": 710.2,
+          "gzip_kb": 178.9,
+          "brotli_kb": 144.1
+        },
+        {
+          "file": "shared~architectureDiagram-ZHVYKT53~cose-bilkent-JH36ORCC.js",
+          "raw_kb": 424.4,
+          "gzip_kb": 133.4,
+          "brotli_kb": 112.6
+        },
+        {
+          "file": "PdfPages.js",
+          "raw_kb": 421.6,
+          "gzip_kb": 125.6,
+          "brotli_kb": 104.3
+        },
+        {
+          "file": "shared~pegDiagram-ECIUJNBX~abnfDiagram-WEYOIA3C~ebnfDiagram-V4P3TTPT~railroadDiagram-Y72NRB~gaub1phv.js",
+          "raw_kb": 614.3,
+          "gzip_kb": 122.5,
+          "brotli_kb": 102.8
+        },
+        {
+          "file": "taskPages.js",
+          "raw_kb": 324.5,
+          "gzip_kb": 102.1,
+          "brotli_kb": 81.6
+        }
+      ],
+      "top_lazy": [
+        {
+          "file": "elk-QONTBCTQ.js",
+          "raw_kb": 1428.5,
+          "gzip_kb": 437.6,
+          "brotli_kb": 335.7
+        },
+        {
+          "file": "pdf.worker.min.js",
+          "raw_kb": 1150.1,
+          "gzip_kb": 354.5,
+          "brotli_kb": 293.6
+        },
+        {
+          "file": "PageEditor.js",
+          "raw_kb": 891.6,
+          "gzip_kb": 262.2,
+          "brotli_kb": 216
+        },
+        {
+          "file": "src(mediabunny).js",
+          "raw_kb": 710.2,
+          "gzip_kb": 178.9,
+          "brotli_kb": 144.1
+        },
+        {
+          "file": "shared~architectureDiagram-ZHVYKT53~cose-bilkent-JH36ORCC.js",
+          "raw_kb": 424.4,
+          "gzip_kb": 133.4,
+          "brotli_kb": 112.6
+        },
+        {
+          "file": "PdfPages.js",
+          "raw_kb": 421.6,
+          "gzip_kb": 125.6,
+          "brotli_kb": 104.3
+        },
+        {
+          "file": "shared~pegDiagram-ECIUJNBX~abnfDiagram-WEYOIA3C~ebnfDiagram-V4P3TTPT~railroadDiagram-Y72NRB~gaub1phv.js",
+          "raw_kb": 614.3,
+          "gzip_kb": 122.5,
+          "brotli_kb": 102.8
+        },
+        {
+          "file": "taskPages.js",
+          "raw_kb": 324.5,
+          "gzip_kb": 102.1,
+          "brotli_kb": 81.6
+        },
+        {
+          "file": "settingsPages.js",
+          "raw_kb": 312.7,
+          "gzip_kb": 93.7,
+          "brotli_kb": 72.3
+        },
+        {
+          "file": "ChatPage.js",
+          "raw_kb": 273.1,
+          "gzip_kb": 88.8,
+          "brotli_kb": 71.3
+        }
+      ]
+    },
+    "pageload": {
+      "runs": 3,
+      "presets": {
+        "desktop": {
+          "viewport": {
+            "width": 1350,
+            "height": 940
+          },
+          "isMobile": false,
+          "hasTouch": false,
+          "deviceScaleFactor": 1,
+          "latency": 40,
+          "down": 10240,
+          "up": 10240,
+          "cpu": 1,
+          "settle": 3000
+        },
+        "phone": {
+          "viewport": {
+            "width": 412,
+            "height": 823
+          },
+          "isMobile": true,
+          "hasTouch": true,
+          "deviceScaleFactor": 1.75,
+          "latency": 150,
+          "down": 1638,
+          "up": 750,
+          "cpu": 4,
+          "settle": 6000
+        }
+      },
+      "pages": {
+        "login.desktop": {
+          "fcp_ms": 512,
+          "lcp_ms": 512,
+          "tbt_ms": 0,
+          "cls": 0,
+          "transfer_kb": 295,
+          "js_kb": 222,
+          "css_kb": 35.5,
+          "requests": 13
+        },
+        "home.desktop": {
+          "fcp_ms": 1080,
+          "lcp_ms": 1080,
+          "tbt_ms": 0,
+          "cls": 0.001,
+          "transfer_kb": 794.8,
+          "js_kb": 693.6,
+          "css_kb": 41.8,
+          "requests": 45
+        },
+        "app_tasks.desktop": {
+          "fcp_ms": 1156,
+          "lcp_ms": 1380,
+          "tbt_ms": 72,
+          "cls": 0.002,
+          "transfer_kb": 939.3,
+          "js_kb": 810,
+          "css_kb": 41.8,
+          "requests": 45
+        },
+        "docs.desktop": {
+          "fcp_ms": 1176,
+          "lcp_ms": 1936,
+          "tbt_ms": 117,
+          "cls": 0,
+          "transfer_kb": 879.1,
+          "js_kb": 773.9,
+          "css_kb": 41.8,
+          "requests": 45
+        },
+        "login.phone": {
+          "fcp_ms": 2100,
+          "lcp_ms": 2100,
+          "tbt_ms": 0,
+          "cls": 0,
+          "transfer_kb": 295,
+          "js_kb": 222,
+          "css_kb": 35.5,
+          "requests": 13
+        },
+        "home.phone": {
+          "fcp_ms": 3492,
+          "lcp_ms": 3492,
+          "tbt_ms": 0,
+          "cls": 0.002,
+          "transfer_kb": 794.8,
+          "js_kb": 693.6,
+          "css_kb": 41.8,
+          "requests": 45
+        },
+        "app_tasks.phone": {
+          "fcp_ms": 4028,
+          "lcp_ms": 4884,
+          "tbt_ms": 275,
+          "cls": 0.001,
+          "transfer_kb": 939.3,
+          "js_kb": 810,
+          "css_kb": 41.8,
+          "requests": 45
+        },
+        "docs.phone": {
+          "fcp_ms": 3912,
+          "lcp_ms": 6272,
+          "tbt_ms": 451,
+          "cls": 0,
+          "transfer_kb": 879.4,
+          "js_kb": 773.9,
+          "css_kb": 41.8,
+          "requests": 46
+        }
+      },
+      "console_errors": {
+        "login": [
+          "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+        ],
+        "app_tasks": [
+          "Failed to load resource: the server responded with a status of 404 (Not Found)"
+        ],
+        "docs": [
+          "Applying inline style violates the following Content Security Policy directive 'style-src 'self''. Either the 'unsafe-inline' keyword, a hash ('sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='), o"
+        ]
+      },
+      "asset_encoding": "br",
+      "checks": [
+        {
+          "id": "perf.asset-compression",
+          "category": "performance",
+          "title": "JS/CSS are served compressed (br/gzip/zstd)",
+          "result": "pass",
+          "evidence": [
+            "GET /assets/index.js with Accept-Encoding: br, gzip, zstd -> content-encoding br, content-length 75319 (278.1 kB decoded)"
+          ]
+        },
+        {
+          "id": "console.csp.login",
+          "category": "csp",
+          "title": "login: no CSP console errors",
+          "result": "pass",
+          "evidence": [
+            "none"
+          ]
+        },
+        {
+          "id": "console.csp.home",
+          "category": "csp",
+          "title": "home: no CSP console errors",
+          "result": "pass",
+          "evidence": [
+            "none"
+          ]
+        },
+        {
+          "id": "console.csp.app_tasks",
+          "category": "csp",
+          "title": "app_tasks: no CSP console errors",
+          "result": "pass",
+          "evidence": [
+            "none"
+          ]
+        },
+        {
+          "id": "console.csp.docs",
+          "category": "csp",
+          "title": "docs: no CSP console errors",
+          "result": "fail",
+          "severity": "low",
+          "fix": "Move the inline style to a stylesheet or a constructed style sheet.",
+          "evidence": [
+            "Applying inline style violates the following Content Security Policy directive 'style-src 'self''. Either the 'unsafe-inline' keyword, a hash ('sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='), o"
+          ]
+        }
+      ]
+    },
+    "latency": {
+      "requests": 500,
+      "concurrency": 10,
+      "endpoints": {
+        "health_ready": {
+          "p50_ms": 4.55,
+          "p95_ms": 7.55,
+          "p99_ms": 11.05,
+          "rps": 1951,
+          "non_200": 0
+        },
+        "index_html": {
+          "p50_ms": 0.09,
+          "p95_ms": 0.4,
+          "p99_ms": 2.34,
+          "rps": 57767,
+          "non_200": 0
+        },
+        "session_me": {
+          "p50_ms": 1.59,
+          "p95_ms": 4.33,
+          "p99_ms": 9.7,
+          "rps": 5066,
+          "non_200": 0
+        },
+        "workspace_list": {
+          "p50_ms": 0.53,
+          "p95_ms": 0.74,
+          "p99_ms": 1.14,
+          "rps": 17466,
+          "non_200": 0
+        },
+        "docs_list": {
+          "p50_ms": 2.02,
+          "p95_ms": 2.97,
+          "p99_ms": 4.07,
+          "rps": 4742,
+          "non_200": 0
+        },
+        "docs_read": {
+          "p50_ms": 0.82,
+          "p95_ms": 1.18,
+          "p99_ms": 1.67,
+          "rps": 11660,
+          "non_200": 0
+        },
+        "docs_search": {
+          "p50_ms": 1.04,
+          "p95_ms": 1.36,
+          "p99_ms": 1.62,
+          "rps": 9301,
+          "non_200": 0
+        },
+        "app_list": {
+          "p50_ms": 0.75,
+          "p95_ms": 1.17,
+          "p99_ms": 1.62,
+          "rps": 12354,
+          "non_200": 0
+        },
+        "tasks_list": {
+          "p50_ms": 22.15,
+          "p95_ms": 28.45,
+          "p99_ms": 29.65,
+          "rps": 447,
+          "non_200": 0
+        },
+        "task_read": {
+          "p50_ms": 1.4,
+          "p95_ms": 1.96,
+          "p99_ms": 4.16,
+          "rps": 6685,
+          "non_200": 0
+        },
+        "file_read": {
+          "p50_ms": 0.67,
+          "p95_ms": 1.13,
+          "p99_ms": 5.32,
+          "rps": 12401,
+          "non_200": 0
+        }
+      }
+    },
+    "server": {
+      "cold_start_ms": 148,
+      "fresh_start_ms": 142,
+      "rss_idle_mb": 60,
+      "rss_after_latency_mb": 90,
+      "rss_after_pageload_mb": 115,
+      "rss_peak_mb": 115
+    },
+    "build": {
+      "revision": "f1b40822df54d3183a9bbe2b5e0b1d6fcdc82395",
+      "web_build_seconds": 64.07,
+      "web_build_peak_rss_mb": 1916,
+      "release_build_seconds": 1047.3,
+      "release_build_peak_rss_mb": 3436,
+      "release_binary_mb": 103,
+      "cargo_jobs": 1,
+      "measured_in_this_run": true
+    }
+  },
+  "security": {
+    "summary": {
+      "checks": 54,
+      "pass": 48,
+      "fail": 4,
+      "warn": 2,
+      "skip": 0,
+      "findings_by_severity": {
+        "critical": 0,
+        "high": 0,
+        "medium": 7,
+        "low": 9,
+        "info": 2
+      }
+    },
+    "checks": [
+      {
+        "id": "local.index.csp-present",
+        "category": "headers",
+        "title": "Content-Security-Policy is set",
+        "result": "pass",
+        "evidence": [
+          "GET / -> content-security-policy: default-src 'self'; script-src 'self' 'sha256-p7FoeZiX4V5mPdVDEbrVQ4ksBKz0RcZUSqwp7oxiNYs='; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'self' https://www.youtube-nocookie.com; media-src 'self' https://video.twimg.com; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self' https://github.com"
+        ]
+      },
+      {
+        "id": "local.index.csp-script-unsafe",
+        "category": "csp",
+        "title": "script-src has no 'unsafe-inline' or 'unsafe-eval'",
+        "result": "pass",
+        "evidence": [
+          "script-src 'self' 'sha256-p7FoeZiX4V5mPdVDEbrVQ4ksBKz0RcZUSqwp7oxiNYs='"
+        ]
+      },
+      {
+        "id": "local.index.csp-style-unsafe",
+        "category": "csp",
+        "title": "style-src has no 'unsafe-inline'",
+        "result": "pass",
+        "evidence": [
+          "style-src 'self'"
+        ]
+      },
+      {
+        "id": "local.index.csp-wildcards",
+        "category": "csp",
+        "title": "CSP has no wildcard or scheme-only sources",
+        "result": "fail",
+        "severity": "low",
+        "fix": "Name the hosts (or proxy remote images through the server).",
+        "evidence": [
+          "wildcard sources: img-src https:"
+        ]
+      },
+      {
+        "id": "local.index.clickjacking",
+        "category": "headers",
+        "title": "frame-ancestors 'none'/'self' or X-Frame-Options DENY/SAMEORIGIN",
+        "result": "pass",
+        "evidence": [
+          "frame-ancestors 'none'",
+          "x-frame-options DENY"
+        ]
+      },
+      {
+        "id": "local.index.csp-object",
+        "category": "csp",
+        "title": "object-src is 'none'",
+        "result": "pass",
+        "evidence": [
+          "object-src 'none'"
+        ]
+      },
+      {
+        "id": "local.index.csp-base-uri",
+        "category": "csp",
+        "title": "base-uri is restricted",
+        "result": "pass",
+        "evidence": [
+          "base-uri 'none'"
+        ]
+      },
+      {
+        "id": "local.index.nosniff",
+        "category": "headers",
+        "title": "X-Content-Type-Options: nosniff",
+        "result": "pass",
+        "evidence": [
+          "GET / -> x-content-type-options: nosniff"
+        ]
+      },
+      {
+        "id": "local.index.referrer-policy",
+        "category": "headers",
+        "title": "Referrer-Policy is strict",
+        "result": "pass",
+        "evidence": [
+          "GET / -> referrer-policy: strict-origin-when-cross-origin"
+        ]
+      },
+      {
+        "id": "local.index.permissions-policy",
+        "category": "headers",
+        "title": "Permissions-Policy is set",
+        "result": "pass",
+        "evidence": [
+          "GET / -> permissions-policy: camera=(), microphone=(), geolocation=(), payment=()"
+        ]
+      },
+      {
+        "id": "local.index.coop",
+        "category": "headers",
+        "title": "Cross-Origin-Opener-Policy is set",
+        "result": "pass",
+        "evidence": [
+          "GET / -> cross-origin-opener-policy: same-origin-allow-popups"
+        ]
+      },
+      {
+        "id": "local.index.corp",
+        "category": "headers",
+        "title": "Cross-Origin-Resource-Policy is set",
+        "result": "fail",
+        "severity": "low",
+        "fix": "Add Cross-Origin-Resource-Policy: same-origin (or same-site) to responses.",
+        "evidence": [
+          "GET / -> cross-origin-resource-policy: (missing)"
+        ]
+      },
+      {
+        "id": "local.index.hsts",
+        "category": "headers",
+        "title": "HSTS max-age >= 180 days",
+        "result": "pass",
+        "evidence": [
+          "GET / -> strict-transport-security: max-age=31536000; includeSubDomains"
+        ]
+      },
+      {
+        "id": "local.index.server-banner",
+        "category": "headers",
+        "title": "No version in Server / X-Powered-By",
+        "result": "pass",
+        "evidence": [
+          "server: (none)",
+          "x-powered-by: (none)"
+        ]
+      },
+      {
+        "id": "local.api.nosniff",
+        "category": "headers",
+        "title": "API responses send nosniff",
+        "result": "pass",
+        "evidence": [
+          "GET /api/v1/auth/options -> 200"
+        ]
+      },
+      {
+        "id": "local.login.cookie.__Host-orbit_session",
+        "category": "cookies",
+        "title": "Cookie __Host-orbit_session has Secure, HttpOnly, SameSite",
+        "result": "pass",
+        "evidence": [
+          "POST /api/v1/auth/login sets __Host-orbit_session; Path; Secure; HttpOnly; SameSite=Lax; Max-Age",
+          "all flags set"
+        ]
+      },
+      {
+        "id": "local.cookie-prefix",
+        "category": "cookies",
+        "title": "Session cookie uses the __Host- prefix",
+        "result": "pass",
+        "evidence": [
+          "cookies: __Host-orbit_session"
+        ]
+      },
+      {
+        "id": "authz.unauthenticated",
+        "category": "authz",
+        "title": "No protected route answers without a session (338 routes)",
+        "result": "pass",
+        "evidence": [
+          "338 routes tested, all protected routes refused"
+        ]
+      },
+      {
+        "id": "authz.unauthenticated-other-4xx",
+        "category": "authz",
+        "title": "Protected routes refuse with 401/403 (not 400/404/405 first)",
+        "result": "warn",
+        "severity": "info",
+        "fix": "Run the auth extractor before body and path validation.",
+        "evidence": [
+          "DELETE /api/internal/agent/credentials/{user_id} -> 404",
+          "GET /api/internal/agent/credentials/{user_id} -> 404",
+          "PUT /api/internal/agent/credentials/{user_id} -> 422",
+          "POST /api/internal/agent/credentials/{user_id}/invalid -> 404",
+          "GET /api/internal/agent/inputs -> 404",
+          "POST /api/internal/agent/inputs/{message_id}/ack -> 404",
+          "POST /api/internal/agent/messages -> 422",
+          "PATCH /api/internal/agent/messages/{message_id} -> 422",
+          "POST /api/internal/agent/sessions -> 422",
+          "PUT /api/internal/agent/threads/{thread_key} -> 422",
+          "GET /api/internal/agent/workspaces/{workspace_id}/people -> 404",
+          "PUT /api/v1/admin/agent -> 400",
+          "GET /api/v1/admin/backups/{backup_id}/workspaces/{workspace_id}/items -> 400",
+          "POST /api/v1/admin/backups/{backup_id}/workspaces/{workspace_id}/restore -> 400",
+          "POST /api/v1/admin/improvements -> 400",
+          "PUT /api/v1/admin/improvements/settings -> 400",
+          "PUT /api/v1/admin/jobs/limits -> 400",
+          "PUT /api/v1/admin/settings/registration -> 400",
+          "PUT /api/v1/admin/settings/s3 -> 400",
+          "PUT /api/v1/admin/settings/smtp -> 400",
+          "PUT /api/v1/admin/settings/storage -> 400",
+          "PUT /api/v1/admin/users/{user_id}/admin -> 400",
+          "PUT /api/v1/admin/users/{user_id}/email -> 400",
+          "POST /api/v1/admin/users/{user_id}/suspension -> 400",
+          "PUT /api/v1/auth/avatar -> 400",
+          "… 101 more"
+        ]
+      },
+      {
+        "id": "authz.unauthenticated-5xx",
+        "category": "errors",
+        "title": "No route fails with 5xx or hangs without a session",
+        "result": "pass",
+        "evidence": [
+          "none"
+        ]
+      },
+      {
+        "id": "idor.cross-workspace",
+        "category": "idor",
+        "title": "User B cannot read or change workspace A (41 requests)",
+        "result": "pass",
+        "evidence": [
+          "GET /api/v1/workspaces/{A} -> 404",
+          "GET /api/v1/workspaces/{A}/pages -> 404",
+          "GET /api/v1/workspaces/{A}/pages/{pageA} -> 404",
+          "GET /api/v1/workspaces/{A}/pages/{pageA}/versions -> 404",
+          "GET /api/v1/workspaces/{A}/pages/{pageA}/files -> 404",
+          "GET /api/v1/workspaces/{A}/pages/{pageA}/files/{fileA} -> 404",
+          "… 35 more, all 4xx"
+        ]
+      },
+      {
+        "id": "idor.state-unchanged",
+        "category": "idor",
+        "title": "A's doc and task are unchanged after B's writes",
+        "result": "pass",
+        "evidence": [
+          "page A 200, title same: true",
+          "task A title same: true"
+        ]
+      },
+      {
+        "id": "tokens.rest-scope",
+        "category": "tokens",
+        "title": "Workspace API tokens (MCP-only) cannot use the REST API or act for the account",
+        "result": "pass",
+        "evidence": [
+          "read token: GET /api/v1/workspaces/{A}/pages -> 401",
+          "read token A: POST /api/v1/workspaces/{A}/pages -> 401",
+          "read token A: PATCH /api/v1/workspaces/{A}/tasks/{taskA} -> 401",
+          "read token A: GET /api/v1/workspaces/{B}/pages -> 401",
+          "read token A: GET /api/v1/workspaces/{B}/pages/{pageB} -> 401",
+          "read token A: POST /api/v1/workspaces/{B}/pages -> 401",
+          "read token A: POST /api/v1/workspaces -> 401",
+          "read token A: PATCH /api/v1/auth/me -> 401",
+          "read token A: GET /api/v1/admin/users -> 401",
+          "read token A: POST /api/v1/workspaces/{A}/api-tokens -> 401",
+          "write token A: GET /api/v1/workspaces/{B}/pages -> 401",
+          "write token A: GET /api/v1/workspaces/{B}/pages/{pageB} -> 401",
+          "write token A: POST /api/v1/workspaces/{B}/pages -> 401",
+          "write token A: POST /api/v1/workspaces -> 401",
+          "write token A: PATCH /api/v1/auth/me -> 401",
+          "write token A: GET /api/v1/admin/users -> 401",
+          "write token A: POST /api/v1/workspaces/{A}/api-tokens -> 401"
+        ]
+      },
+      {
+        "id": "tokens.mcp-scope",
+        "category": "tokens",
+        "title": "MCP: a token of A cannot reach B, and a read token cannot read docs or write",
+        "result": "pass",
+        "evidence": [
+          "initialize -> 200",
+          "all-scope token A: get_doc {pageA} -> 200, returned data (control)",
+          "all-scope token A: get_doc \"{pageB}\" -> 200, refused",
+          "all-scope token A: get_task \"{taskB}\" -> 200, refused",
+          "all-scope token A: update_task \"{taskB}\" -> 200, refused",
+          "read token A: get_doc \"{pageA}\" -> 200, refused",
+          "read token A: create_task \"{projectA}\" -> 200, refused"
+        ]
+      },
+      {
+        "id": "tokens.oauth-scope",
+        "category": "tokens",
+        "title": "OAuth tasks:read token cannot write, read docs, or reach B",
+        "result": "pass",
+        "evidence": [
+          "POST /oauth/register -> 201",
+          "GET /oauth/authorize -> 303",
+          "GET /api/v1/oauth/consent/{id} -> 200",
+          "POST /api/v1/oauth/consent/{id} -> 200",
+          "POST /oauth/token -> 200",
+          "tasks:read token tools/list -> 200: list_task_statuses, list_projects, list_tasks, get_task",
+          "tasks:read token tools/call create_task -> 200, refused",
+          "tasks:read token tools/call get_doc -> 200, refused",
+          "tasks:read token tools/call get_task -> 200, refused",
+          "tasks:read token tools/call list_tasks -> 200, returned data",
+          "OAuth token on REST GET /api/v1/workspaces/{A}/pages -> 401"
+        ]
+      },
+      {
+        "id": "csrf.origin",
+        "category": "csrf",
+        "title": "Cookie writes from a foreign or missing Origin are refused",
+        "result": "pass",
+        "evidence": [
+          "foreign Origin: POST /api/v1/workspaces/{A}/pages -> 403",
+          "Origin null: POST /api/v1/workspaces/{A}/pages -> 403",
+          "no Origin with cookie: POST /api/v1/workspaces/{A}/pages -> 403",
+          "sibling http Origin: POST /api/v1/workspaces/{A}/pages -> 403",
+          "text/plain simple request from foreign Origin -> 403",
+          "same Origin (control): POST /api/v1/workspaces/{A}/pages -> 201"
+        ]
+      },
+      {
+        "id": "csrf.websocket",
+        "category": "csrf",
+        "title": "WebSocket upgrade from a foreign Origin is refused",
+        "result": "pass",
+        "evidence": [
+          "GET /api/v1/workspaces/{A}/live upgrade, foreign Origin -> 403",
+          "same Origin (control) -> 101"
+        ]
+      },
+      {
+        "id": "upload.size-limit",
+        "category": "upload",
+        "title": "A file over the 25 MiB limit is refused",
+        "result": "pass",
+        "evidence": [
+          "POST /api/v1/workspaces/{A}/pages/01a1abcb-34d4-74ba-9d45-2a00cfd394c4/files (25 MiB + 1 byte) -> 413"
+        ]
+      },
+      {
+        "id": "upload.active-content",
+        "category": "upload",
+        "title": "Uploaded HTML/SVG is never served as active inline content",
+        "result": "pass",
+        "evidence": [
+          "GET evil.html -> 200, type text/html, disposition attachment, nosniff true, csp yes",
+          "GET evil.html -> 200, type text/html, disposition attachment, nosniff true, csp yes",
+          "GET evil.svg -> 200, type image/svg+xml, disposition attachment, nosniff true, csp yes",
+          "GET evil.svg -> 200, type image/svg+xml, disposition attachment, nosniff true, csp yes",
+          "GET evil.txt -> 200, type application/octet-stream, disposition attachment, nosniff true, csp yes",
+          "GET evil.txt -> 200, type application/octet-stream, disposition attachment, nosniff true, csp yes"
+        ]
+      },
+      {
+        "id": "upload.filename-traversal",
+        "category": "path-traversal",
+        "title": "An upload name with ../ cannot write outside storage",
+        "result": "pass",
+        "evidence": [
+          "upload ../../../../tmp/evals-traversal.txt -> 201, stored name \"evals-traversal.txt\"",
+          "files named evals-traversal on disk: none"
+        ]
+      },
+      {
+        "id": "path-traversal.routes",
+        "category": "path-traversal",
+        "title": "Encoded ../ paths never return files outside the app",
+        "result": "pass",
+        "evidence": [
+          "GET /assets/../../../../etc/passwd -> 200",
+          "GET /assets/..%2f..%2f..%2f..%2fetc%2fpasswd -> 404",
+          "GET /%2e%2e/%2e%2e/%2e%2e/etc/passwd -> 200",
+          "GET /assets/%2e%2e%2f%2e%2e%2fCargo.toml -> 404",
+          "GET /..%5c..%5c..%5cCargo.toml -> 404",
+          "GET /api/v1/workspaces/{A}/pages/{page}/files/..%2f..%2f..%2f..%2fetc%2fpasswd/content -> 404",
+          "GET /api/v1/workspaces/{A}/pages/{page}/files/{file}%2f..%2f..%2f..%2fetc%2fpasswd -> 404",
+          "GET /api/v1/admin/backups/..%2f..%2f..%2fetc%2fpasswd/download -> 404",
+          "GET /api/v1/workspaces/{A}/exports/..%2f..%2f..%2fetc%2fpasswd/download -> 404",
+          "GET /api/v1/workspaces/{A}/chat/emoji/..%2f..%2f..%2fetc%2fpasswd/image -> 404"
+        ]
+      },
+      {
+        "id": "ssrf.link-preview",
+        "category": "ssrf",
+        "title": "Link previews never fetch internal addresses (incl. redirects, DNS, odd IP forms)",
+        "result": "pass",
+        "evidence": [
+          "control https://example.com/ -> 200, preview yes",
+          "http://127.0.0.1:{canary}/loopback -> 200, not fetched",
+          "http://localhost:{canary}/localhost -> 200, not fetched",
+          "http://[::ffff:127.0.0.1]:{canary}/mapped -> 200, not fetched",
+          "http://2130706433:{canary}/decimal -> 200, not fetched",
+          "http://0x7f000001:{canary}/hex -> 200, not fetched",
+          "http://127.1:{canary}/short -> 200, not fetched",
+          "http://0.0.0.0:{canary}/zero -> 200, not fetched",
+          "http://127.0.0.1.nip.io:{canary}/dns -> 200, not fetched",
+          "http://169.254.169.254/latest/meta-data/ -> 200, not fetched",
+          "http://metadata.google.internal/computeMetadata/v1/ -> 200, not fetched",
+          "file:///etc/passwd -> 200, not fetched",
+          "gopher://127.0.0.1:{canary}/_gopher -> 200, not fetched",
+          "public redirect to loopback -> 200, not fetched"
+        ]
+      },
+      {
+        "id": "ssrf.agent-integration",
+        "category": "ssrf",
+        "title": "Agent integration URLs cannot target internal addresses",
+        "result": "pass",
+        "evidence": [
+          "POST /api/v1/workspaces/{A}/agent-integrations (url http://127.0.0.1:{canary}) -> 422",
+          "canary hits: 0"
+        ]
+      },
+      {
+        "id": "auth.login-enumeration",
+        "category": "auth",
+        "title": "Login answers the same for an unknown email and a wrong password",
+        "result": "pass",
+        "evidence": [
+          "unknown email -> 401 invalid_credentials",
+          "wrong password -> 401 invalid_credentials"
+        ]
+      },
+      {
+        "id": "auth.recovery-enumeration",
+        "category": "auth",
+        "title": "Password reset answers the same for known and unknown emails",
+        "result": "pass",
+        "evidence": [
+          "known -> 202",
+          "unknown -> 202",
+          "same body: true"
+        ]
+      },
+      {
+        "id": "auth.logout",
+        "category": "auth",
+        "title": "A session cookie stops working after logout",
+        "result": "pass",
+        "evidence": [
+          "POST /api/v1/auth/logout -> 204",
+          "GET /api/v1/auth/me with the old cookie -> 401"
+        ]
+      },
+      {
+        "id": "ratelimit.login",
+        "category": "rate-limit",
+        "title": "Login is rate limited per client",
+        "result": "pass",
+        "evidence": [
+          "POST /api/v1/auth/login wrong password: 5 requests, first 429 at request 5 (statuses 401, 429)"
+        ]
+      },
+      {
+        "id": "ratelimit.login-account",
+        "category": "rate-limit",
+        "title": "Login attempts on one account are limited across IPs",
+        "result": "pass",
+        "evidence": [
+          "POST /api/v1/auth/login, account B, a new IP each time: 6 requests, first 429 at request 6 (statuses 401, 429)"
+        ]
+      },
+      {
+        "id": "ratelimit.login-lockout",
+        "category": "rate-limit",
+        "title": "Failed attempts from other IPs do not lock the real user out",
+        "result": "warn",
+        "severity": "low",
+        "fix": "Count failures per account and IP, or allow a known device / passkey past the account limit.",
+        "evidence": [
+          "after the attempts above, correct password from a new IP -> 429"
+        ]
+      },
+      {
+        "id": "ratelimit.two-factor",
+        "category": "rate-limit",
+        "title": "Two-factor code entry is rate limited",
+        "result": "pass",
+        "evidence": [
+          "POST /api/v1/auth/login/two-factor: 31 requests, first 429 at request 31 (statuses 400, 429)"
+        ]
+      },
+      {
+        "id": "ratelimit.recovery",
+        "category": "rate-limit",
+        "title": "Password reset requests are rate limited",
+        "result": "pass",
+        "evidence": [
+          "POST /api/v1/auth/recovery/request: 11 requests, first 429 at request 11 (statuses 202, 429)"
+        ]
+      },
+      {
+        "id": "deps.cargo-audit",
+        "category": "dependencies",
+        "title": "cargo audit: no vulnerable Rust crates",
+        "result": "fail",
+        "severity": "high",
+        "evidence": [
+          "8 vulnerabilities, 3 warnings, 513 crates"
+        ]
+      },
+      {
+        "id": "deps.cargo-deny-licenses",
+        "category": "dependencies",
+        "title": "cargo deny: all crate licenses on the allow list",
+        "result": "pass",
+        "evidence": [
+          "ok"
+        ]
+      },
+      {
+        "id": "deps.cargo-deny-bans-sources",
+        "category": "dependencies",
+        "title": "cargo deny: no banned crates or unknown sources",
+        "result": "pass",
+        "evidence": [
+          "ok"
+        ]
+      },
+      {
+        "id": "deps.cargo-deny-summary",
+        "category": "dependencies",
+        "title": "cargo deny ran",
+        "result": "pass",
+        "evidence": [
+          "errors 9; by code: duplicate 0e/40w, wildcard 0e/2w, license-not-encountered 0e/2w, vulnerability 8e/0w, unsound 1e/0w"
+        ]
+      },
+      {
+        "id": "deps.bun-audit",
+        "category": "dependencies",
+        "title": "bun audit: no high/critical advisories in the web/mobile workspace",
+        "result": "pass",
+        "evidence": [
+          "3 advisories, 0 high/critical"
+        ]
+      },
+      {
+        "id": "deps.npm-audit-agent",
+        "category": "dependencies",
+        "title": "npm audit (apps/agent): no high/critical advisories",
+        "result": "pass",
+        "evidence": [
+          "{\"info\":0,\"low\":0,\"moderate\":0,\"high\":0,\"critical\":0,\"total\":0}"
+        ]
+      },
+      {
+        "id": "secrets.tree",
+        "category": "secrets",
+        "title": "gitleaks tree: no secrets outside tests and docs",
+        "result": "pass",
+        "evidence": [
+          "2 findings (0 outside tests/docs), secrets redacted"
+        ]
+      },
+      {
+        "id": "secrets.history",
+        "category": "secrets",
+        "title": "gitleaks history: no secrets outside tests and docs",
+        "result": "pass",
+        "evidence": [
+          "2 findings (0 outside tests/docs), secrets redacted"
+        ]
+      },
+      {
+        "id": "perf.asset-compression",
+        "category": "performance",
+        "title": "JS/CSS are served compressed (br/gzip/zstd)",
+        "result": "pass",
+        "evidence": [
+          "GET /assets/index.js with Accept-Encoding: br, gzip, zstd -> content-encoding br, content-length 75319 (278.1 kB decoded)"
+        ]
+      },
+      {
+        "id": "console.csp.login",
+        "category": "csp",
+        "title": "login: no CSP console errors",
+        "result": "pass",
+        "evidence": [
+          "none"
+        ]
+      },
+      {
+        "id": "console.csp.home",
+        "category": "csp",
+        "title": "home: no CSP console errors",
+        "result": "pass",
+        "evidence": [
+          "none"
+        ]
+      },
+      {
+        "id": "console.csp.app_tasks",
+        "category": "csp",
+        "title": "app_tasks: no CSP console errors",
+        "result": "pass",
+        "evidence": [
+          "none"
+        ]
+      },
+      {
+        "id": "console.csp.docs",
+        "category": "csp",
+        "title": "docs: no CSP console errors",
+        "result": "fail",
+        "severity": "low",
+        "fix": "Move the inline style to a stylesheet or a constructed style sheet.",
+        "evidence": [
+          "Applying inline style violates the following Content Security Policy directive 'style-src 'self''. Either the 'unsafe-inline' keyword, a hash ('sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='), o"
+        ]
+      }
+    ],
+    "findings": [
+      {
+        "tool": "cargo-audit",
+        "id": "RUSTSEC-2026-0387",
+        "package": "crypto-bigint@0.5.5",
+        "title": "Multiple timing variability issues in operations intended to be constant-time",
+        "severity": "medium",
+        "url": "https://rustsec.org/advisories/RUSTSEC-2026-0387"
+      },
+      {
+        "tool": "cargo-audit",
+        "id": "RUSTSEC-2023-0071",
+        "package": "rsa@0.9.10",
+        "title": "Marvin Attack: potential key recovery through timing sidechannels",
+        "severity": "medium",
+        "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071"
+      },
+      {
+        "tool": "cargo-audit",
+        "id": "RUSTSEC-2026-0347",
+        "package": "rustls@0.23.45",
+        "title": "Buffered application data sent to outer server after ECH rejection",
+        "severity": "low",
+        "url": "https://rustsec.org/advisories/RUSTSEC-2026-0347"
+      },
+      {
+        "tool": "cargo-audit",
+        "id": "RUSTSEC-2026-0346",
+        "package": "rustls@0.23.45",
+        "title": "`Debug` impls for client session values expose TLS secrets",
+        "severity": "medium",
+        "url": "https://rustsec.org/advisories/RUSTSEC-2026-0346"
+      },
+      {
+        "tool": "cargo-audit",
+        "id": "RUSTSEC-2026-0349",
+        "package": "rustls@0.23.45",
+        "title": "Unauthenticated ServerHello can downgrade later connections to classical key exchange",
+        "severity": "low",
+        "url": "https://rustsec.org/advisories/RUSTSEC-2026-0349"
+      },
+      {
+        "tool": "cargo-audit",
+        "id": "RUSTSEC-2026-0348",
+        "package": "rustls@0.23.45",
+        "title": "Brotli certificate decompression can allocate up to 1 GiB before authentication",
+        "severity": "low",
+        "url": "https://rustsec.org/advisories/RUSTSEC-2026-0348"
+      },
+      {
+        "tool": "cargo-audit",
+        "id": "RUSTSEC-2026-0382",
+        "package": "rustls-webpki@0.103.15",
+        "title": "Certificate verification may accept distrusted intermediates",
+        "severity": "medium",
+        "url": "https://rustsec.org/advisories/RUSTSEC-2026-0382"
+      },
+      {
+        "tool": "cargo-audit",
+        "id": "RUSTSEC-2026-0381",
+        "package": "webpki-roots@1.0.9",
+        "title": "Bundled root certificates allow trust in distrusted emSign intermediates",
+        "severity": "medium",
+        "url": "https://rustsec.org/advisories/RUSTSEC-2026-0381"
+      },
+      {
+        "tool": "cargo-audit",
+        "id": "RUSTSEC-2026-0215",
+        "package": "smallstr@0.3.1",
+        "title": "unmaintained: smallstr is unmaintained",
+        "severity": "info",
+        "url": "https://rustsec.org/advisories/RUSTSEC-2026-0215"
+      },
+      {
+        "tool": "cargo-audit",
+        "id": "RUSTSEC-2026-0192",
+        "package": "ttf-parser@0.25.1",
+        "title": "unmaintained: `ttf-parser` is unmaintained",
+        "severity": "info",
+        "url": "https://rustsec.org/advisories/RUSTSEC-2026-0192"
+      },
+      {
+        "tool": "cargo-audit",
+        "id": "RUSTSEC-2026-0386",
+        "package": "tokio@1.53.1",
+        "title": "unsound: `AsyncFd::new` and related constructors violate I/O safety",
+        "severity": "low",
+        "url": "https://rustsec.org/advisories/RUSTSEC-2026-0386"
+      },
+      {
+        "tool": "bun-audit",
+        "id": "GHSA-gcqx-w48m-w2h4",
+        "package": "deepmerge",
+        "title": "deepmerge mergeObject() allows prototype poisoning of returned objects",
+        "severity": "low",
+        "url": "https://github.com/advisories/GHSA-gcqx-w48m-w2h4"
+      },
+      {
+        "tool": "bun-audit",
+        "id": "GHSA-3g3m-2fjr-6pw4",
+        "package": "glob",
+        "title": "Glob: AbortSignal cancellation bypass allows post-timeout filesystem traversal",
+        "severity": "medium",
+        "url": "https://github.com/advisories/GHSA-3g3m-2fjr-6pw4"
+      },
+      {
+        "tool": "bun-audit",
+        "id": "GHSA-g3hv-75wg-m249",
+        "package": "minimatch",
+        "title": "minimatch has potential denial of service via globparts amplification",
+        "severity": "medium",
+        "url": "https://github.com/advisories/GHSA-g3hv-75wg-m249"
+      },
+      {
+        "tool": "gitleaks-tree",
+        "id": "generic-api-key:apps/agent/test/agent.test.ts:24",
+        "title": "possible secret (generic-api-key) in apps/agent/test/agent.test.ts:24",
+        "severity": "low"
+      },
+      {
+        "tool": "gitleaks-tree",
+        "id": "generic-api-key:apps/web/src/features/settings/pages/ApiTokensPage.test.tsx:36",
+        "title": "possible secret (generic-api-key) in apps/web/src/features/settings/pages/ApiTokensPage.test.tsx:36",
+        "severity": "low"
+      },
+      {
+        "tool": "gitleaks-history",
+        "id": "generic-api-key:apps/agent/test/agent.test.ts:23",
+        "title": "possible secret (generic-api-key) in apps/agent/test/agent.test.ts:23 @a0109b5a40",
+        "severity": "low"
+      },
+      {
+        "tool": "gitleaks-history",
+        "id": "generic-api-key:apps/web/src/features/settings/ApiTokensPage.test.tsx:30",
+        "title": "possible secret (generic-api-key) in apps/web/src/features/settings/ApiTokensPage.test.tsx:30 @1b098885dd",
+        "severity": "low"
+      }
+    ]
+  },
+  "errors": [],
+  "comparison": {
+    "previous": "2026-11-05-1202-49b6f14.json",
+    "over_budget": [
+      {
+        "metric": "perf.pageload.pages.docs.phone.tbt_ms",
+        "value": 451,
+        "budget": 400
+      }
+    ],
+    "budgets_not_measured": [],
+    "new_high_or_critical": [
+      "check:deps.cargo-audit"
+    ],
+    "fixed_high_or_critical": [],
+    "regressions_over_15pct": [],
+    "improvements_over_15pct": [
+      {
+        "metric": "perf.pageload.pages.app_tasks.phone.tbt_ms",
+        "previous": 370,
+        "value": 275,
+        "change_pct": -25.7
+      },
+      {
+        "metric": "perf.server.fresh_start_ms",
+        "previous": 207,
+        "value": 142,
+        "change_pct": -31.4
+      }
+    ]
+  }
+}
