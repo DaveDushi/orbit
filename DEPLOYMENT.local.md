@@ -4,11 +4,11 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 5b643467cfc2b17857b2455f101585684eb47111
-  (merges of `upstream-port-1103`, `improvement-requests`, `app-bar-immediate` and `agent-chat-files`, November 4, 2026).
+- Source: DaveDushi/orbit, `main` at f3b830e762157a98ba7101748ce04c941f4f8fa6
+  (`storage-bucket-overlap` and 12 fixes since 5b64346, November 5, 2026).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:5b64346`); fork commits have no published upstream image.
-- Image ID: sha256:559b5e329d59545c457155f3dd76684881ee4ab6394f1f038e58e7a18f4896da
+  (`orbit:f3b830e`); fork commits have no published upstream image.
+- Image ID: sha256:8188ebeb3d5cb7cd9b412b34b29a7917a66da3da67b48edef55f63725c8d76e4
 - Team agent sidecar code (`/opt/orbit-agent`): commit 5b64346.
 - OIDC gateway: `orbit-oidc-gateway.service`, nginx on `127.0.0.1:8400`, config in `/etc/orbit-oidc-gateway/`
   (see `docs/apps.md`). `cloudflared` is NOT installed.
@@ -236,6 +236,51 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 5, 2026 upgrade: overlapping storage buckets and 12 fixes
+
+Fast-forward of `main` from `165c6686` to `f3b830e` (`storage-bucket-overlap`): Admin → Storage refuses a bucket that
+overlaps a workspace bucket (also a removed one that still drains), a workspace bucket is refused when it overlaps the
+installation's bucket or another workspace's bucket, and the mover never deletes an object whose source and destination are
+one physical object (the cause of the files lost on November 5 at 10:28 UTC). Also shipped, since `5b64346`: 11 upstream
+fixes (`d7cb2f13` to `165c6686`) and the November 4 record. No migration (schema stays 74), no new `ORBIT_*` setting, no
+change in `apps/agent`, so the sidecar code was not updated.
+
+Before the switch (read only): `instance_settings` has the bucket `wellrox-orbit-backups` (R2, prefix empty, attachments
+off, backups on); `workspace_storage` has no row, so no workspace bucket is active or draining.
+
+Checks on the branch: platform `object_storage` (11) and server `storage_api` (6) and `workspace_storage_api` (3) on SQLite
+and Postgres; `cargo clippy -p orbit-platform -p orbit-server --all-targets`; `cargo fmt --check`. `orbit-deploy image`
+built `orbit:f3b830e` (label `org.orbit.clean-revision` = the full commit), `deploy/smoke.sh` passed, and
+`orbit config check` passed with the extracted binary.
+
+At the switch: stopped `orbit-agent` and `orbit` at 11:17:42 UTC, created snapshot `01a1ab6d-cdb9-7496-8eb9-94c66da02a08`
+with the old CLI (it went to the S3 bucket, as backups are in S3; the CLI cannot list S3 while the server runs) and verified
+it, ran `migrate run` of the new binary on a copy in `/var/lib/orbit/rehearsal-f3b830e-*` (0 applied, schema 74,
+quick-check and foreign-key checks pass, counts unchanged; deleted afterwards), saved the sidecar data as
+`/var/backups/orbit-agent/orbit-agent-before-f3b830e.tgz`, installed the binary and started `orbit` at 11:18:42 UTC (ready at
+11:18:43), then `orbit-agent`. The old executable is `/usr/local/bin/orbit-5b64346` (equal to the installed one before the
+swap); the new one is also kept as `/usr/local/bin/orbit-f3b830e`. `vm-health`: `PROD_TAG=f3b830e`, `ROLLBACK_TAG=5b64346`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` active, no restarts; readiness (all
+checks); `/orbit-build.json` revision `f3b830e`; schema 74; live quick-check and foreign-key checks pass; counts unchanged
+(6 users, 1 workspace, 3 projects, 63 tasks, 40 pages, 548 chat messages, 0 workspace buckets); sidecar `mock: false`; no
+warning or error in the logs since the start. `vm-health`: all OK except the nginx errors of the 1-minute switch, the age of
+the newest local snapshot (the new one is in S3) and `.git` files owned by root from other sessions.
+**Not** verified on production: any signed-in page and a save in Admin → Storage.
+
+Rollback (the schema did not change, so the old binary reads the current database; restore the snapshot only if data is
+damaged):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-5b64346 /usr/local/bin/orbit
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Only if data must go back to 11:17 UTC (work after it is lost), with both services stopped:
+# sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-5b64346 backup verify 01a1ab6d-cdb9-7496-8eb9-94c66da02a08 && /usr/local/bin/orbit-5b64346 backup restore 01a1ab6d-cdb9-7496-8eb9-94c66da02a08'
+# sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-f3b830e.tgz
+```
 
 ### November 4, 2026 upgrade: upstream port, Suggest a change, the app bar at once and files in agent chats
 
