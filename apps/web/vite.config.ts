@@ -6,7 +6,7 @@ import openapi from '@orbit/api/generated/openapi.json' with { type: 'json' }
 import { createHash } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { brotliCompressSync, constants as zlibConstants, gzipSync } from 'node:zlib'
 
@@ -33,6 +33,8 @@ const emojiAssets = [
   { url: `/assets/emojibase-${emojibaseVersion}/en/shortcodes/`, dir: join(packageDir('emojibase-data'), 'en/shortcodes/'), files: /^github\.json$/, type: 'application/json' },
   { url: `/assets/emojibase-${emojibaseVersion}/en/`, dir: join(packageDir('emojibase-data'), 'en/'), files: /^(data|messages)\.json$/, type: 'application/json' },
 ]
+
+let outDir = ''
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -97,8 +99,11 @@ export default defineConfig({
       // (`apps/server/src/static_assets.rs`). Only text files of 1 kB or more, and only when the result is smaller.
       name: 'orbit-precompress',
       apply: 'build',
+      configResolved(config) {
+        outDir = resolve(config.root, config.build.outDir)
+      },
       closeBundle() {
-        const dist = fileURLToPath(new URL('./dist/', import.meta.url))
+        const dist = outDir
         for (const entry of readdirSync(dist, { recursive: true, withFileTypes: true })) {
           if (!entry.isFile() || !/\.(js|mjs|css|html|json|svg|webmanifest|txt|wasm)$/.test(entry.name)) continue
           const path = join(entry.parentPath, entry.name)

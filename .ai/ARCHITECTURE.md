@@ -49,7 +49,7 @@ Chat is the exception to the query-key rule: its keys begin with `['chat', works
 - Bun for installs, tests, generation, and builds
 - Oxlint and plain CSS with semantic design tokens
 
-`apps/web/index.html` applies the saved theme before paint. `App.tsx` owns routing and providers. `AppShell.tsx` owns global navigation, mobile chrome, and the command palette.
+`apps/web/index.html` applies the saved theme before paint. `App.tsx` owns routing and providers. Only the sign-in pages and gates are in the entry chunk: the shell and each area's pages are `lazy` chunks (`settingsPages.ts` and `taskPages.ts` group an area's pages into one chunk). A new signed-in page is lazy too, and its area goes in `startAreas`, which loads the start URL's code during the session check. `AppShell.tsx` owns global navigation, mobile chrome, and the command palette.
 
 ## Embedded build contract
 
