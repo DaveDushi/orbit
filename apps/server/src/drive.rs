@@ -73,7 +73,7 @@ impl DriveService {
     }
 
     /// The bucket of the workspace's Drive.
-    fn bucket(&self, workspace_id: Id) -> Result<S3Bucket, DriveError> {
+    pub fn bucket(&self, workspace_id: Id) -> Result<S3Bucket, DriveError> {
         let state = self.storage.current();
         match state.workspace_buckets.get(&workspace_id.to_string()) {
             Some(own) if own.active => Ok(own.bucket.clone()),

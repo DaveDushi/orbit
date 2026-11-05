@@ -118,6 +118,29 @@ pub enum Command {
         #[command(subcommand)]
         command: orbit_server::improvements::ImprovementsCommand,
     },
+    /// Drive: imports from the old wellrox-cloud Worker.
+    Drive {
+        #[command(subcommand)]
+        command: DriveCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DriveCommand {
+    /// Adds the wellrox-cloud files (a `wrangler d1 export` SQL dump) to a workspace's Drive in `/wellrox-cloud/`.
+    /// Only database rows: the objects stay where they are in the workspace's Drive bucket. Orbit must be stopped
+    /// (also for a dry run); a real run makes a backup first. A second run adds only what is new.
+    ImportWellroxCloud {
+        /// The workspace id.
+        #[arg(long)]
+        workspace: String,
+        /// The SQL dump of the Worker's D1 database.
+        #[arg(long)]
+        d1_export: PathBuf,
+        /// Report what the import would do (counts, bytes, name conflicts, missing objects) and change nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -236,7 +259,60 @@ pub async fn run(cli: Cli, env: BTreeMap<String, String>) -> Result<String, CliE
         Command::Openapi { output } => write_openapi(output),
         Command::SetupToken { command } => setup_token(config()?, command).await,
         Command::Improvements { command } => improvements(config()?, command).await,
+        Command::Drive { command } => drive(config()?, command).await,
     }
+}
+
+async fn drive(config: Config, command: &DriveCommand) -> Result<String, CliError> {
+    let DriveCommand::ImportWellroxCloud {
+        workspace,
+        d1_export,
+        dry_run,
+    } = command;
+    let workspace_id: orbit_platform::Id = workspace
+        .parse()
+        .map_err(|_| CliError::Operation("--workspace must be a workspace id".to_owned()))?;
+    // Only while no Orbit serves this database (its ownership lock), also for a dry run: it makes the same
+    // transaction and rolls it back.
+    let database = Database::open(&DatabaseConfig::for_data(&config.data))
+        .await
+        .map_err(|error| match error {
+            DatabaseError::AlreadyOwned { .. } => CliError::Operation(
+                "Orbit is running on this database: stop it before the import (also before a --dry-run)"
+                    .to_owned(),
+            ),
+            error => operation(error),
+        })?;
+    migrate_unless_shared(&config, &database).await?;
+    if !*dry_run {
+        let service = BackupService::new(&config.data.backups, &config.data.attachments)
+            .with_object_storage(backup_storage(&config, Some(&database)).await?);
+        let snapshot = service.create(&database).await.map_err(operation)?;
+        eprintln!("backup {} made before the import", snapshot.id);
+    }
+    let app_key = config.app_key.as_ref().map(|key| *key.bytes());
+    let storage = orbit_server::object_storage::saved_storage(&database, app_key.as_ref())
+        .await
+        .map_err(CliError::Operation)?;
+    let bucket = orbit_server::drive::DriveService::new(database.clone(), storage)
+        .bucket(workspace_id)
+        .map_err(|_| {
+            CliError::Operation(
+                "the workspace has no S3 bucket for Drive: connect the bucket with the wellrox-cloud objects first"
+                    .to_owned(),
+            )
+        })?;
+    let report = orbit_server::drive_import::import(
+        &database,
+        &bucket,
+        workspace_id,
+        d1_export,
+        *dry_run,
+        TimestampMillis::now(),
+    )
+    .await
+    .map_err(|error| CliError::Operation(error.to_string()))?;
+    Ok(report.to_string())
 }
 
 fn healthcheck_address(config: &Config) -> SocketAddr {

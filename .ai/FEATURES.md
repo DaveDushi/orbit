@@ -584,6 +584,9 @@ MCP (M6): `mcp_drive.rs`, scopes `drive:read` / `drive:write` (API tokens, OAuth
 Read: list, search, info, read (parser child, 16 MiB, `drive_kind` maps real MIME types). Write: folder, text file
 (48 KiB: an MCP body has 64 KiB), move, rename, trash. No purge/restore/share/import tools. Results are
 `<orbit-data>` blocks (`docs/mcp.md`).
+Import (M7): `orbit drive import-wellrox-cloud` (`drive_import.rs`, CLI in `cli.rs`): D1 SQL dump -> `/wellrox-cloud/`,
+rows only, HEAD checks, trash with original dates, idempotent by `source_ref`, one transaction (dry run = rollback),
+needs Orbit stopped. Operator notes in `docs/operations.md`.
 
 ## Apps
 

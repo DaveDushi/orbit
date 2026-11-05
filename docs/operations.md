@@ -303,6 +303,28 @@ Drive (one drive per workspace, all members read and write) stores its files in 
 - When a workspace is deleted for good, its Drive objects stay in the bucket.
 - Public links (`/s/<token>`): every member can make one for a file or folder; the creator, or an owner or admin (`drive.shares.manage`), turns it off, and it stops at once. Only the token's SHA-256 is stored. A folder link reaches only that folder and what is below it. A link with a password (12+ characters) gives a pass for one hour; wrong passwords are throttled per link and IP address like sign-in, and all public link requests share the sign-in request limit (`authentication_per_minute`). Downloads are redirects to 5-minute bucket URLs and are counted. Every failure answers the same "Link not available". Making and turning off links is in the audit log (`drive.share_created`, `drive.share_revoked`).
 
+### Importing the wellrox-cloud files
+
+`orbit drive import-wellrox-cloud --workspace <id> --d1-export <dump.sql> [--dry-run]` adds the files of the old
+wellrox-cloud Worker to one workspace's Drive, in the folder `/wellrox-cloud/` (`wellrox-cloud (2)` if a member already
+has that name). It writes database rows only: the objects stay in the bucket, and their keys go into Drive as they are.
+
+- Input: a `wrangler d1 export` SQL dump of the Worker's D1 database (tables `nodes`, `blobs`, `trash_entries`; the
+  older `folders`/`file_metadata` tables are not read). Orbit loads it into an in-memory database and refuses a dump
+  that attaches databases, vacuums or loads extensions.
+- The workspace's Drive bucket (its own bucket, else the installation's) must be the bucket that holds the objects.
+  With a bucket prefix, the Worker's keys must start with it. Keys in Orbit's own areas (`blobs/`, `backups/`, `drive/`)
+  are refused, because Orbit's cleanup could delete them.
+- Stop Orbit first, also for `--dry-run` (the ownership lock). A real run makes a backup first, then writes everything
+  in one transaction. A dry run makes the same transaction and rolls it back, and prints the same report: folders,
+  files and bytes, items in the trash, missing objects (HEAD check), refused keys, renamed names, size differences.
+- Items in the Worker's trash go to Orbit's trash with their original date; items trashed more than 30 days ago are
+  deleted forever (with their objects) by Orbit's next hourly maintenance, as the report says. Items whose trash entry
+  was purged, files whose object is missing, and nodes outside the tree are left out.
+- Each item keeps its Worker id (`source_ref`): a second run adds only what is new and keeps members' changes.
+- After the import, the Worker and Orbit share the objects: the Worker must not delete or replace them any more (set it
+  read-only), and a file that Orbit deletes forever is gone for the Worker's old links too.
+
 ## Large images
 
 The web client makes a JPEG, PNG or WebP of 512 KiB or more smaller before upload: at most 2560 px on the long edge, re-encoded as WebP. GIF, SVG and animated images stay as they are.

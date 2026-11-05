@@ -790,7 +790,13 @@ async fn optional_scopes_need_consent_and_survive_refresh() {
         .1
         .to_string();
     let token = f.issue(&client, &code).await;
-    for scope in ["tasks:write", "docs:read", "chat:read", "drive:read", "drive:write"] {
+    for scope in [
+        "tasks:write",
+        "docs:read",
+        "chat:read",
+        "drive:read",
+        "drive:write",
+    ] {
         assert!(token["scope"].as_str().unwrap().contains(scope));
     }
     let principal = f

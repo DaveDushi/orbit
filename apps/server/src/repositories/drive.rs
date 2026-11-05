@@ -1399,7 +1399,7 @@ async fn live_folder(
 }
 
 /// The id and kind of the live node with this name in the folder, other than `except`.
-async fn sibling(
+pub(crate) async fn sibling(
     connection: &mut AnyConnection,
     workspace_id: Id,
     parent_id: Option<Id>,
@@ -1427,7 +1427,7 @@ async fn sibling(
 }
 
 /// `name`, or the first free `name (n)` (before the extension) in the folder.
-async fn free_name(
+pub(crate) async fn free_name(
     connection: &mut AnyConnection,
     workspace_id: Id,
     parent_id: Option<Id>,
