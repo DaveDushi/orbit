@@ -14,7 +14,8 @@ use orbit_platform::{
 };
 
 use crate::repositories::drive::{
-    BlobDeletion, DriveError, DriveNode, DriveRepository, DriveUpload, NewUpload, OnConflict,
+    BlobDeletion, DriveError, DriveMediaStatus, DriveNode, DriveRepository, DriveUpload,
+    MAX_POSTER_BYTES, MAX_THUMB_BYTES, MediaFacts, NewUpload, OnConflict,
 };
 
 const MIB: i64 = 1024 * 1024;
@@ -284,6 +285,95 @@ impl DriveService {
                     .map_err(Into::into)
             })
             .collect()
+    }
+
+    /// Records what the browser measured of an image or video and returns PUT URLs for its thumbnail and (for a
+    /// video) poster; with `failed`, records that the browser could not read the file and returns none.
+    pub async fn begin_media(
+        &self,
+        workspace_id: Id,
+        user_id: Id,
+        node_id: Id,
+        facts: MediaFacts,
+        failed: bool,
+        now: TimestampMillis,
+    ) -> Result<(Option<String>, Option<String>), DriveError> {
+        let target = self
+            .repository
+            .begin_media(workspace_id, user_id, node_id, facts, failed, now)
+            .await?;
+        if failed {
+            return Ok((None, None));
+        }
+        let bucket = self.bucket(workspace_id)?;
+        let sign = |key: &Option<String>| {
+            key.as_deref()
+                .map(|key| bucket.presign_put(key, UPLOAD_URL_LIFETIME))
+                .transpose()
+        };
+        Ok((sign(&target.thumb_key)?, sign(&target.poster_key)?))
+    }
+
+    /// Keeps the thumbnail and poster the browser sent when they are in the bucket and small enough (an object
+    /// that is too large is deleted), and returns the node with their URLs.
+    pub async fn finish_media(
+        &self,
+        workspace_id: Id,
+        user_id: Id,
+        node_id: Id,
+        now: TimestampMillis,
+    ) -> Result<DriveNode, DriveError> {
+        let target = self
+            .repository
+            .media_target(workspace_id, user_id, node_id)
+            .await?;
+        let bucket = self.bucket(workspace_id)?;
+        let mut kept = Vec::with_capacity(2);
+        for (key, limit) in [
+            (target.thumb_key.as_deref(), MAX_THUMB_BYTES),
+            (target.poster_key.as_deref(), MAX_POSTER_BYTES),
+        ] {
+            let Some(key) = key else {
+                kept.push(None);
+                continue;
+            };
+            match bucket.size(key).await? {
+                Some(size) if size > 0 && size <= limit => kept.push(Some(key)),
+                Some(_) => {
+                    bucket.delete(key).await?;
+                    kept.push(None);
+                }
+                None => kept.push(None),
+            }
+        }
+        let mut node = self
+            .repository
+            .finish_media(workspace_id, user_id, node_id, kept[0], kept[1], now)
+            .await?;
+        self.sign_media(workspace_id, std::slice::from_mut(&mut node));
+        Ok(node)
+    }
+
+    /// Adds 5-minute URLs of ready thumbnails and posters to nodes that the caller may see. Without a bucket the
+    /// nodes stay without them.
+    pub fn sign_media(&self, workspace_id: Id, nodes: &mut [DriveNode]) {
+        if !nodes.iter().any(|node| node.thumb_key.is_some()) {
+            return;
+        }
+        let Ok(bucket) = self.bucket(workspace_id) else {
+            return;
+        };
+        for node in nodes {
+            if node.media.map(|media| media.status) != Some(DriveMediaStatus::Ready) {
+                continue;
+            }
+            let sign = |key: &Option<String>| {
+                key.as_deref()
+                    .and_then(|key| bucket.presign_get(key, DOWNLOAD_URL_LIFETIME, None).ok())
+            };
+            node.thumbnail_url = sign(&node.thumb_key);
+            node.poster_url = sign(&node.poster_key);
+        }
     }
 
     pub async fn purge(

@@ -141,11 +141,21 @@ impl Fixture {
 
     /// Uploads a small file with one presigned PUT, as the browser does.
     async fn file(&self, parent: Option<&str>, name: &str, bytes: &[u8]) -> String {
+        self.typed_file(parent, name, bytes, "text/plain").await
+    }
+
+    async fn typed_file(
+        &self,
+        parent: Option<&str>,
+        name: &str,
+        bytes: &[u8],
+        mime: &str,
+    ) -> String {
         let started = self
             .owner(
                 "POST",
                 "/uploads",
-                Some(json!({"parent_id": parent, "name": name, "size": bytes.len(), "mime": "text/plain"})),
+                Some(json!({"parent_id": parent, "name": name, "size": bytes.len(), "mime": mime})),
                 StatusCode::CREATED,
             )
             .await;
@@ -279,6 +289,12 @@ async fn every_route_refuses_callers_outside_the_workspace_before_signing() {
             "/downloads".to_owned(),
             Some(json!({"node_ids": [file]})),
         ),
+        (
+            "POST",
+            format!("/nodes/{file}/media"),
+            Some(json!({"width": 1})),
+        ),
+        ("POST", format!("/nodes/{file}/media/complete"), None),
         ("GET", "/trash".to_owned(), None),
         ("POST", "/trash/empty".to_owned(), None),
         ("GET", "/search?q=a".to_owned(), None),
@@ -1026,4 +1042,159 @@ async fn folder_files_and_batch_downloads_cover_only_live_files() {
         )
         .await;
     assert_eq!(problem["code"], "drive_too_many_items");
+}
+
+#[tokio::test]
+async fn thumbnails_are_kept_only_for_media_when_present_and_small_and_go_with_the_file() {
+    let fixture = fixture().await;
+    let text = fixture.file(None, "notes.txt", b"n").await;
+    let photo = fixture
+        .typed_file(None, "photo.jpg", b"jpeg bytes", "image/jpeg")
+        .await;
+    let video = fixture
+        .typed_file(None, "clip.webm", b"webm bytes", "video/webm")
+        .await;
+    let folder = fixture.folder(None, "Folder").await;
+    for node in [&text, &folder] {
+        let problem = fixture
+            .owner(
+                "POST",
+                &format!("/nodes/{node}/media"),
+                Some(json!({"width": 10})),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            )
+            .await;
+        assert_eq!(problem["code"], "drive_not_media");
+    }
+
+    // An image gets a thumbnail URL only; a video also a poster URL.
+    let image_urls = fixture
+        .owner(
+            "POST",
+            &format!("/nodes/{photo}/media"),
+            Some(json!({"width": 4000, "height": 3000})),
+            StatusCode::OK,
+        )
+        .await;
+    assert!(has_url(&image_urls["thumbnail_put_url"]));
+    assert_eq!(image_urls["poster_put_url"], Value::Null);
+    // Until the browser sends it, the file has no thumbnail, and completing keeps none.
+    let node = fixture
+        .owner(
+            "POST",
+            &format!("/nodes/{photo}/media/complete"),
+            None,
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(node["media"]["status"], "failed");
+    assert!(node.get("thumbnail_url").is_none());
+
+    fixture
+        .owner(
+            "POST",
+            &format!("/nodes/{photo}/media"),
+            Some(json!({"width": 4000, "height": 3000})),
+            StatusCode::OK,
+        )
+        .await;
+    let video_urls = fixture
+        .owner(
+            "POST",
+            &format!("/nodes/{video}/media"),
+            Some(json!({"width": 1920, "height": 1080, "duration_ms": 61_000})),
+            StatusCode::OK,
+        )
+        .await;
+    let photo_urls = fixture
+        .owner(
+            "POST",
+            &format!("/nodes/{photo}/media"),
+            Some(json!({"width": 4000, "height": 3000})),
+            StatusCode::OK,
+        )
+        .await;
+    put(
+        photo_urls["thumbnail_put_url"].as_str().unwrap(),
+        b"thumb".to_vec(),
+    )
+    .await;
+    put(
+        video_urls["thumbnail_put_url"].as_str().unwrap(),
+        b"thumb".to_vec(),
+    )
+    .await;
+    // A poster over 4 MiB is deleted, not kept.
+    put(
+        video_urls["poster_put_url"].as_str().unwrap(),
+        vec![0; 4 * 1024 * 1024 + 1],
+    )
+    .await;
+    let ready = fixture
+        .owner(
+            "POST",
+            &format!("/nodes/{photo}/media/complete"),
+            None,
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(
+        ready["media"],
+        json!({"width": 4000, "height": 3000, "duration_ms": null, "status": "ready"})
+    );
+    assert!(has_url(&ready["thumbnail_url"]));
+    let clip = fixture
+        .owner(
+            "POST",
+            &format!("/nodes/{video}/media/complete"),
+            None,
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(clip["media"]["duration_ms"], 61_000);
+    assert!(has_url(&clip["thumbnail_url"]));
+    assert!(clip.get("poster_url").is_none());
+    assert_eq!(
+        fixture.object_count().await,
+        5,
+        "3 files and 2 thumbnails; the large poster is gone"
+    );
+
+    // Lists, search and the node carry thumbnail URLs that read the thumbnail.
+    let list = fixture.owner("GET", "/nodes", None, StatusCode::OK).await;
+    let listed = list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["id"] == photo.as_str())
+        .unwrap();
+    let thumb = reqwest::get(listed["thumbnail_url"].as_str().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(thumb.bytes().await.unwrap(), b"thumb".as_slice());
+    let found = fixture
+        .owner("GET", "/search?q=photo", None, StatusCode::OK)
+        .await;
+    assert!(has_url(&found["items"][0]["node"]["thumbnail_url"]));
+    let detail = fixture
+        .owner("GET", &format!("/nodes/{video}"), None, StatusCode::OK)
+        .await;
+    assert!(has_url(&detail["node"]["thumbnail_url"]));
+
+    // Deleting the files forever also deletes their thumbnails.
+    for node in [&photo, &video] {
+        fixture
+            .owner(
+                "POST",
+                &format!("/nodes/{node}/trash"),
+                None,
+                StatusCode::NO_CONTENT,
+            )
+            .await;
+    }
+    fixture
+        .owner("POST", "/trash/empty", None, StatusCode::OK)
+        .await;
+    fixture.drive.delete_objects().await.unwrap();
+    assert_eq!(fixture.object_count().await, 1, "only notes.txt is left");
 }

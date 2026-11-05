@@ -16,7 +16,7 @@ use crate::auth_routes::CookieMode;
 use crate::drive::{DOWNLOAD_URL_LIFETIME, DriveService, StartUpload, UPLOAD_URL_LIFETIME};
 use crate::repositories::drive::{
     DriveEntryPage, DriveError, DriveNode, DriveNodeDetail, DriveNodeKind, DriveNodePage,
-    DriveSearch, DriveSort, DriveUpload, OnConflict, Paging, SortOrder,
+    DriveSearch, DriveSort, DriveUpload, MediaFacts, OnConflict, Paging, SortOrder,
 };
 use crate::repositories::identity::IdentityRepository;
 use crate::task_routes::{ApiError, ApiJson, ApiQuery, authenticate_session, request_id_value};
@@ -64,6 +64,11 @@ pub fn drive_router(state: DriveState) -> Router {
             get(list_drive_folder_files),
         )
         .route(&route("/nodes/{node_id}/download"), get(get_drive_download))
+        .route(&route("/nodes/{node_id}/media"), post(begin_drive_media))
+        .route(
+            &route("/nodes/{node_id}/media/complete"),
+            post(complete_drive_media),
+        )
         .route(&route("/trash"), get(list_drive_trash))
         .route(&route("/trash/empty"), post(empty_drive_trash))
         .route(&route("/search"), get(search_drive))
@@ -188,6 +193,28 @@ pub struct StartDriveUpload {
 pub struct SignDriveUploadParts {
     /// At most 100 numbers from 1 to `part_count`.
     part_numbers: Vec<u32>,
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BeginDriveMedia {
+    /// Pixels, as the browser measured them.
+    width: Option<i64>,
+    height: Option<i64>,
+    /// Videos.
+    duration_ms: Option<i64>,
+    /// The browser could not read the file: it gets no thumbnail.
+    #[serde(default)]
+    failed: bool,
+}
+
+/// Where the browser PUTs the thumbnail (and a video's poster); then it calls `media/complete`.
+#[derive(Serialize, ToSchema)]
+pub struct DriveMediaUpload {
+    thumbnail_put_url: Option<String>,
+    poster_put_url: Option<String>,
+    #[schema(value_type = String, format = DateTime)]
+    expires_at: TimestampMillis,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -352,7 +379,10 @@ async fn list_drive_nodes(
             Paging::new(query.offset, query.limit),
         )
         .await
-        .map(Json)
+        .map(|mut page| {
+            state.drive.sign_media(caller.workspace_id, &mut page.items);
+            Json(page)
+        })
         .map_err(|error| caller.fail(error))
 }
 
@@ -399,7 +429,12 @@ async fn get_drive_node(
         .repository()
         .node(caller.workspace_id, caller.user_id, node_id)
         .await
-        .map(Json)
+        .map(|mut detail| {
+            state
+                .drive
+                .sign_media(caller.workspace_id, std::slice::from_mut(&mut detail.node));
+            Json(detail)
+        })
         .map_err(|error| caller.fail(error))
 }
 
@@ -590,6 +625,67 @@ async fn get_drive_download(
     }))
 }
 
+/// Records what the browser measured of an image or video and gives PUT URLs for its thumbnail (at most 1 MiB)
+/// and, for a video, its poster (at most 4 MiB). Thumbnails are made in the browser, never on the server.
+#[utoipa::path(post, path = "/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}/media", params(("workspace_id" = String, Path), ("node_id" = String, Path)), request_body = BeginDriveMedia, responses((status = 200, body = DriveMediaUpload)))]
+async fn begin_drive_media(
+    State(state): State<DriveState>,
+    Path((workspace, node)): Path<(String, String)>,
+    headers: HeaderMap,
+    request_id: RequestIdExtension,
+    ApiJson(body): ApiJson<BeginDriveMedia>,
+) -> Result<Json<DriveMediaUpload>, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace}/drive/nodes/{node}/media");
+    let caller = caller(&state, &headers, &workspace, instance, request_id.as_ref()).await?;
+    let node_id = caller.id(&node)?;
+    let (thumbnail_put_url, poster_put_url) = state
+        .drive
+        .begin_media(
+            caller.workspace_id,
+            caller.user_id,
+            node_id,
+            MediaFacts {
+                width: body.width,
+                height: body.height,
+                duration_ms: body.duration_ms,
+            },
+            body.failed,
+            TimestampMillis::now(),
+        )
+        .await
+        .map_err(|error| caller.fail(error))?;
+    Ok(Json(DriveMediaUpload {
+        thumbnail_put_url,
+        poster_put_url,
+        expires_at: expires_in(UPLOAD_URL_LIFETIME),
+    }))
+}
+
+/// Keeps the thumbnail and poster the browser sent (when they are in the bucket and small enough) and returns
+/// the file with their URLs.
+#[utoipa::path(post, path = "/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}/media/complete", params(("workspace_id" = String, Path), ("node_id" = String, Path)), responses((status = 200, body = DriveNode)))]
+async fn complete_drive_media(
+    State(state): State<DriveState>,
+    Path((workspace, node)): Path<(String, String)>,
+    headers: HeaderMap,
+    request_id: RequestIdExtension,
+) -> Result<Json<DriveNode>, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace}/drive/nodes/{node}/media/complete");
+    let caller = caller(&state, &headers, &workspace, instance, request_id.as_ref()).await?;
+    let node_id = caller.id(&node)?;
+    state
+        .drive
+        .finish_media(
+            caller.workspace_id,
+            caller.user_id,
+            node_id,
+            TimestampMillis::now(),
+        )
+        .await
+        .map(Json)
+        .map_err(|error| caller.fail(error))
+}
+
 /// Download URLs for many files at once (a ZIP built in the browser).
 #[utoipa::path(post, path = "/api/v1/workspaces/{workspace_id}/drive/downloads", params(("workspace_id" = String, Path)), request_body = CreateDriveDownloads, responses((status = 200, body = DriveDownloads)))]
 async fn create_drive_downloads(
@@ -699,7 +795,14 @@ async fn search_drive(
             Paging::new(query.offset, query.limit),
         )
         .await
-        .map(Json)
+        .map(|mut page| {
+            for entry in &mut page.items {
+                state
+                    .drive
+                    .sign_media(caller.workspace_id, std::slice::from_mut(&mut entry.node));
+            }
+            Json(page)
+        })
         .map_err(|error| caller.fail(error))
 }
 
@@ -952,6 +1055,12 @@ fn problem(
             "drive_invalid_part",
             "Invalid part",
             "Ask for 1 to 100 part numbers of a multipart upload, from 1 to its part count.",
+        ),
+        DriveError::NotMedia => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "drive_not_media",
+            "Not an image or video",
+            "Only images and videos have a thumbnail.",
         ),
         DriveError::TooManyItems => (
             StatusCode::UNPROCESSABLE_ENTITY,

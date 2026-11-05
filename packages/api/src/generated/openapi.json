@@ -18563,6 +18563,262 @@
         ]
       }
     },
+    "/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}/media": {
+      "post": {
+        "tags": [
+          "crate::drive_routes"
+        ],
+        "summary": "Records what the browser measured of an image or video and gives PUT URLs for its thumbnail (at most 1 MiB)\nand, for a video, its poster (at most 4 MiB). Thumbnails are made in the browser, never on the server.",
+        "operationId": "begin_drive_media",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Orbit-Contract",
+            "in": "header",
+            "description": "Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BeginDriveMedia"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DriveMediaUpload"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_proxy_headers",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "origin_forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "contract_mismatch",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "internal_error or another documented stable code",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}/media/complete": {
+      "post": {
+        "tags": [
+          "crate::drive_routes"
+        ],
+        "summary": "Keeps the thumbnail and poster the browser sent (when they are in the bucket and small enough) and returns\nthe file with their URLs.",
+        "operationId": "complete_drive_media",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Orbit-Contract",
+            "in": "header",
+            "description": "Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DriveNode"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_proxy_headers",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "origin_forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "contract_mismatch",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "internal_error or another documented stable code",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}/move": {
       "post": {
         "tags": [
@@ -39256,6 +39512,39 @@
           }
         }
       },
+      "BeginDriveMedia": {
+        "type": "object",
+        "properties": {
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Videos."
+          },
+          "failed": {
+            "type": "boolean",
+            "description": "The browser could not read the file: it gets no thumbnail."
+          },
+          "height": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "width": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Pixels, as the browser measured them."
+          }
+        },
+        "additionalProperties": false
+      },
       "BillingCheckoutBody": {
         "type": "object",
         "required": [
@@ -41762,6 +42051,71 @@
           }
         }
       },
+      "DriveMedia": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "height": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DriveMediaStatus"
+          },
+          "width": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "DriveMediaStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "ready",
+          "failed"
+        ]
+      },
+      "DriveMediaUpload": {
+        "type": "object",
+        "description": "Where the browser PUTs the thumbnail (and a video's poster); then it calls `media/complete`.",
+        "required": [
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "poster_put_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "thumbnail_put_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "DriveNode": {
         "type": "object",
         "description": "A folder or file of the drive.",
@@ -41789,6 +42143,17 @@
           "kind": {
             "$ref": "#/components/schemas/DriveNodeKind"
           },
+          "media": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DriveMedia",
+                "description": "What the browser measured of an image or video; `null` until a browser did."
+              }
+            ]
+          },
           "mime": {
             "type": [
               "string",
@@ -41806,6 +42171,13 @@
             ],
             "description": "`null` at the top level."
           },
+          "poster_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A 5-minute URL of a large frame of a video, for the player."
+          },
           "size": {
             "type": [
               "integer",
@@ -41813,6 +42185,13 @@
             ],
             "format": "int64",
             "description": "Bytes; `null` for folders."
+          },
+          "thumbnail_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A 5-minute URL of the thumbnail (images, videos), when there is one."
           },
           "trashed_at": {
             "type": [

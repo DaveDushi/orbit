@@ -571,6 +571,12 @@ the computer, search with type and date filters, trash (delete forever only with
 (`uploads.ts`): 2 files at a time, 4 parts at a time, the server's one part size per file, retries, resume after a
 reload by picking the same file. Folder ZIP in the browser with `client-zip` (streamed to disk where the browser can).
 Shared logic in `packages/api/src/drive.ts`. Mobile has no Drive screen yet.
+Media (M4): thumbnails (480 px, WebP) and video posters (1280 px) are made in the browser (`features/drive/media.ts`):
+from the local file after an upload, and for older files the first time they show in the grid (one at a time, once
+per tab). `POST .../nodes/{id}/media` records width/height/duration and returns PUT URLs; `.../media/complete` keeps
+only objects that exist and are small enough (1 MiB thumb, 4 MiB poster). Node responses carry `media` and 5-minute
+`thumbnail_url`/`poster_url`. `DriveViewer`: images with previous/next, HTML5 video with poster, audio, PDFs through the
+existing pdf.js `PdfPages`.
 
 ## Apps
 

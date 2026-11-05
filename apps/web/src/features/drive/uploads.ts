@@ -17,6 +17,7 @@ import { folderOf, foldersOf, missingParts, partRange } from '@orbit/api/drive'
 import { ApiProblem } from '@orbit/api/problem'
 import { apiClient } from '@/api/client'
 import { createFolder } from './api'
+import { makeThumbnail } from './media'
 
 /** Files that upload at the same time. */
 const PARALLEL_FILES = 2
@@ -146,7 +147,9 @@ class UploadQueue {
 
   private async run(job: Job) {
     try {
-      const node = await uploadFile(job, (patch) => this.update(job, patch))
+      let node = await uploadFile(job, (patch) => this.update(job, patch))
+      // The thumbnail comes from the local file; without one the file shows its icon.
+      node = (await makeThumbnail(job.item.workspaceId, node, job.file).catch(() => null)) ?? node
       this.update(job, { status: 'done', sent: job.item.size, node })
     } catch (error) {
       if (job.controller.signal.aborted) return

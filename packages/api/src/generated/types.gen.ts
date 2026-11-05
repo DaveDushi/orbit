@@ -304,6 +304,22 @@ export type BackupWorkspaceList = {
     items: Array<BackupWorkspace>;
 };
 
+export type BeginDriveMedia = {
+    /**
+     * Videos.
+     */
+    duration_ms?: number | null;
+    /**
+     * The browser could not read the file: it gets no thumbnail.
+     */
+    failed?: boolean;
+    height?: number | null;
+    /**
+     * Pixels, as the browser measured them.
+     */
+    width?: number | null;
+};
+
 export type BillingCheckoutBody = {
     /**
      * One of `BillingView.plans`.
@@ -1266,6 +1282,24 @@ export type DriveEntryPage = {
     next_offset?: number | null;
 };
 
+export type DriveMedia = {
+    duration_ms?: number | null;
+    height?: number | null;
+    status: DriveMediaStatus;
+    width?: number | null;
+};
+
+export type DriveMediaStatus = 'pending' | 'ready' | 'failed';
+
+/**
+ * Where the browser PUTs the thumbnail (and a video's poster); then it calls `media/complete`.
+ */
+export type DriveMediaUpload = {
+    expires_at: string;
+    poster_put_url?: string | null;
+    thumbnail_put_url?: string | null;
+};
+
 /**
  * A folder or file of the drive.
  */
@@ -1274,6 +1308,7 @@ export type DriveNode = {
     created_by?: string | null;
     id: string;
     kind: DriveNodeKind;
+    media?: null | DriveMedia;
     /**
      * `null` for folders.
      */
@@ -1284,9 +1319,17 @@ export type DriveNode = {
      */
     parent_id?: string | null;
     /**
+     * A 5-minute URL of a large frame of a video, for the player.
+     */
+    poster_url?: string | null;
+    /**
      * Bytes; `null` for folders.
      */
     size?: number | null;
+    /**
+     * A 5-minute URL of the thumbnail (images, videos), when there is one.
+     */
+    thumbnail_url?: string | null;
     /**
      * Set on an item in the trash (only on the item that was trashed, not on what it contains).
      */
@@ -12524,6 +12567,116 @@ export type ListDriveFolderFilesResponses = {
 };
 
 export type ListDriveFolderFilesResponse = ListDriveFolderFilesResponses[keyof ListDriveFolderFilesResponses];
+
+export type BeginDriveMediaData = {
+    body: BeginDriveMedia;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        node_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}/media';
+};
+
+export type BeginDriveMediaErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type BeginDriveMediaError = BeginDriveMediaErrors[keyof BeginDriveMediaErrors];
+
+export type BeginDriveMediaResponses = {
+    200: DriveMediaUpload;
+};
+
+export type BeginDriveMediaResponse = BeginDriveMediaResponses[keyof BeginDriveMediaResponses];
+
+export type CompleteDriveMediaData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        node_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}/media/complete';
+};
+
+export type CompleteDriveMediaErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type CompleteDriveMediaError = CompleteDriveMediaErrors[keyof CompleteDriveMediaErrors];
+
+export type CompleteDriveMediaResponses = {
+    200: DriveNode;
+};
+
+export type CompleteDriveMediaResponse = CompleteDriveMediaResponses[keyof CompleteDriveMediaResponses];
 
 export type MoveDriveNodeData = {
     body: MoveDriveNode;

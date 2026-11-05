@@ -101,3 +101,23 @@ export function driveFileKind(node: Pick<DriveNode, 'kind' | 'mime' | 'name'>): 
   if (mime.startsWith('text/') || /word|excel|spreadsheet|presentation|powerpoint|opendocument|rtf|csv/.test(mime)) return 'document'
   return 'other'
 }
+
+/** The long side of a thumbnail and of a video's poster, in pixels. */
+export const THUMB_PIXELS = 480
+export const POSTER_PIXELS = 1280
+
+/** The size of an image scaled down so its long side is at most `max` (never scaled up), in whole pixels. */
+export function scaledSize(width: number, height: number, max: number): { width: number; height: number } {
+  const scale = Math.min(1, max / Math.max(width, height, 1))
+  return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) }
+}
+
+/**
+ * Whether a browser should make this file's thumbnail now: an image or video without one yet (also when an earlier
+ * try stopped before it finished). A file the browser could not read (`failed`) is not tried again.
+ */
+export function needsThumbnail(node: Pick<DriveNode, 'kind' | 'mime' | 'name' | 'media'>): boolean {
+  const kind = driveFileKind(node)
+  if (kind !== 'image' && kind !== 'video') return false
+  return node.media == null || node.media.status === 'pending'
+}

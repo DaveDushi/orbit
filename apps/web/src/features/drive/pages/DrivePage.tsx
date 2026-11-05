@@ -16,6 +16,7 @@ import {
   Trash,
 } from 'reicon-react'
 import type { DriveEntry, DriveNode } from '@orbit/api/generated/types.gen'
+import { needsThumbnail } from '@orbit/api/drive'
 import { ApiProblem } from '@orbit/api/problem'
 import { cn } from 'cn'
 import { EmptyState } from '@/components/common/EmptyState'
@@ -54,6 +55,8 @@ import { NameDialog } from '../components/NameDialog'
 import { NodeIcon } from '../components/NodeIcon'
 import { UploadPanel } from '../components/UploadPanel'
 import { DriveTrash } from '../components/DriveTrash'
+import { DriveViewer } from '../components/DriveViewer'
+import { queueThumbnails } from '../media'
 import { downloadFile, downloadZip } from '../download'
 import { draggingFiles, droppedFiles, pickedFolder } from '../dropped'
 import { uploadQueue, useUploads } from '../uploads'
@@ -106,6 +109,7 @@ export function DrivePage({ view }: { view?: 'trash' }) {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [anchor, setAnchor] = useState<string | null>(null)
   const [dialog, setDialog] = useState<Dialog>(null)
+  const [viewing, setViewing] = useState<string | null>(null)
   const [dropping, setDropping] = useState(false)
   const [busy, setBusy] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
@@ -150,12 +154,20 @@ export function DrivePage({ view }: { view?: 'trash' }) {
     localStorage.setItem(LAYOUT_KEY, layout)
   }, [layout])
 
+  // Older images and videos get their thumbnail the first time someone sees them in the grid.
+  const missingThumbnails = layout === 'grid' ? nodes.filter(needsThumbnail) : []
+  const missingKey = missingThumbnails.map((node) => node.id).join(',')
+  useEffect(() => {
+    if (missingThumbnails.length > 0) queueThumbnails(workspaceId, missingThumbnails, refresh)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the ids decide; the nodes are new objects on each refetch
+  }, [workspaceId, missingKey])
+
   if (view === 'trash') return <DriveTrash workspaceId={workspaceId} />
 
   const openFolder = (id: string | null) => navigate(id === null ? '/drive' : `/drive/${id}`)
   const open = (node: DriveNode) => {
     if (node.kind === 'folder') openFolder(node.id)
-    else void downloadFile(workspaceId, node.id).catch((error: unknown) => toast.error(problemText(error, 'Could not download the file.')))
+    else setViewing(node.id)
   }
 
   const select = (node: DriveNode, event: MouseEvent | KeyboardEvent) => {
@@ -304,6 +316,7 @@ export function DrivePage({ view }: { view?: 'trash' }) {
             onOpen={open}
             onDragStart={dragNodes}
             onDropNodes={moveNodes}
+            onThumbnailExpired={refresh}
           />
         ))}
       </div>
@@ -505,6 +518,15 @@ export function DrivePage({ view }: { view?: 'trash' }) {
         />
       </Pane>
       <UploadPanel workspaceId={workspaceId} />
+      {viewing ? (
+        <DriveViewer
+          workspaceId={workspaceId}
+          files={nodes.filter((node) => node.kind === 'file')}
+          startId={viewing}
+          onDownload={(node) => void download([node])}
+          onClose={() => setViewing(null)}
+        />
+      ) : null}
       {dialog?.kind === 'new-folder' ? (
         <NameDialog
           title="New folder"
@@ -694,7 +716,11 @@ function ListRow({
         onCheckedChange={() => onToggle(node.id)}
       />
       <span className="flex min-w-0 flex-1 items-center gap-2.5">
-        <NodeIcon node={node} className="size-[18px]" />
+        {node.thumbnail_url ? (
+          <img src={node.thumbnail_url} alt="" loading="lazy" draggable={false} className="size-[18px] shrink-0 rounded-sm object-cover" />
+        ) : (
+          <NodeIcon node={node} className="size-[18px]" />
+        )}
         <span className="truncate">{node.name}</span>
       </span>
       {searching ? <span className="w-48 truncate text-xs text-muted-foreground max-[899px]:hidden">{entry.folder_path || 'My Drive'}</span> : null}
@@ -720,9 +746,10 @@ function ListRow({
   )
 }
 
-function GridCard({ entry, searching, selected, onSelect, onOpen, onDragStart, onDropNodes }: ItemProps) {
+function GridCard({ entry, searching, selected, onSelect, onOpen, onDragStart, onDropNodes, onThumbnailExpired }: ItemProps & { onThumbnailExpired: () => void }) {
   const { node } = entry
   const drop = useFolderDrop(node, onDropNodes)
+  const retried = useRef(false)
   return (
     <div
       role="gridcell"
@@ -742,8 +769,30 @@ function GridCard({ entry, searching, selected, onSelect, onOpen, onDragStart, o
       onDragStart={(event) => onDragStart(event, node)}
       {...drop.handlers}
     >
-      <div className="flex aspect-[4/3] items-center justify-center bg-muted/40">
-        <NodeIcon node={node} className="size-10" />
+      <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden bg-muted/40">
+        {node.thumbnail_url ? (
+          <img
+            src={node.thumbnail_url}
+            alt=""
+            loading="lazy"
+            draggable={false}
+            className="size-full object-cover"
+            data-drive-thumbnail
+            // The URL lives 5 minutes: a later load asks for the list again (once, so a missing object cannot loop).
+            onError={() => {
+              if (retried.current) return
+              retried.current = true
+              onThumbnailExpired()
+            }}
+          />
+        ) : (
+          <NodeIcon node={node} className="size-10" />
+        )}
+        {node.media?.duration_ms != null ? (
+          <span className="absolute right-1.5 bottom-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[11px] font-medium text-white tabular-nums">
+            {duration(node.media.duration_ms)}
+          </span>
+        ) : null}
       </div>
       <div className="flex flex-col gap-0.5 px-2.5 py-2">
         <span className="truncate text-[13px] font-medium">{node.name}</span>
@@ -753,4 +802,12 @@ function GridCard({ entry, searching, selected, onSelect, onOpen, onDragStart, o
       </div>
     </div>
   )
+}
+
+/** `1:05`, `1:02:03`. */
+function duration(milliseconds: number) {
+  const seconds = Math.round(milliseconds / 1000)
+  const [hours, minutes, rest] = [Math.floor(seconds / 3600), Math.floor((seconds % 3600) / 60), seconds % 60]
+  const pad = (value: number) => value.toString().padStart(2, '0')
+  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(rest)}` : `${minutes}:${pad(rest)}`
 }

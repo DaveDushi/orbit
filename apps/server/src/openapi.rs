@@ -226,6 +226,8 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::drive_routes::restore_drive_node,
         crate::drive_routes::list_drive_folder_files,
         crate::drive_routes::get_drive_download,
+        crate::drive_routes::begin_drive_media,
+        crate::drive_routes::complete_drive_media,
         crate::drive_routes::create_drive_downloads,
         crate::drive_routes::list_drive_trash,
         crate::drive_routes::empty_drive_trash,

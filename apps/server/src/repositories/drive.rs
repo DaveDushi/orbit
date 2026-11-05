@@ -30,7 +30,14 @@ const MAX_NAME_SUFFIX: u32 = 1_000;
 
 const NODE_COLUMNS: &str = "drive_nodes.id, drive_nodes.parent_id, drive_nodes.kind, drive_nodes.name, \
     drive_nodes.size, drive_nodes.mime, drive_nodes.created_by, drive_nodes.created_at, drive_nodes.updated_by, \
-    drive_nodes.updated_at, drive_nodes.trashed_at";
+    drive_nodes.updated_at, drive_nodes.trashed_at, drive_media.width, drive_media.height, drive_media.duration_ms, \
+    drive_media.status AS media_status, drive_media.thumb_key, drive_media.poster_key";
+/// The nodes with their media (images and videos the browser measured).
+const NODE_FROM: &str =
+    "drive_nodes LEFT JOIN drive_media ON drive_media.blob_id = drive_nodes.blob_id";
+/// The largest thumbnail and poster objects that are kept.
+pub const MAX_THUMB_BYTES: u64 = 1024 * 1024;
+pub const MAX_POSTER_BYTES: u64 = 4 * 1024 * 1024;
 const UPLOAD_COLUMNS: &str = "id, r2_key, size, mime, upload_id, part_size, upload_parent_id, upload_name, \
     upload_conflict, created_by, created_at";
 
@@ -75,6 +82,52 @@ pub struct DriveNode {
     /// Set on an item in the trash (only on the item that was trashed, not on what it contains).
     #[schema(value_type = Option<String>, format = DateTime)]
     pub trashed_at: Option<TimestampMillis>,
+    /// What the browser measured of an image or video; `null` until a browser did.
+    pub media: Option<DriveMedia>,
+    /// A 5-minute URL of the thumbnail (images, videos), when there is one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thumbnail_url: Option<String>,
+    /// A 5-minute URL of a large frame of a video, for the player.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub poster_url: Option<String>,
+    #[serde(skip)]
+    pub thumb_key: Option<String>,
+    #[serde(skip)]
+    pub poster_key: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DriveMediaStatus {
+    /// A browser is making the thumbnail.
+    Pending,
+    Ready,
+    /// The browser could not read the file (a format it cannot show): no thumbnail.
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, ToSchema)]
+pub struct DriveMedia {
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub duration_ms: Option<i64>,
+    pub status: DriveMediaStatus,
+}
+
+/// What a browser measured of an image or video.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MediaFacts {
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub duration_ms: Option<i64>,
+}
+
+/// Where a browser puts the thumbnail and poster of a file.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MediaTarget {
+    pub blob_id: Id,
+    pub thumb_key: Option<String>,
+    pub poster_key: Option<String>,
 }
 
 /// One folder on the way from the top level to a node.
@@ -286,6 +339,8 @@ pub enum DriveError {
     InvalidPart,
     #[error("too many items in one request")]
     TooManyItems,
+    #[error("only images and videos have a thumbnail")]
+    NotMedia,
     #[error("the workspace has no S3 storage for Drive")]
     NoStorage,
     #[error(transparent)]
@@ -335,7 +390,7 @@ impl DriveRepository {
             SortOrder::Asc => "ASC",
             SortOrder::Desc => "DESC",
         };
-        let mut query = SqlBuilder::new(format!("SELECT {NODE_COLUMNS} FROM drive_nodes WHERE "));
+        let mut query = SqlBuilder::new(format!("SELECT {NODE_COLUMNS} FROM {NODE_FROM} WHERE "));
         query.push("drive_nodes.workspace_id = ");
         query.push_bind(workspace_id.to_string());
         push_parent(&mut query, "drive_nodes.parent_id", parent_id);
@@ -582,7 +637,7 @@ impl DriveRepository {
         let mut connection = self.database.pool().acquire().await?;
         require_actor(&mut connection, workspace_id, user_id).await?;
         let mut query = SqlBuilder::new(format!(
-            "SELECT {NODE_COLUMNS} FROM drive_nodes WHERE drive_nodes.workspace_id = "
+            "SELECT {NODE_COLUMNS} FROM {NODE_FROM} WHERE drive_nodes.workspace_id = "
         ));
         query.push_bind(workspace_id.to_string());
         query.push(
@@ -704,7 +759,7 @@ impl DriveRepository {
         query.push_bind(workspace_id.to_string());
         push_live_walk(&mut query);
         query.push(format!(
-            " SELECT {NODE_COLUMNS}, live.folder_path FROM drive_nodes JOIN live ON live.id = drive_nodes.id WHERE 1 = 1"
+            " SELECT {NODE_COLUMNS}, live.folder_path FROM {NODE_FROM} JOIN live ON live.id = drive_nodes.id WHERE 1 = 1"
         ));
         if let Some(text) = search
             .query
@@ -761,7 +816,7 @@ impl DriveRepository {
         query.push_bind(folder_id.to_string());
         push_live_walk(&mut query);
         query.push(format!(
-            " SELECT {NODE_COLUMNS}, live.folder_path FROM drive_nodes JOIN live ON live.id = drive_nodes.id \
+            " SELECT {NODE_COLUMNS}, live.folder_path FROM {NODE_FROM} JOIN live ON live.id = drive_nodes.id \
              WHERE drive_nodes.kind = 'file' ORDER BY live.folder_path, drive_nodes.name_lower, drive_nodes.id"
         ));
         let rows = page_rows(&mut query, paging, &mut connection).await?;
@@ -802,6 +857,124 @@ impl DriveRepository {
             }
         }
         Ok(objects)
+    }
+
+    /// Records what a browser measured of a live image or video and where its thumbnail (and, for a video, its
+    /// poster) go. They stay `pending` until [`Self::finish_media`]; with `failed` the file gets no thumbnail.
+    pub async fn begin_media(
+        &self,
+        workspace_id: Id,
+        user_id: Id,
+        node_id: Id,
+        facts: MediaFacts,
+        failed: bool,
+        now: TimestampMillis,
+    ) -> Result<MediaTarget, DriveError> {
+        let mut transaction = self.database.immediate_transaction().await?;
+        require_actor(&mut transaction, workspace_id, user_id).await?;
+        let chain = live_chain(&mut transaction, workspace_id, node_id).await?;
+        if chain[chain.len() - 1].kind != DriveNodeKind::File {
+            return Err(DriveError::NotMedia);
+        }
+        let row = sqlx::query(
+            "SELECT drive_blobs.id, drive_blobs.mime FROM drive_nodes JOIN drive_blobs ON drive_blobs.id = drive_nodes.blob_id \
+             WHERE drive_nodes.id = $1",
+        )
+        .bind(node_id.to_string())
+        .fetch_one(&mut *transaction)
+        .await?;
+        let blob_id = parse_id(row.try_get("id")?)?;
+        let mime: String = row.try_get("mime")?;
+        let video = mime.starts_with("video/");
+        if !video && !mime.starts_with("image/") {
+            return Err(DriveError::NotMedia);
+        }
+        let key = |kind: &str| (!failed).then(|| format!("drive/{workspace_id}/{blob_id}.{kind}"));
+        let target = MediaTarget {
+            blob_id,
+            thumb_key: key("thumb"),
+            poster_key: if video { key("poster") } else { None },
+        };
+        let positive = |value: Option<i64>| value.filter(|value| *value > 0);
+        sqlx::query(
+            "INSERT INTO drive_media (blob_id, width, height, duration_ms, thumb_key, poster_key, status, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (blob_id) DO UPDATE SET width = excluded.width, \
+             height = excluded.height, duration_ms = excluded.duration_ms, thumb_key = excluded.thumb_key, \
+             poster_key = excluded.poster_key, status = excluded.status, updated_at = excluded.updated_at",
+        )
+        .bind(blob_id.to_string())
+        .bind(positive(facts.width))
+        .bind(positive(facts.height))
+        .bind(facts.duration_ms.filter(|value| *value >= 0))
+        .bind(target.thumb_key.clone())
+        .bind(target.poster_key.clone())
+        .bind(if failed { "failed" } else { "pending" })
+        .bind(now.as_millis())
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        Ok(target)
+    }
+
+    /// The pending thumbnail and poster of a live file, for the member who checks them.
+    pub async fn media_target(
+        &self,
+        workspace_id: Id,
+        user_id: Id,
+        node_id: Id,
+    ) -> Result<MediaTarget, DriveError> {
+        let mut connection = self.database.pool().acquire().await?;
+        require_actor(&mut connection, workspace_id, user_id).await?;
+        live_chain(&mut connection, workspace_id, node_id).await?;
+        let row = sqlx::query(
+            "SELECT drive_media.blob_id, drive_media.thumb_key, drive_media.poster_key FROM drive_nodes \
+             JOIN drive_media ON drive_media.blob_id = drive_nodes.blob_id WHERE drive_nodes.id = $1",
+        )
+        .bind(node_id.to_string())
+        .fetch_optional(&mut *connection)
+        .await?
+        .ok_or(DriveError::NotMedia)?;
+        Ok(MediaTarget {
+            blob_id: parse_id(row.try_get("blob_id")?)?,
+            thumb_key: row.try_get("thumb_key")?,
+            poster_key: row.try_get("poster_key")?,
+        })
+    }
+
+    /// Keeps the thumbnail and poster that the bucket has (the caller checked them): `ready` with a thumbnail,
+    /// else `failed`. Returns the node.
+    pub async fn finish_media(
+        &self,
+        workspace_id: Id,
+        user_id: Id,
+        node_id: Id,
+        thumb_key: Option<&str>,
+        poster_key: Option<&str>,
+        now: TimestampMillis,
+    ) -> Result<DriveNode, DriveError> {
+        let mut transaction = self.database.immediate_transaction().await?;
+        require_actor(&mut transaction, workspace_id, user_id).await?;
+        live_chain(&mut transaction, workspace_id, node_id).await?;
+        sqlx::query(
+            "UPDATE drive_media SET thumb_key = $1, poster_key = $2, status = $3, updated_at = $4 \
+             WHERE blob_id = (SELECT blob_id FROM drive_nodes WHERE id = $5)",
+        )
+        .bind(thumb_key)
+        .bind(poster_key)
+        .bind(if thumb_key.is_some() {
+            "ready"
+        } else {
+            "failed"
+        })
+        .bind(now.as_millis())
+        .bind(node_id.to_string())
+        .execute(&mut *transaction)
+        .await?;
+        let node = load_node(&mut transaction, workspace_id, node_id)
+            .await?
+            .ok_or(DriveError::NotFound)?;
+        transaction.commit().await?;
+        Ok(node)
     }
 
     /// Checks the target of a new upload and records it. With `OnConflict::Fail` a used name is refused now;
@@ -1427,7 +1600,7 @@ async fn load_node(
     node_id: Id,
 ) -> Result<Option<DriveNode>, sqlx::Error> {
     sqlx::query(sqlx::AssertSqlSafe(format!(
-        "SELECT {NODE_COLUMNS} FROM drive_nodes WHERE drive_nodes.id = $1 AND drive_nodes.workspace_id = $2"
+        "SELECT {NODE_COLUMNS} FROM {NODE_FROM} WHERE drive_nodes.id = $1 AND drive_nodes.workspace_id = $2"
     )))
     .bind(node_id.to_string())
     .bind(workspace_id.to_string())
@@ -1453,6 +1626,25 @@ fn node_from_row(row: &sqlx::any::AnyRow) -> Result<DriveNode, sqlx::Error> {
         trashed_at: row
             .try_get::<Option<i64>, _>("trashed_at")?
             .map(TimestampMillis::from_millis),
+        media: row
+            .try_get::<Option<String>, _>("media_status")?
+            .map(|status| {
+                Ok::<_, sqlx::Error>(DriveMedia {
+                    width: row.try_get("width")?,
+                    height: row.try_get("height")?,
+                    duration_ms: row.try_get("duration_ms")?,
+                    status: match status.as_str() {
+                        "ready" => DriveMediaStatus::Ready,
+                        "failed" => DriveMediaStatus::Failed,
+                        _ => DriveMediaStatus::Pending,
+                    },
+                })
+            })
+            .transpose()?,
+        thumbnail_url: None,
+        poster_url: None,
+        thumb_key: row.try_get("thumb_key")?,
+        poster_key: row.try_get("poster_key")?,
     })
 }
 

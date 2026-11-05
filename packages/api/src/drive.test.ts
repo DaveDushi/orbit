@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { foldersOf, missingParts, partRange, sameFile, uniqueZipPaths, zipPath, zipSafeName } from './drive'
+import type { DriveNode } from './generated/types.gen'
+import { foldersOf, missingParts, needsThumbnail, partRange, sameFile, scaledSize, uniqueZipPaths, zipPath, zipSafeName } from './drive'
 
 const MIB = 1024 * 1024
 
@@ -56,5 +57,24 @@ describe('ZIP paths', () => {
       'a/X_ (3).txt',
       'b/x_.txt',
     ])
+  })
+})
+
+describe('thumbnails', () => {
+  test('sizes keep the aspect ratio and never grow', () => {
+    expect(scaledSize(4000, 3000, 480)).toEqual({ width: 480, height: 360 })
+    expect(scaledSize(1080, 1920, 480)).toEqual({ width: 270, height: 480 })
+    expect(scaledSize(100, 50, 480)).toEqual({ width: 100, height: 50 })
+    expect(scaledSize(10000, 1, 480)).toEqual({ width: 480, height: 1 })
+  })
+
+  test('only images and videos without a finished thumbnail need one', () => {
+    const file = (mime: string, media: DriveNode['media']) => ({ kind: 'file' as const, mime, name: 'f', media })
+    expect(needsThumbnail(file('image/png', null))).toBe(true)
+    expect(needsThumbnail(file('video/webm', { status: 'pending' }))).toBe(true)
+    expect(needsThumbnail(file('image/png', { status: 'ready' }))).toBe(false)
+    expect(needsThumbnail(file('image/heic', { status: 'failed' }))).toBe(false)
+    expect(needsThumbnail(file('application/pdf', null))).toBe(false)
+    expect(needsThumbnail({ kind: 'folder', mime: null, name: 'f', media: null })).toBe(false)
   })
 })
