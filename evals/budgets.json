@@ -1,5 +1,5 @@
 {
-  "_about": "Upper limits for evals/run.sh. A metric over its limit fails the run (exit 1). Set from the 2026-11-05 baseline (165c668) plus headroom for VM noise; lower a limit when a fix lands. Paths are the dotted paths of the result JSON. 2026-11-05 (0c37db7): precompressed assets landed; LCP and transfer limits lowered. docs.phone TBT raised to 550: the phone now loads the whole doc editor inside the observation window (before, its chunks were still downloading), so the same work now counts.",
+  "_about": "Upper limits for evals/run.sh. A metric over its limit fails the run (exit 1). Set from the 2026-11-05 baseline (165c668) plus headroom for VM noise; lower a limit when a fix lands. Paths are the dotted paths of the result JSON. 2026-11-05 (0c37db7): precompressed assets landed; LCP and transfer limits lowered. docs.phone TBT stays at 400 and is over it: the phone now loads the whole doc editor inside the observation window, so the same work now counts; the lazy routes task will fix it.",
   "max": {
     "perf.bundle.entry_js.gzip_kb": 880,
     "perf.bundle.entry_css.gzip_kb": 50,
@@ -19,7 +19,7 @@
     "perf.pageload.pages.login.phone.tbt_ms": 300,
     "perf.pageload.pages.home.phone.tbt_ms": 300,
     "perf.pageload.pages.app_tasks.phone.tbt_ms": 400,
-    "perf.pageload.pages.docs.phone.tbt_ms": 550,
+    "perf.pageload.pages.docs.phone.tbt_ms": 400,
     "perf.pageload.pages.login.desktop.cls": 0.1,
     "perf.pageload.pages.home.desktop.cls": 0.1,
     "perf.pageload.pages.app_tasks.desktop.cls": 0.1,
