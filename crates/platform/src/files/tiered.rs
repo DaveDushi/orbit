@@ -309,6 +309,16 @@ impl TieredBlobStore {
         if let Some(bucket) = &state.bucket {
             for (index, object) in remote.iter().enumerate() {
                 let _mutation = self.mutations.begin().await;
+                // Deleting the source would delete the only copy. Saving the settings refuses such buckets.
+                if bucket.same_object(&own.bucket, &object.key) {
+                    tracing::warn!(
+                        %workspace_id,
+                        storage_key = %object.key,
+                        "the workspace bucket and the installation's bucket are the same place; the file stays"
+                    );
+                    set_remaining(remote.len() - index - 1);
+                    continue;
+                }
                 if own.bucket.last_modified(&object.key).await?.is_none() {
                     self.copy_object(bucket, &own.bucket, &object.key).await?;
                 }

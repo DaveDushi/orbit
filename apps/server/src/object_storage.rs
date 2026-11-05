@@ -38,7 +38,16 @@ pub fn bucket(
     secret_access_key: String,
     owner: Owner,
 ) -> Result<S3Bucket, String> {
-    let config = S3Config {
+    let config = config(s3, secret_access_key);
+    match owner {
+        Owner::Installation => S3Bucket::new(config),
+        Owner::Workspace => S3Bucket::new_public(config),
+    }
+    .map_err(|error| error.to_string())
+}
+
+fn config(s3: &S3Settings, secret_access_key: String) -> S3Config {
+    S3Config {
         endpoint: s3.endpoint.clone(),
         region: s3.region.clone(),
         bucket: s3.bucket.clone(),
@@ -46,12 +55,13 @@ pub fn bucket(
         access_key_id: s3.access_key_id.clone(),
         secret_access_key,
         path_style: s3.path_style,
-    };
-    match owner {
-        Owner::Installation => S3Bucket::new(config),
-        Owner::Workspace => S3Bucket::new_public(config),
     }
-    .map_err(|error| error.to_string())
+}
+
+/// Whether the two buckets can hold the same objects ([`S3Config::overlaps`]). The installation and each workspace
+/// need their own place: the mover deletes what it moved out of a bucket.
+pub fn overlaps(left: &S3Settings, right: &S3Settings) -> bool {
+    config(left, String::new()).overlaps(&config(right, String::new()))
 }
 
 /// The saved bucket, with its secret decrypted under the app key.

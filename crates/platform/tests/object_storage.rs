@@ -502,3 +502,121 @@ async fn backups_go_to_s3_and_restore_from_it() {
         Err(orbit_platform::BackupError::NotFound { .. })
     ));
 }
+
+#[test]
+fn buckets_overlap_on_one_server_and_bucket_when_one_prefix_contains_the_other() {
+    let config = |endpoint: &str, bucket: &str, prefix: &str| S3Config {
+        endpoint: endpoint.to_owned(),
+        region: String::new(),
+        bucket: bucket.to_owned(),
+        prefix: prefix.to_owned(),
+        access_key_id: "key".to_owned(),
+        secret_access_key: "secret".to_owned(),
+        path_style: true,
+    };
+    let at = |prefix: &str| config("https://s3.example.com", "files", prefix);
+    for (left, right) in [
+        ("", ""),
+        ("x", "x"),
+        ("", "x/"),
+        ("x/", "x/y/"),
+        ("/x", "x"),
+    ] {
+        assert!(at(left).overlaps(&at(right)), "{left:?} {right:?}");
+        assert!(at(right).overlaps(&at(left)), "{right:?} {left:?}");
+    }
+    for (left, right) in [("a/", "b/"), ("x", "xy"), ("x/y", "x/z")] {
+        assert!(!at(left).overlaps(&at(right)), "{left:?} {right:?}");
+    }
+    // The same server written another way.
+    for endpoint in [
+        "https://S3.Example.com/",
+        "https://s3.example.com:443",
+        "http://s3.example.com:443",
+    ] {
+        assert!(
+            config(endpoint, "files", "").overlaps(&at("")),
+            "{endpoint}"
+        );
+    }
+    assert!(
+        config("https://s3.eu-central-1.amazonaws.com", "files", "").overlaps(&config(
+            "https://s3.amazonaws.com",
+            "files",
+            ""
+        )),
+        "bucket names are global on AWS"
+    );
+    for other in [
+        config("https://s3.example.com", "other", ""),
+        config("https://s3.example.com:9000", "files", ""),
+        config("https://minio.example.com", "files", ""),
+    ] {
+        assert!(!other.overlaps(&at("")), "{other:?}");
+    }
+}
+
+/// A workspace bucket and the installation's bucket that are the same place (as two saves once allowed): the
+/// mover must not delete what it believes it moved.
+async fn same_place(fixture: &Fixture, workspace: Id, attachments: bool, active: bool) {
+    fixture.storage.configure(ObjectStorageState {
+        bucket: Some(fixture.bucket.clone()),
+        attachments,
+        workspace_buckets: [(
+            workspace.to_string(),
+            WorkspaceBucket {
+                bucket: S3Bucket::new(fixture.bucket.config().clone()).unwrap(),
+                active,
+            },
+        )]
+        .into(),
+        ..Default::default()
+    });
+}
+
+#[tokio::test]
+async fn the_mover_keeps_files_when_a_workspace_bucket_is_the_installations_bucket() {
+    let fixture = Fixture::new(true).await;
+    let workspace = Id::new_v7();
+    let keys = [
+        fixture.upload_to(workspace, b"first").await,
+        fixture.upload_to(workspace, b"second").await,
+    ];
+    assert!(fixture.in_bucket(&keys[0]).await && fixture.in_bucket(&keys[1]).await);
+
+    same_place(&fixture, workspace, true, true).await;
+    fixture.store.move_blobs().await.unwrap();
+    for key in &keys {
+        assert!(fixture.in_bucket(key).await, "{key} was deleted");
+    }
+    assert_eq!(fixture.read(&keys[0]).await, b"first");
+    assert_eq!(
+        fixture
+            .store
+            .workspace_status(&workspace.to_string())
+            .unwrap()
+            .remaining,
+        0
+    );
+}
+
+#[tokio::test]
+async fn the_installation_pass_keeps_files_when_a_workspace_bucket_is_the_installations_bucket() {
+    for (attachments, active) in [(false, true), (true, false), (false, false)] {
+        let fixture = Fixture::new(true).await;
+        let workspace = Id::new_v7();
+        let own = fixture.upload_to(workspace, b"own").await;
+        let other = fixture.upload(b"another workspace").await;
+
+        same_place(&fixture, workspace, attachments, active).await;
+        fixture.store.move_blobs().await.unwrap();
+        fixture.store.move_blobs().await.unwrap();
+        for (key, contents) in [(&own, &b"own"[..]), (&other, &b"another workspace"[..])] {
+            assert_eq!(
+                fixture.read(key).await,
+                contents,
+                "attachments {attachments}, active {active}"
+            );
+        }
+    }
+}

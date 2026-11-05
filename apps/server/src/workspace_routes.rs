@@ -2426,6 +2426,21 @@ async fn save_s3(
         crate::secret_box::encrypt_secret(key, &secret)
             .map_err(|()| internal(instance, request_id.as_ref()))?,
     );
+    let workspaces = WorkspaceStorageRepository::new(state.identity.database().clone())
+        .all()
+        .await
+        .map_err(|_| internal(instance, request_id.as_ref()))?;
+    // Removed workspace buckets count until their files moved back.
+    if workspaces
+        .iter()
+        .any(|workspace| crate::object_storage::overlaps(&workspace.s3, &s3))
+    {
+        return Err(invalid(
+            "bucket",
+            "a workspace keeps its files under this bucket and prefix; use another bucket or a prefix that \
+             neither contains nor lies under a workspace's prefix.",
+        ));
+    }
     if let Some(old) = &saved.s3 {
         let moved =
             (&old.endpoint, &old.bucket, &old.prefix) != (&s3.endpoint, &s3.bucket, &s3.prefix);
@@ -2651,11 +2666,24 @@ async fn save_workspace_bucket(
     if installation
         .s3
         .as_ref()
-        .is_some_and(|own| location_of(own) == location_of(&s3))
+        .is_some_and(|own| crate::object_storage::overlaps(own, &s3))
     {
         return Err(invalid(
             "bucket",
-            "the installation keeps its files under this bucket and prefix; use another prefix.",
+            "the installation keeps its files under this bucket and prefix; use another bucket or a prefix \
+             that neither contains nor lies under the installation's prefix.",
+        ));
+    }
+    let others = repository
+        .all()
+        .await
+        .map_err(|_| internal(instance, request_id.as_ref()))?;
+    if others.iter().any(|other| {
+        other.workspace_id != workspace_id && crate::object_storage::overlaps(&other.s3, &s3)
+    }) {
+        return Err(invalid(
+            "bucket",
+            "another workspace keeps its files under this bucket and prefix; use another bucket or prefix.",
         ));
     }
     if let Some(old) = saved.filter(|old| location_of(&old.s3) != location_of(&s3)) {

@@ -21,6 +21,7 @@ struct Fixture {
     storage: ObjectStorage,
     app: axum::Router,
     cookie: String,
+    workspace_id: orbit_platform::Id,
 }
 
 async fn fixture() -> Fixture {
@@ -73,6 +74,7 @@ async fn fixture() -> Fixture {
         storage,
         app,
         cookie: format!("__Host-orbit_session={}", setup.session.token),
+        workspace_id: setup.workspace_id,
     }
 }
 
@@ -292,4 +294,174 @@ async fn a_command_without_the_server_finds_the_backups_in_the_saved_bucket() {
         .await
         .unwrap_err();
     assert!(error.contains("cannot be decrypted"), "{error}");
+}
+
+/// A workspace bucket in the fake S3 server (a workspace may not save one there through the API) under `prefix`.
+async fn save_workspace_bucket(
+    fixture: &Fixture,
+    workspace_id: orbit_platform::Id,
+    body: &Value,
+    prefix: &str,
+) {
+    sqlx::query(
+        "INSERT INTO workspace_storage (workspace_id, endpoint, region, bucket, prefix, access_key_id, \
+         secret_access_key, path_style, active, updated_at) VALUES ($1, $2, 'us-east-1', $3, $4, 'key', $5, 1, 1, 0)",
+    )
+    .bind(workspace_id.to_string())
+    .bind(body["endpoint"].as_str().unwrap())
+    .bind(body["bucket"].as_str().unwrap())
+    .bind(prefix)
+    .bind(b"sealed".to_vec())
+    .execute(fixture.database.pool())
+    .await
+    .unwrap();
+}
+
+async fn other_workspace(fixture: &Fixture) -> orbit_platform::Id {
+    let (status, workspace) = fixture
+        .call("POST", "/api/v1/workspaces", Some(json!({"name": "Other"})))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{workspace}");
+    workspace["id"].as_str().unwrap().parse().unwrap()
+}
+
+fn with_prefix(body: &Value, prefix: &str) -> Value {
+    let mut body = body.clone();
+    body["prefix"] = json!(prefix);
+    body
+}
+
+#[tokio::test]
+async fn the_installation_bucket_cannot_overlap_a_workspace_bucket() {
+    for (workspace, installation) in [
+        ("orbit", "/orbit/"),
+        ("", "x/"),
+        ("x", ""),
+        ("x/", "x/y/"),
+        ("x/y", "x"),
+    ] {
+        let fixture = fixture().await;
+        let body = s3_body().await;
+        save_workspace_bucket(&fixture, fixture.workspace_id, &body, workspace).await;
+        // A removed bucket counts until its files moved back.
+        sqlx::query("UPDATE workspace_storage SET active = 0")
+            .execute(fixture.database.pool())
+            .await
+            .unwrap();
+        let (status, problem) = fixture
+            .call(
+                "PUT",
+                "/api/v1/admin/settings/s3",
+                Some(with_prefix(&body, installation)),
+            )
+            .await;
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{workspace:?} {installation:?} {problem}"
+        );
+        assert_eq!(problem["code"], "invalid_storage_settings");
+        assert!(
+            problem["detail"]
+                .as_str()
+                .unwrap()
+                .starts_with("bucket: a workspace keeps its files"),
+            "{problem}"
+        );
+        assert!(fixture.storage.bucket().is_none());
+    }
+
+    // Prefixes side by side are separate places.
+    let fixture = fixture().await;
+    let body = s3_body().await;
+    save_workspace_bucket(&fixture, fixture.workspace_id, &body, "a").await;
+    let (status, view) = fixture
+        .call(
+            "PUT",
+            "/api/v1/admin/settings/s3",
+            Some(with_prefix(&body, "b/")),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+}
+
+#[tokio::test]
+async fn a_workspace_bucket_cannot_overlap_the_installation_or_another_workspace() {
+    let uri =
+        |fixture: &Fixture| format!("/api/v1/workspaces/{}/storage/bucket", fixture.workspace_id);
+    for (installation, workspace) in [
+        ("orbit", "orbit"),
+        ("", "x/"),
+        ("x", ""),
+        ("x/", "x/y/"),
+        ("x/y", "x"),
+    ] {
+        let fixture = fixture().await;
+        let body = s3_body().await;
+        let (status, view) = fixture
+            .call(
+                "PUT",
+                "/api/v1/admin/settings/s3",
+                Some(with_prefix(&body, installation)),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{view}");
+        let (status, problem) = fixture
+            .call("PUT", &uri(&fixture), Some(with_prefix(&body, workspace)))
+            .await;
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{installation:?} {workspace:?} {problem}"
+        );
+        assert!(
+            problem["detail"]
+                .as_str()
+                .unwrap()
+                .starts_with("bucket: the installation keeps its files"),
+            "{problem}"
+        );
+
+        // Another workspace's bucket, also a removed one.
+        let fixture = self::fixture().await;
+        let other = other_workspace(&fixture).await;
+        save_workspace_bucket(&fixture, other, &body, installation).await;
+        sqlx::query("UPDATE workspace_storage SET active = 0")
+            .execute(fixture.database.pool())
+            .await
+            .unwrap();
+        let (status, problem) = fixture
+            .call("PUT", &uri(&fixture), Some(with_prefix(&body, workspace)))
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+        assert!(
+            problem["detail"]
+                .as_str()
+                .unwrap()
+                .starts_with("bucket: another workspace keeps its files"),
+            "{problem}"
+        );
+    }
+
+    // Prefixes side by side pass the check; the local fake server then fails the public-internet rule.
+    let fixture = fixture().await;
+    let body = s3_body().await;
+    let (status, _) = fixture
+        .call(
+            "PUT",
+            "/api/v1/admin/settings/s3",
+            Some(with_prefix(&body, "a/")),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let other = other_workspace(&fixture).await;
+    save_workspace_bucket(&fixture, other, &body, "c").await;
+    let (status, problem) = fixture
+        .call("PUT", &uri(&fixture), Some(with_prefix(&body, "b/")))
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+    assert!(
+        problem["detail"].as_str().unwrap().starts_with("endpoint:"),
+        "{problem}"
+    );
 }
