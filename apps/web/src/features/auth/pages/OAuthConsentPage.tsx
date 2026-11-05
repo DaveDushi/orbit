@@ -113,7 +113,8 @@ export function OAuthConsentPage() {
             <SelectTrigger size="sm" aria-label="Access preset" className="w-auto"><SelectValue>{preset?.label ?? 'Custom'}</SelectValue></SelectTrigger>
             <SelectContent>
               {PRESETS.map((p) => <SelectItem key={p.id} value={p.id}>{p.label}</SelectItem>)}
-              {preset ? null : <SelectItem value="custom" disabled>Custom</SelectItem>}
+              {/* Keep this item mounted: when a Base UI Select loses the item of its value, it resets to its first value. */}
+              <SelectItem value="custom" disabled className={preset ? 'hidden' : undefined}>Custom</SelectItem>
             </SelectContent>
           </Select>
         </div>

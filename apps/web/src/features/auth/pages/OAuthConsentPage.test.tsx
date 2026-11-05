@@ -103,6 +103,11 @@ test('select all projects and a permission preset send every project and scope',
   expect(within(view.getByRole('group', { name: 'Chat' })).getByRole('button', { name: 'Read' }).getAttribute('aria-pressed')).toBe('true')
   await userEvent.click(within(view.getByRole('group', { name: 'Docs' })).getByRole('button', { name: 'No access' }))
   expect(view.getByRole('combobox', { name: 'Access preset' }).textContent).toContain('Custom')
+  // Going back from Custom to a preset must keep the chosen levels (the Select must not reset to its first preset).
+  await userEvent.click(within(view.getByRole('group', { name: 'Docs' })).getByRole('button', { name: 'Read' }))
+  expect(view.getByRole('combobox', { name: 'Access preset' }).textContent).toContain('Full access')
+  expect(within(view.getByRole('group', { name: 'Tasks' })).getByRole('button', { name: 'Write' }).getAttribute('aria-pressed')).toBe('true')
+  await userEvent.click(within(view.getByRole('group', { name: 'Docs' })).getByRole('button', { name: 'No access' }))
   fireEvent.click(view.getByRole('button', { name: 'Allow selected access' }))
   await view.findByRole('textbox', { name: 'Callback URL' })
   expect(body).toEqual({ csrf_token: 'nonce', approved: true, workspace_id: 'w1', project_ids: ['p1', 'p2'], scopes: ['tasks:write', 'chat:read'] })
