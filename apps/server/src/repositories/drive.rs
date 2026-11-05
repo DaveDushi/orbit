@@ -41,7 +41,9 @@ pub const MAX_POSTER_BYTES: u64 = 4 * 1024 * 1024;
 const UPLOAD_COLUMNS: &str = "id, r2_key, size, mime, upload_id, part_size, upload_parent_id, upload_name, \
     upload_conflict, created_by, created_at";
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DriveNodeKind {
     Folder,
@@ -184,7 +186,18 @@ pub enum SortOrder {
 }
 
 /// What happens when the name is already used in the folder.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    ToSchema,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum OnConflict {
     /// Refuse with `drive_name_taken`.

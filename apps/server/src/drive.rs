@@ -14,8 +14,8 @@ use orbit_platform::{
 };
 
 use crate::repositories::drive::{
-    BlobDeletion, DriveError, DriveMediaStatus, DriveNode, DriveRepository, DriveUpload,
-    MAX_POSTER_BYTES, MAX_THUMB_BYTES, MediaFacts, NewUpload, OnConflict,
+    BlobDeletion, DriveError, DriveMediaStatus, DriveNode, DriveNodeKind, DriveRepository,
+    DriveUpload, MAX_POSTER_BYTES, MAX_THUMB_BYTES, MediaFacts, NewUpload, OnConflict,
 };
 
 const MIB: i64 = 1024 * 1024;
@@ -28,6 +28,10 @@ pub const DOWNLOAD_URL_LIFETIME: Duration = Duration::from_secs(5 * 60);
 pub const UPLOAD_URL_LIFETIME: Duration = Duration::from_secs(60 * 60);
 /// The most URLs signed by one request.
 pub const MAX_URLS: usize = 100;
+/// The largest file an agent reads (`drive_read`), and the largest text file it writes (`drive_upload_text`): an
+/// MCP request body has at most 64 KiB.
+pub const MAX_READ_BYTES: u64 = 16 * 1024 * 1024;
+pub const MAX_TEXT_UPLOAD_BYTES: usize = 48 * 1024;
 /// The most blobs deleted from the bucket by one pass.
 const DELETIONS_PER_PASS: i64 = 500;
 
@@ -352,6 +356,87 @@ impl DriveService {
             .await?;
         self.sign_media(workspace_id, std::slice::from_mut(&mut node));
         Ok(node)
+    }
+
+    /// The bytes of a live file (at most [`MAX_READ_BYTES`]), with its name and MIME type, for an agent to read.
+    /// The bytes go through the server here: only small files, never user downloads.
+    pub async fn file_bytes(
+        &self,
+        workspace_id: Id,
+        user_id: Id,
+        node_id: Id,
+    ) -> Result<(DriveNode, Vec<u8>), DriveError> {
+        let detail = self.repository.node(workspace_id, user_id, node_id).await?;
+        let node = detail.node;
+        if node.kind != DriveNodeKind::File {
+            return Err(DriveError::NotAFolder);
+        }
+        if node.size.unwrap_or(0) > i64::try_from(MAX_READ_BYTES).unwrap_or(i64::MAX) {
+            return Err(DriveError::TooLarge);
+        }
+        let object = self
+            .repository
+            .objects(workspace_id, user_id, &[node_id])
+            .await?
+            .into_iter()
+            .next()
+            .ok_or(DriveError::NotFound)?;
+        let bytes = self
+            .bucket(workspace_id)?
+            .get_bytes(&object.r2_key)
+            .await?
+            .ok_or(DriveError::NotFound)?;
+        Ok((node, bytes))
+    }
+
+    /// Writes a small text file into a folder from the server (an agent's `drive_upload_text`).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn put_text(
+        &self,
+        workspace_id: Id,
+        user_id: Id,
+        parent_id: Option<Id>,
+        name: String,
+        mime: String,
+        text: String,
+        on_conflict: OnConflict,
+        now: TimestampMillis,
+    ) -> Result<DriveNode, DriveError> {
+        if text.len() > MAX_TEXT_UPLOAD_BYTES {
+            return Err(DriveError::TooLarge);
+        }
+        self.repository
+            .require_member(workspace_id, user_id)
+            .await?;
+        let bucket = self.bucket(workspace_id)?;
+        let blob_id = Id::new_v7();
+        let upload = self
+            .repository
+            .begin_upload(
+                workspace_id,
+                user_id,
+                NewUpload {
+                    blob_id,
+                    r2_key: format!("drive/{workspace_id}/{blob_id}"),
+                    parent_id,
+                    name,
+                    size: i64::try_from(text.len()).unwrap_or(i64::MAX),
+                    mime,
+                    on_conflict,
+                    part_size: None,
+                },
+                now,
+            )
+            .await?;
+        if let Err(error) = bucket.put_bytes(&upload.r2_key, text.into_bytes()).await {
+            self.repository
+                .cancel_upload(workspace_id, user_id, blob_id, now)
+                .await?;
+            return Err(error.into());
+        }
+        self.repository
+            .finish_upload(workspace_id, user_id, blob_id, now)
+            .await
     }
 
     /// A 5-minute URL of an object of the workspace's Drive; `download_name` makes the browser save it.

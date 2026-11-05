@@ -39742,7 +39742,9 @@
           "write",
           "docs:read",
           "chat:read",
-          "tasks:write"
+          "tasks:write",
+          "drive:read",
+          "drive:write"
         ]
       },
       "AttachmentComment": {

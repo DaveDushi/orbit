@@ -44,6 +44,8 @@ export function ApiTokensPage() {
   const [docsRead, setDocsRead] = useState(false)
   const [mcpWrite, setMcpWrite] = useState(false)
   const [chatRead, setChatRead] = useState(false)
+  const [driveRead, setDriveRead] = useState(false)
+  const [driveWrite, setDriveWrite] = useState(false)
   const [serviceAccount, setServiceAccount] = useState(false)
   const [expiration, setExpiration] = useState<ExpirationValue>('never')
   const [issuedToken, setIssuedToken] = useState<string>()
@@ -53,7 +55,7 @@ export function ApiTokensPage() {
 
   async function submit(event: FormEvent) {
     event.preventDefault()
-    const scopes = [...(read ? ['read' as const] : []), ...(write ? ['write' as const] : []), ...(mcpWrite ? ['tasks:write' as const] : []), ...(docsRead ? ['docs:read' as const] : []), ...(chatRead ? ['chat:read' as const] : [])]
+    const scopes = [...(read ? ['read' as const] : []), ...(write ? ['write' as const] : []), ...(mcpWrite ? ['tasks:write' as const] : []), ...(docsRead ? ['docs:read' as const] : []), ...(chatRead ? ['chat:read' as const] : []), ...(driveRead ? ['drive:read' as const] : []), ...(driveWrite ? ['drive:write' as const] : [])]
     if (!name.trim() || projectIds.length === 0 || scopes.length === 0) return
     const issued = await createToken.mutateAsync({ name: name.trim(), projectIds, scopes, serviceAccount, expiresInDays: expiration === 'never' ? null : Number(expiration) })
     setIssuedToken(issued.token)
@@ -94,25 +96,27 @@ export function ApiTokensPage() {
             </SelectContent>
           </Select>
         </Field>
-        <FieldSet className="flex-row gap-[18px]">
+        <FieldSet className="gap-2">
           <FieldLegend variant="label">Scopes</FieldLegend>
           <Label className="font-normal"><Checkbox checked={read} onCheckedChange={setRead} /> Read</Label>
           <Label className="font-normal"><Checkbox checked={write} onCheckedChange={setWrite} /> Write tasks over the REST API (includes delete)</Label>
           <Label className="font-normal"><Checkbox checked={mcpWrite} disabled={serviceAccount} onCheckedChange={setMcpWrite} /> Write tasks over MCP (includes delete)</Label>
           <Label className="font-normal"><Checkbox checked={docsRead} disabled={serviceAccount} onCheckedChange={setDocsRead} /> Read docs (including your private docs)</Label>
           <Label className="font-normal"><Checkbox checked={chatRead} disabled={serviceAccount} onCheckedChange={setChatRead} /> Read chat (including your private channels and DMs)</Label>
+          <Label className="font-normal"><Checkbox checked={driveRead} disabled={serviceAccount} onCheckedChange={setDriveRead} /> Read Drive files over MCP</Label>
+          <Label className="font-normal"><Checkbox checked={driveWrite} disabled={serviceAccount} onCheckedChange={setDriveWrite} /> Write Drive over MCP (folders, text files, move, rename, trash; never delete forever)</Label>
         </FieldSet>
         {/* a choice card: the whole card toggles the checkbox and tints while checked */}
         <FieldLabel className="min-[900px]:col-span-2">
           <Field orientation="horizontal">
-            <Checkbox checked={serviceAccount} disabled={docsRead || chatRead || mcpWrite} onCheckedChange={setServiceAccount} />
+            <Checkbox checked={serviceAccount} disabled={docsRead || chatRead || mcpWrite || driveRead || driveWrite} onCheckedChange={setServiceAccount} />
             <FieldContent>
               <FieldTitle>Use a service account</FieldTitle>
               <FieldDescription>For Discord and other unattended integrations. Tokens with the same name reuse this identity.</FieldDescription>
             </FieldContent>
           </Field>
         </FieldLabel>
-        <Button className="justify-self-start" type="submit" disabled={createToken.isPending || !name.trim() || projectIds.length === 0 || (!read && !write && !mcpWrite && !docsRead && !chatRead)}>Create token</Button>
+        <Button className="justify-self-start" type="submit" disabled={createToken.isPending || !name.trim() || projectIds.length === 0 || (!read && !write && !mcpWrite && !docsRead && !chatRead && !driveRead && !driveWrite)}>Create token</Button>
         {createToken.isError ? <p className="text-destructive" role="alert">The API token could not be created.</p> : null}
         </FieldGrid>
       </form>

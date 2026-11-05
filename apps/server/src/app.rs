@@ -365,7 +365,8 @@ impl App {
                             attachment_state.uploads.clone(),
                         )),
                     )
-                    .with_oauth(oauth.clone()),
+                    .with_oauth(oauth.clone())
+                    .with_drive(drive.clone()),
                     &config.http.public_origin,
                 ),
                 oauth: crate::oauth::router(oauth),

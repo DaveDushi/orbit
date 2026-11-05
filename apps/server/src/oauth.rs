@@ -30,7 +30,14 @@ use crate::repositories::identity::IdentityRepository;
 use crate::task_routes::authenticate_session;
 
 const SCOPE: &str = "tasks:read";
-const SCOPES: [&str; 4] = ["tasks:read", "tasks:write", "docs:read", "chat:read"];
+const SCOPES: [&str; 6] = [
+    "tasks:read",
+    "tasks:write",
+    "docs:read",
+    "chat:read",
+    "drive:read",
+    "drive:write",
+];
 fn valid_scopes(scope: &str) -> bool {
     !scope.is_empty() && scope.len() < 128 && scope.split_whitespace().all(|s| SCOPES.contains(&s))
 }
@@ -128,6 +135,8 @@ impl OAuthState {
                     ("tasks:write", ApiTokenScope::TasksWrite),
                     ("docs:read", ApiTokenScope::DocsRead),
                     ("chat:read", ApiTokenScope::ChatRead),
+                    ("drive:read", ApiTokenScope::DriveRead),
+                    ("drive:write", ApiTokenScope::DriveWrite),
                 ] {
                     if extra.split_whitespace().any(|s| s == name) {
                         scopes.push(scope);
@@ -261,7 +270,7 @@ async fn server_metadata(State(state): State<OAuthState>) -> Json<Value> {
 async fn resource_metadata(State(state): State<OAuthState>) -> Json<Value> {
     Json(
         json!({"resource": state.resource, "authorization_servers": [state.origin],
-        "scopes_supported": SCOPES, "bearer_methods_supported": ["header"], "resource_name": "Orbit tasks, docs and chat"}),
+        "scopes_supported": SCOPES, "bearer_methods_supported": ["header"], "resource_name": "Orbit tasks, docs, chat and Drive"}),
     )
 }
 

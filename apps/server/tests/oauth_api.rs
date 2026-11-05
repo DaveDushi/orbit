@@ -780,7 +780,7 @@ async fn optional_scopes_need_consent_and_survive_refresh() {
             true,
         )
         .await;
-    let (status, approval) = f.send("POST", &format!("/api/v1/oauth/consent/{id}"), json!({"approved": true, "csrf_token": consent["csrf_token"], "workspace_id": f.workspace, "project_ids": [f.project], "scopes": ["tasks:write", "docs:read", "chat:read"]}), true).await;
+    let (status, approval) = f.send("POST", &format!("/api/v1/oauth/consent/{id}"), json!({"approved": true, "csrf_token": consent["csrf_token"], "workspace_id": f.workspace, "project_ids": [f.project], "scopes": ["tasks:write", "docs:read", "chat:read", "drive:read", "drive:write"]}), true).await;
     assert_eq!(status, StatusCode::OK, "{approval}");
     let callback = url::Url::parse(approval["redirect_uri"].as_str().unwrap()).unwrap();
     let code = callback
@@ -790,7 +790,7 @@ async fn optional_scopes_need_consent_and_survive_refresh() {
         .1
         .to_string();
     let token = f.issue(&client, &code).await;
-    for scope in ["tasks:write", "docs:read", "chat:read"] {
+    for scope in ["tasks:write", "docs:read", "chat:read", "drive:read", "drive:write"] {
         assert!(token["scope"].as_str().unwrap().contains(scope));
     }
     let principal = f
@@ -805,6 +805,8 @@ async fn optional_scopes_need_consent_and_survive_refresh() {
         ApiTokenScope::TasksWrite,
         ApiTokenScope::DocsRead,
         ApiTokenScope::ChatRead,
+        ApiTokenScope::DriveRead,
+        ApiTokenScope::DriveWrite,
     ] {
         assert!(principal.scopes.contains(&scope));
     }

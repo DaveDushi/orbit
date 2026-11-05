@@ -580,6 +580,10 @@ existing pdf.js `PdfPages`.
 Public links (M5): `drive_share_routes.rs`, `repositories/drive_shares.rs`; member dialog `ShareDialog` (expiry, optional
 password, address shown once, list, turn off) and the public page `/s/:token` (`PublicSharePage`, outside `AuthGate`,
 imported eagerly) with password form, file card and folder browser limited to the shared folder.
+MCP (M6): `mcp_drive.rs`, scopes `drive:read` / `drive:write` (API tokens, OAuth consent; not for service accounts).
+Read: list, search, info, read (parser child, 16 MiB, `drive_kind` maps real MIME types). Write: folder, text file
+(48 KiB: an MCP body has 64 KiB), move, rename, trash. No purge/restore/share/import tools. Results are
+`<orbit-data>` blocks (`docs/mcp.md`).
 
 ## Apps
 

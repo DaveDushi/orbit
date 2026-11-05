@@ -45,6 +45,10 @@ pub enum ApiTokenScope {
     ChatRead,
     /// MCP task writes (`tasks:write`). Not the REST `write` flag, which older tokens have by default.
     TasksWrite,
+    /// MCP Drive reads (`drive:read`): list, search, info and file text.
+    DriveRead,
+    /// MCP Drive writes (`drive:write`): folders, text files, move, rename, trash. Never permanent delete.
+    DriveWrite,
     Mcp,
 }
 
@@ -270,6 +274,14 @@ impl ApiTokenRepository {
                 .get::<String, _>("mcp_scopes")
                 .split_whitespace()
                 .any(|s| s == "tasks:write"),
+            ApiTokenScope::DriveRead => row
+                .get::<String, _>("mcp_scopes")
+                .split_whitespace()
+                .any(|s| s == "drive:read"),
+            ApiTokenScope::DriveWrite => row
+                .get::<String, _>("mcp_scopes")
+                .split_whitespace()
+                .any(|s| s == "drive:write"),
             ApiTokenScope::Mcp => can_read || !row.get::<String, _>("mcp_scopes").is_empty(),
         };
         if !allowed {
@@ -322,6 +334,18 @@ impl ApiTokenRepository {
                         .split_whitespace()
                         .any(|s| s == "tasks:write"),
                     ApiTokenScope::TasksWrite,
+                ),
+                (
+                    row.get::<String, _>("mcp_scopes")
+                        .split_whitespace()
+                        .any(|s| s == "drive:read"),
+                    ApiTokenScope::DriveRead,
+                ),
+                (
+                    row.get::<String, _>("mcp_scopes")
+                        .split_whitespace()
+                        .any(|s| s == "drive:write"),
+                    ApiTokenScope::DriveWrite,
                 ),
             ]
             .into_iter()

@@ -25,6 +25,7 @@ pub mod link_preview;
 pub mod live;
 pub mod mail;
 pub mod mcp;
+mod mcp_drive;
 pub mod metrics;
 pub mod notion;
 pub mod oauth;

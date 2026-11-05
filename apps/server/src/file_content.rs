@@ -28,6 +28,18 @@ pub(crate) struct ContentQuery {
     extract: Option<bool>,
 }
 
+impl ContentQuery {
+    /// Text (or rows) from `offset`, PDF text included: what an agent reads.
+    pub(crate) fn text(offset: u64, limit: u64, sheet: Option<String>) -> Self {
+        Self {
+            sheet,
+            offset: Some(offset),
+            limit: Some(limit),
+            extract: Some(true),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum ReadError {
     Parse(ParseError),

@@ -82,7 +82,7 @@ export function OAuthConsentPage() {
         {!workspaces.length ? <p className="text-sm text-muted-foreground">No active projects are available to your account.</p> : null}
       </fieldset>
       <fieldset className="grid gap-3"><legend className="mb-3 text-sm font-medium">Optional permissions</legend>
-        {([['tasks:write', 'Create, change and delete tasks in selected projects'], ['docs:read', 'Read workspace docs visible to you, including private docs'], ['chat:read', 'Read chat visible to you, including private channels and direct messages']] as const).map(([scope, label]) => <Label key={scope} className="flex items-center gap-2">
+        {([['tasks:write', 'Create, change and delete tasks in selected projects'], ['docs:read', 'Read workspace docs visible to you, including private docs'], ['chat:read', 'Read chat visible to you, including private channels and direct messages'], ['drive:read', 'Read the workspace Drive: list, search and read files'], ['drive:write', 'Change the workspace Drive: folders, text files, move, rename and trash (never delete forever)']] as const).map(([scope, label]) => <Label key={scope} className="flex items-center gap-2">
           <Checkbox checked={scopes.includes(scope)} onCheckedChange={(checked) => setScopes((current) => checked ? [...current, scope] : current.filter((s) => s !== scope))} />{label}
         </Label>)}
       </fieldset>

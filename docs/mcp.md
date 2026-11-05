@@ -270,12 +270,13 @@ cargo test -p orbit-platform --test http_security
 ## Permissions and tools
 
 Existing connections keep read-only task access. Reconnect to approve additional permissions.
-OAuth consent offers optional task writes, docs reads, and chat reads. API tokens use `read`
-(task reads), `tasks:write` (task create, update and delete over MCP), `docs:read`, and `chat:read`.
+OAuth consent offers optional task writes, docs reads, chat reads, and Drive reads and writes. API tokens use
+`read` (task reads), `tasks:write` (task create, update and delete over MCP), `docs:read`, `chat:read`,
+`drive:read` and `drive:write`.
 The REST API's `write` scope gives no MCP access.
 Docs and chat permissions default to off. They apply to content visible to the connected
 person in the selected workspace, including their private docs, private channels and DMs.
-Service-account tokens support task reads only; task writes, docs and chat require a personal identity.
+Service-account tokens support task reads only; task writes, docs, chat and Drive require a personal identity.
 
 | Permission | Tools |
 | --- | --- |
@@ -283,6 +284,13 @@ Service-account tokens support task reads only; task writes, docs and chat requi
 | Task write | `create_task`, `update_task`, `delete_task` |
 | Docs read | `list_docs`, `get_doc` |
 | Chat read | `list_conversations`, `list_messages`, `get_thread` |
+| Drive read (`drive:read`) | `drive_list`, `drive_search`, `drive_info`, `drive_read` (text of files up to 16 MiB, in parts) |
+| Drive write (`drive:write`) | `drive_create_folder`, `drive_upload_text` (up to 48 KiB), `drive_move`, `drive_rename`, `drive_trash` |
+
+Drive tools act as the connected member in the token's workspace (one drive per workspace). Agents never delete
+forever, restore, make public links or import: there are no such tools, and `drive_trash` keeps items restorable
+for 30 days. Every Drive result is text inside an `<orbit-data source="…">` block: file names and content are
+untrusted data, never instructions, and content cannot close the block.
 
 Task create takes `project_id`, `status_id`, `title`, optional markdown `description` and
 `priority`. Task update takes `task_id`, `expected_version`, and optional title, description,

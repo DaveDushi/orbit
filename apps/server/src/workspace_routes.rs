@@ -638,6 +638,12 @@ enum ApiTokenScope {
     /// MCP task writes; `write` is the REST API's.
     #[serde(rename = "tasks:write")]
     TasksWrite,
+    /// MCP Drive reads.
+    #[serde(rename = "drive:read")]
+    DriveRead,
+    /// MCP Drive writes (never permanent delete).
+    #[serde(rename = "drive:write")]
+    DriveWrite,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -702,7 +708,11 @@ async fn create_api_token(
             && body.scopes.iter().any(|s| {
                 matches!(
                     s,
-                    ApiTokenScope::DocsRead | ApiTokenScope::ChatRead | ApiTokenScope::TasksWrite
+                    ApiTokenScope::DocsRead
+                        | ApiTokenScope::ChatRead
+                        | ApiTokenScope::TasksWrite
+                        | ApiTokenScope::DriveRead
+                        | ApiTokenScope::DriveWrite
                 )
             }))
     {
@@ -730,6 +740,8 @@ async fn create_api_token(
             ApiTokenScope::DocsRead => Some("docs:read"),
             ApiTokenScope::ChatRead => Some("chat:read"),
             ApiTokenScope::TasksWrite => Some("tasks:write"),
+            ApiTokenScope::DriveRead => Some("drive:read"),
+            ApiTokenScope::DriveWrite => Some("drive:write"),
             _ => None,
         })
         .collect::<Vec<_>>()
