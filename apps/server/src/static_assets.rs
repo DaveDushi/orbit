@@ -1,7 +1,7 @@
 use axum::Router;
 use axum::body::Body;
 use axum::extract::Request;
-use axum::http::{Method, Response, StatusCode, header};
+use axum::http::{HeaderMap, Method, Response, StatusCode, header};
 use axum::routing::get;
 use base64::Engine;
 use include_dir::{Dir, include_dir};
@@ -112,8 +112,12 @@ fn inline_script_hash(index: &[u8]) -> Option<String> {
     ))
 }
 
-async fn serve_index() -> Response<Body> {
-    asset_response("index.html", false).expect("verified frontend contains index.html")
+async fn serve_index(headers: HeaderMap) -> Response<Body> {
+    index_response(&headers)
+}
+
+fn index_response(headers: &HeaderMap) -> Response<Body> {
+    asset_response("index.html", false, headers).expect("verified frontend contains index.html")
 }
 
 async fn serve_fallback(request: Request) -> Response<Body> {
@@ -127,8 +131,15 @@ async fn serve_fallback(request: Request) -> Response<Body> {
     }
 
     let asset_path = path.trim_start_matches('/');
+    // The `.br` and `.gz` files are encodings of another file, not files of their own.
     if !asset_path.is_empty()
-        && let Some(response) = asset_response(asset_path, asset_path.starts_with("assets/"))
+        && !asset_path.ends_with(".br")
+        && !asset_path.ends_with(".gz")
+        && let Some(response) = asset_response(
+            asset_path,
+            asset_path.starts_with("assets/"),
+            request.headers(),
+        )
     {
         return response;
     }
@@ -139,10 +150,12 @@ async fn serve_fallback(request: Request) -> Response<Body> {
     {
         return not_found_problem(&path, request_id.as_ref());
     }
-    serve_index().await
+    index_response(request.headers())
 }
 
-fn asset_response(path: &str, immutable: bool) -> Option<Response<Body>> {
+/// Sends the precompressed `<path>.br` or `<path>.gz` that the web build wrote when the request
+/// accepts it, else the file itself.
+fn asset_response(path: &str, immutable: bool, headers: &HeaderMap) -> Option<Response<Body>> {
     let file = FRONTEND.get_file(path)?;
     let content_type = if path.ends_with(".html") {
         "text/html; charset=utf-8".to_owned()
@@ -165,14 +178,52 @@ fn asset_response(path: &str, immutable: bool) -> Option<Response<Body>> {
     } else {
         "public, max-age=3600"
     };
+    let mut response = Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CACHE_CONTROL, cache);
+    let encodings = [
+        ("br", FRONTEND.get_file(format!("{path}.br"))),
+        ("gzip", FRONTEND.get_file(format!("{path}.gz"))),
+    ];
+    let mut contents = file.contents();
+    if encodings.iter().any(|(_, file)| file.is_some()) {
+        response = response.header(header::VARY, "accept-encoding");
+        if let Some((encoding, Some(encoded))) = encodings
+            .into_iter()
+            .find(|(encoding, file)| file.is_some() && accepts_encoding(headers, encoding))
+        {
+            response = response.header(header::CONTENT_ENCODING, encoding);
+            contents = encoded.contents();
+        }
+    }
     Some(
-        Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, content_type)
-            .header(header::CACHE_CONTROL, cache)
-            .body(Body::from(file.contents()))
+        response
+            .body(Body::from(contents))
             .expect("embedded asset headers are valid"),
     )
+}
+
+/// Whether `Accept-Encoding` allows `encoding`: named, or covered by `*`, with a `q` above 0.
+fn accepts_encoding(headers: &HeaderMap, encoding: &str) -> bool {
+    let mut wildcard = false;
+    for value in headers.get_all(header::ACCEPT_ENCODING) {
+        let Ok(value) = value.to_str() else { continue };
+        for item in value.split(',') {
+            let mut parts = item.split(';');
+            let name = parts.next().unwrap_or_default().trim();
+            let allowed = parts
+                .filter_map(|param| param.trim().strip_prefix("q="))
+                .all(|q| q.trim().parse::<f32>().is_ok_and(|q| q > 0.0));
+            if name.eq_ignore_ascii_case(encoding) {
+                return allowed;
+            }
+            if name == "*" {
+                wildcard = allowed;
+            }
+        }
+    }
+    wildcard
 }
 
 fn not_found_problem(path: &str, request_id: Option<&RequestId>) -> Response<Body> {

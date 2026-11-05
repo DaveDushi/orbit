@@ -4,10 +4,11 @@ import tailwindcss from '@tailwindcss/vite'
 import babel from '@rolldown/plugin-babel'
 import openapi from '@orbit/api/generated/openapi.json' with { type: 'json' }
 import { createHash } from 'node:crypto'
-import { cpSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { brotliCompressSync, constants as zlibConstants, gzipSync } from 'node:zlib'
 
 const buildRevision = process.env.ORBIT_BUILD_REVISION ?? 'development'
 const sourceHtml = readFileSync(new URL('./index.html', import.meta.url), 'utf8')
@@ -89,6 +90,25 @@ export default defineConfig({
           fileName: 'orbit-build.json',
           source: `${JSON.stringify({ contract: openapi.info.version, revision: buildRevision, csp_script_hash: cspScriptHash }, null, 2)}\n`,
         })
+      },
+    },
+    {
+      // The server embeds `dist` and sends `<file>.br` or `<file>.gz` when the browser accepts it
+      // (`apps/server/src/static_assets.rs`). Only text files of 1 kB or more, and only when the result is smaller.
+      name: 'orbit-precompress',
+      apply: 'build',
+      closeBundle() {
+        const dist = fileURLToPath(new URL('./dist/', import.meta.url))
+        for (const entry of readdirSync(dist, { recursive: true, withFileTypes: true })) {
+          if (!entry.isFile() || !/\.(js|mjs|css|html|json|svg|webmanifest|txt|wasm)$/.test(entry.name)) continue
+          const path = join(entry.parentPath, entry.name)
+          const source = readFileSync(path)
+          if (source.length < 1024) continue
+          const brotli = brotliCompressSync(source, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 11, [zlibConstants.BROTLI_PARAM_SIZE_HINT]: source.length } })
+          if (brotli.length < source.length * 0.9) writeFileSync(`${path}.br`, brotli)
+          const gzip = gzipSync(source, { level: 9 })
+          if (gzip.length < source.length * 0.9) writeFileSync(`${path}.gz`, gzip)
+        }
       },
     },
   ],

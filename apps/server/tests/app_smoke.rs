@@ -157,6 +157,110 @@ async fn embedded_spa_uses_safe_cache_policies_and_never_masks_api_404s() {
     );
 }
 
+async fn get_with_encoding(
+    app: &App,
+    path: &str,
+    accept_encoding: Option<&str>,
+) -> (StatusCode, header::HeaderMap, Vec<u8>) {
+    let mut request = Request::get(path);
+    if let Some(accept_encoding) = accept_encoding {
+        request = request.header(header::ACCEPT_ENCODING, accept_encoding);
+    }
+    let response = app
+        .router()
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    (status, headers, body.to_vec())
+}
+
+fn decode(encoding: Option<&str>, body: &[u8]) -> Vec<u8> {
+    let mut decoded = Vec::new();
+    match encoding {
+        Some("br") => {
+            brotli_decompressor::BrotliDecompress(&mut &body[..], &mut decoded).unwrap();
+        }
+        Some("gzip") => {
+            std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(body), &mut decoded)
+                .unwrap();
+        }
+        None => decoded = body.to_vec(),
+        Some(other) => panic!("unexpected encoding {other}"),
+    }
+    decoded
+}
+
+#[tokio::test]
+async fn embedded_web_build_is_sent_precompressed_when_the_browser_accepts_it() {
+    let root = TempDir::new().unwrap();
+    let app = App::build(app_config(&root)).await.unwrap();
+    let (_, _, index) = get_with_encoding(&app, "/", None).await;
+    let index = String::from_utf8(index).unwrap();
+    let start = index.find("src=\"/assets/").unwrap() + "src=\"".len();
+    let script = &index[start..start + index[start..].find('"').unwrap()];
+    assert!(script.ends_with(".js"), "{script}");
+
+    for path in [script, "/", "/settings/members"] {
+        let (status, plain_headers, plain) = get_with_encoding(&app, path, None).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert!(
+            !plain_headers.contains_key(header::CONTENT_ENCODING),
+            "{path}"
+        );
+        assert_eq!(plain_headers[header::VARY], "accept-encoding", "{path}");
+        for (accept_encoding, expected) in [
+            ("gzip, deflate, br, zstd", Some("br")),
+            ("br;q=1.0, gzip;q=0.8", Some("br")),
+            ("gzip", Some("gzip")),
+            ("br;q=0, gzip", Some("gzip")),
+            ("*", Some("br")),
+            ("identity", None),
+            ("gzip;q=0, *;q=0", None),
+        ] {
+            let (status, headers, body) =
+                get_with_encoding(&app, path, Some(accept_encoding)).await;
+            assert_eq!(status, StatusCode::OK, "{path} {accept_encoding}");
+            let encoding = headers
+                .get(header::CONTENT_ENCODING)
+                .map(|value| value.to_str().unwrap());
+            assert_eq!(encoding, expected, "{path} {accept_encoding}");
+            if expected.is_some() {
+                assert!(body.len() < plain.len(), "{path} {accept_encoding}");
+            }
+            assert_eq!(decode(encoding, &body), plain, "{path} {accept_encoding}");
+            // Every other header (Content-Type, Cache-Control, CSP, …) stays the same.
+            let mut headers = headers;
+            headers.remove(header::CONTENT_ENCODING);
+            headers.remove(header::CONTENT_LENGTH);
+            headers.remove("x-request-id");
+            let mut plain_headers = plain_headers.clone();
+            plain_headers.remove(header::CONTENT_LENGTH);
+            plain_headers.remove("x-request-id");
+            assert_eq!(headers, plain_headers, "{path} {accept_encoding}");
+        }
+    }
+
+    // The precompressed files are not routes of their own.
+    for path in [format!("{script}.br"), format!("{script}.gz")] {
+        let (status, _, _) = get_with_encoding(&app, &path, Some("br, gzip")).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+    }
+    // Small files the build does not compress are sent as before, without Vary.
+    let (status, headers, _) =
+        get_with_encoding(&app, "/manifest.webmanifest", Some("br, gzip")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!headers.contains_key(header::CONTENT_ENCODING));
+    assert!(!headers.contains_key(header::VARY));
+    // The API is never compressed.
+    let (status, headers, _) = get_with_encoding(&app, "/health/live", Some("br, gzip")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!headers.contains_key(header::CONTENT_ENCODING));
+    assert!(!headers.contains_key(header::VARY));
+}
+
 #[tokio::test]
 async fn production_csp_hashes_the_exact_embedded_bootstrap_text() {
     let root = TempDir::new().unwrap();
@@ -478,12 +582,16 @@ async fn installation_admin_can_create_an_online_backup() {
         .oneshot(
             Request::get("/api/v1/admin/backups")
                 .header(header::COOKIE, &cookie)
+                .header(header::ACCEPT_ENCODING, "br, gzip")
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(list.status(), StatusCode::OK);
+    // Only the embedded web build is sent compressed: API responses and downloads are not.
+    assert!(!list.headers().contains_key(header::CONTENT_ENCODING));
+    assert!(!list.headers().contains_key(header::VARY));
     let list: serde_json::Value =
         serde_json::from_slice(&list.into_body().collect().await.unwrap().to_bytes()).unwrap();
     let items = list["items"].as_array().unwrap();
@@ -496,6 +604,7 @@ async fn installation_admin_can_create_an_online_backup() {
         .oneshot(
             Request::get(format!("/api/v1/admin/backups/{id}/download"))
                 .header(header::COOKIE, &cookie)
+                .header(header::ACCEPT_ENCODING, "br, gzip")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -503,6 +612,8 @@ async fn installation_admin_can_create_an_online_backup() {
         .unwrap();
     assert_eq!(download.status(), StatusCode::OK);
     assert_eq!(download.headers()[header::CONTENT_TYPE], "application/zip");
+    assert!(!download.headers().contains_key(header::CONTENT_ENCODING));
+    assert!(!download.headers().contains_key(header::VARY));
     let bytes = download.into_body().collect().await.unwrap().to_bytes();
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
     let names: Vec<String> = archive

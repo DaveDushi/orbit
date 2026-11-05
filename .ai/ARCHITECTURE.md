@@ -53,7 +53,7 @@ Chat is the exception to the query-key rule: its keys begin with `['chat', works
 
 ## Embedded build contract
 
-Vite emits `dist/orbit-build.json` from the committed OpenAPI contract ID and `ORBIT_BUILD_REVISION`. Rust embeds the complete `dist` directory and the same compile-time revision. `StaticAssets::verified` refuses to build the application router if either value differs. Hashed assets use a one-year immutable cache policy; HTML and the manifest use `no-cache`.
+Vite emits `dist/orbit-build.json` from the committed OpenAPI contract ID and `ORBIT_BUILD_REVISION`. Rust embeds the complete `dist` directory and the same compile-time revision. `StaticAssets::verified` refuses to build the application router if either value differs. Hashed assets use a one-year immutable cache policy; HTML and the manifest use `no-cache`. The Vite `orbit-precompress` plugin writes a brotli `.br` and a gzip `.gz` file next to every text file of 1 kB or more in `dist`; the server sends one of them with `Content-Encoding` and `Vary: Accept-Encoding` when the request accepts it (brotli first). API responses, streams and file downloads are never compressed.
 
 CI regenerates OpenAPI and TypeScript output twice for determinism, compares it with committed output, rebuilds the frontend, and checks committed embedded assets for drift.
 

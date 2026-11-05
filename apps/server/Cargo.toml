@@ -73,3 +73,5 @@ sqlx = { version = "0.9", default-features = false, features = ["postgres"] }
 tempfile = "3"
 zstd = "0.14"
 tokio-tungstenite = "0.29"
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+brotli-decompressor = "6.2"
