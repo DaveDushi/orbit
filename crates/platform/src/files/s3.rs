@@ -60,6 +60,39 @@ impl std::fmt::Debug for S3Config {
     }
 }
 
+impl S3Config {
+    /// Whether the two configs can hold the same objects: the same bucket on the same server, and one prefix is
+    /// the other or lies under it (the bucket root holds every prefix). Two of Orbit's stores must never overlap:
+    /// each one lists and deletes the objects under its prefix as its own.
+    #[must_use]
+    pub fn overlaps(&self, other: &Self) -> bool {
+        let (left, right) = (
+            self.prefix.trim_matches('/'),
+            other.prefix.trim_matches('/'),
+        );
+        endpoint_server(&self.endpoint) == endpoint_server(&other.endpoint)
+            && self.bucket.trim().eq_ignore_ascii_case(other.bucket.trim())
+            && (left.is_empty()
+                || right.is_empty()
+                || left == right
+                || left.starts_with(&format!("{right}/"))
+                || right.starts_with(&format!("{left}/")))
+    }
+}
+
+/// The server an endpoint names, as `host:port`. Bucket names are global on AWS, so all its endpoints (regions,
+/// dual-stack) are one server.
+fn endpoint_server(endpoint: &str) -> String {
+    let Ok(url) = Url::parse(endpoint.trim()) else {
+        return endpoint.trim().trim_end_matches('/').to_ascii_lowercase();
+    };
+    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+    if host == "amazonaws.com" || host.ends_with(".amazonaws.com") {
+        return "amazonaws.com".to_owned();
+    }
+    format!("{host}:{}", url.port_or_known_default().unwrap_or_default())
+}
+
 #[derive(Debug, Error)]
 pub enum S3Error {
     #[error("invalid object storage settings: {0}")]
@@ -214,6 +247,12 @@ impl S3Bucket {
     #[must_use]
     pub fn config(&self) -> &S3Config {
         &self.config
+    }
+
+    /// Whether `key` in this bucket and `key` in `other` are one physical object.
+    #[must_use]
+    pub fn same_object(&self, other: &Self, key: &str) -> bool {
+        self.config.overlaps(&other.config) && self.full_key(key) == other.full_key(key)
     }
 
     /// Writes, reads back and deletes a small object: proves the endpoint, credentials and permissions work.
