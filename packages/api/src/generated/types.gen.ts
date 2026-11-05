@@ -3339,7 +3339,7 @@ export type PublicCreateTaskBody = {
      */
     label_ids?: Array<string>;
     /**
-     * A task in an approved project.
+     * A task in an approved project: a UUID or an identifier such as `ENG-12`.
      */
     parent_task_id?: string | null;
     /**
@@ -3564,6 +3564,11 @@ export type PublicUpdateTaskBody = {
      * Replaces the labels.
      */
     label_ids?: Array<string> | null;
+    /**
+     * A task in an approved project (a UUID or an identifier such as `ENG-12`) makes this task
+     * its sub-issue; `null` detaches it.
+     */
+    parent_task_id?: string | null;
     /**
      * `none`, `low`, `medium`, `high` or `urgent`.
      */
@@ -5530,6 +5535,11 @@ export type PublicListTasksData = {
          * `none`, `low`, `medium`, `high` or `urgent`.
          */
         priority?: string;
+        /**
+         * Only the direct sub-issues of this task (a UUID or an identifier such as `ENG-12`), which
+         * must be in an approved project.
+         */
+        parent_task_id?: string;
         /**
          * Text in the title or description, or a task identifier; up to 500 characters.
          */
