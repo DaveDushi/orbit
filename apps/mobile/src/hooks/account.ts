@@ -9,6 +9,7 @@ import { keys } from '../data/keys'
 import type { MemberRecord, User } from '../data/orbit'
 import { currentStatus, type OwnStatus, type UserStatus } from '../data/status'
 import { useOrbit } from '../orbit-context'
+import { useSignedIn } from '../session-context'
 import { uploadPart } from '../upload-part'
 
 /**
@@ -218,7 +219,7 @@ export function useRenameWorkspace() {
 }
 
 export function useAuthOptions() {
-  const { client } = useOrbit()
+  const { client } = useSignedIn()
   return useQuery({ queryKey: account.accountKeys.authOptions, queryFn: () => account.authOptions(client), staleTime: Infinity })
 }
 

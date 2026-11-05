@@ -4,11 +4,11 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 75bd825ad190de97ff24c0c5312ddce8d812014e
-  (dependency advisory fixes, precompressed web assets and lazy routes, November 5, 2026).
+- Source: DaveDushi/orbit, `main` at 7a176ff0ca9481a58d61633679aa484c51739b23
+  (people with no workspace can delete their account, upstream #39, November 5, 2026).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:75bd825`); fork commits have no published upstream image.
-- Image ID: sha256:258f0282cef266f427ba278432937a575596e34a89a1d7cf1e8a125a63b66f2e
+  (`orbit:7a176ff`); fork commits have no published upstream image.
+- Image ID: sha256:7d6f8e1fcf83858b1757f5366175c571fd7e65ba0a1468d85edf3ed946b4b4e0
 - Team agent sidecar code (`/opt/orbit-agent`): commit 5b64346.
 - OIDC gateway: `orbit-oidc-gateway.service`, nginx on `127.0.0.1:8400`, config in `/etc/orbit-oidc-gateway/`
   (see `docs/apps.md`). `cloudflared` is NOT installed.
@@ -236,6 +236,51 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 5, 2026 upgrade: delete account with no workspace (upstream #39)
+
+Fast-forward of `main` from `a9502be1` to `7a176ff` (`delete-account-no-workspace`, port of upstream `0c2492d1`).
+Shipped: someone with no workspace opens Account settings from the onboarding, in a workspace-less app frame
+(`NoWorkspaceShell`, replaces `OperatorShell`), and can delete their account there; mobile's "No workspaces" screen has
+a Delete account button. The dev seed (`just dev`, `just seed`) now opens registration and sets Mailpit when no mail
+server is set; production refuses `--seed`, so this does not reach production. Upstream's provider sign-in parts are not
+ported. No migration (schema stays 74), no new `ORBIT_*` setting, no change in `apps/agent`, so the sidecar code was not
+updated.
+
+Checks on the merged head (`orbit-build`): web `tsc` and all web tests (1541); mobile `tsc`, `bun test src` and the iOS
+export (on the branch, same tree); server `migrate_run_seed` tests on SQLite and Postgres; a browser e2e on an isolated
+instance (leave the only workspace, Account settings from the onboarding, delete the account, sign-in refused).
+`orbit-deploy image` built `orbit:7a176ff` in 1480 s (label `org.orbit.clean-revision` = the full commit; a first
+attempt was killed with its shell after 10 minutes), `deploy/smoke.sh` passed (seed/reset blocked), and `orbit config
+check` passed with the extracted binary. Production unit and `/etc/orbit/orbit.env`: `ORBIT_ENV=production`, `serve`
+only, no seed, Mailpit or registration setting.
+
+At the switch: stopped `orbit-agent` and `orbit` at 19:17:15 UTC, created snapshot `01a1ad24-da16-70b1-91f3-f10cbe80b330`
+with the old CLI and verified it, ran `migrate run` of the new binary on a copy in `/var/lib/orbit/rehearsal-7a176ff-*`
+(0 applied, schema 74, quick-check and foreign-key checks pass, counts unchanged; deleted afterwards), saved the sidecar
+data as `/var/backups/orbit-agent/orbit-agent-before-7a176ff.tgz`, installed the binary and started `orbit` (ready at
+19:18:21), then `orbit-agent`. The old executable is `/usr/local/bin/orbit-75bd825` (equal to the installed and the
+running one before the swap); the new one is also kept as `/usr/local/bin/orbit-7a176ff`. `vm-health`:
+`PROD_TAG=7a176ff`, `ROLLBACK_TAG=75bd825`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` active, no restarts; readiness (all
+checks); `/orbit-build.json` revision `7a176ff`; `/login` answers 200 with the SPA; schema 74; live quick-check and
+foreign-key checks pass; counts unchanged (6 users, 1 workspace, 3 projects, 63 tasks, 43 pages, 579 chat messages);
+registration still closed and no mail server set; no warning or error in the logs since the start. **Not** verified on
+production: any signed-in page, and the no-workspace flow itself (production has no user without a workspace).
+
+Rollback (the schema did not change, so the old binary reads the current database; restore the snapshot only if data is
+damaged):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-75bd825 /usr/local/bin/orbit
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Only if data must go back to 19:17 UTC (work after it is lost), with both services stopped:
+# sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-75bd825 backup verify 01a1ad24-da16-70b1-91f3-f10cbe80b330 && /usr/local/bin/orbit-75bd825 backup restore 01a1ad24-da16-70b1-91f3-f10cbe80b330'
+# sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-7a176ff.tgz
+```
 
 ### November 5, 2026 upgrade: dependency advisories, precompressed web assets and lazy routes
 

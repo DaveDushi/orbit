@@ -170,7 +170,8 @@ export function agenticTabsView(tabs: readonly AgenticTab[], instanceAdmin: bool
 }
 
 /** An area's title, icon and the links this person may open. */
-export function useSettingsArea(name: SettingsAreaName): SettingsArea {
+/** `profileOnly`: just the Profile page, all that someone with no workspace who is not an operator may open. */
+export function useSettingsArea(name: SettingsAreaName, profileOnly = false): SettingsArea {
   const permissions = useContext(WorkspaceContext)?.workspace.permissions ?? []
   const cloud = useBillingEnabled()
   const improvements = useImprovementsEnabled()
@@ -178,7 +179,7 @@ export function useSettingsArea(name: SettingsAreaName): SettingsArea {
   const sections = area.sections
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) => (!item.permission || permissions.includes(item.permission)) && (!item.cloud || cloud) && (!item.improvements || improvements)),
+      items: section.items.filter((item) => (!item.permission || permissions.includes(item.permission)) && (!item.cloud || cloud) && (!item.improvements || improvements) && (!profileOnly || item.to === '/profile')),
     }))
     .filter((section) => section.items.length > 0)
   return { ...area, sections }
