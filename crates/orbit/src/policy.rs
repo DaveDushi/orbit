@@ -59,10 +59,13 @@ pub enum Permission {
     /// Delete Drive files and folders forever (one trashed item, or the whole Drive trash).
     #[serde(rename = "drive.purge")]
     DrivePurge,
+    /// Turn off public Drive links that other members made.
+    #[serde(rename = "drive.shares.manage")]
+    DriveSharesManage,
 }
 
 impl Permission {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::WorkspaceUpdate,
         Self::WorkspaceDelete,
         Self::WorkspaceTransfer,
@@ -81,6 +84,7 @@ impl Permission {
         Self::AppsManage,
         Self::WorkspaceExport,
         Self::DrivePurge,
+        Self::DriveSharesManage,
     ];
 }
 
@@ -163,6 +167,13 @@ impl Actor {
     #[must_use]
     pub fn can_continue_drive_upload(self, started_by: Option<Id>) -> bool {
         started_by == Some(self.user_id)
+    }
+
+    /// A public Drive link is turned off by the member who made it, or by those who manage links
+    /// (`made_by` is `None` when that user is gone).
+    #[must_use]
+    pub fn can_revoke_drive_share(self, made_by: Option<Id>) -> bool {
+        made_by == Some(self.user_id) || self.can(Permission::DriveSharesManage)
     }
 
     /// A private page is visible to its owner alone, so whoever sees one may delete it forever.
@@ -290,7 +301,8 @@ impl Policy {
             | Permission::AgentMemoryManage
             | Permission::AppsManage
             | Permission::WorkspaceExport
-            | Permission::DrivePurge => {
+            | Permission::DrivePurge
+            | Permission::DriveSharesManage => {
                 matches!(role, WorkspaceRole::Owner | WorkspaceRole::Admin)
             }
         }

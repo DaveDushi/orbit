@@ -414,6 +414,15 @@ impl App {
                     attachment_state.uploads.clone(),
                     cookie_mode,
                 ),
+                drive_shares: app_key.as_ref().map(|key| {
+                    crate::drive_share_routes::DriveShareState::new(
+                        Arc::clone(&identity),
+                        drive.clone(),
+                        key,
+                        config.http.public_origin.clone(),
+                        cookie_mode,
+                    )
+                }),
                 drive: crate::drive_routes::DriveState::new(
                     Arc::clone(&identity),
                     drive,

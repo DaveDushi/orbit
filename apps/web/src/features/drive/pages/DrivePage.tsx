@@ -10,6 +10,7 @@ import {
   Edit2,
   Folder,
   FolderAdd,
+  Link,
   More,
   RowVertical,
   Search4,
@@ -53,6 +54,7 @@ import { DRIVE_DRAG_TYPE, FolderTree } from '../components/FolderTree'
 import { MoveDialog } from '../components/MoveDialog'
 import { NameDialog } from '../components/NameDialog'
 import { NodeIcon } from '../components/NodeIcon'
+import { ShareDialog } from '../components/ShareDialog'
 import { UploadPanel } from '../components/UploadPanel'
 import { DriveTrash } from '../components/DriveTrash'
 import { DriveViewer } from '../components/DriveViewer'
@@ -62,7 +64,7 @@ import { draggingFiles, droppedFiles, pickedFolder } from '../dropped'
 import { uploadQueue, useUploads } from '../uploads'
 
 type Layout = 'list' | 'grid'
-type Dialog = { kind: 'new-folder' } | { kind: 'rename'; node: DriveNode } | { kind: 'move'; nodes: DriveNode[] } | null
+type Dialog = { kind: 'new-folder' } | { kind: 'rename'; node: DriveNode } | { kind: 'move'; nodes: DriveNode[] } | { kind: 'share'; node: DriveNode } | null
 
 const LAYOUT_KEY = 'orbit.drive.layout'
 const SORTS: { value: string; label: string }[] = [
@@ -344,6 +346,7 @@ export function DrivePage({ view }: { view?: 'trash' }) {
             onDragStart={dragNodes}
             onDropNodes={moveNodes}
             onRename={(node) => setDialog({ kind: 'rename', node })}
+            onShare={(node) => setDialog({ kind: 'share', node })}
             onMove={(node) => setDialog({ kind: 'move', nodes: [node] })}
             onTrash={(node) => void trashNodes([node])}
             onDownload={(node) => void download([node])}
@@ -437,6 +440,11 @@ export function DrivePage({ view }: { view?: 'trash' }) {
                   <Edit2 className="size-3.5" /> Rename
                 </Button>
               ) : null}
+              {selectedNodes.length === 1 && selectedNodes[0] ? (
+                <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => selectedNodes[0] && setDialog({ kind: 'share', node: selectedNodes[0] })}>
+                  <Link className="size-3.5" /> Share
+                </Button>
+              ) : null}
               <Button type="button" variant="outline" size="sm" disabled={busy} className="text-destructive hover:text-destructive" onClick={() => void trashNodes(selectedNodes)}>
                 <Trash className="size-3.5" /> Move to trash
               </Button>
@@ -527,6 +535,7 @@ export function DrivePage({ view }: { view?: 'trash' }) {
           onClose={() => setViewing(null)}
         />
       ) : null}
+      {dialog?.kind === 'share' ? <ShareDialog workspaceId={workspaceId} node={dialog.node} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'new-folder' ? (
         <NameDialog
           title="New folder"
@@ -673,12 +682,14 @@ function ListRow({
   onDragStart,
   onDropNodes,
   onRename,
+  onShare,
   onMove,
   onTrash,
   onDownload,
 }: ItemProps & {
   onToggle: (id: string) => void
   onRename: (node: DriveNode) => void
+  onShare: (node: DriveNode) => void
   onMove: (node: DriveNode) => void
   onTrash: (node: DriveNode) => void
   onDownload: (node: DriveNode) => void
@@ -737,6 +748,7 @@ function ListRow({
           <DropdownMenuItem onClick={() => onOpen(node)}>{node.kind === 'folder' ? <Folder /> : <DocumentDownload />} {node.kind === 'folder' ? 'Open' : 'Download'}</DropdownMenuItem>
           {node.kind === 'folder' ? <DropdownMenuItem onClick={() => onDownload(node)}><DocumentDownload /> Download ZIP</DropdownMenuItem> : null}
           <DropdownMenuItem onClick={() => onRename(node)}><Edit2 /> Rename</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onShare(node)}><Link /> Share link…</DropdownMenuItem>
           <DropdownMenuItem onClick={() => onMove(node)}><ArrowRight2 /> Move</DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem variant="destructive" onClick={() => onTrash(node)}><Trash /> Move to trash</DropdownMenuItem>

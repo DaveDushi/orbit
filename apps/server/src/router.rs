@@ -39,6 +39,8 @@ pub struct ApiRoutes {
     pub pages: PageState,
     pub page_files: PageFileState,
     pub drive: crate::drive_routes::DriveState,
+    /// Public Drive links; `None` without an app key (their passes need it).
+    pub drive_shares: Option<crate::drive_share_routes::DriveShareState>,
     pub page_comments: PageCommentState,
     pub exports: ExportState,
     pub workspace_exports: WorkspaceExportState,
@@ -81,6 +83,11 @@ pub fn production_router(
         .merge(page_router(api.pages))
         .merge(page_file_router(api.page_files))
         .merge(crate::drive_routes::drive_router(api.drive))
+        .merge(
+            api.drive_shares
+                .map(crate::drive_share_routes::drive_share_router)
+                .unwrap_or_default(),
+        )
         .merge(page_comment_router(api.page_comments))
         .merge(export_router(api.exports))
         .merge(workspace_export_router(api.workspace_exports))

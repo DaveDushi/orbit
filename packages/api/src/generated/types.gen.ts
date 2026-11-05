@@ -1077,6 +1077,17 @@ export type CreateDriveFolder = {
     parent_id?: string | null;
 };
 
+export type CreateDriveShare = {
+    /**
+     * The link stops working at this time; absent: it works until it is turned off.
+     */
+    expires_at?: string | null;
+    /**
+     * 12 to 128 characters; absent: anyone with the link may open it.
+     */
+    password?: string | null;
+};
+
 export type CreateNotionImportBody = {
     /**
      * A Notion personal access token (recommended) or internal connection token. Validated
@@ -1364,6 +1375,44 @@ export type DrivePartUrl = {
 export type DrivePartUrls = {
     expires_at: string;
     items: Array<DrivePartUrl>;
+};
+
+/**
+ * A public link as members see it (the token is shown once, when the link is made).
+ */
+export type DriveShare = {
+    /**
+     * The caller may turn the link off.
+     */
+    can_revoke: boolean;
+    created_at: string;
+    created_by?: string | null;
+    download_count: number;
+    expires_at?: string | null;
+    has_password: boolean;
+    id: string;
+    node_id: string;
+    revoked_at?: string | null;
+};
+
+/**
+ * A new link. `url` holds the token: it is shown only now.
+ */
+export type DriveShareCreated = {
+    share: DriveShare;
+    url: string;
+};
+
+export type DriveShareList = {
+    items: Array<DriveShare>;
+};
+
+/**
+ * Send `pass` in the `X-Orbit-Share-Pass` header (and as `pass=` on downloads) until `expires_at`.
+ */
+export type DriveSharePass = {
+    expires_at: string;
+    pass: string;
 };
 
 export type DriveSort = 'name' | 'updated_at' | 'size';
@@ -2906,7 +2955,7 @@ export type PasswordConfirmationBody = {
  * A workspace capability that depends on the member's role. Actions open to
  * every member (tasks, projects, attachments, docs) are not listed here.
  */
-export type Permission = 'workspace.update' | 'workspace.delete' | 'workspace.transfer' | 'members.manage' | 'audit.view' | 'api_tokens.manage' | 'integrations.manage' | 'teamspaces.delete' | 'pages.purge' | 'views.manage_shared' | 'comments.moderate' | 'chat.manage' | 'billing.manage' | 'storage.manage' | 'agent_memory.manage' | 'apps.manage' | 'workspace.export' | 'drive.purge';
+export type Permission = 'workspace.update' | 'workspace.delete' | 'workspace.transfer' | 'members.manage' | 'audit.view' | 'api_tokens.manage' | 'integrations.manage' | 'teamspaces.delete' | 'pages.purge' | 'views.manage_shared' | 'comments.moderate' | 'chat.manage' | 'billing.manage' | 'storage.manage' | 'agent_memory.manage' | 'apps.manage' | 'workspace.export' | 'drive.purge' | 'drive.shares.manage';
 
 export type PlanInterval = 'month' | 'year';
 
@@ -3023,6 +3072,39 @@ export type ProjectUpdateBody = {
     expected_version: number;
     key: string;
     name: string;
+};
+
+export type PublicDriveFolder = {
+    items: Array<PublicDriveNode>;
+    next_offset?: number | null;
+    /**
+     * The folders from the shared one down to this one.
+     */
+    path: Array<DriveCrumb>;
+};
+
+/**
+ * What a link shows of a file or folder: no member, owner or folder above the shared one.
+ */
+export type PublicDriveNode = {
+    id: string;
+    kind: DriveNodeKind;
+    media?: null | DriveMedia;
+    mime?: string | null;
+    name: string;
+    poster_url?: string | null;
+    size?: number | null;
+    thumbnail_url?: string | null;
+    updated_at: string;
+};
+
+/**
+ * A link that works. While a password is needed, only `locked` is set.
+ */
+export type PublicDriveShare = {
+    expires_at?: string | null;
+    locked: boolean;
+    node?: null | PublicDriveNode;
 };
 
 export type PushKey = {
@@ -3980,6 +4062,10 @@ export type TwoFactorStatus = {
      * Sign-in asks for an authenticator app code after the password.
      */
     totp_enabled: boolean;
+};
+
+export type UnlockDriveShare = {
+    password: string;
 };
 
 export type UpdateMeBody = {
@@ -7875,6 +7961,225 @@ export type PutNotificationPreferencesResponses = {
 };
 
 export type PutNotificationPreferencesResponse = PutNotificationPreferencesResponses[keyof PutNotificationPreferencesResponses];
+
+export type OpenPublicShareData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        token: string;
+    };
+    query?: never;
+    url: '/api/v1/public/drive/shares/{token}';
+};
+
+export type OpenPublicShareErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type OpenPublicShareError = OpenPublicShareErrors[keyof OpenPublicShareErrors];
+
+export type OpenPublicShareResponses = {
+    200: PublicDriveShare;
+};
+
+export type OpenPublicShareResponse = OpenPublicShareResponses[keyof OpenPublicShareResponses];
+
+export type DownloadPublicShareData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        token: string;
+    };
+    query?: {
+        /**
+         * A file below a shared folder; absent: the shared file.
+         */
+        node_id?: string;
+        /**
+         * Let the browser show the file instead of saving it.
+         */
+        inline?: boolean;
+        /**
+         * The pass of a link with a password.
+         */
+        pass?: string;
+    };
+    url: '/api/v1/public/drive/shares/{token}/download';
+};
+
+export type DownloadPublicShareErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type DownloadPublicShareError = DownloadPublicShareErrors[keyof DownloadPublicShareErrors];
+
+export type DownloadPublicShareResponses = {
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type DownloadPublicShareResponse = DownloadPublicShareResponses[keyof DownloadPublicShareResponses];
+
+export type PublicShareFolderData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        token: string;
+    };
+    query?: {
+        /**
+         * A folder below the shared folder; absent: the shared folder.
+         */
+        folder_id?: string;
+        offset?: number;
+        limit?: number;
+    };
+    url: '/api/v1/public/drive/shares/{token}/folder';
+};
+
+export type PublicShareFolderErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type PublicShareFolderError = PublicShareFolderErrors[keyof PublicShareFolderErrors];
+
+export type PublicShareFolderResponses = {
+    200: PublicDriveFolder;
+};
+
+export type PublicShareFolderResponse = PublicShareFolderResponses[keyof PublicShareFolderResponses];
+
+export type UnlockPublicShareData = {
+    body: UnlockDriveShare;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        token: string;
+    };
+    query?: never;
+    url: '/api/v1/public/drive/shares/{token}/unlock';
+};
+
+export type UnlockPublicShareErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type UnlockPublicShareError = UnlockPublicShareErrors[keyof UnlockPublicShareErrors];
+
+export type UnlockPublicShareResponses = {
+    200: DriveSharePass;
+};
+
+export type UnlockPublicShareResponse = UnlockPublicShareResponses[keyof UnlockPublicShareResponses];
 
 export type GetPushKeyData = {
     body?: never;
@@ -12843,6 +13148,112 @@ export type RestoreDriveNodeResponses = {
 
 export type RestoreDriveNodeResponse = RestoreDriveNodeResponses[keyof RestoreDriveNodeResponses];
 
+export type ListDriveSharesData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        node_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}/shares';
+};
+
+export type ListDriveSharesErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type ListDriveSharesError = ListDriveSharesErrors[keyof ListDriveSharesErrors];
+
+export type ListDriveSharesResponses = {
+    200: DriveShareList;
+};
+
+export type ListDriveSharesResponse = ListDriveSharesResponses[keyof ListDriveSharesResponses];
+
+export type CreateDriveShareData = {
+    body: CreateDriveShare;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        node_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}/shares';
+};
+
+export type CreateDriveShareErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type CreateDriveShareError = CreateDriveShareErrors[keyof CreateDriveShareErrors];
+
+export type CreateDriveShareResponses = {
+    201: DriveShareCreated;
+};
+
+export type CreateDriveShareResponse = CreateDriveShareResponses[keyof CreateDriveShareResponses];
+
 export type TrashDriveNodeData = {
     body?: never;
     headers?: {
@@ -12965,6 +13376,61 @@ export type SearchDriveResponses = {
 };
 
 export type SearchDriveResponse = SearchDriveResponses[keyof SearchDriveResponses];
+
+export type RevokeDriveShareData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        share_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/drive/shares/{share_id}/revoke';
+};
+
+export type RevokeDriveShareErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type RevokeDriveShareError = RevokeDriveShareErrors[keyof RevokeDriveShareErrors];
+
+export type RevokeDriveShareResponses = {
+    200: DriveShare;
+};
+
+export type RevokeDriveShareResponse = RevokeDriveShareResponses[keyof RevokeDriveShareResponses];
 
 export type ListDriveTrashData = {
     body?: never;

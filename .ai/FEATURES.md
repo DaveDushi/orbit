@@ -577,6 +577,9 @@ per tab). `POST .../nodes/{id}/media` records width/height/duration and returns 
 only objects that exist and are small enough (1 MiB thumb, 4 MiB poster). Node responses carry `media` and 5-minute
 `thumbnail_url`/`poster_url`. `DriveViewer`: images with previous/next, HTML5 video with poster, audio, PDFs through the
 existing pdf.js `PdfPages`.
+Public links (M5): `drive_share_routes.rs`, `repositories/drive_shares.rs`; member dialog `ShareDialog` (expiry, optional
+password, address shown once, list, turn off) and the public page `/s/:token` (`PublicSharePage`, outside `AuthGate`,
+imported eagerly) with password form, file card and folder browser limited to the shared folder.
 
 ## Apps
 

@@ -18,7 +18,8 @@ export const ROLE_PERMISSIONS: Record<WorkspaceRole, Permission[]> = {
     "agent_memory.manage",
     "apps.manage",
     "workspace.export",
-    "drive.purge"
+    "drive.purge",
+    "drive.shares.manage"
   ],
   "member": [],
   "owner": [
@@ -39,6 +40,7 @@ export const ROLE_PERMISSIONS: Record<WorkspaceRole, Permission[]> = {
     "agent_memory.manage",
     "apps.manage",
     "workspace.export",
-    "drive.purge"
+    "drive.purge",
+    "drive.shares.manage"
   ]
 }

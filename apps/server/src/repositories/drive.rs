@@ -381,25 +381,15 @@ impl DriveRepository {
         let mut connection = self.database.pool().acquire().await?;
         require_actor(&mut connection, workspace_id, user_id).await?;
         live_folder(&mut connection, workspace_id, parent_id).await?;
-        let column = match sort {
-            DriveSort::Name => "drive_nodes.name_lower",
-            DriveSort::UpdatedAt => "drive_nodes.updated_at",
-            DriveSort::Size => "drive_nodes.size",
-        };
-        let direction = match order {
-            SortOrder::Asc => "ASC",
-            SortOrder::Desc => "DESC",
-        };
-        let mut query = SqlBuilder::new(format!("SELECT {NODE_COLUMNS} FROM {NODE_FROM} WHERE "));
-        query.push("drive_nodes.workspace_id = ");
-        query.push_bind(workspace_id.to_string());
-        push_parent(&mut query, "drive_nodes.parent_id", parent_id);
-        query.push(format!(
-            " AND drive_nodes.trashed_at IS NULL ORDER BY CASE WHEN drive_nodes.kind = 'folder' THEN 0 ELSE 1 END, \
-             {column} {direction}, drive_nodes.id {direction}"
-        ));
-        let rows = page_rows(&mut query, paging, &mut connection).await?;
-        node_page(&rows, paging)
+        list_children(
+            &mut connection,
+            workspace_id,
+            parent_id,
+            sort,
+            order,
+            paging,
+        )
+        .await
     }
 
     /// A live node and the folders above it.
@@ -1226,8 +1216,39 @@ impl DriveRepository {
     }
 }
 
+/// The live items of a folder (`None`: the top level), folders first, then by `sort`. The caller checked that
+/// the folder is live.
+pub(crate) async fn list_children(
+    connection: &mut AnyConnection,
+    workspace_id: Id,
+    parent_id: Option<Id>,
+    sort: DriveSort,
+    order: SortOrder,
+    paging: Paging,
+) -> Result<DriveNodePage, DriveError> {
+    let column = match sort {
+        DriveSort::Name => "drive_nodes.name_lower",
+        DriveSort::UpdatedAt => "drive_nodes.updated_at",
+        DriveSort::Size => "drive_nodes.size",
+    };
+    let direction = match order {
+        SortOrder::Asc => "ASC",
+        SortOrder::Desc => "DESC",
+    };
+    let mut query = SqlBuilder::new(format!("SELECT {NODE_COLUMNS} FROM {NODE_FROM} WHERE "));
+    query.push("drive_nodes.workspace_id = ");
+    query.push_bind(workspace_id.to_string());
+    push_parent(&mut query, "drive_nodes.parent_id", parent_id);
+    query.push(format!(
+            " AND drive_nodes.trashed_at IS NULL ORDER BY CASE WHEN drive_nodes.kind = 'folder' THEN 0 ELSE 1 END, \
+             {column} {direction}, drive_nodes.id {direction}"
+        ));
+    let rows = page_rows(&mut query, paging, connection).await?;
+    node_page(&rows, paging)
+}
+
 /// The caller as a member of the workspace; `NotFound` for everybody else.
-async fn require_actor(
+pub(crate) async fn require_actor(
     connection: &mut AnyConnection,
     workspace_id: Id,
     user_id: Id,
@@ -1295,10 +1316,10 @@ fn upload_from_row(row: &sqlx::any::AnyRow) -> Result<DriveUpload, sqlx::Error> 
 
 /// One node on the way from the top level to a node.
 #[derive(Debug)]
-struct Link {
-    id: Id,
-    name: String,
-    kind: DriveNodeKind,
+pub(crate) struct Link {
+    pub(crate) id: Id,
+    pub(crate) name: String,
+    pub(crate) kind: DriveNodeKind,
     trashed: bool,
 }
 
@@ -1335,7 +1356,7 @@ async fn chain(
 }
 
 /// As [`chain`], for a live node only.
-async fn live_chain(
+pub(crate) async fn live_chain(
     connection: &mut AnyConnection,
     workspace_id: Id,
     node_id: Id,
@@ -1594,7 +1615,7 @@ fn entry_page(rows: &[sqlx::any::AnyRow], paging: Paging) -> Result<DriveEntryPa
     })
 }
 
-async fn load_node(
+pub(crate) async fn load_node(
     connection: &mut AnyConnection,
     workspace_id: Id,
     node_id: Id,
@@ -1648,13 +1669,13 @@ fn node_from_row(row: &sqlx::any::AnyRow) -> Result<DriveNode, sqlx::Error> {
     })
 }
 
-fn parse_id(value: String) -> Result<Id, sqlx::Error> {
+pub(crate) fn parse_id(value: String) -> Result<Id, sqlx::Error> {
     value
         .parse()
         .map_err(|error| sqlx::Error::Decode(Box::new(error)))
 }
 
-fn optional_id(value: Option<String>) -> Result<Option<Id>, sqlx::Error> {
+pub(crate) fn optional_id(value: Option<String>) -> Result<Option<Id>, sqlx::Error> {
     value.map(parse_id).transpose()
 }
 

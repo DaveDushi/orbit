@@ -11,6 +11,7 @@ pub mod cluster;
 pub mod collab;
 pub mod drive;
 pub mod drive_routes;
+pub mod drive_share_routes;
 mod email_quota;
 pub mod export;
 pub mod export_routes;

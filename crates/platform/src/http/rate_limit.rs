@@ -370,6 +370,10 @@ pub(super) fn endpoint_class(method: &Method, path: &str) -> Option<EndpointClas
     if path != "/api" && !path.starts_with("/api/") {
         return None;
     }
+    // Public Drive links: anyone with a link (or guessing one) is anonymous, so they share the sign-in limit.
+    if path.starts_with("/api/v1/public/drive/") {
+        return Some(EndpointClass::Authentication);
+    }
     // Both send email to an address anyone can type, so they share the strict recovery limit.
     if path.contains("/recovery") || path.contains("/auth/register") {
         Some(EndpointClass::Recovery)
@@ -415,6 +419,21 @@ mod tests {
             assert_eq!(
                 endpoint_class(&Method::GET, path),
                 Some(EndpointClass::General),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn public_drive_links_share_the_strict_sign_in_limit() {
+        for (method, path) in [
+            (Method::GET, "/api/v1/public/drive/shares/token"),
+            (Method::POST, "/api/v1/public/drive/shares/token/unlock"),
+            (Method::GET, "/api/v1/public/drive/shares/token/download"),
+        ] {
+            assert_eq!(
+                endpoint_class(&method, path),
+                Some(EndpointClass::Authentication),
                 "{path}"
             );
         }

@@ -990,7 +990,7 @@ fn valid_mime(mime: &str) -> bool {
         })
 }
 
-fn problem(
+pub(crate) fn problem(
     error: DriveError,
     instance: &str,
     request_id: Option<&Extension<RequestId>>,

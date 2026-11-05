@@ -228,6 +228,13 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::drive_routes::get_drive_download,
         crate::drive_routes::begin_drive_media,
         crate::drive_routes::complete_drive_media,
+        crate::drive_share_routes::create_drive_share,
+        crate::drive_share_routes::list_drive_shares,
+        crate::drive_share_routes::revoke_drive_share,
+        crate::drive_share_routes::open_public_share,
+        crate::drive_share_routes::unlock_public_share,
+        crate::drive_share_routes::public_share_folder,
+        crate::drive_share_routes::download_public_share,
         crate::drive_routes::create_drive_downloads,
         crate::drive_routes::list_drive_trash,
         crate::drive_routes::empty_drive_trash,
@@ -456,6 +463,10 @@ fn public_operation(operation_id: &str) -> bool {
             | "github_webhook"
             | "github_manifest_callback"
             | "stripe_webhook"
+            | "open_public_share"
+            | "unlock_public_share"
+            | "public_share_folder"
+            | "download_public_share"
     )
 }
 

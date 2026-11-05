@@ -354,6 +354,18 @@ impl DriveService {
         Ok(node)
     }
 
+    /// A 5-minute URL of an object of the workspace's Drive; `download_name` makes the browser save it.
+    pub fn object_url(
+        &self,
+        workspace_id: Id,
+        key: &str,
+        download_name: Option<&str>,
+    ) -> Result<String, DriveError> {
+        Ok(self
+            .bucket(workspace_id)?
+            .presign_get(key, DOWNLOAD_URL_LIFETIME, download_name)?)
+    }
+
     /// Adds 5-minute URLs of ready thumbnails and posters to nodes that the caller may see. Without a bucket the
     /// nodes stay without them.
     pub fn sign_media(&self, workspace_id: Id, nodes: &mut [DriveNode]) {
