@@ -61,6 +61,11 @@ export type AdminUser = {
 };
 
 export type ApiTokenRecord = {
+    /**
+     * Whether the task scope covers every live project of the workspace, including projects
+     * created later. `project_ids` then lists the projects of today.
+     */
+    all_projects: boolean;
     created_at: string;
     expires_at?: string | null;
     id: string;
@@ -1065,6 +1070,11 @@ export type ConversationStateRecord = {
 };
 
 export type CreateApiTokenBody = {
+    /**
+     * Cover every live project of the workspace, including projects created later, instead of
+     * `project_ids`.
+     */
+    all_projects?: boolean;
     expires_in_days?: number | null;
     name: string;
     project_id?: string | null;

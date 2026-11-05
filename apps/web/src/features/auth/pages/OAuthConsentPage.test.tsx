@@ -55,7 +55,7 @@ for (const approved of [true, false]) {
     const field = await view.findByRole('textbox', { name: 'Callback URL' }) as HTMLTextAreaElement
     expect(field.value).toBe(callback)
     expect(window.location.pathname).toBe('/oauth/consent')
-    expect(body).toEqual({ csrf_token: 'nonce', approved, workspace_id: approved ? 'workspace-1' : null, project_ids: approved ? ['project-1'] : [], scopes: [] })
+    expect(body).toEqual({ csrf_token: 'nonce', approved, workspace_id: approved ? 'workspace-1' : null, project_ids: approved ? ['project-1'] : [], all_projects: false, scopes: [] })
     expect(view.queryAllByRole('button', { name: 'Allow read access' }).length).toBe(0)
     const clipboard = navigator.clipboard
     const originalWrite = clipboard.writeText
@@ -105,5 +105,5 @@ test('select all projects and per-resource levels send every project and scope',
   await userEvent.click(within(view.getByRole('group', { name: 'Docs' })).getByRole('button', { name: 'No access' }))
   fireEvent.click(view.getByRole('button', { name: 'Allow selected access' }))
   await view.findByRole('textbox', { name: 'Callback URL' })
-  expect(body).toEqual({ csrf_token: 'nonce', approved: true, workspace_id: 'w1', project_ids: ['p1', 'p2'], scopes: ['tasks:write', 'chat:read', 'drive:read', 'drive:write'] })
+  expect(body).toEqual({ csrf_token: 'nonce', approved: true, workspace_id: 'w1', project_ids: ['p1', 'p2'], all_projects: false, scopes: ['tasks:write', 'chat:read', 'drive:read', 'drive:write'] })
 })
