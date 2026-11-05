@@ -5,7 +5,7 @@ import { ShortcutHelpDialog } from '@/shortcuts/ShortcutHelpDialog'
 import { NavigationCommands, useGlobalCommands } from './globalCommands'
 import { NewTaskProvider } from '@/features/tasks/newTask'
 import { useCommand } from '@/shortcuts/useCommand'
-import { useContext, useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react'
+import { Suspense, useContext, useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react'
 import { useWorkspaceEvents } from '@/features/realtime/useWorkspaceEvents'
 import { ChatProvider } from '@/features/chat/api/ChatProvider'
 import { useChatBadges } from '@/features/chat/api/queries'
@@ -15,6 +15,7 @@ import { preloadPageEditorWhenIdle } from '@/features/docs/editor/loadPageEditor
 import { useUnreadFavicon } from '@/lib/favicon'
 import { chatEnabled } from './productNavigation'
 import { Outlet, useLocation } from 'react-router'
+import { LoadingScreen } from '@/components/common/LoadingScreen'
 import { SidebarLeft as PanelLeft } from 'reicon-react'
 import { cn } from 'cn'
 import { SideSheet, SideSheetContent } from '@/components/common/SideSheet'
@@ -206,7 +207,10 @@ function Shell() {
         <Topbar onOpenDrawer={() => setDrawerOpen(true)} inboxUnread={inboxUnread} />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <ErrorBoundary resetKey={pathname}>
-            <Outlet />
+            {/* a page's code loads on first use (App.tsx); the shell stays while it does */}
+            <Suspense fallback={<LoadingScreen />}>
+              <Outlet />
+            </Suspense>
           </ErrorBoundary>
         </div>
         <MobileDock chatBadge={chatBadge} chatUnread={chatUnread} />

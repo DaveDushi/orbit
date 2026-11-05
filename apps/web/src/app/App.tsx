@@ -1,50 +1,12 @@
 import { ConnectionScreen } from './ConnectionScreen'
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { ConfirmationModalHost } from '@/components/common/ConfirmationModal'
 import { Toaster } from '@/components/ui/sonner'
 import { NewVersionNotice } from '@/app/NewVersionNotice'
 import { Navigate, Outlet, Route, Routes, useNavigate } from 'react-router'
 import { MovedTo } from '@/app/MovedTo'
 import { setAppNavigate } from '@/lib/navigateBridge'
-import { AppShell } from '@/app/shell/AppShell'
 import { chatEnabled } from '@/app/shell/productNavigation'
-import { ChatPage } from '@/features/chat/pages/ChatPage'
-import { ProjectSettingsPage } from '@/features/tasks/pages/ProjectSettingsPage'
-import { TasksPage } from '@/features/tasks/pages/TasksPage'
-import { HomePage } from '@/features/home/pages/HomePage'
-import { TaskTrashPage } from '@/features/tasks/pages/TaskTrashPage'
-import { DocsPage } from '@/features/docs/pages/DocsPage'
-import { AccountLayout, AdminLayout, AgenticLayout, SettingsLayout } from '@/features/settings/pages/SettingsLayout'
-import { AdminAuditPage } from '@/features/admin/pages/AdminAuditPage'
-import { AdminBackupsPage } from '@/features/admin/pages/AdminBackupsPage'
-import { AdminEmailPage } from '@/features/admin/pages/AdminEmailPage'
-import { AdminJobsPage } from '@/features/admin/pages/AdminJobsPage'
-import { AdminLimitsPage } from '@/features/admin/pages/AdminLimitsPage'
-import { AdminStoragePage } from '@/features/admin/pages/AdminStoragePage'
-import { AdminSettingsPage } from '@/features/admin/pages/AdminSettingsPage'
-import { AdminUsersPage } from '@/features/admin/pages/AdminUsersPage'
-import { FeedbackPage } from '@/features/improvements/FeedbackPage'
-import { GeneralPage } from '@/features/settings/pages/GeneralPage'
-import { GithubPage } from '@/features/settings/pages/GithubPage'
-import { EmojiPage } from '@/features/settings/pages/EmojiPage'
-import { DangerZonePage } from '@/features/settings/pages/DangerZonePage'
-import { ExportPage } from '@/features/settings/pages/ExportPage'
-import { BillingPage } from '@/features/settings/pages/BillingPage'
-import { MembersPage } from '@/features/settings/pages/MembersPage'
-import { SecurityPage } from '@/features/settings/pages/SecurityPage'
-import { SessionsPage } from '@/features/settings/pages/SessionsPage'
-import { AgenticAdmin, AgenticTabs, AgenticWorkspace, AgenticYou } from '@/features/settings/pages/AgenticPage'
-import { ShortcutsPage } from '@/features/settings/pages/ShortcutsPage'
-import { StickersPage } from '@/features/settings/pages/StickersPage'
-import { StoragePage } from '@/features/settings/pages/StoragePage'
-import { NotificationsPage } from '@/features/settings/pages/NotificationsPage'
-import { ApiTokensPage } from '@/features/settings/pages/ApiTokensPage'
-import { FileStoragePage } from '@/features/settings/pages/FileStoragePage'
-import { ProfilePage } from '@/features/profile/pages/ProfilePage'
-import { AppearancePage } from '@/features/profile/pages/AppearancePage'
-import { AppPage } from '@/features/apps/AppPage'
-import { AppsSettingsPage } from '@/features/apps/AppsSettingsPage'
-import { InboxPage } from '@/features/inbox/pages/InboxPage'
 import { AuthGate, GuestGate } from '@/features/auth/AuthGate'
 import { AcceptInvitationPage } from '@/features/auth/pages/AcceptInvitationPage'
 import { OAuthConsentPage } from '@/features/auth/pages/OAuthConsentPage'
@@ -53,9 +15,83 @@ import { RecoveryPage } from '@/features/auth/pages/RecoveryPage'
 import { ConfirmEmailPage } from '@/features/auth/pages/ConfirmEmailPage'
 import { RegisterPage } from '@/features/auth/pages/RegisterPage'
 import { SetupPage } from '@/features/auth/pages/SetupPage'
-import { OnboardingPage } from '@/features/onboarding/OnboardingPage'
 import { WorkspaceProvider } from '@/features/workspaces/WorkspaceProvider'
-import { ViewsPage } from '@/features/views/ViewsPage'
+import { preloadPageEditor } from '@/features/docs/editor/loadPageEditor'
+
+// The signed-in app loads on first use, one chunk per area, so the sign-in pages load only what they need.
+const loadShell = () => import('@/app/shell/AppShell')
+const loadChat = () => import('@/features/chat/pages/ChatPage')
+const loadTasks = () => import('./taskPages')
+const loadHome = () => import('@/features/home/pages/HomePage')
+const loadDocs = () => import('@/features/docs/pages/DocsPage')
+const loadSettings = () => import('./settingsPages')
+const loadApps = () => import('@/features/apps/AppPage')
+const loadInbox = () => import('@/features/inbox/pages/InboxPage')
+const loadOnboarding = () => import('@/features/onboarding/OnboardingPage')
+const ChatPage = lazy(() => loadChat().then((module) => ({ default: module.ChatPage })))
+const ProjectSettingsPage = lazy(() => loadTasks().then((module) => ({ default: module.ProjectSettingsPage })))
+const TasksPage = lazy(() => loadTasks().then((module) => ({ default: module.TasksPage })))
+const HomePage = lazy(() => loadHome().then((module) => ({ default: module.HomePage })))
+const TaskTrashPage = lazy(() => loadTasks().then((module) => ({ default: module.TaskTrashPage })))
+const DocsPage = lazy(() => loadDocs().then((module) => ({ default: module.DocsPage })))
+const AccountLayout = lazy(() => loadSettings().then((module) => ({ default: module.AccountLayout })))
+const AdminLayout = lazy(() => loadSettings().then((module) => ({ default: module.AdminLayout })))
+const AgenticLayout = lazy(() => loadSettings().then((module) => ({ default: module.AgenticLayout })))
+const SettingsLayout = lazy(() => loadSettings().then((module) => ({ default: module.SettingsLayout })))
+const AdminAuditPage = lazy(() => loadSettings().then((module) => ({ default: module.AdminAuditPage })))
+const AdminBackupsPage = lazy(() => loadSettings().then((module) => ({ default: module.AdminBackupsPage })))
+const AdminEmailPage = lazy(() => loadSettings().then((module) => ({ default: module.AdminEmailPage })))
+const AdminJobsPage = lazy(() => loadSettings().then((module) => ({ default: module.AdminJobsPage })))
+const AdminLimitsPage = lazy(() => loadSettings().then((module) => ({ default: module.AdminLimitsPage })))
+const AdminStoragePage = lazy(() => loadSettings().then((module) => ({ default: module.AdminStoragePage })))
+const AdminSettingsPage = lazy(() => loadSettings().then((module) => ({ default: module.AdminSettingsPage })))
+const AdminUsersPage = lazy(() => loadSettings().then((module) => ({ default: module.AdminUsersPage })))
+const FeedbackPage = lazy(() => loadSettings().then((module) => ({ default: module.FeedbackPage })))
+const GeneralPage = lazy(() => loadSettings().then((module) => ({ default: module.GeneralPage })))
+const GithubPage = lazy(() => loadSettings().then((module) => ({ default: module.GithubPage })))
+const EmojiPage = lazy(() => loadSettings().then((module) => ({ default: module.EmojiPage })))
+const DangerZonePage = lazy(() => loadSettings().then((module) => ({ default: module.DangerZonePage })))
+const ExportPage = lazy(() => loadSettings().then((module) => ({ default: module.ExportPage })))
+const BillingPage = lazy(() => loadSettings().then((module) => ({ default: module.BillingPage })))
+const MembersPage = lazy(() => loadSettings().then((module) => ({ default: module.MembersPage })))
+const SecurityPage = lazy(() => loadSettings().then((module) => ({ default: module.SecurityPage })))
+const SessionsPage = lazy(() => loadSettings().then((module) => ({ default: module.SessionsPage })))
+const AgenticAdmin = lazy(() => loadSettings().then((module) => ({ default: module.AgenticAdmin })))
+const AgenticTabs = lazy(() => loadSettings().then((module) => ({ default: module.AgenticTabs })))
+const AgenticWorkspace = lazy(() => loadSettings().then((module) => ({ default: module.AgenticWorkspace })))
+const AgenticYou = lazy(() => loadSettings().then((module) => ({ default: module.AgenticYou })))
+const ShortcutsPage = lazy(() => loadSettings().then((module) => ({ default: module.ShortcutsPage })))
+const StickersPage = lazy(() => loadSettings().then((module) => ({ default: module.StickersPage })))
+const StoragePage = lazy(() => loadSettings().then((module) => ({ default: module.StoragePage })))
+const NotificationsPage = lazy(() => loadSettings().then((module) => ({ default: module.NotificationsPage })))
+const ApiTokensPage = lazy(() => loadSettings().then((module) => ({ default: module.ApiTokensPage })))
+const FileStoragePage = lazy(() => loadSettings().then((module) => ({ default: module.FileStoragePage })))
+const ProfilePage = lazy(() => loadSettings().then((module) => ({ default: module.ProfilePage })))
+const AppearancePage = lazy(() => loadSettings().then((module) => ({ default: module.AppearancePage })))
+const AppPage = lazy(() => loadApps().then((module) => ({ default: module.AppPage })))
+const AppsSettingsPage = lazy(() => loadSettings().then((module) => ({ default: module.AppsSettingsPage })))
+const InboxPage = lazy(() => loadInbox().then((module) => ({ default: module.InboxPage })))
+const OnboardingPage = lazy(() => loadOnboarding().then((module) => ({ default: module.OnboardingPage })))
+const ViewsPage = lazy(() => loadTasks().then((module) => ({ default: module.ViewsPage })))
+
+// A signed-in start URL loads its code while the session check runs, not after it, and the shell waits for the start
+// page, so the first screen shows at once and not in parts. A doc also starts its editor now (a doc shows in it).
+const startPath = window.location.pathname
+const loadDocWithEditor = () => {
+  if (startPath !== '/docs') preloadPageEditor()
+  return loadDocs()
+}
+const startAreas: Record<string, () => Promise<unknown>> = {
+  '': loadHome, tasks: loadTasks, 'tasks-trash': loadTasks, views: loadTasks, docs: loadDocWithEditor, chat: loadChat, apps: loadApps,
+  activity: loadInbox, onboarding: loadOnboarding, agentic: loadSettings, profile: loadSettings, admin: loadSettings, settings: loadSettings,
+}
+const signedInStart = !/^\/(setup|login|recovery|register|oauth|accept-invitation|confirm-email)(\/|$)/.test(startPath)
+const startPage = signedInStart ? startAreas[startPath.split('/')[1]]?.() : undefined
+if (signedInStart) void loadShell()
+const AppShell = lazy(async () => {
+  const [module] = await Promise.all([loadShell(), startPage])
+  return { default: module.AppShell }
+})
 
 /** Hands the router's navigate function to non-component code (markdown links). */
 function NavigateBridge() {
@@ -74,6 +110,8 @@ export default function App() {
       <Toaster />
       <NewVersionNotice />
       <ConnectionScreen />
+      {/* blank while the first screen's code loads, as before the split */}
+      <Suspense fallback={null}>
       <Routes>
         <Route element={<GuestGate />}>
           <Route path="setup" element={<SetupPage />} />
@@ -174,6 +212,7 @@ export default function App() {
           </Route>
         </Route>
       </Routes>
+      </Suspense>
     </>
   )
 }
