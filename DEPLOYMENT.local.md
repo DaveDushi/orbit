@@ -4,11 +4,11 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 7a176ff0ca9481a58d61633679aa484c51739b23
-  (people with no workspace can delete their account, upstream #39, November 5, 2026).
+- Source: DaveDushi/orbit, `main` at 35780dcf48968881ff536195059efc813c31a070
+  (Orbit Drive v1, schema 75, November 5, 2026).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:7a176ff`); fork commits have no published upstream image.
-- Image ID: sha256:7d6f8e1fcf83858b1757f5366175c571fd7e65ba0a1468d85edf3ed946b4b4e0
+  (`orbit:35780dc`); fork commits have no published upstream image.
+- Image ID: sha256:91140a09a16d9b48120771f43d6c1e9fd5fe18a57885101caddbe072af13aeaa
 - Team agent sidecar code (`/opt/orbit-agent`): commit 5b64346.
 - OIDC gateway: `orbit-oidc-gateway.service`, nginx on `127.0.0.1:8400`, config in `/etc/orbit-oidc-gateway/`
   (see `docs/apps.md`). `cloudflared` is NOT installed.
@@ -236,6 +236,58 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 5, 2026 upgrade: Orbit Drive v1 (schema 75)
+
+Fast-forward of `main` from `43120b5a` to `35780dc`, the merge of `main` into `drive-core` (`53101b0f`, M1–M8 and the
+Quality & Security fix). Shipped: one Drive per workspace (`/drive`: tree, list/grid, uploads straight to the bucket
+with presigned URLs and multipart resume, browser ZIP, trash, search), browser-made thumbnails and the viewer, public
+links `/s/<token>` (hashed token, expiry, password, revoke), MCP tools under `drive:read` / `drive:write`, the
+`orbit drive import-wellrox-cloud` CLI (not run), and a CSP whose `connect-src`/`img-src`/`media-src` add only the
+configured https bucket origins. Migration 0075 (`drive_nodes`, `drive_blobs`, `drive_media`, `drive_shares`); new
+hourly schedule `drive.maintenance`; new permissions `drive.purge`, `drive.shares.manage`. No new `ORBIT_*` setting, no
+change in `apps/agent`, so the sidecar code was not updated.
+
+Checks on the merged head (`orbit-build`): `rate_limit` (15), `drive_shares_api` (4), platform `backup` (23) and
+`database` (44; one run had a flaky `page_search_migration_backfills_and_tracks_pages`, which passed alone and in two
+more full runs), `app_smoke` (20, schema 75), `openapi_contract` (18), web build and `tsc`. The branch itself passed all
+Drive tests on SQLite and Postgres, the full web suite and the browser e2e runs before the merge.
+`orbit-deploy image` built `orbit:35780dc` (label `org.orbit.clean-revision` = the full commit), `deploy/smoke.sh`
+passed, and `orbit config check` passed with the extracted binary.
+
+At the switch: stopped `orbit-agent` and `orbit` at 23:39:12 UTC, created snapshot `01a1ae14-acf6-7515-b660-0b2286f942fc`
+with the old CLI and verified it, ran `migrate run` of the new binary on a copy in `/var/lib/orbit/rehearsal-35780dc-*`
+(1 applied, schema 75, the four Drive tables, quick-check and foreign-key checks pass, counts unchanged; deleted
+afterwards), saved the sidecar data as `/var/backups/orbit-agent/orbit-agent-before-35780dc.tgz`, installed the binary
+and started `orbit` (ready at 23:40:09; it applied 0075 itself), then `orbit-agent`. The old executable is
+`/usr/local/bin/orbit-7a176ff` (equal to the installed one before the swap); the new one is also kept as
+`/usr/local/bin/orbit-35780dc`. `vm-health`: `PROD_TAG=35780dc`, `ROLLBACK_TAG=7a176ff`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` active, no restarts; readiness (all
+checks); `/orbit-build.json` revision `35780dc`; `/login`, `/drive` and `/s/<token>` answer 200 with the SPA; schema 75;
+live quick-check and foreign-key checks pass; counts unchanged (6 users, 1 workspace, 3 projects, 63 tasks, 43 pages, 581
+chat messages); `drive.maintenance` scheduled; the Drive API answers 401 without a session and an unknown public link
+answers 404 `drive_share_not_found`; the CSP adds only the configured bucket origin; no warning or error in the Orbit log
+since the start (nginx errors only during the stop window). The Orbit nginx location already has `access_log off`, so
+`/s/` and `/api/v1/public/drive/` tokens are not logged on this VM. **Not** done or verified on production: any
+signed-in Drive flow, R2 CORS on `wellrox-files`, `wellrox-files` as the workspace's Drive bucket (no credentials in this
+session), the MP4 spot-check, and the wellrox-cloud import (needs a user decision).
+
+**Before members use Drive:** production has no workspace bucket; its installation bucket is `wellrox-orbit-backups`.
+Until `wellrox-files` is connected in Settings → File storage (with R2 CORS GET/PUT/HEAD from the Orbit origin), Drive
+in the Wellrox workspace picks the backups bucket, where browser uploads fail (no CORS).
+
+Rollback (the old binary cannot read schema 75: restore the snapshot together with the binary; Drive data made after
+23:39 UTC is lost, and so is all other work after it):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-7a176ff backup verify 01a1ae14-acf6-7515-b660-0b2286f942fc && /usr/local/bin/orbit-7a176ff backup restore 01a1ae14-acf6-7515-b660-0b2286f942fc'
+sudo install -m 755 /usr/local/bin/orbit-7a176ff /usr/local/bin/orbit
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-35780dc.tgz
+```
 
 ### November 5, 2026 upgrade: delete account with no workspace (upstream #39)
 
