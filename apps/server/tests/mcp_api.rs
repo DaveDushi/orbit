@@ -799,13 +799,13 @@ async fn sub_issues_can_be_created_listed_moved_and_detached_within_the_grant() 
         .await
         .unwrap();
     let parent = f.tasks.get_task(f.workspace, f.task, f.user).await.unwrap();
-    let identifier: String =
+    let key: String =
         sqlx::query_scalar("SELECT projects.project_key FROM projects WHERE id = $1")
             .bind(f.project.to_string())
             .fetch_one(f.database.pool())
             .await
             .unwrap();
-    let identifier = format!("{identifier}-{}", parent.number);
+    let identifier = format!("{key}-{}", parent.number);
     let created = f
         .tool(
             "create_task",
@@ -814,7 +814,11 @@ async fn sub_issues_can_be_created_listed_moved_and_detached_within_the_grant() 
         .await;
     let child = &created["result"]["structuredContent"];
     assert_eq!(child["parent_task_id"], f.task.to_string(), "{created}");
-    assert_eq!(child["identifier"], identifier);
+    // The result names the new task itself, not its parent.
+    assert_eq!(
+        child["identifier"],
+        format!("{key}-{}", child["number"].as_i64().unwrap())
+    );
     assert!(
         child["url"]
             .as_str()
