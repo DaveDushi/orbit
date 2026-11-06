@@ -5,9 +5,10 @@
 
 pub(crate) mod bot;
 pub(crate) mod credentials;
+mod drive;
 mod graphql;
 pub mod inputs;
-mod integrations;
+pub(crate) mod integrations;
 pub mod memory;
 mod memory_routes;
 mod oauth;
@@ -19,11 +20,12 @@ pub mod settings;
 
 use std::sync::Arc;
 
-/// The agent's routes: the sidecar's, the ChatGPT connection, the memory and the integrations.
+/// The agent's routes: the sidecar's, the ChatGPT connection, the memory, the integrations and Drive.
 pub fn router(state: AgentState) -> axum::Router {
     routes::router(state.clone())
         .merge(memory_routes::router(state.clone()))
-        .merge(integrations::router(state))
+        .merge(integrations::router(state.clone()))
+        .merge(drive::router(state))
 }
 
 use crate::auth_routes::CookieMode;
@@ -89,6 +91,8 @@ pub struct AgentState {
     pub(crate) outbound: outbound::Outbound,
     /// The integrations' OAuth access tokens, only in memory.
     pub(crate) tokens: oauth::TokenCache,
+    /// Orbit Drive for the agent's Drive tools; absent: they answer that Drive is not available.
+    pub(crate) drive: Option<drive::AgentDrive>,
 }
 
 impl AgentState {
@@ -112,7 +116,19 @@ impl AgentState {
                 .unwrap_or_default(),
             outbound: outbound::Outbound::new(outbound::TestHosts::from_env()),
             tokens: oauth::TokenCache::default(),
+            drive: None,
         }
+    }
+
+    /// Turns on the agent's Drive tools; share links start with `public_origin`.
+    #[must_use]
+    pub fn with_drive(mut self, drive: crate::drive::DriveService, public_origin: &str) -> Self {
+        self.drive = Some(drive::AgentDrive {
+            service: drive,
+            reader: crate::file_content::FileReader::new(),
+            public_origin: public_origin.to_owned(),
+        });
+        self
     }
 
     /// Lets integrations reach these hosts over plain HTTP and on local addresses: for tests only.

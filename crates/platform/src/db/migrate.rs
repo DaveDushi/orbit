@@ -515,6 +515,13 @@ impl MigrationRunner {
                     include_str!("../../../../apps/server/migrations/0075_drive.sql"),
                     false,
                 ),
+                Migration::new(
+                    76,
+                    include_str!(
+                        "../../../../apps/server/migrations/0076_agent_drive_approvals.sql"
+                    ),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -690,6 +697,13 @@ impl MigrationRunner {
             Migration::new(
                 75,
                 include_str!("../../../../apps/server/migrations/postgres/0075_drive.sql"),
+                false,
+            ),
+            Migration::new(
+                76,
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0076_agent_drive_approvals.sql"
+                ),
                 false,
             ),
         ];

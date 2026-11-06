@@ -333,7 +333,8 @@ impl App {
             Arc::clone(&identity),
             cookie_mode,
             app_key,
-        );
+        )
+        .with_drive(drive.clone(), &config.http.public_origin);
         let metrics = Metrics::default();
         let apps = crate::apps::AppsState::new(
             Arc::clone(&identity),

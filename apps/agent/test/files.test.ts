@@ -185,3 +185,14 @@ test("read_chat_file explains a refusal like any tool", async () => {
 	assert.equal(result.isError, true);
 	assert.match(result.output[0].text, /Ann cannot do this or cannot see it \(Orbit answered 404, chat_not_found\)/);
 });
+
+test("a Drive read pages like other files: rows from the offset, text with its next offset", async () => {
+	const { driveReadText } = await import("../src/drive.ts");
+	const sheet = { file: { id: "d1", kind: "file", name: "plan.csv", size: 30 }, sheets: [], sheet: null, rows: [["a", "b"], ["c", "d"]], text: null, next_offset: 12, no_text: false };
+	const rows = driveReadText(sheet, 10);
+	assert.deepEqual(JSON.parse(rows.split("\n")[0]), { file_id: "d1", name: "plan.csv", kind: "file", next_offset: 12 });
+	assert.ok(rows.endsWith("row 11: a | b\nrow 12: c | d"));
+	const pdf = driveReadText({ file: { id: "d2", kind: "file", name: "Q1.pdf" }, sheets: [], sheet: null, rows: null, text: "Revenue", next_offset: null, no_text: false }, 0);
+	assert.ok(pdf.endsWith("\nRevenue"));
+	assert.match(driveReadText({ file: { id: "d3", kind: "file", name: "scan.pdf" }, sheets: [], rows: null, text: "", no_text: true }, 0), /No text was found/);
+});

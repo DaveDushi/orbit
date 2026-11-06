@@ -8,12 +8,12 @@ use rmcp::ErrorData;
 use rmcp::model::{CallToolRequestParams, CallToolResult, ContentBlock, Tool};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use crate::drive::{DriveService, MAX_READ_BYTES, MAX_TEXT_UPLOAD_BYTES};
 use crate::file_content::{ContentQuery, FileReader, ReadError};
 use crate::file_parse::{self, FileKind};
-use crate::mcp::{arguments, definition, parse_id, write_definition};
+use crate::mcp::{definition, parse_id, write_definition};
 use crate::repositories::api_tokens::{ApiTokenPrincipal, ApiTokenScope};
 use crate::repositories::drive::{
     DriveError, DriveNode, DriveNodeKind, DriveSearch, DriveSort, OnConflict, Paging, SortOrder,
@@ -228,8 +228,20 @@ fn failure(message: &str) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(message.to_owned())])
 }
 
-fn drive_failure(error: &DriveError) -> CallToolResult {
-    failure(match error {
+/// What a Drive tool did: data for the model (its label and value), or why it failed.
+pub(crate) enum Outcome {
+    Data(String, Value),
+    Failed(&'static str),
+}
+
+impl From<DriveError> for Outcome {
+    fn from(error: DriveError) -> Self {
+        Self::Failed(drive_failure(&error))
+    }
+}
+
+pub(crate) fn drive_failure(error: &DriveError) -> &'static str {
+    match error {
         DriveError::NotFound => "Drive item is not available",
         DriveError::InvalidName => "Invalid name: 1 to 255 characters, no / or \\",
         DriveError::NameTaken => "The name is already used in this folder",
@@ -240,7 +252,13 @@ fn drive_failure(error: &DriveError) -> CallToolResult {
         DriveError::TooLarge => "The file is too large here (read: 16 MiB, text upload: 48 KiB)",
         DriveError::NoStorage => "The workspace has no storage for Drive",
         _ => "Drive is unavailable",
-    })
+    }
+}
+
+/// The arguments of a Drive tool.
+fn arguments<T: serde::de::DeserializeOwned>(raw: &Map<String, Value>) -> Result<T, ErrorData> {
+    serde_json::from_value(Value::Object(raw.clone()))
+        .map_err(|_| ErrorData::invalid_params("Invalid tool arguments", None))
 }
 
 fn paging(offset: Option<i64>, limit: Option<i64>) -> Result<Paging, ErrorData> {
@@ -267,12 +285,37 @@ pub(crate) async fn call(
     if principal.service_account_id.is_some() {
         return Ok(failure("Resource is not available"));
     }
-    let (workspace, user) = (principal.workspace_id, principal.creator_id);
+    let raw = request.arguments.clone().unwrap_or_default();
+    Ok(
+        match run(
+            drive,
+            reader,
+            (principal.workspace_id, principal.creator_id),
+            &request.name,
+            &raw,
+        )
+        .await?
+        {
+            Outcome::Data(label, value) => untrusted(&label, &value),
+            Outcome::Failed(message) => failure(message),
+        },
+    )
+}
+
+/// Runs the Drive tool `name` as `user`, with that member's permissions: for MCP clients and the
+/// team agent (`crate::agent::drive`).
+pub(crate) async fn run(
+    drive: &DriveService,
+    reader: &FileReader,
+    (workspace, user): (Id, Id),
+    name: &str,
+    raw: &Map<String, Value>,
+) -> Result<Outcome, ErrorData> {
     let repository = drive.repository();
     let now = TimestampMillis::now();
-    let result = match request.name.as_ref() {
+    let result = match name {
         "drive_list" => {
-            let args: ListArgs = arguments(request)?;
+            let args: ListArgs = arguments(raw)?;
             let folder_id = optional_id(args.folder_id.as_deref())?;
             let page_size = paging(args.offset, args.limit)?;
             let folder = match folder_id {
@@ -282,7 +325,7 @@ pub(crate) async fn call(
                         "name": detail.node.name,
                         "path": detail.path.iter().map(|crumb| crumb.name.as_str()).chain([detail.node.name.as_str()]).collect::<Vec<_>>().join("/"),
                     })),
-                    Err(error) => return Ok(drive_failure(&error)),
+                    Err(error) => return Ok(error.into()),
                 },
                 None => None,
             };
@@ -298,7 +341,7 @@ pub(crate) async fn call(
                 })
         }
         "drive_search" => {
-            let args: SearchArgs = arguments(request)?;
+            let args: SearchArgs = arguments(raw)?;
             let search = DriveSearch {
                 query: args.query,
                 kind: args.kind,
@@ -317,7 +360,7 @@ pub(crate) async fn call(
                 })
         }
         "drive_info" => {
-            let args: NodeArgs = arguments(request)?;
+            let args: NodeArgs = arguments(raw)?;
             repository
                 .node(workspace, user, parse_id(&args.node_id)?)
                 .await
@@ -337,11 +380,11 @@ pub(crate) async fn call(
                 })
         }
         "drive_read" => {
-            let args: ReadArgs = arguments(request)?;
+            let args: ReadArgs = arguments(raw)?;
             return read(drive, reader, workspace, user, args).await;
         }
         "drive_create_folder" => {
-            let args: CreateFolderArgs = arguments(request)?;
+            let args: CreateFolderArgs = arguments(raw)?;
             repository
                 .create_folder(
                     workspace,
@@ -355,9 +398,9 @@ pub(crate) async fn call(
                 .map(|node| json!({"created": Item::new(node, None)}))
         }
         "drive_upload_text" => {
-            let args: UploadTextArgs = arguments(request)?;
+            let args: UploadTextArgs = arguments(raw)?;
             if args.text.len() > MAX_TEXT_UPLOAD_BYTES {
-                return Ok(drive_failure(&DriveError::TooLarge));
+                return Ok(DriveError::TooLarge.into());
             }
             let mime = match args.text_type.unwrap_or(TextType::Plain) {
                 TextType::Plain => "text/plain",
@@ -380,7 +423,7 @@ pub(crate) async fn call(
                 .map(|node| json!({"created": Item::new(node, None)}))
         }
         "drive_move" => {
-            let args: MoveArgs = arguments(request)?;
+            let args: MoveArgs = arguments(raw)?;
             repository
                 .move_node(
                     workspace,
@@ -393,14 +436,14 @@ pub(crate) async fn call(
                 .map(|node| json!({"moved": Item::new(node, None)}))
         }
         "drive_rename" => {
-            let args: RenameArgs = arguments(request)?;
+            let args: RenameArgs = arguments(raw)?;
             repository
                 .rename(workspace, user, parse_id(&args.node_id)?, &args.name, now)
                 .await
                 .map(|node| json!({"renamed": Item::new(node, None)}))
         }
         "drive_trash" => {
-            let args: NodeArgs = arguments(request)?;
+            let args: NodeArgs = arguments(raw)?;
             let node_id = parse_id(&args.node_id)?;
             repository
                 .trash(workspace, user, node_id, now)
@@ -410,11 +453,11 @@ pub(crate) async fn call(
         _ => return Err(ErrorData::invalid_params("Unknown tool", None)),
     };
     Ok(match result {
-        Ok(value) => untrusted(
-            &format!("drive:{}", request.name.trim_start_matches("drive_")),
-            &value,
+        Ok(value) => Outcome::Data(
+            format!("drive:{}", name.trim_start_matches("drive_")),
+            value,
         ),
-        Err(error) => drive_failure(&error),
+        Err(error) => error.into(),
     })
 }
 
@@ -442,15 +485,15 @@ async fn read(
     workspace: Id,
     user: Id,
     args: ReadArgs,
-) -> Result<CallToolResult, ErrorData> {
+) -> Result<Outcome, ErrorData> {
     let node_id = parse_id(&args.node_id)?;
     let (node, bytes) = match drive.file_bytes(workspace, user, node_id).await {
         Ok(found) => found,
-        Err(error) => return Ok(drive_failure(&error)),
+        Err(error) => return Ok(error.into()),
     };
     let kind = drive_kind(&node.name, node.mime.as_deref().unwrap_or_default());
     if matches!(kind, FileKind::Image | FileKind::Other) {
-        return Ok(failure(
+        return Ok(Outcome::Failed(
             "This file has no text to read (an image or another binary file)",
         ));
     }
@@ -480,9 +523,9 @@ async fn read(
         )
         .await;
     Ok(match parsed {
-        Ok(Some(parsed)) => untrusted(
-            "drive:file",
-            &json!({
+        Ok(Some(parsed)) => Outcome::Data(
+            "drive:file".to_owned(),
+            json!({
                 "file": Item::new(node, None),
                 "sheets": parsed.sheets,
                 "sheet": parsed.sheet,
@@ -492,11 +535,13 @@ async fn read(
                 "no_text": parsed.no_text,
             }),
         ),
-        Ok(None) => failure("This file has no text to read"),
-        Err(ReadError::Busy) => failure("The server is reading other files; try again in a moment"),
-        Err(_) => {
-            failure("This file cannot be read (damaged, protected, too large or too complex)")
+        Ok(None) => Outcome::Failed("This file has no text to read"),
+        Err(ReadError::Busy) => {
+            Outcome::Failed("The server is reading other files; try again in a moment")
         }
+        Err(_) => Outcome::Failed(
+            "This file cannot be read (damaged, protected, too large or too complex)",
+        ),
     })
 }
 
