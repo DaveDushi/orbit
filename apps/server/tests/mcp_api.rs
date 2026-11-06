@@ -925,3 +925,92 @@ async fn docs_and_chat_require_explicit_scopes_and_never_expose_write_tools() {
     let denied = f.tool("get_doc", json!({"page_id": Id::new_v7()})).await;
     assert_eq!(denied["result"]["isError"], true, "{denied}");
 }
+
+fn sized_request(token: &str, body: Body, content_length: Option<usize>) -> Request<Body> {
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri("/mcp")
+        .header(header::HOST, "orbit.test")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .header("mcp-protocol-version", "2025-11-25")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"));
+    if let Some(length) = content_length {
+        builder = builder.header(header::CONTENT_LENGTH, length);
+    }
+    builder.body(body).unwrap()
+}
+
+/// A `list_tasks` call whose JSON body is exactly `size` bytes.
+fn padded_call(size: usize) -> Vec<u8> {
+    let empty = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "list_tasks", "arguments": {"query": ""}}})
+    .to_string();
+    let body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "list_tasks", "arguments": {"query": "x".repeat(size - empty.len())}}})
+    .to_string();
+    assert_eq!(body.len(), size);
+    body.into_bytes()
+}
+
+fn chunked(bytes: Vec<u8>, chunk: usize) -> Body {
+    let frames: Vec<Result<axum::body::Bytes, std::io::Error>> = bytes
+        .chunks(chunk)
+        .map(|part| Ok(axum::body::Bytes::copy_from_slice(part)))
+        .collect();
+    Body::from_stream(futures_util::stream::iter(frames))
+}
+
+/// A body read past the platform limit (one frame over 2 MiB, no Content-Length) used to fail the
+/// MCP transport's read and answer 500.
+#[tokio::test]
+async fn body_size_cap_answers_413_never_500() {
+    const CAP: usize = 64 * 1024;
+    let fixture = Fixture::new().await;
+    let send = |request: Request<Body>| async {
+        let response = fixture.app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        (status, String::from_utf8_lossy(&body).into_owned())
+    };
+    let token = fixture.token.as_str();
+
+    let (status, body) = send(sized_request(
+        token,
+        Body::from(padded_call(CAP)),
+        Some(CAP),
+    ))
+    .await;
+    assert_eq!(status, StatusCode::OK, "at the cap: {body}");
+    let (status, body) = send(sized_request(token, chunked(padded_call(CAP), 4096), None)).await;
+    assert_eq!(status, StatusCode::OK, "chunked at the cap: {body}");
+
+    for size in [CAP + 1, 100 * 1024, 3 * 1024 * 1024] {
+        let cases = [
+            (
+                "content-length",
+                sized_request(token, Body::from(padded_call(size)), Some(size)),
+            ),
+            (
+                "one frame",
+                sized_request(token, Body::from(padded_call(size)), None),
+            ),
+            (
+                "chunked",
+                sized_request(token, chunked(padded_call(size), 16 * 1024), None),
+            ),
+            (
+                "big chunks",
+                sized_request(token, chunked(padded_call(size), 1024 * 1024), None),
+            ),
+        ];
+        for (name, request) in cases {
+            let (status, body) = send(request).await;
+            assert_eq!(
+                status,
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "{name} {size}: {body}"
+            );
+        }
+    }
+}

@@ -7,6 +7,8 @@ use std::convert::Infallible;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 
 use axum::body::Body;
@@ -14,6 +16,7 @@ use axum::extract::ConnectInfo;
 use axum::http::header::{CONTENT_TYPE, HeaderName, HeaderValue, RETRY_AFTER};
 use axum::http::{Request, Response, StatusCode};
 use axum::response::Response as AxumResponse;
+use http_body_util::BodyExt;
 use tower::{Layer, Service};
 
 use crate::{Database, Problem, RateLimitConfig};
@@ -332,7 +335,18 @@ where
             let instance = parts.uri.path().to_owned();
             let method = parts.method.clone();
             // Keep the body lazy so route authentication runs before an upload is read.
-            let body = Body::new(http_body_util::Limited::new(body, body_limit));
+            // Remember a body over the limit: a handler that maps every read error to a 500
+            // (such as the MCP transport) must still answer 413.
+            let body_too_large = Arc::new(AtomicBool::new(false));
+            let body = Body::new(http_body_util::Limited::new(body, body_limit).map_err({
+                let body_too_large = Arc::clone(&body_too_large);
+                move |error| {
+                    if error.is::<http_body_util::LengthLimitError>() {
+                        body_too_large.store(true, Ordering::Relaxed);
+                    }
+                    error
+                }
+            }));
             strip_forwarding_headers(&mut parts.headers);
             parts.extensions.insert(request_id.clone());
             parts.extensions.insert(client_ip);
@@ -387,7 +401,11 @@ where
             {
                 rate_limiter.charge(charge).await;
             }
-            let response = if response.status() == StatusCode::INTERNAL_SERVER_ERROR {
+            let response = if response.status() == StatusCode::INTERNAL_SERVER_ERROR
+                && body_too_large.load(Ordering::Relaxed)
+            {
+                too_large_response(&request_id, &instance)
+            } else if response.status() == StatusCode::INTERNAL_SERVER_ERROR {
                 let status = response.status();
                 tracing::error!(request_id = request_id.as_str(), %status, "http request failed");
                 Problem::internal(request_id.as_str(), &instance).into_response()
