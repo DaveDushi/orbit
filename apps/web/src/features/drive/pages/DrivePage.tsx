@@ -21,7 +21,7 @@ import { needsThumbnail } from '@orbit/api/drive'
 import { ApiProblem } from '@orbit/api/problem'
 import { cn } from 'cn'
 import { EmptyState } from '@/components/common/EmptyState'
-import { Pane, PaneTitle } from '@/components/common/Pane'
+import { Pane, PaneHeader, PaneTitle } from '@/components/common/Pane'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -37,6 +37,8 @@ import { Spinner } from '@/components/ui/spinner'
 import { relativeTime } from '@/lib/format'
 import { formatBytes } from '@/lib/formatBytes'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
+import { InAppSidebar, SidebarListHeader } from '@/app/shell/InAppSidebar'
+import { useInAppSidebar } from '@/app/shell/sidebarSlot'
 import {
   createFolder,
   moveNode,
@@ -164,7 +166,14 @@ export function DrivePage({ view }: { view?: 'trash' }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the ids decide; the nodes are new objects on each refetch
   }, [workspaceId, missingKey])
 
-  if (view === 'trash') return <DriveTrash workspaceId={workspaceId} />
+  if (view === 'trash') {
+    return (
+      <div className="flex h-full min-h-0 min-w-0 flex-1">
+        <DriveFolders workspaceId={workspaceId} selected="" trash onSelect={(id) => navigate(id === null ? '/drive' : `/drive/${id}`)} />
+        <DriveTrash workspaceId={workspaceId} />
+      </div>
+    )
+  }
 
   const openFolder = (id: string | null) => navigate(id === null ? '/drive' : `/drive/${id}`)
   const open = (node: DriveNode) => {
@@ -358,21 +367,7 @@ export function DrivePage({ view }: { view?: 'trash' }) {
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1">
-      <aside className="flex w-60 shrink-0 flex-col border-r px-2 max-[899px]:hidden" aria-label="Drive folders">
-        <div className="flex h-12 items-center px-1">
-          <span className="text-[13px] font-semibold">Drive</span>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <FolderTree workspaceId={workspaceId} selected={searching ? '' : folderId} onSelect={openFolder} onDropNodes={(target, ids) => void moveNodes(ids, target)} />
-        </div>
-        <button
-          type="button"
-          className="mb-2 flex h-8 items-center gap-2 rounded-md px-2 text-[13px] text-sidebar-nav hover:bg-black/4 dark:hover:bg-white/5"
-          onClick={() => navigate('/drive/trash')}
-        >
-          <Trash className="size-4" /> Trash
-        </button>
-      </aside>
+      <DriveFolders workspaceId={workspaceId} selected={searching ? '' : folderId} onSelect={openFolder} onDropNodes={(target, ids) => void moveNodes(ids, target)} />
       <Pane
         className={cn('relative', dropping && 'ring-2 ring-primary ring-inset')}
         onDragOver={(event) => {
@@ -391,7 +386,7 @@ export function DrivePage({ view }: { view?: 'trash' }) {
           void droppedFiles(event.dataTransfer).then(upload)
         }}
       >
-        <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b px-3 py-1.5">
+        <PaneHeader className="flex-wrap">
           <nav aria-label="Breadcrumbs" className="flex min-w-0 flex-1 items-center gap-1 text-[13px]">
             {searching ? (
               <PaneTitle render={<h1 />}>{title}</PaneTitle>
@@ -424,7 +419,7 @@ export function DrivePage({ view }: { view?: 'trash' }) {
             <Search4 className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input key={query} name="q" defaultValue={query} placeholder="Search Drive" aria-label="Search Drive" className="h-8 pl-8" />
           </form>
-        </div>
+        </PaneHeader>
         <div className="flex h-11 shrink-0 items-center gap-2 overflow-x-auto border-b px-3 whitespace-nowrap">
           {selectedNodes.length > 0 ? (
             <>
@@ -606,6 +601,47 @@ function FilterSelect({ label, value, options, onChange }: { label: string; valu
 }
 
 /** A breadcrumb; Drive items dropped on it move into that folder. */
+/** The folder tree and Trash: in the app sidebar when it has room (as the Docs page tree), otherwise beside the files. */
+function DriveFolders({ workspaceId, selected, trash = false, onSelect, onDropNodes }: {
+  workspaceId: string
+  selected: string | null
+  trash?: boolean
+  onSelect: (folderId: string | null) => void
+  onDropNodes?: (folderId: string | null, nodeIds: string[]) => void
+}) {
+  const navigate = useNavigate()
+  const inAppSidebar = useInAppSidebar()
+  return (
+    <InAppSidebar>
+      <aside className={cn('flex min-h-0 flex-col', inAppSidebar ? 'flex-1' : 'w-60 shrink-0 border-r max-[899px]:hidden')} aria-label="Drive folders">
+        {inAppSidebar ? (
+          <SidebarListHeader label="Folders" />
+        ) : (
+          <PaneHeader>
+            <PaneTitle>Drive</PaneTitle>
+          </PaneHeader>
+        )}
+        <div className="min-h-0 flex-1 overflow-y-auto px-2">
+          <FolderTree workspaceId={workspaceId} selected={selected} onSelect={onSelect} onDropNodes={onDropNodes} />
+        </div>
+        <div className="shrink-0 border-t p-2">
+          <button
+            type="button"
+            aria-current={trash ? 'page' : undefined}
+            className={cn(
+              'flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-[13px] font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent/50 hover:text-foreground',
+              trash && 'bg-sidebar-accent text-sidebar-accent-foreground',
+            )}
+            onClick={() => navigate('/drive/trash')}
+          >
+            <Trash className="size-[15px] shrink-0" /> Trash
+          </button>
+        </div>
+      </aside>
+    </InAppSidebar>
+  )
+}
+
 function Crumb({ label, current, onOpen, onDropNodes }: { label: string; current: boolean; onOpen: () => void; onDropNodes: (ids: string[]) => void }) {
   const [over, setOver] = useState(false)
   return (
