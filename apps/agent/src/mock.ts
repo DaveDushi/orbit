@@ -16,8 +16,8 @@
  *   find drive file "words"        read drive file <id|it>              create folder "Name"
  *   trash drive file <id|it>       share drive file <id|it>
  *
- * An answer "yes" to an approval question calls the last integration, drive_trash or drive_share tool again with the
- * same arguments.
+ * A "yes" to an approval question (an answer, or the driver's next message in a DM) calls the last integration,
+ * drive_trash or drive_share tool again with the same arguments.
  * When a memory tool result asks for a summary, the mock writes one from the halves it was shown. A compaction gets a
  * short placeholder summary.
  */
@@ -135,7 +135,7 @@ export function plan(instruction: string, messages: readonly Message[]): { name:
 		}
 		return { name: "use_integration", args: { tool: match[1], arguments: parsed } };
 	}
-	if (/^Answer from [^\n]*\n\s*(yes|approved?)\b/i.test(instruction)) {
+	if (/^(?:Answer|Instruction) from [^\n]*\n\s*(yes|approved?)\b/i.test(instruction)) {
 		const again = lastCall(messages, ["use_integration", "drive_trash", "drive_share"]);
 		if (again) return again;
 	}
