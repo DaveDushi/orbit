@@ -11,7 +11,7 @@ use orbit_server::auth_routes::CookieMode;
 use orbit_server::improvements::{
     ImprovementError, ImprovementState, ImprovementsCommand, Status, router, run_command,
 };
-use orbit_server::repositories::api_tokens::ApiTokenRepository;
+use orbit_server::repositories::api_tokens::{ApiTokenRepository, ApiTokenScope};
 use orbit_server::repositories::identity::{IdentityRepository, SetupRequest};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -137,8 +137,7 @@ impl Fixture {
                 self.admin,
                 "MCP".into(),
                 vec![self.project],
-                true,
-                false,
+                &[ApiTokenScope::TasksRead],
                 false,
                 None,
                 "test",

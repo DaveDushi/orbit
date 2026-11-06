@@ -264,7 +264,7 @@ pub(crate) async fn call(
     request: &CallToolRequestParams,
 ) -> Result<CallToolResult, ErrorData> {
     // A service account has no membership: Drive acts as the connected member only.
-    if principal.service_account_id.is_some() {
+    if principal.service_account.is_some() {
         return Ok(failure("Resource is not available"));
     }
     let (workspace, user) = (principal.workspace_id, principal.creator_id);

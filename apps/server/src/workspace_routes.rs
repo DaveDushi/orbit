@@ -29,7 +29,7 @@ use crate::image_compression::{CompressionStatus, ImageCompressor};
 use crate::mail::{self, Mailer};
 use crate::object_storage::Owner;
 use crate::repositories::api_tokens::{
-    ApiTokenError, ApiTokenRecord, ApiTokenRepository, IssuedApiToken,
+    ApiTokenError, ApiTokenRecord, ApiTokenRepository, ApiTokenScope, IssuedApiToken,
 };
 use crate::repositories::identity::{
     AdminAccountError, AdminUser, AuthenticatedSession, IdentityRepository,
@@ -626,26 +626,6 @@ async fn put_member_note(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[derive(Clone, Copy, Deserialize, ToSchema)]
-#[serde(rename_all = "lowercase")]
-enum ApiTokenScope {
-    Read,
-    Write,
-    #[serde(rename = "docs:read")]
-    DocsRead,
-    #[serde(rename = "chat:read")]
-    ChatRead,
-    /// MCP task writes; `write` is the REST API's.
-    #[serde(rename = "tasks:write")]
-    TasksWrite,
-    /// MCP Drive reads.
-    #[serde(rename = "drive:read")]
-    DriveRead,
-    /// MCP Drive writes (never permanent delete).
-    #[serde(rename = "drive:write")]
-    DriveWrite,
-}
-
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 struct CreateApiTokenBody {
@@ -700,17 +680,22 @@ async fn create_api_token(
             project_ids.push(id);
         }
     }
+    // Projects only limit task access, so a token without a task scope stores none.
+    let task_scope = ApiTokenScope::grants_tasks(&body.scopes);
+    if !task_scope {
+        project_ids.clear();
+    }
     if name.is_empty()
         || name.chars().count() > 100
-        || project_ids.is_empty()
+        || (task_scope && project_ids.is_empty())
         || body.scopes.is_empty()
         || (body.service_account
             && body.scopes.iter().any(|s| {
                 matches!(
                     s,
                     ApiTokenScope::DocsRead
+                        | ApiTokenScope::DocsWrite
                         | ApiTokenScope::ChatRead
-                        | ApiTokenScope::TasksWrite
                         | ApiTokenScope::DriveRead
                         | ApiTokenScope::DriveWrite
                 )
@@ -720,32 +705,11 @@ async fn create_api_token(
             StatusCode::UNPROCESSABLE_ENTITY,
             "invalid_api_token",
             "Invalid API token",
-            "Token names must contain 1 to 100 characters, and at least one project and scope are required.",
+            "Token names must contain 1 to 100 characters, at least one scope is required, and a task scope needs at least one project.",
             instance,
             request_id.as_ref(),
         ));
     }
-    let can_read = body
-        .scopes
-        .iter()
-        .any(|scope| matches!(scope, ApiTokenScope::Read));
-    let can_write = body
-        .scopes
-        .iter()
-        .any(|scope| matches!(scope, ApiTokenScope::Write));
-    let mcp_scopes = body
-        .scopes
-        .iter()
-        .filter_map(|s| match s {
-            ApiTokenScope::DocsRead => Some("docs:read"),
-            ApiTokenScope::ChatRead => Some("chat:read"),
-            ApiTokenScope::TasksWrite => Some("tasks:write"),
-            ApiTokenScope::DriveRead => Some("drive:read"),
-            ApiTokenScope::DriveWrite => Some("drive:write"),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
     let now = TimestampMillis::now();
     let expires_at = match body.expires_in_days {
         None => None,
@@ -765,18 +729,16 @@ async fn create_api_token(
     };
     let issued = state
         .api_tokens
-        .create_scoped(
+        .create(
             workspace_id,
             session.user.id,
             name.to_owned(),
             project_ids,
-            can_read,
-            can_write,
+            &body.scopes,
             body.service_account,
             expires_at,
             request_id_value(request_id.as_ref()),
             now,
-            &mcp_scopes,
         )
         .await
         .map_err(|error| api_token_problem(error, &instance, request_id.as_ref()))?;

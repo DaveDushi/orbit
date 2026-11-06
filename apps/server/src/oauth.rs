@@ -30,10 +30,11 @@ use crate::repositories::identity::IdentityRepository;
 use crate::task_routes::authenticate_session;
 
 const SCOPE: &str = "tasks:read";
-const SCOPES: [&str; 6] = [
+const SCOPES: [&str; 7] = [
     "tasks:read",
     "tasks:write",
     "docs:read",
+    "docs:write",
     "chat:read",
     "drive:read",
     "drive:write",
@@ -127,23 +128,12 @@ impl OAuthState {
                 .get::<String, _>("user_id")
                 .parse()
                 .map_err(|_| OAuthError::server())?,
-            service_account_id: None,
-            scopes: {
-                let extra: String = row.get("mcp_scopes");
-                let mut scopes = vec![ApiTokenScope::Read];
-                for (name, scope) in [
-                    ("tasks:write", ApiTokenScope::TasksWrite),
-                    ("docs:read", ApiTokenScope::DocsRead),
-                    ("chat:read", ApiTokenScope::ChatRead),
-                    ("drive:read", ApiTokenScope::DriveRead),
-                    ("drive:write", ApiTokenScope::DriveWrite),
-                ] {
-                    if extra.split_whitespace().any(|s| s == name) {
-                        scopes.push(scope);
-                    }
-                }
-                scopes
-            },
+            actor_id: row
+                .get::<String, _>("user_id")
+                .parse()
+                .map_err(|_| OAuthError::server())?,
+            service_account: None,
+            scopes: ApiTokenScope::parse_list(&granted_scopes(row.get("mcp_scopes"))),
         }))
     }
 }

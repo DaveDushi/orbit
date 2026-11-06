@@ -12,7 +12,7 @@ use orbit_platform::{
 };
 use orbit_server::drive::DriveService;
 use orbit_server::mcp::{McpState, router};
-use orbit_server::repositories::api_tokens::ApiTokenRepository;
+use orbit_server::repositories::api_tokens::{ApiTokenRepository, ApiTokenScope};
 use orbit_server::repositories::identity::{IdentityRepository, SetupRequest};
 use orbit_server::repositories::tasks::TaskRepository;
 use orbit_server::repositories::workspaces::WorkspaceRepository;
@@ -96,25 +96,37 @@ impl Fixture {
         }
     }
 
-    /// A personal token (or a service account's) with these MCP scopes and the REST read flag.
-    async fn token(&self, mcp_scopes: &str, service_account: bool) -> String {
-        self.tokens
-            .create_scoped(
+    /// A personal token (or a service account's) with `tasks:read` and these scopes. A service
+    /// account cannot be given Drive scopes, so its scopes are set on the row, as for an older token.
+    async fn token(&self, scopes: &str, service_account: bool) -> String {
+        let mut granted = vec![ApiTokenScope::TasksRead];
+        if !service_account {
+            granted.extend(ApiTokenScope::parse_list(scopes));
+        }
+        let issued = self
+            .tokens
+            .create(
                 self.workspace,
                 self.user,
-                format!("MCP {mcp_scopes}"),
+                format!("MCP {scopes}"),
                 vec![self.project],
-                true,
-                false,
+                &granted,
                 service_account,
                 None,
                 "test",
                 TimestampMillis::now(),
-                mcp_scopes,
             )
             .await
-            .unwrap()
-            .token
+            .unwrap();
+        if service_account {
+            sqlx::query("UPDATE api_tokens SET scopes = $1 WHERE id = $2")
+                .bind(format!("tasks:read {scopes}"))
+                .bind(issued.api_token.id.to_string())
+                .execute(self.database.pool())
+                .await
+                .unwrap();
+        }
+        issued.token
     }
 
     async fn rpc(&self, token: &str, method: &str, params: Value) -> Value {

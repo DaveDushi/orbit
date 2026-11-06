@@ -515,6 +515,25 @@ impl MigrationRunner {
                     include_str!("../../../../apps/server/migrations/0075_drive.sql"),
                     false,
                 ),
+                Migration::new(
+                    76,
+                    include_str!("../../../../apps/server/migrations/0076_api_token_scopes.sql"),
+                    true,
+                ),
+                Migration::new(
+                    77,
+                    include_str!(
+                        "../../../../apps/server/migrations/0077_comment_service_account.sql"
+                    ),
+                    false,
+                ),
+                Migration::new(
+                    78,
+                    include_str!(
+                        "../../../../apps/server/migrations/0078_api_token_optional_project.sql"
+                    ),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -690,6 +709,27 @@ impl MigrationRunner {
             Migration::new(
                 75,
                 include_str!("../../../../apps/server/migrations/postgres/0075_drive.sql"),
+                false,
+            ),
+            Migration::new(
+                76,
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0076_api_token_scopes.sql"
+                ),
+                true,
+            ),
+            Migration::new(
+                77,
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0077_comment_service_account.sql"
+                ),
+                false,
+            ),
+            Migration::new(
+                78,
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0078_api_token_optional_project.sql"
+                ),
                 false,
             ),
         ];

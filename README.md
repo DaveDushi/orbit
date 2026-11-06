@@ -15,8 +15,9 @@ there, not in someone else's cloud.
 - **Docs**: a page tree with a rich editor, search, and trash.
 - **Chat**: channels, direct messages, threads, files, and search.
 - **Mail**: a shared mail client. Work in progress; it uses mock data for now.
-- **AI assistant**: planned. Today, AI clients can read tasks through the
-  [MCP server](docs/mcp.md).
+- **AI assistant**: planned. Today, AI clients use tasks, docs, Drive, and
+  chat through the [MCP server](docs/mcp.md), and scripts use the
+  [public API](docs/public-api.md) with an API token.
 - **Administration**: workspaces, members, invitations, roles, sessions, API
   tokens, audit records, and instance settings.
 
