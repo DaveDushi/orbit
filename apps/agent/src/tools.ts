@@ -604,7 +604,7 @@ export const ORBIT_TOOLS = [
 	useIntegration,
 ];
 
-const PROMPT = (name: string) => `You are ${name}, a teammate inside Orbit (tasks, Docs pages, chat). You work in a chat thread.
+const PROMPT = (name: string) => `You are ${name}, a teammate inside Orbit (tasks, Docs pages, Drive files, chat). You work in a chat thread.
 
 Rules:
 - You act for one person per run, the driver. Every tool acts with the driver's Orbit permissions. If Orbit refuses, say so plainly; never try to work around it.

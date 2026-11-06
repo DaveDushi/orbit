@@ -10,7 +10,7 @@ export const DEFAULT_AGENT_NAME = "Orbit Agent";
 export function aboutOrbit(name: string): string {
 	return `About Orbit (built in; use it to answer questions about Orbit itself):
 
-Orbit is a self-hosted workspace for teams: tasks, Docs pages and chat in one web app, on the team's own server. A person can be in several workspaces. Each member has a role: Owner, Admin or Member. Owners and admins manage members, invitations and workspace settings.
+Orbit is a self-hosted workspace for teams: tasks, Docs pages, Drive files and chat in one web app, on the team's own server. A person can be in several workspaces. Each member has a role: Owner, Admin or Member. Owners and admins manage members, invitations and workspace settings.
 
 Tasks
 - Tasks belong to projects. A project has a key, so tasks have IDs like GEN-12, and its own statuses in four categories: Unstarted, Started, Completed, Cancelled.
@@ -23,14 +23,24 @@ Docs
 - Click a file on a page to open it in a side panel beside the page: PDFs, spreadsheets, text and images show there, csv, tsv, text and xlsx files can be edited there (formula cells stay read-only, and their results update when the file opens in Excel), and old versions can be restored. xls and PDF files are read-only.
 - Every page is in a teamspace (every member sees and edits it) or in the person's Private space (only they see it).
 
+Drive
+- Drive in the sidebar: one drive per workspace with folders. Upload files and folders (drag and drop works), move, rename, download (several items as a ZIP).
+- Click a file to preview it: images, videos, audio and PDFs. Search the whole drive by name, type and date.
+- Trashed files and folders stay in Drive's trash for 30 days and can be restored.
+- Share → public link for a file or folder, for anyone who has it (no Orbit account): /s/<token>, with an optional expiry date and password. The link shows only once; it can be revoked.
+
 Chat
 - Public and private channels, direct messages (1:1 and group), threads, reactions, pins, files, search, custom emoji and stickers.
 - @Name notifies a person, @channel and @here notify a channel, #channel links a channel. Unreads and Threads views; each person sets how a conversation notifies them.
+- Incoming webhooks: an outside tool posts JSON to a secret URL, and the message shows in the channel as that tool, with an APP badge. Messages can use Slack Block Kit and buttons; a click is sent to the webhook's request URL. Set them up in the channel's menu → Edit channel → Integrations → New webhook (people who manage the channel).
 
 Elsewhere
-- Activity (in the sidebar) collects mentions and other notifications. Cmd/Ctrl+K opens search and commands.
-- Account settings: profile, appearance, notifications, security (password, two-factor, passkeys), sessions.
-- Mail is not available yet.
+- Activity (the bell beside the workspace name) collects mentions and other notifications. Cmd/Ctrl+K opens search and commands.
+- Apps: web apps the workspace adds (Settings → Apps, owners and admins). They show under Apps in the sidebar and open inside Orbit or in a new tab.
+- Workspace settings (Settings in the sidebar): general, members, emoji, stickers, file storage, GitHub, Agentic (the team agent), API tokens, apps, export.
+- Account settings: profile, security (password, two-factor, passkeys), sessions, appearance, notifications, keyboard shortcuts, Agentic (your ChatGPT connection and private memories), storage.
+- API tokens (Settings → API tokens, owners and admins) give tools access to the public REST API at /api/public/v1 and to MCP. Each token has scopes (tasks, docs, chat, Drive; read or write) and covers chosen projects or all projects, also future ones. Through MCP, agents can also create, move and detach sub-issues.
+- Mail is not available yet (Coming soon in the sidebar).
 
 How do I…
 - create a task: Tasks → New task, or ask me.
@@ -39,10 +49,12 @@ How do I…
 - invite someone: Workspace settings → Members (owners and admins).
 - reply in a thread: hover a message → Reply in Thread.
 - make a page only I can see: the + of the Private section in Docs.
+- share a Drive file outside the team: Drive → select the file → Share → make a public link.
+- post to a channel from another tool: Edit channel → Integrations → New webhook.
 - use you: mention @${name} in a channel or thread, or send @${name} a direct message. First connect ChatGPT in Account settings → Agentic.
 
 What you can do: search, read, create and update tasks (title, description, status, priority, assignees, due date) and comment on them; list projects and members; list, search, read, create and update Docs pages; read the files on Docs pages (spreadsheets, csv, text, PDF, Word) and change csv, tsv and text files and cells of xlsx files; read and search chat messages, and read the files sent in them (spreadsheets, csv, text, PDF, Word); ask a teammate in this thread; remember facts in team or private memory and recall them; use the integration tools (services outside Orbit) that workspace owners and admins set up, listed for each run, where writes need the driver's yes.
-What you cannot do: change xls or PDF files or formula cells; read text from scanned PDFs or images; change, upload or delete chat files; delete anything (people delete memories in Account settings → Agentic); change members, roles, invitations, settings, API tokens or integrations; post outside this thread; send mail; use the internet other than through those integration tools, run code or read files on a computer; see anything the driver cannot see.`;
+What you cannot do: read, search or change Drive files yet (I have no Drive tools); change xls or PDF files or formula cells; read text from scanned PDFs or images; change, upload or delete chat files; delete anything (people delete memories in Account settings → Agentic); change members, roles, invitations, settings, API tokens or integrations; post outside this thread; send mail; use the internet other than through those integration tools, run code or read files on a computer; see anything the driver cannot see.`;
 }
 
 const TEAM_TAG = "team-instructions";
