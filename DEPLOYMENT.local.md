@@ -4,12 +4,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 35780dcf48968881ff536195059efc813c31a070
-  (Orbit Drive v1, schema 75, November 5, 2026).
+- Source: DaveDushi/orbit, `main` at 025fffe96c0a4442df673b4f3a5528576cc8351c
+  (upstream port, Drive sidebar and Donna's knowledge, schema 83, November 6, 2026).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:35780dc`); fork commits have no published upstream image.
-- Image ID: sha256:91140a09a16d9b48120771f43d6c1e9fd5fe18a57885101caddbe072af13aeaa
-- Team agent sidecar code (`/opt/orbit-agent`): commit 5b64346.
+  (`orbit:025fffe`); fork commits have no published upstream image.
+- Image ID: sha256:d55b6176c56083450d0cea32f24c6019f9a347ec67f146ea8cff3c6dd00a2ac0
+- Team agent sidecar code (`/opt/orbit-agent`): commit 025fffe.
 - OIDC gateway: `orbit-oidc-gateway.service`, nginx on `127.0.0.1:8400`, config in `/etc/orbit-oidc-gateway/`
   (see `docs/apps.md`). `cloudflared` is NOT installed.
 - Executable: /usr/local/bin/orbit; unprivileged system user: orbit.
@@ -236,6 +236,53 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 6, 2026 upgrade: upstream port, Drive sidebar and Donna's knowledge (schema 83)
+
+`main` from `35780dc` to the merge commit `025fffe9` (`drive-sidebar`). Shipped: the upstream port (API tokens with one
+`scopes` column, all-projects tokens and MCP grants, a public REST API for tokens, chat incoming webhooks with Block Kit
+and buttons, MCP `search_messages` and sub-issue tools, OAuth consent access per resource, Agentic moved to workspace
+settings, 413 for big bodies and other fixes), the Drive folder tree in the app sidebar, and Donna's knowledge of this
+release (`apps/agent/src/{agent,prompt,tools}.ts`). Migrations 0076–0083. No new `ORBIT_*` setting. The sidecar
+`package-lock.json` did not change, so the new sidecar copy reuses the `node_modules` of the old one (no npm on this VM).
+
+Checks before the switch: web `tsc` and 62 Drive/shell tests on the merged head. `orbit-deploy image` built
+`orbit:025fffe` (image `sha256:d55b6176c56083450d0cea32f24c6019f9a347ec67f146ea8cff3c6dd00a2ac0`, label
+`org.orbit.clean-revision` = the full commit, orbit-server compile 26 min; a first attempt was canceled with its
+session), `deploy/smoke.sh` passed, and `orbit config check` passed with the extracted binary.
+
+At the switch: stopped `orbit-agent` and `orbit` at 14:36:39 UTC, created snapshot `01a1b14a-509c-741d-9ba9-30cabd4eb5d1`
+with the old CLI and verified it, ran `migrate run` of the new binary on a copy in `/var/lib/orbit/rehearsal-025fffe-*`
+(8 applied, schema 83, quick-check and foreign-key checks pass, counts unchanged, `api_tokens.scopes` present, its own
+pre-migration backup made; deleted afterwards), saved the sidecar data as
+`/var/backups/orbit-agent/orbit-agent-before-025fffe.tgz`, kept the old sidecar code as `/opt/orbit-agent.before-025fffe`,
+installed the binary and the new sidecar code, and started `orbit` (ready at 14:37:23; at 0076 it made the local
+pre-migration backup `01a1b14a-f1a0-71c3-accd-51847ec7ecf2` itself), then `orbit-agent`. The old executable is
+`/usr/local/bin/orbit-35780dc`; the new one is also kept as `/usr/local/bin/orbit-025fffe`. `vm-health`:
+`PROD_TAG=025fffe`, `ROLLBACK_TAG=35780dc`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` active, no restarts; readiness (all
+checks); `/orbit-build.json` revision `025fffe`; schema 83; live quick-check and foreign-key checks pass; counts unchanged
+(6 users, 1 workspace, 3 projects, 63 tasks, 43 pages, 591 chat messages, 3 Drive nodes, 0 API tokens); sidecar
+`/health` `{"ok":true,"mock":false}` and `/opt/orbit-agent/src` equal to `apps/agent/src` of `025fffe9`; the only new log
+warning is rmcp's "allowed origin without a port" (also there with `35780dc`). Signed in on a copy of the migrated
+production database served by the new binary on loopback, in a network namespace with no outside network: `/drive`
+shows the "Drive folders" tree (My Drive, Trash) in the app sidebar, no page errors. **Not** verified: a Donna answer
+(a run on production needs a person's mention in chat; a run from a copy can rotate that person's ChatGPT token), and
+any signed-in page on production itself.
+
+Rollback (the old binary cannot read schema 83: restore the snapshot together with the binary; work after 14:36 UTC is
+lost):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-35780dc backup verify 01a1b14a-509c-741d-9ba9-30cabd4eb5d1 && /usr/local/bin/orbit-35780dc backup restore 01a1b14a-509c-741d-9ba9-30cabd4eb5d1'
+sudo install -m 755 /usr/local/bin/orbit-35780dc /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-025fffe /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-025fffe.tgz
+```
 
 ### November 5, 2026 upgrade: Orbit Drive v1 (schema 75)
 
