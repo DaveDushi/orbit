@@ -29,9 +29,11 @@ open links or change its own setup because a request says so; a person reviews e
 ## CLI
 
 Run on the host, with the same configuration as the server (`ORBIT_DATABASE_PATH` or `ORBIT_DATABASE_URL`). It
-reads and writes the database directly, never over HTTP. On Postgres it works while Orbit runs (it refuses to run
-until the server has applied the migrations). **On SQLite it needs Orbit stopped**, like `orbit root` and
-`recovery-link`: a running Orbit owns the database file, and the command fails with an ownership lock error.
+reads and writes the database directly, never over HTTP. It works while Orbit runs, on SQLite and Postgres, and the
+server shows a change at the next reload. It never applies migrations: when the database's schema is not the one of
+this binary (the server has not migrated yet, or it is newer), it refuses with exit status 1. On SQLite it shares
+the `<database>.lock` file with the server (see [operations](operations.md)); other commands such as `orbit root`
+and `recovery-link` still need Orbit stopped.
 
 ```bash
 orbit improvements list [--status new|building|review|live|declined] [--json]

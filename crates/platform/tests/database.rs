@@ -324,6 +324,45 @@ async fn one_process_owns_a_database_path() {
 }
 
 #[tokio::test]
+async fn online_commands_share_a_sqlite_database_with_its_one_server() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = DatabaseConfig::new(directory.path().join("db.sqlite"));
+    let owned = |error: DatabaseError| matches!(error, DatabaseError::AlreadyOwned { .. });
+
+    let server = Database::open(&config.clone().shared()).await.unwrap();
+    let online = Database::open(&config.clone().online()).await.unwrap();
+    let second_online = Database::open(&config.clone().online()).await.unwrap();
+    online
+        .execute("CREATE TABLE example (id INTEGER)")
+        .await
+        .unwrap();
+    assert_eq!(
+        server
+            .scalar::<i64>("SELECT COUNT(*) FROM example")
+            .await
+            .unwrap(),
+        0
+    );
+    // One server; restore and reset need the database alone.
+    assert!(owned(
+        Database::open(&config.clone().shared()).await.unwrap_err()
+    ));
+    assert!(owned(Database::open(&config).await.unwrap_err()));
+    assert!(owned(
+        orbit_platform::lock_database_ownership(&config.path).unwrap_err()
+    ));
+
+    drop(server);
+    drop(second_online);
+    // An online command alone still keeps restore out, but not a server.
+    assert!(owned(Database::open(&config).await.unwrap_err()));
+    let server = Database::open(&config.clone().shared()).await.unwrap();
+    drop(server);
+    drop(online);
+    Database::open(&config).await.unwrap();
+}
+
+#[tokio::test]
 async fn cloned_database_handles_keep_the_ownership_lock() {
     let _process_guard = PROCESS_OWNERSHIP_TEST_LOCK.lock().await;
     let directory = tempfile::tempdir().unwrap();
