@@ -175,7 +175,7 @@ function SidebarSection({ label, collapsed }: { label: string; collapsed: boolea
   )
 }
 
-const PAGE_LIST_TITLES: Record<string, string> = { docs: 'Docs', chat: 'Chat' }
+const PAGE_LIST_TITLES: Record<string, string> = { docs: 'Docs', chat: 'Chat', drive: 'Drive' }
 
 // The pages opened in this tab, newest last, so Back can leave the current area. Shared by the sidebar and the drawer.
 const recentPaths: string[] = []
