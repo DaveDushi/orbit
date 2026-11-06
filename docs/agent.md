@@ -25,6 +25,13 @@ reasons: `.ai/agent-design.md`.
   cannot read images, and it cannot change, upload, download or delete chat files: agent sessions reach only the
   content route. `read_messages` and `search_messages` show each message's files (name, id, kind), and the files of the
   message that starts or joins a run come with that message (`files` of the run input), so no call is needed to find them.
+- It uses **Drive** only through `POST …/agent-tools/drive` (agent sessions cannot reach the normal Drive routes), as
+  the driver: `drive_list`, `drive_search`, `drive_info`, `drive_read` (the same file types, paging and untrusted
+  wrapping as `read_file`), and, when the driver asks, `drive_create_folder`, `drive_save_text` (never replaces a
+  file), `drive_move` and `drive_rename`. `drive_trash` (restorable for 30 days) and `drive_share` (a public link) run
+  only after the driver's **yes** in the thread, checked by Orbit as for integration writes (table
+  `agent_drive_approvals`: one approval is one run of exactly those arguments, and expires). The audit log has
+  `agent_drive.approved_action` with who approved. It cannot delete forever, empty the trash, restore, or turn off links.
 - When it needs information, it asks a teammate in the thread (`@`-mention) and stops. The next reply in the thread
   continues the run, as the original driver.
 - Runs are durable: a restart of Orbit or of the agent continues them.
