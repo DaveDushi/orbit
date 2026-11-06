@@ -539,6 +539,26 @@ impl MigrationRunner {
                     include_str!("../../../../apps/server/migrations/0079_all_projects.sql"),
                     false,
                 ),
+                Migration::new(
+                    80,
+                    include_str!("../../../../apps/server/migrations/0080_chat_webhooks.sql"),
+                    false,
+                ),
+                Migration::new(
+                    81,
+                    include_str!("../../../../apps/server/migrations/0081_chat_message_blocks.sql"),
+                    false,
+                ),
+                Migration::new(
+                    82,
+                    include_str!("../../../../apps/server/migrations/0082_chat_bot_icon_emoji.sql"),
+                    false,
+                ),
+                Migration::new(
+                    83,
+                    include_str!("../../../../apps/server/migrations/0083_chat_interactivity.sql"),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -740,6 +760,26 @@ impl MigrationRunner {
             Migration::new(
                 79,
                 include_str!("../../../../apps/server/migrations/postgres/0079_all_projects.sql"),
+                false,
+            ),
+            Migration::new(
+                80,
+                include_str!("../../../../apps/server/migrations/postgres/0080_chat_webhooks.sql"),
+                false,
+            ),
+            Migration::new(
+                81,
+                include_str!("../../../../apps/server/migrations/postgres/0081_chat_message_blocks.sql"),
+                false,
+            ),
+            Migration::new(
+                82,
+                include_str!("../../../../apps/server/migrations/postgres/0082_chat_bot_icon_emoji.sql"),
+                false,
+            ),
+            Migration::new(
+                83,
+                include_str!("../../../../apps/server/migrations/postgres/0083_chat_interactivity.sql"),
                 false,
             ),
         ];
