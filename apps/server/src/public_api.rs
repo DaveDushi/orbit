@@ -570,7 +570,7 @@ struct TasksQuery {
     assignee_id: Option<String>,
     /// `created_at` (default), `updated_at`, `priority`, `due_date` or `title`.
     sort: Option<String>,
-    /// `desc` (default) or `asc`.
+    /// `desc` (default) or `asc`. With `sort=priority`, `desc` lists `urgent` first.
     order: Option<String>,
     #[param(value_type = Option<String>)]
     label_id: Option<Id>,
@@ -735,9 +735,13 @@ struct DeleteQuery {
     permanent: bool,
 }
 
-/// Reads a query string or JSON body, or answers 400.
+/// Reads a query string or JSON body, or answers 400. The scope check comes first, so a token
+/// without the endpoint's scope gets 403 whatever it sends.
 macro_rules! input {
-    ($ctx:expr, $value:expr) => {
+    ($ctx:expr, $scope:expr, $value:expr) => {{
+        if !$ctx.principal.allows($scope) {
+            return $ctx.error(TokenApiError::MissingScope);
+        }
         match $value {
             Ok(value) => value.0,
             // The parser's text can quote the request; answer with a fixed message.
@@ -747,7 +751,7 @@ macro_rules! input {
                 )
             }
         }
-    };
+    }};
 }
 
 /// A path id that does not parse names no resource.
@@ -812,7 +816,7 @@ async fn statuses(
     query: Result<Query<PageQuery>, QueryRejection>,
 ) -> Response {
     let project = path_id!(ctx, project);
-    let query = input!(ctx, query);
+    let query = input!(ctx, ApiTokenScope::TasksRead, query);
     let result = async {
         let api = s
             .api
@@ -844,7 +848,7 @@ async fn labels(
     query: Result<Query<PageQuery>, QueryRejection>,
 ) -> Response {
     let project = path_id!(ctx, project);
-    let query = input!(ctx, query);
+    let query = input!(ctx, ApiTokenScope::TasksRead, query);
     let result = async {
         let api = s
             .api
@@ -874,7 +878,7 @@ async fn members(
     ctx: Ctx,
     query: Result<Query<PageQuery>, QueryRejection>,
 ) -> Response {
-    let query = input!(ctx, query);
+    let query = input!(ctx, ApiTokenScope::TasksRead, query);
     let result = async {
         let api = s
             .api
@@ -901,7 +905,7 @@ async fn list_tasks(
     ctx: Ctx,
     query: Result<Query<TasksQuery>, QueryRejection>,
 ) -> Response {
-    let query = input!(ctx, query);
+    let query = input!(ctx, ApiTokenScope::TasksRead, query);
     let assignee = match query.assignee_id.as_deref() {
         None => None,
         Some("none") => Some(AssigneeFilter::Unassigned),
@@ -925,6 +929,13 @@ async fn list_tasks(
         None | Some("desc") => SortOrder::Desc,
         Some("asc") => SortOrder::Asc,
         Some(_) => return ctx.invalid("order must be asc or desc."),
+    };
+    // The repository ranks urgent lowest (ascending is urgent first, as in the app's views);
+    // here `desc` means the highest priority first, like the other sorts.
+    let order = match (&sort, order) {
+        (TaskSort::Priority, SortOrder::Desc) => SortOrder::Asc,
+        (TaskSort::Priority, SortOrder::Asc) => SortOrder::Desc,
+        (_, order) => order,
     };
     let result = async {
         let api = s
@@ -993,7 +1004,7 @@ async fn create_task(
     ctx: Ctx,
     body: Result<Json<CreateTaskBody>, JsonRejection>,
 ) -> Response {
-    let body = input!(ctx, body);
+    let body = input!(ctx, ApiTokenScope::TasksWrite, body);
     let result = async {
         let api = s
             .api
@@ -1034,7 +1045,7 @@ async fn update_task(
     Path((_workspace, task)): Path<(String, String)>,
     body: Result<Json<UpdateTaskBody>, JsonRejection>,
 ) -> Response {
-    let body = input!(ctx, body);
+    let body = input!(ctx, ApiTokenScope::TasksWrite, body);
     let result = async {
         let api = s
             .api
@@ -1077,7 +1088,7 @@ async fn delete_task(
     Path((_workspace, task)): Path<(String, String)>,
     query: Result<Query<DeleteQuery>, QueryRejection>,
 ) -> Response {
-    let query = input!(ctx, query);
+    let query = input!(ctx, ApiTokenScope::TasksWrite, query);
     let result = async {
         let api = s
             .api
@@ -1161,7 +1172,7 @@ async fn create_doc(
     ctx: Ctx,
     body: Result<Json<CreateDocBody>, JsonRejection>,
 ) -> Response {
-    let body = input!(ctx, body);
+    let body = input!(ctx, ApiTokenScope::DocsWrite, body);
     let result = async {
         let api = s
             .api
@@ -1199,7 +1210,7 @@ async fn update_doc(
     body: Result<Json<UpdateDocBody>, JsonRejection>,
 ) -> Response {
     let page = path_id!(ctx, page);
-    let body = input!(ctx, body);
+    let body = input!(ctx, ApiTokenScope::DocsWrite, body);
     let result = async {
         let api = s
             .api
@@ -1232,7 +1243,7 @@ async fn comments(
     Path((_workspace, task)): Path<(String, String)>,
     query: Result<Query<PageQuery>, QueryRejection>,
 ) -> Response {
-    let query = input!(ctx, query);
+    let query = input!(ctx, ApiTokenScope::TasksRead, query);
     let result = async {
         let api = s
             .api
@@ -1264,7 +1275,7 @@ async fn create_comment(
     Path((_workspace, task)): Path<(String, String)>,
     body: Result<Json<CommentBody>, JsonRejection>,
 ) -> Response {
-    let body = input!(ctx, body);
+    let body = input!(ctx, ApiTokenScope::TasksWrite, body);
     let result = async {
         let api = s
             .api
