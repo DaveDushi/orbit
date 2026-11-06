@@ -321,8 +321,10 @@ pub(crate) fn add_security_headers(headers: &mut HeaderMap, secure: bool, csp: &
     } else {
         format!(" {buckets}")
     };
+    // The style-src hash is the empty string's: it allows only an empty `<style>`, which BlockNote's placeholder
+    // plugin creates and then fills through the CSSOM (`insertRule`), which CSP does not restrict.
     let policy = format!(
-        "default-src 'self'; {script_source}style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https:{buckets}; connect-src 'self'{buckets}; frame-src 'self' https://www.youtube-nocookie.com; media-src 'self' blob: https://video.twimg.com{buckets}; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self' https://github.com"
+        "default-src 'self'; {script_source}style-src 'self' 'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='; style-src-attr 'unsafe-inline'; img-src 'self' data: blob: https:{buckets}; connect-src 'self'{buckets}; frame-src 'self' https://www.youtube-nocookie.com; media-src 'self' blob: https://video.twimg.com{buckets}; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self' https://github.com"
     );
     // A response may carry its own policy (the wrapper document of a workspace app, which Orbit
     // frames itself). Its `frame-ancestors` decides framing then, so it gets no `X-Frame-Options`.
