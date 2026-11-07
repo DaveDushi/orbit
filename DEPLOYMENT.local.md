@@ -284,7 +284,9 @@ on production itself. Nothing in the R2 bucket was deleted or changed.
 
 Rollback (the old binary cannot read schema 84: restore a snapshot together with the binary; work after the snapshot is
 lost). To undo only the import, restore `01a1b77a-b5b8-7087-8de4-b1805e8941bb` with the new binary (schema 84, before
-the import). To go back to `025fffe` fully:
+the import). A restore changes no R2 object. `025fffe` lists all of `blobs/` only in the installation bucket
+(`wellrox-orbit-backups`), so it does not touch the Worker's `blobs/<id>` in the workspace bucket `wellrox-files`; never
+make `wellrox-files` the installation bucket with it. To go back to `025fffe` fully:
 
 ```sh
 sudo systemctl stop orbit-agent orbit
