@@ -66,12 +66,43 @@ export function mcpText(result: { content?: McpContent[]; structuredContent?: un
 }
 
 /** The question that asks the driver to allow one write. */
-export function approvalQuestion(driverId: string, action: string): string {
+export function approvalQuestion(driverId: string, action: string, what = "to run this outside Orbit"): string {
 	const shown = action.length > 3_000 ? `${action.slice(0, 3_000)}…` : action;
-	return `<@${driverId}> I need your approval to run this outside Orbit:\n\`\`\`\n${shown.replaceAll("```", "'''")}\n\`\`\`\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it.`;
+	return `<@${driverId}> I need your approval ${what}:\n\`\`\`\n${shown.replaceAll("```", "'''")}\n\`\`\`\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it.`;
 }
 
-type Driver = (api: ToolExecutionApi, context: Context, call: (as: As, state: ThreadState) => Promise<ToolExecutionResult>) => Promise<ToolExecutionResult>;
+export type Driver = (api: ToolExecutionApi, context: Context, call: (as: As, state: ThreadState) => Promise<ToolExecutionResult>) => Promise<ToolExecutionResult>;
+
+/**
+ * Orbit answered that the driver must approve: post the question in the thread, wait for the driver, and end the run.
+ * Orbit keeps the approval; the same call after their "yes" runs once.
+ */
+export async function askForApproval(
+	api: ToolExecutionApi,
+	context: Context,
+	orbit: OrbitClient,
+	state: ThreadState,
+	approval: { approval_id: string; action: string },
+	what: string,
+	again: string,
+): Promise<ToolExecutionResult> {
+	// `asDriver` refuses a run without a driver.
+	const driverId = state.driverId as string;
+	await orbit.postMessage({
+		workspaceId: state.workspaceId,
+		conversationId: state.conversationId,
+		rootMessageId: state.rootMessageId,
+		body: approvalQuestion(driverId, approval.action, what),
+		nonce: `approve:${approval.approval_id}`.slice(0, 64),
+	});
+	await api.commit(async (tx) => {
+		(await tx.doc(ThreadDoc, api.conversationId)).waitingFor = driverId;
+	}, context);
+	return {
+		output: [{ type: "text", text: `I asked the driver to approve this. Stop now. If they answer yes, ${again}; on any other answer, do not.` }],
+		control: { terminate: true },
+	};
+}
 
 type Answer =
 	| { status: "ok"; result?: { content?: McpContent[]; structuredContent?: unknown; isError?: boolean }; response?: { status: number; body: unknown; truncated: boolean; content_type?: string | null } }
@@ -90,8 +121,6 @@ export function integrationTool(asDriver: Driver, orbit: () => OrbitClient, untr
 		}),
 		execute: (args, api, context) =>
 			asDriver(api, context, async (as, state) => {
-				// `asDriver` refuses a run without a driver.
-				const driverId = state.driverId as string;
 				const answer = (await as("POST", "/agent-tools/call", {
 					tool: args.tool,
 					arguments: args.arguments ?? {},
@@ -107,22 +136,8 @@ export function integrationTool(asDriver: Driver, orbit: () => OrbitClient, untr
 						}
 						return { output: [{ type: "text", text: untrusted(label, mcpText(answer.result)) }], isError: answer.result?.isError === true };
 					}
-					case "approval_required": {
-						await orbit().postMessage({
-							workspaceId: state.workspaceId,
-							conversationId: state.conversationId,
-							rootMessageId: state.rootMessageId,
-							body: approvalQuestion(driverId, answer.action),
-							nonce: `approve:${answer.approval_id}`.slice(0, 64),
-						});
-						await api.commit(async (tx) => {
-							(await tx.doc(ThreadDoc, api.conversationId)).waitingFor = driverId;
-						}, context);
-						return {
-							output: [{ type: "text", text: "I asked the driver to approve this. Stop now. If they answer yes, call use_integration again with exactly the same tool and arguments." }],
-							control: { terminate: true },
-						};
-					}
+					case "approval_required":
+						return askForApproval(api, context, orbit(), state, answer, "to run this outside Orbit", "call use_integration again with exactly the same tool and arguments");
 					default:
 						return { output: [{ type: "text", text: `${answer.status === "refused" ? "Refused" : "Failed"}: ${answer.detail}` }], isError: true };
 				}

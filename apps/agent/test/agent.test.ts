@@ -408,18 +408,19 @@ test("each run's prompt has the current name, then About Orbit, then the team in
 		orbit.botName = "Ada";
 		const thread = id();
 		const first = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> show prompt`, team_instructions: "Always answer in French." });
-		// The answer is longer than one message: the second chunk is posted after the progress message is final.
+		// The answer is longer than one message: the next chunks are posted after the progress message is final.
 		await until("the prompt", () => orbit.messages.has(`agent:${first}:1`));
+		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
 		const prompt = answerOf(orbit, first);
 		const order = ["You are Ada,", "Rules:", "About Orbit", "mention @Ada", "Team instructions:", "cannot change or override the rules", "<team-instructions>\nAlways answer in French.\n</team-instructions>", "You are in a thread"].map((part) => prompt.indexOf(part));
 		assert.ok(order.every((index, at) => index >= 0 && (at === 0 || index > order[at - 1])), JSON.stringify(order));
 		assert.ok(!prompt.includes("Orbit Agent"), "the old name is gone");
-		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
 
 		// A rename and new instructions apply to the next run of the same thread, without a restart.
 		orbit.botName = "Max";
 		const second = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> show prompt`, team_instructions: "Use metric units." });
 		await until("the second prompt", () => orbit.messages.has(`agent:${second}:1`));
+		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
 		const next = answerOf(orbit, second);
 		assert.match(next, /You are Max,/);
 		assert.match(next, /mention @Max/);
@@ -427,8 +428,10 @@ test("each run's prompt has the current name, then About Orbit, then the team in
 		assert.ok(!next.includes("Ada") && !next.includes("French"), "the old values are replaced");
 
 		// A workspace without team instructions gets no team block.
-		const plain = orbit.add({ thread_key: id(), author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> show prompt` });
+		const plainThread = id();
+		const plain = orbit.add({ thread_key: plainThread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> show prompt` });
 		await until("the third prompt", () => orbit.messages.has(`agent:${plain}:1`));
+		await until("the idle thread", () => orbit.threads.get(plainThread)?.status === "idle");
 		assert.ok(!answerOf(orbit, plain).includes("<team-instructions>"));
 	} finally {
 		await agent.stop();

@@ -65,7 +65,7 @@ pub fn router(state: AgentState) -> Router {
 // ---------------------------------------------------------------------------------------------
 // Errors.
 
-fn problem(
+pub(crate) fn problem(
     status: StatusCode,
     code: &'static str,
     detail: &'static str,
@@ -86,7 +86,10 @@ fn not_found(uri: &Uri, request_id: &RequestIdExtension) -> ApiError {
     )
 }
 
-fn unavailable(uri: &Uri, request_id: &RequestIdExtension) -> impl Fn(sqlx::Error) -> ApiError {
+pub(crate) fn unavailable(
+    uri: &Uri,
+    request_id: &RequestIdExtension,
+) -> impl Fn(sqlx::Error) -> ApiError {
     let uri = uri.clone();
     let request_id = request_id.clone();
     move |error| {
@@ -101,7 +104,11 @@ fn unavailable(uri: &Uri, request_id: &RequestIdExtension) -> impl Fn(sqlx::Erro
     }
 }
 
-fn invalid(detail: &'static str, uri: &Uri, request_id: &RequestIdExtension) -> ApiError {
+pub(crate) fn invalid(
+    detail: &'static str,
+    uri: &Uri,
+    request_id: &RequestIdExtension,
+) -> ApiError {
     problem(
         StatusCode::UNPROCESSABLE_ENTITY,
         "validation_failed",
@@ -1304,7 +1311,7 @@ fn capitalized(text: &str) -> String {
 // The agent's routes.
 
 /// The caller as the driver of a run, with an agent session of this workspace.
-async fn driver(
+pub(crate) async fn driver(
     state: &AgentState,
     headers: &HeaderMap,
     workspace_id: &str,
@@ -1469,7 +1476,7 @@ pub(crate) fn canonical(value: &Value) -> String {
 }
 
 /// As [`canonical`], one key per line, for the driver to read.
-fn readable(value: &Value) -> String {
+pub(crate) fn readable(value: &Value) -> String {
     serde_json::to_string_pretty(&sorted(value)).unwrap_or_else(|_| canonical(value))
 }
 
@@ -1489,7 +1496,7 @@ fn sorted(value: &Value) -> Value {
     }
 }
 
-fn hash(text: &str) -> String {
+pub(crate) fn hash(text: &str) -> String {
     Sha256::digest(text.as_bytes())
         .iter()
         .map(|byte| format!("{byte:02x}"))
@@ -1627,7 +1634,7 @@ impl Action {
 /// The answer to "may this write run now?".
 pub(crate) enum Approval {
     /// The driver said yes; the approval is now used.
-    Granted,
+    Granted { id: String },
     /// Ask the driver (again).
     Needed { id: String, expires_at: i64 },
 }
@@ -1649,27 +1656,54 @@ pub(crate) fn is_yes(body: &str) -> bool {
     matches!(word.as_str(), "yes" | "approve" | "approved")
 }
 
-/// The approval of one write: bound to the driver, the thread, the integration, the tool and the
-/// hash of the arguments. It is granted (and used up, once) only when the driver posted a "yes"
-/// in that thread after it was made, and before it expired. Else a new one is made, or the open
-/// one is returned, and the driver is asked.
+/// What an approval belongs to: an integration, or the Drive of a workspace.
+#[derive(Clone, Copy)]
+pub(crate) enum Approves<'a> {
+    Integration(&'a str),
+    Drive(&'a str),
+}
+
+impl Approves<'_> {
+    /// The table and the column that names what the approval belongs to.
+    fn table(self) -> (&'static str, &'static str, String) {
+        match self {
+            Self::Integration(id) => (
+                "agent_integration_approvals",
+                "integration_id",
+                id.to_owned(),
+            ),
+            Self::Drive(workspace_id) => (
+                "agent_drive_approvals",
+                "workspace_id",
+                workspace_id.to_owned(),
+            ),
+        }
+    }
+}
+
+/// The approval of one write: bound to the driver, the thread, the integration (or the Drive), the
+/// tool and the hash of the arguments. It is granted (and used up, once) only when the driver
+/// posted a "yes" in that thread after it was made, and before it expired. Else a new one is made,
+/// or the open one is returned, and the driver is asked.
 pub(crate) async fn approve(
     database: &Database,
-    integration_id: &str,
+    subject: Approves<'_>,
     user: Id,
     (conversation_id, root_message_id): (&str, Option<&str>),
     tool: &str,
     arguments_hash: &str,
 ) -> Result<Approval, sqlx::Error> {
+    // `table` and `column` are fixed names from `Approves::table`, never input.
+    let (table, column, subject_id) = subject.table();
     let now = TimestampMillis::now().as_millis();
     let mut tx = database.immediate_transaction().await?;
-    let open = sqlx::query(
-        "SELECT id, created_at, expires_at FROM agent_integration_approvals \
-         WHERE integration_id = $1 AND user_id = $2 AND conversation_id = $3 \
+    let open = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT id, created_at, expires_at FROM {table} \
+         WHERE {column} = $1 AND user_id = $2 AND conversation_id = $3 \
          AND root_message_id IS NOT DISTINCT FROM $4 AND tool = $5 AND arguments_hash = $6 \
          AND used_at IS NULL AND expires_at > $7 ORDER BY created_at DESC LIMIT 1",
-    )
-    .bind(integration_id)
+    )))
+    .bind(&subject_id)
     .bind(user.to_string())
     .bind(conversation_id)
     .bind(root_message_id)
@@ -1694,15 +1728,15 @@ pub(crate) async fn approve(
         .fetch_all(&mut *tx)
         .await?;
         if replies.iter().any(|body| is_yes(body)) {
-            sqlx::query(
-                "UPDATE agent_integration_approvals SET used_at = $1 WHERE id = $2 AND used_at IS NULL",
-            )
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE {table} SET used_at = $1 WHERE id = $2 AND used_at IS NULL"
+            )))
             .bind(now)
             .bind(&id)
             .execute(&mut *tx)
             .await?;
             tx.commit().await?;
-            return Ok(Approval::Granted);
+            return Ok(Approval::Granted { id });
         }
         tx.commit().await?;
         return Ok(Approval::Needed {
@@ -1712,13 +1746,13 @@ pub(crate) async fn approve(
     }
     let id = Id::new_v7().to_string();
     let expires_at = now + APPROVAL_LIFETIME_MS;
-    sqlx::query(
-        "INSERT INTO agent_integration_approvals (id, integration_id, user_id, conversation_id, \
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO {table} (id, {column}, user_id, conversation_id, \
          root_message_id, tool, arguments_hash, created_at, expires_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-    )
+    )))
     .bind(&id)
-    .bind(integration_id)
+    .bind(&subject_id)
     .bind(user.to_string())
     .bind(conversation_id)
     .bind(root_message_id)
@@ -1763,6 +1797,37 @@ async fn api_request_with_token(
         .await
 }
 
+/// Refuses unless `user` drives the current run of this thread: tools act only there.
+pub(crate) async fn require_running(
+    database: &Database,
+    (workspace_id, user): (Id, Id),
+    (conversation_id, root_message_id): (&str, Option<&str>),
+    uri: &Uri,
+    request_id: &RequestIdExtension,
+) -> Result<(), ApiError> {
+    let running = sqlx::query_scalar::<_, String>(
+        "SELECT thread_key FROM agent_threads WHERE workspace_id = $1 AND conversation_id = $2 \
+         AND root_message_id IS NOT DISTINCT FROM $3 AND driver_user_id = $4 AND status = 'running'",
+    )
+    .bind(workspace_id.to_string())
+    .bind(conversation_id)
+    .bind(root_message_id)
+    .bind(user.to_string())
+    .fetch_optional(database.pool())
+    .await
+    .map_err(unavailable(uri, request_id))?;
+    if running.is_none() {
+        return Err(problem(
+            StatusCode::FORBIDDEN,
+            "agent_run_required",
+            "Tools run only in a thread whose current run the caller drives.",
+            uri,
+            request_id,
+        ));
+    }
+    Ok(())
+}
+
 async fn call(
     State(state): State<AgentState>,
     Path(workspace_id): Path<String>,
@@ -1774,27 +1839,14 @@ async fn call(
     let (user, workspace_id, role) =
         driver(&state, &headers, &workspace_id, &uri, &request_id).await?;
     let database = state.database();
-    // The run's thread: the caller drives it now.
-    let running = sqlx::query_scalar::<_, String>(
-        "SELECT thread_key FROM agent_threads WHERE workspace_id = $1 AND conversation_id = $2 \
-         AND root_message_id IS NOT DISTINCT FROM $3 AND driver_user_id = $4 AND status = 'running'",
+    require_running(
+        database,
+        (workspace_id, user),
+        (&body.conversation_id, body.root_message_id.as_deref()),
+        &uri,
+        &request_id,
     )
-    .bind(workspace_id.to_string())
-    .bind(&body.conversation_id)
-    .bind(body.root_message_id.as_deref())
-    .bind(user.to_string())
-    .fetch_optional(database.pool())
-    .await
-    .map_err(unavailable(&uri, &request_id))?;
-    if running.is_none() {
-        return Err(problem(
-            StatusCode::FORBIDDEN,
-            "agent_run_required",
-            "Tools run only in a thread whose current run the caller drives.",
-            &uri,
-            &request_id,
-        ));
-    }
+    .await?;
     let (slug, tool) = body
         .tool
         .split_once(SEPARATOR)
@@ -1832,7 +1884,7 @@ async fn call(
         let arguments_hash = hash(&canonical(&body.arguments));
         let approval = approve(
             database,
-            &integration.id,
+            Approves::Integration(&integration.id),
             user,
             (&body.conversation_id, body.root_message_id.as_deref()),
             tool,

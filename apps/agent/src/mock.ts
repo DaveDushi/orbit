@@ -13,8 +13,11 @@
  *   recall privately "words"        what do you remember about "word"
  *   use <integration>__<tool> with {"json": "arguments"}
  *   read the files (reads every file sent with the message, one read_chat_file call each, then reports them all)
+ *   find drive file "words"        read drive file <id|it>              create folder "Name"
+ *   trash drive file <id|it>       share drive file <id|it>
  *
- * An answer "yes" to an approval question calls the last integration tool again with the same arguments.
+ * A "yes" to an approval question (an answer, or the driver's next message in a DM) calls the last integration,
+ * drive_trash or drive_share tool again with the same arguments.
  * When a memory tool result asks for a summary, the mock writes one from the halves it was shown. A compaction gets a
  * short placeholder summary.
  */
@@ -56,8 +59,8 @@ function systemPrompt(messages: readonly Message[]): string {
 	return [...base, ...sections.values()].join("\n\n");
 }
 
-/** The newest id of a created or read task or page in the tool results, for "it". */
-function lastId(messages: readonly Message[], kind: "task" | "page"): string | undefined {
+/** The newest id of a created or read task, page or Drive item in the tool results, for "it". */
+function lastId(messages: readonly Message[], kind: "task" | "page" | "drive"): string | undefined {
 	for (let index = messages.length - 1; index >= 0; index--) {
 		const message = messages[index];
 		if (message.role !== "toolResult" || !message.toolName?.includes(kind)) continue;
@@ -67,13 +70,13 @@ function lastId(messages: readonly Message[], kind: "task" | "page"): string | u
 	return undefined;
 }
 
-/** The newest call of `name` that the model made, for "yes" to an approval. */
-function lastCall(messages: readonly Message[], name: string): Record<string, unknown> | undefined {
+/** The newest call of one of `names` that the model made, for "yes" to an approval. */
+function lastCall(messages: readonly Message[], names: readonly string[]): { name: string; args: Record<string, unknown> } | undefined {
 	for (let index = messages.length - 1; index >= 0; index--) {
 		const message = messages[index];
 		if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
-		const call = (message.content as { type?: string; name?: string; arguments?: Record<string, unknown> }[]).find((part) => part.type === "toolCall" && part.name === name);
-		if (call) return call.arguments;
+		const call = (message.content as { type?: string; name?: string; arguments?: Record<string, unknown> }[]).find((part) => part.type === "toolCall" && names.includes(part.name ?? ""));
+		if (call?.name && call.arguments) return { name: call.name, args: call.arguments };
 	}
 	return undefined;
 }
@@ -98,7 +101,7 @@ function unreadFiles(instruction: string, messages: readonly Message[]): string[
 
 /** The tool call that the newest instruction asks for, or `undefined` when it asks for none. */
 export function plan(instruction: string, messages: readonly Message[]): { name: string; args: { [key: string]: unknown } } | undefined {
-	const target = (value: string, kind: "task" | "page"): string => (/^(it|that)$/i.test(value) ? lastId(messages, kind) : value) ?? value;
+	const target = (value: string, kind: "task" | "page" | "drive"): string => (/^(it|that)$/i.test(value) ? lastId(messages, kind) : value) ?? value;
 	let match: RegExpExecArray | null;
 	if ((match = /create (?:a )?task "([^"]+)"/i.exec(instruction))) return { name: "create_task", args: { title: match[1] } };
 	if ((match = /rename task (\S+) to "([^"]+)"/i.exec(instruction))) return { name: "update_task", args: { task_id: target(match[1], "task"), title: match[2] } };
@@ -107,6 +110,11 @@ export function plan(instruction: string, messages: readonly Message[]): { name:
 		return { name: "create_page", args: { title: match[1], markdown: match[2] ?? "" } };
 	if ((match = /append "([^"]+)" to (?:page|doc|file) (\S+)/i.exec(instruction)))
 		return { name: "update_page", args: { page_id: target(match[2], "page"), markdown: match[1], mode: "append" } };
+	if ((match = /find drive (?:file|folder)s? "([^"]+)"/i.exec(instruction))) return { name: "drive_search", args: { query: match[1] } };
+	if ((match = /read drive file (\S+)/i.exec(instruction))) return { name: "drive_read", args: { node_id: target(match[1], "drive") } };
+	if ((match = /create (?:a )?(?:drive )?folder "([^"]+)"/i.exec(instruction))) return { name: "drive_create_folder", args: { name: match[1] } };
+	if ((match = /trash drive (?:file|folder) (\S+)/i.exec(instruction))) return { name: "drive_trash", args: { node_id: target(match[1], "drive") } };
+	if ((match = /share drive (?:file|folder) (\S+)/i.exec(instruction))) return { name: "drive_share", args: { node_id: target(match[1], "drive") } };
 	if ((match = /read (?:page|doc|file) (\S+)/i.exec(instruction))) return { name: "read_page", args: { page_id: target(match[1], "page") } };
 	if ((match = /search tasks "([^"]+)"/i.exec(instruction))) return { name: "search_tasks", args: { query: match[1] } };
 	if (/list projects/i.test(instruction)) return { name: "list_projects", args: {} };
@@ -127,9 +135,9 @@ export function plan(instruction: string, messages: readonly Message[]): { name:
 		}
 		return { name: "use_integration", args: { tool: match[1], arguments: parsed } };
 	}
-	if (/^Answer from [^\n]*\n\s*(yes|approved?)\b/i.test(instruction)) {
-		const again = lastCall(messages, "use_integration");
-		if (again) return { name: "use_integration", args: again };
+	if (/^(?:Answer|Instruction) from [^\n]*\n\s*(yes|approved?)\b/i.test(instruction)) {
+		const again = lastCall(messages, ["use_integration", "drive_trash", "drive_share"]);
+		if (again) return again;
 	}
 	return undefined;
 }

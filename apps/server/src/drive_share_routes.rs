@@ -160,7 +160,7 @@ impl SharePasses {
 }
 
 /// A new link token and the hash that is stored.
-fn new_token() -> (String, String) {
+pub(crate) fn new_token() -> (String, String) {
     let mut bytes = [0_u8; 32];
     OsRng.fill_bytes(&mut bytes);
     let token = URL_SAFE_NO_PAD.encode(bytes);

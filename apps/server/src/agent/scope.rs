@@ -16,13 +16,16 @@ use sha2::{Digest, Sha256};
 pub const TOKEN_PREFIX: &str = "orbit-agent.";
 
 /// Workspace route segments an agent session never reaches: credentials, integrations, access,
-/// data export, administration, the agent's own team instructions and its integrations.
-const DENIED: [&str; 14] = [
+/// data export, administration, the agent's own team instructions and its integrations. Drive too:
+/// the agent uses it only through `/agent-tools/drive`, which asks the driver before it moves
+/// anything to the trash or makes a public link (`super::drive`).
+const DENIED: [&str; 15] = [
     "agent",
     "agent-integrations",
     "api-tokens",
     "apps",
     "audit",
+    "drive",
     "exports",
     "github",
     "imports",
@@ -177,6 +180,7 @@ mod tests {
             (Method::GET, "/agent-memory/private/wake"),
             (Method::GET, "/agent-tools"),
             (Method::POST, "/agent-tools/call"),
+            (Method::POST, "/agent-tools/drive"),
         ] {
             assert!(allows(WORKSPACE, &method, &path(rest)), "{method} {rest}");
         }
@@ -215,6 +219,11 @@ mod tests {
             (Method::GET, "/chat/files//content"),
             (Method::GET, "/chat/files/abc/def/content"),
             (Method::GET, "/chat/filesabc/content"),
+            (Method::GET, "/drive/nodes"),
+            (Method::POST, "/drive/nodes/abc/trash"),
+            (Method::POST, "/drive/nodes/abc/shares"),
+            (Method::DELETE, "/drive/nodes/abc"),
+            (Method::POST, "/drive/trash/empty"),
         ] {
             assert!(!allows(WORKSPACE, &method, &path(rest)), "{method} {rest}");
         }
