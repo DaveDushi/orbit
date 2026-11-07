@@ -322,7 +322,8 @@ has that name). It writes database rows only: the objects stay in the bucket, an
   that attaches databases, vacuums or loads extensions.
 - The workspace's Drive bucket (its own bucket, else the installation's) must be the bucket that holds the objects.
   With a bucket prefix, the Worker's keys must start with it. Keys in Orbit's own areas (`blobs/`, `backups/`, `drive/`)
-  are refused, because Orbit's cleanup could delete them.
+  are refused, because Orbit's cleanup could delete them. The Worker's own keys `blobs/<22-character id>` are the
+  exception: Orbit's attachment cleanup and mover only take `blobs/{workspace_id}/…`.
 - Stop Orbit first, also for `--dry-run` (the ownership lock). A real run makes a backup first, then writes everything
   in one transaction. A dry run makes the same transaction and rolls it back, and prints the same report: folders,
   files and bytes, items in the trash, missing objects (HEAD check), refused keys, renamed names, size differences.

@@ -237,6 +237,65 @@ It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-ag
 
 ## Verification performed
 
+### November 7, 2026 upgrade: wellrox-cloud import fix, Donna's Drive tools (schema 84), and the wellrox-cloud import
+
+`main` from `015d4de7` (production `025fffe9`) to the merge commit `0e1cbcc9`: `import-guard-fix` (`e7a04eb6`: the
+import takes the Worker keys `blobs/<22-character id>`; the attachment cleanup and mover list only
+`blobs/{workspace_id}/…`, before they could delete those objects; the import no longer logs the dump) and `donna-drive`
+(`aff5c091`, `5b14027d`, `f6a6f2bd`: Donna's Drive tools, trash and public links only after the driver's
+server-checked yes). Its migration `0076_agent_drive_approvals` was renumbered to `0084` (SQLite and Postgres). No new
+`ORBIT_*` setting. The sidecar `package-lock.json` did not change, so the new sidecar reuses the old `node_modules`.
+
+Checks before the switch: agent `tsc` and `node --test` (41 pass); SQLite and Postgres: `drive_import` (4), `agent_drive`
+(3), `agent_integrations` (17), `app_smoke` (20; `embedded_web_build_is_sent_precompressed…` fails locally because the
+working tree's `apps/web/dist` has no `.br` files, not in the image), orbit-platform `object_storage`, `database`, `backup`,
+and the `drive_import` unit tests; `clippy -p orbit-server --all-targets -D warnings`. `orbit-deploy image` built
+`orbit:0e1cbcc` (image `sha256:2e90ceec366db1ef25e9cd1f41bc5a395d5fe960bf335ef7d111dd0e32d705fe`, label = the full
+commit), `deploy/smoke.sh` passed, and `orbit config check` passed with the extracted binary.
+
+At the switch: stopped `orbit-agent` and `orbit` at 19:26:27 UTC, created snapshot `01a1b779-fdac-7724-b377-016a1385d2e4`
+with the old CLI and verified it, ran `migrate run` of the new binary on a copy in `/var/lib/orbit/rehearsal-0e1cbcc-*`
+(1 applied, schema 84, quick-check and foreign-key checks pass, counts unchanged; deleted afterwards), saved the sidecar
+data as `/var/backups/orbit-agent/orbit-agent-before-0e1cbcc.tgz`, kept the old sidecar code as
+`/opt/orbit-agent.before-0e1cbcc`, installed the binary and the new sidecar code, and started `orbit` (ready 19:26:53),
+then `orbit-agent`. The old executable is `/usr/local/bin/orbit-025fffe`; the new one is also kept as
+`/usr/local/bin/orbit-0e1cbcc`. `vm-health`: `PROD_TAG=0e1cbcc`, `ROLLBACK_TAG=025fffe`. Pushed `main`.
+
+The wellrox-cloud import (workspace `01a13079-d065-729b-917b-e30d8d9aa51c`, Drive bucket `wellrox-files`, no prefix):
+stopped both services at 19:27:14, created and verified snapshot `01a1b77a-b5b8-7087-8de4-b1805e8941bb`, gave `orbit` a
+private copy of the dump. Dry run (stderr empty, so no dump text; deleted): 60 folders below `/wellrox-cloud/` (the
+Worker's `root` becomes `/wellrox-cloud/` itself: 61 folder nodes in the dump), 473 files, 8,833,106,462 bytes, 0 in the
+trash, 197 left out (purged in the Worker), 0 missing objects, 0 refused keys, 0 name conflicts, 0 size differences.
+The real run (19:28:18–19:28:47) gave the same report and made its own snapshot `01a1b77b-af48-73a5-9de3-6c2b07f0ebb7`.
+Started `orbit` and `orbit-agent` at 19:29:05. The dump and its copy are deleted.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` active, no restarts; readiness (all
+checks); `/orbit-build.json` revision `0e1cbcc`; schema 84; live quick-check and foreign-key checks pass; counts unchanged
+except Drive (6 users, 1 workspace, 3 projects, 63 tasks, 43 pages, 596 chat messages, 0 API tokens; Drive nodes 3 → 537:
+534 `wellrox_cloud` nodes, 61 folders and 473 files under `/wellrox-cloud/`, 8,833,106,462 bytes, 0 trashed; 473 Drive
+blobs, 462 of them `blobs/<id>`); sidecar `/health` `{"ok":true,"mock":false}` and `/opt/orbit-agent/src` equal to
+`apps/agent/src` of `0e1cbcc9`; no log warnings after the import except rmcp's known "allowed origin without a port".
+On a copy of the imported database served by the new binary in a network namespace: `/drive` lists `wellrox-cloud`, the
+folder opens (breadcrumb, `Rachel Uploads`), no page errors, and the download API gave `wellrox-files` URLs for 4 files;
+outside the namespace a 16-byte ranged GET of each returned 206 with the right total size and file signature (MP4, MOV
+under `Rachel Uploads/`, JPEG, PNG). The copy server stops itself after ~15 s without network (attachment reconcile
+cannot reach S3). **Not** verified: a Donna Drive answer (needs a person's mention on production), any signed-in page
+on production itself. Nothing in the R2 bucket was deleted or changed.
+
+Rollback (the old binary cannot read schema 84: restore a snapshot together with the binary; work after the snapshot is
+lost). To undo only the import, restore `01a1b77a-b5b8-7087-8de4-b1805e8941bb` with the new binary (schema 84, before
+the import). To go back to `025fffe` fully:
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-025fffe backup verify 01a1b779-fdac-7724-b377-016a1385d2e4 && /usr/local/bin/orbit-025fffe backup restore 01a1b779-fdac-7724-b377-016a1385d2e4'
+sudo install -m 755 /usr/local/bin/orbit-025fffe /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-0e1cbcc /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-0e1cbcc.tgz
+```
+
 ### November 6, 2026 upgrade: upstream port, Drive sidebar and Donna's knowledge (schema 83)
 
 `main` from `35780dc` to the merge commit `025fffe9` (`drive-sidebar`). Shipped: the upstream port (API tokens with one
