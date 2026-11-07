@@ -52,6 +52,19 @@ pub struct WorkspaceBucket {
     pub active: bool,
 }
 
+/// The attachments in `bucket`. Their keys are `blobs/{workspace_id}/…`: other objects under `blobs/` (such as
+/// the wellrox-cloud Worker's `blobs/<id>`, which Drive imports) are not Orbit's to move or delete.
+async fn list_attachments(bucket: &S3Bucket) -> Result<Vec<super::S3Object>, super::S3Error> {
+    let mut objects = bucket.list("blobs/").await?;
+    objects.retain(|object| {
+        object
+            .key
+            .strip_prefix("blobs/")
+            .is_some_and(|id| id.contains('/'))
+    });
+    Ok(objects)
+}
+
 /// A place where a blob can be.
 #[derive(Clone, Copy)]
 enum Tier<'a> {
@@ -391,7 +404,7 @@ impl TieredBlobStore {
             }
             Ok(objects.len())
         } else {
-            let mut objects = bucket.list("blobs/").await?;
+            let mut objects = list_attachments(bucket).await?;
             objects.retain(|object| installation(&object.key));
             self.set_remaining(objects.len());
             for (index, object) in objects.iter().enumerate() {
@@ -583,7 +596,7 @@ impl BlobStore for TieredBlobStore {
                 .collect();
             let state = self.storage.current();
             let mut remote = match &state.bucket {
-                Some(bucket) => bucket.list("blobs/").await?,
+                Some(bucket) => list_attachments(bucket).await?,
                 None => Vec::new(),
             };
             for (workspace_id, own) in &state.workspace_buckets {

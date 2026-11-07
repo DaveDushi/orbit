@@ -7,7 +7,9 @@
 //! is loaded into an in-memory SQLite database. The tree starts at the node `root`. An item in the Worker's trash
 //! comes into Orbit's trash with its original date; items whose trash entry was purged are left out. Each object
 //! is checked with a HEAD request: a missing object is reported and its file left out. A key in Orbit's own areas of
-//! the bucket (`blobs/`, `backups/`, `drive/`) is refused, because Orbit's cleanup could delete it.
+//! the bucket (`blobs/`, `backups/`, `drive/`) is refused, because Orbit's cleanup could delete it. The Worker's own
+//! keys `blobs/<22-character id>` are the exception: Orbit's attachment keys always have a folder below `blobs/`
+//! (`blobs/{workspace_id}/…`), and its cleanup only takes those.
 //!
 //! Each imported node keeps its Worker id in `source_ref`, so a second run adds only what is new. The whole import
 //! is one transaction; a dry run makes the same transaction and rolls it back, so its counts and name conflicts
@@ -18,7 +20,7 @@ use std::fmt;
 use std::path::Path;
 
 use orbit_platform::{Database, Id, Row, S3Bucket, TimestampMillis};
-use sqlx::{AnyConnection, Connection};
+use sqlx::{AnyConnection, ConnectOptions, Connection};
 use thiserror::Error;
 
 use crate::repositories::drive::{DriveNodeKind, TRASH_RETENTION_MILLIS, free_name, valid_name};
@@ -29,6 +31,17 @@ const SOURCE_ROOT: &str = "root";
 pub const TARGET_FOLDER: &str = "wellrox-cloud";
 /// Prefixes of the bucket that belong to Orbit: a legacy object there could be deleted by Orbit's cleanup.
 const ORBIT_PREFIXES: [&str; 4] = ["blobs/", "backups/", "drive/", ".orbit-probe/"];
+
+/// A key outside Orbit's areas, or a Worker key `blobs/<id>`: 22 URL-safe characters and no folder.
+fn importable_key(key: &str) -> bool {
+    if let Some(id) = key.strip_prefix("blobs/") {
+        return id.len() == 22
+            && id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_');
+    }
+    !ORBIT_PREFIXES.iter().any(|orbit| key.starts_with(orbit))
+}
 
 #[derive(Debug, Error)]
 pub enum ImportError {
@@ -230,10 +243,12 @@ async fn read_export(path: &Path) -> Result<Export, ImportError> {
             "the dump uses {word}, which an export never does"
         )));
     }
-    // Foreign keys are not checked: a node whose parent is gone is reported as an orphan, not a failure.
+    // Foreign keys are not checked: a node whose parent is gone is reported as an orphan, not a failure. The dump
+    // holds the Worker's secrets (API key verifiers): sqlx must not log it as a (slow) statement.
     let options =
         <sqlx::sqlite::SqliteConnectOptions as std::str::FromStr>::from_str("sqlite::memory:")?
-            .foreign_keys(false);
+            .foreign_keys(false)
+            .disable_statement_logging();
     let mut source = sqlx::SqliteConnection::connect_with(&options).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(dump))
         .execute(&mut source)
@@ -494,7 +509,7 @@ async fn check_blob(
         ));
         return Ok(None);
     };
-    if ORBIT_PREFIXES.iter().any(|orbit| key.starts_with(orbit)) {
+    if !importable_key(&key) {
         report.refused_keys.push(blob.r2_key.clone());
         return Ok(None);
     }
@@ -769,5 +784,80 @@ mod tests {
         assert_eq!(sanitized_name(".."), "_");
         assert_eq!(sanitized_name("   "), "_");
         assert_eq!(sanitized_name(&"x".repeat(300)).chars().count(), 255);
+    }
+
+    #[test]
+    fn worker_keys_under_blobs_are_importable_and_orbits_own_keys_are_not() {
+        assert!(importable_key("blobs/AbCdEfGhIjKlMnOpQr_-09"));
+        assert!(importable_key("Rachel Uploads/report.pdf"));
+        for key in [
+            "blobs/",
+            "blobs/a/b",
+            "blobs/01a13079-d065-729b-917b-e30d8d9aa51c/ab-cd",
+            "blobs/AbCdEfGhIjKlMnOpQr_-09/x",
+            "blobs/AbCdEfGhIjKlMnOpQr_-0",
+            "blobs/AbCdEfGhIjKlMnOpQr_-099",
+            "blobs/AbCdEfGhIjKlMnOpQr..09",
+            "blobs/../AbCdEfGhIjKlMnOpQ",
+            "backups/snapshot.zst",
+            "drive/x",
+            ".orbit-probe/x",
+        ] {
+            assert!(!importable_key(key), "{key}");
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Captured {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn the_dump_is_never_logged_as_a_statement() {
+        // sqlx logs from the connection's worker thread, so only a global subscriber sees it.
+        let captured = Captured::default();
+        let writer = captured.clone();
+        tracing::subscriber::set_global_default(
+            tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::TRACE)
+                .with_writer(move || writer.clone())
+                .finish(),
+        )
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("d1.sql");
+        tokio::fs::write(
+            &path,
+            "CREATE TABLE api_keys (verifier TEXT); INSERT INTO api_keys VALUES ('secret-verifier');\n\
+             CREATE TABLE nodes (id, parent_id, kind, name, blob_id, created_at, updated_at, trash_entry_id);\n\
+             INSERT INTO nodes VALUES ('root', NULL, 'folder', 'root', NULL, '2026-09-01T10:00:00Z', \
+             '2026-09-01T10:00:00Z', NULL);\n\
+             CREATE TABLE blobs (id, r2_key, size, content_type, sha256, created_at, deleted_at);\n\
+             CREATE TABLE trash_entries (id, root_node_id, trashed_at, state);",
+        )
+        .await
+        .unwrap();
+        read_export(&path).await.unwrap();
+        // The same statement on a connection that logs: the capture sees statements.
+        let mut logging = sqlx::SqliteConnection::connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::raw_sql("SELECT 'logged-statement'")
+            .execute(&mut logging)
+            .await
+            .unwrap();
+
+        let log = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+        assert!(log.contains("logged-statement"), "{log}");
+        assert!(!log.contains("secret-verifier"), "{log}");
     }
 }

@@ -191,6 +191,35 @@ async fn the_mover_moves_blobs_to_s3_and_back_while_reads_keep_working() {
     assert!(!fixture.bucket.any("blobs/").await.unwrap());
 }
 
+#[tokio::test]
+async fn objects_under_blobs_that_are_not_attachments_are_never_moved_or_deleted() {
+    // A wellrox-cloud Worker key, which Drive imports: no workspace folder below `blobs/`.
+    let worker_key = "blobs/AbCdEfGhIjKlMnOpQr_-09";
+    let fixture = Fixture::new(true).await;
+    fixture
+        .bucket
+        .put_bytes(worker_key, b"drive file".to_vec())
+        .await
+        .unwrap();
+    let cleaned = fixture
+        .service
+        .reconcile(Utc::now().timestamp_millis() + 41 * DAY_MILLIS)
+        .await
+        .unwrap();
+    assert_eq!(cleaned.deleted_untracked_files, 0);
+    assert!(fixture.in_bucket(worker_key).await);
+
+    fixture.storage.configure(ObjectStorageState {
+        bucket: Some(fixture.bucket.clone()),
+        attachments: false,
+        backups: false,
+        ..Default::default()
+    });
+    assert_eq!(fixture.store.move_blobs().await.unwrap(), 0);
+    assert!(fixture.in_bucket(worker_key).await);
+    assert!(fixture.local.blobs().await.unwrap().is_empty());
+}
+
 fn with_workspace_bucket(
     fixture: &Fixture,
     workspace_id: Id,

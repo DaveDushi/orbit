@@ -2725,6 +2725,7 @@ dependencies = [
  "totp-rs",
  "tower",
  "tracing",
+ "tracing-subscriber",
  "url",
  "utoipa",
  "webauthn-authenticator-rs",
