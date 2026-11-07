@@ -578,13 +578,20 @@ export type ChangePasswordBody = {
 
 export type ChatActionBody = {
     /**
-     * The button's `action_id`.
+     * The button's `action_id`; on a card of the team agent, the id of the button or form.
      */
     action_id: string;
     /**
      * The `block_id` of the block with the button.
      */
     block_id: string;
+    /**
+     * A form's values, by field name (text, or a checkbox's true/false). Only for a form on a
+     * card of the team agent.
+     */
+    values?: {
+        [key: string]: unknown;
+    } | null;
 };
 
 export type ChatActionResult = {
@@ -2331,7 +2338,18 @@ export type MessageBlock = {
     type: 'rich_text';
 } | (AttachmentBlock & {
     type: 'attachment';
-});
+}) | {
+    /**
+     * Names the card in a click. Orbit makes one (`ui0`) when it is missing.
+     */
+    block_id?: string | null;
+    spec: {
+        [key: string]: unknown;
+    };
+    title: string;
+    type: 'ui';
+    version: number;
+};
 
 /**
  * `pin`, `join` and `leave` are one-line system rows; `author_id` is the member they are about.

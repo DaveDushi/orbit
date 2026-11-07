@@ -409,10 +409,13 @@ export function useWebhookSigningSecret() {
     client.webhookSigningSecret(input.conversationId, input.webhookId, input.rotate))
 }
 
-/** A click on an integration's button. The integration answers later, through the live socket. */
+/**
+ * A click on an integration's button, or a click or form send on a card of the team agent. The integration answers
+ * later, through the live socket; the agent's card posts the clicker's message and the agent answers in the thread.
+ */
 export function useClickAction() {
-  return useChatMutation((client, input: { messageId: string; blockId: string; actionId: string }) =>
-    client.clickAction(input.messageId, input.blockId, input.actionId))
+  return useChatMutation((client, input: { messageId: string; blockId: string; actionId: string; values?: Record<string, string | boolean> }) =>
+    client.clickAction(input.messageId, input.blockId, input.actionId, input.values))
 }
 
 /** Hides an integration's reply that only the user sees. */

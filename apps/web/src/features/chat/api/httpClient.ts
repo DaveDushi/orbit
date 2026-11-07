@@ -351,8 +351,8 @@ export function createHttpChatClient(options: HttpChatClientOptions): ChatClient
     async listWebhookDeliveries(conversationId, webhookId) {
       return (await call(listChatWebhookDeliveries(at({ conversation_id: conversationId, webhook_id: webhookId })))).map(toDelivery)
     },
-    async clickAction(messageId, blockId, actionId) {
-      await call(clickChatAction({ ...at({ message_id: messageId }), body: { block_id: blockId, action_id: actionId } }))
+    async clickAction(messageId, blockId, actionId, values) {
+      await call(clickChatAction({ ...at({ message_id: messageId }), body: { block_id: blockId, action_id: actionId, values } }))
     },
     async deleteMessage(messageId) {
       await write(deleteChatMessage(at({ message_id: messageId })))

@@ -7,7 +7,9 @@ import { renderMarkdownBlocks } from '@/lib/markdown'
 import { MarkdownTextContext } from '@/lib/markdownTextContext'
 import type { Message } from '../../api/types'
 import { useChatHost } from '../../chatHost'
+import { agentCardOf } from '../../lib/agentCard'
 import { decodeMentions } from '../../lib/mentionTokens'
+import { AgentCard } from './AgentCard'
 import { LinkEmbed } from './LinkEmbed'
 import { MessageBlocks } from './MessageBlocks'
 import { extractLinkUrls, isJumboEmoji, isLongMessage, standaloneLinkUrls } from './messageText'
@@ -54,14 +56,17 @@ export function MessageBody({ message }: { message: Message }) {
     )
   }
 
-  // An integration's layout blocks replace its text; the text is their plain form for previews and search.
-  if (message.blocks && message.blocks.length > 0) {
+  // An integration's layout blocks replace its text; the text is their plain form for previews and search. The team
+  // agent's card comes under its text instead.
+  const layout = message.blocks?.filter((block) => block.type !== 'ui') ?? []
+  if (layout.length > 0) {
     return (
       <div data-slot="message-body" className="min-w-0">
-        <MessageBlocks blocks={message.blocks} messageId={message.id} interactive={message.bot?.interactive === true} />
+        <MessageBlocks blocks={layout} messageId={message.id} interactive={message.bot?.interactive === true} />
       </div>
     )
   }
+  const card = agentCardOf(message.blocks)
 
   const text = decodeMentions(message.body, people.members, people.channels)
   const origin = window.location.origin
@@ -134,6 +139,13 @@ export function MessageBody({ message }: { message: Message }) {
         <p data-slot="message-sticker" data-deleted="" className="text-muted-foreground italic">
           Sticker was deleted
         </p>
+      ) : null}
+      {card === 'invalid' ? (
+        <p data-slot="agent-card-missing" className="mt-1 text-xs text-muted-foreground italic">
+          The card could not be shown.
+        </p>
+      ) : card ? (
+        <AgentCard card={card} messageId={message.id} />
       ) : null}
       <Attachments attachments={message.attachments} hasTextContent={text !== ''} />
       <LinkCards body={linkBody} />

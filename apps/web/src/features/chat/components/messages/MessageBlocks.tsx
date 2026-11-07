@@ -26,7 +26,7 @@ function withEmoji(text: string, index: readonly EmojiShortcode[] | null): strin
 }
 
 /** Markdown with mention tokens, rendered as a message body is. */
-function Markdown({ text, id, className }: { text: string; id: string; className?: string }) {
+export function Markdown({ text, id, className }: { text: string; id: string; className?: string }) {
   const people = useChatPeople()
   const decoded = decodeMentions(withEmoji(text, useContext(EmojiIndexContext)), people.members, people.channels)
   return (

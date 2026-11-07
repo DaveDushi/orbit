@@ -560,6 +560,12 @@ fn problem(
             "Message too long",
             "A message can have at most 4000 characters.",
         ),
+        ChatError::RateLimited(detail) => (
+            StatusCode::TOO_MANY_REQUESTS,
+            "chat_rate_limited",
+            "Too many requests",
+            detail,
+        ),
         ChatError::EmojiNameTaken => (
             StatusCode::CONFLICT,
             "emoji_name_taken",

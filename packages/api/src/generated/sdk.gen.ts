@@ -1912,7 +1912,9 @@ export const editChatMessage = <ThrowOnError extends boolean = false>(options: O
 
 /**
  * Sends a click on an integration's button to the integration. The answer comes later through
- * the click's `response_url`; this only says whether the integration took the click.
+ * the click's `response_url`; this only says whether the integration took the click. A click on
+ * a card of the team agent posts a message from the member that the agent reads (its answer
+ * comes in the thread).
  */
 export const clickChatAction = <ThrowOnError extends boolean = false>(options: Options<ClickChatActionData, ThrowOnError>): RequestResult<ClickChatActionResponses, ClickChatActionErrors, ThrowOnError> => (options.client ?? client).post<ClickChatActionResponses, ClickChatActionErrors, ThrowOnError>({
     security: [{

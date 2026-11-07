@@ -19961,7 +19961,7 @@
         "tags": [
           "crate::chat_routes::interactions"
         ],
-        "summary": "Sends a click on an integration's button to the integration. The answer comes later through\nthe click's `response_url`; this only says whether the integration took the click.",
+        "summary": "Sends a click on an integration's button to the integration. The answer comes later through\nthe click's `response_url`; this only says whether the integration took the click. A click on\na card of the team agent posts a message from the member that the agent reads (its answer\ncomes in the thread).",
         "operationId": "click_chat_action",
         "parameters": [
           {
@@ -45512,11 +45512,18 @@
         "properties": {
           "action_id": {
             "type": "string",
-            "description": "The button's `action_id`."
+            "description": "The button's `action_id`; on a card of the team agent, the id of the button or form."
           },
           "block_id": {
             "type": "string",
             "description": "The `block_id` of the block with the button."
+          },
+          "values": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "A form's values, by field name (text, or a checkbox's true/false). Only for a form on a\ncard of the team agent."
           }
         },
         "additionalProperties": false
@@ -50384,6 +50391,42 @@
               }
             ],
             "description": "A Slack legacy attachment: a box with a colored bar. Made from a payload's `attachments`\nonly; a payload cannot post it in `blocks`."
+          },
+          {
+            "type": "object",
+            "description": "A card from the team agent: a json-render spec of catalog `version` 1 (`super::ui`). Only\nthe agent posts it, with its answer as the message body; a payload cannot.",
+            "required": [
+              "version",
+              "title",
+              "spec",
+              "type"
+            ],
+            "properties": {
+              "block_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Names the card in a click. Orbit makes one (`ui0`) when it is missing."
+              },
+              "spec": {
+                "type": "object"
+              },
+              "title": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ui"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
           }
         ]
       },

@@ -11,6 +11,8 @@ RUN bun install --frozen-lockfile --filter web
 COPY packages/api/ packages/api/
 COPY packages/editor/ packages/editor/
 COPY apps/web/ apps/web/
+# The catalog of the team agent's cards, shared with the sidecar (apps/agent).
+COPY apps/agent/src/ui-catalog.ts apps/agent/src/
 WORKDIR /src/apps/web
 ARG ORBIT_BUILD_REVISION
 RUN ORBIT_BUILD_REVISION=${ORBIT_BUILD_REVISION} bun run build

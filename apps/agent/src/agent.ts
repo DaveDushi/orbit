@@ -23,16 +23,19 @@ import { loadWake } from "./memory.ts";
 import { namesToTokens, splitBody, tokensToNames, type Person } from "./mentions.ts";
 import { mockModels } from "./mock.ts";
 import { codexModels, PROVIDER, PeopleModels, routedModels } from "./models.ts";
-import type { OrbitClient, PendingInput } from "./orbit.ts";
+import { OrbitError, type OrbitClient, type PendingInput } from "./orbit.ts";
 import { DEFAULT_AGENT_NAME } from "./prompt.ts";
 import { orbitExtension } from "./tools.ts";
+import { actionText, uiBlock } from "./ui.ts";
 
 const context = BACKGROUND_CONTEXT;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** What the model is told a message is. */
-export function frame(kind: "instruction" | "answer" | "steer", author: string, driver: string, text: string): string {
+/** What the model is told a message is. An action's text frames itself (`actionText`). */
+export function frame(kind: "instruction" | "answer" | "steer" | "action", author: string, driver: string, text: string): string {
 	switch (kind) {
+		case "action":
+			return text;
 		case "instruction":
 			return `Instruction from ${author} (the driver of this run):\n${text}`;
 		case "steer":
@@ -64,6 +67,7 @@ const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
 	memory_recall: (args) => `Searching memory for “${args.query}”`,
 	memory_zoom: () => "Reading older memory",
 	// The steps are shown in italics, where `_` would start or end the emphasis.
+	show_ui: () => "Making a card",
 	use_integration: (args) => `Using ${String(args.tool).replace("__", " → ").replaceAll("_", " ")}`,
 };
 
@@ -309,7 +313,7 @@ export class Agent {
 		const conversation = await this.#conversationFor(input);
 		const state = (await this.#harness.snapshot(ThreadDoc, conversation.id, context)) as ThreadState;
 		const people = await this.peopleOf(input.workspace_id);
-		const text = withMessageFiles(tokensToNames(input.body, people), input.files);
+		const text = input.kind === "action" ? actionText(input) : withMessageFiles(tokensToNames(input.body, people), input.files);
 
 		// This input started the current run before a restart: finish what is missing.
 		if (state.run?.inputId === input.message_id) {
@@ -328,7 +332,7 @@ export class Agent {
 		const busy = state.run !== null;
 		if (busy && state.driverId === input.author_id && input.kind !== "answer") {
 			// The driver adds to their own run.
-			await conversation.submit({ type: "input", content: frame("steer", input.author_name, input.author_name, text), requestId: input.message_id, whenBusy: "steer" }, context);
+			await conversation.submit({ type: "input", content: frame(input.kind === "action" ? "action" : "steer", input.author_name, input.author_name, text), requestId: input.message_id, whenBusy: "steer" }, context);
 			await this.#orbit.acknowledge(input.message_id);
 			return "done";
 		}
@@ -341,7 +345,7 @@ export class Agent {
 
 		let driverId = input.author_id;
 		let driverName = input.author_name;
-		let kind: "instruction" | "answer" = "instruction";
+		let kind: "instruction" | "answer" | "action" = input.kind === "action" ? "action" : "instruction";
 		if (input.kind === "answer" && state.driverId) {
 			driverId = state.driverId;
 			driverName = state.driverName ?? "the driver";
@@ -392,6 +396,7 @@ export class Agent {
 			doc.driverName = driverName;
 			doc.waitingFor = null;
 			doc.toolCalls = 0;
+			doc.ui = null;
 			doc.run = { inputId: input.message_id, submissionId: null, progressMessageId, startedAt: Date.now() };
 			doc.agentName = this.botName;
 			doc.teamInstructions = input.team_instructions ?? "";
@@ -484,7 +489,17 @@ export class Agent {
 		const people = await this.peopleOf(state.workspaceId);
 		const body = await this.#answer(conversation, settled, after, progress.steps, people);
 		const [first, ...rest] = splitBody(body);
-		await edit(first);
+		const card = settled.status === "done" && after.ui ? uiBlock(after.ui) : undefined;
+		if (card && run.progressMessageId) {
+			// Orbit checks the card again; one it refuses must not keep the answer from being posted.
+			await this.#orbit.editMessage(run.progressMessageId, state.workspaceId, first, [card]).catch(async (error: unknown) => {
+				if (!(error instanceof OrbitError) || error.status !== 422) throw error;
+				console.warn("agent: Orbit refused the card", error.problem?.detail ?? error.message);
+				await edit(`${first}\n\n_(The card could not be shown.)_`);
+			});
+		} else {
+			await edit(first);
+		}
 		for (const [index, chunk] of rest.entries()) {
 			await this.#orbit.postMessage({ workspaceId: state.workspaceId, conversationId: state.conversationId, rootMessageId: state.rootMessageId, body: chunk, nonce: `agent:${run.inputId}:${index + 1}` });
 		}
@@ -513,7 +528,7 @@ export class Agent {
 			.trim();
 		const waiting = state.waitingFor ? `⏸ Waiting for an answer from <@${state.waitingFor}>.` : "";
 		const answer = namesToTokens(text, people.filter((person) => person.id !== this.botUserId));
-		const main = [waiting, answer].filter(Boolean).join("\n\n").trim();
+		const main = [waiting, answer || state.ui?.fallbackText || ""].filter(Boolean).join("\n\n").trim();
 		return `${main || "Done."}${footer}`;
 	}
 }

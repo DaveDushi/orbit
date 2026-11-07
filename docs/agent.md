@@ -32,6 +32,16 @@ reasons: `.ai/agent-design.md`.
   only after the driver's **yes** in the thread, checked by Orbit as for integration writes (table
   `agent_drive_approvals`: one approval is one run of exactly those arguments, and expires). The audit log has
   `agent_drive.approved_action` with who approved. It cannot delete forever, empty the trash, restore, or turn off links.
+- It can answer with **one card** (`show_ui`): a table, a bar or line chart, a task list, a short form or buttons, built
+  from a fixed catalog (`apps/agent/src/ui-catalog.ts`, json-render 0.22.0, catalog version 1). The text answer is
+  always there too. The sidecar checks the card so the model can fix it; Orbit checks it again
+  (`repositories/chat/ui.rs`: at most 200 elements in one tree from `root`, 8 levels, fixed types and props, no `$`
+  keys, 48 KiB) and stores it as a `ui` block on the answer. Webhooks cannot post `ui` blocks. The web app shows the
+  card under the text (and only the text when the card does not fit its catalog); the phone shows the text and "Open
+  on the web to see the card". A **reply** button or a **form** sends a message from the person who clicked into the
+  thread ("Clicked **Plan my week** on **Open tasks**", or the form values) and queues it for the agent as kind
+  `action`: that person drives the new run. What a button does (label, `params`) comes from the stored card, never
+  from the browser; form values must fit the form's fields (2 KiB). One card takes 5 clicks in 30 minutes.
 - When it needs information, it asks a teammate in the thread (`@`-mention) and stops. The next reply in the thread
   continues the run, as the original driver.
 - Runs are durable: a restart of Orbit or of the agent continues them.

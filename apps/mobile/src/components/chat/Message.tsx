@@ -76,6 +76,10 @@ export function MessageItem({ message, groupStart, highlighted = false, handlers
               {message.edited_at && !message.deleted ? <Text className="text-[11px] text-muted-foreground"> (edited)</Text> : null}
             </Text>
           ) : null}
+          {!message.deleted && message.blocks?.some((block) => block.type === 'ui') ? (
+            // The agent's cards (tables, charts, forms) show on the web only; the text above stands alone.
+            <Text className="text-[12px] leading-[16px] text-muted-foreground">Open on the web to see the card</Text>
+          ) : null}
           {message.sticker ? <Sticker url={message.sticker.url} name={message.sticker.name} /> : message.sticker_id && !message.deleted ? <Text className="text-[12px] text-muted-foreground">Sticker was deleted</Text> : null}
           {!message.deleted && message.attachments.length > 0 ? <Attachments files={message.attachments} hasText={body !== ''} /> : null}
           {!message.deleted && message.reactions.length > 0 ? (

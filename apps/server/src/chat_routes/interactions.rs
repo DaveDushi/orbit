@@ -18,6 +18,7 @@ use url::{Host, Url};
 use utoipa::ToSchema;
 
 use super::{Call, ChatState, RequestIdExtension};
+use crate::push::PushService;
 use crate::repositories::chat::{Click, DeliveryRecord, WebhookRecord};
 use crate::task_routes::{ApiError, ApiJson};
 
@@ -121,8 +122,13 @@ fn sign(secret: &str, timestamp: &str, body: &str) -> String {
 pub(crate) struct ChatActionBody {
     /// The `block_id` of the block with the button.
     block_id: String,
-    /// The button's `action_id`.
+    /// The button's `action_id`; on a card of the team agent, the id of the button or form.
     action_id: String,
+    /// A form's values, by field name (text, or a checkbox's true/false). Only for a form on a
+    /// card of the team agent.
+    #[serde(default)]
+    #[schema(value_type = Option<Object>, required = false)]
+    values: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -157,7 +163,9 @@ fn app_key(state: &ChatState, call: &Call<'_>) -> Result<[u8; 32], ApiError> {
 }
 
 /// Sends a click on an integration's button to the integration. The answer comes later through
-/// the click's `response_url`; this only says whether the integration took the click.
+/// the click's `response_url`; this only says whether the integration took the click. A click on
+/// a card of the team agent posts a message from the member that the agent reads (its answer
+/// comes in the thread).
 #[utoipa::path(post, path = "/api/v1/workspaces/{workspace_id}/chat/messages/{message_id}/actions", params(("workspace_id" = String, Path), ("message_id" = String, Path)), request_body = ChatActionBody, responses((status = 200, body = ChatActionResult)))]
 pub(crate) async fn click_chat_action(
     State(state): State<ChatState>,
@@ -169,6 +177,31 @@ pub(crate) async fn click_chat_action(
 ) -> Result<Json<ChatActionResult>, ApiError> {
     let call = Call::enter(&state, &headers, &uri, &workspace, &request_id).await?;
     let message_id = call.id(&message)?;
+    let action = state
+        .chat
+        .prepare_agent_action(
+            call.workspace_id,
+            call.actor_id,
+            message_id,
+            &body.block_id,
+            &body.action_id,
+            body.values.as_ref(),
+        )
+        .await
+        .map_err(|error| call.problem(error))?;
+    if let Some(mut input) = action {
+        input.online = state.hub.online(call.workspace_id);
+        let written = call
+            .write(
+                &state,
+                state
+                    .chat
+                    .send_message(call.workspace_id, call.actor_id, input),
+            )
+            .await?;
+        PushService::of(state.identity.database()).chat_message(&written.result);
+        return Ok(Json(ChatActionResult { ok: true }));
+    }
     let key = app_key(&state, &call)?;
     let click = state
         .chat

@@ -30,13 +30,15 @@ const id = () => `0199c3a0-0000-7000-8000-${String(++next).padStart(12, "0")}`;
 /** Just enough of Orbit for the agent: the internal API and a few public routes. */
 class FakeOrbit {
 	readonly queue: (PendingInput & { acked?: boolean })[] = [];
-	readonly messages = new Map<string, { id: string; body: string; root: string | null }>();
+	readonly messages = new Map<string, { id: string; body: string; root: string | null; blocks?: any[] }>();
 	readonly threads = new Map<string, { status: string; driver_user_id: string | null; waiting_for_user_id: string | null }>();
 	/** Public API calls: method, path, and the person whose session made them. */
 	readonly calls: { method: string; path: string; as: string }[] = [];
 	readonly connected = new Set<string>([ANN, BOB]);
 	failAcks = false;
 	failEdits = false;
+	/** Orbit refuses the answer's card (422), as it does for one that breaks its rules. */
+	refuseCards = false;
 	botName = "Orbit Agent";
 	/** Agentic → Admin: the model and thinking level of new runs. */
 	model: string | null = null;
@@ -111,8 +113,9 @@ class FakeOrbit {
 			}
 			if ((match = /^\/messages\/(.+)$/.exec(rest)) && method === "PATCH") {
 				if (this.failEdits && !String(body.body).startsWith("⏳")) return [503, { code: "unavailable" }];
+				if (this.refuseCards && body.blocks) return [422, { code: "agent_card_invalid" }];
 				const message = [...this.messages.values()].find((candidate) => candidate.id === match![1]);
-				if (message) message.body = body.body;
+				if (message) Object.assign(message, { body: body.body, blocks: body.blocks });
 				return [204, undefined];
 			}
 			if (rest === "/sessions") {
@@ -136,7 +139,10 @@ class FakeOrbit {
 		const memory = /^\/agent-memory\/(team|private)(\/.*)?$/.exec(rest);
 		if (memory) return this.memoryRoute(method, memory[1], memory[2] ?? "", url, token, body);
 		if (rest === "/projects") return [200, { items: [{ id: "p1", key: "ORB", name: "General" }] }];
-		if (rest === "/projects/p1/statuses") return [200, { items: [{ id: "s1", name: "Todo", position: 0 }] }];
+		if (rest === "/tasks" && method === "GET") {
+			return [200, { items: ["Todo", "Todo", "Done"].map((status, index) => ({ id: id(), number: index + 1, project_id: "p1", status_id: status === "Done" ? "s2" : "s1", title: `Task ${index + 1}`, priority: "none", assignee_ids: [ANN], version: 1 })) }];
+		}
+		if (rest === "/projects/p1/statuses") return [200, { items: [{ id: "s1", name: "Todo", position: 0 }, { id: "s2", name: "Done", position: 1 }] }];
 		if (rest === "/members") return [200, { items: [{ user_id: ANN, display_name: "Ann" }, { user_id: BOB, display_name: "Bob" }] }];
 		if (rest === "/tasks" && method === "POST") {
 			// Bob may not create tasks here; Ann may.
@@ -521,6 +527,62 @@ test("integrations: a write waits for the driver's yes and then runs the same ca
 		const yes = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "answer", body: "yes" });
 		await until("the write", () => progressOf(orbit, yes).startsWith("Done (use_integration)"));
 		assert.deepEqual(orbit.external[1], { tool: "shop__api_request", arguments: order, as: ANN });
+	} finally {
+		await agent.stop();
+		orbit.server.close();
+	}
+});
+
+test("cards: show_ui puts a checked card on the answer, a bad card goes back to the model, and a click runs as the clicker", async () => {
+	const orbit = new FakeOrbit();
+	current = orbit;
+	await orbit.listen();
+	const agent = new Agent(config(orbit, mkdtempSync(join(tmpdir(), "agent-"))), new OrbitClient(config(orbit, "")));
+	await agent.open();
+	await agent.start();
+	try {
+		// The answer is the text, with the card as its one `ui` block.
+		const thread = id();
+		const ask = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> show my open tasks as a table and a bar chart by status` });
+		await until("the card", () => (orbit.messages.get(`agent:${ask}`)?.blocks?.length ?? 0) > 0);
+		const answer = orbit.messages.get(`agent:${ask}`)!;
+		assert.match(answer.body, /^2 open tasks: Todo 2\./);
+		assert.equal(answer.blocks!.length, 1);
+		const [block] = answer.blocks!;
+		assert.equal(block.type, "ui");
+		assert.equal(block.version, 1);
+		assert.deepEqual(block.spec.elements.chart.props.series[0].points, [{ x: "Todo", y: 2 }]);
+		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
+
+		// A card that breaks the catalog is an error for the model, and the answer has no card.
+		const broken = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> show a broken card` });
+		await until("the error", () => progressOf(orbit, broken).startsWith("I could not do that"));
+		assert.match(progressOf(orbit, broken), /The card is not valid[\s\S]*elements\.x\.type: Invalid option/);
+		assert.equal(orbit.messages.get(`agent:${broken}`)?.blocks, undefined);
+		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
+
+		// A card that Orbit refuses still leaves the text answer.
+		orbit.refuseCards = true;
+		const refused = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> show my open tasks as a table` });
+		await until("the answer without its card", () => progressOf(orbit, refused).includes("(The card could not be shown.)"));
+		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
+		orbit.refuseCards = false;
+
+		// Bob clicks a button on Ann's card: Bob drives that run, and the click is framed from Orbit's stored data.
+		orbit.calls.length = 0;
+		const card = { message_id: answer.id, title: "Open tasks" };
+		const click = orbit.add({ thread_key: thread, author_id: BOB, author_name: "Bob", kind: "action", body: "Clicked **Plan my week** on **Open tasks**", action: { type: "button", label: "Plan my week", params: { plan: "week" }, card } });
+		await until("the click's answer", () => progressOf(orbit, click).startsWith("(mock model) I read: Action from Bob"));
+		assert.match(progressOf(orbit, click), /clicked “Plan my week” on your card “Open tasks” with params \{"plan":"week"\}/);
+		assert.equal(orbit.threads.get(thread)?.driver_user_id, BOB);
+		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
+
+		// Ann sends the form: its values are data, and the task is created with Ann's permissions.
+		orbit.calls.length = 0;
+		const form = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "action", body: "Sent **Open tasks**", action: { type: "form", label: "Create task", values: { title: "From the card" }, card } });
+		await until("the task", () => progressOf(orbit, form).startsWith("Done (create_task)"));
+		assert.ok(orbit.calls.some((call) => call.method === "POST" && call.path === "/tasks" && call.as === ANN), JSON.stringify(orbit.calls));
+		assert.ok(orbit.calls.every((call) => call.as === ANN));
 	} finally {
 		await agent.stop();
 		orbit.server.close();

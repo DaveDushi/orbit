@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use super::inputs::{self, ThreadUpdate};
 use super::{AgentState, bot, credentials, sessions};
 use crate::push::PushService;
-use crate::repositories::chat::SendInput;
+use crate::repositories::chat::{BlocksError, SendInput, parse_agent_blocks};
 use crate::task_routes::{ApiError, authenticate_session};
 
 pub(super) const SECRET_HEADER: &str = "x-orbit-agent-secret";
@@ -405,6 +405,7 @@ async fn post_message(
             online: chat.hub.online(body.workspace_id),
             also_in_channel: false,
             nonce: body.nonce,
+            agent_action: None,
         };
         let (written, _) = chat
             .publish(
@@ -439,6 +440,9 @@ async fn post_message(
 struct EditMessageBody {
     workspace_id: Id,
     body: String,
+    /// The answer's card: one `ui` block (`chat::parse_agent_blocks`). Absent: no card.
+    #[serde(default)]
+    blocks: Option<Value>,
 }
 
 async fn edit_message(
@@ -451,6 +455,19 @@ async fn edit_message(
 ) -> Result<StatusCode, ApiError> {
     sidecar_only(&state, &headers, &uri, &request_id)?;
     let message_id = id_of(&message_id, &uri, &request_id)?;
+    let blocks = match &body.blocks {
+        Some(value) => Some(parse_agent_blocks(value).map_err(|BlocksError(detail)| {
+            tracing::warn!(%detail, "agent card refused");
+            error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "agent_card_invalid",
+                "The agent's card is not valid.",
+                &uri,
+                &request_id,
+            )
+        })?),
+        None => None,
+    };
     let chat = state.chat.clone();
     let database = state.database().clone();
     let edited = tokio::spawn(async move {
@@ -458,8 +475,13 @@ async fn edit_message(
         chat.publish(
             body.workspace_id,
             bot,
-            chat.chat
-                .edit_message(body.workspace_id, bot, message_id, &body.body),
+            chat.chat.edit_message(
+                body.workspace_id,
+                bot,
+                message_id,
+                &body.body,
+                blocks.as_deref(),
+            ),
         )
         .await
         .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;

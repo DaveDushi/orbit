@@ -500,6 +500,11 @@ turns its routes, navigation and shortcuts off.
   redirects, public addresses only outside development), and the integration answers through
   `/api/v1/hooks/chat/{id}/responses/{token}` (5 uses, 30 min): replace, delete, `in_channel`, or an ephemeral reply
   (live-only `message.ephemeral` event, `EphemeralMessages.tsx`). The signing secret is encrypted with the app key.
+- The team agent's cards (`docs/agent.md`): a `ui` block (json-render spec, catalog `apps/agent/src/ui-catalog.ts`,
+  checked by `repositories/chat/ui.rs`) on the agent's answer, shown under the body by `AgentCard.tsx` (own SVG chart,
+  `lib/agentCard.ts` falls back to the body). Only the agent's edit route takes it. A click goes through the same
+  actions route: on the agent's message `ChatRepository::prepare_agent_action` posts a message from the clicker and an
+  `agent_inputs` row of kind `action` (5 per card in 30 min). Mobile shows the body and "Open on the web to see the card".
 - Custom emoji belong to the workspace (Workspace Settings > Emoji, owners and admins): `:name:` stays
   text in the body and in reactions and becomes the image when it is shown.
 - Stickers belong to the workspace too (Workspace Settings > Stickers, owners and admins; 512 KiB, 100 for

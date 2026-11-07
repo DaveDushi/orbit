@@ -44,7 +44,11 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // The catalog of the agent's cards, shared with the sidecar (apps/agent deploys on its own).
+      '@agent/ui-catalog': fileURLToPath(new URL('../agent/src/ui-catalog.ts', import.meta.url)),
     },
+    // The shared catalog resolves its imports from apps/agent when that has node_modules: use one copy.
+    dedupe: ['zod', '@json-render/core'],
   },
   plugins: [
     react(),

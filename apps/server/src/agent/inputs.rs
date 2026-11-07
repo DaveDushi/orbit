@@ -19,6 +19,8 @@ pub enum InputKind {
     Answer,
     /// A reply from the person whose run is going: it joins the run.
     Steer,
+    /// A click or form submit on the agent's card: its author starts a run, as for an instruction.
+    Action,
 }
 
 impl InputKind {
@@ -27,6 +29,7 @@ impl InputKind {
             Self::Instruction => "instruction",
             Self::Answer => "answer",
             Self::Steer => "steer",
+            Self::Action => "action",
         }
     }
 }
@@ -95,6 +98,14 @@ pub fn thread_of(message: &MessageRecord, conversation_id: Id, agent_dm: bool) -
     }
 }
 
+/// A click on a card of the agent, sent with the clicker's message (`interactions`): the
+/// message with the card, and what the sidecar reads (from the stored card, and form values).
+#[derive(Clone, Debug)]
+pub struct AgentAction {
+    pub card_message_id: Id,
+    pub action: serde_json::Value,
+}
+
 pub(crate) async fn bot_user_id(conn: &mut AnyConnection) -> Result<Option<Id>, sqlx::Error> {
     let id = sqlx::query_scalar::<_, String>("SELECT user_id FROM agent_bot WHERE id = 1")
         .fetch_optional(&mut *conn)
@@ -104,13 +115,15 @@ pub(crate) async fn bot_user_id(conn: &mut AnyConnection) -> Result<Option<Id>, 
 
 /// Queues `message` for the agent when it is for the agent. Called by `send_message` in its
 /// transaction, after the message row is written. Never fails for a reason of its own: on
-/// Postgres an error would end the whole transaction and lose the message.
+/// Postgres an error would end the whole transaction and lose the message. A message with an
+/// `action` is always for the agent.
 pub(crate) async fn record(
     conn: &mut AnyConnection,
     workspace_id: Id,
     conversation_id: Id,
     is_dm: bool,
     message: &MessageRecord,
+    action: Option<&AgentAction>,
 ) -> Result<(), sqlx::Error> {
     let Some(bot) = bot_user_id(conn).await? else {
         return Ok(());
@@ -119,7 +132,7 @@ pub(crate) async fn record(
         return Ok(());
     }
     let mentioned = message.mentions.user_ids.contains(&bot);
-    if !mentioned && !is_dm && message.thread_root_id.is_none() {
+    if !mentioned && !is_dm && message.thread_root_id.is_none() && action.is_none() {
         return Ok(());
     }
     let bot_member = sqlx::query_scalar::<_, Flag>(
@@ -148,7 +161,11 @@ pub(crate) async fn record(
                         .and_then(|id| id.parse().ok()),
                 })
             });
-    let Some(kind) = classify(mentioned || is_dm, thread, message.author_id) else {
+    let kind = if action.is_some() {
+        InputKind::Action
+    } else if let Some(kind) = classify(mentioned || is_dm, thread, message.author_id) {
+        kind
+    } else {
         return Ok(());
     };
     if !bot_member {
@@ -172,8 +189,8 @@ pub(crate) async fn record(
     }
     sqlx::query(
         "INSERT INTO agent_inputs (message_id, workspace_id, conversation_id, thread_key, \
-         root_message_id, author_id, kind, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
-         ON CONFLICT (message_id) DO NOTHING",
+         root_message_id, author_id, kind, created_at, card_message_id, action) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (message_id) DO NOTHING",
     )
     .bind(message.id.to_string())
     .bind(workspace_id.to_string())
@@ -183,6 +200,8 @@ pub(crate) async fn record(
     .bind(message.author_id.to_string())
     .bind(kind.as_str())
     .bind(message.created_at.as_millis())
+    .bind(action.map(|action| action.card_message_id.to_string()))
+    .bind(action.map(|action| action.action.to_string()))
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -204,6 +223,8 @@ pub struct PendingInput {
     pub author_name: String,
     pub kind: String,
     pub body: String,
+    /// For kind `action`: what was clicked on the agent's card, and the form values.
+    pub action: Option<serde_json::Value>,
     pub created_at: i64,
     /// The workspace's team instructions (`settings`), empty when it has none.
     pub team_instructions: String,
@@ -227,7 +248,7 @@ pub(crate) async fn pending(
 ) -> Result<Vec<PendingInput>, sqlx::Error> {
     let rows = sqlx::query(
         "SELECT i.message_id, i.workspace_id, i.conversation_id, i.thread_key, i.root_message_id, \
-         i.author_id, i.kind, i.created_at, u.display_name, m.body, c.kind AS conversation_kind, \
+         i.author_id, i.kind, i.created_at, i.action, u.display_name, m.body, c.kind AS conversation_kind, \
          c.name AS conversation_name, t.body AS team_instructions, \
          (SELECT COUNT(*) FROM chat_members cm WHERE cm.conversation_id = i.conversation_id) \
          AS conversation_members \
@@ -256,6 +277,9 @@ pub(crate) async fn pending(
             author_name: row.get("display_name"),
             kind: row.get("kind"),
             body: row.get("body"),
+            action: row
+                .get::<Option<String>, _>("action")
+                .and_then(|action| serde_json::from_str(&action).ok()),
             created_at: row.get("created_at"),
             team_instructions: row
                 .get::<Option<String>, _>("team_instructions")

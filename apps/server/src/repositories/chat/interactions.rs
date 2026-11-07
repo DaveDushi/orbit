@@ -2,23 +2,34 @@
 //! webhook's request URL (the route sends it, signed) with a `response_url`: a token that lets the
 //! integration answer five times in thirty minutes by replacing or deleting the message, posting a
 //! new one, or showing a reply to the member who clicked only.
+//!
+//! A click on a card of the team agent (a `ui` block) goes to no webhook: it becomes a message from
+//! the member who clicked, in the card's thread, that the agent reads as an input
+//! ([`ChatRepository::prepare_agent_action`]).
 
 use orbit_platform::{Id, Row, TimestampMillis, generate_opaque_token};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 use super::blocks::find_button;
-use super::messages::{bot_message_parts, remove_message, rewrite_message, webhook_interactive};
+use super::messages::{
+    SendInput, bot_message_parts, remove_message, rewrite_message, webhook_interactive,
+};
+use super::ui::find_ui;
 use super::webhooks::{BotSender, HookTarget, decrypt};
 use super::{
     BotPost, ChatError, ChatEvent, ChatRepository, ConversationKind, Events, MentionsRecord,
     MessageKind, MessageRecord, Written, finish, load_conversation, load_message,
     load_message_access, mentioned_user_ids, parse_id,
 };
+use crate::agent::inputs::{AgentAction, bot_user_id};
 
 /// How long and how often an integration may answer one click (as Slack's `response_url`).
 const RESPONSE_TTL_MS: i64 = 30 * 60 * 1000;
 const RESPONSE_USES: i64 = 5;
+/// The form values of one submit, as JSON.
+const FORM_VALUES_MAX_BYTES: usize = 2048;
+const FORM_VALUE_MAX_CHARS: usize = 2000;
 
 /// A click, ready to send: where, the secret to sign with, and the payload.
 pub struct Click {
@@ -42,7 +53,156 @@ fn token_hash(token: &str) -> Vec<u8> {
     Sha256::digest(token.as_bytes()).to_vec()
 }
 
+/// `**text**` that shows `text` as it is.
+fn bold(text: &str) -> String {
+    let escaped: String = text
+        .chars()
+        .flat_map(|ch| {
+            let escape = matches!(
+                ch,
+                '\\' | '*' | '_' | '`' | '[' | ']' | '<' | '>' | '~' | '|'
+            );
+            escape.then_some('\\').into_iter().chain([ch])
+        })
+        .collect();
+    format!("**{}**", escaped.trim())
+}
+
+/// The form values of a submit: only the form's fields, as text or a checkbox's yes/no, and the
+/// required ones filled in. Returns the values and their lines for the message.
+fn form_values(
+    props: &Value,
+    values: Option<&Map<String, Value>>,
+) -> Result<(Value, Vec<String>), ChatError> {
+    let invalid = ChatError::Invalid { field: "values" };
+    let values = values.ok_or(ChatError::Invalid { field: "values" })?;
+    if Value::Object(values.clone()).to_string().len() > FORM_VALUES_MAX_BYTES {
+        return Err(invalid);
+    }
+    let fields = props.get("fields").and_then(Value::as_array);
+    let field = |name: &str| {
+        fields
+            .into_iter()
+            .flatten()
+            .find(|field| field.get("name").and_then(Value::as_str) == Some(name))
+    };
+    if values.keys().any(|name| field(name).is_none()) {
+        return Err(invalid);
+    }
+    let mut lines = Vec::new();
+    for field in fields.into_iter().flatten() {
+        let name = field
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let label = field.get("label").and_then(Value::as_str).unwrap_or(name);
+        let shown = match values.get(name) {
+            None | Some(Value::Null) => None,
+            Some(Value::Bool(checked)) => Some(if *checked { "yes" } else { "no" }.to_owned()),
+            Some(Value::String(text)) if text.chars().count() <= FORM_VALUE_MAX_CHARS => {
+                (!text.trim().is_empty()).then(|| text.trim().to_owned())
+            }
+            Some(_) => return Err(ChatError::Invalid { field: "values" }),
+        };
+        let required = field.get("required").and_then(Value::as_bool) == Some(true);
+        match shown {
+            Some(shown) => lines.push(format!("- {}: {shown}", bold(label))),
+            None if required => return Err(ChatError::Invalid { field: "values" }),
+            None => {}
+        }
+    }
+    Ok((Value::Object(values.clone()), lines))
+}
+
 impl ChatRepository {
+    /// A click by `actor_id` on a card of the team agent, as the message that reports it: `None`
+    /// when the message is not the agent's, so the click is an integration's. What the click
+    /// does (the button's action and params) comes from the stored card; only form `values`
+    /// come from the member, and they must fit the form's fields.
+    pub async fn prepare_agent_action(
+        &self,
+        workspace_id: Id,
+        actor_id: Id,
+        message_id: Id,
+        block_id: &str,
+        element_id: &str,
+        values: Option<&Map<String, Value>>,
+    ) -> Result<Option<SendInput>, ChatError> {
+        let mut conn = self.database.pool().acquire().await?;
+        let (access, message) =
+            load_message_access(&mut conn, workspace_id, actor_id, message_id).await?;
+        let agent = bot_user_id(&mut conn).await?;
+        if message.bot.is_some() || agent != Some(message.author_id) {
+            return Ok(None);
+        }
+        access.require_member()?;
+        access.require_open()?;
+        if message.deleted {
+            return Err(ChatError::NotFound);
+        }
+        let (title, spec) = message
+            .blocks
+            .as_deref()
+            .and_then(|blocks| find_ui(blocks, block_id))
+            .ok_or(ChatError::NotFound)?;
+        let element = spec
+            .get("elements")
+            .and_then(|elements| elements.get(element_id))
+            .ok_or(ChatError::NotFound)?;
+        let props = element.get("props").cloned().unwrap_or_else(|| json!({}));
+        let text = |key: &str| props.get(key).and_then(Value::as_str).unwrap_or_default();
+        let (action, body) = match element.get("type").and_then(Value::as_str) {
+            Some("Button") if text("action") == "reply" => {
+                if values.is_some_and(|values| !values.is_empty()) {
+                    return Err(ChatError::Invalid { field: "values" });
+                }
+                let action = json!({
+                    "type": "button",
+                    "action": "reply",
+                    "label": text("label"),
+                    "params": props.get("params").cloned().unwrap_or(Value::Null),
+                });
+                (
+                    action,
+                    format!("Clicked {} on {}", bold(text("label")), bold(title)),
+                )
+            }
+            Some("Form") => {
+                let (values, lines) = form_values(&props, values)?;
+                let label = Some(text("submit_label")).filter(|label| !label.is_empty());
+                let action = json!({
+                    "type": "form",
+                    "action": "submit_form",
+                    "label": label.unwrap_or("Send"),
+                    "values": values,
+                });
+                let mut body = format!("Sent {}", bold(title));
+                if !lines.is_empty() {
+                    body = format!("{body}:\n{}", lines.join("\n"));
+                }
+                (action, body)
+            }
+            _ => return Err(ChatError::Invalid { field: "action_id" }),
+        };
+        let mut action = action;
+        action["card"] = json!({ "message_id": message.id.to_string(), "block_id": block_id, "title": title, "element_id": element_id });
+        Ok(Some(SendInput {
+            conversation_id: message.conversation_id,
+            thread_root_id: message.thread_root_id,
+            reply_to_id: None,
+            body,
+            sticker_id: None,
+            file_ids: Vec::new(),
+            online: Vec::new(),
+            also_in_channel: false,
+            nonce: format!("action:{}", Id::new_v7()),
+            agent_action: Some(AgentAction {
+                card_message_id: message.id,
+                action,
+            }),
+        }))
+    }
+
     /// Checks a click by `actor_id` and makes its payload and response token. Only the button's
     /// position comes from the member; its `value` is read from the stored message.
     #[allow(clippy::too_many_arguments)]

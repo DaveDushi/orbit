@@ -149,7 +149,8 @@ export interface ChatClient {
   webhookSigningSecret(conversationId: string, webhookId: string, rotate: boolean): Promise<string>
   listWebhookDeliveries(conversationId: string, webhookId: string): Promise<WebhookDelivery[]>
   /** Sends a click on an integration's button. Rejects when the integration did not take it. */
-  clickAction(messageId: string, blockId: string, actionId: string): Promise<void>
+  /** `values`: a form's values, for a form on a card of the team agent. */
+  clickAction(messageId: string, blockId: string, actionId: string, values?: Record<string, string | boolean>): Promise<void>
 
   createCategory(name: string): Promise<Category>
   renameCategory(categoryId: string, name: string): Promise<Category>

@@ -21,6 +21,8 @@ import { canReadPrivate, dueText, fenced, lineText, type DueSummary, type Memory
 import { namesToTokens, tokensToNames, type Person } from "./mentions.ts";
 import { OrbitError, type OrbitClient } from "./orbit.ts";
 import { aboutOrbit, DEFAULT_AGENT_NAME, teamInstructionsBlock } from "./prompt.ts";
+import { showUi } from "./ui.ts";
+import { uiPrompt } from "./ui-catalog.ts";
 
 export type ToolDeps = {
 	readonly orbit: OrbitClient;
@@ -606,6 +608,7 @@ export const ORBIT_TOOLS = [
 	memoryZoom,
 	useIntegration,
 	...DRIVE_TOOLS,
+	showUi,
 ];
 
 const PROMPT = (name: string) => `You are ${name}, a teammate inside Orbit (tasks, Docs pages, Drive files, chat). You work in a chat thread.
@@ -649,6 +652,7 @@ export function orbitExtension(toolDeps: ToolDeps) {
 		sections: [
 			// The name and the team instructions are read at the start of each run (`Agent.#startRun`).
 			section("orbit", async (input, context) => PROMPT(await agentName(input, context)), { tag: false }),
+			section("orbit-ui", async () => uiPrompt(), { tag: false }),
 			section("orbit-about", async (input, context) => aboutOrbit(await agentName(input, context)), { tag: false }),
 			section("orbit-team", async (input, context) => teamInstructionsBlock((await input.read.snapshot(ThreadDoc, input.conversationId, context))?.teamInstructions), { tag: false }),
 			section("orbit-context", async (input, context) => {

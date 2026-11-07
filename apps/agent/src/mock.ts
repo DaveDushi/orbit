@@ -15,6 +15,8 @@
  *   read the files (reads every file sent with the message, one read_chat_file call each, then reports them all)
  *   find drive file "words"        read drive file <id|it>              create folder "Name"
  *   trash drive file <id|it>       share drive file <id|it>
+ *   show my open tasks as a table (searches tasks, then answers with a card: table, bar chart by status, buttons and a
+ *     "New task" form; sending that form creates the task)
  *
  * A "yes" to an approval question (an answer, or the driver's next message in a DM) calls the last integration,
  * drive_trash or drive_share tool again with the same arguments.
@@ -99,10 +101,51 @@ function unreadFiles(instruction: string, messages: readonly Message[]): string[
 	return ids.filter((id) => !read.has(id));
 }
 
+const CARD_REQUEST = /show (?:me )?(?:my )?(?:open )?tasks as a (?:table|card|chart)/i;
+
+/** The demo card for CARD_REQUEST, from a search_tasks result: open tasks as a table, a bar chart by status, buttons, a form. */
+export function taskCard(result: string): { title: string; fallback_text: string; spec: JsonObject } {
+	const json = /<orbit-data[^>]*>\n([\s\S]*)\n<\/orbit-data>/.exec(result)?.[1] ?? "[]";
+	const tasks = (JSON.parse(json) as { ref: string; title: string; status: string; assignees: string[] }[]).filter((task) => !/^(done|cancell?ed|duplicate)$/i.test(task.status));
+	const counts = new Map<string, number>();
+	for (const task of tasks) counts.set(task.status, (counts.get(task.status) ?? 0) + 1);
+	const first = tasks[0]?.ref;
+	const elements: JsonObject = {
+		card: { type: "Card", props: { title: "Open tasks", description: `${tasks.length} open tasks` }, children: ["table", "chart", "buttons", "form"] },
+		table: {
+			type: "Table",
+			props: {
+				columns: [{ key: "ref", label: "ID" }, { key: "title", label: "Title" }, { key: "status", label: "Status" }, { key: "assignees", label: "Assignees" }],
+				rows: tasks.map((task) => ({ ref: task.ref, title: task.title, status: task.status, assignees: task.assignees.join(", ") })),
+			},
+		},
+		chart: { type: "Chart", props: { kind: "bar", title: "Open tasks by status", x_label: "Status", y_label: "Tasks", series: [{ name: "Tasks", points: [...counts].map(([x, y]) => ({ x, y })) }] } },
+		buttons: { type: "Stack", props: { direction: "row" }, children: first ? ["plan", "open"] : ["plan"] },
+		plan: { type: "Button", props: { label: "Plan my week", style: "primary", action: "reply", params: { plan: "week", tasks: tasks.length } } },
+		...(first ? { open: { type: "Button", props: { label: `Open ${first}`, action: "open_task", params: { task: first } } } } : {}),
+		form: {
+			type: "Form",
+			props: {
+				fields: [
+					{ name: "title", label: "New task", kind: "text", required: true },
+					{ name: "priority", label: "Priority", kind: "select", options: ["low", "medium", "high", "urgent"] },
+					{ name: "due", label: "Due", kind: "date" },
+					{ name: "notify", label: "Tell the team", kind: "checkbox" },
+				],
+				submit_label: "Create task",
+			},
+		},
+	};
+	return { title: "Open tasks", fallback_text: `${tasks.length} open tasks: ${[...counts].map(([status, count]) => `${status} ${count}`).join(", ")}.`, spec: { root: "card", elements } };
+}
+
 /** The tool call that the newest instruction asks for, or `undefined` when it asks for none. */
 export function plan(instruction: string, messages: readonly Message[]): { name: string; args: { [key: string]: unknown } } | undefined {
 	const target = (value: string, kind: "task" | "page" | "drive"): string => (/^(it|that)$/i.test(value) ? lastId(messages, kind) : value) ?? value;
 	let match: RegExpExecArray | null;
+	if (CARD_REQUEST.test(instruction)) return { name: "search_tasks", args: { limit: 50 } };
+	if (/show a broken card/i.test(instruction)) return { name: "show_ui", args: { title: "Broken", fallback_text: "Broken.", spec: { root: "x", elements: { x: { type: "Iframe", props: {} } } } } };
+	if ((match = /sent the form “Create task”[\s\S]*"title": "([^"]+)"/.exec(instruction))) return { name: "create_task", args: { title: match[1] } };
 	if ((match = /create (?:a )?task "([^"]+)"/i.exec(instruction))) return { name: "create_task", args: { title: match[1] } };
 	if ((match = /rename task (\S+) to "([^"]+)"/i.exec(instruction))) return { name: "update_task", args: { task_id: target(match[1], "task"), title: match[2] } };
 	if ((match = /move task (\S+) to ([\w ]+?)\.?$/i.exec(instruction))) return { name: "update_task", args: { task_id: target(match[1], "task"), status: match[2].trim() } };
@@ -166,6 +209,14 @@ export function respond(messages: readonly Message[], modelId = "mock", thinking
 				return `\`\`\`\n${text.length > 600 ? `${text.slice(0, 600)}…` : text}\n\`\`\``;
 			});
 			return fauxAssistantMessage(fauxText(`Done (\`read_chat_file\` ×${reads.length}).\n\n${parts.join("\n\n")}`));
+		}
+		const instruction = textOf(messages[lastUser(messages)]?.content);
+		if (CARD_REQUEST.test(instruction) && last.toolName === "search_tasks" && !last.isError) {
+			return fauxAssistantMessage(fauxToolCall("show_ui", taskCard(textOf(last.content))), { stopReason: "toolUse" });
+		}
+		if (last.toolName === "show_ui" && !last.isError) {
+			const card = lastCall(messages, ["show_ui"]);
+			return fauxAssistantMessage(fauxText(String(card?.args.fallback_text ?? "Here is the card.")));
 		}
 		const result = textOf(last.content).replace(/<\/?orbit-data[^>]*>/g, "").trim();
 		const short = result.length > 900 ? `${result.slice(0, 900)}…` : result;
