@@ -158,7 +158,6 @@ pub(crate) async fn send_chat_message(
         body: body.body,
         also_in_channel: body.also_in_channel,
         nonce: body.nonce,
-        agent_action: None,
     };
     let written = call
         .write(

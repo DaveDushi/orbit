@@ -41,7 +41,7 @@ pub use blocks::{BlocksError, MessageBlock, check_message_blocks, parse_blocks};
 pub use conversations::{ChannelCreate, ChannelUpdate};
 pub use emoji::{CustomEmojiImage, CustomEmojiRecord, EMOJI_MAX_BYTES};
 pub use files::SentChatFile;
-pub use interactions::{Click, ResponseTarget};
+pub use interactions::{Click, ResponseTarget, SentAction};
 pub use messages::BotPost;
 pub use messages::{ForwardInput, MessageCursor, SendInput};
 pub use search::{SearchHitRecord, SearchInput, SearchPage};

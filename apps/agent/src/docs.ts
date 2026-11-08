@@ -1,4 +1,3 @@
-import type { JsonValue } from "@earendil-works/chord";
 import { defineDoc } from "@earendil-works/pi-durable";
 
 /** The run that answers one input: its submission and the progress message it edits. */
@@ -37,8 +36,6 @@ export type ThreadState = {
 	memory?: string | null;
 	/** The integration tools section of the current run (the driver's tools, read at its start). */
 	integrations?: string | null;
-	/** The card that `show_ui` made in the current run, posted with its answer. */
-	ui?: { title: string; fallbackText: string; spec: JsonValue } | null;
 	/** Summaries Orbit asked this thread's runs to write: `scope:lo-hi` → claim. */
 	claims?: Record<string, string>;
 };

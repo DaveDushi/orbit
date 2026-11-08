@@ -344,6 +344,7 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::chat_routes::hooks::post_incoming_webhook,
         crate::chat_routes::hooks::post_action_response,
         crate::chat_routes::interactions::click_chat_action,
+        crate::chat_routes::interactions::list_sent_chat_actions,
         crate::chat_routes::interactions::set_chat_webhook_interactivity,
         crate::chat_routes::interactions::get_chat_webhook_signing_secret,
         crate::chat_routes::interactions::rotate_chat_webhook_signing_secret,

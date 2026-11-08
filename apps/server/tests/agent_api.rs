@@ -1461,6 +1461,20 @@ impl Fixture {
         (id, status, value)
     }
 
+    /// What `member` sent from the card on `message`.
+    async fn sent_actions(&self, member: &Member, message: &str) -> (StatusCode, Value) {
+        self.request(
+            "GET",
+            &format!(
+                "/api/v1/workspaces/{}/chat/messages/{message}/actions",
+                self.workspace_id
+            ),
+            ("cookie", &member.cookie),
+            None,
+        )
+        .await
+    }
+
     async fn click(&self, member: &Member, message: &str, body: Value) -> (StatusCode, Value) {
         self.request(
             "POST",
@@ -1496,7 +1510,7 @@ fn task_card() -> Value {
 }
 
 #[tokio::test]
-async fn clicks_on_the_agents_card_become_its_inputs_with_the_stored_action() {
+async fn clicks_on_the_agents_card_become_its_inputs_with_the_stored_action_and_no_message() {
     let fixture = Fixture::new().await;
     let (bot, _) = fixture.pending().await;
     let teammate = fixture.add_member("teammate").await;
@@ -1531,30 +1545,60 @@ async fn clicks_on_the_agents_card_become_its_inputs_with_the_stored_action() {
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
     assert_eq!(problem["code"], "agent_card_invalid");
+    // While the agent writes the card (`live`), it takes no clicks.
+    let mut live = task_card();
+    live[0]["live"] = json!(true);
     let (card, status, value) = fixture
-        .answer_with_card(&outsider_channel, &mention, task_card())
+        .answer_with_card(&outsider_channel, &mention, live)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{value}");
+    let button = json!({ "block_id": "ui0", "action_id": "plan" });
+    let (status, problem) = fixture.click(&fixture.owner, &card, button.clone()).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{problem}");
+    let (status, value) = fixture
+        .internal(
+            "PATCH",
+            &format!("/messages/{card}"),
+            Some(json!({ "workspace_id": fixture.workspace_id, "body": "2 open tasks.", "blocks": task_card() })),
+        )
         .await;
     assert_eq!(status, StatusCode::NO_CONTENT, "{value}");
 
     // Only members of the channel click: for the teammate, outside this private channel, the card does not exist.
-    let button = json!({ "block_id": "ui0", "action_id": "plan" });
     let (status, problem) = fixture.click(&teammate, &card, button.clone()).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{problem}");
+    let (status, problem) = fixture.sent_actions(&teammate, &card).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{problem}");
 
-    // A click is the clicker's message in the thread, and an `action` input with the stored label and params.
+    // A click is an `action` input from the clicker with the stored label and params, and no chat message.
+    let thread_before = fixture
+        .chat(&fixture.owner, "GET", &format!("/threads/{mention}"), None)
+        .await["items"]
+        .as_array()
+        .unwrap()
+        .len();
     let (status, value) = fixture.click(&fixture.owner, &card, button.clone()).await;
     assert_eq!(status, StatusCode::OK, "{value}");
+    let thread = fixture
+        .chat(&fixture.owner, "GET", &format!("/threads/{mention}"), None)
+        .await;
+    assert_eq!(
+        thread["items"].as_array().unwrap().len(),
+        thread_before,
+        "{thread}"
+    );
     let (status, queue) = fixture.internal("GET", "/inputs", None).await;
     assert_eq!(status, StatusCode::OK);
     let input = &queue["inputs"][0];
     assert_eq!(input["kind"], "action");
     assert_eq!(input["author_id"], fixture.owner.id.to_string());
     assert_eq!(input["thread_key"], mention);
-    assert_eq!(input["body"], "Clicked **Plan my week** on **Open tasks**");
+    assert_eq!(input["body"], "");
     assert_eq!(input["action"]["label"], "Plan my week");
     assert_eq!(input["action"]["params"], json!({ "plan": "week" }));
     assert_eq!(input["action"]["card"]["message_id"], card);
     let first = input["message_id"].as_str().unwrap().to_owned();
+    assert_ne!(first, card);
     fixture
         .internal("POST", &format!("/inputs/{first}/ack"), None)
         .await;
@@ -1610,10 +1654,24 @@ async fn clicks_on_the_agents_card_become_its_inputs_with_the_stored_action() {
         input["action"]["values"],
         json!({ "title": "Write the docs", "urgent": true })
     );
+    assert_eq!(input["body"], "");
+
+    // The card shows what the clicker sent, also after a reload: the button, and the form with its values.
+    let (status, sent) = fixture.sent_actions(&fixture.owner, &card).await;
+    assert_eq!(status, StatusCode::OK, "{sent}");
     assert_eq!(
-        input["body"],
-        "Sent **Open tasks**:\n- **Title**: Write the docs\n- **Urgent**: yes"
+        sent,
+        json!([
+            { "block_id": "ui0", "element_id": "plan", "values": null },
+            { "block_id": "ui0", "element_id": "form", "values": { "title": "Write the docs", "urgent": true } },
+        ])
     );
+    // The sidecar acknowledges an input that has no message.
+    let form_input = input["message_id"].as_str().unwrap().to_owned();
+    let (status, _) = fixture
+        .internal("POST", &format!("/inputs/{form_input}/ack"), None)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
 
     // A card takes 5 clicks in 30 minutes.
     for _ in 0..3 {

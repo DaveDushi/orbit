@@ -26,9 +26,11 @@ import { codexModels, PROVIDER, PeopleModels, routedModels } from "./models.ts";
 import { OrbitError, type OrbitClient, type PendingInput } from "./orbit.ts";
 import { DEFAULT_AGENT_NAME } from "./prompt.ts";
 import { orbitExtension } from "./tools.ts";
-import { actionText, uiBlock } from "./ui.ts";
+import { actionText, cardTitle, finalCard, liveCard, splitAnswer, uiBlock } from "./ui.ts";
+import type { UiSpec } from "./ui-catalog.ts";
 
 const context = BACKGROUND_CONTEXT;
+const CARD_FAILED = "_(The card could not be shown.)_";
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** What the model is told a message is. An action's text frames itself (`actionText`). */
@@ -67,19 +69,24 @@ const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
 	memory_recall: (args) => `Searching memory for “${args.query}”`,
 	memory_zoom: () => "Reading older memory",
 	// The steps are shown in italics, where `_` would start or end the emphasis.
-	show_ui: () => "Making a card",
 	use_integration: (args) => `Using ${String(args.tool).replace("__", " → ").replaceAll("_", " ")}`,
 };
 
-/** Edits the run's progress message at most every 1.5 s with the steps so far and the text being written. */
+/**
+ * Edits the run's progress message at most every 1.5 s with the steps so far and the text being written; while the
+ * model writes a card, every 0.75 s with the card built so far (a `live` ui block, which takes no clicks).
+ */
 class Progress {
 	readonly steps: string[] = [];
-	#text = "";
+	/** The text blocks of the message being written, by content index. */
+	#parts: string[] = [];
+	/** The last part of the card being written that passed the catalog. */
+	#card: UiSpec | null = null;
 	#timer: NodeJS.Timeout | undefined;
 	#writing: Promise<void> = Promise.resolve();
-	readonly #edit: (body: string) => Promise<void>;
+	readonly #edit: (body: string, blocks?: unknown[]) => Promise<void>;
 
-	constructor(edit: (body: string) => Promise<void>) {
+	constructor(edit: (body: string, blocks?: unknown[]) => Promise<void>) {
 		this.#edit = edit;
 	}
 
@@ -87,20 +94,44 @@ class Progress {
 		for (const event of events) {
 			if (event.type === "tool_execution_start" && !event.parentToolCallId) {
 				this.steps.push((TOOL_LABELS[event.toolName] ?? (() => event.toolName))(event.args));
-				this.#text = "";
+				this.#parts = [];
+				this.#card = null;
+			} else if (event.type === "message_start" || event.type === "snapshot") {
+				// A batch starts the message with what it has so far; a snapshot replaces the batches a slow listener missed.
+				const message = event.type === "message_start" ? event.message : event.generation?.message;
+				this.#parts = message?.role === "assistant" ? message.content.map((block) => (block.type === "text" ? block.text : "")) : [];
 			} else if (event.type === "message_update") {
-				for (const change of event.changes) if (change.type === "text_delta") this.#text += change.delta;
+				// Batched updates may carry whole blocks or the whole message instead of deltas.
+				for (const change of event.changes) {
+					if (change.type === "text_delta") this.#parts[change.contentIndex] = (this.#parts[change.contentIndex] ?? "") + change.delta;
+					else if ((change.type === "text_start" || change.type === "block") && change.block.type === "text") this.#parts[change.contentIndex] = change.block.text;
+					else if (change.type === "message") this.#parts = change.message.content.map((block) => (block.type === "text" ? block.text : ""));
+				}
 			}
 		}
-		this.#timer ??= setTimeout(() => {
-			this.#timer = undefined;
-			this.#writing = this.#writing.then(() => this.#edit(this.body()).catch(() => undefined));
-		}, 1_500);
+		this.#timer ??= setTimeout(
+			() => {
+				this.#timer = undefined;
+				const body = this.body();
+				const blocks = this.#card ? [uiBlock(this.#card, true)] : undefined;
+				// A card Orbit refuses must not hold back the text.
+				this.#writing = this.#writing.then(() =>
+					this.#edit(body, blocks).catch(() => (blocks ? this.#edit(body).catch(() => undefined) : undefined)),
+				);
+			},
+			this.#text().includes("```spec") ? 750 : 1_500,
+		);
+	}
+
+	#text(): string {
+		return this.#parts.join("");
 	}
 
 	body(): string {
+		const { text: written, spec } = splitAnswer(this.#text(), false);
+		this.#card = liveCard(spec) ?? (spec ? this.#card : null);
 		const steps = this.steps.map((step) => `• ${step}`).join("\n");
-		const text = this.#text.length > 1_200 ? `…${this.#text.slice(-1_200)}` : this.#text;
+		const text = written.length > 1_200 ? `…${written.slice(-1_200)}` : written;
 		return ["⏳ Working on it…", steps, text].filter(Boolean).join("\n\n");
 	}
 
@@ -396,7 +427,6 @@ export class Agent {
 			doc.driverName = driverName;
 			doc.waitingFor = null;
 			doc.toolCalls = 0;
-			doc.ui = null;
 			doc.run = { inputId: input.message_id, submissionId: null, progressMessageId, startedAt: Date.now() };
 			doc.agentName = this.botName;
 			doc.teamInstructions = input.team_instructions ?? "";
@@ -474,7 +504,7 @@ export class Agent {
 		const run = state.run;
 		const submission = await this.#harness.submission(run.submissionId as SubmissionId, context);
 		if (!submission) return;
-		const edit = (body: string) => (run.progressMessageId ? this.#orbit.editMessage(run.progressMessageId, state.workspaceId, body) : Promise.resolve());
+		const edit = (body: string, blocks?: unknown[]) => (run.progressMessageId ? this.#orbit.editMessage(run.progressMessageId, state.workspaceId, body, blocks) : Promise.resolve());
 		const progress = new Progress(edit);
 		const events = await watchEvents(this.#harness, conversationId, context);
 		events.start(async (batch) => progress.apply(batch));
@@ -487,17 +517,19 @@ export class Agent {
 		}
 		const after = ((await this.#harness.snapshot(ThreadDoc, conversationId, context)) as ThreadState | undefined) ?? state;
 		const people = await this.peopleOf(state.workspaceId);
-		const body = await this.#answer(conversation, settled, after, progress.steps, people);
+		const { body, card } = await this.#answer(conversation, settled, after, progress.steps, people);
 		const [first, ...rest] = splitBody(body);
-		const card = settled.status === "done" && after.ui ? uiBlock(after.ui) : undefined;
-		if (card && run.progressMessageId) {
+		if (card === "invalid") {
+			await edit(`${first}\n\n${CARD_FAILED}`);
+		} else if (card) {
 			// Orbit checks the card again; one it refuses must not keep the answer from being posted.
-			await this.#orbit.editMessage(run.progressMessageId, state.workspaceId, first, [card]).catch(async (error: unknown) => {
+			await edit(first, [uiBlock(card)]).catch(async (error: unknown) => {
 				if (!(error instanceof OrbitError) || error.status !== 422) throw error;
 				console.warn("agent: Orbit refused the card", error.problem?.detail ?? error.message);
-				await edit(`${first}\n\n_(The card could not be shown.)_`);
+				await edit(`${first}\n\n${CARD_FAILED}`);
 			});
 		} else {
+			// Without blocks: a card left from the progress edits goes away.
 			await edit(first);
 		}
 		for (const [index, chunk] of rest.entries()) {
@@ -509,26 +541,27 @@ export class Agent {
 		}, context);
 	}
 
-	async #answer(conversation: Conversation, settled: SettledSubmissionRecord, state: ThreadState, steps: readonly string[], people: readonly Person[]): Promise<string> {
+	/** The answer's body, and its card (`"invalid"`: the model wrote one that does not pass the catalog). */
+	async #answer(conversation: Conversation, settled: SettledSubmissionRecord, state: ThreadState, steps: readonly string[], people: readonly Person[]): Promise<{ body: string; card: UiSpec | "invalid" | null }> {
 		const footer = steps.length ? `\n\n_${steps.join(" · ")}_` : "";
 		if (settled.status !== "done" || settled.type !== "input") {
 			const detail = `${settled.reason ?? "stopped"}${settled.detail ? `: ${typeof settled.detail === "string" ? settled.detail : JSON.stringify(settled.detail)}` : ""}`;
 			if (/oauth|auth|401|refresh|api key/i.test(detail) && state.driverId) {
 				await this.#orbit.invalidateCredential(state.driverId).catch(() => undefined);
-				return `⚠️ <@${state.driverId}> your ChatGPT sign-in no longer works. Connect again in [Agentic](${this.#config.publicUrl}/profile/agentic), then mention me again.${footer}`;
+				return { body: `⚠️ <@${state.driverId}> your ChatGPT sign-in no longer works. Connect again in [Agentic](${this.#config.publicUrl}/profile/agentic), then mention me again.${footer}`, card: null };
 			}
-			return `⚠️ I could not finish: ${detail.slice(0, 600)}. Mention me to try again.${footer}`;
+			return { body: `⚠️ I could not finish: ${detail.slice(0, 600)}. Mention me to try again.${footer}`, card: null };
 		}
 		const entry = await conversation.commit((tx) => tx.entry(settled.answer), context);
 		const message = entry?.model?.[0] as { content?: { type: string; text?: string }[] } | undefined;
-		const text = (message?.content ?? [])
+		const written = (message?.content ?? [])
 			.filter((part) => part.type === "text")
 			.map((part) => part.text ?? "")
-			.join("")
-			.trim();
+			.join("");
+		const { text, card } = finalCard(written);
 		const waiting = state.waitingFor ? `⏸ Waiting for an answer from <@${state.waitingFor}>.` : "";
-		const answer = namesToTokens(text, people.filter((person) => person.id !== this.botUserId));
-		const main = [waiting, answer || state.ui?.fallbackText || ""].filter(Boolean).join("\n\n").trim();
-		return `${main || "Done."}${footer}`;
+		const answer = namesToTokens(text, people.filter((person) => person.id !== this.botUserId)) || (card && card !== "invalid" ? cardTitle(card) : "");
+		const main = [waiting, answer].filter(Boolean).join("\n\n").trim();
+		return { body: `${main || "Done."}${footer}`, card };
 	}
 }

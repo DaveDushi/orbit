@@ -3,6 +3,7 @@ import { defineRegistry, JSONUIProvider, Renderer } from '@json-render/react'
 import { cn } from 'cn'
 import { createContext, useContext, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router'
+import { Check } from 'reicon-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -11,24 +12,39 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { taskPath } from '@/lib/taskLinks'
-import { useClickAction } from '../../api/mutations'
+import { useSendCardAction } from '../../api/mutations'
+import { useSentActions } from '../../api/queries'
 import { ChatError } from '../../api/types'
 import { useChatHost } from '../../chatHost'
-import type { AgentCard as Card } from '../../lib/agentCard'
+import { sentOf, type AgentCard as Card } from '../../lib/agentCard'
 import { Markdown } from './MessageBlocks'
 import { findTypedTaskIds } from './taskIds'
 
 type Values = Record<string, string | boolean>
 
-/** What the buttons and forms of one card need: the message, which click is on its way, and how to send one. */
+/**
+ * What the buttons and forms of one card need: the message, whether the agent still writes the card (no clicks yet),
+ * which click is on its way, what the reader sent (with a form's values), and how to send one.
+ */
 interface CardState {
   messageId: string
+  live: boolean
   pending: string | null
-  sent: ReadonlySet<string>
+  sent: ReadonlyMap<string, Values | null>
   send: (elementId: string, values?: Values) => void
 }
 
-const CardContext = createContext<CardState>({ messageId: '', pending: null, sent: new Set(), send: () => {} })
+const CardContext = createContext<CardState>({ messageId: '', live: false, pending: null, sent: new Map(), send: () => {} })
+
+/** "Sent" beside a button or form that the reader sent: the agent answers in the thread. */
+function SentMark() {
+  return (
+    <span data-slot="agent-card-sent" className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+      <Check className="size-3.5" aria-hidden="true" />
+      Sent
+    </span>
+  )
+}
 
 /** The element's id, which json-render does not pass to a component: `withIds` puts it in the props of the render copy. */
 const idOf = (props: object): string => (props as { id?: string }).id ?? ''
@@ -165,37 +181,43 @@ function formatNumber(value: number): string {
 }
 
 function CardButton({ props }: { props: { label: string; style?: 'primary' | 'secondary' | 'danger'; action: 'reply' | 'open_task'; params?: Record<string, unknown> } }) {
-  const { pending, send } = useContext(CardContext)
+  const { live, pending, sent, send } = useContext(CardContext)
   const navigate = useNavigate()
   const id = idOf(props)
   const variant = props.style === 'danger' ? 'destructive' : props.style === 'primary' ? 'default' : 'outline'
   const task = typeof props.params?.task === 'string' ? props.params.task : null
+  const done = props.action === 'reply' && sent.has(id)
   return (
-    <Button
-      data-slot="agent-card-button"
-      type="button"
-      size="sm"
-      variant={variant}
-      className="max-w-full"
-      // One click at a time for each card.
-      disabled={props.action === 'open_task' ? !task : pending !== null}
-      aria-busy={pending === id || undefined}
-      onClick={() => (props.action === 'open_task' ? task && navigate(taskPath({ id: task })) : send(id))}
-    >
-      {pending === id ? <Spinner data-icon="inline-start" /> : null}
-      <span className="truncate">{props.label}</span>
-    </Button>
+    <span className="inline-flex max-w-full items-center gap-2">
+      <Button
+        data-slot="agent-card-button"
+        type="button"
+        size="sm"
+        variant={variant}
+        className="max-w-full"
+        // One click at a time for each card, none while the agent still writes it, and each button once.
+        disabled={props.action === 'open_task' ? !task : live || done || pending !== null}
+        aria-busy={pending === id || undefined}
+        onClick={() => (props.action === 'open_task' ? task && navigate(taskPath({ id: task })) : send(id))}
+      >
+        {pending === id ? <Spinner data-icon="inline-start" /> : null}
+        <span className="truncate">{props.label}</span>
+      </Button>
+      {done ? <SentMark /> : null}
+    </span>
   )
 }
 
 type FormField = { name: string; label: string; kind: 'text' | 'textarea' | 'select' | 'checkbox' | 'date'; options?: string[]; required?: boolean }
 
-/** A short form: its values go to the agent as one message from the person who sends it. Sent once. */
+/** A short form: its values go to the agent from the person who sends it, without a chat message. Sent once. */
 function CardForm({ props }: { props: { fields: FormField[]; submit_label?: string } }) {
-  const { messageId, pending, sent, send } = useContext(CardContext)
+  const { messageId, live, pending, sent, send } = useContext(CardContext)
   const id = idOf(props)
-  const [values, setValues] = useState<Values>({})
+  const [typed, setValues] = useState<Values>({})
   const done = sent.has(id)
+  // A sent form shows what was sent, also after a reload.
+  const values = (done ? sent.get(id) : null) ?? typed
   const set = (name: string, value: string | boolean) => setValues((old) => ({ ...old, [name]: value }))
   const submit = (event: FormEvent) => {
     event.preventDefault()
@@ -203,7 +225,7 @@ function CardForm({ props }: { props: { fields: FormField[]; submit_label?: stri
   }
   return (
     <form data-slot="agent-card-form" onSubmit={submit} className="grid gap-3">
-      <fieldset disabled={done || pending !== null} className="grid gap-3">
+      <fieldset disabled={live || done || pending !== null} className="grid gap-3">
         {props.fields.map((field) => {
           const inputId = `${messageId}-${id}-${field.name}`
           const value = values[field.name]
@@ -252,11 +274,11 @@ function CardForm({ props }: { props: { fields: FormField[]; submit_label?: stri
         })}
       </fieldset>
       <div className="flex items-center gap-2">
-        <Button type="submit" size="sm" disabled={done || pending !== null || props.fields.some((field) => field.required && field.kind !== 'checkbox' && !values[field.name])}>
+        <Button type="submit" size="sm" disabled={live || done || pending !== null || props.fields.some((field) => field.required && field.kind !== 'checkbox' && !values[field.name])}>
           {pending === id ? <Spinner data-icon="inline-start" /> : null}
           {props.submit_label || 'Send'}
         </Button>
-        {done ? <span className="text-xs text-muted-foreground">Sent</span> : null}
+        {done ? <SentMark /> : null}
       </div>
     </form>
   )
@@ -345,31 +367,37 @@ function withIds(spec: UiSpec): UiSpec {
 }
 
 /**
- * A card that the team agent answered with, under its text. A click on a "reply" button or a form send posts a message
- * from the reader in the thread, which the agent reads; the server takes what the button does from the stored card.
+ * A card that the team agent answered with, under its text. While the agent writes it (`live`), it grows with each edit
+ * and takes no clicks. A click on a "reply" button or a form send goes to the agent without a chat message: the button
+ * or form shows "Sent", and the agent answers in the thread. The server takes what the button does from the stored card.
  */
 export function AgentCard({ card, messageId }: { card: Card; messageId: string }): ReactNode {
   const [pending, setPending] = useState<string | null>(null)
-  const [sent, setSent] = useState<ReadonlySet<string>>(new Set())
-  const clickAction = useClickAction()
+  const sentActions = useSentActions(messageId, !card.live)
+  const sendAction = useSendCardAction()
   const send = (elementId: string, values?: Values) => {
     setPending(elementId)
-    clickAction.mutate(
+    sendAction.mutate(
       { messageId, blockId: card.blockId, actionId: elementId, values },
       {
-        onSuccess: () => setSent((old) => new Set(old).add(elementId)),
         onError: (error) => toast.error(error instanceof ChatError && error.message ? error.message : 'The agent did not get the click.'),
         onSettled: () => setPending(null),
       },
     )
   }
   return (
-    <div data-slot="agent-card" className="mt-1.5 grid max-w-[640px] min-w-0">
-      <CardContext value={{ messageId, pending, sent, send }}>
+    <div data-slot="agent-card" aria-busy={card.live || undefined} className="mt-1.5 grid max-w-[640px] min-w-0 gap-1.5">
+      <CardContext value={{ messageId, live: card.live, pending, sent: sentOf(sentActions.data, card.blockId), send }}>
         <JSONUIProvider registry={registry}>
           <Renderer spec={withIds(card.spec)} registry={registry} />
         </JSONUIProvider>
       </CardContext>
+      {card.live ? (
+        <p data-slot="agent-card-live" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Spinner className="size-3" />
+          Writing the card…
+        </p>
+      ) : null}
     </div>
   )
 }

@@ -283,7 +283,7 @@ fn json_router(state: ChatState) -> Router {
         )
         .route(
             "/api/v1/workspaces/{workspace_id}/chat/messages/{message_id}/actions",
-            post(interactions::click_chat_action),
+            post(interactions::click_chat_action).get(interactions::list_sent_chat_actions),
         )
         .route(
             "/api/v1/workspaces/{workspace_id}/chat/conversations/{conversation_id}/webhooks/{webhook_id}/interactivity",

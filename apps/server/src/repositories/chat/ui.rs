@@ -264,6 +264,7 @@ pub fn parse_agent_blocks(value: &Value) -> Result<Vec<MessageBlock>, BlocksErro
             title,
             spec,
             block_id,
+            ..
         } = &mut block
         else {
             return Err(fail(&at, "must be a ui block"));
@@ -281,15 +282,27 @@ pub fn parse_agent_blocks(value: &Value) -> Result<Vec<MessageBlock>, BlocksErro
     Ok(blocks)
 }
 
-/// The card of a stored message that a click names: its title and spec.
-pub fn find_ui<'a>(blocks: &'a [MessageBlock], block_id: &str) -> Option<(&'a str, &'a Value)> {
+/// A card of a stored message.
+pub struct FoundUi<'a> {
+    pub title: &'a str,
+    pub spec: &'a Value,
+    pub live: bool,
+}
+
+/// The card of a stored message that a click names.
+pub fn find_ui<'a>(blocks: &'a [MessageBlock], block_id: &str) -> Option<FoundUi<'a>> {
     blocks.iter().find_map(|block| match block {
         MessageBlock::Ui {
             title,
             spec,
             block_id: Some(id),
+            live,
             ..
-        } if id == block_id => Some((title.as_str(), spec)),
+        } if id == block_id => Some(FoundUi {
+            title: title.as_str(),
+            spec,
+            live: *live,
+        }),
         _ => None,
     })
 }

@@ -1,41 +1,103 @@
 /**
- * `show_ui`: the agent adds one card (a json-render spec of ./ui-catalog.ts) to its answer. The tool posts nothing: it
- * checks the spec, so the model can fix it in the same run, and keeps it in the thread document. The run's answer
- * message then gets the text as its body and the card as a `ui` block (`Agent.#finishRun`); Orbit checks the card
- * again. Clicks on the card come back as inputs of kind "action" (`actionText`).
+ * Cards in the agent's answers, written the way json-render's "inline" mode writes them: the answer's text, then a
+ * ```spec fence of JSONL lines, each an RFC 6902 patch (`{"op":"add","path":"/elements/x","value":{…}}`) that builds the
+ * spec of ./ui-catalog.ts. While the model writes, each progress edit shows the card built so far (`liveCard`, marked
+ * `live`, without clicks); the answer gets the whole card once it passes `checkUiSpec`, and Orbit checks it again. A
+ * card that fails leaves the text answer. Clicks on the card come back as inputs of kind "action" (`actionText`).
  */
 
-import type { JsonValue } from "@earendil-works/chord";
-import { Type } from "@earendil-works/pi-ai";
-import { defineTool } from "@earendil-works/pi-durable";
+import { applySpecStreamPatch, parseSpecStreamLine } from "@json-render/core";
 
-import { ThreadDoc } from "./docs.ts";
 import { untrusted } from "./files.ts";
 import type { PendingInput } from "./orbit.ts";
-import { checkUiSpec, UI_VERSION } from "./ui-catalog.ts";
+import { checkUiSpec, UI_VERSION, type UiSpec } from "./ui-catalog.ts";
 
-export const showUi = defineTool({
-	name: "show_ui",
-	description:
-		"Add one card to your answer: a table, chart, task list, short form or buttons, built from the components in the Cards section. Call it at most once per answer, before your final text; a second call replaces the card. Then still write a short text answer that stands alone.",
-	parameters: Type.Object({
-		title: Type.String({ minLength: 1, maxLength: 150, description: "What the card shows, for example “Open tasks by status”" }),
-		fallback_text: Type.String({ minLength: 1, maxLength: 2000, description: "The answer in plain text, for when the card cannot be shown (the phone)" }),
-		spec: Type.Record(Type.String(), Type.Unknown(), { description: 'The json-render spec: {"root": "<id>", "elements": {…}}' }),
-	}),
-	execute: async (args, api, context) => {
-		const checked = checkUiSpec(args.spec);
-		if (!checked.ok) return { output: [{ type: "text", text: `The card is not valid. Fix it and call show_ui again:\n${checked.error}` }], isError: true };
-		await api.commit(async (tx) => {
-			(await tx.doc(ThreadDoc, api.conversationId)).ui = { title: args.title.trim(), fallbackText: args.fallback_text.trim(), spec: checked.spec as JsonValue };
-		}, context);
-		return { output: [{ type: "text", text: "The card will show under your answer. Now write the short text answer." }] };
-	},
-});
+const FENCE_OPEN = "```spec";
+const FENCE_CLOSE = "```";
+const TITLE_MAX = 150;
 
-/** The answer message's `ui` block. */
-export function uiBlock(ui: { title: string; spec: unknown }): Record<string, unknown> {
-	return { type: "ui", version: UI_VERSION, title: ui.title, spec: ui.spec };
+/** An answer's text without its ```spec fences, and the spec that their patches built (`null`: none). */
+export type SplitAnswer = { text: string; spec: Record<string, unknown> | null };
+
+/**
+ * Splits what the model wrote into the text and the card. `done: false` while it still writes: the last line may be cut,
+ * so a cut patch is skipped and a cut fence opener is hidden. Lines that do not parse as a patch are dropped inside a
+ * fence; outside one every line is text, so JSON in an ordinary code block stays.
+ */
+export function splitAnswer(written: string, done: boolean): SplitAnswer {
+	const lines = written.split("\n");
+	const cut = done ? undefined : lines.pop();
+	const text: string[] = [];
+	let spec: Record<string, unknown> | null = null;
+	let inFence = false;
+	for (const line of lines) {
+		const trimmed = line.trim();
+		if (!inFence && trimmed.startsWith(FENCE_OPEN)) inFence = true;
+		else if (inFence && trimmed === FENCE_CLOSE) inFence = false;
+		else if (!inFence) text.push(line);
+		else {
+			const patch = parseSpecStreamLine(trimmed);
+			if (!patch) continue;
+			spec ??= {};
+			try {
+				applySpecStreamPatch(spec, patch);
+			} catch {
+				// A failed "test" op: the card is checked as a whole later.
+			}
+		}
+	}
+	const opening = (line: string) => line.startsWith("`") && (FENCE_OPEN.startsWith(line) || line.startsWith(FENCE_OPEN));
+	if (cut !== undefined && !inFence && !opening(cut.trim())) text.push(cut);
+	return { text: text.join("\n").replace(/\n{3,}/g, "\n\n").trim(), spec };
+}
+
+/**
+ * The part of a card being written that can show now: the elements reachable from `root` that exist yet, with their
+ * missing children left out. `null` until that part passes the catalog (an element whose props are still being built
+ * makes it fail: the caller keeps showing the last card that passed).
+ */
+export function liveCard(spec: Record<string, unknown> | null): UiSpec | null {
+	const root = spec?.root;
+	const elements = spec?.elements;
+	if (typeof root !== "string" || !elements || typeof elements !== "object") return null;
+	const all = elements as Record<string, unknown>;
+	const shown: Record<string, unknown> = {};
+	const stack = [root];
+	while (stack.length) {
+		const id = stack.pop()!;
+		const element = all[id];
+		if (shown[id] || !element || typeof element !== "object") continue;
+		const children = (element as { children?: unknown }).children;
+		const present = Array.isArray(children) ? children.filter((child): child is string => typeof child === "string" && Boolean(all[child]) && !shown[child] && child !== id) : [];
+		shown[id] = { ...element, ...(Array.isArray(children) ? { children: present } : {}) };
+		stack.push(...present);
+	}
+	if (!shown[root]) return null;
+	const checked = checkUiSpec({ root, elements: shown });
+	return checked.ok ? checked.spec : null;
+}
+
+/** The card's name in clicks and in the stored block: the root's title. */
+export function cardTitle(spec: UiSpec): string {
+	const title = spec.elements[spec.root]?.props.title;
+	return (typeof title === "string" && title.trim() ? title.trim() : "Card").slice(0, TITLE_MAX);
+}
+
+/** The answer message's `ui` block. `live`: the model still writes it. */
+export function uiBlock(spec: UiSpec, live = false): Record<string, unknown> {
+	return { type: "ui", version: UI_VERSION, title: cardTitle(spec), spec, ...(live ? { live: true } : {}) };
+}
+
+/**
+ * The answer's text and card when the run is done: `card` is `"invalid"` when the model wrote a card that does not pass
+ * the catalog, so the answer shows the text alone.
+ */
+export function finalCard(written: string): { text: string; card: UiSpec | "invalid" | null } {
+	const { text, spec } = splitAnswer(written, true);
+	if (!spec) return { text, card: null };
+	const checked = checkUiSpec(spec);
+	if (!checked.ok) console.warn("agent: the card is not valid", checked.error);
+	return { text, card: checked.ok ? checked.spec : "invalid" };
 }
 
 /**

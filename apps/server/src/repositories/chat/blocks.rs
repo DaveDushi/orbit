@@ -281,6 +281,10 @@ pub enum MessageBlock {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[schema(required = false)]
         block_id: Option<String>,
+        /// The agent is still writing the card: it grows with each edit and takes no clicks.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        #[schema(required = false)]
+        live: bool,
     },
 }
 

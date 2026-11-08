@@ -12,6 +12,8 @@
         "@blocknote/core": "^0.55.0",
         "@blocknote/react": "^0.55.0",
         "@expo-google-fonts/noto-sans": "^0.4.2",
+        "@json-render/core": "0.22.0",
+        "@json-render/react-native": "0.22.0",
         "@orbit/api": "workspace:*",
         "@orbit/editor": "workspace:*",
         "@react-native-community/datetimepicker": "9.2.1",
@@ -39,6 +41,7 @@
         "y-protocols": "1.0.7",
         "y-websocket": "3.1.0",
         "yjs": "13.6.33",
+        "zod": "4.6.7",
       },
       "devDependencies": {
         "@types/react": "~19.3.0",
@@ -457,6 +460,8 @@
     "@json-render/core": ["@json-render/core@0.22.0", "", { "dependencies": { "zod": "^4.3.6" } }, "sha512-BIfJ2V3bLYETetBu2KWoxxRPU5cSAf77dDTBgqaV54kEAfyHta1psPJgNk0fDcB3FCrnCZ5KO/X41VDkrNSYgw=="],
 
     "@json-render/react": ["@json-render/react@0.22.0", "", { "dependencies": { "@json-render/core": "0.22.0" }, "peerDependencies": { "react": "^19.2.3" } }, "sha512-dUBSPn/OZGJGwYiVUVv6qk14AGvfIutKgw7EKJejof14Ft/UPKsoV7/SkF5xIbGIWcM/vk3U4UnNm3NgPnOSSQ=="],
+
+    "@json-render/react-native": ["@json-render/react-native@0.22.0", "", { "dependencies": { "@json-render/core": "0.22.0" }, "peerDependencies": { "react": "^18.0.0 || ^19.0.0", "react-native": ">=0.71.0", "zod": "^4.0.0" } }, "sha512-21qpObRE0PdZVJYrRYS3Zd3Pqcc3pmusEmjpC+L/xVfqysvCKK7WLSrJo+HLOsaAzAa30m4qdwAyKr/DS22n0Q=="],
 
     "@lukeed/ms": ["@lukeed/ms@2.0.2", "", {}, "sha512-9I2Zn6+NJLfaGoz9jN3lpwDgAYvfGeNYdbAIjJOqzs4Tpc+VU3Jqq4IofSUBKajiDS8k9fZIg18/z13mpk1bsA=="],
 

@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { Image, Modal, Platform, Pressable, Share, useWindowDimensions, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
+import { agentCardOf } from '../../data/agent-card'
 import { fileSize, hasReaction, isImage } from '../../data/chat'
 import type { ChatFileRecord } from '../../data/chat-api'
 import { relativeAgo, timeOfDay } from '../../data/format'
@@ -11,6 +12,7 @@ import { showError, useServerImage } from '../../hooks/chat'
 import { useOrbit } from '../../orbit-context'
 import { cssColors, useTheme } from '../../theme'
 import { Avatar, Icon, IconButton, Spinner, Text } from '../../ui'
+import { AgentCard } from './AgentCard'
 import { Emoji } from './EmojiPicker'
 
 /** What a message row needs from the screen: names, the shown text of a body, and what a tap does. */
@@ -44,6 +46,7 @@ export function MessageItem({ message, groupStart, highlighted = false, handlers
   }
 
   const body = message.deleted ? 'Message deleted.' : handlers.text(message.body)
+  const card = message.deleted ? null : agentCardOf(message.blocks)
   return (
     <Pressable
       onLongPress={() => handlers.onLongPress(message)}
@@ -76,9 +79,11 @@ export function MessageItem({ message, groupStart, highlighted = false, handlers
               {message.edited_at && !message.deleted ? <Text className="text-[11px] text-muted-foreground"> (edited)</Text> : null}
             </Text>
           ) : null}
-          {!message.deleted && message.blocks?.some((block) => block.type === 'ui') ? (
-            // The agent's cards (tables, charts, forms) show on the web only; the text above stands alone.
-            <Text className="text-[12px] leading-[16px] text-muted-foreground">Open on the web to see the card</Text>
+          {card === 'invalid' ? (
+            // A card this app's catalog does not fit: the text above stands alone.
+            <Text className="text-[12px] leading-[16px] italic text-muted-foreground">The card could not be shown.</Text>
+          ) : card ? (
+            <AgentCard card={card} messageId={message.id} />
           ) : null}
           {message.sticker ? <Sticker url={message.sticker.url} name={message.sticker.name} /> : message.sticker_id && !message.deleted ? <Text className="text-[12px] text-muted-foreground">Sticker was deleted</Text> : null}
           {!message.deleted && message.attachments.length > 0 ? <Attachments files={message.attachments} hasText={body !== ''} /> : null}

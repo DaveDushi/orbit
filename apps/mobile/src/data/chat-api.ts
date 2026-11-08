@@ -7,6 +7,7 @@ import {
   addChatMembers,
   addChatReaction,
   archiveChatChannel,
+  clickChatAction,
   createChatCategory,
   createChatChannel,
   deleteChatCategory,
@@ -23,6 +24,7 @@ import {
   listChatSearch,
   listChatThreads,
   listFollowedChatThreads,
+  listSentChatActions,
   markChatMessageUnread,
   openChatDm,
   pinChatMessage,
@@ -37,6 +39,7 @@ import {
   updateChatState,
   uploadChatFile,
 } from '@orbit/api/generated/sdk.gen'
+import type { CardValues, SentAction } from './agent-card'
 import type {
   ChatChannelUpdateBody,
   ChatEvent,
@@ -272,6 +275,20 @@ export async function uploadFile(client: OrbitClient, workspaceId: string, uploa
     },
   })
   return data
+}
+
+/**
+ * A tap on a "reply" button or a form send on a card of the team agent: it reaches the agent without a chat message;
+ * the agent answers in the thread. What the button does comes from the stored card on the server.
+ */
+export async function sendCardAction(client: OrbitClient, workspaceId: string, messageId: string, blockId: string, elementId: string, values?: CardValues): Promise<void> {
+  await clickChatAction({ ...at(client, workspaceId), path: { workspace_id: workspaceId, message_id: messageId }, body: { block_id: blockId, action_id: elementId, values } })
+}
+
+/** The reader's taps and form sends on a card of the team agent, so it shows them as sent. */
+export async function sentCardActions(client: OrbitClient, workspaceId: string, messageId: string): Promise<SentAction[]> {
+  const { data } = await listSentChatActions({ ...at(client, workspaceId), path: { workspace_id: workspaceId, message_id: messageId } })
+  return data.map((action) => ({ blockId: action.block_id, elementId: action.element_id, values: (action.values as CardValues | null | undefined) ?? null }))
 }
 
 export async function customEmoji(client: OrbitClient, workspaceId: string): Promise<CustomEmojiRecord[]> {

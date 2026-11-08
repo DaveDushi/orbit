@@ -6,6 +6,8 @@
     "@blocknote/core": "^0.55.0",
     "@blocknote/react": "^0.55.0",
     "@expo-google-fonts/noto-sans": "^0.4.2",
+    "@json-render/core": "0.22.0",
+    "@json-render/react-native": "0.22.0",
     "@orbit/api": "workspace:*",
     "@orbit/editor": "workspace:*",
     "@react-native-community/datetimepicker": "9.2.1",
@@ -32,7 +34,8 @@
     "uniwind": "1.13.0",
     "y-protocols": "1.0.7",
     "y-websocket": "3.1.0",
-    "yjs": "13.6.33"
+    "yjs": "13.6.33",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/react": "~19.3.0",

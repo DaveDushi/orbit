@@ -2343,6 +2343,10 @@ export type MessageBlock = {
      * Names the card in a click. Orbit makes one (`ui0`) when it is missing.
      */
     block_id?: string | null;
+    /**
+     * The agent is still writing the card: it grows with each edit and takes no clicks.
+     */
+    live?: boolean;
     spec: {
         [key: string]: unknown;
     };
@@ -4331,6 +4335,23 @@ export type SecondFactorBody = {
      */
     code: string;
     two_factor_token: string;
+};
+
+/**
+ * A click or form submit that a member sent from a card of the team agent.
+ */
+export type SentAction = {
+    block_id: string;
+    /**
+     * The button or form.
+     */
+    element_id: string;
+    /**
+     * A form's values, as sent.
+     */
+    values?: {
+        [key: string]: unknown;
+    } | null;
 };
 
 export type SessionRecord = {
@@ -14254,6 +14275,61 @@ export type EditChatMessageResponses = {
 };
 
 export type EditChatMessageResponse = EditChatMessageResponses[keyof EditChatMessageResponses];
+
+export type ListSentChatActionsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        message_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/chat/messages/{message_id}/actions';
+};
+
+export type ListSentChatActionsErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * chat_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type ListSentChatActionsError = ListSentChatActionsErrors[keyof ListSentChatActionsErrors];
+
+export type ListSentChatActionsResponses = {
+    200: Array<SentAction>;
+};
+
+export type ListSentChatActionsResponse = ListSentChatActionsResponses[keyof ListSentChatActionsResponses];
 
 export type ClickChatActionData = {
     body: ChatActionBody;

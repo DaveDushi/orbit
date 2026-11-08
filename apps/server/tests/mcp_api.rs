@@ -995,7 +995,6 @@ async fn docs_and_chat_require_explicit_scopes_and_doc_writes_need_docs_write() 
             online: vec![],
             also_in_channel: false,
             nonce: Id::new_v7().to_string(),
-            agent_action: None,
         };
         async move { chat.send_message(f.workspace, actor, input).await.unwrap() }
     };

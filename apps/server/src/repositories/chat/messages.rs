@@ -17,7 +17,6 @@ use super::{
     load_actor, load_conversation, load_message, load_message_access, load_thread_member,
     mentioned_user_ids, parse_id, parse_optional_id,
 };
-use crate::agent::inputs::AgentAction;
 
 const DEFAULT_PAGE: usize = 50;
 const MAX_PAGE: usize = 100;
@@ -26,9 +25,6 @@ const LIST_LIMIT: i64 = 100;
 const FOLLOWED_LIMIT: i64 = 200;
 const MAX_REACTIONS: usize = 20;
 const NONCE_MAX_BYTES: usize = 64;
-/// Clicks and form submits on one card of the agent that reach the agent in 30 minutes.
-const CARD_ACTIONS: i64 = 5;
-const CARD_ACTIONS_WINDOW_MS: i64 = 30 * 60 * 1000;
 const EMOJI_MAX_BYTES: usize = 64;
 /// Reply authors kept on the root for the summary row's avatars.
 const REPLY_AUTHORS: usize = 5;
@@ -74,9 +70,6 @@ pub struct SendInput {
     pub online: Vec<Id>,
     pub also_in_channel: bool,
     pub nonce: String,
-    /// A click on the agent's card that this message reports (`interactions`); `None` for a
-    /// message a person writes.
-    pub agent_action: Option<AgentAction>,
 }
 
 #[derive(Clone, Debug)]
@@ -279,20 +272,6 @@ impl ChatRepository {
         access.require_open()?;
         let conversation_id = access.conversation.id;
         let mut events = Events::default();
-        if let Some(action) = &input.agent_action {
-            let recent: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM agent_inputs WHERE card_message_id = $1 AND created_at > $2",
-            )
-            .bind(action.card_message_id.to_string())
-            .bind(now.as_millis() - CARD_ACTIONS_WINDOW_MS)
-            .fetch_one(&mut *tx)
-            .await?;
-            if recent >= CARD_ACTIONS {
-                return Err(ChatError::RateLimited(
-                    "This card took 5 clicks in the last 30 minutes. Write to the agent instead.",
-                ));
-            }
-        }
 
         if let Some(message) = sent_before(&mut tx, conversation_id, actor_id, &input.nonce).await?
         {
@@ -377,7 +356,6 @@ impl ChatRepository {
             conversation_id,
             access.conversation.kind == ConversationKind::Dm,
             &message,
-            input.agent_action.as_ref(),
         )
         .await?;
         events.conversation(

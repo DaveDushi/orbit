@@ -32,6 +32,8 @@ class FakeOrbit {
 	readonly queue: (PendingInput & { acked?: boolean })[] = [];
 	readonly messages = new Map<string, { id: string; body: string; root: string | null; blocks?: any[] }>();
 	readonly threads = new Map<string, { status: string; driver_user_id: string | null; waiting_for_user_id: string | null }>();
+	/** Every edit of a message, in order. */
+	readonly edits: { id: string; body: string; blocks?: any[] }[] = [];
 	/** Public API calls: method, path, and the person whose session made them. */
 	readonly calls: { method: string; path: string; as: string }[] = [];
 	readonly connected = new Set<string>([ANN, BOB]);
@@ -116,6 +118,7 @@ class FakeOrbit {
 				if (this.refuseCards && body.blocks) return [422, { code: "agent_card_invalid" }];
 				const message = [...this.messages.values()].find((candidate) => candidate.id === match![1]);
 				if (message) Object.assign(message, { body: body.body, blocks: body.blocks });
+				this.edits.push({ id: match[1], body: body.body, blocks: body.blocks });
 				return [204, undefined];
 			}
 			if (rest === "/sessions") {
@@ -533,33 +536,43 @@ test("integrations: a write waits for the driver's yes and then runs the same ca
 	}
 });
 
-test("cards: show_ui puts a checked card on the answer, a bad card goes back to the model, and a click runs as the clicker", async () => {
+test("cards: the card builds live in the progress edits, a bad card leaves the text, and a click runs as the clicker", async () => {
 	const orbit = new FakeOrbit();
 	current = orbit;
 	await orbit.listen();
+	// Slow enough for several progress edits while the card is written.
+	process.env.AGENT_MOCK_TOKENS_PER_SECOND = "150";
 	const agent = new Agent(config(orbit, mkdtempSync(join(tmpdir(), "agent-"))), new OrbitClient(config(orbit, "")));
 	await agent.open();
+	delete process.env.AGENT_MOCK_TOKENS_PER_SECOND;
 	await agent.start();
 	try {
-		// The answer is the text, with the card as its one `ui` block.
+		// The answer is the text without the fence, with the card as its one `ui` block.
 		const thread = id();
 		const ask = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> show my open tasks as a table and a bar chart by status` });
-		await until("the card", () => (orbit.messages.get(`agent:${ask}`)?.blocks?.length ?? 0) > 0);
+		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle", 30_000);
 		const answer = orbit.messages.get(`agent:${ask}`)!;
 		assert.match(answer.body, /^2 open tasks: Todo 2\./);
+		assert.doesNotMatch(answer.body, /```|"op"/);
 		assert.equal(answer.blocks!.length, 1);
 		const [block] = answer.blocks!;
 		assert.equal(block.type, "ui");
 		assert.equal(block.version, 1);
+		assert.equal(block.title, "Open tasks");
+		assert.equal(block.live, undefined);
 		assert.deepEqual(block.spec.elements.chart.props.series[0].points, [{ x: "Todo", y: 2 }]);
-		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
+		// Before that, the progress edits showed the card as it grew, marked live, never with the fence in the text.
+		const live = orbit.edits.filter((edit) => edit.id === answer.id && edit.blocks?.[0]?.live === true);
+		assert.ok(live.length >= 2, JSON.stringify(orbit.edits.map((edit) => [edit.body.slice(0, 400), Object.keys(edit.blocks?.[0]?.spec.elements ?? {})])));
+		const sizes = live.map((edit) => Object.keys(edit.blocks![0].spec.elements).length);
+		assert.ok(sizes[0] < Object.keys(block.spec.elements).length, String(sizes));
+		assert.ok(live.every((edit) => !edit.body.includes("```")));
 
-		// A card that breaks the catalog is an error for the model, and the answer has no card.
+		// A card that breaks the catalog: the text answer alone, with a note, and no card left from the progress edits.
 		const broken = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> show a broken card` });
-		await until("the error", () => progressOf(orbit, broken).startsWith("I could not do that"));
-		assert.match(progressOf(orbit, broken), /The card is not valid[\s\S]*elements\.x\.type: Invalid option/);
+		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle" && progressOf(orbit, broken).startsWith("Here is a card."));
+		assert.equal(progressOf(orbit, broken), "Here is a card.\n\n_(The card could not be shown.)_");
 		assert.equal(orbit.messages.get(`agent:${broken}`)?.blocks, undefined);
-		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
 
 		// A card that Orbit refuses still leaves the text answer.
 		orbit.refuseCards = true;
@@ -571,7 +584,7 @@ test("cards: show_ui puts a checked card on the answer, a bad card goes back to 
 		// Bob clicks a button on Ann's card: Bob drives that run, and the click is framed from Orbit's stored data.
 		orbit.calls.length = 0;
 		const card = { message_id: answer.id, title: "Open tasks" };
-		const click = orbit.add({ thread_key: thread, author_id: BOB, author_name: "Bob", kind: "action", body: "Clicked **Plan my week** on **Open tasks**", action: { type: "button", label: "Plan my week", params: { plan: "week" }, card } });
+		const click = orbit.add({ thread_key: thread, author_id: BOB, author_name: "Bob", kind: "action", body: "", action: { type: "button", label: "Plan my week", params: { plan: "week" }, card } });
 		await until("the click's answer", () => progressOf(orbit, click).startsWith("(mock model) I read: Action from Bob"));
 		assert.match(progressOf(orbit, click), /clicked “Plan my week” on your card “Open tasks” with params \{"plan":"week"\}/);
 		assert.equal(orbit.threads.get(thread)?.driver_user_id, BOB);
@@ -579,7 +592,7 @@ test("cards: show_ui puts a checked card on the answer, a bad card goes back to 
 
 		// Ann sends the form: its values are data, and the task is created with Ann's permissions.
 		orbit.calls.length = 0;
-		const form = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "action", body: "Sent **Open tasks**", action: { type: "form", label: "Create task", values: { title: "From the card" }, card } });
+		const form = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "action", body: "", action: { type: "form", label: "Create task", values: { title: "From the card" }, card } });
 		await until("the task", () => progressOf(orbit, form).startsWith("Done (create_task)"));
 		assert.ok(orbit.calls.some((call) => call.method === "POST" && call.path === "/tasks" && call.as === ANN), JSON.stringify(orbit.calls));
 		assert.ok(orbit.calls.every((call) => call.as === ANN));

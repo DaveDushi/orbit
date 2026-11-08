@@ -15,8 +15,10 @@
  *   read the files (reads every file sent with the message, one read_chat_file call each, then reports them all)
  *   find drive file "words"        read drive file <id|it>              create folder "Name"
  *   trash drive file <id|it>       share drive file <id|it>
- *   show my open tasks as a table (searches tasks, then answers with a card: table, bar chart by status, buttons and a
- *     "New task" form; sending that form creates the task)
+ *   show my open tasks as a table (searches tasks, then answers with text and a ```spec card: table row by row, bar
+ *     chart by status, buttons and a "New task" form; sending that form creates the task)
+ *   show a broken card (answers with a card that is not in the catalog)
+ * AGENT_MOCK_TOKENS_PER_SECOND slows the streamed text (default 400), to watch a card build.
  *
  * A "yes" to an approval question (an answer, or the driver's next message in a DM) calls the last integration,
  * drive_trash or drive_share tool again with the same arguments.
@@ -103,27 +105,35 @@ function unreadFiles(instruction: string, messages: readonly Message[]): string[
 
 const CARD_REQUEST = /show (?:me )?(?:my )?(?:open )?tasks as a (?:table|card|chart)/i;
 
-/** The demo card for CARD_REQUEST, from a search_tasks result: open tasks as a table, a bar chart by status, buttons, a form. */
-export function taskCard(result: string): { title: string; fallback_text: string; spec: JsonObject } {
+/**
+ * The demo answer for CARD_REQUEST, from a search_tasks result: a short text, then a ```spec fence that builds a card of
+ * the open tasks (a table filled row by row, a bar chart by status, buttons, a form), as json-render's inline mode does.
+ */
+export function taskCard(result: string): string {
 	const json = /<orbit-data[^>]*>\n([\s\S]*)\n<\/orbit-data>/.exec(result)?.[1] ?? "[]";
 	const tasks = (JSON.parse(json) as { ref: string; title: string; status: string; assignees: string[] }[]).filter((task) => !/^(done|cancell?ed|duplicate)$/i.test(task.status));
 	const counts = new Map<string, number>();
 	for (const task of tasks) counts.set(task.status, (counts.get(task.status) ?? 0) + 1);
 	const first = tasks[0]?.ref;
-	const elements: JsonObject = {
-		card: { type: "Card", props: { title: "Open tasks", description: `${tasks.length} open tasks` }, children: ["table", "chart", "buttons", "form"] },
-		table: {
+	const add = (path: string, value: unknown) => JSON.stringify({ op: "add", path, value });
+	const patches = [
+		add("/root", "card"),
+		add("/elements/card", { type: "Card", props: { title: "Open tasks", description: `${tasks.length} open tasks` }, children: ["table", "chart", "buttons", "form"] }),
+		add("/elements/table", {
 			type: "Table",
-			props: {
-				columns: [{ key: "ref", label: "ID" }, { key: "title", label: "Title" }, { key: "status", label: "Status" }, { key: "assignees", label: "Assignees" }],
-				rows: tasks.map((task) => ({ ref: task.ref, title: task.title, status: task.status, assignees: task.assignees.join(", ") })),
-			},
-		},
-		chart: { type: "Chart", props: { kind: "bar", title: "Open tasks by status", x_label: "Status", y_label: "Tasks", series: [{ name: "Tasks", points: [...counts].map(([x, y]) => ({ x, y })) }] } },
-		buttons: { type: "Stack", props: { direction: "row" }, children: first ? ["plan", "open"] : ["plan"] },
-		plan: { type: "Button", props: { label: "Plan my week", style: "primary", action: "reply", params: { plan: "week", tasks: tasks.length } } },
-		...(first ? { open: { type: "Button", props: { label: `Open ${first}`, action: "open_task", params: { task: first } } } } : {}),
-		form: {
+			props: { columns: [{ key: "ref", label: "ID" }, { key: "title", label: "Title" }, { key: "status", label: "Status" }, { key: "assignees", label: "Assignees" }], rows: [] },
+			children: [],
+		}),
+		...tasks.map((task) => add("/elements/table/props/rows/-", { ref: task.ref, title: task.title, status: task.status, assignees: task.assignees.join(", ") })),
+		add("/elements/chart", {
+			type: "Chart",
+			props: { kind: "bar", title: "Open tasks by status", x_label: "Status", y_label: "Tasks", series: [{ name: "Tasks", points: [...counts].map(([x, y]) => ({ x, y })) }] },
+			children: [],
+		}),
+		add("/elements/buttons", { type: "Stack", props: { direction: "row" }, children: first ? ["plan", "open"] : ["plan"] }),
+		add("/elements/plan", { type: "Button", props: { label: "Plan my week", style: "primary", action: "reply", params: { plan: "week", tasks: tasks.length } }, children: [] }),
+		...(first ? [add("/elements/open", { type: "Button", props: { label: `Open ${first}`, action: "open_task", params: { task: first } }, children: [] })] : []),
+		add("/elements/form", {
 			type: "Form",
 			props: {
 				fields: [
@@ -134,9 +144,11 @@ export function taskCard(result: string): { title: string; fallback_text: string
 				],
 				submit_label: "Create task",
 			},
-		},
-	};
-	return { title: "Open tasks", fallback_text: `${tasks.length} open tasks: ${[...counts].map(([status, count]) => `${status} ${count}`).join(", ")}.`, spec: { root: "card", elements } };
+			children: [],
+		}),
+	];
+	const summary = `${tasks.length} open tasks: ${[...counts].map(([status, count]) => `${status} ${count}`).join(", ")}.`;
+	return `${summary}\n\n\`\`\`spec\n${patches.join("\n")}\n\`\`\``;
 }
 
 /** The tool call that the newest instruction asks for, or `undefined` when it asks for none. */
@@ -144,7 +156,6 @@ export function plan(instruction: string, messages: readonly Message[]): { name:
 	const target = (value: string, kind: "task" | "page" | "drive"): string => (/^(it|that)$/i.test(value) ? lastId(messages, kind) : value) ?? value;
 	let match: RegExpExecArray | null;
 	if (CARD_REQUEST.test(instruction)) return { name: "search_tasks", args: { limit: 50 } };
-	if (/show a broken card/i.test(instruction)) return { name: "show_ui", args: { title: "Broken", fallback_text: "Broken.", spec: { root: "x", elements: { x: { type: "Iframe", props: {} } } } } };
 	if ((match = /sent the form “Create task”[\s\S]*"title": "([^"]+)"/.exec(instruction))) return { name: "create_task", args: { title: match[1] } };
 	if ((match = /create (?:a )?task "([^"]+)"/i.exec(instruction))) return { name: "create_task", args: { title: match[1] } };
 	if ((match = /rename task (\S+) to "([^"]+)"/i.exec(instruction))) return { name: "update_task", args: { task_id: target(match[1], "task"), title: match[2] } };
@@ -212,17 +223,16 @@ export function respond(messages: readonly Message[], modelId = "mock", thinking
 		}
 		const instruction = textOf(messages[lastUser(messages)]?.content);
 		if (CARD_REQUEST.test(instruction) && last.toolName === "search_tasks" && !last.isError) {
-			return fauxAssistantMessage(fauxToolCall("show_ui", taskCard(textOf(last.content))), { stopReason: "toolUse" });
-		}
-		if (last.toolName === "show_ui" && !last.isError) {
-			const card = lastCall(messages, ["show_ui"]);
-			return fauxAssistantMessage(fauxText(String(card?.args.fallback_text ?? "Here is the card.")));
+			return fauxAssistantMessage(fauxText(taskCard(textOf(last.content))));
 		}
 		const result = textOf(last.content).replace(/<\/?orbit-data[^>]*>/g, "").trim();
 		const short = result.length > 900 ? `${result.slice(0, 900)}…` : result;
 		return fauxAssistantMessage(fauxText(last.isError ? `I could not do that. ${short}` : `Done (${last.toolName}).\n\n\`\`\`\n${short}\n\`\`\``));
 	}
 	const instruction = textOf(messages.filter((message) => message.role === "user").at(-1)?.content);
+	if (/show a broken card/i.test(instruction)) {
+		return fauxAssistantMessage(fauxText(`Here is a card.\n\n\`\`\`spec\n{"op":"add","path":"/root","value":"x"}\n{"op":"add","path":"/elements/x","value":{"type":"Iframe","props":{}}}\n\`\`\``));
+	}
 	if (/show (?:the )?model/i.test(instruction)) {
 		return fauxAssistantMessage(fauxText(`Model: ${modelId}, thinking: ${thinking ?? "default"}`));
 	}
@@ -243,7 +253,7 @@ export function respond(messages: readonly Message[], modelId = "mock", thinking
 export function mockModels(modelId: string, compactModelId?: string): Models {
 	// Every ChatGPT model too, so a model chosen in Agentic → Admin runs.
 	const ids = [...new Set([modelId, compactModelId ?? modelId, ...codexModels().map((model) => model.id)])];
-	const faux = fauxProvider({ provider: PROVIDER, models: ids.map((id) => ({ id, contextWindow: 200_000, maxTokens: 8_000, reasoning: true })), tokensPerSecond: 400 });
+	const faux = fauxProvider({ provider: PROVIDER, models: ids.map((id) => ({ id, contextWindow: 200_000, maxTokens: 8_000, reasoning: true })), tokensPerSecond: Number(process.env.AGENT_MOCK_TOKENS_PER_SECOND) || 400 });
 	const factory = (context: { messages: readonly unknown[] }, options: { reasoning?: string } | undefined, _state: unknown, model: { id: string }) =>
 		respond(context.messages as Message[], model.id, options?.reasoning);
 	faux.setResponses(Array.from({ length: 1_000 }, () => factory));

@@ -21,7 +21,6 @@ import { canReadPrivate, dueText, fenced, lineText, type DueSummary, type Memory
 import { namesToTokens, tokensToNames, type Person } from "./mentions.ts";
 import { OrbitError, type OrbitClient } from "./orbit.ts";
 import { aboutOrbit, DEFAULT_AGENT_NAME, teamInstructionsBlock } from "./prompt.ts";
-import { showUi } from "./ui.ts";
 import { uiPrompt } from "./ui-catalog.ts";
 
 export type ToolDeps = {
@@ -608,7 +607,6 @@ export const ORBIT_TOOLS = [
 	memoryZoom,
 	useIntegration,
 	...DRIVE_TOOLS,
-	showUi,
 ];
 
 const PROMPT = (name: string) => `You are ${name}, a teammate inside Orbit (tasks, Docs pages, Drive files, chat). You work in a chat thread.

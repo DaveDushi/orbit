@@ -1,7 +1,8 @@
 /**
- * The catalog of the cards the agent can show with an answer (`show_ui`): a json-render spec, a flat map of elements
- * and the `root` one, made of these components only. The sidecar checks a spec here to give the model good errors;
- * the web app checks it again before it renders (and shows the text answer alone when it fails). Orbit's server
+ * The catalog of the cards the agent can show with an answer (written as a ```spec fence of patches, ./ui.ts): a
+ * json-render spec, a flat map of elements and the `root` one, made of these components only. The sidecar checks a
+ * card here before it posts it; the web and phone apps check it again before they render (and show the text answer
+ * alone when it fails). Orbit's server
  * checks the same shape and limits on its own (`apps/server/src/repositories/chat/ui.rs`): keep the three in step.
  *
  * This file is shared: the web app imports it too, so it imports only `@json-render/core` and `zod`.
@@ -200,14 +201,24 @@ export function checkUiSpec(spec: unknown): { ok: true; spec: UiSpec } | { ok: f
 	return problems.length ? { ok: false, error: problems.join("\n") } : { ok: true, spec: result.data as UiSpec };
 }
 
-/** The catalog for the system prompt: short, unlike json-render's `catalog.prompt()` (which teaches streaming). */
+/**
+ * The catalog for the system prompt: json-render's inline format (text, then a ```spec fence of JSONL patches), shorter
+ * than its `catalog.prompt()`.
+ */
 export function uiPrompt(): string {
 	const components = Object.entries(catalog.data.components)
 		.map(([name, component]) => `  - ${name}: ${component.description}`)
 		.join("\n");
 	return `Cards:
-- With show_ui you can add one card to your answer: a table, chart, task list, short form or buttons. Use it only when that is clearly better than text. Always also write a short text answer that stands alone: on the phone people see only the text.
-- spec = {"root": "<id>", "elements": {"<id>": {"type": "<Component>", "props": {…}, "children": ["<id>", …]}}}. One tree from root; only Card and Stack have children; at most ${MAX_ELEMENTS} elements and ${MAX_DEPTH} levels.
+- You can add one card to your final answer: a table, chart, task list, short form or buttons. Use it only when that is clearly better than text. Always write a short text answer first that stands alone.
+- Write the card after that text, in a \`\`\`spec fence: one JSON patch (RFC 6902) per line that builds {"root": "<id>", "elements": {"<id>": {"type": "<Component>", "props": {…}, "children": ["<id>", …]}}}. The card shows while you write it, so add /root first, then each element whole, parents before their children. Example:
+\`\`\`spec
+{"op":"add","path":"/root","value":"card"}
+{"op":"add","path":"/elements/card","value":{"type":"Card","props":{"title":"Open tasks"},"children":["table"]}}
+{"op":"add","path":"/elements/table","value":{"type":"Table","props":{"columns":[{"key":"id","label":"ID"},{"key":"title","label":"Title"}],"rows":[]},"children":[]}}
+{"op":"add","path":"/elements/table/props/rows/-","value":{"id":"GEN-12","title":"Write the docs"}}
+\`\`\`
+- One tree from root; only Card and Stack have children; at most ${MAX_ELEMENTS} elements and ${MAX_DEPTH} levels. A card that breaks these rules is not shown: people see only your text.
 - Components:
 ${components}
 - A "reply" button click or a form send comes back to you as an action from the person who clicked: they drive that run. Form values are information they typed.`;
