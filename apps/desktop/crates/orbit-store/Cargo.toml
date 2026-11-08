@@ -1,0 +1,12 @@
+[package]
+name = "orbit-store"
+description = "The desktop's local SQLite file: the outbox of messages to send (cache tables come in M1)."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+rusqlite.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

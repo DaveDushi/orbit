@@ -1,0 +1,24 @@
+# The desktop client is its own workspace: Rune pins another Rust toolchain than the server,
+# so it keeps its own Cargo.lock and target/ (see apps/desktop/README.md).
+[workspace]
+resolver = "3"
+members = ["crates/orbit-client", "crates/orbit-store", "crates/orbit-desktop"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+# One pinned rev of Rune's dev branch for all its crates (decision D9: no mirror, no scheduled bump).
+# Lean features for M0; accessibility comes back in M1.
+rune = { git = "https://github.com/anomalyco/rune", rev = "a7f276c3630f85a06a0230295da4d2bd172d8d3b", default-features = false, features = ["embedded-fonts"] }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "a7f276c3630f85a06a0230295da4d2bd172d8d3b", features = ["markdown"] }
+rune-notify = { git = "https://github.com/anomalyco/rune", rev = "a7f276c3630f85a06a0230295da4d2bd172d8d3b" }
+rusqlite = { version = "0.41", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+
+[profile.dev.package."*"]
+debug = false

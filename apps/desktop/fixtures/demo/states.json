@@ -1,0 +1,42 @@
+[
+  {
+    "conversation_id": "00000000-0000-4000-8000-0000000000a1",
+    "last_read_message_id": null,
+    "unread_count": 0,
+    "mention_count": 0,
+    "notify": "all",
+    "favorite": false
+  },
+  {
+    "conversation_id": "00000000-0000-4000-8000-0000000000a2",
+    "last_read_message_id": null,
+    "unread_count": 4,
+    "mention_count": 1,
+    "notify": "all",
+    "favorite": false
+  },
+  {
+    "conversation_id": "00000000-0000-4000-8000-0000000000a3",
+    "last_read_message_id": null,
+    "unread_count": 2,
+    "mention_count": 0,
+    "notify": "mentions",
+    "favorite": false
+  },
+  {
+    "conversation_id": "00000000-0000-4000-8000-0000000000a4",
+    "last_read_message_id": null,
+    "unread_count": 12,
+    "mention_count": 0,
+    "notify": "muted",
+    "favorite": false
+  },
+  {
+    "conversation_id": "00000000-0000-4000-8000-0000000000b2",
+    "last_read_message_id": null,
+    "unread_count": 1,
+    "mention_count": 1,
+    "notify": "all",
+    "favorite": false
+  }
+]

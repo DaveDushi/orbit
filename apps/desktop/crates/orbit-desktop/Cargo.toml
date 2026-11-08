@@ -1,0 +1,13 @@
+[package]
+name = "orbit-desktop"
+description = "The Orbit desktop app (Rune)."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+orbit-client = { path = "../orbit-client" }
+rune.workspace = true
+# Pinned with rune now; Markdown (M1) and notifications (M3) use them.
+rune-kit.workspace = true
+rune-notify.workspace = true

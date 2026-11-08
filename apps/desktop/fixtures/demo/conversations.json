@@ -1,0 +1,128 @@
+[
+  {
+    "id": "00000000-0000-4000-8000-0000000000a1",
+    "kind": "public",
+    "name": "general",
+    "topic": "Company-wide news",
+    "category_id": null,
+    "position": 0,
+    "member_ids": [
+      "00000000-0000-4000-8000-000000000001",
+      "00000000-0000-4000-8000-000000000002"
+    ],
+    "is_default": true,
+    "self_dm": false,
+    "archived": false,
+    "created_by": "00000000-0000-4000-8000-000000000001",
+    "created_at": "2026-10-01T09:00:00Z",
+    "last_message_at": "2026-11-08T08:10:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-0000000000a2",
+    "kind": "public",
+    "name": "design",
+    "topic": "Specs, mocks and reviews",
+    "category_id": null,
+    "position": 1,
+    "member_ids": [
+      "00000000-0000-4000-8000-000000000001",
+      "00000000-0000-4000-8000-000000000002"
+    ],
+    "is_default": false,
+    "self_dm": false,
+    "archived": false,
+    "created_by": "00000000-0000-4000-8000-000000000001",
+    "created_at": "2026-10-01T09:00:00Z",
+    "last_message_at": "2026-11-08T09:42:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-0000000000a3",
+    "kind": "private",
+    "name": "releases",
+    "topic": "Ship dates",
+    "category_id": null,
+    "position": 2,
+    "member_ids": [
+      "00000000-0000-4000-8000-000000000001",
+      "00000000-0000-4000-8000-000000000002"
+    ],
+    "is_default": false,
+    "self_dm": false,
+    "archived": false,
+    "created_by": "00000000-0000-4000-8000-000000000001",
+    "created_at": "2026-10-01T09:00:00Z",
+    "last_message_at": "2026-11-07T17:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-0000000000a4",
+    "kind": "public",
+    "name": "random",
+    "topic": "Anything goes",
+    "category_id": null,
+    "position": 3,
+    "member_ids": [
+      "00000000-0000-4000-8000-000000000001",
+      "00000000-0000-4000-8000-000000000002"
+    ],
+    "is_default": false,
+    "self_dm": false,
+    "archived": false,
+    "created_by": "00000000-0000-4000-8000-000000000001",
+    "created_at": "2026-10-01T09:00:00Z",
+    "last_message_at": "2026-11-05T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-0000000000a5",
+    "kind": "public",
+    "name": "old-launch",
+    "topic": "Archived",
+    "category_id": null,
+    "position": 4,
+    "member_ids": [
+      "00000000-0000-4000-8000-000000000001",
+      "00000000-0000-4000-8000-000000000002"
+    ],
+    "is_default": false,
+    "self_dm": false,
+    "archived": true,
+    "created_by": "00000000-0000-4000-8000-000000000001",
+    "created_at": "2026-10-01T09:00:00Z",
+    "last_message_at": "2026-09-01T12:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-0000000000b1",
+    "kind": "dm",
+    "name": "Donna",
+    "topic": "",
+    "category_id": null,
+    "position": 0,
+    "member_ids": [
+      "00000000-0000-4000-8000-000000000001",
+      "00000000-0000-4000-8000-000000000003"
+    ],
+    "is_default": false,
+    "self_dm": false,
+    "archived": false,
+    "created_by": "00000000-0000-4000-8000-000000000001",
+    "created_at": "2026-10-01T09:00:00Z",
+    "last_message_at": "2026-11-06T10:00:00Z"
+  },
+  {
+    "id": "00000000-0000-4000-8000-0000000000b2",
+    "kind": "dm",
+    "name": "Mira Okafor",
+    "topic": "",
+    "category_id": null,
+    "position": 0,
+    "member_ids": [
+      "00000000-0000-4000-8000-000000000001",
+      "00000000-0000-4000-8000-000000000004"
+    ],
+    "is_default": false,
+    "self_dm": false,
+    "archived": false,
+    "created_by": "00000000-0000-4000-8000-000000000001",
+    "created_at": "2026-10-01T09:00:00Z",
+    "last_message_at": "2026-11-07T21:15:00Z"
+  }
+]

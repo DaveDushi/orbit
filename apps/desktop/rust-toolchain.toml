@@ -1,0 +1,4 @@
+# Rune's toolchain (its rust-toolchain.toml at the pinned rev), not Orbit's.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]

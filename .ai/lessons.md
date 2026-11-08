@@ -192,3 +192,6 @@
 - Expo DOM components render in a web view whose `#root` is a flex row: give the component's root `flex: 1`, or it is
   only as wide as its content. The Expo web target renders the component inline, so the preview does not show this;
   check the exported bundle (`expo export --platform ios`, `www.bundle/*.html`) with a fake `window.ReactNativeWebView`.
+
+## exe.dev gateway in front of production
+- The exe.dev proxy answers a request with no token with `307` to `/__exe.dev/login`, and a bad or expired token with `401 text/plain` + `WWW-Authenticate: Bearer, Basic` (Orbit's 401 is problem+json). It also reads a plain `Authorization: Bearer` as its own token, so a native client or script that sends only Orbit's bearer session gets the proxy's 401. Send the exe.dev token in `X-Exedev-Authorization` (2026-11-08, `apps/desktop/README.md`).
