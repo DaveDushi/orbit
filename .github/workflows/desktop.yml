@@ -2,14 +2,19 @@ name: Desktop
 
 # The Orbit desktop app (apps/desktop: the server's web UI in a wry window, with a tray, notifications
 # and an unread badge): tests on Linux, a Windows installer and zip (unsigned, the main target) and a macOS
-# .app/.dmg (ad-hoc signed, not notarized), plus `latest.json` for the app's update check.
+# .app/.dmg (ad-hoc signed, not notarized; only when asked), plus `latest.json` for the app's update check.
 # Run by hand, or push a tag `desktop-v<version>` (macOS minutes cost 10×: no build on every push).
+# deploy/desktop-downloads.sh copies the files to the server's /downloads/desktop/.
 on:
   workflow_dispatch:
     inputs:
       server:
         description: Server that hosts the downloads (latest.json links to <server>/downloads/desktop/)
         default: https://orbit.wellrox.com
+      macos:
+        description: Also build the macOS .dmg (parked; Windows is the target)
+        type: boolean
+        default: false
   push:
     tags: ["desktop-v*"]
 
@@ -48,6 +53,7 @@ jobs:
           scripts/check-gateway-smoke.sh target/debug/orbit-desktop
 
   macos:
+    if: ${{ inputs.macos }}
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -139,10 +145,12 @@ jobs:
             apps/desktop/Orbit-${{ env.VERSION }}-windows-x64-setup.exe
             apps/desktop/Orbit-${{ env.VERSION }}-windows-x64.zip
 
-  # latest.json for the app's update check: copy it and the three files to the server's
-  # downloads/desktop/ folder (served by nginx, behind the gateway like the rest).
+  # latest.json for the app's update check: deploy/desktop-downloads.sh copies it and the files to the
+  # server's downloads/desktop/ folder (served by nginx, behind the gateway like the rest).
+  # Windows only is enough: the macOS fields are left out when that job did not run.
   manifest:
     needs: [macos, windows]
+    if: ${{ !cancelled() && needs.windows.result == 'success' && needs.macos.result != 'failure' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -154,17 +162,19 @@ jobs:
           SERVER: ${{ inputs.server || 'https://orbit.wellrox.com' }}
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          dmg=$(basename artifacts/desktop-macos/*.dmg)
           setup=$(basename artifacts/desktop-windows/*-setup.exe)
           zip=$(basename artifacts/desktop-windows/*.zip)
           base="${SERVER%/}/downloads/desktop"
           # `windows` (the app's update link) is the installer: it updates the installed app in place.
-          jq -n --arg v "$version" --arg mac "$base/$dmg" --arg win "$base/$setup" --arg zip "$base/$zip" \
-            --arg mac_sha "$(sha256sum artifacts/desktop-macos/$dmg | cut -d' ' -f1)" \
+          jq -n --arg v "$version" --arg win "$base/$setup" --arg zip "$base/$zip" \
             --arg win_sha "$(sha256sum artifacts/desktop-windows/$setup | cut -d' ' -f1)" \
             --arg zip_sha "$(sha256sum artifacts/desktop-windows/$zip | cut -d' ' -f1)" \
-            '{version: $v, notes: "", macos: $mac, windows: $win, windows_zip: $zip,
-              sha256: {macos: $mac_sha, windows: $win_sha, windows_zip: $zip_sha}}' > latest.json
+            '{version: $v, notes: "", windows: $win, windows_zip: $zip,
+              sha256: {windows: $win_sha, windows_zip: $zip_sha}}' > latest.json
+          if dmg=$(ls artifacts/desktop-macos/*.dmg 2>/dev/null); then
+            jq --arg mac "$base/$(basename "$dmg")" --arg mac_sha "$(sha256sum "$dmg" | cut -d' ' -f1)" \
+              '.macos = $mac | .sha256.macos = $mac_sha' latest.json > latest.tmp && mv latest.tmp latest.json
+          fi
           cat latest.json
       - uses: actions/upload-artifact@v4
         with:

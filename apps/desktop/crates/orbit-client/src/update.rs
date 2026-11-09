@@ -105,4 +105,16 @@ mod tests {
         assert!(newer("0.3.0", &latest).is_none(), "older file (a rollback) does not nag");
         assert!(newer("0.1.0", &Latest { version: "soon".into(), ..Latest::default() }).is_none());
     }
+
+    #[test]
+    fn the_windows_only_file_of_the_desktop_workflow_reads() {
+        // The shape `.github/workflows/desktop.yml` writes when the macOS job did not run.
+        let json = r#"{"version":"0.1.1","notes":"","windows":"https://orbit.example/downloads/desktop/Orbit-0.1.1-windows-x64-setup.exe",
+            "windows_zip":"https://orbit.example/downloads/desktop/Orbit-0.1.1-windows-x64.zip",
+            "sha256":{"windows":"ab","windows_zip":"cd"}}"#;
+        let latest: Latest = serde_json::from_str(json).unwrap();
+        assert_eq!(latest.windows.as_deref(), Some("https://orbit.example/downloads/desktop/Orbit-0.1.1-windows-x64-setup.exe"));
+        assert_eq!(latest.macos, None);
+        assert!(newer("0.1.0", &latest).is_some());
+    }
 }

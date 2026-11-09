@@ -31,7 +31,7 @@ test("About Orbit names every page of the sidebar, the settings areas and the ac
 	// The patterns still find the pages: a changed source must not make this test pass with nothing to check.
 	assert.ok(labels.get("SidebarNav.tsx")!.length >= 15, `sidebar labels: ${labels.get("SidebarNav.tsx")}`);
 	assert.ok(labels.get("settingsNav.ts")!.length >= 30, `settings labels: ${labels.get("settingsNav.ts")}`);
-	assert.deepEqual(labels.get("UserMenu.tsx"), ["Account settings", "Appearance", "Suggest a change"]);
+	assert.deepEqual(labels.get("UserMenu.tsx"), ["Account settings", "Appearance", "Download desktop app", "Suggest a change"]);
 	for (const known of ["Home", "Drive", "Due soon", "Views", "All projects", "Admin"]) assert.ok(labels.get("SidebarNav.tsx")!.includes(known), known);
 	for (const known of ["API tokens", "Keyboard shortcuts", "Audit log"]) assert.ok(labels.get("settingsNav.ts")!.includes(known), known);
 

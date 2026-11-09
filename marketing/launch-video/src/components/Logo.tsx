@@ -1,15 +1,16 @@
 import { interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion'
 import { color, display } from '../theme'
 
-// The pixel "O" from apps/web/public/logo.svg: four bars on an 11x11 grid, each with a shadow 1 unit down-right.
+// The pixel "W" from apps/web/public/logo.svg: five bars on an 11x11 grid, each with a shadow 1 unit down-right.
 const BARS = [
-  { x: 2, y: 0, w: 6, h: 2 },
-  { x: 8, y: 2, w: 2, h: 6 },
-  { x: 2, y: 8, w: 6, h: 2 },
-  { x: 0, y: 2, w: 2, h: 6 },
+  { x: 0, y: 0, w: 2, h: 8 },
+  { x: 2, y: 8, w: 2, h: 2 },
+  { x: 4, y: 4, w: 2, h: 4 },
+  { x: 6, y: 8, w: 2, h: 2 },
+  { x: 8, y: 0, w: 2, h: 8 },
 ]
 
-/** Orbit mark: the pixel "O". Its bars drop into place one by one, clockwise from the top. */
+/** Orbit mark: the pixel "W". Its bars drop into place one by one, left to right. */
 export function OrbitMark({ size = 160, from = 0 }: { size?: number; from?: number }) {
   const frame = useCurrentFrame() - from
   const { fps } = useVideoConfig()

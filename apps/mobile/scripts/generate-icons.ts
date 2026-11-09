@@ -98,7 +98,7 @@ const entries = Object.entries(all)
   .sort(([a], [b]) => a.localeCompare(b))
   .map(([name, component]) => `  /** reicon ${component} */\n  ${name}: ${JSON.stringify(outline(component))},`)
 
-/** The pixel "O" of the web's sign-in card, as the web serves it. */
+/** The pixel "W" of the web's sign-in card, as the web serves it. */
 const logo = readFileSync(resolve(import.meta.dir, '../../web/public/logo.svg'), 'utf8').trim()
 
 writeFileSync(

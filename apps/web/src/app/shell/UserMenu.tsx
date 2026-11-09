@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
-import { Brush, ChevronDown, Logout as LogOut, MessageEdit, User } from 'reicon-react'
+import { Brush, ChevronDown, Logout as LogOut, MessageEdit, Monitor, User } from 'reicon-react'
 import { cn } from 'cn'
 import { Button } from '@/components/ui/button'
 import {
@@ -20,6 +20,10 @@ import { StatusMenuItems } from '@/features/realtime/components/StatusMenuItems'
 import { useOwnStatus } from '@/features/realtime/useOwnStatus'
 import { useImprovementsEnabled } from '@/features/improvements/api'
 import { SuggestChangeDialog } from '@/features/improvements/SuggestChangeDialog'
+
+/** The desktop app's download page (deploy/desktop-downloads.sh): Windows only for now, and not inside the app itself. */
+const DESKTOP_DOWNLOADS = '/downloads/desktop/'
+const offerDesktopApp = typeof window !== 'undefined' && /Windows/.test(navigator.userAgent) && !('__orbitDesktop' in window)
 
 /** Signed-in profile and account actions shared by both sidebars. */
 export function UserMenu({ collapsed = false, topbar = false }: { collapsed?: boolean; /** The phone top bar's look: avatar and chevron, the menu opens below. */ topbar?: boolean }) {
@@ -92,6 +96,12 @@ export function UserMenu({ collapsed = false, topbar = false }: { collapsed?: bo
             <Brush />
             Appearance
           </DropdownMenuItem>
+          {offerDesktopApp ? (
+            <DropdownMenuItem onClick={() => window.open(DESKTOP_DOWNLOADS, '_blank', 'noopener')}>
+              <Monitor />
+              Download desktop app
+            </DropdownMenuItem>
+          ) : null}
           {canSuggest ? (
             <DropdownMenuItem onClick={() => setSuggesting(true)}>
               <MessageEdit />

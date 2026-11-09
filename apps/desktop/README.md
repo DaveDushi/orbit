@@ -93,13 +93,16 @@ Run by hand (Actions → Desktop → Run workflow) or push a tag `desktop-v<vers
 `packaging/windows/orbit.ico` embedded by `build.rs`) → `Orbit.exe` in `Orbit-<version>-windows-x64.zip` and
 in the installer `Orbit-<version>-windows-x64-setup.exe` (Inno Setup 6, `packaging/windows/orbit.iss`: per
 user, no admin, `%LOCALAPPDATA%\Programs\Orbit`, Start-menu shortcut, optional desktop shortcut, uninstaller;
-the job installs it silently, checks the files and shortcut, and uninstalls; all unsigned); macOS (`macos-14`, arm64) release build → `Orbit.app` (ad-hoc
+the job installs it silently, checks the files and shortcut, and uninstalls; all unsigned); macOS (`macos-14`, arm64, parked: only with the
+`macos` input of a run by hand) release build → `Orbit.app` (ad-hoc
 signed, `codesign -s -`) in `Orbit-<version>-macos-arm64.dmg`. Both packages run `--version` and
 `scripts/check-gateway-smoke.sh` (the packaged `--check-gateway` against the fake server). The `manifest`
 job writes `latest.json` (version, URLs under `<server>/downloads/desktop/`, sha256; `windows` is the
-installer, `windows_zip` the zip). Publishing is by hand: copy the four files to the server's
-`downloads/desktop/` folder (an nginx static location, a deploy
-step outside this folder).
+installer, `windows_zip` the zip; the macOS fields only when that job ran). It needs only the Windows job.
+Publish with `deploy/desktop-downloads.sh [<run id>]` on the server: it checks the sha256 values and copies the
+files to `/srv/orbit-downloads/desktop/`, which nginx serves as `/downloads/desktop/` (the nginx block is in the
+script). The folder is outside the deploy, so deploys keep it. The icons come from `apps/web/public/logo.svg`
+through `scripts/logo-icons.sh`.
 
 - **Windows SmartScreen:** the exe is not signed, so on the first start Windows says "Windows protected your
   PC". Click **More info**, then **Run anyway**. Only a code-signing certificate removes this warning.
