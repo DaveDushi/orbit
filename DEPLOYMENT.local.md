@@ -237,6 +237,57 @@ It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-ag
 
 ## Verification performed
 
+### November 9, 2026 upgrade: Donna knows the sender's current time (schema 86, no migration)
+
+`main` merged `donna-time` (`3a36a9c7`, based on `9f790ab3`) with merge commit `b1ad1597` (`main` had the docs commit
+`39f7fdf0`). `frame()` starts each new input with the sender's local time (`[Mon 2026-11-09 12:01, Asia/Jerusalem]`,
+from `users.timezone`; UTC if none); the internal people endpoint (`apps/server/src/agent/routes.rs`) now returns
+`timezone`. The system prompt has no time in it, only the fixed `TIME_RULE` (`apps/agent/src/prompt.ts`), so its cache
+stays. No migration, no new `ORBIT_*` setting, `package-lock.json` unchanged (the new sidecar's `npm ci --omit=dev`
+gave the same `node_modules/.package-lock.json`).
+
+Checks before the switch: agent `tsc` and `node --test` (49 pass, with "the system prompt is the same at any time":
+the prompt at 2026-11-09 08:03Z and 2027-03-01 23:30Z is identical); `agent_api` (14) on SQLite and Postgres.
+`orbit-deploy image` built `orbit:b1ad159` (label = the full merge commit; the first try died with the 10-minute tool
+timeout, the background run finished); `deploy/smoke.sh` passed; `orbit config check` passed with the extracted binary.
+
+At the switch: stopped `orbit-agent` and `orbit` at 10:00:50 UTC, created snapshot
+`01a1bfc0-de4a-7367-95f9-ba6f131f295d` with the old CLI and verified it, ran `migrate run` of the new binary on a copy
+in `/var/lib/orbit/rehearsal-b1ad159-switch-*` (0 applied, schema 86, quick-check ok, 0 foreign-key rows, counts
+unchanged: 6 users, 1 workspace, 3 projects, 65 tasks, 47 pages, 635 chat messages, 121 agent inputs; deleted
+afterwards), saved the sidecar data as `/var/backups/orbit-agent/orbit-agent-before-b1ad159.tgz`, kept the old sidecar
+code as `/opt/orbit-agent.before-b1ad159`, installed the binary and the new sidecar code, and started `orbit` (ready
+10:01:18), then `orbit-agent`. The old executable is `/usr/local/bin/orbit-9f790ab`; the new one is also kept as
+`/usr/local/bin/orbit-b1ad159`. `vm-health` (`/root/ops/vm-health.conf`): `PROD_TAG=b1ad159`, `ROLLBACK_TAG=9f790ab`,
+`ROLLBACK_BACKUP=01a1bfc0-de4a-7367-95f9-ba6f131f295d`. Pushed `main`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` active, no restarts; readiness
+(all checks); `/orbit-build.json` revision `b1ad159`; schema 86; live quick-check and foreign-key checks pass; web `/`
+200; sidecar `/health` `{"ok":true,"mock":false}` and `/opt/orbit-agent/src` equal to `apps/agent/src` of `b1ad1597`;
+no log errors. **Real-model date on production:** the same way as the 9f790ab check (a temporary UUID v7 session row
+for ddusi@wellrox.com inserted while Orbit was stopped, 2 h expiry, revoked by `POST /api/v1/auth/logout` (204) after
+the check; headless Chromium through `socat` on 127.0.0.1:8443). In the Donna DM (question message
+`01a1bfc1-d7b7-762e-8f17-220235d6bed9`, 10:01 UTC = 12:01 in Jerusalem) "what is today's date and weekday, and what
+date is next Friday?" gave "Today is Monday, November 9, 2026; next Friday is November 13, 2026 (Asia/Jerusalem)."
+(correct). Only console error: the known service worker 400. Screenshot:
+`/root/.local/share/com.jean.desktop/pasted-images/donna-time-prod.png`. **Not** verified: the phone app.
+
+Rollback (same schema 86: the old binary reads it, no restore needed). To go back to `9f790ab`:
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-9f790ab /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-b1ad159 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Data back to 10:00 UTC, only if needed (work after it is lost), with both services stopped:
+# sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-9f790ab backup verify 01a1bfc0-de4a-7367-95f9-ba6f131f295d && /usr/local/bin/orbit-9f790ab backup restore 01a1bfc0-de4a-7367-95f9-ba6f131f295d'
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-b1ad159.tgz
+```
+
+Then set `PROD_TAG=9f790ab`, `ROLLBACK_TAG=0e1cbcc`, `ROLLBACK_BACKUP=01a1bf84-ed4d-762a-a81e-1338a01f24c6` in
+`/root/ops/vm-health.conf`.
+
 ### November 9, 2026 upgrade: Donna's interactive cards (schema 86)
 
 `main` fast-forwarded from `e202fd80` (production `0e1cbcc9`) to `9f790ab3` (`a8f75065`: Donna answers with
