@@ -221,6 +221,12 @@ orbit-deploy end <id>                             # only after all the checks pa
   the revision and the schema before you continue.
 - Do not delete the lock file. To release the lock of a dead session, read the `<id>` from `status`, check production,
   and run `orbit-deploy end <id>`.
+- **What's new for Donna:** before the build (with the merge), add an entry on top of `apps/agent/src/whats-new.md`
+  (`## <deploy date>`, then 1-4 short lines about what people can see or do; one entry per date, so add lines to
+  today's entry if it exists; keep the 8 newest) and commit it to `main`. A deploy with nothing new for people adds no
+  entry. The file is in `apps/agent`, so a deploy that changes it also copies the sidecar code to `/opt/orbit-agent`
+  and restarts `orbit-agent`. Donna takes the revision from `/orbit-build.json` herself. Name the entry in the
+  upgrade section below.
 - Put each new upgrade section first under "Verification performed", with its rollback command. Cleanup reads the
   first `install -m 755 /usr/local/bin/orbit-<sha> /usr/local/bin/orbit` line in this file as the rollback copy.
 
