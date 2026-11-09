@@ -979,7 +979,7 @@ async fn complete_drive_upload(
 }
 
 /// `type/subtype` in plain characters, at most 255 long.
-fn valid_mime(mime: &str) -> bool {
+pub(crate) fn valid_mime(mime: &str) -> bool {
     mime.len() <= 255
         && mime.split_once('/').is_some_and(|(kind, subtype)| {
             !kind.is_empty()

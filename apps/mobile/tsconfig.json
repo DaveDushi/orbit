@@ -1,7 +1,12 @@
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
-    "strict": true
+    "strict": true,
+    "paths": {
+      "@agent/ui-catalog": [
+        "../agent/src/ui-catalog.ts"
+      ]
+    }
   },
   "exclude": [
     "node_modules",

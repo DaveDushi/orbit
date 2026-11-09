@@ -623,6 +623,7 @@ impl ChatRepository {
         actor_id: Id,
         message_id: Id,
         body: &str,
+        blocks: Option<&[MessageBlock]>,
     ) -> Result<Written<MessageRecord>, ChatError> {
         let body = clean_body(body, false)?;
         let now = TimestampMillis::now();
@@ -648,7 +649,7 @@ impl ChatRepository {
         access.require_member()?;
         access.require_open()?;
 
-        let (events, next) = rewrite_message(&mut tx, &message, &body, None, Some(now)).await?;
+        let (events, next) = rewrite_message(&mut tx, &message, &body, blocks, Some(now)).await?;
         finish(tx, events, next).await
     }
 

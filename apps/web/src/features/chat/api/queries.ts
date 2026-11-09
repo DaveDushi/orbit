@@ -90,6 +90,16 @@ export function useWebhookDeliveries(conversationId: string, webhookId: string, 
   })
 }
 
+/** What the reader sent from a card of the agent, so its buttons and forms show "Sent" after a reload. */
+export function useSentActions(messageId: string, enabled: boolean) {
+  const { client, workspaceId } = useChatContext()
+  return useQuery({
+    queryKey: chatKeys.sentActions(workspaceId, messageId),
+    queryFn: () => requireClient(client).sentActions(messageId),
+    enabled: client !== null && enabled,
+  })
+}
+
 const NO_EPHEMERAL: Message[] = []
 
 /** Integration replies only the user sees in a conversation. They live in this tab's memory until a reload. */

@@ -270,6 +270,22 @@ pub enum MessageBlock {
     /// A Slack legacy attachment: a box with a colored bar. Made from a payload's `attachments`
     /// only; a payload cannot post it in `blocks`.
     Attachment(Box<AttachmentBlock>),
+    /// A card from the team agent: a json-render spec of catalog `version` 1 (`super::ui`). Only
+    /// the agent posts it, with its answer as the message body; a payload cannot.
+    Ui {
+        version: u32,
+        title: String,
+        #[schema(value_type = Object)]
+        spec: Value,
+        /// Names the card in a click. Orbit makes one (`ui0`) when it is missing.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schema(required = false)]
+        block_id: Option<String>,
+        /// The agent is still writing the card: it grows with each edit and takes no clicks.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        #[schema(required = false)]
+        live: bool,
+    },
 }
 
 /// A legacy attachment, cleaned: texts are Orbit Markdown, links http(s) and images https.
@@ -455,6 +471,12 @@ fn check(block: &MessageBlock, at: &str) -> Result<(), BlocksError> {
             Ok(())
         }
         MessageBlock::Attachment(attachment) => check_attachment(attachment, at),
+        MessageBlock::Ui {
+            version,
+            title,
+            spec,
+            ..
+        } => super::ui::check_ui(*version, title, spec, at),
         MessageBlock::Markdown { text } => {
             check_text(text, MARKDOWN_MAX_CHARS, &format!("{at}.text"))
         }
@@ -917,8 +939,8 @@ pub fn fallback_text(blocks: &[MessageBlock], max: usize) -> String {
             MessageBlock::Image {
                 alt_text, title, ..
             } => lines.push(title.as_ref().map_or(alt_text, |title| &title.text).clone()),
-            // Buttons name actions, not content.
-            MessageBlock::Divider | MessageBlock::Actions { .. } => {}
+            // Buttons name actions, not content. A card comes with its own body.
+            MessageBlock::Divider | MessageBlock::Actions { .. } | MessageBlock::Ui { .. } => {}
             MessageBlock::Markdown { text } => lines.push(text.clone()),
             MessageBlock::Attachment(attachment) => lines.extend(
                 [

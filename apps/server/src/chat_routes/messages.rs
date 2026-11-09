@@ -215,9 +215,13 @@ pub(crate) async fn edit_chat_message(
     let message_id = call.id(&message)?;
     call.write(
         &state,
-        state
-            .chat
-            .edit_message(call.workspace_id, call.actor_id, message_id, &body.body),
+        state.chat.edit_message(
+            call.workspace_id,
+            call.actor_id,
+            message_id,
+            &body.body,
+            None,
+        ),
     )
     .await
 }

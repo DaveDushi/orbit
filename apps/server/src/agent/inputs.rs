@@ -19,14 +19,18 @@ pub enum InputKind {
     Answer,
     /// A reply from the person whose run is going: it joins the run.
     Steer,
+    /// A click or form submit on the agent's card: its author starts a run, as for an instruction.
+    /// It has no chat message (`ChatRepository::queue_agent_action`).
+    Action,
 }
 
 impl InputKind {
-    const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Instruction => "instruction",
             Self::Answer => "answer",
             Self::Steer => "steer",
+            Self::Action => "action",
         }
     }
 }
@@ -104,7 +108,8 @@ pub(crate) async fn bot_user_id(conn: &mut AnyConnection) -> Result<Option<Id>, 
 
 /// Queues `message` for the agent when it is for the agent. Called by `send_message` in its
 /// transaction, after the message row is written. Never fails for a reason of its own: on
-/// Postgres an error would end the whole transaction and lose the message.
+/// Postgres an error would end the whole transaction and lose the message. A click on the
+/// agent's card is queued without a message (`ChatRepository::queue_agent_action`).
 pub(crate) async fn record(
     conn: &mut AnyConnection,
     workspace_id: Id,
@@ -204,6 +209,8 @@ pub struct PendingInput {
     pub author_name: String,
     pub kind: String,
     pub body: String,
+    /// For kind `action`: what was clicked on the agent's card, and the form values.
+    pub action: Option<serde_json::Value>,
     pub created_at: i64,
     /// The workspace's team instructions (`settings`), empty when it has none.
     pub team_instructions: String,
@@ -227,12 +234,13 @@ pub(crate) async fn pending(
 ) -> Result<Vec<PendingInput>, sqlx::Error> {
     let rows = sqlx::query(
         "SELECT i.message_id, i.workspace_id, i.conversation_id, i.thread_key, i.root_message_id, \
-         i.author_id, i.kind, i.created_at, u.display_name, m.body, c.kind AS conversation_kind, \
+         i.author_id, i.kind, i.created_at, i.action, u.display_name, \
+         COALESCE(m.body, '') AS body, c.kind AS conversation_kind, \
          c.name AS conversation_name, t.body AS team_instructions, \
          (SELECT COUNT(*) FROM chat_members cm WHERE cm.conversation_id = i.conversation_id) \
          AS conversation_members \
          FROM agent_inputs i \
-         JOIN chat_messages m ON m.id = i.message_id \
+         LEFT JOIN chat_messages m ON m.id = i.message_id \
          JOIN chat_conversations c ON c.id = i.conversation_id \
          JOIN users u ON u.id = i.author_id \
          LEFT JOIN agent_team_instructions t ON t.workspace_id = i.workspace_id \
@@ -256,6 +264,9 @@ pub(crate) async fn pending(
             author_name: row.get("display_name"),
             kind: row.get("kind"),
             body: row.get("body"),
+            action: row
+                .get::<Option<String>, _>("action")
+                .and_then(|action| serde_json::from_str(&action).ok()),
             created_at: row.get("created_at"),
             team_instructions: row
                 .get::<Option<String>, _>("team_instructions")

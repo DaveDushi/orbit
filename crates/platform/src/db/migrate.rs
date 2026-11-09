@@ -566,6 +566,18 @@ impl MigrationRunner {
                     ),
                     false,
                 ),
+                Migration::new(
+                    85,
+                    include_str!("../../../../apps/server/migrations/0085_agent_card_actions.sql"),
+                    false,
+                ),
+                Migration::new(
+                    86,
+                    include_str!(
+                        "../../../../apps/server/migrations/0086_agent_hidden_actions.sql"
+                    ),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -793,6 +805,20 @@ impl MigrationRunner {
                 84,
                 include_str!(
                     "../../../../apps/server/migrations/postgres/0084_agent_drive_approvals.sql"
+                ),
+                false,
+            ),
+            Migration::new(
+                85,
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0085_agent_card_actions.sql"
+                ),
+                false,
+            ),
+            Migration::new(
+                86,
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0086_agent_hidden_actions.sql"
                 ),
                 false,
             ),

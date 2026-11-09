@@ -7,6 +7,7 @@ import { patchMessage, updateOutbox } from './events'
 import { chatKeys } from './keys'
 import { requireClient } from './queries'
 import type { Attachment, Category, Conversation, ConversationState, Message, MessageSticker, NotifyLevel, ReplyQuote, ThreadState } from './types'
+import type { SentAction } from '../lib/agentCard'
 
 const TYPING_INTERVAL = 8000
 /** When the typing signal was last sent, for each composer (conversation or thread). */
@@ -409,10 +410,30 @@ export function useWebhookSigningSecret() {
     client.webhookSigningSecret(input.conversationId, input.webhookId, input.rotate))
 }
 
-/** A click on an integration's button. The integration answers later, through the live socket. */
+/**
+ * A click on an integration's button, or a click or form send on a card of the team agent. The integration answers
+ * later, through the live socket; the agent's card posts the clicker's message and the agent answers in the thread.
+ */
 export function useClickAction() {
-  return useChatMutation((client, input: { messageId: string; blockId: string; actionId: string }) =>
-    client.clickAction(input.messageId, input.blockId, input.actionId))
+  return useChatMutation((client, input: { messageId: string; blockId: string; actionId: string; values?: Record<string, string | boolean> }) =>
+    client.clickAction(input.messageId, input.blockId, input.actionId, input.values))
+}
+
+/**
+ * A click or form send on a card of the team agent: no chat message shows it; the card shows it as sent (kept in the
+ * sent-actions query, which a reload reads from the server) until the agent answers in the thread.
+ */
+export function useSendCardAction() {
+  const { client, workspaceId } = useChatContext()
+  const queryClient = useQueryClient()
+  return useMutation<void, Error, { messageId: string; blockId: string; actionId: string; values?: Record<string, string | boolean> }>({
+    mutationFn: (input) => requireClient(client).clickAction(input.messageId, input.blockId, input.actionId, input.values),
+    onSuccess: (_, input) =>
+      queryClient.setQueryData<SentAction[]>(chatKeys.sentActions(workspaceId, input.messageId), (old) => [
+        ...(old ?? []),
+        { blockId: input.blockId, elementId: input.actionId, values: input.values ?? null },
+      ]),
+  })
 }
 
 /** Hides an integration's reply that only the user sees. */

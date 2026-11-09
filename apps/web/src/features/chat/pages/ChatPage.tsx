@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Navigate, useNavigate } from 'react-router'
+import { Navigate, useLocation, useNavigate } from 'react-router'
 import { Lock, Message } from 'reicon-react'
+import { cn } from 'cn'
+import { isChatConversationPath } from '@/app/shell/productNavigation'
 import { EmptyState } from '@/components/common/EmptyState'
 import { Pane } from '@/components/common/Pane'
 import { SideSheet, SideSheetContent } from '@/components/common/SideSheet'
@@ -168,6 +170,8 @@ function ChatCommands() {
  */
 export function ChatPage() {
   const location = useChatLocation()
+  // the phone's top bar is hidden below `/chat` (a full screen), so only then does the page go up into the top safe area
+  const fullScreen = isChatConversationPath(useLocation().pathname)
   const theme = useCustomTheme()
   const navigation = useChatNavigation()
   const openPane = useOpenPane()
@@ -307,7 +311,7 @@ export function ChatPage() {
       <div
         data-slot="chat-page"
         data-view={location.view === 'home' ? 'index' : 'detail'}
-        className="group/chat flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background text-foreground max-[899px]:-mt-[env(safe-area-inset-top,0px)] dark:[--background:var(--card)]"
+        className={cn('group/chat flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background text-foreground dark:[--background:var(--card)]', fullScreen && 'max-[899px]:-mt-[env(safe-area-inset-top,0px)]')}
         style={customThemeVariables(theme)}
       >
         <ChatSidebar />

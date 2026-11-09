@@ -18,7 +18,7 @@ use url::{Host, Url};
 use utoipa::ToSchema;
 
 use super::{Call, ChatState, RequestIdExtension};
-use crate::repositories::chat::{Click, DeliveryRecord, WebhookRecord};
+use crate::repositories::chat::{Click, DeliveryRecord, SentAction, WebhookRecord};
 use crate::task_routes::{ApiError, ApiJson};
 
 const TIMEOUT: Duration = Duration::from_secs(3);
@@ -121,8 +121,13 @@ fn sign(secret: &str, timestamp: &str, body: &str) -> String {
 pub(crate) struct ChatActionBody {
     /// The `block_id` of the block with the button.
     block_id: String,
-    /// The button's `action_id`.
+    /// The button's `action_id`; on a card of the team agent, the id of the button or form.
     action_id: String,
+    /// A form's values, by field name (text, or a checkbox's true/false). Only for a form on a
+    /// card of the team agent.
+    #[serde(default)]
+    #[schema(value_type = Option<Object>, required = false)]
+    values: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -157,7 +162,9 @@ fn app_key(state: &ChatState, call: &Call<'_>) -> Result<[u8; 32], ApiError> {
 }
 
 /// Sends a click on an integration's button to the integration. The answer comes later through
-/// the click's `response_url`; this only says whether the integration took the click.
+/// the click's `response_url`; this only says whether the integration took the click. A click on
+/// a card of the team agent is queued for the agent, without a chat message; its answer comes in
+/// the thread.
 #[utoipa::path(post, path = "/api/v1/workspaces/{workspace_id}/chat/messages/{message_id}/actions", params(("workspace_id" = String, Path), ("message_id" = String, Path)), request_body = ChatActionBody, responses((status = 200, body = ChatActionResult)))]
 pub(crate) async fn click_chat_action(
     State(state): State<ChatState>,
@@ -169,6 +176,21 @@ pub(crate) async fn click_chat_action(
 ) -> Result<Json<ChatActionResult>, ApiError> {
     let call = Call::enter(&state, &headers, &uri, &workspace, &request_id).await?;
     let message_id = call.id(&message)?;
+    let queued = state
+        .chat
+        .queue_agent_action(
+            call.workspace_id,
+            call.actor_id,
+            message_id,
+            &body.block_id,
+            &body.action_id,
+            body.values.as_ref(),
+        )
+        .await
+        .map_err(|error| call.problem(error))?;
+    if queued {
+        return Ok(Json(ChatActionResult { ok: true }));
+    }
     let key = app_key(&state, &call)?;
     let click = state
         .chat
@@ -307,6 +329,26 @@ pub(crate) async fn rotate_chat_webhook_signing_secret(
     request_id: RequestIdExtension,
 ) -> Result<Json<ChatSigningSecret>, ApiError> {
     signing_secret(&state, path, &headers, &uri, &request_id, true).await
+}
+
+/// The clicks and form sends of the caller on a card of the team agent, oldest first: the card
+/// shows them as sent.
+#[utoipa::path(get, path = "/api/v1/workspaces/{workspace_id}/chat/messages/{message_id}/actions", params(("workspace_id" = String, Path), ("message_id" = String, Path)), responses((status = 200, body = Vec<SentAction>)))]
+pub(crate) async fn list_sent_chat_actions(
+    State(state): State<ChatState>,
+    Path((workspace, message)): Path<(String, String)>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+) -> Result<Json<Vec<SentAction>>, ApiError> {
+    let call = Call::enter(&state, &headers, &uri, &workspace, &request_id).await?;
+    let message_id = call.id(&message)?;
+    call.read(
+        state
+            .chat
+            .sent_agent_actions(call.workspace_id, call.actor_id, message_id)
+            .await,
+    )
 }
 
 /// The last 20 clicks sent to a webhook, newest first.

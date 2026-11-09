@@ -25,7 +25,7 @@ const MODES = [
   { value: 'embed', label: 'Inside Orbit' },
   { value: 'new_tab', label: 'In a new tab' },
 ] as const
-const ICON_ITEMS = Object.keys(APP_ICONS).map((value) => ({ value, label: value[0].toUpperCase() + value.slice(1) }))
+const ICON_ITEMS = Object.keys(APP_ICONS).map((value) => ({ value, label: value[0].toUpperCase() + value.slice(1).replace('-', ' ') }))
 
 const message = (error: unknown, fallback: string) => (error instanceof Error && error.message ? error.message : fallback)
 const lines = (text: string) => text.split('\n').map((line) => line.trim()).filter(Boolean)
@@ -215,7 +215,7 @@ function AppSettings({ app, canSignIn, onSecret }: { app: ManagedApp; canSignIn:
           <FieldLabel htmlFor="app-icon">Icon</FieldLabel>
           <Select items={ICON_ITEMS} value={app.icon} onValueChange={(next) => save({ icon: next as string }, 'Saved')}>
             <SelectTrigger id="app-icon" aria-label="Icon"><SelectValue /></SelectTrigger>
-            <SelectContent>{ICON_ITEMS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
+            <SelectContent>{ICON_ITEMS.map((option) => <SelectItem key={option.value} value={option.value}>{createElement(appIcon(option.value))}{option.label}</SelectItem>)}</SelectContent>
           </Select>
         </Field>
       </FieldGrid>

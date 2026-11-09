@@ -29,6 +29,7 @@ export const chatKeys = {
   webhooks: (workspaceId: string, conversationId: string) => ['chat-webhooks', workspaceId, conversationId] as const,
   /** Outside the `all` prefix: never kept on the device, and not read again by a resync. */
   deliveries: (workspaceId: string, webhookId: string) => ['chat-webhook-deliveries', workspaceId, webhookId] as const,
+  sentActions: (workspaceId: string, messageId: string) => ['chat-sent-actions', workspaceId, messageId] as const,
   /** Integration replies only this user sees, for one conversation. Client-only: they are gone after a reload. */
   ephemeral: (workspaceId: string, conversationId: string) => ['chat-ephemeral', workspaceId, conversationId] as const,
   /** Outside the `all` prefix: a resync must not touch the messages that only this tab has. */

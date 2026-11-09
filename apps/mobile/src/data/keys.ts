@@ -18,6 +18,8 @@ export const keys = {
   chatCategories: (workspaceId: string) => ['chat-categories', workspaceId] as const,
   chatStates: (workspaceId: string) => ['chat-states', workspaceId] as const,
   messages: (workspaceId: string, conversationId: string) => ['messages', workspaceId, conversationId] as const,
+  /** The reader's taps and form sends on one card of the agent. */
+  sentActions: (workspaceId: string, messageId: string) => ['chat-sent-actions', workspaceId, messageId] as const,
   notifications: (workspaceId: string) => ['notifications', workspaceId] as const,
   unreadNotifications: (workspaceId: string) => ['notifications', workspaceId, 'unread'] as const,
   pages: (workspaceId: string) => ['pages', workspaceId] as const,

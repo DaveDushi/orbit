@@ -19957,11 +19957,135 @@
       }
     },
     "/api/v1/workspaces/{workspace_id}/chat/messages/{message_id}/actions": {
+      "get": {
+        "tags": [
+          "crate::chat_routes::interactions"
+        ],
+        "summary": "The clicks and form sends of the caller on a card of the team agent, oldest first: the card\nshows them as sent.",
+        "operationId": "list_sent_chat_actions",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "message_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Orbit-Contract",
+            "in": "header",
+            "description": "Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SentAction"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_proxy_headers",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "chat_not_found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "contract_mismatch",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "internal_error or another documented stable code",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ]
+      },
       "post": {
         "tags": [
           "crate::chat_routes::interactions"
         ],
-        "summary": "Sends a click on an integration's button to the integration. The answer comes later through\nthe click's `response_url`; this only says whether the integration took the click.",
+        "summary": "Sends a click on an integration's button to the integration. The answer comes later through\nthe click's `response_url`; this only says whether the integration took the click. A click on\na card of the team agent is queued for the agent, without a chat message; its answer comes in\nthe thread.",
         "operationId": "click_chat_action",
         "parameters": [
           {
@@ -45512,11 +45636,18 @@
         "properties": {
           "action_id": {
             "type": "string",
-            "description": "The button's `action_id`."
+            "description": "The button's `action_id`; on a card of the team agent, the id of the button or form."
           },
           "block_id": {
             "type": "string",
             "description": "The `block_id` of the block with the button."
+          },
+          "values": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "A form's values, by field name (text, or a checkbox's true/false). Only for a form on a\ncard of the team agent."
           }
         },
         "additionalProperties": false
@@ -50384,6 +50515,46 @@
               }
             ],
             "description": "A Slack legacy attachment: a box with a colored bar. Made from a payload's `attachments`\nonly; a payload cannot post it in `blocks`."
+          },
+          {
+            "type": "object",
+            "description": "A card from the team agent: a json-render spec of catalog `version` 1 (`super::ui`). Only\nthe agent posts it, with its answer as the message body; a payload cannot.",
+            "required": [
+              "version",
+              "title",
+              "spec",
+              "type"
+            ],
+            "properties": {
+              "block_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Names the card in a click. Orbit makes one (`ui0`) when it is missing."
+              },
+              "live": {
+                "type": "boolean",
+                "description": "The agent is still writing the card: it grows with each edit and takes no clicks."
+              },
+              "spec": {
+                "type": "object"
+              },
+              "title": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ui"
+                ]
+              },
+              "version": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
           }
         ]
       },
@@ -55541,6 +55712,30 @@
           }
         },
         "additionalProperties": false
+      },
+      "SentAction": {
+        "type": "object",
+        "description": "A click or form submit that a member sent from a card of the team agent.",
+        "required": [
+          "block_id",
+          "element_id"
+        ],
+        "properties": {
+          "block_id": {
+            "type": "string"
+          },
+          "element_id": {
+            "type": "string",
+            "description": "The button or form."
+          },
+          "values": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "A form's values, as sent."
+          }
+        }
       },
       "SessionRecord": {
         "type": "object",

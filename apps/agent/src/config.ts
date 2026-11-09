@@ -31,6 +31,10 @@ export type Config = {
 	/** The ChatGPT (Codex) model that writes compaction summaries; `undefined`: the conversation's model. */
 	readonly compactModel: string | undefined;
 	readonly compactThinking: ThinkingLevel;
+	/** The media sandbox's socket (deploy/donna-sandbox); `undefined`: no media tools. */
+	readonly sandboxSocket: string | undefined;
+	/** A conversation's /work is deleted after this many hours without a run. */
+	readonly sandboxIdleHours: number;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -62,5 +66,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 		compactTokens,
 		compactModel,
 		compactThinking,
+		sandboxSocket: env.AGENT_SANDBOX_SOCKET?.trim() || undefined,
+		sandboxIdleHours: Number(env.AGENT_SANDBOX_IDLE_HOURS || 24),
 	};
 }

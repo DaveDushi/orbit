@@ -36,7 +36,7 @@ test("one very long row still moves the reading forward", () => {
 test("a scan and a file without text say so", () => {
 	const scan = fileReadText(content({ file: { ...file, kind: "pdf" }, text: "", no_text: true }), 0);
 	assert.match(scan, /No text was found/);
-	assert.match(fileReadText(content({ file: { ...file, kind: "other" } }), 0), /no text you can read/);
+	assert.match(fileReadText(content({ file: { ...file, kind: "other" } }), 0), /no text to read here/);
 });
 
 test("a file block shows on the page as its name", () => {

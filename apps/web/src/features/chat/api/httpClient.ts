@@ -9,6 +9,7 @@ import {
   createChatWebhook,
   getChatWebhookSigningSecret,
   listChatWebhookDeliveries,
+  listSentChatActions,
   rotateChatWebhookSigningSecret,
   setChatWebhookInteractivity,
   deleteChatWebhook,
@@ -351,8 +352,15 @@ export function createHttpChatClient(options: HttpChatClientOptions): ChatClient
     async listWebhookDeliveries(conversationId, webhookId) {
       return (await call(listChatWebhookDeliveries(at({ conversation_id: conversationId, webhook_id: webhookId })))).map(toDelivery)
     },
-    async clickAction(messageId, blockId, actionId) {
-      await call(clickChatAction({ ...at({ message_id: messageId }), body: { block_id: blockId, action_id: actionId } }))
+    async clickAction(messageId, blockId, actionId, values) {
+      await call(clickChatAction({ ...at({ message_id: messageId }), body: { block_id: blockId, action_id: actionId, values } }))
+    },
+    async sentActions(messageId) {
+      return (await call(listSentChatActions(at({ message_id: messageId })))).map((action) => ({
+        blockId: action.block_id,
+        elementId: action.element_id,
+        values: (action.values as Record<string, string | boolean> | null | undefined) ?? null,
+      }))
     },
     async deleteMessage(messageId) {
       await write(deleteChatMessage(at({ message_id: messageId })))

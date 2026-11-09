@@ -2,7 +2,8 @@
   "files": [],
   "compilerOptions": {
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@agent/ui-catalog": ["../agent/src/ui-catalog.ts"]
     }
   },
   "references": [

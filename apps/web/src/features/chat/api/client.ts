@@ -1,4 +1,5 @@
 import type { PresenceMap } from '@/features/realtime/presence'
+import type { SentAction } from '../lib/agentCard'
 import type {
   Attachment,
   Category,
@@ -149,7 +150,10 @@ export interface ChatClient {
   webhookSigningSecret(conversationId: string, webhookId: string, rotate: boolean): Promise<string>
   listWebhookDeliveries(conversationId: string, webhookId: string): Promise<WebhookDelivery[]>
   /** Sends a click on an integration's button. Rejects when the integration did not take it. */
-  clickAction(messageId: string, blockId: string, actionId: string): Promise<void>
+  /** `values`: a form's values, for a form on a card of the team agent. */
+  clickAction(messageId: string, blockId: string, actionId: string, values?: Record<string, string | boolean>): Promise<void>
+  /** The reader's clicks and form sends on a card of the team agent. */
+  sentActions(messageId: string): Promise<SentAction[]>
 
   createCategory(name: string): Promise<Category>
   renameCategory(categoryId: string, name: string): Promise<Category>

@@ -283,7 +283,7 @@ fn json_router(state: ChatState) -> Router {
         )
         .route(
             "/api/v1/workspaces/{workspace_id}/chat/messages/{message_id}/actions",
-            post(interactions::click_chat_action),
+            post(interactions::click_chat_action).get(interactions::list_sent_chat_actions),
         )
         .route(
             "/api/v1/workspaces/{workspace_id}/chat/conversations/{conversation_id}/webhooks/{webhook_id}/interactivity",
@@ -559,6 +559,12 @@ fn problem(
             "chat_message_too_long",
             "Message too long",
             "A message can have at most 4000 characters.",
+        ),
+        ChatError::RateLimited(detail) => (
+            StatusCode::TOO_MANY_REQUESTS,
+            "chat_rate_limited",
+            "Too many requests",
+            detail,
         ),
         ChatError::EmojiNameTaken => (
             StatusCode::CONFLICT,

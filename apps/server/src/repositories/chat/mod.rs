@@ -21,6 +21,7 @@ mod search;
 mod slack;
 mod state;
 mod stickers;
+mod ui;
 mod webhooks;
 
 use std::collections::HashMap;
@@ -40,13 +41,14 @@ pub use blocks::{BlocksError, MessageBlock, check_message_blocks, parse_blocks};
 pub use conversations::{ChannelCreate, ChannelUpdate};
 pub use emoji::{CustomEmojiImage, CustomEmojiRecord, EMOJI_MAX_BYTES};
 pub use files::SentChatFile;
-pub use interactions::{Click, ResponseTarget};
+pub use interactions::{Click, ResponseTarget, SentAction};
 pub use messages::BotPost;
 pub use messages::{ForwardInput, MessageCursor, SendInput};
 pub use search::{SearchHitRecord, SearchInput, SearchPage};
 pub use slack::{attachment_blocks, cut, emoji_name, mrkdwn_to_markdown};
 pub use state::{ConversationCursor, ReadSnapshot, StateUpdate, ThreadCursor};
 pub use stickers::{CustomStickerImage, CustomStickerRecord, STICKER_MAX_BYTES, StickerRecord};
+pub use ui::parse_agent_blocks;
 pub use webhooks::{
     BotSender, DeliveryRecord, HookTarget, WebhookInput, WebhookRecord, WebhookWithSecret,
 };
@@ -66,6 +68,8 @@ pub enum ChatError {
     Invalid { field: &'static str },
     #[error("the message is too long")]
     TooLong,
+    #[error("{0}")]
+    RateLimited(&'static str),
     #[error("an emoji with this name exists")]
     EmojiNameTaken,
     #[error("the workspace has its full number of emoji")]

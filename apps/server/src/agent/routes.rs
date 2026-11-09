@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use super::inputs::{self, ThreadUpdate};
 use super::{AgentState, bot, credentials, sessions};
 use crate::push::PushService;
-use crate::repositories::chat::SendInput;
+use crate::repositories::chat::{BlocksError, SendInput, parse_agent_blocks};
 use crate::task_routes::{ApiError, authenticate_session};
 
 pub(super) const SECRET_HEADER: &str = "x-orbit-agent-secret";
@@ -439,6 +439,9 @@ async fn post_message(
 struct EditMessageBody {
     workspace_id: Id,
     body: String,
+    /// The answer's card: one `ui` block (`chat::parse_agent_blocks`). Absent: no card.
+    #[serde(default)]
+    blocks: Option<Value>,
 }
 
 async fn edit_message(
@@ -451,6 +454,19 @@ async fn edit_message(
 ) -> Result<StatusCode, ApiError> {
     sidecar_only(&state, &headers, &uri, &request_id)?;
     let message_id = id_of(&message_id, &uri, &request_id)?;
+    let blocks = match &body.blocks {
+        Some(value) => Some(parse_agent_blocks(value).map_err(|BlocksError(detail)| {
+            tracing::warn!(%detail, "agent card refused");
+            error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "agent_card_invalid",
+                "The agent's card is not valid.",
+                &uri,
+                &request_id,
+            )
+        })?),
+        None => None,
+    };
     let chat = state.chat.clone();
     let database = state.database().clone();
     let edited = tokio::spawn(async move {
@@ -458,8 +474,13 @@ async fn edit_message(
         chat.publish(
             body.workspace_id,
             bot,
-            chat.chat
-                .edit_message(body.workspace_id, bot, message_id, &body.body),
+            chat.chat.edit_message(
+                body.workspace_id,
+                bot,
+                message_id,
+                &body.body,
+                blocks.as_deref(),
+            ),
         )
         .await
         .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
@@ -482,7 +503,8 @@ async fn edit_message(
     }
 }
 
-/// The workspace's members (id and name), to turn `<@id>` tokens into names and back.
+/// The workspace's members (id, name and time zone): to turn `<@id>` tokens into names and back, and to give
+/// each message its sender's local time.
 async fn list_people(
     State(state): State<AgentState>,
     Path(workspace_id): Path<String>,
@@ -493,7 +515,7 @@ async fn list_people(
     sidecar_only(&state, &headers, &uri, &request_id)?;
     let workspace_id = id_of(&workspace_id, &uri, &request_id)?;
     let rows = sqlx::query(
-        "SELECT users.id, users.display_name FROM memberships \
+        "SELECT users.id, users.display_name, users.timezone FROM memberships \
          JOIN users ON users.id = memberships.user_id \
          WHERE memberships.workspace_id = $1 AND users.suspended_at IS NULL \
          ORDER BY users.display_name",
@@ -508,6 +530,7 @@ async fn list_people(
             json!({
                 "id": row.get::<String, _>("id"),
                 "name": row.get::<String, _>("display_name"),
+                "timezone": row.get::<Option<String>, _>("timezone"),
             })
         })
         .collect();

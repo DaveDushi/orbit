@@ -30,13 +30,24 @@ export type PendingInput = {
 	readonly root_message_id: string | null;
 	readonly author_id: string;
 	readonly author_name: string;
-	readonly kind: "instruction" | "answer" | "steer";
+	readonly kind: "instruction" | "answer" | "steer" | "action";
 	readonly body: string;
+	/** For kind "action": a click on the agent's card (`ui.ts`); absent from an older Orbit. */
+	readonly action?: CardAction | null;
 	readonly created_at: number;
 	/** The workspace's team instructions; empty when it has none. */
 	readonly team_instructions: string;
 	/** The message's files; absent from an older Orbit. */
 	readonly files?: readonly ChatFile[];
+};
+
+/** What Orbit stored for a click or form send on the agent's card: the card's own data, and the form values. */
+export type CardAction = {
+	readonly type: "button" | "form";
+	readonly label: string;
+	readonly params?: Record<string, unknown> | null;
+	readonly values?: Record<string, unknown>;
+	readonly card?: { readonly message_id: string; readonly title: string };
 };
 
 export type PendingInputs = {
@@ -88,6 +99,13 @@ export class OrbitClient {
 		return this.#fetch(method, `/api/internal/agent${path}`, { authorization: `Bearer ${this.#config.secret}` }, body, `${method} ${path}`);
 	}
 
+	/** The git revision of Orbit's build, from the web build manifest it serves. */
+	async buildRevision(): Promise<string> {
+		const manifest = (await this.#fetch("GET", "/orbit-build.json", {}, undefined, "GET /orbit-build.json")) as { revision?: unknown } | undefined;
+		if (typeof manifest?.revision !== "string" || !manifest.revision) throw new Error("orbit-build.json has no revision");
+		return manifest.revision;
+	}
+
 	/** The queued inputs, the bot's id and current name, and the model and thinking level of new runs (`null`: default). */
 	async pendingInputs(waitSeconds: number): Promise<PendingInputs> {
 		return (await this.internal("GET", `/inputs?wait=${waitSeconds}`)) as PendingInputs;
@@ -119,8 +137,9 @@ export class OrbitClient {
 		return result.id;
 	}
 
-	async editMessage(messageId: string, workspaceId: string, body: string): Promise<void> {
-		await this.internal("PATCH", `/messages/${messageId}`, { workspace_id: workspaceId, body });
+	/** `blocks`: the answer's card (one `ui` block), which Orbit checks again. */
+	async editMessage(messageId: string, workspaceId: string, body: string, blocks?: readonly unknown[]): Promise<void> {
+		await this.internal("PATCH", `/messages/${messageId}`, { workspace_id: workspaceId, body, ...(blocks ? { blocks } : {}) });
 	}
 
 	async readCredential(userId: string): Promise<Record<string, unknown> | undefined> {
