@@ -1,7 +1,7 @@
 import type { ComponentType } from 'react'
 import { useRender } from '@base-ui/react/use-render'
 import { NavLink, useLocation } from 'react-router'
-import { Home2 as Home, Message as MessageSquare, DocumentText as FileText, Setting2 as Settings, Sms as Mail, TaskSquare as SquareCheck } from 'reicon-react'
+import { Home2 as Home, Message as MessageSquare, DocumentText as FileText, Setting2 as Settings, TaskSquare as SquareCheck, Folder } from 'reicon-react'
 import { cn } from 'cn'
 import { Button } from '@/components/ui/button'
 import { chatEnabled, docsHidden, isChatConversationPath, mobileDockPathsFor } from './productNavigation'
@@ -11,7 +11,7 @@ const DOCK_LINKS = [
   { to: '/tasks', label: 'Tasks', icon: SquareCheck },
   { to: '/docs', label: 'Docs', icon: FileText },
   { to: '/chat', label: 'Chat', icon: MessageSquare },
-  { to: '/mail', label: 'Mail', icon: Mail },
+  { to: '/drive', label: 'Drive', icon: Folder },
   { to: '/settings', label: 'Settings', icon: Settings },
 ].filter((link) => !(docsHidden && link.to === '/docs'))
 

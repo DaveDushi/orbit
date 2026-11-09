@@ -4,7 +4,7 @@ import { useBindings } from '@/shortcuts/useCommand'
 import { createContext, Fragment, useContext, useEffect, useState, type ComponentType, type ReactNode } from 'react'
 import { Link, useLocation, useMatch, useNavigate, useResolvedPath, type LinkProps } from 'react-router'
 import { cva, type VariantProps } from 'class-variance-authority'
-import { Calendar, ChevronDown, CalendarTick, Danger, SecurityUser, Home2 as Home, Layer, Message as MessageSquare, DocumentText as FileText, Search4 as Search, Setting2 as Settings, Sms as Mail, Star, TaskSquare as SquareCheck, Timer, Folder, Add as Plus, Trash } from 'reicon-react'
+import { Calendar, ChevronDown, CalendarTick, Danger, SecurityUser, Home2 as Home, Layer, Message as MessageSquare, DocumentText as FileText, Search4 as Search, Setting2 as Settings, Star, TaskSquare as SquareCheck, Timer, Folder, Add as Plus, Trash } from 'reicon-react'
 import { cn } from 'cn'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
@@ -27,7 +27,6 @@ const WORKSPACE_LINKS = [
   { to: '/docs', label: 'Docs', icon: FileText, enabled: true },
   { to: '/drive', label: 'Drive', icon: Folder, enabled: true },
   { to: '/chat', label: 'Chat', icon: MessageSquare, enabled: false },
-  { to: '/mail', label: 'Mail', icon: Mail, enabled: false },
 ].filter((link) => !(docsHidden && link.to === '/docs'))
 
 // Coolify tile navigation: the row never fills; the icon sits in a 3D tile and the current row shows a pink tile.

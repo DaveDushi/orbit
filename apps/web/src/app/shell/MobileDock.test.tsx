@@ -10,15 +10,13 @@ function Location() {
 test('upcoming mobile sections are visible but cannot navigate', () => {
   const view = render(<MemoryRouter initialEntries={['/tasks']}><MobileDock chatEnabled={false} /><Location /></MemoryRouter>)
   const dock = within(view.getByRole('navigation'))
-  for (const label of ['Mail', 'Chat']) {
-    const button = dock.getByRole('button', { name: label }) as HTMLButtonElement
-    expect(button.disabled).toBe(true)
-    expect(button.textContent).not.toContain('Soon')
-    fireEvent.click(button)
-    expect(view.getByTestId('location').textContent).toBe('/tasks')
-  }
+  const button = dock.getByRole('button', { name: 'Chat' }) as HTMLButtonElement
+  expect(button.disabled).toBe(true)
+  expect(button.textContent).not.toContain('Soon')
+  fireEvent.click(button)
+  expect(view.getByTestId('location').textContent).toBe('/tasks')
   expect(dock.queryAllByText('DMs')).toHaveLength(0)
-  expect(dock.getAllByRole('link')).toHaveLength(4)
+  expect(dock.getAllByRole('link')).toHaveLength(5)
   fireEvent.click(dock.getByRole('link', { name: 'Docs' }))
   expect(view.getByTestId('location').textContent).toBe('/docs')
   fireEvent.click(dock.getByRole('link', { name: 'Settings' }))
@@ -35,17 +33,27 @@ test('upcoming mobile sections are visible but cannot navigate', () => {
 test('the dock lists the products in the sidebar order', () => {
   const view = render(<MemoryRouter initialEntries={['/tasks']}><MobileDock chatEnabled /></MemoryRouter>)
   const labels = [...view.container.querySelectorAll('[data-slot="mobile-dock-item"]')].map((item) => item.textContent)
-  expect(labels).toEqual(['Home', 'Tasks', 'Docs', 'Chat', 'Mail', 'Settings'])
+  expect(labels).toEqual(['Home', 'Tasks', 'Docs', 'Chat', 'Drive', 'Settings'])
 })
 
 test('in a development build Chat is a dock link', () => {
   const view = render(<MemoryRouter initialEntries={['/tasks']}><MobileDock chatEnabled /><Location /></MemoryRouter>)
   const dock = within(view.getByRole('navigation'))
-  expect(dock.getAllByRole('link')).toHaveLength(5)
+  expect(dock.getAllByRole('link')).toHaveLength(6)
   fireEvent.click(dock.getByRole('link', { name: 'Chat' }))
   expect(view.getByTestId('location').textContent).toBe('/chat')
   // the chat list keeps the dock
   expect(view.getAllByRole('navigation')).toHaveLength(1)
+})
+
+test('Drive is a dock link, current on its page and below it', () => {
+  for (const path of ['/drive', '/drive/folder/f1']) {
+    const view = render(<MemoryRouter initialEntries={[path]}><MobileDock chatEnabled /></MemoryRouter>)
+    const dock = within(view.getByRole('navigation'))
+    expect(dock.getByRole('link', { name: 'Drive' }).getAttribute('aria-current')).toBe('page')
+    expect(dock.queryByRole('button', { name: 'Mail' })).toBeNull()
+    view.unmount()
+  }
 })
 
 test('the dock is hidden inside a chat conversation', () => {
