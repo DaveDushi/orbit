@@ -12,7 +12,7 @@ use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, Styl
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, Context, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render,
-    SharedString, StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div, px,
+    SharedString, StatefulInteractiveElement as _, StyleRefinement, Styled as _, WeakEntity, Window, div, px,
 };
 use orbit_client::{ConversationKind, ConversationRecord, MessageKind};
 
@@ -188,6 +188,7 @@ impl OrbitApp {
             (Some(_), false) => {
                 let rows = Rc::new(RowContext::new(self, cx.entity().downgrade(), false));
                 MessageScroller::new("messages", self.scroller.clone(), move |ix, _, cx| rows.render(ix, cx))
+                    .with_row_style(tight_rows())
                     .flex_1()
                     .min_h_0()
                     .into_any_element()
@@ -251,9 +252,15 @@ impl OrbitApp {
             centered("No replies yet.".into(), theme.muted_foreground)
         } else {
             let rows = rows.clone();
-            MessageScroller::new("thread", self.thread_scroller.clone(), move |ix, _, cx| rows.render(ix, cx)).flex_1().min_h_0().into_any_element()
+            MessageScroller::new("thread", self.thread_scroller.clone(), move |ix, _, cx| rows.render(ix, cx))
+                .with_row_style(tight_rows())
+                .flex_1().min_h_0().into_any_element()
         };
-        let count = thread.replies.len();
+        // While loading, the root's own count; then the replies shown.
+        let count = match &thread.root {
+            Some(root) if thread.loading => root.reply_count as usize,
+            _ => thread.replies.len(),
+        };
         v_flex()
             .id("thread-panel")
             .w(px(360.))
@@ -340,14 +347,14 @@ impl RowContext {
         });
         let thread = (!is_root && !self.in_thread && m.reply_count > 0).then(|| {
             let (app, root) = (self.app.clone(), m.id.clone());
-            Button::new(SharedString::from(format!("replies-{}", m.id))).link().small()
+            h_flex().child(Button::new(SharedString::from(format!("replies-{}", m.id))).link().small()
                 .label(match m.reply_count {
                     1 => "1 reply".to_owned(),
                     n => format!("{n} replies"),
                 })
                 .on_click(move |_, _, cx| {
                     let _ = app.update(cx, |app, cx| app.open_thread(&root, cx));
-                })
+                }))
         });
         let delivery = match &row.delivery {
             Delivery::Sent => None,
@@ -414,6 +421,11 @@ fn badge(count: i64, fill: Hsla, color: Hsla) -> impl IntoElement {
     let label = if count > 99 { "99+".to_owned() } else { count.to_string() };
     div().h(px(18.)).min_w(px(18.)).px_1p5().rounded_full().bg(fill).text_color(color).text_xs().font_medium()
         .flex().items_center().justify_center().child(label)
+}
+
+/// Chat rows sit close together: the scroller's default (32 px under each row) is for cards.
+fn tight_rows() -> StyleRefinement {
+    StyleRefinement::default().px_0().pb_0()
 }
 
 fn centered(text: String, color: Hsla) -> AnyElement {

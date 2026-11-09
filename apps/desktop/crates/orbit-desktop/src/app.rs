@@ -404,7 +404,8 @@ impl OrbitApp {
         let (workspace, root) = (self.chat.workspace_id.clone(), root_id.to_owned());
         match &self.backend {
             Backend::Fixture(f) => {
-                let page = self.chat.thread.as_ref().and_then(|t| t.root.clone()).map(|root_message| ThreadPage {
+                let root_message = f.messages.values().flatten().find(|m| m.id == root).cloned();
+                let page = root_message.map(|root_message| ThreadPage {
                     root: root_message,
                     items: f.threads.get(&root).cloned().unwrap_or_default(),
                     before: None,
