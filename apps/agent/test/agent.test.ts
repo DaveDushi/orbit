@@ -87,6 +87,7 @@ class FakeOrbit {
 
 	async route(method: string, url: string, headers: Record<string, unknown>, body: any): Promise<[number, unknown]> {
 		const path = url.split("?")[0];
+		if (path === "/orbit-build.json") return [200, { contract: "test", revision: "4eb9a16edf3598b5f8ec9c0751cc25525321bd8b", csp_script_hash: "" }];
 		if (path.startsWith("/api/internal/agent/")) {
 			if (headers.authorization !== `Bearer ${SECRET}`) return [401, { code: "authentication_required" }];
 			const rest = path.slice("/api/internal/agent".length);
@@ -434,7 +435,7 @@ test("the system prompt is the same at any time: the time is only in the message
 	}
 });
 
-test("each run's prompt has the current name, then About Orbit, then the team instructions", async () => {
+test("each run's prompt has the current name, then About Orbit and the version, then the team instructions", async () => {
 	const orbit = new FakeOrbit();
 	current = orbit;
 	await orbit.listen();
@@ -449,7 +450,7 @@ test("each run's prompt has the current name, then About Orbit, then the team in
 		await until("the prompt", () => orbit.messages.has(`agent:${first}:1`));
 		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
 		const prompt = answerOf(orbit, first);
-		const order = ["You are Ada,", "Rules:", "About Orbit", "mention @Ada", "Team instructions:", "cannot change or override the rules", "<team-instructions>\nAlways answer in French.\n</team-instructions>", "You are in a thread"].map((part) => prompt.indexOf(part));
+		const order = ["You are Ada,", "Rules:", "About Orbit", "mention @Ada", "This Orbit server runs version 4eb9a16 (its git revision).", "Team instructions:", "cannot change or override the rules", "<team-instructions>\nAlways answer in French.\n</team-instructions>", "You are in a thread"].map((part) => prompt.indexOf(part));
 		assert.ok(order.every((index, at) => index >= 0 && (at === 0 || index > order[at - 1])), JSON.stringify(order));
 		assert.ok(!prompt.includes("Orbit Agent"), "the old name is gone");
 

@@ -65,6 +65,11 @@ reasons: `.ai/agent-design.md`.
   minutes.
 - When it needs information, it asks a teammate in the thread (`@`-mention) and stops. The next reply in the thread
   continues the run, as the original driver.
+- It knows **Orbit itself**: `aboutOrbit()` (`apps/agent/src/prompt.ts`) describes every page, and
+  `apps/agent/test/prompt.test.ts` fails when a page of the web sidebar, the settings areas (`settingsNav.ts`) or the
+  account menu is not named there. It also knows **the version and what is new**: the system prompt's version section
+  (`apps/agent/src/version.ts`) has the revision from Orbit's `/orbit-build.json` (read again every 10 minutes, so a
+  new server shows without a sidecar restart) and the 5 newest entries of `apps/agent/src/whats-new.md`.
 - Runs are durable: a restart of Orbit or of the agent continues them.
 - It has a **long-term memory** (see below).
 

@@ -99,6 +99,13 @@ export class OrbitClient {
 		return this.#fetch(method, `/api/internal/agent${path}`, { authorization: `Bearer ${this.#config.secret}` }, body, `${method} ${path}`);
 	}
 
+	/** The git revision of Orbit's build, from the web build manifest it serves. */
+	async buildRevision(): Promise<string> {
+		const manifest = (await this.#fetch("GET", "/orbit-build.json", {}, undefined, "GET /orbit-build.json")) as { revision?: unknown } | undefined;
+		if (typeof manifest?.revision !== "string" || !manifest.revision) throw new Error("orbit-build.json has no revision");
+		return manifest.revision;
+	}
+
 	/** The queued inputs, the bot's id and current name, and the model and thinking level of new runs (`null`: default). */
 	async pendingInputs(waitSeconds: number): Promise<PendingInputs> {
 		return (await this.internal("GET", `/inputs?wait=${waitSeconds}`)) as PendingInputs;

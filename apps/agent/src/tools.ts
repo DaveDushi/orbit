@@ -25,6 +25,7 @@ import { OrbitError, type OrbitClient } from "./orbit.ts";
 import { aboutOrbit, DEFAULT_AGENT_NAME, teamInstructionsBlock, TIME_RULE } from "./prompt.ts";
 import type { Sandbox } from "./sandbox.ts";
 import { uiPrompt } from "./ui-catalog.ts";
+import { orbitRevision, versionBlock } from "./version.ts";
 
 export type ToolDeps = {
 	readonly orbit: OrbitClient;
@@ -669,6 +670,7 @@ export function orbitExtension(toolDeps: ToolDeps) {
 			section("orbit", async (input, context) => PROMPT(await agentName(input, context), Boolean(toolDeps.sandbox)), { tag: false }),
 			section("orbit-ui", async () => uiPrompt(), { tag: false }),
 			section("orbit-about", async (input, context) => aboutOrbit(await agentName(input, context), Boolean(toolDeps.sandbox)), { tag: false }),
+			section("orbit-version", async () => versionBlock(await orbitRevision(deps().orbit)), { tag: false }),
 			section("orbit-team", async (input, context) => teamInstructionsBlock((await input.read.snapshot(ThreadDoc, input.conversationId, context))?.teamInstructions), { tag: false }),
 			section("orbit-context", async (input, context) => {
 				const state = await input.read.snapshot(ThreadDoc, input.conversationId, context);

@@ -9,6 +9,7 @@
  *   search tasks "words"            list projects                         read messages
  *   ask @Name "Question"           show prompt (answers with the system prompt, to check names and team instructions)
  *   show model (answers with the run's model and thinking level)
+ *   what's new (answers with the version section of the system prompt)
  *   remember "Fact"                 remember privately "Fact"             recall "words"
  *   recall privately "words"        what do you remember about "word"
  *   use <integration>__<tool> with {"json": "arguments"}
@@ -302,6 +303,10 @@ export function respond(messages: readonly Message[], modelId = "mock", thinking
 	}
 	if (/show (?:the )?model/i.test(instruction)) {
 		return fauxAssistantMessage(fauxText(`Model: ${modelId}, thinking: ${thinking ?? "default"}`));
+	}
+	if (/what(?:'|’)?s new/i.test(instruction)) {
+		const section = systemPrompt(messages).split("\n\n").find((part) => part.startsWith("Version and what's new ("));
+		return fauxAssistantMessage(fauxText(section ?? "I have no version section."));
 	}
 	if (/show (?:the )?(?:system )?prompt/i.test(instruction)) {
 		return fauxAssistantMessage(fauxText(systemPrompt(messages)));
