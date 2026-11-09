@@ -11,7 +11,7 @@ use gpui_kit::component::text::TextView;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, Context, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render,
+    AnyElement, App, Context, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, Render,
     SharedString, StatefulInteractiveElement as _, StyleRefinement, Styled as _, WeakEntity, Window, div, px,
 };
 use orbit_client::{ConversationKind, ConversationRecord, MessageKind};
@@ -218,19 +218,6 @@ impl OrbitApp {
             .pb_4()
             .pt_1()
             .gap_1()
-            .capture_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
-                let empty = this.inputs.composer.read(cx).value().is_empty();
-                match e.keystroke.key.as_str() {
-                    "escape" if this.chat.editing.is_some() => this.cancel_edit(window, cx),
-                    "up" if empty && this.chat.editing.is_none() => {
-                        if let Some(id) = this.chat.last_own_message() {
-                            this.start_edit(&id, window, cx);
-                        }
-                    }
-                    _ => return,
-                }
-                cx.stop_propagation();
-            }))
             .when(editing, |c| {
                 c.child(h_flex().gap_2().items_center().text_xs().text_color(theme.muted_foreground)
                     .child(div().flex_1().child("Editing your message · Enter saves · Esc cancels"))

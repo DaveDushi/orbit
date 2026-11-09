@@ -7,10 +7,14 @@ Usage: python3 -I fake-gateway.py PORT PASSWORD_FILE [MODE[,MODE]]
   strip:  the gateway removes Authorization before Orbit.
   reject: the gateway answers 401 itself when Authorization is present.
   keepcookie: the gateway passes its own cookie on to Orbit (by default it removes it).
+  nogateway: no gateway at all (a self-hosted server).
 The fake Orbit applies Orbit's origin rule: a POST or upgrade without Origin that carries a
-cookie gets 403 origin_forbidden. The account is ada@example.test, password in PASSWORD_FILE.
+cookie gets 403 origin_forbidden. A sign-in with Origin gets Orbit's session cookie (browser
+mode), without Origin the token in the body. The account is ada@example.test, password in
+PASSWORD_FILE. Chat: two channels with messages and a thread; a send or an edit goes out on every
+open live socket. A message whose body contains "[fail]" gets a 503.
 """
-import base64, hashlib, json, secrets, struct, sys, time, urllib.parse
+import base64, hashlib, json, queue, secrets, struct, sys, threading, time, urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT, PASSWORD_FILE = int(sys.argv[1]), sys.argv[2]
@@ -20,6 +24,35 @@ COOKIE = "exe-proxy=signed-in-" + secrets.token_hex(8)
 SESSIONS = set()
 WORKSPACE = "0190aaaa-0000-7000-8000-000000000001"
 USER = {"id": "u1", "email": "ada@example.test", "display_name": "Ada Example", "installation_admin": False, "root": False, "status": {}}
+MEMBERS = [{"user_id": "u1", "display_name": "Ada Example"}, {"user_id": "u2", "display_name": "Theo Brandt"}]
+LOCK = threading.Lock()
+LIVE = []  # one queue per open live socket
+SEQ = [0]
+
+
+def message(mid, conv, author, body, at, root=None, replies=0):
+    return {"id": mid, "conversation_id": conv, "thread_root_id": root, "kind": "message", "author_id": author,
+            "body": body, "mentions": {}, "created_at": at, "edited_at": None, "deleted": False, "attachments": [],
+            "reactions": [], "pinned": False, "also_in_channel": False, "nonce": None, "reply_count": replies,
+            "last_reply_at": None, "reply_user_ids": [], "last_reply": None, "reply_to_id": None, "reply_to": None,
+            "forwarded": None, "sticker_id": None, "sticker": None, "bot": None, "blocks": None}
+
+
+MESSAGES = {
+    "c1": [message("m1", "c1", "u2", "Hello from the **fake** server.", "2026-11-09T09:00:00Z"),
+           message("m2", "c1", "u1", "Hi Theo! This list came over HTTP.", "2026-11-09T09:01:00Z", replies=1)],
+    "c2": [],
+}
+THREADS = {"m2": [message("m3", "c1", "u2", "A reply in the thread.", "2026-11-09T09:02:00Z", root="m2")]}
+
+
+def broadcast(event):
+    """Sends a chat event to every open live socket, numbered like Orbit's."""
+    with LOCK:
+        SEQ[0] += 1
+        frame = json.dumps({"seq": SEQ[0], "topic": "chat", "event": event}).encode()
+        for q in LIVE:
+            q.put(frame)
 
 LOGIN_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>exe.dev</title>
 <meta http-equiv="refresh" content="3;url=/__exe.dev/done?redirect=%s">
@@ -65,6 +98,8 @@ class Handler(BaseHTTPRequestHandler):
             target = urllib.parse.parse_qs(path.query).get("redirect", ["/"])[0]
             self.reply(302, b"", [("Location", target), ("Set-Cookie", COOKIE + "; Path=/; HttpOnly; Max-Age=86400")])
             return False
+        if "nogateway" in MODES:
+            return self.origin_allowed()
         cookies = [c.strip() for c in (self.headers.get("Cookie") or "").split(";")]
         if COOKIE not in cookies:
             target = urllib.parse.quote(self.path, safe="")
@@ -121,9 +156,21 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/v1/workspaces":
             return self.json(200, [{"id": WORKSPACE, "name": "Demo workspace", "role": "member", "permissions": [], "version": 1}])
         if path.endswith("/chat/conversations"):
-            return self.json(200, [{"id": "c1", "kind": "public", "name": "general", "position": 0}])
+            return self.json(200, [{"id": "c1", "kind": "public", "name": "general", "topic": "Fake server", "position": 0},
+                                   {"id": "c2", "kind": "public", "name": "random", "position": 1}])
         if path.endswith("/chat/states"):
-            return self.json(200, [{"conversation_id": "c1", "unread_count": 2, "notify": "all"}])
+            return self.json(200, [{"conversation_id": "c1", "unread_count": 2, "notify": "all"},
+                                   {"conversation_id": "c2", "unread_count": 0, "notify": "all"}])
+        if path.endswith("/members"):
+            return self.json(200, {"items": MEMBERS})
+        parts = path.split("/")
+        if path.endswith("/messages") and parts[-2] in MESSAGES:
+            with LOCK:
+                return self.json(200, {"items": MESSAGES[parts[-2]], "before": None, "after": None})
+        if "/chat/threads/" in path and parts[-1] in THREADS:
+            root = next(m for m in MESSAGES["c1"] if m["id"] == parts[-1])
+            with LOCK:
+                return self.json(200, {"root": root, "items": THREADS[parts[-1]], "before": None, "after": None, "state": None})
         self.problem(404, "not_found", "Not found.")
 
     def do_POST(self):
@@ -133,12 +180,13 @@ class Handler(BaseHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         if path == "/api/v1/auth/login":
             data = json.loads(body or b"{}")
-            if self.headers.get("Origin"):
-                return self.problem(400, "browser_request", "A native sign-in sends no Origin.")
             if data.get("email") != USER["email"] or data.get("password") != PASSWORD:
                 return self.problem(401, "invalid_credentials", "The email or password is not correct.")
             token = "sess-" + secrets.token_hex(16)
             SESSIONS.add(token)
+            if self.headers.get("Origin"):  # a browser: the session as a cookie (SessionDelivery::Cookie)
+                body = json.dumps({"user": USER, "session_id": "s-" + token[-6:], "session_token": None}).encode()
+                return self.reply(200, body, [("Content-Type", "application/json"), ("Set-Cookie", "orbit_session_dev=%s; Path=/; HttpOnly" % token)])
             return self.json(200, {"user": USER, "session_id": "s-" + token[-6:], "session_token": token})
         if path == "/api/v1/auth/logout":
             token = self.session()
@@ -146,7 +194,37 @@ class Handler(BaseHTTPRequestHandler):
                 return self.problem(401, "authentication_required", "Sign in.")
             SESSIONS.discard(token)
             return self.reply(204)
+        if not self.session():
+            return self.problem(401, "authentication_required", "Sign in.")
+        parts = path.split("/")
+        if path.endswith("/messages") and parts[-2] in MESSAGES:
+            data = json.loads(body or b"{}")
+            if "[fail]" in data.get("body", ""):
+                return self.problem(503, "unavailable", "The server is busy. Try again.")
+            with LOCK:
+                root = data.get("thread_root_id")
+                msg = message("m-" + secrets.token_hex(4), parts[-2], "u1", data["body"], time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), root=root)
+                msg["nonce"] = data.get("nonce")
+                (THREADS.setdefault(root, []) if root else MESSAGES[parts[-2]]).append(msg)
+            broadcast({"type": "message.created", "message": msg})
+            return self.json(200, {"result": msg, "events": [], "seq": SEQ[0]})
         self.problem(404, "not_found", "Not found.")
+
+    def do_PATCH(self):
+        if not self.gateway():
+            return
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        if not self.session():
+            return self.problem(401, "authentication_required", "Sign in.")
+        mid = urllib.parse.urlparse(self.path).path.split("/")[-1]
+        with LOCK:
+            found = [m for ms in list(MESSAGES.values()) + list(THREADS.values()) for m in ms if m["id"] == mid]
+            if not found:
+                return self.problem(404, "not_found", "Not found.")
+            found[0]["body"] = json.loads(body)["body"]
+            found[0]["edited_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        broadcast({"type": "message.updated", "message": found[0]})
+        return self.json(200, {"result": found[0], "events": [], "seq": SEQ[0]})
 
     def socket(self, live):
         if not self.session():
@@ -160,13 +238,23 @@ class Handler(BaseHTTPRequestHandler):
             self.frame(0x1, b'{"type":"resync"}')
         else:
             self.frame(0x1, json.dumps({"version": 1, "kind": "resync_required", "sequence": "0"}).encode())
-        # Stay open like Orbit: a ping every few seconds until the client goes.
+        # Stay open like Orbit: chat events as they happen, a ping every few seconds, until the client goes.
+        q = queue.Queue()
+        if live:
+            with LOCK:
+                LIVE.append(q)
         try:
             while True:
-                time.sleep(5)
-                self.frame(0x1, b'{"type":"ping"}') if live else self.frame(0x9, b"")
+                try:
+                    self.frame(0x1, q.get(timeout=5))
+                except queue.Empty:
+                    self.frame(0x1, b'{"type":"ping"}') if live else self.frame(0x9, b"")
         except OSError:
             pass
+        finally:
+            with LOCK:
+                if q in LIVE:
+                    LIVE.remove(q)
 
     def upgrade(self):
         accept = base64.b64encode(hashlib.sha1((self.headers["Sec-WebSocket-Key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()

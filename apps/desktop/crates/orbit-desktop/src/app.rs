@@ -12,7 +12,7 @@ use std::sync::{Arc, RwLock};
 
 use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
 use gpui_kit::component::message_scroller::MessageScrollerState;
-use gpui_kit::{App, AppContext as _, Context, Entity, Subscription, Window};
+use gpui_kit::{App, AppContext as _, Context, Entity, Focusable as _, KeystrokeEvent, Modifiers, Subscription, Window};
 use orbit_client::update::{LATEST_PATH, Latest, newer};
 use orbit_client::{
     ApiError, AuthUser, Client, ConversationRecord, ConversationStateRecord, Fixture, HandOff, LoginOutcome,
@@ -146,6 +146,24 @@ impl OrbitApp {
                 }
             }),
         ];
+        // Up and Esc in the composer: GPUI runs the text area's own key bindings (Up moves the
+        // caret) before key listeners, so they are taken here, before the bindings.
+        let (weak, composer) = (cx.weak_entity(), inputs.composer.clone());
+        let mut subscriptions = subscriptions;
+        subscriptions.push(cx.intercept_keystrokes(move |e: &KeystrokeEvent, window, cx| {
+            let key = e.keystroke.key.clone();
+            if !matches!(key.as_str(), "up" | "escape") || e.keystroke.modifiers != Modifiers::default() {
+                return;
+            }
+            if !composer.read(cx).focus_handle(cx).is_focused(window) {
+                return;
+            }
+            let _ = weak.update(cx, |app, cx| {
+                if app.composer_key(&key, window, cx) {
+                    cx.stop_propagation();
+                }
+            });
+        }));
         let scroller = cx.new(|cx| MessageScrollerState::new(0, cx));
         let thread_scroller = cx.new(|cx| MessageScrollerState::new(0, cx));
         cx.observe(&scroller, |_, _, cx| cx.notify()).detach();
@@ -493,6 +511,20 @@ impl OrbitApp {
             composer.update(cx, |f, cx| f.focus(window, cx));
         }
         cx.notify();
+    }
+
+    /// Up in an empty composer edits the person's newest message; Esc cancels an edit.
+    /// True when the key was used.
+    fn composer_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        match key {
+            "escape" if self.chat.editing.is_some() => self.cancel_edit(window, cx),
+            "up" if self.chat.editing.is_none() && self.inputs.composer.read(cx).value().is_empty() => {
+                let Some(id) = self.chat.last_own_message() else { return false };
+                self.start_edit(&id, window, cx);
+            }
+            _ => return false,
+        }
+        true
     }
 
     pub fn cancel_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
