@@ -4,12 +4,18 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at f6683850f9ef2bcb72f4708d4bfde4908b709c6a
-  (Donna's media sandbox, Donna knows the version and what is new, ecommerce app icons, schema 86, November 9, 2026).
+- Source: DaveDushi/orbit, `main` at 49954a2fbda4e8ce5786efbecbba63d0689c59b4
+  (the "W" logo, the Windows desktop app downloads, schema 86, November 9, 2026).
 - Binary extracted from the image built locally on this VM from that commit
   (`orbit:f668385`); fork commits have no published upstream image.
-- Image ID: sha256:fa703adfe39344b803e7a874b8d9a948ffcc50b7fda3f9bc80cc394f43980b09
-- Team agent sidecar code (`/opt/orbit-agent`): commit f668385.
+- Image ID: sha256:b67ad1393b816511bb2e04e4c4e119e6e90032dff46b78be5ac1296e28776ce4
+- Team agent sidecar code (`/opt/orbit-agent`): commit 49954a2.
+- Desktop app downloads: https://orbit.wellrox.com/downloads/desktop/ (installer, zip, `latest.json` for the app's update
+  check; behind the exe.dev login like the rest). nginx `location /downloads/desktop/` in
+  `/etc/nginx/conf.d/orbit.conf` serves `/srv/orbit-downloads/desktop/` (outside the deploy, so deploys keep it; the
+  conf before this block is `/tmp/orbit.conf.before-downloads` until reboot). Publish a new version: push a tag
+  `desktop-v<version>` (the version in `apps/desktop/Cargo.toml`), wait for the Desktop workflow, then
+  `deploy/desktop-downloads.sh [<run id>]` as root (checks the sha256 values, removes older Orbit-* files).
 - Donna's media sandbox: `deploy/donna-sandbox/setup.sh` (socket `/run/orbit-donna/sandbox.sock`, user
   `donna-sandbox`, `orbit-donna.slice`, `/var/lib/orbit-donna`, drop-in `orbit-agent.service.d/orbit-donna.conf`).
 - OIDC gateway: `orbit-oidc-gateway.service`, nginx on `127.0.0.1:8400`, config in `/etc/orbit-oidc-gateway/`
@@ -244,6 +250,70 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 9, 2026 upgrade: the "W" logo and the Windows desktop app downloads (schema 86)
+
+`main` fast-forwarded to `49954a2f` from `3a7ce95f`: the `desktop-rune` branch (the desktop app: the web UI in a
+native window with tray, notifications, badge, Windows installer; parts 1-4 and `70bf91f9`, `c8753f1a`) and
+`49954a2f`: the logo is a pixel "W" (Wellrox fork) from one source, `apps/web/public/logo.svg`;
+`scripts/logo-icons.sh` makes the favicons, PWA/Apple icons, the desktop tray PNG and `orbit.ico`. The Desktop workflow
+builds macOS only on request, and `latest.json` needs only the Windows job; desktop 0.1.1;
+`deploy/desktop-downloads.sh`; "Download desktop app" in the account menu (Windows browsers, not inside the app).
+`aboutOrbit()` names the W logo and the download link; the 4th line of the `2026-11-09` "what's new" entry names them.
+No migration, no new `ORBIT_*` setting, sidecar `package-lock.json` unchanged (only `src/prompt.ts` and
+`src/whats-new.md` changed; the new `src` was copied over a copy of the old code).
+
+Checks before the switch: desktop `cargo test --workspace` (57 pass, with
+`the_windows_only_file_of_the_desktop_workflow_reads`); web `tsc --noEmit`, `UserMenu.test.tsx` and `favicon.test.ts`
+(4 pass); mobile `tsc --noEmit` and `bun test src` (151 pass; iOS bundle not built: no Metro server runs); agent
+`tsc` and `node --test` (59 pass, 0 fail, 11 skipped). `orbit-deploy image` built `orbit:49954a2` before the merge and
+reused it after the fast-forward; `deploy/smoke.sh` passed; `orbit config check` passed with the extracted binary.
+
+At the switch: stopped `orbit-agent` and `orbit` at 17:53:16 UTC, created snapshot
+`01a1c171-6545-7502-b5ce-5a5090ab8bdd` with the old CLI (`/usr/local/bin/orbit-f668385`) and verified it, ran
+`migrate run` of the new binary on a copy in `/var/lib/orbit/rehearsal-49954a2-*` (0 applied, quick-check ok, 0
+foreign-key rows; deleted afterwards), saved the sidecar data as
+`/var/backups/orbit-agent/orbit-agent-before-49954a2.tgz`, kept the old sidecar code as
+`/opt/orbit-agent.before-49954a2`, installed the binary (`/usr/local/bin/orbit-49954a2` too) and the new sidecar
+`src`, added the nginx `/downloads/desktop/` location (`nginx -t` ok, reload), and started `orbit` (ready 17:53:42),
+then `orbit-agent`. Pushed `main`. `vm-health` (`/root/ops/vm-health.conf`): `PROD_TAG=49954a2`,
+`ROLLBACK_TAG=f668385`, `ROLLBACK_BACKUP=01a1c171-6545-7502-b5ce-5a5090ab8bdd`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` active, no restarts; readiness
+(all checks); `/orbit-build.json` revision `49954a2f`; live quick-check and foreign-key checks pass; web `/` 200;
+`/logo.svg` and `/favicon.svg` are the W; sidecar `/health` `{"ok":true,"mock":false}` and `/opt/orbit-agent/src` equal
+to `apps/agent/src` of `49954a2f`; no warnings in the logs. Browser on production (temporary UUID v7 session row for
+ddusi@wellrox.com, revoked by `POST /api/v1/auth/logout` (204); headless Chromium through `socat` on 127.0.0.1:8443):
+the phone top bar shows the W, the account menu (Windows user agent) shows "Download desktop app", which opens
+`/downloads/desktop/`. Only console error: the known service worker 400. The sign-in page has no logo (none since the
+Coolify-style restyle `2fef22c3`). Screenshots in `/root/.local/share/com.jean.desktop/pasted-images/`:
+`desktop-w-icons.png`, `desktop-w-icons-actual-size.png`, `web-w-signin.png`, `web-w-phone-topbar.png`,
+`web-w-phone-topbar-zoom.png`, `web-w-phone-sidebar.png`, `web-w-account-menu.png`, `web-w-downloads-page.png`.
+Desktop downloads: tag `desktop-v0.1.1` started Desktop run
+[42669076371](https://github.com/DaveDushi/orbit/actions/runs/42669076371) (test, windows and manifest passed, macos
+skipped); `deploy/desktop-downloads.sh 42669076371` put `Orbit-0.1.1-windows-x64-setup.exe` (sha256 `6a39bfd9…`),
+`Orbit-0.1.1-windows-x64.zip` (`57ec2ae5…`) and `latest.json` (version 0.1.1, Windows only) in
+`/srv/orbit-downloads/desktop/`. Through the local nginx: `latest.json` 200 `application/json`, `no-cache`; both files
+download with the sha256 of `latest.json`. The public URL answers 307 to the exe.dev login without an exe.dev session,
+like every Orbit page. **Not** verified: a download through the public URL with an exe.dev session, and the installer on
+a real Windows PC (the workflow installed and uninstalled it on its Windows runner).
+
+Rollback (same schema 86: the old binary reads it, no restore needed). To go back to `f668385`:
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-f668385 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-49954a2 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Data back to 17:53 UTC, only if needed (work after it is lost), with both services stopped:
+# sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-f668385 backup verify 01a1c171-6545-7502-b5ce-5a5090ab8bdd && /usr/local/bin/orbit-f668385 backup restore 01a1c171-6545-7502-b5ce-5a5090ab8bdd'
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-49954a2.tgz
+```
+
+After this rollback, set `PROD_TAG=f668385`, `ROLLBACK_TAG=4eb9a16`,
+`ROLLBACK_BACKUP=01a1c082-e2b9-7515-a956-d7c5cc81b6bf` in `/root/ops/vm-health.conf`. The nginx downloads location
+can stay (the old binary does not use `/downloads/`).
 
 ### November 9, 2026 upgrade: Donna's media sandbox, the version and what is new, ecommerce app icons (schema 86)
 
