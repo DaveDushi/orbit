@@ -15,6 +15,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::api::{ApiError, classify_response};
+use crate::types::{ConversationRecord, ConversationStateRecord, MessageRecord};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum LiveFrame {
@@ -40,6 +41,32 @@ pub fn parse_live_frame(text: &str) -> Option<LiveFrame> {
             Some(LiveFrame::Event { seq: frame.get("seq").and_then(Value::as_u64), topic, event: frame.get("event").cloned().unwrap_or(Value::Null) })
         }
     }
+}
+
+/// A chat change from a live `Event` frame (`ChatEvent` in `openapi.json`): the kinds the app
+/// applies to what it shows. Others (emoji, stickers, categories, threads) read as `None`.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(tag = "type")]
+pub enum ChatEvent {
+    #[serde(rename = "message.created")]
+    MessageCreated { message: MessageRecord },
+    /// Edits, reactions, pins and thread summary changes.
+    #[serde(rename = "message.updated")]
+    MessageUpdated { message: MessageRecord },
+    #[serde(rename = "message.deleted")]
+    MessageDeleted { conversation_id: String, message_id: String, #[serde(default)] thread_root_id: Option<String> },
+    #[serde(rename = "conversation.changed")]
+    ConversationChanged { conversation: ConversationRecord },
+    /// The receiver lost access to it.
+    #[serde(rename = "conversation.removed")]
+    ConversationRemoved { conversation_id: String },
+    #[serde(rename = "state.changed")]
+    StateChanged { state: ConversationStateRecord },
+}
+
+/// The chat change in an event's `event` value, if it is one the app applies.
+pub fn parse_chat_event(event: &Value) -> Option<ChatEvent> {
+    ChatEvent::deserialize(event).ok()
 }
 
 /// Where the live socket resumes: the epoch and the number of the last event it got, so the server
@@ -209,6 +236,24 @@ mod tests {
         assert_eq!(cursor.query(), "");
         cursor.read(&frame(r#"{"type":"resync"}"#));
         assert_eq!(cursor.query(), "?epoch=e2&after=2");
+    }
+
+    #[test]
+    fn chat_events_parse_by_type_and_unknown_ones_are_none() {
+        let message = r#"{"id":"m1","conversation_id":"c1","thread_root_id":null,"kind":"message","author_id":"u1",
+            "body":"hi","mentions":{},"created_at":"2026-11-09T10:00:00Z","edited_at":null,"deleted":false,"attachments":[],
+            "reactions":[{"emoji":"👍","user_ids":["u2"]}],"pinned":false,"also_in_channel":false,"nonce":"desk-1","reply_count":0,
+            "last_reply_at":null,"reply_user_ids":[],"last_reply":null,"reply_to_id":null,"reply_to":null,"forwarded":null,
+            "sticker_id":null,"sticker":null,"bot":null,"blocks":null,"future":1}"#;
+        let created: Value = serde_json::from_str(&format!(r#"{{"type":"message.created","message":{message}}}"#)).unwrap();
+        let Some(ChatEvent::MessageCreated { message }) = parse_chat_event(&created) else { panic!("{created}") };
+        assert_eq!((message.id.as_str(), message.nonce.as_deref(), message.reactions.len()), ("m1", Some("desk-1"), 1));
+        let deleted = serde_json::json!({"type":"message.deleted","conversation_id":"c1","message_id":"m1","thread_root_id":null});
+        assert_eq!(parse_chat_event(&deleted), Some(ChatEvent::MessageDeleted { conversation_id: "c1".into(), message_id: "m1".into(), thread_root_id: None }));
+        let state = serde_json::json!({"type":"state.changed","state":{"conversation_id":"c1","unread_count":3,"mention_count":1,"notify":"all","favorite":false}});
+        assert!(matches!(parse_chat_event(&state), Some(ChatEvent::StateChanged { state }) if state.unread_count == 3));
+        assert_eq!(parse_chat_event(&serde_json::json!({"type":"emoji.changed"})), None);
+        assert_eq!(parse_chat_event(&serde_json::json!({"type":"message.created"})), None, "broken: no message");
     }
 
     #[test]

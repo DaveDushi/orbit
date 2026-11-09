@@ -1,0 +1,189 @@
+{
+  "00000000-0000-4000-8000-0000000000a2": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "conversation_id": "00000000-0000-4000-8000-0000000000a2",
+      "thread_root_id": null,
+      "kind": "join",
+      "author_id": "00000000-0000-4000-8000-000000000002",
+      "body": "",
+      "created_at": "2026-11-08T08:58:00Z",
+      "edited_at": null,
+      "deleted": false,
+      "reactions": [],
+      "also_in_channel": false,
+      "nonce": null,
+      "reply_count": 0,
+      "last_reply_at": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "conversation_id": "00000000-0000-4000-8000-0000000000a2",
+      "thread_root_id": null,
+      "kind": "message",
+      "author_id": "00000000-0000-4000-8000-000000000004",
+      "body": "Morning! The **sidebar spec** is ready for review:\n\n- 48 px header row\n- 8 px body padding\n- unread badges on the right",
+      "created_at": "2026-11-08T09:02:00Z",
+      "edited_at": null,
+      "deleted": false,
+      "reactions": [
+        {
+          "emoji": "👍",
+          "user_ids": [
+            "00000000-0000-4000-8000-000000000001",
+            "00000000-0000-4000-8000-000000000002"
+          ]
+        },
+        {
+          "emoji": "🎉",
+          "user_ids": [
+            "00000000-0000-4000-8000-000000000002"
+          ]
+        }
+      ],
+      "also_in_channel": false,
+      "nonce": null,
+      "reply_count": 0,
+      "last_reply_at": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "conversation_id": "00000000-0000-4000-8000-0000000000a2",
+      "thread_root_id": null,
+      "kind": "message",
+      "author_id": "00000000-0000-4000-8000-000000000002",
+      "body": "Looks good. One question about the empty state, see the thread.",
+      "created_at": "2026-11-08T09:10:00Z",
+      "edited_at": null,
+      "deleted": false,
+      "reactions": [],
+      "also_in_channel": false,
+      "nonce": null,
+      "reply_count": 3,
+      "last_reply_at": "2026-11-08T09:31:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000004",
+      "conversation_id": "00000000-0000-4000-8000-0000000000a2",
+      "thread_root_id": null,
+      "kind": "message",
+      "author_id": "00000000-0000-4000-8000-000000000001",
+      "body": "I moved the mock to `design/sidebar-v3.fig`. Changes since v2:\n\n1. Muted channels are grey\n2. Mentions use the accent badge",
+      "created_at": "2026-11-08T09:20:00Z",
+      "edited_at": "2026-11-08T09:22:00Z",
+      "deleted": false,
+      "reactions": [],
+      "also_in_channel": false,
+      "nonce": null,
+      "reply_count": 0,
+      "last_reply_at": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000005",
+      "conversation_id": "00000000-0000-4000-8000-0000000000a2",
+      "thread_root_id": null,
+      "kind": "message",
+      "author_id": "00000000-0000-4000-8000-000000000003",
+      "body": "Summary of today's review for <@00000000-0000-4000-8000-000000000001>:\n\n> Ship the sidebar first, the composer next week.\n\n```rust\nlet unread = rows.iter().filter(|r| r.unread > 0).count();\n```",
+      "created_at": "2026-11-08T09:35:00Z",
+      "edited_at": null,
+      "deleted": false,
+      "reactions": [],
+      "also_in_channel": false,
+      "nonce": null,
+      "reply_count": 0,
+      "last_reply_at": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000006",
+      "conversation_id": "00000000-0000-4000-8000-0000000000a2",
+      "thread_root_id": null,
+      "kind": "message",
+      "author_id": "00000000-0000-4000-8000-000000000004",
+      "body": "Thanks Donna! I will open the follow-up tasks after lunch.",
+      "created_at": "2026-11-08T09:42:00Z",
+      "edited_at": null,
+      "deleted": false,
+      "reactions": [],
+      "also_in_channel": false,
+      "nonce": null,
+      "reply_count": 0,
+      "last_reply_at": null
+    }
+  ],
+  "00000000-0000-4000-8000-0000000000a1": [
+    {
+      "id": "00000000-0000-4000-8000-000000000010",
+      "conversation_id": "00000000-0000-4000-8000-0000000000a1",
+      "thread_root_id": null,
+      "kind": "message",
+      "author_id": "00000000-0000-4000-8000-000000000002",
+      "body": "Welcome to **Northwind**. Office hours are on Thursday.",
+      "created_at": "2026-11-08T08:00:00Z",
+      "edited_at": null,
+      "deleted": false,
+      "reactions": [],
+      "also_in_channel": false,
+      "nonce": null,
+      "reply_count": 0,
+      "last_reply_at": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000011",
+      "conversation_id": "00000000-0000-4000-8000-0000000000a1",
+      "thread_root_id": null,
+      "kind": "message",
+      "author_id": "00000000-0000-4000-8000-000000000001",
+      "body": "Thanks Theo!",
+      "created_at": "2026-11-08T08:10:00Z",
+      "edited_at": null,
+      "deleted": false,
+      "reactions": [
+        {
+          "emoji": "❤️",
+          "user_ids": [
+            "00000000-0000-4000-8000-000000000002"
+          ]
+        }
+      ],
+      "also_in_channel": false,
+      "nonce": null,
+      "reply_count": 0,
+      "last_reply_at": null
+    }
+  ],
+  "00000000-0000-4000-8000-0000000000b1": [
+    {
+      "id": "00000000-0000-4000-8000-000000000020",
+      "conversation_id": "00000000-0000-4000-8000-0000000000b1",
+      "thread_root_id": null,
+      "kind": "message",
+      "author_id": "00000000-0000-4000-8000-000000000001",
+      "body": "Can you list the open design tasks?",
+      "created_at": "2026-11-06T09:58:00Z",
+      "edited_at": null,
+      "deleted": false,
+      "reactions": [],
+      "also_in_channel": false,
+      "nonce": null,
+      "reply_count": 0,
+      "last_reply_at": null
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000021",
+      "conversation_id": "00000000-0000-4000-8000-0000000000b1",
+      "thread_root_id": null,
+      "kind": "message",
+      "author_id": "00000000-0000-4000-8000-000000000003",
+      "body": "There are **3** open design tasks:\n\n| Task | Owner |\n|---|---|\n| Sidebar spec | Mira |\n| Empty states | Theo |\n| Icons | Ada |",
+      "created_at": "2026-11-06T10:00:00Z",
+      "edited_at": null,
+      "deleted": false,
+      "reactions": [],
+      "also_in_channel": false,
+      "nonce": null,
+      "reply_count": 0,
+      "last_reply_at": null
+    }
+  ]
+}

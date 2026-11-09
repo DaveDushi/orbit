@@ -1,15 +1,19 @@
 //! A fake backend for headless runs and goldens: a folder of JSON files shaped like the API's
 //! responses, with synthetic data only.
 //!
-//! - `workspace.json`: `{ "name": "…" }`
+//! - `workspace.json`: `{ "name": "…", "me": "<user id of the signed-in person>" }`
 //! - `conversations.json`: the body of `GET …/chat/conversations`
 //! - `states.json`: the body of `GET …/chat/states`
+//! - `members.json`: the body of `GET …/members`
+//! - `messages.json`: `{ "<conversation id>": [MessageRecord, …] }`, oldest first
+//! - `threads.json`: `{ "<root message id>": [MessageRecord, …] }`, the replies, oldest first
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::types::{ConversationKind, ConversationRecord, ConversationStateRecord, NotifyLevel};
+use crate::types::{ConversationKind, ConversationRecord, ConversationStateRecord, MemberPage, MemberRecord, MessageRecord, NotifyLevel};
 
 #[derive(Debug)]
 pub enum FixtureError {
@@ -31,13 +35,20 @@ impl std::error::Error for FixtureError {}
 #[derive(Deserialize)]
 struct WorkspaceFile {
     name: String,
+    #[serde(default)]
+    me: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Fixture {
     pub workspace_name: String,
+    /// The signed-in person's user id.
+    pub me: String,
     pub conversations: Vec<ConversationRecord>,
     pub states: Vec<ConversationStateRecord>,
+    pub members: Vec<MemberRecord>,
+    pub messages: HashMap<String, Vec<MessageRecord>>,
+    pub threads: HashMap<String, Vec<MessageRecord>>,
 }
 
 /// One line of the sidebar.
@@ -57,8 +68,12 @@ impl Fixture {
         let workspace: WorkspaceFile = read(&dir.join("workspace.json"))?;
         Ok(Fixture {
             workspace_name: workspace.name,
+            me: workspace.me,
             conversations: read(&dir.join("conversations.json"))?,
             states: read(&dir.join("states.json"))?,
+            members: read::<MemberPage>(&dir.join("members.json"))?.items,
+            messages: read(&dir.join("messages.json"))?,
+            threads: read(&dir.join("threads.json"))?,
         })
     }
 
@@ -112,6 +127,10 @@ mod tests {
         assert_eq!(names, ["general", "design", "releases", "random", "Mira Okafor", "Donna"]);
         let design = &rows[1];
         assert_eq!((design.unread, design.mentions), (4, 1));
+        let fixture = demo();
+        let root = fixture.messages[&design.id].iter().find(|m| m.reply_count > 0).expect("a thread root in #design");
+        assert_eq!(fixture.threads[&root.id].len() as i64, root.reply_count);
+        assert!(fixture.members.iter().any(|m| m.user_id == fixture.me));
         assert!(rows[3].muted, "random is muted");
     }
 

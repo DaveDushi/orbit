@@ -116,7 +116,7 @@ fn signed_in_headers(origin: &str) -> (ServerUrl, Vec<(&'static str, Secret)>) {
     let server = ServerUrl::parse(origin).unwrap();
     let mut client = Client::new(server.clone());
     client.set_gateway(Some(gateway_cookies(&server)));
-    client.set_session(Some(orbit_client::Session { session_id: "s1".into(), token: Secret::new(SESSION_TOKEN) }));
+    client.set_session(Some(orbit_client::Session { session_id: "s1".into(), token: Secret::new(SESSION_TOKEN), browser: false }));
     let headers = client.auth_headers("/api/v1/workspaces");
     (server, headers)
 }
@@ -236,7 +236,7 @@ fn a_stopped_socket_ends_its_thread_without_reconnecting() {
 fn the_browser_style_sign_out_sends_origin_and_the_session_cookie_but_no_bearer() {
     let mock = Mock::start(vec![http(204, &[], "")]);
     let mut client = client(&mock);
-    client.set_session(Some(orbit_client::Session { session_id: "s1".into(), token: Secret::new(SESSION_TOKEN) }));
+    client.set_session(Some(orbit_client::Session { session_id: "s1".into(), token: Secret::new(SESSION_TOKEN), browser: false }));
     client.logout_as_browser().unwrap();
     assert!(client.session().is_none());
     let origin = mock.origin.clone();

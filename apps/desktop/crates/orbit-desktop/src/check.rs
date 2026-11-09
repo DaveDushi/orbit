@@ -80,7 +80,7 @@ pub fn run(server: &str) -> i32 {
             Err(e) => { println!("{e}: the cookies do not pass; stopped"); return 1; }
         }
         print!("4. Cookies + a junk bearer, /auth/me  ");
-        client.set_session(Some(Session { session_id: String::new(), token: Secret::new("not-a-session") }));
+        client.set_session(Some(Session { session_id: String::new(), token: Secret::new("not-a-session"), browser: false }));
         let junk = client.me();
         client.set_session(None);
         println!("{}", match &junk {

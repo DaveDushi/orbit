@@ -1,4 +1,4 @@
-# Rune's toolchain (its rust-toolchain.toml at the pinned rev), not Orbit's.
+# Its own toolchain (not Orbit's 1.97.1): GPUI snapshots follow recent stable Rust.
 [toolchain]
 channel = "1.99.1"
 components = ["clippy", "rustfmt"]

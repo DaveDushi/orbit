@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use orbit_client::{AuthUser, ConversationRecord, ConversationStateRecord, Fixture, SetupStatus, WorkspaceRecord};
+use orbit_client::{AuthUser, ConversationRecord, ConversationStateRecord, Fixture, MemberRecord, MessageRecord, SetupStatus, WorkspaceRecord};
 use serde_json::Value;
 
 /// The calls the app makes, and the schema of each one's item.
@@ -105,6 +105,43 @@ fn the_fields_we_read_are_in_the_contract() {
     let state: &ConversationStateRecord = &fixture.states[0];
     assert_subset(&doc, "ConversationRecord", &fields_of(conversation));
     assert_subset(&doc, "ConversationStateRecord", &fields_of(state));
+    let message: &MessageRecord = &fixture.messages.values().next().unwrap()[0];
+    assert_subset(&doc, "MessageRecord", &fields_of(message));
+    let member: &MemberRecord = &fixture.members[0];
+    let member_item = &doc["components"]["schemas"]["Page_MemberRecord"]["properties"]["items"]["items"]["properties"];
+    for field in fields_of(member) {
+        assert!(member_item.get(&field).is_some(), "MemberRecord.{field} is not in openapi.json");
+    }
+}
+
+/// The chat calls of the message list, the thread panel and the composer: path, method, and the
+/// schema of the 200 body (and of the request body for writes).
+const CHAT_CALLS: &[(&str, &str, &str, Option<&str>)] = &[
+    ("get", "/api/v1/workspaces/{workspace_id}/members", "Page_MemberRecord", None),
+    ("get", "/api/v1/workspaces/{workspace_id}/chat/conversations/{conversation_id}/messages", "MessagePage", None),
+    ("get", "/api/v1/workspaces/{workspace_id}/chat/threads/{root_id}", "ThreadPage", None),
+    ("post", "/api/v1/workspaces/{workspace_id}/chat/conversations/{conversation_id}/messages", "ChatWrite_MessageRecord", Some("ChatSendBody")),
+    ("patch", "/api/v1/workspaces/{workspace_id}/chat/messages/{message_id}", "ChatWrite_MessageRecord", Some("ChatEditBody")),
+];
+
+#[test]
+fn the_chat_calls_exist_with_the_schemas_we_read_and_write() {
+    let doc = openapi();
+    for (method, path, response, request) in CHAT_CALLS {
+        let operation = &doc["paths"][path][method];
+        let schema = &operation["responses"]["200"]["content"]["application/json"]["schema"];
+        assert_eq!(schema["$ref"], format!("#/components/schemas/{response}"), "{method} {path}");
+        if let Some(request) = request {
+            let body = &operation["requestBody"]["content"]["application/json"]["schema"];
+            assert_eq!(body["$ref"], format!("#/components/schemas/{request}"), "{method} {path} body");
+        }
+    }
+    let strings = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert_subset(&doc, "ChatSendBody", &strings(&["body", "nonce", "thread_root_id"]));
+    assert_subset(&doc, "ChatEditBody", &strings(&["body"]));
+    assert_subset(&doc, "ChatWrite_MessageRecord", &strings(&["result"]));
+    assert_subset(&doc, "MessagePage", &strings(&["items", "before", "after"]));
+    assert_subset(&doc, "ThreadPage", &strings(&["root", "items", "before", "after"]));
 }
 
 #[test]
@@ -115,4 +152,5 @@ fn the_enum_values_we_know_are_the_servers() {
     };
     assert_eq!(values("ConversationKind"), ["public", "private", "dm"]);
     assert_eq!(values("NotifyLevel"), ["all", "mentions", "muted"]);
+    assert_eq!(values("MessageKind"), ["message", "pin", "join", "leave"]);
 }

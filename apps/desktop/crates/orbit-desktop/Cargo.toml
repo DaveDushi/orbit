@@ -1,17 +1,22 @@
 [package]
 name = "orbit-desktop"
-description = "The Orbit desktop app (Rune)."
+description = "The Orbit desktop app (GPUI + gpui-component)."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
 
+[features]
+# `--snap`: headless PNGs through GPUI's offscreen renderer (Linux: lavapipe). Off in packaged builds.
+snap = ["gpui-kit/test-support", "dep:image"]
+
 [dependencies]
 orbit-client = { path = "../orbit-client" }
-rune.workspace = true
-# Pinned with rune now; Markdown (M1) and notifications (M3) use them.
-rune-kit.workspace = true
-rune-notify.workspace = true
-# The gateway sign-in window (`--gateway-signin`), a separate process: tao and Rune's winit both
+gpui-kit.workspace = true
+async-channel.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# PNG output of `--snap` (GPUI hands back an `image::RgbaImage`).
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+# The gateway sign-in window (`--gateway-signin`), a separate process: tao and GPUI both
 # want the main thread. Linux needs libwebkit2gtk-4.1-dev to build.
 wry = "0.57"
 tao = "0.37"
@@ -27,6 +32,8 @@ keyring = { version = "3.6", default-features = false, features = ["apple-native
 
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
+# The packaged app is a GUI program without a console; command-line uses attach to the caller's.
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["sync-secret-service", "crypto-rust"] }

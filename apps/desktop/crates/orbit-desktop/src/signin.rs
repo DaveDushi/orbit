@@ -1,5 +1,5 @@
 //! The gateway sign-in window: `orbit-desktop --gateway-signin <server>`, a separate process
-//! (tao + wry) because Rune's winit loop owns the app's main thread.
+//! (tao + wry) because GPUI's event loop owns the app's main thread.
 //!
 //! It opens `<server>/api/v1/setup/status`. Without a gateway session the exe.dev proxy redirects
 //! to its sign-in page (`/__exe.dev/login`); after the person signs in it redirects back. A page
