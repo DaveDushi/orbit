@@ -12,7 +12,8 @@ The fake Orbit applies Orbit's origin rule: a POST or upgrade without Origin tha
 cookie gets 403 origin_forbidden. A sign-in with Origin gets Orbit's session cookie (browser
 mode), without Origin the token in the body. The account is ada@example.test, password in
 PASSWORD_FILE. Chat: two channels with messages and a thread; a send or an edit goes out on every
-open live socket. A message whose body contains "[fail]" gets a 503.
+open live socket. A message whose body contains "[fail]" gets a 503. `GET /__test/close-sockets`
+closes every socket with 1012 (Orbit's "server restart"), so clients reconnect with their session.
 """
 import base64, hashlib, json, queue, secrets, struct, sys, threading, time, urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,7 +27,8 @@ WORKSPACE = "0190aaaa-0000-7000-8000-000000000001"
 USER = {"id": "u1", "email": "ada@example.test", "display_name": "Ada Example", "installation_admin": False, "root": False, "status": {}}
 MEMBERS = [{"user_id": "u1", "display_name": "Ada Example"}, {"user_id": "u2", "display_name": "Theo Brandt"}]
 LOCK = threading.Lock()
-LIVE = []  # one queue per open live socket
+LIVE = []  # one queue per open socket (live and events)
+CLOSE = b"close-1012"
 SEQ = [0]
 
 
@@ -142,6 +144,11 @@ class Handler(BaseHTTPRequestHandler):
         return None
 
     def do_GET(self):
+        if self.path == "/__test/close-sockets":
+            with LOCK:
+                for q in LIVE:
+                    q.put(CLOSE)
+            return self.reply(204)
         if not self.gateway():
             return
         path = urllib.parse.urlparse(self.path).path
@@ -174,9 +181,10 @@ class Handler(BaseHTTPRequestHandler):
         self.problem(404, "not_found", "Not found.")
 
     def do_POST(self):
+        # Read the body first: a refusal must not leave it on the kept-alive connection.
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
         if not self.gateway():
             return
-        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
         path = urllib.parse.urlparse(self.path).path
         if path == "/api/v1/auth/login":
             data = json.loads(body or b"{}")
@@ -211,9 +219,9 @@ class Handler(BaseHTTPRequestHandler):
         self.problem(404, "not_found", "Not found.")
 
     def do_PATCH(self):
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
         if not self.gateway():
             return
-        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
         if not self.session():
             return self.problem(401, "authentication_required", "Sign in.")
         mid = urllib.parse.urlparse(self.path).path.split("/")[-1]
@@ -240,13 +248,16 @@ class Handler(BaseHTTPRequestHandler):
             self.frame(0x1, json.dumps({"version": 1, "kind": "resync_required", "sequence": "0"}).encode())
         # Stay open like Orbit: chat events as they happen, a ping every few seconds, until the client goes.
         q = queue.Queue()
-        if live:
-            with LOCK:
-                LIVE.append(q)
+        with LOCK:
+            LIVE.append(q)
         try:
             while True:
                 try:
-                    self.frame(0x1, q.get(timeout=5))
+                    item = q.get(timeout=5)
+                    if item == CLOSE:
+                        return self.frame(0x8, struct.pack("!H", 1012))
+                    if live:
+                        self.frame(0x1, item)
                 except queue.Empty:
                     self.frame(0x1, b'{"type":"ping"}') if live else self.frame(0x9, b"")
         except OSError:

@@ -397,7 +397,7 @@ fn link_line(name: &str, link: &Link, theme: &gpui_kit::component::Theme) -> imp
     };
     h_flex().id(SharedString::from(format!("link-{}", name.to_lowercase()))).gap_2().items_center()
         .child(dot(color))
-        .child(div().text_xs().truncate().text_color(theme.sidebar_foreground.opacity(0.7)).child(format!("{name}: {words}")))
+        .child(div().flex_1().min_w_0().text_xs().text_color(theme.sidebar_foreground.opacity(0.7)).child(format!("{name}: {words}")))
 }
 
 fn dot(color: Hsla) -> impl IntoElement {
