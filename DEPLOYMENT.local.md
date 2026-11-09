@@ -4,12 +4,14 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 4eb9a16edf3598b5f8ec9c0751cc25525321bd8b
-  (the phone top bar stays visible on the chat list, schema 86, November 9, 2026).
+- Source: DaveDushi/orbit, `main` at f6683850f9ef2bcb72f4708d4bfde4908b709c6a
+  (Donna's media sandbox, Donna knows the version and what is new, ecommerce app icons, schema 86, November 9, 2026).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:4eb9a16`); fork commits have no published upstream image.
-- Image ID: sha256:05a5a54bb7f32baf0df5614c442f92be2019094fd6f76daced706056a4ddfd6c
-- Team agent sidecar code (`/opt/orbit-agent`): commit b1ad159 (`apps/agent` has no change in 4eb9a16).
+  (`orbit:f668385`); fork commits have no published upstream image.
+- Image ID: sha256:fa703adfe39344b803e7a874b8d9a948ffcc50b7fda3f9bc80cc394f43980b09
+- Team agent sidecar code (`/opt/orbit-agent`): commit f668385.
+- Donna's media sandbox: `deploy/donna-sandbox/setup.sh` (socket `/run/orbit-donna/sandbox.sock`, user
+  `donna-sandbox`, `orbit-donna.slice`, `/var/lib/orbit-donna`, drop-in `orbit-agent.service.d/orbit-donna.conf`).
 - OIDC gateway: `orbit-oidc-gateway.service`, nginx on `127.0.0.1:8400`, config in `/etc/orbit-oidc-gateway/`
   (see `docs/apps.md`). `cloudflared` is NOT installed.
 - Executable: /usr/local/bin/orbit; unprivileged system user: orbit.
@@ -242,6 +244,76 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 9, 2026 upgrade: Donna's media sandbox, the version and what is new, ecommerce app icons (schema 86)
+
+`main` fast-forwarded to `f6683850` from `accd0e4d`. The `donna-media` branch had `a6b7e3f8` and `917aa551` (Donna
+looks at and edits images, videos and scanned PDFs from Drive in a sandbox, `deploy/donna-sandbox/`), and merged
+`donna-knowledge` (`f34bf62c`, Donna knows the deployed version and what is new; merge `21671c50`, conflict in
+`apps/agent/src/tools.ts`: both the `orbit-about` section with the sandbox flag and the new `orbit-version` section
+kept) and `app-icons` (`7caba27b`, 16 ecommerce icons in the app icon picker; merge `0bcdc06e`). `f6683850` adds the
+icons to `aboutOrbit()` and the "what's new" entry: the `2026-11-09` entry of `apps/agent/src/whats-new.md` now has 4
+lines (media sandbox; time, date and version; cards; ecommerce icons and the phone top bar). No migration, no new
+`ORBIT_*` setting, `package-lock.json` of the sidecar unchanged.
+
+Checks before the switch: agent `tsc` and `node --test` (59 pass, 0 fail, 11 skipped); `cargo test -p orbit-server
+--lib apps::` (6 pass, with `the_icons_equal_the_web_list_and_include_the_default`); web `tsc --noEmit`.
+`orbit-deploy image` built `orbit:f668385` before the merge (label = the full commit) and reused it after the
+fast-forward; `deploy/smoke.sh` passed; `orbit config check` passed with the extracted binary.
+
+At the switch: stopped `orbit-agent` and `orbit` at 13:32:45 UTC, created snapshot
+`01a1c082-e2b9-7515-a956-d7c5cc81b6bf` with the old CLI (`/usr/local/bin/orbit-4eb9a16`) and verified it, ran
+`migrate run` of the new binary on a copy in `/var/lib/orbit/rehearsal-f668385-*` (0 applied, schema 86, quick-check
+ok, 0 foreign-key rows, counts unchanged: 6 users, 1 workspace, 3 projects, 65 tasks, 47 pages, 649 chat messages,
+128 agent inputs; deleted afterwards), saved the sidecar data as
+`/var/backups/orbit-agent/orbit-agent-before-f668385.tgz`, kept the old sidecar code as
+`/opt/orbit-agent.before-f668385`, installed the binary and the new sidecar code, and started `orbit` (ready
+13:33:11), then `orbit-agent`. The old executable is `/usr/local/bin/orbit-4eb9a16`; the new one is also kept as
+`/usr/local/bin/orbit-f668385`. Pushed `main`. Then `sudo deploy/donna-sandbox/setup.sh` (installed bubblewrap,
+ffmpeg, imagemagick, ghostscript, poppler-utils and libimage-exiftool-perl; needrestart deferred the restarts of
+docker, jean-server, dbus and systemd-logind, not done) and `systemctl restart orbit-agent` (13:33:41).
+`vm-health` (`/root/ops/vm-health.conf`): `PROD_TAG=f668385`, `ROLLBACK_TAG=4eb9a16`,
+`ROLLBACK_BACKUP=01a1c082-e2b9-7515-a956-d7c5cc81b6bf`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` active, no restarts; readiness
+(all checks); `/orbit-build.json` revision `f6683850`; schema 86; live quick-check and foreign-key checks pass; web `/`
+200; sidecar `/health` `{"ok":true,"mock":false}` and `/opt/orbit-agent/src` equal to `apps/agent/src` of
+`f6683850`; `/run/orbit-donna/sandbox.sock` (root:orbit-agent, 0660), `orbit-donna.socket` active, `orbit-agent` has
+`AGENT_SANDBOX_SOCKET`; no log errors (only the known rmcp origin warning and the node SQLite warning).
+**Real-model check on production:** the same way as the 4eb9a16 check (a temporary UUID v7 session row for
+ddusi@wellrox.com, 2 h expiry, revoked by `POST /api/v1/auth/logout` (204) after the check; headless Chromium through
+`socat` on 127.0.0.1:8443). In the Donna DM:
+- "look at the Drive image wellrox-pushup-challenge-story-1.png …" (message `01a1c084-d5ae-740a-92ff-d20710555e79`):
+  "A blush-pink Wellrox push-up challenge giveaway graphic with the logo at the top. It advertises a full 4-band
+  premium fabric set for one random winner, with entry closing August 23 at 12 PM ET. The bottom displays
+  challenge.wellrox.com, plus eligibility and entry details." with the status "Looking at 1 image(s)"; the sandbox made
+  one `/work` image in `/var/lib/orbit-donna/work`.
+- "which Orbit version runs here, and what is new?" (message `01a1c085-34f7-7149-a278-570ea8dc8a69`): "Orbit runs
+  f668385, deployed November 9, 2026", then the 4 lines of the new entry.
+
+Only console error: the known service worker 400. Screenshots:
+`/root/.local/share/com.jean.desktop/pasted-images/donna-media-prod-image.png` and `donna-media-prod-version.png`.
+**Not** verified: a video or scanned PDF on production, a media edit saved to Drive, the icon picker in the browser,
+and the phone app.
+
+Rollback (same schema 86: the old binary reads it, no restore needed). To go back to `4eb9a16`:
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-4eb9a16 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-f668385 /opt/orbit-agent
+sudo deploy/donna-sandbox/setup.sh --uninstall   # from a checkout that has it; removes the sandbox and its /work data
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Data back to 13:32 UTC, only if needed (work after it is lost), with both services stopped:
+# sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-4eb9a16 backup verify 01a1c082-e2b9-7515-a956-d7c5cc81b6bf && /usr/local/bin/orbit-4eb9a16 backup restore 01a1c082-e2b9-7515-a956-d7c5cc81b6bf'
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-f668385.tgz
+```
+
+After this rollback, set `PROD_TAG=4eb9a16`, `ROLLBACK_TAG=b1ad159`,
+`ROLLBACK_BACKUP=01a1bfde-6379-76a0-921b-f55b526c059a` in `/root/ops/vm-health.conf`. To turn off only the sandbox
+and keep f668385: `sudo deploy/donna-sandbox/setup.sh --uninstall && sudo systemctl restart orbit-agent` (Donna then
+has no media tools).
 
 ### November 9, 2026 upgrade: the phone top bar stays visible on the chat list (schema 86, web only)
 
