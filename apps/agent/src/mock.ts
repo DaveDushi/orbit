@@ -85,6 +85,11 @@ function lastCall(messages: readonly Message[], names: readonly string[]): { nam
 	return undefined;
 }
 
+/** The newest message from a person, without the sender's time that starts it (`clockLine`). */
+function newestInstruction(messages: readonly Message[]): string {
+	return textOf(messages[lastUser(messages)]?.content).replace(/^\[[^\]\n]*\]\n/, "");
+}
+
 /** The newest user message's index. */
 function lastUser(messages: readonly Message[]): number {
 	return messages.findLastIndex((message) => message.role === "user");
@@ -211,7 +216,7 @@ export function respond(messages: readonly Message[], modelId = "mock", thinking
 			return fauxAssistantMessage(fauxToolCall("memory_summarize", { scope: due[1], block: due[2], text: Buffer.from(summary).subarray(0, 270).toString() }), { stopReason: "toolUse" });
 		}
 		if (last.toolName === "read_chat_file") {
-			const instruction = textOf(messages[lastUser(messages)]?.content);
+			const instruction = newestInstruction(messages);
 			const next = plan(instruction, messages);
 			if (next) return fauxAssistantMessage(fauxToolCall(next.name, next.args as JsonObject), { stopReason: "toolUse" });
 			const reads = messages.slice(lastUser(messages)).filter((message) => message.role === "toolResult" && message.toolName === "read_chat_file");
@@ -221,7 +226,7 @@ export function respond(messages: readonly Message[], modelId = "mock", thinking
 			});
 			return fauxAssistantMessage(fauxText(`Done (\`read_chat_file\` ×${reads.length}).\n\n${parts.join("\n\n")}`));
 		}
-		const instruction = textOf(messages[lastUser(messages)]?.content);
+		const instruction = newestInstruction(messages);
 		if (CARD_REQUEST.test(instruction) && last.toolName === "search_tasks" && !last.isError) {
 			return fauxAssistantMessage(fauxText(taskCard(textOf(last.content))));
 		}
@@ -229,7 +234,7 @@ export function respond(messages: readonly Message[], modelId = "mock", thinking
 		const short = result.length > 900 ? `${result.slice(0, 900)}…` : result;
 		return fauxAssistantMessage(fauxText(last.isError ? `I could not do that. ${short}` : `Done (${last.toolName}).\n\n\`\`\`\n${short}\n\`\`\``));
 	}
-	const instruction = textOf(messages.filter((message) => message.role === "user").at(-1)?.content);
+	const instruction = newestInstruction(messages);
 	if (/show a broken card/i.test(instruction)) {
 		return fauxAssistantMessage(fauxText(`Here is a card.\n\n\`\`\`spec\n{"op":"add","path":"/root","value":"x"}\n{"op":"add","path":"/elements/x","value":{"type":"Iframe","props":{}}}\n\`\`\``));
 	}

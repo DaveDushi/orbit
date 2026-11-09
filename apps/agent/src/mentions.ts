@@ -3,7 +3,8 @@
  * The model reads and writes `@Name` instead.
  */
 
-export type Person = { readonly id: string; readonly name: string };
+/** A workspace member; `timezone` is the IANA zone of their profile (absent from an older Orbit). */
+export type Person = { readonly id: string; readonly name: string; readonly timezone?: string | null };
 
 const USER_TOKEN = /<@([0-9a-f-]{36})>/gi;
 

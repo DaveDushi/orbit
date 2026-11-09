@@ -137,6 +137,10 @@ flow in pi-ai binds port 1455 and allows one login at a time, so we do not use i
 - **Delivery.** `GET /api/internal/agent/inputs` returns `bot_name`, and each input has `team_instructions`. The
   sidecar stores both in the thread's `orbit.thread` document when a run starts; the prompt sections read them from
   there, so they stay the same during a run (Pi resends only changed sections) and change with the next run.
+- **Current time.** Each message to the model starts with its sender's local time (`frame` → `clockLine`, e.g.
+  `[Mon 2026-11-09 10:03, Asia/Jerusalem]`), from the profile time zone that `GET /api/internal/agent/workspaces/{id}/people`
+  returns (cached 60 s); missing or unknown zone → UTC. The time is never in a prompt section: the system prompt must
+  stay byte-identical between runs, or the provider's prompt cache breaks. One fixed rule (`TIME_RULE`) explains it.
 - **Scope.** Agent sessions cannot reach `/api/v1/workspaces/{id}/agent` (denied segment) or `/api/v1/admin/agent`.
 - **Model.** An installation admin picks the conversation model and thinking level (one row, `agent_model_settings`;
   `null` = `AGENT_MODEL` and Pi's default). Orbit asks the sidecar (`GET /models`, shared secret) which ChatGPT models

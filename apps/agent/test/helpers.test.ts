@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { clockLine, frame } from "../src/agent.ts";
 import { blocksToMarkdown, markdownToBlocks } from "../src/blocks.ts";
 import { namesToTokens, splitBody, tokensToNames } from "../src/mentions.ts";
 import { plan } from "../src/mock.ts";
@@ -66,4 +67,17 @@ test("a tool call waits longer than Orbit's worst case for it; other requests ke
 	// Orbit: token, API call, new token and one retry, 30 seconds each, with no request timeout on this route.
 	assert.ok(requestTimeoutMs("/api/v1/workspaces/w/agent-tools/call") > 4 * 30_000);
 	assert.equal(requestTimeoutMs("/api/v1/workspaces/w/tasks"), 40_000);
+});
+
+test("each message starts with its sender's local time; a missing or unknown time zone gives UTC", () => {
+	const morning = new Date("2026-11-09T08:03:00Z");
+	assert.equal(clockLine("Asia/Jerusalem", morning), "[Mon 2026-11-09 10:03, Asia/Jerusalem]");
+	// 23:30 UTC is already the next day in Jerusalem.
+	const late = new Date("2026-11-09T23:30:00Z");
+	assert.equal(clockLine("Asia/Jerusalem", late), "[Tue 2026-11-10 01:30, Asia/Jerusalem]");
+	assert.equal(clockLine("Not/AZone", late), "[Mon 2026-11-09 23:30, UTC]");
+	assert.equal(clockLine(null, late), "[Mon 2026-11-09 23:30, UTC]");
+	assert.equal(clockLine("", late), "[Mon 2026-11-09 23:30, UTC]");
+	assert.equal(frame("instruction", "Ann", "Ann", "hi", "Asia/Jerusalem", morning), "[Mon 2026-11-09 10:03, Asia/Jerusalem]\nInstruction from Ann (the driver of this run):\nhi");
+	assert.equal(frame("action", "Ann", "Ann", "clicked", undefined, morning), "[Mon 2026-11-09 08:03, UTC]\nclicked");
 });

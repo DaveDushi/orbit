@@ -406,6 +406,32 @@ test("compaction: a conversation over the threshold is summarized by the compact
 	}
 });
 
+test("the system prompt is the same at any time: the time is only in the messages", async () => {
+	const orbit = new FakeOrbit();
+	current = orbit;
+	await orbit.listen();
+	let now = new Date("2026-11-09T08:03:00Z");
+	const agent = new Agent(config(orbit, mkdtempSync(join(tmpdir(), "agent-"))), new OrbitClient(config(orbit, "")), () => now);
+	await agent.open();
+	await agent.start();
+	try {
+		const prompts: string[] = [];
+		for (const at of ["2026-11-09T08:03:00Z", "2027-03-01T23:30:00Z"]) {
+			now = new Date(at);
+			const thread = id();
+			const input = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> show prompt` });
+			await until("the prompt", () => orbit.messages.has(`agent:${input}:1`));
+			await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
+			prompts.push(answerOf(orbit, input));
+		}
+		assert.match(prompts[0], /Each message starts with the current time of its sender/);
+		assert.equal(prompts[1], prompts[0]);
+	} finally {
+		await agent.stop();
+		orbit.server.close();
+	}
+});
+
 test("each run's prompt has the current name, then About Orbit, then the team instructions", async () => {
 	const orbit = new FakeOrbit();
 	current = orbit;
