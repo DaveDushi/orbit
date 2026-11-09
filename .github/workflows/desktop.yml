@@ -1,0 +1,145 @@
+name: Desktop
+
+# The Orbit desktop app (apps/desktop, GPUI): tests on Linux, a macOS .app/.dmg (ad-hoc signed,
+# not notarized) and a Windows zip (unsigned), plus `latest.json` for the app's update check.
+# Run by hand, or push a tag `desktop-v<version>` (macOS minutes cost 10×: no build on every push).
+on:
+  workflow_dispatch:
+    inputs:
+      server:
+        description: Server that hosts the downloads (latest.json links to <server>/downloads/desktop/)
+        default: https://orbit.wellrox.com
+  push:
+    tags: ["desktop-v*"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: apps/desktop
+
+env:
+  CARGO_TERM_COLOR: always
+  # The toolchain of apps/desktop/rust-toolchain.toml.
+  RUST_TOOLCHAIN: 1.99.1
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop
+      - name: Linux libraries (GPUI, the wry sign-in window, lavapipe for headless frames)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-x11-dev libx11-xcb-dev libwayland-dev libfontconfig-dev \
+            libwebkit2gtk-4.1-dev mesa-vulkan-drivers pkg-config
+      # `snap` adds the GPUI tests (key handling) to the unit tests.
+      - run: cargo test --workspace --features orbit-desktop/snap --locked
+      - name: Headless frame of the fixture app, and --check-gateway against the fake server
+        run: |
+          cargo build -p orbit-desktop --features snap --locked
+          target/debug/orbit-desktop --fixture fixtures/demo --snap thread.png --scene thread
+          scripts/check-gateway-smoke.sh target/debug/orbit-desktop
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux-frame
+          path: apps/desktop/thread.png
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop
+      - run: cargo build --release -p orbit-desktop --locked
+      - name: Orbit.app, ad-hoc signed, in a .dmg
+        run: |
+          version=$(cargo pkgid -p orbit-desktop | sed 's/.*[#@]//')
+          app=dist/Orbit.app
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp target/release/orbit-desktop "$app/Contents/MacOS/orbit-desktop"
+          sed "s/@VERSION@/$version/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
+          # Ad hoc: no paid Apple account. The first open needs right-click → Open.
+          codesign --force --deep --sign - "$app"
+          codesign --verify --verbose "$app"
+          ln -s /Applications dist/Applications
+          hdiutil create -volname Orbit -srcfolder dist -ov -format UDZO "Orbit-$version-macos-arm64.dmg"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: The packaged binary starts and runs --check-gateway
+        run: |
+          dist/Orbit.app/Contents/MacOS/orbit-desktop --version
+          scripts/check-gateway-smoke.sh dist/Orbit.app/Contents/MacOS/orbit-desktop
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-macos
+          path: apps/desktop/Orbit-${{ env.VERSION }}-macos-arm64.dmg
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop
+      - run: cargo build --release -p orbit-desktop --locked
+      - name: Orbit zip (unsigned; SmartScreen warns on first start)
+        shell: bash
+        run: |
+          version=$(cargo pkgid -p orbit-desktop | sed 's/.*[#@]//')
+          mkdir -p dist/Orbit
+          cp target/release/orbit-desktop.exe dist/Orbit/Orbit.exe
+          cp packaging/windows/README.txt dist/Orbit/
+          (cd dist && 7z a "../Orbit-$version-windows-x64.zip" Orbit)
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: The packaged binary starts and runs --check-gateway
+        shell: bash
+        run: |
+          dist/Orbit/Orbit.exe --version
+          PYTHON=python scripts/check-gateway-smoke.sh dist/Orbit/Orbit.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-windows
+          path: apps/desktop/Orbit-${{ env.VERSION }}-windows-x64.zip
+
+  # latest.json for the app's update check: copy it and the two files to the server's
+  # downloads/desktop/ folder (served by nginx, behind the gateway like the rest).
+  manifest:
+    needs: [macos, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: apps/desktop/artifacts
+      - name: latest.json
+        env:
+          SERVER: ${{ inputs.server || 'https://orbit.wellrox.com' }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          dmg=$(basename artifacts/desktop-macos/*.dmg)
+          zip=$(basename artifacts/desktop-windows/*.zip)
+          base="${SERVER%/}/downloads/desktop"
+          jq -n --arg v "$version" --arg mac "$base/$dmg" --arg win "$base/$zip" \
+            --arg mac_sha "$(sha256sum artifacts/desktop-macos/$dmg | cut -d' ' -f1)" \
+            --arg win_sha "$(sha256sum artifacts/desktop-windows/$zip | cut -d' ' -f1)" \
+            '{version: $v, notes: "", macos: $mac, windows: $win, sha256: {macos: $mac_sha, windows: $win_sha}}' > latest.json
+          cat latest.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-latest-json
+          path: apps/desktop/latest.json
