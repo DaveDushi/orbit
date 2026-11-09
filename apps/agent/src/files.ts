@@ -32,9 +32,9 @@ export function fileReadText(content: FileContent, offset: number): string {
 	if (file.version !== undefined) Object.assign(about, { version: file.version, can_write: file.can_edit });
 	if (content.sheets.length) Object.assign(about, { sheets: content.sheets, sheet: content.sheet });
 	if (file.kind === "image" || file.kind === "other") {
-		return `${JSON.stringify(about)}\nThis kind of file has no text you can read (no images, no OCR). People can open or download it in Orbit.`;
+		return `${JSON.stringify(about)}\nThis kind of file has no text to read here. People can open or download it in Orbit.`;
 	}
-	if (content.no_text) return `${JSON.stringify(about)}\nNo text was found in this file. It may be a scan; there is no OCR, so you cannot read it.`;
+	if (content.no_text) return `${JSON.stringify(about)}\nNo text was found in this file. It may be a scan, which has no text to read here.`;
 	if (content.rows) {
 		const lines: string[] = [];
 		let size = 0;

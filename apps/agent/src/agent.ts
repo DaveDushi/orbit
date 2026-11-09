@@ -25,6 +25,7 @@ import { mockModels } from "./mock.ts";
 import { codexModels, PROVIDER, PeopleModels, routedModels } from "./models.ts";
 import { OrbitError, type OrbitClient, type PendingInput } from "./orbit.ts";
 import { DEFAULT_AGENT_NAME } from "./prompt.ts";
+import { Sandbox } from "./sandbox.ts";
 import { orbitExtension } from "./tools.ts";
 import { actionText, cardTitle, finalCard, liveCard, splitAnswer, uiBlock } from "./ui.ts";
 import type { UiSpec } from "./ui-catalog.ts";
@@ -89,6 +90,10 @@ const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
 	memory_summarize: () => "Summarizing memory",
 	memory_recall: (args) => `Searching memory for “${args.query}”`,
 	memory_zoom: () => "Reading older memory",
+	media_shell: () => "Running a media command",
+	work_from_drive: () => "Copying a Drive file to the sandbox",
+	view_image: (args) => `Looking at ${[...((args.paths as unknown[]) ?? []), ...((args.node_ids as unknown[]) ?? [])].length || "an"} image(s)`,
+	work_to_drive: (args) => `Saving “${String(args.name ?? args.path).replaceAll("_", " ")}” to Drive`,
 	// The steps are shown in italics, where `_` would start or end the emphasis.
 	use_integration: (args) => `Using ${String(args.tool).replace("__", " → ").replaceAll("_", " ")}`,
 };
@@ -114,7 +119,7 @@ class Progress {
 	apply(events: readonly AgentEvent[]): void {
 		for (const event of events) {
 			if (event.type === "tool_execution_start" && !event.parentToolCallId) {
-				this.steps.push((TOOL_LABELS[event.toolName] ?? (() => event.toolName))(event.args));
+				this.steps.push((TOOL_LABELS[event.toolName] ?? (() => event.toolName.replaceAll("_", " ")))(event.args));
 				this.#parts = [];
 				this.#card = null;
 			} else if (event.type === "message_start" || event.type === "snapshot") {
@@ -176,6 +181,9 @@ export class Agent {
 	choice: { model: string | null; thinking: string | null } = { model: null, thinking: null };
 	/** Pi provider session id → the person who pays for that conversation's requests. */
 	readonly #payers = new Map<string, string>();
+	/** The media sandbox, when AGENT_SANDBOX_SOCKET names one. */
+	readonly #sandbox: Sandbox | undefined;
+	#sandboxSweep: NodeJS.Timeout | undefined;
 	readonly #threads = new Map<string, ConversationId>();
 	readonly #watching = new Map<string, Promise<void>>();
 	readonly #running = new Map<string, string>();
@@ -191,6 +199,7 @@ export class Agent {
 		this.#orbit = orbit;
 		this.#now = now;
 		this.#people = new PeopleModels(orbit);
+		this.#sandbox = config.sandboxSocket ? new Sandbox(config.sandboxSocket) : undefined;
 	}
 
 	get people(): PeopleModels {
@@ -208,6 +217,7 @@ export class Agent {
 				maxToolCalls: this.#config.maxToolCallsPerRun,
 				botUserId: () => this.botUserId,
 				compactWith: this.#config.compactModel ? { model: this.#config.compactModel, thinking: this.#config.compactThinking } : undefined,
+				sandbox: this.#sandbox,
 			}),
 		);
 		let models: Models;
@@ -258,11 +268,19 @@ export class Agent {
 		// Payers are known before any resumed request is sent.
 		this.#harness.resume();
 		for (const [threadKey, conversationId] of resumed) this.#watch(threadKey, conversationId);
+		if (this.#sandbox) {
+			// Orbit threads have no end: a conversation's /work goes after a day (by default) without a run.
+			const sweep = () => void this.#sandbox?.gc(this.#config.sandboxIdleHours * 3600).catch((error: unknown) => console.warn("agent: cleaning the media sandbox failed", String(error)));
+			sweep();
+			this.#sandboxSweep = setInterval(sweep, 3_600_000);
+			this.#sandboxSweep.unref();
+		}
 		void this.#loop();
 	}
 
 	async stop(): Promise<void> {
 		this.#stopped = true;
+		clearInterval(this.#sandboxSweep);
 		await this.#harness?.close(context);
 	}
 

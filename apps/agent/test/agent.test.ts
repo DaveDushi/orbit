@@ -216,6 +216,8 @@ function config(orbit: FakeOrbit, dataDir: string, compactTokens = 250_000, comp
 		compactTokens,
 		compactModel,
 		compactThinking: "high",
+		sandboxSocket: undefined,
+		sandboxIdleHours: 24,
 	};
 }
 

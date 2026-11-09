@@ -8,6 +8,10 @@
 //! one approval for one run of exactly these arguments): `drive_trash` (restorable for 30 days)
 //! and `drive_share` (a public link without a password). The audit log keeps who approved them.
 //! There is no tool to delete forever, empty the trash, restore, or turn off a link.
+//!
+//! Four tools are for the agent's media sandbox only (`apps/agent/src/media.ts`), and the model never sees their URLs:
+//! `drive_fetch` signs a 5-minute download URL of a file the driver can see, and `drive_upload_begin`,
+//! `drive_upload_complete` and `drive_upload_cancel` save a result as a new file. A save never replaces a file.
 
 use axum::extract::{Extension, Path, State};
 use axum::http::{HeaderMap, Uri};
@@ -22,8 +26,11 @@ use super::integrations::{
     Approval, Approves, approve, canonical, driver, hash, invalid, require_running, unavailable,
 };
 use crate::audit::{self, AuditOutcome};
+use crate::drive::{DOWNLOAD_URL_LIFETIME, DriveService, StartUpload};
 use crate::mcp_drive::{self, Outcome};
-use crate::repositories::drive::{DriveError, DriveNodeDetail, DriveNodeKind};
+use crate::repositories::drive::{
+    DriveError, DriveNode, DriveNodeDetail, DriveNodeKind, OnConflict,
+};
 use crate::repositories::drive_shares::DriveShareRepository;
 use crate::task_routes::ApiError;
 
@@ -40,6 +47,17 @@ const TOOLS: [&str; 8] = [
     "drive_move",
     "drive_rename",
 ];
+
+/// The sandbox tools ([`media`]).
+const MEDIA_TOOLS: [&str; 4] = [
+    "drive_fetch",
+    "drive_upload_begin",
+    "drive_upload_complete",
+    "drive_upload_cancel",
+];
+
+/// The largest file the agent copies into its sandbox or saves from it.
+pub const MAX_MEDIA_BYTES: i64 = 1024 * 1024 * 1024;
 
 /// The Drive service, the file parser and the public origin of share links.
 #[derive(Clone)]
@@ -67,6 +85,30 @@ struct CallBody {
     /// The thread of the run: approvals belong to it.
     conversation_id: String,
     root_message_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FetchArgs {
+    node_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UploadArgs {
+    parent_id: Option<String>,
+    name: String,
+    size: i64,
+    mime: Option<String>,
+    /// `fail` (default) or `rename`; never `replace`.
+    #[serde(default)]
+    on_conflict: OnConflict,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UploadIdArgs {
+    upload_id: String,
 }
 
 #[derive(Deserialize)]
@@ -158,6 +200,9 @@ async fn call(
         return Ok(refused(
             "A text file cannot replace a file; use another name or on_conflict rename.",
         ));
+    }
+    if MEDIA_TOOLS.contains(&tool) {
+        return Ok(media(&drive.service, (workspace_id, user), tool, &body.arguments).await);
     }
     if TOOLS.contains(&tool) {
         return Ok(
@@ -298,6 +343,152 @@ async fn call(
     )
     .await;
     Ok(answer(outcome))
+}
+
+/// What the sandbox needs of a file: never member ids.
+fn file_view(node: &DriveNode) -> Value {
+    json!({ "id": node.id, "name": node.name, "size": node.size, "mime": node.mime, "parent_id": node.parent_id })
+}
+
+/// The sandbox tools, as the driver: only files that the driver can see go in, and results come out only as new
+/// files.
+async fn media(
+    drive: &DriveService,
+    (workspace_id, user): (Id, Id),
+    tool: &str,
+    arguments: &Map<String, Value>,
+) -> Json<Value> {
+    let raw = Value::Object(arguments.clone());
+    let ok = |label: &str, value: Value| answer(Outcome::Data(label.to_owned(), value));
+    match tool {
+        "drive_fetch" => {
+            let Ok(args) = serde_json::from_value::<FetchArgs>(raw) else {
+                return refused("Give only node_id.");
+            };
+            let Ok(node_id) = args.node_id.parse::<Id>() else {
+                return answer(DriveError::NotFound.into());
+            };
+            let detail = match drive.repository().node(workspace_id, user, node_id).await {
+                Ok(detail) => detail,
+                Err(error) => return answer(error.into()),
+            };
+            if detail.node.kind != DriveNodeKind::File {
+                return answer(DriveError::NotAFolder.into());
+            }
+            if detail.node.size.unwrap_or(0) > MAX_MEDIA_BYTES {
+                return refused("The file is larger than 1 GiB.");
+            }
+            match drive
+                .download_urls(workspace_id, user, &[node_id], true)
+                .await
+            {
+                Ok(urls) => match urls.into_iter().next() {
+                    Some((_, url)) => ok(
+                        "drive:fetch",
+                        json!({
+                            "file": file_view(&detail.node),
+                            "url": url,
+                            "expires_in_seconds": DOWNLOAD_URL_LIFETIME.as_secs(),
+                        }),
+                    ),
+                    None => answer(DriveError::NotFound.into()),
+                },
+                Err(error) => answer(error.into()),
+            }
+        }
+        "drive_upload_begin" => {
+            let Ok(args) = serde_json::from_value::<UploadArgs>(raw) else {
+                return refused("Give name, size, and optionally parent_id, mime and on_conflict.");
+            };
+            if args.on_conflict == OnConflict::Replace {
+                return refused(
+                    "A saved file never replaces a file; use on_conflict fail or rename.",
+                );
+            }
+            if !(0..=MAX_MEDIA_BYTES).contains(&args.size) {
+                return refused("The file is larger than 1 GiB.");
+            }
+            let parent_id = match args.parent_id.as_deref().map(str::parse::<Id>).transpose() {
+                Ok(parent_id) => parent_id,
+                Err(_) => return answer(DriveError::NotFound.into()),
+            };
+            let mime = args
+                .mime
+                .map(|mime| mime.trim().to_ascii_lowercase())
+                .filter(|mime| crate::drive_routes::valid_mime(mime))
+                .unwrap_or_else(|| "application/octet-stream".to_owned());
+            let started = match drive
+                .start_upload(
+                    workspace_id,
+                    user,
+                    StartUpload {
+                        parent_id,
+                        name: args.name,
+                        size: args.size,
+                        mime,
+                        on_conflict: args.on_conflict,
+                    },
+                    TimestampMillis::now(),
+                )
+                .await
+            {
+                Ok(started) => started,
+                Err(error) => return answer(error.into()),
+            };
+            let upload = started.upload;
+            let numbers = (1..=u32::try_from(upload.part_count()).unwrap_or(0)).collect::<Vec<_>>();
+            let parts = if upload.multipart() {
+                match drive
+                    .part_urls(workspace_id, user, upload.id, &numbers)
+                    .await
+                {
+                    Ok(parts) => parts,
+                    Err(error) => {
+                        let _ = drive
+                            .cancel_upload(workspace_id, user, upload.id, TimestampMillis::now())
+                            .await;
+                        return answer(error.into());
+                    }
+                }
+            } else {
+                Vec::new()
+            };
+            ok(
+                "drive:upload",
+                json!({
+                    "upload_id": upload.id,
+                    "url": started.url,
+                    "part_size": upload.part_size,
+                    "parts": parts.into_iter().map(|(number, url)| json!({ "number": number, "url": url })).collect::<Vec<_>>(),
+                }),
+            )
+        }
+        _ => {
+            let Ok(args) = serde_json::from_value::<UploadIdArgs>(raw) else {
+                return refused("Give only upload_id.");
+            };
+            let Ok(upload_id) = args.upload_id.parse::<Id>() else {
+                return answer(DriveError::NotFound.into());
+            };
+            let now = TimestampMillis::now();
+            if tool == "drive_upload_cancel" {
+                return match drive
+                    .cancel_upload(workspace_id, user, upload_id, now)
+                    .await
+                {
+                    Ok(()) => ok("drive:upload", json!({ "cancelled": upload_id })),
+                    Err(error) => answer(error.into()),
+                };
+            }
+            match drive
+                .complete_upload(workspace_id, user, upload_id, now)
+                .await
+            {
+                Ok(node) => ok("drive:upload", json!({ "created": file_view(&node) })),
+                Err(error) => answer(error.into()),
+            }
+        }
+    }
 }
 
 /// The audit line of an approved action: what ran, and the approval of whom.

@@ -18,6 +18,9 @@
  *   show my open tasks as a table (searches tasks, then answers with text and a ```spec card: table row by row, bar
  *     chart by status, buttons and a "New task" form; sending that form creates the task)
  *   show a broken card (answers with a card that is not in the catalog)
+ *   edit video "clip.mp4" and image "photo.jpg" (media tools: finds both in Drive, copies the video to the sandbox,
+ *     makes a contact sheet, looks at it and at the Drive image, trims and scales the video, halves the image, saves
+ *     both as new Drive files, then reports what reached it, image blocks included)
  * AGENT_MOCK_TOKENS_PER_SECOND slows the streamed text (default 400), to watch a card build.
  *
  * A "yes" to an approval question (an answer, or the driver's next message in a DM) calls the last integration,
@@ -106,6 +109,63 @@ function unreadFiles(instruction: string, messages: readonly Message[]): string[
 			.map((part) => part.arguments?.file_id),
 	);
 	return ids.filter((id) => !read.has(id));
+}
+
+const MEDIA_REQUEST = /edit video "([^"]+)" and image "([^"]+)"/i;
+
+/** The tool results of this run, oldest first. */
+function runResults(messages: readonly Message[]): Message[] {
+	return messages.slice(lastUser(messages)).filter((message) => message.role === "toolResult");
+}
+
+/** The next step of the media demo (MEDIA_REQUEST), or its final answer. */
+export function mediaStep(instruction: string, messages: readonly Message[]): { name: string; args: { [key: string]: unknown } } | { text: string } | undefined {
+	const match = MEDIA_REQUEST.exec(instruction);
+	if (!match) return undefined;
+	const [, video, image] = match;
+	const results = runResults(messages);
+	const failed = results.find((result) => result.isError);
+	if (failed) return { text: `I could not finish (${failed.toolName}): ${textOf(failed.content).slice(0, 600)}` };
+	const idIn = (result: Message | undefined) => /"id":\s*"([0-9a-f-]{36})"/.exec(textOf(result?.content))?.[1];
+	const stem = (name: string) => name.replace(/\.[^.]+$/, "");
+	const quoted = (name: string) => `'${name.replaceAll("'", "'\\''")}'`;
+	switch (results.length) {
+		case 0:
+			return { name: "drive_search", args: { query: video } };
+		case 1:
+			return { name: "drive_search", args: { query: image } };
+		case 2:
+			return { name: "work_from_drive", args: { node_id: idIn(results[0]) } };
+		case 3:
+			return {
+				name: "media_shell",
+				args: { command: `ffprobe -v error -show_entries format=duration:stream=codec_type,width,height -of compact ${quoted(video)}; ffmpeg -v error -i ${quoted(video)} -vf "fps=1,scale=320:-2,tile=3x2" -frames:v 1 -y sheet.jpg` },
+			};
+		case 4:
+			return { name: "view_image", args: { paths: ["sheet.jpg"], node_ids: [idIn(results[1])] } };
+		case 5:
+			return { name: "work_from_drive", args: { node_id: idIn(results[1]) } };
+		case 6:
+			return {
+				name: "media_shell",
+				args: {
+					command: `ffmpeg -v error -ss 1 -t 3 -i ${quoted(video)} -vf scale=640:-2 -c:v libx264 -preset veryfast -an -y trimmed.mp4 && convert ${quoted(image)} -resize 50% small.jpg && identify -format "%f %wx%h\\n" small.jpg && ffprobe -v error -show_entries format=duration -of csv=p=0 trimmed.mp4`,
+				},
+			};
+		case 7:
+			return { name: "work_to_drive", args: { path: "trimmed.mp4", name: `${stem(video)} (trimmed, 640px).mp4`, on_conflict: "rename" } };
+		case 8:
+			return { name: "work_to_drive", args: { path: "small.jpg", name: `${stem(image)} (half size).jpg`, on_conflict: "rename" } };
+		default: {
+			const seen = (results[4]?.content as { type?: string; mimeType?: string; data?: string }[] | undefined)?.filter((part) => part.type === "image") ?? [];
+			const sizes = [...textOf(results[4]?.content).matchAll(/"width": (\d+),\s*"height": (\d+)/g)].map((size) => `${size[1]}×${size[2]}`);
+			const saved = [results[7], results[8]].map((result) => /"name":\s*"([^"]+)"/.exec(textOf(result?.content))?.[1] ?? "?");
+			const probe = textOf(results[3]?.content).match(/duration=([\d.]+)/)?.[1];
+			return {
+				text: `(mock model) I received ${seen.length} images (${seen.map((part) => `${part.mimeType}, ${Math.round(((part.data?.length ?? 0) * 3) / 4 / 1024)} KiB`).join("; ")}): a contact sheet of the ${probe ? `${Number(probe).toFixed(1)} s ` : ""}video and the photo (originals ${sizes.join(" and ")}).\n\nSaved as new Drive files: **${saved[0]}** (seconds 1 to 4, 640 px wide, no sound) and **${saved[1]}**.`,
+			};
+		}
+	}
 }
 
 const CARD_REQUEST = /show (?:me )?(?:my )?(?:open )?tasks as a (?:table|card|chart)/i;
@@ -227,6 +287,8 @@ export function respond(messages: readonly Message[], modelId = "mock", thinking
 			return fauxAssistantMessage(fauxText(`Done (\`read_chat_file\` ×${reads.length}).\n\n${parts.join("\n\n")}`));
 		}
 		const instruction = newestInstruction(messages);
+		const media = mediaStep(instruction, messages);
+		if (media) return "text" in media ? fauxAssistantMessage(fauxText(media.text)) : fauxAssistantMessage(fauxToolCall(media.name, media.args as JsonObject), { stopReason: "toolUse" });
 		if (CARD_REQUEST.test(instruction) && last.toolName === "search_tasks" && !last.isError) {
 			return fauxAssistantMessage(fauxText(taskCard(textOf(last.content))));
 		}
@@ -249,6 +311,8 @@ export function respond(messages: readonly Message[], modelId = "mock", thinking
 		const found = memoryLines(messages).filter((line) => line.toLowerCase().includes(asked[1].toLowerCase()));
 		return fauxAssistantMessage(fauxText(found.length ? `From memory:\n${found.join("\n")}` : `I remember nothing about “${asked[1]}”.`));
 	}
+	const media = mediaStep(instruction, messages);
+	if (media && "name" in media) return fauxAssistantMessage(fauxToolCall(media.name, media.args as JsonObject), { stopReason: "toolUse" });
 	const call = plan(instruction, messages);
 	if (!call) return fauxAssistantMessage(fauxText(`(mock model) I read: ${instruction.slice(0, 300)}`));
 	return fauxAssistantMessage(fauxToolCall(call.name, call.args as JsonObject), { stopReason: "toolUse" });

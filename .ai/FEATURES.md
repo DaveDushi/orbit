@@ -508,6 +508,10 @@ turns its routes, navigation and shortcuts off.
   route takes it. A click goes through the same actions route: on the agent's message
   `ChatRepository::queue_agent_action` writes an `agent_inputs` row of kind `action` with an id of its own and no chat
   message (5 per card in 30 min); `GET …/messages/{id}/actions` lists the reader's sends, so the card shows "Sent".
+- The team agent's media tools (`docs/agent.md`, `apps/agent/src/media.ts`), only with `AGENT_SANDBOX_SOCKET`: bash
+  with ffmpeg, ImageMagick, gs, poppler and exiftool in a per-conversation `/work` (bubblewrap as `donna-sandbox`, no
+  network, 2 GiB disk image; setup `deploy/donna-sandbox/setup.sh`), images from `/work` or Drive sent to the model as
+  image blocks, Drive files in only as the driver (`drive_fetch`) and out only as new files (`drive_upload_*`).
 - Custom emoji belong to the workspace (Workspace Settings > Emoji, owners and admins): `:name:` stays
   text in the body and in reactions and becomes the image when it is shown.
 - Stickers belong to the workspace too (Workspace Settings > Stickers, owners and admins; 512 KiB, 100 for

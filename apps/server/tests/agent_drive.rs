@@ -552,3 +552,191 @@ async fn the_agent_cannot_skip_the_approval_or_reach_another_workspace() {
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+/// The bytes behind a signed URL, as the sidecar reads them.
+async fn get_bytes(url: &str) -> Vec<u8> {
+    let response = reqwest::get(url).await.unwrap();
+    assert!(response.status().is_success(), "{}", response.status());
+    response.bytes().await.unwrap().to_vec()
+}
+
+#[tokio::test]
+async fn the_media_sandbox_gets_only_files_the_driver_sees_and_saves_only_new_files() {
+    let fixture = Fixture::new().await;
+    let bea = fixture.add_member("bea").await;
+    let report = fixture.file("report.txt").await;
+    let run = fixture.run(&bea).await;
+
+    // In: a short-lived URL of a file the driver can see.
+    let fetched = fixture
+        .drive(&run, "drive_fetch", json!({ "node_id": report }))
+        .await;
+    assert_eq!(fetched["status"], "ok", "{fetched}");
+    assert_eq!(fetched["result"]["file"]["name"], "report.txt");
+    assert!(fetched["result"]["file"].get("created_by").is_none());
+    assert_eq!(
+        get_bytes(fetched["result"]["url"].as_str().unwrap()).await,
+        b"Quarterly numbers"
+    );
+    // Not a folder, not a file of a workspace the driver is not in, and only the node id.
+    let folder = fixture
+        .drive(&run, "drive_create_folder", json!({ "name": "Clips" }))
+        .await;
+    let folder_id = folder["result"]["created"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let other = WorkspaceRepository::new((*fixture.database).clone())
+        .create(
+            fixture.owner.id,
+            "Other".into(),
+            "test",
+            TimestampMillis::now(),
+        )
+        .await
+        .unwrap();
+    let foreign = fixture
+        .drive
+        .put_text(
+            other.id,
+            fixture.owner.id,
+            None,
+            "secret.txt".to_owned(),
+            "text/plain".to_owned(),
+            "secret".to_owned(),
+            OnConflict::Fail,
+            TimestampMillis::now(),
+        )
+        .await
+        .unwrap()
+        .id
+        .to_string();
+    for node in [&folder_id, &foreign, &Id::new_v7().to_string()] {
+        let answer = fixture
+            .drive(&run, "drive_fetch", json!({ "node_id": node }))
+            .await;
+        assert_eq!(answer["status"], "failed", "{answer}");
+        assert!(answer.get("result").is_none());
+    }
+    let extra = fixture
+        .drive(
+            &run,
+            "drive_fetch",
+            json!({ "node_id": report, "inline": false }),
+        )
+        .await;
+    assert_eq!(extra["status"], "refused", "{extra}");
+
+    // Out: never over a file. A used name fails, `replace` is refused, and `rename` makes a new file.
+    let taken = fixture
+        .drive(
+            &run,
+            "drive_upload_begin",
+            json!({ "name": "report.txt", "size": 5, "mime": "text/plain" }),
+        )
+        .await;
+    assert_eq!(taken["status"], "failed", "{taken}");
+    let replace = fixture
+        .drive(
+            &run,
+            "drive_upload_begin",
+            json!({ "name": "report.txt", "size": 5, "on_conflict": "replace" }),
+        )
+        .await;
+    assert_eq!(replace["status"], "refused", "{replace}");
+    let huge = fixture
+        .drive(
+            &run,
+            "drive_upload_begin",
+            json!({ "name": "huge.mp4", "size": 2_i64 * 1024 * 1024 * 1024 }),
+        )
+        .await;
+    assert_eq!(huge["status"], "refused", "{huge}");
+    let begun = fixture
+        .drive(
+            &run,
+            "drive_upload_begin",
+            json!({ "name": "report.txt", "size": 5, "mime": "text/plain", "on_conflict": "rename", "parent_id": null }),
+        )
+        .await;
+    assert_eq!(begun["status"], "ok", "{begun}");
+    let upload_id = begun["result"]["upload_id"].as_str().unwrap().to_owned();
+    // Another member cannot finish it.
+    let owner_run = fixture.run(&fixture.owner).await;
+    let stolen = fixture
+        .drive(
+            &owner_run,
+            "drive_upload_complete",
+            json!({ "upload_id": upload_id }),
+        )
+        .await;
+    assert_eq!(stolen["status"], "failed", "{stolen}");
+    // Nothing uploaded yet: it does not complete.
+    let early = fixture
+        .drive(
+            &run,
+            "drive_upload_complete",
+            json!({ "upload_id": upload_id }),
+        )
+        .await;
+    assert_eq!(early["status"], "failed", "{early}");
+    let put = reqwest::Client::new()
+        .put(begun["result"]["url"].as_str().unwrap())
+        .body("hello")
+        .send()
+        .await
+        .unwrap();
+    assert!(put.status().is_success());
+    let done = fixture
+        .drive(
+            &run,
+            "drive_upload_complete",
+            json!({ "upload_id": upload_id }),
+        )
+        .await;
+    assert_eq!(done["status"], "ok", "{done}");
+    assert_eq!(done["result"]["created"]["name"], "report (2).txt");
+    let new_id = done["result"]["created"]["id"].as_str().unwrap().to_owned();
+    assert_ne!(new_id, report);
+    let new_file = fixture
+        .drive(&run, "drive_fetch", json!({ "node_id": new_id }))
+        .await;
+    assert_eq!(
+        get_bytes(new_file["result"]["url"].as_str().unwrap()).await,
+        b"hello"
+    );
+    let old_file = fixture
+        .drive(&run, "drive_fetch", json!({ "node_id": report }))
+        .await;
+    assert_eq!(
+        get_bytes(old_file["result"]["url"].as_str().unwrap()).await,
+        b"Quarterly numbers",
+        "the old file is unchanged"
+    );
+    assert!(!fixture.trashed(&report).await);
+
+    // A cancelled upload leaves nothing.
+    let cancelled = fixture
+        .drive(
+            &run,
+            "drive_upload_begin",
+            json!({ "name": "cut.mp4", "size": 5, "parent_id": folder_id }),
+        )
+        .await;
+    let cancelled_id = cancelled["result"]["upload_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let answer = fixture
+        .drive(
+            &run,
+            "drive_upload_cancel",
+            json!({ "upload_id": cancelled_id }),
+        )
+        .await;
+    assert_eq!(answer["status"], "ok", "{answer}");
+    let listed = fixture
+        .drive(&run, "drive_list", json!({ "folder_id": folder_id }))
+        .await;
+    assert_eq!(listed["result"]["items"], json!([]), "{listed}");
+}

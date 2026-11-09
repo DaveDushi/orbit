@@ -13,7 +13,7 @@ import type { ToolExecutionApi, ToolExecutionResult } from "@earendil-works/pi-d
 import { ThreadDoc, type ThreadState } from "./docs.ts";
 import type { OrbitClient } from "./orbit.ts";
 
-type As = (method: string, path: string, body?: unknown) => Promise<any>;
+export type As = (method: string, path: string, body?: unknown) => Promise<any>;
 
 export type IntegrationTool = {
 	/** `<slug>__<tool>`. */

@@ -15,8 +15,8 @@ reasons: `.ai/agent-design.md`.
 - Each person pays with **their own ChatGPT account** (Plus or Pro). They connect it in **Account settings → AI
   agent** with a device code, so it works on a remote server.
 - It reads files on Docs pages (`read_file`: spreadsheets, csv, tsv, text, PDF, Word, in parts) and changes csv, tsv and
-  text files and cells of xlsx files (`write_file`; formula cells are read-only). It cannot change xls or PDF files, and
-  it has no OCR for scans. File content is
+  text files and cells of xlsx files (`write_file`; formula cells are read-only). It cannot change xls or PDF files,
+  and `read_file` finds no text in scans (with the media sandbox it looks at the pages of a scan in Drive). File content is
   data and never instructions. A write needs the version the agent read, is recorded with the driver's name, and keeps
   the old version, which a person can restore in the file panel.
 - It reads files that people send in chat messages (`read_chat_file`: the same file types and paging as `read_file`,
@@ -32,6 +32,23 @@ reasons: `.ai/agent-design.md`.
   only after the driver's **yes** in the thread, checked by Orbit as for integration writes (table
   `agent_drive_approvals`: one approval is one run of exactly those arguments, and expires). The audit log has
   `agent_drive.approved_action` with who approved. It cannot delete forever, empty the trash, restore, or turn off links.
+- With the **media sandbox** (`AGENT_SANDBOX_SOCKET`, set up by `deploy/donna-sandbox/setup.sh`) it works with images,
+  video and scanned PDFs: `media_shell` runs bash with ffmpeg, ffprobe, ImageMagick, ghostscript, poppler and exiftool
+  in the conversation's `/work`; `work_from_drive` copies a Drive file there; `view_image` sends images from `/work` or
+  Drive to the model as image blocks (at most 4 per call, at most 2048 px, converted in the sandbox); `work_to_drive` saves
+  a file as a **new** Drive file. It chooses video frames itself (scene changes, chosen times, contact sheets) and renders
+  scan pages to images. It cannot hear audio. Drive bytes move through `/agent-tools/drive` tools only the sidecar uses
+  (`drive_fetch`: a 5-minute download URL of a file the driver can see; `drive_upload_begin` with `fail` or `rename`,
+  never `replace`; `drive_upload_complete`, `drive_upload_cancel`), at most 1 GiB per file; the model never sees the URLs.
+  Each run is a systemd service instance (`orbit-donna@.service`, started by `orbit-donna.socket`): a root broker
+  (`deploy/donna-sandbox/broker.py`) mounts the conversation's disk image (a sparse ext4 file of 2 GiB: the hard quota
+  of `/work`) in the instance's private mount namespace, then runs bash as the user `donna-sandbox` in bubblewrap with
+  an empty environment, every namespace unshared (no network), a read-only system (`/usr` and a few `/etc` files; no
+  `/opt`, `/root`, `/home`, `/run`, `/var` or `/usr/local`) and only `/work` and a private `/tmp` writable. Limits: 2 CPUs
+  and 2 GiB per run (3 GiB for all runs, `orbit-donna.slice`), 256 tasks, the call's time limit (at most 10 minutes)
+  and 15 minutes per instance. The agent never opens a `/work` file itself: files go in and out through `cat` in a run.
+  A conversation's `/work` is deleted after `AGENT_SANDBOX_IDLE_HOURS` without a run. Escape tests:
+  `apps/agent/test/sandbox.test.ts` against a test copy (`AGENT_SANDBOX_TEST_SOCKET`).
 - It can answer with **one card**: a table, a bar or line chart, a task list, a short form or buttons, built from a
   fixed catalog (`apps/agent/src/ui-catalog.ts`, json-render 0.22.0, catalog version 1). The model writes its text
   answer, then the card in json-render's inline format: a ```spec fence of JSONL lines, each an RFC 6902 patch
@@ -195,6 +212,8 @@ it calls Orbit back. Both sides share one secret.
 | `AGENT_COMPACT_TOKENS` | `250000` | Tokens of context at which a conversation (a thread, or the main list of a DM with the agent) is summarized in the background; a request waits for the summary 20000 tokens above. Applies to each model whose own Pi threshold is higher. `0` keeps Pi's defaults. Older entries stay in `pi.sqlite`. |
 | `AGENT_COMPACT_MODEL` | `gpt-6-luna` | The ChatGPT (Codex) model that writes compaction summaries, paid by the driver like the run. Empty: the conversation's model. When the old part of the conversation does not fit this model's window (with 30000 tokens for thinking and the summary) or its request fails, the conversation's model writes the summary. |
 | `AGENT_COMPACT_THINKING` | `high` | Thinking level for the compaction summary: `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. |
+| `AGENT_SANDBOX_SOCKET` | none | The media sandbox's socket, for example `/run/orbit-donna/sandbox.sock`. Without it the agent has no media tools. `setup.sh` sets it in a drop-in of `orbit-agent.service`. |
+| `AGENT_SANDBOX_IDLE_HOURS` | `24` | A conversation's `/work` is deleted after this many hours without a run (checked every hour). |
 | `AGENT_MOCK` | off | `1`: a scripted model and a fake ChatGPT sign-in, for tests without OpenAI. Never in production. |
 
 | Orbit test setting | Meaning |
@@ -216,6 +235,14 @@ sudo systemctl enable --now orbit-agent && sudo systemctl restart orbit
 ```
 
 `ORBIT_TRUSTED_PROXIES` must contain `127.0.0.1/32` (it does when a local nginx or Caddy is the proxy).
+
+The media sandbox (optional; root, idempotent, also installs the packages it needs):
+
+```bash
+sudo deploy/donna-sandbox/setup.sh && sudo systemctl restart orbit-agent
+```
+
+The Docker Compose agent has no media sandbox.
 
 ### Docker Compose
 

@@ -13,7 +13,8 @@ import { fileReadText, READ_CHARS, untrusted, type FileContent } from "./files.t
 import { askForApproval, type Driver } from "./integrations.ts";
 import type { OrbitClient } from "./orbit.ts";
 
-type Answer =
+/** What `/agent-tools/drive` answers. */
+export type DriveAnswer =
 	| { status: "ok"; label: string; result: Record<string, unknown> }
 	| { status: "approval_required"; approval_id: string; action: string; expires_at: number }
 	| { status: "refused" | "failed"; detail: string };
@@ -48,7 +49,7 @@ export function driveTools(asDriver: Driver, orbit: () => OrbitClient) {
 					arguments: Object.fromEntries(Object.entries(args).filter(([, value]) => value !== undefined)),
 					conversation_id: state.conversationId,
 					root_message_id: state.rootMessageId,
-				})) as Answer;
+				})) as DriveAnswer;
 				switch (answer.status) {
 					case "ok":
 						return { output: [{ type: "text", text: untrusted(answer.label, format ? format(answer.result) : answer.result) }] };

@@ -13,9 +13,12 @@ export const DEFAULT_AGENT_NAME = "Orbit Agent";
 export const TIME_RULE =
 	"- Each message starts with the current time of its sender, in their time zone: [weekday YYYY-MM-DD HH:MM, time zone]. Use it for today, tomorrow, next week and due dates, and write the real date in your answer.";
 
-/** What Orbit is and how people use it, for "how do I…" questions. True for this version: keep it in step with the app. */
-export function aboutOrbit(name: string): string {
-	return `About Orbit (built in; use it to answer questions about Orbit itself):
+/**
+ * What Orbit is and how people use it, for "how do I…" questions. True for this version: keep it in step with the app.
+ * `media`: this server has the media sandbox (`AGENT_SANDBOX_SOCKET`).
+ */
+export function aboutOrbit(name: string, media = false): string {
+	const about = `About Orbit (built in; use it to answer questions about Orbit itself):
 
 Orbit is a self-hosted workspace for teams: tasks, Docs pages, Drive files and chat in one web app, on the team's own server. A person can be in several workspaces. Each member has a role: Owner, Admin or Member. Owners and admins manage members, invitations and workspace settings.
 
@@ -35,7 +38,7 @@ Drive
 - Click a file to preview it: images, videos, audio and PDFs. Search the whole drive by name, type and date.
 - Trashed files and folders stay in Drive's trash for 30 days and can be restored.
 - Share → public link for a file or folder, for anyone who has it (no Orbit account): /s/<token>, with an optional expiry date and password. The link shows only once; it can be revoked.
-
+${media ? `- Ask ${name} about images, videos and scanned PDFs in Drive: ${name} looks at them (frames of a video, pages of a scan), can edit them (for example trim or shrink a video, crop, resize or convert an image, extract frames) and saves the result as a new Drive file. ${name} cannot hear sound.\n` : ""}
 Chat
 - Public and private channels, direct messages (1:1 and group), threads, reactions, pins, files, search, custom emoji and stickers.
 - @Name notifies a person, @channel and @here notify a channel, #channel links a channel. Unreads and Threads views; each person sets how a conversation notifies them.
@@ -63,6 +66,9 @@ How do I…
 
 What you can do: show a table, chart, task list, form or buttons card with an answer (it builds live while you write it); search, read, create and update tasks (title, description, status, priority, assignees, due date) and comment on them; list projects and members; list, search, read, create and update Docs pages; read the files on Docs pages (spreadsheets, csv, text, PDF, Word) and change csv, tsv and text files and cells of xlsx files; read and search chat messages, and read the files sent in them (spreadsheets, csv, text, PDF, Word); list, search and read Drive files, and create folders, save text files, move and rename in Drive, and move items to the Drive trash or make a public link only after the driver's yes; ask a teammate in this thread; remember facts in team or private memory and recall them; use the integration tools (services outside Orbit) that workspace owners and admins set up, listed for each run, where writes need the driver's yes.
 What you cannot do: change xls or PDF files or formula cells; read text from scanned PDFs or images; change, upload or delete chat files; delete anything forever or empty the Drive trash (people delete memories in Account settings → Agentic); change members, roles, invitations, settings, API tokens or integrations; post outside this thread; send mail; use the internet other than through those integration tools, run code or read files on a computer; see anything the driver cannot see.`;
+	if (!media) return about;
+	return `${about}
+Media: this server gives you a media sandbox, so you can also copy Drive files into it, run ffmpeg, ImageMagick, ghostscript, poppler and exiftool there (no network), look at images, video frames and scanned PDF pages from Drive, and save results as new Drive files. Code runs only there. You still cannot hear audio, look at images sent in chat or on Docs pages, or replace a Drive file.`;
 }
 
 const TEAM_TAG = "team-instructions";
