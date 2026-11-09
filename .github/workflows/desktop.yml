@@ -1,7 +1,8 @@
 name: Desktop
 
-# The Orbit desktop app (apps/desktop, GPUI): tests on Linux, a macOS .app/.dmg (ad-hoc signed,
-# not notarized) and a Windows zip (unsigned), plus `latest.json` for the app's update check.
+# The Orbit desktop app (apps/desktop: the server's web UI in a wry window, with a tray, notifications
+# and an unread badge): tests on Linux, a Windows zip (unsigned, the main target) and a macOS
+# .app/.dmg (ad-hoc signed, not notarized), plus `latest.json` for the app's update check.
 # Run by hand, or push a tag `desktop-v<version>` (macOS minutes cost 10×: no build on every push).
 on:
   workflow_dispatch:
@@ -36,22 +37,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop
-      - name: Linux libraries (GPUI, the wry sign-in window, lavapipe for headless frames)
+      - name: Linux libraries (wry's WebKitGTK, the tray's appindicator)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-x11-dev libx11-xcb-dev libwayland-dev libfontconfig-dev \
-            libwebkit2gtk-4.1-dev mesa-vulkan-drivers pkg-config
-      # `snap` adds the GPUI tests (key handling) to the unit tests.
-      - run: cargo test --workspace --features orbit-desktop/snap --locked
-      - name: Headless frame of the fixture app, and --check-gateway against the fake server
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev pkg-config
+      - run: cargo test --workspace --locked
+      - name: --check-gateway against the fake server
         run: |
-          cargo build -p orbit-desktop --features snap --locked
-          target/debug/orbit-desktop --fixture fixtures/demo --snap thread.png --scene thread
+          cargo build -p orbit-desktop --locked
           scripts/check-gateway-smoke.sh target/debug/orbit-desktop
-      - uses: actions/upload-artifact@v4
-        with:
-          name: desktop-linux-frame
-          path: apps/desktop/thread.png
 
   macos:
     runs-on: macos-14

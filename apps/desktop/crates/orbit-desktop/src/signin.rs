@@ -139,7 +139,7 @@ fn finish(server: &ServerUrl, outcome: HandOff) -> ! {
 }
 
 /// `<data dir>/orbit-desktop/gateway/<host_port>`.
-fn data_dir(server: &ServerUrl) -> Option<PathBuf> {
+pub fn data_dir(server: &ServerUrl) -> Option<PathBuf> {
     let name: String = server.origin().split_once("://").map_or("", |(_, rest)| rest)
         .chars().map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' }).collect();
     Some(dirs::data_dir()?.join("orbit-desktop").join("gateway").join(name))

@@ -1,39 +1,32 @@
 [package]
 name = "orbit-desktop"
-description = "The Orbit desktop app (GPUI + gpui-component)."
+description = "The Orbit desktop app: the server's web UI in a native window (wry), with a tray, notifications and an unread badge."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
 
-[features]
-# `--snap`: headless PNGs through GPUI's offscreen renderer (Linux: lavapipe). Off in packaged builds.
-snap = ["gpui-kit/test-support", "dep:image"]
-
 [dependencies]
 orbit-client = { path = "../orbit-client" }
-gpui-kit.workspace = true
-async-channel.workspace = true
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-# PNG output of `--snap` (GPUI hands back an `image::RgbaImage`).
-image = { version = "0.25", default-features = false, features = ["png"], optional = true }
-# The gateway sign-in window (`--gateway-signin`), a separate process: tao and GPUI both
-# want the main thread. Linux needs libwebkit2gtk-4.1-dev to build.
+# The main window and the gateway sign-in window: a system web view (WebView2, WKWebView,
+# WebKitGTK). Linux needs libwebkit2gtk-4.1-dev to build.
 wry = "0.57"
 tao = "0.37"
-# Session token and gateway cookies: macOS Keychain, Windows Credential Manager, Secret Service.
-keyring = { version = "3.6", default-features = false }
+# The tray icon and its menu. Linux loads libayatana-appindicator3 (or libappindicator3) at run time.
+tray-icon = "0.26"
+# OS notifications: D-Bus on Linux, NSUserNotification on macOS, toasts on Windows.
+notify-rust = "4.19"
+# Decodes the embedded app icon.
+image = { version = "0.25", default-features = false, features = ["png"] }
 dirs = "6"
 rpassword = "7"
+# External links in the default browser (ShellExecute, `open`, `xdg-open`).
+open = "5"
 serde.workspace = true
 serde_json.workspace = true
 
-[target.'cfg(target_os = "macos")'.dependencies]
-keyring = { version = "3.6", default-features = false, features = ["apple-native"] }
+[dev-dependencies]
+tempfile.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
-# The packaged app is a GUI program without a console; command-line uses attach to the caller's.
-windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-keyring = { version = "3.6", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
+# The console of command-line uses, and the "Start with Windows" entry in the registry.
+windows-sys = { version = "0.61", features = ["Win32_System_Console", "Win32_System_Registry", "Win32_Foundation"] }

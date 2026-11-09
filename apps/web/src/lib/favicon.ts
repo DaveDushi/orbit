@@ -20,4 +20,13 @@ export function useUnreadFavicon(unreadCount: number) {
     setFavicon(href)
     return () => setFavicon(FAVICON)
   }, [href])
+  // The same count on the app icon (the Badging API): the Orbit desktop app's taskbar or dock badge, and an
+  // installed web app's icon. Browsers without it, or a plain tab, ignore it.
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('setAppBadge' in navigator)) return
+    navigator.setAppBadge(unreadCount).catch(() => {})
+    return () => {
+      navigator.clearAppBadge().catch(() => {})
+    }
+  }, [unreadCount])
 }

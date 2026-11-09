@@ -1,119 +1,120 @@
-# Orbit desktop (GPUI) — sign-in, chat read/write, live sockets, packaging
+# Orbit desktop: the Orbit web UI in a native window
 
-Design: `/root/orbit-designs/desktop-rune.md` (UI switched from Rune to GPUI on 2026-11-09, see its note).
+The app shows the team's real Orbit web UI (the server's own pages) in a system web view, and adds what a
+browser tab cannot do well: a tray icon, OS notifications, an unread badge on the taskbar or Dock icon,
+downloads to the Downloads folder, links to other sites in the default browser, and "Start with Windows".
+Windows is the main target, macOS second. Design history: `/root/orbit-designs/desktop-rune.md` (native
+Rune, then GPUI chat screens until 2026-11-09; both are gone, see git history before this change).
+
 This is its own Cargo workspace, excluded from the root one: it has its own `rust-toolchain.toml` (1.99.1;
 Orbit pins 1.97.1), `Cargo.lock` and `target/`.
 
 | Crate | What |
 |---|---|
-| `orbit-client` | `/api/v1` types, the HTTP client (`api.rs`: gateway cookies, Orbit login/2FA/logout, browser mode, chat reads and writes, error classes), the gateway cookie hand-off (`cookies.rs`), the workspace sockets (`live.rs` rules and chat events, `socket.rs` threads), backoff, the fixture backend, the update check (`update.rs`), the contract test against `packages/api/src/generated/openapi.json`. No UI, no async runtime. |
-| `orbit-store` | The local SQLite file (0600, deleted on sign-out): the outbox. |
-| `orbit-desktop` | The GPUI app: `state.rs` (everything the app shows, no UI, unit-tested), `app.rs` (the GPUI entity, text fields, network jobs on threads, the channel into the UI), `view.rs` (rendering), `snap.rs` (headless PNGs), the gateway sign-in window (`signin.rs`, tao + wry), the keychain (`keychain.rs`), the risk-4b check (`check.rs`). |
+| `orbit-desktop` | The app. `shell.rs`: the main window (tao + wry), tray (`tray-icon`), notifications (`notify-rust`), badge, downloads. `bridge.rs` + `assets/bridge.js`: the script the web view runs on the server's pages and the messages it sends. `route.rs`: links and download names. `settings.rs`: server, autostart flag, window place. `autostart.rs`: the OS entries. `signin.rs` + `check.rs`: the gateway sign-in window and `--check-gateway`. |
+| `orbit-client` | `/api/v1` types, the blocking HTTP client and sockets, the gateway rules, the hand-off of gateway cookies (`cookies.rs`), the update check (`update.rs`), the fixture backend and the contract test against `packages/api/src/generated/openapi.json`. The app uses `update.rs` and the server address rules; `--check-gateway` uses the rest. |
 
-**UI stack.** GPUI (Zed's UI framework) with gpui-component (Longbridge), through their facade crate
-`gpui-kit`, pinned to one git rev (`39ab849a`, tag v0.9.1, 2026-11-09) in `Cargo.toml`. That rev pins GPUI
-to the exact crates.io snapshot `gpui-pre =0.3.12`; `Cargo.lock` records it. Bump the rev on purpose
-only, in its own commit, starting from gpui-kit's own `Cargo.lock` at the new tag (its tree has exact
-pins such as `taffy =0.15.0` that an older lock breaks). Used components: `MessageScroller` (virtual,
-variable-height message list that follows the newest message), `TextView::markdown` (message bodies),
-`Input` / `Textarea` (sign-in fields, composer), `Button`, `Avatar`, `Theme` (light/dark from the system).
+## How it works
+
+- **Server.** The first start shows a small start page that asks for the server (`orbit.example.com`;
+  `http://` only for this computer). Tray → Change server… shows it again. The choice is in
+  `<config dir>/orbit-desktop/settings.json` (with the autostart flag and the window place; no secrets).
+- **Sign-in.** The window loads the server. With an exe.dev gateway in front, the gateway's sign-in shows in
+  the window, then Orbit's own sign-in page, like in a browser. The web view keeps its cookies in one profile
+  per server (`<data dir>/orbit-desktop/gateway/<host>`, the same one the `--gateway-signin` window uses), so
+  the person stays signed in after a restart. Nothing goes to the OS keychain: the web view's profile is the
+  only copy (WebView2 encrypts its cookies with DPAPI; WebKit keeps them in its own store).
+- **Bridge (no Orbit change needed).** `assets/bridge.js` runs before the page's scripts, on the server's own
+  pages only (not on the gateway's `/__exe.dev/` pages, not in frames), and posts JSON through `window.ipc`.
+  The app reads only the shapes in `bridge.rs`, clipped, and only from the server's pages.
+  - Notifications: `Notification` and `ServiceWorkerRegistration.showNotification` become OS notifications;
+    the permission reads "granted". Orbit's live socket already sends its `notify` signal to every open tab,
+    and the web app shows it when its window is not in front (`apps/web/src/features/realtime/notify.ts`).
+    So the app notifies for what the person's Orbit notification settings allow (DMs, mentions, threads),
+    while it runs, also hidden in the tray. A click (Linux; see open items) brings the window up and opens the
+    message, the way the web app's own click does.
+  - Unread badge: `navigator.setAppBadge` (the Badging API). The web app calls it with the same count as its
+    favicon dot (`apps/web/src/lib/favicon.ts`, ships with the next web deploy). Until a server has that, the
+    badge counts the notifications that came while the window was not in front, until it comes to the front.
+    Windows: a red dot overlay on the taskbar button; macOS: the Dock badge; Linux: the Unity launcher count
+    where there is one. The tray icon gets a red dot and its tooltip says the count.
+  - Links: a click on a link to another site goes to the default browser; `target="_blank"` and `window.open`
+    too (`route.rs`). `mailto:` and `tel:` go to their OS apps; `javascript:`, `file:` and others do nothing.
+  - Update check: the page reads `/downloads/desktop/latest.json` with its own gateway cookies; when that
+    version is newer, a notification says so and the tray gets "Download Orbit x.y.z" (opens the browser).
+- **Downloads.** Every download goes to the Downloads folder (the home folder when there is none), with
+  " (2)", " (3)" … when the name is taken; a notification says where. No save dialog.
+- **Window and tray.** Closing the window hides it to the tray; tray → Quit Orbit ends the app. A left click on
+  the tray icon (Windows) or Open Orbit shows the window. The window's place, size and maximized state are
+  saved on close and quit, and come back at the next start if they still fit on a monitor.
+- **Start with Windows** (macOS: Open at login; Linux: Start at login): a check item in the tray menu, off
+  by default. On, it writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\Orbit` (macOS:
+  `~/Library/LaunchAgents/com.wellrox.orbit.plist`; Linux: `~/.config/autostart/orbit-desktop.desktop`)
+  with `--hidden`, so the app starts in the tray. Each start writes it again while on (a moved app still starts).
 
 ## Commands
 
 On the shared VM, run every build through `orbit-build` (see the root `AGENTS.md`), debug only. Linux needs
-`libxkbcommon-x11-dev`, `libx11-xcb-dev`, `libwayland-dev`, `libfontconfig-dev` (GPUI),
-`libwebkit2gtk-4.1-dev` and `pkg-config` (the sign-in window, wry), and `mesa-vulkan-drivers` (lavapipe) to
-render headless or under Xvfb.
+`libwebkit2gtk-4.1-dev` and `pkg-config` to build, and `libayatana-appindicator3-1` (or `libappindicator3-1`)
+at run time for the tray. Windows needs the WebView2 runtime (Windows 10 and 11 have it).
 
 ```bash
 cd apps/desktop
-CARGO_INCREMENTAL=0 orbit-build cargo test --workspace --features orbit-desktop/snap   # state, parsing, gateway, contract, outbox, GPUI keys
-CARGO_INCREMENTAL=0 orbit-build cargo build -p orbit-desktop --features snap
-target/debug/orbit-desktop --fixture fixtures/demo                                     # a window, synthetic data
-target/debug/orbit-desktop --fixture fixtures/demo --snap out.png --scene thread --theme dark   # headless PNG
-target/debug/orbit-desktop                                  # the real app (server → gateway window → sign-in)
+CARGO_INCREMENTAL=0 orbit-build cargo test --workspace     # bridge, routes, settings, autostart, gateway, contract
+CARGO_INCREMENTAL=0 orbit-build cargo build -p orbit-desktop
+target/debug/orbit-desktop                                  # the app (start page the first time)
+target/debug/orbit-desktop --hidden                         # in the tray only
 target/debug/orbit-desktop --check-gateway https://orbit.wellrox.com   # risk 4b, needs a person (below)
 python3 -I scripts/fake-gateway.py PORT PASSWORD_FILE [forward|strip|reject|keepcookie|nogateway]  # local E2E server
 scripts/check-gateway-smoke.sh target/debug/orbit-desktop   # --check-gateway end to end on the fake server
 ```
 
-Fixtures hold synthetic data only. Never put real users, messages or tokens in fixtures or goldens.
-
-Scenes for `--snap` (feature `snap`, with `--fixture fixtures/demo`): `shell`, `signed-out`, `login-error`,
-`channel`, `markdown`, `thread`, `composer`, `sent`, `send-failed`, `editing`, `empty-error`, `live`,
-`reconnecting`, `browser-mode`, `stopped`, `update`.
-
-## Chat (2026-11-09)
-
-- **Read.** The sidebar (channels, then DMs; unread and mention badges; muted ones grey), the open
-  conversation's newest 100 messages in a `MessageScroller` (Markdown bodies, mention tokens shown as
-  names, reactions, "edited", join/leave/pin rows, local times), and the thread panel (root, replies,
-  its own reply field). Times show in the computer's time zone.
-- **Write.** Enter sends, Shift+Enter adds a line. A message shows at once as "Sending…" with a nonce
-  (`desk-…`); the server's copy replaces it by that nonce, also when the live socket echoes it first. A
-  failed send stays with "Not sent: <why>" and "Retry", which sends again with the same nonce (the server
-  posts it at most once). Edit: hover your message → Edit, or Up in an empty composer; Enter saves, Esc
-  cancels. Empty and too-long (over 4,000 characters) messages are refused before sending.
-- **Live.** Chat events (`message.created/updated/deleted`, `conversation.changed/removed`,
-  `state.changed`) change the lists in place, without a refetch; `resync` and `resync_required` refetch
-  the sidebar and the open lists. The status line shows each socket: connected, connecting, "reconnecting in
-  N s" (backoff 1, 2, 4 … 30 s plus jitter), or stopped (no access, update the app).
-- **Browser mode (risk 4b fallback, no server change).** When the gateway is in the way of the bearer
-  session, the app sends the same session token as Orbit's session cookie with `Origin: <server>`, like a
-  browser on the server's own origin. It switches on its own when (a) the sign-in gets `403
-  origin_forbidden` (the proxy passes its cookie: the app signs in again with `Origin`), or (b) the first
-  call after a fresh sign-in gets the gateway's `401` or Orbit's `401` (the proxy read or stripped
-  `Authorization`). The sidebar then says "Browser mode"; the choice is saved with the session.
-- **Updates.** After sign-in the app reads `<server>/downloads/desktop/latest.json`; when its version is
-  newer, a bar offers "Download" (opens the browser). No file (404) means no bar.
-- **Not done yet:** attachments, reactions (adding), mentions picker, delete, older pages (scroll-up),
-  typing and presence, notifications, badges, the offline outbox in the UI, workspace switcher.
+**Local check under Xvfb (2026-11-09, Linux only).** A private Orbit (`/usr/local/bin/orbit seed` + `serve`
+on a fresh SQLite file in `/tmp`, port 18990, seed users only), Xvfb, `dbus-launch`, `stalonetray` (tray
+host), `dunst` (notifications), `xdotool`: sign-in in the window, chat, tray menu, autostart on (entry
+written), a DM from the second seed user → OS notification and a red dot on the tray icon, notification click →
+the DM opens in the window, external link → `xdg-open`, two audit-log CSV exports → `orbit-audit.csv` and
+`orbit-audit (2).csv`, window moved → Quit → same place at the next start, start page refuses `http://` to
+another host, `--hidden` shows no window.
 
 ## Packaging (`.github/workflows/desktop.yml`)
 
-Run by hand (Actions → Desktop → Run workflow) or push a tag `desktop-v<version>`. Jobs: Linux tests and a
-headless frame; macOS (`macos-14`, arm64) release build → `Orbit.app` (ad-hoc signed, `codesign -s -`) in
-`Orbit-<version>-macos-arm64.dmg`; Windows release build (GUI program, no console) → `Orbit.exe` in
-`Orbit-<version>-windows-x64.zip` (unsigned). Both packages run `--version` and
+Run by hand (Actions → Desktop → Run workflow) or push a tag `desktop-v<version>`. Jobs: Linux tests and the
+`--check-gateway` smoke run; Windows release build (GUI program, no console) → `Orbit.exe` in
+`Orbit-<version>-windows-x64.zip` (unsigned); macOS (`macos-14`, arm64) release build → `Orbit.app` (ad-hoc
+signed, `codesign -s -`) in `Orbit-<version>-macos-arm64.dmg`. Both packages run `--version` and
 `scripts/check-gateway-smoke.sh` (the packaged `--check-gateway` against the fake server). The `manifest`
 job writes `latest.json` (version, both URLs under `<server>/downloads/desktop/`, sha256). Publishing is by
 hand: copy the three files to the server's `downloads/desktop/` folder (an nginx static location, a deploy
 step outside this folder).
 
+- **Windows SmartScreen:** the exe is not signed, so on the first start Windows says "Windows protected your
+  PC". Click **More info**, then **Run anyway**. Only a code-signing certificate removes this warning.
+  `--check-gateway` in the package: `start /wait Orbit.exe --check-gateway https://orbit.wellrox.com` in a
+  Command Prompt.
 - macOS: first open needs right-click → Open (no notarization). `--check-gateway` in the package:
   `/Applications/Orbit.app/Contents/MacOS/orbit-desktop --check-gateway https://orbit.wellrox.com`.
-- Windows: SmartScreen warns on first start (More info → Run anyway). `--check-gateway`:
-  `start /wait Orbit.exe --check-gateway https://orbit.wellrox.com` in a Command Prompt.
 
-## M1: sign-in and sockets (2026-11-09)
+## Open items
 
-**Sign-in (decision D1 = G2).** The app asks for the server, probes `GET /api/v1/setup/status`, and when the
-exe.dev gateway answers `307` to `/__exe.dev/login` it runs itself as `orbit-desktop --gateway-signin <server>`:
-a tao + wry window (a separate process, because GPUI's event loop owns the main thread) that loads the probe, shows
-the gateway's sign-in, and when a page of the server's own origin finishes loading, writes the server's cookies
-(`cookies_for_url`) as one JSON line to its stdout pipe (`orbit_client::cookies`, refuses a terminal). Each
-server has its own web view data dir on Linux and Windows; macOS uses the default WebKit store. Then Orbit's
-own sign-in: `POST /api/v1/auth/login` (+ `/login/two-factor`) without `Origin`, the token from the body,
-`Authorization: Bearer` on every request and socket upgrade. Gateway cookies and the session are JSON entries
-in the OS keychain (`keyring`: Keychain, Credential Manager, Secret Service), one per server; secrets are
-`Secret`s (redacted `Debug`/`Display`) and never go in a URL or a log.
+- **Tested on Linux only** (WebKitGTK under Xvfb). Windows and macOS build in CI, but nobody has run the
+  window, tray, toasts, overlay badge, Dock badge, autostart entry or WebView2 downloads on a real machine.
+- **Windows toasts** show "Windows PowerShell" as their source and a click does nothing: notify-rust needs a
+  registered AppUserModelID (a Start-menu shortcut from an installer). macOS: a click also does nothing.
+- **No installer**: a zip, so no Start-menu entry and no exe icon in Explorer (the window and tray have the icon).
+- **One instance**: a second start opens a second window and tray icon.
+- **Gateway cookie lifetime**: when the exe.dev cookie expires, the gateway's sign-in shows in the window again.
 
-**Who refused** (`api::classify_response`): gateway `307` → open the sign-in window again; gateway `401` (with
-`WWW-Authenticate: Bearer`) → same; Orbit `401` problem+json → sign in to Orbit again; `409 contract_mismatch`
-→ update the app; anything else → an error line.
+## The gateway sign-in window and `--check-gateway`
 
-**Sockets** (`orbit-client/src/socket.rs`): one thread per socket, blocking `tungstenite` with rustls (ring).
-`/live` resumes with `?epoch=&after=` (`LiveCursor`, same rules as `apps/mobile/src/data/live.ts`), `/events`
-with `?after=`; `resync` / `resync_required` refetch. Close `4401` → signed out, `4403` → no access (both stop);
-`1012`, drops and other codes reconnect after 1×, 2×, 4× … 30× 1 s plus up to 50 % jitter; the delays start
-again only after a connection held 10 s. A refused upgrade is classified like HTTP (gateway 307/401 stop and
-reopen the sign-in window). Silence over 60 s counts as lost.
-
-**Local end-to-end** (Xvfb, WebKitGTK, synthetic data): `scripts/fake-gateway.py` is a fake gateway (307 to a
-fake sign-in page that sets a cookie) in front of a fake Orbit that applies Orbit's origin rule. With it the
-real app went server → sign-in window → Orbit sign-in → sidebar → both sockets connected → server down
-(reconnecting) → server back with new cookies (window reopened, "session ended") → sign-out. `--check-gateway`
-gives the right verdict in all four modes and always revokes its test session.
+`--check-gateway` signs in natively (bearer session) to answer risk 4b. When the server answers `307` to
+`/__exe.dev/login` it runs `orbit-desktop --gateway-signin <server>`: a tao + wry window that loads the probe,
+shows the gateway's sign-in, and when a page of the server's own origin finishes loading, writes the server's
+cookies (`cookies_for_url`) as one JSON line to its stdout pipe (`orbit_client::cookies`, refuses a terminal).
+Then Orbit's own sign-in: `POST /api/v1/auth/login` (+ `/login/two-factor`) without `Origin`, the token from
+the body, `Authorization: Bearer` on every request and socket upgrade; secrets are `Secret`s (redacted
+`Debug`/`Display`) and never go in a URL or a log. Sockets: `orbit-client/src/socket.rs` (one thread per
+socket, blocking `tungstenite` with rustls/ring, backoff 1 … 30 s plus jitter, close `4401`/`4403` stop).
 
 ### Risk 4b: does the gateway pass `Authorization: Bearer` (and leave Orbit's origin rule alone)?
 
@@ -136,7 +137,7 @@ terminal. GETs only, plus one sign-in and one sign-out; it prints no secret and 
 | `COOKIE FORWARDED` | Sign-in got `403 origin_forbidden`: the proxy passes its own cookie to Orbit, and Orbit refuses a request without `Origin` that has any cookie (`crates/platform/src/http/security.rs:112-127`). |
 
 Options if it is not `FORWARDED` (none changes the server in M1; the user decides):
-1. **Browser mode, no server change** (built in the app since 2026-11-09, see "Chat" above; it switches on by itself): send `Origin: <server>` and use Orbit's own session cookie
+1. **Browser mode, no server change** (the web-view app since 2026-11-09 is this by nature: a browser on the server's own origin): send `Origin: <server>` and use Orbit's own session cookie
    (`__Host-orbit_session`, taken from the sign-in's `Set-Cookie`) instead of the bearer. Orbit accepts it as
    a browser session from its own origin; it fixes all three failures if the proxy forwards cookies.
 2. **Small server change:** read the native session from a second header the proxy leaves alone (for example
@@ -168,7 +169,7 @@ the secrets in memory only, so it asks again after a restart.
 `apps/server/src/repositories/chat/messages.rs:251-286` (`send_message` returns the first message for a repeated
 `(conversation, author, nonce)`), `sent_before` at `:923`, unique index `chat_messages_nonce`
 (`apps/server/migrations/0037_chat.sql:136`, Postgres `0046_baseline.sql:2173`), test
-`apps/server/tests/chat_api.rs:425`. `orbit-store` gives each entry one nonce for its life and sends one head per
+`apps/server/tests/chat_api.rs:425`. The old native outbox (`orbit-store`, removed 2026-11-09) gave each entry one nonce for its life and sent one head per
 conversation.
 
 **Notifications (macOS, ad-hoc signed; found with Rune, before the switch to GPUI):** `rune-notify` posts only from a bundle (`mac.rs` `bundled()`: a bundle id

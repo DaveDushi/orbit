@@ -1,4 +1,4 @@
-# Its own toolchain (not Orbit's 1.97.1): GPUI snapshots follow recent stable Rust.
+# Its own toolchain (not Orbit's 1.97.1): the web view, tray and notification crates move with recent stable Rust.
 [toolchain]
 channel = "1.99.1"
 components = ["clippy", "rustfmt"]

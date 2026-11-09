@@ -195,3 +195,6 @@
 
 ## exe.dev gateway in front of production
 - The exe.dev proxy answers a request with no token with `307` to `/__exe.dev/login`, and a bad or expired token with `401 text/plain` + `WWW-Authenticate: Bearer, Basic` (Orbit's 401 is problem+json). It also reads a plain `Authorization: Bearer` as its own token, so a native client or script that sends only Orbit's bearer session gets the proxy's 401. Send the exe.dev token in `X-Exedev-Authorization` (2026-11-08, `apps/desktop/README.md`).
+
+## Desktop app (apps/desktop)
+- The desktop app is the web UI in a system web view (WebView2 / WKWebView / WebKitGTK). Its bridge (`apps/desktop/crates/orbit-desktop/assets/bridge.js`) replaces `Notification`, `ServiceWorkerRegistration.showNotification` and `navigator.setAppBadge`, and dispatches the worker's `orbit:navigate` message on a notification click. When you change how the web app notifies, badges or follows a notification click (`features/realtime/notify.ts`, `push.ts`, `lib/favicon.ts`), keep those calls or update the bridge (2026-11-09).
