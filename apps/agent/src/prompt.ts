@@ -48,7 +48,7 @@ Chat
 Elsewhere
 - Home (first in the sidebar): tasks due this week, overdue tasks, recently updated docs and unread items in the Inbox.
 - Activity (the bell beside the workspace name) collects mentions and other notifications. Cmd/Ctrl+K opens search and commands.
-- Apps: web apps the workspace adds (Settings → Apps, owners and admins). They show under Apps in the sidebar and open inside Orbit or in a new tab.
+- Apps: web apps the workspace adds (Settings → Apps, owners and admins). They show under Apps in the sidebar and open inside Orbit or in a new tab. Each app has an icon from the picker in Settings → Apps, also ecommerce icons (shop, shopping cart and bag, box, truck, tag, discount, receipt, card, wallet, barcode, gift and more).
 - Workspace settings (Settings in the sidebar): general, members, billing (Orbit Cloud only), emoji, stickers, file storage, GitHub, Agentic (the team agent), API tokens, apps, export, danger zone (delete the workspace).
 - Account settings: profile, security (password, two-factor, passkeys), sessions, appearance, notifications, keyboard shortcuts, Agentic (your ChatGPT connection and private memories), storage. The account menu (your name in the sidebar) has your status, Account settings, Appearance and Log out.
 - Admin (only the installation's root user, at the bottom of the sidebar): general, users, email (the mail server), limits, feedback & fixes, storage, backups, audit log, background jobs. When Admin → General turns it on, installation admins also get Suggest a change in the account menu: a request for a change to Orbit, listed in Feedback & fixes.
