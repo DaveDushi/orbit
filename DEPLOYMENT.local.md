@@ -4,12 +4,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 025fffe96c0a4442df673b4f3a5528576cc8351c
-  (upstream port, Drive sidebar and Donna's knowledge, schema 83, November 6, 2026).
+- Source: DaveDushi/orbit, `main` at 9f790ab389e784588fc81b7df750694bdeb03077
+  (Donna's interactive cards: live cards, hidden card clicks, phone cards, schema 86, November 9, 2026).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:025fffe`); fork commits have no published upstream image.
-- Image ID: sha256:d55b6176c56083450d0cea32f24c6019f9a347ec67f146ea8cff3c6dd00a2ac0
-- Team agent sidecar code (`/opt/orbit-agent`): commit 025fffe.
+  (`orbit:9f790ab`); fork commits have no published upstream image.
+- Image ID: sha256:533b28f8bff4a4c11dd31a8024c2acac46c26d678ce1796c808a81f6c8aef7cc
+- Team agent sidecar code (`/opt/orbit-agent`): commit 9f790ab.
 - OIDC gateway: `orbit-oidc-gateway.service`, nginx on `127.0.0.1:8400`, config in `/etc/orbit-oidc-gateway/`
   (see `docs/apps.md`). `cloudflared` is NOT installed.
 - Executable: /usr/local/bin/orbit; unprivileged system user: orbit.
@@ -236,6 +236,68 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 9, 2026 upgrade: Donna's interactive cards (schema 86)
+
+`main` fast-forwarded from `e202fd80` (production `0e1cbcc9`) to `9f790ab3` (`a8f75065`: Donna answers with
+interactive cards, `show_ui` and json-render; `9f790ab3`: live cards through SpecStream, card clicks without a chat
+message, native phone cards). Migrations `0085_agent_card_actions` (SQLite rebuilds `agent_inputs` for kind `action`)
+and `0086_agent_hidden_actions` (SQLite rebuilds `agent_inputs` again without the `chat_messages` foreign key; Postgres
+drops `agent_inputs_message_id_fkey`). No new `ORBIT_*` setting. The sidecar `package-lock.json` changed: the new
+sidecar has its own `npm ci --omit=dev` (55 modules, new `@json-render` and `zod`; this VM has no `npm` next to
+`/opt/orbit-node`, so it ran `/root/.local/node/lib/node_modules/npm/bin/npm-cli.js` with `/opt/orbit-node/bin/node`).
+`aboutOrbit()` in `apps/agent/src/prompt.ts` names the live cards, the clicks without a chat message, "Sent" and the
+phone cards.
+
+Checks before the switch: agent `tsc` and `node --test` (47 pass); SQLite and Postgres: `agent_api` (14), `app_smoke`
+(21), `openapi_contract` (19), orbit-platform `database` (23) and `backup` (49). (`app_smoke` first failed with
+`StaticAssets(RevisionMismatch)` because the worktree's `apps/web/dist` was an old build; a fresh web build fixed it,
+the image builds its own.) `orbit-deploy image` built `orbit:9f790ab` before the merge (label = the full commit) and
+reused it after the fast-forward; `deploy/smoke.sh` passed twice; `orbit config check` passed with the extracted
+binary. An early migration rehearsal on a hot copy gave the same result as the one below.
+
+At the switch: stopped `orbit-agent` and `orbit` at 08:55:22 UTC, created snapshot
+`01a1bf84-ed4d-762a-a81e-1338a01f24c6` with the old CLI and verified it, ran `migrate run` of the new binary on a copy
+in `/var/lib/orbit/rehearsal-9f790ab-switch-*` (2 applied, schema 86, quick-check ok, 0 foreign-key rows, counts
+unchanged: 6 users, 1 workspace, 3 projects, 65 tasks, 47 pages, 622 chat messages, 0 API tokens, 112 agent inputs
+(0 pending), 537 Drive nodes; deleted afterwards), saved the sidecar data as
+`/var/backups/orbit-agent/orbit-agent-before-9f790ab.tgz`, kept the old sidecar code as
+`/opt/orbit-agent.before-9f790ab`, installed the binary and the new sidecar code, and started `orbit` (ready
+08:55:28), then `orbit-agent`. The old executable is `/usr/local/bin/orbit-0e1cbcc`; the new one is also kept as
+`/usr/local/bin/orbit-9f790ab`. `vm-health` (`/root/ops/vm-health.conf`): `PROD_TAG=9f790ab`, `ROLLBACK_TAG=0e1cbcc`,
+`ROLLBACK_BACKUP=01a1bf84-ed4d-762a-a81e-1338a01f24c6`. Pushed `main`. Stopped the gen-UI test servers on
+127.0.0.1:18741/18742 and 18761/18762 (`/tmp/orbit-genui-e2e`, `/tmp/orbit-genui-v2` and their sidecars).
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` active, no restarts; readiness
+(all checks); `/orbit-build.json` revision `9f790ab`; schema 86; live quick-check and foreign-key checks pass; web `/`
+200; sidecar `/health` `{"ok":true,"mock":false}` and `/opt/orbit-agent/src` equal to `apps/agent/src` of `9f790ab3`;
+no log errors (only rmcp's known "allowed origin without a port"; nginx "connection refused" only during the 6 s
+restart). **Real-model card on production:** a temporary session row for ddusi@wellrox.com (inserted while Orbit was
+stopped, 2 h expiry, revoked by `POST /api/v1/auth/logout` after the check; a session id must be a UUID v7), headless
+Chromium through a local TLS hop (`socat` on 127.0.0.1:8443 to nginx, `X-Forwarded-Proto: https` added by the
+browser context). In the Donna DM (question message `01a1bf86-6aa9-753a-866b-264bcc542729`, 08:56:59) a short question gave a card "Production card check"
+that built live (`aria-busy`), with buttons "Works" and "Broken"; the click on "Works" showed "Sent", made one
+`agent_inputs` row of kind `action` with its own id (acked) and **no** chat message of the user, and Donna answered
+"Confirmed—cards and button replies work on production." "Sent" stays after a reload. No page errors (the one console
+400 is the service worker script, which does not get the test's added header; `/sw.js` is 200 through HTTPS).
+Screenshots: `/root/.local/share/com.jean.desktop/pasted-images/donna-gen-ui-prod-{1-card,2-sent,3-reply}.png`.
+**Not** verified: the phone app against production.
+
+Rollback (the old binary cannot read schema 86: restore the snapshot together with the binary; work after 08:55 UTC
+is lost, also chat messages). To go back to `0e1cbcc`:
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-0e1cbcc backup verify 01a1bf84-ed4d-762a-a81e-1338a01f24c6 && /usr/local/bin/orbit-0e1cbcc backup restore 01a1bf84-ed4d-762a-a81e-1338a01f24c6'
+sudo install -m 755 /usr/local/bin/orbit-0e1cbcc /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-9f790ab /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-9f790ab.tgz
+```
+
+Then set `PROD_TAG=0e1cbcc`, `ROLLBACK_TAG=025fffe`, `ROLLBACK_BACKUP=01a1b779-fdac-7724-b377-016a1385d2e4` in
+`/root/ops/vm-health.conf`.
 
 ### November 7, 2026 upgrade: wellrox-cloud import fix, Donna's Drive tools (schema 84), and the wellrox-cloud import
 
