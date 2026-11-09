@@ -4,12 +4,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 9f790ab389e784588fc81b7df750694bdeb03077
-  (Donna's interactive cards: live cards, hidden card clicks, phone cards, schema 86, November 9, 2026).
+- Source: DaveDushi/orbit, `main` at 4eb9a16edf3598b5f8ec9c0751cc25525321bd8b
+  (the phone top bar stays visible on the chat list, schema 86, November 9, 2026).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:9f790ab`); fork commits have no published upstream image.
-- Image ID: sha256:533b28f8bff4a4c11dd31a8024c2acac46c26d678ce1796c808a81f6c8aef7cc
-- Team agent sidecar code (`/opt/orbit-agent`): commit 9f790ab.
+  (`orbit:4eb9a16`); fork commits have no published upstream image.
+- Image ID: sha256:05a5a54bb7f32baf0df5614c442f92be2019094fd6f76daced706056a4ddfd6c
+- Team agent sidecar code (`/opt/orbit-agent`): commit b1ad159 (`apps/agent` has no change in 4eb9a16).
 - OIDC gateway: `orbit-oidc-gateway.service`, nginx on `127.0.0.1:8400`, config in `/etc/orbit-oidc-gateway/`
   (see `docs/apps.md`). `cloudflared` is NOT installed.
 - Executable: /usr/local/bin/orbit; unprivileged system user: orbit.
@@ -236,6 +236,53 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 9, 2026 upgrade: the phone top bar stays visible on the chat list (schema 86, web only)
+
+`main` merged `chat-topbar` (`13b5ba4e`, based on `39f7fdf0`) with merge commit `4eb9a16e` (`main` had `b1ad1597` and
+the docs commit `19812b2f`). Web only: `ChatPage.tsx` pulls the page up into the top safe area only on a conversation
+path (`isChatConversationPath`), and `ChatSidebar.tsx` drops its own top inset padding. No migration, no new
+`ORBIT_*` setting, no change in `apps/agent` (`/opt/orbit-agent/src` equal to `apps/agent/src`, so the sidecar code
+was not replaced), `aboutOrbit()` unchanged (bug fix).
+
+Checks before the switch: `orbit-deploy image` built `orbit:4eb9a16` in the background (label = the full merge
+commit); `deploy/smoke.sh` passed; `orbit config check` passed with the extracted binary.
+
+At the switch: stopped `orbit-agent` and `orbit` at 10:33:05 UTC, created snapshot
+`01a1bfde-6379-76a0-921b-f55b526c059a` with the old CLI (`/usr/local/bin/orbit-b1ad159`) and verified it, ran
+`migrate run` of the new binary on a copy in `/var/lib/orbit/rehearsal-4eb9a16-*` (0 applied, schema 86, quick-check
+ok, 0 foreign-key rows, counts unchanged: 6 users, 1 workspace, 3 projects, 65 tasks, 47 pages, 637 chat messages,
+122 agent inputs; deleted afterwards), saved the sidecar data as
+`/var/backups/orbit-agent/orbit-agent-before-4eb9a16.tgz`, installed the binary, and started `orbit` (ready 10:33:27),
+then `orbit-agent`. The old executable is `/usr/local/bin/orbit-b1ad159`; the new one is also kept as
+`/usr/local/bin/orbit-4eb9a16`. `vm-health` (`/root/ops/vm-health.conf`): `PROD_TAG=4eb9a16`,
+`ROLLBACK_TAG=b1ad159`, `ROLLBACK_BACKUP=01a1bfde-6379-76a0-921b-f55b526c059a`. Pushed `main`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` active, no restarts; readiness
+(all checks); `/orbit-build.json` revision `4eb9a16`; schema 86; live quick-check and foreign-key checks pass; web `/`
+200; sidecar `/health` `{"ok":true,"mock":false}`; no log errors (only the known rmcp origin warning and the node
+SQLite warning). **Phone web check on production:** no saved login, so a temporary UUID v7 session row for
+ddusi@wellrox.com (2 h expiry, inserted live with `busy_timeout`), revoked by `POST /api/v1/auth/logout` (204,
+`revoked_at` set) after the check; headless Chromium 390x844 through `socat` on 127.0.0.1:8443 with
+`Emulation.setSafeAreaInsetsOverride` top 47 px. `/chat`: the top bar (Wellrox, bell, avatar) is at 47-108 px, the
+chat page starts at 108 px. `/chat/unreads`: no top bar, the chat page fills 0-844 px. Only console error: the known
+service worker 400. Screenshots: `/root/.local/share/com.jean.desktop/pasted-images/chat-topbar-prod.png` and
+`chat-topbar-prod-conversation.png`. **Not** verified: the phone app.
+
+Rollback (same schema 86: the old binary reads it, no restore needed). To go back to `b1ad159`:
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-b1ad159 /usr/local/bin/orbit
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Data back to 10:33 UTC, only if needed (work after it is lost), with both services stopped:
+# sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-b1ad159 backup verify 01a1bfde-6379-76a0-921b-f55b526c059a && /usr/local/bin/orbit-b1ad159 backup restore 01a1bfde-6379-76a0-921b-f55b526c059a'
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-4eb9a16.tgz
+```
+
+Then set `PROD_TAG=b1ad159`, `ROLLBACK_TAG=9f790ab`, `ROLLBACK_BACKUP=01a1bfc0-de4a-7367-95f9-ba6f131f295d` in
+`/root/ops/vm-health.conf`.
 
 ### November 9, 2026 upgrade: Donna knows the sender's current time (schema 86, no migration)
 
