@@ -63,6 +63,11 @@ test("the system is read-only; only /work and /tmp take writes", { skip }, async
 	assert.equal(text(result.stdout).trim(), "fine");
 });
 
+test("it cannot make new namespaces", { skip }, async () => {
+	const result = await sandbox.run(work, "unshare --user --map-root-user true 2>/dev/null && echo NEW-USERNS; unshare --net true 2>/dev/null && echo NEW-NETNS; echo done");
+	assert.equal(result.stdout.toString(), "done\n");
+});
+
 test("one conversation cannot see another's /work", { skip }, async () => {
 	await sandbox.run(work, "echo private > mine.txt");
 	const other = await sandbox.run(workId(randomUUID()), "ls -A /work; cat /work/mine.txt 2>/dev/null || true");

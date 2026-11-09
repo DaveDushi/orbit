@@ -105,7 +105,7 @@ def bwrap(uid: int, gid: int, script: str, args: list[str]) -> list[str]:
     command = [
         "/usr/bin/setpriv", f"--reuid={uid}", f"--regid={gid}", "--clear-groups", "--no-new-privs",
         "--inh-caps=-all", "--bounding-set=-all", "--",
-        "/usr/bin/bwrap", "--unshare-all", "--die-with-parent", "--new-session", "--cap-drop", "ALL",
+        "/usr/bin/bwrap", "--unshare-all", "--unshare-user", "--disable-userns", "--die-with-parent", "--new-session", "--cap-drop", "ALL",
         "--hostname", "sandbox",
         "--ro-bind", "/usr", "/usr", "--tmpfs", "/usr/local", "--remount-ro", "/usr/local",
     ]
