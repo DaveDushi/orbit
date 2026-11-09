@@ -11,7 +11,7 @@ Orbit pins 1.97.1), `Cargo.lock` and `target/`.
 
 | Crate | What |
 |---|---|
-| `orbit-desktop` | The app. `shell.rs`: the main window (tao + wry), tray (`tray-icon`), notifications (`notify-rust`), badge, downloads. `bridge.rs` + `assets/bridge.js`: the script the web view runs on the server's pages and the messages it sends. `route.rs`: links and download names. `settings.rs`: server, autostart flag, window place. `autostart.rs`: the OS entries. `signin.rs` + `check.rs`: the gateway sign-in window and `--check-gateway`. |
+| `orbit-desktop` | The app. `shell.rs`: the main window (tao + wry), tray (`tray-icon`), notifications (`notify-rust`), badge, downloads. `instance.rs`: one app per person. `app_id.rs`: the Windows AppUserModelID. `build.rs`: the icon in `Orbit.exe`. `bridge.rs` + `assets/bridge.js`: the script the web view runs on the server's pages and the messages it sends. `route.rs`: links and download names. `settings.rs`: server, autostart flag, window place. `autostart.rs`: the OS entries. `signin.rs` + `check.rs`: the gateway sign-in window and `--check-gateway`. |
 | `orbit-client` | `/api/v1` types, the blocking HTTP client and sockets, the gateway rules, the hand-off of gateway cookies (`cookies.rs`), the update check (`update.rs`), the fixture backend and the contract test against `packages/api/src/generated/openapi.json`. The app uses `update.rs` and the server address rules; `--check-gateway` uses the rest. |
 
 ## How it works
@@ -31,8 +31,13 @@ Orbit pins 1.97.1), `Cargo.lock` and `target/`.
     the permission reads "granted". Orbit's live socket already sends its `notify` signal to every open tab,
     and the web app shows it when its window is not in front (`apps/web/src/features/realtime/notify.ts`).
     So the app notifies for what the person's Orbit notification settings allow (DMs, mentions, threads),
-    while it runs, also hidden in the tray. A click (Linux; see open items) brings the window up and opens the
-    message, the way the web app's own click does.
+    while it runs, also hidden in the tray. A click brings the window up and opens the message, the way the
+    web app's own click does (the notice's id goes back to the bridge, which runs the page's click handler).
+    Windows: the toast's sender is "Orbit" when the installer's Start-menu shortcut is there (it carries the
+    AppUserModelID `Wellrox.Orbit`, which the app also sets on its process, `app_id.rs`); from the zip it is
+    "Windows PowerShell" (a toast with an ID no shortcut carries does not show at all). The click works while
+    the toast is up; a click on it later in the notification center starts `Orbit.exe` through the
+    shortcut, which shows the running window (one instance) but does not open the message.
   - Unread badge: `navigator.setAppBadge` (the Badging API). The web app calls it with the same count as its
     favicon dot (`apps/web/src/lib/favicon.ts`, ships with the next web deploy). Until a server has that, the
     badge counts the notifications that came while the window was not in front, until it comes to the front.
@@ -44,6 +49,10 @@ Orbit pins 1.97.1), `Cargo.lock` and `target/`.
     version is newer, a notification says so and the tray gets "Download Orbit x.y.z" (opens the browser).
 - **Downloads.** Every download goes to the Downloads folder (the home folder when there is none), with
   " (2)", " (3)" … when the name is taken; a notification says where. No save dialog.
+- **One instance.** The first start locks `<data dir>/orbit-desktop/instance.lock` and listens on a loopback
+  port (in `instance.port`). A later start sends `show` there and ends: the running window comes to the
+  front, with no second window or tray icon. A later `--hidden` start (autostart) just ends. Change server
+  frees the lock before it starts the app again.
 - **Window and tray.** Closing the window hides it to the tray; tray → Quit Orbit ends the app. A left click on
   the tray icon (Windows) or Open Orbit shows the window. The window's place, size and maximized state are
   saved on close and quit, and come back at the next start if they still fit on a monitor.
@@ -80,12 +89,16 @@ another host, `--hidden` shows no window.
 ## Packaging (`.github/workflows/desktop.yml`)
 
 Run by hand (Actions → Desktop → Run workflow) or push a tag `desktop-v<version>`. Jobs: Linux tests and the
-`--check-gateway` smoke run; Windows release build (GUI program, no console) → `Orbit.exe` in
-`Orbit-<version>-windows-x64.zip` (unsigned); macOS (`macos-14`, arm64) release build → `Orbit.app` (ad-hoc
+`--check-gateway` smoke run; Windows release build (GUI program, no console, the Orbit icon from
+`packaging/windows/orbit.ico` embedded by `build.rs`) → `Orbit.exe` in `Orbit-<version>-windows-x64.zip` and
+in the installer `Orbit-<version>-windows-x64-setup.exe` (Inno Setup 6, `packaging/windows/orbit.iss`: per
+user, no admin, `%LOCALAPPDATA%\Programs\Orbit`, Start-menu shortcut, optional desktop shortcut, uninstaller;
+the job installs it silently, checks the files and shortcut, and uninstalls; all unsigned); macOS (`macos-14`, arm64) release build → `Orbit.app` (ad-hoc
 signed, `codesign -s -`) in `Orbit-<version>-macos-arm64.dmg`. Both packages run `--version` and
 `scripts/check-gateway-smoke.sh` (the packaged `--check-gateway` against the fake server). The `manifest`
-job writes `latest.json` (version, both URLs under `<server>/downloads/desktop/`, sha256). Publishing is by
-hand: copy the three files to the server's `downloads/desktop/` folder (an nginx static location, a deploy
+job writes `latest.json` (version, URLs under `<server>/downloads/desktop/`, sha256; `windows` is the
+installer, `windows_zip` the zip). Publishing is by hand: copy the four files to the server's
+`downloads/desktop/` folder (an nginx static location, a deploy
 step outside this folder).
 
 - **Windows SmartScreen:** the exe is not signed, so on the first start Windows says "Windows protected your
@@ -97,12 +110,15 @@ step outside this folder).
 
 ## Open items
 
-- **Tested on Linux only** (WebKitGTK under Xvfb). Windows and macOS build in CI, but nobody has run the
-  window, tray, toasts, overlay badge, Dock badge, autostart entry or WebView2 downloads on a real machine.
-- **Windows toasts** show "Windows PowerShell" as their source and a click does nothing: notify-rust needs a
-  registered AppUserModelID (a Start-menu shortcut from an installer). macOS: a click also does nothing.
-- **No installer**: a zip, so no Start-menu entry and no exe icon in Explorer (the window and tray have the icon).
-- **One instance**: a second start opens a second window and tray icon.
+- **Tested on Linux only** (WebKitGTK under Xvfb). Windows and macOS build in CI (the Windows code also
+  builds here with `--target x86_64-pc-windows-gnu`), but nobody has run the window, tray, toasts and their
+  click, the AppUserModelID, the overlay badge, the Dock badge, the installer, autostart or WebView2
+  downloads on a real machine.
+- **macOS notification click**: the app waits for it the same way (notify-rust's synchronous
+  `NSUserNotification` send, one waiting thread per notification until it is clicked or closed). Not tried
+  on a Mac.
+- **Windows: a toast clicked in the notification center** after it left the screen shows the window but does
+  not open the message (no COM activator).
 - **Gateway cookie lifetime**: when the exe.dev cookie expires, the gateway's sign-in shows in the window again.
 
 ## The gateway sign-in window and `--check-gateway`

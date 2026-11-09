@@ -23,6 +23,7 @@ use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIc
 use wry::{NewWindowResponse, WebContext, WebView, WebViewBuilder};
 
 use crate::bridge::{self, Message, Unread};
+use crate::instance::Instance;
 use crate::route::{self, Route};
 use crate::settings::{Area, MIN_HEIGHT, MIN_WIDTH, Settings, WindowState};
 use crate::{autostart, signin};
@@ -39,6 +40,8 @@ enum UserEvent {
     NewWindow(String),
     Title(String),
     NotificationClicked(u64),
+    /// A second start of the app (see `instance.rs`).
+    Show,
     Downloaded { path: Option<PathBuf>, ok: bool },
 }
 
@@ -51,7 +54,8 @@ struct TrayMenu {
 }
 
 /// Opens the app. `hidden`: start in the tray (the autostart entry passes `--hidden`).
-pub fn run(hidden: bool) -> ! {
+/// `instance`: this app's single-instance lock, freed before a restart.
+pub fn run(hidden: bool, mut instance: Option<Instance>) -> ! {
     let mut settings = Settings::load();
     let server = settings.server.as_deref().and_then(|s| ServerUrl::parse(s).ok());
     if settings.start_with_os
@@ -68,6 +72,14 @@ pub fn run(hidden: bool) -> ! {
             let _ = proxy.send_event(UserEvent::Tray(event));
         }
     }));
+    if let Some(instance) = &instance {
+        let proxy = proxy.clone();
+        if let Err(e) = instance.serve(move || {
+            let _ = proxy.send_event(UserEvent::Show);
+        }) {
+            eprintln!("orbit-desktop: a second start cannot reach this one: {e}");
+        }
+    }
     MenuEvent::set_event_handler(Some({
         let proxy = proxy.clone();
         move |event| {
@@ -120,6 +132,9 @@ pub fn run(hidden: bool) -> ! {
         *control_flow = ControlFlow::Wait;
         let _keep = &context;
         let before = unread;
+        // The Windows overlay is lost while the window is hidden (its taskbar button is gone):
+        // set it again when the window is back in front.
+        let mut redraw_badge = false;
         match event {
             Event::NewEvents(StartCause::Init) => {
                 // The tray exists once the loop runs (macOS needs that; it is fine elsewhere).
@@ -142,10 +157,14 @@ pub fn run(hidden: bool) -> ! {
                         normal = window_state(&window).or(normal);
                     }
                 }
-                WindowEvent::Focused(true) => unread.seen(),
+                WindowEvent::Focused(true) => {
+                    unread.seen();
+                    // `show` focuses the window; by then its taskbar button is back.
+                    redraw_badge = true;
+                }
                 _ => {}
             },
-            Event::UserEvent(UserEvent::Tray(TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. })) => {
+            Event::UserEvent(UserEvent::Tray(TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. }) | UserEvent::Show) => {
                 show(&window);
             }
             Event::UserEvent(UserEvent::Tray(_)) => {}
@@ -187,6 +206,8 @@ pub fn run(hidden: bool) -> ! {
                         Ok(picked) => {
                             settings.server = Some(picked.origin().to_owned());
                             save_window(&mut settings, &window, normal);
+                            // Free the lock first, or the new start hands itself back to this one.
+                            drop(instance.take());
                             restart(hidden);
                             *control_flow = ControlFlow::Exit;
                         }
@@ -236,7 +257,7 @@ pub fn run(hidden: bool) -> ! {
             }
             _ => {}
         }
-        if unread != before {
+        if unread != before || redraw_badge {
             show_badge(&window, tray.as_ref(), &unread, &icon_rgba, icon_size, dot.as_ref());
         }
     })
@@ -320,33 +341,42 @@ fn open_outside(url: &str) {
     }
 }
 
-/// An OS notification. A click brings the window to the front and, for a page's notice, does
-/// what the web app does on a click (Linux; Windows and macOS show the notice only, see README).
+/// An OS notification. A click brings the window to the front and, for a page's notice (`id`),
+/// does what the web app does on a click: the bridge opens that conversation.
 fn notify(title: String, body: String, id: Option<u64>, proxy: &EventLoopProxy<UserEvent>) {
     let proxy = proxy.clone();
+    // The thread waits for the click (or the close) of its notification.
     std::thread::spawn(move || {
         let mut notification = notify_rust::Notification::new();
         notification.summary(&title).body(&body).appname("Orbit");
+        // D-Bus servers report a body click only for a "default" action (Windows and macOS always
+        // do; there an action would add a button).
         #[cfg(all(unix, not(target_os = "macos")))]
-        {
-            notification.action("default", "Open");
-            match notification.show() {
-                Ok(handle) => handle.wait_for_action(|action| {
-                    if action == "default" {
+        notification.action("default", "Open");
+        #[cfg(windows)]
+        if let Some(app_id) = crate::app_id::for_toasts() {
+            notification.app_id(app_id);
+        }
+        let shown = notification.show().map_err(|e| e.to_string()).and_then(|handle| {
+            handle
+                .wait_for_response(|response: &notify_rust::NotificationResponse| {
+                    if clicked(response) {
                         let _ = proxy.send_event(UserEvent::NotificationClicked(id.unwrap_or(0)));
                     }
-                }),
-                Err(e) => eprintln!("orbit-desktop: notification: {e}"),
-            }
-        }
-        #[cfg(not(all(unix, not(target_os = "macos"))))]
-        {
-            let _ = (&proxy, id);
-            if let Err(e) = notification.show() {
-                eprintln!("orbit-desktop: notification: {e}");
-            }
+                })
+                .map_err(|e| e.to_string())
+        });
+        if let Err(e) = shown {
+            eprintln!("orbit-desktop: notification: {e}");
         }
     });
+}
+
+/// A click on the notification's body (`Default`), or on the "default" action of a D-Bus server
+/// that reports it as an action.
+fn clicked(response: &notify_rust::NotificationResponse) -> bool {
+    use notify_rust::NotificationResponse::{Action, Default};
+    matches!(response, Default) || matches!(response, Action(key) if key == "default")
 }
 
 fn show_badge(window: &Window, tray: Option<&TrayIcon>, unread: &Unread, icon: &[u8], size: u32, dot: Option<&tao::window::Icon>) {
@@ -486,4 +516,20 @@ fn mac_app_menu() -> Menu {
 fn fail(message: &str) -> ! {
     eprintln!("orbit-desktop: {message}");
     std::process::exit(1);
+}
+
+#[cfg(test)]
+mod tests {
+    use notify_rust::{CloseReason, NotificationResponse};
+
+    use super::clicked;
+
+    #[test]
+    fn only_a_click_on_the_notification_opens_it() {
+        assert!(clicked(&NotificationResponse::Default));
+        assert!(clicked(&NotificationResponse::Action("default".into())));
+        assert!(!clicked(&NotificationResponse::Action("__closed".into())));
+        assert!(!clicked(&NotificationResponse::Closed(CloseReason::Dismissed)));
+        assert!(!clicked(&NotificationResponse::Closed(CloseReason::Expired)));
+    }
 }

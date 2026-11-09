@@ -4,6 +4,8 @@
 //!
 //! - no arguments: opens the app (the start page asks for the server the first time).
 //! - `--hidden`: starts in the tray, without a window (the autostart entry uses it).
+//!
+//! The app runs once per person: a later start shows the running window (see `instance.rs`).
 //! - `--gateway-signin <server>`: the sign-in window helper of `--check-gateway` (see `signin.rs`).
 //! - `--check-gateway <server>`: the risk-4b check (see `check.rs`).
 //! - `--version`: prints the version.
@@ -11,9 +13,12 @@
 // Release builds on Windows are GUI programs (no console window behind the app).
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+#[cfg(windows)]
+mod app_id;
 mod autostart;
 mod bridge;
 mod check;
+mod instance;
 mod route;
 mod settings;
 mod shell;
@@ -36,9 +41,22 @@ fn main() {
         println!("orbit-desktop {}", env!("CARGO_PKG_VERSION"));
         return;
     }
+    let hidden = args.iter().any(|a| a == autostart::HIDDEN_FLAG);
+    let instance = match instance::dir().map(|dir| instance::start(&dir, hidden)) {
+        Some(Ok(instance::Start::First(instance))) => Some(instance),
+        Some(Ok(instance::Start::Running)) => return,
+        // Rare (no data folder): start anyway rather than not at all.
+        Some(Err(e)) => {
+            eprintln!("orbit-desktop: cannot check for a running app: {e}");
+            None
+        }
+        None => None,
+    };
+    #[cfg(windows)]
+    app_id::set_for_process();
     #[cfg(target_os = "macos")]
     let _ = notify_rust::set_application("com.wellrox.orbit");
-    shell::run(args.iter().any(|a| a == autostart::HIDDEN_FLAG));
+    shell::run(hidden, instance);
 }
 
 /// Prints of a command-line use go to the console the GUI program was started from

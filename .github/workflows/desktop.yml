@@ -1,7 +1,7 @@
 name: Desktop
 
 # The Orbit desktop app (apps/desktop: the server's web UI in a wry window, with a tray, notifications
-# and an unread badge): tests on Linux, a Windows zip (unsigned, the main target) and a macOS
+# and an unread badge): tests on Linux, a Windows installer and zip (unsigned, the main target) and a macOS
 # .app/.dmg (ad-hoc signed, not notarized), plus `latest.json` for the app's update check.
 # Run by hand, or push a tag `desktop-v<version>` (macOS minutes cost 10×: no build on every push).
 on:
@@ -105,12 +105,41 @@ jobs:
         run: |
           dist/Orbit/Orbit.exe --version
           PYTHON=python scripts/check-gateway-smoke.sh dist/Orbit/Orbit.exe
+      # Per user (no admin), Start-menu and optional desktop shortcut, uninstaller. Inno Setup 6 is
+      # on the windows-2025 image (images/windows/Windows2025-Readme.md in actions/runner-images);
+      # Chocolatey installs it if a later image drops it.
+      - name: Orbit installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup --no-progress -y
+            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          }
+          & $iscc "/DAppVersion=$env:VERSION" "/DSourceExe=$PWD\dist\Orbit\Orbit.exe" "/O$PWD" packaging\windows\orbit.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: The installer installs per user and uninstalls
+        shell: pwsh
+        run: |
+          $setup = "Orbit-$env:VERSION-windows-x64-setup.exe"
+          Start-Process -Wait -FilePath ".\$setup" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+          $app = "$env:LOCALAPPDATA\Programs\Orbit"
+          $lnk = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Orbit.lnk"
+          if (-not (Test-Path "$app\Orbit.exe")) { throw "Orbit.exe is not in $app" }
+          if (-not (Test-Path $lnk)) { throw "no Start-menu shortcut at $lnk" }
+          & "$app\Orbit.exe" --version | Out-Host
+          Start-Process -Wait -FilePath "$app\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES'
+          # The uninstaller runs on from a temp copy: wait for it.
+          for ($i = 0; $i -lt 30 -and (Test-Path $lnk); $i++) { Start-Sleep -Seconds 1 }
+          if (Test-Path $lnk) { throw "the uninstaller left the Start-menu shortcut" }
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-windows
-          path: apps/desktop/Orbit-${{ env.VERSION }}-windows-x64.zip
+          path: |
+            apps/desktop/Orbit-${{ env.VERSION }}-windows-x64-setup.exe
+            apps/desktop/Orbit-${{ env.VERSION }}-windows-x64.zip
 
-  # latest.json for the app's update check: copy it and the two files to the server's
+  # latest.json for the app's update check: copy it and the three files to the server's
   # downloads/desktop/ folder (served by nginx, behind the gateway like the rest).
   manifest:
     needs: [macos, windows]
@@ -126,12 +155,16 @@ jobs:
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           dmg=$(basename artifacts/desktop-macos/*.dmg)
+          setup=$(basename artifacts/desktop-windows/*-setup.exe)
           zip=$(basename artifacts/desktop-windows/*.zip)
           base="${SERVER%/}/downloads/desktop"
-          jq -n --arg v "$version" --arg mac "$base/$dmg" --arg win "$base/$zip" \
+          # `windows` (the app's update link) is the installer: it updates the installed app in place.
+          jq -n --arg v "$version" --arg mac "$base/$dmg" --arg win "$base/$setup" --arg zip "$base/$zip" \
             --arg mac_sha "$(sha256sum artifacts/desktop-macos/$dmg | cut -d' ' -f1)" \
-            --arg win_sha "$(sha256sum artifacts/desktop-windows/$zip | cut -d' ' -f1)" \
-            '{version: $v, notes: "", macos: $mac, windows: $win, sha256: {macos: $mac_sha, windows: $win_sha}}' > latest.json
+            --arg win_sha "$(sha256sum artifacts/desktop-windows/$setup | cut -d' ' -f1)" \
+            --arg zip_sha "$(sha256sum artifacts/desktop-windows/$zip | cut -d' ' -f1)" \
+            '{version: $v, notes: "", macos: $mac, windows: $win, windows_zip: $zip,
+              sha256: {macos: $mac_sha, windows: $win_sha, windows_zip: $zip_sha}}' > latest.json
           cat latest.json
       - uses: actions/upload-artifact@v4
         with:
