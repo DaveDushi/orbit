@@ -6,6 +6,7 @@ import { Switch } from '@/components/ui/switch'
 import { useInstanceSettings, useSetRegistration } from '@/features/admin/api'
 import { ImprovementsCard } from '@/features/improvements/ImprovementsCard'
 import { SettingsRow } from '@/features/settings/components/SettingsParts'
+import { LoadingText } from '@/components/ui/spinner'
 
 function problemText(error: unknown, fallback: string) {
   return error instanceof ApiProblem ? error.detail : fallback
@@ -14,7 +15,7 @@ function problemText(error: unknown, fallback: string) {
 /** Instance settings: who can create an account, and Suggest a change. */
 export function AdminSettingsPage() {
   const settings = useInstanceSettings()
-  if (settings.isPending) return <SettingsCard title="General"><p role="status">Loading settings…</p></SettingsCard>
+  if (settings.isPending) return <SettingsCard title="General"><p><LoadingText>Loading settings…</LoadingText></p></SettingsCard>
   if (settings.isError) return <SettingsCard title="General"><p role="alert">Settings could not be loaded. <Button variant="ghost" onClick={() => void settings.refetch()}>Retry</Button></p></SettingsCard>
   return (
     <>

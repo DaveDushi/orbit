@@ -12,7 +12,7 @@ export default function AdminLimitsScreen() {
   const settings = useInstanceSettings()
   return (
     <AdminShell refreshing={settings.isRefetching} onRefresh={() => void settings.refetch()}>
-      {settings.isPending ? <SettingsCard title="Limits"><Note>Loading settings…</Note></SettingsCard> : null}
+      {settings.isPending ? <SettingsCard title="Limits"><Note loading>Loading settings…</Note></SettingsCard> : null}
       {settings.isError ? (
         <SettingsCard title="Limits">
           <View className="flex-row items-center gap-2">

@@ -6,7 +6,7 @@ import { KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, 
 import { useAgentEnabled } from '../../hooks/agent'
 import { useOrbit } from '../../orbit-context'
 import { alpha, cssColors, setSchemePreference, useLayout, useTheme } from '../../theme'
-import { Icon, type IconName, IconButton, PaneHeader, SafeAreaView, Text } from '../../ui'
+import { Icon, type IconName, IconButton, PaneHeader, SafeAreaView, Spinner, Text } from '../../ui'
 import { MenuButton } from '../Drawer'
 
 export interface SettingsNavItem {
@@ -267,6 +267,14 @@ export function Segmented<T extends string>({ value, options, onChange, label }:
 }
 
 /** A quiet status or error line inside a card. */
-export function Note({ children, error = false }: { children: ReactNode; error?: boolean }) {
-  return <Text className={`text-[13px] leading-[19px] ${error ? 'text-destructive' : 'text-muted-foreground'}`}>{children}</Text>
+/** A short message. `loading` puts the spinner before it, as the web's `LoadingText`. */
+export function Note({ children, error = false, loading = false }: { children: ReactNode; error?: boolean; loading?: boolean }) {
+  const text = <Text className={`text-[13px] leading-[19px] ${error ? 'text-destructive' : 'text-muted-foreground'}`}>{children}</Text>
+  if (!loading) return text
+  return (
+    <View accessibilityRole="progressbar" className="flex-row items-center gap-2">
+      <Spinner />
+      {text}
+    </View>
+  )
 }

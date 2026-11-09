@@ -67,7 +67,7 @@ export default function MembersScreen() {
             {search ? <IconButton icon="close" label="Clear search" size={22} iconSize={12} color={colors.mutedForeground} onPress={() => setSearch('')} /> : null}
           </View>
         </View>
-        {members.isPending ? <View className="p-4"><Note>Loading workspace members…</Note></View> : null}
+        {members.isPending ? <View className="p-4"><Note loading>Loading workspace members…</Note></View> : null}
         {members.isError ? <View className="p-4"><Note error>Workspace members could not be loaded.</Note></View> : null}
         {members.data && list.length === 0 ? <View className="p-4"><Note>No matching members. Try a different name, email address, or role.</Note></View> : null}
         {list.map((member, index) => {
@@ -160,7 +160,7 @@ function Invite() {
 function PendingInvitations() {
   const invitations = useInvitations(true)
   const { revokeInvitation } = useMemberWrites()
-  if (invitations.isPending) return <SettingsCard title="Pending invitations"><Note>Loading invitations…</Note></SettingsCard>
+  if (invitations.isPending) return <SettingsCard title="Pending invitations"><Note loading>Loading invitations…</Note></SettingsCard>
   if (invitations.isError) return <SettingsCard title="Pending invitations"><Note error>Invitations could not be loaded.</Note></SettingsCard>
   if (invitations.data.length === 0) return null
   return (

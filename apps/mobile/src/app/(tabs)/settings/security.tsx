@@ -62,7 +62,7 @@ export default function SecurityScreen() {
         }
         flush
       >
-        {status.isPending ? <View className="p-4"><Note>Loading…</Note></View> : null}
+        {status.isPending ? <View className="p-4"><Note loading>Loading…</Note></View> : null}
         {status.isError ? <View className="p-4"><Note error>Two-factor sign-in could not be loaded.</Note></View> : null}
         {status.data ? (
           <SettingsRow first>

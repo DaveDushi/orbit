@@ -25,7 +25,7 @@ export default function NotificationsScreen() {
               <Button label="Retry" variant="ghost" onPress={() => void prefs.refetch()} />
             </View>
           ) : (
-            <Note>Loading…</Note>
+            <Note loading>Loading…</Note>
           )
         ) : (
           <View className="gap-4">

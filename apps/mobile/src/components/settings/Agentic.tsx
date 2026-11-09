@@ -76,7 +76,7 @@ function McpSetup() {
       </SettingsCard>
 
       <SettingsCard title="Connected apps" description="MCP clients you approved. Disconnecting an app stops its access and refresh tokens." flush>
-        {connections.isPending ? <View className="p-4"><Note>Loading connections…</Note></View> : null}
+        {connections.isPending ? <View className="p-4"><Note loading>Loading connections…</Note></View> : null}
         {connections.isError ? <View className="p-4"><Note error>Connections could not be loaded.</Note></View> : null}
         {connections.data && list.length === 0 ? <View className="p-4"><Note>No connected apps.</Note></View> : null}
         {list.map((connection, index) => (
