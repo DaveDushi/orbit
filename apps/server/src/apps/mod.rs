@@ -31,9 +31,36 @@ use crate::task_routes::{ApiError, authenticate_session};
 type RequestIdExtension = Option<Extension<RequestId>>;
 
 const ROLES: [&str; 3] = ["owner", "admin", "member"];
-const ICONS: [&str; 8] = [
-    "category", "code", "chart", "cloud", "book", "driver", "cpu", "link",
+/// The icons an app can have, in picker order: equal to `APP_ICONS` in `apps/web/src/features/apps/appIcons.ts`.
+/// Never rename one: saved apps keep their name.
+const ICONS: [&str; 24] = [
+    "shop",
+    "shopping-cart",
+    "shopping-bag",
+    "box",
+    "truck",
+    "tag",
+    "discount",
+    "receipt",
+    "card",
+    "wallet",
+    "barcode",
+    "gift",
+    "people",
+    "message",
+    "instagram",
+    "global",
+    "category",
+    "code",
+    "chart",
+    "cloud",
+    "book",
+    "driver",
+    "cpu",
+    "link",
 ];
+/// The icon of a new app. Not `ICONS[0]`: the picker order can change.
+const DEFAULT_ICON: &str = "category";
 const MAX_APPS: i64 = 100;
 const MAX_REDIRECT_URIS: usize = 10;
 /// The client id of every app starts with this; `/oauth/register` only makes `orbit-client-…`.
@@ -852,7 +879,7 @@ async fn create(
         workspace_id: workspace_id.to_string(),
         slug: String::new(),
         name: String::new(),
-        icon: ICONS[0].to_owned(),
+        icon: DEFAULT_ICON.to_owned(),
         url: String::new(),
         allowed_roles: ROLES.iter().map(|role| (*role).to_owned()).collect(),
         open_mode: "embed".to_owned(),
@@ -1008,7 +1035,9 @@ async fn rotate_secret(
 mod tests {
     use url::Url;
 
-    use super::{check_app_url, check_redirect_uri, frame_csp, frame_html, slug_from};
+    use super::{
+        DEFAULT_ICON, ICONS, check_app_url, check_redirect_uri, frame_csp, frame_html, slug_from,
+    };
 
     const ORBIT: &str = "https://orbit.example.com";
 
@@ -1092,6 +1121,25 @@ mod tests {
         // A stored address with a CSP separator in the host is refused, not written.
         let unsafe_host = Url::parse("https://a;b.example.com/").unwrap();
         assert!(frame_csp(&unsafe_host, &[], false).is_none());
+    }
+
+    #[test]
+    fn the_icons_equal_the_web_list_and_include_the_default() {
+        assert!(ICONS.contains(&DEFAULT_ICON));
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../web/src/features/apps/appIcons.ts"
+        );
+        let source = std::fs::read_to_string(path).unwrap();
+        let start = source.find("APP_ICONS").unwrap();
+        let body = &source[start..];
+        let body = &body[body.find("= {").unwrap() + 3..body.find("\n}").unwrap()];
+        let web: Vec<&str> = body
+            .lines()
+            .filter_map(|line| line.trim().split_once(':'))
+            .map(|(name, _)| name.trim_matches('\''))
+            .collect();
+        assert_eq!(web, ICONS);
     }
 
     #[test]
