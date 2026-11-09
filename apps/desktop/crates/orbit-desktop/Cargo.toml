@@ -11,3 +11,22 @@ rune.workspace = true
 # Pinned with rune now; Markdown (M1) and notifications (M3) use them.
 rune-kit.workspace = true
 rune-notify.workspace = true
+# The gateway sign-in window (`--gateway-signin`), a separate process: tao and Rune's winit both
+# want the main thread. Linux needs libwebkit2gtk-4.1-dev to build.
+wry = "0.57"
+tao = "0.37"
+# Session token and gateway cookies: macOS Keychain, Windows Credential Manager, Secret Service.
+keyring = { version = "3.6", default-features = false }
+dirs = "6"
+rpassword = "7"
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3.6", default-features = false, features = ["apple-native"] }
+
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3.6", default-features = false, features = ["sync-secret-service", "crypto-rust"] }

@@ -1,25 +1,22 @@
-//! The exe.dev auth proxy in front of a hosted Orbit. The app sends the person's exe.dev VM token
-//! in [`GATEWAY_TOKEN_HEADER`]; the proxy strips it before Orbit (https://exe.dev/docs/https-tokens-for-vms.md).
+//! The exe.dev auth proxy in front of a hosted Orbit. The app passes it with the cookies of its
+//! browser sign-in, which a web view window hands over (`cookies.rs`, decision D1 = G2).
 //!
 //! What the proxy answers (seen on orbit.wellrox.com, 2026-11-08, HTTP and WebSocket upgrades alike):
-//! - no token: `307` to `/__exe.dev/login?…` (its browser sign-in);
-//! - a token it refuses (malformed, expired, revoked): `401`, `text/plain`, `WWW-Authenticate: Bearer, Basic`.
+//! - no credentials: `307` to `/__exe.dev/login?…` (its browser sign-in);
+//! - credentials it refuses (malformed, expired, revoked): `401`, `text/plain`, `WWW-Authenticate: Bearer, Basic`.
 //!
 //! Orbit's own `401` is `application/problem+json` with no `WWW-Authenticate`, so the two differ.
 //! The proxy also reads a plain `Authorization: Bearer` as an exe.dev token (its deprecated form):
 //! without a valid gateway token, Orbit's session header alone gets the proxy's `401`.
-
-/// The header that carries the exe.dev token.
-pub const GATEWAY_TOKEN_HEADER: &str = "X-Exedev-Authorization";
 
 /// Who answered a response, as far as the gateway goes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GatewayReply {
     /// The request reached Orbit (or there is no gateway); read the response as Orbit's.
     Passed,
-    /// The proxy wants its browser sign-in: the app sent no token.
+    /// The proxy wants its browser sign-in: no cookie, or it expired.
     SignInRequired,
-    /// The proxy refused the token: ask the person for a new one.
+    /// The proxy refused what it read (a bad cookie, or a bearer token it took for its own).
     TokenRejected,
 }
 

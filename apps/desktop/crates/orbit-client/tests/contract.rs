@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use orbit_client::{ConversationRecord, ConversationStateRecord, Fixture};
+use orbit_client::{AuthUser, ConversationRecord, ConversationStateRecord, Fixture, SetupStatus, WorkspaceRecord};
 use serde_json::Value;
 
 /// The calls the app makes, and the schema of each one's item.
@@ -32,11 +32,59 @@ fn fields_of<T: serde::Serialize>(value: &T) -> Vec<String> {
     serde_json::to_value(value).unwrap().as_object().unwrap().keys().cloned().collect()
 }
 
-fn assert_subset(doc: &Value, name: &str, ours: &[String]) {
-    let properties = schema(doc, name)["properties"].as_object().unwrap_or_else(|| panic!("no schema {name}"));
-    for field in ours {
-        assert!(properties.contains_key(field), "{name}.{field} is not in openapi.json");
+/// The properties of a schema, also when it is an `allOf` of objects.
+fn properties(doc: &Value, name: &str) -> Vec<String> {
+    let schema = schema(doc, name);
+    let parts: Vec<&Value> = match schema["allOf"].as_array() {
+        Some(parts) => parts.iter().collect(),
+        None => vec![schema],
+    };
+    let mut names = Vec::new();
+    for part in parts {
+        let part = match part["$ref"].as_str() {
+            Some(r) => self::schema(doc, r.trim_start_matches("#/components/schemas/")),
+            None => part,
+        };
+        names.extend(part["properties"].as_object().into_iter().flat_map(|p| p.keys().cloned()));
     }
+    assert!(!names.is_empty(), "no schema {name}");
+    names
+}
+
+fn assert_subset(doc: &Value, name: &str, ours: &[String]) {
+    let properties = properties(doc, name);
+    for field in ours {
+        assert!(properties.contains(field), "{name}.{field} is not in openapi.json");
+    }
+}
+
+/// The sign-in, session and probe calls, and the schema of each status the client reads.
+const AUTH_CALLS: &[(&str, &str, &str, &str)] = &[
+    ("get", "/api/v1/setup/status", "200", "SetupStatus"),
+    ("post", "/api/v1/auth/login", "200", "LoginResponse"),
+    ("post", "/api/v1/auth/login", "202", "TwoFactorChallenge"),
+    ("post", "/api/v1/auth/login/two-factor", "200", "LoginResponse"),
+    ("get", "/api/v1/auth/me", "200", "AuthUserResponse"),
+];
+
+#[test]
+fn the_auth_calls_exist_with_the_schemas_we_read() {
+    let doc = openapi();
+    for (method, path, status, name) in AUTH_CALLS {
+        let response = &doc["paths"][path][method]["responses"][status]["content"]["application/json"]["schema"];
+        assert_eq!(response["$ref"], format!("#/components/schemas/{name}"), "{method} {path} {status}");
+    }
+    assert!(doc["paths"]["/api/v1/auth/logout"]["post"]["responses"]["204"].is_object());
+    let workspaces = &doc["paths"]["/api/v1/workspaces"]["get"]["responses"]["200"]["content"]["application/json"]["schema"];
+    assert_eq!(workspaces["items"]["$ref"], "#/components/schemas/WorkspaceRecord");
+
+    let user = AuthUser { id: "u".into(), email: "e".into(), display_name: "d".into() };
+    assert_subset(&doc, "AuthUserResponse", &fields_of(&user));
+    assert_subset(&doc, "WorkspaceRecord", &fields_of(&WorkspaceRecord { id: "w".into(), name: "n".into() }));
+    assert_subset(&doc, "SetupStatus", &fields_of(&SetupStatus { complete: true }));
+    let strings = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert_subset(&doc, "LoginResponse", &strings(&["user", "session_id", "session_token"]));
+    assert_subset(&doc, "TwoFactorChallenge", &strings(&["two_factor_token"]));
 }
 
 #[test]

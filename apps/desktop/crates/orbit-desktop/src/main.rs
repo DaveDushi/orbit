@@ -1,105 +1,106 @@
-//! Orbit desktop, M0: one window with the workspace's conversations, from a fixture backend.
-//! `orbit-desktop --fixture apps/desktop/fixtures/demo` opens it; add `--snap out.png` to render
-//! it headless (`--scene selected` opens the first unread conversation, `--theme light|dark`).
+//! Orbit desktop. Without arguments it opens the app: server → gateway sign-in window (when the
+//! server has an exe.dev gateway) → Orbit sign-in → the first workspace's conversations, kept
+//! fresh by its live and events sockets.
+//!
+//! - `--fixture <dir>`: signed in on synthetic data, no network; with `--snap out.png --scene <name>`
+//!   it renders headless (scenes below).
+//! - `--gateway-signin <server>`: the sign-in window helper (the app runs it; see `signin.rs`).
+//! - `--check-gateway <server>`: the risk-4b check (see `check.rs`).
 
-use std::path::PathBuf;
+mod app;
+mod check;
+mod keychain;
+mod signin;
+mod view;
 
-use orbit_client::{ConversationKind, Fixture, SidebarRow};
-use rune::tok::{self, radius, type_};
-use rune::{AppSpec, Cx, El, ScrollSpec, col, el, row, text};
+use std::path::Path;
 
-#[derive(Default)]
-struct State {
-    workspace: String,
-    rows: Vec<SidebarRow>,
-    selected: Option<String>,
-    /// Why there is nothing to show.
-    error: Option<String>,
+use app::{Link, Screen, State};
+use orbit_client::{Fixture, ServerUrl};
+use rune::AppSpec;
+
+fn fixture_state(dir: &Path) -> State {
+    let mut s = State { server: ServerUrl::parse("orbit.example.com").ok(), ..State::default() };
+    s.server_edit.replace_text("orbit.example.com");
+    match Fixture::load(dir) {
+        Ok(f) => {
+            s.screen = Screen::SignedIn;
+            s.workspace = f.workspace_name.clone();
+            s.rows = f.sidebar();
+            s.user = "Ada Example".into();
+            s.live = Link::Connected;
+            s.events = Link::Connected;
+        }
+        Err(e) => s.error = Some(e.to_string()),
+    }
+    s
 }
 
 fn init() -> State {
     let args = rune::extra_args();
-    let fixture = args.iter().position(|a| a == "--fixture").and_then(|i| args.get(i + 1)).map(PathBuf::from);
-    let Some(dir) = fixture else {
-        return State { error: Some("Not signed in. M0 runs only with --fixture <dir>.".into()), ..State::default() };
-    };
-    match Fixture::load(&dir) {
-        Ok(f) => State { workspace: f.workspace_name.clone(), rows: f.sidebar(), ..State::default() },
-        Err(e) => State { error: Some(e.to_string()), ..State::default() },
+    match args.iter().position(|a| a == "--fixture").and_then(|i| args.get(i + 1)) {
+        Some(dir) => fixture_state(Path::new(dir)),
+        None => State::online(),
     }
 }
 
-fn view(s: &State, cx: &mut Cx<State>) -> El {
-    let dark = cx.system_dark();
-    let t = tok::theme(dark);
-    let accent = tok::accent(0, dark);
-
-    let mut list = col().key("conversations").w_full().gap(2.0).padding(8.0).role("list").label("Conversations");
-    let mut dms_started = false;
-    for r in &s.rows {
-        if r.kind == ConversationKind::Dm && !dms_started {
-            dms_started = true;
-            list = list.child(text("Direct messages").font(type_::SECTION).color(t.text_secondary).px(8.0).py(6.0));
-        }
-        let selected = s.selected.as_deref() == Some(r.id.as_str());
-        let sigil = match r.kind {
-            ConversationKind::Private => "🔒",
-            ConversationKind::Dm => "@",
-            _ => "#",
-        };
-        let strong = r.unread > 0 && !r.muted;
-        let name = text(format!("{sigil} {}", r.name)).font(if strong { type_::TITLE } else { type_::BODY })
-            .color(if strong || selected { t.text } else { t.text_secondary }).grow(1.0).truncate();
-        let mut line = row().key(format!("conv-{}", r.id)).role("button").label(r.name.clone())
-            .h(30.0).px(8.0).gap(8.0).center_y().radius(radius::SM)
-            .fill(if selected { t.press } else { t.bg.alpha(0.0) })
-            .on_press({
-                let id = r.id.clone();
-                move |s: &mut State| s.selected = Some(id.clone())
-            })
-            .child(name);
-        if r.mentions > 0 {
-            line = line.child(badge(r.mentions, accent, t.bg));
-        } else if r.unread > 0 && !r.muted {
-            line = line.child(badge(r.unread, t.control_off, t.text));
-        }
-        list = list.child(line);
-    }
-
-    let header = row().h(48.0).px(16.0).center_y()
-        .child(text(s.workspace.clone()).font(type_::TITLE).color(t.text));
-    let sidebar = col().key("sidebar").w(260.0).h_full().fill(t.card).border_sides([0.0, 1.0, 0.0, 0.0], t.separator)
-        .child(header)
-        .child(list.scroll(ScrollSpec { stick_bottom: false }).shrink().min_h(0.0));
-
-    let open = s.selected.as_ref().and_then(|id| s.rows.iter().find(|r| &r.id == id));
-    let main = match (&s.error, open) {
-        (Some(error), _) => centered(text(error.clone()).font(type_::BODY).color(t.text_secondary)),
-        (None, Some(r)) => col().key("conversation").grow(1.0).h_full()
-            .child(row().h(48.0).px(16.0).gap(12.0).center_y().border_sides([0.0, 0.0, 1.0, 0.0], t.separator)
-                .child(text(r.name.clone()).font(type_::TITLE).color(t.text))
-                .child(text(r.topic.clone()).font(type_::BODY).color(t.text_secondary).truncate()))
-            .child(centered(text("Messages come in M1.").font(type_::BODY).color(t.text_secondary))),
-        (None, None) => centered(text("Pick a conversation.").font(type_::BODY).color(t.text_secondary)),
-    };
-
-    row().w_full().h_full().fill(t.bg).child(sidebar).child(main)
+fn select_unread(s: &mut State) {
+    s.selected = s.rows.iter().find(|r| r.unread > 0).map(|r| r.id.clone());
 }
 
-fn badge(count: i64, fill: rune::Color, color: rune::Color) -> El {
-    let label = if count > 99 { "99+".to_owned() } else { count.to_string() };
-    el().h(18.0).px(6.0).radius(9.0).fill(fill).center()
-        .child(text(label).font(type_::LABEL).color(color))
+fn login(s: &mut State) {
+    s.screen = Screen::Login;
+    s.email.replace_text("ada@example.test");
+    s.password.replace_text("correct horse battery");
 }
 
-fn centered(child: El) -> El {
-    col().grow(1.0).h_full().center().child(child)
-}
+/// Named states for headless snapshots (`--fixture fixtures/demo --snap out.png --scene <name>`).
+type Scene = (&'static str, fn(&mut State));
+
+const SCENES: &[Scene] = &[
+    ("selected", select_unread),
+    ("signed-out", |s| s.screen = Screen::Server),
+    ("gateway", |s| {
+        s.screen = Screen::Gateway;
+        s.busy = true;
+    }),
+    ("login", login),
+    ("login-error", |s| {
+        login(s);
+        s.password.clear();
+        s.error = Some("The email or password is not correct.".into());
+    }),
+    ("two-factor", |s| {
+        s.screen = Screen::TwoFactor;
+        s.code.replace_text("4821");
+    }),
+    ("signed-in", select_unread),
+    ("reconnecting", |s| {
+        select_unread(s);
+        s.live = Link::Retrying(4);
+        s.events = Link::Connecting;
+    }),
+    ("session-ended", |s| {
+        login(s);
+        s.password.clear();
+        s.error = Some("Your session ended. Sign in again.".into());
+    }),
+];
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let value = |flag: &str| args.iter().position(|a| a == flag).map(|i| args.get(i + 1).cloned().unwrap_or_default());
+    if let Some(server) = value("--gateway-signin") {
+        signin::run(&server);
+    }
+    if let Some(server) = value("--check-gateway") {
+        std::process::exit(check::run(&server));
+    }
     rune::run(AppSpec::<State> {
-        scenes: &[("selected", |s| s.selected = s.rows.iter().find(|r| r.unread > 0).map(|r| r.id.clone()))],
-        min_size: Some((640.0, 400.0)),
-        ..AppSpec::new("Orbit", (900.0, 560.0), init, view)
+        scenes: SCENES,
+        setup: Some(|s, waker| s.setup(waker)),
+        poll: Some(|s, _, _| s.poll()),
+        min_size: Some((640.0, 420.0)),
+        ..AppSpec::new("Orbit", (900.0, 560.0), init, view::view)
     });
 }

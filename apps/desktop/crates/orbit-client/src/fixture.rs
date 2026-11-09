@@ -62,30 +62,34 @@ impl Fixture {
         })
     }
 
-    /// Channels by position, then direct messages, newest first. Archived ones are left out.
     pub fn sidebar(&self) -> Vec<SidebarRow> {
-        let mut open: Vec<&ConversationRecord> = self.conversations.iter().filter(|c| !c.archived).collect();
-        open.sort_by(|a, b| {
-            let dm = |c: &ConversationRecord| c.kind == ConversationKind::Dm;
-            dm(a).cmp(&dm(b))
-                .then_with(|| if dm(a) { b.last_message_at.cmp(&a.last_message_at) } else { a.position.cmp(&b.position) })
-                .then_with(|| a.name.cmp(&b.name))
-        });
-        open.into_iter()
-            .map(|c| {
-                let state = self.states.iter().find(|s| s.conversation_id == c.id);
-                SidebarRow {
-                    id: c.id.clone(),
-                    kind: c.kind,
-                    name: c.name.clone(),
-                    topic: c.topic.clone(),
-                    unread: state.map_or(0, |s| s.unread_count),
-                    mentions: state.map_or(0, |s| s.mention_count),
-                    muted: state.is_some_and(|s| s.notify == NotifyLevel::Muted),
-                }
-            })
-            .collect()
+        sidebar(&self.conversations, &self.states)
     }
+}
+
+/// Channels by position, then direct messages, newest first. Archived ones are left out.
+pub fn sidebar(conversations: &[ConversationRecord], states: &[ConversationStateRecord]) -> Vec<SidebarRow> {
+    let mut open: Vec<&ConversationRecord> = conversations.iter().filter(|c| !c.archived).collect();
+    open.sort_by(|a, b| {
+        let dm = |c: &ConversationRecord| c.kind == ConversationKind::Dm;
+        dm(a).cmp(&dm(b))
+            .then_with(|| if dm(a) { b.last_message_at.cmp(&a.last_message_at) } else { a.position.cmp(&b.position) })
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    open.into_iter()
+        .map(|c| {
+            let state = states.iter().find(|s| s.conversation_id == c.id);
+            SidebarRow {
+                id: c.id.clone(),
+                kind: c.kind,
+                name: c.name.clone(),
+                topic: c.topic.clone(),
+                unread: state.map_or(0, |s| s.unread_count),
+                mentions: state.map_or(0, |s| s.mention_count),
+                muted: state.is_some_and(|s| s.notify == NotifyLevel::Muted),
+            }
+        })
+        .collect()
 }
 
 fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, FixtureError> {

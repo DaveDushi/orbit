@@ -59,3 +59,24 @@ pub struct ConversationStateRecord {
     #[serde(default)]
     pub favorite: bool,
 }
+
+/// `SetupStatus`: `GET /api/v1/setup/status`, the probe that tells an Orbit server (and its gateway) apart.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SetupStatus {
+    pub complete: bool,
+}
+
+/// `AuthUserResponse`: `GET /api/v1/auth/me` and the `user` of a sign-in.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AuthUser {
+    pub id: String,
+    pub email: String,
+    pub display_name: String,
+}
+
+/// `WorkspaceRecord`: an item of `GET /api/v1/workspaces`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WorkspaceRecord {
+    pub id: String,
+    pub name: String,
+}

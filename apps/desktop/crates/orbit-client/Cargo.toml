@@ -1,6 +1,6 @@
 [package]
 name = "orbit-client"
-description = "Orbit API types, the exe.dev gateway rules and the fixture backend. No Rune dependency."
+description = "Orbit API types, HTTP client, sockets, the exe.dev gateway rules and the fixture backend. No Rune dependency."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
@@ -8,3 +8,10 @@ license.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+ureq.workspace = true
+tungstenite.workspace = true
+rustls.workspace = true
+webpki-roots.workspace = true
+
+[dev-dependencies]
+tungstenite = { workspace = true }
