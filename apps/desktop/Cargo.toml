@@ -6,7 +6,7 @@ members = ["crates/orbit-client", "crates/orbit-desktop"]
 
 [workspace.package]
 edition = "2024"
-version = "0.1.1"
+version = "0.1.2"
 license = "Apache-2.0"
 
 [workspace.dependencies]

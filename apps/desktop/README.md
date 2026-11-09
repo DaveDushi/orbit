@@ -41,8 +41,9 @@ Orbit pins 1.97.1), `Cargo.lock` and `target/`.
   - Unread badge: `navigator.setAppBadge` (the Badging API). The web app calls it with the same count as its
     favicon dot (`apps/web/src/lib/favicon.ts`, ships with the next web deploy). Until a server has that, the
     badge counts the notifications that came while the window was not in front, until it comes to the front.
-    Windows: a red dot overlay on the taskbar button; macOS: the Dock badge; Linux: the Unity launcher count
-    where there is one. The tray icon gets a red dot and its tooltip says the count.
+    Windows: an overlay on the taskbar button, a red circle with the number (1 to 9, then 9+; a small red dot for
+    `setAppBadge()` without a number), drawn at 16 px × the display scale (`src/overlay.rs`); macOS: the Dock
+    badge; Linux: the Unity launcher count where there is one. The tray icon gets a red dot and its tooltip says the count.
   - Links: a click on a link to another site goes to the default browser; `target="_blank"` and `window.open`
     too (`route.rs`). `mailto:` and `tel:` go to their OS apps; `javascript:`, `file:` and others do nothing.
   - Update check: the page reads `/downloads/desktop/latest.json` with its own gateway cookies; when that

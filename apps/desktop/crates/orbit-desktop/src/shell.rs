@@ -125,8 +125,6 @@ pub fn run(hidden: bool, mut instance: Option<Instance>) -> ! {
     let mut update_url: Option<String> = None;
     // The start page is showing: only it may pick a server (it has no URL of its own).
     let mut picking = server.is_none();
-    // The Windows taskbar overlay while something is unread.
-    let dot = if cfg!(windows) { tao::window::Icon::from_rgba(dot_rgba(16), 16, 16).ok() } else { None };
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -157,6 +155,8 @@ pub fn run(hidden: bool, mut instance: Option<Instance>) -> ! {
                         normal = window_state(&window).or(normal);
                     }
                 }
+                // the overlay's size follows the display's scale
+                WindowEvent::ScaleFactorChanged { .. } => redraw_badge = true,
                 WindowEvent::Focused(true) => {
                     unread.seen();
                     // `show` focuses the window; by then its taskbar button is back.
@@ -258,7 +258,7 @@ pub fn run(hidden: bool, mut instance: Option<Instance>) -> ! {
             _ => {}
         }
         if unread != before || redraw_badge {
-            show_badge(&window, tray.as_ref(), &unread, &icon_rgba, icon_size, dot.as_ref());
+            show_badge(&window, tray.as_ref(), &unread, &icon_rgba, icon_size);
         }
     })
 }
@@ -379,7 +379,7 @@ fn clicked(response: &notify_rust::NotificationResponse) -> bool {
     matches!(response, Default) || matches!(response, Action(key) if key == "default")
 }
 
-fn show_badge(window: &Window, tray: Option<&TrayIcon>, unread: &Unread, icon: &[u8], size: u32, dot: Option<&tao::window::Icon>) {
+fn show_badge(window: &Window, tray: Option<&TrayIcon>, unread: &Unread, icon: &[u8], size: u32) {
     let label = unread.label();
     if let Some(tray) = tray {
         let _ = tray.set_tooltip(Some(match &label {
@@ -393,12 +393,14 @@ fn show_badge(window: &Window, tray: Option<&TrayIcon>, unread: &Unread, icon: &
     #[cfg(windows)]
     {
         use tao::platform::windows::WindowExtWindows;
-        window.set_overlay_icon(label.as_ref().and(dot));
+        // the taskbar draws the overlay at its small-icon size: 16 px × the display scale
+        let px = (16.0 * window.scale_factor()).round().max(16.0) as u32;
+        let overlay = crate::overlay::mark(unread.badge()).and_then(|m| tao::window::Icon::from_rgba(crate::overlay::rgba(&m, px), px, px).ok());
+        window.set_overlay_icon(overlay.as_ref());
     }
     #[cfg(target_os = "macos")]
     {
         use tao::platform::macos::WindowExtMacOS;
-        let _ = dot;
         window.set_badge_label(label);
     }
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -409,7 +411,7 @@ fn show_badge(window: &Window, tray: Option<&TrayIcon>, unread: &Unread, icon: &
             bridge::Badge::Flag => 1,
         };
         window.set_badge_count((count > 0).then_some(count), Some("orbit-desktop.desktop".into()));
-        let _ = (label, dot);
+        let _ = label;
     }
 }
 
@@ -458,13 +460,6 @@ fn app_icon() -> (Vec<u8>, u32) {
     let image = image::load_from_memory(ICON_PNG).expect("the embedded icon is a PNG").into_rgba8();
     let size = image.width();
     (image.into_raw(), size)
-}
-
-/// The red unread dot, `size` × `size`, for the Windows taskbar overlay.
-fn dot_rgba(size: u32) -> Vec<u8> {
-    let mut rgba = vec![0; (size * size * 4) as usize];
-    paint_dot(&mut rgba, size, size as f32 / 2.0, size as f32 / 2.0, size as f32 / 2.0);
-    rgba
 }
 
 /// The app icon with a red dot at its top right (the tray, while something is unread).
