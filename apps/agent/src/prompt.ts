@@ -6,6 +6,13 @@
 /** The bot's name until Orbit tells the sidecar the current one (threads made before names could change). */
 export const DEFAULT_AGENT_NAME = "Orbit Agent";
 
+/**
+ * How the model learns the date. The time is in each message (`frame`), never in the system prompt: the prompt must
+ * stay the same from run to run, or its cache breaks.
+ */
+export const TIME_RULE =
+	"- Each message starts with the current time of its sender, in their time zone: [weekday YYYY-MM-DD HH:MM, time zone]. Use it for today, tomorrow, next week and due dates, and write the real date in your answer.";
+
 /** What Orbit is and how people use it, for "how do I…" questions. True for this version: keep it in step with the app. */
 export function aboutOrbit(name: string): string {
 	return `About Orbit (built in; use it to answer questions about Orbit itself):

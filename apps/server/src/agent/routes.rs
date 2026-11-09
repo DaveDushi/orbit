@@ -503,7 +503,8 @@ async fn edit_message(
     }
 }
 
-/// The workspace's members (id and name), to turn `<@id>` tokens into names and back.
+/// The workspace's members (id, name and time zone): to turn `<@id>` tokens into names and back, and to give
+/// each message its sender's local time.
 async fn list_people(
     State(state): State<AgentState>,
     Path(workspace_id): Path<String>,
@@ -514,7 +515,7 @@ async fn list_people(
     sidecar_only(&state, &headers, &uri, &request_id)?;
     let workspace_id = id_of(&workspace_id, &uri, &request_id)?;
     let rows = sqlx::query(
-        "SELECT users.id, users.display_name FROM memberships \
+        "SELECT users.id, users.display_name, users.timezone FROM memberships \
          JOIN users ON users.id = memberships.user_id \
          WHERE memberships.workspace_id = $1 AND users.suspended_at IS NULL \
          ORDER BY users.display_name",
@@ -529,6 +530,7 @@ async fn list_people(
             json!({
                 "id": row.get::<String, _>("id"),
                 "name": row.get::<String, _>("display_name"),
+                "timezone": row.get::<Option<String>, _>("timezone"),
             })
         })
         .collect();

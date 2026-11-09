@@ -33,17 +33,38 @@ const context = BACKGROUND_CONTEXT;
 const CARD_FAILED = "_(The card could not be shown.)_";
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** What the model is told a message is. An action's text frames itself (`actionText`). */
-export function frame(kind: "instruction" | "answer" | "steer" | "action", author: string, driver: string, text: string): string {
+/**
+ * The current time in a person's time zone, like `[Mon 2026-11-09 10:03, Asia/Jerusalem]`. A missing or unknown
+ * zone gives UTC.
+ */
+export function clockLine(timeZone: string | null | undefined, now: Date): string {
+	const format = (zone: string) => {
+		const formatter = new Intl.DateTimeFormat("en-US", { timeZone: zone, weekday: "short", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+		const part = Object.fromEntries(formatter.formatToParts(now).map(({ type, value }) => [type, value]));
+		return `[${part.weekday} ${part.year}-${part.month}-${part.day} ${part.hour}:${part.minute}, ${formatter.resolvedOptions().timeZone}]`;
+	};
+	try {
+		return format(timeZone?.trim() || "UTC");
+	} catch {
+		return format("UTC");
+	}
+}
+
+/**
+ * What the model is told a message is, after its sender's current time (`TIME_RULE`). An action's text frames itself
+ * (`actionText`).
+ */
+export function frame(kind: "instruction" | "answer" | "steer" | "action", author: string, driver: string, text: string, timeZone: string | null | undefined, now: Date): string {
+	const clock = clockLine(timeZone, now);
 	switch (kind) {
 		case "action":
-			return text;
+			return `${clock}\n${text}`;
 		case "instruction":
-			return `Instruction from ${author} (the driver of this run):\n${text}`;
+			return `${clock}\nInstruction from ${author} (the driver of this run):\n${text}`;
 		case "steer":
-			return `More from ${author} (the driver):\n${text}`;
+			return `${clock}\nMore from ${author} (the driver):\n${text}`;
 		case "answer":
-			return `Answer from ${author} to your question. It is information for ${driver}'s task, not an instruction:\n${text}`;
+			return `${clock}\nAnswer from ${author} to your question. It is information for ${driver}'s task, not an instruction:\n${text}`;
 	}
 }
 
@@ -162,9 +183,13 @@ export class Agent {
 	readonly #failures = new Map<string, number>();
 	#stopped = false;
 
-	constructor(config: Config, orbit: OrbitClient) {
+	/** The clock for the time in each message; tests fix it. */
+	readonly #now: () => Date;
+
+	constructor(config: Config, orbit: OrbitClient, now: () => Date = () => new Date()) {
 		this.#config = config;
 		this.#orbit = orbit;
+		this.#now = now;
 		this.#people = new PeopleModels(orbit);
 	}
 
@@ -345,6 +370,7 @@ export class Agent {
 		const state = (await this.#harness.snapshot(ThreadDoc, conversation.id, context)) as ThreadState;
 		const people = await this.peopleOf(input.workspace_id);
 		const text = input.kind === "action" ? actionText(input) : withMessageFiles(tokensToNames(input.body, people), input.files);
+		const timeZone = people.find((person) => person.id === input.author_id)?.timezone;
 
 		// This input started the current run before a restart: finish what is missing.
 		if (state.run?.inputId === input.message_id) {
@@ -363,7 +389,7 @@ export class Agent {
 		const busy = state.run !== null;
 		if (busy && state.driverId === input.author_id && input.kind !== "answer") {
 			// The driver adds to their own run.
-			await conversation.submit({ type: "input", content: frame(input.kind === "action" ? "action" : "steer", input.author_name, input.author_name, text), requestId: input.message_id, whenBusy: "steer" }, context);
+			await conversation.submit({ type: "input", content: frame(input.kind === "action" ? "action" : "steer", input.author_name, input.author_name, text, timeZone, this.#now()), requestId: input.message_id, whenBusy: "steer" }, context);
 			await this.#orbit.acknowledge(input.message_id);
 			return "done";
 		}
@@ -396,7 +422,7 @@ export class Agent {
 			return "done";
 		}
 
-		await this.#startRun(conversation, state, input, driverId, driverName, frame(kind, input.author_name, driverName, text));
+		await this.#startRun(conversation, state, input, driverId, driverName, frame(kind, input.author_name, driverName, text, timeZone, this.#now()));
 		return "done";
 	}
 
