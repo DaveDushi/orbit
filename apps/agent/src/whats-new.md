@@ -7,9 +7,9 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 -->
 
 ## 2026-11-10
+- Owners and admins can connect Donna to remote MCP servers that use OAuth, for example TikTok Social: Settings → Agentic → Workspace → Add tool, credential "Sign in with OAuth (Connect)", then sign in and click Authorize. The row shows who is connected and when to reconnect.
 - Phones: Settings, Account settings and Admin open as a menu of their pages. The bottom bar has Drive instead of Mail.
-- Task boards stay fast with many tasks, and every card is there when you scroll. A change to many tasks at once shows in each task's activity. A closed GitHub issue or merged pull request moves its task to Done.
-- Comments lose empty lines at the start and end, and sending a comment no longer blanks the page. Loading shows a small ring spinner. In Drive, a click opens a file or folder; tick the box (or Ctrl/Shift+click) to select.
+- Task boards stay fast with many tasks, and every card is there when you scroll. A change to many tasks at once shows in each task's activity. A closed GitHub issue or merged pull request moves its task to Done. Comments lose empty lines at the start and end, and sending a comment no longer blanks the page. Loading shows a small ring spinner. In Drive, a click opens a file or folder; tick the box (or Ctrl/Shift+click) to select.
 - Chat on phones: Donna's cards and wide tables fit the screen and scroll sideways, the day chip no longer covers text, and repeated steps show once with a count. Desktop app 0.1.3 for Windows: the taskbar shows unread messages, and "Sign in to app" opens its window.
 
 ## 2026-11-09
