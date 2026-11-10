@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  connectAgentIntegration,
   createAgentIntegration,
   deleteAgentIntegration,
+  disconnectAgentIntegration,
   readAgentIntegrations,
   testAgentIntegration,
   updateAgentIntegration,
@@ -43,6 +45,19 @@ export function useTestAgentIntegration(workspaceId: string) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => testAgentIntegration(apiClient, workspaceId, id),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: key(workspaceId) }),
+  })
+}
+
+/** Starts an MCP server's sign-in. The caller opens `authorize_url`. */
+export function useConnectAgentIntegration(workspaceId: string) {
+  return useMutation({ mutationFn: (id: string) => connectAgentIntegration(apiClient, workspaceId, id) })
+}
+
+export function useDisconnectAgentIntegration(workspaceId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => disconnectAgentIntegration(apiClient, workspaceId, id),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: key(workspaceId) }),
   })
 }

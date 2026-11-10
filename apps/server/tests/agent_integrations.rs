@@ -2,6 +2,7 @@
 //! confinement and the address check. Local fake MCP and HTTP servers stand in for the outside.
 //! Runs on SQLite, and on Postgres with `ORBIT_TEST_POSTGRES_URL`.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -9,7 +10,7 @@ use axum::body::{Body, to_bytes};
 use axum::extract::State;
 use axum::http::{HeaderMap, Request, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{any, post};
+use axum::routing::{any, get, post};
 use orbit_platform::{
     AttachmentMutationCoordinator, AuthenticatedUser, Id, LocalBlobStore, PasswordService,
     TestDatabase, TimestampMillis, UploadLimits, UploadService,
@@ -23,6 +24,8 @@ use tower::ServiceExt;
 
 const SECRET: &str = "test-agent-secret-0123456789abcdef0123456789";
 const API_KEY: &str = "Bearer very-secret-api-key-4711";
+/// The public URL of the Orbit under test: the sign-in's redirect URI starts with it.
+const ORBIT: &str = "https://orbit.example.com";
 
 /// What a fake server received: one JSON line per request.
 type Seen = Arc<Mutex<Vec<Value>>>;
@@ -89,7 +92,8 @@ impl Fixture {
             CookieMode::secure(),
             Some([3; 32]),
         )
-        .with_integration_test_hosts(test_hosts);
+        .with_integration_test_hosts(test_hosts)
+        .with_public_origin(ORBIT);
         let app = chat_router(chat)
             .merge(orbit_server::agent::router(agent))
             .layer(axum::middleware::from_fn_with_state(
@@ -183,6 +187,23 @@ impl Fixture {
             status,
             serde_json::from_slice(&bytes).unwrap_or(Value::Null),
         )
+    }
+
+    /// A GET with a cookie: the status and the `Location` header.
+    async fn navigate(&self, uri: &str, cookie: &str) -> (StatusCode, String) {
+        let request = Request::builder()
+            .uri(uri)
+            .header("cookie", cookie)
+            .body(Body::empty())
+            .unwrap();
+        let response = self.app.clone().oneshot(request).await.unwrap();
+        let location = response
+            .headers()
+            .get(header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned();
+        (response.status(), location)
     }
 
     /// An admin route as `member` (cookie).
@@ -1780,4 +1801,589 @@ async fn the_graphql_setting_is_checked_when_it_is_saved() {
         )
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{value}");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Connect: a remote MCP server that uses OAuth (agent::mcp_oauth).
+
+/// A remote MCP server with its own OAuth server, as the MCP authorization spec describes: a 401
+/// names the protected resource metadata, the authorization server metadata is only at the
+/// path-appended OIDC URL (as TikTok's), dynamic registration, PKCE and rotating refresh tokens.
+#[derive(Default)]
+struct FakeConnect {
+    base: String,
+    /// The S256 challenge of the code the fake "authorize page" gave out.
+    challenge: Option<String>,
+    redirect_uri: Option<String>,
+    registrations: Vec<Value>,
+    token_forms: Vec<HashMap<String, String>>,
+    issued: u64,
+    access: Option<String>,
+    refresh: Option<String>,
+    expires_in: i64,
+    refuse_refresh: bool,
+    mcp_auth: Vec<Option<String>>,
+}
+
+type Connect = Arc<Mutex<FakeConnect>>;
+
+async fn fake_connect() -> Connect {
+    async fn mcp(
+        State(fake): State<Connect>,
+        headers: HeaderMap,
+        body: axum::body::Bytes,
+    ) -> Response {
+        let auth = headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let mut state = fake.lock().unwrap();
+        state.mcp_auth.push(auth.clone());
+        let expected = state.access.as_ref().map(|token| format!("Bearer {token}"));
+        if auth.is_none() || auth != expected {
+            let metadata = format!("{}/.well-known/oauth-protected-resource/mcp", state.base);
+            return (
+                StatusCode::UNAUTHORIZED,
+                [(
+                    header::WWW_AUTHENTICATE,
+                    format!("Bearer resource_metadata=\"{metadata}\""),
+                )],
+            )
+                .into_response();
+        }
+        drop(state);
+        let message: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+        let reply =
+            |result: Value| json!({ "jsonrpc": "2.0", "id": message["id"], "result": result });
+        match message["method"].as_str().unwrap_or_default() {
+            "initialize" => axum::Json(reply(json!({
+                "protocolVersion": "2025-06-18", "capabilities": { "tools": {} },
+                "serverInfo": { "name": "social", "version": "1" },
+            })))
+            .into_response(),
+            "notifications/initialized" => StatusCode::ACCEPTED.into_response(),
+            "tools/list" => axum::Json(reply(json!({ "tools": [
+                { "name": "list_videos", "description": "List videos.", "annotations": { "readOnlyHint": true },
+                  "inputSchema": { "type": "object" } },
+                { "name": "reply_comment", "description": "Reply to a comment.",
+                  "inputSchema": { "type": "object", "properties": { "text": { "type": "string" } } } },
+            ] })))
+            .into_response(),
+            "tools/call" => axum::Json(reply(json!({
+                "content": [{ "type": "text", "text": format!("{} ran", message["params"]["name"]) }],
+            })))
+            .into_response(),
+            _ => StatusCode::BAD_REQUEST.into_response(),
+        }
+    }
+    async fn resource(State(fake): State<Connect>) -> axum::Json<Value> {
+        let base = fake.lock().unwrap().base.clone();
+        axum::Json(json!({
+            "resource": format!("{base}/mcp"),
+            "authorization_servers": [format!("{base}/oauth")],
+            "scopes_supported": ["video.list", "comment.list.manage"],
+        }))
+    }
+    async fn metadata(State(fake): State<Connect>) -> axum::Json<Value> {
+        let base = fake.lock().unwrap().base.clone();
+        axum::Json(json!({
+            "issuer": format!("{base}/oauth"),
+            "authorization_endpoint": format!("{base}/oauth/authorize"),
+            "token_endpoint": format!("{base}/oauth/token"),
+            "registration_endpoint": format!("{base}/oauth/register"),
+            "code_challenge_methods_supported": ["S256"],
+            "token_endpoint_auth_methods_supported": ["none"],
+            "response_types_supported": ["code"],
+        }))
+    }
+    async fn register(
+        State(fake): State<Connect>,
+        axum::Json(body): axum::Json<Value>,
+    ) -> Response {
+        fake.lock().unwrap().registrations.push(body);
+        (
+            StatusCode::CREATED,
+            axum::Json(json!({ "client_id": "client-1" })),
+        )
+            .into_response()
+    }
+    async fn token(State(fake): State<Connect>, body: String) -> Response {
+        let form: HashMap<String, String> = url::form_urlencoded::parse(body.as_bytes())
+            .into_owned()
+            .collect();
+        let mut state = fake.lock().unwrap();
+        state.token_forms.push(form.clone());
+        let refused = || {
+            (
+                StatusCode::BAD_REQUEST,
+                axum::Json(json!({ "error": "invalid_grant" })),
+            )
+                .into_response()
+        };
+        let good = match form.get("grant_type").map(String::as_str) {
+            Some("authorization_code") => {
+                let verifier = form.get("code_verifier").cloned().unwrap_or_default();
+                let challenge = base64::Engine::encode(
+                    &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+                    <sha2::Sha256 as sha2::Digest>::digest(verifier.as_bytes()),
+                );
+                form.get("code").map(String::as_str) == Some("code-1")
+                    && state.challenge.as_deref() == Some(challenge.as_str())
+                    && form.get("redirect_uri") == state.redirect_uri.as_ref()
+                    && form.get("client_id").map(String::as_str) == Some("client-1")
+                    && form.get("resource").map(String::as_str)
+                        == Some(format!("{}/mcp", state.base).as_str())
+            }
+            Some("refresh_token") => {
+                !state.refuse_refresh && form.get("refresh_token") == state.refresh.as_ref()
+            }
+            _ => false,
+        };
+        if !good {
+            return refused();
+        }
+        state.issued += 1;
+        let issued = state.issued;
+        state.access = Some(format!("access-{issued}"));
+        state.refresh = Some(format!("refresh-{issued}"));
+        axum::Json(json!({
+            "access_token": format!("access-{issued}"),
+            "token_type": "Bearer",
+            "expires_in": state.expires_in,
+            "refresh_token": format!("refresh-{issued}"),
+            "refresh_expires_in": 31_536_000,
+            "username": "brand_account",
+        }))
+        .into_response()
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let fake: Connect = Arc::new(Mutex::new(FakeConnect {
+        base,
+        expires_in: 86_400,
+        ..FakeConnect::default()
+    }));
+    let router = axum::Router::new()
+        .route("/mcp", post(mcp).delete(|| async { StatusCode::OK }))
+        .route("/.well-known/oauth-protected-resource/mcp", get(resource))
+        .route("/oauth/.well-known/openid-configuration", get(metadata))
+        .route("/oauth/register", post(register))
+        .route("/oauth/token", post(token))
+        .with_state(Arc::clone(&fake));
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    fake
+}
+
+/// An MCP integration without a credential, and its ID.
+async fn connect_fixture() -> (Fixture, Connect, String) {
+    let fixture = Fixture::new(&["127.0.0.1"]).await;
+    let fake = fake_connect().await;
+    let url = format!("{}/mcp", fake.lock().unwrap().base);
+    let (status, created) = fixture
+        .admin(
+            &fixture.owner,
+            "POST",
+            "",
+            Some(json!({ "kind": "mcp", "name": "Social", "url": url })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    (fixture, fake, created["id"].as_str().unwrap().to_owned())
+}
+
+/// Starts Connect as `member` and plays the authorize page: it keeps the challenge and gives out
+/// `code-1`. Returns the `state` and the callback URI (without `iss`).
+async fn authorize(
+    fixture: &Fixture,
+    fake: &Connect,
+    member: &Member,
+    id: &str,
+) -> (String, String) {
+    let (status, started) = fixture
+        .admin(member, "POST", &format!("/{id}/oauth"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{started}");
+    assert_eq!(started["ok"], true, "{started}");
+    let url = url::Url::parse(started["authorize_url"].as_str().unwrap()).unwrap();
+    let pairs: HashMap<String, String> = url.query_pairs().into_owned().collect();
+    let mut state = fake.lock().unwrap();
+    assert_eq!(url.path(), "/oauth/authorize");
+    assert_eq!(pairs["code_challenge_method"], "S256");
+    assert_eq!(pairs["resource"], format!("{}/mcp", state.base));
+    assert_eq!(pairs["scope"], "video.list comment.list.manage");
+    assert_eq!(pairs["client_id"], "client-1");
+    assert_eq!(
+        pairs["redirect_uri"],
+        format!("{ORBIT}/api/v1/agent-integrations/oauth/callback")
+    );
+    state.challenge = Some(pairs["code_challenge"].clone());
+    state.redirect_uri = Some(pairs["redirect_uri"].clone());
+    let callback = format!(
+        "/api/v1/agent-integrations/oauth/callback?code=code-1&state={}",
+        pairs["state"]
+    );
+    (pairs["state"].clone(), callback)
+}
+
+async fn integration(fixture: &Fixture, id: &str) -> Value {
+    let (_, list) = fixture.admin(&fixture.owner, "GET", "", None).await;
+    list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == id)
+        .unwrap()
+        .clone()
+}
+
+fn outcome(location: &str) -> &str {
+    location
+        .split_once("agent_tool_connect=")
+        .map_or("", |(_, outcome)| outcome)
+}
+
+#[tokio::test]
+async fn connect_signs_in_with_pkce_and_the_agent_calls_with_the_sealed_token() {
+    let (fixture, fake, id) = connect_fixture().await;
+    let (_, tested) = fixture
+        .admin(&fixture.owner, "POST", &format!("/{id}/test"), None)
+        .await;
+    assert_eq!(
+        tested["detail"], "The server needs a sign-in: click Connect.",
+        "{tested}"
+    );
+
+    let (_, callback) = authorize(&fixture, &fake, &fixture.owner, &id).await;
+    {
+        let state = fake.lock().unwrap();
+        let registration = &state.registrations[0];
+        assert_eq!(
+            registration["redirect_uris"],
+            json!([format!("{ORBIT}/api/v1/agent-integrations/oauth/callback")])
+        );
+        assert_eq!(registration["token_endpoint_auth_method"], "none");
+        assert_eq!(
+            registration["grant_types"],
+            json!(["authorization_code", "refresh_token"])
+        );
+    }
+    let before = TimestampMillis::now().as_millis();
+    let (status, location) = fixture.navigate(&callback, &fixture.owner.cookie).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        location,
+        "/settings/agentic/workspace?agent_tool_connect=connected"
+    );
+
+    let view = integration(&fixture, &id).await;
+    assert_eq!(view["auth_type"], "connect", "{view}");
+    assert_eq!(view["connection"]["account"], "brand_account");
+    assert_eq!(view["connection"]["needs_reconnect"], false);
+    let grant = view["connection"]["grant_expires_at"].as_i64().unwrap();
+    assert!(
+        (before + 31_536_000_000..before + 31_536_000_000 + 60_000).contains(&grant),
+        "{grant}"
+    );
+    // The tools were read with the token right after the sign-in; read-only ones are on.
+    let tools = view["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 2);
+    assert_eq!(tools[0]["enabled"], true);
+    let text = view.to_string();
+    assert!(
+        !text.contains("access-") && !text.contains("refresh-") && !text.contains("client-1"),
+        "{text}"
+    );
+    let sealed: Vec<u8> =
+        sqlx::query_scalar("SELECT oauth_sealed_connection FROM agent_integrations WHERE id = $1")
+            .bind(&id)
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap();
+    assert!(!String::from_utf8_lossy(&sealed).contains("access-1"));
+
+    // The agent: a read runs with the token, a write needs the driver's yes.
+    fixture
+        .admin(
+            &fixture.owner,
+            "PATCH",
+            &format!("/{id}"),
+            Some(json!({ "enabled_tools": ["list_videos", "reply_comment"] })),
+        )
+        .await;
+    let (general, root, bearer) = fixture.run(&fixture.owner).await;
+    let thread = (general.as_str(), root.as_str());
+    let (_, read) = fixture
+        .call(&bearer, thread, "social__list_videos", json!({}))
+        .await;
+    assert_eq!(read["status"], "ok", "{read}");
+    assert_eq!(
+        fake.lock().unwrap().mcp_auth.last().unwrap().as_deref(),
+        Some("Bearer access-1")
+    );
+    let (_, write) = fixture
+        .call(
+            &bearer,
+            thread,
+            "social__reply_comment",
+            json!({ "text": "Thanks!" }),
+        )
+        .await;
+    assert_eq!(write["status"], "approval_required", "{write}");
+    fixture
+        .send(&fixture.owner, &general, "yes", Some(&root))
+        .await;
+    let (_, write) = fixture
+        .call(
+            &bearer,
+            thread,
+            "social__reply_comment",
+            json!({ "text": "Thanks!" }),
+        )
+        .await;
+    assert_eq!(write["status"], "ok", "{write}");
+
+    // A new server URL drops the sign-in.
+    let url = format!("{}/mcp?v=2", fake.lock().unwrap().base);
+    let (status, changed) = fixture
+        .admin(
+            &fixture.owner,
+            "PATCH",
+            &format!("/{id}"),
+            Some(json!({ "url": url })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{changed}");
+    assert_eq!(changed["connection"], Value::Null);
+    assert_eq!(changed["auth_type"], "none");
+}
+
+#[tokio::test]
+async fn the_state_works_once_only_for_its_session_and_until_it_expires() {
+    let (fixture, fake, id) = connect_fixture().await;
+    let admin = fixture.add_user("admin", Some("admin")).await;
+    let member = fixture.add_user("member", Some("member")).await;
+    let (status, _) = fixture
+        .admin(&member, "POST", &format!("/{id}/oauth"), None)
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Unknown state.
+    let (_, location) = fixture
+        .navigate(
+            "/api/v1/agent-integrations/oauth/callback?code=code-1&state=made-up",
+            &fixture.owner.cookie,
+        )
+        .await;
+    assert_eq!(outcome(&location), "expired");
+
+    // Another admin's browser cannot finish the owner's sign-in, and the state is then used up.
+    let (_, callback) = authorize(&fixture, &fake, &fixture.owner, &id).await;
+    let (_, location) = fixture.navigate(&callback, &admin.cookie).await;
+    assert_eq!(outcome(&location), "session");
+    let (_, location) = fixture.navigate(&callback, &fixture.owner.cookie).await;
+    assert_eq!(outcome(&location), "expired");
+
+    // An `iss` of another server is refused before the code is used.
+    let (_, callback) = authorize(&fixture, &fake, &fixture.owner, &id).await;
+    let (_, location) = fixture
+        .navigate(
+            &format!("{callback}&iss=https%3A%2F%2Fevil.example.com"),
+            &fixture.owner.cookie,
+        )
+        .await;
+    assert_eq!(outcome(&location), "failed");
+    assert!(fake.lock().unwrap().token_forms.is_empty());
+
+    // A denied sign-in.
+    let (_, callback) = authorize(&fixture, &fake, &fixture.owner, &id).await;
+    let (_, location) = fixture
+        .navigate(
+            &format!("{callback}&error=access_denied"),
+            &fixture.owner.cookie,
+        )
+        .await;
+    assert_eq!(outcome(&location), "denied");
+
+    // After 10 minutes.
+    let (_, callback) = authorize(&fixture, &fake, &fixture.owner, &id).await;
+    sqlx::query("UPDATE agent_integration_oauth_states SET expires_at = $1")
+        .bind(TimestampMillis::now().as_millis() - 1)
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    let (_, location) = fixture.navigate(&callback, &fixture.owner.cookie).await;
+    assert_eq!(outcome(&location), "expired");
+    assert_eq!(integration(&fixture, &id).await["connection"], Value::Null);
+
+    // The right session works once; a replay does not.
+    let (_, callback) = authorize(&fixture, &fake, &admin, &id).await;
+    let (_, location) = fixture.navigate(&callback, &admin.cookie).await;
+    assert_eq!(outcome(&location), "connected");
+    let (_, location) = fixture.navigate(&callback, &admin.cookie).await;
+    assert_eq!(outcome(&location), "expired");
+    assert_eq!(fake.lock().unwrap().issued, 1);
+}
+
+#[tokio::test]
+async fn tokens_renew_before_expiry_and_after_a_401_and_a_refused_refresh_needs_reconnect() {
+    let (fixture, fake, id) = connect_fixture().await;
+    // 30 seconds: inside the minute before expiry, so every call renews first.
+    fake.lock().unwrap().expires_in = 30;
+    let (_, callback) = authorize(&fixture, &fake, &fixture.owner, &id).await;
+    let (_, location) = fixture.navigate(&callback, &fixture.owner.cookie).await;
+    assert_eq!(outcome(&location), "connected");
+    // Reading the tools at the sign-in already renewed once.
+    assert_eq!(fake.lock().unwrap().issued, 2);
+
+    let (general, root, bearer) = fixture.run(&fixture.owner).await;
+    let thread = (general.as_str(), root.as_str());
+    let (_, read) = fixture
+        .call(&bearer, thread, "social__list_videos", json!({}))
+        .await;
+    assert_eq!(read["status"], "ok", "{read}");
+    {
+        let state = fake.lock().unwrap();
+        assert_eq!(state.issued, 3);
+        let refresh = state.token_forms.last().unwrap();
+        assert_eq!(refresh["grant_type"], "refresh_token");
+        // The rotated refresh token of the previous answer.
+        assert_eq!(refresh["refresh_token"], "refresh-2");
+        assert_eq!(refresh["resource"], format!("{}/mcp", state.base));
+        assert_eq!(
+            state.mcp_auth.last().unwrap().as_deref(),
+            Some("Bearer access-3")
+        );
+    }
+
+    // A long-lived token the server revoked: one 401, one renewal, one retry.
+    fake.lock().unwrap().expires_in = 86_400;
+    fixture
+        .call(&bearer, thread, "social__list_videos", json!({}))
+        .await;
+    fake.lock().unwrap().access = Some("revoked".to_owned());
+    let (_, read) = fixture
+        .call(&bearer, thread, "social__list_videos", json!({}))
+        .await;
+    assert_eq!(read["status"], "ok", "{read}");
+    assert_eq!(fake.lock().unwrap().issued, 5);
+
+    // The server refuses the refresh: the agent is told, admins see "needs reconnect".
+    {
+        let mut state = fake.lock().unwrap();
+        state.refuse_refresh = true;
+        state.access = Some("revoked-again".to_owned());
+    }
+    let (_, read) = fixture
+        .call(&bearer, thread, "social__list_videos", json!({}))
+        .await;
+    assert_eq!(read["status"], "failed", "{read}");
+    assert!(
+        read["detail"].as_str().unwrap().contains("Reconnect"),
+        "{read}"
+    );
+    let view = integration(&fixture, &id).await;
+    assert_eq!(view["connection"]["needs_reconnect"], true, "{view}");
+    // No more token requests until an admin reconnects.
+    let requests = fake.lock().unwrap().token_forms.len();
+    fixture
+        .call(&bearer, thread, "social__list_videos", json!({}))
+        .await;
+    assert_eq!(fake.lock().unwrap().token_forms.len(), requests);
+
+    // Reconnect clears it; Disconnect removes the sign-in.
+    fake.lock().unwrap().refuse_refresh = false;
+    let (_, callback) = authorize(&fixture, &fake, &fixture.owner, &id).await;
+    let (_, location) = fixture.navigate(&callback, &fixture.owner.cookie).await;
+    assert_eq!(outcome(&location), "connected");
+    assert_eq!(
+        integration(&fixture, &id).await["connection"]["needs_reconnect"],
+        false
+    );
+    let (status, view) = fixture
+        .admin(&fixture.owner, "DELETE", &format!("/{id}/oauth"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    assert_eq!(view["connection"], Value::Null);
+}
+
+#[tokio::test]
+async fn owners_and_admins_get_one_email_when_a_sign_in_ends_within_14_days() {
+    let (fixture, fake, id) = connect_fixture().await;
+    fixture.add_user("admin", Some("admin")).await;
+    fixture.add_user("member", Some("member")).await;
+    let (_, callback) = authorize(&fixture, &fake, &fixture.owner, &id).await;
+    fixture.navigate(&callback, &fixture.owner.cookie).await;
+    let database = (*fixture.database).clone();
+    let (mailer, outbox) = orbit_server::mail::Mailer::recording(database.clone(), ORBIT);
+    let send = || orbit_server::agent::send_sign_in_notices(&database, &mailer);
+    let sent = || {
+        let mut emails: Vec<(String, String)> = outbox
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|email| (email.to.clone(), email.body.clone()))
+            .collect();
+        emails.sort();
+        emails
+    };
+
+    // A year left: nothing.
+    send().await.unwrap();
+    assert!(sent().is_empty());
+
+    let set = |column: &'static str, value: i64| {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE agent_integrations SET {column} = $1 WHERE id = $2"
+        )))
+        .bind(value)
+        .bind(id.clone())
+        .execute(fixture.database.pool())
+    };
+    let day = 24 * 60 * 60 * 1_000;
+    set(
+        "oauth_grant_expires_at",
+        TimestampMillis::now().as_millis() + 10 * day - 60_000,
+    )
+    .await
+    .unwrap();
+    send().await.unwrap();
+    // `send_later` sends in a task.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let emails = sent();
+    assert_eq!(
+        emails.iter().map(|(to, _)| to.as_str()).collect::<Vec<_>>(),
+        ["admin@example.com", "owner@example.com"]
+    );
+    assert!(emails[0].1.contains("\"Social\""), "{}", emails[0].1);
+    assert!(emails[0].1.contains("ends in 10 days"), "{}", emails[0].1);
+    assert!(
+        emails[0]
+            .1
+            .contains(&format!("{ORBIT}/settings/agentic/workspace"))
+    );
+
+    // Once only.
+    send().await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(sent().len(), 2);
+
+    // A reconnect clears the notice; a refused refresh is told the same way.
+    let (_, callback) = authorize(&fixture, &fake, &fixture.owner, &id).await;
+    fixture.navigate(&callback, &fixture.owner.cookie).await;
+    set("oauth_invalid_at", TimestampMillis::now().as_millis())
+        .await
+        .unwrap();
+    send().await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let emails = sent();
+    assert_eq!(emails.len(), 4);
+    assert!(
+        emails
+            .iter()
+            .filter(|(_, body)| body.contains("stopped working"))
+            .count()
+            == 2
+    );
 }

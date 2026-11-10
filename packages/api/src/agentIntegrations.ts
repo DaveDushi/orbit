@@ -28,8 +28,13 @@ export interface AgentIntegration {
   kind: AgentIntegrationKind
   url: string
   auth_header: string | null
-  /** `header`: a fixed credential. `oauth`: Orbit gets the token with a client ID and secret. */
-  auth_type: 'none' | 'header' | 'oauth'
+  /**
+   * `header`: a fixed credential. `oauth`: Orbit gets the token with a client ID and secret. `connect`: an admin signed
+   * in to the MCP server (OAuth) with Connect.
+   */
+  auth_type: 'none' | 'header' | 'oauth' | 'connect'
+  /** MCP: the shared sign-in, after Connect. */
+  connection: AgentIntegrationConnection | null
   oauth_token_url: string | null
   /** HTTP: what Test does a GET of, below the base URL. */
   test_path: string | null
@@ -47,6 +52,19 @@ export interface AgentIntegration {
   created_at: number
   updated_at: number
 }
+
+/** An MCP server's sign-in. Orbit keeps the tokens; the browser only sees this. */
+export interface AgentIntegrationConnection {
+  /** Who signed in, when the server told. */
+  account: string | null
+  connected_at: number | null
+  /** When an admin must connect again. `null`: the server did not say. */
+  grant_expires_at: number | null
+  /** A token refresh was refused: only Reconnect helps. */
+  needs_reconnect: boolean
+}
+
+export type AgentIntegrationConnectStart = { ok: true; authorize_url: string } | { ok: false; detail: string }
 
 export interface AgentIntegrationList {
   items: AgentIntegration[]
@@ -108,4 +126,16 @@ export async function deleteAgentIntegration(client: Client, workspaceId: string
 export async function testAgentIntegration(client: Client, workspaceId: string, id: string): Promise<AgentIntegrationTest> {
   const { data } = await client.post({ url: `${base(workspaceId)}/${id}/test`, throwOnError: true })
   return data as AgentIntegrationTest
+}
+
+/** MCP: starts the sign-in. Open `authorize_url` in this tab; the server sends the browser back to the admin page. */
+export async function connectAgentIntegration(client: Client, workspaceId: string, id: string): Promise<AgentIntegrationConnectStart> {
+  const { data } = await client.post({ url: `${base(workspaceId)}/${id}/oauth`, throwOnError: true })
+  return data as AgentIntegrationConnectStart
+}
+
+/** MCP: removes the sign-in. */
+export async function disconnectAgentIntegration(client: Client, workspaceId: string, id: string): Promise<AgentIntegration> {
+  const { data } = await client.delete({ url: `${base(workspaceId)}/${id}/oauth`, throwOnError: true })
+  return data as AgentIntegration
 }

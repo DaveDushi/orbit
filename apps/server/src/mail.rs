@@ -302,6 +302,39 @@ pub mod templates {
         }
     }
 
+    /// To the owners and admins of a workspace: the sign-in of an agent tool (a remote MCP
+    /// server) ends in `days_left` days, or (`None`) already stopped working.
+    #[must_use]
+    pub fn agent_tool_sign_in(
+        to: &str,
+        workspace: &str,
+        tool: &str,
+        days_left: Option<i64>,
+        url: &str,
+    ) -> OutgoingEmail {
+        let (subject, state) = match days_left {
+            Some(days) => (
+                "An agent tool's sign-in ends soon",
+                format!("ends in {days} {}", if days == 1 { "day" } else { "days" }),
+            ),
+            None => (
+                "An agent tool needs a new sign-in",
+                "stopped working".to_owned(),
+            ),
+        };
+        OutgoingEmail {
+            to: to.to_owned(),
+            subject: subject.to_owned(),
+            body: format!(
+                "The sign-in of the agent tool {} in the workspace {} {state}. Until an owner or \
+                 admin connects it again, the agent cannot use it.\n\n\
+                 Open Agentic → Workspace and click Reconnect:\n{url}\n",
+                quoted_name(tool),
+                quoted_name(workspace),
+            ),
+        }
+    }
+
     #[must_use]
     pub fn test(to: &str) -> OutgoingEmail {
         OutgoingEmail {

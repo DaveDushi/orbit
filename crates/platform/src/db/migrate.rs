@@ -578,6 +578,13 @@ impl MigrationRunner {
                     ),
                     false,
                 ),
+                Migration::new(
+                    87,
+                    include_str!(
+                        "../../../../apps/server/migrations/0087_agent_integration_connect.sql"
+                    ),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -819,6 +826,13 @@ impl MigrationRunner {
                 86,
                 include_str!(
                     "../../../../apps/server/migrations/postgres/0086_agent_hidden_actions.sql"
+                ),
+                false,
+            ),
+            Migration::new(
+                87,
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0087_agent_integration_connect.sql"
                 ),
                 false,
             ),

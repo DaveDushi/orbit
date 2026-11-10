@@ -128,7 +128,8 @@ may use each integration. The agent sees the tools as `<prefix>__<tool>`.
 form: token URL, client ID, client secret, the header for the token (default `Authorization`) and an optional test
 path. Orbit sends `grant_type=client_credentials` with the client ID and secret to the token URL and uses the token
 from the answer. In `Authorization` the value is `Bearer <token>`; in another header, the bare token. A fixed
-credential and an OAuth client exclude each other: setting one clears the other. MCP servers cannot use OAuth clients.
+credential and an OAuth client exclude each other: setting one clears the other. MCP servers cannot use OAuth clients
+(they use Connect, below).
 
 - Orbit reads `expires_in` from the answer and renews 60 seconds before expiry. If `expires_in` is missing or at most
   60, the token serves one call only. The token stays in the memory of each server, so a restart asks for a new one.
@@ -138,6 +139,37 @@ credential and an OAuth client exclude each other: setting one clears the other.
   status and a short OAuth error code, such as `shop_not_permitted`.
 - **A new base URL or token URL needs the client ID and secret again.** So an admin who cannot read the secret cannot
   send it, or a token, to another host. The token URL can be on another host than the base URL.
+
+**Connect: remote MCP servers that use OAuth.** Choose **Sign in with OAuth (Connect)** as the credential of a remote
+MCP server (or click **Connect** on a server without a fixed credential). Orbit follows the
+[MCP authorization spec](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization); no developer
+app or client ID is needed:
+
+1. Orbit sends `initialize` without a credential. The server's 401 names its protected resource metadata (RFC 9728),
+   else Orbit tries the well-known URLs. The metadata's `resource` must be this server, and it names the
+   authorization server, whose metadata (RFC 8414 or OIDC, in the spec's order) must name the same `issuer`, https
+   endpoints and PKCE with `S256`.
+2. Orbit registers itself as a client (dynamic client registration, RFC 7591) with the redirect URI
+   `<ORBIT_PUBLIC_ORIGIN>/api/v1/agent-integrations/oauth/callback`. A server without registration cannot be connected
+   yet.
+3. Your browser opens the service's sign-in page. Orbit sends PKCE (`S256`), the `resource` parameter and the scope of
+   the 401 (else every scope the metadata lists). The `state` works once, only for the Orbit session that started it,
+   and for 10 minutes; an `iss` in the answer must be the issuer.
+4. Back in Orbit, the row shows **Connected as …** (when the service says who signed in), and the date the sign-in
+   ends (the refresh token's `refresh_expires_in`; unknown when the service does not say). Orbit reads the tools.
+
+One sign-in per integration serves everyone who may use it: connect with the account the agent should act as (for
+TikTok Social, the brand's account). The tokens are sealed with `ORBIT_APP_KEY` in the database and never reach the
+browser, a log or an error. Orbit renews the access token a minute before it ends, and once after a 401. When the
+service refuses a renewal, the row says the sign-in stopped working and the agent tells the driver to ask an admin;
+only **Reconnect** helps. From 14 days before the sign-in ends, the row warns and the owners and admins of the
+workspace get one email (when a mail server is set); click **Reconnect** before the date. **Disconnect** (under Edit)
+deletes the tokens in Orbit; the grant at the service stays until it ends or you remove Orbit there. A new server URL
+or a fixed credential removes the sign-in. Writes still need the driver's yes.
+
+**Example: TikTok Social.** Server URL `https://business-api.tiktok.com/open_mcp/tt-ads-mcp-organic-social`, credential
+**Sign in with OAuth (Connect)**. Sign in with the brand's TikTok account and click **Authorize**; the grant lasts one
+year.
 
 **Test** does a GET of the optional test path, which stays below the base URL. An OAuth integration always gets a new
 token. With no test path, Test reports that the token request worked and does not call the API. With a test path, an
@@ -263,7 +295,9 @@ docker compose -f deploy/compose.yaml --profile agent up -d --build
   nobody can connect. Disconnecting deletes it.
 - Agent tools and their sealed credentials are in `agent_integrations`; the driver's approvals of writes in
   `agent_integration_approvals`. Removing an integration deletes both. An OAuth client ID and secret are sealed
-  together in `oauth_sealed_client`, apart from `sealed_secret`. OAuth access tokens are never written to the
+  together in `oauth_sealed_client`, apart from `sealed_secret`. The sign-in of a connected MCP server (tokens and the registered client) is
+  sealed in `oauth_sealed_connection`; a started sign-in waits in `agent_integration_oauth_states` (state hash, PKCE
+  verifier, at most 10 minutes). OAuth access tokens are never written to the
   database: they stay in the memory of each server.
 - The agent stores transcripts in `AGENT_DATA_DIR`. It stores no tokens.
 - One agent process owns its data directory. Several Orbit servers on one Postgres database can share one agent.

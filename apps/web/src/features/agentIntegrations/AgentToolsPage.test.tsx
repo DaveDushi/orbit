@@ -4,7 +4,9 @@ import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import type { AgentIntegration } from '@orbit/api/agentIntegrations'
 import { WorkspaceContext } from '@/features/workspaces/workspaceContext'
 import { testWorkspace } from '@/test/workspace'
+import { MemoryRouter } from 'react-router'
 import { AgentToolsPage } from './AgentToolsPage'
+import { connectionStatus } from './connectionStatus'
 
 const originalFetch = globalThis.fetch
 afterEach(() => {
@@ -13,7 +15,7 @@ afterEach(() => {
 })
 
 const http: AgentIntegration = {
-  id: 'i1', slug: 'shop', name: 'Shop', kind: 'http', url: 'https://shop.example.com', auth_header: null, auth_type: 'none', oauth_token_url: null,
+  id: 'i1', slug: 'shop', name: 'Shop', kind: 'http', url: 'https://shop.example.com', auth_header: null, auth_type: 'none', connection: null, oauth_token_url: null,
   test_path: 'me', graphql_read_path: null, graphql_reads_enabled: false, secret_set: false, allowed_roles: ['owner'], allowed_methods: ['GET'], tools: null, tools_checked_at: null, created_at: 1, updated_at: 1,
 }
 
@@ -33,7 +35,7 @@ function serve(items: AgentIntegration[]) {
 function show() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   const workspace = testWorkspace('owner')
-  return render(<QueryClientProvider client={client}><WorkspaceContext.Provider value={{ workspace, workspaces: [workspace], selectWorkspace: () => {} }}><AgentToolsPage /></WorkspaceContext.Provider></QueryClientProvider>)
+  return render(<QueryClientProvider client={client}><WorkspaceContext.Provider value={{ workspace, workspaces: [workspace], selectWorkspace: () => {} }}><MemoryRouter><AgentToolsPage /></MemoryRouter></WorkspaceContext.Provider></QueryClientProvider>)
 }
 
 const type = (element: Element, value: string) => fireEvent.change(element, { target: { value } })
@@ -80,4 +82,19 @@ test('the switch stays off and says why when there is no GraphQL path', async ()
   fireEvent.click(view.getByRole('button', { name: 'Edit Shop' }))
   expect(view.getByText(/Set a GraphQL path under Advanced first/)).toBeTruthy()
   expect(view.getByRole('switch', { name: 'Run GraphQL reads without approval' }).hasAttribute('data-disabled')).toBe(true)
+})
+
+test('a sign-in warns from 14 days before it ends, and when a refresh was refused', () => {
+  const day = 24 * 60 * 60 * 1000
+  const now = Date.UTC(2026, 10, 10)
+  const connection = { account: 'brand', connected_at: now, grant_expires_at: now + 15 * day, needs_reconnect: false }
+  expect(connectionStatus(connection, now).warning).toBe(false)
+  expect(connectionStatus(connection, now).text).toStartWith('Connected as brand · until ')
+  const soon = connectionStatus({ ...connection, grant_expires_at: now + 14 * day }, now)
+  expect(soon.warning).toBe(true)
+  expect(soon.text).toContain('ends in 14 days')
+  expect(connectionStatus({ ...connection, grant_expires_at: now + 1 }, now).text).toContain('ends in 1 day ')
+  expect(connectionStatus({ ...connection, grant_expires_at: now }, now).text).toStartWith('Sign-in ended on ')
+  expect(connectionStatus({ ...connection, needs_reconnect: true }, now)).toEqual({ text: 'Sign-in stopped working. Click Reconnect.', warning: true })
+  expect(connectionStatus({ ...connection, account: null, grant_expires_at: null }, now)).toEqual({ text: 'Connected', warning: false })
 })

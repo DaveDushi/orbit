@@ -43,6 +43,11 @@ pub(crate) enum OutboundError {
     Token(String),
     #[error("the token request worked, but the API refused the test request with HTTP {0}")]
     TokenWorkedApiRefused(u16),
+    /// The shared sign-in of a remote MCP server ended or was refused (`super::mcp_oauth`).
+    #[error(
+        "the sign-in to this service has ended: an owner or admin must click Reconnect in Agentic → Workspace"
+    )]
+    Reconnect,
 }
 
 /// The hosts that skip the address check (lower case, no port).
@@ -308,47 +313,149 @@ impl Outbound {
         token_url: &Url,
         client: &OAuthClient,
     ) -> Result<(AccessToken, Option<u64>), OutboundError> {
-        let token_url = check_url(token_url.as_str(), &self.test_hosts)?;
-        let form = url::form_urlencoded::Serializer::new(String::new())
-            .append_pair("grant_type", "client_credentials")
-            .append_pair("client_id", &client.client_id)
-            .append_pair("client_secret", &client.client_secret)
-            .finish();
-        let request = self
-            .client
-            .post(token_url)
-            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
-            .header("accept", "application/json")
-            .body(form);
         let failed = OutboundError::Token;
-        let response = self.send(request).await.map_err(|error| match error {
-            OutboundError::Network(reason) => failed(reason),
-            other => other,
-        })?;
-        let status = response.status();
-        let (bytes, _) = read_limited(response, true)
-            .await
-            .map_err(|error| failed(error.to_string()))?;
-        let answer: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-        if !status.is_success() {
-            let code = answer
-                .get("error")
-                .and_then(Value::as_str)
-                .filter(|code| oauth_error_code(code))
-                .map_or_else(String::new, |code| format!(" ({code})"));
-            return Err(failed(format!("HTTP {}{code}", status.as_u16())));
+        let (status, answer) = self
+            .token_request(
+                token_url,
+                &[
+                    ("grant_type", "client_credentials"),
+                    ("client_id", &client.client_id),
+                    ("client_secret", &client.client_secret),
+                ],
+                None,
+            )
+            .await?;
+        if !(200..300).contains(&status) {
+            return Err(failed(token_failure(status, &answer)));
         }
         let token = answer
             .get("access_token")
             .and_then(Value::as_str)
-            .filter(|token| {
-                !token.is_empty() && token.len() <= 8_192 && HeaderValue::from_str(token).is_ok()
-            })
+            .filter(|token| usable_token(token))
             .ok_or_else(|| failed("the answer has no usable access_token".to_owned()))?;
         Ok((
             AccessToken::new(token.to_owned()),
             answer.get("expires_in").and_then(Value::as_u64),
         ))
+    }
+
+    /// A form POST to an OAuth token endpoint: the status and the JSON answer (`Null` when it is
+    /// not JSON). `basic` is a client ID and secret for HTTP Basic. A failure to reach it is a
+    /// [`OutboundError::Token`]; the body is never part of an error.
+    pub(crate) async fn token_request(
+        &self,
+        token_url: &Url,
+        form: &[(&str, &str)],
+        basic: Option<(&str, &str)>,
+    ) -> Result<(u16, Value), OutboundError> {
+        let failed = OutboundError::Token;
+        let token_url = check_url(token_url.as_str(), &self.test_hosts)?;
+        // The serializer is not `Send`: it must be gone before the request is sent.
+        let body = {
+            let mut body = url::form_urlencoded::Serializer::new(String::new());
+            for (key, value) in form {
+                body.append_pair(key, value);
+            }
+            body.finish()
+        };
+        let mut request = self
+            .client
+            .post(token_url)
+            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header("accept", "application/json")
+            .body(body);
+        if let Some((id, secret)) = basic {
+            request = request.basic_auth(form_encoded(id), Some(form_encoded(secret)));
+        }
+        let response = self.send(request).await.map_err(|error| match error {
+            OutboundError::Network(reason) => failed(reason),
+            other => other,
+        })?;
+        let status = response.status().as_u16();
+        let (bytes, _) = read_limited(response, true)
+            .await
+            .map_err(|error| failed(error.to_string()))?;
+        Ok((
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        ))
+    }
+
+    /// A GET of a JSON document (OAuth metadata): the status and the JSON (`Null` when it is not
+    /// JSON). Same checks and limits as every call here.
+    pub(crate) async fn get_json(&self, url: &Url) -> Result<(u16, Value), OutboundError> {
+        let url = check_url(url.as_str(), &self.test_hosts)?;
+        let response = self
+            .send(self.client.get(url).header("accept", "application/json"))
+            .await?;
+        let status = response.status().as_u16();
+        let (bytes, _) = read_limited(response, true).await?;
+        Ok((
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        ))
+    }
+
+    /// A POST of a JSON body (dynamic client registration): the status and the JSON answer.
+    pub(crate) async fn post_json(
+        &self,
+        url: &Url,
+        body: &Value,
+    ) -> Result<(u16, Value), OutboundError> {
+        let url = check_url(url.as_str(), &self.test_hosts)?;
+        let response = self
+            .send(
+                self.client
+                    .post(url)
+                    .header("accept", "application/json")
+                    .json(body),
+            )
+            .await?;
+        let status = response.status().as_u16();
+        let (bytes, _) = read_limited(response, true).await?;
+        Ok((
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        ))
+    }
+
+    /// The `WWW-Authenticate` header of an MCP server that answers an `initialize` without a
+    /// credential with 401; `None` for any other answer.
+    pub(crate) async fn mcp_challenge(&self, url: &Url) -> Result<Option<String>, OutboundError> {
+        let url = check_url(url.as_str(), &self.test_hosts)?;
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": { "name": "orbit-agent", "version": env!("CARGO_PKG_VERSION") },
+            },
+        });
+        let response = self
+            .send(
+                self.client
+                    .post(url)
+                    .header("accept", "application/json, text/event-stream")
+                    .json(&message),
+            )
+            .await?;
+        if response.status() != reqwest::StatusCode::UNAUTHORIZED {
+            return Ok(None);
+        }
+        Ok(response
+            .headers()
+            .get_all(reqwest::header::WWW_AUTHENTICATE)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .find(|value| {
+                value
+                    .trim_start()
+                    .get(..6)
+                    .is_some_and(|scheme| scheme.eq_ignore_ascii_case("bearer"))
+            })
+            .map(|value| value.chars().take(4_096).collect()))
     }
 
     /// The tools of an MCP server (`tools/list`, all pages up to 20).
@@ -620,6 +727,26 @@ async fn read_limited(
         bytes.extend_from_slice(&chunk);
     }
     Ok((bytes, false))
+}
+
+/// Why a token request failed, for an error: the status and a short OAuth error code, never the body.
+pub(crate) fn token_failure(status: u16, answer: &Value) -> String {
+    let code = answer
+        .get("error")
+        .and_then(Value::as_str)
+        .filter(|code| oauth_error_code(code))
+        .map_or_else(String::new, |code| format!(" ({code})"));
+    format!("HTTP {status}{code}")
+}
+
+/// A token Orbit can send in a header.
+pub(crate) fn usable_token(token: &str) -> bool {
+    !token.is_empty() && token.len() <= 8_192 && HeaderValue::from_str(token).is_ok()
+}
+
+/// RFC 6749 §2.3.1: the client ID and secret are form-encoded before HTTP Basic.
+fn form_encoded(value: &str) -> String {
+    url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
 /// `^[a-z_]{1,64}$`: safe to show, like `shop_not_permitted`.

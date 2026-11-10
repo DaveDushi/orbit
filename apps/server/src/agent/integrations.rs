@@ -13,12 +13,13 @@
 //! `.ai/agent-design.md`, "Integrations". Like the other agent routes, these are not in the
 //! OpenAPI contract.
 
-use axum::extract::{Extension, Path, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use orbit_domain::{Permission, WorkspaceRole};
-use orbit_platform::{Database, Id, RequestId, Row, TimestampMillis};
+use orbit_platform::{Database, Flag, Id, RequestId, Row, TimestampMillis};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -26,8 +27,9 @@ use url::Url;
 
 use super::AgentState;
 use super::graphql;
+use super::mcp_oauth;
 use super::oauth::{AccessToken, OAuthClient};
-use super::outbound::{ApiAnswer, Credential, OutboundError, check_url, join_api_url};
+use super::outbound::{ApiAnswer, Credential, Outbound, OutboundError, check_url, join_api_url};
 use crate::audit::{self, AuditOutcome};
 use crate::repositories::membership;
 use crate::secret_box::{decrypt_secret, encrypt_secret};
@@ -57,6 +59,11 @@ pub fn router(state: AgentState) -> Router {
             patch(update).delete(remove),
         )
         .route(&format!("{admin}/{{integration_id}}/test"), post(test))
+        .route(
+            &format!("{admin}/{{integration_id}}/oauth"),
+            post(connect_start).delete(disconnect),
+        )
+        .route(mcp_oauth::CALLBACK_PATH, get(connect_callback))
         .route(tools, get(agent_tools))
         .route(&format!("{tools}/call"), post(call))
         .with_state(state)
@@ -148,11 +155,28 @@ struct Integration {
     tools_checked_at: Option<i64>,
     created_at: i64,
     updated_at: i64,
+    /// MCP: the shared OAuth sign-in (`mcp_oauth`). The sealed tokens are never loaded here.
+    connection: Option<ConnectionView>,
+    /// [`save`] removes the connection: the server or the credential changed.
+    drop_connection: bool,
+}
+
+/// What admins see of an MCP server's sign-in.
+#[derive(Clone, Debug, Serialize)]
+struct ConnectionView {
+    /// Who signed in, when the server told.
+    account: Option<String>,
+    connected_at: Option<i64>,
+    /// When the grant ends and the admin must connect again; unknown when the server does not say.
+    grant_expires_at: Option<i64>,
+    /// A refresh was refused: only Reconnect helps.
+    needs_reconnect: bool,
 }
 
 const COLUMNS: &str = "id, slug, name, kind, url, auth_header, sealed_secret, oauth_token_url, \
      oauth_sealed_client, test_path, graphql_read_path, graphql_reads_enabled, allowed_roles, enabled_tools, allowed_methods, tools, \
-     tools_checked_at, created_at, updated_at";
+     tools_checked_at, created_at, updated_at, oauth_sealed_connection IS NOT NULL AS oauth_connected, \
+     oauth_account, oauth_connected_at, oauth_grant_expires_at, oauth_invalid_at";
 
 fn strings(json: &str) -> Vec<String> {
     serde_json::from_str(json).unwrap_or_default()
@@ -182,6 +206,16 @@ impl Integration {
             tools_checked_at: row.get("tools_checked_at"),
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
+            connection: row
+                .get::<Flag, _>("oauth_connected")
+                .0
+                .then(|| ConnectionView {
+                    account: row.get("oauth_account"),
+                    connected_at: row.get("oauth_connected_at"),
+                    grant_expires_at: row.get("oauth_grant_expires_at"),
+                    needs_reconnect: row.get::<Option<i64>, _>("oauth_invalid_at").is_some(),
+                }),
+            drop_connection: false,
         }
     }
 
@@ -325,8 +359,11 @@ struct IntegrationView {
     kind: String,
     url: String,
     auth_header: Option<String>,
-    /// `none`, `header` (a fixed credential) or `oauth` (client credentials).
+    /// `none`, `header` (a fixed credential), `oauth` (client credentials) or `connect` (an MCP
+    /// server's OAuth sign-in).
     auth_type: &'static str,
+    /// MCP: the sign-in, when an admin connected the server.
+    connection: Option<ConnectionView>,
     oauth_token_url: Option<String>,
     test_path: Option<String>,
     graphql_read_path: Option<String>,
@@ -351,13 +388,16 @@ impl From<&Integration> for IntegrationView {
             kind: integration.kind.clone(),
             url: integration.url.clone(),
             auth_header: integration.auth_header.clone(),
-            auth_type: if integration.uses_oauth() {
+            auth_type: if integration.connection.is_some() {
+                "connect"
+            } else if integration.uses_oauth() {
                 "oauth"
             } else if integration.sealed_secret.is_some() {
                 "header"
             } else {
                 "none"
             },
+            connection: integration.connection.clone(),
             oauth_token_url: integration.oauth_token_url.clone(),
             test_path: integration.test_path.clone(),
             graphql_read_path: integration.graphql_read_path.clone(),
@@ -402,6 +442,19 @@ async fn manager(
     uri: &Uri,
     request_id: &RequestIdExtension,
 ) -> Result<(Id, Id), ApiError> {
+    manager_session(state, headers, workspace_id, uri, request_id)
+        .await
+        .map(|(_, user, workspace_id)| (user, workspace_id))
+}
+
+/// As [`manager`], with the session's ID first.
+async fn manager_session(
+    state: &AgentState,
+    headers: &HeaderMap,
+    workspace_id: &str,
+    uri: &Uri,
+    request_id: &RequestIdExtension,
+) -> Result<(Id, Id, Id), ApiError> {
     let session = authenticate_session(
         &state.identity,
         state.cookie_mode,
@@ -438,7 +491,7 @@ async fn manager(
             request_id,
         ));
     }
-    Ok((session.user.id, workspace_id))
+    Ok((session.id, session.user.id, workspace_id))
 }
 
 async fn is_agent_session(
@@ -696,6 +749,8 @@ fn apply(
         tools_checked_at: None,
         created_at: now,
         updated_at: now,
+        connection: None,
+        drop_connection: false,
     });
     // Strictly newer, also in the same millisecond: it is part of the token cache's key.
     next.updated_at = current.map_or(now, |current| now.max(current.updated_at + 1));
@@ -748,10 +803,12 @@ fn apply(
         }
         let url = url.to_string();
         if current.is_some_and(|current| current.url != url) && next.kind == "mcp" {
-            // Another server: its tools are unknown until the next test.
+            // Another server: its tools are unknown until the next test, and the sign-in was for
+            // the old one.
             next.tools = None;
             next.tools_checked_at = None;
             next.enabled_tools.clear();
+            next.connection = None;
         }
         next.url = url;
     }
@@ -816,6 +873,8 @@ fn apply(
                 encrypt_secret(key, &secret)
                     .map_err(|()| invalid("The secret cannot be sealed.", uri, request_id))?,
             );
+            // A fixed credential replaces the sign-in.
+            next.connection = None;
             if next.auth_header.is_none() || (current_uses_oauth && !header_given) {
                 next.auth_header = Some(DEFAULT_AUTH_HEADER.to_owned());
             }
@@ -923,6 +982,8 @@ fn apply(
         next.enabled_tools = enabled;
         next.enabled_tools.dedup();
     }
+    next.drop_connection =
+        current.is_some_and(|current| current.connection.is_some()) && next.connection.is_none();
     Ok(next)
 }
 
@@ -1001,9 +1062,20 @@ async fn save(
     .bind(i64::from(integration.graphql_reads_enabled))
     .execute(&mut *tx)
     .await?;
+    // Only a removal: a new connection is saved by `mcp_oauth`, so this save cannot undo it.
+    if integration.drop_connection {
+        sqlx::query(DROP_CONNECTION)
+            .bind(&integration.id)
+            .execute(&mut *tx)
+            .await?;
+    }
     tx.commit().await?;
     Ok(true)
 }
+
+const DROP_CONNECTION: &str = "UPDATE agent_integrations SET oauth_sealed_connection = NULL, \
+     oauth_account = NULL, oauth_connected_at = NULL, oauth_grant_expires_at = NULL, \
+     oauth_invalid_at = NULL, oauth_expiry_notice_at = NULL WHERE id = $1";
 
 fn conflict(uri: &Uri, request_id: &RequestIdExtension) -> ApiError {
     problem(
@@ -1189,30 +1261,14 @@ async fn test(
     let url = Url::parse(&integration.url)
         .map_err(|_| invalid("The URL is not valid.", &uri, &request_id))?;
     let outcome: Result<String, OutboundError> = if integration.kind == "mcp" {
-        match state.outbound.mcp_tools(&url, credential.as_ref()).await {
-            Ok(tools) => {
-                let tools: Vec<Value> = tools.iter().filter_map(keep_tool).collect();
-                if integration.tools.is_none() {
-                    integration.enabled_tools = tools
-                        .iter()
-                        .filter(|tool| read_only(tool))
-                        .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
-                        .collect();
-                } else {
-                    integration.enabled_tools.retain(|name| {
-                        tools.iter().any(|tool| tool["name"].as_str() == Some(name))
-                    });
-                }
-                let count = tools.len();
-                integration.tools = Some(tools);
-                integration.tools_checked_at = Some(TimestampMillis::now().as_millis());
-                save(state.database(), workspace_id, user, &integration, false)
-                    .await
-                    .map_err(unavailable(&uri, &request_id))?;
-                Ok(format!("Connected. The server has {count} tools."))
-            }
-            Err(error) => Err(error),
-        }
+        read_tools(
+            &state,
+            (workspace_id, user),
+            &mut integration,
+            &url,
+            credential.as_ref(),
+        )
+        .await
     } else if let Some((token_url, client)) = &oauth {
         test_oauth(&state, &integration, token_url, client).await
     } else {
@@ -1254,7 +1310,14 @@ async fn test(
         json!({ "slug": integration.slug }),
     )
     .await;
-    let detail = outcome.unwrap_or_else(|error| capitalized(&error.to_string()));
+    let detail = outcome.unwrap_or_else(|error| match error {
+        OutboundError::Status(401)
+            if integration.kind == "mcp" && integration.connection.is_none() =>
+        {
+            "The server needs a sign-in: click Connect.".to_owned()
+        }
+        error => capitalized(&error.to_string()),
+    });
     Ok(Json(json!({
         "ok": ok,
         "detail": detail,
@@ -1296,7 +1359,324 @@ async fn test_oauth(
     }
 }
 
-fn capitalized(text: &str) -> String {
+/// Reads an MCP server's tools and keeps them (the first time, read-only tools are turned on).
+/// With a sign-in, it uses the connection's token.
+async fn read_tools(
+    state: &AgentState,
+    (workspace_id, user): (Id, Id),
+    integration: &mut Integration,
+    url: &Url,
+    credential: Option<&Credential>,
+) -> Result<String, OutboundError> {
+    let tools = mcp(state, integration, url, credential, McpOperation::ListTools).await?;
+    let tools = tools.as_array().map(Vec::as_slice).unwrap_or_default();
+    let tools: Vec<Value> = tools.iter().filter_map(keep_tool).collect();
+    if integration.tools.is_none() {
+        integration.enabled_tools = tools
+            .iter()
+            .filter(|tool| read_only(tool))
+            .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+            .collect();
+    } else {
+        integration
+            .enabled_tools
+            .retain(|name| tools.iter().any(|tool| tool["name"].as_str() == Some(name)));
+    }
+    let count = tools.len();
+    integration.tools = Some(tools);
+    integration.tools_checked_at = Some(TimestampMillis::now().as_millis());
+    if let Err(error) = save(state.database(), workspace_id, user, integration, false).await {
+        tracing::warn!(%error, "agent integrations");
+        return Err(OutboundError::Refused("Try again in a moment."));
+    }
+    Ok(format!("Connected. The server has {count} tools."))
+}
+
+/// One operation on an MCP server: `tools/list` (as an array) or one `tools/call`.
+#[derive(Clone, Copy)]
+enum McpOperation<'a> {
+    ListTools,
+    Call(&'a str, &'a Value),
+}
+
+impl McpOperation<'_> {
+    async fn run(
+        self,
+        outbound: &Outbound,
+        url: &Url,
+        credential: Option<&Credential>,
+    ) -> Result<Value, OutboundError> {
+        match self {
+            Self::ListTools => outbound.mcp_tools(url, credential).await.map(Value::Array),
+            Self::Call(tool, arguments) => {
+                outbound.mcp_call(url, credential, tool, arguments).await
+            }
+        }
+    }
+}
+
+/// An MCP operation with the integration's credential. With a sign-in, its token: renewed when
+/// it is due, and once more after a 401.
+async fn mcp(
+    state: &AgentState,
+    integration: &Integration,
+    url: &Url,
+    credential: Option<&Credential>,
+    operation: McpOperation<'_>,
+) -> Result<Value, OutboundError> {
+    if integration.connection.is_none() {
+        return operation.run(&state.outbound, url, credential).await;
+    }
+    let token = mcp_oauth::access(state, &integration.id, None).await?;
+    let answer = operation
+        .run(
+            &state.outbound,
+            url,
+            Some(&token.credential(DEFAULT_AUTH_HEADER)),
+        )
+        .await;
+    if !matches!(answer, Err(OutboundError::Status(401))) {
+        return answer;
+    }
+    let token = mcp_oauth::access(state, &integration.id, Some(&token)).await?;
+    operation
+        .run(
+            &state.outbound,
+            url,
+            Some(&token.credential(DEFAULT_AUTH_HEADER)),
+        )
+        .await
+}
+
+/// Starts the sign-in of an MCP server: the browser opens `authorize_url`, and comes back to
+/// [`connect_callback`]. A failure is `ok: false` with a detail for the admin.
+async fn connect_start(
+    State(state): State<AgentState>,
+    Path((workspace_id, integration_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+) -> Result<Json<Value>, ApiError> {
+    let (session_id, user, workspace_id) =
+        manager_session(&state, &headers, &workspace_id, &uri, &request_id).await?;
+    let integration = load_one(state.database(), workspace_id, "id", &integration_id)
+        .await
+        .map_err(unavailable(&uri, &request_id))?
+        .ok_or_else(|| not_found(&uri, &request_id))?;
+    if integration.kind != "mcp" {
+        return Err(invalid(
+            "Only MCP servers have a sign-in.",
+            &uri,
+            &request_id,
+        ));
+    }
+    match mcp_oauth::start(
+        &state,
+        (&integration.id, &integration.url),
+        (session_id, user),
+    )
+    .await
+    {
+        Ok(url) => Ok(Json(json!({ "ok": true, "authorize_url": url.as_str() }))),
+        Err(detail) => {
+            record(
+                state.database(),
+                workspace_id,
+                user,
+                "agent_integration.connect",
+                AuditOutcome::Failure,
+                &integration.id,
+                &request_id,
+                json!({ "slug": integration.slug, "step": "start" }),
+            )
+            .await;
+            Ok(Json(json!({ "ok": false, "detail": detail })))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct CallbackQuery {
+    code: Option<String>,
+    state: Option<String>,
+    iss: Option<String>,
+    error: Option<String>,
+}
+
+/// Where the authorization server sends the admin's browser back. The `state` is used up first,
+/// whatever happens next; it must belong to this browser's session, whose user must still manage
+/// the workspace. Then Orbit exchanges the code, saves the sealed tokens and reads the tools. The
+/// browser goes back to the admin page with one fixed outcome word, never a detail.
+async fn connect_callback(
+    State(state): State<AgentState>,
+    Query(query): Query<CallbackQuery>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+) -> Response {
+    let back = |outcome: &str| {
+        Redirect::to(&format!(
+            "/settings/agentic/workspace?agent_tool_connect={outcome}"
+        ))
+        .into_response()
+    };
+    let (Some(key), Some(state_value)) = (state.app_key.as_ref(), query.state.as_deref()) else {
+        return back("invalid");
+    };
+    let database = state.database();
+    let started = match mcp_oauth::take(database, key, state_value).await {
+        Ok(Some(started)) => started,
+        Ok(None) => return back("expired"),
+        Err(error) => {
+            tracing::warn!(%error, "agent integration connect");
+            return back("failed");
+        }
+    };
+    let Ok(session) = authenticate_session(
+        &state.identity,
+        state.cookie_mode,
+        &headers,
+        uri.path(),
+        request_id.as_ref(),
+    )
+    .await
+    else {
+        return back("session");
+    };
+    if session.id.to_string() != started.session_id
+        || session.user.id.to_string() != started.user_id
+    {
+        return back("session");
+    }
+    let workspace_id = sqlx::query_scalar::<_, String>(
+        "SELECT workspace_id FROM agent_integrations WHERE id = $1",
+    )
+    .bind(&started.integration_id)
+    .fetch_optional(database.pool())
+    .await;
+    let Ok(Some(workspace_id)) = workspace_id else {
+        return back("changed");
+    };
+    let (user, workspace_id) =
+        match manager(&state, &headers, &workspace_id, &uri, &request_id).await {
+            Ok(caller) => caller,
+            Err(_) => return back("session"),
+        };
+    let Ok(Some(mut integration)) =
+        load_one(database, workspace_id, "id", &started.integration_id).await
+    else {
+        return back("changed");
+    };
+    let failure = |step: &'static str| {
+        record(
+            database,
+            workspace_id,
+            user,
+            "agent_integration.connect",
+            AuditOutcome::Failure,
+            &started.integration_id,
+            &request_id,
+            json!({ "step": step }),
+        )
+    };
+    if query.error.is_some() {
+        failure("denied").await;
+        return back("denied");
+    }
+    let Some(code) = query.code.as_deref().filter(|code| !code.is_empty()) else {
+        failure("no_code").await;
+        return back("invalid");
+    };
+    if integration.url != started.mcp_url() {
+        failure("url_changed").await;
+        return back("changed");
+    }
+    let (connection, tokens) =
+        match mcp_oauth::finish(&state.outbound, &started, code, query.iss.as_deref()).await {
+            Ok(done) => done,
+            Err(detail) => {
+                tracing::info!(
+                    detail,
+                    "agent integration connect: the code exchange failed"
+                );
+                failure("token").await;
+                return back("failed");
+            }
+        };
+    match mcp_oauth::save_new(database, key, &started, &connection, &tokens).await {
+        Ok(true) => {}
+        Ok(false) => {
+            failure("url_changed").await;
+            return back("changed");
+        }
+        Err(error) => {
+            tracing::warn!(%error, "agent integration connect");
+            return back("failed");
+        }
+    }
+    record(
+        database,
+        workspace_id,
+        user,
+        "agent_integration.connect",
+        AuditOutcome::Success,
+        &integration.id,
+        &request_id,
+        json!({ "slug": integration.slug, "issuer": connection.issuer }),
+    )
+    .await;
+    // The tools, with the new token. A failure here leaves the connection; Test tries again.
+    if let Ok(Some(saved)) = load_one(database, workspace_id, "id", &integration.id).await {
+        integration = saved;
+        if let Ok(url) = Url::parse(&integration.url)
+            && let Err(error) =
+                read_tools(&state, (workspace_id, user), &mut integration, &url, None).await
+        {
+            tracing::info!(%error, "agent integration connect: the tools could not be read");
+        }
+    }
+    back("connected")
+}
+
+/// Removes an MCP server's sign-in. The server keeps its grant until it expires or the admin
+/// revokes it there.
+async fn disconnect(
+    State(state): State<AgentState>,
+    Path((workspace_id, integration_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+) -> Result<Json<IntegrationView>, ApiError> {
+    let (user, workspace_id) = manager(&state, &headers, &workspace_id, &uri, &request_id).await?;
+    let database = state.database();
+    let integration = load_one(database, workspace_id, "id", &integration_id)
+        .await
+        .map_err(unavailable(&uri, &request_id))?
+        .ok_or_else(|| not_found(&uri, &request_id))?;
+    sqlx::query(DROP_CONNECTION)
+        .bind(&integration.id)
+        .execute(database.pool())
+        .await
+        .map_err(unavailable(&uri, &request_id))?;
+    record(
+        database,
+        workspace_id,
+        user,
+        "agent_integration.disconnect",
+        AuditOutcome::Success,
+        &integration.id,
+        &request_id,
+        json!({ "slug": integration.slug }),
+    )
+    .await;
+    let integration = load_one(database, workspace_id, "id", &integration_id)
+        .await
+        .map_err(unavailable(&uri, &request_id))?
+        .ok_or_else(|| not_found(&uri, &request_id))?;
+    Ok(Json(IntegrationView::from(&integration)))
+}
+
+pub(crate) fn capitalized(text: &str) -> String {
     let mut characters = text.chars();
     characters.next().map_or_else(String::new, |first| {
         format!(
@@ -1921,11 +2301,15 @@ async fn call(
             tool, arguments, ..
         } => {
             let url = Url::parse(&integration.url).map_err(|_| not_found(&uri, &request_id))?;
-            let result = state
-                .outbound
-                .mcp_call(&url, credential.as_ref(), tool, arguments)
-                .await
-                .map(|result| json!({ "status": "ok", "result": result }));
+            let result = mcp(
+                &state,
+                &integration,
+                &url,
+                credential.as_ref(),
+                McpOperation::Call(tool, arguments),
+            )
+            .await
+            .map(|result| json!({ "status": "ok", "result": result }));
             (result, json!({ "tool": tool }))
         }
         Action::Api {

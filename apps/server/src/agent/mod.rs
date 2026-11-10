@@ -9,6 +9,7 @@ mod drive;
 mod graphql;
 pub mod inputs;
 pub(crate) mod integrations;
+mod mcp_oauth;
 pub mod memory;
 mod memory_routes;
 mod oauth;
@@ -29,6 +30,14 @@ pub fn router(state: AgentState) -> axum::Router {
 }
 
 use crate::auth_routes::CookieMode;
+
+/// Emails workspace admins when the sign-in of a connected MCP server ends within 14 days.
+pub async fn send_sign_in_notices(
+    database: &orbit_platform::Database,
+    mailer: &crate::mail::Mailer,
+) -> Result<(), sqlx::Error> {
+    mcp_oauth::send_notices(database, mailer).await
+}
 use crate::chat_routes::ChatState;
 use crate::repositories::identity::IdentityRepository;
 
@@ -91,6 +100,10 @@ pub struct AgentState {
     pub(crate) outbound: outbound::Outbound,
     /// The integrations' OAuth access tokens, only in memory.
     pub(crate) tokens: oauth::TokenCache,
+    /// One refresh at a time per connected MCP server (`mcp_oauth`).
+    pub(crate) connect_locks: mcp_oauth::RefreshLocks,
+    /// Orbit's public URL: the redirect URI of an MCP server's sign-in starts with it.
+    pub(crate) public_origin: Option<String>,
     /// Orbit Drive for the agent's Drive tools; absent: they answer that Drive is not available.
     pub(crate) drive: Option<drive::AgentDrive>,
 }
@@ -116,6 +129,8 @@ impl AgentState {
                 .unwrap_or_default(),
             outbound: outbound::Outbound::new(outbound::TestHosts::from_env()),
             tokens: oauth::TokenCache::default(),
+            connect_locks: mcp_oauth::RefreshLocks::default(),
+            public_origin: None,
             drive: None,
         }
     }
@@ -128,6 +143,13 @@ impl AgentState {
             reader: crate::file_content::FileReader::new(),
             public_origin: public_origin.to_owned(),
         });
+        self
+    }
+
+    /// Lets admins connect remote MCP servers with OAuth; the sign-in comes back below `public_origin`.
+    #[must_use]
+    pub fn with_public_origin(mut self, public_origin: &str) -> Self {
+        self.public_origin = Some(public_origin.trim_end_matches('/').to_owned());
         self
     }
 

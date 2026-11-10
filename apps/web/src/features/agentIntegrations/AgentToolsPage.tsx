@@ -1,6 +1,7 @@
 import { toast } from 'sonner'
 import { cn } from 'cn'
-import { useState, type ComponentProps, type FormEvent } from 'react'
+import { useEffect, useState, type ComponentProps, type FormEvent } from 'react'
+import { useSearchParams } from 'react-router'
 import { Category, Code, Trash } from 'reicon-react'
 import type { AgentIntegration, AgentIntegrationKind, AgentIntegrationMethod, AgentIntegrationRole } from '@orbit/api/agentIntegrations'
 import { confirmAction } from '@/components/common/confirmAction'
@@ -14,11 +15,12 @@ import { Label } from '@/components/ui/label'
 import { PasswordInput } from '@/components/ui/password-input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { relativeTime } from '@/lib/format'
+import { fullDate, relativeTime } from '@/lib/format'
 import { FieldGrid, RequiredMark, RowIcon, SettingsRow } from '@/features/settings/components/SettingsParts'
 import { useCan } from '@/features/workspaces/permissions'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
-import { useAgentIntegrations, useCreateAgentIntegration, useDeleteAgentIntegration, useTestAgentIntegration, useUpdateAgentIntegration } from './api'
+import { useAgentIntegrations, useConnectAgentIntegration, useCreateAgentIntegration, useDeleteAgentIntegration, useDisconnectAgentIntegration, useTestAgentIntegration, useUpdateAgentIntegration } from './api'
+import { connectionStatus } from './connectionStatus'
 
 const KINDS = [
   { value: 'mcp', label: 'Remote MCP server' },
@@ -28,6 +30,20 @@ const AUTH_TYPES = [
   { value: 'header', label: 'Fixed header credential' },
   { value: 'oauth', label: 'OAuth client credentials' },
 ] as const
+const MCP_AUTH_TYPES = [
+  { value: 'header', label: 'Fixed header credential' },
+  { value: 'connect', label: 'Sign in with OAuth (Connect)' },
+] as const
+/** What the server's sign-in callback reports in `?agent_tool_connect=`. */
+const CONNECT_OUTCOMES: Record<string, string> = {
+  connected: 'Connected. Orbit read the server’s tools.',
+  denied: 'The sign-in was cancelled.',
+  expired: 'The sign-in took longer than 10 minutes or was already used. Click Connect again.',
+  session: 'Finish the sign-in in the browser and Orbit session that started it.',
+  changed: 'The tool changed during the sign-in. Click Connect again.',
+  failed: 'The sign-in failed. Click Connect again.',
+  invalid: 'The sign-in failed. Click Connect again.',
+}
 const SHOPIFY_HEADER = 'X-Shopify-Access-Token'
 const SHOPIFY_TEST_PATH = 'shop.json'
 const SHOPIFY_GRAPHQL_PATH = '/graphql.json'
@@ -44,6 +60,13 @@ function shopifyTokenUrl(url: string) {
     return null
   }
 }
+/** Opens the server's sign-in page in this tab, or tells why it cannot. */
+async function startConnect(connect: (id: string) => Promise<{ ok: true; authorize_url: string } | { ok: false; detail: string }>, id: string) {
+  const result = await connect(id)
+  if (result.ok) window.location.assign(result.authorize_url)
+  else toast.error(result.detail)
+}
+
 const DOCS_URL = 'https://github.com/DaveDushi/orbit/blob/main/docs/agent.md#agent-tools-integrations'
 const toggled = <T,>(list: readonly T[], value: T, on: boolean) => (on ? [...list, value] : list.filter((item) => item !== value))
 
@@ -53,6 +76,16 @@ export function AgentToolsPage() {
   const canManage = useCan('integrations.manage')
   const integrations = useAgentIntegrations(workspace.id, canManage)
   const [adding, setAdding] = useState(false)
+  const [search, setSearch] = useSearchParams()
+  const outcome = search.get('agent_tool_connect')
+
+  useEffect(() => {
+    if (!outcome) return
+    const text = CONNECT_OUTCOMES[outcome] ?? CONNECT_OUTCOMES.failed
+    if (outcome === 'connected') toast(text)
+    else toast.error(text)
+    setSearch((current) => { current.delete('agent_tool_connect'); return current }, { replace: true })
+  }, [outcome, setSearch])
 
   if (!canManage) return null
 
@@ -92,6 +125,9 @@ function AddIntegration({ canKeepSecrets, onClose }: { canKeepSecrets: boolean; 
   const [secret, setSecret] = useState('')
   const [roles, setRoles] = useState<AgentIntegrationRole[]>(['owner', 'admin', 'member'])
   const [authType, setAuthType] = useState<'header' | 'oauth'>('header')
+  const [mcpAuth, setMcpAuth] = useState<'connect' | 'header'>('header')
+  const connectOnAdd = kind === 'mcp' && mcpAuth === 'connect'
+  const connect = useConnectAgentIntegration(workspace.id)
   const [tokenUrl, setTokenUrl] = useState('')
   const [clientId, setClientId] = useState('')
   const [clientSecret, setClientSecret] = useState('')
@@ -133,11 +169,13 @@ function AddIntegration({ canKeepSecrets, onClose }: { canKeepSecrets: boolean; 
       ...(kind === 'http' && graphqlPath.trim() ? { graphql_read_path: graphqlPath.trim() } : {}),
       ...(oauth
         ? { auth_header: header.trim() || 'Authorization', oauth_token_url: tokenUrl.trim(), oauth_client_id: clientId.trim(), oauth_client_secret: clientSecret.trim(), ...(testPath.trim() ? { test_path: testPath.trim() } : {}) }
-        : secret ? { auth_header: header.trim() || 'Authorization', secret } : {}),
+        : secret && !connectOnAdd ? { auth_header: header.trim() || 'Authorization', secret } : {}),
     })
     try {
+      // The sign-in leaves this page; the server reads the tools when it comes back.
+      if (connectOnAdd) await startConnect(connect.mutateAsync, created.id)
       // An MCP server's tools are known only after a test.
-      if (created.kind === 'mcp') {
+      else if (created.kind === 'mcp') {
         const result = await test.mutateAsync(created.id)
         if (result.ok) toast(result.detail)
         else toast.error(result.detail)
@@ -162,6 +200,14 @@ function AddIntegration({ canKeepSecrets, onClose }: { canKeepSecrets: boolean; 
         <Input id="agent-tool-url" value={url} maxLength={2048} onChange={(event) => changeUrl(event.target.value)} placeholder={kind === 'mcp' ? 'https://mcp.example.com/mcp' : 'https://api.example.com/v1'} />
         <FieldDescription>{kind === 'mcp' ? 'The Streamable HTTP endpoint.' : 'Every request of the agent stays below this URL.'} HTTPS only; local and private addresses are refused.</FieldDescription>
       </Field>
+      {kind === 'mcp' ? <Field className="min-[900px]:col-span-2">
+        <FieldLabel htmlFor="agent-tool-mcp-auth">Credential</FieldLabel>
+        <Select items={MCP_AUTH_TYPES} value={mcpAuth} onValueChange={(value) => setMcpAuth(value as 'connect' | 'header')}>
+          <SelectTrigger id="agent-tool-mcp-auth" aria-label="Credential"><SelectValue /></SelectTrigger>
+          <SelectContent>{MCP_AUTH_TYPES.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
+        </Select>
+        {connectOnAdd ? <FieldDescription>{canKeepSecrets ? 'After Add, you sign in to the service and click Authorize. Everyone who may use this tool shares that one sign-in. Orbit keeps the tokens and renews them.' : 'This server has no ORBIT_APP_KEY, so it cannot keep a sign-in.'}</FieldDescription> : null}
+      </Field> : null}
       {kind === 'http' ? <Field className="min-[900px]:col-span-2">
         <FieldLabel htmlFor="agent-tool-auth">Credential</FieldLabel>
         <Select items={AUTH_TYPES} value={authType} onValueChange={(value) => changeAuthType(value as 'header' | 'oauth')}>
@@ -181,12 +227,12 @@ function AddIntegration({ canKeepSecrets, onClose }: { canKeepSecrets: boolean; 
           <PasswordInput id="agent-tool-client-secret" value={clientSecret} autoComplete="off" disabled={!canKeepSecrets} onChange={(event) => setClientSecret(event.target.value)} />
           <FieldDescription>{canKeepSecrets ? 'Orbit never shows the client ID or secret again.' : 'This server has no ORBIT_APP_KEY, so it cannot keep secrets.'}</FieldDescription>
         </Field>
-      </> : <Field className="min-[900px]:col-span-2">
+      </> : connectOnAdd ? null : <Field className="min-[900px]:col-span-2">
         <FieldLabel htmlFor="agent-tool-secret">Secret</FieldLabel>
         <PasswordInput id="agent-tool-secret" value={secret} autoComplete="off" disabled={!canKeepSecrets} onChange={(event) => setSecret(event.target.value)} placeholder="Bearer …" />
         <FieldDescription>{canKeepSecrets ? 'The full header value. Shared by everyone who may use this tool. Orbit never shows it again.' : 'This server has no ORBIT_APP_KEY, so it cannot keep secrets.'}</FieldDescription>
       </Field>}
-      <Advanced className="min-[900px]:col-span-2" fields={oauth ? 'Token header, test path, GraphQL path' : kind === 'http' ? 'Credential header, GraphQL path' : 'Credential header'}>
+      {connectOnAdd ? null : <Advanced className="min-[900px]:col-span-2" fields={oauth ? 'Token header, test path, GraphQL path' : kind === 'http' ? 'Credential header, GraphQL path' : 'Credential header'}>
         <FieldGrid>
           {oauth ? <>
             <Field><FieldLabel htmlFor="agent-tool-header">Token header</FieldLabel><Input id="agent-tool-header" value={header} maxLength={100} onChange={(event) => setHeader(event.target.value)} /><FieldDescription>In Authorization, the value is “Bearer &lt;token&gt;”. In other headers, the bare token.</FieldDescription></Field>
@@ -194,11 +240,11 @@ function AddIntegration({ canKeepSecrets, onClose }: { canKeepSecrets: boolean; 
           </> : <Field><FieldLabel htmlFor="agent-tool-header">Credential header</FieldLabel><Input id="agent-tool-header" value={header} maxLength={100} onChange={(event) => setHeader(event.target.value)} /></Field>}
           {kind === 'http' ? <Field className="min-[900px]:col-span-2"><FieldLabel htmlFor="agent-tool-graphql-path">GraphQL path</FieldLabel><Input id="agent-tool-graphql-path" value={graphqlPath} maxLength={2048} onChange={(event) => setGraphqlPath(event.target.value)} placeholder="/graphql" /><FieldDescription>Optional. After you add the tool, a switch can let GraphQL reads at this exact path run without approval. It is off until you turn it on.</FieldDescription></Field> : null}
         </FieldGrid>
-      </Advanced>
+      </Advanced>}
       <RolesField value={roles} onChange={setRoles} />
       <div className="flex items-end justify-start gap-2 min-[900px]:justify-end">
         <Button variant="ghost" type="button" onClick={onClose}>Cancel</Button>
-        <Button type="submit" disabled={create.isPending || test.isPending || !name.trim() || !url.trim() || roles.length === 0 || oauthIncomplete}>Add</Button>
+        <Button type="submit" disabled={create.isPending || test.isPending || connect.isPending || !name.trim() || !url.trim() || roles.length === 0 || oauthIncomplete || (connectOnAdd && !canKeepSecrets)}>{connectOnAdd ? 'Add and connect' : 'Add'}</Button>
       </div>
       {create.isError ? <p className="text-destructive min-[900px]:col-span-2" role="alert">{message(create.error, 'The tool could not be added.')}</p> : null}
     </FieldGrid>
@@ -217,7 +263,7 @@ function integrationStatus(integration: AgentIntegration) {
   const reach = integration.kind === 'http'
     ? integration.allowed_methods.join(', ')
     : integration.tools ? `${integration.tools.filter((tool) => tool.enabled).length} of ${integration.tools.length} tools on` : 'Not tested'
-  const credential = integration.auth_type === 'oauth' ? 'OAuth client' : integration.secret_set ? 'Credential set' : 'No credential'
+  const credential = integration.auth_type === 'oauth' ? 'OAuth client' : integration.connection ? 'OAuth sign-in' : integration.secret_set ? 'Credential set' : 'No credential'
   return `${reach} · ${credential}`
 }
 
@@ -225,7 +271,12 @@ function IntegrationRow({ integration }: { integration: AgentIntegration }) {
   const { workspace } = useWorkspace()
   const test = useTestAgentIntegration(workspace.id)
   const remove = useDeleteAgentIntegration(workspace.id)
+  const connect = useConnectAgentIntegration(workspace.id)
   const [open, setOpen] = useState(false)
+  // A fixed credential replaces the sign-in, so only servers without one offer Connect.
+  const canConnect = integration.kind === 'mcp' && integration.auth_type !== 'header'
+  const [now] = useState(Date.now)
+  const signIn = integration.connection ? connectionStatus(integration.connection, now) : null
 
   async function runTest() {
     const result = await test.mutateAsync(integration.id)
@@ -240,8 +291,10 @@ function IntegrationRow({ integration }: { integration: AgentIntegration }) {
         <span className="flex flex-wrap items-center gap-2 text-[13px] font-medium text-foreground">{integration.name}<Badge variant="secondary">{integration.kind === 'mcp' ? 'MCP server' : 'HTTP API'}</Badge></span>
         <code className="truncate text-xs text-muted-foreground">{integration.url}</code>
         <span className="text-xs text-muted-foreground/70">{integrationStatus(integration)}</span>
+        {signIn ? <span className={cn('text-xs', signIn.warning ? 'font-medium text-destructive' : 'text-muted-foreground')} role={signIn.warning ? 'alert' : undefined}>{signIn.text}</span> : null}
       </div>
       <div className="flex shrink-0 items-center gap-1">
+        {canConnect ? <Button variant={signIn?.warning || !integration.connection ? 'default' : 'outline'} type="button" disabled={connect.isPending} onClick={() => void startConnect(connect.mutateAsync, integration.id).catch((error: unknown) => toast.error(message(error, 'The sign-in could not start.')))}>{connect.isPending ? 'Opening…' : integration.connection ? 'Reconnect' : 'Connect'}</Button> : null}
         <Button variant="outline" type="button" disabled={test.isPending} onClick={() => void runTest()}>{test.isPending ? 'Testing…' : 'Test'}</Button>
         <Button variant="ghost" type="button" aria-label={`${open ? 'Close' : 'Edit'} ${integration.name}`} aria-expanded={open} onClick={() => setOpen(!open)}>{open ? 'Close' : 'Edit'}</Button>
         <Button variant="ghost" size="icon" className="text-muted-foreground" type="button" aria-label={`Remove ${integration.name}`} disabled={remove.isPending} onClick={async () => {
@@ -256,6 +309,7 @@ function IntegrationRow({ integration }: { integration: AgentIntegration }) {
 function IntegrationDetails({ integration }: { integration: AgentIntegration }) {
   const { workspace } = useWorkspace()
   const update = useUpdateAgentIntegration(workspace.id)
+  const disconnect = useDisconnectAgentIntegration(workspace.id)
   const [secret, setSecret] = useState('')
   const [clientId, setClientId] = useState('')
   const [clientSecret, setClientSecret] = useState('')
@@ -275,13 +329,16 @@ function IntegrationDetails({ integration }: { integration: AgentIntegration }) 
       <div className="flex min-w-0 flex-1 flex-col gap-0.5 text-xs text-muted-foreground">
         <span>Tools named <code>{integration.slug}__…</code></span>
         {oauth ? <code className="[overflow-wrap:anywhere]">Token URL: {integration.oauth_token_url}</code> : null}
-        <span>{oauth ? `OAuth client credentials, token in ${integration.auth_header}` : integration.secret_set ? `Credential set in ${integration.auth_header}` : 'No credential'} · changed {relativeTime(new Date(integration.updated_at).toISOString())}</span>
+        <span>{oauth ? `OAuth client credentials, token in ${integration.auth_header}` : integration.connection ? `OAuth sign-in${integration.connection.connected_at ? ` since ${fullDate(new Date(integration.connection.connected_at).toISOString())}` : ''}, shared by everyone who may use this tool` : integration.secret_set ? `Credential set in ${integration.auth_header}` : 'No credential'} · changed {relativeTime(new Date(integration.updated_at).toISOString())}</span>
       </div>
+      {integration.connection ? <Button variant="ghost" type="button" disabled={disconnect.isPending} onClick={async () => {
+        if (await confirmAction({ title: `Disconnect ${integration.name}?`, description: 'Orbit deletes the tokens and the agent cannot use these tools until an admin connects again. To end the grant at the service too, remove Orbit in your account there.', confirmLabel: 'Disconnect', danger: true })) disconnect.mutate(integration.id, { onError: (error) => toast.error(message(error, 'The sign-in could not be removed.')) })
+      }}>Disconnect</Button> : null}
     </SettingsRow>
     <SettingsRow>
       <RolesField value={integration.allowed_roles} onChange={(roles) => { if (roles.length) save({ allowed_roles: roles }) }} />
     </SettingsRow>
-    {oauth ? <SettingsRow>
+    {integration.connection ? null : oauth ? <SettingsRow>
       <form className="flex w-full flex-wrap items-end gap-2" onSubmit={(event) => { event.preventDefault(); if (clientId.trim() && clientSecret.trim()) save({ oauth_client_id: clientId.trim(), oauth_client_secret: clientSecret.trim() }, 'Client replaced'); setClientId(''); setClientSecret('') }}>
         <Field className="min-w-48 flex-1">
           <FieldLabel htmlFor={`agent-tool-client-id-${integration.id}`}>Replace client ID</FieldLabel>

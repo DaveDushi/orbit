@@ -64,6 +64,8 @@ const NOTION_CLEANUP: &str = "notion.cleanup";
 const SCHEDULED_BACKUP: &str = "backup.scheduled";
 /// Hourly: deletes Drive trash older than 30 days, cancels stale uploads and deletes their objects.
 const DRIVE_MAINTENANCE: &str = "drive.maintenance";
+/// Tells workspace admins that an agent tool's sign-in ends soon (`agent::mcp_oauth`).
+const AGENT_SIGN_IN_NOTICES: &str = "agent.sign_in_notices";
 
 pub struct App {
     config: Config,
@@ -297,6 +299,7 @@ impl App {
             notion_imports.clone(),
             workspace_exports.clone(),
             billing.clone(),
+            mailer.clone(),
             config.jobs.concurrency,
         )
         .await?;
@@ -335,7 +338,8 @@ impl App {
             cookie_mode,
             app_key,
         )
-        .with_drive(drive.clone(), &config.http.public_origin);
+        .with_drive(drive.clone(), &config.http.public_origin)
+        .with_public_origin(&config.http.public_origin);
         let metrics = Metrics::default();
         let apps = crate::apps::AppsState::new(
             Arc::clone(&identity),
@@ -957,6 +961,7 @@ async fn initialize_production_services(
     notion_imports: NotionImportService,
     workspace_exports: WorkspaceExportService,
     billing: Option<crate::billing::Billing>,
+    mailer: Mailer,
     concurrency: usize,
 ) -> Result<ProductionServices, AppError> {
     let store = JobStore::new(database.clone());
@@ -1041,6 +1046,18 @@ async fn initialize_production_services(
                 }
             })
         })
+        .and_then(|worker| {
+            let database = database.clone();
+            worker.with_handler(maintenance_kind(AGENT_SIGN_IN_NOTICES), move |_| {
+                let database = database.clone();
+                let mailer = mailer.clone();
+                async move {
+                    crate::agent::send_sign_in_notices(&database, &mailer)
+                        .await
+                        .map_err(|_| JobError::Retryable("agent sign-in notices failed".to_owned()))
+                }
+            })
+        })
         .and_then(|worker| crate::notion::import::register_jobs(worker, notion_imports))
         .and_then(|worker| crate::workspace_export::register_job(worker, workspace_exports))
         .and_then(|worker| match billing {
@@ -1093,6 +1110,13 @@ async fn initialize_production_services(
         &scheduler,
         DRIVE_MAINTENANCE,
         Duration::from_secs(60 * 60),
+        now,
+    )
+    .await?;
+    ensure_schedule(
+        &scheduler,
+        AGENT_SIGN_IN_NOTICES,
+        Duration::from_secs(6 * 60 * 60),
         now,
     )
     .await?;
