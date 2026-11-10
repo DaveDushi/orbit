@@ -7,6 +7,7 @@ import { namesToTokens, splitBody, tokensToNames } from "../src/mentions.ts";
 import { plan } from "../src/mock.ts";
 import { requestTimeoutMs } from "../src/orbit.ts";
 import { teamInstructionsBlock } from "../src/prompt.ts";
+import { groupSteps } from "../src/steps.ts";
 
 const ann = { id: "0199c3a0-0000-7000-8000-00000000000a", name: "Ann" };
 const annLee = { id: "0199c3a0-0000-7000-8000-00000000000b", name: "Ann Lee" };
@@ -80,4 +81,12 @@ test("each message starts with its sender's local time; a missing or unknown tim
 	assert.equal(clockLine("", late), "[Mon 2026-11-09 23:30, UTC]");
 	assert.equal(frame("instruction", "Ann", "Ann", "hi", "Asia/Jerusalem", morning), "[Mon 2026-11-09 10:03, Asia/Jerusalem]\nInstruction from Ann (the driver of this run):\nhi");
 	assert.equal(frame("action", "Ann", "Ann", "clicked", undefined, morning), "[Mon 2026-11-09 08:03, UTC]\nclicked");
+});
+
+test("a step repeated right after itself shows once with its count, in order", () => {
+	const api = "Using shopify → api request";
+	assert.deepEqual(groupSteps([api, api, api]), [`${api} ×3`]);
+	assert.deepEqual(groupSteps([api, api, "Reading a task", api]), [`${api} ×2`, "Reading a task", api]);
+	assert.deepEqual(groupSteps(["Reading a task"]), ["Reading a task"]);
+	assert.deepEqual(groupSteps([]), []);
 });

@@ -17,8 +17,8 @@ export function Topbar({ onOpenDrawer, inboxUnread = false }: { onOpenDrawer: ()
   return (
     <header className="hidden shrink-0 items-center justify-between gap-4 border-b border-border bg-card px-4 py-3 max-[899px]:flex">
       <div className="flex min-w-0 flex-1 items-center gap-2.5">
-        <Link to="/" aria-label="Home" className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted transition-opacity hover:opacity-80">
-          <img src="/logo.svg" alt="" className="size-[18px]" />
+        <Link to="/" aria-label="Home" className="flex size-8 shrink-0 items-center justify-center rounded-lg transition-opacity hover:opacity-80">
+          <img src="/logo.svg" alt="" className="size-[22px]" />
         </Link>
         <WorkspaceSwitcher topbar />
       </div>

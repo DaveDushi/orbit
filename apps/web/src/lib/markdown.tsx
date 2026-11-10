@@ -143,6 +143,7 @@ export function mentionifyText(text: string, keyPrefix: string, mentionTokens: M
         <a
           key={key}
           href={matched.href}
+          data-slot="mention"
           className="cursor-pointer rounded-sm bg-primary/10 px-0.5 font-medium text-primary no-underline hover:underline dark:bg-primary/20"
           onClick={(e) => {
             e.preventDefault()
@@ -159,7 +160,7 @@ export function mentionifyText(text: string, keyPrefix: string, mentionTokens: M
           userId={mentionedUserId(matched.label, sortedTokens)}
           name={matched.label}
           inText
-          render={<span className="rounded-sm bg-primary/10 px-0.5 font-medium text-primary dark:bg-primary/20" />}
+          render={<span data-slot="mention" className="rounded-sm bg-primary/10 px-0.5 font-medium text-primary dark:bg-primary/20" />}
         >
           {value}
         </ProfileTrigger>
@@ -343,6 +344,9 @@ function renderList(lines: string[], start: number, keyPrefix: string, mentionTo
   return { node, next: i }
 }
 
+/** A table cell of one short word (an order number, an id, a code): it stays on one line. */
+const oneToken = (cell: string) => cell.length <= 32 && !/\s/.test(cell)
+
 function tableCells(line: string): string[] | null {
   if (!line.includes('|')) return null
   return line.trim().replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/).map((cell) => cell.trim().replace(/\\\|/g, '|'))
@@ -418,10 +422,13 @@ export function renderMarkdownBlocks(text: string, keyPrefix: string, mentionTok
         ? 'center'
         : separator[index].endsWith(':') ? 'right' : 'left'
       blocks.push(
+        // A message wraps anywhere, which would squeeze the columns to one letter: a table wraps at words, gives each
+        // column some width and scrolls sideways when they do not fit. Only words longer than 16rem break; mentions,
+        // short single words (order numbers) and right-aligned cells (amounts) stay on one line.
         <div key={`${keyPrefix}-table-${start}`} className="my-2 max-w-full overflow-x-auto">
-          <table className="min-w-full border-collapse text-[13px]">
-            <thead><tr>{headers.map((cell, index) => <th key={index} data-align={align(index)} className="border-b border-border px-3 py-1.5 text-left font-semibold data-[align=center]:text-center data-[align=right]:text-right">{renderMarkdownText(cell, `${keyPrefix}-th-${start}-${index}`, mentionTokens, options)}</th>)}</tr></thead>
-            <tbody>{rows.map((row, rowIndex) => <tr key={rowIndex}>{headers.map((_, index) => <td key={index} data-align={align(index)} className="border-b border-border/50 px-3 py-1.5 text-left align-top data-[align=center]:text-center data-[align=right]:text-right">{renderMarkdownText(row[index] || '', `${keyPrefix}-td-${start}-${rowIndex}-${index}`, mentionTokens, options)}</td>)}</tr>)}</tbody>
+          <table className="min-w-full border-collapse text-[13px] wrap-break-word [&_[data-slot=mention]]:whitespace-nowrap">
+            <thead><tr>{headers.map((cell, index) => <th key={index} data-align={align(index)} className="max-w-64 min-w-28 border-b border-border px-3 py-1.5 text-left font-semibold data-[align=center]:text-center data-[align=right]:text-right">{renderMarkdownText(cell, `${keyPrefix}-th-${start}-${index}`, mentionTokens, options)}</th>)}</tr></thead>
+            <tbody>{rows.map((row, rowIndex) => <tr key={rowIndex}>{headers.map((_, index) => <td key={index} data-align={align(index)} data-token={oneToken(row[index] || '') || undefined} className="max-w-64 min-w-28 border-b border-border/50 px-3 py-1.5 text-left align-top data-token:whitespace-nowrap data-[align=center]:text-center data-[align=right]:text-right data-[align=right]:whitespace-nowrap">{renderMarkdownText(row[index] || '', `${keyPrefix}-td-${start}-${rowIndex}-${index}`, mentionTokens, options)}</td>)}</tr>)}</tbody>
           </table>
         </div>,
       )

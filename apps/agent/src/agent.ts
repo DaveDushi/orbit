@@ -26,6 +26,7 @@ import { codexModels, PROVIDER, PeopleModels, routedModels } from "./models.ts";
 import { OrbitError, type OrbitClient, type PendingInput } from "./orbit.ts";
 import { DEFAULT_AGENT_NAME } from "./prompt.ts";
 import { Sandbox } from "./sandbox.ts";
+import { groupSteps } from "./steps.ts";
 import { orbitExtension } from "./tools.ts";
 import { actionText, cardTitle, finalCard, liveCard, splitAnswer, uiBlock } from "./ui.ts";
 import type { UiSpec } from "./ui-catalog.ts";
@@ -156,7 +157,7 @@ class Progress {
 	body(): string {
 		const { text: written, spec } = splitAnswer(this.#text(), false);
 		this.#card = liveCard(spec) ?? (spec ? this.#card : null);
-		const steps = this.steps.map((step) => `• ${step}`).join("\n");
+		const steps = groupSteps(this.steps).map((step) => `• ${step}`).join("\n");
 		const text = written.length > 1_200 ? `…${written.slice(-1_200)}` : written;
 		return ["⏳ Working on it…", steps, text].filter(Boolean).join("\n\n");
 	}
@@ -587,7 +588,7 @@ export class Agent {
 
 	/** The answer's body, and its card (`"invalid"`: the model wrote one that does not pass the catalog). */
 	async #answer(conversation: Conversation, settled: SettledSubmissionRecord, state: ThreadState, steps: readonly string[], people: readonly Person[]): Promise<{ body: string; card: UiSpec | "invalid" | null }> {
-		const footer = steps.length ? `\n\n_${steps.join(" · ")}_` : "";
+		const footer = steps.length ? `\n\n_${groupSteps(steps).join(" · ")}_` : "";
 		if (settled.status !== "done" || settled.type !== "input") {
 			const detail = `${settled.reason ?? "stopped"}${settled.detail ? `: ${typeof settled.detail === "string" ? settled.detail : JSON.stringify(settled.detail)}` : ""}`;
 			if (/oauth|auth|401|refresh|api key/i.test(detail) && state.driverId) {

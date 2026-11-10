@@ -47,7 +47,7 @@ icon 192 10 "$public/icon-192.png"
 icon 512 28 "$public/icon-512.png"
 icon 64 4 "$desktop/crates/orbit-desktop/assets/orbit-64.png"
 
-for spec in 16:1 24:1 32:2 48:3 64:4 256:14; do
+for spec in 16:1 24:2 32:2 48:4 64:4 256:14; do
   icon "${spec%%:*}" "${spec##*:}" "$tmp/ico-${spec%%:*}.png"
 done
 convert "$tmp"/ico-{16,24,32,48,64,256}.png "$desktop/packaging/windows/orbit.ico"

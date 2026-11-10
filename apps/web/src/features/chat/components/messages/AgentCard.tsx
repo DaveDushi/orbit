@@ -16,6 +16,7 @@ import { useSendCardAction } from '../../api/mutations'
 import { useSentActions } from '../../api/queries'
 import { ChatError } from '../../api/types'
 import { useChatHost } from '../../chatHost'
+import { useElementWidth } from '../../pages/useChatViewport'
 import { sentOf, type AgentCard as Card } from '../../lib/agentCard'
 import { Markdown } from './MessageBlocks'
 import { findTypedTaskIds } from './taskIds'
@@ -71,11 +72,14 @@ type ChartProps = {
   series: { name: string; points: { x: string | number; y: number }[] }[]
 }
 
-/** A small bar or line chart in SVG: one y axis from zero, at most 3 series, a legend for two or more. */
+/**
+ * A small bar or line chart in SVG: one y axis from zero, at most 3 series, a legend for two or more. It is drawn at
+ * its own width (240–480px), so the text stays 11px on a phone; x labels are left out until the rest fit.
+ */
 function Chart({ kind, title, x_label, y_label, series }: ChartProps) {
-  const width = 480
+  const [ref, measured] = useElementWidth()
+  const width = Math.round(Math.min(480, Math.max(240, measured ?? 480)))
   const height = 220
-  const left = 40
   const right = 8
   const top = 12
   const bottom = 36
@@ -87,26 +91,29 @@ function Chart({ kind, title, x_label, y_label, series }: ChartProps) {
   const max = Math.ceil(high / step) * step || step
   const min = Math.floor(low / step) * step
   const y = (value: number) => top + ((max - value) / (max - min)) * (height - top - bottom)
+  const ticks = Array.from({ length: Math.round((max - min) / step) + 1 }, (_, index) => min + index * step)
+  // room for the widest tick (about 7px a character at 11px) and the rotated y label
+  const left = Math.max(...ticks.map((tick) => formatTick(tick).length)) * 7 + 10 + (y_label ? 16 : 0)
   const band = (width - left - right) / xs.length
   const center = (x: string) => left + band * (xs.indexOf(x) + 0.5)
   const thickness = Math.min(24, (band * 0.7) / series.length)
-  const ticks = Array.from({ length: Math.round((max - min) / step) + 1 }, (_, index) => min + index * step)
-  const labelEvery = Math.ceil(xs.length / 8)
+  const labelChars = Math.min(14, Math.max(...xs.map((x) => x.length)))
+  const labelEvery = Math.max(1, Math.ceil(xs.length / 8), Math.ceil((labelChars * 6.5 + 8) / band))
   return (
-    <figure data-slot="agent-card-chart" className="grid min-w-0 gap-1.5">
+    <figure ref={ref} data-slot="agent-card-chart" className="grid min-w-0 gap-1.5">
       {title ? <figcaption className="text-sm font-medium text-foreground">{title}</figcaption> : null}
       <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={title ?? 'Chart'} className="h-auto w-full max-w-[480px] overflow-visible text-muted-foreground">
         {ticks.map((tick) => (
           <g key={tick}>
             <line x1={left} x2={width - right} y1={y(tick)} y2={y(tick)} className="stroke-border" strokeWidth={1} />
             <text x={left - 6} y={y(tick)} dy="0.32em" textAnchor="end" fontSize={11} fill="currentColor">
-              {formatNumber(tick)}
+              {formatTick(tick)}
             </text>
           </g>
         ))}
         {xs.map((x, index) =>
           index % labelEvery === 0 ? (
-            <text key={x} x={center(x)} y={height - bottom + 16} textAnchor="middle" fontSize={11} fill="currentColor">
+            <text key={x} x={center(x)} y={height - bottom + 18} textAnchor="middle" fontSize={11} fill="currentColor">
               {x.length > 14 ? `${x.slice(0, 13)}…` : x}
             </text>
           ) : null,
@@ -117,7 +124,7 @@ function Chart({ kind, title, x_label, y_label, series }: ChartProps) {
           </text>
         ) : null}
         {y_label ? (
-          <text transform={`translate(10 ${top + (height - top - bottom) / 2}) rotate(-90)`} textAnchor="middle" fontSize={11} fill="currentColor">
+          <text transform={`translate(8 ${top + (height - top - bottom) / 2}) rotate(-90)`} textAnchor="middle" fontSize={11} fill="currentColor">
             {y_label}
           </text>
         ) : null}
@@ -176,6 +183,12 @@ function niceStep(raw: number): number {
   return (scaled <= 1 ? 1 : scaled <= 2 ? 2 : scaled <= 5 ? 5 : 10) * power
 }
 
+/** An axis number, short: 15,000,000 is "15M" (the phone app writes it the same way). */
+function formatTick(value: number): string {
+  const [size, unit] = ([[1e9, 'B'], [1e6, 'M'], [1e3, 'K']] as const).find(([size]) => Math.abs(value) >= size) ?? [1, '']
+  return `${Number((value / size).toFixed(1)).toLocaleString()}${unit}`
+}
+
 function formatNumber(value: number): string {
   return Number.isInteger(value) ? value.toLocaleString() : value.toLocaleString(undefined, { maximumFractionDigits: 2 })
 }
@@ -194,7 +207,7 @@ function CardButton({ props }: { props: { label: string; style?: 'primary' | 'se
         type="button"
         size="sm"
         variant={variant}
-        className="max-w-full"
+        className="max-w-full pointer-coarse:h-9"
         // One click at a time for each card, none while the agent still writes it, and each button once.
         disabled={props.action === 'open_task' ? !task : live || done || pending !== null}
         aria-busy={pending === id || undefined}
@@ -274,7 +287,7 @@ function CardForm({ props }: { props: { fields: FormField[]; submit_label?: stri
         })}
       </fieldset>
       <div className="flex items-center gap-2">
-        <Button type="submit" size="sm" disabled={live || done || pending !== null || props.fields.some((field) => field.required && field.kind !== 'checkbox' && !values[field.name])}>
+        <Button type="submit" size="sm" className="pointer-coarse:h-9" disabled={live || done || pending !== null || props.fields.some((field) => field.required && field.kind !== 'checkbox' && !values[field.name])}>
           {pending === id ? <Spinner data-icon="inline-start" /> : null}
           {props.submit_label || 'Send'}
         </Button>
@@ -295,7 +308,8 @@ const TONES = {
 const { registry } = defineRegistry(catalog, {
   components: {
     Card: ({ props, children }) => (
-      <section data-slot="agent-card-card" className="grid min-w-0 gap-3 rounded-lg border bg-card p-3">
+      // one column no wider than the card: a long word breaks instead of pushing the card's parts out of it
+      <section data-slot="agent-card-card" className="grid min-w-0 grid-cols-1 gap-3 rounded-lg border bg-card p-3 wrap-anywhere">
         {props.title || props.description ? (
           <header className="grid gap-0.5">
             {props.title ? <h3 className="font-semibold text-foreground">{props.title}</h3> : null}
@@ -315,7 +329,8 @@ const { registry } = defineRegistry(catalog, {
     ),
     Table: ({ props }) => (
       <div data-slot="agent-card-table" className="max-w-full overflow-x-auto rounded-md border">
-        <table className="w-full text-sm">
+        {/* as a Markdown table: wraps at words, scrolls sideways; numbers and one-word cells stay on one line */}
+        <table className="min-w-full text-sm wrap-break-word">
           <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
             <tr>
               {props.columns.map((column) => (
@@ -331,7 +346,11 @@ const { registry } = defineRegistry(catalog, {
                 {props.columns.map((column) => {
                   const cell = row[column.key]
                   return (
-                    <td key={column.key} className="px-2.5 py-1.5 align-top" style={{ textAlign: column.align ?? (typeof cell === 'number' ? 'right' : undefined) }}>
+                    <td
+                      key={column.key}
+                      data-token={typeof cell === 'number' || (typeof cell === 'string' && cell.length <= 32 && !/\s/.test(cell)) || undefined}
+                      className="max-w-64 min-w-28 px-2.5 py-1.5 align-top data-token:whitespace-nowrap"
+                      style={{ textAlign: column.align ?? (typeof cell === 'number' ? 'right' : undefined) }}>
                       {typeof cell === 'string' ? <TaskText text={cell} /> : typeof cell === 'number' ? formatNumber(cell) : cell === true ? 'yes' : cell === false ? 'no' : ''}
                     </td>
                   )

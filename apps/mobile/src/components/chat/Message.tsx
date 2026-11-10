@@ -1,12 +1,13 @@
 import { File, Paths } from 'expo-file-system'
 import { useState } from 'react'
-import { Image, Modal, Platform, Pressable, Share, useWindowDimensions, View } from 'react-native'
+import { Image, Modal, Platform, Pressable, ScrollView, Share, useWindowDimensions, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { agentCardOf } from '../../data/agent-card'
 import { fileSize, hasReaction, isImage } from '../../data/chat'
 import type { ChatFileRecord } from '../../data/chat-api'
 import { relativeAgo, timeOfDay } from '../../data/format'
+import { splitTables, type TextPart } from '../../data/markdown'
 import type { MessageRecord } from '../../data/orbit'
 import { showError, useServerImage } from '../../hooks/chat'
 import { useOrbit } from '../../orbit-context'
@@ -25,6 +26,31 @@ export interface MessageHandlers {
   onAddReaction: (message: MessageRecord) => void
   /** Absent in a thread: its replies have no thread of their own. */
   onOpenThread?: (message: MessageRecord) => void
+}
+
+/**
+ * A Markdown table of a message, as on the web: it scrolls sideways, each column as wide as its longest cell needs
+ * (96–220px), and wraps at words inside that.
+ */
+function MessageTable({ table }: { table: Extract<TextPart, { kind: 'table' }> }) {
+  const widths = table.header.map((head, index) => Math.min(220, Math.max(96, Math.max(head.length, ...table.rows.map((row) => row[index]!.length)) * 7.5 + 20)))
+  const cell = (text: string, index: number, head: boolean) => (
+    <Text key={index} style={{ width: widths[index], textAlign: table.right[index] ? 'right' : 'left' }} className={`px-2.5 py-1.5 text-[13px] leading-[18px] ${head ? 'font-noto-semibold' : ''}`}>
+      {text}
+    </Text>
+  )
+  return (
+    <ScrollView horizontal className="my-1.5" contentContainerClassName="min-w-full">
+      <View>
+        <View className="flex-row border-b border-border">{table.header.map((head, index) => cell(head, index, true))}</View>
+        {table.rows.map((row, rowIndex) => (
+          <View key={rowIndex} className="flex-row border-b border-border/50">
+            {row.map((text, index) => cell(text, index, false))}
+          </View>
+        ))}
+      </View>
+    </ScrollView>
+  )
 }
 
 /**
@@ -73,12 +99,16 @@ export function MessageItem({ message, groupStart, highlighted = false, handlers
               <Text className="text-[12px] leading-[16px] text-muted-foreground">Forwarded from {handlers.nameOf(message.forwarded.author_id)}</Text>
             </View>
           ) : null}
-          {body ? (
-            <Text className={`text-[14px] leading-[21px] ${message.deleted ? 'text-muted-foreground' : 'text-foreground/85'}`}>
-              {body}
-              {message.edited_at && !message.deleted ? <Text className="text-[11px] text-muted-foreground"> (edited)</Text> : null}
-            </Text>
-          ) : null}
+          {(message.deleted ? [{ kind: 'text', text: body } as const] : splitTables(body)).map((part, index, parts) =>
+            part.kind === 'table' ? (
+              <MessageTable key={index} table={part} />
+            ) : (
+              <Text key={index} className={`text-[14px] leading-[21px] ${message.deleted ? 'text-muted-foreground' : 'text-foreground/85'}`}>
+                {part.text}
+                {index === parts.length - 1 && message.edited_at && !message.deleted ? <Text className="text-[11px] text-muted-foreground"> (edited)</Text> : null}
+              </Text>
+            ),
+          )}
           {card === 'invalid' ? (
             // A card this app's catalog does not fit: the text above stands alone.
             <Text className="text-[12px] leading-[16px] italic text-muted-foreground">The card could not be shown.</Text>

@@ -67,8 +67,8 @@ export function NoWorkspaceShell() {
         {/* the workspace app's phone top bar (`Topbar`) */}
         <header className="hidden shrink-0 items-center justify-between gap-4 border-b border-border bg-card px-4 py-3 max-[899px]:flex">
           <Link to={home} className="flex min-w-0 flex-1 items-center gap-2.5">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted">
-              <img src="/logo.svg" alt="" className="size-[18px]" />
+            <span className="flex size-8 shrink-0 items-center justify-center">
+              <img src="/logo.svg" alt="" className="size-[22px]" />
             </span>
             <span className="truncate text-[13px] font-semibold text-foreground">Orbit</span>
           </Link>

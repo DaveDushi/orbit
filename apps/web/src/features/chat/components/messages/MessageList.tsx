@@ -596,7 +596,8 @@ export function MessageList({
           </Button>
         ) : null}
         {dayAbove?.type === 'message' && dayAbove.day !== undefined && (virtualizer.scrollOffset ?? 0) > 0 ? (
-          <div data-slot="day-chip-floating" className="pointer-events-none absolute inset-x-0 top-2 z-[5] flex justify-center py-2">
+          // the messages fade out under the chip, so it never sits on a half-hidden line of text
+          <div data-slot="day-chip-floating" className="pointer-events-none absolute inset-x-0 top-0 z-[5] flex justify-center bg-linear-to-b from-background from-55% to-transparent pt-4 pb-5">
             <span className="rounded-full border border-border bg-background px-3 py-0.5 text-xs font-medium text-muted-foreground">{dayChip(dayAbove.day)}</span>
           </div>
         ) : null}

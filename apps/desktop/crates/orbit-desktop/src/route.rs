@@ -2,7 +2,9 @@
 //!
 //! The main window shows the server's own pages and the gateway's sign-in only. A link to
 //! another site (a click in a message, a `target="_blank"` link, `window.open`) opens in the
-//! default browser; `mailto:` and `tel:` go to their OS apps. Top-level navigations between
+//! default browser; `mailto:` and `tel:` go to their OS apps. A blank popup is the exception: the
+//! web app opens one for an embedded app's sign-in and then loads the app's login in it, and that
+//! sign-in must happen in this app's web view, where the embedded app reads its cookies. Top-level navigations between
 //! pages are left alone (the gateway sign-in can pass through exe.dev and an identity provider,
 //! and embeds load in frames); the bridge script sends link clicks on the server's pages here.
 
@@ -18,6 +20,14 @@ pub enum Route {
     External,
     /// Neither (`javascript:`, `file:`, unknown schemes).
     Deny,
+    /// A popup window of the web view itself, which the page then fills (`window.open('about:blank')`).
+    Popup,
+}
+
+/// A new window that a page asked for (`window.open`, `target="_blank"`).
+pub fn new_window(server: &ServerUrl, url: &str) -> Route {
+    // an embedded app's sign-in (apps/web `features/apps/signInPopup.ts`); WebKit may give a blank page no URL
+    if url.is_empty() || url == "about:blank" { Route::Popup } else { route(server, url) }
 }
 
 /// A link the person opened, from a page in the main window.
@@ -81,6 +91,19 @@ mod tests {
         assert_eq!(route(&server, "javascript:alert(1)"), Route::Deny);
         assert_eq!(route(&server, "file:///etc/passwd"), Route::Deny);
         assert_eq!(route(&server, "ms-settings:privacy"), Route::Deny);
+    }
+
+    #[test]
+    fn a_blank_popup_opens_in_the_app_and_other_new_windows_as_links() {
+        let server = ServerUrl::parse("https://orbit.example.com").unwrap();
+        // the sign-in popup of an embedded app: denied, `window.open` returned null and the web app
+        // said "Your browser blocked the sign-in window"
+        assert_eq!(new_window(&server, "about:blank"), Route::Popup);
+        assert_eq!(new_window(&server, ""), Route::Popup);
+        assert_eq!(new_window(&server, "about:blank#x"), Route::Deny);
+        assert_eq!(new_window(&server, "https://creators.example.com/login"), Route::External);
+        assert_eq!(new_window(&server, "https://orbit.example.com/chat"), Route::InApp);
+        assert_eq!(new_window(&server, "javascript:alert(1)"), Route::Deny);
     }
 
     #[test]

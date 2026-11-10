@@ -46,6 +46,10 @@ Orbit pins 1.97.1), `Cargo.lock` and `target/`.
     badge; Linux: the Unity launcher count where there is one. The tray icon gets a red dot and its tooltip says the count.
   - Links: a click on a link to another site goes to the default browser; `target="_blank"` and `window.open`
     too (`route.rs`). `mailto:` and `tel:` go to their OS apps; `javascript:`, `file:` and others do nothing.
+    A blank popup (`window.open('about:blank')`) is the exception: it opens as the web view's own window, in the
+    same profile, because the web app loads an embedded app's sign-in in it ("Sign in to app"), and the app in
+    the frame reads that sign-in's cookies from this web view, not from the browser (until 0.1.2 it was refused,
+    and the web app said the sign-in window was blocked).
   - Update check: the page reads `/downloads/desktop/latest.json` with its own gateway cookies; when that
     version is newer, a notification says so and the tray gets "Download Orbit x.y.z" (opens the browser).
 - **Downloads.** Every download goes to the Downloads folder (the home folder when there is none), with

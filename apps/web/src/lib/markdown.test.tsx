@@ -49,6 +49,15 @@ test('renders tables with inline Markdown and horizontal overflow', () => {
   expect(table.querySelectorAll('th')[1].dataset.align).toBe('right')
 })
 
+test('a table cell of one short word (an order number) stays on one line; text cells wrap', () => {
+  // The message's wrap-anywhere squeezed the first column of a phone's table to a few letters (2026-11-10).
+  const view = preview('| Order | Customer | Total |\n| --- | --- | ---: |\n| #SO-2026-004512 | Nordwind Handelsgesellschaft mbH | 1,249.90 € |')
+  const cells = [...view.getByRole('table').querySelectorAll('td')]
+
+  expect(cells.map((cell) => cell.hasAttribute('data-token'))).toEqual([true, false, false])
+  expect(cells[2].dataset.align).toBe('right')
+})
+
 test('renders horizontal rules and strikethrough but leaves fenced code raw', () => {
   const view = preview('Before ~~removed~~\n---\nAfter\n* * *\n```text\n- [x] raw\n---\n```')
 

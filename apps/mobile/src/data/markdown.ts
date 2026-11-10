@@ -56,3 +56,42 @@ function inline(text: string): string {
     )
     .join('')
 }
+
+/** A part of a shown message: plain text, or a Markdown table (its cells as plain text). */
+export type TextPart = { kind: 'text'; text: string } | { kind: 'table'; header: string[]; rows: string[][]; right: boolean[] }
+
+function tableCells(line: string): string[] | null {
+  if (!line.includes('|')) return null
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/).map((cell) => cell.trim().replace(/\\\|/g, '|'))
+}
+
+/**
+ * The Markdown tables of a text (as the web reads them: a row of cells, then `---` cells, then rows), apart from the
+ * text around them, so a phone can show them as tables instead of lines of `|`.
+ */
+export function splitTables(text: string): TextPart[] {
+  const parts: TextPart[] = []
+  const lines = text.split('\n')
+  let plain: string[] = []
+  const flush = () => {
+    const joined = plain.join('\n').replace(/^\n+|\n+$/g, '')
+    if (joined) parts.push({ kind: 'text', text: joined })
+    plain = []
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const header = tableCells(lines[i]!)
+    const separator = tableCells(lines[i + 1] ?? '')
+    if (!header || !separator || header.length !== separator.length || !separator.every((cell) => /^:?-{3,}:?$/.test(cell))) {
+      plain.push(lines[i]!)
+      continue
+    }
+    flush()
+    const rows: string[][] = []
+    i += 2
+    for (let cells = tableCells(lines[i] ?? ''); cells; cells = tableCells(lines[++i] ?? '')) rows.push(header.map((_, index) => cells![index] ?? ''))
+    i -= 1
+    parts.push({ kind: 'table', header, rows, right: separator.map((cell) => cell.endsWith(':') && !cell.startsWith(':')) })
+  }
+  flush()
+  return parts
+}

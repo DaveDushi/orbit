@@ -264,6 +264,7 @@ pub fn run(hidden: bool, mut instance: Option<Instance>) -> ! {
 }
 
 fn build_webview(window: &Window, context: &mut WebContext, server: Option<&ServerUrl>, proxy: &EventLoopProxy<UserEvent>) -> wry::Result<WebView> {
+    let popups = server.cloned();
     let ipc = proxy.clone();
     let new_window = proxy.clone();
     let title = proxy.clone();
@@ -274,6 +275,11 @@ fn build_webview(window: &Window, context: &mut WebContext, server: Option<&Serv
             let _ = ipc.send_event(UserEvent::Ipc { from, body: request.into_body() });
         })
         .with_new_window_req_handler(move |url, _| {
+            // A blank popup is the web view's own window (same profile and cookies); the page keeps its handle
+            // and loads an embedded app's sign-in in it. Any other new window is a link (`follow`).
+            if popups.as_ref().is_some_and(|server| route::new_window(server, &url) == Route::Popup) {
+                return NewWindowResponse::Allow;
+            }
             let _ = new_window.send_event(UserEvent::NewWindow(url));
             NewWindowResponse::Deny
         })
@@ -331,7 +337,7 @@ fn follow(server: Option<&ServerUrl>, webview: &WebView, url: &str) {
             let _ = webview.load_url(url);
         }
         Route::External => open_outside(url),
-        Route::Deny => {}
+        Route::Deny | Route::Popup => {}
     }
 }
 

@@ -67,7 +67,7 @@ export function Button({ label, onPress, variant = 'primary', size = 'default', 
       accessibilityState={{ disabled: inactive, busy: loading }}
       disabled={inactive}
       onPress={onPress}
-      className={`flex-row items-center justify-center gap-1.5 border ${SIZE[size].box} ${VARIANT[variant].box} ${block ? 'self-stretch' : ''} ${disabled && !loading ? 'opacity-50' : ''}`}
+      className={`max-w-full flex-row items-center justify-center gap-1.5 border ${SIZE[size].box} ${VARIANT[variant].box} ${block ? 'self-stretch' : ''} ${disabled && !loading ? 'opacity-50' : ''}`}
       style={({ pressed }) => ({
         // only when set: a key with `undefined` would replace the class's background (`bg-primary`) in the merged style
         ...(variant === 'secondary' && pressed ? { backgroundColor: mix(colors.secondary, 0.95, colors.foreground) } : {}),
@@ -77,7 +77,8 @@ export function Button({ label, onPress, variant = 'primary', size = 'default', 
       })}
     >
       {loading ? <Spinner color={iconColor} /> : icon ? <View><Icon name={icon} size={size === 'default' || size === 'lg' ? 16 : 14} color={iconColor} /></View> : null}
-      <Text className={`font-noto-medium ${SIZE[size].text} ${muted ? 'text-muted-foreground/70' : VARIANT[variant].text}`}>{label}</Text>
+      {/* one line: a long label ends in "…" instead of growing out of the button */}
+      <Text numberOfLines={1} className={`shrink font-noto-medium ${SIZE[size].text} ${muted ? 'text-muted-foreground/70' : VARIANT[variant].text}`}>{label}</Text>
     </Pressable>
   )
 }

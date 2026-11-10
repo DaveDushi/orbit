@@ -76,15 +76,23 @@ function niceStep(raw: number): number {
   return (scaled <= 1 ? 1 : scaled <= 2 ? 2 : scaled <= 5 ? 5 : 10) * power
 }
 
+/** An axis number, short: 15,000,000 is "15M", as on the web (Hermes has no compact notation everywhere). */
+function formatTick(value: number): string {
+  const [size, unit] = ([[1e9, 'B'], [1e6, 'M'], [1e3, 'K']] as const).find(([size]) => Math.abs(value) >= size) ?? [1, '']
+  return `${Number((value / size).toFixed(1)).toLocaleString()}${unit}`
+}
 const formatNumber = (value: number) => (Number.isInteger(value) ? value.toLocaleString() : value.toLocaleString(undefined, { maximumFractionDigits: 2 }))
 
-/** The web's small bar or line chart, in react-native-svg: one y axis from zero, at most 3 series, a legend for two or more. */
+/**
+ * The web's small bar or line chart, in react-native-svg: one y axis from zero, at most 3 series, a legend for two or
+ * more. Drawn at its own width (240–480), so the text stays 12px; x labels are left out until the rest fit.
+ */
 function Chart({ kind, title, x_label, y_label, series }: ChartProps) {
   const { colors } = useTheme()
   const seriesColors = [colors.chart2, colors.chart4, colors.chart1]
-  const width = 480
+  const [measured, setMeasured] = useState(480)
+  const width = Math.round(Math.min(480, Math.max(240, measured)))
   const height = 220
-  const left = 40
   const right = 8
   const top = 12
   const bottom = 36
@@ -96,26 +104,29 @@ function Chart({ kind, title, x_label, y_label, series }: ChartProps) {
   const max = Math.ceil(high / step) * step || step
   const min = Math.floor(low / step) * step
   const y = (value: number) => top + ((max - value) / (max - min)) * (height - top - bottom)
+  const ticks = Array.from({ length: Math.round((max - min) / step) + 1 }, (_, index) => min + index * step)
+  // room for the widest tick (about 7.5 a character at 12) and the rotated y label
+  const left = Math.max(...ticks.map((tick) => formatTick(tick).length)) * 7.5 + 10 + (y_label ? 16 : 0)
   const band = (width - left - right) / xs.length
   const center = (x: string) => left + band * (xs.indexOf(x) + 0.5)
   const thickness = Math.min(24, (band * 0.7) / series.length)
-  const ticks = Array.from({ length: Math.round((max - min) / step) + 1 }, (_, index) => min + index * step)
-  const labelEvery = Math.ceil(xs.length / 6)
+  const labelChars = Math.min(12, Math.max(...xs.map((x) => x.length)))
+  const labelEvery = Math.max(1, Math.ceil(xs.length / 6), Math.ceil((labelChars * 7 + 8) / band))
   return (
-    <View className="gap-1.5">
+    <View className="gap-1.5" onLayout={(event) => setMeasured(event.nativeEvent.layout.width)}>
       {title ? <Text className="font-noto-medium text-[14px] leading-[20px]">{title}</Text> : null}
       <Svg width="100%" height={undefined} viewBox={`0 0 ${width} ${height}`} style={{ aspectRatio: width / height }} accessibilityLabel={title ?? 'Chart'}>
         {ticks.map((tick) => (
           <G key={tick}>
             <Line x1={left} x2={width - right} y1={y(tick)} y2={y(tick)} stroke={colors.border} strokeWidth={1} />
             <SvgText x={left - 6} y={y(tick) + 4} textAnchor="end" fontSize={12} fill={colors.mutedForeground}>
-              {formatNumber(tick)}
+              {formatTick(tick)}
             </SvgText>
           </G>
         ))}
         {xs.map((x, index) =>
           index % labelEvery === 0 ? (
-            <SvgText key={x} x={center(x)} y={height - bottom + 16} textAnchor="middle" fontSize={12} fill={colors.mutedForeground}>
+            <SvgText key={x} x={center(x)} y={height - bottom + 18} textAnchor="middle" fontSize={12} fill={colors.mutedForeground}>
               {x.length > 12 ? `${x.slice(0, 11)}…` : x}
             </SvgText>
           ) : null,
@@ -180,10 +191,11 @@ function CardButton({ props }: { props: { label: string; style?: 'primary' | 'se
   const task = props.action === 'open_task' && typeof props.params?.task === 'string' ? taskOf(props.params.task) : undefined
   const done = props.action === 'reply' && sent.has(id)
   return (
-    <View className="flex-row items-center gap-2">
+    <View className="max-w-full flex-row items-center gap-2">
       <Button
         label={props.label}
-        size="sm"
+        // 32px: a finger's target in a card
+        size="default"
         variant={variant}
         loading={pending === id}
         // One tap at a time for each card, none while the agent still writes it, and each button once.
@@ -268,7 +280,7 @@ function CardForm({ props }: { props: { fields: FormField[]; submit_label?: stri
         )
       })}
       <View className="flex-row items-center gap-2">
-        <Button label={props.submit_label || 'Send'} size="sm" loading={pending === id} disabled={locked || missing} onPress={() => send(id, values)} />
+        <Button label={props.submit_label || 'Send'} loading={pending === id} disabled={locked || missing} onPress={() => send(id, values)} />
         {done ? <SentMark /> : null}
       </View>
       {picking?.kind === 'select' ? (
