@@ -4,12 +4,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at e3ba2f8664f5f440394552ae663514ade608170f
-  (step 1b: phone chat, Drive click, desktop 0.1.3, schema 86, November 10, 2026).
+- Source: DaveDushi/orbit, `main` at 6bfa8a7ec7e63f01d776cfb392961aee103934ac
+  (step 1c: MCP OAuth Connect, schema 87, November 10, 2026).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:e3ba2f8`); fork commits have no published upstream image.
-- Image ID: sha256:91c37aadb94b4083693017cbc28c712c6d66eda193461dc3938bb7a2013a83c4
-- Team agent sidecar code (`/opt/orbit-agent`): commit e3ba2f8.
+  (`orbit:6bfa8a7`); fork commits have no published upstream image.
+- Image ID: sha256:7364c8357c17f843026fa6f23e82ad9007919ab186200ff83a82e73abd621e96
+- Team agent sidecar code (`/opt/orbit-agent`): commit 6bfa8a7.
 - Desktop app downloads: https://orbit.wellrox.com/downloads/desktop/ (installer, zip, `latest.json` for the app's update
   check; behind the exe.dev login like the rest). nginx `location /downloads/desktop/` in
   `/etc/nginx/conf.d/orbit.conf` serves `/srv/orbit-downloads/desktop/` (outside the deploy, so deploys keep it; the
@@ -250,6 +250,59 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 10, 2026 upgrade: step 1c, Connect remote MCP servers with OAuth (schema 87)
+
+`main` fast-forwarded to `0fea68d2` from `423d9dc7` (branch `mcp-oauth-connect`): `9b041c7c` (Agent tools: credential
+"Sign in with OAuth (Connect)" for remote MCP servers, e.g. TikTok Social; one shared sign-in per integration, tokens
+sealed with the app key and renewed, "Connected as …", grant end date, owner/admin email 14 days before, Reconnect,
+Disconnect; callback `GET /api/v1/agent-integrations/oauth/callback`; migration `0087_agent_integration_connect`, SQLite
+and Postgres: 6 nullable columns on `agent_integrations` and the table `agent_integration_oauth_states`) and `0fea68d2`
+(also try the path-appended RFC 8414 metadata URL), then `6bfa8a7e`: a line on top of the `2026-11-10` "what's new"
+entry (OAuth Connect; two older lines of that entry merged to keep 4). `aboutOrbit()` was already updated on the branch
+(Agent tools line and "How do I… let you use a service like TikTok"). No new `ORBIT_*` setting; sidecar
+`package.json`/`package-lock.json` unchanged (only `src`). `ORBIT_PUBLIC_ORIGIN` is `https://orbit.wellrox.com` (the
+OAuth redirect URI base); `https://business-api.tiktok.com/` answers HTTP 301 to the `orbit` user.
+
+Checks before the switch (after `bun install --frozen-lockfile` and `npm ci` in `apps/agent`): web `tsc -b` and `bun test
+src/features/agentIntegrations` (4 pass, 0 fail); agent `tsc` and `node --test` (60 pass, 0 fail, 11 skipped). Rust tests
+were not run again on `main` (same commits as the branch). `orbit-deploy image` built `orbit:6bfa8a7` (31 min);
+`deploy/smoke.sh` passed; `orbit config check` passed with the extracted binary.
+
+At the switch: stopped `orbit-agent` and `orbit` at 15:52:41 UTC, created snapshot
+`01a1c629-5ad6-7167-98d6-3431a1608760` with the old CLI (`/usr/local/bin/orbit-e3ba2f8`) and verified it, ran
+`migrate run` of the new binary on a copy in `/var/lib/orbit/rehearsal-6bfa8a7-*` (1 applied, schema 87, quick-check ok,
+0 foreign-key rows, 6 new `oauth_*` columns and the new table; deleted afterwards), saved the sidecar data as
+`/var/backups/orbit-agent/orbit-agent-before-6bfa8a7.tgz`, kept the old sidecar code as
+`/opt/orbit-agent.before-6bfa8a7`, installed the binary (`/usr/local/bin/orbit-6bfa8a7` too) and the new sidecar `src`,
+and started `orbit` (15:53:14, ready), then `orbit-agent` (15:53:20). Pushed `main`. `vm-health`
+(`/root/ops/vm-health.conf`, old copy `.before-6bfa8a7`): `PROD_TAG=6bfa8a7`, `ROLLBACK_TAG=e3ba2f8`,
+`ROLLBACK_BACKUP=01a1c629-5ad6-7167-98d6-3431a1608760`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` active, no restarts; readiness
+(all checks) and `/health/live` 200; `/orbit-build.json` revision `6bfa8a7e`; schema 87; live quick-check and
+foreign-key checks pass; web `/` 200; `/api/v1/agent-integrations/oauth/callback?state=x&code=y` answers 303 to
+`/settings/agentic/workspace?agent_tool_connect=expired` (an unknown path under it is 404); sidecar `/health`
+`{"ok":true,"mock":false}` and `/opt/orbit-agent/src` equal to `apps/agent/src` of `6bfa8a7e`; no log warnings except
+rmcp's known "allowed origin without a port"; `vm-health` OK except the nginx lines of the switch window (58, all
+15:52–15:53, upstream refused while stopped) and `.git` file owners. **Not** verified: a real TikTok Connect (needs an
+admin's sign-in in the browser) and a Donna answer through it.
+
+Rollback (the old binary refuses schema 87: restore the snapshot together with the binary; work after 15:52 UTC is lost,
+also any OAuth connection made after the deploy). To go back to `e3ba2f8`:
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-6bfa8a7 backup verify 01a1c629-5ad6-7167-98d6-3431a1608760 && /usr/local/bin/orbit-6bfa8a7 backup restore 01a1c629-5ad6-7167-98d6-3431a1608760'
+sudo install -m 755 /usr/local/bin/orbit-e3ba2f8 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-6bfa8a7 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-6bfa8a7.tgz
+```
+
+After this rollback, set `PROD_TAG=e3ba2f8`, `ROLLBACK_TAG=8151a3c`,
+`ROLLBACK_BACKUP=01a1c5a4-5127-7421-90cd-a66f0ccfe0cf` in `/root/ops/vm-health.conf`.
 
 ### November 10, 2026 upgrade: step 1b, phone chat, Drive click and desktop 0.1.3 (schema 86)
 
