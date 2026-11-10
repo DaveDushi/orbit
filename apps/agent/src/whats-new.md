@@ -6,6 +6,12 @@ build: "## YYYY-MM-DD" (the deploy date), then 1-4 short "- " lines about what p
 members, not developers. Keep the 8 newest entries; the prompt shows the 5 newest.
 -->
 
+## 2026-11-10
+- Phones: Settings, Account settings and Admin open as a menu of their pages. The bottom bar has Drive instead of Mail.
+- Task boards stay fast with many tasks, and every card is there when you scroll. A change to many tasks at once shows in each task's activity. A closed GitHub issue or merged pull request moves its task to Done.
+- Comments lose empty lines at the start and end, and sending a comment no longer blanks the page. Loading shows a small ring spinner.
+- Desktop app 0.1.2 for Windows: the taskbar icon shows the number of unread messages.
+
 ## 2026-11-09
 - Donna can look at images, videos and scanned PDFs in Drive, edit them (for example trim a video, or crop, resize or convert an image) and save the result as a new Drive file. She cannot hear sound.
 - Donna knows the current time and date of the person who writes to her, so "tomorrow" and "next week" are right, and she knows which Orbit version runs and what is new.

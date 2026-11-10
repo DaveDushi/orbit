@@ -72,7 +72,9 @@ test('workspace creation retry repeats form clearing and workspace selection', a
 
 test('project creation retry selects the created project', async () => {
   let calls = 0
-  globalThis.fetch = (async () => {
+  globalThis.fetch = (async (request: Request) => {
+    // the mutation reads the project list first, to pick a free key
+    if (request.method === 'GET') return Response.json({ items: [], next_cursor: null })
     calls += 1
     return calls === 1 ? failure() : Response.json({
       id: 'project-2', workspace_id: workspace.id, name: 'Second', key: 'SECON', color: '#8b5cf6',

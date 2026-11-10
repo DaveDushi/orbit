@@ -38,6 +38,8 @@ WizardStyle=modern
 ; A running Orbit (also hidden in the tray) holds Orbit.exe: close it for an update or uninstall.
 CloseApplications=yes
 RestartApplications=no
+; Tells Explorer to refresh its icon cache after install, so shortcuts and the taskbar show a new icon at once.
+ChangesAssociations=yes
 
 [Tasks]
 Name: desktopicon; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
