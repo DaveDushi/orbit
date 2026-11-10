@@ -16,6 +16,9 @@
 ## Team agent transcripts are shared per thread
 - One Pi conversation serves a whole chat thread, so anything a run reads (tool results, prompt sections) stays in the transcript for the next driver of that thread. Data that only one person may see (their private agent memory) is read only where that person is alone with the agent (a DM of two); see `.ai/agent-design.md`, "Memory", M2.
 
+## Guests (chat-only role)
+- `membership::actor` returns `None` for a guest, so every repository that uses it refuses guests; only chat uses `chat_actor`. A route with its own membership SQL (`FROM memberships`) must exclude `role = 'guest'` itself. `tests/guest_access.rs` sweeps only the OpenAPI operations: a route outside the contract (agent, apps, internal) needs its own guest test (`agent_api.rs`, `apps_api.rs`).
+
 ## Settings and internal callers
 - Orbit refuses to start on an unknown `ORBIT_*` environment variable. A new setting needs its key in `crates/platform/src/config.rs` (or an ignored prefix there, as `ORBIT_AGENT_` for the agent), or the server will not boot (2026-10-29).
 - The origin policy refuses a write without `Origin` unless it carries `Authorization: Bearer` (and no cookie). A server-to-server caller (a sidecar, a script) sends its secret as a bearer token. Route tests that skip `HttpPlatformLayer` do not see this: check such callers against a running server.
@@ -64,6 +67,7 @@
 ## Tooling
 - `jean.json` gives every worktree the same run ports (18888 web, 18080 API, `--strictPort`), so a second worktree's run environment cannot start while another one runs, and port 18080 can also be taken by a local VM. Check who owns the port (`ss -ltnp`, `/proc/<pid>/cwd`) before you trust a page there. Without a working run environment, build the web app and let Playwright serve `dist/` and stub `/api` with `page.route` (no extra server process) (2026-10-20).
 - Do not run `bunx expo lint` in `apps/mobile`: mobile has no ESLint setup, and the command installs ESLint, edits `package.json` and `bun.lock` and writes `eslint.config.js`. The mobile checks are `bunx tsc --noEmit -p .`, `bun test src` and the iOS bundle (`bunx expo export --platform ios` when no Metro runs) (2026-10-28).
+- `expo export` shares Metro's cache in `/tmp` with every worktree: a DOM bundle can fail with "Unable to resolve ./../../../../<other-worktree>/apps/mobile/…". Rerun with `--clear` when no Metro server runs (2026-11-10).
 - Never `git stash` to compare against `main`: other sessions edit this working tree at the same time, so the stash takes their work and `stash pop` fails on their new edits. Undo your change in place (or use `git show HEAD:path`) instead (2026-10-15).
 - The release image is static musl on Alpine with no OpenSSL. Pick pure-Rust crates (rustls, RustCrypto); `webauthn-rs` 0.5 needs OpenSSL, so Orbit pins the pure-Rust 0.6 line.
 - The user-run Vite dev server (port 8888) can serve a broken module graph after files are renamed (`.tsx`→`.ts`) mid-session — pages render blank with no console errors. Verify against `aubr build` + `aubx vite preview` before debugging app code, and report the dev server needs a restart instead of touching it.
