@@ -76,7 +76,8 @@ trap cleanup EXIT
 started=$(date +%s)
 mkdir -p "$EVALS_WORK/parts"
 
-# step <name> <command...>: runs one step; a failure is recorded and the run goes on.
+# step <name> <command...>: runs one step; a failure is recorded and the run goes on. `set -e` does not apply inside
+# `if`, so step functions add `|| return 1` to each command that must not fail.
 step() {
     local name=$1
     shift
@@ -105,21 +106,21 @@ fi
 seed() {
     local url
     url=$(orbit_cli development setup-token init --origin "http://127.0.0.1:$EVALS_PORT" | grep -o 'token=[A-Za-z0-9_-]*' | tail -1)
-    start_instance development ORBIT_RATE_LIMIT_GENERAL_PER_MINUTE=1000000
+    start_instance development ORBIT_RATE_LIMIT_GENERAL_PER_MINUTE=1000000 || return 1
     echo "{\"fresh_start_ms\": $STARTUP_MS}" >"$EVALS_WORK/fresh-start.json"
-    bun "$root/evals/src/seed.ts" "${url#token=}"
+    bun "$root/evals/src/seed.ts" "${url#token=}" || return 1
     stop_instance
 }
 
 perf_server() {
     # Cold start on the seeded database, then memory idle, after the latency run and after the page loads.
-    start_instance development ORBIT_RATE_LIMIT_GENERAL_PER_MINUTE=1000000
+    start_instance development ORBIT_RATE_LIMIT_GENERAL_PER_MINUTE=1000000 || return 1
     local cold=$STARTUP_MS idle after_latency after_pages
     sleep 5
     idle=$(server_rss)
-    bun "$root/evals/src/latency.ts"
+    bun "$root/evals/src/latency.ts" || return 1
     after_latency=$(server_rss)
-    bun "$root/evals/src/pageload.ts"
+    bun "$root/evals/src/pageload.ts" || return 1
     after_pages=$(server_rss)
     stop_instance
     local fresh
@@ -130,8 +131,8 @@ JSON
 }
 
 security_local() {
-    start_instance production
-    bun "$root/evals/src/security-local.ts"
+    start_instance production || return 1
+    bun "$root/evals/src/security-local.ts" || return 1
     stop_instance
 }
 

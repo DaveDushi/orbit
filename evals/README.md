@@ -10,14 +10,47 @@ evals/run.sh --perf              # only performance
 evals/run.sh --security          # only security
 evals/run.sh --build             # first a clean release build (about 18 minutes, 1 job), and record its time and memory
 evals/run.sh --no-prod           # no requests to production
+evals/run.sh --noise[=N]         # N perf runs of this commit (default 5), writes evals/noise.json (about 4 minutes each)
+bun evals/src/compare.ts <before.json> <after.json>   # compare two stored results again
 ```
 
 The run needs the release binary `target/release/orbit` (with the web build embedded). Make it once with `--build`;
 later runs reuse it and report the build numbers that `--build` stored in `target/evals-build.json` for that commit.
 
-Exit code: `0` all good; `1` a metric is over its budget, or a high/critical finding that the previous result did not
-have; `2` a step failed (see the log). Changes of more than 15% against the previous result are listed, but do not
-fail the run.
+Exit code: `0` all good; `1` a metric is over its budget, a perf metric got worse than the previous result beyond its
+noise (below), or a high/critical finding that the previous result did not have; `2` a step failed (see the log).
+
+## Did my change make it slower?
+
+Each run compares its perf numbers with the latest result in `results/` (`src/compare.ts`). A metric is **worse**, and
+fails the run, only when all three are true:
+
+1. it moved by more than **15%** (`THRESHOLD_PCT`; a rule in `RULES` can set its own),
+2. by more than its **floor**, in its own unit: 1 ms for API latency, one frame (16.7 ms) for FCP and LCP, 50 ms for
+   TBT, 0.02 for CLS, 2 kB for bundle sizes, 5 kB and 1 request for page transfers, 50 ms for server start, 5 MB for
+   server memory, 30 s and 100 MB for builds, 100 requests/s for throughput,
+3. and by more than its **noise**: how far it moved between runs of one commit on this machine (max - min, from
+   `noise.json`).
+
+Error responses (`non_200`) count from the first one. The same move the other way is **better**. A move over 15% that
+fails the floor or the noise is shown as **under floor** or **in noise**. A metric the new run did not measure (for
+example the build numbers of a run without `--build`) is **missing**. None of these fail the run. Metrics that moved
+less than 15% are not shown. Without `noise.json` (or without the metric in it) only threshold and floor decide.
+
+```text
+Against 2026-11-05-1302-f1b4082.json (noise of 5 runs of 8500992):
+  metric                                   before  after             delta  noise      verdict
+  latency.endpoints.task_read.p99_ms         1.65   4.16  +2.51 (+152.12%)  ±3.1      in noise
+  ...
+```
+
+Re-measure the noise (`evals/run.sh --noise`, 5 runs under one build lock, about 20 minutes) after a change to the VM
+or to how a metric is measured, and commit `noise.json`. Compare results of the same machine and the same `--quick`
+setting; the run prints a note when they differ. Five runs give a range that is a little narrower than the real one.
+
+The method comes from Ember's `perf/src/compare.ts` and its README section "Did my change make it slower?"
+([NYLLON-SOFTWARE/ember-cloudflare](https://github.com/NYLLON-SOFTWARE/ember-cloudflare), MIT licence, copyright
+37signals, LLC and NYLLON LLC). Orbit's version is a rewrite for its own metrics, not a copy.
 
 ## Rules it keeps
 
@@ -71,6 +104,8 @@ cookies and console.
 ## Files
 
 - `budgets.json` — upper limits per metric (dotted path in the result). Lower a limit when a fix lands.
+- `noise.json` — run-to-run noise per perf metric (commit, run count, date, machine); `run.sh --noise` writes it.
+- `src/compare.ts` — the noise-aware comparison (thresholds and floors in `RULES`); tests: `bun test evals/src`.
 - `deny.toml`, `gitleaks.toml` — scanner configs. gitleaks allows only triaged false positives; keep entries narrow.
 - `results/` — one JSON per run: commit, date, machine, every metric, every check with evidence, and the comparison.
 - `lib/install-tools.sh` — installs pinned `cargo-audit`, `cargo-deny`, `gitleaks` and `oha` release binaries into
