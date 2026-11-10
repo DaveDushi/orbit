@@ -1,5 +1,6 @@
 import type { PresenceMap } from '@/features/realtime/presence'
 import type { SentAction } from '../lib/agentCard'
+import type { PageContext } from '@/features/askDonna/pageContext'
 import type {
   Attachment,
   Category,
@@ -41,6 +42,8 @@ export interface SendMessageInput {
   body: string
   attachments?: Attachment[]
   alsoInChannel?: boolean
+  /** Sent from the Ask bar or its panel: the page the person is on, for the agent (never shown in chat). */
+  pageContext?: PageContext | null
   /** Made by the caller; the `message.created` echo carries it. */
   nonce: string
 }

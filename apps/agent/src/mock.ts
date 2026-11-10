@@ -19,6 +19,8 @@
  *   show my open tasks as a table (searches tasks, then answers with text and a ```spec card: table row by row, bar
  *     chart by status, buttons and a "New task" form; sending that form creates the task)
  *   show a broken card (answers with a card that is not in the catalog)
+ *   what is this (from the Ask bar: reads the task, page or Drive folder of the page context; "it" and "this" in the
+ *     other instructions also mean that item when the run has no newer one)
  *   edit video "clip.mp4" and image "photo.jpg" (media tools: finds both in Drive, copies the video to the sandbox,
  *     makes a contact sheet, looks at it and at the Drive image, trims and scales the video, halves the image, saves
  *     both as new Drive files, then reports what reached it, image blocks included)
@@ -217,10 +219,33 @@ export function taskCard(result: string): string {
 	return `${summary}\n\n\`\`\`spec\n${patches.join("\n")}\n\`\`\``;
 }
 
+/** The item of the Ask bar's page context in a message (`page.ts`), if any. */
+export function pageItem(message: string): { kind: string; id: string } | undefined {
+	const json = /<orbit-data source="page context">\n([\s\S]*?)\n<\/orbit-data>/.exec(message)?.[1];
+	if (!json) return undefined;
+	try {
+		const item = JSON.parse(json) as { kind?: unknown; id?: unknown };
+		return typeof item.kind === "string" && typeof item.id === "string" ? { kind: item.kind, id: item.id } : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+const PAGE_KINDS = { task: "task", page: "doc", drive: "drive_folder" } as const;
+
 /** The tool call that the newest instruction asks for, or `undefined` when it asks for none. */
-export function plan(instruction: string, messages: readonly Message[]): { name: string; args: { [key: string]: unknown } } | undefined {
-	const target = (value: string, kind: "task" | "page" | "drive"): string => (/^(it|that)$/i.test(value) ? lastId(messages, kind) : value) ?? value;
+export function plan(message: string, messages: readonly Message[]): { name: string; args: { [key: string]: unknown } } | undefined {
+	const open = pageItem(message);
+	// The page context is data: only the person's own words are the command.
+	const instruction = message.replace(/\n\nSent from the Ask bar[\s\S]*$/, "");
+	const fromPage = (kind: "task" | "page" | "drive") => (open?.kind === PAGE_KINDS[kind] ? open.id : undefined);
+	const target = (value: string, kind: "task" | "page" | "drive"): string => (/^(it|that|this)$/i.test(value) ? (lastId(messages, kind) ?? fromPage(kind)) : value) ?? value;
 	let match: RegExpExecArray | null;
+	if (/what is (?:this|open|here)/i.test(instruction) && open) {
+		if (open.kind === "task") return { name: "get_task", args: { task_id: open.id } };
+		if (open.kind === "doc") return { name: "read_page", args: { page_id: open.id } };
+		if (open.kind === "drive_folder") return { name: "drive_list", args: { folder_id: open.id } };
+	}
 	if (CARD_REQUEST.test(instruction)) return { name: "search_tasks", args: { limit: 50 } };
 	if ((match = /sent the form “Create task”[\s\S]*"title": "([^"]+)"/.exec(instruction))) return { name: "create_task", args: { title: match[1] } };
 	if ((match = /create (?:a )?task "([^"]+)"/i.exec(instruction))) return { name: "create_task", args: { title: match[1] } };

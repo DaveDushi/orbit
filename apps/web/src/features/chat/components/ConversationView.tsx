@@ -17,6 +17,7 @@ import { MessageList, type MessageListHandle } from './messages/MessageList'
 import { conversationTitle, useChatPeople } from './messages/people'
 import { onMarkedUnread } from './messages/unreadSignal'
 import { EphemeralMessages } from './messages/EphemeralMessages'
+import type { PageContext } from '@/features/askDonna/pageContext'
 
 function hasFiles(event: DragEvent): boolean {
   return Array.from(event.dataTransfer.types).includes('Files')
@@ -37,7 +38,16 @@ function JoinBar({ conversation, title }: { conversation: Conversation; title: s
   )
 }
 
-interface ColumnProps {
+/** The Ask panel's additions to the column. */
+interface PanelProps {
+  /** The page the person is on, sent with each message for the agent. */
+  pageContext?: () => PageContext | null
+  /** Files to put in the composer (the Ask bar's +); `onFilesTaken` says they are there. */
+  files?: File[]
+  onFilesTaken?: () => void
+}
+
+interface ColumnProps extends PanelProps {
   conversation: Conversation
   /** The user's live state; absent for a public channel the user has not joined. */
   state: ConversationState | undefined
@@ -45,7 +55,7 @@ interface ColumnProps {
 }
 
 /** Mounted once for each opened conversation (keyed by id), so what it captures on open lasts until the user leaves. */
-function ConversationColumn({ conversation, state, focusMessageId }: ColumnProps) {
+function ConversationColumn({ conversation, state, focusMessageId, pageContext, files, onFilesTaken }: ColumnProps) {
   const { currentUserId, workspaceId } = useChatContext()
   const queryClient = useQueryClient()
   const people = useChatPeople()
@@ -105,6 +115,12 @@ function ConversationColumn({ conversation, state, focusMessageId }: ColumnProps
   useEffect(() => {
     if (conversation.isMember && atBottom && focused && !suspended && unread) markRead(conversationId)
   }, [conversation.isMember, atBottom, focused, suspended, unread, state?.unreadCount, markRead, conversationId])
+
+  useEffect(() => {
+    if (!files?.length || !composer.current) return
+    composer.current.addFiles(files)
+    onFilesTaken?.()
+  }, [files, onFilesTaken])
 
   // The root message was marked as unread from its thread view.
   useEffect(() => onMarkedUnread((id) => id === conversationId && setSuspended(true)), [conversationId])
@@ -197,6 +213,7 @@ function ConversationColumn({ conversation, state, focusMessageId }: ColumnProps
               // In a window around an old message the new message would not show: go to the newest messages.
               if (query.hasNextPage) toLatest()
             }}
+            pageContext={pageContext}
           />
         </>
       ) : conversation.archived ? (
@@ -222,7 +239,7 @@ function ConversationColumn({ conversation, state, focusMessageId }: ColumnProps
  * The message column below the header: the list, the typing and connection lines, and the composer; or the join bar
  * for a public channel the user is not in; or the archived notice. It owns the mark-read rule of the conversation.
  */
-export function ConversationView({ conversationId, focusMessageId }: { conversationId: string; focusMessageId?: string | null }) {
+export function ConversationView({ conversationId, focusMessageId, ...panel }: { conversationId: string; focusMessageId?: string | null } & PanelProps) {
   const conversation = useConversation(conversationId).data
   const state = useConversationState(conversationId)
   // The read cursor is captured when the column mounts, so it waits for the user's states. An unknown conversation is
@@ -230,5 +247,5 @@ export function ConversationView({ conversationId, focusMessageId }: { conversat
   if (!conversation || state.isPending) {
     return <section data-slot="conversation-view" aria-busy="true" className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background" />
   }
-  return <ConversationColumn key={conversationId} conversation={conversation} state={state.data} focusMessageId={focusMessageId} />
+  return <ConversationColumn key={conversationId} conversation={conversation} state={state.data} focusMessageId={focusMessageId} {...panel} />
 }

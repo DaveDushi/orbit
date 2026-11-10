@@ -117,6 +117,12 @@ flow in pi-ai binds port 1455 and allows one login at a time, so we do not use i
 - The blast radius is the driver's own Orbit access in one workspace, minus the denied routes (section 2). No shell,
   no delete tool, no posting outside the current thread, no access to other workspaces.
 - Each run is limited to 40 tool calls (a `beforeTool` hook blocks more).
+- **Ask bar page context (2026-11-10):** a message from the Ask bar names the page and the open task, Docs page or
+  Drive folder (`page_context`). It comes from the browser, so it is untrusted like any message: Orbit checks only its
+  shape (known page and kind, a valid id, a title cut to one 200-character line) and stores it on `agent_inputs`, never
+  resolving it; the sidecar re-checks it and puts it in an `<orbit-data source="page context">` block after the
+  driver's text. The model reads the item with its tools as the driver, so a forged id or a title with instructions
+  reaches nothing new: the item is found only when the driver can read it, and the title is data.
 - **Changed with integrations (2026-10-29):** "no internet" is no longer the whole defence. The agent can now reach
   the outside, but only through the agent tools that owners and admins set up, with Orbit making each call, and
   every write needs the driver's "yes" checked by Orbit. It still has no general web, fetch or e-mail tool. See

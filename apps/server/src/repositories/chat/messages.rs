@@ -5,6 +5,8 @@ use orbit_platform::{Flag, Id, TimestampMillis};
 use sqlx::AnyConnection;
 use sqlx::any::AnyRow;
 
+use crate::agent::inputs::PageContext;
+
 use super::blocks::{self, MessageBlock, fallback_text};
 use super::files::{MAX_MESSAGE_FILES, attach_files, copy_files};
 use super::stickers::load_sticker;
@@ -70,6 +72,9 @@ pub struct SendInput {
     pub online: Vec<Id>,
     pub also_in_channel: bool,
     pub nonce: String,
+    /// Sent from the Ask bar: the page the sender was on. Kept only when the message is for the
+    /// agent (`agent::inputs::record`).
+    pub page_context: Option<PageContext>,
 }
 
 #[derive(Clone, Debug)]
@@ -359,6 +364,7 @@ impl ChatRepository {
             conversation_id,
             access.conversation.kind == ConversationKind::Dm,
             &message,
+            input.page_context.as_ref(),
         )
         .await?;
         events.conversation(

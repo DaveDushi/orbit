@@ -405,6 +405,7 @@ async fn post_message(
             online: chat.hub.online(body.workspace_id),
             also_in_channel: false,
             nonce: body.nonce,
+            page_context: None,
         };
         let (written, _) = chat
             .publish(

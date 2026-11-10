@@ -297,6 +297,7 @@ export function createHttpChatClient(options: HttpChatClientOptions): ChatClient
         also_in_channel: input.alsoInChannel ?? false,
         file_ids: (input.attachments ?? []).map((attachment) => attachment.id),
         nonce: input.nonce,
+        ...(input.pageContext ? { page_context: input.pageContext } : {}),
       }
       const send = () => write(sendChatMessage({ ...at({ conversation_id: input.conversationId }), body }))
       try {

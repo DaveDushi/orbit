@@ -868,6 +868,7 @@ async fn seed_chat(
                 online: Vec::new(),
                 also_in_channel: false,
                 nonce: format!("development-seed-{sent}"),
+                page_context: None,
             },
         )
         .await

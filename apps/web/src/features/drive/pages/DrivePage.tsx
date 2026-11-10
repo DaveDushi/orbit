@@ -65,6 +65,7 @@ import { downloadFile, downloadZip } from '../download'
 import { draggingFiles, droppedFiles, pickedFolder } from '../dropped'
 import { uploadQueue, useUploads } from '../uploads'
 import { driveClick } from '../click'
+import { usePublishPageItem } from '@/features/askDonna/pageContext'
 
 type Layout = 'list' | 'grid'
 type Dialog = { kind: 'new-folder' } | { kind: 'rename'; node: DriveNode } | { kind: 'move'; nodes: DriveNode[] } | { kind: 'share'; node: DriveNode } | null
@@ -123,6 +124,8 @@ export function DrivePage({ view }: { view?: 'trash' }) {
   const rename = useRenameNode(workspaceId)
 
   const folder = useDriveNode(workspaceId, folderId)
+  // the Ask bar tells the agent which folder is open (none at the top level)
+  usePublishPageItem('drive_folder', folder.data?.node.id, folder.data?.node.name)
   const children = useDriveChildren(workspaceId, folderId, sort, order)
   const days = DATES.find((option) => option.value === date)?.days ?? null
   const search = useMemo<DriveSearchInput>(

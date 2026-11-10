@@ -7,6 +7,7 @@ use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 
 use super::{Call, ChatEvents, ChatState, ChatWrite, RequestIdExtension};
+use crate::agent::inputs::PageContext;
 use crate::push::PushService;
 use crate::repositories::chat::{
     ChatError, FollowedThreadRecord, ForwardInput, MessageCursor, MessagePage, MessageRecord,
@@ -81,6 +82,11 @@ pub(crate) struct ChatSendBody {
     /// Made by the caller (1–64 bytes). A send that is tried again with the same nonce returns
     /// the first message.
     nonce: String,
+    /// Sent from the Ask bar: the page the caller is on, for the team agent. Kept only when the
+    /// message is for the agent; never shown in chat.
+    #[serde(default)]
+    #[schema(required = false)]
+    page_context: Option<PageContext>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -158,6 +164,7 @@ pub(crate) async fn send_chat_message(
         body: body.body,
         also_in_channel: body.also_in_channel,
         nonce: body.nonce,
+        page_context: body.page_context.map(PageContext::cleaned),
     };
     let written = call
         .write(

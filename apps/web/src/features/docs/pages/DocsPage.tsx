@@ -30,6 +30,7 @@ import { DocTree } from '@/features/docs/components/DocTree'
 import { DocPageActionsContext, type DocPageActions } from '@/features/docs/pageActions'
 import { NotionImportPane } from './NotionImportPane'
 import { PageTrashPane } from './PageTrashPane'
+import { usePublishPageItem } from '@/features/askDonna/pageContext'
 
 /** The docs page's main pane (hidden on phones while the page list shows). */
 function DocsPane({ className, ...props }: ComponentProps<typeof Pane>) {
@@ -55,6 +56,8 @@ export function DocsPage({ view = 'page' }: { view?: 'page' | 'trash' | 'import'
   const [gone, setGone] = useState<{ id: string; key: string } | null>(null)
   const leaving = gone !== null && gone.id === pageId && gone.key === location.key
   const page = usePage(workspace.id, view === 'page' && !leaving ? pageId : undefined)
+  // the Ask bar tells the agent which page is open
+  usePublishPageItem('doc', page.data?.id, page.data && (page.data.title || 'Untitled'))
   const createPage = useCreatePage(workspace.id)
   const trashPage = useTrashPage(workspace.id)
   const movePage = useMovePage(workspace.id)

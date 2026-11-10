@@ -74,6 +74,7 @@ import { useCreateTaskDefaults, useOpenNewTask } from '@/features/tasks/newTask'
 import { rebaseViewSessionEdit, useViewState, type ViewSource } from '@/features/views/useViewState'
 import { validateFilterOnServer } from '@/features/views/validateFilter'
 import { countConditions, DEFAULT_DISPLAY, emptyFilter, isTaskPreset, normalizeViewState, pageKeyFor, type TaskPreset } from '@/features/views/viewState'
+import { usePublishPageItem } from '@/features/askDonna/pageContext'
 
 const EMPTY_PROJECTS: NonNullable<ReturnType<typeof useProjects>['data']> = []
 const EMPTY_LABELS: NonNullable<ReturnType<typeof useLabels>['data']> = []
@@ -200,6 +201,8 @@ function WorkspaceTasksPage() {
   const activeTask = detailQuery.data
     ? taskFromRecord(detailQuery.data, projects.find((project) => project.id === detailQuery.data?.project_id), commentsQuery.data, [...(attachmentsQuery.data ?? []), ...commentAttachments.data], activityQuery.data, projects, knownNumbers)
     : undefined
+  // the Ask bar tells the agent which task is open
+  usePublishPageItem('task', activeTask?.id, activeTask && `${activeTask.identifier} ${activeTask.title}`)
   const users = membersQuery.data ?? []
   const labels = labelsQuery.data ?? EMPTY_LABELS
   // a project page offers only its project's labels; other pages merge same-named labels of every project

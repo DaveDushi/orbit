@@ -5,7 +5,7 @@ import { ShortcutHelpDialog } from '@/shortcuts/ShortcutHelpDialog'
 import { NavigationCommands, useGlobalCommands } from './globalCommands'
 import { NewTaskProvider } from '@/features/tasks/newTask'
 import { useCommand } from '@/shortcuts/useCommand'
-import { Suspense, useContext, useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react'
+import { lazy, Suspense, useContext, useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react'
 import { useWorkspaceEvents } from '@/features/realtime/useWorkspaceEvents'
 import { ChatProvider } from '@/features/chat/api/ChatProvider'
 import { useChatBadges } from '@/features/chat/api/queries'
@@ -41,6 +41,11 @@ import { MenuSurfaceContext } from '@/components/ui/menuSurface'
 import { useNewUi } from '@/lib/themeContext'
 import { useSidebarMenuSurface } from './sidebarMenu'
 import { hostsPageList, SidebarSlotContext } from './sidebarSlot'
+import { AskDonnaBar } from '@/features/askDonna/AskDonnaBar'
+import { useAskDonna } from '@/features/askDonna/useAskDonna'
+
+// the chat list and composer load on the first open of the Ask panel
+const AskDonnaPanel = lazy(() => import('@/features/askDonna/AskDonnaPanel'))
 
 const desktopQuery = '(min-width: 900px)'
 const subscribeDesktop = (onChange: () => void) => {
@@ -108,6 +113,10 @@ function Shell() {
   // the new UI's sidebar menus share one look and the custom theme; the classic ones keep their own
   const sidebarMenuSurface = useSidebarMenuSurface()
   const menuSurface = newUi ? sidebarMenuSurface : null
+  // The Ask bar and its panel: on a computer, on every page but Chat (`pageContextFor`), never for a guest
+  const askDonna = useAskDonna()
+  const ask = desktop && askDonna?.context ? askDonna : null
+  const askConversation = ask?.panel.open ? ask.panel.conversationId : null
 
   useLayoutEffect(() => {
     const viewport = window.visualViewport
@@ -217,7 +226,16 @@ function Shell() {
           </ErrorBoundary>
         </div>
         <MobileDock chatBadge={chatBadge} chatUnread={chatUnread} />
+        {ask && !askConversation ? <AskDonnaBar ask={ask} /> : null}
       </div>
+
+      {ask && askConversation ? (
+        <ErrorBoundary resetKey={askConversation}>
+          <Suspense fallback={null}>
+            <AskDonnaPanel ask={ask} conversationId={askConversation} />
+          </Suspense>
+        </ErrorBoundary>
+      ) : null}
 
       <SideSheet open={drawerOpen} onOpenChange={setDrawerOpen}>
         <SideSheetContent

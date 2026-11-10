@@ -590,6 +590,11 @@ impl MigrationRunner {
                     include_str!("../../../../apps/server/migrations/0088_guests.sql"),
                     false,
                 ),
+                Migration::new(
+                    89,
+                    include_str!("../../../../apps/server/migrations/0089_agent_page_context.sql"),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -800,17 +805,23 @@ impl MigrationRunner {
             ),
             Migration::new(
                 81,
-                include_str!("../../../../apps/server/migrations/postgres/0081_chat_message_blocks.sql"),
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0081_chat_message_blocks.sql"
+                ),
                 false,
             ),
             Migration::new(
                 82,
-                include_str!("../../../../apps/server/migrations/postgres/0082_chat_bot_icon_emoji.sql"),
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0082_chat_bot_icon_emoji.sql"
+                ),
                 false,
             ),
             Migration::new(
                 83,
-                include_str!("../../../../apps/server/migrations/postgres/0083_chat_interactivity.sql"),
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0083_chat_interactivity.sql"
+                ),
                 false,
             ),
             Migration::new(
@@ -844,6 +855,13 @@ impl MigrationRunner {
             Migration::new(
                 88,
                 include_str!("../../../../apps/server/migrations/postgres/0088_guests.sql"),
+                false,
+            ),
+            Migration::new(
+                89,
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0089_agent_page_context.sql"
+                ),
                 false,
             ),
         ];

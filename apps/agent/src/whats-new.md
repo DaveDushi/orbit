@@ -6,6 +6,10 @@ build: "## YYYY-MM-DD" (the deploy date), then 1-4 short "- " lines about what p
 members, not developers. Keep the 8 newest entries; the prompt shows the 5 newest.
 -->
 
+## 2026-11-11
+- Ask Donna from any page: a small "Ask Donna…" box at the bottom of Tasks, Docs, Drive, Activity, settings and the other pages (not in Chat; web and desktop app). Press Enter and Donna answers in a panel on the right while you stay on the page. Close the panel and open it again: the conversation is still there.
+- Donna knows the page you asked from and the task, Docs page or Drive folder open on it, so "this" means that item. The conversation is your direct message with Donna, so "Open in Chat" shows it in Chat. Changes still ask for your yes, as in Chat.
+
 ## 2026-11-10
 - Guests: owners and admins can invite outside people to chosen private channels (Settings → Members → Invite, role Guest). A guest sees only those channels, direct messages with people there and their account settings: no public channels, tasks, Docs, Drive or Donna.
 - Owners and admins can connect Donna to remote MCP servers that use OAuth, for example TikTok Social: Settings → Agentic → Workspace → Add tool, credential "Sign in with OAuth (Connect)", then sign in and click Authorize. The row shows who is connected and when to reconnect.

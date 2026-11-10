@@ -799,12 +799,11 @@ async fn sub_issues_can_be_created_listed_moved_and_detached_within_the_grant() 
         .await
         .unwrap();
     let parent = f.tasks.get_task(f.workspace, f.task, f.user).await.unwrap();
-    let key: String =
-        sqlx::query_scalar("SELECT projects.project_key FROM projects WHERE id = $1")
-            .bind(f.project.to_string())
-            .fetch_one(f.database.pool())
-            .await
-            .unwrap();
+    let key: String = sqlx::query_scalar("SELECT projects.project_key FROM projects WHERE id = $1")
+        .bind(f.project.to_string())
+        .fetch_one(f.database.pool())
+        .await
+        .unwrap();
     let identifier = format!("{key}-{}", parent.number);
     let created = f
         .tool(
@@ -995,6 +994,7 @@ async fn docs_and_chat_require_explicit_scopes_and_doc_writes_need_docs_write() 
             online: vec![],
             also_in_channel: false,
             nonce: Id::new_v7().to_string(),
+            page_context: None,
         };
         async move { chat.send_message(f.workspace, actor, input).await.unwrap() }
     };

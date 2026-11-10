@@ -46371,6 +46371,17 @@
             "type": "string",
             "description": "Made by the caller (1–64 bytes). A send that is tried again with the same nonce returns\nthe first message."
           },
+          "page_context": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PageContext",
+                "description": "Sent from the Ask bar: the page the caller is on, for the team agent. Kept only when the\nmessage is for the agent; never shown in chat."
+              }
+            ]
+          },
           "reply_to_id": {
             "type": [
               "string",
@@ -51631,6 +51642,22 @@
           }
         }
       },
+      "PageArea": {
+        "type": "string",
+        "description": "The area of the app.",
+        "enum": [
+          "home",
+          "tasks",
+          "docs",
+          "drive",
+          "activity",
+          "settings",
+          "account",
+          "admin",
+          "apps",
+          "other"
+        ]
+      },
       "PageComment": {
         "type": "object",
         "description": "One comment of a thread. A deleted comment keeps its place with an empty body.",
@@ -51708,6 +51735,30 @@
               "type": "object"
             },
             "description": "BlockNote blocks of the comment editor (see `CreatePageThreadBody.body`)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PageContext": {
+        "type": "object",
+        "description": "Where the sender was when they wrote to the agent from the Ask bar (a page that is not Chat):\nthe area of the app and the item open there. It comes from the sender's browser, so it is\nuntrusted: the sidecar shows it to the model as data, and the agent reads the item only with\nits tools, as the driver, so it can name nothing that the driver cannot read.",
+        "required": [
+          "page"
+        ],
+        "properties": {
+          "item": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PageItem",
+                "description": "The task, Docs page or Drive folder open on the page."
+              }
+            ]
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageArea"
           }
         },
         "additionalProperties": false
@@ -51966,6 +52017,35 @@
             }
           }
         }
+      },
+      "PageItem": {
+        "type": "object",
+        "required": [
+          "kind",
+          "id",
+          "title"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PageItemKind"
+          },
+          "title": {
+            "type": "string",
+            "description": "As the page shows it; cut to 200 characters, control characters become spaces."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PageItemKind": {
+        "type": "string",
+        "enum": [
+          "task",
+          "doc",
+          "drive_folder"
+        ]
       },
       "PageList": {
         "type": "object",

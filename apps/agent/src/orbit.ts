@@ -1,5 +1,6 @@
 import type { Config } from "./config.ts";
 import type { ChatFile } from "./files.ts";
+import type { PageContext } from "./page.ts";
 
 /** An Orbit answer that is not 2xx. `problem` is Orbit's Problem Details body when it sent one. */
 /**
@@ -39,6 +40,8 @@ export type PendingInput = {
 	readonly team_instructions: string;
 	/** The message's files; absent from an older Orbit. */
 	readonly files?: readonly ChatFile[];
+	/** Sent from the Ask bar: the page the author is on (`page.ts`); absent from Chat and an older Orbit. */
+	readonly page_context?: PageContext | null;
 };
 
 /** What Orbit stored for a click or form send on the agent's card: the card's own data, and the form values. */

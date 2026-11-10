@@ -9,9 +9,8 @@ import { SideSheet, SideSheetContent } from '@/components/common/SideSheet'
 import { Button } from '@/components/ui/button'
 import { useChatContext } from '@/features/chat/api/chatContext'
 import { useCategories, useConversations, useConversationStates } from '@/features/chat/api/queries'
-import type { Message as ChatMessage } from '@/features/chat/api/types'
-import { ChatHostContext, type ChatHost } from '@/features/chat/chatHost'
-import { conversationPath, messagePath, UNREADS_PATH } from '@/features/chat/chatRoutes'
+import { ChatHostContext } from '@/features/chat/chatHost'
+import { conversationPath, UNREADS_PATH } from '@/features/chat/chatRoutes'
 import { ConversationHeader } from '@/features/chat/components/ConversationHeader'
 import { ConversationView } from '@/features/chat/components/ConversationView'
 import { BrowseChannelsDialog } from '@/features/chat/components/dialogs/BrowseChannelsDialog'
@@ -30,15 +29,11 @@ import { UnreadsView } from '@/features/chat/components/views/UnreadsView'
 import { useMarkAllReadWithUndo } from '@/features/chat/components/views/useMarkAllReadWithUndo'
 import { customThemeVariables, useCustomTheme } from '@/lib/customTheme'
 import { getLastOpenedConversation, setLastOpenedConversation } from '@/features/chat/lib/drafts'
-import { decodeMentions } from '@/features/chat/lib/mentionTokens'
 import { buildSidebarSections, conversationBadge } from '@/features/chat/lib/sidebar'
 import { useChatLocation, useChatNavigation, useOpenPane } from '@/features/chat/useChatNavigation'
-import { useProjects } from '@/features/tasks/api/projects'
-import { useOpenNewTask } from '@/features/tasks/newTask'
-import { useMembers } from '@/features/workspaces/api'
 import { useBindings, useCommand, useRunCommand } from '@/shortcuts/useCommand'
-import { ChatLinkCard, ChatLinkChip } from './ChatLinkCard'
-import { homeConversation, orbitLinkTarget, PANE_WIDTH, paneLayout, rightPaneOf, taskTitleFromMessage, type RightPane } from './chatPageLib'
+import { homeConversation, PANE_WIDTH, paneLayout, rightPaneOf, type RightPane } from './chatPageLib'
+import { useChatPageHost } from './useChatPageHost'
 import { openedByPointer, useElementWidth, useInputModality, useIsPhone } from './useChatViewport'
 import { loadFailed } from '@/lib/connection'
 import { useIsGuest } from '@/features/workspaces/permissions'
@@ -178,11 +173,8 @@ export function ChatPage() {
   const openPane = useOpenPane()
   const { workspaceId } = useChatContext()
   const conversations = useConversations()
-  const people = useMembers(workspaceId).data
-  const openNewTask = useOpenNewTask()
-  // a guest has no tasks or docs: no task keys, no Orbit link cards, no "Create task"; it cannot browse channels
+  // a guest cannot browse channels
   const guest = useIsGuest()
-  const projects = useProjects(workspaceId, !guest).data
   const phone = useIsPhone()
   const [areaRef, areaWidth] = useElementWidth()
   const [paneWidth, setPaneWidth] = useStoredWidth('orbit:chat:pane_width', PANE_WIDTH)
@@ -196,26 +188,7 @@ export function ChatPage() {
     if (openId) setLastOpenedConversation(workspaceId, openId)
   }, [openId, workspaceId])
 
-  const host: ChatHost = {
-    renderLinkCard: (url) => {
-      const target = guest ? null : orbitLinkTarget(url, window.location.origin)
-      return target ? <ChatLinkCard kind={target.kind} id={target.id} /> : null
-    },
-    renderLink: (url, plain, hidden) => {
-      const target = guest ? null : orbitLinkTarget(url, window.location.origin)
-      return target ? <ChatLinkChip kind={target.kind} id={target.id} hidden={hidden}>{plain}</ChatLinkChip> : plain
-    },
-    taskKeys: (projects ?? []).map((project) => project.key),
-    createTask: guest ? undefined : (message: ChatMessage) => {
-      const source = conversations.data?.find((candidate) => candidate.id === message.conversationId)
-      const text = decodeMentions(message.body, people ?? [], conversations.data ?? [])
-      const where = source && source.kind !== 'dm' ? `a message in #${source.name}` : 'a direct message'
-      openNewTask({
-        title: taskTitleFromMessage(text),
-        description: `Created from [${where}](${window.location.origin}${messagePath(message)}).`,
-      })
-    },
-  }
+  const host = useChatPageHost()
 
   if (location.view === 'home' && !phone && conversations.data) {
     const target = homeConversation(conversations.data, getLastOpenedConversation(workspaceId))

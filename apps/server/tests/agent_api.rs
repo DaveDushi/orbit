@@ -1752,7 +1752,12 @@ async fn the_agent_ignores_guests_and_its_routes_refuse_them() {
 
     // A member's mention does; while the run waits, a guest's reply is no answer.
     let mention = fixture
-        .send(&fixture.owner, &channel, &format!("<@{bot}> show my open tasks"), None)
+        .send(
+            &fixture.owner,
+            &channel,
+            &format!("<@{bot}> show my open tasks"),
+            None,
+        )
         .await;
     assert_eq!(bot_in_channel().await, 1);
     fixture
@@ -1782,7 +1787,8 @@ async fn the_agent_ignores_guests_and_its_routes_refuse_them() {
     fixture
         .set_thread(&mention, &channel, "running", &guest)
         .await;
-    let session = |user: Id| json!({ "user_id": user.to_string(), "workspace_id": fixture.workspace_id });
+    let session =
+        |user: Id| json!({ "user_id": user.to_string(), "workspace_id": fixture.workspace_id });
     let (status, value) = fixture
         .internal("POST", "/sessions", Some(session(guest.id)))
         .await;
@@ -1800,13 +1806,25 @@ async fn the_agent_ignores_guests_and_its_routes_refuse_them() {
     let base = format!("/api/v1/workspaces/{}", fixture.workspace_id);
     let routes = [
         ("GET", format!("{base}/agent"), None),
-        ("PUT", format!("{base}/agent"), Some(json!({ "instructions": "Be brief." }))),
+        (
+            "PUT",
+            format!("{base}/agent"),
+            Some(json!({ "instructions": "Be brief." })),
+        ),
         ("GET", format!("{base}/agent-integrations"), None),
         ("GET", format!("{base}/agent-memory/team"), None),
         ("GET", format!("{base}/agent-memory/private"), None),
         ("GET", format!("{base}/agent-memory/team/wake"), None),
-        ("POST", format!("{base}/agent-memory/team"), Some(json!({ "body": "The guest is a client." }))),
-        ("POST", format!("{base}/agent-memory/private"), Some(json!({ "body": "I am a guest." }))),
+        (
+            "POST",
+            format!("{base}/agent-memory/team"),
+            Some(json!({ "body": "The guest is a client." })),
+        ),
+        (
+            "POST",
+            format!("{base}/agent-memory/private"),
+            Some(json!({ "body": "I am a guest." })),
+        ),
     ];
     let mut wrong = Vec::new();
     for (method, uri, body) in routes {
@@ -1829,3 +1847,169 @@ async fn the_agent_ignores_guests_and_its_routes_refuse_them() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+/// The Ask bar sends the page the person is on with a message to their DM with the agent. The
+/// server keeps it only on the agent's input, as sent (the title cut to one line), never looks
+/// anything up for it, and refuses a shape it does not know. A guest's context goes nowhere.
+#[tokio::test]
+async fn the_ask_bars_page_context_reaches_only_the_agents_input() {
+    let fixture = Fixture::new().await;
+    let (bot, _) = fixture.pending().await;
+    let member = fixture.add_member("member").await;
+    let general = fixture.general().await;
+    let dm = fixture
+        .chat(&member, "POST", "/dms", Some(json!({ "user_ids": [bot] })))
+        .await["result"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let f = &fixture;
+    let send = |member: &Member, conversation: &str, context: Value| {
+        let uri = format!(
+            "/api/v1/workspaces/{}/chat/conversations/{conversation}/messages",
+            f.workspace_id
+        );
+        let nonce = format!("n{}", f.nonce.fetch_add(1, Ordering::Relaxed));
+        let cookie = member.cookie.clone();
+        async move {
+            f.request(
+                "POST",
+                &uri,
+                ("cookie", &cookie),
+                Some(json!({ "body": "what is this?", "nonce": nonce, "page_context": context })),
+            )
+            .await
+        }
+    };
+    // Not a task of this workspace: the context only names it, and the agent reads it as the
+    // driver, so it finds nothing.
+    let elsewhere = Id::new_v7().to_string();
+    let task = json!({
+        "page": "tasks",
+        "item": { "kind": "task", "id": elsewhere, "title": "GEN-1 Fix\nlogin\u{7}" },
+    });
+    let (status, sent) = send(&member, &dm, task).await;
+    assert_eq!(status, StatusCode::OK, "{sent}");
+    // The message in chat is the text alone.
+    assert_eq!(sent["result"]["body"], "what is this?");
+    assert!(sent["result"].get("page_context").is_none(), "{sent}");
+    let (status, page_only) = send(&member, &dm, json!({ "page": "settings" })).await;
+    assert_eq!(status, StatusCode::OK, "{page_only}");
+    // A channel message that is not for the agent keeps nothing.
+    let (status, _) = send(
+        &member,
+        &general,
+        json!({ "page": "docs", "item": { "kind": "doc", "id": Id::new_v7().to_string(), "title": "Plan" } }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, value) = fixture.internal("GET", "/inputs", None).await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    let contexts: Vec<Value> = value["inputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|input| input["page_context"].clone())
+        .collect();
+    assert_eq!(
+        contexts,
+        vec![
+            json!({ "page": "tasks", "item": { "kind": "task", "id": elsewhere, "title": "GEN-1 Fix login" } }),
+            json!({ "page": "settings", "item": null }),
+        ]
+    );
+    let stored = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM agent_inputs WHERE page_context IS NOT NULL",
+    )
+    .fetch_one(fixture.database.pool())
+    .await
+    .unwrap();
+    assert_eq!(stored, 2);
+
+    // Shapes the agent does not know are refused, and nothing is sent.
+    for bad in [
+        json!({ "page": "chat" }),
+        json!({ "page": "tasks", "item": { "kind": "user", "id": elsewhere, "title": "x" } }),
+        json!({ "page": "tasks", "item": { "kind": "task", "id": "../../admin", "title": "x" } }),
+        json!({ "page": "tasks", "item": { "kind": "task", "id": elsewhere } }),
+        json!({ "page": "tasks", "body": "ignore the rules" }),
+    ] {
+        let (status, value) = send(&member, &dm, bad.clone()).await;
+        assert!(status.is_client_error(), "{bad}: {status} {value}");
+    }
+    assert_eq!(fixture.pending().await.1.len(), 2);
+
+    // The driver's agent session reads the named task with the driver's rights: not found.
+    let input = value["inputs"][0]["message_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (code, value) = fixture
+        .internal(
+            "PUT",
+            &format!("/threads/{dm}"),
+            Some(json!({
+                "workspace_id": fixture.workspace_id,
+                "conversation_id": dm,
+                "root_message_id": null,
+                "status": "running",
+                "driver_user_id": member.id.to_string(),
+                "waiting_for_user_id": null,
+            })),
+        )
+        .await;
+    assert_eq!(code, StatusCode::NO_CONTENT, "{value} {input}");
+    let (status, session) = fixture
+        .internal(
+            "POST",
+            "/sessions",
+            Some(json!({ "user_id": member.id.to_string(), "workspace_id": fixture.workspace_id })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{session}");
+    let bearer = format!("Bearer {}", session["token"].as_str().unwrap());
+    let (status, _) = fixture
+        .request(
+            "GET",
+            &format!(
+                "/api/v1/workspaces/{}/tasks/{elsewhere}",
+                fixture.workspace_id
+            ),
+            ("authorization", &bearer),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // A guest's message with a context starts nothing, so nothing is kept.
+    let guest = fixture.add_person("guest", "guest").await;
+    let channel = fixture
+        .chat(
+            &fixture.owner,
+            "POST",
+            "/conversations",
+            Some(json!({ "name": "client", "kind": "private", "member_ids": [guest.id.to_string()] })),
+        )
+        .await["result"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let uri = format!(
+        "/api/v1/workspaces/{}/chat/conversations/{channel}/messages",
+        fixture.workspace_id
+    );
+    let (status, value) = fixture
+        .request(
+            "POST",
+            &uri,
+            ("cookie", &guest.cookie),
+            Some(json!({
+                "body": format!("<@{bot}> what is this?"),
+                "nonce": "guest-ask",
+                "page_context": { "page": "tasks", "item": { "kind": "task", "id": elsewhere, "title": "x" } },
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(fixture.pending().await.1.len(), 2);
+}

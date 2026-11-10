@@ -21,10 +21,11 @@ const key = ['agent'] as const
 const memoryKey = (workspaceId: string) => ['agent-memory', workspaceId] as const
 
 /** The agent's state for the signed-in person. Polls while a ChatGPT sign-in waits for its code to be entered. */
-export function useAgentStatus() {
+export function useAgentStatus(enabled = true) {
   return useQuery({
     queryKey: key,
     queryFn: () => readAgentStatus(apiClient),
+    enabled,
     refetchInterval: (query) => {
       const data = query.state.data
       return data?.enabled && data.login?.state === 'pending' && !data.chatgpt.connected ? 3_000 : false

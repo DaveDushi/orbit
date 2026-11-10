@@ -8,6 +8,7 @@ import { chatKeys } from './keys'
 import { requireClient } from './queries'
 import type { Attachment, Category, Conversation, ConversationState, Message, MessageSticker, NotifyLevel, ReplyQuote, ThreadState } from './types'
 import type { SentAction } from '../lib/agentCard'
+import type { PageContext } from '@/features/askDonna/pageContext'
 
 const TYPING_INTERVAL = 8000
 /** When the typing signal was last sent, for each composer (conversation or thread). */
@@ -35,6 +36,8 @@ export interface SendInput {
   body: string
   attachments?: Attachment[]
   alsoInChannel?: boolean
+  /** Sent from the Ask bar or its panel: the page the person is on, for the agent. */
+  pageContext?: PageContext | null
 }
 
 /** The row shown until the server confirms. Its id sorts after every confirmed message, and in send order. */

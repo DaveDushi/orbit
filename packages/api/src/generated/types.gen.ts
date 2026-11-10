@@ -849,6 +849,7 @@ export type ChatSendBody = {
      * the first message.
      */
     nonce: string;
+    page_context?: null | PageContext;
     /**
      * The message this one quotes (an inline reply): a message of the same conversation.
      */
@@ -2808,6 +2809,11 @@ export type Page = {
 };
 
 /**
+ * The area of the app.
+ */
+export type PageArea = 'home' | 'tasks' | 'docs' | 'drive' | 'activity' | 'settings' | 'account' | 'admin' | 'apps' | 'other';
+
+/**
  * One comment of a thread. A deleted comment keeps its place with an empty body.
  */
 export type PageComment = {
@@ -2842,6 +2848,17 @@ export type PageCommentBody = {
     body: Array<{
         [key: string]: unknown;
     }>;
+};
+
+/**
+ * Where the sender was when they wrote to the agent from the Ask bar (a page that is not Chat):
+ * the area of the app and the item open there. It comes from the sender's browser, so it is
+ * untrusted: the sidecar shows it to the model as data, and the agent reads the item only with
+ * its tools, as the driver, so it can name nothing that the driver cannot read.
+ */
+export type PageContext = {
+    item?: null | PageItem;
+    page: PageArea;
 };
 
 export type PageExportArchive = Blob | File;
@@ -2943,6 +2960,17 @@ export type PageFileVersion = {
 export type PageFileVersionList = {
     items: Array<PageFileVersion>;
 };
+
+export type PageItem = {
+    id: string;
+    kind: PageItemKind;
+    /**
+     * As the page shows it; cut to 200 characters, control characters become spaces.
+     */
+    title: string;
+};
+
+export type PageItemKind = 'task' | 'doc' | 'drive_folder';
 
 export type PageList = {
     items: Array<PageSummary>;

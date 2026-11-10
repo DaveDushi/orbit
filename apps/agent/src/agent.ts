@@ -24,6 +24,7 @@ import { namesToTokens, splitBody, tokensToNames, type Person } from "./mentions
 import { mockModels } from "./mock.ts";
 import { codexModels, PROVIDER, PeopleModels, routedModels } from "./models.ts";
 import { OrbitError, type OrbitClient, type PendingInput } from "./orbit.ts";
+import { withPageContext } from "./page.ts";
 import { DEFAULT_AGENT_NAME } from "./prompt.ts";
 import { Sandbox } from "./sandbox.ts";
 import { groupSteps } from "./steps.ts";
@@ -388,7 +389,7 @@ export class Agent {
 		const conversation = await this.#conversationFor(input);
 		const state = (await this.#harness.snapshot(ThreadDoc, conversation.id, context)) as ThreadState;
 		const people = await this.peopleOf(input.workspace_id);
-		const text = input.kind === "action" ? actionText(input) : withMessageFiles(tokensToNames(input.body, people), input.files);
+		const text = input.kind === "action" ? actionText(input) : withPageContext(withMessageFiles(tokensToNames(input.body, people), input.files), input.page_context);
 		const timeZone = people.find((person) => person.id === input.author_id)?.timezone;
 
 		// This input started the current run before a restart: finish what is missing.

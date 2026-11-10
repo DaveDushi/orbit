@@ -38,6 +38,7 @@ import { StickerPicker } from './StickerPicker'
 import { useAutosize } from './useAutosize'
 import { useEmojiAutocomplete } from './useEmojiAutocomplete'
 import { useUploads } from './useUploads'
+import type { PageContext } from '@/features/askDonna/pageContext'
 
 /** The counter shows when this few characters are left. */
 const COUNTER_FROM = 200
@@ -67,6 +68,8 @@ interface ComposerProps {
   /** `Shift+Tab`. Returns false when the list has no message to focus. */
   onFocusList?: () => boolean
   onSent?: () => void
+  /** The Ask panel: the page the person is on, sent with each message for the agent. */
+  pageContext?: () => PageContext | null
 }
 
 /**
@@ -74,7 +77,7 @@ interface ComposerProps {
  * emoji show in the field as the reader will get them), files, a draft kept
  * in `localStorage`, and the typing signal. `Enter` sends (a new line on a touch screen, and in an open code block), `Shift+Enter` is a new line.
  */
-export function Composer({ ref, conversation, threadRootId = null, replyTo = null, onClearReply, autoFocus = false, onEditLast, onFocusList, onSent }: ComposerProps) {
+export function Composer({ ref, conversation, threadRootId = null, replyTo = null, onClearReply, autoFocus = false, onEditLast, onFocusList, onSent, pageContext }: ComposerProps) {
   const { workspaceId, currentUserId } = useChatContext()
   const people = useChatPeople()
   const coarse = useCoarsePointer()
@@ -145,7 +148,7 @@ export function Composer({ ref, conversation, threadRootId = null, replyTo = nul
         return
       }
     }
-    send({ conversationId, threadRootId, replyTo: replyTo && quoteOf(replyTo), body, attachments, alsoInChannel: inThread && alsoInChannel })
+    send({ conversationId, threadRootId, replyTo: replyTo && quoteOf(replyTo), body, attachments, alsoInChannel: inThread && alsoInChannel, pageContext: pageContext?.() })
     // The message is now a row of the list (it stays there with "Not sent" if the send fails), so the draft is done.
     setTextState('')
     clearDraft(workspaceId, conversationId, threadRootId)
@@ -164,7 +167,7 @@ export function Composer({ ref, conversation, threadRootId = null, replyTo = nul
    */
   function sendSticker(sticker: CustomStickerRecord) {
     setStickerOpen(false)
-    send({ conversationId, threadRootId, replyTo: replyTo && quoteOf(replyTo), body: '', sticker: { id: sticker.id, name: sticker.name, url: sticker.url } })
+    send({ conversationId, threadRootId, replyTo: replyTo && quoteOf(replyTo), body: '', sticker: { id: sticker.id, name: sticker.name, url: sticker.url }, pageContext: pageContext?.() })
     onClearReply?.()
     onSent?.()
   }
