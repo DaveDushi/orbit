@@ -6,7 +6,7 @@
 import { execSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { parseArgs } from 'node:util'
 import { readJson, work } from './common'
 import { caveats, compareMetrics, formatRows, perfMetrics, readNoise, THRESHOLD_PCT } from './compare'
@@ -118,7 +118,7 @@ result.comparison = {
 writeFileSync(join(resultsDir, name), `${JSON.stringify(result, null, 2)}\n`)
 
 // Summary.
-console.log(`\nResult: evals/results/${name} (${result.duration_s} s)`)
+console.log(`\nResult: ${relative(root, join(resultsDir, name))} (${result.duration_s} s)`)
 const show = (label: string, path: string, unit = '') => metrics[path] !== undefined && console.log(`  ${label.padEnd(36)} ${metrics[path]}${unit}`)
 show('entry JS gzip', 'perf.bundle.entry_js.gzip_kb', ' kB')
 show('entry CSS gzip', 'perf.bundle.entry_css.gzip_kb', ' kB')
