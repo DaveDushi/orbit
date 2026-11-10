@@ -4,12 +4,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 49954a2fbda4e8ce5786efbecbba63d0689c59b4
-  (the "W" logo, the Windows desktop app downloads, schema 86, November 9, 2026).
+- Source: DaveDushi/orbit, `main` at 8151a3c7c0f904837518e363a2001bd1110f6a74
+  (release step 1: upstream fixes, phone settings menu, board virtualization, schema 86, November 10, 2026).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:f668385`); fork commits have no published upstream image.
-- Image ID: sha256:b67ad1393b816511bb2e04e4c4e119e6e90032dff46b78be5ac1296e28776ce4
-- Team agent sidecar code (`/opt/orbit-agent`): commit 49954a2.
+  (`orbit:8151a3c`); fork commits have no published upstream image.
+- Image ID: sha256:87c04b849e5635b4ba37f00bcc32ff827c4d0e6c46d023e0d7d3beb3a10cc0a9
+- Team agent sidecar code (`/opt/orbit-agent`): commit 8151a3c.
 - Desktop app downloads: https://orbit.wellrox.com/downloads/desktop/ (installer, zip, `latest.json` for the app's update
   check; behind the exe.dev login like the rest). nginx `location /downloads/desktop/` in
   `/etc/nginx/conf.d/orbit.conf` serves `/srv/orbit-downloads/desktop/` (outside the deploy, so deploys keep it; the
@@ -250,6 +250,61 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 10, 2026 upgrade: release step 1, upstream fixes and the phone settings menu (schema 86)
+
+`main` fast-forwarded to `8151a3c7` from `50396704` (branch `badge-drive-tab`): `4dfc6657` (Drive replaces Mail in the
+phone dock), `ec04712d` (desktop 0.1.2: unread number on the Windows taskbar overlay), nine coollabsio/orbit commits
+cherry-picked with `-x` (`fc850b10` next free project key, `1ef45408` comment trim and no blank page on comment send
+(without upstream's math sanitizer), `30766fcf` bulk changes in each task's activity, `5cbc496e` phone settings menu
+(merged with our classic-UI sub-navigation, which a phone menu replaces), `c53ea121` GitHub closed issues and merged
+PRs to Done (by hand, without upstream's trial-limit test), `ee9cecf5` ring spinner (our W loader in
+`OrbitUnavailable.tsx` stays; mobile notes get `loading`), `fd5c3c1c` and `507ad808` board virtualization (no "Show
+more"), `71e714ab` plain background), and `8151a3c7`: `ChangesAssociations=yes` in the Windows installer, two tests
+that upstream left broken by its own changes, `aboutOrbit()` and the `2026-11-10` "what's new" entry. Not taken: the
+import group, the mobile/Expo group, version bumps, `5821bc44` (guest role, a later step). No migration, no new
+`ORBIT_*` setting, sidecar `package-lock.json` unchanged (only `src/prompt.ts` and `src/whats-new.md` changed).
+
+Checks before the switch: web `tsc --noEmit` and `bun test src/features/tasks src/features/settings src/app/shell
+src/components/ui` (512 pass; 2 fail in `TaskList.test.tsx`, the same 2 fail on `50396704`); mobile `tsc --noEmit` and
+`bun test src` (152 pass; iOS bundle not built: no Metro server runs); agent `tsc` and `node --test` (59 pass, 0 fail,
+11 skipped); server `tasks_api`, `integrations_api`, `chat_api` on SQLite and Postgres (141 pass each) and
+`--lib sanitize` (15 pass). Browser e2e against a local seeded server (screenshots
+`/root/.local/share/com.jean.desktop/pasted-images/orbit-step1-*.png`). `orbit-deploy image` built `orbit:8151a3c`
+before the merge and reused it after the fast-forward; `deploy/smoke.sh` passed; `orbit config check` passed with the
+extracted binary.
+
+At the switch: stopped `orbit-agent` and `orbit` at 10:37:58 UTC, created snapshot
+`01a1c509-3a31-7732-8323-b52e2f8836cf` (S3 bucket; the verified copy is in
+`/var/backups/orbit/downloads/01a1c509-3a31-7732-8323-b52e2f8836cf`) with the old CLI (`/usr/local/bin/orbit-49954a2`)
+and verified it, ran `migrate run` of the new binary on a copy in `/var/lib/orbit/rehearsal-8151a3c-*` (0 applied,
+schema current, quick-check ok, 0 foreign-key rows; deleted afterwards), saved the sidecar data as
+`/var/backups/orbit-agent/orbit-agent-before-8151a3c.tgz`, kept the old sidecar code as
+`/opt/orbit-agent.before-8151a3c`, installed the binary (`/usr/local/bin/orbit-8151a3c` too) and the new sidecar `src`,
+and started `orbit` (ready 10:38:40), then `orbit-agent`. `vm-health` (`/root/ops/vm-health.conf`, old copy
+`.before-8151a3c`): `PROD_TAG=8151a3c`, `ROLLBACK_TAG=49954a2`, `ROLLBACK_BACKUP=01a1c509-3a31-7732-8323-b52e2f8836cf`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` active, no restarts; readiness
+(all checks); `/orbit-build.json` revision `8151a3c7`; schema 86; live quick-check and foreign-key checks pass; web `/`
+and `/logo.svg` 200; sidecar `/health` `{"ok":true,"mock":false}` and `/opt/orbit-agent/src` equal to `apps/agent/src`
+of `8151a3c7`. Logs: only the rmcp "allowed origin without a port" warning and Node's SQLite ExperimentalWarning, both
+also with `49954a2`. **Not** verified: a signed-in browser check on production.
+
+Rollback (same schema 86: the old binary reads it, no restore needed). To go back to `49954a2`:
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-49954a2 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-8151a3c /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Data back to 10:37 UTC, only if needed (work after it is lost), with both services stopped:
+# sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-49954a2 backup verify 01a1c509-3a31-7732-8323-b52e2f8836cf && /usr/local/bin/orbit-49954a2 backup restore 01a1c509-3a31-7732-8323-b52e2f8836cf'
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-8151a3c.tgz
+```
+
+After this rollback, set `PROD_TAG=49954a2`, `ROLLBACK_TAG=f668385`,
+`ROLLBACK_BACKUP=01a1c171-6545-7502-b5ce-5a5090ab8bdd` in `/root/ops/vm-health.conf`.
 
 ### November 9, 2026 upgrade: the "W" logo and the Windows desktop app downloads (schema 86)
 
