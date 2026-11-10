@@ -35,7 +35,7 @@ Docs
 
 Drive
 - Drive in the sidebar: one drive per workspace with folders. Upload files and folders (drag and drop works), move, rename, download (several items as a ZIP).
-- Click a file to preview it: images, videos, audio and PDFs. Search the whole drive by name, type and date.
+- Click or tap a file to preview it (images, videos, audio and PDFs) and a folder to open it. To select several, tick their boxes, or use Ctrl/Cmd+click and Shift+click. Search the whole drive by name, type and date.
 - Trashed files and folders stay in Drive's trash for 30 days and can be restored.
 - Share → public link for a file or folder, for anyone who has it (no Orbit account): /s/<token>, with an optional expiry date and password. The link shows only once; it can be revoked.
 ${media ? `- Ask ${name} about images, videos and scanned PDFs in Drive: ${name} looks at them (frames of a video, pages of a scan), can edit them (for example trim or shrink a video, crop, resize or convert an image, extract frames) and saves the result as a new Drive file. ${name} cannot hear sound.\n` : ""}
@@ -65,7 +65,7 @@ How do I…
 - invite someone: Workspace settings → Members (owners and admins).
 - reply in a thread: hover a message → Reply in Thread.
 - make a page only I can see: the + of the Private section in Docs.
-- share a Drive file outside the team: Drive → select the file → Share → make a public link.
+- share a Drive file outside the team: Drive → the file's … menu → Share link… → make a public link.
 - post to a channel from another tool: Edit channel → Integrations → New webhook.
 - use you: mention @${name} in a channel or thread, or send @${name} a direct message. First connect ChatGPT in Account settings → Agentic.
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import {
@@ -64,6 +64,7 @@ import { queueThumbnails } from '../media'
 import { downloadFile, downloadZip } from '../download'
 import { draggingFiles, droppedFiles, pickedFolder } from '../dropped'
 import { uploadQueue, useUploads } from '../uploads'
+import { driveClick } from '../click'
 
 type Layout = 'list' | 'grid'
 type Dialog = { kind: 'new-folder' } | { kind: 'rename'; node: DriveNode } | { kind: 'move'; nodes: DriveNode[] } | { kind: 'share'; node: DriveNode } | null
@@ -181,20 +182,15 @@ export function DrivePage({ view }: { view?: 'trash' }) {
     else setViewing(node.id)
   }
 
-  const select = (node: DriveNode, event: MouseEvent | KeyboardEvent) => {
-    if (event.shiftKey && anchor) {
-      const from = nodes.findIndex((candidate) => candidate.id === anchor)
-      const to = nodes.findIndex((candidate) => candidate.id === node.id)
-      const [start, end] = from < to ? [from, to] : [to, from]
-      setSelected(new Set(nodes.slice(start, end + 1).map((candidate) => candidate.id)))
-      return
-    }
-    if (event.metaKey || event.ctrlKey) {
-      toggle(node.id)
-    } else {
-      setSelected(new Set([node.id]))
-    }
-    setAnchor(node.id)
+  // A plain click or tap opens the item; Ctrl/Cmd+click and Shift+click select, as the checkbox does (`driveClick`).
+  const click = (node: DriveNode, event: MouseEvent) => {
+    const from = anchor === null ? -1 : nodes.findIndex((candidate) => candidate.id === anchor)
+    const action = driveClick(event, from !== -1)
+    if (action === 'open') return open(node)
+    if (action === 'toggle') return toggle(node.id)
+    const to = nodes.findIndex((candidate) => candidate.id === node.id)
+    const [start, end] = from < to ? [from, to] : [to, from]
+    setSelected(new Set(nodes.slice(start, end + 1).map((candidate) => candidate.id)))
   }
   const toggle = (id: string) => {
     setSelected((current) => {
@@ -323,7 +319,8 @@ export function DrivePage({ view }: { view?: 'trash' }) {
             entry={entry}
             searching={searching}
             selected={selected.has(entry.node.id)}
-            onSelect={select}
+            onClick={click}
+            onToggle={toggle}
             onOpen={open}
             onDragStart={dragNodes}
             onDropNodes={moveNodes}
@@ -349,7 +346,7 @@ export function DrivePage({ view }: { view?: 'trash' }) {
             entry={entry}
             searching={searching}
             selected={selected.has(entry.node.id)}
-            onSelect={select}
+            onClick={click}
             onToggle={toggle}
             onOpen={open}
             onDragStart={dragNodes}
@@ -676,7 +673,8 @@ interface ItemProps {
   entry: DriveEntry
   searching: boolean
   selected: boolean
-  onSelect: (node: DriveNode, event: MouseEvent | KeyboardEvent) => void
+  onClick: (node: DriveNode, event: MouseEvent) => void
+  onToggle: (id: string) => void
   onOpen: (node: DriveNode) => void
   onDragStart: (event: DragEvent, node: DriveNode) => void
   onDropNodes: (ids: string[], target: string) => Promise<void>
@@ -712,7 +710,7 @@ function ListRow({
   entry,
   searching,
   selected,
-  onSelect,
+  onClick,
   onToggle,
   onOpen,
   onDragStart,
@@ -723,7 +721,6 @@ function ListRow({
   onTrash,
   onDownload,
 }: ItemProps & {
-  onToggle: (id: string) => void
   onRename: (node: DriveNode) => void
   onShare: (node: DriveNode) => void
   onMove: (node: DriveNode) => void
@@ -744,13 +741,12 @@ function ListRow({
         selected && 'bg-primary/8 hover:bg-primary/10 dark:bg-primary/15',
         drop.over && 'ring-2 ring-primary/60 ring-inset',
       )}
-      onClick={(event) => onSelect(node, event)}
-      onDoubleClick={() => onOpen(node)}
+      onClick={(event) => onClick(node, event)}
       onKeyDown={(event) => {
         if (event.key === 'Enter') onOpen(node)
         if (event.key === ' ') {
           event.preventDefault()
-          onSelect(node, event)
+          onToggle(node.id)
         }
       }}
       onDragStart={(event) => onDragStart(event, node)}
@@ -794,7 +790,7 @@ function ListRow({
   )
 }
 
-function GridCard({ entry, searching, selected, onSelect, onOpen, onDragStart, onDropNodes, onThumbnailExpired }: ItemProps & { onThumbnailExpired: () => void }) {
+function GridCard({ entry, searching, selected, onClick, onToggle, onOpen, onDragStart, onDropNodes, onThumbnailExpired }: ItemProps & { onThumbnailExpired: () => void }) {
   const { node } = entry
   const drop = useFolderDrop(node, onDropNodes)
   const retried = useRef(false)
@@ -805,19 +801,30 @@ function GridCard({ entry, searching, selected, onSelect, onOpen, onDragStart, o
       tabIndex={0}
       draggable
       className={cn(
-        'flex cursor-default flex-col overflow-hidden rounded-lg border bg-card outline-none select-none hover:border-primary/40 focus-visible:ring-2 focus-visible:ring-ring/50',
+        'group/card flex cursor-default flex-col overflow-hidden rounded-lg border bg-card outline-none select-none hover:border-primary/40 focus-visible:ring-2 focus-visible:ring-ring/50',
         selected && 'border-primary ring-1 ring-primary',
         drop.over && 'ring-2 ring-primary/60',
       )}
-      onClick={(event) => onSelect(node, event)}
-      onDoubleClick={() => onOpen(node)}
+      onClick={(event) => onClick(node, event)}
       onKeyDown={(event) => {
         if (event.key === 'Enter') onOpen(node)
+        if (event.key === ' ') {
+          event.preventDefault()
+          onToggle(node.id)
+        }
       }}
       onDragStart={(event) => onDragStart(event, node)}
       {...drop.handlers}
     >
       <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden bg-muted/40">
+        {/* the card opens on a click: this box selects it (shown on hover, always on touch screens and once selected) */}
+        <Checkbox
+          checked={selected}
+          aria-label={`Select ${node.name}`}
+          className={cn('absolute top-2 left-2 z-10 bg-background/80', !selected && 'hover-fine:opacity-0 hover-fine:group-hover/card:opacity-100 hover-fine:group-focus-within/card:opacity-100')}
+          onClick={(event) => event.stopPropagation()}
+          onCheckedChange={() => onToggle(node.id)}
+        />
         {node.thumbnail_url ? (
           <img
             src={node.thumbnail_url}
