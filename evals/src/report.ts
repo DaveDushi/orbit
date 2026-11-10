@@ -1,18 +1,21 @@
 // Merges the result parts of a run into evals/results/<date>-<sha>.json, compares it with the latest earlier result
 // and with evals/budgets.json, prints a summary and sets the exit code:
-//   1 = a metric is over budget, or a high/critical security finding that the previous result did not have;
-//   2 = a step of the run failed. Budgets and the previous result never fail a run on their own otherwise.
+//   1 = a metric is over budget, a perf metric got worse beyond threshold, floor and noise (compare.ts), or a
+//       high/critical security finding that the previous result did not have;
+//   2 = a step of the run failed.
 import { execSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { readJson, work } from './common'
+import { caveats, compareMetrics, formatRows, perfMetrics, readNoise, THRESHOLD_PCT } from './compare'
 import type { Check } from './headers'
 
 const { values: options } = parseArgs({ options: { duration: { type: 'string' }, perf: { type: 'string' }, security: { type: 'string' }, quick: { type: 'string' }, build: { type: 'string' }, prod: { type: 'string' } } })
 const root = join(import.meta.dir, '../..')
-const resultsDir = join(root, 'evals/results')
+// EVALS_RESULTS_DIR: `run.sh --noise` keeps its runs out of evals/results.
+const resultsDir = process.env.EVALS_RESULTS_DIR || join(root, 'evals/results')
 const shell = (command: string) => {
   try {
     return execSync(command, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
@@ -73,16 +76,7 @@ const result = {
   comparison: {} as Record<string, unknown>,
 }
 
-// Numbers by dotted path, for budgets and the comparison with the previous result.
-const flatten = (value: unknown, prefix = '', out: Record<string, number> = {}) => {
-  if (typeof value === 'number') out[prefix] = value
-  else if (value && typeof value === 'object' && !Array.isArray(value)) for (const [key, inner] of Object.entries(value)) flatten(inner, prefix ? `${prefix}.${key}` : key, out)
-  return out
-}
-// Lower is better, except throughput.
-const higherIsBetter = (path: string) => /\.rps$/.test(path)
-const ignored = (path: string) => /^perf\.(pageload\.(runs|presets)|latency\.(requests|concurrency)|build\.cargo_jobs)/.test(path)
-const metrics = Object.fromEntries(Object.entries(flatten({ perf: result.perf })).filter(([path]) => !ignored(path)))
+const metrics = perfMetrics(result)
 
 // The latest earlier result.
 mkdirSync(resultsDir, { recursive: true })
@@ -104,16 +98,12 @@ const overBudget = Object.entries(budgets)
   .map(([path, max]) => ({ metric: path, value: metrics[path], budget: max }))
 const missingBudgets = Object.keys(budgets).filter((path) => metrics[path] === undefined)
 
-const tolerance = 0.15 // listed only; budgets decide the exit code
-const previousMetrics = previous ? flatten({ perf: previous.perf }) : {}
-const changes = Object.entries(metrics)
-  .filter(([path]) => previousMetrics[path] !== undefined && previousMetrics[path] !== 0)
-  .map(([path, value]) => ({ metric: path, previous: previousMetrics[path], value, change_pct: Math.round(((value - previousMetrics[path]) / Math.abs(previousMetrics[path])) * 1000) / 10 }))
-// Also a minimum absolute change, so sub-millisecond noise on a fast endpoint is not listed.
-const floor = (metric: string) => (/_ms$/.test(metric) ? 5 : /_(kb|mb)$/.test(metric) ? 5 : /\.rps$/.test(metric) ? Infinity : /\.cls$/.test(metric) ? 0.02 : 0)
-const significant = (change: (typeof changes)[number]) => Math.abs(change.value - change.previous) >= floor(change.metric)
-const regressions = changes.filter((change) => significant(change) && (higherIsBetter(change.metric) ? -change.change_pct : change.change_pct) > tolerance * 100)
-const improvements = changes.filter((change) => significant(change) && (higherIsBetter(change.metric) ? change.change_pct : -change.change_pct) > tolerance * 100)
+// Noise-aware comparison with the previous result (compare.ts): only `worse` fails the run.
+const noise = readNoise()
+const compared = previous && result.options.perf
+const rows = compared ? compareMetrics(perfMetrics(previous), metrics, noise) : []
+const notes = compared ? caveats(previous, result, noise) : []
+const worse = rows.filter((row) => row.verdict === 'worse')
 
 result.comparison = {
   previous: earlier.at(-1) ?? null,
@@ -121,8 +111,9 @@ result.comparison = {
   budgets_not_measured: missingBudgets,
   new_high_or_critical: newSerious,
   fixed_high_or_critical: fixedSerious,
-  regressions_over_15pct: regressions,
-  improvements_over_15pct: improvements,
+  noise: noise ? { commit: noise.commit, runs: noise.runs, date: noise.date } : null,
+  notes,
+  perf: rows,
 }
 writeFileSync(join(resultsDir, name), `${JSON.stringify(result, null, 2)}\n`)
 
@@ -141,7 +132,13 @@ const s = result.security.summary
 console.log(`  security checks: ${s.pass} pass, ${s.fail} fail, ${s.warn} warn, ${s.skip} skip; findings ${JSON.stringify(s.findings_by_severity)}`)
 for (const item of checks.filter((check) => check.result === 'fail')) console.log(`  FAIL [${item.severity}] ${item.id}: ${item.title}`)
 if (overBudget.length) console.log(`  over budget: ${overBudget.map((item) => `${item.metric} ${item.value} > ${item.budget}`).join('; ')}`)
-if (regressions.length) console.log(`  >15% worse than ${earlier.at(-1)}: ${regressions.map((item) => `${item.metric} ${item.previous} -> ${item.value}`).join('; ')}`)
+if (compared) {
+  console.log(`\nAgainst ${earlier.at(-1)} (${noise ? `noise of ${noise.runs} runs of ${noise.commit.slice(0, 7)}` : 'no noise file'}):`)
+  for (const note of notes) console.log(`  note: ${note}`)
+  if (rows.length) for (const line of formatRows(rows)) console.log(`  ${line}`)
+  else console.log(`  no metric moved by more than ${THRESHOLD_PCT}%`)
+  console.log(`  ${worse.length} worse (fails the run), ${rows.filter((row) => row.verdict === 'better').length} better, ${rows.filter((row) => ['in noise', 'under floor'].includes(row.verdict)).length} inside noise or floor, ${rows.filter((row) => row.verdict === 'missing').length} missing`)
+}
 if (newSerious.length) console.log(`  new high/critical: ${newSerious.join(', ')}`)
 if (errors.length) console.log(`  failed steps: ${errors.join(', ')}`)
-process.exit(errors.length ? 2 : overBudget.length || newSerious.length ? 1 : 0)
+process.exit(errors.length ? 2 : overBudget.length || newSerious.length || worse.length ? 1 : 0)
