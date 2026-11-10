@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Makes every copy of the Orbit mark from its one source, apps/web/public/logo.svg (the pixel "W" on an 11x11
 # grid): the web favicons, the PWA and Apple icons, the desktop tray PNG and the Windows .ico (exe, installer).
-# PNGs are an opaque black square with the mark centered at whole pixels per grid unit, so edges stay crisp.
+# The mark sits centered at whole pixels per grid unit, so edges stay crisp, on a transparent background (RGBA).
+# Only the Apple touch icon keeps an opaque black square: iOS shows transparent pixels as black anyway.
+# (No icon in manifest.webmanifest is "maskable"; a maskable one would need an opaque background too.)
 # Needs ImageMagick (`convert`). Run from anywhere: scripts/logo-icons.sh
 set -euo pipefail
 
@@ -28,13 +30,19 @@ printf '%s<mask id="cut"><path fill="#fff" d="M0 0h11v11H0z"/><path d="M6 6h5v5H
 # so no blended edge pixels.
 convert -background none "$source_svg" -filter point -resize '11x11!' -depth 8 "$tmp/mark.png"
 
-# icon <size> <pixels per unit> <out>: black square, mark centered.
+# icon <size> <pixels per unit> <out>: transparent square, mark centered, 8-bit RGBA.
 icon() {
-  convert "$tmp/mark.png" -sample "$(( 11 * $2 ))x$(( 11 * $2 ))" -background black -gravity center \
-    -extent "$1x$1" -alpha off -depth 8 -strip "$3"
+  convert "$tmp/mark.png" -sample "$(( 11 * $2 ))x$(( 11 * $2 ))" -background none -gravity center \
+    -extent "$1x$1" -depth 8 -strip "PNG32:$3"
 }
 
-icon 180 10 "$public/apple-touch-icon.png"
+# opaque_icon <size> <pixels per unit> <out>: the same on a black square, no alpha channel.
+opaque_icon() {
+  convert "$tmp/mark.png" -sample "$(( 11 * $2 ))x$(( 11 * $2 ))" -background black -gravity center \
+    -extent "$1x$1" -flatten -alpha off -depth 8 -strip "PNG24:$3"
+}
+
+opaque_icon 180 10 "$public/apple-touch-icon.png"
 icon 192 10 "$public/icon-192.png"
 icon 512 28 "$public/icon-512.png"
 icon 64 4 "$desktop/crates/orbit-desktop/assets/orbit-64.png"
