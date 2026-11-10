@@ -418,8 +418,11 @@ test("the system prompt is the same at any time: the time is only in the message
 	current = orbit;
 	await orbit.listen();
 	let now = new Date("2026-11-09T08:03:00Z");
+	// The whole system prompt is streamed back: at the default 400 tokens/s it takes longer than `until` waits.
+	process.env.AGENT_MOCK_TOKENS_PER_SECOND = "4000";
 	const agent = new Agent(config(orbit, mkdtempSync(join(tmpdir(), "agent-"))), new OrbitClient(config(orbit, "")), () => now);
 	await agent.open();
+	delete process.env.AGENT_MOCK_TOKENS_PER_SECOND;
 	await agent.start();
 	try {
 		const prompts: string[] = [];
@@ -443,8 +446,11 @@ test("each run's prompt has the current name, then About Orbit and the version, 
 	const orbit = new FakeOrbit();
 	current = orbit;
 	await orbit.listen();
+	// The whole system prompt is streamed back: at the default 400 tokens/s it takes longer than `until` waits.
+	process.env.AGENT_MOCK_TOKENS_PER_SECOND = "4000";
 	const agent = new Agent(config(orbit, mkdtempSync(join(tmpdir(), "agent-"))), new OrbitClient(config(orbit, "")));
 	await agent.open();
+	delete process.env.AGENT_MOCK_TOKENS_PER_SECOND;
 	await agent.start();
 	try {
 		orbit.botName = "Ada";
