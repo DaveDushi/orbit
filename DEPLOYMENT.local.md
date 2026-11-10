@@ -4,12 +4,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 8151a3c7c0f904837518e363a2001bd1110f6a74
-  (release step 1: upstream fixes, phone settings menu, board virtualization, schema 86, November 10, 2026).
+- Source: DaveDushi/orbit, `main` at e3ba2f8664f5f440394552ae663514ade608170f
+  (step 1b: phone chat, Drive click, desktop 0.1.3, schema 86, November 10, 2026).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:8151a3c`); fork commits have no published upstream image.
-- Image ID: sha256:87c04b849e5635b4ba37f00bcc32ff827c4d0e6c46d023e0d7d3beb3a10cc0a9
-- Team agent sidecar code (`/opt/orbit-agent`): commit 8151a3c.
+  (`orbit:e3ba2f8`); fork commits have no published upstream image.
+- Image ID: sha256:91c37aadb94b4083693017cbc28c712c6d66eda193461dc3938bb7a2013a83c4
+- Team agent sidecar code (`/opt/orbit-agent`): commit e3ba2f8.
 - Desktop app downloads: https://orbit.wellrox.com/downloads/desktop/ (installer, zip, `latest.json` for the app's update
   check; behind the exe.dev login like the rest). nginx `location /downloads/desktop/` in
   `/etc/nginx/conf.d/orbit.conf` serves `/srv/orbit-downloads/desktop/` (outside the deploy, so deploys keep it; the
@@ -250,6 +250,67 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 10, 2026 upgrade: step 1b, phone chat, Drive click and desktop 0.1.3 (schema 86)
+
+`main` fast-forwarded to `9fb6d301` from `9e690d92` (branch `mobile-chat-fix`): `c6db2c64` (phone chat: cards fit the
+screen, Markdown tables wrap and scroll sideways, day chip with a fade, repeated tool lines grouped with a count; no
+grey box behind the W in the phone top bar; desktop "Sign in to app" popup fix; desktop 0.1.3) and `9fb6d301` (Drive: a
+click opens, only the checkbox or Ctrl/Shift selects), then `e3ba2f86`: lines added to the `2026-11-10` "what's new"
+entry (Drive click; phone chat and desktop 0.1.3). `aboutOrbit()` was already updated on the branch. No migration, no
+new `ORBIT_*` setting, sidecar `package.json`/`package-lock.json` unchanged (only `src` changed).
+
+Checks before the switch (after `bun install --frozen-lockfile` at the root and `npm ci` in `apps/agent`: the main
+checkout had no `@json-render` packages): web `tsc --noEmit` and `bun test src/features/drive src/features/chat
+src/lib/markdown.test.tsx src/app/shell` (263 pass, 0 fail); mobile `tsc --noEmit` and `bun test src` (153 pass, 0
+fail); agent `tsc` and `node --test` (60 pass, 0 fail, 11 skipped); desktop `cargo test --workspace` (61 pass, 1
+ignored). `orbit-deploy image` built `orbit:e3ba2f8`; `deploy/smoke.sh` passed; `orbit config check` passed with the
+extracted binary.
+
+At the switch: stopped `orbit-agent` and `orbit` at 13:27:22 UTC, created snapshot
+`01a1c5a4-5127-7421-90cd-a66f0ccfe0cf` with the old CLI (`/usr/local/bin/orbit-8151a3c`) and verified it, ran
+`migrate run` of the new binary on a copy in `/var/lib/orbit/rehearsal-e3ba2f8-*` (0 applied, schema 86, quick-check
+ok, 0 foreign-key rows; deleted afterwards), saved the sidecar data as
+`/var/backups/orbit-agent/orbit-agent-before-e3ba2f8.tgz`, kept the old sidecar code as
+`/opt/orbit-agent.before-e3ba2f8`, installed the binary (`/usr/local/bin/orbit-e3ba2f8` too) and the new sidecar `src`,
+and started `orbit` (ready 13:27:57), then `orbit-agent`. Pushed `main` and tag `desktop-v0.1.3`. `vm-health`
+(`/root/ops/vm-health.conf`, old copy `.before-e3ba2f8`): `PROD_TAG=e3ba2f8`, `ROLLBACK_TAG=8151a3c`,
+`ROLLBACK_BACKUP=01a1c5a4-5127-7421-90cd-a66f0ccfe0cf`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` active, no restarts; readiness
+(all checks); `/orbit-build.json` revision `e3ba2f86`; schema 86; live quick-check and foreign-key checks pass; web `/`
+and `/logo.svg` 200; sidecar `/health` `{"ok":true,"mock":false}` and `/opt/orbit-agent/src` equal to `apps/agent/src`
+of `e3ba2f86`; no warnings in the logs; `vm-health` OK except the nginx lines of the switch window, the build-session
+test instance and `.git` file owners. Browser on production at 390 px (temporary UUID v7 session row for
+ddusi@wellrox.com, revoked by `POST /api/v1/auth/logout` (204); headless Chromium through `socat` on 127.0.0.1:8443):
+Donna's DM with a Markdown table (the table scrolls sideways in its box, the page stays 390 px wide), the phone top bar
+W with no box, Drive: a click on a folder opens it and a click on a file opens the preview, no selection. Console: the
+known service worker 400 and one 404 (resource not identified). Screenshots:
+`/root/.local/share/com.jean.desktop/pasted-images/orbit-1b-prod-*.png`.
+Desktop downloads: tag `desktop-v0.1.3` (on `e3ba2f86`) started Desktop run
+[42824960498](https://github.com/DaveDushi/orbit/actions/runs/42824960498) (test, windows and manifest passed, macos
+skipped); `deploy/desktop-downloads.sh 42824960498` put `Orbit-0.1.3-windows-x64-setup.exe` (sha256 `e4da3e1c…`),
+`Orbit-0.1.3-windows-x64.zip` (`9d5e96aa…`) and `latest.json` (version 0.1.3, Windows only) in
+`/srv/orbit-downloads/desktop/` and removed the 0.1.2 files. Through the local nginx: `latest.json` 200
+`application/json`, `no-cache`; both files download with the sha256 of `latest.json`. **Not** verified: the installer
+and the "Sign in to app" popup on a real Windows PC.
+
+Rollback (same schema 86: the old binary reads it, no restore needed). To go back to `8151a3c`:
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-8151a3c /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-e3ba2f8 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Data back to 13:27 UTC, only if needed (work after it is lost), with both services stopped:
+# sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-8151a3c backup verify 01a1c5a4-5127-7421-90cd-a66f0ccfe0cf && /usr/local/bin/orbit-8151a3c backup restore 01a1c5a4-5127-7421-90cd-a66f0ccfe0cf'
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-e3ba2f8.tgz
+```
+
+After this rollback, set `PROD_TAG=8151a3c`, `ROLLBACK_TAG=49954a2`,
+`ROLLBACK_BACKUP=01a1c509-3a31-7732-8323-b52e2f8836cf` in `/root/ops/vm-health.conf`. The desktop 0.1.3 downloads can
+stay (the server does not use them).
 
 ### November 10, 2026 upgrade: release step 1, upstream fixes and the phone settings menu (schema 86)
 
