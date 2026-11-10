@@ -35,11 +35,11 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: apps/desktop
       - name: Linux libraries (wry's WebKitGTK, the tray's appindicator)
@@ -56,11 +56,11 @@ jobs:
     if: ${{ inputs.macos }}
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: apps/desktop
       - run: cargo build --release -p orbit-desktop --locked
@@ -81,7 +81,7 @@ jobs:
         run: |
           dist/Orbit.app/Contents/MacOS/orbit-desktop --version
           scripts/check-gateway-smoke.sh dist/Orbit.app/Contents/MacOS/orbit-desktop
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: desktop-macos
           path: apps/desktop/Orbit-${{ env.VERSION }}-macos-arm64.dmg
@@ -89,11 +89,11 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: apps/desktop
       - run: cargo build --release -p orbit-desktop --locked
@@ -138,7 +138,7 @@ jobs:
           # The uninstaller runs on from a temp copy: wait for it.
           for ($i = 0; $i -lt 30 -and (Test-Path $lnk); $i++) { Start-Sleep -Seconds 1 }
           if (Test-Path $lnk) { throw "the uninstaller left the Start-menu shortcut" }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: desktop-windows
           path: |
@@ -153,8 +153,8 @@ jobs:
     if: ${{ !cancelled() && needs.windows.result == 'success' && needs.macos.result != 'failure' }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: apps/desktop/artifacts
       - name: latest.json
@@ -176,7 +176,7 @@ jobs:
               '.macos = $mac | .sha256.macos = $mac_sha' latest.json > latest.tmp && mv latest.tmp latest.json
           fi
           cat latest.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: desktop-latest-json
           path: apps/desktop/latest.json
