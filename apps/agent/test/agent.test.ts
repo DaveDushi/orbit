@@ -234,8 +234,12 @@ async function until(what: string, check: () => boolean, ms = 15_000): Promise<v
 
 const progressOf = (orbit: FakeOrbit, messageId: string) => orbit.messages.get(`agent:${messageId}`)?.body ?? "";
 /** A long answer: the progress message and the chunks posted after it. */
-const answerOf = (orbit: FakeOrbit, messageId: string) =>
-	[progressOf(orbit, messageId), ...[1, 2, 3, 4, 5].map((index) => orbit.messages.get(`agent:${messageId}:${index}`)?.body ?? "")].join("\n");
+/** The whole answer: the progress message, then every chunk posted after it. */
+const answerOf = (orbit: FakeOrbit, messageId: string) => {
+	const parts = [progressOf(orbit, messageId)];
+	for (let index = 1; orbit.messages.has(`agent:${messageId}:${index}`); index++) parts.push(orbit.messages.get(`agent:${messageId}:${index}`)!.body);
+	return parts.join("\n");
+};
 
 test("each run acts as its driver; an answer does not lend the answerer's permissions", async () => {
 	const orbit = new FakeOrbit();
