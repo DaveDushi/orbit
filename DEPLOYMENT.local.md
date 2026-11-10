@@ -289,6 +289,13 @@ Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tu
 and `/logo.svg` 200; sidecar `/health` `{"ok":true,"mock":false}` and `/opt/orbit-agent/src` equal to `apps/agent/src`
 of `8151a3c7`. Logs: only the rmcp "allowed origin without a port" warning and Node's SQLite ExperimentalWarning, both
 also with `49954a2`. **Not** verified: a signed-in browser check on production.
+Desktop downloads: tag `desktop-v0.1.2` (on `22920080`) started Desktop run
+[42801038457](https://github.com/DaveDushi/orbit/actions/runs/42801038457) (test, windows and manifest passed, macos
+skipped); `deploy/desktop-downloads.sh 42801038457` put `Orbit-0.1.2-windows-x64-setup.exe` (sha256 `06facd7c…`),
+`Orbit-0.1.2-windows-x64.zip` (`55491790…`) and `latest.json` (version 0.1.2, Windows only) in
+`/srv/orbit-downloads/desktop/` and removed the 0.1.1 files. Through the local nginx: `latest.json` 200
+`application/json`, `no-cache`; both files download with the sha256 of `latest.json`. The public URLs answer 307 to the
+exe.dev login without an exe.dev session. **Not** verified: the installer on a real Windows PC.
 
 Rollback (same schema 86: the old binary reads it, no restore needed). To go back to `49954a2`:
 
