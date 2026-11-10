@@ -11,7 +11,7 @@ use sqlx::any::AnyRow;
 
 use super::{
     ChatError, ChatFileRecord, ChatRepository, MESSAGE_SELECT, MessageRecord, hydrate, id_list,
-    in_ids, load_access, load_actor, parse_id,
+    in_ids, load_access, load_actor, parse_id, reachable_dm,
 };
 
 /// Files of one message.
@@ -23,9 +23,17 @@ const FILE_COLUMNS: &str = "id, workspace_id, message_id, file_name, mime_type, 
      EXISTS (SELECT 1 FROM attachment_blobs b WHERE b.id = chat_message_files.blob_id AND b.deleted_at IS NOT NULL) \
      AS deleted";
 
-/// `c` is a conversation that `me` (a membership of the file's workspace) can read.
-const CONVERSATION_READABLE: &str = "(c.kind = 'public' OR EXISTS (SELECT 1 FROM chat_members cm \
-     WHERE cm.conversation_id = c.id AND cm.user_id = me.user_id))";
+/// `c` is a conversation that `me` (a membership of the file's workspace) can read. A guest
+/// reads no public channel, and nobody reads a direct message the guest can no longer reach.
+fn conversation_readable() -> String {
+    format!(
+        "((c.kind = 'public' AND me.role <> 'guest') \
+         OR (EXISTS (SELECT 1 FROM chat_members cm \
+                     WHERE cm.conversation_id = c.id AND cm.user_id = me.user_id) \
+             AND {}))",
+        reachable_dm()
+    )
+}
 
 /// A file of a sent message, with where its bytes are.
 #[derive(Clone, Debug)]
@@ -217,7 +225,8 @@ impl ChatRepository {
                      LEFT JOIN chat_conversations c ON c.id = f.conversation_id \
                      WHERE f.id = $2 AND f.workspace_id = $3 AND ( \
                          (f.message_id IS NULL AND f.uploaded_by = me.user_id) \
-                         OR {CONVERSATION_READABLE})"
+                         OR {})",
+                    conversation_readable()
                 )))
                 .bind(actor_id.to_string())
                 .bind(file_id.to_string())
@@ -258,7 +267,8 @@ impl ChatRepository {
              JOIN memberships me ON me.workspace_id = f.workspace_id AND me.user_id = $1 \
              JOIN chat_messages m ON m.id = f.message_id AND m.deleted_at IS NULL \
              JOIN chat_conversations c ON c.id = f.conversation_id \
-             WHERE f.id = $2 AND f.workspace_id = $3 AND {CONVERSATION_READABLE}"
+             WHERE f.id = $2 AND f.workspace_id = $3 AND {}",
+            conversation_readable()
         )))
         .bind(actor_id.to_string())
         .bind(file_id.to_string())

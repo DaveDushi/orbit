@@ -5,9 +5,9 @@ import { useState } from 'react'
 import { Linking, View } from 'react-native'
 
 import { ConfirmDialog, type ConfirmRequest } from '../../../components/settings/Dialog'
-import { ACCOUNT_NAV, Note, RowIcon, RowText, SettingsCard, SettingsRow, SettingsShell, WORKSPACE_NAV } from '../../../components/settings/Shell'
+import { ACCOUNT_NAV, allowedNav, Note, RowIcon, RowText, SettingsCard, SettingsRow, SettingsShell, WORKSPACE_NAV } from '../../../components/settings/Shell'
 import { useAuthOptions, useMemberWrites, useRenameWorkspace } from '../../../hooks/account'
-import { useOrbit } from '../../../orbit-context'
+import { useIsGuest, useOrbit } from '../../../orbit-context'
 import { useMembers } from '../../../queries'
 import { errorMessage } from '../../../session-context'
 import { useTheme } from '../../../theme'
@@ -15,22 +15,24 @@ import { Button, Icon, Input } from '../../../ui'
 
 /**
  * The dock's Settings: the web's workspace General page (name, leave), and the account pages,
- * the server and Sign out, which the web keeps in the account menu.
+ * the server and Sign out, which the web keeps in the account menu. A guest has no workspace
+ * settings: it gets its account pages, Sign out and Leave workspace.
  */
 export default function GeneralScreen() {
   const { workspace, session, user, signOut } = useOrbit()
   const { colors } = useTheme()
   const [signingOut, setSigningOut] = useState(false)
   const [signOutError, setSignOutError] = useState<string | null>(null)
+  const guest = useIsGuest()
 
   return (
-    <SettingsShell title="Settings" nav={WORKSPACE_NAV}>
+    <SettingsShell title={guest ? 'Account settings' : 'Settings'} nav={guest ? ACCOUNT_NAV : WORKSPACE_NAV}>
       {workspace.permissions.includes('workspace.update') ? <WorkspaceName key={workspace.id} /> : null}
 
-      <AppsCard />
+      {guest ? null : <AppsCard />}
 
       <SettingsCard title="Account" description={`${user.email} on ${session.server}`} flush>
-        {ACCOUNT_NAV.map((item, index) => (
+        {allowedNav(ACCOUNT_NAV, workspace.permissions, true, guest).map((item, index) => (
           <SettingsRow key={item.href} first={index === 0} label={item.label} onPress={() => router.push(item.href)}>
             <RowIcon icon={item.icon} />
             <RowText title={item.label} />

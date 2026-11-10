@@ -127,6 +127,19 @@ pub(crate) async fn record(
     if !mentioned && !is_dm && message.thread_root_id.is_none() {
         return Ok(());
     }
+    // The agent never works for a guest: a guest's mention, DM, answer or reply starts nothing.
+    let guest = sqlx::query_scalar::<_, Flag>(
+        "SELECT EXISTS (SELECT 1 FROM memberships WHERE workspace_id = $1 AND user_id = $2 \
+         AND role = 'guest')",
+    )
+    .bind(workspace_id.to_string())
+    .bind(message.author_id.to_string())
+    .fetch_one(&mut *conn)
+    .await?
+    .0;
+    if guest {
+        return Ok(());
+    }
     let bot_member = sqlx::query_scalar::<_, Flag>(
         "SELECT EXISTS (SELECT 1 FROM chat_members WHERE conversation_id = $1 AND user_id = $2)",
     )

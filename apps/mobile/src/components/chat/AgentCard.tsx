@@ -12,7 +12,7 @@ import { keys } from '../../data/keys'
 import { identifier } from '../../data/tasks'
 import { markdownToText } from '../../data/markdown'
 import { showError } from '../../hooks/chat'
-import { useOrbit } from '../../orbit-context'
+import { useIsGuest, useOrbit } from '../../orbit-context'
 import { useProjects, useTasks } from '../../queries'
 import { useTheme } from '../../theme'
 import { Button, Icon, Input, PickerSheet, Spinner, Text } from '../../ui'
@@ -385,6 +385,8 @@ function withIds(spec: UiSpec): UiSpec {
  */
 export function AgentCard({ card, messageId }: { card: Card; messageId: string }) {
   const { client, workspaceId } = useOrbit()
+  // the agent never works for a guest: its cards are read-only for one
+  const guest = useIsGuest()
   const queryClient = useQueryClient()
   const key = keys.sentActions(workspaceId, messageId)
   const sentActions = useQuery({ queryKey: key, queryFn: () => sentCardActions(client, workspaceId, messageId), enabled: !card.live })
@@ -396,7 +398,7 @@ export function AgentCard({ card, messageId }: { card: Card; messageId: string }
   const pending = action.isPending ? (action.variables?.elementId ?? null) : null
   return (
     <View className="mt-1.5 gap-1.5">
-      <CardContext value={{ live: card.live, pending, sent: sentOf(sentActions.data, card.blockId), send: (elementId, values) => action.mutate({ elementId, values }) }}>
+      <CardContext value={{ live: card.live || guest, pending, sent: sentOf(sentActions.data, card.blockId), send: (elementId, values) => action.mutate({ elementId, values }) }}>
         <JSONUIProvider registry={registry}>
           <Renderer spec={withIds(card.spec)} registry={registry} includeStandard={false} />
         </JSONUIProvider>

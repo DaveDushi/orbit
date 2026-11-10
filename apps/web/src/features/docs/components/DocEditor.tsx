@@ -65,7 +65,7 @@ import { mentionableMembers } from '@/features/docs/comments/mentionable'
 import { pageMentionCandidates } from '@/features/docs/editor/pageMentions'
 import { fileTargetOf, type FileTarget } from '@/features/docs/api/pageFiles'
 import { useBlockDeepLink } from '@/features/docs/useBlockDeepLink'
-import { useMembers } from '@/features/workspaces/api'
+import { useTeamMembers } from '@/features/workspaces/api'
 import { announceWorkspaceReadOnly, useWorkspaceReadOnly } from '@/features/workspaces/billing'
 import { Comment as CommentIcon } from 'reicon-react'
 import { loadPageEditor } from '@/features/docs/editor/loadPageEditor'
@@ -180,7 +180,7 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
   // Comments: header button + badge, the panel (Open / Resolved) and inbox deep links (`?thread=<id>`).
   const threadsQuery = usePageThreads(workspaceId, page.id)
   const counts = threadCounts(threadsQuery.data)
-  const membersQuery = useMembers(workspaceId)
+  const membersQuery = useTeamMembers(workspaceId)
   const [commentsOpen, setCommentsOpen] = useState(false)
   const [openFile, setOpenFile] = useState<FileTarget | null>(null)
   const fileDirty = useRef(false)

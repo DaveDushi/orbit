@@ -20,6 +20,7 @@ import { useElementWidth } from '../../pages/useChatViewport'
 import { sentOf, type AgentCard as Card } from '../../lib/agentCard'
 import { Markdown } from './MessageBlocks'
 import { findTypedTaskIds } from './taskIds'
+import { useIsGuest } from '@/features/workspaces/permissions'
 
 type Values = Record<string, string | boolean>
 
@@ -392,6 +393,8 @@ function withIds(spec: UiSpec): UiSpec {
  */
 export function AgentCard({ card, messageId }: { card: Card; messageId: string }): ReactNode {
   const [pending, setPending] = useState<string | null>(null)
+  // the agent never works for a guest: its cards are read-only for one
+  const guest = useIsGuest()
   const sentActions = useSentActions(messageId, !card.live)
   const sendAction = useSendCardAction()
   const send = (elementId: string, values?: Values) => {
@@ -406,7 +409,7 @@ export function AgentCard({ card, messageId }: { card: Card; messageId: string }
   }
   return (
     <div data-slot="agent-card" aria-busy={card.live || undefined} className="mt-1.5 grid max-w-[640px] min-w-0 gap-1.5">
-      <CardContext value={{ messageId, live: card.live, pending, sent: sentOf(sentActions.data, card.blockId), send }}>
+      <CardContext value={{ messageId, live: card.live || guest, pending, sent: sentOf(sentActions.data, card.blockId), send }}>
         <JSONUIProvider registry={registry}>
           <Renderer spec={withIds(card.spec)} registry={registry} />
         </JSONUIProvider>

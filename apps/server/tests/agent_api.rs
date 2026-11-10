@@ -113,6 +113,10 @@ impl Fixture {
     }
 
     async fn add_member(&self, name: &str) -> Member {
+        self.add_person(name, "member").await
+    }
+
+    async fn add_person(&self, name: &str, role: &str) -> Member {
         let id = Id::new_v7();
         let now = TimestampMillis::now().as_millis();
         let email = format!("{name}@example.com");
@@ -129,11 +133,12 @@ impl Fixture {
         .unwrap();
         sqlx::query(
             "INSERT INTO memberships (id, workspace_id, user_id, role, version, created_at, updated_at) \
-             VALUES ($1, $2, $3, 'member', 0, $4, $4)",
+             VALUES ($1, $2, $3, $4, 0, $5, $5)",
         )
         .bind(Id::new_v7().to_string())
         .bind(&self.workspace_id)
         .bind(id.to_string())
+        .bind(role)
         .bind(now)
         .execute(self.database.pool())
         .await
@@ -1707,3 +1712,120 @@ async fn clicks_on_the_agents_card_become_its_inputs_with_the_stored_action_and_
         "{status}: {problem}"
     );
 }
+
+/// A guest (chat in its private channels only) never reaches the agent: its mentions, answers and
+/// card clicks start nothing, it gets no agent session, and every agent route of the workspace
+/// refuses it. Each route is called by the owner too, so it exists and checks access.
+#[tokio::test]
+async fn the_agent_ignores_guests_and_its_routes_refuse_them() {
+    let fixture = Fixture::new().await;
+    let (bot, _) = fixture.pending().await;
+    let guest = fixture.add_person("guest", "guest").await;
+    let channel = fixture
+        .chat(
+            &fixture.owner,
+            "POST",
+            "/conversations",
+            Some(json!({ "name": "client", "kind": "private", "member_ids": [guest.id.to_string()] })),
+        )
+        .await["result"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let bot_in_channel = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM chat_members WHERE conversation_id = $1 AND user_id = $2",
+        )
+        .bind(&channel)
+        .bind(&bot)
+        .fetch_one(fixture.database.pool())
+        .await
+        .unwrap()
+    };
+
+    // A guest's mention neither queues an input nor brings the agent in.
+    fixture
+        .send(&guest, &channel, &format!("<@{bot}> list every task"), None)
+        .await;
+    assert!(fixture.pending().await.1.is_empty());
+    assert_eq!(bot_in_channel().await, 0);
+
+    // A member's mention does; while the run waits, a guest's reply is no answer.
+    let mention = fixture
+        .send(&fixture.owner, &channel, &format!("<@{bot}> show my open tasks"), None)
+        .await;
+    assert_eq!(bot_in_channel().await, 1);
+    fixture
+        .internal("POST", &format!("/inputs/{mention}/ack"), None)
+        .await;
+    fixture
+        .set_thread(&mention, &channel, "waiting", &fixture.owner)
+        .await;
+    fixture
+        .send(&guest, &channel, "use project General", Some(&mention))
+        .await;
+    assert!(fixture.pending().await.1.is_empty());
+
+    // The guest sees the agent's card but cannot click it; the member can.
+    let (card, status, value) = fixture
+        .answer_with_card(&channel, &mention, task_card())
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{value}");
+    let button = json!({ "block_id": "ui0", "action_id": "plan" });
+    let (status, problem) = fixture.click(&guest, &card, button.clone()).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{problem}");
+    assert!(fixture.pending().await.1.is_empty());
+    let (status, value) = fixture.click(&fixture.owner, &card, button).await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+
+    // No agent session for a guest, even one set as a run's driver.
+    fixture
+        .set_thread(&mention, &channel, "running", &guest)
+        .await;
+    let session = |user: Id| json!({ "user_id": user.to_string(), "workspace_id": fixture.workspace_id });
+    let (status, value) = fixture
+        .internal("POST", "/sessions", Some(session(guest.id)))
+        .await;
+    assert!(status.is_client_error(), "{status} {value}");
+    fixture
+        .set_thread(&mention, &channel, "running", &fixture.owner)
+        .await;
+    let (status, value) = fixture
+        .internal("POST", "/sessions", Some(session(fixture.owner.id)))
+        .await;
+    assert!(status.is_success(), "{status} {value}");
+
+    // Every agent route of the workspace refuses the guest. The tool routes (`agent-tools`) take
+    // only an agent session, which a guest never gets (above).
+    let base = format!("/api/v1/workspaces/{}", fixture.workspace_id);
+    let routes = [
+        ("GET", format!("{base}/agent"), None),
+        ("PUT", format!("{base}/agent"), Some(json!({ "instructions": "Be brief." }))),
+        ("GET", format!("{base}/agent-integrations"), None),
+        ("GET", format!("{base}/agent-memory/team"), None),
+        ("GET", format!("{base}/agent-memory/private"), None),
+        ("GET", format!("{base}/agent-memory/team/wake"), None),
+        ("POST", format!("{base}/agent-memory/team"), Some(json!({ "body": "The guest is a client." }))),
+        ("POST", format!("{base}/agent-memory/private"), Some(json!({ "body": "I am a guest." }))),
+    ];
+    let mut wrong = Vec::new();
+    for (method, uri, body) in routes {
+        let (guest_status, guest_body) = fixture
+            .request(method, &uri, ("cookie", &guest.cookie), body.clone())
+            .await;
+        let (owner_status, owner_body) = fixture
+            .request(method, &uri, ("cookie", &fixture.owner.cookie), body)
+            .await;
+        let refused = matches!(guest_status, StatusCode::NOT_FOUND | StatusCode::FORBIDDEN);
+        // The owner passes the access check: success, or a later rule's refusal.
+        let checked = owner_status.as_u16() < 400
+            || (owner_status != StatusCode::NOT_FOUND && owner_body["code"] != guest_body["code"]);
+        if !refused || !checked {
+            wrong.push(format!(
+                "{method} {uri}: guest {guest_status} {guest_body}, owner {owner_status} {owner_body}"
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+

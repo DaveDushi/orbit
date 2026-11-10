@@ -3,6 +3,7 @@ import type { Permission } from '@orbit/api/generated/types.gen'
 import type { ReactNode } from 'react'
 import { KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, Switch, View } from 'react-native'
 
+import { guestMayOpen, isGuestRole } from '../../data/guest'
 import { useAgentEnabled } from '../../hooks/agent'
 import { useOrbit } from '../../orbit-context'
 import { alpha, cssColors, setSchemePreference, useLayout, useTheme } from '../../theme'
@@ -31,9 +32,12 @@ export const WORKSPACE_NAV: readonly SettingsNavItem[] = [
   { href: '/settings/members', label: 'Members', icon: 'people' },
 ]
 
-/** The links of `nav` this workspace role may open; the agent's page only when the server runs the agent. */
-export function allowedNav<T extends SettingsNavItem>(nav: readonly T[], permissions: readonly Permission[], agent = false): T[] {
-  return nav.filter((item) => (!item.permission || permissions.includes(item.permission)) && (!item.agent || agent))
+/**
+ * The links of `nav` this workspace role may open: the agent's page only when the server runs the agent, and for a
+ * guest only its own settings (`guestMayOpen`).
+ */
+export function allowedNav<T extends SettingsNavItem>(nav: readonly T[], permissions: readonly Permission[], agent = false, guest = false): T[] {
+  return nav.filter((item) => (!item.permission || permissions.includes(item.permission)) && (!item.agent || agent) && (!guest || guestMayOpen(item.href)))
 }
 
 export const ACCOUNT_NAV: readonly SettingsNavItem[] = [
@@ -69,6 +73,7 @@ export function SettingsShell({ title, nav, children, refreshing, onRefresh }: {
   const newUi = useLayout() === 'new'
   const { workspace } = useOrbit()
   const agent = useAgentEnabled()
+  const guest = isGuestRole(workspace.role)
   const muted = alpha(colors.mutedForeground, 0.7)
   return (
     <SafeAreaView edges={['top', 'left', 'right']} className="flex-1 bg-background">
@@ -79,7 +84,8 @@ export function SettingsShell({ title, nav, children, refreshing, onRefresh }: {
           {title}
         </Text>
         <View className="flex-row gap-1.5">
-          <IconButton icon="search" label="Search" color={muted} onPress={() => router.navigate('/tasks?search=1')} />
+          {/* a guest has no tasks to search */}
+          {guest ? null : <IconButton icon="search" label="Search" color={muted} onPress={() => router.navigate('/tasks?search=1')} />}
           <IconButton icon={scheme === 'dark' ? 'sun' : 'moon'} label="Toggle theme" iconSize={15} color={muted} onPress={() => setSchemePreference(scheme === 'dark' ? 'light' : 'dark')} />
         </View>
       </PaneHeader>
@@ -91,7 +97,7 @@ export function SettingsShell({ title, nav, children, refreshing, onRefresh }: {
         >
           {newUi || nav.length === 0 ? null : (
             <View accessibilityRole="tablist" accessibilityLabel={title} className="flex-row flex-wrap gap-0.5 py-3 border-t border-b border-border">
-              {allowedNav(nav, workspace.permissions, agent).map((item) => {
+              {allowedNav(nav, workspace.permissions, agent, guest).map((item) => {
                 const active = pathname === item.href
                 return (
                   <Pressable

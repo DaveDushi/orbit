@@ -1919,12 +1919,21 @@ export type InstanceSettingsView = {
 };
 
 export type InvitationBody = {
+    /**
+     * The private channels a guest joins; required (one or more) for `guest`, refused for
+     * other roles.
+     */
+    conversation_ids?: Array<string>;
     delivery: DeliveryBody;
     email: string;
     role: RoleBody;
 };
 
 export type InvitationPreview = {
+    /**
+     * The private channels a guest invitation adds the guest to; empty for other roles.
+     */
+    channels: Array<string>;
     email: string;
     workspace_name: string;
 };
@@ -4214,7 +4223,7 @@ export type RichListItem = {
     type: 'rich_text_section';
 };
 
-export type RoleBody = 'owner' | 'admin' | 'member';
+export type RoleBody = 'owner' | 'admin' | 'member' | 'guest';
 
 export type RoleChangeBody = {
     expected_version: number;
@@ -5190,7 +5199,7 @@ export type WorkspaceRecord = {
     version: number;
 };
 
-export type WorkspaceRole = 'owner' | 'admin' | 'member';
+export type WorkspaceRole = 'owner' | 'admin' | 'member' | 'guest';
 
 /**
  * How many bytes of files a workspace stores, and its quota.
@@ -17604,7 +17613,7 @@ export type CreateInvitationErrors = {
      */
     413: WorkspaceProblem;
     /**
-     * invalid_email
+     * invalid_email, invalid_guest_channels
      */
     422: WorkspaceProblem;
     /**

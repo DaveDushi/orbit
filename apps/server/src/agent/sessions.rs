@@ -41,6 +41,7 @@ pub(crate) async fn issue(
          JOIN users ON users.id = memberships.user_id \
          JOIN workspaces ON workspaces.id = memberships.workspace_id \
          WHERE memberships.user_id = $1 AND memberships.workspace_id = $2 \
+         AND memberships.role <> 'guest' \
          AND users.suspended_at IS NULL AND workspaces.deleted_at IS NULL",
     )
     .bind(user_id.to_string())

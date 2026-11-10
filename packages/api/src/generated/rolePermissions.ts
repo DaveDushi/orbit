@@ -21,6 +21,7 @@ export const ROLE_PERMISSIONS: Record<WorkspaceRole, Permission[]> = {
     "drive.purge",
     "drive.shares.manage"
   ],
+  "guest": [],
   "member": [],
   "owner": [
     "workspace.update",

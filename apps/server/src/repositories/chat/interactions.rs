@@ -126,6 +126,9 @@ impl ChatRepository {
         if message.bot.is_some() || agent != Some(message.author_id) {
             return Ok(false);
         }
+        if access.actor.is_guest() {
+            return Err(ChatError::Forbidden("Guests cannot use the agent."));
+        }
         access.require_member()?;
         access.require_open()?;
         if message.deleted {

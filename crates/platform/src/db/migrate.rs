@@ -585,6 +585,11 @@ impl MigrationRunner {
                     ),
                     false,
                 ),
+                Migration::new(
+                    88,
+                    include_str!("../../../../apps/server/migrations/0088_guests.sql"),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -834,6 +839,11 @@ impl MigrationRunner {
                 include_str!(
                     "../../../../apps/server/migrations/postgres/0087_agent_integration_connect.sql"
                 ),
+                false,
+            ),
+            Migration::new(
+                88,
+                include_str!("../../../../apps/server/migrations/postgres/0088_guests.sql"),
                 false,
             ),
         ];

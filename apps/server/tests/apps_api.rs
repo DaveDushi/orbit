@@ -1413,3 +1413,45 @@ async fn a_framed_login_required_tells_orbit_and_goes_back_to_the_app() {
     assert!(!bad.headers.contains_key(header::LOCATION));
     assert!(!bad.text.contains("orbit-redirect"));
 }
+
+#[tokio::test]
+async fn a_guest_opens_and_signs_in_to_no_app() {
+    let fixture = Fixture::new().await;
+    let client = fixture
+        .add_app("Everyone", &["owner", "admin", "member"])
+        .await;
+    let guest = fixture.user("guest", Some("guest")).await;
+    let member = fixture.user("member", Some("member")).await;
+    for path in ["/apps", "/apps/everyone/frame", "/workspace-apps"] {
+        assert_eq!(
+            fixture.api("GET", path, &guest, None).await.status,
+            StatusCode::NOT_FOUND,
+            "{path}"
+        );
+    }
+    assert_eq!(
+        fixture.api("GET", "/apps", &member, None).await.status,
+        StatusCode::OK
+    );
+    // No app allows guests, and a guest never gets a code.
+    let refused = fixture
+        .api(
+            "PATCH",
+            &format!("/workspace-apps/{}", client.app_id),
+            &fixture.owner,
+            Some(json!({"allowed_roles": ["guest"]})),
+        )
+        .await;
+    assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let answer = fixture.authorize(&guest, &client).await;
+    assert_eq!(answer.status, StatusCode::SEE_OTHER);
+    assert_eq!(answer.param("error").unwrap(), "access_denied");
+    assert!(answer.param("code").is_none());
+    assert!(
+        fixture
+            .authorize(&member, &client)
+            .await
+            .param("code")
+            .is_some()
+    );
+}
