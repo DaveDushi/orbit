@@ -4,12 +4,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 6bfa8a7ec7e63f01d776cfb392961aee103934ac
-  (step 1c: MCP OAuth Connect, schema 87, November 10, 2026).
+- Source: DaveDushi/orbit, `main` at 2d72c1c769cc8bab8a1b2696e7367feafd0cfe8a
+  (step 2: chat-only guest role, schema 88, November 10, 2026; not pushed yet).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:6bfa8a7`); fork commits have no published upstream image.
-- Image ID: sha256:7364c8357c17f843026fa6f23e82ad9007919ab186200ff83a82e73abd621e96
-- Team agent sidecar code (`/opt/orbit-agent`): commit 6bfa8a7.
+  (`orbit:2d72c1c`); fork commits have no published upstream image.
+- Image ID: sha256:02376c2c97d084c62528c481597ed2274e772e3ef7e98995b46834be40ccaaf3
+- Team agent sidecar code (`/opt/orbit-agent`): commit 2d72c1c.
 - Desktop app downloads: https://orbit.wellrox.com/downloads/desktop/ (installer, zip, `latest.json` for the app's update
   check; behind the exe.dev login like the rest). nginx `location /downloads/desktop/` in
   `/etc/nginx/conf.d/orbit.conf` serves `/srv/orbit-downloads/desktop/` (outside the deploy, so deploys keep it; the
@@ -250,6 +250,70 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 10, 2026 upgrade: step 2, chat-only guest role (schema 88)
+
+`main` from `6d92dbb2` to `2d72c1c7`: the three commits of branch `guest-role` (based on `a249fefa`) cherry-picked on
+top, the same linear result as a rebase and fast-forward (the tree differs from the branch only by `6d92dbb2`'s
+workflow file): `44be5af5` (port of upstream `5821bc44`, #86: role Guest; owners and admins invite a guest to chosen
+private channels; a guest sees only those channels, direct messages with people there and their account settings; no
+public channels, Home, Activity, tasks, Docs, Drive, apps, API tokens or Donna; migration `0088_guests`: SQLite
+rebuilds `workspace_invitations` and `memberships` to add `guest` to their CHECK, Postgres only changes the
+constraints; both add `workspace_invitation_conversations`), `1adbadb1` (agent test reads every chunk), `2d72c1c7`
+(lessons). The branch already had the line on top of the `2026-11-10` "what's new" entry (Guests; two older lines merged
+to keep 4) and the `aboutOrbit()` "Guests" section. No new `ORBIT_*` setting; sidecar `package.json`/`package-lock.json`
+unchanged (only `src`). After the deploy, `e1403955` (test only): the two agent prompt tests stream the system prompt
+at 4000 tokens/s; at the default 400 it is longer than their 15 s wait (they failed on the branch too).
+
+Checks before the switch (after `bun install --frozen-lockfile` and `npm ci` in `apps/agent`): agent `tsc` and
+`node --test` (60 pass, 0 fail, 11 skipped, with `e1403955`); web `tsc -b` and `bun test` of the 4 changed test files
+(21 pass); mobile `tsc` and `bun test` of `guest`, `chat`, `account-api` (37 pass); Rust (SQLite): orbit-domain
+`policies` (15), orbit-platform `database` (50) and `backup` (23), orbit-server `guest_access` (1) and `app_smoke` (21).
+(`guest_access` and `app_smoke` first failed with `StaticAssets(RevisionMismatch)`: this checkout's `apps/web/dist` was
+an old build; a fresh web build fixed it.) Postgres was not run. `orbit-deploy image` built `orbit:2d72c1c` (37 min);
+`deploy/smoke.sh` passed; `orbit config check` passed with the extracted binary. A migration rehearsal on a hot copy
+gave the same result as the one below.
+
+At the switch: stopped `orbit-agent` and `orbit` at 20:25:17 UTC, created snapshot
+`01a1c722-ed80-71dc-81f7-0cd456bf1feb` with the old CLI (`/usr/local/bin/orbit-6bfa8a7`; stored in S3, the verified
+download is `/var/backups/orbit/downloads/01a1c722-ed80-71dc-81f7-0cd456bf1feb`) and verified it,
+`deploy/backup-rehearsal.sh` with the old binary passed (verify), ran `migrate run` of the new binary on a copy in
+`/var/lib/orbit/rehearsal-2d72c1c-switch-*` (1 applied, schema 88, quick-check ok, 0 foreign-key rows, counts
+unchanged: 7 users, 1 workspace, 7 memberships (6 member, 1 owner), 7 invitations, 66 task assignees, 62 chat members,
+74 thread members, 3 projects, 67 tasks, 53 pages, 745 chat messages, 154 agent inputs; owner check and the 5
+`memberships` triggers present; deleted afterwards), saved the sidecar data as
+`/var/backups/orbit-agent/orbit-agent-before-2d72c1c.tgz`, kept the old sidecar code as
+`/opt/orbit-agent.before-2d72c1c`, installed the binary (`/usr/local/bin/orbit-2d72c1c` too) and the new sidecar
+`src`, and started `orbit` (20:25:57, ready), then `orbit-agent` (20:26:02). `main` is **not** pushed. `vm-health`
+(`/root/ops/vm-health.conf`, old copy `.before-2d72c1c`): `PROD_TAG=2d72c1c`, `ROLLBACK_TAG=6bfa8a7`,
+`ROLLBACK_BACKUP=01a1c722-ed80-71dc-81f7-0cd456bf1feb`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` active, no restarts; readiness
+(all checks) and `/health/live` 200; `/orbit-build.json` revision `2d72c1c7`; schema 88; live quick-check and
+foreign-key checks pass; web `/` 200; `deploy/verify-production.sh` passes against `http://127.0.0.1:8000` with
+`X-Forwarded-Proto: https`; sidecar `/health` `{"ok":true,"mock":false}` and `/opt/orbit-agent/src` equal to
+`apps/agent/src` of `2d72c1c7` (the `2026-11-10` entry starts with the Guests line); no log warnings; `vm-health` OK
+except the nginx lines of the switch window (65, all 20:25, upstream refused while stopped). Signed-in API check as the
+owner ddusi@wellrox.com (temporary session row, 30 min, revoked by `POST /api/v1/auth/logout`, then 401):
+`/workspaces` gives Wellrox (owner), chat conversations 12 (6 public, 1 private, 5 DMs), projects 2 (the third row is
+deleted), members 7 (6 member, 1 owner). **Not** verified: a signed-in check as a `member` role account, a real guest
+invitation and guest sign-in on production, and a Donna answer about what's new (the deployed file was checked).
+
+Rollback (the old binary refuses schema 88: restore the snapshot together with the binary; work after 20:25 UTC is
+lost, also any guest invitation made after the deploy). To go back to `6bfa8a7`:
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-2d72c1c backup verify 01a1c722-ed80-71dc-81f7-0cd456bf1feb && /usr/local/bin/orbit-2d72c1c backup restore 01a1c722-ed80-71dc-81f7-0cd456bf1feb'
+sudo install -m 755 /usr/local/bin/orbit-6bfa8a7 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-2d72c1c /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-2d72c1c.tgz
+```
+
+After this rollback, set `PROD_TAG=6bfa8a7`, `ROLLBACK_TAG=e3ba2f8`,
+`ROLLBACK_BACKUP=01a1c629-5ad6-7167-98d6-3431a1608760` in `/root/ops/vm-health.conf`.
 
 ### November 10, 2026 upgrade: step 1c, Connect remote MCP servers with OAuth (schema 87)
 
