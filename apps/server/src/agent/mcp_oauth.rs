@@ -224,7 +224,8 @@ pub(crate) fn protected_resource_urls(mcp_url: &Url) -> Vec<Url> {
     urls
 }
 
-/// The metadata URLs of an authorization server, in the spec's order.
+/// The metadata URLs of an authorization server: the spec's order, with the path-appended RFC 8414
+/// URL second. Some servers (TikTok's) answer only at the path-appended URLs.
 pub(crate) fn authorization_server_urls(issuer: &Url) -> Vec<Url> {
     let path = issuer.path().trim_end_matches('/').to_owned();
     let at = |path: String| {
@@ -242,6 +243,7 @@ pub(crate) fn authorization_server_urls(issuer: &Url) -> Vec<Url> {
     } else {
         vec![
             at(format!("/.well-known/oauth-authorization-server{path}")),
+            at(format!("{path}/.well-known/oauth-authorization-server")),
             at(format!("/.well-known/openid-configuration{path}")),
             at(format!("{path}/.well-known/openid-configuration")),
         ]
@@ -279,7 +281,9 @@ fn strings(value: &Value) -> Vec<String> {
 }
 
 /// The authorization server metadata, checked: the exact `issuer`, https endpoints (plain HTTP
-/// only for test hosts), PKCE with S256, and the code flow.
+/// only for test hosts), PKCE with S256 (a MUST of the MCP spec), and the code flow. OIDC fields
+/// (`jwks_uri`, `subject_types_supported`, …) are not needed: an OAuth-shaped
+/// `openid-configuration` is fine.
 pub(crate) fn checked_metadata(
     document: &Value,
     issuer: &str,
@@ -1089,6 +1093,7 @@ mod tests {
             urls,
             [
                 "https://business-api.tiktok.com/.well-known/oauth-authorization-server/open_mcp/tt-ads-mcp-organic-social/oauth",
+                "https://business-api.tiktok.com/open_mcp/tt-ads-mcp-organic-social/oauth/.well-known/oauth-authorization-server",
                 "https://business-api.tiktok.com/.well-known/openid-configuration/open_mcp/tt-ads-mcp-organic-social/oauth",
                 "https://business-api.tiktok.com/open_mcp/tt-ads-mcp-organic-social/oauth/.well-known/openid-configuration",
             ]
@@ -1338,5 +1343,136 @@ mod tests {
         let tokens = parse_tokens(&json!({ "access_token": "access-value" }), 0).unwrap();
         let text = format!("{client:?} {connection:?} {tokens:?}");
         assert!(!text.contains("value"), "{text}");
+    }
+
+    /// A local server with TikTok's shapes: the MCP path answers 401 with `resource_metadata`, and
+    /// the authorization server's metadata answers only at the paths in `serves`. Returns its base
+    /// URL and the paths that were asked for.
+    async fn tiktok_like(
+        serves: &'static [&'static str],
+    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        use axum::http::{StatusCode, Uri, header};
+        use axum::response::IntoResponse;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (seen, origin) = (std::sync::Arc::clone(&asked), base.clone());
+        let router = axum::Router::new().fallback(move |uri: Uri| {
+            let (seen, base) = (std::sync::Arc::clone(&seen), origin.clone());
+            async move {
+                let path = uri.path().to_owned();
+                seen.lock().unwrap().push(path.clone());
+                let mcp = format!("{base}/open_mcp/social");
+                if path == "/open_mcp/social" {
+                    let metadata = format!(
+                        "Bearer resource_metadata=\"{base}/.well-known/oauth-protected-resource/open_mcp/social\""
+                    );
+                    return (StatusCode::UNAUTHORIZED, [(header::WWW_AUTHENTICATE, metadata)], "unauthorized")
+                        .into_response();
+                }
+                if path == "/.well-known/oauth-protected-resource/open_mcp/social" {
+                    return axum::Json(json!({
+                        "authorization_servers": [format!("{mcp}/oauth")],
+                        "bearer_methods_supported": ["header"],
+                        "resource": mcp,
+                        "scopes_supported": ["user.info.basic", "video.list"],
+                    }))
+                    .into_response();
+                }
+                if serves.contains(&path.as_str()) {
+                    let issuer = format!("{mcp}/oauth");
+                    // TikTok's answer, OAuth-shaped also at openid-configuration: no jwks_uri,
+                    // subject_types_supported or id_token_signing_alg_values_supported.
+                    return axum::Json(json!({
+                        "authorization_endpoint": format!("{issuer}/tiktok/authorize"),
+                        "code_challenge_methods_supported": ["S256"],
+                        "grant_types_supported": ["authorization_code", "refresh_token"],
+                        "issuer": issuer,
+                        "registration_endpoint": format!("{issuer}/tiktok/register"),
+                        "response_types_supported": ["code"],
+                        "revocation_endpoint": format!("{issuer}/tiktok/revoke"),
+                        "token_endpoint": format!("{issuer}/tiktok/token"),
+                        "token_endpoint_auth_methods_supported": ["none"],
+                    }))
+                    .into_response();
+                }
+                (StatusCode::NOT_FOUND, "<html>404 Not Found</html>").into_response()
+            }
+        });
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        (base, asked)
+    }
+
+    fn metadata_paths(asked: &std::sync::Mutex<Vec<String>>) -> Vec<String> {
+        asked
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|path| {
+                path.contains("oauth-authorization-server") || path.contains("openid-configuration")
+            })
+            .cloned()
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn discovery_finds_tiktoks_metadata_at_the_path_appended_url() {
+        let outbound = super::Outbound::new(TestHosts::new(["127.0.0.1"]));
+        let (base, asked) =
+            tiktok_like(&["/open_mcp/social/oauth/.well-known/oauth-authorization-server"]).await;
+        let mcp = Url::parse(&format!("{base}/open_mcp/social")).unwrap();
+        let discovery = super::discover(&outbound, &mcp).await.unwrap();
+        assert_eq!(discovery.issuer, format!("{base}/open_mcp/social/oauth"));
+        assert_eq!(discovery.resource, mcp.as_str());
+        assert_eq!(
+            discovery.token_endpoint,
+            format!("{base}/open_mcp/social/oauth/tiktok/token")
+        );
+        assert_eq!(
+            discovery.scope.as_deref(),
+            Some("user.info.basic video.list")
+        );
+        // The inserted path answered 404, the appended one 200, and nothing more was asked.
+        assert_eq!(
+            metadata_paths(&asked),
+            [
+                "/.well-known/oauth-authorization-server/open_mcp/social/oauth",
+                "/open_mcp/social/oauth/.well-known/oauth-authorization-server",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn discovery_accepts_an_oauth_shaped_openid_configuration() {
+        let outbound = super::Outbound::new(TestHosts::new(["127.0.0.1"]));
+        let (base, asked) =
+            tiktok_like(&["/open_mcp/social/oauth/.well-known/openid-configuration"]).await;
+        let mcp = Url::parse(&format!("{base}/open_mcp/social")).unwrap();
+        let discovery = super::discover(&outbound, &mcp).await.unwrap();
+        assert_eq!(
+            discovery.registration_endpoint.as_deref(),
+            Some(format!("{base}/open_mcp/social/oauth/tiktok/register").as_str())
+        );
+        assert_eq!(metadata_paths(&asked).len(), 4);
+
+        // Nothing answers: a clear error, no panic.
+        let (base, _) = tiktok_like(&[]).await;
+        let mcp = Url::parse(&format!("{base}/open_mcp/social")).unwrap();
+        assert!(super::discover(&outbound, &mcp).await.is_err());
+    }
+
+    #[test]
+    fn only_issuer_and_the_two_endpoints_are_required_besides_pkce() {
+        let none = TestHosts::default();
+        let minimal = json!({
+            "issuer": "https://auth.example.com",
+            "authorization_endpoint": "https://auth.example.com/authorize",
+            "token_endpoint": "https://auth.example.com/token",
+            "code_challenge_methods_supported": ["S256"],
+        });
+        let discovery = checked_metadata(&minimal, "https://auth.example.com", &none).unwrap();
+        assert_eq!(discovery.registration_endpoint, None);
+        assert!(discovery.auth_methods.is_empty());
     }
 }
