@@ -1,0 +1,1226 @@
+{
+  "schema": 1,
+  "commit": "56dc71792ad33d43b750605f4a320157f3119bf4",
+  "short": "56dc717",
+  "branch": "ci-hardening",
+  "dirty": false,
+  "date": "2026-11-10T22:12:09.681Z",
+  "duration_s": 186,
+  "options": {
+    "perf": true,
+    "security": false,
+    "quick": false,
+    "build": false,
+    "prod": false
+  },
+  "machine": {
+    "hostname_hash": "d5df452f",
+    "cpu": "AMD EPYC 9554P 64-Core Processor",
+    "cpus": 4,
+    "memory_gb": 16,
+    "kernel": "6.12.115",
+    "bun": "1.4.4",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "cargo_build_jobs": 1,
+    "build_slice": true
+  },
+  "perf": {
+    "bundle": {
+      "entry_js": {
+        "files": [
+          "shared~index~ChatPage~taskPages~AppShell~PageEditor~settingsPages.js",
+          "shared~index~AppPage~OnboardingPage~HomePage~DrivePage~DocsPage~ChatPage~taskPages~AppShell~jp1sn2cn.js",
+          "shared~index~AppPage~OnboardingPage~InboxPage~HomePage~DrivePage~DocsPage~ChatPage~taskPage~ffmtc6wb.js",
+          "shared~index~AppPage~OnboardingPage~InboxPage~HomePage~DrivePage~DocsPage~PdfPages~ChatPage~m20eprm8.js",
+          "rolldown-runtime.js",
+          "shared~OnboardingPage~InboxPage~HomePage~DocsPage~ChatPage~taskPages~AppShell~settingsPages.js",
+          "shared~AppPage~InboxPage~HomePage~DrivePage~DocsPage~ChatPage~taskPages~AppShell~settingsPages.js",
+          "shared~index~AppPage~DrivePage~DocsPage~ChatPage~taskPages~AppShell~PageEditor~settingsPages.js",
+          "shared~index~OnboardingPage~InboxPage~DrivePage~DocsPage~ChatPage~taskPages~PageEditor~settingsPages.js",
+          "shared~index~AppPage~OnboardingPage~DrivePage~DocsPage~PdfPages~ChatPage~taskPages~AppShell~b9s324f5.js",
+          "shared~index~DrivePage~ChatPage~settingsPages.js",
+          "shared~DrivePage~DocsPage~ChatPage~taskPages~AppShell~settingsPages.js",
+          "shared~InboxPage~HomePage~DocsPage~ChatPage~taskPages~AppShell~PageEditor~diagram-ODIL2UCW~~nu1mfgza.js",
+          "shared~mermaid.core~pegDiagram-ECIUJNBX~abnfDiagram-WEYOIA3C~ebnfDiagram-V4P3TTPT~railroadD~h3hav6nd.js",
+          "index(mermaid).js"
+        ],
+        "raw_kb": 1321.6,
+        "gzip_kb": 424.8,
+        "brotli_kb": 367.2
+      },
+      "entry_css": {
+        "files": [
+          "index.css"
+        ],
+        "raw_kb": 325.7,
+        "gzip_kb": 46.3,
+        "brotli_kb": 35.6
+      },
+      "all_js": {
+        "raw_kb": 11933.4,
+        "gzip_kb": 3494.9,
+        "brotli_kb": 2895.8
+      },
+      "all_css": {
+        "raw_kb": 363,
+        "gzip_kb": 53.2,
+        "brotli_kb": 41.6
+      },
+      "chunk_count": 104,
+      "largest_lazy_gzip_kb": 437.6,
+      "lazy_over_100kb_gzip": [
+        {
+          "file": "elk-QONTBCTQ.js",
+          "raw_kb": 1428.5,
+          "gzip_kb": 437.6,
+          "brotli_kb": 335.9
+        },
+        {
+          "file": "pdf.worker.min.js",
+          "raw_kb": 1150.1,
+          "gzip_kb": 354.5,
+          "brotli_kb": 293.6
+        },
+        {
+          "file": "PageEditor.js",
+          "raw_kb": 892.3,
+          "gzip_kb": 262.3,
+          "brotli_kb": 216
+        },
+        {
+          "file": "src(mediabunny).js",
+          "raw_kb": 710.2,
+          "gzip_kb": 178.9,
+          "brotli_kb": 144.1
+        },
+        {
+          "file": "ChatPage.js",
+          "raw_kb": 469.2,
+          "gzip_kb": 146.6,
+          "brotli_kb": 119.8
+        },
+        {
+          "file": "shared~architectureDiagram-ZHVYKT53~cose-bilkent-JH36ORCC.js",
+          "raw_kb": 424.4,
+          "gzip_kb": 133.4,
+          "brotli_kb": 112.6
+        },
+        {
+          "file": "PdfPages.js",
+          "raw_kb": 421.6,
+          "gzip_kb": 125.6,
+          "brotli_kb": 104.4
+        },
+        {
+          "file": "shared~pegDiagram-ECIUJNBX~abnfDiagram-WEYOIA3C~ebnfDiagram-V4P3TTPT~railroadDiagram-Y72NRB~gaub1phv.js",
+          "raw_kb": 614.3,
+          "gzip_kb": 122.5,
+          "brotli_kb": 102.8
+        },
+        {
+          "file": "taskPages.js",
+          "raw_kb": 328.3,
+          "gzip_kb": 103.4,
+          "brotli_kb": 82.8
+        }
+      ],
+      "top_lazy": [
+        {
+          "file": "elk-QONTBCTQ.js",
+          "raw_kb": 1428.5,
+          "gzip_kb": 437.6,
+          "brotli_kb": 335.9
+        },
+        {
+          "file": "pdf.worker.min.js",
+          "raw_kb": 1150.1,
+          "gzip_kb": 354.5,
+          "brotli_kb": 293.6
+        },
+        {
+          "file": "PageEditor.js",
+          "raw_kb": 892.3,
+          "gzip_kb": 262.3,
+          "brotli_kb": 216
+        },
+        {
+          "file": "src(mediabunny).js",
+          "raw_kb": 710.2,
+          "gzip_kb": 178.9,
+          "brotli_kb": 144.1
+        },
+        {
+          "file": "ChatPage.js",
+          "raw_kb": 469.2,
+          "gzip_kb": 146.6,
+          "brotli_kb": 119.8
+        },
+        {
+          "file": "shared~architectureDiagram-ZHVYKT53~cose-bilkent-JH36ORCC.js",
+          "raw_kb": 424.4,
+          "gzip_kb": 133.4,
+          "brotli_kb": 112.6
+        },
+        {
+          "file": "PdfPages.js",
+          "raw_kb": 421.6,
+          "gzip_kb": 125.6,
+          "brotli_kb": 104.4
+        },
+        {
+          "file": "shared~pegDiagram-ECIUJNBX~abnfDiagram-WEYOIA3C~ebnfDiagram-V4P3TTPT~railroadDiagram-Y72NRB~gaub1phv.js",
+          "raw_kb": 614.3,
+          "gzip_kb": 122.5,
+          "brotli_kb": 102.8
+        },
+        {
+          "file": "taskPages.js",
+          "raw_kb": 328.3,
+          "gzip_kb": 103.4,
+          "brotli_kb": 82.8
+        },
+        {
+          "file": "settingsPages.js",
+          "raw_kb": 306.5,
+          "gzip_kb": 90.4,
+          "brotli_kb": 69.8
+        }
+      ]
+    },
+    "pageload": {
+      "runs": 3,
+      "presets": {
+        "desktop": {
+          "viewport": {
+            "width": 1350,
+            "height": 940
+          },
+          "isMobile": false,
+          "hasTouch": false,
+          "deviceScaleFactor": 1,
+          "latency": 40,
+          "down": 10240,
+          "up": 10240,
+          "cpu": 1,
+          "settle": 3000
+        },
+        "phone": {
+          "viewport": {
+            "width": 412,
+            "height": 823
+          },
+          "isMobile": true,
+          "hasTouch": true,
+          "deviceScaleFactor": 1.75,
+          "latency": 150,
+          "down": 1638,
+          "up": 750,
+          "cpu": 4,
+          "settle": 6000
+        }
+      },
+      "pages": {
+        "login.desktop": {
+          "fcp_ms": 660,
+          "lcp_ms": 660,
+          "tbt_ms": 0,
+          "cls": 0,
+          "transfer_kb": 445.2,
+          "js_kb": 371.7,
+          "css_kb": 35.9,
+          "requests": 20
+        },
+        "home.desktop": {
+          "fcp_ms": 1104,
+          "lcp_ms": 1104,
+          "tbt_ms": 0,
+          "cls": 0.001,
+          "transfer_kb": 847.2,
+          "js_kb": 745.4,
+          "css_kb": 42.3,
+          "requests": 49
+        },
+        "app_tasks.desktop": {
+          "fcp_ms": 1556,
+          "lcp_ms": 1556,
+          "tbt_ms": 222,
+          "cls": 0.001,
+          "transfer_kb": 1199.1,
+          "js_kb": 1069.2,
+          "css_kb": 42.3,
+          "requests": 53
+        },
+        "docs.desktop": {
+          "fcp_ms": 1372,
+          "lcp_ms": 2300,
+          "tbt_ms": 661,
+          "cls": 0,
+          "transfer_kb": 893.7,
+          "js_kb": 787.9,
+          "css_kb": 42.3,
+          "requests": 48
+        },
+        "login.phone": {
+          "fcp_ms": 3256,
+          "lcp_ms": 3256,
+          "tbt_ms": 0,
+          "cls": 0,
+          "transfer_kb": 445.2,
+          "js_kb": 371.7,
+          "css_kb": 35.9,
+          "requests": 20
+        },
+        "home.phone": {
+          "fcp_ms": 4160,
+          "lcp_ms": 4160,
+          "tbt_ms": 0,
+          "cls": 0.002,
+          "transfer_kb": 847.2,
+          "js_kb": 745.4,
+          "css_kb": 42.3,
+          "requests": 49
+        },
+        "app_tasks.phone": {
+          "fcp_ms": 5928,
+          "lcp_ms": 6900,
+          "tbt_ms": 687,
+          "cls": 0.001,
+          "transfer_kb": 1199.1,
+          "js_kb": 1069.2,
+          "css_kb": 42.3,
+          "requests": 53
+        },
+        "docs.phone": {
+          "fcp_ms": 4180,
+          "lcp_ms": 6780,
+          "tbt_ms": 811,
+          "cls": 0,
+          "transfer_kb": 894.3,
+          "js_kb": 787.9,
+          "css_kb": 42.3,
+          "requests": 50
+        }
+      },
+      "console_errors": {
+        "login": [
+          "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+        ],
+        "app_tasks": [
+          "Failed to load resource: the server responded with a status of 404 (Not Found)"
+        ]
+      },
+      "asset_encoding": "br",
+      "checks": [
+        {
+          "id": "perf.asset-compression",
+          "category": "performance",
+          "title": "JS/CSS are served compressed (br/gzip/zstd)",
+          "result": "pass",
+          "evidence": [
+            "GET /assets/index.js with Accept-Encoding: br, gzip, zstd -> content-encoding br, content-length 84870 (315.7 kB decoded)"
+          ]
+        },
+        {
+          "id": "console.csp.login",
+          "category": "csp",
+          "title": "login: no CSP console errors",
+          "result": "pass",
+          "evidence": [
+            "none"
+          ]
+        },
+        {
+          "id": "console.csp.home",
+          "category": "csp",
+          "title": "home: no CSP console errors",
+          "result": "pass",
+          "evidence": [
+            "none"
+          ]
+        },
+        {
+          "id": "console.csp.app_tasks",
+          "category": "csp",
+          "title": "app_tasks: no CSP console errors",
+          "result": "pass",
+          "evidence": [
+            "none"
+          ]
+        },
+        {
+          "id": "console.csp.docs",
+          "category": "csp",
+          "title": "docs: no CSP console errors",
+          "result": "pass",
+          "evidence": [
+            "none"
+          ]
+        }
+      ]
+    },
+    "latency": {
+      "requests": 500,
+      "concurrency": 10,
+      "endpoints": {
+        "health_ready": {
+          "p50_ms": 8.05,
+          "p95_ms": 16.02,
+          "p99_ms": 20.99,
+          "rps": 1114,
+          "non_200": 0
+        },
+        "index_html": {
+          "p50_ms": 0.13,
+          "p95_ms": 0.57,
+          "p99_ms": 1.43,
+          "rps": 46575,
+          "non_200": 0
+        },
+        "session_me": {
+          "p50_ms": 2.44,
+          "p95_ms": 7.81,
+          "p99_ms": 23.25,
+          "rps": 2366,
+          "non_200": 0
+        },
+        "workspace_list": {
+          "p50_ms": 1.32,
+          "p95_ms": 4.89,
+          "p99_ms": 8.25,
+          "rps": 5338,
+          "non_200": 0
+        },
+        "docs_list": {
+          "p50_ms": 2.68,
+          "p95_ms": 6.32,
+          "p99_ms": 8.63,
+          "rps": 3211,
+          "non_200": 0
+        },
+        "docs_read": {
+          "p50_ms": 1.15,
+          "p95_ms": 3.04,
+          "p99_ms": 4.39,
+          "rps": 7118,
+          "non_200": 0
+        },
+        "docs_search": {
+          "p50_ms": 1.29,
+          "p95_ms": 2.51,
+          "p99_ms": 3.31,
+          "rps": 6833,
+          "non_200": 0
+        },
+        "app_list": {
+          "p50_ms": 1.65,
+          "p95_ms": 4.7,
+          "p99_ms": 6.78,
+          "rps": 4851,
+          "non_200": 0
+        },
+        "tasks_list": {
+          "p50_ms": 18.15,
+          "p95_ms": 26.02,
+          "p99_ms": 37.04,
+          "rps": 526,
+          "non_200": 0
+        },
+        "task_read": {
+          "p50_ms": 1.24,
+          "p95_ms": 2.03,
+          "p99_ms": 3.75,
+          "rps": 7296,
+          "non_200": 0
+        },
+        "file_read": {
+          "p50_ms": 0.68,
+          "p95_ms": 1.45,
+          "p99_ms": 2.03,
+          "rps": 12890,
+          "non_200": 0
+        }
+      }
+    },
+    "server": {
+      "cold_start_ms": 250,
+      "fresh_start_ms": 147,
+      "rss_idle_mb": 63,
+      "rss_after_latency_mb": 95,
+      "rss_after_pageload_mb": 119,
+      "rss_peak_mb": 119
+    }
+  },
+  "security": {
+    "summary": {
+      "checks": 5,
+      "pass": 5,
+      "fail": 0,
+      "warn": 0,
+      "skip": 0,
+      "findings_by_severity": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "info": 0
+      }
+    },
+    "checks": [
+      {
+        "id": "perf.asset-compression",
+        "category": "performance",
+        "title": "JS/CSS are served compressed (br/gzip/zstd)",
+        "result": "pass",
+        "evidence": [
+          "GET /assets/index.js with Accept-Encoding: br, gzip, zstd -> content-encoding br, content-length 84870 (315.7 kB decoded)"
+        ]
+      },
+      {
+        "id": "console.csp.login",
+        "category": "csp",
+        "title": "login: no CSP console errors",
+        "result": "pass",
+        "evidence": [
+          "none"
+        ]
+      },
+      {
+        "id": "console.csp.home",
+        "category": "csp",
+        "title": "home: no CSP console errors",
+        "result": "pass",
+        "evidence": [
+          "none"
+        ]
+      },
+      {
+        "id": "console.csp.app_tasks",
+        "category": "csp",
+        "title": "app_tasks: no CSP console errors",
+        "result": "pass",
+        "evidence": [
+          "none"
+        ]
+      },
+      {
+        "id": "console.csp.docs",
+        "category": "csp",
+        "title": "docs: no CSP console errors",
+        "result": "pass",
+        "evidence": [
+          "none"
+        ]
+      }
+    ],
+    "findings": []
+  },
+  "errors": [],
+  "comparison": {
+    "previous": "2026-11-05-1302-f1b4082.json",
+    "over_budget": [
+      {
+        "metric": "perf.pageload.pages.app_tasks.desktop.tbt_ms",
+        "value": 222,
+        "budget": 150
+      },
+      {
+        "metric": "perf.pageload.pages.docs.desktop.tbt_ms",
+        "value": 661,
+        "budget": 200
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.phone.tbt_ms",
+        "value": 687,
+        "budget": 400
+      },
+      {
+        "metric": "perf.pageload.pages.docs.phone.tbt_ms",
+        "value": 811,
+        "budget": 400
+      }
+    ],
+    "budgets_not_measured": [
+      "perf.build.release_build_seconds",
+      "perf.build.release_build_peak_rss_mb",
+      "perf.build.web_build_peak_rss_mb"
+    ],
+    "new_high_or_critical": [],
+    "fixed_high_or_critical": [
+      "check:deps.cargo-audit"
+    ],
+    "noise": {
+      "commit": "66dc33c36cd04ea883a1e5c48eb19e7a6d80b1d1",
+      "runs": 5,
+      "date": "2026-11-10T22:02:23.848Z"
+    },
+    "notes": [],
+    "perf": [
+      {
+        "metric": "perf.bundle.entry_js.brotli_kb",
+        "before": 219.6,
+        "after": 367.2,
+        "delta": 147.6,
+        "change_pct": 67.21,
+        "noise": 0,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.bundle.entry_js.gzip_kb",
+        "before": 253.4,
+        "after": 424.8,
+        "delta": 171.4,
+        "change_pct": 67.64,
+        "noise": 0,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.bundle.entry_js.raw_kb",
+        "before": 810,
+        "after": 1321.6,
+        "delta": 511.6,
+        "change_pct": 63.16,
+        "noise": 0,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.latency.endpoints.health_ready.rps",
+        "before": 1951,
+        "after": 1114,
+        "delta": -837,
+        "change_pct": -42.9,
+        "noise": 713,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.latency.endpoints.session_me.rps",
+        "before": 5066,
+        "after": 2366,
+        "delta": -2700,
+        "change_pct": -53.3,
+        "noise": 2570,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.latency.endpoints.workspace_list.p95_ms",
+        "before": 0.74,
+        "after": 4.89,
+        "delta": 4.15,
+        "change_pct": 560.81,
+        "noise": 1.8,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.latency.endpoints.workspace_list.p99_ms",
+        "before": 1.14,
+        "after": 8.25,
+        "delta": 7.11,
+        "change_pct": 623.68,
+        "noise": 2.98,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.latency.endpoints.workspace_list.rps",
+        "before": 17466,
+        "after": 5338,
+        "delta": -12128,
+        "change_pct": -69.44,
+        "noise": 6896,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.desktop.fcp_ms",
+        "before": 1156,
+        "after": 1556,
+        "delta": 400,
+        "change_pct": 34.6,
+        "noise": 168,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.desktop.js_kb",
+        "before": 810,
+        "after": 1069.2,
+        "delta": 259.2,
+        "change_pct": 32,
+        "noise": 0,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.desktop.requests",
+        "before": 45,
+        "after": 53,
+        "delta": 8,
+        "change_pct": 17.78,
+        "noise": 1,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.desktop.tbt_ms",
+        "before": 72,
+        "after": 222,
+        "delta": 150,
+        "change_pct": 208.33,
+        "noise": 94,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.desktop.transfer_kb",
+        "before": 939.3,
+        "after": 1199.1,
+        "delta": 259.8,
+        "change_pct": 27.66,
+        "noise": 0.3,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.phone.fcp_ms",
+        "before": 4028,
+        "after": 5928,
+        "delta": 1900,
+        "change_pct": 47.17,
+        "noise": 456,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.phone.js_kb",
+        "before": 810,
+        "after": 1069.2,
+        "delta": 259.2,
+        "change_pct": 32,
+        "noise": 0,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.phone.lcp_ms",
+        "before": 4884,
+        "after": 6900,
+        "delta": 2016,
+        "change_pct": 41.28,
+        "noise": 688,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.phone.requests",
+        "before": 45,
+        "after": 53,
+        "delta": 8,
+        "change_pct": 17.78,
+        "noise": 1,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.phone.transfer_kb",
+        "before": 939.3,
+        "after": 1199.1,
+        "delta": 259.8,
+        "change_pct": 27.66,
+        "noise": 0.3,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.docs.desktop.lcp_ms",
+        "before": 1936,
+        "after": 2300,
+        "delta": 364,
+        "change_pct": 18.8,
+        "noise": 316,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.docs.desktop.tbt_ms",
+        "before": 117,
+        "after": 661,
+        "delta": 544,
+        "change_pct": 464.96,
+        "noise": 151,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.home.phone.fcp_ms",
+        "before": 3492,
+        "after": 4160,
+        "delta": 668,
+        "change_pct": 19.13,
+        "noise": 516,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.home.phone.lcp_ms",
+        "before": 3492,
+        "after": 4160,
+        "delta": 668,
+        "change_pct": 19.13,
+        "noise": 460,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.login.desktop.fcp_ms",
+        "before": 512,
+        "after": 660,
+        "delta": 148,
+        "change_pct": 28.91,
+        "noise": 120,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.login.desktop.js_kb",
+        "before": 222,
+        "after": 371.7,
+        "delta": 149.7,
+        "change_pct": 67.43,
+        "noise": 0,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.login.desktop.lcp_ms",
+        "before": 512,
+        "after": 660,
+        "delta": 148,
+        "change_pct": 28.91,
+        "noise": 120,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.login.desktop.requests",
+        "before": 13,
+        "after": 20,
+        "delta": 7,
+        "change_pct": 53.85,
+        "noise": 0,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.login.desktop.transfer_kb",
+        "before": 295,
+        "after": 445.2,
+        "delta": 150.2,
+        "change_pct": 50.92,
+        "noise": 0,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.login.phone.fcp_ms",
+        "before": 2100,
+        "after": 3256,
+        "delta": 1156,
+        "change_pct": 55.05,
+        "noise": 312,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.login.phone.js_kb",
+        "before": 222,
+        "after": 371.7,
+        "delta": 149.7,
+        "change_pct": 67.43,
+        "noise": 0,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.login.phone.lcp_ms",
+        "before": 2100,
+        "after": 3256,
+        "delta": 1156,
+        "change_pct": 55.05,
+        "noise": 312,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.login.phone.requests",
+        "before": 13,
+        "after": 20,
+        "delta": 7,
+        "change_pct": 53.85,
+        "noise": 0,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.pageload.pages.login.phone.transfer_kb",
+        "before": 295,
+        "after": 445.2,
+        "delta": 150.2,
+        "change_pct": 50.92,
+        "noise": 0,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.server.cold_start_ms",
+        "before": 148,
+        "after": 250,
+        "delta": 102,
+        "change_pct": 68.92,
+        "noise": 80,
+        "verdict": "worse"
+      },
+      {
+        "metric": "perf.build.release_binary_mb",
+        "before": 103,
+        "after": null,
+        "delta": null,
+        "change_pct": null,
+        "noise": null,
+        "verdict": "missing"
+      },
+      {
+        "metric": "perf.build.release_build_peak_rss_mb",
+        "before": 3436,
+        "after": null,
+        "delta": null,
+        "change_pct": null,
+        "noise": null,
+        "verdict": "missing"
+      },
+      {
+        "metric": "perf.build.release_build_seconds",
+        "before": 1047.3,
+        "after": null,
+        "delta": null,
+        "change_pct": null,
+        "noise": null,
+        "verdict": "missing"
+      },
+      {
+        "metric": "perf.build.web_build_peak_rss_mb",
+        "before": 1916,
+        "after": null,
+        "delta": null,
+        "change_pct": null,
+        "noise": null,
+        "verdict": "missing"
+      },
+      {
+        "metric": "perf.build.web_build_seconds",
+        "before": 64.07,
+        "after": null,
+        "delta": null,
+        "change_pct": null,
+        "noise": null,
+        "verdict": "missing"
+      },
+      {
+        "metric": "perf.latency.endpoints.app_list.p95_ms",
+        "before": 1.17,
+        "after": 4.7,
+        "delta": 3.53,
+        "change_pct": 301.71,
+        "noise": 4.48,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.latency.endpoints.app_list.p99_ms",
+        "before": 1.62,
+        "after": 6.78,
+        "delta": 5.16,
+        "change_pct": 318.52,
+        "noise": 5.33,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.latency.endpoints.app_list.rps",
+        "before": 12354,
+        "after": 4851,
+        "delta": -7503,
+        "change_pct": -60.73,
+        "noise": 7685,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.latency.endpoints.docs_list.p95_ms",
+        "before": 2.97,
+        "after": 6.32,
+        "delta": 3.35,
+        "change_pct": 112.79,
+        "noise": 7.95,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.latency.endpoints.docs_list.p99_ms",
+        "before": 4.07,
+        "after": 8.63,
+        "delta": 4.56,
+        "change_pct": 112.04,
+        "noise": 14.01,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.latency.endpoints.docs_list.rps",
+        "before": 4742,
+        "after": 3211,
+        "delta": -1531,
+        "change_pct": -32.29,
+        "noise": 2655,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.latency.endpoints.docs_read.p95_ms",
+        "before": 1.18,
+        "after": 3.04,
+        "delta": 1.86,
+        "change_pct": 157.63,
+        "noise": 12.21,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.latency.endpoints.docs_read.p99_ms",
+        "before": 1.67,
+        "after": 4.39,
+        "delta": 2.72,
+        "change_pct": 162.87,
+        "noise": 18.7,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.latency.endpoints.docs_read.rps",
+        "before": 11660,
+        "after": 7118,
+        "delta": -4542,
+        "change_pct": -38.95,
+        "noise": 8618,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.latency.endpoints.docs_search.p95_ms",
+        "before": 1.36,
+        "after": 2.51,
+        "delta": 1.15,
+        "change_pct": 84.56,
+        "noise": 8.64,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.latency.endpoints.docs_search.p99_ms",
+        "before": 1.62,
+        "after": 3.31,
+        "delta": 1.69,
+        "change_pct": 104.32,
+        "noise": 23.99,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.latency.endpoints.docs_search.rps",
+        "before": 9301,
+        "after": 6833,
+        "delta": -2468,
+        "change_pct": -26.53,
+        "noise": 5668,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.latency.endpoints.file_read.p99_ms",
+        "before": 5.32,
+        "after": 2.03,
+        "delta": -3.29,
+        "change_pct": -61.84,
+        "noise": 5.75,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.latency.endpoints.health_ready.p50_ms",
+        "before": 4.55,
+        "after": 8.05,
+        "delta": 3.5,
+        "change_pct": 76.92,
+        "noise": 3.91,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.latency.endpoints.health_ready.p95_ms",
+        "before": 7.55,
+        "after": 16.02,
+        "delta": 8.47,
+        "change_pct": 112.19,
+        "noise": 16.42,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.latency.endpoints.health_ready.p99_ms",
+        "before": 11.05,
+        "after": 20.99,
+        "delta": 9.94,
+        "change_pct": 89.95,
+        "noise": 35.38,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.latency.endpoints.index_html.rps",
+        "before": 57767,
+        "after": 46575,
+        "delta": -11192,
+        "change_pct": -19.37,
+        "noise": 23689,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.latency.endpoints.session_me.p95_ms",
+        "before": 4.33,
+        "after": 7.81,
+        "delta": 3.48,
+        "change_pct": 80.37,
+        "noise": 7.49,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.latency.endpoints.session_me.p99_ms",
+        "before": 9.7,
+        "after": 23.25,
+        "delta": 13.55,
+        "change_pct": 139.69,
+        "noise": 17.92,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.latency.endpoints.tasks_list.p50_ms",
+        "before": 22.15,
+        "after": 18.15,
+        "delta": -4,
+        "change_pct": -18.06,
+        "noise": 7.43,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.latency.endpoints.tasks_list.p99_ms",
+        "before": 29.65,
+        "after": 37.04,
+        "delta": 7.39,
+        "change_pct": 24.92,
+        "noise": 46.28,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.phone.tbt_ms",
+        "before": 275,
+        "after": 687,
+        "delta": 412,
+        "change_pct": 149.82,
+        "noise": 426,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.pageload.pages.docs.desktop.fcp_ms",
+        "before": 1176,
+        "after": 1372,
+        "delta": 196,
+        "change_pct": 16.67,
+        "noise": 324,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.pageload.pages.docs.phone.tbt_ms",
+        "before": 451,
+        "after": 811,
+        "delta": 360,
+        "change_pct": 79.82,
+        "noise": 528,
+        "verdict": "in noise"
+      },
+      {
+        "metric": "perf.latency.endpoints.app_list.p50_ms",
+        "before": 0.75,
+        "after": 1.65,
+        "delta": 0.9,
+        "change_pct": 120,
+        "noise": 0.47,
+        "verdict": "under floor"
+      },
+      {
+        "metric": "perf.latency.endpoints.docs_list.p50_ms",
+        "before": 2.02,
+        "after": 2.68,
+        "delta": 0.66,
+        "change_pct": 32.67,
+        "noise": 1.5,
+        "verdict": "under floor"
+      },
+      {
+        "metric": "perf.latency.endpoints.docs_read.p50_ms",
+        "before": 0.82,
+        "after": 1.15,
+        "delta": 0.33,
+        "change_pct": 40.24,
+        "noise": 3.33,
+        "verdict": "under floor"
+      },
+      {
+        "metric": "perf.latency.endpoints.docs_search.p50_ms",
+        "before": 1.04,
+        "after": 1.29,
+        "delta": 0.25,
+        "change_pct": 24.04,
+        "noise": 0.96,
+        "verdict": "under floor"
+      },
+      {
+        "metric": "perf.latency.endpoints.file_read.p95_ms",
+        "before": 1.13,
+        "after": 1.45,
+        "delta": 0.32,
+        "change_pct": 28.32,
+        "noise": 4.27,
+        "verdict": "under floor"
+      },
+      {
+        "metric": "perf.latency.endpoints.index_html.p50_ms",
+        "before": 0.09,
+        "after": 0.13,
+        "delta": 0.04,
+        "change_pct": 44.44,
+        "noise": 0.07,
+        "verdict": "under floor"
+      },
+      {
+        "metric": "perf.latency.endpoints.index_html.p95_ms",
+        "before": 0.4,
+        "after": 0.57,
+        "delta": 0.17,
+        "change_pct": 42.5,
+        "noise": 0.95,
+        "verdict": "under floor"
+      },
+      {
+        "metric": "perf.latency.endpoints.index_html.p99_ms",
+        "before": 2.34,
+        "after": 1.43,
+        "delta": -0.91,
+        "change_pct": -38.89,
+        "noise": 1.26,
+        "verdict": "under floor"
+      },
+      {
+        "metric": "perf.latency.endpoints.session_me.p50_ms",
+        "before": 1.59,
+        "after": 2.44,
+        "delta": 0.85,
+        "change_pct": 53.46,
+        "noise": 2,
+        "verdict": "under floor"
+      },
+      {
+        "metric": "perf.latency.endpoints.tasks_list.rps",
+        "before": 447,
+        "after": 526,
+        "delta": 79,
+        "change_pct": 17.67,
+        "noise": 223,
+        "verdict": "under floor"
+      },
+      {
+        "metric": "perf.latency.endpoints.workspace_list.p50_ms",
+        "before": 0.53,
+        "after": 1.32,
+        "delta": 0.79,
+        "change_pct": 149.06,
+        "noise": 0.35,
+        "verdict": "under floor"
+      },
+      {
+        "metric": "perf.pageload.pages.app_tasks.desktop.cls",
+        "before": 0.002,
+        "after": 0.001,
+        "delta": 0,
+        "change_pct": -50,
+        "noise": 0,
+        "verdict": "under floor"
+      }
+    ]
+  }
+}

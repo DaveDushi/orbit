@@ -38,11 +38,18 @@ example the build numbers of a run without `--build`) is **missing**. None of th
 less than 15% are not shown. Without `noise.json` (or without the metric in it) only threshold and floor decide.
 
 ```text
-Against 2026-11-05-1302-f1b4082.json (noise of 5 runs of 8500992):
-  metric                                   before  after             delta  noise      verdict
-  latency.endpoints.task_read.p99_ms         1.65   4.16  +2.51 (+152.12%)  ±3.1      in noise
-  ...
+Against 2026-11-05-1302-f1b4082.json (noise of 5 runs of 66dc33c):
+  metric                                        before   after              delta   noise      verdict
+  bundle.entry_js.gzip_kb                        253.4   424.8   +171.4 (+67.64%)      ±0        WORSE
+  pageload.pages.docs.desktop.tbt_ms               117     661    +544 (+464.96%)    ±151        WORSE
+  build.release_build_seconds                   1047.3       -                          -      missing
+  latency.endpoints.docs_read.p95_ms              1.18    3.04   +1.86 (+157.63%)  ±12.21     in noise
+  pageload.pages.app_tasks.desktop.cls           0.002   0.001       -0.001 (-50%)      ±0  under floor
+  33 worse (fails the run), 0 better, 36 inside noise or floor, 5 missing
 ```
+
+On the shared 4-vCPU VM (2026-11-10) bundle sizes, transfers, CLS and memory do not move between runs; LCP moves by
+10-40%, TBT up to 140%, and API latency and throughput by 40-500%, so only large API changes count there.
 
 Re-measure the noise (`evals/run.sh --noise`, 5 runs under one build lock, about 20 minutes) after a change to the VM
 or to how a metric is measured, and commit `noise.json`. Compare results of the same machine and the same `--quick`

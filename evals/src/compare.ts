@@ -84,7 +84,7 @@ export type Row = {
   verdict: Verdict
 }
 
-const round = (value: number) => Math.round(value * 100) / 100
+const round = (value: number) => Math.round(value * 1000) / 1000
 
 /**
  * How each metric of `before` moved in `after`. Rows only for metrics over their threshold (or, for error counts, any
