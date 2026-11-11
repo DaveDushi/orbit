@@ -90,3 +90,17 @@ test("a step repeated right after itself shows once with its count, in order", (
 	assert.deepEqual(groupSteps(["Reading a task"]), ["Reading a task"]);
 	assert.deepEqual(groupSteps([]), []);
 });
+
+test("Drive file blocks: read_page shows only their ids, and a file goes after the first block with the text", async () => {
+	const { blockIndexAfter } = await import("../src/tools.ts");
+	const blocks = [
+		{ type: "heading", props: { level: 2 }, content: [{ type: "text", text: "Intro" }] },
+		{ id: "b1", type: "driveFile", props: { workspaceId: "w", nodeId: "n1" } },
+		{ type: "paragraph", content: [{ type: "text", text: "Budget table below" }] },
+	];
+	assert.equal(blocksToMarkdown(blocks), "## Intro\n[Drive file n1 (block b1)]\nBudget table below");
+	assert.equal(blockIndexAfter(blocks, "intro"), 1);
+	assert.equal(blockIndexAfter(blocks, "BUDGET"), 3);
+	assert.equal(blockIndexAfter(blocks, "missing"), undefined);
+	assert.deepEqual(plan("insert drive file n1 into page p1 at 2", []), { name: "insert_drive_file", args: { node_id: "n1", page_id: "p1", position: 2 } });
+});

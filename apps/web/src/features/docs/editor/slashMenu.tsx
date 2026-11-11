@@ -1,6 +1,6 @@
 import { filterSuggestionItems, insertOrUpdateBlockForSlashMenu } from '@blocknote/core/extensions'
 import { getDefaultReactSlashMenuItems, type DefaultReactSuggestionItem } from '@blocknote/react'
-import { DocumentText, Hierarchy, LampOn, Link2 } from 'reicon-react'
+import { DocumentText, FolderCloud, Hierarchy, LampOn, Link2 } from 'reicon-react'
 import { MERMAID_LANGUAGE } from '@orbit/editor/codeLanguages'
 import { CALLOUT_DEFAULT_BACKGROUND } from '@orbit/editor/schema'
 import type { PageEditorInstance } from '@orbit/editor/schema'
@@ -11,9 +11,14 @@ export const PAGE_ITEMS_GROUP = 'Basic blocks'
 export interface PageSlashActions {
   onSubpage: () => void
   onLinkPage: () => void
+  /** Absent: the editor has no Drive (no "Insert from Drive"). */
+  onInsertDriveFile?: () => void
 }
 
-/** "Sub-page" and "Link a page" — titles, subtexts and aliases ported from the old docs slash menu. */
+/**
+ * "Sub-page" and "Link a page" — titles, subtexts and aliases ported from the old docs slash menu — and "Insert from
+ * Drive" when the editor has a Drive.
+ */
 export function pageSlashItems(actions: PageSlashActions): DefaultReactSuggestionItem[] {
   return [
     {
@@ -32,6 +37,18 @@ export function pageSlashItems(actions: PageSlashActions): DefaultReactSuggestio
       icon: <Link2 className="size-[18px]" />,
       onItemClick: actions.onLinkPage,
     },
+    ...(actions.onInsertDriveFile
+      ? [
+          {
+            title: 'Insert from Drive',
+            subtext: 'Show a Drive file, always its latest version',
+            aliases: ['drive', 'file', 'image', 'video', 'pdf', 'attach'],
+            group: PAGE_ITEMS_GROUP,
+            icon: <FolderCloud className="size-[18px]" />,
+            onItemClick: actions.onInsertDriveFile,
+          },
+        ]
+      : []),
   ]
 }
 

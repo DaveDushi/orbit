@@ -88,6 +88,9 @@ pub fn production_router(
         .merge(views)
         .merge(page_router(api.pages))
         .merge(page_file_router(api.page_files))
+        .merge(crate::page_drive_routes::page_drive_router(
+            api.drive.clone(),
+        ))
         .merge(crate::drive_routes::drive_router(api.drive))
         .merge(
             api.drive_shares

@@ -36,6 +36,20 @@ const pageBlockConfig = {
 } as const
 
 /**
+ * A file of Orbit Drive, shown from Drive on every read (a reference, never a copy): `workspaceId` is the Drive's
+ * workspace, `nodeId` the file. Page documents only; the server checks the reader's Drive access each time.
+ */
+export const DRIVE_FILE_BLOCK_TYPE = 'driveFile'
+const driveFileBlockConfig = {
+  type: DRIVE_FILE_BLOCK_TYPE,
+  propSchema: {
+    workspaceId: { default: '' },
+    nodeId: { default: '' },
+  },
+  content: 'none',
+} as const
+
+/**
  * A Notion-style callout: an emoji next to rich text, in a rounded colored box; nested blocks sit inside the box.
  * `backgroundColor`/`textColor` are BlockNote color names.
  */
@@ -60,12 +74,14 @@ const mentionConfig = {
 } as const
 
 type PageBlockImplementation = ReactCustomBlockImplementation<typeof pageBlockConfig>
+type DriveFileImplementation = ReactCustomBlockImplementation<typeof driveFileBlockConfig>
 type CalloutImplementation = ReactCustomBlockImplementation<typeof calloutBlockConfig>
 type MentionImplementation = ReactInlineContentImplementation<typeof mentionConfig, StyleSchemaFromSpecs<typeof defaultStyleSpecs>>
 
 /** How a host draws the custom blocks. Views never change the schema, so every host edits the same documents. */
 export interface EditorViews {
   page: { render: PageBlockImplementation['render']; toExternalHTML?: PageBlockImplementation['toExternalHTML'] }
+  driveFile: { render: DriveFileImplementation['render']; toExternalHTML?: DriveFileImplementation['toExternalHTML'] }
   callout: { render: CalloutImplementation['render']; toExternalHTML?: CalloutImplementation['toExternalHTML'] }
   mention: { render: MentionImplementation['render'] }
   codeBlock: CodeBlockOptions
@@ -81,6 +97,7 @@ export function createEditorSchemas(views: EditorViews) {
       ...baseBlockSpecs,
       codeBlock,
       page: createReactBlockSpec(pageBlockConfig, views.page)(),
+      driveFile: createReactBlockSpec(driveFileBlockConfig, views.driveFile)(),
       callout: callout(),
     },
     inlineContentSpecs: { ...defaultInlineContentSpecs, mention },
@@ -88,7 +105,7 @@ export function createEditorSchemas(views: EditorViews) {
 
   /**
    * Task descriptions and comments: the page editor's blocks without `page` (a link to a docs page is a plain link
-   * there). The server's converter shares the page schema; its task sanitizer drops `page` blocks.
+   * there) and `driveFile`. The server's converter shares the page schema; its task sanitizer drops both.
    */
   const taskEditorSchema = BlockNoteSchema.create({
     blockSpecs: {

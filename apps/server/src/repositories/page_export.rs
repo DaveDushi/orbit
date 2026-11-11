@@ -9,6 +9,7 @@ use orbit_platform::{Database, Id};
 use serde_json::Value;
 use thiserror::Error;
 
+use super::drive_refs::{DriveRefState, drive_refs, resolve_all};
 use super::pages::{json_text_array, parse_id, visible};
 use super::tasks::{TaskError, require_access};
 use crate::collab::CollabHub;
@@ -50,6 +51,9 @@ pub struct ExportSource {
     pub members: HashMap<Id, String>,
     /// Archive folder of a root page (path segments); a root without one goes to the archive root.
     pub root_dirs: HashMap<Id, Vec<String>>,
+    /// What the caller may see of each Drive file of the exported pages, by `(workspace id, node id)` as the
+    /// blocks store them (checked at export time; locked files have no name).
+    pub drive_files: HashMap<(String, String), DriveRefState>,
 }
 
 #[derive(Debug, Error)]
@@ -229,12 +233,14 @@ impl PageExportRepository {
 
         let files = self.load_files(workspace_id, &pages).await?;
         let members = self.load_members(workspace_id).await?;
+        let drive_files = self.load_drive_files(actor_id, &pages).await?;
         Ok(ExportSource {
             pages,
             titles,
             files,
             members,
             root_dirs: HashMap::new(),
+            drive_files,
         })
     }
 
@@ -361,13 +367,29 @@ impl PageExportRepository {
             .collect();
         let files = self.load_files(workspace_id, &pages).await?;
         let members = self.load_members(workspace_id).await?;
+        let drive_files = self.load_drive_files(actor_id, &pages).await?;
         Ok(ExportSource {
             pages,
             titles,
             files,
             members,
             root_dirs,
+            drive_files,
         })
+    }
+
+    /// The Drive files of `pages` as `actor_id` may see them.
+    async fn load_drive_files(
+        &self,
+        actor_id: Id,
+        pages: &[ExportPage],
+    ) -> Result<HashMap<(String, String), DriveRefState>, PageExportError> {
+        let refs: Vec<_> = pages
+            .iter()
+            .flat_map(|page| drive_refs(&page.content))
+            .collect();
+        let mut connection = self.database.pool().acquire().await?;
+        Ok(resolve_all(&mut connection, actor_id, &refs).await?)
     }
 
     async fn load_files(

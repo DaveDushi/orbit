@@ -77,6 +77,7 @@ export function PageHistoryPane({ workspaceId, pageId, readCurrent, resolvePage,
   const listRef = useRef<HTMLDivElement>(null)
   const optionIds = useMemo(() => [CURRENT, ...items.map((item) => item.id)], [items])
   const groups = useMemo(() => groupByDay(items), [items])
+  const driveFiles = useMemo(() => ({ workspaceId, pageId }), [workspaceId, pageId])
   // Read once each time "Current version" gets selected, not on every parent render.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const current = useMemo(() => (selectedId === CURRENT ? readCurrent() : null), [selectedId])
@@ -189,6 +190,7 @@ export function PageHistoryPane({ workspaceId, pageId, readCurrent, resolvePage,
                     onOpenPage={onOpenPage}
                     onCreateSubpage={noSubpage}
                     onPickPage={noPick}
+                    driveFiles={driveFiles}
                     className="-mx-[54px] max-[899px]:mx-0"
                   />
                 </Suspense>

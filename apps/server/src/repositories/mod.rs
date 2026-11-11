@@ -5,6 +5,7 @@ pub mod backup_items;
 pub mod billing;
 pub mod chat;
 pub mod drive;
+pub mod drive_refs;
 pub mod drive_shares;
 pub mod identity;
 pub mod instance_settings;

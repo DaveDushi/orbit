@@ -59,6 +59,10 @@ export function blocksToMarkdown(blocks: readonly Block[], depth = 0): string {
 			case "file":
 				lines.push(`${indent}[file: ${block.props?.name ?? "unnamed"}]`);
 				break;
+			case "driveFile":
+				// Only ids: the name needs a check of the reader's Drive access (list_page_drive_files).
+				lines.push(`${indent}[Drive file ${block.props?.nodeId ?? ""} (block ${block.id ?? ""})]`);
+				break;
 			default:
 				lines.push(`${indent}${text}`);
 		}

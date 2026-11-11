@@ -25,9 +25,9 @@ type RequestIdExtension = Option<Extension<RequestId>>;
 
 #[derive(Clone)]
 pub struct DriveState {
-    identity: Arc<IdentityRepository>,
-    drive: DriveService,
-    cookie_mode: CookieMode,
+    pub(crate) identity: Arc<IdentityRepository>,
+    pub(crate) drive: DriveService,
+    pub(crate) cookie_mode: CookieMode,
 }
 
 impl DriveState {

@@ -39,6 +39,7 @@ Docs
 - Pages in a tree with a rich editor that several people edit at the same time, with comments, @mentions, favorites, search and a trash. Pages can be imported from Notion.
 - Click a file on a page to open it in a side panel beside the page: PDFs, spreadsheets, text and images show there, csv, tsv, text and xlsx files can be edited there (formula cells stay read-only, and their results update when the file opens in Excel), and old versions can be restored. xls and PDF files are read-only.
 - Every page is in a teamspace (every member sees and edits it) or in the person's Private space (only they see it).
+- Insert from Drive: type "/" on a page → Insert from Drive, then search or open folders and pick a file. The page shows the file from Drive, never a copy, so it is always the latest version: images and videos show on the page, other files (PDFs and more) as a card that opens the Drive preview. A file in the Drive trash or deleted shows "File not available". Someone without access to the file (for example a file pasted from another workspace) sees a locked card without its name, and exports show only the files the exporting person may see. The phone app shows a plain "Drive file" card for now. ${name} can add, change or remove these files on a page when asked, and list the files of a page or the pages that show a file.
 
 Drive
 - Drive in the sidebar: one drive per workspace with folders. Upload files and folders (drag and drop works), move, rename, download (several items as a ZIP).

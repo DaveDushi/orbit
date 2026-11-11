@@ -345,7 +345,10 @@ fn sanitize_mentions(value: &Value) -> Value {
     }
 }
 
-/// Blocks of the editor schema; a task's editor has no `page` blocks.
+/// Blocks only page documents have: a task's editor has neither.
+const PAGE_ONLY_BLOCKS: [&str; 2] = ["page", "driveFile"];
+
+/// Blocks of the editor schema; a task's editor has no `page` or `driveFile` blocks.
 fn keep_known_blocks(blocks: &[Value], task: bool) -> Vec<Value> {
     blocks
         .iter()
@@ -354,7 +357,8 @@ fn keep_known_blocks(blocks: &[Value], task: bool) -> Vec<Value> {
                 .get("type")
                 .and_then(Value::as_str)
                 .is_some_and(|block_type| {
-                    schema().blocks.contains_key(block_type) && !(task && block_type == "page")
+                    schema().blocks.contains_key(block_type)
+                        && !(task && PAGE_ONLY_BLOCKS.contains(&block_type))
                 })
         })
         .map(|block| {
@@ -867,6 +871,7 @@ mod tests {
     fn task_policy_drops_page_block() {
         let blocks = [
             json!({"type": "page", "props": {"pageId": PAGE}}),
+            json!({"type": "driveFile", "props": {"workspaceId": PAGE, "nodeId": PAGE}}),
             json!({"type": "paragraph", "content": [{"type": "text", "text": "kept", "styles": {}}]}),
         ];
         let sanitized = sanitize_blocks_for(&blocks, &task_policy());
@@ -879,6 +884,7 @@ mod tests {
         let file = format!("/api/v1/workspaces/{PAGE}/pages/{PAGE}/files/{PAGE}");
         let blocks = [
             json!({"type": "page", "props": {"pageId": PAGE}}),
+            json!({"type": "driveFile", "props": {"workspaceId": PAGE, "nodeId": PAGE}}),
             image(&file),
             image("javascript:x"),
         ];

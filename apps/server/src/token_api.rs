@@ -14,13 +14,17 @@ use crate::billing::WorkspaceAccess;
 use crate::collab::kind_task::members;
 use crate::collab::markdown_import::markdown_to_blocks;
 use crate::collab::markdown_merge::{MAX_BLOCKS, block_count};
-use crate::export::markdown::{KeepLinks, LinkResolver, PageLink, blocks_to_markdown};
+use crate::export::drive_folder_path;
+use crate::export::markdown::{
+    DriveFileLink, KeepLinks, LinkResolver, PageLink, blocks_to_markdown,
+};
 use crate::repositories::api_tokens::{ApiTokenPrincipal, ApiTokenScope};
 use crate::repositories::billing::write_access;
 use crate::repositories::chat::{
     ChatError, ChatRepository, ConversationRecord, MessageCursor, MessagePage, SearchInput,
     SearchPage, ThreadPage,
 };
+use crate::repositories::drive_refs::{DriveRefState, drive_refs, resolve_all};
 use crate::repositories::pages::{
     CreatePage, MarkdownContent, PageChanges, PageError, PageList, PageRecord, PageRepository,
     SpaceRequest, revision,
@@ -294,8 +298,12 @@ pub struct DocView {
 }
 
 /// Links pages to `/docs/<id>` under the titles of the pages that the actor can see; any other
-/// page stays "Untitled", so a link does not tell what a hidden page is called.
-struct DocLinks(HashMap<String, String>);
+/// page stays "Untitled", so a link does not tell what a hidden page is called. Drive files show
+/// as the actor may see them (`drive_refs::resolve`): a locked file has no name.
+struct DocLinks(
+    HashMap<String, String>,
+    HashMap<(String, String), DriveRefState>,
+);
 
 impl LinkResolver for DocLinks {
     fn page(&self, page_id: &str) -> Option<PageLink> {
@@ -307,6 +315,17 @@ impl LinkResolver for DocLinks {
 
     fn url(&self, url: &str) -> String {
         KeepLinks.url(url)
+    }
+
+    fn drive_file(&self, workspace_id: &str, node_id: &str) -> DriveFileLink {
+        match self.1.get(&(workspace_id.to_owned(), node_id.to_owned())) {
+            Some(DriveRefState::Available(node)) => DriveFileLink::Available(PageLink {
+                title: node.name.clone(),
+                href: drive_folder_path(node.parent_id),
+            }),
+            Some(DriveRefState::Unavailable) => DriveFileLink::Unavailable,
+            Some(DriveRefState::Locked) | None => DriveFileLink::Locked,
+        }
     }
 }
 
@@ -1014,9 +1033,23 @@ impl Authorized<'_> {
                 }
             }
         }
-        let markdown = blocks_to_markdown(&page.content, &DocLinks(titles));
+        let drive = self.drive_files(&page.content).await?;
+        let markdown = blocks_to_markdown(&page.content, &DocLinks(titles, drive));
         page.version = revision(page.version, page.updated_at);
         Ok(DocView { page, markdown })
+    }
+
+    /// What the actor may see of the Drive files of `content`.
+    async fn drive_files(
+        &self,
+        content: &[Value],
+    ) -> Result<HashMap<(String, String), DriveRefState>> {
+        let refs = drive_refs(content);
+        if refs.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut connection = self.api.tasks.database().pool().acquire().await?;
+        Ok(resolve_all(&mut connection, self.principal.actor_id, &refs).await?)
     }
 
     pub async fn create_doc(&self, input: NewDoc) -> Result<DocView> {
@@ -1088,6 +1121,13 @@ impl Authorized<'_> {
                     .map(|summary| (summary.id.to_string(), summary.title))
                     .collect();
                 let members = members(self.api.tasks.database().pool(), p.workspace_id).await?;
+                // The Drive files of the current content, as `doc_view` shows them; the write
+                // checks the revision, so the read has the content the client saw.
+                let current = pages
+                    .get_page(p.workspace_id, page_id, p.actor_id)
+                    .await
+                    .map_err(hidden_page)?;
+                let drive = self.drive_files(&current.content).await?;
                 pages
                     .update_page_markdown_at_revision(
                         p.workspace_id,
@@ -1098,7 +1138,7 @@ impl Authorized<'_> {
                         MarkdownContent {
                             markdown,
                             members,
-                            links: Arc::new(DocLinks(titles)),
+                            links: Arc::new(DocLinks(titles, drive)),
                         },
                         self.request_id,
                         TimestampMillis::now(),

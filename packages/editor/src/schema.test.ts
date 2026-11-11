@@ -10,6 +10,7 @@ describe('createEditorSchemas', () => {
   test('any views give the schema the server converts with', () => {
     const { pageEditorSchema } = createEditorSchemas({
       page: { render: () => null },
+      driveFile: { render: () => null },
       callout: { render: () => null },
       mention: { render: () => null },
       codeBlock: { tokenClass: () => undefined },

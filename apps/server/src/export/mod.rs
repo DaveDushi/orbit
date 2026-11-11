@@ -17,9 +17,12 @@ use tokio::io::AsyncReadExt;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
+use crate::repositories::drive_refs::DriveRefState;
 use crate::repositories::page_export::{ExportFile, ExportSource, PageExportError};
 use crate::repositories::page_files::{PageFileError, PageFileRepository, parse_page_file_url};
-use markdown::{LinkResolver, PageLink, blocks_to_markdown, escape_label, link_destination};
+use markdown::{
+    DriveFileLink, LinkResolver, PageLink, blocks_to_markdown, escape_label, link_destination,
+};
 use names::{
     ASSETS_DIR, NameSet, STEM_MAX_CHARS, relative_link, sanitize_segment, split_file_name,
 };
@@ -158,6 +161,21 @@ impl LinkResolver for Resolver<'_> {
         })
     }
 
+    fn drive_file(&self, workspace_id: &str, node_id: &str) -> DriveFileLink {
+        match self
+            .source
+            .drive_files
+            .get(&(workspace_id.to_owned(), node_id.to_owned()))
+        {
+            Some(DriveRefState::Available(node)) => DriveFileLink::Available(PageLink {
+                title: node.name.clone(),
+                href: self.absolute(&drive_folder_path(node.parent_id)),
+            }),
+            Some(DriveRefState::Unavailable) => DriveFileLink::Unavailable,
+            Some(DriveRefState::Locked) | None => DriveFileLink::Locked,
+        }
+    }
+
     fn url(&self, url: &str) -> String {
         if let Some((workspace, page, file)) = parse_page_file_url(url) {
             if workspace == self.workspace_id
@@ -180,6 +198,11 @@ impl LinkResolver for Resolver<'_> {
         }
         url.to_owned()
     }
+}
+
+/// The Drive folder (in the web app) that has a file with this parent.
+pub(crate) fn drive_folder_path(parent_id: Option<Id>) -> String {
+    parent_id.map_or_else(|| "/drive".to_owned(), |parent| format!("/drive/{parent}"))
 }
 
 /// Media types that are already compressed; stored as they are.

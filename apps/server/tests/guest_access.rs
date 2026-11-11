@@ -501,6 +501,10 @@ const UNCHECKED: &[&str] = &[
     "complete_drive_upload",
     "sign_drive_upload_parts",
     "cancel_drive_upload",
+    // A Drive file block of a page needs a Drive file (the fixture's node is a folder).
+    "insert_page_drive_file",
+    "replace_page_drive_file",
+    "remove_page_drive_file",
     // A restore needs a deleted record, and a purge a trashed one; deletes run last.
     "restore_drive_node",
     "purge_drive_node",

@@ -283,7 +283,7 @@ fn class(block: &Value) -> &'static str {
         "divider" => "divider",
         "table" => "table",
         "image" => "image",
-        "file" | "video" | "audio" | "page" => "link",
+        "file" | "video" | "audio" | "page" | "driveFile" => "link",
         "paragraph" if only_link(block).is_some() => "link",
         _ => "paragraph",
     }
@@ -716,6 +716,12 @@ impl Context<'_> {
         let kind = block_type(old);
         let props = |name: &str| new["props"].get(name).cloned();
         match kind {
+            // Its line changed (an unchanged one keeps the block): it is what the new line says.
+            "driveFile" => {
+                let mut block = new.clone();
+                block["id"] = old["id"].clone();
+                return block;
+            }
             "page" => {
                 let href = self
                     .resolver
