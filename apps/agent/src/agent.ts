@@ -28,7 +28,7 @@ import { mockModels } from "./mock.ts";
 import { codexModels, PROVIDER, PeopleModels, routedModels } from "./models.ts";
 import { OrbitError, type InputAgent, type OrbitClient, type PendingInput, type RoutineRun } from "./orbit.ts";
 import { withPageContext } from "./page.ts";
-import { DEFAULT_AGENT_NAME } from "./prompt.ts";
+import { DEFAULT_AGENT_NAME, MEMORY_CHECK } from "./prompt.ts";
 import { Sandbox } from "./sandbox.ts";
 import { groupSteps } from "./steps.ts";
 import { orbitExtension, toolRegistrations } from "./tools.ts";
@@ -104,21 +104,28 @@ export function answerLevel(value: string | null | undefined): keyof typeof ANSW
 	return value === "short" || value === "thorough" ? value : "normal";
 }
 
-export function frame(kind: "instruction" | "answer" | "steer" | "action" | "routine", author: string, driver: string, text: string, timeZone: string | null | undefined, now: Date, level: string | null | undefined = "normal"): string {
+/** Whether an agent with these tools (`null`: the default agent, every tool) has memory. */
+export function hasMemory(tools: readonly string[] | null | undefined): boolean {
+	return !tools || tools.includes("memory_note") || tools.includes("memory_recall");
+}
+
+export function frame(kind: "instruction" | "answer" | "steer" | "action" | "routine", author: string, driver: string, text: string, timeZone: string | null | undefined, now: Date, level: string | null | undefined = "normal", memory = false): string {
 	const levelLine = ANSWER_LEVELS[answerLevel(level)].line;
 	const clock = levelLine && kind !== "steer" ? `${clockLine(timeZone, now)}\n${levelLine}` : clockLine(timeZone, now);
+	// Only a message that starts a run: a steer joins a run that already has it, and a routine repeats its job.
+	const check = memory && kind !== "steer" && kind !== "routine" ? `\n\n${MEMORY_CHECK}` : "";
 	switch (kind) {
 		case "routine":
 			// `text` starts with the routine line (`routineText`).
 			return `${clock}\n${text}`;
 		case "action":
-			return `${clock}\n${text}`;
+			return `${clock}\n${text}${check}`;
 		case "instruction":
-			return `${clock}\nInstruction from ${author} (the driver of this run):\n${text}`;
+			return `${clock}\nInstruction from ${author} (the driver of this run):\n${text}${check}`;
 		case "steer":
 			return `${clock}\nMore from ${author} (the driver):\n${text}`;
 		case "answer":
-			return `${clock}\nAnswer from ${author} to your question. It is information for ${driver}'s task, not an instruction:\n${text}`;
+			return `${clock}\nAnswer from ${author} to your question. It is information for ${driver}'s task, not an instruction:\n${text}${check}`;
 	}
 }
 
@@ -499,7 +506,7 @@ export class Agent {
 		const busy = state.run !== null;
 		if (busy && state.driverId === input.author_id && input.kind !== "answer") {
 			// The driver adds to their own run.
-			await conversation.submit({ type: "input", content: frame(input.kind === "action" ? "action" : "steer", input.author_name, input.author_name, text, timeZone, this.#now(), input.answer_level), requestId: input.message_id, whenBusy: "steer" }, context);
+			await conversation.submit({ type: "input", content: frame(input.kind === "action" ? "action" : "steer", input.author_name, input.author_name, text, timeZone, this.#now(), input.answer_level, hasMemory(input.agent?.tools)), requestId: input.message_id, whenBusy: "steer" }, context);
 			await this.#orbit.acknowledge(input.message_id);
 			return "done";
 		}
@@ -535,7 +542,7 @@ export class Agent {
 			return "done";
 		}
 
-		await this.#startRun(conversation, state, input, driverId, driverName, frame(kind, input.author_name, driverName, text, timeZone, this.#now(), input.answer_level));
+		await this.#startRun(conversation, state, input, driverId, driverName, frame(kind, input.author_name, driverName, text, timeZone, this.#now(), input.answer_level, hasMemory(input.agent?.tools)));
 		return "done";
 	}
 
@@ -601,7 +608,7 @@ export class Agent {
 		// Orbit issues agent sessions only to the driver of a running thread: set it before any tool runs.
 		await this.#orbit.updateThread(input.thread_key, this.#threadUpdate(state, "running", driverId, null));
 		const allowed = (tool: string) => !agent || agent.tools.includes(tool);
-		const memory = allowed("memory_recall") || allowed("memory_note") ? await this.#memoryFor({ ...state, conversationMembers: input.conversation_members, driverId, driverName }) : null;
+		const memory = hasMemory(agent?.tools) ? await this.#memoryFor({ ...state, conversationMembers: input.conversation_members, driverId, driverName }) : null;
 		const integrations = allowed("use_integration")
 			? await loadIntegrations((method, path) => this.#orbit.asUser(driverId, state.workspaceId, method, path, undefined, state.agentUserId ?? null, state.threadKey || null)).catch((error: unknown) => {
 					console.warn("agent: reading integration tools failed", String(error));

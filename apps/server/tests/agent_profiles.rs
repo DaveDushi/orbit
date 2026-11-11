@@ -1,6 +1,6 @@
 //! Agent profiles (step 6): owners and admins make more agents; people reach one by mention in its
 //! channels or by DM; it acts with the driver's permissions and only with its tools, enforced by
-//! Orbit; guests cannot use it; each person's answer level reaches the run; routines run with any
+//! Orbit; guests cannot use it; each agent's answer level reaches its runs; routines run with any
 //! agent; deleting an agent pauses its routines and keeps its DMs. Runs on SQLite, and on Postgres
 //! with `ORBIT_TEST_POSTGRES_URL`.
 
@@ -639,11 +639,49 @@ async fn orbit_enforces_the_agents_tools_and_the_drivers_own_permissions() {
 }
 
 #[tokio::test]
-async fn each_persons_answer_level_is_stored_and_reaches_their_runs() {
+async fn each_agents_answer_level_is_set_on_its_card_and_reaches_its_runs() {
     let fixture = Fixture::new().await;
     let member = fixture.add_person("Mia", "member").await;
     let general = fixture.general().await;
-    let (status, level) = fixture
+    let base = format!("/api/v1/workspaces/{}/agents", fixture.workspace_id);
+    let (status, _) = fixture
+        .request(
+            "PATCH",
+            &format!("{base}/default"),
+            ("cookie", &fixture.owner.cookie),
+            Some(json!({ "answer_level": "loud" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, _) = fixture
+        .request(
+            "PATCH",
+            &format!("{base}/default"),
+            ("cookie", &member.cookie),
+            Some(json!({ "answer_level": "thorough" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = fixture
+        .request(
+            "PATCH",
+            &format!("{base}/default"),
+            ("cookie", &fixture.owner.cookie),
+            Some(json!({ "answer_level": "short" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let agent = fixture
+        .create_agent(json!({ "name": "Helper", "tools": ["read_page"], "all_channels": true, "answer_level": "thorough" }))
+        .await;
+    assert_eq!(agent["answer_level"], "thorough");
+    let (_, list) = fixture
+        .request("GET", &base, ("cookie", &member.cookie), None)
+        .await;
+    assert_eq!(list["default_agent"]["answer_level"], "short");
+    assert_eq!(list["agents"][0]["answer_level"], "thorough");
+    // The old per-person setting is gone.
+    let (status, _) = fixture
         .request(
             "GET",
             "/api/v1/agent/preferences",
@@ -651,51 +689,20 @@ async fn each_persons_answer_level_is_stored_and_reaches_their_runs() {
             None,
         )
         .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(level["answer_level"], "normal");
-    let (status, _) = fixture
-        .request(
-            "PUT",
-            "/api/v1/agent/preferences",
-            ("cookie", &member.cookie),
-            Some(json!({ "answer_level": "loud" })),
-        )
-        .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-    let (status, _) = fixture
-        .request(
-            "PUT",
-            "/api/v1/agent/preferences",
-            ("cookie", &member.cookie),
-            Some(json!({ "answer_level": "short" })),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK);
-    let (status, _) = fixture
-        .request(
-            "PUT",
-            "/api/v1/agent/preferences",
-            ("cookie", &fixture.owner.cookie),
-            Some(json!({ "answer_level": "thorough" })),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::NOT_FOUND);
 
-    // The default agent and a custom one get the driver's level.
+    // Each agent's level, whoever drives.
     fixture.pending().await;
     let bot: String = sqlx::query_scalar("SELECT user_id FROM agent_bot WHERE id = 1")
         .fetch_one(fixture.database.pool())
         .await
         .unwrap();
-    let agent = fixture
-        .create_agent(json!({ "name": "Helper", "tools": ["read_page"], "all_channels": true }))
-        .await;
     let mention = fixture
         .send(&member, &general, &format!("<@{bot}> hi"))
         .await;
     fixture
         .send(
-            &fixture.owner,
+            &member,
             &general,
             &format!("<@{}> hi", agent["user_id"].as_str().unwrap()),
         )
@@ -707,7 +714,7 @@ async fn each_persons_answer_level_is_stored_and_reaches_their_runs() {
     assert_eq!(inputs[0]["answer_level"], "short");
     assert_eq!(inputs[1]["answer_level"], "thorough");
 
-    // An answer in a waiting thread runs at the driver's level, not the answerer's.
+    // An answer in a waiting thread keeps the agent's level.
     fixture.set_thread(&inputs[0], "waiting", &member).await;
     fixture.ack(&inputs[0]).await;
     fixture.ack(&inputs[1]).await;
@@ -1202,4 +1209,160 @@ async fn each_agent_uses_only_its_ticked_integrations_and_the_role_rule_still_ap
         .unwrap();
     let (_, list) = fixture.api(&fixture.owner, "GET", "/agents", None).await;
     assert_eq!(list["agents"][0]["integration_ids"], json!([tiktok]));
+}
+
+#[tokio::test]
+async fn each_agent_has_its_own_memory_and_never_reaches_another_agents() {
+    let fixture = Fixture::new().await;
+    let member = fixture.add_person("Mia", "member").await;
+    let general = fixture.general().await;
+    let keeper = fixture
+        .create_agent(json!({ "name": "Keeper", "tools": ["memory_note", "memory_recall"], "all_channels": true }))
+        .await;
+    let keeper_bot = keeper["user_id"].as_str().unwrap().to_owned();
+    fixture.pending().await;
+    let donna_bot: String = sqlx::query_scalar("SELECT user_id FROM agent_bot WHERE id = 1")
+        .fetch_one(fixture.database.pool())
+        .await
+        .unwrap();
+    // A running run of each agent, driven by Mia, so each gets a session.
+    fixture
+        .send(&member, &general, &format!("<@{donna_bot}> note"))
+        .await;
+    fixture
+        .send(&member, &general, &format!("<@{keeper_bot}> note"))
+        .await;
+    let inputs = fixture.pending().await;
+    assert_eq!(inputs.len(), 2);
+    for input in &inputs {
+        fixture.set_thread(input, "running", &member).await;
+    }
+    let (status, donna) = fixture.session(&member, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, keeper_token) = fixture.session(&member, Some(&keeper_bot)).await;
+    assert_eq!(status, StatusCode::OK);
+
+    for (token, scope, body) in [
+        (&donna, "team", "Donna team fact"),
+        (&donna, "private", "Donna private fact"),
+        (&keeper_token, "team", "Keeper team fact"),
+        (&keeper_token, "private", "Keeper private fact"),
+    ] {
+        let (status, noted) = fixture
+            .as_agent(
+                token,
+                "POST",
+                &format!("/agent-memory/{scope}"),
+                Some(json!({ "body": body })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{noted}");
+        assert_eq!(noted["position"], 0);
+    }
+    let bodies = |page: &Value| -> Vec<String> {
+        page["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["body"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    // Each agent reads only its own memory.
+    for (token, scope, expected) in [
+        (&donna, "team", "Donna team fact"),
+        (&donna, "private", "Donna private fact"),
+        (&keeper_token, "team", "Keeper team fact"),
+        (&keeper_token, "private", "Keeper private fact"),
+    ] {
+        let (status, page) = fixture
+            .as_agent(token, "GET", &format!("/agent-memory/{scope}"), None)
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(bodies(&page), [expected]);
+        let (_, wake) = fixture
+            .as_agent(token, "GET", &format!("/agent-memory/{scope}/wake"), None)
+            .await;
+        assert!(wake["text"].as_str().unwrap().ends_with(expected), "{wake}");
+    }
+    // Naming another agent is refused, for reads and writes, whichever way it is named.
+    for (token, other) in [
+        (&keeper_token, donna_bot.as_str()),
+        (&keeper_token, "default"),
+        (&donna, keeper_bot.as_str()),
+    ] {
+        for (method, body) in [("GET", None), ("POST", Some(json!({ "body": "sneaky" })))] {
+            let (status, problem) = fixture
+                .as_agent(
+                    token,
+                    method,
+                    &format!("/agent-memory/team?agent={other}"),
+                    body,
+                )
+                .await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{method} {other}: {problem}");
+            assert_eq!(problem["code"], "agent_memory_other_agent");
+        }
+    }
+    let (status, page) = fixture
+        .as_agent(
+            &keeper_token,
+            "GET",
+            &format!("/agent-memory/team?agent={keeper_bot}"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bodies(&page), ["Keeper team fact"]);
+
+    // People pick the agent; no agent is the default one; an unknown agent is not found.
+    let base = format!("/api/v1/workspaces/{}/agent-memory", fixture.workspace_id);
+    for (query, scope, expected) in [
+        (String::new(), "team", "Donna team fact"),
+        (format!("?agent={donna_bot}"), "team", "Donna team fact"),
+        (format!("?agent={keeper_bot}"), "team", "Keeper team fact"),
+        (
+            format!("?agent={keeper_bot}"),
+            "private",
+            "Keeper private fact",
+        ),
+    ] {
+        let (status, page) = fixture
+            .request(
+                "GET",
+                &format!("{base}/{scope}{query}"),
+                ("cookie", &member.cookie),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(bodies(&page), [expected]);
+    }
+    let (status, _) = fixture
+        .request(
+            "GET",
+            &format!("{base}/team?agent={}", Id::new_v7()),
+            ("cookie", &member.cookie),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // The owner deletes from Keeper's team memory; Donna's stays.
+    let (status, _) = fixture
+        .request(
+            "DELETE",
+            &format!("{base}/team/memories/0?agent={keeper_bot}"),
+            ("cookie", &fixture.owner.cookie),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, page) = fixture
+        .request(
+            "GET",
+            &format!("{base}/team"),
+            ("cookie", &member.cookie),
+            None,
+        )
+        .await;
+    assert_eq!(bodies(&page), ["Donna team fact"]);
 }

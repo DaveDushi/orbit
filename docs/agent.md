@@ -96,7 +96,8 @@ avatar `PUT|DELETE …/agents/default/avatar`) has:
 |---|---|---|
 | Name (`@handle`) and avatar | Owners and admins who are installation admins | The bot user's: the same in every workspace (one source, no copy), so a workspace admin who is not an installation admin sees them read-only (`403 installation_admin_required`). Same name rules as below; messages, mentions, DMs and earlier messages show the new name, and the sidecar reads it with the next poll (`bot_name`). |
 | Instructions | Owners and admins | This workspace only, at most 8,000 characters, stored in `agent_default_profiles`; in the prompt as an `<agent-instructions>` block after About Orbit and the team instructions (which every agent follows). |
-| Model and thinking level | Owners and admins | This workspace only; empty: the installation's choice (Agentic → Admin). |
+| Model and thinking level | Owners and admins | This workspace only; empty: the installation's **Default model** (its card at the bottom of Agentic → Agents). |
+| Answer level | Owners and admins | This workspace only; see [Answer level](#answer-level). |
 | Connected services | Owners and admins | See [Connected services per agent](#connected-services-per-agent). |
 
 The default agent cannot be deleted (`DELETE …/agents/default` is `405`) and always works in every channel and DM.
@@ -112,13 +113,14 @@ agent has:
 | Avatar | PNG, JPEG or WebP, at most 512 KiB (the form makes a 256 px square). |
 | Instructions | At most 8,000 characters. They go into the system prompt in an `<agent-instructions>` block after the fixed rules and About Orbit, and cannot change the rules or the approvals. |
 | Tools | A subset of the default agent's tools. **Orbit enforces it**: an agent session of this agent reaches only the routes its tools need (`agent::profiles::route_need`, checked in `agent::scope`; any other route is refused), the Drive route checks the exact tool, and the sidecar offers the model only these tools and blocks any other call. |
-| Model and thinking level | From the models the agent service offers; empty: the installation's choice (Agentic → Admin). |
+| Model and thinking level | From the models the agent service offers; empty: the installation's **Default model**. |
+| Answer level | Short, Normal or Thorough; see [Answer level](#answer-level). |
 | Channels | Every channel, or chosen channels. Direct messages with it always work. |
 | Connected services | Ticks per workspace integration (`integration_ids`); see below. The form has no separate `use_integration` tick: the tool is on exactly when a service is ticked. |
 
 - People reach an agent like a person: `@mention` it in one of its channels (the answer comes in the thread under
   the message) or send it a DM. It acts **as the driver**, with the same write approvals, ChatGPT payer and limits as
-  the default agent. It shares the workspace's team instructions and memory.
+  the default agent. It shares the workspace's team instructions, and has its own memory (see [Memory](#memory)).
 - A mention in a channel that is not one of its channels starts nothing there and the agent does not join the
   channel: Orbit answers in the person's DM with the agent and names its channels.
 - Each agent is a bot user of its own with a membership in its workspace, so web and phone show its name and avatar
@@ -132,11 +134,16 @@ agent has:
 
 ## Answer level
 
-Each person picks **Short**, **Normal** or **Thorough** in **Account settings → Agentic → Answer level**
-(`GET/PUT /api/v1/agent/preferences`, table `agent_preferences`). It applies to the default agent and every other
-agent, from the person's next run: Short runs at thinking level `low` and adds "Answer level: short…" to the run's
-message; Thorough runs at `high` and asks for full detail; Normal keeps the agent's or the installation's thinking
-level. An answer to a waiting run uses the driver's level, not the answerer's.
+Each agent's card in **Settings → Agentic → Agents** has an answer level: **Short**, **Normal** or **Thorough**
+(`answer_level` on `PATCH …/agents/default` and `POST|PATCH …/agents/{id}`; columns `agent_default_profiles.answer_level`
+and `agent_profiles.answer_level`). Owners and admins set it; it applies to every person who uses that agent, from the
+next run: Short runs at thinking level `low` and adds "Answer level: short…" to the run's message; Thorough runs at
+`high` and asks for full detail; Normal keeps the agent's or the installation's thinking level.
+
+Until step 13 each person picked a level for every agent (`/api/v1/agent/preferences`, gone now). Migration
+`0096_agent_answer_level_and_memory` gave every agent of a workspace, the default one too, the most common level of
+the workspace's people (owners, admins and members; no choice counts as Normal; a tie keeps Normal, then Short), and
+dropped `agent_preferences`.
 
 ## Routines, reminders and send later
 
@@ -228,11 +235,11 @@ level. An answer to a waiting run uses the driver's level, not the answerer's.
 
 ## Memory
 
-The agent keeps one-line memories in Orbit's database, in two scopes:
+Each agent keeps its own one-line memories in Orbit's database, in two scopes:
 
-- **Team memory**, one per workspace: decisions, conventions, project facts, outcomes. Every member can read it;
-  owners and admins can delete from it.
-- **Private memory**, one per person per workspace: that person's preferences and context. Only they can read it,
+- **Team memory**, one per agent per workspace: decisions, conventions, project facts, outcomes. Every member can read
+  it; owners and admins can delete from it.
+- **Private memory**, one per agent per person per workspace: that person's preferences and context. Only they can read it,
   and the agent reads it only in a direct message between them and the agent (other threads are shared with other
   people). Facts from a DM go to private memory unless the person asks for team memory.
 
@@ -240,9 +247,23 @@ At the start of each run the agent reads a short view of both: recent memories w
 summaries that it writes itself. It can search all memories and open a summary. Memories are data for the agent,
 never instructions, and each one keeps its author and source thread.
 
-People see and search the memory in **Account settings → Agentic**, and delete wrong entries there (a deleted
-memory also drops the summaries built from it; the agent writes them again). The agent itself cannot delete memory.
-When a member leaves a workspace, their private memory there is deleted. Design: `.ai/agent-design.md`, "Memory".
+**One agent, one memory (step 13).** An agent never reads or writes another agent's memory, and **Orbit enforces it**:
+the memory routes (`…/agent-memory/{team|private}…`) take the agent of an agent session from the session itself
+(`agent_sessions.agent_user_id`); a request of an agent session that names another agent (`?agent=…`) gets
+`403 agent_memory_other_agent`. People pick an agent with `?agent=<its bot user id>` (no `agent`: the default agent;
+an agent of another workspace: `404`). The memory written before step 13 is the default agent's (`agent_user_id`
+NULL, as in every other `agent_user_id` column). A custom agent has memory only with the `memory_note` or
+`memory_recall` tool.
+
+**When the agent notes and reads.** Each message that starts a run of an agent with memory ends with a short
+"Memory check" from Orbit: note new lasting facts (people, customers, products, projects, decisions, preferences,
+corrections) with `memory_note` before the final answer, also in a DM, and search with `memory_recall` before saying
+it does not know. The check is in the message, not the system prompt, so the prompt cache stays warm.
+
+People see and search the memory in **Account settings → Agentic → Memories** (pick the agent first), and delete wrong
+entries there (a deleted memory also drops the summaries built from it; the agent writes them again). The agent itself
+cannot delete memory. When a member leaves a workspace, their private memory there is deleted (every agent's).
+Design: `.ai/agent-design.md`, "Memory".
 
 ### Connected services per agent
 
@@ -264,7 +285,7 @@ integration that the driver's role may use **and** that the run's agent may use 
 | Setting | Where | Who | Notes |
 |---|---|---|---|
 | Name | The default agent's card in Agentic → Agents (`PATCH /api/v1/workspaces/{id}/agents/default`) | Owners and admins who are installation admins | One name for the installation: it is the bot user's display name, so it is also the agent's `@handle`. 2–40 characters (letters, digits, single spaces, `- _ . '`). Orbit refuses a name that another account already has (trimmed, any case), because `@Name` would then reach that person. Messages and earlier mentions show the new name. |
-| Model and thinking level | Agentic → Admin (`PUT /api/v1/admin/agent/model`) | Installation admins | The installation's default, for every agent whose card keeps **Default** (the default agent's card can choose another per workspace), stored in `agent_model_settings`. The model list comes from the sidecar (its ChatGPT (Codex) models); Orbit refuses any other model, and a model can only be saved while the sidecar answers. Thinking: `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. **Default** (`null`) is `AGENT_MODEL` and Pi's default thinking level. Compaction keeps `AGENT_COMPACT_MODEL`/`AGENT_COMPACT_THINKING`. |
+| Model and thinking level | The **Default model** card at the bottom of Agentic → Agents (`PUT /api/v1/admin/agent/model`; the old Agentic → Admin address opens Agents) | Installation admins | The installation's default, for every agent whose card keeps **Default** (the default agent's card can choose another per workspace), stored in `agent_model_settings`. The model list comes from the sidecar (its ChatGPT (Codex) models); Orbit refuses any other model, and a model can only be saved while the sidecar answers. Thinking: `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. **Default** (`null`) is `AGENT_MODEL` and Pi's default thinking level. Compaction keeps `AGENT_COMPACT_MODEL`/`AGENT_COMPACT_THINKING`. |
 | Team instructions | Agentic → Workspace (`/settings/agentic/workspace`, `PUT /api/v1/workspaces/{id}/agent`) | Owners and admins write, every member reads | Plain text, at most 4,000 characters, stored in `agent_team_instructions`. |
 
 The system prompt of a run has, in this order: the rules (with the current name), the built-in **About Orbit**
@@ -410,7 +431,7 @@ it calls Orbit back. Both sides share one secret.
 | `ORBIT_FORWARDED_PROTO` | none | Set `https` when Orbit runs in production on loopback: Orbit accepts the header only from a trusted proxy address (`ORBIT_TRUSTED_PROXIES` must contain the agent's address, for example `127.0.0.1/32`). |
 | `AGENT_HOST`, `AGENT_PORT` | `127.0.0.1`, `8790` | Where the agent listens. Keep it on loopback or a private network. |
 | `AGENT_DATA_DIR` | `./data` | Pi Durable's SQLite file (`pi.sqlite`): transcripts and runs. Back it up with Orbit's data. |
-| `AGENT_MODEL` | `gpt-6.1-sol` | The ChatGPT (Codex) model id of runs while Agentic → Admin has **Default**. |
+| `AGENT_MODEL` | `gpt-6.1-sol` | The ChatGPT (Codex) model id of runs while the Default model card has **Default**. |
 | `AGENT_MAX_RUNS_PER_USER` | `3` | Runs one person can have going at the same time; more wait. |
 | `AGENT_MAX_TOOL_CALLS` | `40` | Tool calls per run. |
 | `AGENT_MEMORY_TOKENS` | `3000` | Tokens of memory the agent reads at the start of each run (team and private together; `0` turns it off). It is paid by the driver's ChatGPT account. |

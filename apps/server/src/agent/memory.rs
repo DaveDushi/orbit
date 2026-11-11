@@ -1,4 +1,6 @@
-//! The agent's long-term memory: per workspace a team memory, and per person a private one. Each is
+//! The agent's long-term memory: per workspace and agent a team memory, and per person a private
+//! one. An agent never reaches another agent's memory: the routes take the agent of an agent
+//! session from the session (`scope::SessionAgent`). Each is
 //! a log of one-line memories (positions 0, 1, 2, … without gaps) and a binary tree of one-line
 //! summaries over aligned blocks (`#0-1`, `#2-3`, `#0-3`, …) that is only a cache of the log. A run
 //! reads the "wake view": recent memories word for word, older ones as coarser summaries. The
@@ -24,6 +26,13 @@ const CLAIM_MS: i64 = 10 * 60 * 1_000;
 pub const MAX_WAKE_BYTES: usize = 80_000;
 /// The most lines a wake view can have.
 const MAX_WAKE_LINES: u64 = 400;
+
+/// Whose memory a request is about: one agent's (`None`: the default agent) in one workspace.
+#[derive(Clone, Copy, Debug)]
+pub struct Place {
+    pub workspace_id: Id,
+    pub agent: Option<Id>,
+}
 
 /// Which memory a request is about. `Private` is always the caller's own.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -317,15 +326,16 @@ pub struct MemoryPage {
 /// The scope's id and size, or `None` when nothing was noted in it yet.
 async fn find_scope(
     conn: &mut AnyConnection,
-    workspace_id: Id,
+    place: Place,
     owner: Option<Id>,
 ) -> Result<Option<(String, u64)>, sqlx::Error> {
     let row = sqlx::query(
         "SELECT id, size FROM agent_memory_scopes WHERE workspace_id = $1 \
-         AND owner_user_id IS NOT DISTINCT FROM $2",
+         AND owner_user_id IS NOT DISTINCT FROM $2 AND agent_user_id IS NOT DISTINCT FROM $3",
     )
-    .bind(workspace_id.to_string())
+    .bind(place.workspace_id.to_string())
     .bind(owner.map(|id| id.to_string()))
+    .bind(place.agent.map(|id| id.to_string()))
     .fetch_optional(&mut *conn)
     .await?;
     Ok(row.map(|row| (row.get("id"), to_u64(row.get("size")))))
@@ -664,7 +674,7 @@ impl MemoryStore {
     /// Appends one memory and claims the next due summary for the caller.
     pub async fn note(
         &self,
-        workspace_id: Id,
+        place: Place,
         user_id: Id,
         scope: Scope,
         body: &str,
@@ -673,13 +683,13 @@ impl MemoryStore {
         let body = check_line(body)?;
         let now = TimestampMillis::now().as_millis();
         let mut tx = self.database.immediate_transaction().await?;
-        let (_, owner) = member(&mut tx, workspace_id, user_id, scope).await?;
+        let (_, owner) = member(&mut tx, place.workspace_id, user_id, scope).await?;
         if let Some(conversation) = source.conversation_id {
             let found = sqlx::query_scalar::<_, String>(
                 "SELECT id FROM chat_conversations WHERE id = $1 AND workspace_id = $2",
             )
             .bind(conversation.to_string())
-            .bind(workspace_id.to_string())
+            .bind(place.workspace_id.to_string())
             .fetch_optional(&mut *tx)
             .await?;
             if found.is_none() {
@@ -698,17 +708,18 @@ impl MemoryStore {
                 return Err(MemoryError::Invalid("The source thread is unknown."));
             }
         }
-        let scope_id = match find_scope(&mut tx, workspace_id, owner).await? {
+        let scope_id = match find_scope(&mut tx, place, owner).await? {
             Some((id, _)) => id,
             None => {
                 let id = Id::new_v7().to_string();
                 sqlx::query(
-                    "INSERT INTO agent_memory_scopes (id, workspace_id, owner_user_id, size, created_at) \
-                     VALUES ($1, $2, $3, 0, $4)",
+                    "INSERT INTO agent_memory_scopes (id, workspace_id, owner_user_id, agent_user_id, \
+                     size, created_at) VALUES ($1, $2, $3, $4, 0, $5)",
                 )
                 .bind(&id)
-                .bind(workspace_id.to_string())
+                .bind(place.workspace_id.to_string())
                 .bind(owner.map(|id| id.to_string()))
+                .bind(place.agent.map(|id| id.to_string()))
                 .bind(now)
                 .execute(&mut *tx)
                 .await?;
@@ -749,7 +760,7 @@ impl MemoryStore {
     /// Saves the summary of `(lo, size)` when `claim` still holds it, then claims the next due one.
     pub async fn summarize(
         &self,
-        workspace_id: Id,
+        place: Place,
         user_id: Id,
         scope: Scope,
         (lo, size): (u64, u64),
@@ -759,8 +770,8 @@ impl MemoryStore {
         let body = check_line(body)?;
         let now = TimestampMillis::now().as_millis();
         let mut tx = self.database.immediate_transaction().await?;
-        let (_, owner) = member(&mut tx, workspace_id, user_id, scope).await?;
-        let Some((scope_id, total)) = find_scope(&mut tx, workspace_id, owner).await? else {
+        let (_, owner) = member(&mut tx, place.workspace_id, user_id, scope).await?;
+        let Some((scope_id, total)) = find_scope(&mut tx, place, owner).await? else {
             return Err(MemoryError::NotFound);
         };
         let saved = sqlx::query(
@@ -787,15 +798,15 @@ impl MemoryStore {
     /// The wake view of a scope in at most `bytes` bytes of text.
     pub async fn wake(
         &self,
-        workspace_id: Id,
+        place: Place,
         user_id: Id,
         scope: Scope,
         bytes: usize,
     ) -> Result<Wake, MemoryError> {
         let bytes = bytes.min(MAX_WAKE_BYTES);
         let mut conn = self.database.pool().acquire().await?;
-        let (_, owner) = member(&mut conn, workspace_id, user_id, scope).await?;
-        let Some((scope_id, total)) = find_scope(&mut conn, workspace_id, owner).await? else {
+        let (_, owner) = member(&mut conn, place.workspace_id, user_id, scope).await?;
+        let Some((scope_id, total)) = find_scope(&mut conn, place, owner).await? else {
             return Ok(Wake {
                 total: 0,
                 lines: Vec::new(),
@@ -833,14 +844,14 @@ impl MemoryStore {
     /// The two halves of block `(lo, size)`.
     pub async fn zoom(
         &self,
-        workspace_id: Id,
+        place: Place,
         user_id: Id,
         scope: Scope,
         (lo, size): (u64, u64),
     ) -> Result<Vec<Line>, MemoryError> {
         let mut conn = self.database.pool().acquire().await?;
-        let (_, owner) = member(&mut conn, workspace_id, user_id, scope).await?;
-        let Some((scope_id, total)) = find_scope(&mut conn, workspace_id, owner).await? else {
+        let (_, owner) = member(&mut conn, place.workspace_id, user_id, scope).await?;
+        let Some((scope_id, total)) = find_scope(&mut conn, place, owner).await? else {
             return Err(MemoryError::NotFound);
         };
         if lo + size > total {
@@ -855,7 +866,7 @@ impl MemoryStore {
     /// Memories, newest first; with `query`, only those that contain every word of it.
     pub async fn list(
         &self,
-        workspace_id: Id,
+        place: Place,
         user_id: Id,
         scope: Scope,
         query: Option<&str>,
@@ -863,9 +874,9 @@ impl MemoryStore {
         limit: u64,
     ) -> Result<MemoryPage, MemoryError> {
         let mut conn = self.database.pool().acquire().await?;
-        let (actor, owner) = member(&mut conn, workspace_id, user_id, scope).await?;
+        let (actor, owner) = member(&mut conn, place.workspace_id, user_id, scope).await?;
         let can_delete = actor.can_delete_agent_memory(owner);
-        let Some((scope_id, _)) = find_scope(&mut conn, workspace_id, owner).await? else {
+        let Some((scope_id, _)) = find_scope(&mut conn, place, owner).await? else {
             return Ok(MemoryPage {
                 items: Vec::new(),
                 next_before: None,
@@ -931,18 +942,18 @@ impl MemoryStore {
     /// Erases one memory and drops every summary built from it; they are written again later.
     pub async fn delete(
         &self,
-        workspace_id: Id,
+        place: Place,
         user_id: Id,
         scope: Scope,
         position: u64,
     ) -> Result<(), MemoryError> {
         let now = TimestampMillis::now().as_millis();
         let mut tx = self.database.immediate_transaction().await?;
-        let (actor, owner) = member(&mut tx, workspace_id, user_id, scope).await?;
+        let (actor, owner) = member(&mut tx, place.workspace_id, user_id, scope).await?;
         if !actor.can_delete_agent_memory(owner) {
             return Err(MemoryError::Forbidden);
         }
-        let Some((scope_id, _)) = find_scope(&mut tx, workspace_id, owner).await? else {
+        let Some((scope_id, _)) = find_scope(&mut tx, place, owner).await? else {
             return Err(MemoryError::NotFound);
         };
         let erased = sqlx::query(
@@ -973,17 +984,17 @@ impl MemoryStore {
     /// Drops the summary of `(lo, size)` and the summaries built from it (OptMem's `forget`).
     pub async fn forget(
         &self,
-        workspace_id: Id,
+        place: Place,
         user_id: Id,
         scope: Scope,
         (lo, size): (u64, u64),
     ) -> Result<(), MemoryError> {
         let mut tx = self.database.immediate_transaction().await?;
-        let (actor, owner) = member(&mut tx, workspace_id, user_id, scope).await?;
+        let (actor, owner) = member(&mut tx, place.workspace_id, user_id, scope).await?;
         if !actor.can_delete_agent_memory(owner) {
             return Err(MemoryError::Forbidden);
         }
-        let Some((scope_id, _)) = find_scope(&mut tx, workspace_id, owner).await? else {
+        let Some((scope_id, _)) = find_scope(&mut tx, place, owner).await? else {
             return Err(MemoryError::NotFound);
         };
         let dropped = sqlx::query(

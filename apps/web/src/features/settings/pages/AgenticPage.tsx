@@ -3,29 +3,26 @@ import { mcpClientCommands, mcpUrl } from '@orbit/api/mcp'
 import { SettingsCard } from '@/components/common/SettingsCard'
 import { CopyCodeButton } from '@/components/common/CopyCodeButton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { AgentModelPage } from '@/features/agent/AgentModelPage'
 import { AgentPage } from '@/features/agent/AgentPage'
 import { AgentsPage } from '@/features/agent/AgentsPage'
-import { AnswerLevelPage } from '@/features/agent/AnswerLevelPage'
+import { DefaultModelCard } from '@/features/agent/DefaultModelCard'
 import { MemoryPage } from '@/features/agent/MemoryPage'
 import { RoutinesPage } from '@/features/agent/RoutinesPage'
 import { TeamInstructionsPage } from '@/features/agent/TeamInstructionsPage'
 import { useAgentStatus } from '@/features/agent/api'
 import { BotsPage } from '@/features/bots/BotsPage'
 import { AgentToolsPage } from '@/features/agentIntegrations/AgentToolsPage'
-import { useCurrentUser } from '@/features/auth/api'
 import { OAuthConnections } from '@/features/auth/components/OAuthConnections'
 import { AGENTIC_TABS, agenticTabsView } from '../settingsNav'
 
-/** The page's sections by role, as tabs. One tab needs no bar. Each section keeps the access check it always had. */
+/** The page's sections, as tabs. One tab needs no bar. Each section keeps the access check it always had. */
 export function AgenticTabs() {
   const { pathname, search, hash } = useLocation()
   const navigate = useNavigate()
-  const user = useCurrentUser()
   const status = useAgentStatus()
-  // Both answers decide the tabs, so a redirect must wait for them.
-  if (status.isPending || user.isPending) return null
-  const { tabs, current, redirect } = agenticTabsView(AGENTIC_TABS, user.data?.installation_admin === true, status.data?.enabled === true, pathname)
+  // The answer decides the tabs, so a redirect must wait for it.
+  if (status.isPending) return null
+  const { tabs, current, redirect } = agenticTabsView(AGENTIC_TABS, status.data?.enabled === true, pathname)
   if (redirect) return <Navigate to={{ pathname: redirect, search, hash }} replace />
   if (tabs.length < 2 || !current || !tabs.includes(current)) return <Outlet />
   return (
@@ -44,7 +41,6 @@ export function AgenticYou() {
   return (
     <>
       {agent ? <AgentPage /> : null}
-      {agent ? <AnswerLevelPage /> : null}
       <McpSetup />
       <OAuthConnections />
       {agent ? <MemoryPage /> : null}
@@ -62,9 +58,18 @@ export function AgenticWorkspace() {
   )
 }
 
-/** The workspace's agents, the default one first: every member reads them, owners and admins manage them. */
+/**
+ * The workspace's agents, the default one first: every member reads them, owners and admins manage them. Below them,
+ * installation admins set the default model of every agent that keeps Default.
+ */
 export function AgenticAgents() {
-  return useAgentStatus().data?.enabled === true ? <AgentsPage /> : null
+  if (useAgentStatus().data?.enabled !== true) return null
+  return (
+    <>
+      <AgentsPage />
+      <DefaultModelCard />
+    </>
+  )
 }
 
 /** Webhook bots: they answer from an https URL and work without the team agent. Owners and admins manage them. */
@@ -75,11 +80,6 @@ export function AgenticBots() {
 /** Routines: the person's own, and every routine of the workspace for owners and admins. */
 export function AgenticRoutines() {
   return useAgentStatus().data?.enabled === true ? <RoutinesPage /> : null
-}
-
-/** The agents' default model for the whole instance. */
-export function AgenticAdmin() {
-  return <AgentModelPage />
 }
 
 function McpSetup() {

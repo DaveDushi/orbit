@@ -31,6 +31,7 @@ function serve(canDelete: boolean) {
     const url = new URL(request.url)
     calls.push(`${request.method} ${url.pathname}`)
     if (url.pathname === '/api/v1/agent') return Response.json({ enabled: true })
+    if (url.pathname.endsWith('/agents')) return Response.json({ default_agent: { user_id: 'bot', name: 'Donna' }, agents: [{ user_id: 'keeper', name: 'Keeper' }] })
     if (request.method === 'DELETE') return new Response(null, { status: 204 })
     if (url.pathname.endsWith('/wake')) return Response.json({ total: 1, lines: [], text: '' })
     const page: AgentMemoryPage = { items: [memory], next_before: null, can_delete: canDelete }

@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { clockLine, frame } from "../src/agent.ts";
+import { clockLine, frame, hasMemory } from "../src/agent.ts";
 import { blocksToMarkdown, markdownToBlocks } from "../src/blocks.ts";
 import { namesToTokens, splitBody, tokensToNames } from "../src/mentions.ts";
 import { plan } from "../src/mock.ts";
 import { requestTimeoutMs } from "../src/orbit.ts";
-import { teamInstructionsBlock } from "../src/prompt.ts";
+import { MEMORY_CHECK, teamInstructionsBlock } from "../src/prompt.ts";
 import { groupSteps } from "../src/steps.ts";
 
 const ann = { id: "0199c3a0-0000-7000-8000-00000000000a", name: "Ann" };
@@ -81,6 +81,27 @@ test("each message starts with its sender's local time; a missing or unknown tim
 	assert.equal(clockLine("", late), "[Mon 2026-11-09 23:30, UTC]");
 	assert.equal(frame("instruction", "Ann", "Ann", "hi", "Asia/Jerusalem", morning), "[Mon 2026-11-09 10:03, Asia/Jerusalem]\nInstruction from Ann (the driver of this run):\nhi");
 	assert.equal(frame("action", "Ann", "Ann", "clicked", undefined, morning), "[Mon 2026-11-09 08:03, UTC]\nclicked");
+});
+
+// Regression (step 13): runs skipped memory because the rule was only far up in the system prompt. Every message that
+// starts a run of an agent with memory now ends with the memory check; steers and routine runs do not repeat it.
+test("a message that starts a run ends with the memory check when the agent has memory", () => {
+	const now = new Date("2026-11-09T08:03:00Z");
+	for (const kind of ["instruction", "answer", "action"] as const) {
+		const text = frame(kind, "Ann", "Bob", "Yoga Six moved its sale to Friday", "UTC", now, "short", true);
+		assert.ok(text.endsWith(`\n\n${MEMORY_CHECK}`), kind);
+		assert.ok(text.indexOf("Yoga Six") < text.indexOf(MEMORY_CHECK), kind);
+		assert.ok(!frame(kind, "Ann", "Bob", "hi", "UTC", now, "normal", false).includes(MEMORY_CHECK), kind);
+	}
+	for (const kind of ["steer", "routine"] as const) assert.ok(!frame(kind, "Ann", "Ann", "hi", "UTC", now, "normal", true).includes(MEMORY_CHECK), kind);
+	assert.match(MEMORY_CHECK, /memory_note/);
+	assert.match(MEMORY_CHECK, /memory_recall/);
+	// The default agent has every tool; a custom agent has memory only with a memory tool.
+	assert.equal(hasMemory(null), true);
+	assert.equal(hasMemory(undefined), true);
+	assert.equal(hasMemory(["read_page", "memory_note"]), true);
+	assert.equal(hasMemory(["memory_recall"]), true);
+	assert.equal(hasMemory(["read_page"]), false);
 });
 
 test("a step repeated right after itself shows once with its count, in order", () => {

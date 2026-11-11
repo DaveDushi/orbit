@@ -6,20 +6,18 @@ build: "## YYYY-MM-DD" (the deploy date), then 1-4 short "- " lines about what p
 members, not developers. Keep the 8 newest entries; the prompt shows the 5 newest.
 -->
 
-## 2026-11-16
+## 2026-11-12
+- Each agent now has its own memory (team and private); Donna keeps everything she remembered so far, and Account settings → Agentic → Memories has an agent picker. Donna now notes lasting facts on her own and checks her memory before she says she does not know. The answer level (Short, Normal, Thorough) is set on each agent's card in Settings → Agentic → Agents, and the default model moved there too (the Admin tab is gone).
+- Routines can run a saved script: Donna can write a short script that uses her tools, save it ("save this as a script"), and run it on each run of a routine. Its changes need your yes to that exact script; after any change of the script, the routine makes no changes until you approve the new version. See, edit and delete scripts in Settings → Agentic → Routines.
+- Test run: the "Test run" button of a routine (or "test my routine" to Donna) runs it now, as you. The result comes only in your DM with Donna, marked "Test run", and nothing is changed or posted: it lists what it would do. Each routine shows its last runs with the result, errors and the tool calls of its script.
+- Donna has her own card in Settings → Agentic → Agents, first and marked Default: owners and admins change her instructions and model for the workspace there, and installation admins her name and avatar (the default model is at the bottom of the Agents tab). Each agent card, Donna's too, ticks the connected services (for example TikTok or Shopify) that the agent may use; a new service is on for Donna and off for the other agents until ticked.
 - Bots that answer: owners and admins connect a bot from their own service in Settings → Agentic → Bots: a name, avatar, https URL and the channels where it works. @mention it there or send it a direct message, and its answer comes within 30 seconds as a message from the bot. If it does not answer in time, a short note says so.
-
-## 2026-11-15
 - Chat search has new filters: Mentions me, Has link and Threads only (replies in threads), and you can sort by Newest or Oldest. Filters combine with each other and with This conversation, From and Has file. The matched words are marked in the results.
 - Recent searches: click the empty search field in a conversation to see your last 10 searches and run one again; Clear removes them. They are saved in your browser only (web and desktop app).
 
 ## 2026-11-11
-- Routines can run a saved script: Donna can write a short script that uses her tools, save it ("save this as a script"), and run it on each run of a routine. Its changes need your yes to that exact script; after any change of the script, the routine makes no changes until you approve the new version. See, edit and delete scripts in Settings → Agentic → Routines.
-- Test run: the "Test run" button of a routine (or "test my routine" to Donna) runs it now, as you. The result comes only in your DM with Donna, marked "Test run", and nothing is changed or posted: it lists what it would do. Each routine shows its last runs with the result, errors and the tool calls of its script.
-- Donna has her own card in Settings → Agentic → Agents, first and marked Default: owners and admins change her instructions and model for the workspace there, and installation admins her name and avatar (Admin → AI agent now has only the default model). Each agent card, Donna's too, ticks the connected services (for example TikTok or Shopify) that the agent may use; a new service is on for Donna and off for the other agents until ticked.
 - Insert from Drive in Docs: type "/" → Insert from Drive and pick a file. The page always shows the latest version from Drive (images and videos on the page, other files as a card that opens the preview). People without access to the file see a locked card. Ask Donna to add, change or remove a Drive file on a page, or which pages show a file.
 - More agents: owners and admins create agents next to Donna in Settings → Agentic → Agents, each with a name, avatar, instructions, tools, model and the channels where it works. @mention one in those channels or send it a direct message; it works with your permissions and asks for your yes before changes, like Donna.
-- Answer level: pick Short, Normal or Thorough in Account settings → Agentic. It sets how much Donna and every other agent thinks and writes for you.
 - Routines can use any agent: pick it when you edit the routine in Settings → Agentic → Routines.
 - Routines: ask Donna for a recurring job ("every weekday at 9, summarize yesterday in #support"). She does it as you, with your permissions, and posts the result where you chose. See, pause, edit and delete them in Settings → Agentic → Routines.
 - Reminders: "remind me at 5pm to call Ana" and Donna sends you a direct message then.

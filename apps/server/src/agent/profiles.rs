@@ -516,20 +516,15 @@ async fn set_integrations(
 // ---------------------------------------------------------------------------------------------
 // Answer level
 
-/// How much an agent thinks and writes for one person.
+/// How much an agent thinks and writes, set on its card.
 pub const ANSWER_LEVELS: [&str; 3] = ["short", "normal", "thorough"];
 
-pub(crate) async fn answer_level(
-    conn: &mut AnyConnection,
-    user_id: Id,
-) -> Result<String, sqlx::Error> {
-    Ok(sqlx::query_scalar::<_, String>(
-        "SELECT answer_level FROM agent_preferences WHERE user_id = $1",
-    )
-    .bind(user_id.to_string())
-    .fetch_optional(&mut *conn)
-    .await?
-    .unwrap_or_else(|| "normal".to_owned()))
+fn checked_answer_level(raw: Option<&str>) -> Result<Option<String>, &'static str> {
+    match raw {
+        None => Ok(None),
+        Some(level) if ANSWER_LEVELS.contains(&level) => Ok(Some(level.to_owned())),
+        Some(_) => Err("The answer level must be short, normal or thorough."),
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -552,10 +547,6 @@ pub fn router(state: AgentState) -> Router {
         .route(
             &format!("{base}/{{agent_id}}/avatar"),
             put(upload_avatar).delete(remove_avatar),
-        )
-        .route(
-            "/api/v1/agent/preferences",
-            get(read_preferences).put(save_preferences),
         )
         .with_state(state)
 }
@@ -679,6 +670,7 @@ struct AgentView {
     tools: Vec<String>,
     model: Option<String>,
     thinking: Option<String>,
+    answer_level: String,
     all_channels: bool,
     channels: Vec<ChannelView>,
     /// The integrations it may use (ticked on its card).
@@ -696,6 +688,7 @@ struct DefaultAgentView {
     instructions: String,
     model: Option<String>,
     thinking: Option<String>,
+    answer_level: String,
     integration_ids: Vec<String>,
     /// Installation admins: the name and avatar are the installation's.
     can_rename: bool,
@@ -722,7 +715,7 @@ async fn agent_views(
 ) -> Result<Vec<AgentView>, sqlx::Error> {
     let mut query = SqlBuilder::new(
         "SELECT p.id, p.user_id, u.display_name, a.updated_at AS avatar_at, p.instructions, p.tools, \
-         p.model, p.thinking, p.all_channels, p.created_at, p.updated_at FROM agent_profiles p \
+         p.model, p.thinking, p.answer_level, p.all_channels, p.created_at, p.updated_at FROM agent_profiles p \
          JOIN users u ON u.id = p.user_id LEFT JOIN user_avatars a ON a.user_id = p.user_id \
          WHERE p.deleted_at IS NULL AND p.workspace_id = ",
     );
@@ -768,6 +761,7 @@ async fn agent_views(
             tools: serde_json::from_str(&row.get::<String, _>("tools")).unwrap_or_default(),
             model: row.get("model"),
             thinking: row.get("thinking"),
+            answer_level: row.get("answer_level"),
             all_channels: row.get::<bool, _>("all_channels"),
             channels,
             integration_ids,
@@ -849,6 +843,8 @@ struct AgentBody {
     model: Option<Option<String>>,
     #[serde(default, with = "double_option")]
     thinking: Option<Option<String>>,
+    /// `short`, `normal` or `thorough`; absent keeps it (`normal` on create).
+    answer_level: Option<String>,
     all_channels: Option<bool>,
     channel_ids: Option<Vec<Id>>,
     /// The integrations it may use; absent on update keeps them.
@@ -1071,6 +1067,9 @@ async fn create_agent(
         .map_err(|detail| invalid(detail, &uri, &request_id))?;
     let tools = checked_tools(body.tools.as_deref().unwrap_or_default())
         .map_err(|detail| invalid(detail, &uri, &request_id))?;
+    let answer_level = checked_answer_level(body.answer_level.as_deref())
+        .map_err(|detail| invalid(detail, &uri, &request_id))?
+        .unwrap_or_else(|| "normal".to_owned());
     let (model, thinking) =
         checked_model(&state, body.model, body.thinking, &uri, &request_id).await?;
     // The hash of a random secret that is thrown away: no password signs in as the agent.
@@ -1132,7 +1131,8 @@ async fn create_agent(
         .await?;
         sqlx::query(
             "INSERT INTO agent_profiles (id, workspace_id, user_id, instructions, tools, model, thinking, \
-             all_channels, created_by, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)",
+             all_channels, created_by, created_at, updated_at, answer_level) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11)",
         )
         .bind(profile_id.to_string())
         .bind(workspace_id.to_string())
@@ -1144,6 +1144,7 @@ async fn create_agent(
         .bind(i64::from(body.all_channels.unwrap_or(false)))
         .bind(actor.user_id.to_string())
         .bind(now.as_millis())
+        .bind(&answer_level)
         .execute(&mut *tx)
         .await?;
         let agent = LiveAgent {
@@ -1257,6 +1258,8 @@ async fn update_agent(
         .map(checked_tools)
         .transpose()
         .map_err(|detail| invalid(detail, &uri, &request_id))?;
+    let answer_level = checked_answer_level(body.answer_level.as_deref())
+        .map_err(|detail| invalid(detail, &uri, &request_id))?;
     let (model, thinking) =
         checked_model(&state, body.model, body.thinking, &uri, &request_id).await?;
     let database = state.database();
@@ -1301,6 +1304,10 @@ async fn update_agent(
         if let Some(thinking) = &thinking {
             update.push(", thinking = ");
             update.push_bind(thinking.clone());
+        }
+        if let Some(level) = &answer_level {
+            update.push(", answer_level = ");
+            update.push_bind(level.clone());
         }
         if let Some(all) = body.all_channels {
             update.push(", all_channels = ");
@@ -1605,7 +1612,8 @@ async fn default_view(
     .fetch_one(&mut *conn)
     .await?;
     let settings = sqlx::query(
-        "SELECT instructions, model, thinking FROM agent_default_profiles WHERE workspace_id = $1",
+        "SELECT instructions, model, thinking, answer_level FROM agent_default_profiles \
+         WHERE workspace_id = $1",
     )
     .bind(workspace_id.to_string())
     .fetch_optional(&mut *conn)
@@ -1626,7 +1634,8 @@ async fn default_view(
             .map(|row| row.get("instructions"))
             .unwrap_or_default(),
         model: settings.as_ref().and_then(|row| row.get("model")),
-        thinking: settings.and_then(|row| row.get("thinking")),
+        thinking: settings.as_ref().and_then(|row| row.get("thinking")),
+        answer_level: settings.map_or_else(|| "normal".to_owned(), |row| row.get("answer_level")),
         integration_ids,
         can_rename,
     })
@@ -1642,6 +1651,8 @@ struct DefaultBody {
     model: Option<Option<String>>,
     #[serde(default, with = "double_option")]
     thinking: Option<Option<String>>,
+    /// `short`, `normal` or `thorough`; absent keeps it.
+    answer_level: Option<String>,
     /// The integrations it may use; the others are off for it, new ones on.
     integration_ids: Option<Vec<String>>,
 }
@@ -1673,6 +1684,8 @@ async fn update_default(
         .as_deref()
         .map(checked_instructions)
         .transpose()
+        .map_err(|detail| invalid(detail, &uri, &request_id))?;
+    let answer_level = checked_answer_level(body.answer_level.as_deref())
         .map_err(|detail| invalid(detail, &uri, &request_id))?;
     let (model, thinking) =
         checked_model(&state, body.model, body.thinking, &uri, &request_id).await?;
@@ -1740,6 +1753,10 @@ async fn update_default(
         if let Some(thinking) = &thinking {
             update.push(", thinking = ");
             update.push_bind(thinking.clone());
+        }
+        if let Some(level) = &answer_level {
+            update.push(", answer_level = ");
+            update.push_bind(level.clone());
         }
         update.push(" WHERE workspace_id = ");
         update.push_bind(workspace_id.to_string());
@@ -1844,78 +1861,6 @@ async fn remove_default_avatar(
 ) -> Result<StatusCode, ApiError> {
     let user = default_user(&state, &headers, &workspace_id, &uri, &request_id).await?;
     clear_avatar(&state, user, &uri, &request_id).await
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PreferencesBody {
-    answer_level: String,
-}
-
-async fn read_preferences(
-    State(state): State<AgentState>,
-    headers: HeaderMap,
-    uri: Uri,
-    request_id: RequestIdExtension,
-) -> Result<Json<Value>, ApiError> {
-    let session = authenticate_session(
-        &state.identity,
-        state.cookie_mode,
-        &headers,
-        uri.path(),
-        request_id.as_ref(),
-    )
-    .await?;
-    let mut conn = state
-        .database()
-        .pool()
-        .acquire()
-        .await
-        .map_err(|error| unavailable(&error, &uri, &request_id))?;
-    let level = answer_level(&mut conn, session.user.id)
-        .await
-        .map_err(|error| unavailable(&error, &uri, &request_id))?;
-    Ok(Json(
-        json!({ "answer_level": level, "answer_levels": ANSWER_LEVELS }),
-    ))
-}
-
-/// The person's answer level for every agent, from their next run on.
-async fn save_preferences(
-    State(state): State<AgentState>,
-    headers: HeaderMap,
-    uri: Uri,
-    request_id: RequestIdExtension,
-    ApiJson(body): ApiJson<PreferencesBody>,
-) -> Result<Json<Value>, ApiError> {
-    let session = authenticate_session(
-        &state.identity,
-        state.cookie_mode,
-        &headers,
-        uri.path(),
-        request_id.as_ref(),
-    )
-    .await?;
-    if !ANSWER_LEVELS.contains(&body.answer_level.as_str()) {
-        return Err(invalid(
-            "The answer level must be short, normal or thorough.",
-            &uri,
-            &request_id,
-        ));
-    }
-    sqlx::query(
-        "INSERT INTO agent_preferences (user_id, answer_level, updated_at) VALUES ($1, $2, $3) \
-         ON CONFLICT (user_id) DO UPDATE SET answer_level = excluded.answer_level, updated_at = excluded.updated_at",
-    )
-    .bind(session.user.id.to_string())
-    .bind(&body.answer_level)
-    .bind(TimestampMillis::now().as_millis())
-    .execute(state.database().pool())
-    .await
-    .map_err(|error| unavailable(&error, &uri, &request_id))?;
-    Ok(Json(
-        json!({ "answer_level": body.answer_level, "answer_levels": ANSWER_LEVELS }),
-    ))
 }
 
 #[cfg(test)]

@@ -425,8 +425,7 @@ pub struct PendingInput {
     pub agent: Option<InputAgent>,
     /// The default agent's own settings in this workspace (`profiles`), for its inputs once set.
     pub default_agent: Option<DefaultAgent>,
-    /// The driver's answer level (`profiles::ANSWER_LEVELS`): the author's, or for an answer the
-    /// waiting run's driver's.
+    /// The agent's answer level (`profiles::ANSWER_LEVELS`), set on its card.
     pub answer_level: String,
     /// `channel`: the agent may not be used where it was mentioned. Orbit answers these itself
     /// (`refusals`); the sidecar never gets them.
@@ -506,7 +505,7 @@ pub(crate) async fn pending(
          (SELECT COUNT(*) FROM chat_members cm WHERE cm.conversation_id = i.conversation_id) \
          AS conversation_members, i.agent_user_id, i.refused, au.display_name AS agent_name, \
          p.instructions AS agent_instructions, p.tools AS agent_tools, p.model AS agent_model, \
-         p.thinking AS agent_thinking, COALESCE(ap.answer_level, 'normal') AS answer_level, \
+         p.thinking AS agent_thinking, COALESCE(p.answer_level, dp.answer_level, 'normal') AS answer_level, \
          dp.workspace_id AS default_set, dp.instructions AS default_instructions, \
          dp.model AS default_model, dp.thinking AS default_thinking \
          FROM agent_inputs i \
@@ -519,10 +518,6 @@ pub(crate) async fn pending(
          LEFT JOIN agent_profiles p ON p.user_id = i.agent_user_id \
          LEFT JOIN agent_default_profiles dp ON dp.workspace_id = i.workspace_id AND i.agent_user_id IS NULL \
          LEFT JOIN users au ON au.id = i.agent_user_id \
-         LEFT JOIN agent_threads th ON th.thread_key = i.thread_key \
-         LEFT JOIN agent_preferences ap ON ap.user_id = CASE \
-             WHEN i.kind = 'answer' AND th.driver_user_id IS NOT NULL THEN th.driver_user_id \
-             ELSE i.author_id END \
          WHERE i.acked_at IS NULL ORDER BY i.message_id LIMIT $1",
     )
     .bind(limit)

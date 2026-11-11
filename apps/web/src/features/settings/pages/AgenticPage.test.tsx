@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { MovedTo } from '@/app/MovedTo'
 import { WorkspaceContext } from '@/features/workspaces/workspaceContext'
 import { testWorkspace } from '@/test/workspace'
-import { AgenticAdmin, AgenticTabs, AgenticWorkspace, AgenticYou } from './AgenticPage'
+import { AgenticAgents, AgenticTabs, AgenticWorkspace, AgenticYou } from './AgenticPage'
 
 const originalFetch = globalThis.fetch
 afterEach(() => {
@@ -29,6 +29,7 @@ function show(role: Role, instanceAdmin: boolean, enabled: boolean, path: string
     if (url === '/api/v1/auth/me') return Response.json({ id: 'u', email: 'a@b.c', display_name: 'A', installation_admin: instanceAdmin, root: instanceAdmin })
     if (url === '/api/v1/admin/agent/model') return Response.json({ model: null, thinking: null, available: null, thinking_levels: [], updated_by_name: null })
     if (url.endsWith('/agent-integrations')) return Response.json({ items: [], can_keep_secrets: true })
+    if (url.endsWith('/agents')) return Response.json({ default_agent: { user_id: 'bot', name: 'Ada', avatar_url: null, instructions: '', model: null, thinking: null, answer_level: 'normal', integration_ids: [], can_rename: instanceAdmin }, agents: [], integrations: [], can_manage: role !== 'member', tools: [], models: null, thinking_levels: [], max_instructions_chars: 4000, max_agents: 20 })
     if (url.endsWith('/agent')) return Response.json({ instructions: '', can_edit: role !== 'member', max_chars: 4000, updated_at: null, updated_by_name: null })
     if (url === '/api/v1/oauth/grants') return Response.json({ items: [] })
     return Response.json({ items: [], next_cursor: null, lines: [], can_delete: false })
@@ -44,9 +45,11 @@ function show(role: Role, instanceAdmin: boolean, enabled: boolean, path: string
             <Route path="settings/agentic" element={<AgenticTabs />}>
               <Route index element={<AgenticYou />} />
               <Route path="workspace" element={<AgenticWorkspace />} />
-              <Route path="admin" element={<AgenticAdmin />} />
+              <Route path="agents" element={<AgenticAgents />} />
+              <Route path="admin" element={<MovedTo path="/settings/agentic/agents" />} />
             </Route>
             <Route path="settings/agent-tools" element={<MovedTo path="/settings/agentic/workspace" />} />
+            <Route path="agentic/admin" element={<MovedTo path="/settings/agentic/agents" />} />
           </Routes>
         </MemoryRouter>
       </WorkspaceContext.Provider>
@@ -83,14 +86,17 @@ test('Workspace shows Tools to owners and admins; members read instructions and 
   expect(asked.some((url) => url.endsWith('/agent-integrations'))).toBe(false)
 })
 
-test('Admin opens only for an instance admin, whatever the workspace role', async () => {
-  const admin = show('member', true, true, '/settings/agentic/admin')
-  await admin.view.findByRole('heading', { name: 'Model' })
-  expect(admin.view.getByTestId('where').textContent).toBe('/settings/agentic/admin')
-  cleanup()
+test('the old Admin addresses open Agents, where only an instance admin sees the default model', async () => {
+  for (const path of ['/settings/agentic/admin', '/agentic/admin']) {
+    const admin = show('member', true, true, path)
+    await admin.view.findByRole('heading', { name: 'Default model' })
+    expect(admin.view.getByTestId('where').textContent).toBe('/settings/agentic/agents')
+    cleanup()
+  }
   const other = show('owner', false, true, '/settings/agentic/admin')
-  await other.view.findByText('MCP server')
-  expect(other.view.getByTestId('where').textContent).toBe('/settings/agentic')
+  await other.view.findByText('Ada')
+  expect(other.view.getByTestId('where').textContent).toBe('/settings/agentic/agents')
+  expect(other.view.queryAllByRole('heading', { name: 'Default model' })).toHaveLength(0)
   expect(other.view.queryAllByRole('tab', { name: 'Admin' })).toHaveLength(0)
 })
 

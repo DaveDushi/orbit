@@ -113,7 +113,7 @@ async fn github_schema_is_in_one_draft_migration() {
         db.scalar::<i64>("SELECT MAX(version) FROM schema_migrations")
             .await
             .unwrap(),
-        94
+        96
     );
     assert_eq!(
         db.scalar::<i64>("SELECT COUNT(*) FROM pragma_table_info('github_issue_links') WHERE name IN ('kind', 'pull_state', 'sync_paused')")
@@ -250,7 +250,7 @@ async fn rejects_a_schema_newer_than_the_binary() {
         error,
         MigrationError::SchemaNewer {
             database_version: 999,
-            binary_version: 94
+            binary_version: 96
         }
     ));
 }
@@ -3337,4 +3337,110 @@ async fn agent_settings_migration_keeps_integrations_of_agents_that_had_the_tool
             .unwrap(),
         0
     );
+}
+
+#[tokio::test]
+async fn answer_level_and_memory_migration_moves_both_to_the_agents() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = Database::open(&DatabaseConfig::new(directory.path().join("db.sqlite")))
+        .await
+        .unwrap();
+    MigrationRunner::embedded_through("test", 94)
+        .run(&database)
+        .await
+        .unwrap();
+    let mut transaction = database.transaction().await.unwrap();
+    // w1: two people chose thorough, one chose nothing (normal), a guest chose short: thorough wins.
+    // w2: one thorough, one nothing: a tie keeps normal.
+    sqlx::raw_sql(
+        "INSERT INTO users (id, email, normalized_email, display_name, password_hash, created_at, updated_at)
+         VALUES ('ann', 'a@example.com', 'a@example.com', 'Ann', 'x', 1, 1),
+                ('bob', 'b@example.com', 'b@example.com', 'Bob', 'x', 1, 1),
+                ('cy', 'c@example.com', 'c@example.com', 'Cy', 'x', 1, 1),
+                ('gus', 'g@example.com', 'g@example.com', 'Gus', 'x', 1, 1),
+                ('donna', 'd@orbit.invalid', 'd@orbit.invalid', 'Donna', 'x', 1, 1),
+                ('seller', 's@orbit.invalid', 's@orbit.invalid', 'Seller', 'x', 1, 1),
+                ('writer', 'w@orbit.invalid', 'w@orbit.invalid', 'Writer', 'x', 1, 1);
+         INSERT INTO workspaces (id, name, version, owner_membership_id, created_at, updated_at)
+         VALUES ('w1', 'One', 0, 'm1', 1, 1), ('w2', 'Two', 0, 'm5', 1, 1);
+         INSERT INTO memberships (id, workspace_id, user_id, role, version, created_at, updated_at)
+         VALUES ('m1', 'w1', 'ann', 'owner', 0, 1, 1), ('m2', 'w1', 'bob', 'member', 0, 1, 1),
+                ('m3', 'w1', 'cy', 'member', 0, 1, 1), ('m4', 'w1', 'gus', 'guest', 0, 1, 1),
+                ('m5', 'w2', 'ann', 'owner', 0, 1, 1), ('m6', 'w2', 'cy', 'member', 0, 1, 1),
+                ('m7', 'w1', 'donna', 'member', 0, 1, 1), ('m8', 'w1', 'seller', 'member', 0, 1, 1),
+                ('m9', 'w2', 'writer', 'member', 0, 1, 1);
+         INSERT INTO agent_bot (id, user_id) VALUES (1, 'donna');
+         INSERT INTO agent_preferences (user_id, answer_level, updated_at)
+         VALUES ('ann', 'thorough', 1), ('bob', 'thorough', 1), ('gus', 'short', 1),
+                ('donna', 'short', 1), ('seller', 'short', 1);
+         INSERT INTO agent_profiles (id, workspace_id, user_id, tools, created_at, updated_at)
+         VALUES ('p-seller', 'w1', 'seller', '[]', 1, 1), ('p-writer', 'w2', 'writer', '[]', 1, 1);
+         INSERT INTO agent_memory_scopes (id, workspace_id, owner_user_id, size, created_at)
+         VALUES ('team', 'w1', NULL, 1, 1), ('mine', 'w1', 'ann', 1, 1);
+         INSERT INTO agent_memories (scope_id, position, body, author_id, created_at)
+         VALUES ('team', 0, 'Ship on Fridays', 'ann', 1), ('mine', 0, 'Ann likes tea', 'ann', 1);",
+    )
+    .execute(&mut *transaction)
+    .await
+    .unwrap();
+    transaction.commit().await.unwrap();
+
+    MigrationRunner::embedded("test")
+        .run(&database)
+        .await
+        .unwrap();
+
+    let agents: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, answer_level FROM agent_profiles ORDER BY id")
+            .fetch_all(database.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        agents,
+        [
+            ("p-seller".to_owned(), "thorough".to_owned()),
+            ("p-writer".to_owned(), "normal".to_owned()),
+        ]
+    );
+    // The default agent: a row only where the level is not the default.
+    let defaults: Vec<(String, String)> =
+        sqlx::query_as("SELECT workspace_id, answer_level FROM agent_default_profiles ORDER BY 1")
+            .fetch_all(database.pool())
+            .await
+            .unwrap();
+    assert_eq!(defaults, [("w1".to_owned(), "thorough".to_owned())]);
+
+    // Every memory written so far is the default agent's (NULL), and another agent gets its own scopes.
+    let memories: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT m.body, s.agent_user_id FROM agent_memories m \
+         JOIN agent_memory_scopes s ON s.id = m.scope_id ORDER BY m.body",
+    )
+    .fetch_all(database.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        memories,
+        [
+            ("Ann likes tea".to_owned(), None),
+            ("Ship on Fridays".to_owned(), None)
+        ]
+    );
+    sqlx::raw_sql(
+        "INSERT INTO agent_memory_scopes (id, workspace_id, owner_user_id, agent_user_id, size, created_at)
+         VALUES ('seller-team', 'w1', NULL, 'seller', 0, 1), ('seller-ann', 'w1', 'ann', 'seller', 0, 1)",
+    )
+    .execute(database.pool())
+    .await
+    .unwrap();
+    for duplicate in [
+        "INSERT INTO agent_memory_scopes (id, workspace_id, owner_user_id, size, created_at) VALUES ('x', 'w1', NULL, 0, 1)",
+        "INSERT INTO agent_memory_scopes (id, workspace_id, owner_user_id, agent_user_id, size, created_at) VALUES ('y', 'w1', 'ann', 'seller', 0, 1)",
+    ] {
+        assert!(
+            sqlx::raw_sql(duplicate)
+                .execute(database.pool())
+                .await
+                .is_err()
+        );
+    }
 }

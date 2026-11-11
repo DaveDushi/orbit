@@ -14,7 +14,7 @@ import type { OrbitClient } from "./orbit.ts";
 /** pi-ai's ChatGPT (Codex) provider; its OAuth flow has a device-code login. */
 export const PROVIDER = "openai-codex";
 
-/** The ChatGPT (Codex) models an installation admin can choose for runs (Agentic → Admin). */
+/** The ChatGPT (Codex) models an installation admin can choose for runs (the Default model card in Agentic → Agents). */
 export function codexModels(): { id: string; name: string }[] {
 	return openaiCodexProvider()
 		.getModels()

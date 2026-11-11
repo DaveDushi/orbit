@@ -95,34 +95,41 @@ export interface AgentMemoryWake {
 
 const memoryUrl = (workspaceId: string, scope: AgentMemoryScope) => `/api/v1/workspaces/${workspaceId}/agent-memory/${scope}`
 
+/**
+ * Each agent has its own memory. `agent` is the agent's bot user id (`AgentProfile.user_id`); `null` is the default
+ * agent. Orbit gives an agent only its own memory.
+ */
+const withAgent = (url: string, agent: string | null | undefined) => (agent ? `${url}${url.includes('?') ? '&' : '?'}agent=${encodeURIComponent(agent)}` : url)
+
 /** Memories, newest first; with `query`, only those containing every word. */
 export async function readAgentMemories(
   client: Client,
   workspaceId: string,
   scope: AgentMemoryScope,
-  options: { query?: string; before?: number | null } = {},
+  options: { query?: string; before?: number | null; agent?: string | null } = {},
 ): Promise<AgentMemoryPage> {
   const params = new URLSearchParams({ limit: '50' })
   if (options.query?.trim()) params.set('query', options.query.trim())
   if (options.before != null) params.set('before', String(options.before))
+  if (options.agent) params.set('agent', options.agent)
   const { data } = await client.get({ url: `${memoryUrl(workspaceId, scope)}?${params}`, throwOnError: true })
   return data as AgentMemoryPage
 }
 
 /** What a run of the agent reads from this memory, in about `bytes` bytes. */
-export async function readAgentMemoryWake(client: Client, workspaceId: string, scope: AgentMemoryScope, bytes = 12_000): Promise<AgentMemoryWake> {
-  const { data } = await client.get({ url: `${memoryUrl(workspaceId, scope)}/wake?bytes=${bytes}`, throwOnError: true })
+export async function readAgentMemoryWake(client: Client, workspaceId: string, scope: AgentMemoryScope, agent: string | null = null, bytes = 12_000): Promise<AgentMemoryWake> {
+  const { data } = await client.get({ url: withAgent(`${memoryUrl(workspaceId, scope)}/wake?bytes=${bytes}`, agent), throwOnError: true })
   return data as AgentMemoryWake
 }
 
 /** Erases a memory; the summaries built from it are written again. */
-export async function deleteAgentMemory(client: Client, workspaceId: string, scope: AgentMemoryScope, position: number): Promise<void> {
-  await client.delete({ url: `${memoryUrl(workspaceId, scope)}/memories/${position}`, throwOnError: true })
+export async function deleteAgentMemory(client: Client, workspaceId: string, scope: AgentMemoryScope, position: number, agent: string | null = null): Promise<void> {
+  await client.delete({ url: withAgent(`${memoryUrl(workspaceId, scope)}/memories/${position}`, agent), throwOnError: true })
 }
 
 /** Drops the summary of memories `lo`–`hi` (and those built from it); the agent writes it again. */
-export async function forgetAgentMemorySummary(client: Client, workspaceId: string, scope: AgentMemoryScope, lo: number, hi: number): Promise<void> {
-  await client.delete({ url: `${memoryUrl(workspaceId, scope)}/summaries/${lo}-${hi}`, throwOnError: true })
+export async function forgetAgentMemorySummary(client: Client, workspaceId: string, scope: AgentMemoryScope, lo: number, hi: number, agent: string | null = null): Promise<void> {
+  await client.delete({ url: withAgent(`${memoryUrl(workspaceId, scope)}/summaries/${lo}-${hi}`, agent), throwOnError: true })
 }
 
 /** The chat link of a memory's source thread. */
@@ -202,6 +209,7 @@ export interface AgentProfile {
   /** `null`: the installation's model and thinking level. */
   model: string | null
   thinking: string | null
+  answer_level: AnswerLevel
   /** Every channel; else only `channels`. Direct messages always work. */
   all_channels: boolean
   channels: { id: string; name: string; kind: 'public' | 'private' }[]
@@ -217,9 +225,10 @@ export interface DefaultAgent {
   name: string
   avatar_url: string | null
   instructions: string
-  /** `null`: the installation's model and thinking level (Agentic → Admin). */
+  /** `null`: the installation's model and thinking level (the Default model card in Agentic → Agents). */
   model: string | null
   thinking: string | null
+  answer_level: AnswerLevel
   /** The connected services it may use; new ones are on until unticked. */
   integration_ids: string[]
   /** Installation admins change the name and avatar. */
@@ -261,6 +270,7 @@ export interface AgentProfileInput {
   tools?: string[]
   model?: string | null
   thinking?: string | null
+  answer_level?: AnswerLevel
   all_channels?: boolean
   channel_ids?: string[]
   integration_ids?: string[]
@@ -272,6 +282,7 @@ export interface DefaultAgentInput {
   instructions?: string
   model?: string | null
   thinking?: string | null
+  answer_level?: AnswerLevel
   integration_ids?: string[]
 }
 
@@ -312,15 +323,11 @@ export async function setAgentProfileAvatar(client: Client, workspaceId: string,
   else await client.delete({ url, throwOnError: true })
 }
 
-/** How much every agent thinks and writes for the signed-in person. */
+/** How much an agent thinks and writes, set on its card: for every person who uses it. */
 export type AnswerLevel = 'short' | 'normal' | 'thorough'
 
-export async function readAnswerLevel(client: Client): Promise<AnswerLevel> {
-  const { data } = await client.get({ url: '/api/v1/agent/preferences', throwOnError: true })
-  return (data as { answer_level: AnswerLevel }).answer_level
-}
-
-export async function saveAnswerLevel(client: Client, level: AnswerLevel): Promise<AnswerLevel> {
-  const { data } = await client.put({ url: '/api/v1/agent/preferences', body: { answer_level: level }, headers: { 'Content-Type': 'application/json' }, throwOnError: true })
-  return (data as { answer_level: AnswerLevel }).answer_level
-}
+export const ANSWER_LEVELS: readonly { value: AnswerLevel; label: string; help: string }[] = [
+  { value: 'short', label: 'Short', help: 'Less thinking, a few lines. Fast.' },
+  { value: 'normal', label: 'Normal', help: 'Its model and thinking level as set.' },
+  { value: 'thorough', label: 'Thorough', help: 'More thinking, full detail. Slower, and it uses more of each person’s ChatGPT limits.' },
+]

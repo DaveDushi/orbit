@@ -627,6 +627,13 @@ impl MigrationRunner {
                     include_str!("../../../../apps/server/migrations/0095_webhook_bots.sql"),
                     false,
                 ),
+                Migration::new(
+                    96,
+                    include_str!(
+                        "../../../../apps/server/migrations/0096_agent_answer_level_and_memory.sql"
+                    ),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -928,6 +935,13 @@ impl MigrationRunner {
             Migration::new(
                 95,
                 include_str!("../../../../apps/server/migrations/postgres/0095_webhook_bots.sql"),
+                false,
+            ),
+            Migration::new(
+                96,
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0096_agent_answer_level_and_memory.sql"
+                ),
                 false,
             ),
         ];

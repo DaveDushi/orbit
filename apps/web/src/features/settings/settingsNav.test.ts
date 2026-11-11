@@ -3,28 +3,27 @@ import { AGENTIC_TABS, agenticTabsView } from './settingsNav'
 
 const labels = (view: ReturnType<typeof agenticTabsView>) => view.tabs.map((tab) => tab.label)
 
-test('an instance admin gets every section and stays on the address', () => {
-  for (const [path, label] of [['/settings/agentic', 'You'], ['/settings/agentic/', 'You'], ['/settings/agentic/workspace', 'Workspace'], ['/settings/agentic/agents', 'Agents'], ['/settings/agentic/routines', 'Routines'], ['/settings/agentic/bots', 'Bots'], ['/settings/agentic/admin', 'Admin']]) {
-    const view = agenticTabsView(AGENTIC_TABS, true, true, path)
-    expect(labels(view)).toEqual(['You', 'Workspace', 'Agents', 'Routines', 'Bots', 'Admin'])
+test('every section shows and stays on its address', () => {
+  for (const [path, label] of [['/settings/agentic', 'You'], ['/settings/agentic/', 'You'], ['/settings/agentic/workspace', 'Workspace'], ['/settings/agentic/agents', 'Agents'], ['/settings/agentic/routines', 'Routines'], ['/settings/agentic/bots', 'Bots']]) {
+    const view = agenticTabsView(AGENTIC_TABS, true, path)
+    expect(labels(view)).toEqual(['You', 'Workspace', 'Agents', 'Routines', 'Bots'])
     expect(view.current?.label).toBe(label)
     expect(view.redirect).toBeNull()
   }
 })
 
-test('anyone else has no Admin tab, and its address goes to the first section', () => {
-  const view = agenticTabsView(AGENTIC_TABS, false, true, '/settings/agentic/admin')
-  expect(labels(view)).toEqual(['You', 'Workspace', 'Agents', 'Routines', 'Bots'])
-  expect(view.redirect).toBe('/settings/agentic')
-  expect(agenticTabsView(AGENTIC_TABS, false, true, '/settings/agentic/workspace').redirect).toBeNull()
+test('the old Admin tab goes to Agents, where its default model is; another unknown address to the first section', () => {
+  for (const agent of [true, false]) {
+    expect(agenticTabsView(AGENTIC_TABS, agent, '/settings/agentic/admin').redirect).toBe('/settings/agentic/agents')
+    expect(agenticTabsView(AGENTIC_TABS, agent, '/settings/agentic/admin/').redirect).toBe('/settings/agentic/agents')
+    expect(agenticTabsView(AGENTIC_TABS, agent, '/settings/agentic/nothing').redirect).toBe('/settings/agentic')
+  }
 })
 
 test('with the agent off only You and Bots show, and direct links keep their access rule', () => {
-  expect(labels(agenticTabsView(AGENTIC_TABS, true, false, '/settings/agentic'))).toEqual(['You', 'Bots'])
-  const tools = agenticTabsView(AGENTIC_TABS, false, false, '/settings/agentic/workspace')
+  expect(labels(agenticTabsView(AGENTIC_TABS, false, '/settings/agentic'))).toEqual(['You', 'Bots'])
+  const tools = agenticTabsView(AGENTIC_TABS, false, '/settings/agentic/workspace')
   expect(labels(tools)).toEqual(['You', 'Bots'])
   expect(tools.redirect).toBeNull()
   expect(tools.current?.label).toBe('Workspace')
-  expect(agenticTabsView(AGENTIC_TABS, true, false, '/settings/agentic/admin').redirect).toBeNull()
-  expect(agenticTabsView(AGENTIC_TABS, false, false, '/settings/agentic/admin').redirect).toBe('/settings/agentic')
 })

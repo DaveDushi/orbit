@@ -5,10 +5,10 @@ import type { AgentMemoryScope, AgentMemorySource } from '@orbit/api/agent'
 
 import { Note, RowText, Segmented, SettingsCard, SettingsRow } from '../settings/Shell'
 import { relativeAgo } from '../../data/format'
-import { useAgentMemories, useAgentMemoryWake, useAgentStatus, useDeleteAgentMemory, useForgetAgentMemorySummary } from '../../hooks/agent'
+import { useAgentMemories, useAgentMemoryWake, useAgentProfiles, useAgentStatus, useDeleteAgentMemory, useForgetAgentMemorySummary } from '../../hooks/agent'
 import { useOrbit } from '../../orbit-context'
 import { errorMessage } from '../../session-context'
-import { Button, IconButton, Input } from '../../ui'
+import { Button, IconButton, Input, PickerSheet } from '../../ui'
 
 const SCOPES = [
   { value: 'team', label: 'Team' },
@@ -21,16 +21,30 @@ function sourceHref(source: AgentMemorySource | null): string | null {
   return source.root_message_id ? `/chat/thread/${source.root_message_id}` : `/chat/${source.conversation_id}`
 }
 
-/** The web's Account → Agent → Memory tab: what the agent remembers in this workspace, for the team and for you. */
+/** The picker's key for the default agent, whose memory the API names with no agent. */
+const DEFAULT_AGENT = 'default'
+
+/** The web's Agentic → You → Memories: what one agent remembers in this workspace, for the team and for you. Each agent has its own memory. */
 export function AgentMemory() {
   const { workspace } = useOrbit()
   const status = useAgentStatus()
+  const profiles = useAgentProfiles().data
+  const [picked, setPicked] = useState(DEFAULT_AGENT)
+  const [picking, setPicking] = useState(false)
   const [scope, setScope] = useState<AgentMemoryScope>('team')
   const [query, setQuery] = useState('')
-  const memories = useAgentMemories(scope, query.trim())
-  const wake = useAgentMemoryWake(scope)
-  const remove = useDeleteAgentMemory(scope)
-  const forget = useForgetAgentMemorySummary(scope)
+  const agents = [
+    { key: DEFAULT_AGENT, label: profiles?.default_agent.name ?? (status.data?.enabled ? status.data.name : 'Default agent') },
+    ...(profiles?.agents ?? []).map((agent) => ({ key: agent.user_id, label: agent.name })),
+  ]
+  // A deleted agent leaves the list: show the default agent then.
+  const current = agents.find((agent) => agent.key === picked) ?? agents[0]
+  const agent = current.key === DEFAULT_AGENT ? null : current.key
+  const name = current.label
+  const memories = useAgentMemories(agent, scope, query.trim())
+  const wake = useAgentMemoryWake(agent, scope)
+  const remove = useDeleteAgentMemory(agent, scope)
+  const forget = useForgetAgentMemorySummary(agent, scope)
   const pages = memories.data?.pages ?? []
   const items = pages.flatMap((page) => page.items)
   const canDelete = pages[0]?.can_delete ?? false
@@ -63,19 +77,20 @@ export function AgentMemory() {
         title="Memories"
         description={
           scope === 'team'
-            ? `What the agent remembers for everyone in ${workspace.name}. Every member can read it; owners and admins can delete from it.`
-            : `What the agent remembers about you in ${workspace.name}. Only you can read it, and the agent reads it only in a direct message with you.`
+            ? `What ${name} remembers for everyone in ${workspace.name}. Every member can read it; owners and admins can delete from it. Each agent has its own memory.`
+            : `What ${name} remembers about you in ${workspace.name}. Only you can read it, and ${name} reads it only in a direct message with you. Each agent has its own memory.`
         }
         flush
       >
         <View className="gap-3 p-4">
+          {agents.length > 1 ? <Button label={`Agent: ${name}`} variant="outline" onPress={() => setPicking(true)} /> : null}
           <Segmented label="Memory" value={scope} options={SCOPES} onChange={setScope} />
           <Input placeholder="Search memories" accessibilityLabel="Search memories" autoCapitalize="none" autoCorrect={false} value={query} onChangeText={setQuery} />
         </View>
         {memories.isPending ? <View className="p-4"><Note>Loading memories…</Note></View> : null}
         {memories.isError ? <View className="p-4"><Note error>Memories could not be loaded.</Note></View> : null}
         {memories.isSuccess && items.length === 0 ? (
-          <View className="p-4"><Note>{query.trim() ? 'No memory matches this search.' : 'Nothing yet. The agent notes facts here while it works.'}</Note></View>
+          <View className="p-4"><Note>{query.trim() ? 'No memory matches this search.' : `Nothing yet. ${name} notes facts here while it works.`}</Note></View>
         ) : null}
         {items.map((memory) => {
           const href = sourceHref(memory.source)
@@ -92,7 +107,7 @@ export function AgentMemory() {
         {remove.isError ? <View className="p-4"><Note error>{errorMessage(remove.error)}</Note></View> : null}
       </SettingsCard>
       {summaries.length > 0 ? (
-        <SettingsCard title="Summaries" description="The agent reads older memories as these one-line summaries, which it writes itself. Delete a wrong one and the agent writes it again from the memories." flush>
+        <SettingsCard title="Summaries" description={`${name} reads older memories as these one-line summaries, which it writes itself. Delete a wrong one and ${name} writes it again from the memories.`} flush>
           {summaries.map((line, index) => (
             <SettingsRow key={`${line.lo}-${line.hi}`} first={index === 0}>
               <RowText title={line.body} subtitle={`Memories #${line.lo}–#${line.hi}`} />
@@ -102,6 +117,13 @@ export function AgentMemory() {
           {forget.isError ? <View className="p-4"><Note error>{errorMessage(forget.error)}</Note></View> : null}
         </SettingsCard>
       ) : null}
+      <PickerSheet
+        visible={picking}
+        title="Agent"
+        options={agents.map((option) => ({ ...option, selected: option.key === current.key }))}
+        onSelect={(key) => { setPicked(key); setPicking(false) }}
+        onClose={() => setPicking(false)}
+      />
     </>
   )
 }

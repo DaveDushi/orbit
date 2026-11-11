@@ -1,6 +1,8 @@
 //! `/api/v1/workspaces/{workspace_id}/agent-memory/{team|private}/…`: the agent's memory for the
 //! web app (cookie) and for the sidecar (the driver's agent session, through `agent::scope`).
-//! Like the other agent routes, they are not in the OpenAPI contract.
+//! Each agent has its own memory: people pick it with `?agent=<its bot user id>` (absent: the
+//! default agent); an agent session always gets its own agent's, and naming another one is
+//! refused. Like the other agent routes, they are not in the OpenAPI contract.
 
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
@@ -11,11 +13,19 @@ use serde::Deserialize;
 
 use super::AgentState;
 use super::memory::{
-    self, MemoryError, MemoryPage, MemoryStore, Noted, Scope, Source, Summarized, Wake,
+    self, MemoryError, MemoryPage, MemoryStore, Noted, Place, Scope, Source, Summarized, Wake,
 };
+use super::scope::SessionAgent;
 use crate::task_routes::{ApiError, authenticate_session};
 
 type RequestIdExtension = Option<Extension<RequestId>>;
+type SessionAgentExtension = Option<Extension<SessionAgent>>;
+
+/// The agent whose memory a person asks for; every route takes it.
+#[derive(Deserialize)]
+struct AgentQuery {
+    agent: Option<String>,
+}
 
 pub fn router(state: AgentState) -> Router {
     let base = "/api/v1/workspaces/{workspace_id}/agent-memory/{scope}";
@@ -92,14 +102,23 @@ fn failure(error: MemoryError, uri: &Uri, request_id: &RequestIdExtension) -> Ap
     }
 }
 
-/// The caller, the workspace, the scope and the store.
+/// What a request names: its workspace and scope, the agent it asks for, and the agent of its
+/// session when it is an agent session.
+struct Asked<'a> {
+    workspace_id: &'a str,
+    scope: &'a str,
+    agent: Option<&'a str>,
+    session_agent: Option<&'a SessionAgent>,
+}
+
+/// The caller, the place (workspace and agent), the scope and the store.
 async fn context(
     state: &AgentState,
     headers: &HeaderMap,
-    (workspace_id, scope): (&str, &str),
+    asked: Asked<'_>,
     uri: &Uri,
     request_id: &RequestIdExtension,
-) -> Result<(Id, Id, Scope, MemoryStore), ApiError> {
+) -> Result<(Id, Place, Scope, MemoryStore), ApiError> {
     let session = authenticate_session(
         &state.identity,
         state.cookie_mode,
@@ -108,16 +127,79 @@ async fn context(
         request_id.as_ref(),
     )
     .await?;
-    let workspace_id = workspace_id
+    let workspace_id: Id = asked
+        .workspace_id
         .parse()
         .map_err(|_| not_found(uri, request_id))?;
-    let scope = Scope::parse(scope).ok_or_else(|| not_found(uri, request_id))?;
+    let scope = Scope::parse(asked.scope).ok_or_else(|| not_found(uri, request_id))?;
+    let agent = agent_of(state, workspace_id, &asked, uri, request_id).await?;
     Ok((
         session.user.id,
-        workspace_id,
+        Place {
+            workspace_id,
+            agent,
+        },
         scope,
         MemoryStore::new(state.database().clone()),
     ))
+}
+
+/// The agent whose memory this is: `None` for the default agent. An agent session gets its own
+/// agent and nothing else; a person gets the agent they name, when it is one of the workspace's.
+async fn agent_of(
+    state: &AgentState,
+    workspace_id: Id,
+    asked: &Asked<'_>,
+    uri: &Uri,
+    request_id: &RequestIdExtension,
+) -> Result<Option<Id>, ApiError> {
+    let unavailable = |error: sqlx::Error| failure(MemoryError::Database(error), uri, request_id);
+    let mut conn = state
+        .database()
+        .pool()
+        .acquire()
+        .await
+        .map_err(unavailable)?;
+    let named = match asked
+        .agent
+        .filter(|agent| !agent.is_empty() && *agent != "default")
+    {
+        None => None,
+        Some(agent) => {
+            let agent: Id = agent.parse().map_err(|_| not_found(uri, request_id))?;
+            let default = super::inputs::bot_user_id(&mut conn)
+                .await
+                .map_err(unavailable)?;
+            (default != Some(agent)).then_some(agent)
+        }
+    };
+    if let Some(SessionAgent(own)) = asked.session_agent {
+        let own = own.as_deref().and_then(|id| id.parse::<Id>().ok());
+        if asked.agent.is_some() && named != own {
+            return Err(problem(
+                StatusCode::FORBIDDEN,
+                "agent_memory_other_agent",
+                "An agent reads and writes only its own memory.",
+                uri,
+                request_id,
+            ));
+        }
+        return Ok(own);
+    }
+    if let Some(agent) = named {
+        let found = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM agent_profiles WHERE workspace_id = $1 AND user_id = $2",
+        )
+        .bind(workspace_id.to_string())
+        .bind(agent.to_string())
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(unavailable)?;
+        if found.is_none() {
+            return Err(not_found(uri, request_id));
+        }
+    }
+    Ok(named)
 }
 
 #[derive(Deserialize)]
@@ -127,19 +209,33 @@ struct ListQuery {
     limit: Option<u64>,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn list(
     State(state): State<AgentState>,
     Path((workspace_id, scope)): Path<(String, String)>,
     Query(query): Query<ListQuery>,
+    Query(asked): Query<AgentQuery>,
+    session_agent: SessionAgentExtension,
     headers: HeaderMap,
     uri: Uri,
     request_id: RequestIdExtension,
 ) -> Result<Json<MemoryPage>, ApiError> {
-    let (user_id, workspace_id, scope, store) =
-        context(&state, &headers, (&workspace_id, &scope), &uri, &request_id).await?;
+    let (user_id, place, scope, store) = context(
+        &state,
+        &headers,
+        Asked {
+            workspace_id: &workspace_id,
+            scope: &scope,
+            agent: asked.agent.as_deref(),
+            session_agent: session_agent.as_ref().map(|Extension(agent)| agent),
+        },
+        &uri,
+        &request_id,
+    )
+    .await?;
     store
         .list(
-            workspace_id,
+            place,
             user_id,
             scope,
             query.query.as_deref(),
@@ -159,18 +255,32 @@ struct NoteBody {
     source: Source,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn note(
     State(state): State<AgentState>,
     Path((workspace_id, scope)): Path<(String, String)>,
+    Query(asked): Query<AgentQuery>,
+    session_agent: SessionAgentExtension,
     headers: HeaderMap,
     uri: Uri,
     request_id: RequestIdExtension,
     Json(body): Json<NoteBody>,
 ) -> Result<Json<Noted>, ApiError> {
-    let (user_id, workspace_id, scope, store) =
-        context(&state, &headers, (&workspace_id, &scope), &uri, &request_id).await?;
+    let (user_id, place, scope, store) = context(
+        &state,
+        &headers,
+        Asked {
+            workspace_id: &workspace_id,
+            scope: &scope,
+            agent: asked.agent.as_deref(),
+            session_agent: session_agent.as_ref().map(|Extension(agent)| agent),
+        },
+        &uri,
+        &request_id,
+    )
+    .await?;
     store
-        .note(workspace_id, user_id, scope, &body.body, &body.source)
+        .note(place, user_id, scope, &body.body, &body.source)
         .await
         .map(Json)
         .map_err(|error| failure(error, &uri, &request_id))
@@ -185,16 +295,30 @@ struct SummaryBody {
     body: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn summarize(
     State(state): State<AgentState>,
     Path((workspace_id, scope)): Path<(String, String)>,
+    Query(asked): Query<AgentQuery>,
+    session_agent: SessionAgentExtension,
     headers: HeaderMap,
     uri: Uri,
     request_id: RequestIdExtension,
     Json(body): Json<SummaryBody>,
 ) -> Result<Json<Summarized>, ApiError> {
-    let (user_id, workspace_id, scope, store) =
-        context(&state, &headers, (&workspace_id, &scope), &uri, &request_id).await?;
+    let (user_id, place, scope, store) = context(
+        &state,
+        &headers,
+        Asked {
+            workspace_id: &workspace_id,
+            scope: &scope,
+            agent: asked.agent.as_deref(),
+            session_agent: session_agent.as_ref().map(|Extension(agent)| agent),
+        },
+        &uri,
+        &request_id,
+    )
+    .await?;
     let block = memory::parse_block(&body.block).ok_or_else(|| {
         problem(
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -205,7 +329,7 @@ async fn summarize(
         )
     })?;
     store
-        .summarize(workspace_id, user_id, scope, block, &body.claim, &body.body)
+        .summarize(place, user_id, scope, block, &body.claim, &body.body)
         .await
         .map(Json)
         .map_err(|error| failure(error, &uri, &request_id))
@@ -217,18 +341,32 @@ struct WakeQuery {
     bytes: Option<usize>,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn wake(
     State(state): State<AgentState>,
     Path((workspace_id, scope)): Path<(String, String)>,
     Query(query): Query<WakeQuery>,
+    Query(asked): Query<AgentQuery>,
+    session_agent: SessionAgentExtension,
     headers: HeaderMap,
     uri: Uri,
     request_id: RequestIdExtension,
 ) -> Result<Json<Wake>, ApiError> {
-    let (user_id, workspace_id, scope, store) =
-        context(&state, &headers, (&workspace_id, &scope), &uri, &request_id).await?;
+    let (user_id, place, scope, store) = context(
+        &state,
+        &headers,
+        Asked {
+            workspace_id: &workspace_id,
+            scope: &scope,
+            agent: asked.agent.as_deref(),
+            session_agent: session_agent.as_ref().map(|Extension(agent)| agent),
+        },
+        &uri,
+        &request_id,
+    )
+    .await?;
     store
-        .wake(workspace_id, user_id, scope, query.bytes.unwrap_or(8_000))
+        .wake(place, user_id, scope, query.bytes.unwrap_or(8_000))
         .await
         .map(Json)
         .map_err(|error| failure(error, &uri, &request_id))
@@ -237,15 +375,28 @@ async fn wake(
 async fn zoom(
     State(state): State<AgentState>,
     Path((workspace_id, scope, block)): Path<(String, String, String)>,
+    Query(asked): Query<AgentQuery>,
+    session_agent: SessionAgentExtension,
     headers: HeaderMap,
     uri: Uri,
     request_id: RequestIdExtension,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let (user_id, workspace_id, scope, store) =
-        context(&state, &headers, (&workspace_id, &scope), &uri, &request_id).await?;
+    let (user_id, place, scope, store) = context(
+        &state,
+        &headers,
+        Asked {
+            workspace_id: &workspace_id,
+            scope: &scope,
+            agent: asked.agent.as_deref(),
+            session_agent: session_agent.as_ref().map(|Extension(agent)| agent),
+        },
+        &uri,
+        &request_id,
+    )
+    .await?;
     let block = memory::parse_block(&block).ok_or_else(|| not_found(&uri, &request_id))?;
     let halves = store
-        .zoom(workspace_id, user_id, scope, block)
+        .zoom(place, user_id, scope, block)
         .await
         .map_err(|error| failure(error, &uri, &request_id))?;
     Ok(Json(serde_json::json!({ "lines": halves })))
@@ -254,15 +405,28 @@ async fn zoom(
 async fn forget(
     State(state): State<AgentState>,
     Path((workspace_id, scope, block)): Path<(String, String, String)>,
+    Query(asked): Query<AgentQuery>,
+    session_agent: SessionAgentExtension,
     headers: HeaderMap,
     uri: Uri,
     request_id: RequestIdExtension,
 ) -> Result<StatusCode, ApiError> {
-    let (user_id, workspace_id, scope, store) =
-        context(&state, &headers, (&workspace_id, &scope), &uri, &request_id).await?;
+    let (user_id, place, scope, store) = context(
+        &state,
+        &headers,
+        Asked {
+            workspace_id: &workspace_id,
+            scope: &scope,
+            agent: asked.agent.as_deref(),
+            session_agent: session_agent.as_ref().map(|Extension(agent)| agent),
+        },
+        &uri,
+        &request_id,
+    )
+    .await?;
     let block = memory::parse_block(&block).ok_or_else(|| not_found(&uri, &request_id))?;
     store
-        .forget(workspace_id, user_id, scope, block)
+        .forget(place, user_id, scope, block)
         .await
         .map_err(|error| failure(error, &uri, &request_id))?;
     Ok(StatusCode::NO_CONTENT)
@@ -271,14 +435,27 @@ async fn forget(
 async fn delete(
     State(state): State<AgentState>,
     Path((workspace_id, scope, position)): Path<(String, String, u64)>,
+    Query(asked): Query<AgentQuery>,
+    session_agent: SessionAgentExtension,
     headers: HeaderMap,
     uri: Uri,
     request_id: RequestIdExtension,
 ) -> Result<StatusCode, ApiError> {
-    let (user_id, workspace_id, scope, store) =
-        context(&state, &headers, (&workspace_id, &scope), &uri, &request_id).await?;
+    let (user_id, place, scope, store) = context(
+        &state,
+        &headers,
+        Asked {
+            workspace_id: &workspace_id,
+            scope: &scope,
+            agent: asked.agent.as_deref(),
+            session_agent: session_agent.as_ref().map(|Extension(agent)| agent),
+        },
+        &uri,
+        &request_id,
+    )
+    .await?;
     store
-        .delete(workspace_id, user_id, scope, position)
+        .delete(place, user_id, scope, position)
         .await
         .map_err(|error| failure(error, &uri, &request_id))?;
     Ok(StatusCode::NO_CONTENT)

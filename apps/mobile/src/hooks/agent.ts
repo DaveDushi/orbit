@@ -7,6 +7,7 @@ import {
   readAgentMemories,
   readAgentMemoryWake,
   readAgentModel,
+  readAgentProfiles,
   readTeamInstructions,
   saveAgentModel,
   saveTeamInstructions,
@@ -51,37 +52,43 @@ export function useDisconnectChatgpt() {
 
 const memoryKey = (workspaceId: string) => ['agent-memory', workspaceId] as const
 
-/** The agent's memory in the current workspace, newest first; older pages load with `before`. */
-export function useAgentMemories(scope: AgentMemoryScope, query: string) {
+/** The workspace's agents (the default one and the others), for the memory's agent picker. */
+export function useAgentProfiles() {
+  const { client, workspaceId } = useOrbit()
+  return useQuery({ queryKey: ['agent', 'profiles', workspaceId], queryFn: () => readAgentProfiles(client, workspaceId) })
+}
+
+/** One agent's memory (`agent` null: the default agent) in the current workspace, newest first; older pages load with `before`. */
+export function useAgentMemories(agent: string | null, scope: AgentMemoryScope, query: string) {
   const { client, workspaceId } = useOrbit()
   return useInfiniteQuery({
-    queryKey: [...memoryKey(workspaceId), scope, 'list', query],
-    queryFn: ({ pageParam }) => readAgentMemories(client, workspaceId, scope, { query, before: pageParam }),
+    queryKey: [...memoryKey(workspaceId), agent, scope, 'list', query],
+    queryFn: ({ pageParam }) => readAgentMemories(client, workspaceId, scope, { query, before: pageParam, agent }),
     initialPageParam: null as number | null,
     getNextPageParam: (page) => page.next_before,
   })
 }
 
 /** What a run of the agent reads from this memory. */
-export function useAgentMemoryWake(scope: AgentMemoryScope) {
+export function useAgentMemoryWake(agent: string | null, scope: AgentMemoryScope) {
   const { client, workspaceId } = useOrbit()
-  return useQuery({ queryKey: [...memoryKey(workspaceId), scope, 'wake'], queryFn: () => readAgentMemoryWake(client, workspaceId, scope) })
+  return useQuery({ queryKey: [...memoryKey(workspaceId), agent, scope, 'wake'], queryFn: () => readAgentMemoryWake(client, workspaceId, scope, agent) })
 }
 
-export function useDeleteAgentMemory(scope: AgentMemoryScope) {
+export function useDeleteAgentMemory(agent: string | null, scope: AgentMemoryScope) {
   const { client, workspaceId } = useOrbit()
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (position: number) => deleteAgentMemory(client, workspaceId, scope, position),
+    mutationFn: (position: number) => deleteAgentMemory(client, workspaceId, scope, position, agent),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: memoryKey(workspaceId) }),
   })
 }
 
-export function useForgetAgentMemorySummary(scope: AgentMemoryScope) {
+export function useForgetAgentMemorySummary(agent: string | null, scope: AgentMemoryScope) {
   const { client, workspaceId } = useOrbit()
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ lo, hi }: { lo: number; hi: number }) => forgetAgentMemorySummary(client, workspaceId, scope, lo, hi),
+    mutationFn: ({ lo, hi }: { lo: number; hi: number }) => forgetAgentMemorySummary(client, workspaceId, scope, lo, hi, agent),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: memoryKey(workspaceId) }),
   })
 }

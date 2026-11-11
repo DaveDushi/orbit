@@ -386,7 +386,9 @@ async fn trusted_proxy_replaces_an_unusable_client_request_id() {
     };
 
     // ChatGPT's MCP client sends IDs with a slash suffix (issue #52).
-    let response = send(&["69bbe4ed-800c-4d1c-93fd-59cb80a7ccdf/tvke"]).await.unwrap();
+    let response = send(&["69bbe4ed-800c-4d1c-93fd-59cb80a7ccdf/tvke"])
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         body_json(response).await["request_id"],
@@ -396,8 +398,14 @@ async fn trusted_proxy_replaces_an_unusable_client_request_id() {
     for values in [&["bad id with spaces"][..], &["a", "b"][..]] {
         let response = send(values).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let generated = response.headers()["x-request-id"].to_str().unwrap().to_owned();
-        assert!(generated.parse::<orbit_platform::Id>().is_ok(), "{generated}");
+        let generated = response.headers()["x-request-id"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert!(
+            generated.parse::<orbit_platform::Id>().is_ok(),
+            "{generated}"
+        );
         assert_eq!(body_json(response).await["request_id"], generated.as_str());
     }
 }

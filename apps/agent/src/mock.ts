@@ -45,6 +45,7 @@ import { createModels, type AssistantMessage, type JsonObject, type Models } fro
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 
 import { codexModels, PROVIDER } from "./models.ts";
+import { MEMORY_CHECK } from "./prompt.ts";
 
 type Message = { role: string; content?: unknown; toolName?: string; isError?: boolean; sections?: Record<string, string | null> };
 
@@ -102,7 +103,8 @@ function lastCall(messages: readonly Message[], names: readonly string[]): { nam
 
 /** The newest message from a person, without the sender's time that starts it (`clockLine`). */
 function newestInstruction(messages: readonly Message[]): string {
-	return textOf(messages[lastUser(messages)]?.content).replace(/^\[[^\]\n]*\]\n/, "");
+	// The memory check is Orbit's, not the driver's words: the rules read only what the driver wrote.
+	return textOf(messages[lastUser(messages)]?.content).replace(/^\[[^\]\n]*\]\n/, "").replace(`\n\n${MEMORY_CHECK}`, "");
 }
 
 /** The newest user message's index. */
@@ -381,7 +383,7 @@ export function respond(messages: readonly Message[], modelId = "mock", thinking
 
 /** A `Models` with scripted models under the ChatGPT provider's id: the conversation's and the compaction model. */
 export function mockModels(modelId: string, compactModelId?: string): Models {
-	// Every ChatGPT model too, so a model chosen in Agentic → Admin runs.
+	// Every ChatGPT model too, so a model chosen in the Default model card runs.
 	const ids = [...new Set([modelId, compactModelId ?? modelId, ...codexModels().map((model) => model.id)])];
 	const faux = fauxProvider({ provider: PROVIDER, models: ids.map((id) => ({ id, contextWindow: 200_000, maxTokens: 8_000, reasoning: true })), tokensPerSecond: Number(process.env.AGENT_MOCK_TOKENS_PER_SECOND) || 400 });
 	const factory = (context: { messages: readonly unknown[] }, options: { reasoning?: string } | undefined, _state: unknown, model: { id: string }) =>

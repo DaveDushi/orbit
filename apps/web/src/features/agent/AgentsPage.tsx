@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { AGENT_DEFAULT_CHOICE as DEFAULT, type AgentProfile, type AgentProfiles, type DefaultAgent } from '@orbit/api/agent'
+import { AGENT_DEFAULT_CHOICE as DEFAULT, ANSWER_LEVELS, type AgentProfile, type AgentProfiles, type AnswerLevel, type DefaultAgent } from '@orbit/api/agent'
 import { ApiProblem } from '@orbit/api/problem'
 import { ConfirmDeleteModal } from '@/components/common/ConfirmDeleteModal'
 import { Modal } from '@/components/common/Modal'
@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useConversations } from '@/features/chat/api/queries'
 import { avatarImage } from '@/features/profile/avatarImage'
 import { FieldGrid } from '@/features/settings/components/SettingsParts'
@@ -53,6 +54,7 @@ export function AgentsPage() {
                 <span className="text-sm font-medium text-foreground">{main.name}</span>
                 <Badge>Default</Badge>
                 {main.model ? <Badge variant="outline">{main.model}</Badge> : null}
+                <Badge variant="outline">{answerLevelLabel(main.answer_level)} answers</Badge>
               </div>
               <p className="text-xs text-muted-foreground">Every channel and direct messages · {servicesLabel(data, main.integration_ids)}</p>
               {main.instructions ? <p className="line-clamp-2 text-sm text-muted-foreground">{main.instructions}</p> : null}
@@ -71,6 +73,7 @@ export function AgentsPage() {
                   <span className="text-sm font-medium text-foreground">{agent.name}</span>
                   <Badge variant="secondary">{agent.tools.length} tools</Badge>
                   {agent.model ? <Badge variant="outline">{agent.model}</Badge> : null}
+                  <Badge variant="outline">{answerLevelLabel(agent.answer_level)} answers</Badge>
                 </div>
                 <p className="text-xs text-muted-foreground">{channelsLabel(agent)} · {servicesLabel(data, agent.integration_ids)}</p>
                 {agent.instructions ? <p className="line-clamp-2 text-sm text-muted-foreground">{agent.instructions}</p> : null}
@@ -103,6 +106,8 @@ export function AgentsPage() {
     </SettingsCard>
   )
 }
+
+const answerLevelLabel = (level: AnswerLevel) => ANSWER_LEVELS.find((option) => option.value === level)?.label ?? 'Normal'
 
 function channelsLabel(agent: AgentProfile): string {
   if (agent.all_channels) return 'Every channel and direct messages'
@@ -148,10 +153,11 @@ function AgentDialog({ profiles, editing, onClose }: { profiles: AgentProfiles; 
   const [services, setServices] = useState<string[]>(agent?.integration_ids ?? [])
   const [model, setModel] = useState(agent?.model ?? DEFAULT)
   const [thinking, setThinking] = useState(agent?.thinking ?? DEFAULT)
+  const [answerLevel, setAnswerLevel] = useState<AnswerLevel>(agent?.answer_level ?? 'normal')
   const [allChannels, setAllChannels] = useState(custom?.all_channels ?? false)
   const [channelIds, setChannelIds] = useState<string[]>(custom?.channels.map((channel) => channel.id) ?? [])
   const [avatar, setAvatar] = useState<{ blob: Blob; url: string } | null | undefined>(undefined)
-  const models = [{ value: DEFAULT, label: 'Default (as Agentic → Admin)' }, ...(profiles.models?.models ?? []).map((option) => ({ value: option.id, label: option.name }))]
+  const models = [{ value: DEFAULT, label: 'Default (the Default model below)' }, ...(profiles.models?.models ?? []).map((option) => ({ value: option.id, label: option.name }))]
   if (agent?.model && !models.some((option) => option.value === agent.model)) models.push({ value: agent.model, label: agent.model })
   const levels = [{ value: DEFAULT, label: 'Default' }, ...profiles.thinking_levels.map((level) => ({ value: level, label: level }))]
   const toggle = (list: string[], item: string, on: boolean) => (on ? [...list, item] : list.filter((own) => own !== item))
@@ -169,7 +175,7 @@ function AgentDialog({ profiles, editing, onClose }: { profiles: AgentProfiles; 
 
   function submit(event: React.FormEvent) {
     event.preventDefault()
-    const choice = { instructions, model: model === DEFAULT ? null : model, thinking: thinking === DEFAULT ? null : thinking, integration_ids: services }
+    const choice = { instructions, model: model === DEFAULT ? null : model, thinking: thinking === DEFAULT ? null : thinking, answer_level: answerLevel, integration_ids: services }
     const done = { onSuccess: (saved: { name: string }) => { toast(`${saved.name} saved`); onClose() } }
     const newAvatar = avatar === undefined ? undefined : (avatar?.blob ?? null)
     if (editing.kind === 'default') {
@@ -284,6 +290,21 @@ function AgentDialog({ profiles, editing, onClose }: { profiles: AgentProfiles; 
             </Select>
           </Field>
         </FieldGrid>
+        <Field>
+          <FieldLabel id="agent-profile-answer-level">Answer level</FieldLabel>
+          <ToggleGroup
+            aria-labelledby="agent-profile-answer-level"
+            variant="outline"
+            value={[answerLevel]}
+            onValueChange={(value: string[]) => {
+              const next = value[0] as AnswerLevel | undefined
+              if (next) setAnswerLevel(next)
+            }}
+          >
+            {ANSWER_LEVELS.map((option) => <ToggleGroupItem key={option.value} value={option.value} className="px-3">{option.label}</ToggleGroupItem>)}
+          </ToggleGroup>
+          <FieldDescription>How much it thinks and writes, for everyone who uses it. {ANSWER_LEVELS.find((option) => option.value === answerLevel)?.help}</FieldDescription>
+        </Field>
         {isDefault ? <p className="text-xs text-muted-foreground">{agent?.name} works in every channel and direct message, and cannot be deleted.</p> : <fieldset className="flex flex-col gap-2">
           <legend className="mb-1 text-sm font-medium text-foreground">Channels</legend>
           <label className="flex items-center gap-2 text-sm text-foreground">
