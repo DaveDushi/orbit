@@ -26,6 +26,10 @@ export function notificationCopy(notification: NotificationRecord, pageTitle: st
       return { title: 'You were mentioned', body: 'Someone mentioned you in a task comment.' }
     case 'description_mentioned':
       return { title: 'You were mentioned', body: 'Someone mentioned you in a task description.' }
+    case 'task_commented':
+      return { title: `${actor} commented on a task you follow`, body: 'Open the task to read the comment.' }
+    case 'task_status_changed':
+      return { title: `${actor} changed the status of a task you follow`, body: 'Open the task to see its status.' }
     default:
       return { title: 'You were assigned a task', body: 'A task was assigned to you.' }
   }

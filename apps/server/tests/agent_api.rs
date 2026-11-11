@@ -647,6 +647,81 @@ async fn credentials_are_sealed_and_only_the_status_reaches_the_person() {
     assert_eq!(value["chatgpt"]["connected"], false);
 }
 
+/// Donna writes a note as the person who drives her run: the task's other followers get a
+/// notification, the driver does not, and Donna can follow and unfollow for the driver.
+#[tokio::test]
+async fn an_agent_note_notifies_the_task_followers() {
+    let fixture = Fixture::new().await;
+    let member = fixture.add_member("member").await;
+    let workspace = &fixture.workspace_id;
+    let (project, status): (String, String) = sqlx::query_as(
+        "SELECT project_id, id FROM task_statuses WHERE workspace_id = $1 ORDER BY position LIMIT 1",
+    )
+    .bind(workspace)
+    .fetch_one(fixture.database.pool())
+    .await
+    .unwrap();
+    let (code, task) = fixture
+        .request(
+            "POST",
+            &format!("/api/v1/workspaces/{workspace}/tasks"),
+            ("cookie", &fixture.owner.cookie),
+            Some(json!({ "project_id": project, "status_id": status, "title": "Followed" })),
+        )
+        .await;
+    assert_eq!(code, StatusCode::CREATED, "{task}");
+    let task = task["id"].as_str().unwrap();
+    let bearer = fixture.agent_session(&member).await;
+    let agent = ("authorization", bearer.as_str());
+
+    let (code, value) = fixture
+        .request(
+            "POST",
+            &format!("/api/v1/workspaces/{workspace}/tasks/{task}/comments"),
+            agent,
+            Some(json!({ "body": "Donna's note" })),
+        )
+        .await;
+    assert_eq!(code, StatusCode::CREATED, "{value}");
+    assert_eq!(
+        inbox_kinds(&fixture, &fixture.owner).await,
+        ["task_commented"]
+    );
+    assert!(inbox_kinds(&fixture, &member).await.is_empty());
+
+    for (method, following) in [("DELETE", false), ("PUT", true)] {
+        let (code, value) = fixture
+            .request(
+                method,
+                &format!("/api/v1/workspaces/{workspace}/tasks/{task}/followers/me"),
+                agent,
+                None,
+            )
+            .await;
+        assert_eq!(code, StatusCode::OK, "{value}");
+        assert_eq!(value["following"], following);
+    }
+}
+
+/// The kinds of `member`'s notifications, newest first.
+async fn inbox_kinds(fixture: &Fixture, member: &Member) -> Vec<String> {
+    let (code, value) = fixture
+        .request(
+            "GET",
+            &format!("/api/v1/workspaces/{}/notifications", fixture.workspace_id),
+            ("cookie", &member.cookie),
+            None,
+        )
+        .await;
+    assert_eq!(code, StatusCode::OK, "{value}");
+    value["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["kind"].as_str().unwrap().to_owned())
+        .collect()
+}
+
 // ---------------------------------------------------------------------------------------------
 // Memory.
 

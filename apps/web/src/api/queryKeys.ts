@@ -48,6 +48,9 @@ export const queryKeys = {
     [...workspace(workspaceId), 'tasks', 'detail', taskId, 'attachments'] as const,
   taskRelations: (workspaceId: string, taskId: string) =>
     [...workspace(workspaceId), 'tasks', 'detail', taskId, 'relations'] as const,
+  /** Who follows the task (gets its new comments and status changes), and whether the caller does. */
+  taskFollowers: (workspaceId: string, taskId: string) =>
+    [...workspace(workspaceId), 'tasks', 'detail', taskId, 'followers'] as const,
   labels: (workspaceId: string) => [...workspace(workspaceId), 'labels'] as const,
   commentAttachments: (workspaceId: string, taskId: string, commentId: string) =>
     [...workspace(workspaceId), 'tasks', 'detail', taskId, 'comments', commentId, 'attachments'] as const,

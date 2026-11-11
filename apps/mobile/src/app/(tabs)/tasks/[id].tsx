@@ -44,7 +44,7 @@ import {
   splitInlineFiles,
   subIssueBody,
 } from '../../../data/tasks'
-import { useAdoptSubIssue, useCommentAttachments, useCreateTask, useRelationWrites, useSubIssues, useTaskAttachments, useTaskRelations, useTaskWrite } from '../../../hooks/tasks'
+import { useAdoptSubIssue, useCommentAttachments, useCreateTask, useRelationWrites, useSetFollowing, useSubIssues, useTaskAttachments, useTaskFollowers, useTaskRelations, useTaskWrite, taskKeys } from '../../../hooks/tasks'
 import { useOrbit } from '../../../orbit-context'
 import { useLabels, usePeople, useProjects, useStatuses } from '../../../queries'
 import { errorMessage } from '../../../session-context'
@@ -113,6 +113,9 @@ export default function TaskScreen() {
   const comments = useQuery({ queryKey: keys.comments(workspaceId, id), queryFn: () => api.comments(client, workspaceId, id) })
   const activity = useQuery({ queryKey: keys.taskActivity(workspaceId, id), queryFn: () => api.taskActivity(client, workspaceId, id) })
   const relations = useTaskRelations(id)
+  const followers = useTaskFollowers(id)
+  const setFollowing = useSetFollowing(id)
+  const following = followers.data?.following ?? false
   const subIssues = useSubIssues(id)
   const attachments = useTaskAttachments(id)
   const commentFiles = useCommentAttachments(id, comments.data ?? [])
@@ -127,6 +130,8 @@ export default function TaskScreen() {
       setDraft('')
       setDraftFiles([])
       queryClient.setQueryData<api.CommentRecord[]>(keys.comments(workspaceId, id), (list) => (list ? [...list, comment] : [comment]))
+      // the author and the members it mentions follow the task now
+      void queryClient.invalidateQueries({ queryKey: taskKeys.followers(workspaceId, id) })
     },
     onError: (error) => Alert.alert('Could not add the comment', errorMessage(error)),
   })
@@ -397,6 +402,17 @@ export default function TaskScreen() {
               <View className="-ml-2 flex-row">
                 <Chip label={current.source_url ? 'Edit source' : 'Add source'} onPress={() => sheets.open({ kind: 'source' })}>
                   <ChipText muted>{current.source_url ? 'Edit source' : 'Add source'}</ChipText>
+                </Chip>
+              </View>
+            </PropertyGroup>
+            <PropertyGroup title="Followers">
+              <ChipText muted={!followers.data?.user_ids.length}>
+                {followers.data?.user_ids.length ? followers.data.user_ids.map(nameOf).join(', ') : followers.isPending ? '…' : 'No followers'}
+              </ChipText>
+              <View className="-ml-2 mt-1 flex-row">
+                <Chip label={following ? 'Unfollow' : 'Follow'} onPress={followers.data && !setFollowing.isPending ? () => setFollowing.mutate(!following) : undefined}>
+                  <Icon name={following ? 'bellOff' : 'bell'} size={14} color={colors.mutedForeground} />
+                  <ChipText muted>{following ? 'Unfollow' : 'Follow'}</ChipText>
                 </Chip>
               </View>
             </PropertyGroup>

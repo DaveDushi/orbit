@@ -2506,6 +2506,11 @@ export type NotificationPrefs = {
     chat_mentions: boolean;
     direct_messages: boolean;
     /**
+     * New notes and status changes of tasks the user follows. An older client that does not
+     * send it keeps it on.
+     */
+    followed_tasks?: boolean;
+    /**
      * Mentions in task comments, pages and page comments.
      */
     mentions: boolean;
@@ -2521,15 +2526,16 @@ export type NotificationRecord = {
     chat_conversation_id?: string | null;
     chat_message_id?: string | null;
     /**
-     * The task comment of a `comment_mentioned` notification.
+     * The task comment of a `comment_mentioned` or `task_commented` notification.
      */
     comment_id?: string | null;
     created_at: string;
     id: string;
     /**
      * `task_assigned`, `comment_mentioned` (task comment), `description_mentioned` (task
-     * description), `page_comment_mentioned`, `page_mentioned` (an @mention in a page body) or
-     * `chat_mentioned` (a chat message).
+     * description), `task_commented` (a new note on a followed task), `task_status_changed` (a
+     * followed task's new status), `page_comment_mentioned`, `page_mentioned` (an @mention in a
+     * page body) or `chat_mentioned` (a chat message).
      */
     kind: string;
     /**
@@ -3330,15 +3336,16 @@ export type PageNotificationRecord = {
         chat_conversation_id?: string | null;
         chat_message_id?: string | null;
         /**
-         * The task comment of a `comment_mentioned` notification.
+         * The task comment of a `comment_mentioned` or `task_commented` notification.
          */
         comment_id?: string | null;
         created_at: string;
         id: string;
         /**
          * `task_assigned`, `comment_mentioned` (task comment), `description_mentioned` (task
-         * description), `page_comment_mentioned`, `page_mentioned` (an @mention in a page body) or
-         * `chat_mentioned` (a chat message).
+         * description), `task_commented` (a new note on a followed task), `task_status_changed` (a
+         * followed task's new status), `page_comment_mentioned`, `page_mentioned` (an @mention in a
+         * page body) or `chat_mentioned` (a chat message).
          */
         kind: string;
         /**
@@ -4651,6 +4658,17 @@ export type TaskConflict = {
     current_version?: number | null;
     field?: string | null;
     refresh?: string | null;
+};
+
+export type TaskFollowers = {
+    /**
+     * Whether the caller follows the task.
+     */
+    following: boolean;
+    /**
+     * The active members who follow the task, in the order they started.
+     */
+    user_ids: Array<string>;
 };
 
 export type TaskProblem = {
@@ -23520,6 +23538,179 @@ export type DownloadCommentAttachmentResponses = {
 };
 
 export type DownloadCommentAttachmentResponse = DownloadCommentAttachmentResponses[keyof DownloadCommentAttachmentResponses];
+
+export type ListTaskFollowersData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        task_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/tasks/{task_id}/followers';
+};
+
+export type ListTaskFollowersErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type ListTaskFollowersError = ListTaskFollowersErrors[keyof ListTaskFollowersErrors];
+
+export type ListTaskFollowersResponses = {
+    200: TaskFollowers;
+};
+
+export type ListTaskFollowersResponse = ListTaskFollowersResponses[keyof ListTaskFollowersResponses];
+
+export type UnfollowTaskData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        task_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/tasks/{task_id}/followers/me';
+};
+
+export type UnfollowTaskErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type UnfollowTaskError = UnfollowTaskErrors[keyof UnfollowTaskErrors];
+
+export type UnfollowTaskResponses = {
+    200: TaskFollowers;
+};
+
+export type UnfollowTaskResponse = UnfollowTaskResponses[keyof UnfollowTaskResponses];
+
+export type FollowTaskData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        task_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/tasks/{task_id}/followers/me';
+};
+
+export type FollowTaskErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type FollowTaskError = FollowTaskErrors[keyof FollowTaskErrors];
+
+export type FollowTaskResponses = {
+    200: TaskFollowers;
+};
+
+export type FollowTaskResponse = FollowTaskResponses[keyof FollowTaskResponses];
 
 export type ListGithubLinksData = {
     body?: never;

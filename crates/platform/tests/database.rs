@@ -113,7 +113,7 @@ async fn github_schema_is_in_one_draft_migration() {
         db.scalar::<i64>("SELECT MAX(version) FROM schema_migrations")
             .await
             .unwrap(),
-        89
+        90
     );
     assert_eq!(
         db.scalar::<i64>("SELECT COUNT(*) FROM pragma_table_info('github_issue_links') WHERE name IN ('kind', 'pull_state', 'sync_paused')")
@@ -250,7 +250,7 @@ async fn rejects_a_schema_newer_than_the_binary() {
         error,
         MigrationError::SchemaNewer {
             database_version: 999,
-            binary_version: 89
+            binary_version: 90
         }
     ));
 }
@@ -3142,4 +3142,132 @@ async fn an_api_token_may_have_no_project_but_a_set_project_is_still_checked() {
         ],
         "existing rows keep their project"
     );
+}
+
+#[tokio::test]
+async fn task_followers_migration_backfills_creators_assignees_and_note_authors() {
+    // A fixed path in this build's temp directory: on Postgres its test database is made anew
+    // each run instead of piling up.
+    let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("task-followers.sqlite");
+    for suffix in ["", "-wal", "-shm", ".lock", ".owner.lock"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+    let database = Database::open(&DatabaseConfig::new(&path)).await.unwrap();
+    MigrationRunner::embedded_through("test", 89)
+        .run(&database)
+        .await
+        .unwrap();
+    let [
+        owner,
+        member,
+        guest,
+        robot_writer,
+        workspace,
+        project,
+        status,
+    ]: [Id; 7] = std::array::from_fn(|_| Id::new_v7());
+    let [
+        owner_membership,
+        member_membership,
+        guest_membership,
+        robot_membership,
+    ]: [Id; 4] = std::array::from_fn(|_| Id::new_v7());
+    let [
+        by_owner,
+        by_service,
+        owner_note,
+        service_note,
+        guest_note,
+        notification,
+        service,
+    ]: [Id; 7] = std::array::from_fn(|_| Id::new_v7());
+    let seed = format!(
+        "INSERT INTO users (id, email, normalized_email, display_name, password_hash, created_at, updated_at)
+         VALUES ('{owner}', 'owner@example.com', 'owner@example.com', 'Owner', 'x', 1, 1),
+                ('{member}', 'member@example.com', 'member@example.com', 'Member', 'x', 1, 1),
+                ('{guest}', 'guest@example.com', 'guest@example.com', 'Guest', 'x', 1, 1),
+                ('{robot_writer}', 'robot@example.com', 'robot@example.com', 'Robot', 'x', 1, 1);
+         INSERT INTO workspaces (id, name, version, owner_membership_id, created_at, updated_at)
+         VALUES ('{workspace}', 'Orbit', 0, '{owner_membership}', 1, 1);
+         INSERT INTO memberships (id, workspace_id, user_id, role, version, created_at, updated_at)
+         VALUES ('{owner_membership}', '{workspace}', '{owner}', 'owner', 0, 1, 1),
+                ('{member_membership}', '{workspace}', '{member}', 'member', 0, 1, 1),
+                ('{guest_membership}', '{workspace}', '{guest}', 'guest', 0, 1, 1),
+                ('{robot_membership}', '{workspace}', '{robot_writer}', 'member', 0, 1, 1);
+         INSERT INTO projects (id, workspace_id, name, project_key, color, version, created_at, updated_at)
+         VALUES ('{project}', '{workspace}', 'Live', 'LIVE', '#000000', 0, 1, 1);
+         INSERT INTO task_statuses (id, workspace_id, project_id, name, description, color, category, position, version, created_at, updated_at)
+         VALUES ('{status}', '{workspace}', '{project}', 'Todo', '', '#ffffff', 'unstarted', 0, 0, 1, 1);
+         INSERT INTO service_accounts (id, workspace_id, name, created_by, created_at)
+         VALUES ('{service}', '{workspace}', 'Sync bot', '{owner}', 1);
+         INSERT INTO tasks (id, workspace_id, project_id, status_id, title, creator_id, creator_service_account_id, created_at, updated_at)
+         VALUES ('{by_owner}', '{workspace}', '{project}', '{status}', 'Mine', '{owner}', NULL, 1, 1),
+                ('{by_service}', '{workspace}', '{project}', '{status}', 'Synced', '{robot_writer}', '{service}', 2, 2);
+         INSERT INTO task_assignees (task_id, membership_id, user_id)
+         VALUES ('{by_owner}', '{member_membership}', '{member}');
+         INSERT INTO task_comments (id, workspace_id, task_id, author_id, body, version, created_at, updated_at, author_service_account_id)
+         VALUES ('{owner_note}', '{workspace}', '{by_service}', '{owner}', 'hi', 0, 3, 3, NULL),
+                ('{service_note}', '{workspace}', '{by_owner}', '{robot_writer}', 'bot', 0, 3, 3, '{service}'),
+                ('{guest_note}', '{workspace}', '{by_owner}', '{guest}', 'old', 0, 3, 3, NULL);
+         INSERT INTO notifications (id, workspace_id, recipient_user_id, actor_user_id, kind, task_id, dedupe_key, created_at)
+         VALUES ('{notification}', '{workspace}', '{member}', '{owner}', 'task_assigned', '{by_owner}', 'kept', 4);"
+    );
+    let mut transaction = database.transaction().await.unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(seed))
+        .execute(&mut *transaction)
+        .await
+        .unwrap();
+    transaction.commit().await.unwrap();
+
+    MigrationRunner::embedded("test")
+        .run(&database)
+        .await
+        .unwrap();
+
+    let followers: Vec<(String, String)> =
+        sqlx::query_as("SELECT task_id, user_id FROM task_followers ORDER BY task_id, user_id")
+            .fetch_all(database.pool())
+            .await
+            .unwrap();
+    let mut expected = vec![
+        // creator and assignee; not the service account's note writer, not the guest
+        (by_owner.to_string(), owner.to_string()),
+        (by_owner.to_string(), member.to_string()),
+        // a note author; not the creator of a service account's task
+        (by_service.to_string(), owner.to_string()),
+    ];
+    expected.sort();
+    assert_eq!(followers, expected);
+
+    // The old notification stays, and the new kinds go in.
+    let kept: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM notifications WHERE dedupe_key = 'kept'")
+            .fetch_one(database.pool())
+            .await
+            .unwrap();
+    assert_eq!(kept, 1);
+    for (kind, comment) in [
+        ("task_commented", format!("'{owner_note}'")),
+        ("task_status_changed", "NULL".to_owned()),
+    ] {
+        database
+            .execute(&format!(
+                "INSERT INTO notifications (id, workspace_id, recipient_user_id, actor_user_id, kind, task_id, comment_id, dedupe_key, created_at)
+                 VALUES ('{}', '{workspace}', '{member}', '{owner}', '{kind}', '{by_service}', {comment}, '{kind}', 5)",
+                Id::new_v7()
+            ))
+            .await
+            .unwrap();
+    }
+    database
+        .execute(&format!(
+            "INSERT INTO notification_prefs (user_id, updated_at) VALUES ('{member}', 1)"
+        ))
+        .await
+        .unwrap();
+    let followed: i64 = sqlx::query_scalar("SELECT followed_tasks FROM notification_prefs")
+        .fetch_one(database.pool())
+        .await
+        .unwrap();
+    assert_eq!(followed, 1);
 }

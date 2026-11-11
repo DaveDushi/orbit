@@ -33,6 +33,7 @@ const PREFERENCES: { field: keyof NotificationPrefs; label: string; chat?: true 
   { field: 'channel_messages', label: 'All messages in channels set to "All messages"', chat: true },
   { field: 'task_assigned', label: 'Tasks assigned to me' },
   { field: 'mentions', label: 'Mentions in comments and pages' },
+  { field: 'followed_tasks', label: 'Comments and status changes on tasks I follow' },
 ]
 
 /** Whether this browser gets notifications, with the button that changes it. */
@@ -143,7 +144,8 @@ function Preferences() {
             <span className="text-sm font-medium text-foreground">{label}</span>
             <Switch
               aria-label={label}
-              checked={current[field]}
+              // a server without `followed_tasks` has it on
+              checked={current[field] ?? true}
               onCheckedChange={(checked: boolean) =>
                 save.mutate({ ...current, [field]: checked }, { onError: () => toast.error('Could not save your choice. Try again.') })
               }

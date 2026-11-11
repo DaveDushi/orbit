@@ -13,6 +13,7 @@ use super::page_mentions::mentioned_users;
 use super::pages::revision;
 use super::sub_issues::{self, AutoClosed};
 use super::task_filter::{self, FilterError, FilterGroup, ShowCompleted, SubIssuesDisplay};
+use super::task_followers::{self, FollowerNotice, TaskFollowers};
 use super::task_relations::{self, RelationActor};
 use crate::audit::{self, AuditOutcome};
 use crate::collab::kind_task::members;
@@ -205,13 +206,14 @@ pub struct NotificationRecord {
     #[schema(value_type = String)]
     pub actor_user_id: Id,
     /// `task_assigned`, `comment_mentioned` (task comment), `description_mentioned` (task
-    /// description), `page_comment_mentioned`, `page_mentioned` (an @mention in a page body) or
-    /// `chat_mentioned` (a chat message).
+    /// description), `task_commented` (a new note on a followed task), `task_status_changed` (a
+    /// followed task's new status), `page_comment_mentioned`, `page_mentioned` (an @mention in a
+    /// page body) or `chat_mentioned` (a chat message).
     pub kind: String,
     /// Set for task notifications.
     #[schema(value_type = Option<String>)]
     pub task_id: Option<Id>,
-    /// The task comment of a `comment_mentioned` notification.
+    /// The task comment of a `comment_mentioned` or `task_commented` notification.
     #[schema(value_type = Option<String>)]
     pub comment_id: Option<Id>,
     /// Page, thread and comment of a `page_comment_mentioned` notification; the page of a
@@ -1683,6 +1685,11 @@ impl TaskRepository {
         .execute(&mut *tx)
         .await?;
         replace_assignees(&mut tx, id, &input.assignee_ids).await?;
+        // The creator (a person, not a service account) and the assignees follow the task.
+        if self.notifies() {
+            task_followers::follow_in_tx(&mut tx, id, &[actor_id], now).await?;
+        }
+        task_followers::follow_in_tx(&mut tx, id, &input.assignee_ids, now).await?;
         if let Some(blocks) = blocks.as_ref().filter(|_| self.notifies()) {
             // everyone the new description mentions is newly mentioned
             notify_description_mentions(&mut tx, workspace_id, id, &[], blocks, actor_id, now)
@@ -2783,6 +2790,23 @@ impl TaskRepository {
                 now,
             )
             .await?;
+            // The mentioned already have a notification of this note.
+            task_followers::notify_followers_in_tx(
+                &mut tx,
+                workspace_id,
+                actor_id,
+                FollowerNotice {
+                    kind: "task_commented",
+                    task_id,
+                    comment_id: Some(id),
+                    skip: &mentioned_user_ids,
+                },
+                now,
+            )
+            .await?;
+            // The author and the mentioned follow the task from now on.
+            task_followers::follow_in_tx(&mut tx, task_id, &[actor_id], now).await?;
+            task_followers::follow_in_tx(&mut tx, task_id, &mentioned_user_ids, now).await?;
         }
         self.record_write(
             &mut tx,
@@ -2860,6 +2884,7 @@ impl TaskRepository {
             now,
         )
         .await?;
+        task_followers::follow_in_tx(&mut tx, task_id, &added, now).await?;
         record_mutation(
             &mut tx,
             workspace_id,
@@ -3033,6 +3058,36 @@ impl TaskRepository {
         .await?
         .rows_affected();
         Ok(changed)
+    }
+
+    /// The task's followers. With `follow`, the actor first follows (`true`) or unfollows
+    /// (`false`) it. Only a member who can see the task (not a guest) gets here.
+    pub async fn task_followers(
+        &self,
+        workspace_id: Id,
+        task_id: Id,
+        actor_id: Id,
+        follow: Option<bool>,
+        now: TimestampMillis,
+    ) -> Result<TaskFollowers, TaskError> {
+        let mut tx = match follow {
+            Some(_) => self.database.immediate_transaction().await?,
+            None => self.database.pool().begin().await?,
+        };
+        require_task_tx(&mut tx, workspace_id, task_id, actor_id).await?;
+        self.check_project_grant(&mut tx, workspace_id, task_id)
+            .await?;
+        match follow {
+            Some(true) => task_followers::follow_in_tx(&mut tx, task_id, &[actor_id], now).await?,
+            Some(false) => task_followers::unfollow_in_tx(&mut tx, task_id, actor_id).await?,
+            None => {}
+        }
+        let user_ids = task_followers::followers_in_tx(&mut tx, workspace_id, task_id).await?;
+        tx.commit().await?;
+        Ok(TaskFollowers {
+            following: user_ids.contains(&actor_id),
+            user_ids,
+        })
     }
 }
 
@@ -3274,6 +3329,7 @@ pub(super) async fn update_task_in_tx(
         }
         None => {}
     }
+    let mut added_assignees = Vec::new();
     if let Some(assignees) = &update.changes.assignee_ids {
         let added: Vec<Id> = assignees
             .iter()
@@ -3281,6 +3337,8 @@ pub(super) async fn update_task_in_tx(
             .filter(|id| !current.assignee_ids.contains(id))
             .collect();
         replace_assignees(tx, update.id, assignees).await?;
+        task_followers::follow_in_tx(tx, update.id, &added, now).await?;
+        added_assignees.clone_from(&added);
         if notify {
             notify_users(
                 tx,
@@ -3299,6 +3357,23 @@ pub(super) async fn update_task_in_tx(
     }
     if let Some(labels) = &label_ids {
         replace_labels(tx, update.id, labels).await?;
+    }
+    // A status someone chose (not one a project move picks); a new assignee hears of the task
+    // through its assignment.
+    if notify && update.changes.status_id.is_some() && status_id != current.status_id {
+        task_followers::notify_followers_in_tx(
+            tx,
+            workspace_id,
+            actor_id,
+            FollowerNotice {
+                kind: "task_status_changed",
+                task_id: update.id,
+                comment_id: None,
+                skip: &added_assignees,
+            },
+            now,
+        )
+        .await?;
     }
     let Some((_, blocks)) = new_description else {
         return Ok(None);
@@ -3683,14 +3758,14 @@ async fn validate_assignees(
     Ok(())
 }
 
-struct NotificationRequest<'a> {
-    kind: &'a str,
-    task_id: Id,
-    comment_id: Option<Id>,
-    recipients: &'a [Id],
+pub(super) struct NotificationRequest<'a> {
+    pub kind: &'a str,
+    pub task_id: Id,
+    pub comment_id: Option<Id>,
+    pub recipients: &'a [Id],
 }
 
-async fn notify_users(
+pub(super) async fn notify_users(
     tx: &mut Transaction<'_, Any>,
     workspace_id: Id,
     actor_id: Id,
@@ -3731,8 +3806,12 @@ async fn notify_users(
             request.kind,
             request.comment_id.unwrap_or(request.task_id)
         );
-        if request.kind == "description_mentioned" {
-            // a description can mention someone again later (see `DESCRIPTION_MENTION_WINDOW_MS`)
+        if matches!(
+            request.kind,
+            "description_mentioned" | "task_status_changed"
+        ) {
+            // a description can mention someone again later (see `DESCRIPTION_MENTION_WINDOW_MS`),
+            // and a task can change its status again
             dedupe_key.push_str(&format!(":{}", now.as_millis()));
         }
         sqlx::query(
@@ -4075,7 +4154,8 @@ async fn notify_description_mentions(
         },
         now,
     )
-    .await
+    .await?;
+    task_followers::follow_in_tx(tx, task_id, &recipients, now).await
 }
 
 /// Writes a co-edited description: `description_json` and its markdown copy, without a version

@@ -83,7 +83,7 @@ export default function ActivityScreen() {
           keyExtractor={(item) => item.id}
           contentContainerClassName={items.length === 0 ? 'grow' : undefined}
           refreshControl={<RefreshControl refreshing={notifications.isRefetching} onRefresh={() => void notifications.refetch()} tintColor={colors.mutedForeground} />}
-          ListEmptyComponent={<EmptyState icon="inbox" title="You're all caught up" description="Assignments and mentions appear here." />}
+          ListEmptyComponent={<EmptyState icon="inbox" title="You're all caught up" description="Assignments, mentions and tasks you follow appear here." />}
           renderItem={({ item }) => {
             const actor = people.find((person) => person.id === item.actor_user_id)
             const page = item.page_id ? pages.data?.find((entry) => entry.id === item.page_id) : undefined

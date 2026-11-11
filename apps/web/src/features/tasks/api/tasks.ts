@@ -12,17 +12,20 @@ import {
   deleteTask,
   deleteTaskAttachment,
   deleteTaskRelation,
+  followTask,
   getTask,
   listComments,
   listGithubLinks,
   listTaskActivity,
   listCommentAttachments,
   listTaskAttachments,
+  listTaskFollowers,
   listTaskRelations,
   listTaskTrash,
   listTasks,
   reorderTasks,
   restoreTask,
+  unfollowTask,
   updateComment,
   updateTask,
 } from '@orbit/api/generated/sdk.gen'
@@ -35,6 +38,7 @@ import type {
   PageTaskRecord,
   ReorderItem,
   TaskRecord,
+  TaskFollowers,
   TaskRelationRecord,
   TaskUpdateBody,
   CommentRecord,
@@ -174,6 +178,14 @@ function taskDetailQueries(workspaceId: string, taskId: string | undefined) {
         return required(data, 'Task relations response was empty.')
       },
     }),
+    followers: queryOptions({
+      queryKey: queryKeys.taskFollowers(workspaceId, id),
+      enabled,
+      queryFn: async (): Promise<TaskFollowers> => {
+        const { data } = await listTaskFollowers({ client: apiClient, path: { workspace_id: workspaceId, task_id: id }, throwOnError: true })
+        return required(data, 'Task followers response was empty.')
+      },
+    }),
     subIssues: queryOptions({
       // under tasks.all: every task mutation's invalidation and optimistic patch reaches it
       queryKey: [...queryKeys.tasks.all(workspaceId), 'sub-issues', id],
@@ -205,6 +217,7 @@ export async function prefetchTaskDetail(queryClient: QueryClient, workspaceId: 
     queryClient.prefetchQuery(queries.activity),
     queryClient.prefetchQuery(queries.attachments),
     queryClient.prefetchQuery(queries.relations),
+    queryClient.prefetchQuery(queries.followers),
     queryClient.prefetchQuery(queries.subIssues),
     queryClient.fetchQuery(queries.comments)
       .then((comments) => Promise.all(comments.map((comment) => queryClient.prefetchQuery(commentAttachmentsQuery(workspaceId, taskId, comment.id)))))
@@ -478,6 +491,25 @@ export function useTaskRelations(workspaceId: string, taskId: string | undefined
   return useQuery(taskDetailQueries(workspaceId, taskId).relations)
 }
 
+export function useTaskFollowers(workspaceId: string, taskId: string | undefined) {
+  return useQuery(taskDetailQueries(workspaceId, taskId).followers)
+}
+
+/** Follows (`true`) or unfollows (`false`) the task for the signed-in member. */
+export function useSetTaskFollowing(workspaceId: string, taskId: string) {
+  const queryClient = useQueryClient()
+  return useMutation<TaskFollowers, Error, boolean>({
+    mutationFn: async (follow) => {
+      const path = { workspace_id: workspaceId, task_id: taskId }
+      const { data } = follow
+        ? await followTask({ client: apiClient, path, throwOnError: true })
+        : await unfollowTask({ client: apiClient, path, throwOnError: true })
+      return required(data, 'Task followers response was empty.')
+    },
+    onSuccess: (followers) => queryClient.setQueryData(queryKeys.taskFollowers(workspaceId, taskId), followers),
+  })
+}
+
 export function useAddTaskRelation(workspaceId: string, taskId: string) {
   const queryClient = useQueryClient()
   return useMutation<TaskRelationRecord, Error, TaskRelationInput>({
@@ -543,7 +575,11 @@ export function useCreateTaskComment(workspaceId: string, taskId: string) {
       })
       return required(response.data, 'Create comment response was empty.')
     },
-    onSettled: () => void queryClient.invalidateQueries({ queryKey: queryKeys.comments(workspaceId, taskId) }),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.comments(workspaceId, taskId) })
+      // the author and the members it mentions follow the task now
+      void queryClient.invalidateQueries({ queryKey: queryKeys.taskFollowers(workspaceId, taskId) })
+    },
   })
 }
 

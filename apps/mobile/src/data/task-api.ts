@@ -10,18 +10,21 @@ import {
   deleteLabel,
   deleteTaskAttachment,
   deleteTaskRelation,
+  followTask,
   listCommentAttachments,
   listTaskAttachments,
+  listTaskFollowers,
   listTaskRelations,
   listTasks,
+  unfollowTask,
   uploadTaskAttachments,
 } from '@orbit/api/generated/sdk.gen'
-import type { AttachmentRecord, CreateTaskBody, NewTaskRelationType, TaskRelationRecord } from '@orbit/api/generated/types.gen'
+import type { AttachmentRecord, CreateTaskBody, NewTaskRelationType, TaskFollowers, TaskRelationRecord } from '@orbit/api/generated/types.gen'
 
 import type { LabelRecord, OrbitClient, TaskRecord } from './orbit'
 import type { PickedFile } from './tasks'
 
-export type { AttachmentRecord, CreateTaskBody, NewTaskRelationType, TaskRelationRecord }
+export type { AttachmentRecord, CreateTaskBody, NewTaskRelationType, TaskFollowers, TaskRelationRecord }
 
 const task = (client: OrbitClient, workspaceId: string, taskId: string) => ({ client, path: { workspace_id: workspaceId, task_id: taskId }, throwOnError: true as const })
 
@@ -139,4 +142,14 @@ export async function uploadInline(client: OrbitClient, workspaceId: string, tas
 
 export async function removeAttachment(client: OrbitClient, workspaceId: string, taskId: string, attachmentId: string): Promise<void> {
   await deleteTaskAttachment({ client, path: { workspace_id: workspaceId, task_id: taskId, attachment_id: attachmentId }, throwOnError: true })
+}
+
+/** Who follows the task (gets its new comments and status changes), and whether the caller does. */
+export async function followers(client: OrbitClient, workspaceId: string, taskId: string): Promise<TaskFollowers> {
+  return (await listTaskFollowers(task(client, workspaceId, taskId))).data
+}
+
+/** Follows (`true`) or unfollows (`false`) the task for the signed-in member. */
+export async function setFollowing(client: OrbitClient, workspaceId: string, taskId: string, follow: boolean): Promise<TaskFollowers> {
+  return (await (follow ? followTask : unfollowTask)(task(client, workspaceId, taskId))).data
 }
