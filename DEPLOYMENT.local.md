@@ -4,12 +4,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 2d72c1c769cc8bab8a1b2696e7367feafd0cfe8a
-  (step 2: chat-only guest role, schema 88, November 10, 2026; not pushed yet).
+- Source: DaveDushi/orbit, `main` at 6988352734cc229a5f4c64ade9f5d6168736f3c4
+  (step 3: the Ask Donna bar, schema 89, November 11, 2026; not pushed yet).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:2d72c1c`); fork commits have no published upstream image.
-- Image ID: sha256:02376c2c97d084c62528c481597ed2274e772e3ef7e98995b46834be40ccaaf3
-- Team agent sidecar code (`/opt/orbit-agent`): commit 2d72c1c.
+  (`orbit:6988352`); fork commits have no published upstream image.
+- Image ID: sha256:5c48065c0fd099cabf23b70c844831dca00f14ae01dcd201fc89509acf697531
+- Team agent sidecar code (`/opt/orbit-agent`): commit 6988352.
 - Desktop app downloads: https://orbit.wellrox.com/downloads/desktop/ (installer, zip, `latest.json` for the app's update
   check; behind the exe.dev login like the rest). nginx `location /downloads/desktop/` in
   `/etc/nginx/conf.d/orbit.conf` serves `/srv/orbit-downloads/desktop/` (outside the deploy, so deploys keep it; the
@@ -250,6 +250,64 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 11, 2026 upgrade: step 3, the Ask Donna bar (schema 89)
+
+`main` fast-forwarded from `531b0d70` to `69883527` (branch `ask-donna-bar`, one commit): a small "Ask Donna…" box at
+the bottom center of every page but Chat (web and desktop app, not for guests); Enter sends to the person's DM with
+Donna and opens a panel on the right (Open in Chat, ×, files). Each send from the box or the panel carries
+`page_context` (area and the open task, Docs page or Drive folder), stored on the agent input only and shown to the
+model as data (`apps/agent/src/page.ts`). Migration `0089_agent_page_context`: `ALTER TABLE agent_inputs ADD COLUMN
+page_context TEXT` (SQLite and Postgres). `aboutOrbit()` has the new "Ask bar" section and a "How do I… use you" line;
+"what's new" has a new `2026-11-11` entry (2 lines, on top; 6 entries). No new `ORBIT_*` setting; sidecar
+`package.json`/`package-lock.json`/`tsconfig.json` unchanged (only `src`).
+
+Checks before the switch (after `bun install --frozen-lockfile` and `npm ci` in `apps/agent`; the full suites passed on
+the branch, and the 2 TaskList bulk-toolbar web test failures also fail on main): agent `tsc` and `node --test
+test/page.test.ts` (4 pass); web `bun run build` (fresh `dist`); orbit-server `agent_api` (16 pass, SQLite). Postgres
+was not run. `orbit-deploy image` built `orbit:6988352` (34 min); `deploy/smoke.sh` passed; `orbit config check`
+passed with the extracted binary. A migration rehearsal on a hot copy gave the same result as the one below.
+
+At the switch: stopped `orbit-agent` and `orbit` at 00:12:50 UTC, created snapshot
+`01a1c7f3-40b8-77e1-a4b1-a766211bdfcb` with the old CLI (`/usr/local/bin/orbit-2d72c1c`; stored in S3, the verified
+download is `/var/backups/orbit/downloads/01a1c7f3-40b8-77e1-a4b1-a766211bdfcb`) and verified it,
+`deploy/backup-rehearsal.sh` with the old binary passed (verify), ran `migrate run` of the new binary on a copy in
+`/var/lib/orbit/rehearsal-6988352-switch-*` (1 applied, schema 89, quick-check ok, 0 foreign-key rows, counts
+unchanged: 7 users, 7 memberships, 751 chat messages, 67 tasks, 157 agent inputs; deleted afterwards), saved the
+sidecar data as `/var/backups/orbit-agent/orbit-agent-before-6988352.tgz`, kept the old sidecar code as
+`/opt/orbit-agent.before-6988352`, installed the binary (`/usr/local/bin/orbit-6988352` too) and the new sidecar `src`,
+and started `orbit` (00:13:32, ready), then `orbit-agent` (00:13:42). `main` is **not** pushed. `vm-health`
+(`/root/ops/vm-health.conf`, old copy `.before-6988352`): `PROD_TAG=6988352`, `ROLLBACK_TAG=2d72c1c`,
+`ROLLBACK_BACKUP=01a1c7f3-40b8-77e1-a4b1-a766211bdfcb`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` active, no restarts; readiness
+(all checks) and `/health/live` 200; `/orbit-build.json` revision `69883527`; schema 89; live quick-check and
+foreign-key checks pass; web `/` 200; `deploy/verify-production.sh` passes against `http://127.0.0.1:8000` with
+`X-Forwarded-Proto: https`; sidecar `/health` `{"ok":true,"mock":false}` and `/opt/orbit-agent/src` equal to
+`apps/agent/src` of `69883527`; no log warnings; `vm-health` OK except the nginx lines of the switch window (21, all
+00:13, upstream refused while stopped). Signed-in browser check as the owner ddusi@wellrox.com (temporary session
+row, 30 min, revoked by `POST /api/v1/auth/logout` (204), then 401; Playwright through a local TLS hop): `/tasks` shows
+the "Ask Donna…" box, `/chat` has none; Enter on Tasks sent `page_context {"page":"tasks","item":null}` (200), the
+agent input stored it, the panel opened, and Donna answered "You're on the **Tasks** page." The test question and
+answer stay in the owner's DM with Donna. Console: 3 × 400 for `/sw.js` (known artifact of the added header) and 4 ×
+404 (not investigated). **Not** verified: an item context (open task, Docs page, Drive folder), the desktop app, and
+a `member` role account.
+
+Rollback (the old binary refuses schema 89: restore the snapshot together with the binary; work after 00:12 UTC is
+lost). To go back to `2d72c1c`:
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-6988352 backup verify 01a1c7f3-40b8-77e1-a4b1-a766211bdfcb && /usr/local/bin/orbit-6988352 backup restore 01a1c7f3-40b8-77e1-a4b1-a766211bdfcb'
+sudo install -m 755 /usr/local/bin/orbit-2d72c1c /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-6988352 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-6988352.tgz
+```
+
+After this rollback, set `PROD_TAG=2d72c1c`, `ROLLBACK_TAG=6bfa8a7`,
+`ROLLBACK_BACKUP=01a1c722-ed80-71dc-81f7-0cd456bf1feb` in `/root/ops/vm-health.conf`.
 
 ### November 10, 2026 upgrade: step 2, chat-only guest role (schema 88)
 
