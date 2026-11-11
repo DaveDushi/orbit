@@ -8,7 +8,8 @@ use orbit_platform::{Database, Id, PasswordService, TimestampMillis, generate_op
 use crate::repositories::chat::join_public_channels;
 
 const EMAIL: &str = "agent@orbit.invalid";
-/// The name the bot starts with. An installation admin can change it (`settings`).
+/// The name the bot starts with. An installation admin can change it on the default agent's card
+/// (`profiles`).
 pub(crate) const NAME: &str = "Orbit Agent";
 
 /// The bot's name as people see it in chat; the default before the bot exists.

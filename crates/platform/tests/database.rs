@@ -113,7 +113,7 @@ async fn github_schema_is_in_one_draft_migration() {
         db.scalar::<i64>("SELECT MAX(version) FROM schema_migrations")
             .await
             .unwrap(),
-        92
+        93
     );
     assert_eq!(
         db.scalar::<i64>("SELECT COUNT(*) FROM pragma_table_info('github_issue_links') WHERE name IN ('kind', 'pull_state', 'sync_paused')")
@@ -250,7 +250,7 @@ async fn rejects_a_schema_newer_than_the_binary() {
         error,
         MigrationError::SchemaNewer {
             database_version: 999,
-            binary_version: 92
+            binary_version: 93
         }
     ));
 }
@@ -3270,4 +3270,71 @@ async fn task_followers_migration_backfills_creators_assignees_and_note_authors(
         .await
         .unwrap();
     assert_eq!(followed, 1);
+}
+
+#[tokio::test]
+async fn agent_settings_migration_keeps_integrations_of_agents_that_had_the_tool() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = Database::open(&DatabaseConfig::new(directory.path().join("db.sqlite")))
+        .await
+        .unwrap();
+    MigrationRunner::embedded_through("test", 92)
+        .run(&database)
+        .await
+        .unwrap();
+    let mut transaction = database.transaction().await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO users (id, email, normalized_email, display_name, password_hash, created_at, updated_at)
+         VALUES ('owner', 'o@example.com', 'o@example.com', 'Owner', 'x', 1, 1),
+                ('seller', 's@orbit.invalid', 's@orbit.invalid', 'Seller', 'x', 1, 1),
+                ('writer', 'w@orbit.invalid', 'w@orbit.invalid', 'Writer', 'x', 1, 1),
+                ('gone', 'g@orbit.invalid', 'g@orbit.invalid', 'Gone', 'x', 1, 1),
+                ('elsewhere', 'e@orbit.invalid', 'e@orbit.invalid', 'Elsewhere', 'x', 1, 1);
+         INSERT INTO workspaces (id, name, version, owner_membership_id, created_at, updated_at)
+         VALUES ('w1', 'One', 0, 'm1', 1, 1), ('w2', 'Two', 0, 'm2', 1, 1);
+         INSERT INTO memberships (id, workspace_id, user_id, role, version, created_at, updated_at)
+         VALUES ('m1', 'w1', 'owner', 'owner', 0, 1, 1), ('m2', 'w2', 'owner', 'owner', 0, 1, 1);
+         INSERT INTO agent_integrations (id, workspace_id, slug, name, kind, url, allowed_roles, created_at, updated_at)
+         VALUES ('shop', 'w1', 'shop', 'Shop', 'http', 'https://shop.example.com', '[\"member\"]', 1, 1),
+                ('tiktok', 'w1', 'tiktok', 'TikTok', 'mcp', 'https://tiktok.example.com', '[\"member\"]', 1, 1),
+                ('other', 'w2', 'other', 'Other', 'http', 'https://other.example.com', '[\"member\"]', 1, 1);
+         INSERT INTO agent_profiles (id, workspace_id, user_id, tools, created_at, updated_at, deleted_at)
+         VALUES ('p-seller', 'w1', 'seller', '[\"read_page\",\"use_integration\"]', 1, 1, NULL),
+                ('p-writer', 'w1', 'writer', '[\"read_page\"]', 1, 1, NULL),
+                ('p-gone', 'w1', 'gone', '[\"use_integration\"]', 1, 1, 5),
+                ('p-elsewhere', 'w2', 'elsewhere', '[\"use_integration\"]', 1, 1, NULL);",
+    )
+    .execute(&mut *transaction)
+    .await
+    .unwrap();
+    transaction.commit().await.unwrap();
+
+    MigrationRunner::embedded("test")
+        .run(&database)
+        .await
+        .unwrap();
+
+    // Only live agents with the tool, and only their own workspace's integrations.
+    let ticks: Vec<(String, String)> = sqlx::query_as(
+        "SELECT agent_id, integration_id FROM agent_profile_integrations ORDER BY agent_id, integration_id",
+    )
+    .fetch_all(database.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        ticks,
+        [
+            ("p-elsewhere".to_owned(), "other".to_owned()),
+            ("p-seller".to_owned(), "shop".to_owned()),
+            ("p-seller".to_owned(), "tiktok".to_owned()),
+        ]
+    );
+    // The default agent keeps every integration: nothing is off for it.
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agent_default_integrations_off")
+            .fetch_one(database.pool())
+            .await
+            .unwrap(),
+        0
+    );
 }

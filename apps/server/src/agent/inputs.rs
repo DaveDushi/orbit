@@ -419,6 +419,8 @@ pub struct PendingInput {
     pub files: Vec<InputFile>,
     /// The custom agent this input is for; `None`: the default agent.
     pub agent: Option<InputAgent>,
+    /// The default agent's own settings in this workspace (`profiles`), for its inputs once set.
+    pub default_agent: Option<DefaultAgent>,
     /// The driver's answer level (`profiles::ANSWER_LEVELS`): the author's, or for an answer the
     /// waiting run's driver's.
     pub answer_level: String,
@@ -436,6 +438,14 @@ pub struct InputAgent {
     pub instructions: String,
     pub tools: Vec<String>,
     /// `None`: the installation's choice.
+    pub model: Option<String>,
+    pub thinking: Option<String>,
+}
+
+/// The default agent's card in one workspace. `None` model and thinking: the installation's choice.
+#[derive(Clone, Debug, Serialize)]
+pub struct DefaultAgent {
+    pub instructions: String,
     pub model: Option<String>,
     pub thinking: Option<String>,
 }
@@ -472,7 +482,9 @@ pub(crate) async fn pending(
          (SELECT COUNT(*) FROM chat_members cm WHERE cm.conversation_id = i.conversation_id) \
          AS conversation_members, i.agent_user_id, i.refused, au.display_name AS agent_name, \
          p.instructions AS agent_instructions, p.tools AS agent_tools, p.model AS agent_model, \
-         p.thinking AS agent_thinking, COALESCE(ap.answer_level, 'normal') AS answer_level \
+         p.thinking AS agent_thinking, COALESCE(ap.answer_level, 'normal') AS answer_level, \
+         dp.workspace_id AS default_set, dp.instructions AS default_instructions, \
+         dp.model AS default_model, dp.thinking AS default_thinking \
          FROM agent_inputs i \
          LEFT JOIN chat_messages m ON m.id = i.message_id \
          LEFT JOIN agent_routines r ON r.id = i.routine_id \
@@ -480,6 +492,7 @@ pub(crate) async fn pending(
          JOIN users u ON u.id = i.author_id \
          LEFT JOIN agent_team_instructions t ON t.workspace_id = i.workspace_id \
          LEFT JOIN agent_profiles p ON p.user_id = i.agent_user_id \
+         LEFT JOIN agent_default_profiles dp ON dp.workspace_id = i.workspace_id AND i.agent_user_id IS NULL \
          LEFT JOIN users au ON au.id = i.agent_user_id \
          LEFT JOIN agent_threads th ON th.thread_key = i.thread_key \
          LEFT JOIN agent_preferences ap ON ap.user_id = CASE \
@@ -540,6 +553,13 @@ pub(crate) async fn pending(
                         .unwrap_or_default(),
                     model: row.get("agent_model"),
                     thinking: row.get("agent_thinking"),
+                }),
+            default_agent: row
+                .get::<Option<String>, _>("default_set")
+                .map(|_| DefaultAgent {
+                    instructions: row.get("default_instructions"),
+                    model: row.get("default_model"),
+                    thinking: row.get("default_thinking"),
                 }),
             answer_level: row.get("answer_level"),
             refused: row.get("refused"),

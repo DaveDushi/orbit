@@ -918,3 +918,288 @@ async fn routines_run_with_the_chosen_agent_and_pause_when_it_is_deleted() {
     // The name is free again.
     fixture.create_agent(json!({ "name": "Blog Writer" })).await;
 }
+
+impl Fixture {
+    /// An HTTP API integration of the workspace for these roles.
+    async fn add_integration(&self, slug: &str, roles: &[&str]) -> String {
+        let id = Id::new_v7().to_string();
+        sqlx::query(
+            "INSERT INTO agent_integrations (id, workspace_id, slug, name, kind, url, allowed_roles, created_at, updated_at) \
+             VALUES ($1, $2, $3, $3, 'http', 'https://api.example.com', $4, 1, 1)",
+        )
+        .bind(&id)
+        .bind(&self.workspace_id)
+        .bind(slug)
+        .bind(json!(roles).to_string())
+        .execute(self.database.pool())
+        .await
+        .unwrap();
+        id
+    }
+
+    /// The integration tools an agent session lists, by slug.
+    async fn listed(&self, token: &str) -> Vec<String> {
+        let (status, listed) = self.as_agent(token, "GET", "/agent-tools", None).await;
+        assert_eq!(status, StatusCode::OK, "{listed}");
+        listed["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| {
+                tool["name"]
+                    .as_str()
+                    .unwrap()
+                    .trim_end_matches("__api_request")
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    /// A call of an integration's tool in the run of `input`: the problem code, or "" when Orbit
+    /// passed the agent and role checks. DELETE is not an allowed method, so nothing leaves Orbit.
+    async fn call_code(&self, token: &str, input: &Value, slug: &str) -> String {
+        let (_, answer) = self
+            .as_agent(
+                token,
+                "POST",
+                "/agent-tools/call",
+                Some(json!({
+                    "tool": format!("{slug}__api_request"),
+                    "arguments": { "method": "DELETE", "path": "/orders" },
+                    "conversation_id": input["conversation_id"],
+                    "root_message_id": input["root_message_id"],
+                })),
+            )
+            .await;
+        answer["code"].as_str().unwrap_or_default().to_owned()
+    }
+}
+
+#[tokio::test]
+async fn the_default_agent_is_first_cannot_be_deleted_and_its_card_reaches_runs() {
+    let fixture = Fixture::new().await;
+    let admin = fixture.add_person("Ada", "admin").await;
+    let member = fixture.add_person("Mia", "member").await;
+    let general = fixture.general().await;
+
+    let (status, list) = fixture.api(&member, "GET", "/agents", None).await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    let bot = list["default_agent"]["user_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(list["default_agent"]["name"], "Orbit Agent");
+    assert_eq!(list["default_agent"]["can_rename"], false);
+
+    // It cannot be deleted, by its route or as a custom agent.
+    let (status, _) = fixture
+        .api(&fixture.owner, "DELETE", "/agents/default", None)
+        .await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    let (status, _) = fixture
+        .api(&fixture.owner, "DELETE", &format!("/agents/{bot}"), None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Its name is the installation's: a workspace admin changes only the workspace's part.
+    let (status, problem) = fixture
+        .api(
+            &admin,
+            "PATCH",
+            "/agents/default",
+            Some(json!({ "name": "Donna", "instructions": "Be brief." })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{problem}");
+    assert_eq!(problem["code"], "installation_admin_required");
+    let (status, _) = fixture
+        .api(
+            &member,
+            "PATCH",
+            "/agents/default",
+            Some(json!({ "instructions": "x" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, saved) = fixture
+        .api(
+            &admin,
+            "PATCH",
+            "/agents/default",
+            Some(json!({ "instructions": "Be brief." })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["instructions"], "Be brief.");
+    assert_eq!(saved["name"], "Orbit Agent");
+    let (status, problem) = fixture
+        .api(
+            &fixture.owner,
+            "PATCH",
+            "/agents/default",
+            Some(json!({ "name": "mia" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{problem}");
+    let (status, renamed) = fixture
+        .api(
+            &fixture.owner,
+            "PATCH",
+            "/agents/default",
+            Some(json!({ "name": "Donna" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{renamed}");
+    assert_eq!(renamed["name"], "Donna");
+    assert_eq!(renamed["instructions"], "Be brief.");
+    assert_eq!(renamed["can_rename"], true);
+
+    // The name is the bot's: the sidecar and its runs read it, and the card's instructions reach
+    // the default agent's inputs only.
+    fixture
+        .send(&member, &general, &format!("<@{bot}> hello"))
+        .await;
+    let (status, queue) = fixture.internal("GET", "/inputs", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(queue["bot_name"], "Donna");
+    let input = &queue["inputs"][0];
+    assert!(input["agent"].is_null(), "{input}");
+    assert_eq!(input["default_agent"]["instructions"], "Be brief.");
+    assert!(input["default_agent"]["model"].is_null());
+    let (status, _) = fixture
+        .request(
+            "PUT",
+            "/api/v1/admin/agent",
+            ("cookie", &fixture.owner.cookie),
+            Some(json!({ "name": "Old route" })),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "the old rename route is gone"
+    );
+}
+
+#[tokio::test]
+async fn each_agent_uses_only_its_ticked_integrations_and_the_role_rule_still_applies() {
+    let fixture = Fixture::new().await;
+    let member = fixture.add_person("Mia", "member").await;
+    let general = fixture.general().await;
+    let everyone = ["owner", "admin", "member"];
+    let shop = fixture.add_integration("shop", &everyone).await;
+    let tiktok = fixture.add_integration("tiktok", &["owner", "admin"]).await;
+    let ads = fixture.add_integration("ads", &everyone).await;
+
+    let seller = fixture
+        .create_agent(json!({
+            "name": "Seller",
+            "tools": ["use_integration"],
+            "all_channels": true,
+            "integration_ids": [shop, tiktok],
+        }))
+        .await;
+    assert_eq!(seller["integration_ids"].as_array().unwrap().len(), 2);
+    let (status, _) = fixture
+        .api(
+            &fixture.owner,
+            "PATCH",
+            &format!("/agents/{}", seller["id"].as_str().unwrap()),
+            Some(json!({ "integration_ids": ["not-ours"] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    // The default agent: everything but ads.
+    let (status, card) = fixture
+        .api(
+            &fixture.owner,
+            "PATCH",
+            "/agents/default",
+            Some(json!({ "integration_ids": [shop, tiktok] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{card}");
+    // Added later: on for the default agent, off for the custom one.
+    let later = fixture.add_integration("later", &everyone).await;
+    let (_, list) = fixture.api(&fixture.owner, "GET", "/agents", None).await;
+    let mut default_ids: Vec<&str> = list["default_agent"]["integration_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|id| id.as_str().unwrap())
+        .collect();
+    default_ids.sort_unstable();
+    assert!(!default_ids.contains(&ads.as_str()));
+    let mut expected = vec![shop.as_str(), tiktok.as_str(), later.as_str()];
+    expected.sort_unstable();
+    assert_eq!(default_ids, expected);
+    assert_eq!(list["integrations"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        list["agents"][0]["integration_ids"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let (_, members_view) = fixture.api(&member, "GET", "/agents", None).await;
+    assert_eq!(members_view["integrations"], json!([]));
+
+    // The custom agent, driven by a member: its ticks, within the member's role.
+    let seller_bot = seller["user_id"].as_str().unwrap();
+    fixture
+        .send(&member, &general, &format!("<@{seller_bot}> orders"))
+        .await;
+    let inputs = fixture.pending().await;
+    let seller_input = inputs
+        .iter()
+        .find(|input| input["agent"]["user_id"] == seller_bot)
+        .unwrap()
+        .clone();
+    fixture.set_thread(&seller_input, "running", &member).await;
+    let (_, token) = fixture.session(&member, Some(seller_bot)).await;
+    assert_eq!(fixture.listed(&token).await, ["shop"]);
+    for (slug, code) in [
+        ("ads", "agent_integration_agent"),
+        ("later", "agent_integration_agent"),
+        ("tiktok", "agent_integration_role"),
+    ] {
+        assert_eq!(
+            fixture.call_code(&token, &seller_input, slug).await,
+            code,
+            "{slug}"
+        );
+    }
+    assert_eq!(fixture.call_code(&token, &seller_input, "shop").await, "");
+    fixture.ack(&seller_input).await;
+    fixture.set_thread(&seller_input, "idle", &member).await;
+
+    // The default agent, driven by the owner: every role, all but the unticked one.
+    let bot = list["default_agent"]["user_id"].as_str().unwrap();
+    fixture
+        .send(&fixture.owner, &general, &format!("<@{bot}> orders"))
+        .await;
+    let inputs = fixture.pending().await;
+    let input = inputs
+        .iter()
+        .find(|input| input["agent"].is_null())
+        .unwrap()
+        .clone();
+    fixture.set_thread(&input, "running", &fixture.owner).await;
+    let (_, token) = fixture.session(&fixture.owner, None).await;
+    let mut listed = fixture.listed(&token).await;
+    listed.sort();
+    assert_eq!(listed, ["later", "shop", "tiktok"]);
+    assert_eq!(
+        fixture.call_code(&token, &input, "ads").await,
+        "agent_integration_agent"
+    );
+
+    // Deleting an integration takes its ticks with it.
+    sqlx::query("DELETE FROM agent_integrations WHERE id = $1")
+        .bind(&shop)
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    let (_, list) = fixture.api(&fixture.owner, "GET", "/agents", None).await;
+    assert_eq!(list["agents"][0]["integration_ids"], json!([tiktok]));
+}

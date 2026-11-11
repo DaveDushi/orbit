@@ -201,7 +201,7 @@ class Progress {
 }
 
 /**
- * The model and thinking level of a new run: a custom agent's own choice, else the installation admin's, else the
+ * The model and thinking level of a new run: the agent's own choice (its card), else the installation admin's, else the
  * defaults (`AGENT_MODEL`, Pi's thinking level). Orbit checks choices against this sidecar's models, but a sidecar of
  * another version may not have one: then the run takes the default. The driver's answer level sets the thinking level
  * of short and thorough answers.
@@ -209,7 +209,7 @@ class Progress {
 export function runModel(
 	defaultModel: string,
 	choice: { model: string | null; thinking: string | null },
-	agent: InputAgent | null,
+	agent: Pick<InputAgent, "model" | "thinking"> | null,
 	level: string | null | undefined,
 ): { model: { provider: string; modelId: string }; thinkingLevel: ThinkingLevel | null } {
 	const model = agent?.model ?? choice.model;
@@ -539,13 +539,13 @@ export class Agent {
 			doc.run = { inputId: input.message_id, submissionId: null, progressMessageId, startedAt: Date.now(), title: input.routine ? routineTitle(input.routine) : null };
 			doc.agentName = agent?.name || this.botName;
 			doc.defaultAgentName = this.botName;
-			doc.agentInstructions = agent?.instructions ?? "";
+			doc.agentInstructions = agent?.instructions ?? input.default_agent?.instructions ?? "";
 			doc.allowedTools = agent ? [...agent.tools] : null;
 			doc.teamInstructions = input.team_instructions ?? "";
 			// Each run takes the model chosen now and the driver's answer level; a run already going keeps its own.
 			// A custom agent is offered only its own tools (Orbit refuses the others too).
 			await configure(tx, conversation.id, {
-				...this.#runModel(agent, input.answer_level),
+				...this.#runModel(agent ?? input.default_agent ?? null, input.answer_level),
 				tools: agent ? toolRegistrations(agent.tools, Boolean(this.#sandbox)) : null,
 			});
 		}, context);
@@ -579,7 +579,7 @@ export class Agent {
 	 * thinking level). Orbit checks the choice against this sidecar's models, but a sidecar of another version may
 	 * not have it: then the run takes the default.
 	 */
-	#runModel(agent: InputAgent | null = null, level?: string): { model: { provider: string; modelId: string }; thinkingLevel: ThinkingLevel | null } {
+	#runModel(agent: Pick<InputAgent, "model" | "thinking"> | null = null, level?: string): { model: { provider: string; modelId: string }; thinkingLevel: ThinkingLevel | null } {
 		return runModel(this.#config.model, this.choice, agent, level);
 	}
 

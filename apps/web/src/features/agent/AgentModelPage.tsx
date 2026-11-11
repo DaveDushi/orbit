@@ -1,30 +1,23 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { AGENT_DEFAULT_CHOICE as DEFAULT, agentModelChoices, type AgentIdentity, type AgentModelSettings } from '@orbit/api/agent'
+import { AGENT_DEFAULT_CHOICE as DEFAULT, agentModelChoices, type AgentModelSettings } from '@orbit/api/agent'
 import { ApiProblem } from '@orbit/api/problem'
 import { SettingsCard } from '@/components/common/SettingsCard'
 import { Button } from '@/components/ui/button'
 import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
-import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { FieldGrid } from '@/features/settings/components/SettingsParts'
-import { useAgentIdentity, useAgentModel, useAgentStatus, useSaveAgentModel, useSaveAgentName } from './api'
+import { useAgentModel, useAgentStatus, useSaveAgentModel } from './api'
 
-/** Agentic → Admin: the agent's one name for the installation, which is also its @handle in chat, and its model. */
-export function AgentNamePage() {
-  const identity = useAgentIdentity()
+/** Agentic → Admin: the installation's model, for every agent that keeps "Default". The default agent's name and avatar are on its card in Agentic → Agents. */
+export function AgentModelPage() {
   const model = useAgentModel()
   const status = useAgentStatus().data
   if (status?.enabled === false) return <SettingsCard title="Agent">The agent is not set up on this server.</SettingsCard>
-  if (identity.isPending || model.isPending) return <SettingsCard title="Agent"><p role="status">Loading the agent settings…</p></SettingsCard>
-  if (identity.isError || model.isError) return <SettingsCard title="Agent"><p role="alert">The agent settings could not be loaded. <Button variant="ghost" onClick={() => { void identity.refetch(); void model.refetch() }}>Retry</Button></p></SettingsCard>
+  if (model.isPending) return <SettingsCard title="Agent"><p role="status">Loading the agent settings…</p></SettingsCard>
+  if (model.isError) return <SettingsCard title="Agent"><p role="alert">The agent settings could not be loaded. <Button variant="ghost" onClick={() => void model.refetch()}>Retry</Button></p></SettingsCard>
   // Remount on save so the fields show what the server stored.
-  return (
-    <>
-      <NameCard key={identity.data.name} identity={identity.data} />
-      <ModelCard key={`${model.data.model}/${model.data.thinking}`} settings={model.data} />
-    </>
-  )
+  return <ModelCard key={`${model.data.model}/${model.data.thinking}`} settings={model.data} />
 }
 
 function ModelCard({ settings }: { settings: AgentModelSettings }) {
@@ -45,7 +38,7 @@ function ModelCard({ settings }: { settings: AgentModelSettings }) {
 
   return (
     <form onSubmit={submit}>
-      <SettingsCard title="Model" description="For every new run, in every workspace. More thinking gives better answers, but they are slower and use more of the driver's ChatGPT limits.">
+      <SettingsCard title="Model" description="For every new run, in every workspace, of each agent whose card keeps Default. The name and avatar of the default agent are on its card in Agentic → Agents. More thinking gives better answers, but they are slower and use more of the driver's ChatGPT limits.">
         <FieldGrid>
           <Field>
             <FieldLabel htmlFor="agent-model">Model</FieldLabel>
@@ -71,36 +64,6 @@ function ModelCard({ settings }: { settings: AgentModelSettings }) {
         <div className="mt-4 flex items-center justify-end gap-3">
           {settings.updated_by_name ? <span className="mr-auto text-xs text-muted-foreground">Last changed by {settings.updated_by_name}</span> : null}
           <Button type="submit" disabled={!changed || save.isPending}>{save.isPending ? 'Saving…' : 'Save model'}</Button>
-        </div>
-      </SettingsCard>
-    </form>
-  )
-}
-
-function NameCard({ identity }: { identity: AgentIdentity }) {
-  const save = useSaveAgentName()
-  const [name, setName] = useState(identity.name)
-  const changed = name.trim() !== identity.name
-
-  function submit(event: React.FormEvent) {
-    event.preventDefault()
-    if (!changed || save.isPending) return
-    save.mutate(name.trim(), { onSuccess: () => toast('Agent name saved') })
-  }
-
-  return (
-    <form onSubmit={submit}>
-      <SettingsCard title="Name" description="One name in every workspace. People mention it as @Name in chat, and its messages and earlier mentions show the new name. It cannot be the name of another person in Orbit.">
-        <FieldGrid>
-          <Field>
-            <FieldLabel className="sr-only" htmlFor="agent-name">Name</FieldLabel>
-            <Input id="agent-name" required maxLength={identity.max_name_chars} value={name} onChange={(event) => { save.reset(); setName(event.target.value) }} />
-            <FieldDescription>{identity.min_name_chars} to {identity.max_name_chars} characters: letters, digits, single spaces and - _ . '</FieldDescription>
-          </Field>
-        </FieldGrid>
-        {save.isError ? <p role="alert" className="mt-3 text-sm text-destructive">{save.error instanceof ApiProblem ? save.error.detail : 'The name could not be saved.'}</p> : null}
-        <div className="mt-4 flex justify-end">
-          <Button type="submit" disabled={!changed || save.isPending}>{save.isPending ? 'Saving…' : 'Save name'}</Button>
         </div>
       </SettingsCard>
     </form>

@@ -46,6 +46,8 @@ export type PendingInput = {
 	readonly routine?: RoutineRun | null;
 	/** A custom agent (Settings → Agentic → Agents); `null` or absent: the default agent. */
 	readonly agent?: InputAgent | null;
+	/** The default agent's card in this workspace, for its inputs once set; absent from an older Orbit. */
+	readonly default_agent?: DefaultAgent | null;
 	/** The driver's answer level: `short`, `normal` or `thorough`; absent from an older Orbit. */
 	readonly answer_level?: string;
 };
@@ -57,6 +59,14 @@ export type InputAgent = {
 	readonly instructions: string;
 	/** The tool names it may use (a subset of the default agent's). */
 	readonly tools: readonly string[];
+	/** `null`: the installation's choice. */
+	readonly model: string | null;
+	readonly thinking: string | null;
+};
+
+/** The default agent's own instructions and model in one workspace (Settings → Agentic → Agents). */
+export type DefaultAgent = {
+	readonly instructions: string;
 	/** `null`: the installation's choice. */
 	readonly model: string | null;
 	readonly thinking: string | null;

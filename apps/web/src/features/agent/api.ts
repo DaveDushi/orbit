@@ -5,11 +5,9 @@ import {
   forgetAgentMemorySummary,
   readAgentMemories,
   readAgentMemoryWake,
-  readAgentIdentity,
   readAgentModel,
   readTeamInstructions,
   saveAgentModel,
-  saveAgentName,
   saveTeamInstructions,
   readAgentStatus,
   startChatgptLogin,
@@ -20,7 +18,9 @@ import {
   saveAnswerLevel,
   setAgentProfileAvatar,
   updateAgentProfile,
+  updateDefaultAgent,
   type AgentMemoryScope,
+  type DefaultAgentInput,
   type AgentProfileInput,
   type AnswerLevel,
 } from '@orbit/api/agent'
@@ -92,23 +92,6 @@ export function useForgetAgentMemorySummary(workspaceId: string, scope: AgentMem
   })
 }
 
-const identityKey = ['agent', 'identity'] as const
-
-/** Agentic → Admin: the agent's name. Installation admins only. */
-export function useAgentIdentity() {
-  return useQuery({ queryKey: identityKey, queryFn: () => readAgentIdentity(apiClient) })
-}
-
-/** Renames the agent; the status (its name on the account page) and member lists show the new name. */
-export function useSaveAgentName() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (name: string) => saveAgentName(apiClient, name),
-    onSuccess: (identity) => queryClient.setQueryData(identityKey, identity),
-    onSettled: () => void queryClient.invalidateQueries({ queryKey: key }),
-  })
-}
-
 const modelKey = ['agent', 'model'] as const
 
 /** Agentic → Admin: the model and thinking level. Installation admins only. */
@@ -165,6 +148,23 @@ export function useSaveAgentProfile(workspaceId: string) {
       return saved
     },
     onSettled: refresh,
+  })
+}
+
+/** The default agent's card. Its name is also in the agent status (the Ask bar, account page) and member lists. */
+export function useSaveDefaultAgent(workspaceId: string) {
+  const queryClient = useQueryClient()
+  const refresh = useRefreshAgents(workspaceId)
+  return useMutation({
+    mutationFn: async ({ input, avatar }: { input: DefaultAgentInput; avatar?: Blob | null }) => {
+      const saved = await updateDefaultAgent(apiClient, workspaceId, input)
+      if (avatar !== undefined) await setAgentProfileAvatar(apiClient, workspaceId, 'default', avatar)
+      return saved
+    },
+    onSettled: () => {
+      refresh()
+      void queryClient.invalidateQueries({ queryKey: key, exact: true })
+    },
   })
 }
 
