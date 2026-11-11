@@ -2121,6 +2121,22 @@ pub(crate) async fn approve(
     // `table` and `column` are fixed names from `Approves::table`, never input.
     let (table, column, subject_id) = subject.table();
     let now = TimestampMillis::now().as_millis();
+    // A run of a routine's saved script that its creator approved (the exact code, by its hash) needs
+    // no new yes: the yes to the script covers its writes (`crate::scheduled::runs`). Never for
+    // routines and messages posted as the driver: a script cannot schedule more work unasked.
+    if !matches!(subject, Approves::Scheduled(_))
+        && let Some(run) = crate::scheduled::runs::approved_script_run(
+            database,
+            conversation_id,
+            root_message_id,
+            user,
+        )
+        .await?
+    {
+        return Ok(Approval::Granted {
+            id: format!("script-run:{run}"),
+        });
+    }
     let mut tx = database.immediate_transaction().await?;
     let open = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT id, created_at, expires_at FROM {table} \
@@ -2259,6 +2275,7 @@ async fn call(
     headers: HeaderMap,
     uri: Uri,
     request_id: RequestIdExtension,
+    dry: Option<Extension<super::scope::DryRun>>,
     Json(body): Json<CallBody>,
 ) -> Result<Json<Value>, ApiError> {
     let (user, workspace_id, role, access) =
@@ -2314,6 +2331,10 @@ async fn call(
     let describe = action.describe(&integration);
     let graphql_read = action.graphql_read(&integration);
     let needs_approval = action.write() && !graphql_read;
+    // A test run reads, and only says which writes it would make.
+    if needs_approval && dry.is_some() {
+        return Ok(Json(json!({ "status": "dry_run", "action": describe })));
+    }
     if needs_approval {
         let arguments_hash = hash(&canonical(&body.arguments));
         let approval = approve(

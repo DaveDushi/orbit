@@ -462,6 +462,23 @@ pub struct RoutineRun {
     pub name: String,
     pub schedule: String,
     pub time_zone: String,
+    /// A test run (`crate::scheduled::runs`): in the creator's DM, nothing written.
+    pub test: bool,
+    /// `normal`, `script` or `dry`: what the run may write (Orbit enforces it).
+    pub writes: String,
+    /// The saved script this run runs, exactly as it was when the run started.
+    pub script: Option<RunScript>,
+    /// The script's `store()` values from the routine's last run.
+    pub state: Option<serde_json::Value>,
+}
+
+/// A routine run's saved script.
+#[derive(Clone, Debug, Serialize)]
+pub struct RunScript {
+    pub id: String,
+    pub name: String,
+    pub code: String,
+    pub hash: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -481,7 +498,10 @@ pub(crate) async fn pending(
         "SELECT i.message_id, i.workspace_id, i.conversation_id, i.thread_key, i.root_message_id, \
          i.author_id, i.kind, i.created_at, i.action, i.page_context, u.display_name, \
          COALESCE(m.body, r.prompt, '') AS body, r.id AS routine_id, r.name AS routine_name, \
-         r.schedule AS routine_schedule, r.time_zone AS routine_time_zone, c.kind AS conversation_kind, \
+         r.schedule AS routine_schedule, r.time_zone AS routine_time_zone, r.script_state AS routine_state, \
+         rr.test AS run_test, rr.writes AS run_writes, rr.script_id AS run_script_id, \
+         rr.script_name AS run_script_name, rr.script_code AS run_script_code, rr.script_hash AS run_script_hash, \
+         c.kind AS conversation_kind, \
          c.name AS conversation_name, t.body AS team_instructions, \
          (SELECT COUNT(*) FROM chat_members cm WHERE cm.conversation_id = i.conversation_id) \
          AS conversation_members, i.agent_user_id, i.refused, au.display_name AS agent_name, \
@@ -492,6 +512,7 @@ pub(crate) async fn pending(
          FROM agent_inputs i \
          LEFT JOIN chat_messages m ON m.id = i.message_id \
          LEFT JOIN agent_routines r ON r.id = i.routine_id \
+         LEFT JOIN agent_routine_runs rr ON rr.id = i.message_id \
          JOIN chat_conversations c ON c.id = i.conversation_id \
          JOIN users u ON u.id = i.author_id \
          LEFT JOIN agent_team_instructions t ON t.workspace_id = i.workspace_id \
@@ -535,6 +556,28 @@ pub(crate) async fn pending(
                     name: row.get("routine_name"),
                     schedule: row.get("routine_schedule"),
                     time_zone: row.get("routine_time_zone"),
+                    test: row.get::<Option<bool>, _>("run_test").unwrap_or(false),
+                    // A run from before history existed may write as before.
+                    writes: row
+                        .get::<Option<String>, _>("run_writes")
+                        .unwrap_or_else(|| "normal".to_owned()),
+                    script: row
+                        .get::<Option<String>, _>("run_script_id")
+                        .map(|id| RunScript {
+                            id,
+                            name: row
+                                .get::<Option<String>, _>("run_script_name")
+                                .unwrap_or_default(),
+                            code: row
+                                .get::<Option<String>, _>("run_script_code")
+                                .unwrap_or_default(),
+                            hash: row
+                                .get::<Option<String>, _>("run_script_hash")
+                                .unwrap_or_default(),
+                        }),
+                    state: row
+                        .get::<Option<String>, _>("routine_state")
+                        .and_then(|state| serde_json::from_str(&state).ok()),
                 }),
             created_at: row.get("created_at"),
             team_instructions: row

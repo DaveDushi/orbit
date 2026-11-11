@@ -1,5 +1,5 @@
 /**
- * Routines, reminders and send later (`apps/server/src/scheduled/`). The tools only list and create, as the driver;
+ * Routines, reminders, send later, saved scripts and test runs (`apps/server/src/scheduled/`). The tools only list and create, as the driver;
  * people change, pause and delete in Settings → Agentic → Routines and in the chat composer (`agent::scope` refuses
  * anything else from an agent session). Creating goes to `/agent-tools/scheduled`: a routine or a message posted as
  * the driver is made only after the driver's "yes" in the thread to exactly that action (Orbit keeps and checks the
@@ -51,9 +51,37 @@ export async function conversationFor(as: As, state: ThreadState, value: string 
 }
 
 function routineView(routine: Json): Json {
-	const { id, name, prompt, schedule, time_zone, status, paused_reason, next_run_at, last_run_at, last_run_status, last_error, conversation_name, conversation_kind, creator_name } = routine;
+	const { id, name, prompt, schedule, time_zone, status, paused_reason, next_run_at, last_run_at, last_run_status, last_error, conversation_name, conversation_kind, creator_name, script_name, script_approved } = routine;
 	const post_in = conversation_kind === "dm" ? "a DM" : conversation_name ? `#${conversation_name}` : "nowhere (deleted)";
-	return { id, name, instruction: prompt, schedule, time_zone, status, paused_reason, next_run_at: iso(next_run_at), last_run_at: iso(last_run_at), last_run_status, last_error, post_in, creator: creator_name };
+	const script = script_name ? `${script_name}${script_approved ? "" : " (not approved: its runs make no writes until the driver approves this version)"}` : null;
+	return { id, name, instruction: prompt, schedule, time_zone, status, paused_reason, next_run_at: iso(next_run_at), last_run_at: iso(last_run_at), last_run_status, last_error, post_in, creator: creator_name, script };
+}
+
+function scriptView(script: Json, withCode = false): Json {
+	const { id, name, description, code_hash, routines, owner_name, code } = script;
+	return {
+		id,
+		name,
+		description,
+		version: String(code_hash).slice(0, 12),
+		owner: owner_name,
+		routines: ((routines as Json[]) ?? []).map((routine) => `${routine.name}${routine.approved ? "" : " (writes off until the driver approves this version)"}`),
+		...(withCode ? { code: String(code).length > 1_500 ? `${String(code).slice(0, 1_500)}…` : code } : {}),
+	};
+}
+
+/** The driver's routine by id or name. */
+async function routineFor(as: As, value: string): Promise<Json | undefined> {
+	const { routines } = (await as("GET", "/routines")) as { routines: Json[] };
+	const wanted = value.trim().toLowerCase();
+	return routines.find((routine) => routine.id === value.trim()) ?? routines.find((routine) => String(routine.name).toLowerCase() === wanted);
+}
+
+/** The driver's saved script by id or name. */
+async function scriptFor(as: As, value: string): Promise<Json | undefined> {
+	const { scripts } = (await as("GET", "/scripts")) as { scripts: Json[] };
+	const wanted = value.trim().toLowerCase();
+	return scripts.find((script) => script.id === value.trim()) ?? scripts.find((script) => String(script.name).toLowerCase() === wanted);
 }
 
 function iso(value: unknown): string | null {
@@ -68,16 +96,21 @@ type Answer =
 
 /** The tools; `asDriver` and the client come from the Orbit tools. */
 export function scheduledTools(asDriver: Driver, orbit: () => OrbitClient) {
-	/** Creates through Orbit, which asks the driver first for `schedule_routine` and `send_later`. */
+	/**
+	 * Creates through Orbit, which asks the driver first for `schedule_routine`, `send_later` and `approve_routine_script`.
+	 * `args` may look things up first; a string is a refusal.
+	 */
 	const create =
-		(tool: string, args: Json, view: (result: Json) => unknown, postIn?: string) =>
+		(tool: string, args: Json | ((as: As) => Promise<Json | string>), view: (result: Json) => unknown, postIn?: string) =>
 		(api: ToolExecutionApi, context: Context): Promise<ToolExecutionResult> =>
 			asDriver(api, context, async (as, state) => {
 				const conversation = postIn === undefined ? undefined : await conversationFor(as, state, postIn);
 				if (conversation === null) return refused(`I found no channel named ${postIn} that ${state.driverName ?? "the driver"} is in.`);
+				const found = typeof args === "function" ? await args(as) : args;
+				if (typeof found === "string") return refused(found);
 				const answer = (await as("POST", "/agent-tools/scheduled", {
 					tool,
-					arguments: Object.fromEntries(Object.entries({ ...args, conversation_id: conversation }).filter(([, value]) => value !== undefined)),
+					arguments: Object.fromEntries(Object.entries({ ...found, conversation_id: conversation }).filter(([, value]) => value !== undefined)),
 					conversation_id: state.conversationId,
 					root_message_id: state.rootMessageId,
 				})) as Answer;
@@ -85,7 +118,7 @@ export function scheduledTools(asDriver: Driver, orbit: () => OrbitClient) {
 					case "ok":
 						return ok(answer.label, view(answer.result));
 					case "approval_required":
-						return askForApproval(api, context, orbit(), state, answer, "to schedule this", `call ${tool} again with exactly the same arguments`);
+						return askForApproval(api, context, orbit(), state, answer, tool === "approve_routine_script" ? "to let this routine's script write" : "to schedule this", `call ${tool} again with exactly the same arguments`);
 					default:
 						return refused(`${answer.status === "refused" ? "Refused" : "Failed"}: ${answer.detail}`);
 				}
@@ -101,13 +134,75 @@ export function scheduledTools(asDriver: Driver, orbit: () => OrbitClient) {
 			cron: Type.String({ description: "5-field cron expression in the time zone" }),
 			time_zone: timeZone,
 			post_in: where,
+			script: Type.Optional(Type.String({ description: "A saved script (name or id) to run on each run; the approval then covers its exact code" })),
 		}),
 		execute: (args, api, context) =>
 			create(
 				"schedule_routine",
-				{ name: args.name, prompt: args.instruction, schedule: args.cron, time_zone: args.time_zone },
+				async (as) => {
+					const script = args.script ? await scriptFor(as, args.script) : undefined;
+					if (args.script && !script) return `I found no saved script named ${args.script}.`;
+					return { name: args.name, prompt: args.instruction, schedule: args.cron, time_zone: args.time_zone, script_id: script?.id };
+				},
 				(routine) => ({ ...routineView(routine), manage: "Settings → Agentic → Routines" }),
 				args.post_in ?? "",
+			)(api, context),
+	});
+
+	const routineArg = Type.String({ description: "The routine's name or id (list_routines)" });
+
+	const saveScript = defineTool({
+		name: "save_script",
+		description:
+			"Save a script for the driver to use later, for example in a routine: JavaScript as for codemode (calls await tools.<name>(args); store(key, value) and load(key) keep small values from one routine run to the next). Saving under an existing name replaces its code: routines that run it then make no writes until the driver approves the new version. Saving runs nothing.",
+		parameters: Type.Object({
+			name: Type.String({ minLength: 1, maxLength: 80 }),
+			code: Type.String({ minLength: 1, maxLength: 20_000, description: "The script, as you would pass it to codemode" }),
+			description: Type.Optional(Type.String({ maxLength: 500, description: "What it does, in one or two sentences" })),
+		}),
+		execute: (args, api, context) => create("save_script", { name: args.name, code: args.code, description: args.description }, (script) => ({ ...scriptView(script), manage: "Settings → Agentic → Routines" }))(api, context),
+	});
+
+	const listScripts = defineTool({
+		name: "list_scripts",
+		description: "List the driver's saved scripts (for an owner or admin: every script of the workspace), with their version, the routines that run them, and the start of their code.",
+		parameters: Type.Object({}),
+		execute: (_args, api, context) =>
+			asDriver(api, context, async (as) => {
+				const { scripts } = (await as("GET", "/scripts")) as { scripts: Json[] };
+				return ok("scripts", scripts.map((script) => scriptView(script, true)));
+			}),
+	});
+
+	const testRoutine = defineTool({
+		name: "test_routine",
+		description:
+			"Test one of the driver's routines now: it runs as a normal run (its script or instruction), as the driver, but posts the result only in the driver's DM with you, marked \"Test run\", and makes no writes (each comes back as \"would do\"). Use it when the driver asks to test or try a routine.",
+		parameters: Type.Object({ routine: routineArg }),
+		execute: (args, api, context) =>
+			create(
+				"test_routine",
+				async (as) => {
+					const routine = await routineFor(as, args.routine);
+					return routine ? { routine_id: routine.id } : `I found no routine named ${args.routine}.`;
+				},
+				(run) => ({ test_run: run.id, status: run.status, where: "the driver's DM with you, marked Test run" }),
+			)(api, context),
+	});
+
+	const approveRoutineScript = defineTool({
+		name: "approve_routine_script",
+		description:
+			"Ask the driver to approve the current version of the saved script that one of their routines runs, so its runs may write again. It needs the driver's yes: then stop, and after their yes call it again with exactly the same arguments.",
+		parameters: Type.Object({ routine: routineArg }),
+		execute: (args, api, context) =>
+			create(
+				"approve_routine_script",
+				async (as) => {
+					const routine = await routineFor(as, args.routine);
+					return routine ? { routine_id: routine.id } : `I found no routine named ${args.routine}.`;
+				},
+				(routine) => routineView(routine),
 			)(api, context),
 	});
 
@@ -144,5 +239,5 @@ export function scheduledTools(asDriver: Driver, orbit: () => OrbitClient) {
 			)(api, context),
 	});
 
-	return [scheduleRoutine, listRoutines, remindMe, sendLater];
+	return [scheduleRoutine, listRoutines, remindMe, sendLater, listScripts, saveScript, testRoutine, approveRoutineScript];
 }

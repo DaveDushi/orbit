@@ -14,6 +14,8 @@ use orbit_platform::{Id, RequestId, TimestampMillis};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+use super::runs::{RunRecord, RunReport};
+use super::scripts::{SaveScript, ScriptChange, ScriptRecord};
 use super::store::{
     NewRoutine, NewScheduled, RoutineChange, RoutineRecord, ScheduledChange, ScheduledError,
     ScheduledRecord, Store,
@@ -45,7 +47,24 @@ pub fn router(state: AgentState) -> Router {
             &format!("{base}/scheduled-messages/{{scheduled_id}}"),
             patch(update_scheduled).delete(delete_scheduled),
         )
+        .route(
+            &format!("{base}/routines/{{routine_id}}/test"),
+            post(test_routine),
+        )
+        .route(
+            &format!("{base}/routines/{{routine_id}}/runs"),
+            get(list_runs),
+        )
+        .route(&format!("{base}/scripts"), get(list_scripts))
+        .route(
+            &format!("{base}/scripts/{{script_id}}"),
+            patch(update_script).delete(delete_script),
+        )
         .route(&format!("{base}/agent-tools/scheduled"), post(agent_call))
+        .route(
+            "/api/internal/agent/routine-runs/{run_id}",
+            axum::routing::put(finish_run),
+        )
         .with_state(state)
 }
 
@@ -233,6 +252,119 @@ async fn delete_routine(
         .map_err(|error| failure(error, &uri, &request_id))
 }
 
+async fn test_routine(
+    State(state): State<AgentState>,
+    Path((workspace_id, routine_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+) -> Result<Json<RunRecord>, ApiError> {
+    let (user_id, workspace_id) =
+        caller(&state, &headers, &workspace_id, &uri, &request_id).await?;
+    let routine_id = id(&routine_id, &uri, &request_id)?;
+    super::runner::test_run(
+        &state,
+        workspace_id,
+        user_id,
+        routine_id,
+        TimestampMillis::now(),
+    )
+    .await
+    .map(Json)
+    .map_err(|error| failure(error, &uri, &request_id))
+}
+
+async fn list_runs(
+    State(state): State<AgentState>,
+    Path((workspace_id, routine_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+) -> Result<Json<Value>, ApiError> {
+    let (user_id, workspace_id) =
+        caller(&state, &headers, &workspace_id, &uri, &request_id).await?;
+    let routine_id = id(&routine_id, &uri, &request_id)?;
+    let runs = store(&state)
+        .list_runs(workspace_id, user_id, routine_id)
+        .await
+        .map_err(|error| failure(error, &uri, &request_id))?;
+    Ok(Json(json!({ "runs": runs })))
+}
+
+async fn list_scripts(
+    State(state): State<AgentState>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+) -> Result<Json<Value>, ApiError> {
+    let (user_id, workspace_id) =
+        caller(&state, &headers, &workspace_id, &uri, &request_id).await?;
+    let scripts = store(&state)
+        .list_scripts(workspace_id, user_id)
+        .await
+        .map_err(|error| failure(error, &uri, &request_id))?;
+    Ok(Json(json!({ "scripts": scripts })))
+}
+
+async fn update_script(
+    State(state): State<AgentState>,
+    Path((workspace_id, script_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+    ApiJson(body): ApiJson<ScriptChange>,
+) -> Result<Json<ScriptRecord>, ApiError> {
+    let (user_id, workspace_id) =
+        caller(&state, &headers, &workspace_id, &uri, &request_id).await?;
+    let script_id = id(&script_id, &uri, &request_id)?;
+    store(&state)
+        .update_script(
+            workspace_id,
+            user_id,
+            script_id,
+            body,
+            TimestampMillis::now(),
+        )
+        .await
+        .map(Json)
+        .map_err(|error| failure(error, &uri, &request_id))
+}
+
+async fn delete_script(
+    State(state): State<AgentState>,
+    Path((workspace_id, script_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+) -> Result<StatusCode, ApiError> {
+    let (user_id, workspace_id) =
+        caller(&state, &headers, &workspace_id, &uri, &request_id).await?;
+    let script_id = id(&script_id, &uri, &request_id)?;
+    store(&state)
+        .delete_script(workspace_id, user_id, script_id)
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(|error| failure(error, &uri, &request_id))
+}
+
+/// The sidecar reports the end of a routine run (`super::runs::finish`).
+async fn finish_run(
+    State(state): State<AgentState>,
+    Path(run_id): Path<String>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+    Json(body): Json<RunReport>,
+) -> Result<StatusCode, ApiError> {
+    crate::agent::routes::sidecar_only(&state, &headers, &uri, &request_id)?;
+    let run_id = id(&run_id, &uri, &request_id)?;
+    super::runs::finish(state.database(), run_id, body, TimestampMillis::now())
+        .await
+        .map(|_| StatusCode::NO_CONTENT)
+        .map_err(|error| failure(error, &uri, &request_id))
+}
+
 async fn list_scheduled(
     State(state): State<AgentState>,
     Path(workspace_id): Path<String>,
@@ -317,7 +449,8 @@ async fn delete_scheduled(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AgentCall {
-    /// `schedule_routine`, `send_later` or `remind_me`.
+    /// `schedule_routine`, `send_later`, `remind_me`, `save_script`, `test_routine` or
+    /// `approve_routine_script`.
     tool: String,
     #[serde(default)]
     arguments: Map<String, Value>,
@@ -343,6 +476,12 @@ struct ReminderArgs {
     send_at: String,
     #[serde(default)]
     time_zone: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RoutineArgs {
+    routine_id: Id,
 }
 
 fn refused(detail: &str) -> Json<Value> {
@@ -401,6 +540,8 @@ async fn approval_question(
     })
 }
 
+// An axum handler: each extractor is one argument.
+#[allow(clippy::too_many_arguments)]
 async fn agent_call(
     State(state): State<AgentState>,
     Path(workspace_id): Path<String>,
@@ -408,13 +549,14 @@ async fn agent_call(
     uri: Uri,
     request_id: RequestIdExtension,
     custom: Option<Extension<crate::agent::profiles::AgentTools>>,
+    dry: Option<Extension<crate::agent::scope::DryRun>>,
     Json(body): Json<AgentCall>,
 ) -> Result<Json<Value>, ApiError> {
     let (user_id, workspace_id, _role) =
         driver(&state, &headers, &workspace_id, &uri, &request_id).await?;
     // A custom agent runs only the scheduling tools it has.
     if let Some(Extension(crate::agent::profiles::AgentTools(tools))) = &custom
-        && !tools.iter().any(|own| *own == body.tool)
+        && !tools.contains(&body.tool)
     {
         return Ok(refused("This agent's tools do not include this."));
     }
@@ -434,7 +576,73 @@ async fn agent_call(
     let now = TimestampMillis::now();
     let caller = (workspace_id, user_id);
     let arguments = Value::Object(body.arguments);
+    // A test run makes nothing here: no routine, message, reminder, script or other test run.
+    if dry.is_some() {
+        return Ok(Json(json!({
+            "status": "dry_run",
+            "action": format!("{} {arguments}", body.tool),
+        })));
+    }
     match body.tool.as_str() {
+        // The driver's own script: saving runs nothing, and new code turns off the writes of the
+        // routines that run it until the driver approves it again.
+        "save_script" => {
+            let Ok(input) = serde_json::from_value::<SaveScript>(arguments) else {
+                return Ok(refused("Give name, code and description only."));
+            };
+            match store.save_script(workspace_id, user_id, input, now).await {
+                Ok(record) => Ok(created("script saved", record)),
+                Err(error) => refusal(error, &uri, &request_id),
+            }
+        }
+        // A dry run in the driver's DM: it writes nothing, so it needs no approval.
+        "test_routine" => {
+            let Ok(args) = serde_json::from_value::<RoutineArgs>(arguments) else {
+                return Ok(refused("Give routine_id only."));
+            };
+            match super::runner::test_run(&state, workspace_id, user_id, args.routine_id, now).await
+            {
+                Ok(run) => Ok(created("test run started", run)),
+                Err(error) => refusal(error, &uri, &request_id),
+            }
+        }
+        "approve_routine_script" => {
+            let Ok(args) = serde_json::from_value::<RoutineArgs>(arguments) else {
+                return Ok(refused("Give routine_id only."));
+            };
+            let preview = match store
+                .preview_script_approval(workspace_id, user_id, args.routine_id)
+                .await
+            {
+                Ok(preview) => preview,
+                Err(error) => return refusal(error, &uri, &request_id),
+            };
+            let input = json!({ "routine_id": args.routine_id, "script_hash": preview.input });
+            if let Some(question) = approval_question(
+                &state,
+                caller,
+                thread,
+                "approve_routine_script",
+                preview.action,
+                &input,
+                (&uri, &request_id),
+            )
+            .await?
+            {
+                return Ok(question);
+            }
+            let change = RoutineChange {
+                approve_script_hash: Some(preview.input),
+                ..RoutineChange::default()
+            };
+            match store
+                .update_routine(workspace_id, user_id, args.routine_id, change, now)
+                .await
+            {
+                Ok(record) => Ok(created("script approved", record)),
+                Err(error) => refusal(error, &uri, &request_id),
+            }
+        }
         // Only for the driver, from the agent: nobody else reads it.
         "remind_me" => {
             let Ok(args) = serde_json::from_value::<ReminderArgs>(arguments) else {
@@ -499,7 +707,7 @@ async fn agent_call(
         "schedule_routine" => {
             let Ok(input) = serde_json::from_value::<NewRoutine>(arguments) else {
                 return Ok(refused(
-                    "Give name, prompt, schedule, time_zone and conversation_id only.",
+                    "Give name, prompt, schedule, time_zone, conversation_id and script_id only.",
                 ));
             };
             // The routine is the session's agent's: the default agent or this custom agent.

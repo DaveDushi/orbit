@@ -18,6 +18,7 @@
 
 ## New agent tools
 - A new sidecar tool also needs its row in `TOOL_CATALOG` and its routes in `route_need` (`apps/server/src/agent/profiles.rs`): custom agents' sessions are refused every route that no tool names there (fail closed). `apps/agent/test/profiles.test.ts` fails when the catalog and the sidecar's tools differ (2026-11-11).
+- A routine's test run is a dry run enforced by Orbit (`agent::scope::dry_allows`): a dry session reaches only reads and the agent tool routes (`/agent-tools/call`, `/drive`, `/scheduled`). A new agent route that writes on POST must be refused there, or check `Option<Extension<scope::DryRun>>` and answer `{"status": "dry_run", "action": …}` like those routes (2026-11-11).
 
 ## Guests (chat-only role)
 - `membership::actor` returns `None` for a guest, so every repository that uses it refuses guests; only chat uses `chat_actor`. A route with its own membership SQL (`FROM memberships`) must exclude `role = 'guest'` itself. `tests/guest_access.rs` sweeps only the OpenAPI operations: a route outside the contract (agent, apps, internal) needs its own guest test (`agent_api.rs`, `apps_api.rs`).

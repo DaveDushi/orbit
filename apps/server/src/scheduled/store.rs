@@ -42,7 +42,7 @@ pub enum ScheduledError {
 const GUESTS: &str = "Guests cannot use routines, reminders or send later.";
 
 /// The caller as a full member (not a guest) of the workspace.
-async fn member(
+pub(super) async fn member(
     conn: &mut AnyConnection,
     workspace_id: Id,
     user_id: Id,
@@ -145,7 +145,7 @@ async fn target_problem(
     Ok(None)
 }
 
-fn clean_text(
+pub(super) fn clean_text(
     text: &str,
     max_chars: usize,
     empty: &'static str,
@@ -239,6 +239,14 @@ pub struct RoutineRecord {
     pub last_error: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+    /// The saved script it runs on each run (`super::scripts`); `null`: only its instruction.
+    pub script_id: Option<String>,
+    pub script_name: Option<String>,
+    /// The script's code hash now.
+    pub script_hash: Option<String>,
+    /// Its creator approved the script's current code: its runs may write. While `false`, a run of
+    /// the script writes nothing and says what it would do.
+    pub script_approved: bool,
     /// The caller may change the schedule, the instruction and the target, and resume it.
     pub can_edit: bool,
     /// The caller may pause and delete it.
@@ -261,6 +269,13 @@ pub struct NewRoutine {
     /// routines for itself.
     #[serde(default)]
     pub agent_user_id: Option<Id>,
+    /// One of the creator's saved scripts, run on each run.
+    #[serde(default)]
+    pub script_id: Option<Id>,
+    /// The code hash of that script that the creator approves (its writes run without a new yes).
+    /// Absent: its runs write nothing until they approve it.
+    #[serde(default)]
+    pub script_hash: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -282,19 +297,31 @@ pub struct RoutineChange {
     /// `active` or `paused`.
     #[serde(default)]
     pub status: Option<String>,
+    /// One of the creator's saved scripts, or `""` for none (the instruction only). Another script
+    /// needs its own approval.
+    #[serde(default)]
+    pub script_id: Option<String>,
+    /// Approves the routine's script at exactly this code hash (the code the creator looked at):
+    /// refused when the script changed meanwhile.
+    #[serde(default)]
+    pub approve_script_hash: Option<String>,
 }
 
 const ROUTINE_SELECT: &str = "SELECT r.id, r.workspace_id, r.agent_user_id, ag.display_name AS agent_name, \
      r.creator_id, u.display_name AS creator_name, \
      r.conversation_id, c.name AS conversation_name, c.kind AS conversation_kind, r.name, r.prompt, r.schedule, \
      r.time_zone, r.status, r.paused_reason, r.next_run_at, r.last_run_at, r.last_run_status, \
-     r.last_run_message_id, r.last_error, r.created_at, r.updated_at \
+     r.last_run_message_id, r.last_error, r.created_at, r.updated_at, r.script_id, s.name AS script_name, \
+     s.code_hash AS script_hash, r.script_approved_hash \
      FROM agent_routines r JOIN users u ON u.id = r.creator_id JOIN users ag ON ag.id = r.agent_user_id \
-     LEFT JOIN chat_conversations c ON c.id = r.conversation_id";
+     LEFT JOIN chat_conversations c ON c.id = r.conversation_id LEFT JOIN agent_scripts s ON s.id = r.script_id";
 
 fn routine_of(row: &sqlx::any::AnyRow, actor: Actor) -> Result<RoutineRecord, ScheduledError> {
     let creator: String = row.get("creator_id");
     let creator_id: Id = creator.parse().map_err(|_| ScheduledError::NotFound)?;
+    let script_hash: Option<String> = row.get("script_hash");
+    let script_approved = script_hash.is_some()
+        && row.get::<Option<String>, _>("script_approved_hash") == script_hash;
     Ok(RoutineRecord {
         id: row.get("id"),
         workspace_id: row.get("workspace_id"),
@@ -318,12 +345,16 @@ fn routine_of(row: &sqlx::any::AnyRow, actor: Actor) -> Result<RoutineRecord, Sc
         last_error: row.get("last_error"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
+        script_id: row.get("script_id"),
+        script_name: row.get("script_name"),
+        script_hash,
+        script_approved,
         can_edit: actor.can_edit_routine(creator_id),
         can_stop: actor.can_stop_routine(creator_id),
     })
 }
 
-async fn load_routine(
+pub(super) async fn load_routine(
     conn: &mut AnyConnection,
     workspace_id: Id,
     routine_id: Id,
@@ -346,7 +377,7 @@ async fn load_routine(
 }
 
 /// The creator's DM with the agent, opened (and announced to both) when it does not exist yet.
-async fn agent_dm(
+pub(super) async fn agent_dm(
     chat: &ChatState,
     workspace_id: Id,
     user_id: Id,
@@ -437,7 +468,7 @@ async fn agent_target(
 }
 
 pub struct Store {
-    database: Database,
+    pub(super) database: Database,
 }
 
 impl Store {
@@ -503,6 +534,23 @@ impl Store {
             return Err(ScheduledError::Invalid(problem.detail()));
         }
         agent_target(&mut tx, workspace_id, agent, conversation_id).await?;
+        // A script's writes are approved only for the exact code the creator saw.
+        let approved_hash = match input.script_id {
+            None => None,
+            Some(script) => {
+                let (_, _, hash) =
+                    super::scripts::own_script(&mut tx, workspace_id, user_id, script).await?;
+                match input.script_hash {
+                    Some(seen) if seen == hash => Some(hash),
+                    Some(_) => {
+                        return Err(ScheduledError::Invalid(
+                            "The script changed after you approved it. Ask again.",
+                        ));
+                    }
+                    None => None,
+                }
+            }
+        };
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM agent_routines WHERE workspace_id = $1 AND creator_id = $2",
         )
@@ -518,8 +566,8 @@ impl Store {
         let id = Id::new_v7();
         sqlx::query(
             "INSERT INTO agent_routines (id, workspace_id, agent_user_id, creator_id, conversation_id, name, prompt, \
-             schedule, time_zone, status, next_run_at, created_at, updated_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', $10, $11, $11)",
+             schedule, time_zone, status, next_run_at, created_at, updated_at, script_id, script_approved_hash) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', $10, $11, $11, $12, $13)",
         )
         .bind(id.to_string())
         .bind(workspace_id.to_string())
@@ -532,6 +580,8 @@ impl Store {
         .bind(&zone)
         .bind(schedule.next_after(now.as_millis()))
         .bind(now.as_millis())
+        .bind(input.script_id.map(|id| id.to_string()))
+        .bind(approved_hash)
         .execute(&mut *tx)
         .await?;
         let routine = load_routine(&mut tx, workspace_id, id, actor).await?;
@@ -578,10 +628,18 @@ impl Store {
             .map_or_else(String::new, |next| {
                 format!(", first on {}", local_time(next, &zone))
             });
+        let (script, script_hash) = match input.script_id {
+            None => (String::new(), None),
+            Some(script) => {
+                let (script_name, code, hash) =
+                    super::scripts::own_script(&mut conn, workspace_id, user_id, script).await?;
+                (script_approval_text(&script_name, &code, &hash), Some(hash))
+            }
+        };
         Ok(Preview {
             action: format!(
                 "New routine \"{name}\": as you, on the schedule `{expression}` ({zone}{next}), \
-                 the agent does this and posts the result in {target}:\n\n{prompt}"
+                 the agent does this and posts the result in {target}:\n\n{prompt}{script}"
             ),
             input: NewRoutine {
                 name,
@@ -590,6 +648,8 @@ impl Store {
                 time_zone: Some(zone),
                 conversation_id: input.conversation_id,
                 agent_user_id: session_agent,
+                script_id: input.script_id,
+                script_hash,
             },
         })
     }
@@ -610,7 +670,9 @@ impl Store {
             || change.schedule.is_some()
             || change.time_zone.is_some()
             || change.conversation_id.is_some()
-            || change.agent_user_id.is_some();
+            || change.agent_user_id.is_some()
+            || change.script_id.is_some()
+            || change.approve_script_hash.is_some();
         let pause = match change.status.as_deref() {
             None => None,
             Some("paused") => Some(true),
@@ -685,9 +747,17 @@ impl Store {
             None
         };
         let status = if active { "active" } else { "paused" };
+        let (script, approved_hash) = routine_script_change(
+            &mut tx,
+            (workspace_id, creator, routine_id),
+            change.script_id.as_deref(),
+            change.approve_script_hash.as_deref(),
+        )
+        .await?;
         sqlx::query(
             "UPDATE agent_routines SET name = $1, prompt = $2, schedule = $3, time_zone = $4, conversation_id = $5, \
-             status = $6, paused_reason = NULL, next_run_at = $7, updated_at = $8, agent_user_id = $10 WHERE id = $9",
+             status = $6, paused_reason = NULL, next_run_at = $7, updated_at = $8, agent_user_id = $10, \
+             script_id = $11, script_approved_hash = $12 WHERE id = $9",
         )
         .bind(&name)
         .bind(&prompt)
@@ -699,11 +769,47 @@ impl Store {
         .bind(now.as_millis())
         .bind(routine_id.to_string())
         .bind(agent.to_string())
+        .bind(script)
+        .bind(approved_hash)
         .execute(&mut *tx)
         .await?;
         let routine = load_routine(&mut tx, workspace_id, routine_id, actor).await?;
         tx.commit().await?;
         Ok(routine)
+    }
+
+    /// What the creator approves when a routine's script changed (or got one without approval): the
+    /// routine and the script's exact code, as the agent's approval question shows it. The input is
+    /// the hash, so the yes is bound to that code.
+    pub async fn preview_script_approval(
+        &self,
+        workspace_id: Id,
+        user_id: Id,
+        routine_id: Id,
+    ) -> Result<Preview<String>, ScheduledError> {
+        let mut conn = self.database.pool().acquire().await?;
+        let actor = member(&mut conn, workspace_id, user_id).await?;
+        let routine = load_routine(&mut conn, workspace_id, routine_id, actor).await?;
+        if !routine.can_edit {
+            return Err(ScheduledError::Forbidden(
+                "Only the person who made this routine can approve its script.",
+            ));
+        }
+        let Some(script) = routine.script_id.as_deref().and_then(|id| id.parse().ok()) else {
+            return Err(ScheduledError::Invalid(
+                "This routine runs no saved script.",
+            ));
+        };
+        let (name, code, hash) =
+            super::scripts::own_script(&mut conn, workspace_id, user_id, script).await?;
+        Ok(Preview {
+            action: format!(
+                "Routine \"{}\": allow its runs to make the writes of your saved script{}",
+                routine.name,
+                script_approval_text(&name, &code, &hash)
+            ),
+            input: hash,
+        })
     }
 
     pub async fn delete_routine(
@@ -952,6 +1058,68 @@ impl Store {
         tx.commit().await?;
         Ok(())
     }
+}
+
+/// The script part of an approval question: its name, the start of its hash and its code (the start
+/// of it: Settings → Agentic → Routines shows all of it).
+fn script_approval_text(name: &str, code: &str, hash: &str) -> String {
+    let shown: String = code.chars().take(1500).collect();
+    let more = if shown.len() < code.len() {
+        "\n… (the rest is in Settings → Agentic → Routines)"
+    } else {
+        ""
+    };
+    format!(
+        "\n\nEach run runs your saved script \"{name}\" (version {}). Its writes then need no new yes; \
+         a changed script needs a new yes:\n{shown}{more}",
+        &hash[..hash.len().min(12)]
+    )
+}
+
+/// The script and the approved hash after a change of a routine: another script (`""`: none) drops
+/// the approval; `approve` approves the script's current code, only when it is the code the creator saw.
+async fn routine_script_change(
+    conn: &mut AnyConnection,
+    (workspace_id, creator, routine_id): (Id, Id, Id),
+    script: Option<&str>,
+    approve: Option<&str>,
+) -> Result<(Option<String>, Option<String>), ScheduledError> {
+    let row =
+        sqlx::query("SELECT script_id, script_approved_hash FROM agent_routines WHERE id = $1")
+            .bind(routine_id.to_string())
+            .fetch_one(&mut *conn)
+            .await?;
+    let current: Option<String> = row.get("script_id");
+    let mut approved: Option<String> = row.get("script_approved_hash");
+    let script = match script {
+        None => current.clone(),
+        Some("") => None,
+        Some(id) => {
+            let parsed: Id = id
+                .parse()
+                .map_err(|_| ScheduledError::Invalid("Pick one of your saved scripts."))?;
+            super::scripts::own_script(conn, workspace_id, creator, parsed).await?;
+            Some(parsed.to_string())
+        }
+    };
+    if script != current {
+        approved = None;
+    }
+    if let Some(seen) = approve {
+        let Some(id) = script.as_deref().and_then(|id| id.parse().ok()) else {
+            return Err(ScheduledError::Invalid(
+                "This routine runs no saved script.",
+            ));
+        };
+        let (_, _, hash) = super::scripts::own_script(conn, workspace_id, creator, id).await?;
+        if seen != hash {
+            return Err(ScheduledError::Invalid(
+                "The script changed since you looked at it. Look at it again.",
+            ));
+        }
+        approved = Some(hash);
+    }
+    Ok((script, approved))
 }
 
 fn checked_send_at(text: &str, zone: &str, now: TimestampMillis) -> Result<i64, ScheduledError> {

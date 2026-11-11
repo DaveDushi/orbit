@@ -15,7 +15,7 @@ use orbit_platform::{Id, Row, TimestampMillis};
 use tokio_util::sync::CancellationToken;
 
 use super::schedule::RoutineSchedule;
-use super::store::{message_problem, routine_problem};
+use super::store::{ScheduledError, message_problem, routine_problem};
 use crate::agent::AgentState;
 use crate::agent::inputs::bot_user_id;
 use crate::push::PushService;
@@ -330,6 +330,23 @@ async fn claim(
     .await?
     .0;
     let run = connected.then(Id::new_v7);
+    let script = super::runs::routine_script(&mut tx, id).await?;
+    super::runs::insert_run(
+        &mut tx,
+        super::runs::NewRun {
+            id: run.unwrap_or_else(Id::new_v7),
+            routine_id: id,
+            workspace_id,
+            test: false,
+            status: if connected { "started" } else { "skipped" },
+            writes: super::runs::writes_of(script.as_ref()),
+            script: script.as_ref(),
+            error: (!connected)
+                .then_some("Skipped: connect your ChatGPT account in Settings → Agentic."),
+            now: now.as_millis(),
+        },
+    )
+    .await?;
     let (status, error) = if connected {
         ("started", None)
     } else {
@@ -397,32 +414,66 @@ async fn start(
         .await;
     };
     let name: String = row.get("name");
+    let header = format!("⏳ Routine **{}** is starting…", name.replace('*', ""));
+    let Some(header_id) = post_run(
+        state,
+        (workspace_id, agent, creator),
+        (id, run),
+        conversation,
+        header,
+        now,
+    )
+    .await?
+    else {
+        return give_up(
+            state,
+            id,
+            run,
+            "Paused: the agent cannot post in the conversation it posts to.",
+            now,
+        )
+        .await;
+    };
+    sqlx::query(
+        "UPDATE agent_routines SET pending_run_id = NULL, last_run_message_id = $1 WHERE id = $2 AND pending_run_id = $3",
+    )
+    .bind(header_id.to_string())
+    .bind(id.to_string())
+    .bind(run.to_string())
+    .execute(database.pool())
+    .await?;
+    round.routines_started += 1;
+    Ok(())
+}
+
+/// Posts a run's first message as the agent in `conversation` and queues the run for it, as the
+/// creator, with the run's thread on its history row. Safe to call again for the same run: the
+/// nonce gives the same message, the input id the same input. `None`: the agent cannot post there.
+async fn post_run(
+    state: &AgentState,
+    (workspace_id, agent, creator): (Id, Id, Id),
+    (routine_id, run): (Id, Id),
+    conversation: Id,
+    header: String,
+    now: TimestampMillis,
+) -> Result<Option<Id>, sqlx::Error> {
+    let database = state.database();
     join_conversation(state, conversation, agent, now).await?;
     // The sidecar posts its progress with the nonce `agent:<input id>`: it finds this message and
     // writes the answer into it, so the answer is in the conversation, and questions and
     // approvals go to the thread under it.
-    let header = match post(
+    let Ok(header) = post(
         state,
         workspace_id,
         agent,
         conversation,
         None,
-        format!("⏳ Routine **{}** is starting…", name.replace('*', "")),
+        header,
         format!("agent:{run}"),
     )
     .await?
-    {
-        Ok(message) => message,
-        Err(_) => {
-            return give_up(
-                state,
-                id,
-                run,
-                "Paused: the agent cannot post in the conversation it posts to.",
-                now,
-            )
-            .await;
-        }
+    else {
+        return Ok(None);
     };
     // A custom agent's run has its own thread key, as in chat (`inputs::agent_thread_key`).
     let custom = {
@@ -431,7 +482,18 @@ async fn start(
             .await?
             .map(|profile| profile.user_id)
     };
+    let thread_key = crate::agent::inputs::agent_thread_key(custom, header.id);
     let mut tx = database.immediate_transaction().await?;
+    // The thread first: the run's agent sessions read from it whether they may write.
+    sqlx::query(
+        "UPDATE agent_routine_runs SET conversation_id = $1, message_id = $2, thread_key = $3 WHERE id = $4",
+    )
+    .bind(conversation.to_string())
+    .bind(header.id.to_string())
+    .bind(thread_key.to_string())
+    .bind(run.to_string())
+    .execute(&mut *tx)
+    .await?;
     sqlx::query(
         "INSERT INTO agent_inputs (message_id, workspace_id, conversation_id, thread_key, root_message_id, \
          author_id, kind, created_at, routine_id, agent_user_id) \
@@ -440,25 +502,16 @@ async fn start(
     .bind(run.to_string())
     .bind(workspace_id.to_string())
     .bind(conversation.to_string())
-    .bind(crate::agent::inputs::agent_thread_key(custom, header.id).to_string())
+    .bind(thread_key.to_string())
     .bind(header.id.to_string())
     .bind(creator.to_string())
     .bind(now.as_millis())
-    .bind(id.to_string())
+    .bind(routine_id.to_string())
     .bind(custom.map(|id| id.to_string()))
     .execute(&mut *tx)
     .await?;
-    sqlx::query(
-        "UPDATE agent_routines SET pending_run_id = NULL, last_run_message_id = $1 WHERE id = $2 AND pending_run_id = $3",
-    )
-    .bind(header.id.to_string())
-    .bind(id.to_string())
-    .bind(run.to_string())
-    .execute(&mut *tx)
-    .await?;
     tx.commit().await?;
-    round.routines_started += 1;
-    Ok(())
+    Ok(Some(header.id))
 }
 
 async fn give_up(
@@ -475,6 +528,14 @@ async fn give_up(
     .bind(reason)
     .bind(now.as_millis())
     .bind(id.to_string())
+    .bind(run.to_string())
+    .execute(state.database().pool())
+    .await?;
+    sqlx::query(
+        "UPDATE agent_routine_runs SET status = 'failed', error = $1, finished_at = $2 WHERE id = $3 AND status = 'started'",
+    )
+    .bind(reason)
+    .bind(now.as_millis())
     .bind(run.to_string())
     .execute(state.database().pool())
     .await?;
@@ -503,4 +564,116 @@ async fn join_conversation(
     .execute(state.database().pool())
     .await?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------
+// Test runs
+
+/// A test run of a routine, now, by its creator (`POST …/routines/{id}/test`, the agent's
+/// `test_routine`). It runs as a normal run of the routine (its script or its instruction) as the
+/// creator, but posts only in the creator's DM with the routine's agent, marked "Test run", and is a
+/// dry run: Orbit makes none of its writes, and the answer says what it would do (`super::runs`).
+pub async fn test_run(
+    state: &AgentState,
+    workspace_id: Id,
+    user_id: Id,
+    routine_id: Id,
+    now: TimestampMillis,
+) -> Result<super::runs::RunRecord, ScheduledError> {
+    if state.config.is_none() {
+        return Err(ScheduledError::AgentOff);
+    }
+    let database = state.database();
+    let routine = {
+        let mut conn = database.pool().acquire().await?;
+        let actor = super::store::member(&mut conn, workspace_id, user_id).await?;
+        super::store::load_routine(&mut conn, workspace_id, routine_id, actor).await?
+    };
+    if !routine.can_edit {
+        return Err(ScheduledError::Forbidden(
+            "Only the person who made this routine can test it: it runs as them.",
+        ));
+    }
+    let agent: Id = routine
+        .agent_user_id
+        .parse()
+        .map_err(|_| ScheduledError::NotFound)?;
+    let dm = super::store::agent_dm(&state.chat, workspace_id, user_id, agent).await?;
+    let run = Id::new_v7();
+    {
+        let mut tx = database.immediate_transaction().await?;
+        if let Some(reason) =
+            routine_problem(&mut tx, workspace_id, user_id, agent, Some(dm)).await?
+        {
+            return Err(ScheduledError::Invalid(reason));
+        }
+        let connected = sqlx::query_scalar::<_, orbit_platform::Flag>(
+            "SELECT EXISTS (SELECT 1 FROM agent_credentials WHERE user_id = $1 AND invalid_at IS NULL)",
+        )
+        .bind(user_id.to_string())
+        .fetch_one(&mut *tx)
+        .await?
+        .0;
+        if !connected {
+            return Err(ScheduledError::Invalid(
+                "Connect your ChatGPT account in Settings → Agentic first.",
+            ));
+        }
+        let going = sqlx::query_scalar::<_, orbit_platform::Flag>(
+            "SELECT EXISTS (SELECT 1 FROM agent_routine_runs WHERE routine_id = $1 AND test = 1 \
+             AND status = 'started' AND started_at > $2)",
+        )
+        .bind(routine_id.to_string())
+        .bind(now.as_millis() - super::runs::TEST_RUN_STALE_MS)
+        .fetch_one(&mut *tx)
+        .await?
+        .0;
+        if going {
+            return Err(ScheduledError::Limit(
+                "A test run of this routine is still going. Wait for its result.",
+            ));
+        }
+        let script = super::runs::routine_script(&mut tx, routine_id).await?;
+        super::runs::insert_run(
+            &mut tx,
+            super::runs::NewRun {
+                id: run,
+                routine_id,
+                workspace_id,
+                test: true,
+                status: "started",
+                writes: "dry",
+                script: script.as_ref(),
+                error: None,
+                now: now.as_millis(),
+            },
+        )
+        .await?;
+        tx.commit().await?;
+    }
+    let header = format!(
+        "🧪 Test run of the routine **{}**: nothing is written or posted elsewhere…",
+        routine.name.replace('*', "")
+    );
+    let posted = post_run(
+        state,
+        (workspace_id, agent, user_id),
+        (routine_id, run),
+        dm,
+        header,
+        now,
+    )
+    .await?;
+    if posted.is_none() {
+        sqlx::query(
+            "UPDATE agent_routine_runs SET status = 'failed', error = $1, finished_at = $2 WHERE id = $3",
+        )
+        .bind("The agent could not post in your DM with it.")
+        .bind(now.as_millis())
+        .bind(run.to_string())
+        .execute(database.pool())
+        .await?;
+    }
+    let mut conn = database.pool().acquire().await?;
+    super::runs::load_run(&mut conn, run).await
 }

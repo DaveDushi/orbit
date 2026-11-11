@@ -68,7 +68,8 @@ pub fn allows(workspace_id: &str, method: &Method, path: &str) -> bool {
     // The agent lists routines, reminders and scheduled messages here, and makes them only through
     // `/agent-tools/scheduled`, which asks the driver before anything posts as them
     // (`crate::scheduled`); only people change, pause or delete them (Settings, the composer).
-    if segment == "routines" || segment == "scheduled-messages" {
+    // Saved scripts too: the agent saves them only through `/agent-tools/scheduled`.
+    if segment == "routines" || segment == "scheduled-messages" || segment == "scripts" {
         return method == Method::GET;
     }
     // The agent notes and reads memory; only people delete it.
@@ -84,6 +85,29 @@ pub fn allows(workspace_id: &str, method: &Method, path: &str) -> bool {
                 .is_some_and(|id| !id.is_empty() && !id.contains('/'));
     }
     true
+}
+
+/// A dry run's session (a routine's test run, or a script changed since its approval): set on the
+/// request by [`layer`], so the agent tool routes answer a write with what it would do.
+#[derive(Clone, Copy, Debug)]
+pub struct DryRun;
+
+/// Whether a dry run's session may make this request: reads, and the agent tool routes, which run
+/// reads and answer writes with `dry_run` themselves. Every other write is refused here, so no
+/// tool can write in a dry run, whatever the sidecar or the model does.
+#[must_use]
+pub fn dry_allows(method: &Method, path: &str) -> bool {
+    if method == Method::GET || method == Method::HEAD {
+        return true;
+    }
+    method == Method::POST
+        && [
+            "/agent-tools/call",
+            "/agent-tools/drive",
+            "/agent-tools/scheduled",
+        ]
+        .iter()
+        .any(|tool| path.ends_with(tool))
 }
 
 /// Whether a custom agent with these tools may make this request (after [`allows`]): only the
@@ -110,7 +134,7 @@ pub async fn layer(State(database): State<Database>, mut request: Request, next:
     };
     let hash: [u8; 32] = Sha256::digest(token.as_bytes()).into();
     let row = sqlx::query(
-        "SELECT agent_sessions.workspace_id, agent_sessions.agent_user_id, p.tools, p.deleted_at \
+        "SELECT agent_sessions.workspace_id, agent_sessions.agent_user_id, agent_sessions.dry_run, p.tools, p.deleted_at \
          FROM sessions JOIN agent_sessions ON agent_sessions.session_id = sessions.id \
          LEFT JOIN agent_profiles p ON p.user_id = agent_sessions.agent_user_id \
          WHERE sessions.token_hash = $1 AND sessions.revoked_at IS NULL",
@@ -167,6 +191,18 @@ pub async fn layer(State(database): State<Database>, mut request: Request, next:
             },
         );
     }
+    let dry = row.get::<bool, _>("dry_run");
+    if dry && !dry_allows(&method, &path) {
+        return refuse(
+            &request,
+            StatusCode::CONFLICT,
+            "agent_dry_run",
+            "Test run: Orbit did not do this write.",
+        );
+    }
+    if dry {
+        request.extensions_mut().insert(DryRun);
+    }
     if let Some(tools) = custom {
         request
             .extensions_mut()
@@ -203,7 +239,7 @@ fn refuse(request: &Request, status: StatusCode, code: &str, detail: &str) -> Re
 mod tests {
     use axum::http::Method;
 
-    use super::allows;
+    use super::{allows, dry_allows};
 
     const WORKSPACE: &str = "0199c3a0-0000-7000-8000-000000000001";
 
@@ -307,6 +343,35 @@ mod tests {
             "/mcp",
         ] {
             assert!(!allows(WORKSPACE, &Method::GET, other), "{other}");
+        }
+    }
+
+    #[test]
+    fn a_dry_run_reads_and_reaches_only_the_agent_tool_routes() {
+        for (method, rest) in [
+            (Method::GET, "/tasks"),
+            (Method::GET, "/chat/search"),
+            (Method::POST, "/agent-tools/call"),
+            (Method::POST, "/agent-tools/drive"),
+            (Method::POST, "/agent-tools/scheduled"),
+        ] {
+            assert!(dry_allows(&method, &path(rest)), "{method} {rest}");
+        }
+        for (method, rest) in [
+            (Method::POST, "/tasks"),
+            (Method::PATCH, "/tasks/abc"),
+            (Method::POST, "/tasks/abc/comments"),
+            (Method::PUT, "/tasks/abc/followers/me"),
+            (Method::POST, "/pages"),
+            (Method::PATCH, "/pages/abc"),
+            (Method::PUT, "/pages/abc/files/def/content"),
+            (Method::POST, "/pages/abc/drive-files"),
+            (Method::POST, "/chat/conversations/abc/messages"),
+            (Method::POST, "/agent-memory/team"),
+            (Method::POST, "/agent-memory/team/summaries"),
+            (Method::DELETE, "/pages/abc/drive-files/x"),
+        ] {
+            assert!(!dry_allows(&method, &path(rest)), "{method} {rest}");
         }
     }
 }
