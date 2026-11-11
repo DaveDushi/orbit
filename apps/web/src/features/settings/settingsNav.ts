@@ -157,8 +157,6 @@ export interface AgenticTab {
   label: string
   /** Shown only when the server runs the team agent. */
   agent?: boolean
-  /** Only instance admins may open it. */
-  instanceAdmin?: boolean
 }
 
 export const AGENTIC_TABS: readonly AgenticTab[] = [
@@ -166,18 +164,21 @@ export const AGENTIC_TABS: readonly AgenticTab[] = [
   { to: '/settings/agentic/workspace', label: 'Workspace', agent: true },
   { to: '/settings/agentic/agents', label: 'Agents', agent: true },
   { to: '/settings/agentic/routines', label: 'Routines', agent: true },
-  { to: '/settings/agentic/admin', label: 'Admin', agent: true, instanceAdmin: true },
 ]
 
+/** Sections that moved: the Admin tab's default model is on the Agents tab now. */
+const AGENTIC_MOVED: Readonly<Record<string, string>> = {
+  '/settings/agentic/admin': '/settings/agentic/agents',
+}
+
 /**
- * The Agentic page's tabs for this person, and where to go when they may not open the address. With the agent off its
- * tabs hide, but a direct link still opens: the section answers for itself, as these pages always did.
+ * The Agentic page's tabs, and where an address that is not a tab goes: its new section, else the first one. With the
+ * agent off its tabs hide, but a direct link still opens: the section answers for itself, as these pages always did.
  */
-export function agenticTabsView(tabs: readonly AgenticTab[], instanceAdmin: boolean, agent: boolean, pathname: string) {
-  const open = tabs.filter((tab) => !tab.instanceAdmin || instanceAdmin)
+export function agenticTabsView(tabs: readonly AgenticTab[], agent: boolean, pathname: string) {
   const path = pathname.replace(/\/+$/, '')
-  const current = open.find((tab) => tab.to === path)
-  return { tabs: open.filter((tab) => !tab.agent || agent), current, redirect: current ? null : open[0].to }
+  const current = tabs.find((tab) => tab.to === path)
+  return { tabs: tabs.filter((tab) => !tab.agent || agent), current, redirect: current ? null : (AGENTIC_MOVED[path] ?? tabs[0].to) }
 }
 
 /** An area's title, icon and the links this person may open. */

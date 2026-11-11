@@ -58,7 +58,6 @@ const BillingPage = lazy(() => loadSettings().then((module) => ({ default: modul
 const MembersPage = lazy(() => loadSettings().then((module) => ({ default: module.MembersPage })))
 const SecurityPage = lazy(() => loadSettings().then((module) => ({ default: module.SecurityPage })))
 const SessionsPage = lazy(() => loadSettings().then((module) => ({ default: module.SessionsPage })))
-const AgenticAdmin = lazy(() => loadSettings().then((module) => ({ default: module.AgenticAdmin })))
 const AgenticTabs = lazy(() => loadSettings().then((module) => ({ default: module.AgenticTabs })))
 const AgenticWorkspace = lazy(() => loadSettings().then((module) => ({ default: module.AgenticWorkspace })))
 const AgenticRoutines = lazy(() => loadSettings().then((module) => ({ default: module.AgenticRoutines })))
@@ -163,7 +162,7 @@ export default function App() {
                 {/* the Agentic page moved to the workspace settings; old links, bookmarks and agent messages still work */}
                 <Route path="agentic/*" element={<MovedTo path="/settings/agentic" />} />
                 <Route path="agentic/workspace" element={<MovedTo path="/settings/agentic/workspace" />} />
-                <Route path="agentic/admin" element={<MovedTo path="/settings/agentic/admin" />} />
+                <Route path="agentic/admin" element={<MovedTo path="/settings/agentic/agents" />} />
                 <Route path="profile" element={<AccountLayout />}>
                   <Route index element={<ProfilePage />} />
                   <Route path="general" element={<ProfilePage />} />
@@ -189,7 +188,7 @@ export default function App() {
                   <Route path="backups" element={<AdminBackupsPage />} />
                   <Route path="jobs" element={<AdminJobsPage />} />
                   <Route path="feedback" element={<FeedbackPage />} />
-                  <Route path="agent" element={<MovedTo path="/settings/agentic/admin" />} />
+                  <Route path="agent" element={<MovedTo path="/settings/agentic/agents" />} />
                 </Route>
                 <Route path="settings" element={<SettingsLayout />}>
                   <Route index element={<GeneralPage />} />
@@ -204,7 +203,8 @@ export default function App() {
                     <Route path="workspace" element={<AgenticWorkspace />} />
                     <Route path="agents" element={<AgenticAgents />} />
                     <Route path="routines" element={<AgenticRoutines />} />
-                    <Route path="admin" element={<AgenticAdmin />} />
+                    {/* the Admin tab's default model is on the Agents tab now */}
+                    <Route path="admin" element={<MovedTo path="/settings/agentic/agents" />} />
                   </Route>
                   <Route path="billing" element={<BillingPage />} />
                   <Route path="export" element={<ExportPage />} />

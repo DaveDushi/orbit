@@ -261,9 +261,10 @@ routes), `inputs.rs` (`record`, `agent_thread_key`), `scope.rs`, `routes.rs` (`r
   it. The agent does not join that channel.
 - **P7. Deletion.** Soft: `deleted_at`, the bot user suspended and renamed "(deleted)", routines paused, waiting
   inputs acknowledged, threads idle, sessions deleted. DMs stay readable.
-- **P8. Answer level.** Per person (`agent_preferences`), sent with each input (the driver's: for an answer, the
-  waiting run's driver). The sidecar sets the run's thinking level and adds one line to the run's message, never to
-  the system prompt (the prompt cache stays warm).
+- **P8. Answer level.** Per agent since step 13 (`agent_profiles.answer_level`, `agent_default_profiles.answer_level`),
+  set on its card by owners and admins, for everyone who uses it; sent with each input. The sidecar sets the run's
+  thinking level and adds one line to the run's message, never to the system prompt (the prompt cache stays warm).
+  Migration 0096 gave every agent of a workspace the most common level of its people and dropped `agent_preferences`.
 - **Open.** Reminders made through a custom agent still come from the default agent. Mobile has no Agents or
   answer-level settings yet (agents show in chat like members).
 
@@ -379,6 +380,28 @@ their ancestors.
 - Their team memories stay: they are work facts of the workspace. The author shows as their name.
 - Deleting the workspace deletes all its memory (foreign keys). Deleting a user deletes their private memories and
   sets the author of their team memories to null.
+
+#### M10. One memory per agent (step 13)
+
+- `agent_memory_scopes.agent_user_id`: NULL is the default agent (as in every other `agent_user_id` column), so the
+  memory written before stayed the default agent's with no data change (migration 0096). The unique indexes include
+  `COALESCE(agent_user_id, '')`.
+- **Enforced by Orbit.** The scope layer puts the agent of every agent session on the request (`scope::SessionAgent`);
+  the memory routes use it and refuse an agent session that names another agent (`403 agent_memory_other_agent`).
+  People pick the agent with `?agent=` (the bot user id; it must be an agent of the workspace, else 404). Private
+  memory is still the caller's own, so a person reads only their own private memory of each agent.
+- **Why the agents do not share.** A custom agent has its own instructions and tools; sharing one memory would let a
+  narrow agent read what the default agent learned in other contexts, and its notes would steer the default agent.
+
+#### M11. Why the agent skipped memory (step 13)
+
+Production (2026-11-11): 3 `memory_note` calls in 197 runs, two of them only after the person asked; two thirds of the
+runs are in the DMs with Donna, and most runs used no reasoning tokens. The only rule was in the system prompt, far
+above the request, and it said to note facts "worth keeping beyond this thread": in a DM, which is one conversation
+forever, the model read that as "the transcript is enough". Fix: the rules say that other threads never see this one
+and that long conversations are shortened, and every message that starts a run ends with a short memory check from
+Orbit (`frame`, `MEMORY_CHECK`): note new lasting facts before the final answer, search memory before saying "I do not
+know". It is in the message, so the system prompt and its cache do not change.
 
 #### M9. Why the database and not files
 

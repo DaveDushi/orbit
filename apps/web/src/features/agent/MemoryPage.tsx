@@ -4,6 +4,7 @@ import { Search4 as Search, Trash } from 'reicon-react'
 import { agentMemorySourcePath, type AgentMemoryLine, type AgentMemoryScope } from '@orbit/api/agent'
 import { Button } from '@/components/ui/button'
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { ConfirmDeleteModal } from '@/components/common/ConfirmDeleteModal'
 import { SettingsCard } from '@/components/common/SettingsCard'
@@ -11,22 +12,35 @@ import { SettingsRow } from '@/features/settings/components/SettingsParts'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import { relativeTime } from '@/lib/format'
 import { useDebouncedValue } from '@/lib/useDebouncedValue'
-import { useAgentMemories, useAgentMemoryWake, useDeleteAgentMemory, useForgetAgentMemorySummary, useAgentStatus } from './api'
+import { useAgentMemories, useAgentMemoryWake, useAgentProfiles, useDeleteAgentMemory, useForgetAgentMemorySummary, useAgentStatus } from './api'
 
 type Pending = { kind: 'memory'; position: number } | { kind: 'summary'; lo: number; hi: number }
 
-/** Agentic → You: what the agent remembers in the current workspace, for the team and for you. */
+/** The picker's value for the default agent, whose memory the API names with no agent. */
+const DEFAULT_AGENT = 'default'
+
+/** Agentic → You: what one agent remembers in the current workspace, for the team and for you. Each agent has its own memory. */
 export function MemoryPage() {
   const { workspace } = useWorkspace()
   const status = useAgentStatus()
+  const profiles = useAgentProfiles(workspace.id).data
+  const [picked, setPicked] = useState(DEFAULT_AGENT)
   const [scope, setScope] = useState<AgentMemoryScope>('team')
   const [search, setSearch] = useState('')
   const query = useDebouncedValue(search.trim(), 250)
   const [pending, setPending] = useState<Pending | null>(null)
-  const memories = useAgentMemories(workspace.id, scope, query)
-  const wake = useAgentMemoryWake(workspace.id, scope)
-  const remove = useDeleteAgentMemory(workspace.id, scope)
-  const forget = useForgetAgentMemorySummary(workspace.id, scope)
+  const agents = [
+    { value: DEFAULT_AGENT, label: profiles?.default_agent.name ?? (status.data?.enabled ? status.data.name : 'Default agent') },
+    ...(profiles?.agents ?? []).map((agent) => ({ value: agent.user_id, label: agent.name })),
+  ]
+  // A deleted agent leaves the list: show the default agent then.
+  const current = agents.find((agent) => agent.value === picked) ?? agents[0]
+  const agent = current.value === DEFAULT_AGENT ? null : current.value
+  const name = current.label
+  const memories = useAgentMemories(workspace.id, agent, scope, query)
+  const wake = useAgentMemoryWake(workspace.id, agent, scope)
+  const remove = useDeleteAgentMemory(workspace.id, agent, scope)
+  const forget = useForgetAgentMemorySummary(workspace.id, agent, scope)
 
   if (status.data && !status.data.enabled) {
     return <SettingsCard title="Agent">The agent is not set up on this server.</SettingsCard>
@@ -42,24 +56,32 @@ export function MemoryPage() {
         title="Memories"
         description={
           scope === 'team'
-            ? `What the agent remembers for everyone in ${workspace.name}. Every member can read it; owners and admins can delete from it.`
-            : `What the agent remembers about you in ${workspace.name}. Only you can read it, and the agent reads it only in a direct message with you.`
+            ? `What ${name} remembers for everyone in ${workspace.name}. Every member can read it; owners and admins can delete from it. Each agent has its own memory.`
+            : `What ${name} remembers about you in ${workspace.name}. Only you can read it, and ${name} reads it only in a direct message with you. Each agent has its own memory.`
         }
         actions={
-          <ToggleGroup
-            aria-label="Memory"
-            variant="outline"
-            size="sm"
-            spacing={0}
-            value={[scope]}
-            onValueChange={(value: string[]) => {
-              const next = value[0]
-              if (next === 'team' || next === 'private') setScope(next)
-            }}
-          >
-            <ToggleGroupItem value="team">Team</ToggleGroupItem>
-            <ToggleGroupItem value="private">Private</ToggleGroupItem>
-          </ToggleGroup>
+          <div className="flex flex-wrap items-center gap-2">
+            <Select items={agents} value={current.value} onValueChange={(value) => setPicked(value ?? DEFAULT_AGENT)}>
+              <SelectTrigger size="sm" aria-label="Agent" className="min-w-36"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {agents.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <ToggleGroup
+              aria-label="Memory"
+              variant="outline"
+              size="sm"
+              spacing={0}
+              value={[scope]}
+              onValueChange={(value: string[]) => {
+                const next = value[0]
+                if (next === 'team' || next === 'private') setScope(next)
+              }}
+            >
+              <ToggleGroupItem value="team">Team</ToggleGroupItem>
+              <ToggleGroupItem value="private">Private</ToggleGroupItem>
+            </ToggleGroup>
+          </div>
         }
         flush
       >
@@ -80,7 +102,7 @@ export function MemoryPage() {
           ) : null}
           {memories.isSuccess && items.length === 0 ? (
             <SettingsRow className="text-sm text-muted-foreground">
-              {query ? 'No memory matches this search.' : 'Nothing yet. The agent notes facts here while it works.'}
+              {query ? 'No memory matches this search.' : `Nothing yet. ${name} notes facts here while it works.`}
             </SettingsRow>
           ) : null}
           {items.map((memory) => {
@@ -117,7 +139,7 @@ export function MemoryPage() {
       {summaries.length > 0 ? (
         <SettingsCard
           title="Summaries"
-          description="The agent reads older memories as these one-line summaries, which it writes itself. Delete a wrong one and the agent writes it again from the memories."
+          description={`${name} reads older memories as these one-line summaries, which it writes itself. Delete a wrong one and ${name} writes it again from the memories.`}
           flush
         >
           <div className="flex flex-col divide-y">

@@ -91,6 +91,11 @@ pub fn allows(workspace_id: &str, method: &Method, path: &str) -> bool {
 #[derive(Clone, Copy, Debug)]
 pub struct DryRun;
 
+/// The agent of an agent session (`None`: the default agent), set on the request by [`layer`]. Routes
+/// that keep something per agent (memory) take the agent from here, never from the request.
+#[derive(Clone, Debug)]
+pub struct SessionAgent(pub Option<String>);
+
 /// Whether a dry run's session may make this request: reads, and the agent tool routes, which run
 /// reads and answer writes with `dry_run` themselves. Every other write is refused here, so no
 /// tool can write in a dry run, whatever the sidecar or the model does.
@@ -202,6 +207,9 @@ pub async fn layer(State(database): State<Database>, mut request: Request, next:
     if dry {
         request.extensions_mut().insert(DryRun);
     }
+    request
+        .extensions_mut()
+        .insert(SessionAgent(row.get("agent_user_id")));
     if let Some(tools) = custom {
         request
             .extensions_mut()

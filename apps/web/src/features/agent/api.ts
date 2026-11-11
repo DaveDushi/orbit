@@ -14,15 +14,12 @@ import {
   createAgentProfile,
   deleteAgentProfile,
   readAgentProfiles,
-  readAnswerLevel,
-  saveAnswerLevel,
   setAgentProfileAvatar,
   updateAgentProfile,
   updateDefaultAgent,
   type AgentMemoryScope,
   type DefaultAgentInput,
   type AgentProfileInput,
-  type AnswerLevel,
 } from '@orbit/api/agent'
 import { apiClient } from '@/api/client'
 
@@ -58,43 +55,43 @@ export function useDisconnectChatgpt() {
   })
 }
 
-/** One page of memories per scope and search; older pages load with `before`. */
-export function useAgentMemories(workspaceId: string, scope: AgentMemoryScope, query: string) {
+/** One page of one agent's memories (`agent` null: the default agent) per scope and search; older pages load with `before`. */
+export function useAgentMemories(workspaceId: string, agent: string | null, scope: AgentMemoryScope, query: string) {
   return useInfiniteQuery({
-    queryKey: [...memoryKey(workspaceId), scope, 'list', query],
-    queryFn: ({ pageParam }) => readAgentMemories(apiClient, workspaceId, scope, { query, before: pageParam }),
+    queryKey: [...memoryKey(workspaceId), agent, scope, 'list', query],
+    queryFn: ({ pageParam }) => readAgentMemories(apiClient, workspaceId, scope, { query, before: pageParam, agent }),
     initialPageParam: null as number | null,
     getNextPageParam: (page) => page.next_before,
   })
 }
 
 /** What a run of the agent reads from this memory. */
-export function useAgentMemoryWake(workspaceId: string, scope: AgentMemoryScope) {
+export function useAgentMemoryWake(workspaceId: string, agent: string | null, scope: AgentMemoryScope) {
   return useQuery({
-    queryKey: [...memoryKey(workspaceId), scope, 'wake'],
-    queryFn: () => readAgentMemoryWake(apiClient, workspaceId, scope),
+    queryKey: [...memoryKey(workspaceId), agent, scope, 'wake'],
+    queryFn: () => readAgentMemoryWake(apiClient, workspaceId, scope, agent),
   })
 }
 
-export function useDeleteAgentMemory(workspaceId: string, scope: AgentMemoryScope) {
+export function useDeleteAgentMemory(workspaceId: string, agent: string | null, scope: AgentMemoryScope) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (position: number) => deleteAgentMemory(apiClient, workspaceId, scope, position),
+    mutationFn: (position: number) => deleteAgentMemory(apiClient, workspaceId, scope, position, agent),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: memoryKey(workspaceId) }),
   })
 }
 
-export function useForgetAgentMemorySummary(workspaceId: string, scope: AgentMemoryScope) {
+export function useForgetAgentMemorySummary(workspaceId: string, agent: string | null, scope: AgentMemoryScope) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ lo, hi }: { lo: number; hi: number }) => forgetAgentMemorySummary(apiClient, workspaceId, scope, lo, hi),
+    mutationFn: ({ lo, hi }: { lo: number; hi: number }) => forgetAgentMemorySummary(apiClient, workspaceId, scope, lo, hi, agent),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: memoryKey(workspaceId) }),
   })
 }
 
 const modelKey = ['agent', 'model'] as const
 
-/** Agentic → Admin: the model and thinking level. Installation admins only. */
+/** Agentic → Agents, the Default model card: the installation's model and thinking level. Installation admins only. */
 export function useAgentModel() {
   return useQuery({ queryKey: modelKey, queryFn: () => readAgentModel(apiClient) })
 }
@@ -171,19 +168,4 @@ export function useSaveDefaultAgent(workspaceId: string) {
 export function useDeleteAgentProfile(workspaceId: string) {
   const refresh = useRefreshAgents(workspaceId)
   return useMutation({ mutationFn: (id: string) => deleteAgentProfile(apiClient, workspaceId, id), onSettled: refresh })
-}
-
-const answerLevelKey = ['agent', 'answer-level'] as const
-
-/** Account settings → Agentic: how much every agent thinks and writes for the signed-in person. */
-export function useAnswerLevel() {
-  return useQuery({ queryKey: answerLevelKey, queryFn: () => readAnswerLevel(apiClient) })
-}
-
-export function useSaveAnswerLevel() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (level: AnswerLevel) => saveAnswerLevel(apiClient, level),
-    onSuccess: (level) => queryClient.setQueryData(answerLevelKey, level),
-  })
 }
