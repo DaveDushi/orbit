@@ -4,12 +4,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 65d7d0b6f253005260e7386263d747af5b320045
-  (the Ask bar needs a ChatGPT connection, schema 92, November 11, 2026; not pushed yet).
+- Source: DaveDushi/orbit, `main` at 8b0df85c16eea275c06d58da664c4c684d52dd8c
+  (step 7: Insert from Drive, schema 92, November 11, 2026; not pushed yet).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:65d7d0b`); fork commits have no published upstream image.
-- Image ID: sha256:428b6f9741b81d9e3101863629a9db3f1b8e4461b291f25314a91e9b332b195f
-- Team agent sidecar code (`/opt/orbit-agent`): commit 65d7d0b.
+  (`orbit:8b0df85`); fork commits have no published upstream image.
+- Image ID: sha256:3fff57285c5e0e55367ecd38cd4c399bd1b53fb1dfc46324dcb816576ec258bd
+- Team agent sidecar code (`/opt/orbit-agent`): commit 8b0df85.
 - Desktop app downloads: https://orbit.wellrox.com/downloads/desktop/ (installer, zip, `latest.json` for the app's update
   check; behind the exe.dev login like the rest). nginx `location /downloads/desktop/` in
   `/etc/nginx/conf.d/orbit.conf` serves `/srv/orbit-downloads/desktop/` (outside the deploy, so deploys keep it; the
@@ -250,6 +250,66 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 11, 2026 upgrade: step 7, Insert from Drive (schema 92, no migration)
+
+`main` from `c4b7c163` to `8b0df85c`: fast-forward to branch `insert-from-drive` (`02aed76e` rebased on `main`, now
+`8b0df85c`; the rebase had no conflict). Docs: `/` → Insert from Drive picks a file of the workspace's Drive; the
+`driveFile` block holds a reference (workspace + node id), never a copy, and every read resolves it for the reader:
+available (images and videos inline, other files as a card that opens the Drive preview), locked (no Drive access, no
+name) or unavailable (trash, deleted). Export and the token API show only what the reader may see; the phone app shows a
+plain "Drive file" card. Donna's new tools `list_page_drive_files`, `find_drive_file_pages`, `insert_drive_file`,
+`replace_drive_file`, `remove_drive_file` (as the asking person, no approval), in `TOOL_CATALOG` and `route_need`
+for custom agents. New API `/api/v1/workspaces/{w}/pages/{p}/drive-files[/resolve|/{block}]` and
+`/pages/drive-file-uses/{node}`. No migration, no new `ORBIT_*` setting, no new dependency; sidecar
+`package.json`/`package-lock.json`/`tsconfig.json` unchanged (only `src`). `aboutOrbit()` describes Insert from Drive
+and the tools. What's new: 1 line on top of the `2026-11-11` entry (now 10 lines; 5 entries; the other lines unchanged).
+
+Checks before the merge, in the worktree after the rebase: agent `tsc` and `node --test test/*.test.ts` (70 pass, 11
+skipped, 0 fail); web `bun test src/features/docs src/features/askDonna` (330 pass) and `tsc`; `packages/editor` tests
+(19 pass); mobile `tsc`; web `bun run build`; orbit-server `--lib` (261) and the test binaries `page_drive_files_api`,
+`guest_access`, `openapi_contract`, `agent_profiles`, `agent_api`, `agent_drive`, `collab_convert`,
+`doc_markdown_writes`, `collab_reconcile`, `markdown_merge`, `export_api`, `export_markdown`, `workspace_export_api`,
+`public_api`, `drive_api`, `pages_api`, `app_smoke` (443 tests in all, 0 fail), SQLite, under `orbit-build` (its
+`target` removed afterwards). Postgres and the full suites were not run. `orbit-deploy image` built `orbit:8b0df85`
+(image `sha256:3fff57285c5e0e55367ecd38cd4c399bd1b53fb1dfc46324dcb816576ec258bd`, finished 15:18 UTC);
+`deploy/smoke.sh` passed; `orbit config check` passed with the extracted binary.
+
+At the switch: stopped `orbit-agent` and `orbit` at 15:19:16 UTC, created snapshot `01a1cb31-1edc-7650-974f-06d9b635919c` with the old CLI
+(`/usr/local/bin/orbit-65d7d0b`; the verified download is `/var/backups/orbit/downloads/01a1cb31-1edc-7650-974f-06d9b635919c`) and verified it,
+`deploy/backup-rehearsal.sh` with the old binary passed (verify), ran `migrate run` of the new binary on a copy in
+`/var/lib/orbit/rehearsal-8b0df85-*` (0 applied, schema 92, quick-check ok; deleted afterwards), saved the sidecar data
+as `/var/backups/orbit-agent/orbit-agent-before-8b0df85.tgz`, kept the old sidecar code as
+`/opt/orbit-agent.before-8b0df85`, installed the binary (`/usr/local/bin/orbit-8b0df85` too) and the new sidecar `src`,
+and started `orbit` (15:19:30, ready), then `orbit-agent` (15:19:34). `main` is **not** pushed. `vm-health`
+(`/root/ops/vm-health.conf`, old copy `.before-8b0df85`): `PROD_TAG=8b0df85`, `ROLLBACK_TAG=65d7d0b`,
+`ROLLBACK_BACKUP=01a1cb31-1edc-7650-974f-06d9b635919c`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, no restarts; readiness (all checks) and `/health/live` 200;
+`/orbit-build.json` revision `8b0df85c`; schema 92; live quick-check ok, 0 foreign-key rows; web `/` and its main JS
+asset 200; without a session the new routes answer 401 (`GET`/`POST .../drive-files`, `POST .../drive-files/resolve`,
+`PUT`/`DELETE .../drive-files/{block}`, `GET .../pages/drive-file-uses/{node}`; a POST/PUT body without its required
+fields gives 400 first); an unknown route 404; `deploy/verify-production.sh` passes against `http://127.0.0.1:8000`;
+sidecar `/health` `{"ok":true,"mock":false}` and `/opt/orbit-agent/src` equal to `apps/agent/src` of `8b0df85c`;
+agent queue empty; the only log warning is the `rmcp` line. `vm-health` OK except nginx (35 lines, restarts), docker
+(`ifd-s3`) and git-owner. **Not** verified on production: a signed-in Insert from Drive (the branch's e2e run covers
+the picker, inline image and video, PDF card, locked card, unavailable file and Donna's insert), the phone app, a Donna
+Drive-file tool call.
+
+Rollback (no migration: the old binary runs on schema 92, no restore needed). To go back to `65d7d0b`:
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-65d7d0b /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-8b0df85 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Data, only if needed (work after 15:19 UTC is lost): /usr/local/bin/orbit-65d7d0b backup restore 01a1cb31-1edc-7650-974f-06d9b635919c (as orbit, with /etc/orbit/orbit.env)
+```
+
+Pages that got Drive file blocks after the switch keep them in their content; the old web app does not know the
+`driveFile` block. After this rollback, set `PROD_TAG=65d7d0b`, `ROLLBACK_TAG=c198b30`,
+`ROLLBACK_BACKUP=01a1cb00-c6ae-7195-8014-497bb566df86` in `/root/ops/vm-health.conf`.
 
 ### November 11, 2026 upgrade: the Ask bar needs a ChatGPT connection (schema 92, no migration)
 
