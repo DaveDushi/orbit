@@ -4,12 +4,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at c198b304a67170f0ee2d7030a85f2a3ee5b7150b
-  (step 6: agent profiles, schema 92, November 11, 2026; not pushed yet).
+- Source: DaveDushi/orbit, `main` at 65d7d0b6f253005260e7386263d747af5b320045
+  (the Ask bar needs a ChatGPT connection, schema 92, November 11, 2026; not pushed yet).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:c198b30`); fork commits have no published upstream image.
-- Image ID: sha256:1f63e0aa9b7ba768042fe50fc4880582ae1707874fcd8c8c7c75d41d5891fa90
-- Team agent sidecar code (`/opt/orbit-agent`): commit c198b30.
+  (`orbit:65d7d0b`); fork commits have no published upstream image.
+- Image ID: sha256:428b6f9741b81d9e3101863629a9db3f1b8e4461b291f25314a91e9b332b195f
+- Team agent sidecar code (`/opt/orbit-agent`): commit 65d7d0b.
 - Desktop app downloads: https://orbit.wellrox.com/downloads/desktop/ (installer, zip, `latest.json` for the app's update
   check; behind the exe.dev login like the rest). nginx `location /downloads/desktop/` in
   `/etc/nginx/conf.d/orbit.conf` serves `/srv/orbit-downloads/desktop/` (outside the deploy, so deploys keep it; the
@@ -250,6 +250,56 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 11, 2026 upgrade: the Ask bar needs a ChatGPT connection (schema 92, no migration)
+
+`main` from `2bd86666` to `65d7d0b6`: cherry-pick of `d30f4de8` (branch `agent-profiles`, on `6673a3f5`). The Ask bar
+and its panel show only for a member whose ChatGPT is connected (as well as the agent on and a member role); losing the
+connection closes an open panel (`useAskDonna`, `useAskDonna.test.tsx`). `aboutOrbit()` and the Ask bar line of the
+`2026-11-11` what's-new entry say so (the only conflict: main's merged entry kept, that line replaced; still 9 lines, 5
+entries). No migration, no new `ORBIT_*` setting, no new dependency; sidecar `package.json`/`package-lock.json`/
+`tsconfig.json` unchanged (only `src`).
+
+Checks before the switch (after `bun install --frozen-lockfile` and `npm ci` in `apps/agent`): web `bun test
+src/features/askDonna` (10 pass) and `tsc --noEmit`; agent `tsc` and `node --test test/*.test.ts` (68 pass, 11
+skipped, 0 fail). Rust tests not run (no Rust change). `orbit-deploy image` built `orbit:65d7d0b` (image
+`sha256:428b6f9741b81d9e3101863629a9db3f1b8e4461b291f25314a91e9b332b195f`, finished 14:25 UTC, after the webhook-bots
+`cargo test` released `orbit-build`); `deploy/smoke.sh` passed; `orbit config check` passed with the extracted binary.
+
+At the switch: stopped `orbit-agent` and `orbit` at 14:26:27 UTC, created snapshot
+`01a1cb00-c6ae-7195-8014-497bb566df86` with the old CLI (`/usr/local/bin/orbit-c198b30`; the verified download is
+`/var/backups/orbit/downloads/01a1cb00-c6ae-7195-8014-497bb566df86`) and verified it, `deploy/backup-rehearsal.sh`
+with the old binary passed (verify), ran `migrate run` of the new binary on a copy in
+`/var/lib/orbit/rehearsal-65d7d0b-*` (0 applied, schema 92, quick-check ok; deleted afterwards), saved the sidecar data
+as `/var/backups/orbit-agent/orbit-agent-before-65d7d0b.tgz`, kept the old sidecar code as
+`/opt/orbit-agent.before-65d7d0b`, installed the binary (`/usr/local/bin/orbit-65d7d0b` too) and the new sidecar `src`,
+and started `orbit` (14:27:01, ready), then `orbit-agent` (14:27:05). `main` is **not** pushed. `vm-health`
+(`/root/ops/vm-health.conf`, old copy `.before-65d7d0b`): `PROD_TAG=65d7d0b`, `ROLLBACK_TAG=c198b30`,
+`ROLLBACK_BACKUP=01a1cb00-c6ae-7195-8014-497bb566df86`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, no restarts; readiness (all checks) and `/health/live` 200;
+`/orbit-build.json` revision `65d7d0b6`; schema 92; live quick-check ok, 0 foreign-key rows; web `/` and its main JS
+asset 200; `deploy/verify-production.sh` passes against `http://127.0.0.1:8000` (`X-Forwarded-Proto: https` via a
+`CURL_HOME` `.curlrc`); sidecar `/health` `{"ok":true,"mock":false}` and `/opt/orbit-agent/src` equal to
+`apps/agent/src` of `65d7d0b6`; the only log warning is the `rmcp` "allowed origin without a port" line. `vm-health` OK
+except nginx (21 lines, restarts), docker (`ifd-s3`) and git-owner. Signed-in browser check (temporary v7 session rows,
+socat TLS hop, Playwright; both sessions logged out, revoked): a member without ChatGPT sees no Ask bar on
+`/profile/agentic` and `/tasks`; a member with ChatGPT sees it on both. **Not** verified: the desktop app, a question
+through the bar after the switch.
+
+Rollback (no migration: the old binary runs on schema 92, no restore needed). To go back to `c198b30`:
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-c198b30 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-65d7d0b /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Data, only if needed (work after 14:26 UTC is lost): /usr/local/bin/orbit-c198b30 backup restore 01a1cb00-c6ae-7195-8014-497bb566df86 (as orbit, with /etc/orbit/orbit.env)
+```
+
+After this rollback, set `PROD_TAG=c198b30`, `ROLLBACK_TAG=7ae0434`,
+`ROLLBACK_BACKUP=01a1c9f2-7f91-7301-9967-9efb75b713de` in `/root/ops/vm-health.conf`.
 
 ### November 11, 2026 upgrade: step 6, agent profiles (schema 92)
 
