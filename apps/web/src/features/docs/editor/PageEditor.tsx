@@ -32,7 +32,8 @@ import { ImageZoomButton } from './ImageZoomButton'
 import { setEditableInPlace } from '@orbit/editor/editable'
 import { internalPageLinkId, isSafeLinkHref } from '@orbit/editor/links'
 import { linkMentions, pastedFilesToCopy, toEditorContent, toStoredContent, type FileScope, type FileToCopy } from './content'
-import { insertPageBlock } from './pageBlockCommands'
+import { insertDriveFileBlock, insertPageBlock } from './pageBlockCommands'
+import type { DriveFileHost, DriveFileRef } from '../api/driveFiles'
 import { PageEditorContext, type PageEditorContextValue, type PageRef } from './pageEditorContext'
 import { watchDeletedFiles } from '@orbit/editor/deletedFiles'
 import type { PageEditorInstance } from '@orbit/editor/schema'
@@ -145,6 +146,10 @@ export interface PageEditorProps {
   onCreateSubpage?: () => Promise<string>
   /** Lets the user pick an existing page; resolves to its id, or null when cancelled. Page profile only. */
   onPickPage?: () => Promise<string | null>
+  /** The page that Drive file blocks resolve their files through (the server checks access on every read). */
+  driveFiles?: DriveFileHost | null
+  /** Lets the user pick a Drive file ("Insert from Drive"); resolves to it, or null when cancelled. Page profile only. */
+  onPickDriveFile?: () => Promise<DriveFileRef | null>
   /**
    * Uploads a file for an image/file block (slash menu, file panel, paste, drop) and resolves to its URL.
    * Reject to abort; the caller reports the error. Without it the editor offers no uploads.
@@ -186,6 +191,8 @@ function PageEditorInner({
   onOpenPage,
   onCreateSubpage = noSubpage,
   onPickPage = noPicker,
+  driveFiles = null,
+  onPickDriveFile,
   uploadFile,
   comments,
   mentions,
@@ -371,7 +378,10 @@ function PageEditorInner({
     [editor, fileScope],
   )
 
-  const context = useMemo<PageEditorContextValue>(() => ({ resolvePage, onOpenPage: onOpenPage ?? (() => {}) }), [resolvePage, onOpenPage])
+  const context = useMemo<PageEditorContextValue>(
+    () => ({ resolvePage, onOpenPage: onOpenPage ?? (() => {}), driveFiles }),
+    [resolvePage, onOpenPage, driveFiles],
+  )
 
   const slashActions = {
     onSubpage: () => {
@@ -396,6 +406,17 @@ function PageEditorInner({
         () => {},
       )
     },
+    onInsertDriveFile: onPickDriveFile
+      ? () => {
+          const anchorId = editor.getTextCursorPosition().block.id
+          void onPickDriveFile().then(
+            (file) => {
+              if (file && mounted.current) insertDriveFileBlock(editor, anchorId, file.workspaceId, file.nodeId)
+            },
+            () => {},
+          )
+        }
+      : undefined,
   }
 
   /**

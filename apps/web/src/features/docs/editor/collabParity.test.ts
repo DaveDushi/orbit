@@ -87,6 +87,8 @@ const EDITOR_EXERCISE: Json[] = [
   { id: 'ex-file', type: 'file', props: { url: EXERCISE_FILE, name: 'report.pdf' } },
   { id: 'ex-file-empty', type: 'file' },
   { id: 'ex-page', type: 'page', props: { pageId: EXERCISE_PAGE } },
+  { id: 'ex-drive-file', type: 'driveFile', props: { workspaceId: EXERCISE_PAGE, nodeId: EXERCISE_PAGE } },
+  { id: 'ex-drive-file-empty', type: 'driveFile' },
   {
     id: 'ex-callout',
     type: 'callout',

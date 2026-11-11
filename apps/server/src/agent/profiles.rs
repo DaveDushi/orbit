@@ -42,7 +42,7 @@ pub const MAX_CHANNELS: usize = 100;
 /// The default agent's tools, by group, as the sidecar names them (`apps/agent/src/tools.ts`,
 /// `media.ts`; `apps/agent/test/profiles.test.ts` keeps both lists the same). `true`: the tool
 /// writes or posts.
-pub const TOOL_CATALOG: [(&str, &str, bool); 42] = [
+pub const TOOL_CATALOG: [(&str, &str, bool); 47] = [
     ("list_projects", "Tasks", false),
     ("search_tasks", "Tasks", false),
     ("get_task", "Tasks", false),
@@ -59,6 +59,11 @@ pub const TOOL_CATALOG: [(&str, &str, bool); 42] = [
     ("create_page", "Docs", true),
     ("update_page", "Docs", true),
     ("write_file", "Docs", true),
+    ("list_page_drive_files", "Docs", false),
+    ("find_drive_file_pages", "Docs", false),
+    ("insert_drive_file", "Docs", true),
+    ("replace_drive_file", "Docs", true),
+    ("remove_drive_file", "Docs", true),
     ("read_messages", "Chat", false),
     ("search_messages", "Chat", false),
     ("read_chat_file", "Chat", false),
@@ -109,6 +114,10 @@ const PAGE_TOOLS: &[&str] = &[
     "create_page",
     "update_page",
     "write_file",
+    "list_page_drive_files",
+    "find_drive_file_pages",
+    // `after_text` reads the page first.
+    "insert_drive_file",
 ];
 const MEMORY_TOOLS: &[&str] = &[
     "memory_recall",
@@ -171,6 +180,16 @@ pub fn route_need(method: &Method, rest: &str) -> RouteNeed {
         ["pages", ..] if get => RouteNeed::Any(PAGE_TOOLS),
         ["pages"] if method == Method::POST => RouteNeed::Any(&["create_page"]),
         ["pages", _] if method == Method::PATCH => RouteNeed::Any(&["create_page", "update_page"]),
+        // Not `drive-files/resolve`: only the web editor reads with it.
+        ["pages", _, "drive-files"] if method == Method::POST => {
+            RouteNeed::Any(&["insert_drive_file"])
+        }
+        ["pages", _, "drive-files", block] if method == Method::PUT && *block != "resolve" => {
+            RouteNeed::Any(&["replace_drive_file"])
+        }
+        ["pages", _, "drive-files", block] if method == Method::DELETE && *block != "resolve" => {
+            RouteNeed::Any(&["remove_drive_file"])
+        }
         ["pages", _, "files", _, "content"] if method == Method::PUT => {
             RouteNeed::Any(&["write_file"])
         }
@@ -1421,7 +1440,7 @@ mod tests {
         assert!(checked_tools(&tools(&["delete_everything"])).is_err());
         assert!(checked_tools(&tools(&[""])).is_err());
         assert_eq!(checked_tools(&[]), Ok(Vec::new()));
-        assert_eq!(tool_catalog().count(), 42);
+        assert_eq!(tool_catalog().count(), 47);
     }
 
     #[test]
@@ -1456,6 +1475,31 @@ mod tests {
         ] {
             assert!(!tools_allow(&writer, &method, rest), "{method} {rest}");
         }
+        // Drive files on pages: each write needs its own tool.
+        let files = tools(&["list_page_drive_files", "insert_drive_file"]);
+        assert!(tools_allow(&files, &Method::GET, "pages/abc/drive-files"));
+        assert!(tools_allow(&files, &Method::GET, "pages/drive-file-uses/n"));
+        assert!(tools_allow(&files, &Method::POST, "pages/abc/drive-files"));
+        assert!(!tools_allow(
+            &files,
+            &Method::PUT,
+            "pages/abc/drive-files/b"
+        ));
+        assert!(!tools_allow(
+            &files,
+            &Method::DELETE,
+            "pages/abc/drive-files/b"
+        ));
+        assert!(!tools_allow(
+            &files,
+            &Method::POST,
+            "pages/abc/drive-files/resolve"
+        ));
+        assert!(!tools_allow(
+            &writer,
+            &Method::POST,
+            "pages/abc/drive-files"
+        ));
         let tasks = tools(&["get_task", "comment_on_task"]);
         assert!(tools_allow(&tasks, &Method::GET, "tasks/abc"));
         assert!(tools_allow(&tasks, &Method::POST, "tasks/abc/comments"));

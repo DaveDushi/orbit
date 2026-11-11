@@ -18,6 +18,17 @@ pub struct PageLink {
     pub href: String,
 }
 
+/// What the reader may see of the Drive file of a `driveFile` block.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DriveFileLink {
+    /// The file's current name and where it is in Orbit.
+    Available(PageLink),
+    /// The reader has no Drive access to the file: no name.
+    Locked,
+    /// In the trash, deleted, or not a file.
+    Unavailable,
+}
+
 /// Rewrites references while converting (links between exported pages, asset paths).
 pub trait LinkResolver {
     /// The target of a `page` block, or `None` when the page is gone or not visible
@@ -29,6 +40,11 @@ pub trait LinkResolver {
     /// mention (and to "Unknown user" without one).
     fn member_name(&self, _user_id: &str) -> Option<String> {
         None
+    }
+    /// The Drive file of a `driveFile` block as the reader may see it. Resolvers that do not check the reader's
+    /// Drive access show it locked.
+    fn drive_file(&self, _workspace_id: &str, _node_id: &str) -> DriveFileLink {
+        DriveFileLink::Locked
     }
 }
 
@@ -614,6 +630,21 @@ impl Converter<'_> {
                     None => "*Missing page*".to_owned(),
                 };
                 joined(&link, nested())
+            }
+            "driveFile" => {
+                let text = match self
+                    .resolver
+                    .drive_file(prop_str(block, "workspaceId"), prop_str(block, "nodeId"))
+                {
+                    DriveFileLink::Available(link) => format!(
+                        "[{}]({})",
+                        escape_label(link.title.trim()),
+                        link_destination(&link.href)
+                    ),
+                    DriveFileLink::Locked => "*Locked Drive file*".to_owned(),
+                    DriveFileLink::Unavailable => "*File not available*".to_owned(),
+                };
+                joined(&text, nested())
             }
             // Paragraphs and anything unknown: the text, then the children.
             _ => joined(&self.paragraph(block.get("content")), nested()),

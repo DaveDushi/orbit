@@ -101,6 +101,25 @@
    "content": "none",
    "attrs": []
   },
+  "driveFile": {
+   "content": "none",
+   "attrs": [
+    {
+     "name": "workspaceId",
+     "prop": true,
+     "missing": {
+      "value": ""
+     }
+    },
+    {
+     "name": "nodeId",
+     "prop": true,
+     "missing": {
+      "value": ""
+     }
+    }
+   ]
+  },
   "file": {
    "content": "none",
    "attrs": [

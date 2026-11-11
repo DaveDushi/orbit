@@ -1049,7 +1049,7 @@ fn teamspace_not_found(instance: String, request_id: Option<&Extension<RequestId
     )
 }
 
-fn page_problem(
+pub(crate) fn page_problem(
     error: PageError,
     instance: String,
     request_id: Option<&Extension<RequestId>>,

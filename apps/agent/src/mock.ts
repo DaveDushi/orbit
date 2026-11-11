@@ -16,6 +16,9 @@
  *   read the files (reads every file sent with the message, one read_chat_file call each, then reports them all)
  *   find drive file "words"        read drive file <id|it>              create folder "Name"
  *   trash drive file <id|it>       share drive file <id|it>
+ *   insert drive file <id|it> into page <id|it|this> [at <n>]     list drive files of page <id|it|this>
+ *   which pages show drive file <id|it>     replace drive file block <block> on page <id|it> with <id|it>
+ *   remove drive file block <block> from page <id|it>
  *   show my open tasks as a table (searches tasks, then answers with text and a ```spec card: table row by row, bar
  *     chart by status, buttons and a "New task" form; sending that form creates the task)
  *   schedule routine "Name" at "cron" to "Instruction" [in #channel]     list routines
@@ -258,6 +261,14 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 		return { name: "create_page", args: { title: match[1], markdown: match[2] ?? "" } };
 	if ((match = /append "([^"]+)" to (?:page|doc|file) (\S+)/i.exec(instruction)))
 		return { name: "update_page", args: { page_id: target(match[2], "page"), markdown: match[1], mode: "append" } };
+	if ((match = /insert drive file (\S+) into (?:page|doc) (\S+?)(?: at (\d+))?\.?$/i.exec(instruction)))
+		return { name: "insert_drive_file", args: { node_id: target(match[1], "drive"), page_id: target(match[2], "page"), ...(match[3] ? { position: Number(match[3]) } : {}) } };
+	if ((match = /list (?:the )?drive files (?:of|on) (?:page|doc) (\S+?)\.?$/i.exec(instruction))) return { name: "list_page_drive_files", args: { page_id: target(match[1], "page") } };
+	if ((match = /which pages show drive file (\S+?)\??$/i.exec(instruction))) return { name: "find_drive_file_pages", args: { node_id: target(match[1], "drive") } };
+	if ((match = /replace drive file block (\S+) on (?:page|doc) (\S+) with (\S+?)\.?$/i.exec(instruction)))
+		return { name: "replace_drive_file", args: { block_id: match[1], page_id: target(match[2], "page"), node_id: target(match[3], "drive") } };
+	if ((match = /remove drive file block (\S+) from (?:page|doc) (\S+?)\.?$/i.exec(instruction)))
+		return { name: "remove_drive_file", args: { block_id: match[1], page_id: target(match[2], "page") } };
 	if ((match = /find drive (?:file|folder)s? "([^"]+)"/i.exec(instruction))) return { name: "drive_search", args: { query: match[1] } };
 	if ((match = /read drive file (\S+)/i.exec(instruction))) return { name: "drive_read", args: { node_id: target(match[1], "drive") } };
 	if ((match = /create (?:a )?(?:drive )?folder "([^"]+)"/i.exec(instruction))) return { name: "drive_create_folder", args: { name: match[1] } };

@@ -32,6 +32,11 @@ reasons: `.ai/agent-design.md`.
   only after the driver's **yes** in the thread, checked by Orbit as for integration writes (table
   `agent_drive_approvals`: one approval is one run of exactly those arguments, and expires). The audit log has
   `agent_drive.approved_action` with who approved. It cannot delete forever, empty the trash, restore, or turn off links.
+- **Drive files on Docs pages** (`driveFile` blocks, a reference to the file, never a copy): `list_page_drive_files`
+  and `find_drive_file_pages` read; `insert_drive_file` (at a top-level `position` or `after_text`), `replace_drive_file`
+  and `remove_drive_file` write through `…/pages/{id}/drive-files` as the driver, **without an approval** (user rule
+  #100): Orbit checks the driver's Drive access to the file and the right to edit the page. Removing a block never
+  touches the file. `read_page` shows these blocks as `[Drive file <node id> (block <id>)]`.
 - With the **media sandbox** (`AGENT_SANDBOX_SOCKET`, set up by `deploy/donna-sandbox/setup.sh`) it works with images,
   video and scanned PDFs: `media_shell` runs bash with ffmpeg, ffprobe, ImageMagick, ghostscript, poppler and exiftool
   in the conversation's `/work`; `work_from_drive` copies a Drive file there; `view_image` sends images from `/work` or

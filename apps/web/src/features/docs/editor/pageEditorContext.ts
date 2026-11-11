@@ -1,4 +1,5 @@
 import { createContext, useContext } from 'react'
+import type { DriveFileHost } from '../api/driveFiles'
 
 /** What a `page` block needs to know about its target page. `null` = the page does not exist (or is not loaded). */
 export interface PageRef {
@@ -10,6 +11,8 @@ export interface PageRef {
 export interface PageEditorContextValue {
   resolvePage: (pageId: string) => PageRef | null
   onOpenPage: (pageId: string) => void
+  /** The page that `driveFile` blocks resolve their files through; `null`: they show a plain placeholder. */
+  driveFiles: DriveFileHost | null
 }
 
 // Custom block views render through portals inside <BlockNoteView>, so they see this provider.
@@ -17,6 +20,7 @@ export interface PageEditorContextValue {
 export const PageEditorContext = createContext<PageEditorContextValue>({
   resolvePage: () => null,
   onOpenPage: () => {},
+  driveFiles: null,
 })
 
 export function usePageEditorContext(): PageEditorContextValue {

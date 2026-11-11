@@ -154,8 +154,8 @@ describe('preferTitleMatches', () => {
 })
 
 describe('task profile', () => {
-  test('the task schema has the page block types minus page', () => {
-    const page = Object.keys(pageEditorSchema.blockSpecs).filter((type) => type !== 'page').sort()
+  test('the task schema has the page block types minus page and driveFile', () => {
+    const page = Object.keys(pageEditorSchema.blockSpecs).filter((type) => type !== 'page' && type !== 'driveFile').sort()
     expect(Object.keys(taskEditorSchema.blockSpecs).sort()).toEqual(page)
   })
 

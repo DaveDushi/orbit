@@ -148,6 +148,12 @@ class FakeOrbit {
 		}
 		if (rest === "/projects/p1/statuses") return [200, { items: [{ id: "s1", name: "Todo", position: 0 }, { id: "s2", name: "Done", position: 1 }] }];
 		if (rest === "/members") return [200, { items: [{ user_id: ANN, display_name: "Ann" }, { user_id: BOB, display_name: "Bob" }] }];
+		const driveFiles = /^\/pages\/([^/]+)\/drive-files$/.exec(rest);
+		if (driveFiles && method === "POST") {
+			// Ann has Drive access to the file and may edit the page; Bob has not: Orbit answers 404.
+			if (token === BOB) return [404, { code: "drive_not_found" }];
+			return [201, { block_id: "b1", position: body.position ?? 0, workspace_id: WS, node_id: body.node_id, status: "available", file: { id: body.node_id, name: "report.pdf", mime: "application/pdf", size: 10 }, url: null }];
+		}
 		if (rest === "/tasks" && method === "POST") {
 			// Bob may not create tasks here; Ann may.
 			if (token === BOB) return [403, { code: "forbidden" }];
@@ -281,6 +287,33 @@ test("each run acts as its driver; an answer does not lend the answerer's permis
 		const unconnected = orbit.add({ thread_key: id(), author_id: BOB, author_name: "Bob", kind: "instruction", body: `<@${BOT}> list projects` });
 		await until("the connect message", () => progressOf(orbit, unconnected).includes("connect your ChatGPT account"));
 		assert.equal(orbit.calls.length, 0);
+	} finally {
+		await agent.stop();
+		orbit.server.close();
+	}
+});
+
+test("Drive files on pages: added as the driver without an approval; Orbit's refusal is explained", async () => {
+	const orbit = new FakeOrbit();
+	current = orbit;
+	await orbit.listen();
+	const agent = new Agent(config(orbit, mkdtempSync(join(tmpdir(), "agent-"))), new OrbitClient(config(orbit, "")));
+	await agent.open();
+	await agent.start();
+	const [file, page] = [id(), id()];
+	try {
+		const asked = orbit.add({ thread_key: id(), author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> insert drive file ${file} into page ${page} at 2` });
+		await until("Ann's answer", () => progressOf(orbit, asked).startsWith("Done (insert_drive_file)"));
+		const call = orbit.calls.find((candidate) => candidate.path === `/pages/${page}/drive-files`);
+		assert.deepEqual(call, { method: "POST", path: `/pages/${page}/drive-files`, as: ANN });
+		assert.match(progressOf(orbit, asked), /report\.pdf/);
+		assert.doesNotMatch(progressOf(orbit, asked), /approval/i);
+
+		orbit.calls.length = 0;
+		const refused = orbit.add({ thread_key: id(), author_id: BOB, author_name: "Bob", kind: "instruction", body: `<@${BOT}> insert drive file ${file} into page ${page}` });
+		await until("Bob's answer", () => progressOf(orbit, refused).startsWith("I could not do that"));
+		assert.ok(orbit.calls.every((candidate) => candidate.as === BOB), JSON.stringify(orbit.calls));
+		assert.match(progressOf(orbit, refused), /Bob cannot do this or cannot see it/);
 	} finally {
 		await agent.stop();
 		orbit.server.close();

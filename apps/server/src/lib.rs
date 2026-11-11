@@ -33,6 +33,7 @@ pub mod oauth;
 pub mod object_storage;
 pub mod openapi;
 pub mod page_comment_routes;
+pub mod page_drive_routes;
 pub mod page_file_routes;
 pub mod page_routes;
 pub mod public_api;

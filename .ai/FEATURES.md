@@ -196,6 +196,15 @@ favorites through `/pages/favorites` (list), `/pages/{page_id}/favorite` (PUT/DE
   `backgroundColor` (BlockNote color names, default `gray`; `default` = border only) and `textColor`, both editable in the
   block "Colors" menu. Notion-like rounded box that also holds nested blocks; tint mixed per theme (light full, dark faint).
   Copy/paste inside Orbit keeps it; other apps get "emoji + text".
+- Insert from Drive (`/` → Insert from Drive, `components/DriveFilePicker.tsx`, `editor/DriveFileBlock.tsx`): a page-only
+  `driveFile` block holds `workspaceId` + `nodeId` (a reference, never a copy). Each read resolves it for the reader
+  (`repositories/drive_refs.rs`, `page_drive_routes.rs`: `GET|POST …/pages/{id}/drive-files`, `POST …/drive-files/resolve`,
+  `PUT|DELETE …/drive-files/{block}`, `GET …/pages/drive-file-uses/{node}`): `available` (image/video inline with a
+  5-minute URL, other files a card that opens `DriveViewer`), `locked` (no Drive access to that workspace, for example a
+  block pasted from another workspace: no name, no URL), `unavailable` ("File not available": trash, deleted, folder).
+  Drive has no rights per file: access = non-guest membership of the file's workspace. Markdown export and the token
+  API write `[name](/drive/<folder>)`, `*Locked Drive file*` or `*File not available*` per reader. Task editors drop
+  the block; mobile shows a plain "Drive file" card. Orbit has no public share of Docs pages.
   Image and File blocks (slash menu, file panel, paste and drop) upload to the page; video/audio blocks stay off. Image/file
   block URLs are limited to page-file paths, http(s) or empty (anything else is blanked on load and before saving).
 - Page files: `POST /pages/{page_id}/files` (multipart, one `file` field) → `PageFile` with a same-origin `url`

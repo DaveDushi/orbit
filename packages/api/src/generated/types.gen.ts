@@ -1545,6 +1545,54 @@ export type DriveEntryPage = {
     next_offset?: number | null;
 };
 
+/**
+ * What the caller may see of one Drive file reference, now.
+ */
+export type DriveFileReference = {
+    file?: null | DriveNode;
+    node_id: string;
+    status: PageDriveFileStatus;
+    /**
+     * A 5-minute URL that shows an available image or video inline.
+     */
+    url?: string | null;
+    /**
+     * The Drive's workspace, as the block stores it.
+     */
+    workspace_id: string;
+};
+
+/**
+ * One reference to resolve: what a `driveFile` block stores.
+ */
+export type DriveFileReferenceInput = {
+    node_id: string;
+    workspace_id: string;
+};
+
+export type DriveFileReferenceList = {
+    /**
+     * In the order of the request.
+     */
+    items: Array<DriveFileReference>;
+};
+
+/**
+ * A page that shows a Drive file.
+ */
+export type DriveFileUse = {
+    /**
+     * How many blocks of the page show the file.
+     */
+    blocks: number;
+    page_id: string;
+    title: string;
+};
+
+export type DriveFileUseList = {
+    items: Array<DriveFileUse>;
+};
+
 export type DriveMedia = {
     duration_ms?: number | null;
     height?: number | null;
@@ -1906,6 +1954,17 @@ export type IncomingWebhookPayload = {
      * The author name of this message only (cut to 80 characters).
      */
     username?: string | null;
+};
+
+export type InsertPageDriveFile = {
+    /**
+     * A file of the workspace's Drive.
+     */
+    node_id: string;
+    /**
+     * Index among the page's top-level blocks (0: first); absent: at the end.
+     */
+    position?: number | null;
 };
 
 export type InstanceAdminBody = {
@@ -2866,6 +2925,26 @@ export type PageContext = {
     item?: null | PageItem;
     page: PageArea;
 };
+
+/**
+ * A `driveFile` block of a page.
+ */
+export type PageDriveFile = DriveFileReference & {
+    block_id: string;
+    /**
+     * The block's index among the page's top-level blocks; `null` for a nested block.
+     */
+    position?: number | null;
+};
+
+export type PageDriveFileList = {
+    items: Array<PageDriveFile>;
+};
+
+/**
+ * What the caller may see of one Drive file reference.
+ */
+export type PageDriveFileStatus = 'available' | 'locked' | 'unavailable';
 
 export type PageExportArchive = Blob | File;
 
@@ -4129,6 +4208,13 @@ export type ReorderItem = {
     position: number;
 };
 
+export type ReplacePageDriveFile = {
+    /**
+     * The file the block shows from now on.
+     */
+    node_id: string;
+};
+
 /**
  * The newest reply of a thread, shown under its root.
  */
@@ -4160,6 +4246,13 @@ export type ReplyToRecord = {
      * The quoted message has a sticker: a quote with no text says so.
      */
     sticker: boolean;
+};
+
+export type ResolveDriveFiles = {
+    /**
+     * At most 100.
+     */
+    references: Array<DriveFileReferenceInput>;
 };
 
 export type RestoreBackupItem = {
@@ -18264,6 +18357,57 @@ export type CreatePageResponses = {
 
 export type CreatePageResponse = CreatePageResponses[keyof CreatePageResponses];
 
+export type ListDriveFileUsesData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        node_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/pages/drive-file-uses/{node_id}';
+};
+
+export type ListDriveFileUsesErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type ListDriveFileUsesError = ListDriveFileUsesErrors[keyof ListDriveFileUsesErrors];
+
+export type ListDriveFileUsesResponses = {
+    200: DriveFileUseList;
+};
+
+export type ListDriveFileUsesResponse = ListDriveFileUsesResponses[keyof ListDriveFileUsesResponses];
+
 export type ListPageFavoritesData = {
     body?: never;
     headers?: {
@@ -18803,6 +18947,279 @@ export type UpdatePageResponses = {
 };
 
 export type UpdatePageResponse = UpdatePageResponses[keyof UpdatePageResponses];
+
+export type ListPageDriveFilesData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        page_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/pages/{page_id}/drive-files';
+};
+
+export type ListPageDriveFilesErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type ListPageDriveFilesError = ListPageDriveFilesErrors[keyof ListPageDriveFilesErrors];
+
+export type ListPageDriveFilesResponses = {
+    200: PageDriveFileList;
+};
+
+export type ListPageDriveFilesResponse = ListPageDriveFilesResponses[keyof ListPageDriveFilesResponses];
+
+export type InsertPageDriveFileData = {
+    body: InsertPageDriveFile;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        page_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/pages/{page_id}/drive-files';
+};
+
+export type InsertPageDriveFileErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type InsertPageDriveFileError = InsertPageDriveFileErrors[keyof InsertPageDriveFileErrors];
+
+export type InsertPageDriveFileResponses = {
+    201: PageDriveFile;
+};
+
+export type InsertPageDriveFileResponse = InsertPageDriveFileResponses[keyof InsertPageDriveFileResponses];
+
+export type ResolvePageDriveFilesData = {
+    body: ResolveDriveFiles;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        page_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/pages/{page_id}/drive-files/resolve';
+};
+
+export type ResolvePageDriveFilesErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type ResolvePageDriveFilesError = ResolvePageDriveFilesErrors[keyof ResolvePageDriveFilesErrors];
+
+export type ResolvePageDriveFilesResponses = {
+    200: DriveFileReferenceList;
+};
+
+export type ResolvePageDriveFilesResponse = ResolvePageDriveFilesResponses[keyof ResolvePageDriveFilesResponses];
+
+export type RemovePageDriveFileData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        page_id: string;
+        block_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/pages/{page_id}/drive-files/{block_id}';
+};
+
+export type RemovePageDriveFileErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type RemovePageDriveFileError = RemovePageDriveFileErrors[keyof RemovePageDriveFileErrors];
+
+export type RemovePageDriveFileResponses = {
+    204: void;
+};
+
+export type RemovePageDriveFileResponse = RemovePageDriveFileResponses[keyof RemovePageDriveFileResponses];
+
+export type ReplacePageDriveFileData = {
+    body: ReplacePageDriveFile;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        page_id: string;
+        block_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/pages/{page_id}/drive-files/{block_id}';
+};
+
+export type ReplacePageDriveFileErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type ReplacePageDriveFileError = ReplacePageDriveFileErrors[keyof ReplacePageDriveFileErrors];
+
+export type ReplacePageDriveFileResponses = {
+    200: PageDriveFile;
+};
+
+export type ReplacePageDriveFileResponse = ReplacePageDriveFileResponses[keyof ReplacePageDriveFileResponses];
 
 export type DuplicatePageData = {
     body: DuplicatePageBody;

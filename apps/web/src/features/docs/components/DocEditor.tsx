@@ -78,6 +78,8 @@ import { FilePanel } from './FilePanel'
 import { FileSplit, type FileSplitHandle } from './FileSplit'
 import { PageHistoryPane } from './PageHistoryPane'
 import { PageLinkDialog } from './PageLinkDialog'
+import { DriveFilePicker } from './DriveFilePicker'
+import type { DriveFileRef } from '@/features/docs/api/driveFiles'
 
 const PageEditor = lazy(() => loadPageEditor().then((module) => ({ default: module.PageEditor })))
 
@@ -591,6 +593,25 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
     setLinkOpen(false)
   }
 
+  // "Insert from Drive": the picker resolves to a file of this workspace's Drive.
+  const [drivePickerOpen, setDrivePickerOpen] = useState(false)
+  const drivePickResolver = useRef<((picked: DriveFileRef | null) => void) | null>(null)
+  const onPickDriveFile = useCallback(
+    () =>
+      new Promise<DriveFileRef | null>((resolve) => {
+        drivePickResolver.current?.(null)
+        drivePickResolver.current = resolve
+        setDrivePickerOpen(true)
+      }),
+    [],
+  )
+  const closeDrivePicker = (picked: DriveFileRef | null) => {
+    drivePickResolver.current?.(picked)
+    drivePickResolver.current = null
+    setDrivePickerOpen(false)
+  }
+  const driveFiles = useMemo(() => ({ workspaceId, pageId }), [workspaceId, pageId])
+
   const ancestors = ancestorsOf(pages, pageId)
   // The tree summary follows optimistic moves (and sub-pages moved with their root); the detail may lag.
   const space = spaceKey(byId.get(pageId) ?? page)
@@ -1000,6 +1021,8 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
                     onOpenPage={onOpenPage}
                     onCreateSubpage={onCreateSubpage}
                     onPickPage={onPickPage}
+                    driveFiles={driveFiles}
+                    onPickDriveFile={onPickDriveFile}
                     uploadFile={uploadFile}
                     comments={{
                       workspaceId,
@@ -1041,6 +1064,7 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
                       onOpenPage={onOpenPage}
                       onCreateSubpage={onCreateSubpage}
                       onPickPage={onPickPage}
+                      driveFiles={driveFiles}
                       mentions={mentions}
                       className="-mx-[54px] min-h-40 max-[899px]:mx-0"
                     />
@@ -1066,6 +1090,13 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
         </div>
         {linkOpen ? (
           <PageLinkDialog pages={pages} excludeId={pageId} onPick={(picked) => closeLinkDialog(picked.id)} onClose={() => closeLinkDialog(null)} />
+        ) : null}
+        {drivePickerOpen ? (
+          <DriveFilePicker
+            workspaceId={workspaceId}
+            onPick={(file) => closeDrivePicker({ workspaceId, nodeId: file.id })}
+            onClose={() => closeDrivePicker(null)}
+          />
         ) : null}
       </Pane>
       {historyOpen ? (

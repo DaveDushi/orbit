@@ -11,7 +11,22 @@ function isEmptyInlineBlock(block: { content?: unknown }): boolean {
  * an async action was pending, the block is appended at the end.
  */
 export function insertPageBlock(editor: PageEditorInstance, anchorId: string, pageId: string): void {
-  const pageBlock = { type: 'page' as const, props: { pageId } }
+  insertCardBlock(editor, anchorId, { type: 'page', props: { pageId } })
+}
+
+/** A `driveFile` block: the file by reference (the Drive's workspace and the node), never a copy. */
+export function driveFileBlock(workspaceId: string, nodeId: string) {
+  return { type: 'driveFile' as const, props: { workspaceId, nodeId } }
+}
+
+/** [`insertPageBlock`] for a Drive file. */
+export function insertDriveFileBlock(editor: PageEditorInstance, anchorId: string, workspaceId: string, nodeId: string): void {
+  insertCardBlock(editor, anchorId, driveFileBlock(workspaceId, nodeId))
+}
+
+type CardBlock = { type: 'page'; props: { pageId: string } } | ReturnType<typeof driveFileBlock>
+
+function insertCardBlock(editor: PageEditorInstance, anchorId: string, pageBlock: CardBlock): void {
   editor.transact(() => {
     const anchor = editor.getBlock(anchorId)
     let inserted

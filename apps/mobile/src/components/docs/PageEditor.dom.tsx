@@ -114,6 +114,20 @@ function PageCard({ block }: { block: { props: { pageId: string } } }) {
   )
 }
 
+/**
+ * A Drive file block (web: "Insert from Drive"). The app has no Drive yet, so it shows a plain card without the file's
+ * name (the web app asks the server, which checks the reader's Drive access on every read).
+ */
+function DriveFileCard() {
+  return (
+    <div contentEditable={false} className="orbit-page-card" data-state="drive-file">
+      <span className="orbit-page-card-icon">📎</span>
+      <span className="orbit-page-card-title">Drive file</span>
+      <span className="orbit-page-card-note">Open on the web</span>
+    </div>
+  )
+}
+
 function Callout({ block, contentRef }: { block: { props: { emoji: string } }; contentRef: (node: HTMLElement | null) => void }) {
   return (
     <div className="orbit-callout">
@@ -139,6 +153,7 @@ const COLORED_TOKENS = new Set(['keyword', 'string', 'comment', 'class', 'proper
 
 const { pageEditorSchema } = createEditorSchemas({
   page: { render: PageCard },
+  driveFile: { render: DriveFileCard },
   callout: { render: Callout },
   mention: { render: Mention },
   codeBlock: { tokenClass: (type) => (COLORED_TOKENS.has(type) ? `orbit-token-${type}` : undefined) },

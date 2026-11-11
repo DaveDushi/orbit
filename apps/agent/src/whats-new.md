@@ -7,6 +7,7 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 -->
 
 ## 2026-11-11
+- Insert from Drive in Docs: type "/" → Insert from Drive and pick a file. The page always shows the latest version from Drive (images and videos on the page, other files as a card that opens the preview). People without access to the file see a locked card. Ask Donna to add, change or remove a Drive file on a page, or which pages show a file.
 - More agents: owners and admins create agents next to Donna in Settings → Agentic → Agents, each with a name, avatar, instructions, tools, model and the channels where it works. @mention one in those channels or send it a direct message; it works with your permissions and asks for your yes before changes, like Donna.
 - Answer level: pick Short, Normal or Thorough in Account settings → Agentic. It sets how much Donna and every other agent thinks and writes for you.
 - Routines can use any agent: pick it when you edit the routine in Settings → Agentic → Routines.
