@@ -4,12 +4,13 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 8b0df85c16eea275c06d58da664c4c684d52dd8c
-  (step 7: Insert from Drive, schema 92, November 11, 2026; not pushed yet).
+- Source: DaveDushi/orbit, `main` at 5def7724822100713eb36480b2a91f3f064694ad
+  (steps 9-13: chat search filters, webhook bots, agent settings, code mode, memory per agent; schema 96;
+  November 11, 2026; not pushed yet).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:8b0df85`); fork commits have no published upstream image.
-- Image ID: sha256:3fff57285c5e0e55367ecd38cd4c399bd1b53fb1dfc46324dcb816576ec258bd
-- Team agent sidecar code (`/opt/orbit-agent`): commit 8b0df85.
+  (`orbit:5def772`); fork commits have no published upstream image.
+- Image ID: sha256:3063fca5fca4f103294119f16467af7cf851cf07b687aca41ba9319bd22b010b
+- Team agent sidecar code (`/opt/orbit-agent`): commit 5def772.
 - Desktop app downloads: https://orbit.wellrox.com/downloads/desktop/ (installer, zip, `latest.json` for the app's update
   check; behind the exe.dev login like the rest). nginx `location /downloads/desktop/` in
   `/etc/nginx/conf.d/orbit.conf` serves `/srv/orbit-downloads/desktop/` (outside the deploy, so deploys keep it; the
@@ -250,6 +251,110 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 11, 2026 upgrade: steps 9-13, chat search filters, webhook bots, agent settings, code mode, memory per agent (schema 96)
+
+`main` from `49bcc1c5` to `5def7724`: five `--no-ff` merges, in this order: `chat-search-filters` (`30ce235e`, step 9;
+merge `cdd703b8`), `webhook-bots` (`8319a208`, step 10; `f55a084c`), `agent-settings-v2` (`b722155f`, step 11;
+`e3cc60ee`), `codemode-routines` (`b9f66c14`, step 12; `1506785b`), `agent-memory-cleanup` (`432fd28b`, step 13;
+`5def7724`). Steps 9 and 10 were on `2bd86666` with the pre-rebase `02aed76e` (Insert from Drive, the same content as
+`8b0df85c`): no conflict. What is new for people:
+- Step 9: chat search filters Mentions me, Has link, Threads only; sort Newest/Oldest; marked matches; recent searches
+  (browser only). `GET .../chat/search` takes `mentions_me`, `has_link`, `threads_only`, `sort`.
+- Step 10: webhook bots (Settings → Agentic → Bots, owners and admins; at most 20): a bot user with a name, avatar,
+  https URL and channels; a mention or DM is posted signed to the URL; the answer within 30 s (HTTP answer or the
+  single-use `/api/v1/hooks/bots/{bot}/replies/{token}`). Author docs: `docs/webhook-bots.md`.
+  `ORBIT_WEBHOOK_BOT_TEST_HOSTS` is for local tests only and must stay unset here. None is set up by this deploy.
+- Step 11: Donna's own card (Default) in Settings → Agentic → Agents (instructions, model; name and avatar for
+  installation admins); connected services ticked per agent (a new service is on for Donna, off for the others).
+- Step 12: code mode (QuickJS sandbox, `@earendil-works/pi-codemode` 1.4.0, the only new sidecar dependency), saved
+  scripts, routines that run a script (writes need a yes to the exact code), Test run (a dry run in the creator's DM)
+  and run history.
+- Step 13: the answer level is per agent (owners and admins, on the card; `agent_preferences` and
+  `GET/PUT /api/v1/agent/preferences` are gone, now 404); the Default model card is on the Agents tab and the Admin tab
+  is gone (`/settings/agentic/admin` and `/agentic/admin` open Agents); memory per agent (Account settings → Agentic →
+  Memories has an agent picker); Donna notes lasting facts herself.
+
+Migrations: `0093_agent_settings`, `0094_routine_scripts`, `0095_webhook_bots`, `0096_agent_answer_level_and_memory`
+(SQLite and Postgres). The webhook bots migration was `0093` on its branch and is **renumbered to `0095`** at the merge
+(files, both catalogs in `migrate.rs`); no database ever applied it as 93 except the branch's test instances.
+`SUPPORTED_SCHEMA_VERSION` 96. 0096 drops `agent_preferences` after it gives every agent of a workspace the most common
+level of its people (production: 1 row, `normal`, so nothing changes), and adds `agent_memory_scopes.agent_user_id`
+(NULL = the default agent, so all memory written so far stays Donna's).
+
+Merge conflicts: `migrate.rs` (catalog order 93, 94, 95, 96); `apps/agent/src/prompt.ts` (`aboutOrbit()` keeps the
+step 10 Bots section and "How do I" line next to the step 11-13 text; Workspace settings lists "You, Workspace, Agents,
+Routines, Bots"); `App.tsx`, `settingsPages.ts`, `settingsNav.ts` and its test (the Bots tab stays, without the agent
+flag, next to step 13's tabs; the Admin route redirects to Agents). What's new: the branches' lines (dated `2026-11-15`,
+`2026-11-16` and on top of `2026-11-11`) form one new `2026-11-12` entry of 7 lines (Israel date of the switch; it was
+23:47 UTC on November 11); the `2026-11-11` entry keeps its 10 older lines; 6 entries.
+
+Checks on the merged `main` (after `bun install --frozen-lockfile`, `npm ci` in `apps/agent`, fresh web `dist`):
+agent `tsc` and `node --test test/*.test.ts` (74 pass, 11 skipped, 0 fail); web `tsc`; web `bun test src` (1591 pass,
+2 fail: the two bulk TaskList tests, which fail the same way on `49bcc1c5`); mobile `tsc`. Rust, under `orbit-build`,
+with `CARGO_PROFILE_DEV_DEBUG=0` (with debug info the test binaries filled the disk at the first try; see
+`.ai/lessons.md`): `cargo test -p orbit-platform -p orbit-server` on SQLite, all 76 test binaries, 1372 pass, 0 fail, 1
+ignored; on Postgres (`orbit-dev-pg`) `database`, `backup`, `agent_api`, `agent_profiles`, `agent_drive`,
+`agent_integrations`, `routine_scripts`, `scheduled_api`, `webhook_bots`, `chat_api`, `app_smoke`, `guest_access`
+(206 pass, 0 fail). `target` removed afterwards.
+
+Migration dry run on a read-only copy of production (`sqlite3 -readonly .backup` at 21:58 UTC, migrated at 22:38 with the merged debug binary;
+again at 23:46 on a hot copy with the release binary): 4 applied, schema 92 → 96, quick-check ok, 0 foreign-key rows;
+the row count of every old table unchanged; the 57 `agent_memories` rows byte-identical; their 3 scopes (1 team with
+54, 2 private with 3) have `agent_user_id` NULL, so Donna's scope query (`find_scope`) finds them.
+
+Merged e2e on a separate test instance (`/root/orbit-test/merged-9-13`, Orbit 18641, mock sidecar 18841, echo bot
+18746; stopped afterwards), 8 checks passed, screenshots in
+`/root/.local/share/com.jean.desktop/pasted-images/orbit-9-13/`: `09-chat-search-has-link-filter`,
+`10-webhook-bot-reply-in-thread`, `11-agents-tab`, `12a-routine-test-run-history`, `12b-test-run-result-in-dm`,
+`13a-memory-agent-picker-scribe`, `13b-agentic-admin-redirects-to-agents`.
+
+`orbit-deploy image` built `orbit:5def772` (image `sha256:3063fca5fca4f103294119f16467af7cf851cf07b687aca41ba9319bd22b010b`,
+finished 23:39 UTC); `deploy/smoke.sh` passed; `orbit config check` passed with the extracted binary.
+
+At the switch: stopped `orbit-agent` and `orbit` at 23:46:59 UTC, created snapshot
+`01a1cd01-f234-71e3-9540-8b06c009985f` with the old CLI (`/usr/local/bin/orbit-8b0df85`; the verified download is
+`/var/backups/orbit/downloads/01a1cd01-f234-71e3-9540-8b06c009985f`) and verified it, `deploy/backup-rehearsal.sh` with
+the old binary passed (verify), kept a plain copy of the stopped database as
+`/var/backups/orbit/pre-migration/orbit-before-5def772.sqlite` (mode 600), ran `migrate run` of the new binary on a copy
+in `/var/lib/orbit/rehearsal-5def772-switch-*` (4 applied, schema 92 → 96, quick-check ok, 0 foreign-key rows, counts
+unchanged: 7 users, 72 tasks, 202 agent inputs, 864 chat messages, 69 notifications, 1 routine, 57 memories with
+identical content; deleted afterwards), saved the sidecar data as
+`/var/backups/orbit-agent/orbit-agent-before-5def772.tgz`, kept the old sidecar code as `/opt/orbit-agent.before-5def772`,
+installed the binary (`/usr/local/bin/orbit-5def772` too) and the new sidecar (`package.json`, `package-lock.json`,
+`tsconfig.json`, `src`, `npm ci --omit=dev`), and started `orbit` (23:47:40, ready 23:47:41), then `orbit-agent`
+(23:47:41). `main` is **not** pushed. `vm-health` (`/root/ops/vm-health.conf`, old copy `.before-5def772`):
+`PROD_TAG=5def772`, `ROLLBACK_TAG=8b0df85`, `ROLLBACK_BACKUP=01a1cd01-f234-71e3-9540-8b06c009985f`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, no restarts; readiness (all checks) and `/health/live` 200;
+`/orbit-build.json` revision `5def7724`; schema 96; live quick-check ok, 0 foreign-key rows, 57 memories in 3 scopes of
+the default agent; web `/`, `/settings/agentic/agents`, `/settings/agentic/bots`, `/settings/agentic/admin`,
+`/profile/agentic` 200; without a session 401 for `GET .../chat/search` with the new filters, `GET`/`POST .../bots`,
+`PATCH .../bots/{id}`, `POST .../bots/{id}/secret`, `GET .../bots/{id}/deliveries`, `GET .../agents`, `PATCH
+.../agents/default`, `GET .../scripts`, `GET .../routines/{id}/runs`, `POST .../routines/{id}/test`, `GET
+.../agent-memory/team` (also `?agent=`); a reply URL with an unknown bot 404; `GET /api/v1/agent/preferences` 404
+(removed); an unknown route 404; `deploy/verify-production.sh` passes against `http://127.0.0.1:8000`; sidecar `/health`
+`{"ok":true,"mock":false}` and `/opt/orbit-agent/src` equal to `apps/agent/src` of `5def7724`; agent queue empty (0
+unacked inputs); the only log warning is the `rmcp` line. `vm-health` OK except nginx (1 line) and docker (`ifd-s3`).
+**Not** verified on production: a signed-in check of any step 9-13 screen, a real webhook bot, a code mode or routine
+test run with the real model, the phone app.
+
+Rollback (the old binary refuses schema 96: restore the snapshot together with the binary; work after 23:47 UTC is
+lost). To go back to `8b0df85`:
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-5def772 backup verify 01a1cd01-f234-71e3-9540-8b06c009985f && /usr/local/bin/orbit-5def772 backup restore 01a1cd01-f234-71e3-9540-8b06c009985f'
+sudo install -m 755 /usr/local/bin/orbit-8b0df85 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-5def772 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-5def772.tgz
+# Plain copy of the database before the migration: /var/backups/orbit/pre-migration/orbit-before-5def772.sqlite
+```
+
+After this rollback, set `PROD_TAG=8b0df85`, `ROLLBACK_TAG=65d7d0b`,
+`ROLLBACK_BACKUP=01a1cb31-1edc-7650-974f-06d9b635919c` in `/root/ops/vm-health.conf`.
 
 ### November 11, 2026 upgrade: step 7, Insert from Drive (schema 92, no migration)
 

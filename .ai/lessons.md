@@ -38,6 +38,9 @@
 - Do slow CPU work (Markdown merges, Yjs reconciles of big docs) before `immediate_transaction()`, on `spawn_blocking`, and only check and persist inside it: the transaction holds every writer of the database, and a CPU-bound task also stalls the other tasks of its tokio worker. Markdown doc writes do this under the collab room lock and check the revision and the log again in the transaction (2026-11-05).
 - A background loop (job worker, scheduler, attachment reconciliation, integrity job) must treat `orbit_platform::is_transient_lock_error` as "retry on the next round", never as fatal: any service error stops the whole server (`AppError::Background`), and SQLite returns "database is locked" after the 5 s busy timeout (2026-11-05).
 
+## Full Rust test run and disk space
+- `cargo test -p orbit-platform -p orbit-server` with the default debug info makes about 75 test binaries of up to 800 MB each (over 45 GB): it filled this VM's disk on 2026-11-11, and the link failed with "Bus error". Run full suites with `CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0` (about 8 GB of `target`), and remove `target` afterwards.
+
 ## Jean run environments share ports
 - `jean.json` gives every worktree the same ports (web 18888, API 18080), and `just dev` uses `--strictPort`. Before you trust a run environment, check who owns the ports (`ss -ltnp | grep -E ':18080|:18888'`, then `readlink /proc/<pid>/cwd`): another worktree's Vite server can answer on 18888 with its own code (2026-10-20).
 
