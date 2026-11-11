@@ -2,28 +2,26 @@ import { useState } from 'react'
 import { Pressable, View } from 'react-native'
 
 import { FieldLabel, Note, SettingsCard } from '../settings/Shell'
-import { AGENT_DEFAULT_CHOICE as DEFAULT, agentModelChoices, type AgentIdentity, type AgentModelSettings } from '@orbit/api/agent'
-import { useAgentIdentity, useAgentModel, useSaveAgentModel, useSaveAgentName } from '../../hooks/agent'
+import { AGENT_DEFAULT_CHOICE as DEFAULT, agentModelChoices, type AgentModelSettings } from '@orbit/api/agent'
+import { useAgentModel, useSaveAgentModel } from '../../hooks/agent'
 import { errorMessage } from '../../session-context'
 import { useTheme } from '../../theme'
-import { Button, Icon, Input, PickerSheet, Text } from '../../ui'
+import { Button, Icon, PickerSheet, Text } from '../../ui'
 
-/** The web's Agentic → Admin: the agent's one name for the installation, which is also its @handle in chat, and its model. */
+/** The web's Agentic → Admin: the installation's model for every agent that keeps Default. The default agent's name and avatar are on its card in the web's Agentic → Agents. */
 export function AdminAgent() {
-  const identity = useAgentIdentity()
   const model = useAgentModel()
   return (
     <>
-      {identity.isPending || model.isPending ? <SettingsCard title="Agent"><Note>Loading the agent settings…</Note></SettingsCard> : null}
-      {identity.isError || model.isError ? (
+      {model.isPending ? <SettingsCard title="Agent"><Note>Loading the agent settings…</Note></SettingsCard> : null}
+      {model.isError ? (
         <SettingsCard title="Agent">
           <View className="flex-row items-center gap-2">
             <Note error>The agent settings could not be loaded.</Note>
-            <Button label="Retry" variant="ghost" onPress={() => { void identity.refetch(); void model.refetch() }} />
+            <Button label="Retry" variant="ghost" onPress={() => void model.refetch()} />
           </View>
         </SettingsCard>
       ) : null}
-      {identity.data ? <NameCard identity={identity.data} /> : null}
       {model.data ? <ModelCard key={`${model.data.model}/${model.data.thinking}`} settings={model.data} /> : null}
     </>
   )
@@ -36,7 +34,7 @@ function ModelCard({ settings }: { settings: AgentModelSettings }) {
   const changed = model !== (settings.model ?? DEFAULT) || thinking !== (settings.thinking ?? DEFAULT)
   const { models, levels } = agentModelChoices(settings)
   return (
-    <SettingsCard title="Model" description="For every new run, in every workspace. More thinking gives better answers, but they are slower and use more of the driver's ChatGPT limits.">
+    <SettingsCard title="Model" description="For every new run, in every workspace, of each agent whose card keeps Default. The default agent's name and avatar are on its card in Agentic → Agents on the web. More thinking gives better answers, but they are slower and use more of the driver's ChatGPT limits.">
       <View className="gap-4">
         <Choice label="Model" value={model} options={models} onChange={(value) => { save.reset(); setModel(value) }} />
         {settings.available ? null : <Note>The agent service is offline, so only the default model can be chosen now.</Note>}
@@ -80,34 +78,5 @@ function Choice({ label, value, options, onChange }: { label: string; value: str
         onClose={() => setOpen(false)}
       />
     </View>
-  )
-}
-
-function NameCard({ identity }: { identity: AgentIdentity }) {
-  const save = useSaveAgentName()
-  const [name, setName] = useState(identity.name)
-  const changed = name.trim() !== identity.name
-  return (
-    <SettingsCard title="Name" description="One name in every workspace. People mention it as @Name in chat, and its messages and earlier mentions show the new name. It cannot be the name of another person in Orbit.">
-      <View className="gap-4">
-        <Input
-          accessibilityLabel="Name"
-          autoCapitalize="words"
-          autoCorrect={false}
-          maxLength={identity.max_name_chars}
-          value={name}
-          onChangeText={(value) => {
-            save.reset()
-            setName(value)
-          }}
-          description={`${identity.min_name_chars} to ${identity.max_name_chars} characters: letters, digits, single spaces and - _ . '`}
-        />
-        {save.isError ? <Note error>{errorMessage(save.error)}</Note> : null}
-        {save.isSuccess ? <Note>Agent name saved.</Note> : null}
-        <View className="flex-row justify-end">
-          <Button label={save.isPending ? 'Saving…' : 'Save name'} disabled={!changed || save.isPending} onPress={() => save.mutate(name.trim(), { onSuccess: (saved) => setName(saved.name) })} />
-        </View>
-      </View>
-    </SettingsCard>
   )
 }

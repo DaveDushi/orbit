@@ -22,7 +22,7 @@ import { mediaTools } from "./media.ts";
 import { canReadPrivate, dueText, fenced, lineText, type DueSummary, type MemoryLine, type MemoryScope } from "./memory.ts";
 import { namesToTokens, tokensToNames, type Person } from "./mentions.ts";
 import { OrbitError, type OrbitClient } from "./orbit.ts";
-import { aboutOrbit, agentInstructionsBlock, DEFAULT_AGENT_NAME, teamInstructionsBlock, TIME_RULE } from "./prompt.ts";
+import { aboutOrbit, agentInstructionsBlock, DEFAULT_AGENT_NAME, defaultAgentInstructionsBlock, teamInstructionsBlock, TIME_RULE } from "./prompt.ts";
 import type { Sandbox } from "./sandbox.ts";
 import { scheduledTools } from "./scheduled.ts";
 import { uiPrompt } from "./ui-catalog.ts";
@@ -63,7 +63,10 @@ async function asDriver(api: Api, context: Context, call: (as: (method: string, 
 		(error: unknown) => {
 			if (error instanceof OrbitError) {
 				const why =
-					error.status === 403 || error.status === 404
+					// The agent, not the driver, may not use this service: its card does not tick it.
+					error.problem?.code === "agent_integration_agent"
+						? `Orbit refused it: ${error.problem.detail}`
+						: error.status === 403 || error.status === 404
 						? `${state.driverName ?? "The person"} cannot do this or cannot see it (Orbit answered ${error.status}${error.problem?.code ? `, ${error.problem.code}` : ""}).`
 						: `Orbit answered ${error.status}: ${error.problem?.detail ?? error.problem?.code ?? "error"}.`;
 				return { output: [{ type: "text", text: why }], isError: true };
@@ -806,10 +809,10 @@ export function orbitExtension(toolDeps: ToolDeps) {
 			section("orbit-about", async (input, context) => aboutOrbit(await agentName(input, context), Boolean(toolDeps.sandbox)), { tag: false }),
 			section("orbit-version", async () => versionBlock(await orbitRevision(deps().orbit)), { tag: false }),
 			section("orbit-team", async (input, context) => teamInstructionsBlock((await input.read.snapshot(ThreadDoc, input.conversationId, context))?.teamInstructions), { tag: false }),
-			// A custom agent: its admins' instructions and its tools, after the fixed rules and About Orbit.
+			// The agent's card: a custom agent's instructions and tools, or the default agent's instructions, after the fixed rules and About Orbit.
 			section("orbit-agent", async (input, context) => {
 				const state = await input.read.snapshot(ThreadDoc, input.conversationId, context);
-				if (!state?.allowedTools) return undefined;
+				if (!state?.allowedTools) return defaultAgentInstructionsBlock(state?.agentName || DEFAULT_AGENT_NAME, state?.agentInstructions);
 				return agentInstructionsBlock(state.agentName || DEFAULT_AGENT_NAME, state.agentInstructions, state.allowedTools, state.defaultAgentName || DEFAULT_AGENT_NAME);
 			}, { tag: false }),
 			section("orbit-context", async (input, context) => {

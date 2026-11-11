@@ -36,7 +36,7 @@ export type ThreadState = {
 	teamInstructions?: string;
 	/** The thread's custom agent (its bot user); absent or `null`: the default agent. Fixed for the thread. */
 	agentUserId?: string | null;
-	/** A custom agent's instructions and tools, read at the start of the current run; `null` tools: every tool. */
+	/** The agent's instructions (a custom agent's, or the default agent's card) and a custom agent's tools, read at the start of the current run; `null` tools: every tool. */
 	agentInstructions?: string;
 	allowedTools?: string[] | null;
 	/** The default agent's name, so a custom agent can point people to it. */

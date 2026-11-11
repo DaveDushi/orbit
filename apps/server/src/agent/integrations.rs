@@ -5,8 +5,9 @@
 //!
 //! - `/api/v1/workspaces/{id}/agent-integrations…`: set up, test and remove (owners and admins,
 //!   normal sessions only; `agent::scope` keeps agent sessions out).
-//! - `/api/v1/workspaces/{id}/agent-tools…`: the tools the driver's role may use, and a call
-//!   (agent sessions of the driver of a running thread only).
+//! - `/api/v1/workspaces/{id}/agent-tools…`: the tools the driver's role and the run's agent (the
+//!   ticks on its card, `profiles::IntegrationAccess`) may use, and a call (agent sessions of the
+//!   driver of a running thread only).
 //!
 //! A write (an MCP tool that is not read-only, an HTTP method other than GET or HEAD) runs only
 //! after the driver answered "yes" in the thread: see [`approve`]. Design and grilling:
@@ -30,6 +31,7 @@ use super::graphql;
 use super::mcp_oauth;
 use super::oauth::{AccessToken, OAuthClient};
 use super::outbound::{ApiAnswer, Credential, Outbound, OutboundError, check_url, join_api_url};
+use super::profiles::IntegrationAccess;
 use crate::audit::{self, AuditOutcome};
 use crate::repositories::membership;
 use crate::secret_box::{decrypt_secret, encrypt_secret};
@@ -1698,6 +1700,44 @@ pub(crate) async fn driver(
     uri: &Uri,
     request_id: &RequestIdExtension,
 ) -> Result<(Id, Id, WorkspaceRole), ApiError> {
+    let (_, user, workspace_id, role) =
+        driver_session(state, headers, workspace_id, uri, request_id).await?;
+    Ok((user, workspace_id, role))
+}
+
+/// As [`driver`], with the integrations the session's agent may use (its card's ticks).
+async fn driver_access(
+    state: &AgentState,
+    headers: &HeaderMap,
+    workspace_id: &str,
+    uri: &Uri,
+    request_id: &RequestIdExtension,
+) -> Result<(Id, Id, WorkspaceRole, IntegrationAccess), ApiError> {
+    let (session, user, workspace_id, role) =
+        driver_session(state, headers, workspace_id, uri, request_id).await?;
+    let database = state.database();
+    let agent = super::sessions::agent_of(database, session)
+        .await
+        .map_err(unavailable(uri, request_id))?
+        .flatten();
+    let mut conn = database
+        .pool()
+        .acquire()
+        .await
+        .map_err(unavailable(uri, request_id))?;
+    let access = super::profiles::integration_access(&mut conn, workspace_id, agent)
+        .await
+        .map_err(unavailable(uri, request_id))?;
+    Ok((user, workspace_id, role, access))
+}
+
+async fn driver_session(
+    state: &AgentState,
+    headers: &HeaderMap,
+    workspace_id: &str,
+    uri: &Uri,
+    request_id: &RequestIdExtension,
+) -> Result<(Id, Id, Id, WorkspaceRole), ApiError> {
     let session = authenticate_session(
         &state.identity,
         state.cookie_mode,
@@ -1725,7 +1765,7 @@ pub(crate) async fn driver(
         .await
         .map_err(unavailable(uri, request_id))?
         .ok_or_else(|| not_found(uri, request_id))?;
-    Ok((session.user.id, workspace_id, actor.role))
+    Ok((session.id, session.user.id, workspace_id, actor.role))
 }
 
 #[derive(Serialize)]
@@ -1810,14 +1850,15 @@ async fn agent_tools(
     uri: Uri,
     request_id: RequestIdExtension,
 ) -> Result<Json<Value>, ApiError> {
-    let (_, workspace_id, role) =
-        driver(&state, &headers, &workspace_id, &uri, &request_id).await?;
+    let (_, workspace_id, role, access) =
+        driver_access(&state, &headers, &workspace_id, &uri, &request_id).await?;
     let all = load_all(state.database(), workspace_id)
         .await
         .map_err(unavailable(&uri, &request_id))?;
+    // The role rule of each integration and the agent's ticks, both.
     let tools: Vec<AgentTool> = all
         .iter()
-        .filter(|integration| integration.allows(role))
+        .filter(|integration| integration.allows(role) && access.allows(&integration.id))
         .flat_map(agent_tools_of)
         .collect();
     Ok(Json(json!({ "tools": tools })))
@@ -2220,8 +2261,8 @@ async fn call(
     request_id: RequestIdExtension,
     Json(body): Json<CallBody>,
 ) -> Result<Json<Value>, ApiError> {
-    let (user, workspace_id, role) =
-        driver(&state, &headers, &workspace_id, &uri, &request_id).await?;
+    let (user, workspace_id, role, access) =
+        driver_access(&state, &headers, &workspace_id, &uri, &request_id).await?;
     let database = state.database();
     require_running(
         database,
@@ -2244,6 +2285,15 @@ async fn call(
             StatusCode::FORBIDDEN,
             "agent_integration_role",
             "The driver's role may not use this integration.",
+            &uri,
+            &request_id,
+        ));
+    }
+    if !access.allows(&integration.id) {
+        return Err(problem(
+            StatusCode::FORBIDDEN,
+            "agent_integration_agent",
+            "This agent may not use this integration: it is not ticked on the agent's card.",
             &uri,
             &request_id,
         ));

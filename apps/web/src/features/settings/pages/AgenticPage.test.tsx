@@ -27,7 +27,6 @@ function show(role: Role, instanceAdmin: boolean, enabled: boolean, path: string
     asked.push(url)
     if (url === '/api/v1/agent') return Response.json(enabled ? { enabled, online: true, can_connect: true, bot_user_id: 'bot', name: 'Ada', chatgpt: { connected: false, invalid: false, account_id: null, connected_at: null }, login: null } : { enabled })
     if (url === '/api/v1/auth/me') return Response.json({ id: 'u', email: 'a@b.c', display_name: 'A', installation_admin: instanceAdmin, root: instanceAdmin })
-    if (url === '/api/v1/admin/agent') return Response.json({ name: 'Ada', min_name_chars: 2, max_name_chars: 40 })
     if (url === '/api/v1/admin/agent/model') return Response.json({ model: null, thinking: null, available: null, thinking_levels: [], updated_by_name: null })
     if (url.endsWith('/agent-integrations')) return Response.json({ items: [], can_keep_secrets: true })
     if (url.endsWith('/agent')) return Response.json({ instructions: '', can_edit: role !== 'member', max_chars: 4000, updated_at: null, updated_by_name: null })
@@ -86,7 +85,7 @@ test('Workspace shows Tools to owners and admins; members read instructions and 
 
 test('Admin opens only for an instance admin, whatever the workspace role', async () => {
   const admin = show('member', true, true, '/settings/agentic/admin')
-  await admin.view.findByRole('heading', { name: 'Name' })
+  await admin.view.findByRole('heading', { name: 'Model' })
   expect(admin.view.getByTestId('where').textContent).toBe('/settings/agentic/admin')
   cleanup()
   const other = show('owner', false, true, '/settings/agentic/admin')

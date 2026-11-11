@@ -3,7 +3,7 @@ import { mcpClientCommands, mcpUrl } from '@orbit/api/mcp'
 import { SettingsCard } from '@/components/common/SettingsCard'
 import { CopyCodeButton } from '@/components/common/CopyCodeButton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { AgentNamePage } from '@/features/agent/AgentNamePage'
+import { AgentModelPage } from '@/features/agent/AgentModelPage'
 import { AgentPage } from '@/features/agent/AgentPage'
 import { AgentsPage } from '@/features/agent/AgentsPage'
 import { AnswerLevelPage } from '@/features/agent/AnswerLevelPage'
@@ -62,7 +62,7 @@ export function AgenticWorkspace() {
   )
 }
 
-/** The workspace's agents besides the default one: every member reads them, owners and admins manage them. */
+/** The workspace's agents, the default one first: every member reads them, owners and admins manage them. */
 export function AgenticAgents() {
   return useAgentStatus().data?.enabled === true ? <AgentsPage /> : null
 }
@@ -77,9 +77,9 @@ export function AgenticRoutines() {
   return useAgentStatus().data?.enabled === true ? <RoutinesPage /> : null
 }
 
-/** The agent's name and model for the whole instance. */
+/** The agents' default model for the whole instance. */
 export function AgenticAdmin() {
-  return <AgentNamePage />
+  return <AgentModelPage />
 }
 
 function McpSetup() {

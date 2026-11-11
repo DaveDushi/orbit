@@ -1166,28 +1166,23 @@ async fn installation_admins_rename_the_agent_but_not_to_a_members_name() {
     let (bot, _) = fixture.pending().await;
     let member = fixture.add_member("Teammate").await;
     let rename = |name: &str| Some(json!({ "name": name }));
+    // The name is on the default agent's card (Settings → Agentic → Agents).
+    let agents = format!("/api/v1/workspaces/{}/agents", fixture.workspace_id);
+    let card = format!("{agents}/default");
 
-    let (status, value) = fixture
-        .cookie(&fixture.owner, "GET", "/api/v1/admin/agent", None)
-        .await;
+    let (status, value) = fixture.cookie(&fixture.owner, "GET", &agents, None).await;
     assert_eq!(status, StatusCode::OK, "{value}");
-    assert_eq!(value["name"], "Orbit Agent");
-    assert_eq!(value["bot_user_id"], bot.as_str());
+    assert_eq!(value["default_agent"]["name"], "Orbit Agent");
+    assert_eq!(value["default_agent"]["user_id"], bot.as_str());
 
-    // Only an installation admin, and never an agent session (even one of that admin).
-    let (status, _) = fixture
-        .cookie(&member, "PUT", "/api/v1/admin/agent", rename("Ada"))
-        .await;
+    // Only owners and admins who are installation admins, and never an agent session (even one of
+    // that admin).
+    let (status, _) = fixture.cookie(&member, "PATCH", &card, rename("Ada")).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     let bearer = fixture.agent_session(&fixture.owner).await;
-    for method in ["GET", "PUT"] {
+    for (method, uri) in [("GET", &agents), ("PATCH", &card)] {
         let (status, value) = fixture
-            .request(
-                method,
-                "/api/v1/admin/agent",
-                ("authorization", &bearer),
-                rename("Ada"),
-            )
+            .request(method, uri, ("authorization", &bearer), rename("Ada"))
             .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{method}");
         assert_eq!(value["code"], "agent_scope");
@@ -1195,12 +1190,7 @@ async fn installation_admins_rename_the_agent_but_not_to_a_members_name() {
 
     // `@Teammate` would reach the member: any case, any spaces around it.
     let (status, value) = fixture
-        .cookie(
-            &fixture.owner,
-            "PUT",
-            "/api/v1/admin/agent",
-            rename(" teammate "),
-        )
+        .cookie(&fixture.owner, "PATCH", &card, rename(" teammate "))
         .await;
     assert_eq!(status, StatusCode::CONFLICT, "{value}");
     assert_eq!(value["code"], "agent_name_taken");
@@ -1214,39 +1204,24 @@ async fn installation_admins_rename_the_agent_but_not_to_a_members_name() {
     .await
     .unwrap();
     let (status, _) = fixture
-        .cookie(
-            &fixture.owner,
-            "PUT",
-            "/api/v1/admin/agent",
-            rename("NEWCOMER"),
-        )
+        .cookie(&fixture.owner, "PATCH", &card, rename("NEWCOMER"))
         .await;
     assert_eq!(status, StatusCode::CONFLICT);
     for invalid in ["A", "@Ada", "Ada  Bot", &"a".repeat(41)] {
         let (status, _) = fixture
-            .cookie(
-                &fixture.owner,
-                "PUT",
-                "/api/v1/admin/agent",
-                rename(invalid),
-            )
+            .cookie(&fixture.owner, "PATCH", &card, rename(invalid))
             .await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{invalid}");
     }
 
     let (status, value) = fixture
-        .cookie(
-            &fixture.owner,
-            "PUT",
-            "/api/v1/admin/agent",
-            rename("  Ada  "),
-        )
+        .cookie(&fixture.owner, "PATCH", &card, rename("  Ada  "))
         .await;
     assert_eq!(status, StatusCode::OK, "{value}");
     assert_eq!(value["name"], "Ada");
     // Its own name again is no collision.
     let (status, _) = fixture
-        .cookie(&fixture.owner, "PUT", "/api/v1/admin/agent", rename("ADA"))
+        .cookie(&fixture.owner, "PATCH", &card, rename("ADA"))
         .await;
     assert_eq!(status, StatusCode::OK);
 

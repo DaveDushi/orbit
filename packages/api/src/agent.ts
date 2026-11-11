@@ -131,25 +131,6 @@ export function agentMemorySourcePath(source: AgentMemorySource | null): string 
   return source.root_message_id ? `/chat/${source.conversation_id}/thread/${source.root_message_id}` : `/chat/${source.conversation_id}`
 }
 
-/** Admin → AI agent: the agent's one name for the whole installation (installation admins only). */
-export interface AgentIdentity {
-  name: string
-  bot_user_id: string | null
-  min_name_chars: number
-  max_name_chars: number
-}
-
-export async function readAgentIdentity(client: Client): Promise<AgentIdentity> {
-  const { data } = await client.get({ url: '/api/v1/admin/agent', throwOnError: true })
-  return data as AgentIdentity
-}
-
-/** Renames the agent. 409 `agent_name_taken` when a member already has the name. */
-export async function saveAgentName(client: Client, name: string): Promise<AgentIdentity> {
-  const { data } = await client.put({ url: '/api/v1/admin/agent', body: { name }, headers: { 'Content-Type': 'application/json' }, throwOnError: true })
-  return data as AgentIdentity
-}
-
 /** Admin → AI agent: the model and thinking level of every run. `null` is the agent's default. */
 export interface AgentModelSettings {
   model: string | null
@@ -224,8 +205,32 @@ export interface AgentProfile {
   /** Every channel; else only `channels`. Direct messages always work. */
   all_channels: boolean
   channels: { id: string; name: string; kind: 'public' | 'private' }[]
+  /** The connected services it may use (ticked on its card); new ones are off. Orbit refuses the others. */
+  integration_ids: string[]
   created_at: number
   updated_at: number
+}
+
+/** The default agent's card: its name and avatar are the installation's; the rest is this workspace's. */
+export interface DefaultAgent {
+  user_id: string
+  name: string
+  avatar_url: string | null
+  instructions: string
+  /** `null`: the installation's model and thinking level (Agentic → Admin). */
+  model: string | null
+  thinking: string | null
+  /** The connected services it may use; new ones are on until unticked. */
+  integration_ids: string[]
+  /** Installation admins change the name and avatar. */
+  can_rename: boolean
+}
+
+/** A connected service of the workspace (Agentic → Workspace), for the ticks on agent cards. */
+export interface AgentIntegrationOption {
+  id: string
+  name: string
+  kind: 'mcp' | 'http'
 }
 
 export interface AgentToolInfo {
@@ -236,7 +241,10 @@ export interface AgentToolInfo {
 }
 
 export interface AgentProfiles {
+  default_agent: DefaultAgent
   agents: AgentProfile[]
+  /** For owners and admins; else empty. */
+  integrations: AgentIntegrationOption[]
   /** Owners and admins. */
   can_manage: boolean
   tools: AgentToolInfo[]
@@ -255,6 +263,16 @@ export interface AgentProfileInput {
   thinking?: string | null
   all_channels?: boolean
   channel_ids?: string[]
+  integration_ids?: string[]
+}
+
+/** The default agent's card. `name` needs an installation admin (403 `installation_admin_required`). */
+export interface DefaultAgentInput {
+  name?: string
+  instructions?: string
+  model?: string | null
+  thinking?: string | null
+  integration_ids?: string[]
 }
 
 const agentsUrl = (workspaceId: string) => `/api/v1/workspaces/${workspaceId}/agents`
@@ -275,6 +293,12 @@ export async function updateAgentProfile(client: Client, workspaceId: string, id
   return data as AgentProfile
 }
 
+/** The default agent cannot be deleted. 409 `agent_name_taken` when an account already has the name. */
+export async function updateDefaultAgent(client: Client, workspaceId: string, input: DefaultAgentInput): Promise<DefaultAgent> {
+  const { data } = await client.patch({ url: `${agentsUrl(workspaceId)}/default`, body: input, headers: { 'Content-Type': 'application/json' }, throwOnError: true })
+  return data as DefaultAgent
+}
+
 /** Its routines pause; its messages and DMs stay readable. */
 export async function deleteAgentProfile(client: Client, workspaceId: string, id: string): Promise<void> {
   await client.delete({ url: `${agentsUrl(workspaceId)}/${id}`, throwOnError: true })
@@ -282,6 +306,7 @@ export async function deleteAgentProfile(client: Client, workspaceId: string, id
 
 /** A PNG, JPEG or WebP of at most 512 KiB (`avatarImage` makes a 256 px square); `null` removes it. */
 export async function setAgentProfileAvatar(client: Client, workspaceId: string, id: string, image: Blob | null): Promise<void> {
+  // `id` "default": the default agent (installation admins only).
   const url = `${agentsUrl(workspaceId)}/${id}/avatar`
   if (image) await client.put({ ...formDataBodySerializer, url, body: { file: image }, headers: { 'Content-Type': null }, throwOnError: true })
   else await client.delete({ url, throwOnError: true })

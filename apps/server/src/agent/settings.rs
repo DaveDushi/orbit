@@ -1,5 +1,5 @@
-//! The agent's settings that people change: its name (the bot user's display name) and its model
-//! and thinking level (one for the installation, set by an installation admin), and each
+//! The agent's settings that people change: its model and thinking level (one for the
+//! installation, set by an installation admin), and each
 //! workspace's team instructions (set by the workspace's owners and admins, read by every
 //! member). The sidecar reads them for each run (`routes::list_inputs`). Agent sessions reach neither: `scope` refuses `/agent` of a workspace
 //! and every `/api/v1/admin` route. Like the other agent routes, these are not in the OpenAPI
@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::AnyConnection;
 
-use super::{AgentState, bot};
+use super::AgentState;
 use crate::audit::{self, AuditOutcome};
 use crate::repositories::membership;
 use crate::task_routes::{ApiError, ApiJson, authenticate_session, request_id_value};
@@ -70,70 +70,8 @@ pub fn same_name(a: &str, b: &str) -> bool {
     a.trim().to_lowercase() == b.trim().to_lowercase()
 }
 
-/// Whether another account has this name. The bot joins every workspace, also the ones made since
-/// the sidecar last asked for inputs, so every account shares or will share a workspace with it.
-/// Compared in Rust, because SQLite's `lower` folds ASCII only.
-async fn name_taken(conn: &mut AnyConnection, bot: Id, name: &str) -> Result<bool, sqlx::Error> {
-    let names =
-        sqlx::query_scalar::<_, String>("SELECT DISTINCT display_name FROM users WHERE id <> $1")
-            .bind(bot.to_string())
-            .fetch_all(&mut *conn)
-            .await?;
-    Ok(names.iter().any(|other| same_name(other, name)))
-}
-
-enum RenameError {
-    Taken,
-    Database(sqlx::Error),
-}
-
-impl From<sqlx::Error> for RenameError {
-    fn from(error: sqlx::Error) -> Self {
-        Self::Database(error)
-    }
-}
-
-/// Renames the bot. The check and the write are in one serialized transaction, so a member
-/// cannot take the name between them through this route.
-async fn rename(
-    database: &Database,
-    actor_id: Id,
-    name: &str,
-    request_id: &str,
-) -> Result<(), RenameError> {
-    let bot = bot::ensure(database).await?;
-    let mut tx = database.immediate_transaction().await?;
-    if name_taken(&mut tx, bot, name).await? {
-        return Err(RenameError::Taken);
-    }
-    let now = TimestampMillis::now();
-    sqlx::query(
-        "UPDATE users SET display_name = $1, updated_at = $2, version = version + 1 WHERE id = $3",
-    )
-    .bind(name)
-    .bind(now.as_millis())
-    .bind(bot.to_string())
-    .execute(&mut *tx)
-    .await?;
-    audit::record_global(
-        &mut tx,
-        Some(actor_id),
-        "agent.renamed",
-        AuditOutcome::Success,
-        "user",
-        Some(bot),
-        request_id,
-        json!({ "name": name }),
-        now,
-    )
-    .await?;
-    tx.commit().await?;
-    Ok(())
-}
-
 pub fn router(state: AgentState) -> Router {
     Router::new()
-        .route("/api/v1/admin/agent", get(read_agent).put(save_agent))
         .route("/api/v1/admin/agent/model", get(read_model).put(save_model))
         .route(
             "/api/v1/workspaces/{workspace_id}/agent",
@@ -185,21 +123,8 @@ fn invalid(detail: &'static str, uri: &Uri, request_id: &RequestIdExtension) -> 
 }
 
 // ---------------------------------------------------------------------------------------------
-// The name: Admin → AI agent.
-
-#[derive(Serialize)]
-struct AgentView {
-    name: String,
-    bot_user_id: Option<String>,
-    min_name_chars: usize,
-    max_name_chars: usize,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AgentBody {
-    name: String,
-}
+// The model and thinking level: Admin → AI agent. The name moved to the default agent's card in
+// Settings → Agentic → Agents (`profiles`).
 
 /// The signed-in installation admin, or the error to answer with.
 async fn installation_admin(
@@ -243,71 +168,6 @@ async fn installation_admin(
     }
     Ok(session.user.id)
 }
-
-async fn agent_view(database: &Database) -> Result<AgentView, sqlx::Error> {
-    let mut conn = database.pool().acquire().await?;
-    let bot_user_id = super::inputs::bot_user_id(&mut conn).await?;
-    let name = bot::name(&mut conn).await?;
-    Ok(AgentView {
-        name,
-        bot_user_id: bot_user_id.map(|id| id.to_string()),
-        min_name_chars: MIN_NAME_CHARS,
-        max_name_chars: MAX_NAME_CHARS,
-    })
-}
-
-async fn read_agent(
-    State(state): State<AgentState>,
-    headers: HeaderMap,
-    uri: Uri,
-    request_id: RequestIdExtension,
-) -> Result<Json<AgentView>, ApiError> {
-    installation_admin(&state, &headers, &uri, &request_id).await?;
-    agent_view(state.database())
-        .await
-        .map(Json)
-        .map_err(|error| unavailable(&error, &uri, &request_id))
-}
-
-/// Renames the agent for the whole installation. Its chat messages and every mention of it show
-/// the new name, and the sidecar uses it from its next run.
-async fn save_agent(
-    State(state): State<AgentState>,
-    headers: HeaderMap,
-    uri: Uri,
-    request_id: RequestIdExtension,
-    ApiJson(body): ApiJson<AgentBody>,
-) -> Result<Json<AgentView>, ApiError> {
-    let admin = installation_admin(&state, &headers, &uri, &request_id).await?;
-    let name = checked_name(&body.name).map_err(|detail| invalid(detail, &uri, &request_id))?;
-    match rename(
-        state.database(),
-        admin,
-        &name,
-        request_id_value(request_id.as_ref()),
-    )
-    .await
-    {
-        Ok(()) => {}
-        Err(RenameError::Taken) => {
-            return Err(problem(
-                StatusCode::CONFLICT,
-                "agent_name_taken",
-                "Someone in Orbit already has this name. Mentions of the agent would reach them, so pick another name.",
-                &uri,
-                &request_id,
-            ));
-        }
-        Err(RenameError::Database(error)) => return Err(unavailable(&error, &uri, &request_id)),
-    }
-    agent_view(state.database())
-        .await
-        .map(Json)
-        .map_err(|error| unavailable(&error, &uri, &request_id))
-}
-
-// ---------------------------------------------------------------------------------------------
-// The model and thinking level: Admin → AI agent.
 
 /// The saved choice; `None` is the sidecar's default.
 pub(crate) async fn model_choice(

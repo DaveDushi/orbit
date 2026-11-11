@@ -614,7 +614,12 @@ impl MigrationRunner {
                 ),
                 Migration::new(
                     93,
-                    include_str!("../../../../apps/server/migrations/0093_webhook_bots.sql"),
+                    include_str!("../../../../apps/server/migrations/0093_agent_settings.sql"),
+                    false,
+                ),
+                Migration::new(
+                    95,
+                    include_str!("../../../../apps/server/migrations/0095_webhook_bots.sql"),
                     false,
                 ),
             ],
@@ -905,7 +910,12 @@ impl MigrationRunner {
             ),
             Migration::new(
                 93,
-                include_str!("../../../../apps/server/migrations/postgres/0093_webhook_bots.sql"),
+                include_str!("../../../../apps/server/migrations/postgres/0093_agent_settings.sql"),
+                false,
+            ),
+            Migration::new(
+                95,
+                include_str!("../../../../apps/server/migrations/postgres/0095_webhook_bots.sql"),
                 false,
             ),
         ];

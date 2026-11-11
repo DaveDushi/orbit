@@ -88,8 +88,23 @@ reasons: `.ai/agent-design.md`.
 
 ## More agents (agent profiles)
 
-Besides the default agent, owners and admins of a workspace create more agents in **Settings → Agentic → Agents**
-(`/settings/agentic/agents`, `…/workspaces/{id}/agents`). No agent is made for you. Each agent has:
+**Settings → Agentic → Agents** (`/settings/agentic/agents`, `…/workspaces/{id}/agents`) lists the **default agent
+first**, marked **Default**, then the workspace's other agents. The default agent's card (`PATCH …/agents/default`,
+avatar `PUT|DELETE …/agents/default/avatar`) has:
+
+| Field | Who | Notes |
+|---|---|---|
+| Name (`@handle`) and avatar | Owners and admins who are installation admins | The bot user's: the same in every workspace (one source, no copy), so a workspace admin who is not an installation admin sees them read-only (`403 installation_admin_required`). Same name rules as below; messages, mentions, DMs and earlier messages show the new name, and the sidecar reads it with the next poll (`bot_name`). |
+| Instructions | Owners and admins | This workspace only, at most 8,000 characters, stored in `agent_default_profiles`; in the prompt as an `<agent-instructions>` block after About Orbit and the team instructions (which every agent follows). |
+| Model and thinking level | Owners and admins | This workspace only; empty: the installation's choice (Agentic → Admin). |
+| Connected services | Owners and admins | See [Connected services per agent](#connected-services-per-agent). |
+
+The default agent cannot be deleted (`DELETE …/agents/default` is `405`) and always works in every channel and DM.
+There is no data migration for its name: it stays the bot user's display name; only the editing place moved from
+Agentic → Admin (the old `PUT /api/v1/admin/agent` is gone) to this card.
+
+Besides the default agent, owners and admins of a workspace create more agents there. No agent is made for you. Each
+agent has:
 
 | Field | Notes |
 |---|---|
@@ -99,6 +114,7 @@ Besides the default agent, owners and admins of a workspace create more agents i
 | Tools | A subset of the default agent's tools. **Orbit enforces it**: an agent session of this agent reaches only the routes its tools need (`agent::profiles::route_need`, checked in `agent::scope`; any other route is refused), the Drive route checks the exact tool, and the sidecar offers the model only these tools and blocks any other call. |
 | Model and thinking level | From the models the agent service offers; empty: the installation's choice (Agentic → Admin). |
 | Channels | Every channel, or chosen channels. Direct messages with it always work. |
+| Connected services | Ticks per workspace integration (`integration_ids`); see below. The form has no separate `use_integration` tick: the tool is on exactly when a service is ticked. |
 
 - People reach an agent like a person: `@mention` it in one of its channels (the answer comes in the thread under
   the message) or send it a DM. It acts **as the driver**, with the same write approvals, ChatGPT payer and limits as
@@ -181,12 +197,27 @@ People see and search the memory in **Account settings → Agentic**, and delete
 memory also drops the summaries built from it; the agent writes them again). The agent itself cannot delete memory.
 When a member leaves a workspace, their private memory there is deleted. Design: `.ai/agent-design.md`, "Memory".
 
+### Connected services per agent
+
+Each agent card, the default agent's too, has a tick box per integration of the workspace (Agentic → Workspace →
+Connected services). **Orbit enforces it**: `GET …/agent-tools` lists, and `POST …/agent-tools/call` accepts, only an
+integration that the driver's role may use **and** that the run's agent may use (the session's `agent_user_id`,
+`profiles::IntegrationAccess`). A call of another one gets `403 agent_integration_agent` (the role rule stays
+`403 agent_integration_role`), and the sidecar offers the model only the listed tools.
+
+- Custom agents: an allow list (`agent_profile_integrations`). A new integration is **off** until ticked.
+- Default agent: a deny list per integration (`agent_default_integrations_off`). A new integration is **on** until
+  unticked.
+- Deleting an integration removes its ticks (`ON DELETE CASCADE`).
+- Migration `0093_agent_settings`: every live custom agent that had the `use_integration` tool got all integrations of
+  its workspace; the default agent keeps all.
+
 ## Name, model and instructions
 
 | Setting | Where | Who | Notes |
 |---|---|---|---|
-| Name | Agentic → Admin (`/settings/agentic/admin`, `PUT /api/v1/admin/agent`) | Installation admins | One name for the installation: it is the bot user's display name, so it is also the agent's `@handle`. 2–40 characters (letters, digits, single spaces, `- _ . '`). Orbit refuses a name that another account already has (trimmed, any case), because `@Name` would then reach that person. Messages and earlier mentions show the new name. |
-| Model and thinking level | Agentic → Admin (`PUT /api/v1/admin/agent/model`) | Installation admins | One choice for the installation, stored in `agent_model_settings`. The model list comes from the sidecar (its ChatGPT (Codex) models); Orbit refuses any other model, and a model can only be saved while the sidecar answers. Thinking: `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. **Default** (`null`) is `AGENT_MODEL` and Pi's default thinking level. Compaction keeps `AGENT_COMPACT_MODEL`/`AGENT_COMPACT_THINKING`. |
+| Name | The default agent's card in Agentic → Agents (`PATCH /api/v1/workspaces/{id}/agents/default`) | Owners and admins who are installation admins | One name for the installation: it is the bot user's display name, so it is also the agent's `@handle`. 2–40 characters (letters, digits, single spaces, `- _ . '`). Orbit refuses a name that another account already has (trimmed, any case), because `@Name` would then reach that person. Messages and earlier mentions show the new name. |
+| Model and thinking level | Agentic → Admin (`PUT /api/v1/admin/agent/model`) | Installation admins | The installation's default, for every agent whose card keeps **Default** (the default agent's card can choose another per workspace), stored in `agent_model_settings`. The model list comes from the sidecar (its ChatGPT (Codex) models); Orbit refuses any other model, and a model can only be saved while the sidecar answers. Thinking: `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. **Default** (`null`) is `AGENT_MODEL` and Pi's default thinking level. Compaction keeps `AGENT_COMPACT_MODEL`/`AGENT_COMPACT_THINKING`. |
 | Team instructions | Agentic → Workspace (`/settings/agentic/workspace`, `PUT /api/v1/workspaces/{id}/agent`) | Owners and admins write, every member reads | Plain text, at most 4,000 characters, stored in `agent_team_instructions`. |
 
 The system prompt of a run has, in this order: the rules (with the current name), the built-in **About Orbit**

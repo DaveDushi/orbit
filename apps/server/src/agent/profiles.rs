@@ -8,6 +8,14 @@
 //! the Drive route checks the exact tool ([`drive_tool_allowed`]). The agent still acts with the
 //! driver's permissions only, like the default agent.
 //!
+//! The default agent is the first card there (step 11): its name and avatar (its bot user's, the same in
+//! every workspace, so only installation admins change them), and per workspace its instructions, model
+//! and thinking level ([`agent_default_profiles`]). It cannot be deleted and works in every channel.
+//!
+//! Every agent, the default one too, uses only the integrations ticked on its card
+//! ([`IntegrationAccess`], checked by `super::integrations` on top of each integration's role rule).
+//! A new integration is off for custom agents and on for the default agent.
+//!
 //! Each person's answer level (Short, Normal, Thorough) is here too: it applies to every agent.
 //!
 //! Like the other agent routes, these are not in the OpenAPI contract.
@@ -25,8 +33,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::AnyConnection;
 
-use super::AgentState;
 use super::settings::{THINKING_LEVELS, checked_name, same_name};
+use super::{AgentState, bot};
 use crate::audit::{self, AuditOutcome};
 use crate::repositories::membership;
 use crate::task_routes::{ApiError, ApiJson, authenticate_session, request_id_value};
@@ -374,6 +382,119 @@ pub(crate) async fn channel_names(
 }
 
 // ---------------------------------------------------------------------------------------------
+// Integrations per agent
+
+/// The integrations of a workspace that one agent may use, before each integration's role rule.
+#[derive(Debug, Eq, PartialEq)]
+pub enum IntegrationAccess {
+    /// The default agent: every integration but these (new ones are on).
+    AllBut(Vec<String>),
+    /// A custom agent: only these (new ones are off).
+    Only(Vec<String>),
+}
+
+impl IntegrationAccess {
+    #[must_use]
+    pub fn allows(&self, integration_id: &str) -> bool {
+        match self {
+            Self::AllBut(off) => !off.iter().any(|id| id == integration_id),
+            Self::Only(on) => on.iter().any(|id| id == integration_id),
+        }
+    }
+}
+
+/// What `agent` (`None`: the default agent) may use in the workspace. A deleted agent: nothing.
+pub(crate) async fn integration_access(
+    conn: &mut AnyConnection,
+    workspace_id: Id,
+    agent: Option<Id>,
+) -> Result<IntegrationAccess, sqlx::Error> {
+    Ok(match agent {
+        None => IntegrationAccess::AllBut(
+            sqlx::query_scalar(
+                "SELECT o.integration_id FROM agent_default_integrations_off o \
+                 JOIN agent_integrations i ON i.id = o.integration_id WHERE i.workspace_id = $1",
+            )
+            .bind(workspace_id.to_string())
+            .fetch_all(&mut *conn)
+            .await?,
+        ),
+        Some(agent) => IntegrationAccess::Only(
+            sqlx::query_scalar(
+                "SELECT a.integration_id FROM agent_profile_integrations a \
+                 JOIN agent_profiles p ON p.id = a.agent_id \
+                 WHERE p.workspace_id = $1 AND p.user_id = $2 AND p.deleted_at IS NULL",
+            )
+            .bind(workspace_id.to_string())
+            .bind(agent.to_string())
+            .fetch_all(&mut *conn)
+            .await?,
+        ),
+    })
+}
+
+/// The workspace's integrations, by name: the ticks of every agent card.
+async fn workspace_integrations(
+    conn: &mut AnyConnection,
+    workspace_id: Id,
+) -> Result<Vec<IntegrationOption>, sqlx::Error> {
+    Ok(sqlx::query(
+        "SELECT id, name, kind FROM agent_integrations WHERE workspace_id = $1 ORDER BY lower(name), id",
+    )
+    .bind(workspace_id.to_string())
+    .fetch_all(&mut *conn)
+    .await?
+    .iter()
+    .map(|row| IntegrationOption {
+        id: row.get("id"),
+        name: row.get("name"),
+        kind: row.get("kind"),
+    })
+    .collect())
+}
+
+/// The listed integrations, each once, if every one is the workspace's.
+async fn checked_integrations(
+    conn: &mut AnyConnection,
+    workspace_id: Id,
+    ids: &[String],
+) -> Result<Vec<String>, SaveError> {
+    let known: Vec<String> = workspace_integrations(conn, workspace_id)
+        .await?
+        .into_iter()
+        .map(|integration| integration.id)
+        .collect();
+    if ids.iter().any(|id| !known.contains(id)) {
+        return Err(SaveError::Invalid(
+            "One of the connected services is not this workspace's.",
+        ));
+    }
+    Ok(known.into_iter().filter(|id| ids.contains(id)).collect())
+}
+
+/// A custom agent's ticks: exactly `ids`.
+async fn set_integrations(
+    conn: &mut AnyConnection,
+    profile_id: Id,
+    ids: &[String],
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM agent_profile_integrations WHERE agent_id = $1")
+        .bind(profile_id.to_string())
+        .execute(&mut *conn)
+        .await?;
+    for id in ids {
+        sqlx::query(
+            "INSERT INTO agent_profile_integrations (agent_id, integration_id) VALUES ($1, $2)",
+        )
+        .bind(profile_id.to_string())
+        .bind(id)
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------
 // Answer level
 
 /// How much an agent thinks and writes for one person.
@@ -399,6 +520,12 @@ pub fn router(state: AgentState) -> Router {
     let base = "/api/v1/workspaces/{workspace_id}/agents";
     Router::new()
         .route(base, get(list_agents).post(create_agent))
+        // The default agent: no DELETE, it cannot be deleted.
+        .route(&format!("{base}/default"), patch(update_default))
+        .route(
+            &format!("{base}/default/avatar"),
+            put(upload_default_avatar).delete(remove_default_avatar),
+        )
         .route(
             &format!("{base}/{{agent_id}}"),
             patch(update_agent).delete(delete_agent),
@@ -535,8 +662,31 @@ struct AgentView {
     thinking: Option<String>,
     all_channels: bool,
     channels: Vec<ChannelView>,
+    /// The integrations it may use (ticked on its card).
+    integration_ids: Vec<String>,
     created_at: i64,
     updated_at: i64,
+}
+
+/// The default agent's card. Its name and avatar are its bot user's, the same in every workspace.
+#[derive(Serialize)]
+struct DefaultAgentView {
+    user_id: String,
+    name: String,
+    avatar_url: Option<String>,
+    instructions: String,
+    model: Option<String>,
+    thinking: Option<String>,
+    integration_ids: Vec<String>,
+    /// Installation admins: the name and avatar are the installation's.
+    can_rename: bool,
+}
+
+#[derive(Serialize)]
+struct IntegrationOption {
+    id: String,
+    name: String,
+    kind: String,
 }
 
 #[derive(Serialize)]
@@ -582,6 +732,12 @@ async fn agent_views(
             kind: channel.get("kind"),
         })
         .collect();
+        let integration_ids = sqlx::query_scalar(
+            "SELECT integration_id FROM agent_profile_integrations WHERE agent_id = $1 ORDER BY integration_id",
+        )
+        .bind(&id)
+        .fetch_all(database.pool())
+        .await?;
         views.push(AgentView {
             avatar_url: user_id.parse().ok().and_then(|user: Id| {
                 crate::auth_routes::avatar_url(user, row.get::<Option<i64>, _>("avatar_at"))
@@ -595,6 +751,7 @@ async fn agent_views(
             thinking: row.get("thinking"),
             all_channels: row.get::<bool, _>("all_channels"),
             channels,
+            integration_ids,
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
         });
@@ -616,6 +773,27 @@ async fn list_agents(
         .await
         .map_err(|error| unavailable(&error, &uri, &request_id))?;
     let can_manage = actor.can(Permission::WorkspaceUpdate);
+    let can_rename = state
+        .identity
+        .is_installation_admin(actor.user_id)
+        .await
+        .unwrap_or(false);
+    let default_agent = default_view(state.database(), workspace_id, can_rename)
+        .await
+        .map_err(|error| unavailable(&error, &uri, &request_id))?;
+    let integrations = if can_manage {
+        let mut conn = state
+            .database()
+            .pool()
+            .acquire()
+            .await
+            .map_err(|error| unavailable(&error, &uri, &request_id))?;
+        workspace_integrations(&mut conn, workspace_id)
+            .await
+            .map_err(|error| unavailable(&error, &uri, &request_id))?
+    } else {
+        Vec::new()
+    };
     let tools: Vec<ToolView> = tool_catalog()
         .map(|(name, group, writes)| ToolView {
             name,
@@ -629,7 +807,9 @@ async fn list_agents(
         None
     };
     Ok(Json(json!({
+        "default_agent": default_agent,
         "agents": agents,
+        "integrations": integrations,
         "can_manage": can_manage,
         "tools": tools,
         "models": models,
@@ -652,6 +832,8 @@ struct AgentBody {
     thinking: Option<Option<String>>,
     all_channels: Option<bool>,
     channel_ids: Option<Vec<Id>>,
+    /// The integrations it may use; absent on update keeps them.
+    integration_ids: Option<Vec<String>>,
 }
 
 /// Tells an absent field (`None`) from `null` (`Some(None)`).
@@ -673,6 +855,8 @@ enum SaveError {
     NotFound,
     Forbidden,
     Limit,
+    /// The default agent's name or avatar: the installation's, so installation admins only.
+    NotInstallationAdmin,
     Database(sqlx::Error),
 }
 
@@ -698,6 +882,13 @@ fn save_failure(error: SaveError, uri: &Uri, request_id: &RequestIdExtension) ->
             StatusCode::CONFLICT,
             "limit_reached",
             "This workspace has 20 agents. Delete one first.",
+            uri,
+            request_id,
+        ),
+        SaveError::NotInstallationAdmin => problem(
+            StatusCode::FORBIDDEN,
+            "installation_admin_required",
+            "The default agent's name and avatar are the same in every workspace, so only an installation administrator changes them.",
             uri,
             request_id,
         ),
@@ -950,6 +1141,13 @@ async fn create_agent(
             now,
         )
         .await?;
+        let integrations = checked_integrations(
+            &mut tx,
+            workspace_id,
+            body.integration_ids.as_deref().unwrap_or_default(),
+        )
+        .await?;
+        set_integrations(&mut tx, profile_id, &integrations).await?;
         audit::record(
             &mut tx,
             workspace_id,
@@ -959,7 +1157,7 @@ async fn create_agent(
             "agent_profile",
             Some(profile_id),
             &request,
-            json!({ "name": name, "tools": tools.len() }),
+            json!({ "name": name, "tools": tools.len(), "integrations": integrations.len() }),
             now,
         )
         .await?;
@@ -1096,6 +1294,14 @@ async fn update_agent(
         if let Some(channel_ids) = &body.channel_ids {
             set_channels(&mut tx, workspace_id, actor.user_id, &agent, channel_ids, now).await?;
         }
+        let integrations = match &body.integration_ids {
+            Some(ids) => {
+                let ids = checked_integrations(&mut tx, workspace_id, ids).await?;
+                set_integrations(&mut tx, agent_id, &ids).await?;
+                Some(ids.len())
+            }
+            None => None,
+        };
         audit::record(
             &mut tx,
             workspace_id,
@@ -1105,7 +1311,7 @@ async fn update_agent(
             "agent_profile",
             Some(agent_id),
             &request,
-            json!({ "name": name, "tools": tools.as_ref().map(Vec::len) }),
+            json!({ "name": name, "tools": tools.as_ref().map(Vec::len), "integrations": integrations }),
             now,
         )
         .await?;
@@ -1242,7 +1448,7 @@ async fn upload_avatar(
     headers: HeaderMap,
     uri: Uri,
     request_id: RequestIdExtension,
-    mut multipart: Multipart,
+    multipart: Multipart,
 ) -> Result<StatusCode, ApiError> {
     let user = agent_user(
         &state,
@@ -1253,13 +1459,23 @@ async fn upload_avatar(
         &request_id,
     )
     .await?;
+    set_avatar(&state, user, multipart, &uri, &request_id).await
+}
+
+async fn set_avatar(
+    state: &AgentState,
+    user: Id,
+    mut multipart: Multipart,
+    uri: &Uri,
+    request_id: &RequestIdExtension,
+) -> Result<StatusCode, ApiError> {
     let bad = || {
         problem(
             StatusCode::BAD_REQUEST,
             "invalid_multipart",
             "Send the image as the multipart field \"file\".",
-            &uri,
-            &request_id,
+            uri,
+            request_id,
         )
     };
     let mut image = None;
@@ -1274,12 +1490,12 @@ async fn upload_avatar(
             StatusCode::PAYLOAD_TOO_LARGE,
             "avatar_too_large",
             "The image must be at most 512 KiB.",
-            &uri,
-            &request_id,
+            uri,
+            request_id,
         ));
     }
     let mime_type = crate::auth_routes::avatar_mime_type(&image)
-        .ok_or_else(|| invalid("Upload a PNG, JPEG or WebP image.", &uri, &request_id))?;
+        .ok_or_else(|| invalid("Upload a PNG, JPEG or WebP image.", uri, request_id))?;
     state
         .identity
         .set_avatar_audited(
@@ -1296,8 +1512,8 @@ async fn upload_avatar(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal",
                 "The avatar could not be changed.",
-                &uri,
-                &request_id,
+                uri,
+                request_id,
             )
         })?;
     Ok(StatusCode::NO_CONTENT)
@@ -1319,6 +1535,15 @@ async fn remove_avatar(
         &request_id,
     )
     .await?;
+    clear_avatar(&state, user, &uri, &request_id).await
+}
+
+async fn clear_avatar(
+    state: &AgentState,
+    user: Id,
+    uri: &Uri,
+    request_id: &RequestIdExtension,
+) -> Result<StatusCode, ApiError> {
     state
         .identity
         .remove_avatar_audited(
@@ -1332,11 +1557,274 @@ async fn remove_avatar(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal",
                 "The avatar could not be changed.",
-                &uri,
-                &request_id,
+                uri,
+                request_id,
             )
         })?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------------------------------------------------------------------------------------------
+// The default agent's card
+
+async fn default_view(
+    database: &Database,
+    workspace_id: Id,
+    can_rename: bool,
+) -> Result<DefaultAgentView, sqlx::Error> {
+    let mut conn = database.pool().acquire().await?;
+    // A write transaction only for an installation whose bot does not exist yet.
+    let user_id = match super::inputs::bot_user_id(&mut conn).await? {
+        Some(id) => id,
+        None => bot::ensure(database).await?,
+    };
+    let identity = sqlx::query(
+        "SELECT u.display_name, a.updated_at AS avatar_at FROM users u \
+         LEFT JOIN user_avatars a ON a.user_id = u.id WHERE u.id = $1",
+    )
+    .bind(user_id.to_string())
+    .fetch_one(&mut *conn)
+    .await?;
+    let settings = sqlx::query(
+        "SELECT instructions, model, thinking FROM agent_default_profiles WHERE workspace_id = $1",
+    )
+    .bind(workspace_id.to_string())
+    .fetch_optional(&mut *conn)
+    .await?;
+    let access = integration_access(&mut conn, workspace_id, None).await?;
+    let integration_ids = workspace_integrations(&mut conn, workspace_id)
+        .await?
+        .into_iter()
+        .map(|integration| integration.id)
+        .filter(|id| access.allows(id))
+        .collect();
+    Ok(DefaultAgentView {
+        user_id: user_id.to_string(),
+        name: identity.get("display_name"),
+        avatar_url: crate::auth_routes::avatar_url(user_id, identity.get("avatar_at")),
+        instructions: settings
+            .as_ref()
+            .map(|row| row.get("instructions"))
+            .unwrap_or_default(),
+        model: settings.as_ref().and_then(|row| row.get("model")),
+        thinking: settings.and_then(|row| row.get("thinking")),
+        integration_ids,
+        can_rename,
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DefaultBody {
+    /// Installation admins only.
+    name: Option<String>,
+    instructions: Option<String>,
+    #[serde(default, with = "double_option")]
+    model: Option<Option<String>>,
+    #[serde(default, with = "double_option")]
+    thinking: Option<Option<String>>,
+    /// The integrations it may use; the others are off for it, new ones on.
+    integration_ids: Option<Vec<String>>,
+}
+
+/// Changes the default agent: its name (for the whole installation), and in this workspace its
+/// instructions, model, thinking level and integrations. Absent fields stay.
+async fn update_default(
+    State(state): State<AgentState>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+    ApiJson(body): ApiJson<DefaultBody>,
+) -> Result<Json<Value>, ApiError> {
+    let (workspace_id, actor) = manager(&state, &headers, &workspace_id, &uri, &request_id).await?;
+    let can_rename = state
+        .identity
+        .is_installation_admin(actor.user_id)
+        .await
+        .unwrap_or(false);
+    let name = body
+        .name
+        .as_deref()
+        .map(checked_name)
+        .transpose()
+        .map_err(|detail| invalid(detail, &uri, &request_id))?;
+    let instructions = body
+        .instructions
+        .as_deref()
+        .map(checked_instructions)
+        .transpose()
+        .map_err(|detail| invalid(detail, &uri, &request_id))?;
+    let (model, thinking) =
+        checked_model(&state, body.model, body.thinking, &uri, &request_id).await?;
+    let database = state.database();
+    let bot = bot::ensure(database)
+        .await
+        .map_err(|error| unavailable(&error, &uri, &request_id))?;
+    let request = request_id_value(request_id.as_ref()).to_owned();
+    async {
+        let mut tx = database.immediate_transaction().await?;
+        let allowed = membership::actor(&mut *tx, workspace_id, actor.user_id)
+            .await?
+            .is_some_and(|actor| actor.can(Permission::WorkspaceUpdate));
+        if !allowed {
+            return Err(SaveError::Forbidden);
+        }
+        let now = TimestampMillis::now();
+        if let Some(name) = &name {
+            if !can_rename {
+                return Err(SaveError::NotInstallationAdmin);
+            }
+            if name_taken(&mut tx, Some(bot), name).await? {
+                return Err(SaveError::Taken);
+            }
+            sqlx::query(
+                "UPDATE users SET display_name = $1, updated_at = $2, version = version + 1 WHERE id = $3",
+            )
+            .bind(name)
+            .bind(now.as_millis())
+            .bind(bot.to_string())
+            .execute(&mut *tx)
+            .await?;
+            audit::record_global(
+                &mut tx,
+                Some(actor.user_id),
+                "agent.renamed",
+                AuditOutcome::Success,
+                "user",
+                Some(bot),
+                &request,
+                json!({ "name": name }),
+                now,
+            )
+            .await?;
+        }
+        sqlx::query(
+            "INSERT INTO agent_default_profiles (workspace_id, updated_by, updated_at) VALUES ($1, $2, $3) \
+             ON CONFLICT (workspace_id) DO UPDATE SET updated_by = excluded.updated_by, updated_at = excluded.updated_at",
+        )
+        .bind(workspace_id.to_string())
+        .bind(actor.user_id.to_string())
+        .bind(now.as_millis())
+        .execute(&mut *tx)
+        .await?;
+        let mut update = SqlBuilder::new("UPDATE agent_default_profiles SET updated_at = ");
+        update.push_bind(now.as_millis());
+        if let Some(instructions) = &instructions {
+            update.push(", instructions = ");
+            update.push_bind(instructions.clone());
+        }
+        if let Some(model) = &model {
+            update.push(", model = ");
+            update.push_bind(model.clone());
+        }
+        if let Some(thinking) = &thinking {
+            update.push(", thinking = ");
+            update.push_bind(thinking.clone());
+        }
+        update.push(" WHERE workspace_id = ");
+        update.push_bind(workspace_id.to_string());
+        update.build().execute(&mut *tx).await?;
+        let mut off = None;
+        if let Some(ids) = &body.integration_ids {
+            let on = checked_integrations(&mut tx, workspace_id, ids).await?;
+            sqlx::query(
+                "DELETE FROM agent_default_integrations_off WHERE integration_id IN \
+                 (SELECT id FROM agent_integrations WHERE workspace_id = $1)",
+            )
+            .bind(workspace_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+            let ids: Vec<String> = workspace_integrations(&mut tx, workspace_id)
+                .await?
+                .into_iter()
+                .map(|integration| integration.id)
+                .filter(|id| !on.contains(id))
+                .collect();
+            for id in &ids {
+                sqlx::query("INSERT INTO agent_default_integrations_off (integration_id) VALUES ($1)")
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            off = Some(ids.len());
+        }
+        audit::record(
+            &mut tx,
+            workspace_id,
+            Some(actor.user_id),
+            "agent_default.update",
+            AuditOutcome::Success,
+            "workspace",
+            Some(workspace_id),
+            &request,
+            json!({
+                "name": name,
+                "instructions": instructions.as_ref().map(|text| text.chars().count()),
+                "integrations_off": off,
+            }),
+            now,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok::<_, SaveError>(())
+    }
+    .await
+    .map_err(|error| save_failure(error, &uri, &request_id))?;
+    let view = default_view(database, workspace_id, can_rename)
+        .await
+        .map_err(|error| unavailable(&error, &uri, &request_id))?;
+    Ok(Json(json!(view)))
+}
+
+/// The default agent's bot user, for an owner or admin of the workspace who is an installation
+/// admin: its avatar shows in every workspace.
+async fn default_user(
+    state: &AgentState,
+    headers: &HeaderMap,
+    workspace_id: &str,
+    uri: &Uri,
+    request_id: &RequestIdExtension,
+) -> Result<Id, ApiError> {
+    let (_, actor) = manager(state, headers, workspace_id, uri, request_id).await?;
+    let admin = state
+        .identity
+        .is_installation_admin(actor.user_id)
+        .await
+        .unwrap_or(false);
+    if !admin {
+        return Err(save_failure(
+            SaveError::NotInstallationAdmin,
+            uri,
+            request_id,
+        ));
+    }
+    bot::ensure(state.database())
+        .await
+        .map_err(|error| unavailable(&error, uri, request_id))
+}
+
+async fn upload_default_avatar(
+    State(state): State<AgentState>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+    multipart: Multipart,
+) -> Result<StatusCode, ApiError> {
+    let user = default_user(&state, &headers, &workspace_id, &uri, &request_id).await?;
+    set_avatar(&state, user, multipart, &uri, &request_id).await
+}
+
+async fn remove_default_avatar(
+    State(state): State<AgentState>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+) -> Result<StatusCode, ApiError> {
+    let user = default_user(&state, &headers, &workspace_id, &uri, &request_id).await?;
+    clear_avatar(&state, user, &uri, &request_id).await
 }
 
 #[derive(Deserialize)]
@@ -1415,7 +1903,7 @@ async fn save_preferences(
 mod tests {
     use axum::http::Method;
 
-    use super::{checked_tools, drive_tool_allowed, tool_catalog, tools_allow};
+    use super::{IntegrationAccess, checked_tools, drive_tool_allowed, tool_catalog, tools_allow};
 
     fn tools(names: &[&str]) -> Vec<String> {
         names.iter().map(|name| (*name).to_owned()).collect()
@@ -1522,6 +2010,18 @@ mod tests {
         // Nothing at all: only the workspace and its members.
         assert!(tools_allow(&[], &Method::GET, "members"));
         assert!(!tools_allow(&[], &Method::GET, "pages"));
+    }
+
+    #[test]
+    fn new_integrations_are_on_for_the_default_agent_and_off_for_custom_agents() {
+        let default = IntegrationAccess::AllBut(tools(&["tiktok"]));
+        assert!(!default.allows("tiktok"));
+        assert!(default.allows("shopify"));
+        assert!(default.allows("added-later"));
+        let custom = IntegrationAccess::Only(tools(&["shopify"]));
+        assert!(custom.allows("shopify"));
+        assert!(!custom.allows("tiktok"));
+        assert!(!custom.allows("added-later"));
     }
 
     #[test]
