@@ -273,6 +273,10 @@ export function createHttpChatClient(options: HttpChatClientOptions): ChatClient
         conversation_id: input.conversationId,
         author_id: input.authorId,
         has_file: input.hasFile,
+        mentions_me: input.mentionsMe,
+        has_link: input.hasLink,
+        threads_only: input.threadsOnly,
+        sort: input.sort,
         cursor: input.cursor,
       }
       const page = await call(listChatSearch({ ...at({}), query }))

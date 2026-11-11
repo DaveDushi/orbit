@@ -6,6 +6,10 @@ build: "## YYYY-MM-DD" (the deploy date), then 1-4 short "- " lines about what p
 members, not developers. Keep the 8 newest entries; the prompt shows the 5 newest.
 -->
 
+## 2026-11-15
+- Chat search has new filters: Mentions me, Has link and Threads only (replies in threads), and you can sort by Newest or Oldest. Filters combine with each other and with This conversation, From and Has file. The matched words are marked in the results.
+- Recent searches: click the empty search field in a conversation to see your last 10 searches and run one again; Clear removes them. They are saved in your browser only (web and desktop app).
+
 ## 2026-11-11
 - Insert from Drive in Docs: type "/" → Insert from Drive and pick a file. The page always shows the latest version from Drive (images and videos on the page, other files as a card that opens the preview). People without access to the file see a locked card. Ask Donna to add, change or remove a Drive file on a page, or which pages show a file.
 - More agents: owners and admins create agents next to Donna in Settings → Agentic → Agents, each with a name, avatar, instructions, tools, model and the channels where it works. @mention one in those channels or send it a direct message; it works with your permissions and asks for your yes before changes, like Donna.

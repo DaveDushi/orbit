@@ -12,6 +12,7 @@ import { useChatContext } from '@/features/chat/api/chatContext'
 import type { Conversation } from '@/features/chat/api/types'
 import type { ChatPane } from '@/features/chat/chatRoutes'
 import { EditChannelDialog } from '@/features/chat/components/dialogs/EditChannelDialog'
+import { addRecentSearch, clearRecentSearches, useRecentSearches } from '@/features/chat/lib/recentSearches'
 import { conversationTitle, dmProfilePerson } from '@/features/chat/lib/sidebar'
 import { useChatLocation, useChatNavigation, useOpenPane } from '@/features/chat/useChatNavigation'
 import { useMembers } from '@/features/workspaces/api'
@@ -20,6 +21,7 @@ import { ConversationIcon } from './sidebar/ConversationIcon'
 import { ConversationMenuItems } from './sidebar/ConversationMenuItems'
 import { useConversationActions } from './sidebar/useConversationActions'
 import { ProfileTrigger } from '@/components/common/ProfileTrigger'
+import { RecentSearches } from './RecentSearches'
 import { Badge } from '@/components/ui/badge'
 
 /** A header button that shows a right pane and closes it again; pressed while its pane is open. */
@@ -51,6 +53,11 @@ export function ConversationHeader({ conversation }: { conversation: Conversatio
   // a narrow header (a phone, or a column next to an open pane): the search field takes the place of the name
   const [searching, setSearching] = useState(false)
   const searchInput = useRef<HTMLInputElement>(null)
+  const searchField = useRef<HTMLDivElement>(null)
+  const recentPopup = useRef<HTMLDivElement>(null)
+  // the recent searches show under the field while it has the focus and no text
+  const [recentOpen, setRecentOpen] = useState(false)
+  const recentSearches = useRecentSearches(workspaceId, currentUserId)
 
   const here = location.view === 'conversation' ? location : null
   const query = here?.q ?? ''
@@ -61,6 +68,11 @@ export function ConversationHeader({ conversation }: { conversation: Conversatio
   const guestIds = new Set(people.filter((person) => person.role === 'Guest').map((person) => person.id))
   const hasGuests = channel && conversation.memberIds.some((id) => guestIds.has(id))
   const toggle = (pane: ChatPane) => () => navigation.togglePane(pane)
+  const search = (text: string) => {
+    setRecentOpen(false)
+    if (currentUserId) addRecentSearch(workspaceId, currentUserId, text)
+    navigation.openSearch(text)
+  }
 
   return (
     <PaneHeader data-slot="conversation-header" data-searching={searching || undefined} className="group/header @container/header max-[899px]:gap-1 max-[899px]:px-2">
@@ -101,17 +113,57 @@ export function ConversationHeader({ conversation }: { conversation: Conversatio
         onSubmit={(event) => {
           event.preventDefault()
           const text = String(new FormData(event.currentTarget).get('q') ?? '').trim()
-          if (text) navigation.openSearch(text)
+          if (text) search(text)
           else if (query) navigation.closePane()
         }}
       >
-        <InputGroup className="w-56 border-0 bg-secondary/40 @max-[620px]/header:w-full dark:bg-secondary/40">
+        <InputGroup ref={searchField} className="w-56 border-0 bg-secondary/40 @max-[620px]/header:w-full dark:bg-secondary/40">
           <InputGroupAddon>
             <Search4 />
           </InputGroupAddon>
           {/* keyed by the query, so the field follows `?q=` (back, forward, a closed pane) without an effect */}
-          <InputGroupInput key={query} ref={searchInput} name="q" type="search" defaultValue={query} placeholder="Search" aria-label={`Search in ${title}`} autoComplete="off" />
+          <InputGroupInput
+            key={query}
+            ref={searchInput}
+            name="q"
+            type="search"
+            defaultValue={query}
+            placeholder="Search"
+            aria-label={`Search in ${title}`}
+            autoComplete="off"
+            onFocus={(event) => setRecentOpen(event.currentTarget.value === '')}
+            onInput={(event) => setRecentOpen(event.currentTarget.value === '')}
+            onBlur={(event) => {
+              if (!recentPopup.current?.contains(event.relatedTarget)) setRecentOpen(false)
+            }}
+            onKeyDown={(event) => {
+              if (!recentOpen) return
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                setRecentOpen(false)
+              } else if (event.key === 'ArrowDown') {
+                event.preventDefault()
+                recentPopup.current?.querySelector<HTMLElement>('li button')?.focus()
+              }
+            }}
+          />
         </InputGroup>
+        <RecentSearches
+          open={recentOpen}
+          onClose={() => {
+            // closed with the focus in the list (Escape): the focus goes back to the field
+            if (recentPopup.current?.contains(document.activeElement)) searchInput.current?.focus()
+            setRecentOpen(false)
+          }}
+          anchor={searchField}
+          popup={recentPopup}
+          searches={recentSearches}
+          onPick={search}
+          onClear={() => {
+            if (currentUserId) clearRecentSearches(workspaceId, currentUserId)
+            searchInput.current?.focus()
+          }}
+        />
       </form>
       <Tip label="Close search" side="bottom">
         <Button

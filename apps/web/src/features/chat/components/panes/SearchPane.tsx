@@ -4,7 +4,8 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Toggle } from '@/components/ui/toggle'
 import { useChatContext } from '@/features/chat/api/chatContext'
-import { useConversations, useSearchMessages } from '@/features/chat/api/queries'
+import type { SearchSort } from '@/features/chat/api/client'
+import { isSearchable, useConversations, useSearchMessages } from '@/features/chat/api/queries'
 import type { Conversation, SearchHit } from '@/features/chat/api/types'
 import { decodeMentions } from '@/features/chat/lib/mentionTokens'
 import { conversationTitle } from '@/features/chat/lib/sidebar'
@@ -16,6 +17,10 @@ import { RightPane, RightPaneBody, RightPaneEmpty, RightPaneError, RightPaneLoad
 import { useJumpToMessage } from './useJumpToMessage'
 
 const ANYONE = 'anyone'
+const SORT_OPTIONS: { value: SearchSort; label: string }[] = [
+  { value: 'newest', label: 'Newest' },
+  { value: 'oldest', label: 'Oldest' },
+]
 
 /** Search results for the query in the conversation header, with filters. A click on a result goes to the message. */
 export function SearchPane({ conversationId, query }: { conversationId: string; query: string }) {
@@ -26,16 +31,24 @@ export function SearchPane({ conversationId, query }: { conversationId: string; 
   const [thisConversation, setThisConversation] = useState(true)
   const [authorId, setAuthorId] = useState(ANYONE)
   const [hasFile, setHasFile] = useState(false)
+  const [mentionsMe, setMentionsMe] = useState(false)
+  const [hasLink, setHasLink] = useState(false)
+  const [threadsOnly, setThreadsOnly] = useState(false)
+  const [sort, setSort] = useState<SearchSort>('newest')
 
   const text = query.trim()
-  const search = useSearchMessages({
+  const input = {
     query: text,
     conversationId: thisConversation ? conversationId : undefined,
     authorId: authorId === ANYONE ? undefined : authorId,
     hasFile: hasFile || undefined,
-  })
-  // the same rule as the hook: nothing is searched until there is a query or a filter
-  const searching = text !== '' || authorId !== ANYONE || hasFile
+    mentionsMe: mentionsMe || undefined,
+    hasLink: hasLink || undefined,
+    threadsOnly: threadsOnly || undefined,
+    sort: sort === 'newest' ? undefined : sort,
+  }
+  const search = useSearchMessages(input)
+  const searching = isSearchable(input)
   const hits = search.data?.pages.flatMap((page) => page.items) ?? []
   const authorOptions = [{ value: ANYONE, label: 'Anyone' }, ...[...members].sort((a, b) => a.name.localeCompare(b.name)).map((member) => ({ value: member.id, label: member.name }))]
 
@@ -57,9 +70,30 @@ export function SearchPane({ conversationId, query }: { conversationId: string; 
             ))}
           </SelectContent>
         </Select>
+        <Toggle variant="outline" size="sm" pressed={mentionsMe} onPressedChange={setMentionsMe}>
+          Mentions me
+        </Toggle>
+        <Toggle variant="outline" size="sm" pressed={hasLink} onPressedChange={setHasLink}>
+          Has link
+        </Toggle>
         <Toggle variant="outline" size="sm" pressed={hasFile} onPressedChange={setHasFile}>
           Has file
         </Toggle>
+        <Toggle variant="outline" size="sm" pressed={threadsOnly} onPressedChange={setThreadsOnly}>
+          Threads only
+        </Toggle>
+        <Select items={SORT_OPTIONS} value={sort} onValueChange={(value) => setSort(value as SearchSort)}>
+          <SelectTrigger size="sm" aria-label="Sort" className="w-auto">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent align="start" alignItemWithTrigger={false} className="w-auto min-w-32">
+            {SORT_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
       <RightPaneBody>
         {!searching ? (
@@ -130,7 +164,7 @@ function SearchResult({ hit, members, conversations, conversation, currentUserId
   const channels = conversations.filter((item) => item.kind !== 'dm')
   const files = message.attachments.length
   return (
-    <Button variant="ghost" className="h-auto w-full flex-col items-stretch gap-1 p-2 font-normal whitespace-normal active:not-aria-[haspopup]:translate-y-0" onClick={onOpen}>
+    <Button variant="ghost" className="h-auto w-full flex-col items-stretch gap-1 p-2 text-left font-normal whitespace-normal active:not-aria-[haspopup]:translate-y-0" onClick={onOpen}>
       <MessageByline message={message} members={members}>
         {conversation ? (
           <span className="truncate text-xs text-muted-foreground">

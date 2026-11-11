@@ -2064,7 +2064,8 @@ export const restoreChatRead = <ThrowOnError extends boolean = false>(options: O
 });
 
 /**
- * Messages in the conversations the caller can read, newest first, 20 for each page.
+ * Messages in the conversations the caller can read, newest (or oldest) first, 20 for each
+ * page. The filters combine: a message must pass every one.
  */
 export const listChatSearch = <ThrowOnError extends boolean = false>(options: Options<ListChatSearchData, ThrowOnError>): RequestResult<ListChatSearchResponses, ListChatSearchErrors, ThrowOnError> => (options.client ?? client).get<ListChatSearchResponses, ListChatSearchErrors, ThrowOnError>({
     security: [{

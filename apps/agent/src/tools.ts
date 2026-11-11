@@ -555,11 +555,21 @@ const readMessages = defineTool({
 
 const searchMessages = defineTool({
 	name: "search_messages",
-	description: "Search chat messages the person can read.",
-	parameters: Type.Object({ query: Type.String({ minLength: 1 }) }),
+	description:
+		"Search chat messages the person can read. Every word must match (the last one as a prefix). The filters combine; with a filter the query may be empty (for example mentions_me alone lists the messages that mention the person). Newest first unless sort is oldest.",
+	parameters: Type.Object({
+		query: Type.Optional(Type.String()),
+		mentions_me: Type.Optional(Type.Boolean({ description: "Only messages that mention the person (also @channel and @here where they are a member)." })),
+		has_link: Type.Optional(Type.Boolean({ description: "Only messages with a link." })),
+		threads_only: Type.Optional(Type.Boolean({ description: "Only replies in threads." })),
+		sort: Type.Optional(Type.Union([Type.Literal("newest"), Type.Literal("oldest")])),
+	}),
 	execute: (args, api, context) =>
 		asDriver(api, context, async (as) => {
-			const [page, everyone] = await Promise.all([as("GET", `/chat/search?query=${encodeURIComponent(args.query)}`), people(as)]);
+			const params = new URLSearchParams({ query: args.query ?? "" });
+			for (const flag of ["mentions_me", "has_link", "threads_only"] as const) if (args[flag]) params.set(flag, "true");
+			if (args.sort) params.set("sort", args.sort);
+			const [page, everyone] = await Promise.all([as("GET", `/chat/search?${params}`), people(as)]);
 			return ok("chat search", messageLines(((page.items ?? []) as Json[]).slice(0, 30).map((hit) => hit.message as Json), everyone));
 		}),
 });

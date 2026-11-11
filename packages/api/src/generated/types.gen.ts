@@ -4460,7 +4460,7 @@ export type SearchHitRecord = {
 
 export type SearchPage = {
     /**
-     * Null when there is nothing older.
+     * Null when there is nothing more.
      */
     cursor: string | null;
     items: Array<SearchHitRecord>;
@@ -15081,6 +15081,23 @@ export type ListChatSearchData = {
          * Only messages with a file.
          */
         has_file?: boolean;
+        /**
+         * Only messages that mention the caller (also `@channel` and `@here` where the caller is a
+         * member).
+         */
+        mentions_me?: boolean;
+        /**
+         * Only messages with an `http(s)://` link.
+         */
+        has_link?: boolean;
+        /**
+         * Only thread replies.
+         */
+        threads_only?: boolean;
+        /**
+         * `newest` (the default) or `oldest` first.
+         */
+        sort?: 'newest' | 'oldest';
         /**
          * The `cursor` of the page before.
          */

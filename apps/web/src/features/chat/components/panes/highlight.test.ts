@@ -26,6 +26,16 @@ test('unsorted, overlapping and touching ranges become one match', () => {
   expect(shape(splitByRanges('abcdef', [[1, 5], [2, 3]]))).toBe('a[bcde]f')
 })
 
+test('markup in a message stays text: marks come from offsets, so no HTML is built from the body', () => {
+  const text = '<img src=x onerror=alert(1)> deploy <b>now</b>'
+  const segments = splitByRanges(text, [[29, 35]])
+  expect(segments).toEqual([
+    { text: '<img src=x onerror=alert(1)> ', match: false },
+    { text: 'deploy', match: true },
+    { text: ' <b>now</b>', match: false },
+  ])
+})
+
 test('ranges outside the text are clamped or dropped', () => {
   expect(shape(splitByRanges('abc', [[-2, 1], [2, 9], [7, 9], [2, 2]]))).toBe('[a]b[c]')
 })

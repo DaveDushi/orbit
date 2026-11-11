@@ -262,6 +262,11 @@ export function useLinkPreview(url: string, enabled = true) {
   }).data ?? null
 }
 
+/** A search runs once there is a query or a filter; the sort alone is no filter. */
+export function isSearchable(input: Omit<SearchInput, 'cursor'>): boolean {
+  return input.query.trim() !== '' || Boolean(input.authorId || input.hasFile || input.mentionsMe || input.hasLink || input.threadsOnly)
+}
+
 /** Search, paged by cursor (`fetchNextPage`). Runs once there is a query or a filter. Results are not live. */
 export function useSearchMessages(input: Omit<SearchInput, 'cursor'>) {
   const { client, workspaceId } = useChatContext()
@@ -270,10 +275,14 @@ export function useSearchMessages(input: Omit<SearchInput, 'cursor'>) {
     conversationId: input.conversationId,
     authorId: input.authorId,
     hasFile: input.hasFile,
+    mentionsMe: input.mentionsMe,
+    hasLink: input.hasLink,
+    threadsOnly: input.threadsOnly,
+    sort: input.sort,
   }
   return useInfiniteQuery({
     queryKey: chatKeys.search(workspaceId, filters),
-    enabled: client !== null && (filters.query !== '' || Boolean(filters.authorId) || Boolean(filters.hasFile)),
+    enabled: client !== null && isSearchable(filters),
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) => requireClient(client).searchMessages({ ...filters, cursor: pageParam }),
     getNextPageParam: (last) => last.cursor ?? undefined,

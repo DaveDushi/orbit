@@ -602,6 +602,7 @@ impl TaskTools {
                     author_id: a.author_id.as_deref().map(parse_id).transpose()?,
                     has_file: a.has_file,
                     cursor: a.cursor.as_deref().map(parse_id).transpose()?,
+                    ..Default::default()
                 })
                 .await
                 .map(|p| json!(p))

@@ -483,6 +483,13 @@ turns its routes, navigation and shortcuts off.
 - Threads are the only reply model (side pane and full view), with follow state for each member.
 - Reactions, pins, files, mentions (`@user`, `@channel`, `@here`, `#channel`), search, the
   Unreads and Threads views, a notify level for each conversation.
+- Search (`GET …/chat/search`, `repositories/chat/search.rs`; FTS5 on SQLite, `tsvector` on Postgres) opens in the
+  right pane (`panes/SearchPane.tsx`) with the matched words marked from server offsets (`ranges`, never HTML).
+  Filters are SQL `AND`s, so they combine: conversation, author, has file, mentions me (a `chat_message_mentions` row,
+  or `@channel`/`@here` where the reader is a member), has link (`http(s)://` in the body) and threads only; sort
+  newest (default) or oldest, paged by message id. Only conversations the reader can read (guests: their channels).
+  Recent searches (last 10, per workspace and person) are in `localStorage` only (`lib/recentSearches.ts`) and open
+  under the empty header search field.
 - The team agent reads chat files (`read_chat_file`) through `GET …/chat/files/{id}/content`: the page file query and
   parser (`file_content.rs`), only files of sent, not deleted messages that the driver can read; read-only.
 - Unread and mention counts come from the server (counters, not count queries).

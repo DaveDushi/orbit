@@ -1964,6 +1964,178 @@ async fn search_finds_messages_in_readable_conversations_only() {
 }
 
 #[tokio::test]
+async fn search_filters_and_sort_combine_within_readable_conversations() {
+    let fixture = Fixture::new().await;
+    let owner = &fixture.owner;
+    let ada = fixture.add_member("ada").await;
+    let bob = fixture.add_member("bob").await;
+    let guest = fixture.add_guest("guest").await;
+    let general = fixture.general().await;
+    let secret = fixture.channel(owner, "secret", "private", &[&ada]).await;
+    let shared = fixture
+        .channel(owner, "with-guest", "private", &[&ada, &guest])
+        .await;
+    let mention = fixture
+        .send(owner, &general, &format!("deploy notes for <@{}>", bob.id))
+        .await;
+    let link = fixture
+        .send(&ada, &general, "deploy link https://example.com/x")
+        .await;
+    let reply = fixture
+        .reply(
+            owner,
+            &general,
+            &mention,
+            "deploy reply HTTPS://example.org",
+        )
+        .await;
+    let broadcast = fixture.send(owner, &general, "deploy for <!channel>").await;
+    let hidden = fixture
+        .send(owner, &secret, "deploy secret https://s.example <!here>")
+        .await;
+    let guest_link = fixture
+        .send(
+            &ada,
+            &shared,
+            &format!("deploy guest https://g.example <@{}>", guest.id),
+        )
+        .await;
+    // `http` without `://` is no link.
+    fixture.send(&ada, &general, "deploy over http now").await;
+    let ids = |page: &Value| -> Vec<String> {
+        page["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|hit| hit["message"]["id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let search = |member: &'static str, query: String| {
+        let member = match member {
+            "ada" => &ada,
+            "bob" => &bob,
+            _ => &guest,
+        };
+        let fixture = &fixture;
+        async move {
+            ids(&fixture
+                .ok(member, "GET", &format!("/search?{query}"), None)
+                .await)
+        }
+    };
+
+    // Each filter alone, with words and without.
+    assert_eq!(
+        search("bob", "query=deploy&mentions_me=true".into()).await,
+        [broadcast.clone(), mention.clone()]
+    );
+    assert_eq!(
+        search("bob", "mentions_me=true".into()).await,
+        [broadcast.clone(), mention.clone()]
+    );
+    assert_eq!(
+        search("bob", "query=deploy&has_link=true".into()).await,
+        [reply.clone(), link.clone()]
+    );
+    assert_eq!(
+        search("bob", "threads_only=true".into()).await,
+        std::slice::from_ref(&reply)
+    );
+    // Combined with each other, with the author and the conversation filters.
+    assert!(
+        search("bob", "query=deploy&mentions_me=true&has_link=true".into())
+            .await
+            .is_empty()
+    );
+    assert_eq!(
+        search("bob", "has_link=true&threads_only=true".into()).await,
+        std::slice::from_ref(&reply)
+    );
+    assert_eq!(
+        search("ada", "query=deploy&has_link=true&mentions_me=true".into()).await,
+        std::slice::from_ref(&hidden)
+    );
+    assert_eq!(
+        search("ada", format!("has_link=true&author_id={}", ada.id)).await,
+        [guest_link.clone(), link.clone()]
+    );
+    assert_eq!(
+        search("ada", format!("has_link=true&conversation_id={general}")).await,
+        [reply.clone(), link.clone()]
+    );
+    // Oldest first.
+    assert_eq!(
+        search("ada", "query=deploy&has_link=true&sort=oldest".into()).await,
+        [
+            link.clone(),
+            reply.clone(),
+            hidden.clone(),
+            guest_link.clone()
+        ]
+    );
+    assert_eq!(
+        search("ada", "has_link=true&sort=oldest".into()).await,
+        [
+            link.clone(),
+            reply.clone(),
+            hidden.clone(),
+            guest_link.clone()
+        ]
+    );
+    // A guest finds only its own channel's messages; a member not in a private channel does
+    // not find them either.
+    assert_eq!(
+        search("guest", "has_link=true".into()).await,
+        std::slice::from_ref(&guest_link)
+    );
+    assert_eq!(
+        search("guest", "query=deploy&mentions_me=true".into()).await,
+        std::slice::from_ref(&guest_link)
+    );
+    assert!(search("guest", "threads_only=true".into()).await.is_empty());
+    assert!(
+        !search("bob", "has_link=true".into())
+            .await
+            .contains(&hidden)
+    );
+    let (status, _) = fixture
+        .call(&bob, "GET", "/search?query=deploy&sort=random", None)
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Pages follow the order: the cursor continues after the last message of the page.
+    let mut sent = Vec::new();
+    for index in 0..21 {
+        sent.push(fixture.send(&bob, &general, &format!("bulk {index}")).await);
+    }
+    for (sort, expected) in [
+        ("oldest", sent.clone()),
+        ("newest", sent.iter().rev().cloned().collect()),
+    ] {
+        let first = fixture
+            .ok(
+                &bob,
+                "GET",
+                &format!("/search?query=bulk&sort={sort}"),
+                None,
+            )
+            .await;
+        let cursor = first["cursor"].as_str().unwrap().to_owned();
+        let second = fixture
+            .ok(
+                &bob,
+                "GET",
+                &format!("/search?query=bulk&sort={sort}&cursor={cursor}"),
+                None,
+            )
+            .await;
+        assert!(second["cursor"].is_null());
+        let mut all = ids(&first);
+        all.extend(ids(&second));
+        assert_eq!(all, expected, "{sort}");
+    }
+}
+#[tokio::test]
 async fn a_mention_in_a_channel_makes_an_inbox_item_that_reading_the_channel_clears() {
     let fixture = Fixture::new().await;
     let ada = fixture.add_member("ada").await;

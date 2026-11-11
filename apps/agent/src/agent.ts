@@ -112,7 +112,7 @@ const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
 	create_page: (args) => `Creating page “${args.title}”`,
 	update_page: () => "Updating a page",
 	read_messages: () => "Reading messages",
-	search_messages: (args) => `Searching messages for “${args.query}”`,
+	search_messages: (args) => (args.query ? `Searching messages for “${args.query}”` : "Searching messages"),
 	ask_teammate: (args) => `Asking ${args.person}`,
 	schedule_routine: (args) => `Scheduling the routine “${args.name}”`,
 	list_routines: () => "Reading routines",
