@@ -828,10 +828,12 @@ async fn weekly_foreign_key_failure_stops_serving() {
         .unwrap();
     sqlx::query(
         "INSERT INTO sessions (id, token_hash, user_id, created_at, last_activity_at, \
-         idle_expires_at, absolute_expires_at) VALUES ($1, zeroblob(32), $2, 1, 1, 2, 2)",
+         idle_expires_at, absolute_expires_at) VALUES ($1, zeroblob(32), $2, 1, $3, 2, 2)",
     )
     .bind(orbit_platform::Id::new_v7().to_string())
     .bind(orbit_platform::Id::new_v7().to_string())
+    // Recent activity, so the retention job does not delete the orphan before the check sees it.
+    .bind(orbit_platform::TimestampMillis::now().as_millis())
     .execute(&mut *connection)
     .await
     .unwrap();
