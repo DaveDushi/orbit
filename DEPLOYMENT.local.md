@@ -4,12 +4,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 6988352734cc229a5f4c64ade9f5d6168736f3c4
-  (step 3: the Ask Donna bar, schema 89, November 11, 2026; not pushed yet).
+- Source: DaveDushi/orbit, `main` at 5b63556e91036a77064b26c1dda7cf810a145db1
+  (step 4: task followers, schema 90, November 11, 2026; not pushed yet).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:6988352`); fork commits have no published upstream image.
-- Image ID: sha256:5c48065c0fd099cabf23b70c844831dca00f14ae01dcd201fc89509acf697531
-- Team agent sidecar code (`/opt/orbit-agent`): commit 6988352.
+  (`orbit:5b63556`); fork commits have no published upstream image.
+- Image ID: sha256:144bb387c8b1784e9a4afe65a99c55e27428eb8da6501c094545b1e3d6d8bcb8
+- Team agent sidecar code (`/opt/orbit-agent`): commit 5b63556.
 - Desktop app downloads: https://orbit.wellrox.com/downloads/desktop/ (installer, zip, `latest.json` for the app's update
   check; behind the exe.dev login like the rest). nginx `location /downloads/desktop/` in
   `/etc/nginx/conf.d/orbit.conf` serves `/srv/orbit-downloads/desktop/` (outside the deploy, so deploys keep it; the
@@ -250,6 +250,64 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 11, 2026 upgrade: step 4, task followers (schema 90)
+
+`main` from `ebb79e0a` to `5b63556e`: merge commit `5807a3ed` of branch `task-followers` (one commit, `cd052333`, on
+`69883527`), then `5b63556e` moved its what's-new line from a `2026-11-12` entry into the `2026-11-11` entry (now 3
+lines, on top; 6 entries). The creator, assignees, commenters and @mentioned people of a task follow it; followers get
+an Activity notification and a push for each new comment and status change (not their own); the Followers field of a
+task (web and phone) has Follow / Unfollow; Account settings → Notifications has "Comments and status changes on tasks I
+follow". New API `/api/v1/workspaces/{workspace_id}/tasks/{task_id}/followers` (and `/followers/me`). Donna has a
+`follow_task` tool, and `aboutOrbit()` describes followers. Migration `0090_task_followers`: creates `task_followers`,
+backfills it, and **rebuilds** the SQLite `notifications` table (Postgres: its own file). No new `ORBIT_*` setting;
+sidecar `package.json`/`package-lock.json`/`tsconfig.json` unchanged (only `src`).
+
+Checks before the switch (after `bun install --frozen-lockfile` and `npm ci` in `apps/agent`; the full suites passed on
+the branch; the 2 TaskList bulk-toolbar web test failures and one clippy lint in `collab/sanitize.rs` also exist on
+main): agent `tsc` and `node --test test/prompt.test.ts` (5 pass, the what's-new test included); web `bun run build`
+(fresh `dist`); orbit-server `task_followers_api` (5 pass), `notifications_api` (3 pass), `push_api` (6 pass), SQLite,
+under `orbit-build`. Postgres was not run. `orbit-deploy image` built `orbit:5b63556` (about 40 min);
+`deploy/smoke.sh` passed; `orbit config check` passed with the extracted binary. A migration rehearsal on a hot copy
+(schema 89 → 90, before the stop) gave the same result as the one below.
+
+At the switch: stopped `orbit-agent` and `orbit` at 03:24:52 UTC, created snapshot
+`01a1c8a3-1238-7233-8587-e9164866681c` with the old CLI (`/usr/local/bin/orbit-6988352`; stored in S3, the verified
+download is `/var/backups/orbit/downloads/01a1c8a3-1238-7233-8587-e9164866681c`) and verified it,
+`deploy/backup-rehearsal.sh` with the old binary passed (verify), ran `migrate run` of the new binary on a copy in
+`/var/lib/orbit/rehearsal-5b63556-switch-*` (1 applied, schema 90, quick-check ok, 0 foreign-key rows, counts
+unchanged: 7 users, 71 tasks, 180 agent inputs, 63 notifications with the same count for each kind; 97 follower rows on
+71 tasks; deleted afterwards), saved the sidecar data as `/var/backups/orbit-agent/orbit-agent-before-5b63556.tgz`,
+kept the old sidecar code as `/opt/orbit-agent.before-5b63556`, installed the binary (`/usr/local/bin/orbit-5b63556`
+too) and the new sidecar `src`, and started `orbit` (03:25:16, ready), then `orbit-agent` (03:25:19). `main` is
+**not** pushed. `vm-health` (`/root/ops/vm-health.conf`, old copy `.before-5b63556`): `PROD_TAG=5b63556`,
+`ROLLBACK_TAG=6988352`, `ROLLBACK_BACKUP=01a1c8a3-1238-7233-8587-e9164866681c`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` active, no restarts; readiness
+(all checks) and `/health/live` 200; `/orbit-build.json` revision `5b63556e`; schema 90; live quick-check ok, 0
+foreign-key rows, 97 `task_followers` rows, 63 notifications; web `/` and its main JS asset 200; `GET
+/api/v1/workspaces/{w}/tasks/{t}/followers` without a session answers 401 `authentication_required` (an unknown route
+404); `deploy/verify-production.sh` passes against `http://127.0.0.1:8000` with `X-Forwarded-Proto: https` (sent via a
+`CURL_HOME` `.curlrc`); sidecar `/health` `{"ok":true,"mock":false}` and `/opt/orbit-agent/src` equal to
+`apps/agent/src` of `5b63556e`; no log warnings; `vm-health` OK except the nginx lines of the switch window (37, all
+03:24-03:25, upstream refused while stopped) and the known `git-owner` warning. **Not** verified: a signed-in browser
+check (Followers field, Follow / Unfollow, a follower notification and push), the phone app, Donna's `follow_task`.
+
+Rollback (the old binary refuses schema 90: restore the snapshot together with the binary; work after 03:24 UTC is
+lost). To go back to `6988352`:
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-5b63556 backup verify 01a1c8a3-1238-7233-8587-e9164866681c && /usr/local/bin/orbit-5b63556 backup restore 01a1c8a3-1238-7233-8587-e9164866681c'
+sudo install -m 755 /usr/local/bin/orbit-6988352 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-5b63556 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-5b63556.tgz
+```
+
+After this rollback, set `PROD_TAG=6988352`, `ROLLBACK_TAG=2d72c1c`,
+`ROLLBACK_BACKUP=01a1c7f3-40b8-77e1-a4b1-a766211bdfcb` in `/root/ops/vm-health.conf`.
 
 ### November 11, 2026 upgrade: step 3, the Ask Donna bar (schema 89)
 
