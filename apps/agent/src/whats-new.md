@@ -6,10 +6,8 @@ build: "## YYYY-MM-DD" (the deploy date), then 1-4 short "- " lines about what p
 members, not developers. Keep the 8 newest entries; the prompt shows the 5 newest.
 -->
 
-## 2026-11-12
-- Follow tasks: you follow a task you created, are assigned to, comment on or are @mentioned in. Each new comment and status change shows in Activity and as a desktop or phone notification (not your own). The Followers field of a task lists who follows and has Follow / Unfollow. Turn it off in Account settings → Notifications → "Comments and status changes on tasks I follow".
-
 ## 2026-11-11
+- Follow tasks: you follow a task you created, are assigned to, comment on or are @mentioned in. Each new comment and status change shows in Activity and as a desktop or phone notification (not your own). The Followers field of a task lists who follows and has Follow / Unfollow. Turn it off in Account settings → Notifications → "Comments and status changes on tasks I follow".
 - Ask Donna from any page: a small "Ask Donna…" box at the bottom of Tasks, Docs, Drive, Activity, settings and the other pages (not in Chat; web and desktop app). Press Enter and Donna answers in a panel on the right while you stay on the page. Close the panel and open it again: the conversation is still there.
 - Donna knows the page you asked from and the task, Docs page or Drive folder open on it, so "this" means that item. The conversation is your direct message with Donna, so "Open in Chat" shows it in Chat. Changes still ask for your yes, as in Chat.
 
