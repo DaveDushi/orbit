@@ -24,7 +24,7 @@
 
 ## Settings and internal callers
 - Orbit refuses to start on an unknown `ORBIT_*` environment variable. A new setting needs its key in `crates/platform/src/config.rs` (or an ignored prefix there, as `ORBIT_AGENT_` for the agent), or the server will not boot (2026-10-29).
-- The origin policy refuses a write without `Origin` unless it carries `Authorization: Bearer` (and no cookie). A server-to-server caller (a sidecar, a script) sends its secret as a bearer token. Route tests that skip `HttpPlatformLayer` do not see this: check such callers against a running server.
+- The origin policy refuses a write without `Origin` unless it carries `Authorization: Bearer` (and no cookie). A server-to-server caller (a sidecar, a script) sends its secret as a bearer token. Route tests that skip `HttpPlatformLayer` do not see this: check such callers against a running server; a route whose credential is in the path (incoming hooks, bot reply URLs) needs its prefix in `OriginPolicy::permits` (`crates/platform/src/http/security.rs`).
 
 ## Cron expressions
 - The `cron` crate (0.15) counts weekdays from Sunday = 1 (`1-5` is Sunday–Thursday), and wants a seconds field first. People and models write standard 5-field cron (0 or 7 = Sunday, `1-5` = Monday–Friday): translate the weekday field to names first, as `scheduled::schedule` does (2026-11-11).

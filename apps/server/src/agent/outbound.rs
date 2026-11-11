@@ -57,8 +57,13 @@ pub(crate) struct TestHosts(Arc<[String]>);
 impl TestHosts {
     /// `ORBIT_AGENT_INTEGRATION_TEST_HOSTS`: a comma-separated list of host names or IPs.
     pub(crate) fn from_env() -> Self {
+        Self::from_var("ORBIT_AGENT_INTEGRATION_TEST_HOSTS")
+    }
+
+    /// The hosts in the environment variable `name` (a comma-separated list).
+    pub(crate) fn from_var(name: &str) -> Self {
         Self::new(
-            std::env::var("ORBIT_AGENT_INTEGRATION_TEST_HOSTS")
+            std::env::var(name)
                 .unwrap_or_default()
                 .split(',')
                 .map(str::trim)
@@ -71,8 +76,9 @@ impl TestHosts {
         if !hosts.is_empty() {
             tracing::warn!(
                 ?hosts,
-                "ORBIT_AGENT_INTEGRATION_TEST_HOSTS is set: agent integrations may reach these hosts \
-                 over plain HTTP and on local addresses. Never set it in production."
+                "Test hosts are set (ORBIT_AGENT_INTEGRATION_TEST_HOSTS or \
+                 ORBIT_WEBHOOK_BOT_TEST_HOSTS): Orbit may reach these hosts over plain HTTP and on \
+                 local addresses. Never set them in production."
             );
         }
         Self(hosts.into())
@@ -222,8 +228,16 @@ pub(crate) struct Outbound {
 
 impl Outbound {
     pub(crate) fn new(test_hosts: TestHosts) -> Self {
+        Self::with_user_agent(
+            test_hosts,
+            concat!("Orbit-Agent/", env!("CARGO_PKG_VERSION")),
+        )
+    }
+
+    /// The same client with its own `User-Agent` (webhook bots send `Orbit-Bots/…`).
+    pub(crate) fn with_user_agent(test_hosts: TestHosts, user_agent: &'static str) -> Self {
         let client = reqwest::Client::builder()
-            .user_agent(concat!("Orbit-Agent/", env!("CARGO_PKG_VERSION")))
+            .user_agent(user_agent)
             .timeout(TIMEOUT)
             .connect_timeout(CONNECT_TIMEOUT)
             // A proxy would resolve the host itself, past the address check.
@@ -379,6 +393,33 @@ impl Outbound {
             status,
             serde_json::from_slice(&bytes).unwrap_or(Value::Null),
         ))
+    }
+
+    /// A POST of `body` (JSON) with `headers`, checked again before it leaves, within `timeout`:
+    /// the status and the answer, at most `max_bytes` (a longer answer is [`OutboundError::TooLarge`]).
+    /// For webhook bots (`crate::webhook_bots`).
+    pub(crate) async fn post_bytes(
+        &self,
+        url: &Url,
+        body: Vec<u8>,
+        headers: HeaderMap,
+        timeout: Duration,
+        max_bytes: usize,
+    ) -> Result<(u16, Vec<u8>), OutboundError> {
+        let url = check_url(url.as_str(), &self.test_hosts)?;
+        let response = self
+            .send(
+                self.client
+                    .post(url)
+                    .headers(headers)
+                    .header(CONTENT_TYPE, "application/json")
+                    .timeout(timeout)
+                    .body(body),
+            )
+            .await?;
+        let status = response.status().as_u16();
+        let (bytes, _) = read_capped(response, max_bytes, true).await?;
+        Ok((status, bytes))
     }
 
     /// A GET of a JSON document (OAuth metadata): the status and the JSON (`Null` when it is not
@@ -707,7 +748,16 @@ async fn read_sse_reply(mut response: reqwest::Response, id: u64) -> Result<Valu
 
 /// The body up to the size limit; `strict` fails beyond it, else the rest is dropped.
 async fn read_limited(
+    response: reqwest::Response,
+    strict: bool,
+) -> Result<(Vec<u8>, bool), OutboundError> {
+    read_capped(response, MAX_RESPONSE_BYTES, strict).await
+}
+
+/// The body up to `max` bytes; `strict` fails beyond it, else the rest is dropped.
+async fn read_capped(
     mut response: reqwest::Response,
+    max: usize,
     strict: bool,
 ) -> Result<(Vec<u8>, bool), OutboundError> {
     let mut bytes = Vec::new();
@@ -716,11 +766,11 @@ async fn read_limited(
         .await
         .map_err(|error| OutboundError::Network(network_reason(&error.without_url())))?
     {
-        if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
+        if bytes.len() + chunk.len() > max {
             if strict {
                 return Err(OutboundError::TooLarge);
             }
-            let room = MAX_RESPONSE_BYTES - bytes.len();
+            let room = max - bytes.len();
             bytes.extend_from_slice(&chunk[..room]);
             return Ok((bytes, true));
         }

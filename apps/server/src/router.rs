@@ -54,6 +54,7 @@ pub struct ApiRoutes {
     pub imports: ImportState,
     pub chat: ChatState,
     pub agent: crate::agent::AgentState,
+    pub bots: crate::webhook_bots::BotState,
     pub improvements: crate::improvements::ImprovementState,
 }
 
@@ -107,6 +108,7 @@ pub fn production_router(
         .merge(crate::live::socket::live_router(api.chat.clone()))
         .merge(chat_router(api.chat))
         .merge(crate::agent::router(api.agent))
+        .merge(crate::webhook_bots::router(api.bots))
         .merge(crate::improvements::router(api.improvements))
         .merge(
             Router::new()

@@ -13,7 +13,7 @@ mod mcp_oauth;
 pub mod memory;
 mod memory_routes;
 mod oauth;
-mod outbound;
+pub(crate) mod outbound;
 pub mod profiles;
 mod routes;
 pub mod scope;

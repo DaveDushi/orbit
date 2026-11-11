@@ -166,6 +166,7 @@ export const AGENTIC_TABS: readonly AgenticTab[] = [
   { to: '/settings/agentic/workspace', label: 'Workspace', agent: true },
   { to: '/settings/agentic/agents', label: 'Agents', agent: true },
   { to: '/settings/agentic/routines', label: 'Routines', agent: true },
+  { to: '/settings/agentic/bots', label: 'Bots' },
   { to: '/settings/agentic/admin', label: 'Admin', agent: true, instanceAdmin: true },
 ]
 

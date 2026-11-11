@@ -66,7 +66,8 @@ test('You shows MCP setup to every role, and agent sections only when the agent 
     const off = show(role, false, false, '/settings/agentic')
     expect(await off.view.findByText('MCP server')).toBeTruthy()
     expect(off.view.queryAllByText('ChatGPT connection')).toHaveLength(0)
-    expect(off.view.queryAllByRole('tab')).toHaveLength(0)
+    // Bots need no agent: with the agent off, only You and Bots are tabs.
+    expect(off.view.queryAllByRole('tab').map((tab) => tab.textContent)).toEqual(['You', 'Bots'])
     cleanup()
   }
 })

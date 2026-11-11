@@ -19,13 +19,14 @@ pub const TOKEN_PREFIX: &str = "orbit-agent.";
 /// data export, administration, the agent's own team instructions and its integrations. Drive too:
 /// the agent uses it only through `/agent-tools/drive`, which asks the driver before it moves
 /// anything to the trash or makes a public link (`super::drive`).
-const DENIED: [&str; 16] = [
+const DENIED: [&str; 17] = [
     "agent",
     "agent-integrations",
     "agents",
     "api-tokens",
     "apps",
     "audit",
+    "bots",
     "drive",
     "exports",
     "github",
@@ -269,6 +270,8 @@ mod tests {
             (Method::GET, "/agents"),
             (Method::POST, "/agents"),
             (Method::PATCH, "/agents/abc"),
+            (Method::GET, "/bots"),
+            (Method::POST, "/bots/abc/secret"),
             (Method::GET, "/chat/files/abc"),
             (Method::POST, "/chat/files"),
             (Method::GET, "/chat/files"),

@@ -93,6 +93,7 @@ impl OriginPolicy {
                 | "/oauth/revoke"
                 | "/oauth/userinfo"
         ) || uri.path().starts_with("/api/v1/hooks/chat/")
+            || uri.path().starts_with("/api/v1/hooks/bots/")
         {
             // Machine-to-machine: the secret in the path is the credential, and no cookie is read.
             return true;

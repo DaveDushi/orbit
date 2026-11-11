@@ -12,7 +12,7 @@ import type { MessageRecord } from '../../data/orbit'
 import { confirmAction, showError, useChatWrite, useIsChatAdmin } from '../../hooks/chat'
 
 import { useOrbit } from '../../orbit-context'
-import { useConversations, usePeople } from '../../queries'
+import { useConversations, useMembers, usePeople } from '../../queries'
 import { type IconName, Spinner, Text } from '../../ui'
 import type { ComposerState, PendingMessage } from './Composer'
 import { Emoji, EmojiPicker } from './EmojiPicker'
@@ -21,13 +21,15 @@ import { ActionSheet, type SheetItem } from './Sheet'
 
 export type ListRow = MessageRow | { type: 'pending'; key: string; pending: PendingMessage }
 
-/** Names and shown text for message rows: members by id, mentions decoded, markdown flattened. */
+/** Names, pictures and shown text for message rows: members by id, mentions decoded, markdown flattened. */
 export function useMessageText() {
   const people = usePeople()
+  const members = useMembers().data
   const conversations = useConversations()
   const channels: Person[] = useMemo(() => (conversations.data ?? []).map((item) => ({ id: item.id, name: item.name })), [conversations.data])
   return {
     nameOf: (userId: string) => people.find((person) => person.id === userId)?.name ?? 'Unknown',
+    pictureOf: (userId: string) => members?.find((member) => member.user_id === userId)?.avatar_url ?? null,
     text: (body: string) => markdownToText(decodeMentions(body, people, channels)),
   }
 }

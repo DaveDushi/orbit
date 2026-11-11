@@ -13,12 +13,15 @@ import { showError, useServerImage } from '../../hooks/chat'
 import { useOrbit } from '../../orbit-context'
 import { cssColors, useTheme } from '../../theme'
 import { Avatar, Icon, IconButton, Spinner, Text } from '../../ui'
+import { ProfilePicture } from '../settings/ProfilePicture'
 import { AgentCard } from './AgentCard'
 import { Emoji } from './EmojiPicker'
 
 /** What a message row needs from the screen: names, the shown text of a body, and what a tap does. */
 export interface MessageHandlers {
   nameOf: (userId: string) => string
+  /** The author's picture (a person's or a bot's), or `null` for the initials. */
+  pictureOf: (userId: string) => string | null
   /** A stored body as shown: mentions as names, markdown as plain text. */
   text: (body: string) => string
   onLongPress: (message: MessageRecord) => void
@@ -82,7 +85,7 @@ export function MessageItem({ message, groupStart, highlighted = false, handlers
     >
       {message.reply_to ? <Quote author={handlers.nameOf(message.reply_to.author_id)} body={message.reply_to.sticker && !message.reply_to.body ? 'Sticker' : handlers.text(message.reply_to.body)} /> : null}
       <View className={`flex-row gap-2 px-3 pb-0.5 ${groupStart ? 'pt-1' : 'pt-0.5'}`}>
-        <View className="w-7.5 pt-0.5">{groupStart ? <Avatar id={message.author_id} name={author} size={30} /> : null}</View>
+        <View className="w-7.5 pt-0.5">{groupStart ? <ProfilePicture id={message.author_id} name={author} url={handlers.pictureOf(message.author_id)} size={30} /> : null}</View>
         <View className="flex-1 min-w-0">
           {groupStart ? (
             <View className="flex-row items-baseline gap-2">
