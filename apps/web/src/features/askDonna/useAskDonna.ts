@@ -22,8 +22,10 @@ export interface AskDonna {
 }
 
 /**
- * The Ask bar and its panel, for members of a workspace where the agent is on; `null` for a guest (who cannot use the
- * agent) and without the agent. The conversation is the person's DM with the agent, so it is the same one as in Chat.
+ * The Ask bar and its panel, for members of a workspace where the agent is on and who connected ChatGPT (the model of
+ * every agent profile); `null` for a guest (who cannot use the agent), without the agent and without the connection.
+ * Losing the connection also closes an open panel. The conversation is the person's DM with the agent, so it is the
+ * same one as in Chat.
  */
 export function useAskDonna(): AskDonna | null {
   const { workspace } = useWorkspace()
@@ -37,7 +39,11 @@ export function useAskDonna(): AskDonna | null {
   const panel = panelIn(state, workspace.id)
   const context = pageContextFor(pathname, item)
 
-  if (guest || !status?.enabled || !status.bot_user_id) return null
+  if (guest || !status?.enabled || !status.bot_user_id || !status.chatgpt.connected) {
+    // closed now, so a new connection shows the bar without the old panel
+    if (state.open) dispatch({ type: 'close' })
+    return null
+  }
   const botId = status.bot_user_id
 
   async function conversation(): Promise<string | null> {

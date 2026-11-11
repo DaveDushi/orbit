@@ -72,14 +72,14 @@ reasons: `.ai/agent-design.md`.
   new server shows without a sidecar restart) and the 5 newest entries of `apps/agent/src/whats-new.md`.
 - Runs are durable: a restart of Orbit or of the agent continues them.
 - It has a **long-term memory** (see below).
-- **Ask bar** (web and desktop app, not for guests): a small "Ask <name>…" box at the bottom center of every page but
-  Chat. Enter sends the text to the person's DM with the agent and opens it in a right panel (the chat list, cards,
-  approvals and composer of Chat), so the person stays on the page; closing and opening the panel keeps the
-  conversation, and "Open in Chat" opens the DM. Each message from the bar or the panel carries `page_context`: the
-  area of the app and the open task, Docs page or Drive folder (`{ kind, id, title }`). Orbit checks its shape, keeps
-  it only on the agent's input (`agent_inputs.page_context`, never on the chat message) and looks nothing up for it.
-  The agent gets it after the message in an `<orbit-data source="page context">` block, as data, and reads the item
-  with its tools as the driver, so the context names nothing the driver cannot read.
+- **Ask bar** (web and desktop app, not for guests, only with the person's ChatGPT connected): a small "Ask <name>…" box
+  at the bottom center of every page but Chat. Enter sends the text to the person's DM with the agent and opens it in a
+  right panel (the chat list, cards, approvals and composer of Chat), so the person stays on the page; closing and
+  opening the panel keeps the conversation, and "Open in Chat" opens the DM. Each message from the bar or the panel
+  carries `page_context`: the area of the app and the open task, Docs page or Drive folder (`{ kind, id, title }`).
+  Orbit checks its shape, keeps it only on the agent's input (`agent_inputs.page_context`, never on the chat message)
+  and looks nothing up for it. The agent gets it after the message in an `<orbit-data source="page context">` block, as
+  data, and reads the item with its tools as the driver, so the context names nothing the driver cannot read.
 
 ## More agents (agent profiles)
 
