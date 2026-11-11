@@ -6,6 +6,11 @@ build: "## YYYY-MM-DD" (the deploy date), then 1-4 short "- " lines about what p
 members, not developers. Keep the 8 newest entries; the prompt shows the 5 newest.
 -->
 
+## 2026-11-14
+- More agents: owners and admins create agents next to Donna in Settings → Agentic → Agents, each with a name, avatar, instructions, tools, model and the channels where it works. @mention one in those channels or send it a direct message; it works with your permissions and asks for your yes before changes, like Donna.
+- Answer level: pick Short, Normal or Thorough in Account settings → Agentic. It sets how much Donna and every other agent thinks and writes for you.
+- Routines can use any agent: pick it when you edit the routine in Settings → Agentic → Routines.
+
 ## 2026-11-13
 - Routines: ask Donna for a recurring job ("every weekday at 9, summarize yesterday in #support"). She does it as you, with your permissions, and posts the result where you chose. See, pause, edit and delete them in Settings → Agentic → Routines.
 - Reminders: "remind me at 5pm to call Ana" and Donna sends you a direct message then.
@@ -39,6 +44,3 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 - API tokens can cover all projects, also future ones, and give access to the public REST API and MCP.
 - Chat incoming webhooks: other tools can post to a channel, also with Slack Block Kit and buttons.
 - Agentic moved to workspace settings.
-
-## 2026-11-05
-- Orbit Drive: one drive per workspace with folders, uploads, previews, search, a trash and public links with an optional password and expiry date.

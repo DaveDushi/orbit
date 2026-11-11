@@ -2,7 +2,7 @@
 //! rows, so the whole API judges them like the person's browser; `agent_sessions` marks them for
 //! the scope layer (`super::scope`).
 
-use orbit_platform::{Database, Id, TimestampMillis, generate_opaque_token};
+use orbit_platform::{Database, Id, Row, TimestampMillis, generate_opaque_token};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -33,6 +33,7 @@ pub(crate) async fn issue(
     database: &Database,
     user_id: Id,
     workspace_id: Id,
+    agent: Option<Id>,
 ) -> Result<IssuedAgentSession, SessionRefused> {
     let now = TimestampMillis::now().as_millis();
     let mut tx = database.immediate_transaction().await?;
@@ -51,12 +52,20 @@ pub(crate) async fn issue(
     if member.is_none() {
         return Err(SessionRefused::NotMember);
     }
+    if let Some(agent) = agent
+        && super::profiles::live_agent(&mut tx, workspace_id, agent)
+            .await?
+            .is_none()
+    {
+        return Err(SessionRefused::NoRun);
+    }
     let driving = sqlx::query_scalar::<_, String>(
         "SELECT thread_key FROM agent_threads WHERE workspace_id = $1 AND driver_user_id = $2 \
-         AND status IN ('running', 'waiting') LIMIT 1",
+         AND status IN ('running', 'waiting') AND agent_user_id IS NOT DISTINCT FROM $3 LIMIT 1",
     )
     .bind(workspace_id.to_string())
     .bind(user_id.to_string())
+    .bind(agent.map(|id| id.to_string()))
     .fetch_optional(&mut *tx)
     .await?;
     if driving.is_none() {
@@ -85,14 +94,32 @@ pub(crate) async fn issue(
     .execute(&mut *tx)
     .await?;
     sqlx::query(
-        "INSERT INTO agent_sessions (session_id, user_id, workspace_id, expires_at) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO agent_sessions (session_id, user_id, workspace_id, expires_at, agent_user_id) \
+         VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(id.to_string())
     .bind(user_id.to_string())
     .bind(workspace_id.to_string())
     .bind(expires_at)
+    .bind(agent.map(|id| id.to_string()))
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
     Ok(IssuedAgentSession { token, expires_at })
+}
+
+/// Which agent an agent session belongs to: `None` for a person's session, `Some(None)` for the
+/// default agent, `Some(Some(bot))` for a custom agent.
+pub(crate) async fn agent_of(
+    database: &Database,
+    session_id: Id,
+) -> Result<Option<Option<Id>>, sqlx::Error> {
+    let row = sqlx::query("SELECT agent_user_id FROM agent_sessions WHERE session_id = $1")
+        .bind(session_id.to_string())
+        .fetch_optional(database.pool())
+        .await?;
+    Ok(row.map(|row| {
+        row.get::<Option<String>, _>("agent_user_id")
+            .and_then(|id| id.parse().ok())
+    }))
 }

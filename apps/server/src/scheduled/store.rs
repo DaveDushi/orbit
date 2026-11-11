@@ -214,6 +214,8 @@ pub struct RoutineRecord {
     pub workspace_id: String,
     /// The agent that runs it (its bot user).
     pub agent_user_id: String,
+    /// The agent's name, as people mention it.
+    pub agent_name: String,
     pub creator_id: String,
     pub creator_name: String,
     /// Where it posts; `null` when that conversation was deleted.
@@ -255,6 +257,10 @@ pub struct NewRoutine {
     /// Default: the creator's DM with the agent.
     #[serde(default)]
     pub conversation_id: Option<Id>,
+    /// The agent that runs it; default: the default agent. An agent's own session always makes
+    /// routines for itself.
+    #[serde(default)]
+    pub agent_user_id: Option<Id>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -270,16 +276,20 @@ pub struct RoutineChange {
     pub time_zone: Option<String>,
     #[serde(default)]
     pub conversation_id: Option<Id>,
+    /// Another agent runs it (the default one or a custom agent of the workspace).
+    #[serde(default)]
+    pub agent_user_id: Option<Id>,
     /// `active` or `paused`.
     #[serde(default)]
     pub status: Option<String>,
 }
 
-const ROUTINE_SELECT: &str = "SELECT r.id, r.workspace_id, r.agent_user_id, r.creator_id, u.display_name AS creator_name, \
+const ROUTINE_SELECT: &str = "SELECT r.id, r.workspace_id, r.agent_user_id, ag.display_name AS agent_name, \
+     r.creator_id, u.display_name AS creator_name, \
      r.conversation_id, c.name AS conversation_name, c.kind AS conversation_kind, r.name, r.prompt, r.schedule, \
      r.time_zone, r.status, r.paused_reason, r.next_run_at, r.last_run_at, r.last_run_status, \
      r.last_run_message_id, r.last_error, r.created_at, r.updated_at \
-     FROM agent_routines r JOIN users u ON u.id = r.creator_id \
+     FROM agent_routines r JOIN users u ON u.id = r.creator_id JOIN users ag ON ag.id = r.agent_user_id \
      LEFT JOIN chat_conversations c ON c.id = r.conversation_id";
 
 fn routine_of(row: &sqlx::any::AnyRow, actor: Actor) -> Result<RoutineRecord, ScheduledError> {
@@ -289,6 +299,7 @@ fn routine_of(row: &sqlx::any::AnyRow, actor: Actor) -> Result<RoutineRecord, Sc
         id: row.get("id"),
         workspace_id: row.get("workspace_id"),
         agent_user_id: row.get("agent_user_id"),
+        agent_name: row.get("agent_name"),
         creator_id: creator,
         creator_name: row.get("creator_name"),
         conversation_id: row.get("conversation_id"),
@@ -352,6 +363,40 @@ async fn agent_dm(
     Ok(written.value.id)
 }
 
+/// The agent of a routine: the default agent, or a live custom agent of the workspace.
+async fn routine_agent(
+    conn: &mut AnyConnection,
+    workspace_id: Id,
+    wanted: Option<Id>,
+) -> Result<Id, ScheduledError> {
+    let donna = bot_user_id(conn).await?;
+    match wanted {
+        None => donna.ok_or(ScheduledError::AgentOff),
+        Some(agent) if Some(agent) == donna => Ok(agent),
+        Some(agent) => crate::agent::profiles::live_agent(conn, workspace_id, agent)
+            .await?
+            .map(|profile| profile.user_id)
+            .ok_or(ScheduledError::Invalid("Pick an agent of this workspace.")),
+    }
+}
+
+/// Refuses a custom agent's routine in a channel that is not one of its channels.
+async fn agent_target(
+    conn: &mut AnyConnection,
+    workspace_id: Id,
+    agent: Id,
+    conversation: Id,
+) -> Result<(), ScheduledError> {
+    if let Some(profile) = crate::agent::profiles::live_agent(conn, workspace_id, agent).await?
+        && !crate::agent::profiles::allowed_in(conn, &profile, conversation).await?
+    {
+        return Err(ScheduledError::Invalid(
+            "This agent may not post there: pick one of its channels or your DM with it.",
+        ));
+    }
+    Ok(())
+}
+
 pub struct Store {
     database: Database,
 }
@@ -388,6 +433,7 @@ impl Store {
         workspace_id: Id,
         user_id: Id,
         input: NewRoutine,
+        session_agent: Option<Option<Id>>,
         now: TimestampMillis,
     ) -> Result<RoutineRecord, ScheduledError> {
         let name = clean_name(&input.name)?;
@@ -395,9 +441,11 @@ impl Store {
         let agent = {
             let mut conn = self.database.pool().acquire().await?;
             member(&mut conn, workspace_id, user_id).await?;
-            bot_user_id(&mut conn)
-                .await?
-                .ok_or(ScheduledError::AgentOff)?
+            let wanted = match session_agent {
+                Some(own) => own,
+                None => input.agent_user_id,
+            };
+            routine_agent(&mut conn, workspace_id, wanted).await?
         };
         let conversation_id = match input.conversation_id {
             Some(id) => id,
@@ -415,6 +463,7 @@ impl Store {
         {
             return Err(ScheduledError::Invalid(problem.detail()));
         }
+        agent_target(&mut tx, workspace_id, agent, conversation_id).await?;
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM agent_routines WHERE workspace_id = $1 AND creator_id = $2",
         )
@@ -466,7 +515,8 @@ impl Store {
             || change.prompt.is_some()
             || change.schedule.is_some()
             || change.time_zone.is_some()
-            || change.conversation_id.is_some();
+            || change.conversation_id.is_some()
+            || change.agent_user_id.is_some();
         let pause = match change.status.as_deref() {
             None => None,
             Some("paused") => Some(true),
@@ -516,11 +566,14 @@ impl Store {
             Some(paused) => !paused,
             None => current.status == "active",
         };
-        if active {
-            let agent: Id = current
+        let agent: Id = match change.agent_user_id {
+            Some(wanted) => routine_agent(&mut tx, workspace_id, Some(wanted)).await?,
+            None => current
                 .agent_user_id
                 .parse()
-                .map_err(|_| ScheduledError::NotFound)?;
+                .map_err(|_| ScheduledError::NotFound)?,
+        };
+        if active {
             let Some(conversation) = conversation.as_deref().and_then(|id| id.parse().ok()) else {
                 return Err(ScheduledError::Invalid("Pick where the routine posts."));
             };
@@ -529,6 +582,7 @@ impl Store {
             {
                 return Err(ScheduledError::Invalid(problem.detail()));
             }
+            agent_target(&mut tx, workspace_id, agent, conversation).await?;
         }
         // A new schedule, a resume or an edit of a waiting run starts counting from now.
         let next = if active {
@@ -539,7 +593,7 @@ impl Store {
         let status = if active { "active" } else { "paused" };
         sqlx::query(
             "UPDATE agent_routines SET name = $1, prompt = $2, schedule = $3, time_zone = $4, conversation_id = $5, \
-             status = $6, paused_reason = NULL, next_run_at = $7, updated_at = $8 WHERE id = $9",
+             status = $6, paused_reason = NULL, next_run_at = $7, updated_at = $8, agent_user_id = $10 WHERE id = $9",
         )
         .bind(&name)
         .bind(&prompt)
@@ -550,6 +604,7 @@ impl Store {
         .bind(next)
         .bind(now.as_millis())
         .bind(routine_id.to_string())
+        .bind(agent.to_string())
         .execute(&mut *tx)
         .await?;
         let routine = load_routine(&mut tx, workspace_id, routine_id, actor).await?;
@@ -900,6 +955,26 @@ pub(super) async fn routine_problem(
     let Some(conversation) = conversation else {
         return Ok(Some("Paused: the conversation it posts to was deleted."));
     };
+    let custom = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT deleted_at FROM agent_profiles WHERE user_id = $1",
+    )
+    .bind(agent.to_string())
+    .fetch_optional(&mut *conn)
+    .await?;
+    match custom {
+        Some(Some(_)) => return Ok(Some("Paused: its agent was deleted.")),
+        Some(None) => {
+            if let Some(profile) =
+                crate::agent::profiles::live_agent(conn, workspace_id, agent).await?
+                && !crate::agent::profiles::allowed_in(conn, &profile, conversation).await?
+            {
+                return Ok(Some(
+                    "Paused: its agent may no longer post in the channel it posts to.",
+                ));
+            }
+        }
+        None => {}
+    }
     Ok(
         target_problem(conn, workspace_id, creator, conversation, Some(agent))
             .await?

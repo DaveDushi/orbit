@@ -157,12 +157,25 @@ async fn create_routine(
     if state.config.is_none() {
         return Err(failure(ScheduledError::AgentOff, &uri, &request_id));
     }
+    // An agent makes routines for itself: its session decides the agent, not the body.
+    let session = authenticate_session(
+        &state.identity,
+        state.cookie_mode,
+        &headers,
+        uri.path(),
+        request_id.as_ref(),
+    )
+    .await?;
+    let session_agent = crate::agent::sessions::agent_of(state.database(), session.id)
+        .await
+        .map_err(|error| failure(ScheduledError::Database(error), &uri, &request_id))?;
     store(&state)
         .create_routine(
             &state.chat,
             workspace_id,
             user_id,
             body,
+            session_agent,
             TimestampMillis::now(),
         )
         .await

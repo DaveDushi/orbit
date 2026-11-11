@@ -11,6 +11,8 @@ export interface Routine {
   id: string
   workspace_id: string
   agent_user_id: string
+  /** The agent's name, as people mention it. */
+  agent_name: string
   creator_id: string
   creator_name: string
   /** `null`: the conversation was deleted. */
@@ -44,6 +46,8 @@ export interface RoutineChange {
   schedule?: string
   time_zone?: string
   conversation_id?: string
+  /** Another agent of the workspace runs it. */
+  agent_user_id?: string
   status?: 'active' | 'paused'
 }
 

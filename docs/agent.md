@@ -81,6 +81,42 @@ reasons: `.ai/agent-design.md`.
   The agent gets it after the message in an `<orbit-data source="page context">` block, as data, and reads the item
   with its tools as the driver, so the context names nothing the driver cannot read.
 
+## More agents (agent profiles)
+
+Besides the default agent, owners and admins of a workspace create more agents in **Settings → Agentic → Agents**
+(`/settings/agentic/agents`, `…/workspaces/{id}/agents`). No agent is made for you. Each agent has:
+
+| Field | Notes |
+|---|---|
+| Name | Its `@handle`, the same rules as the default agent's name; no other account may have it. |
+| Avatar | PNG, JPEG or WebP, at most 512 KiB (the form makes a 256 px square). |
+| Instructions | At most 8,000 characters. They go into the system prompt in an `<agent-instructions>` block after the fixed rules and About Orbit, and cannot change the rules or the approvals. |
+| Tools | A subset of the default agent's tools. **Orbit enforces it**: an agent session of this agent reaches only the routes its tools need (`agent::profiles::route_need`, checked in `agent::scope`; any other route is refused), the Drive route checks the exact tool, and the sidecar offers the model only these tools and blocks any other call. |
+| Model and thinking level | From the models the agent service offers; empty: the installation's choice (Agentic → Admin). |
+| Channels | Every channel, or chosen channels. Direct messages with it always work. |
+
+- People reach an agent like a person: `@mention` it in one of its channels (the answer comes in the thread under
+  the message) or send it a DM. It acts **as the driver**, with the same write approvals, ChatGPT payer and limits as
+  the default agent. It shares the workspace's team instructions and memory.
+- A mention in a channel that is not one of its channels starts nothing there and the agent does not join the
+  channel: Orbit answers in the person's DM with the agent and names its channels.
+- Each agent is a bot user of its own with a membership in its workspace, so web and phone show its name and avatar
+  like a member's. At most 20 agents per workspace.
+- **Deleting an agent**: nobody can reach it, its waiting inputs and sessions end, its routines pause ("its agent was
+  deleted"), and its bot user is suspended and renamed "<name> (deleted)", so its messages and DMs stay readable and
+  the name is free again.
+- **Guests** cannot use any agent, and cannot see the Agents list.
+- Each agent has its own thread state: in one chat thread the default agent and a custom agent each keep their own
+  run, queue and transcript (`inputs::agent_thread_key`).
+
+## Answer level
+
+Each person picks **Short**, **Normal** or **Thorough** in **Account settings → Agentic → Answer level**
+(`GET/PUT /api/v1/agent/preferences`, table `agent_preferences`). It applies to the default agent and every other
+agent, from the person's next run: Short runs at thinking level `low` and adds "Answer level: short…" to the run's
+message; Thorough runs at `high` and asks for full detail; Normal keeps the agent's or the installation's thinking
+level. An answer to a waiting run uses the driver's level, not the answerer's.
+
 ## Routines, reminders and send later
 
 - **Routines.** A member asks the agent in chat for a recurring job ("every weekday at 9, summarize yesterday's
@@ -90,7 +126,9 @@ reasons: `.ai/agent-design.md`.
   **driven by the creator**: their permissions, their ChatGPT account, and the same write approvals as chat. Orbit
   posts the run's message as the agent in the chosen conversation; the answer replaces it, and questions and approval
   cards go to the thread under it, for the creator. The saved instruction is the creator's own words and gives no more
-  than their permissions. A routine stores the agent's user (`agent_user_id`), so other agents can have routines later.
+  than their permissions. A routine stores its agent (`agent_user_id`): the agent asked in chat makes it for itself, and in
+  Settings → Agentic → Routines the creator can pick another agent that works in the routine's channel. Reminders
+  always come from the default agent.
 - **Where it posts.** A channel the creator is in (the agent joins a private one), or a DM that has the agent (by
   default the creator's DM with it). **Settings → Agentic → Routines** lists them with the schedule, the next run,
   the last run and its status: pause, resume, edit (name, instruction, schedule, time zone, target) and delete. The

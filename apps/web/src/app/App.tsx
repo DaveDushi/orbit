@@ -62,6 +62,7 @@ const AgenticAdmin = lazy(() => loadSettings().then((module) => ({ default: modu
 const AgenticTabs = lazy(() => loadSettings().then((module) => ({ default: module.AgenticTabs })))
 const AgenticWorkspace = lazy(() => loadSettings().then((module) => ({ default: module.AgenticWorkspace })))
 const AgenticRoutines = lazy(() => loadSettings().then((module) => ({ default: module.AgenticRoutines })))
+const AgenticAgents = lazy(() => loadSettings().then((module) => ({ default: module.AgenticAgents })))
 const AgenticYou = lazy(() => loadSettings().then((module) => ({ default: module.AgenticYou })))
 const ShortcutsPage = lazy(() => loadSettings().then((module) => ({ default: module.ShortcutsPage })))
 const StickersPage = lazy(() => loadSettings().then((module) => ({ default: module.StickersPage })))
@@ -201,6 +202,7 @@ export default function App() {
                   <Route path="agentic" element={<AgenticTabs />}>
                     <Route index element={<AgenticYou />} />
                     <Route path="workspace" element={<AgenticWorkspace />} />
+                    <Route path="agents" element={<AgenticAgents />} />
                     <Route path="routines" element={<AgenticRoutines />} />
                     <Route path="admin" element={<AgenticAdmin />} />
                   </Route>

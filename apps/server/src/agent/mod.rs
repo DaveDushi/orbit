@@ -14,6 +14,7 @@ pub mod memory;
 mod memory_routes;
 mod oauth;
 mod outbound;
+pub mod profiles;
 mod routes;
 pub mod scope;
 pub(crate) mod sessions;
@@ -28,6 +29,7 @@ pub fn router(state: AgentState) -> axum::Router {
         .merge(memory_routes::router(state.clone()))
         .merge(integrations::router(state.clone()))
         .merge(drive::router(state.clone()))
+        .merge(profiles::router(state.clone()))
         .merge(crate::scheduled::router(state))
 }
 
