@@ -7,6 +7,8 @@ export type RunState = {
 	submissionId: number | null;
 	progressMessageId: string | null;
 	startedAt: number;
+	/** A line above the progress and the answer, such as a routine's name; absent: none. */
+	title?: string | null;
 };
 
 /**

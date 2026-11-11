@@ -63,6 +63,12 @@ pub fn allows(workspace_id: &str, method: &Method, path: &str) -> bool {
     if segment == "members" {
         return method == Method::GET;
     }
+    // The agent lists routines, reminders and scheduled messages here, and makes them only through
+    // `/agent-tools/scheduled`, which asks the driver before anything posts as them
+    // (`crate::scheduled`); only people change, pause or delete them (Settings, the composer).
+    if segment == "routines" || segment == "scheduled-messages" {
+        return method == Method::GET;
+    }
     // The agent notes and reads memory; only people delete it.
     if segment == "agent-memory" {
         return method != Method::DELETE;
@@ -181,6 +187,9 @@ mod tests {
             (Method::GET, "/agent-tools"),
             (Method::POST, "/agent-tools/call"),
             (Method::POST, "/agent-tools/drive"),
+            (Method::POST, "/agent-tools/scheduled"),
+            (Method::GET, "/routines"),
+            (Method::GET, "/scheduled-messages"),
         ] {
             assert!(allows(WORKSPACE, &method, &path(rest)), "{method} {rest}");
         }
@@ -224,6 +233,13 @@ mod tests {
             (Method::POST, "/drive/nodes/abc/shares"),
             (Method::DELETE, "/drive/nodes/abc"),
             (Method::POST, "/drive/trash/empty"),
+            (Method::POST, "/routines"),
+            (Method::POST, "/scheduled-messages"),
+            (Method::PATCH, "/routines/abc"),
+            (Method::DELETE, "/routines/abc"),
+            (Method::POST, "/routines/abc"),
+            (Method::PATCH, "/scheduled-messages/abc"),
+            (Method::DELETE, "/scheduled-messages/abc"),
         ] {
             assert!(!allows(WORKSPACE, &method, &path(rest)), "{method} {rest}");
         }

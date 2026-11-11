@@ -2036,11 +2036,13 @@ pub(crate) fn is_yes(body: &str) -> bool {
     matches!(word.as_str(), "yes" | "approve" | "approved")
 }
 
-/// What an approval belongs to: an integration, or the Drive of a workspace.
+/// What an approval belongs to: an integration, the Drive of a workspace, or the routines and
+/// scheduled messages of a workspace.
 #[derive(Clone, Copy)]
 pub(crate) enum Approves<'a> {
     Integration(&'a str),
     Drive(&'a str),
+    Scheduled(&'a str),
 }
 
 impl Approves<'_> {
@@ -2052,7 +2054,9 @@ impl Approves<'_> {
                 "integration_id",
                 id.to_owned(),
             ),
-            Self::Drive(workspace_id) => (
+            // Routines and send later share the Drive's table: both are per workspace, and the
+            // tool tells them apart.
+            Self::Drive(workspace_id) | Self::Scheduled(workspace_id) => (
                 "agent_drive_approvals",
                 "workspace_id",
                 workspace_id.to_owned(),

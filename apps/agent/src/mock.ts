@@ -18,6 +18,9 @@
  *   trash drive file <id|it>       share drive file <id|it>
  *   show my open tasks as a table (searches tasks, then answers with text and a ```spec card: table row by row, bar
  *     chart by status, buttons and a "New task" form; sending that form creates the task)
+ *   schedule routine "Name" at "cron" to "Instruction" [in #channel]     list routines
+ *   remind me at <2026-11-11T17:00> "Text"     send later at <2026-11-11T17:00> "Text" [in #channel]
+ *   (a routine's scheduled run carries its saved instruction, which these same rules read)
  *   show a broken card (answers with a card that is not in the catalog)
  *   what is this (from the Ask bar: reads the task, page or Drive folder of the page context; "it" and "this" in the
  *     other instructions also mean that item when the run has no newer one)
@@ -27,7 +30,7 @@
  * AGENT_MOCK_TOKENS_PER_SECOND slows the streamed text (default 400), to watch a card build.
  *
  * A "yes" to an approval question (an answer, or the driver's next message in a DM) calls the last integration,
- * drive_trash or drive_share tool again with the same arguments.
+ * drive_trash, drive_share, schedule_routine or send_later tool again with the same arguments.
  * When a memory tool result asks for a summary, the mock writes one from the halves it was shown. A compaction gets a
  * short placeholder summary.
  */
@@ -262,6 +265,12 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 	if ((match = /share drive (?:file|folder) (\S+)/i.exec(instruction))) return { name: "drive_share", args: { node_id: target(match[1], "drive") } };
 	if ((match = /read (?:page|doc|file) (\S+)/i.exec(instruction))) return { name: "read_page", args: { page_id: target(match[1], "page") } };
 	if ((match = /search tasks "([^"]+)"/i.exec(instruction))) return { name: "search_tasks", args: { query: match[1] } };
+	if ((match = /schedule (?:a )?routine "([^"]+)" at "([^"]+)" to "([^"]+)"(?: in (#[\w-]+(?:\([0-9a-f-]+\))?))?/i.exec(instruction)))
+		return { name: "schedule_routine", args: { name: match[1], cron: match[2], instruction: match[3], ...(match[4] ? { post_in: match[4] } : {}) } };
+	if (/list (?:my )?routines/i.test(instruction)) return { name: "list_routines", args: {} };
+	if ((match = /remind me at (\S+) "([^"]+)"/i.exec(instruction))) return { name: "remind_me", args: { at: match[1], text: match[2] } };
+	if ((match = /send later at (\S+) "([^"]+)"(?: in (#[\w-]+(?:\([0-9a-f-]+\))?))?/i.exec(instruction)))
+		return { name: "send_later", args: { at: match[1], text: match[2], ...(match[3] ? { post_in: match[3] } : {}) } };
 	if (/list projects/i.test(instruction)) return { name: "list_projects", args: {} };
 	if (/read messages/i.test(instruction)) return { name: "read_messages", args: {} };
 	if (/read (?:the )?(?:chat )?files/i.test(instruction)) {
@@ -281,7 +290,7 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 		return { name: "use_integration", args: { tool: match[1], arguments: parsed } };
 	}
 	if (/^(?:Answer|Instruction) from [^\n]*\n\s*(yes|approved?)\b/i.test(instruction)) {
-		const again = lastCall(messages, ["use_integration", "drive_trash", "drive_share"]);
+		const again = lastCall(messages, ["use_integration", "drive_trash", "drive_share", "schedule_routine", "send_later"]);
 		if (again) return again;
 	}
 	return undefined;

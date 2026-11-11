@@ -200,6 +200,37 @@ tests, the account settings navigation and routes in the web and mobile apps. `a
 - A person can still set their own display name to the agent's name (profile, sign-up, invitations). Then `@Name` in
   the agent's answers is ambiguous. Refusing that everywhere a name is set is not built yet.
 
+## Routines
+
+Status: built on branch `donna-routines` (2026-11-11). Code: `apps/server/src/scheduled/` (schedule maths, store,
+routes, runner), migration `0091_routines_and_scheduled_messages.sql`, `apps/agent/src/scheduled.ts`,
+`apps/web/src/features/agent/RoutinesPage.tsx`, `apps/web/src/features/chat/components/composer/SendLater.tsx`. User
+docs: `docs/agent.md`, "Routines, reminders and send later".
+
+- **R1. Whose run?** The creator's, always: a routine run is an `agent_inputs` row of kind `instruction` with
+  `author_id` = creator and `routine_id` set; it has no chat message of its own (like a card action, 0086), and the
+  sidecar gets the saved instruction as `body` plus `routine`. So the same driver rules, agent sessions, approvals
+  and ChatGPT payer apply as in chat. A stored instruction is the creator's words; it cannot raise permissions,
+  because nothing in the run has more than the creator's session.
+- **R2. Where does the answer go?** Orbit posts the run's first message as the agent with the nonce
+  `agent:<input id>`, the nonce the sidecar uses for its progress message: the sidecar gets that message back and
+  writes the answer into it (with the routine's name as a title line). The input's thread is that message, so
+  questions and approval cards are in its thread, and the creator's "yes" there continues the run as usual.
+- **R3. Exactly once.** Claim = compare-and-set on `next_run_at` in an `immediate_transaction`; posting uses
+  `pending_run_id` as nonce and input id (both idempotent); a pending run older than 30 s is finished by any server.
+  Messages: nonce `scheduled:<id>`, then the row is deleted.
+- **R4. Injection.** A prompt-injected run could try to create a routine or a send-later message, which post as the
+  driver. Orbit enforces the driver's approval, as for `drive_trash`: agent sessions cannot `POST /routines` or
+  `/scheduled-messages` (`agent::scope`); they create only through `POST /agent-tools/scheduled` in a run of the
+  driver (`scheduled::routes::agent_call`). `schedule_routine` and `send_later` are checked first (the same checks as
+  when saved), then need the driver's "yes" in the thread to the exact action (`integrations::approve`, rows in
+  `agent_drive_approvals` with these tool names): the card shows the text or instruction, where it posts, and the
+  time or the schedule, time zone and first run. The approval is bound to the hash of the saved input (cleaned text,
+  time zone, UTC time or normalized cron, conversation), so changed arguments need a new approval, and one yes
+  creates once. `remind_me` (a DM from the agent to the driver only) needs no approval. A routine's later runs need
+  none either (the creator approved it); writes in a run keep their own approvals. Agent sessions cannot change,
+  pause or delete routines or scheduled messages.
+
 ## Memory
 
 Status: built on branch `agent-memory` (2026-10-29). The design follows OptMem

@@ -53937,7 +53937,8 @@
           "apps.manage",
           "workspace.export",
           "drive.purge",
-          "drive.shares.manage"
+          "drive.shares.manage",
+          "routines.manage"
         ]
       },
       "PlanInterval": {
@@ -58577,7 +58578,8 @@
       "apps.manage",
       "workspace.export",
       "drive.purge",
-      "drive.shares.manage"
+      "drive.shares.manage",
+      "routines.manage"
     ],
     "guest": [],
     "member": [],
@@ -58600,7 +58602,8 @@
       "apps.manage",
       "workspace.export",
       "drive.purge",
-      "drive.shares.manage"
+      "drive.shares.manage",
+      "routines.manage"
     ]
   }
 }

@@ -8,12 +8,15 @@ export type Person = { readonly id: string; readonly name: string; readonly time
 
 const USER_TOKEN = /<@([0-9a-f-]{36})>/gi;
 
-/** Orbit body → text for the model. Unknown users stay as `@unknown`. */
+/**
+ * Orbit body → text for the model. Unknown users stay as `@unknown`. A channel keeps its id (`#channel(<id>)`), so
+ * the model can name it to a tool (for example where a routine posts).
+ */
 export function tokensToNames(body: string, people: readonly Person[]): string {
 	const names = new Map(people.map((person) => [person.id.toLowerCase(), person.name]));
 	return body
 		.replace(USER_TOKEN, (_, id: string) => `@${names.get(id.toLowerCase()) ?? "unknown"}`)
-		.replace(/<#[0-9a-f-]{36}>/gi, "#channel")
+		.replace(/<#([0-9a-f-]{36})>/gi, (_, id: string) => `#channel(${id})`)
 		.replace(/<!channel>/g, "@channel")
 		.replace(/<!here>/g, "@here");
 }

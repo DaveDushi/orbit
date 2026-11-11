@@ -600,6 +600,13 @@ impl MigrationRunner {
                     include_str!("../../../../apps/server/migrations/0090_task_followers.sql"),
                     false,
                 ),
+                Migration::new(
+                    91,
+                    include_str!(
+                        "../../../../apps/server/migrations/0091_routines_and_scheduled_messages.sql"
+                    ),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -872,6 +879,13 @@ impl MigrationRunner {
             Migration::new(
                 90,
                 include_str!("../../../../apps/server/migrations/postgres/0090_task_followers.sql"),
+                false,
+            ),
+            Migration::new(
+                91,
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0091_routines_and_scheduled_messages.sql"
+                ),
                 false,
             ),
         ];

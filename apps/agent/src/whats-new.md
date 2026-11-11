@@ -7,6 +7,9 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 -->
 
 ## 2026-11-11
+- Routines: ask Donna for a recurring job ("every weekday at 9, summarize yesterday in #support"). She does it as you, with your permissions, and posts the result where you chose. See, pause, edit and delete them in Settings → Agentic → Routines.
+- Reminders: "remind me at 5pm to call Ana" and Donna sends you a direct message then.
+- Send later: the arrow next to Send in chat → Send later…. Your message is posted as you at that time; edit or cancel it in Scheduled messages. Donna can schedule one for you too.
 - Follow tasks: you follow a task you created, are assigned to, comment on or are @mentioned in. Each new comment and status change shows in Activity and as a desktop or phone notification (not your own). The Followers field of a task lists who follows and has Follow / Unfollow. Turn it off in Account settings → Notifications → "Comments and status changes on tasks I follow".
 - Ask Donna from any page: a small "Ask Donna…" box at the bottom of Tasks, Docs, Drive, Activity, settings and the other pages (not in Chat; web and desktop app). Press Enter and Donna answers in a panel on the right while you stay on the page. Close the panel and open it again: the conversation is still there.
 - Donna knows the page you asked from and the task, Docs page or Drive folder open on it, so "this" means that item. The conversation is your direct message with Donna, so "Open in Chat" shows it in Chat. Changes still ask for your yes, as in Chat.

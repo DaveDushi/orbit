@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AgentNamePage } from '@/features/agent/AgentNamePage'
 import { AgentPage } from '@/features/agent/AgentPage'
 import { MemoryPage } from '@/features/agent/MemoryPage'
+import { RoutinesPage } from '@/features/agent/RoutinesPage'
 import { TeamInstructionsPage } from '@/features/agent/TeamInstructionsPage'
 import { useAgentStatus } from '@/features/agent/api'
 import { AgentToolsPage } from '@/features/agentIntegrations/AgentToolsPage'
@@ -55,6 +56,11 @@ export function AgenticWorkspace() {
       <AgentToolsPage />
     </>
   )
+}
+
+/** Routines: the person's own, and every routine of the workspace for owners and admins. */
+export function AgenticRoutines() {
+  return useAgentStatus().data?.enabled === true ? <RoutinesPage /> : null
 }
 
 /** The agent's name and model for the whole instance. */

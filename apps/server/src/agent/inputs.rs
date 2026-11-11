@@ -300,12 +300,24 @@ pub struct PendingInput {
     pub action: Option<serde_json::Value>,
     /// Sent from the Ask bar: the page the author was on (untrusted, see [`PageContext`]).
     pub page_context: Option<PageContext>,
+    /// A scheduled run of the author's routine: `body` is its saved instruction.
+    pub routine: Option<RoutineRun>,
     pub created_at: i64,
     /// The workspace's team instructions (`settings`), empty when it has none.
     pub team_instructions: String,
     /// The message's files, so the run knows them without a call. The agent reads them with
     /// the chat file content route.
     pub files: Vec<InputFile>,
+}
+
+/// The routine behind an input (`crate::scheduled`): its instruction is the creator's own words, saved
+/// earlier, so it gives no more than the creator's permissions.
+#[derive(Clone, Debug, Serialize)]
+pub struct RoutineRun {
+    pub id: String,
+    pub name: String,
+    pub schedule: String,
+    pub time_zone: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -324,12 +336,14 @@ pub(crate) async fn pending(
     let rows = sqlx::query(
         "SELECT i.message_id, i.workspace_id, i.conversation_id, i.thread_key, i.root_message_id, \
          i.author_id, i.kind, i.created_at, i.action, i.page_context, u.display_name, \
-         COALESCE(m.body, '') AS body, c.kind AS conversation_kind, \
+         COALESCE(m.body, r.prompt, '') AS body, r.id AS routine_id, r.name AS routine_name, \
+         r.schedule AS routine_schedule, r.time_zone AS routine_time_zone, c.kind AS conversation_kind, \
          c.name AS conversation_name, t.body AS team_instructions, \
          (SELECT COUNT(*) FROM chat_members cm WHERE cm.conversation_id = i.conversation_id) \
          AS conversation_members \
          FROM agent_inputs i \
          LEFT JOIN chat_messages m ON m.id = i.message_id \
+         LEFT JOIN agent_routines r ON r.id = i.routine_id \
          JOIN chat_conversations c ON c.id = i.conversation_id \
          JOIN users u ON u.id = i.author_id \
          LEFT JOIN agent_team_instructions t ON t.workspace_id = i.workspace_id \
@@ -359,6 +373,14 @@ pub(crate) async fn pending(
             page_context: row
                 .get::<Option<String>, _>("page_context")
                 .and_then(|context| serde_json::from_str(&context).ok()),
+            routine: row
+                .get::<Option<String>, _>("routine_id")
+                .map(|id| RoutineRun {
+                    id,
+                    name: row.get("routine_name"),
+                    schedule: row.get("routine_schedule"),
+                    time_zone: row.get("routine_time_zone"),
+                }),
             created_at: row.get("created_at"),
             team_instructions: row
                 .get::<Option<String>, _>("team_instructions")
