@@ -4,12 +4,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 
 - Canonical URL: https://orbit.wellrox.com/
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 5b63556e91036a77064b26c1dda7cf810a145db1
-  (step 4: task followers, schema 90, November 11, 2026; not pushed yet).
+- Source: DaveDushi/orbit, `main` at 7ae0434f755863ef3f3486234784072eddc4e0a3
+  (step 5: routines, reminders and send later, schema 91, November 11, 2026; not pushed yet).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:5b63556`); fork commits have no published upstream image.
-- Image ID: sha256:144bb387c8b1784e9a4afe65a99c55e27428eb8da6501c094545b1e3d6d8bcb8
-- Team agent sidecar code (`/opt/orbit-agent`): commit 5b63556.
+  (`orbit:7ae0434`); fork commits have no published upstream image.
+- Image ID: sha256:8200ec1cc34b68bb08afd2ee01ea147a9f19f0ac54e3827a632a0570b9c09b70
+- Team agent sidecar code (`/opt/orbit-agent`): commit 7ae0434.
 - Desktop app downloads: https://orbit.wellrox.com/downloads/desktop/ (installer, zip, `latest.json` for the app's update
   check; behind the exe.dev login like the rest). nginx `location /downloads/desktop/` in
   `/etc/nginx/conf.d/orbit.conf` serves `/srv/orbit-downloads/desktop/` (outside the deploy, so deploys keep it; the
@@ -250,6 +250,73 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 11, 2026 upgrade: step 5, routines, reminders and send later (schema 91)
+
+`main` from `a050b765` to `7ae0434f`: merge commit of branch `donna-routines` (`5687ce3c`, `c00bbe05`, on `cd052333`);
+the merge resolves the what's-new conflict: the branch's 3 lines (dated `2026-11-13`; its `2026-11-12` copy of the
+followers line dropped) go on top of the `2026-11-11` entry (now 6 lines; 6 entries). Routines: a member asks Donna in
+chat for a recurring job (cron in a time zone), run as the creator with their permissions and posted in the chosen
+channel or DM; Settings → Agentic → Routines lists, pauses, resumes, edits and deletes them (25 per person per
+workspace, at most every 15 minutes). Reminders: Donna DMs the person at the time. Send later: the arrow next to Send
+in the composer; Scheduled messages edits or cancels. Guests can use none of it. Donna's `schedule_routine` and
+`send_later` need the driver's yes (agent sessions create only through `/agent-tools/scheduled`); `remind_me` needs
+none. `aboutOrbit()` describes all of it. One server loop (`apps/server/src/scheduled/runner.rs`, every 10 s) runs due
+work. New API `/api/v1/workspaces/{w}/routines[/{id}]` and `/scheduled-messages[/{id}]`. Migration
+`0091_routines_and_scheduled_messages`: creates `agent_routines` and `scheduled_messages`, `ALTER TABLE agent_inputs
+ADD COLUMN routine_id` (SQLite and Postgres; additive). New Rust dependency `chrono-tz` 0.10. No new `ORBIT_*` setting;
+sidecar `package.json`/`package-lock.json`/`tsconfig.json` unchanged (only `src`, with the new `routine` field on agent
+inputs, so server and sidecar switched together).
+
+Checks before the switch (after `bun install --frozen-lockfile` and `npm ci` in `apps/agent`; the full suites passed on
+the branch; the 2 TaskList web test failures, the clippy lint in `collab/sanitize.rs` and the fmt diff in
+`crates/platform/tests/http_security.rs` also exist on main): agent `tsc` and `node --test test/*.test.ts` (64 pass,
+11 skipped, 0 fail; the what's-new test included); web `bun run build` (fresh `dist`); orbit-server `agent_api` (17
+pass) and `scheduled_api` (11 pass), SQLite, under `orbit-build` (after the step 6 `agent-profiles` build released
+it). Postgres was not run. `orbit-deploy image` built `orbit:7ae0434` with `chrono-tz` (06:25-07:05 UTC);
+`deploy/smoke.sh` passed; `orbit config check` passed with the extracted binary. A migration rehearsal on a hot copy
+(`sqlite3 .backup`, before the stop) gave the same result as the one below.
+
+At the switch: stopped `orbit-agent` and `orbit` at 07:11:59 UTC, created snapshot
+`01a1c973-0106-7325-9644-8dc368cb7b28` with the old CLI (`/usr/local/bin/orbit-5b63556`; stored in S3, the verified
+download is `/var/backups/orbit/downloads/01a1c973-0106-7325-9644-8dc368cb7b28`) and verified it,
+`deploy/backup-rehearsal.sh` with the old binary passed (verify), ran `migrate run` of the new binary on a copy in
+`/var/lib/orbit/rehearsal-7ae0434-switch-*` (1 applied, schema 90 → 91, quick-check ok, 0 foreign-key rows, the row
+count of every old table unchanged: 7 users, 71 tasks, 180 agent inputs, 797 chat messages, 63 notifications; the 2 new
+tables empty; deleted afterwards), saved the sidecar data as `/var/backups/orbit-agent/orbit-agent-before-7ae0434.tgz`,
+kept the old sidecar code as `/opt/orbit-agent.before-7ae0434`, installed the binary (`/usr/local/bin/orbit-7ae0434`
+too) and the new sidecar `src`, and started `orbit` (07:12:15, ready), then `orbit-agent` (07:12:16). `main` is
+**not** pushed. `vm-health` (`/root/ops/vm-health.conf`, old copy `.before-7ae0434`): `PROD_TAG=7ae0434`,
+`ROLLBACK_TAG=5b63556`, `ROLLBACK_BACKUP=01a1c973-0106-7325-9644-8dc368cb7b28`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-oidc-gateway` and `orbit-oidc-tunnel` active, no restarts; readiness
+(all checks, `scheduler` included) and `/health/live` 200; `/orbit-build.json` revision `7ae0434f`; schema 91; live
+quick-check ok, 0 foreign-key rows; web `/` and its main JS asset 200; without a session `GET .../routines` and
+`GET .../scheduled-messages` answer 401, `POST .../agent-tools/scheduled` 403, `GET .../routines/x` 405 (PATCH/DELETE
+only), an unknown route 404; `deploy/verify-production.sh` passes against `http://127.0.0.1:8000` with
+`X-Forwarded-Proto: https` (sent via a `CURL_HOME` `.curlrc`); sidecar `/health` `{"ok":true,"mock":false}` and
+`/opt/orbit-agent/src` equal to `apps/agent/src` of `7ae0434f`. The scheduler loop has no start log line: it runs as a
+background service (one that stops ends the server) and logged no warning after the start; the only log warning is the
+`rmcp` "allowed origin without a port" line that each start also logged before. `vm-health` OK except disk 81% and one
+nginx line (07:12:15, upstream refused during the start). **Not** verified: a signed-in browser check (Settings →
+Agentic → Routines, Send later and Scheduled messages in the composer), the phone app, a real routine run, reminder or
+scheduled send, Donna's approval card for `schedule_routine` / `send_later`.
+
+Rollback (the old binary refuses schema 91: restore the snapshot together with the binary; work after 07:11 UTC is
+lost). To go back to `5b63556`:
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-7ae0434 backup verify 01a1c973-0106-7325-9644-8dc368cb7b28 && /usr/local/bin/orbit-7ae0434 backup restore 01a1c973-0106-7325-9644-8dc368cb7b28'
+sudo install -m 755 /usr/local/bin/orbit-5b63556 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-7ae0434 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-7ae0434.tgz
+```
+
+After this rollback, set `PROD_TAG=5b63556`, `ROLLBACK_TAG=6988352`,
+`ROLLBACK_BACKUP=01a1c8a3-1238-7233-8587-e9164866681c` in `/root/ops/vm-health.conf`.
 
 ### November 11, 2026 upgrade: step 4, task followers (schema 90)
 
