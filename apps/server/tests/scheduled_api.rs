@@ -515,44 +515,90 @@ async fn guests_have_no_routines_reminders_or_send_later() {
     }
 }
 
+impl Fixture {
+    /// An agent session of the owner, driving a running thread in #general (no thread root).
+    async fn agent_run(&self) -> (String, String) {
+        self.connect_chatgpt(&self.owner).await;
+        let general = self.general().await;
+        // Orbit makes agent sessions only for the driver of a running thread.
+        let (status, value) = self
+            .request(
+                "PUT",
+                &format!("/api/internal/agent/threads/{general}"),
+                ("authorization", &format!("Bearer {SECRET}")),
+                Some(json!({
+                    "workspace_id": self.workspace_id, "conversation_id": general, "root_message_id": null,
+                    "status": "running", "driver_user_id": self.owner.id.to_string(), "waiting_for_user_id": null,
+                })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{value}");
+        let (status, value) = self
+            .request(
+                "POST",
+                "/api/internal/agent/sessions",
+                ("authorization", &format!("Bearer {SECRET}")),
+                Some(json!({ "user_id": self.owner.id.to_string(), "workspace_id": self.workspace_id })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{value}");
+        (
+            format!("Bearer {}", value["token"].as_str().unwrap()),
+            general,
+        )
+    }
+
+    /// The agent's call of a scheduling tool in the run's thread.
+    async fn agent_tool(&self, bearer: &str, thread: &str, tool: &str, arguments: Value) -> Value {
+        let (status, value) = self
+            .request(
+                "POST",
+                &format!("/api/v1/workspaces/{}/agent-tools/scheduled", self.workspace_id),
+                ("authorization", bearer),
+                Some(json!({ "tool": tool, "arguments": arguments, "conversation_id": thread, "root_message_id": null })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{tool}: {value}");
+        value
+    }
+
+    async fn say(&self, member: &Member, conversation: &str, body: &str) {
+        self.ok(
+            member,
+            "POST",
+            &format!("/chat/conversations/{conversation}/messages"),
+            Some(json!({ "body": body, "nonce": Id::new_v7().to_string() })),
+        )
+        .await;
+    }
+}
+
 #[tokio::test]
-async fn agent_sessions_only_list_and_create() {
+async fn agent_sessions_only_list_and_create_through_the_agent_tool() {
     let fixture = Fixture::new().await;
-    fixture.connect_chatgpt(&fixture.owner).await;
-    let general = fixture.general().await;
-    // Orbit makes agent sessions only for the driver of a running thread.
-    let (status, value) = fixture
-        .request(
-            "PUT",
-            &format!("/api/internal/agent/threads/{general}"),
-            ("authorization", &format!("Bearer {SECRET}")),
-            Some(json!({
-                "workspace_id": fixture.workspace_id, "conversation_id": general, "root_message_id": null,
-                "status": "running", "driver_user_id": fixture.owner.id.to_string(), "waiting_for_user_id": null,
-            })),
-        )
-        .await;
-    assert_eq!(status, StatusCode::NO_CONTENT, "{value}");
-    let (status, value) = fixture
-        .request(
-            "POST",
-            "/api/internal/agent/sessions",
-            ("authorization", &format!("Bearer {SECRET}")),
-            Some(json!({ "user_id": fixture.owner.id.to_string(), "workspace_id": fixture.workspace_id })),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{value}");
-    let bearer = format!("Bearer {}", value["token"].as_str().unwrap());
+    let (bearer, general) = fixture.agent_run().await;
     let base = format!("/api/v1/workspaces/{}", fixture.workspace_id);
-    let (status, made) = fixture
-        .request(
-            "POST",
-            &format!("{base}/routines"),
-            ("authorization", &bearer),
-            Some(json!({ "name": "Standup", "prompt": "list projects", "schedule": "0 9 * * 1-5", "conversation_id": general })),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{made}");
+    // The normal create routes would skip the driver's approval.
+    for (path, body) in [
+        (
+            "routines",
+            json!({ "name": "Standup", "prompt": "list projects", "schedule": "0 9 * * 1-5", "conversation_id": general }),
+        ),
+        (
+            "scheduled-messages",
+            json!({ "kind": "message", "conversation_id": general, "body": "hi", "send_at": chrono_like(now() + HOUR) }),
+        ),
+    ] {
+        let (status, value) = fixture
+            .request(
+                "POST",
+                &format!("{base}/{path}"),
+                ("authorization", &bearer),
+                Some(body),
+            )
+            .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {value}");
+    }
     let (status, _) = fixture
         .request(
             "GET",
@@ -562,7 +608,27 @@ async fn agent_sessions_only_list_and_create() {
         )
         .await;
     assert_eq!(status, StatusCode::OK);
-    let id = made["id"].as_str().unwrap();
+    // A reminder is a DM to the driver only: no approval.
+    let reminder = fixture
+        .agent_tool(
+            &bearer,
+            &general,
+            "remind_me",
+            // A local time without an offset: the driver's zone (UTC here).
+            json!({ "body": "Call Ana", "send_at": &chrono_like(now() + 24 * HOUR)[..16] }),
+        )
+        .await;
+    assert_eq!(reminder["status"], "ok", "{reminder}");
+    assert_eq!(reminder["result"]["kind"], "reminder");
+    // People change, pause and delete; the agent cannot.
+    let routine = fixture
+        .routine(
+            &fixture.owner,
+            json!({ "name": "Mine", "prompt": "list projects", "schedule": "0 9 * * 1-5" }),
+        )
+        .await
+        .1;
+    let id = routine["id"].as_str().unwrap();
     for method in ["PATCH", "DELETE"] {
         let (status, _) = fixture
             .request(
@@ -574,16 +640,142 @@ async fn agent_sessions_only_list_and_create() {
             .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{method}");
     }
-    let (status, value) = fixture
+    // Only in a thread whose run the caller drives.
+    let (status, _) = fixture
         .request(
             "POST",
-            &format!("{base}/scheduled-messages"),
+            &format!("{base}/agent-tools/scheduled"),
             ("authorization", &bearer),
-            // A local time without an offset: the driver's zone (UTC here).
-            Some(json!({ "kind": "reminder", "body": "Call Ana", "send_at": &chrono_like(now() + 24 * HOUR)[..16] })),
+            Some(json!({ "tool": "remind_me", "arguments": { "body": "x", "send_at": chrono_like(now() + HOUR) }, "conversation_id": Id::new_v7().to_string(), "root_message_id": null })),
         )
         .await;
-    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn a_routine_from_the_agent_needs_the_drivers_yes_to_exactly_it() {
+    let fixture = Fixture::new().await;
+    let (bearer, general) = fixture.agent_run().await;
+    let owner = fixture.owner.id.to_string();
+    let routines = || {
+        fixture.count(
+            "SELECT COUNT(*) FROM agent_routines WHERE creator_id = $1",
+            &owner,
+        )
+    };
+    let args = json!({ "name": "Standup", "prompt": "Summarize #support", "schedule": "0 9 * * 1-5", "time_zone": "Europe/Berlin", "conversation_id": general });
+    let asked = fixture
+        .agent_tool(&bearer, &general, "schedule_routine", args.clone())
+        .await;
+    assert_eq!(asked["status"], "approval_required", "{asked}");
+    let action = asked["action"].as_str().unwrap();
+    for part in [
+        "\"Standup\"",
+        "0 9 * * 1-5",
+        "Europe/Berlin",
+        "#general",
+        "Summarize #support",
+        "first on",
+    ] {
+        assert!(action.contains(part), "{part}: {action}");
+    }
+    assert_eq!(routines().await, 0);
+    // An invalid routine is refused before anyone is asked.
+    let refused = fixture
+        .agent_tool(
+            &bearer,
+            &general,
+            "schedule_routine",
+            json!({ "name": "x", "prompt": "y", "schedule": "* * * * *" }),
+        )
+        .await;
+    assert_eq!(refused["status"], "refused", "{refused}");
+
+    // A "no" does not approve (as for Drive, a yes of someone else does not either: `agent_drive`).
+    fixture.say(&fixture.owner, &general, "no").await;
+    let again = fixture
+        .agent_tool(&bearer, &general, "schedule_routine", args.clone())
+        .await;
+    assert_eq!(again["status"], "approval_required", "{again}");
+    assert_eq!(again["approval_id"], asked["approval_id"]);
+    assert_eq!(routines().await, 0);
+
+    // After the driver's yes, other arguments still need their own approval.
+    fixture.say(&fixture.owner, &general, "yes").await;
+    let mut changed = args.clone();
+    changed["schedule"] = json!("*/15 * * * *");
+    let other = fixture
+        .agent_tool(&bearer, &general, "schedule_routine", changed)
+        .await;
+    assert_eq!(other["status"], "approval_required", "{other}");
+    assert_ne!(other["approval_id"], asked["approval_id"]);
+    assert_eq!(routines().await, 0);
+
+    // The same arguments run once.
+    let made = fixture
+        .agent_tool(&bearer, &general, "schedule_routine", args.clone())
+        .await;
+    assert_eq!(made["status"], "ok", "{made}");
+    assert_eq!(made["result"]["schedule"], "0 9 * * 1-5");
+    assert_eq!(made["result"]["time_zone"], "Europe/Berlin");
+    assert_eq!(routines().await, 1);
+    let next = fixture
+        .agent_tool(&bearer, &general, "schedule_routine", args)
+        .await;
+    assert_eq!(
+        next["status"], "approval_required",
+        "the yes is used up: {next}"
+    );
+    assert_eq!(routines().await, 1);
+}
+
+#[tokio::test]
+async fn a_message_sent_later_by_the_agent_needs_the_drivers_yes_to_exactly_it() {
+    let fixture = Fixture::new().await;
+    let (bearer, general) = fixture.agent_run().await;
+    let owner = fixture.owner.id.to_string();
+    let messages = || {
+        fixture.count(
+            "SELECT COUNT(*) FROM scheduled_messages WHERE author_id = $1 AND kind = 'message'",
+            &owner,
+        )
+    };
+    let at = chrono_like(now() + 2 * HOUR);
+    let args = json!({ "conversation_id": general, "body": "Standup moved to 10", "send_at": at });
+    let asked = fixture
+        .agent_tool(&bearer, &general, "send_later", args.clone())
+        .await;
+    assert_eq!(asked["status"], "approval_required", "{asked}");
+    let action = asked["action"].as_str().unwrap();
+    for part in ["as you", "#general", "Standup moved to 10", "(UTC)"] {
+        assert!(action.contains(part), "{part}: {action}");
+    }
+    assert_eq!(messages().await, 0);
+
+    fixture.say(&fixture.owner, &general, "Yes, send it").await;
+    let mut changed = args.clone();
+    changed["body"] = json!("Standup is cancelled");
+    let other = fixture
+        .agent_tool(&bearer, &general, "send_later", changed)
+        .await;
+    assert_eq!(other["status"], "approval_required", "{other}");
+    assert_eq!(messages().await, 0);
+
+    let made = fixture
+        .agent_tool(&bearer, &general, "send_later", args.clone())
+        .await;
+    assert_eq!(made["status"], "ok", "{made}");
+    assert_eq!(made["result"]["body"], "Standup moved to 10");
+    assert_eq!(made["result"]["conversation_id"], general.as_str());
+    assert_eq!(messages().await, 1);
+    let next = fixture
+        .agent_tool(&bearer, &general, "send_later", args)
+        .await;
+    assert_eq!(
+        next["status"], "approval_required",
+        "the yes is used up: {next}"
+    );
+    assert_eq!(messages().await, 1);
 }
 
 #[tokio::test]

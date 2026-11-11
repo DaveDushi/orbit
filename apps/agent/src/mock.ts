@@ -30,7 +30,7 @@
  * AGENT_MOCK_TOKENS_PER_SECOND slows the streamed text (default 400), to watch a card build.
  *
  * A "yes" to an approval question (an answer, or the driver's next message in a DM) calls the last integration,
- * drive_trash or drive_share tool again with the same arguments.
+ * drive_trash, drive_share, schedule_routine or send_later tool again with the same arguments.
  * When a memory tool result asks for a summary, the mock writes one from the halves it was shown. A compaction gets a
  * short placeholder summary.
  */
@@ -290,7 +290,7 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 		return { name: "use_integration", args: { tool: match[1], arguments: parsed } };
 	}
 	if (/^(?:Answer|Instruction) from [^\n]*\n\s*(yes|approved?)\b/i.test(instruction)) {
-		const again = lastCall(messages, ["use_integration", "drive_trash", "drive_share"]);
+		const again = lastCall(messages, ["use_integration", "drive_trash", "drive_share", "schedule_routine", "send_later"]);
 		if (again) return again;
 	}
 	return undefined;

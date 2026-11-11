@@ -1,19 +1,27 @@
 //! `/api/v1/workspaces/{workspace_id}/routines` and `/scheduled-messages`, for the web app (cookie)
-//! and for the agent (the driver's agent session, which `agent::scope` lets list and create only).
-//! Like the agent's other routes, they are not in the OpenAPI contract.
+//! and for the agent (the driver's agent session, which `agent::scope` lets only list there).
+//! The agent creates through `/agent-tools/scheduled`, in a run of its driver: a reminder (a DM
+//! from the agent to the driver) at once, a routine or a message posted as the driver only after
+//! the driver's "yes" in the thread to exactly that action (`crate::agent::integrations::approve`),
+//! so text in a task, page, file or message cannot make the agent post as them. A routine's later
+//! runs need no new approval. Like the agent's other routes, they are not in the OpenAPI contract.
 
 use axum::extract::{Extension, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
-use axum::routing::{get, patch};
+use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use orbit_platform::{Id, RequestId, TimestampMillis};
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, json};
 
 use super::store::{
     NewRoutine, NewScheduled, RoutineChange, RoutineRecord, ScheduledChange, ScheduledError,
     ScheduledRecord, Store,
 };
 use crate::agent::AgentState;
+use crate::agent::integrations::{
+    Approval, Approves, approve, canonical, driver, hash, require_running, unavailable,
+};
 use crate::task_routes::{ApiError, ApiJson, authenticate_session};
 
 type RequestIdExtension = Option<Extension<RequestId>>;
@@ -37,6 +45,7 @@ pub fn router(state: AgentState) -> Router {
             &format!("{base}/scheduled-messages/{{scheduled_id}}"),
             patch(update_scheduled).delete(delete_scheduled),
         )
+        .route(&format!("{base}/agent-tools/scheduled"), post(agent_call))
         .with_state(state)
 }
 
@@ -287,4 +296,220 @@ async fn delete_scheduled(
         .await
         .map(|()| StatusCode::NO_CONTENT)
         .map_err(|error| failure(error, &uri, &request_id))
+}
+
+// ---------------------------------------------------------------------------------------------
+// The agent
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AgentCall {
+    /// `schedule_routine`, `send_later` or `remind_me`.
+    tool: String,
+    #[serde(default)]
+    arguments: Map<String, Value>,
+    /// The thread of the run: approvals belong to it.
+    conversation_id: String,
+    root_message_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MessageArgs {
+    conversation_id: Id,
+    body: String,
+    send_at: String,
+    #[serde(default)]
+    time_zone: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReminderArgs {
+    body: String,
+    send_at: String,
+    #[serde(default)]
+    time_zone: Option<String>,
+}
+
+fn refused(detail: &str) -> Json<Value> {
+    Json(json!({ "status": "refused", "detail": detail }))
+}
+
+/// A store error as the agent reads it; only a database error is an HTTP error.
+fn refusal(
+    error: ScheduledError,
+    uri: &Uri,
+    request_id: &RequestIdExtension,
+) -> Result<Json<Value>, ApiError> {
+    match error {
+        ScheduledError::Database(_) => Err(failure(error, uri, request_id)),
+        ScheduledError::NotFound => Ok(refused("Not found.")),
+        ScheduledError::AgentOff => Ok(refused("The agent is not set up on this server.")),
+        other => Ok(refused(&other.to_string())),
+    }
+}
+
+fn created(label: &str, record: impl Serialize) -> Json<Value> {
+    Json(json!({ "status": "ok", "label": label, "result": record }))
+}
+
+/// `None` when the driver approved exactly `input` for `tool` in this thread (the approval is now
+/// used); else the question to ask them.
+async fn approval_question(
+    state: &AgentState,
+    (workspace_id, user_id): (Id, Id),
+    thread: (&str, Option<&str>),
+    tool: &str,
+    action: String,
+    input: &impl Serialize,
+    (uri, request_id): (&Uri, &RequestIdExtension),
+) -> Result<Option<Json<Value>>, ApiError> {
+    let input = serde_json::to_value(input).unwrap_or(Value::Null);
+    let workspace = workspace_id.to_string();
+    let approval = approve(
+        state.database(),
+        Approves::Scheduled(&workspace),
+        user_id,
+        thread,
+        tool,
+        &hash(&canonical(&input)),
+    )
+    .await
+    .map_err(unavailable(uri, request_id))?;
+    Ok(match approval {
+        Approval::Granted { .. } => None,
+        Approval::Needed { id, expires_at } => Some(Json(json!({
+            "status": "approval_required",
+            "approval_id": id,
+            "action": action,
+            "expires_at": expires_at,
+        }))),
+    })
+}
+
+async fn agent_call(
+    State(state): State<AgentState>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+    Json(body): Json<AgentCall>,
+) -> Result<Json<Value>, ApiError> {
+    let (user_id, workspace_id, _role) =
+        driver(&state, &headers, &workspace_id, &uri, &request_id).await?;
+    let thread = (
+        body.conversation_id.as_str(),
+        body.root_message_id.as_deref(),
+    );
+    require_running(
+        state.database(),
+        (workspace_id, user_id),
+        thread,
+        &uri,
+        &request_id,
+    )
+    .await?;
+    let store = store(&state);
+    let now = TimestampMillis::now();
+    let caller = (workspace_id, user_id);
+    let arguments = Value::Object(body.arguments);
+    match body.tool.as_str() {
+        // Only for the driver, from the agent: nobody else reads it.
+        "remind_me" => {
+            let Ok(args) = serde_json::from_value::<ReminderArgs>(arguments) else {
+                return Ok(refused("Give body, send_at and time_zone only."));
+            };
+            let input = NewScheduled {
+                kind: "reminder".to_owned(),
+                conversation_id: None,
+                body: args.body,
+                send_at: args.send_at,
+                time_zone: args.time_zone,
+            };
+            match store
+                .create_scheduled(workspace_id, user_id, input, now)
+                .await
+            {
+                Ok(record) => Ok(created("reminder scheduled", record)),
+                Err(error) => refusal(error, &uri, &request_id),
+            }
+        }
+        "send_later" => {
+            let Ok(args) = serde_json::from_value::<MessageArgs>(arguments) else {
+                return Ok(refused(
+                    "Give conversation_id, body, send_at and time_zone only.",
+                ));
+            };
+            let input = NewScheduled {
+                kind: "message".to_owned(),
+                conversation_id: Some(args.conversation_id),
+                body: args.body,
+                send_at: args.send_at,
+                time_zone: args.time_zone,
+            };
+            let preview = match store
+                .preview_message(workspace_id, user_id, input, now)
+                .await
+            {
+                Ok(preview) => preview,
+                Err(error) => return refusal(error, &uri, &request_id),
+            };
+            if let Some(question) = approval_question(
+                &state,
+                caller,
+                thread,
+                "send_later",
+                preview.action,
+                &preview.input,
+                (&uri, &request_id),
+            )
+            .await?
+            {
+                return Ok(question);
+            }
+            match store
+                .create_scheduled(workspace_id, user_id, preview.input, now)
+                .await
+            {
+                Ok(record) => Ok(created("message scheduled", record)),
+                Err(error) => refusal(error, &uri, &request_id),
+            }
+        }
+        "schedule_routine" => {
+            let Ok(input) = serde_json::from_value::<NewRoutine>(arguments) else {
+                return Ok(refused(
+                    "Give name, prompt, schedule, time_zone and conversation_id only.",
+                ));
+            };
+            let preview = match store
+                .preview_routine(workspace_id, user_id, input, now)
+                .await
+            {
+                Ok(preview) => preview,
+                Err(error) => return refusal(error, &uri, &request_id),
+            };
+            if let Some(question) = approval_question(
+                &state,
+                caller,
+                thread,
+                "schedule_routine",
+                preview.action,
+                &preview.input,
+                (&uri, &request_id),
+            )
+            .await?
+            {
+                return Ok(question);
+            }
+            match store
+                .create_routine(&state.chat, workspace_id, user_id, preview.input, now)
+                .await
+            {
+                Ok(record) => Ok(created("routine created", record)),
+                Err(error) => refusal(error, &uri, &request_id),
+            }
+        }
+        _ => Ok(refused("Unknown tool.")),
+    }
 }

@@ -219,10 +219,17 @@ docs: `docs/agent.md`, "Routines, reminders and send later".
 - **R3. Exactly once.** Claim = compare-and-set on `next_run_at` in an `immediate_transaction`; posting uses
   `pending_run_id` as nonce and input id (both idempotent); a pending run older than 30 s is finished by any server.
   Messages: nonce `scheduled:<id>`, then the row is deleted.
-- **R4. Injection.** A prompt-injected run could create a routine (the driver's permissions, the limits, visible in
-  the thread and the Routines page) or a send-later message as the driver. The prompt says to create them only when the
-  driver asks; agent sessions cannot change, pause or delete them. Open: an approval step like Drive's for
-  `send_later` to another conversation, if this proves risky.
+- **R4. Injection.** A prompt-injected run could try to create a routine or a send-later message, which post as the
+  driver. Orbit enforces the driver's approval, as for `drive_trash`: agent sessions cannot `POST /routines` or
+  `/scheduled-messages` (`agent::scope`); they create only through `POST /agent-tools/scheduled` in a run of the
+  driver (`scheduled::routes::agent_call`). `schedule_routine` and `send_later` are checked first (the same checks as
+  when saved), then need the driver's "yes" in the thread to the exact action (`integrations::approve`, rows in
+  `agent_drive_approvals` with these tool names): the card shows the text or instruction, where it posts, and the
+  time or the schedule, time zone and first run. The approval is bound to the hash of the saved input (cleaned text,
+  time zone, UTC time or normalized cron, conversation), so changed arguments need a new approval, and one yes
+  creates once. `remind_me` (a DM from the agent to the driver only) needs no approval. A routine's later runs need
+  none either (the creator approved it); writes in a run keep their own approvals. Agent sessions cannot change,
+  pause or delete routines or scheduled messages.
 
 ## Memory
 

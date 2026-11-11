@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 // The SELECT prefixes are constants: no input reaches the SQL text.
 use sqlx::{AnyConnection, AssertSqlSafe};
 
-use super::schedule::{RoutineSchedule, parse_time, time_zone};
+use super::schedule::{RoutineSchedule, local_time, parse_time, time_zone};
 use crate::agent::inputs::bot_user_id;
 use crate::chat_routes::ChatState;
 use crate::repositories::membership;
@@ -243,7 +243,7 @@ pub struct RoutineRecord {
     pub can_stop: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NewRoutine {
     pub name: String,
@@ -352,6 +352,45 @@ async fn agent_dm(
     Ok(written.value.id)
 }
 
+/// Where a routine or a message posts, as the driver reads it in an approval question.
+async fn place(
+    conn: &mut AnyConnection,
+    user_id: Id,
+    conversation_id: Id,
+) -> Result<String, sqlx::Error> {
+    let row = sqlx::query("SELECT kind, name FROM chat_conversations WHERE id = $1")
+        .bind(conversation_id.to_string())
+        .fetch_optional(&mut *conn)
+        .await?;
+    let Some(row) = row else {
+        return Ok(format!("conversation {conversation_id}"));
+    };
+    if row.get::<String, _>("kind") != "dm" {
+        let name: Option<String> = row.get("name");
+        return Ok(format!("#{}", name.unwrap_or_default()));
+    }
+    let others: Vec<String> = sqlx::query_scalar(
+        "SELECT u.display_name FROM chat_members m JOIN users u ON u.id = m.user_id \
+         WHERE m.conversation_id = $1 AND m.user_id <> $2 ORDER BY u.display_name",
+    )
+    .bind(conversation_id.to_string())
+    .bind(user_id.to_string())
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(if others.is_empty() {
+        "your own DM".to_owned()
+    } else {
+        format!("the DM with {}", others.join(", "))
+    })
+}
+
+/// What the driver approves before the agent makes a routine or a scheduled message: the action
+/// in words, and the input exactly as it will be saved (the approval is bound to its hash).
+pub struct Preview<T> {
+    pub action: String,
+    pub input: T,
+}
+
 pub struct Store {
     database: Database,
 }
@@ -449,6 +488,59 @@ impl Store {
         let routine = load_routine(&mut tx, workspace_id, id, actor).await?;
         tx.commit().await?;
         Ok(routine)
+    }
+
+    /// The checks of [`Self::create_routine`] (but the limit) without saving, for the agent's
+    /// approval question. The input has the time zone and the cleaned values filled in.
+    pub async fn preview_routine(
+        &self,
+        workspace_id: Id,
+        user_id: Id,
+        input: NewRoutine,
+        now: TimestampMillis,
+    ) -> Result<Preview<NewRoutine>, ScheduledError> {
+        let name = clean_name(&input.name)?;
+        let prompt = clean_prompt(&input.prompt)?;
+        let mut conn = self.database.pool().acquire().await?;
+        member(&mut conn, workspace_id, user_id).await?;
+        let agent = bot_user_id(&mut conn)
+            .await?
+            .ok_or(ScheduledError::AgentOff)?;
+        let zone = match input.time_zone.filter(|zone| !zone.trim().is_empty()) {
+            Some(zone) => zone.trim().to_owned(),
+            None => profile_zone(&mut conn, user_id).await?,
+        };
+        let (expression, schedule) = checked_schedule(&input.schedule, &zone, now.as_millis())?;
+        let target = match input.conversation_id {
+            Some(conversation) => {
+                if let Some(problem) =
+                    target_problem(&mut conn, workspace_id, user_id, conversation, Some(agent))
+                        .await?
+                {
+                    return Err(ScheduledError::Invalid(problem.detail()));
+                }
+                place(&mut conn, user_id, conversation).await?
+            }
+            None => "your DM with the agent".to_owned(),
+        };
+        let next = schedule
+            .next_after(now.as_millis())
+            .map_or_else(String::new, |next| {
+                format!(", first on {}", local_time(next, &zone))
+            });
+        Ok(Preview {
+            action: format!(
+                "New routine \"{name}\": as you, on the schedule `{expression}` ({zone}{next}), \
+                 the agent does this and posts the result in {target}:\n\n{prompt}"
+            ),
+            input: NewRoutine {
+                name,
+                prompt,
+                schedule: expression,
+                time_zone: Some(zone),
+                conversation_id: input.conversation_id,
+            },
+        })
     }
 
     pub async fn update_routine(
@@ -680,6 +772,55 @@ impl Store {
         Ok(record)
     }
 
+    /// The checks of [`Self::create_scheduled`] for a message (but the limit) without saving, for
+    /// the agent's approval question. The input has the time as UTC and the time zone filled in.
+    pub async fn preview_message(
+        &self,
+        workspace_id: Id,
+        user_id: Id,
+        input: NewScheduled,
+        now: TimestampMillis,
+    ) -> Result<Preview<NewScheduled>, ScheduledError> {
+        let body = clean_text(
+            &input.body,
+            BODY_MAX_CHARS,
+            "Write the message.",
+            "The message can have at most 4,000 characters.",
+        )?;
+        let mut conn = self.database.pool().acquire().await?;
+        member(&mut conn, workspace_id, user_id).await?;
+        let zone = match input.time_zone.filter(|zone| !zone.trim().is_empty()) {
+            Some(zone) => zone,
+            None => profile_zone(&mut conn, user_id).await?,
+        };
+        let send_at = checked_send_at(&input.send_at, &zone, now)?;
+        let conversation = input.conversation_id.ok_or(ScheduledError::Invalid(
+            "Pick the conversation for the message.",
+        ))?;
+        if let Some(problem) =
+            target_problem(&mut conn, workspace_id, user_id, conversation, None).await?
+        {
+            return Err(ScheduledError::Invalid(problem.detail()));
+        }
+        let target = place(&mut conn, user_id, conversation).await?;
+        let utc = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(send_at)
+            .ok_or(ScheduledError::Invalid("Pick a time within one year."))?
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        Ok(Preview {
+            action: format!(
+                "Send later: post this message as you in {target} on {}:\n\n{body}",
+                local_time(send_at, &zone)
+            ),
+            input: NewScheduled {
+                kind: "message".to_owned(),
+                conversation_id: Some(conversation),
+                body,
+                send_at: utc,
+                time_zone: Some(zone),
+            },
+        })
+    }
+
     /// A new text or time. A failed message is scheduled again with it.
     pub async fn update_scheduled(
         &self,
@@ -786,7 +927,7 @@ pub struct ScheduledRecord {
     pub updated_at: i64,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NewScheduled {
     /// `message` or `reminder`.

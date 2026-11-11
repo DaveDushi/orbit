@@ -85,7 +85,8 @@ reasons: `.ai/agent-design.md`.
 
 - **Routines.** A member asks the agent in chat for a recurring job ("every weekday at 9, summarize yesterday's
   #support messages here"). The agent turns the words into a 5-field cron expression (`0 9 * * 1-5`) and calls
-  `schedule_routine`. The time zone is the creator's profile zone unless they name another (a time inside a clock
+  `schedule_routine`. Orbit then asks the creator to approve the routine in the thread (name, instruction, where it
+  posts, schedule, time zone and first run); the routine is made only after their **yes**. The time zone is the creator's profile zone unless they name another (a time inside a clock
   change that skips it does not run that day; a time that happens twice runs once). Each run is a normal agent run
   **driven by the creator**: their permissions, their ChatGPT account, and the same write approvals as chat. Orbit
   posts the run's message as the agent in the chosen conversation; the answer replaces it, and questions and approval
@@ -95,7 +96,8 @@ reasons: `.ai/agent-design.md`.
   default the creator's DM with it). **Settings → Agentic → Routines** lists them with the schedule, the next run,
   the last run and its status: pause, resume, edit (name, instruction, schedule, time zone, target) and delete. The
   creator does everything; owners and admins (`routines.manage`) see every routine of the workspace and may pause and
-  delete, but not edit or resume someone else's. Agent sessions may only list and create (`agent::scope`).
+  delete, but not edit or resume someone else's. Agent sessions may only list, and create through
+  `/agent-tools/scheduled` (`agent::scope`).
 - **Pauses.** Before each run Orbit checks the creator: still an active member, not a guest, still in the target
   conversation, the channel not archived or deleted, the agent still in the workspace. If not, the routine pauses with
   that reason (no retry loop). Without a ChatGPT connection the run is skipped (`last_error`) and the next one waits.
@@ -106,7 +108,8 @@ reasons: `.ai/agent-design.md`.
 - **Send later.** In the composer, the arrow next to Send → **Send later…** (in an hour, tomorrow at 9:00, Monday at
   9:00, or a date and time). The message (text only) is posted **as the person** through the normal chat send at that
   time. **Scheduled messages** (the same menu, or the bar above the composer) lists the person's messages and
-  reminders to edit the text or time, or cancel. The agent can schedule one (`send_later`) when asked. A message that
+  reminders to edit the text or time, or cancel. The agent can schedule one (`send_later`) when asked, only after the person's **yes** to an approval card
+  that shows the text, where it posts and when. A reminder (`remind_me`) needs no approval. A message that
   cannot be posted any more (the person left the channel, it was archived) stays in the list as not sent with the
   reason. At most 100 waiting messages and reminders per person, up to one year ahead.
 - **Guests** cannot use routines, reminders or send later.

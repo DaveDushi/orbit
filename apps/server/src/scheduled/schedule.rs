@@ -152,6 +152,21 @@ fn standard_weekdays(field: &str) -> Option<String> {
     Some(parts.join(","))
 }
 
+/// `ms` as a person reads it in `zone`: `Wed 11 Nov 2026, 17:00 (Europe/Berlin)`.
+#[must_use]
+pub fn local_time(ms: i64, zone: &str) -> String {
+    let Some(time) = DateTime::<Utc>::from_timestamp_millis(ms) else {
+        return ms.to_string();
+    };
+    match time_zone(zone) {
+        Ok(tz) => format!(
+            "{} ({zone})",
+            time.with_timezone(&tz).format("%a %-d %b %Y, %H:%M")
+        ),
+        Err(_) => format!("{} (UTC)", time.format("%a %-d %b %Y, %H:%M")),
+    }
+}
+
 /// A time that a person or the agent wrote: RFC 3339 with an offset (`2026-11-11T17:00:00+02:00`,
 /// `…Z`), or a local time without one (`2026-11-11T17:00`, `2026-11-11 17:00:00`) in `zone`. A
 /// local time that a clock change skips is refused; one that happens twice means the first.
