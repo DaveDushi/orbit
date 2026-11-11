@@ -34,6 +34,13 @@ export interface Routine {
   last_error: string | null
   created_at: number
   updated_at: number
+  /** The saved script it runs on each run; `null`: only its instruction. */
+  script_id: string | null
+  script_name: string | null
+  /** The script's code hash now. */
+  script_hash: string | null
+  /** The creator approved the script's current code: its runs may write. While `false`, script runs write nothing. */
+  script_approved: boolean
   /** The caller may change it and resume it (only its creator). */
   can_edit: boolean
   /** The caller may pause and delete it (its creator, owners and admins). */
@@ -49,6 +56,65 @@ export interface RoutineChange {
   /** Another agent of the workspace runs it. */
   agent_user_id?: string
   status?: 'active' | 'paused'
+  /** One of the creator's saved scripts, or `''` for none. Another script needs its own approval. */
+  script_id?: string
+  /** Approves the routine's script at exactly this code hash (refused when the script changed meanwhile). */
+  approve_script_hash?: string
+}
+
+/** One tool call of a routine run; `would_do` is a write that a test run did not make. */
+export interface RoutineRunCall {
+  name: string
+  args: string
+  status: 'ok' | 'error' | 'dry_run'
+  would_do?: string
+}
+
+/** One of a routine's last 20 runs. */
+export interface RoutineRun {
+  id: string
+  routine_id: string
+  /** A test run: in the creator's DM, nothing written. */
+  test: boolean
+  status: 'started' | 'skipped' | 'done' | 'failed'
+  /** `script`: an approved script; `dry`: a test run or a changed script (nothing written). */
+  writes: 'normal' | 'script' | 'dry'
+  conversation_id: string | null
+  message_id: string | null
+  script_name: string | null
+  script_hash: string | null
+  started_at: number
+  finished_at: number | null
+  output: string | null
+  error: string | null
+  tool_calls: RoutineRunCall[]
+}
+
+/** A script an agent saved for a person; a routine can run it. */
+export interface Script {
+  id: string
+  workspace_id: string
+  owner_id: string
+  owner_name: string
+  name: string
+  description: string
+  code: string
+  /** SHA-256 of the code: a routine's write approval is bound to it. */
+  code_hash: string
+  created_at: number
+  updated_at: number
+  /** The routines that run it, and whether their creator approved this exact code. */
+  routines: { id: string; name: string; approved: boolean }[]
+  /** Only its owner changes it. */
+  can_edit: boolean
+  /** Its owner, owners and admins delete it. */
+  can_delete: boolean
+}
+
+export interface ScriptChange {
+  name?: string
+  description?: string
+  code?: string
 }
 
 const routinesUrl = (workspaceId: string) => `/api/v1/workspaces/${workspaceId}/routines`
@@ -65,6 +131,33 @@ export async function updateRoutine(client: Client, workspaceId: string, id: str
 
 export async function deleteRoutine(client: Client, workspaceId: string, id: string): Promise<void> {
   await client.delete({ url: `${routinesUrl(workspaceId)}/${id}`, throwOnError: true })
+}
+
+/** Runs the routine now as a test run (its creator only): the result comes in their DM with the agent. */
+export async function testRoutine(client: Client, workspaceId: string, id: string): Promise<RoutineRun> {
+  const { data } = await client.post({ url: `${routinesUrl(workspaceId)}/${id}/test`, throwOnError: true })
+  return data as RoutineRun
+}
+
+export async function listRoutineRuns(client: Client, workspaceId: string, id: string): Promise<RoutineRun[]> {
+  const { data } = await client.get({ url: `${routinesUrl(workspaceId)}/${id}/runs`, throwOnError: true })
+  return (data as { runs: RoutineRun[] }).runs
+}
+
+const scriptsUrl = (workspaceId: string) => `/api/v1/workspaces/${workspaceId}/scripts`
+
+export async function listScripts(client: Client, workspaceId: string): Promise<Script[]> {
+  const { data } = await client.get({ url: scriptsUrl(workspaceId), throwOnError: true })
+  return (data as { scripts: Script[] }).scripts
+}
+
+export async function updateScript(client: Client, workspaceId: string, id: string, change: ScriptChange): Promise<Script> {
+  const { data } = await client.patch({ url: `${scriptsUrl(workspaceId)}/${id}`, body: change, headers: json, throwOnError: true })
+  return data as Script
+}
+
+export async function deleteScript(client: Client, workspaceId: string, id: string): Promise<void> {
+  await client.delete({ url: `${scriptsUrl(workspaceId)}/${id}`, throwOnError: true })
 }
 
 /** A message posted as its author later (`message`), or a reminder from the agent in the author's DM with it. */

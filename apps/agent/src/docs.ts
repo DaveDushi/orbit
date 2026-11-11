@@ -11,6 +11,23 @@ export type RunState = {
 	title?: string | null;
 };
 
+/** A routine run (Orbit's `agent_routine_runs`): what it may write, and the saved script it runs. */
+export type RoutineRunState = {
+	runId: string;
+	routineName: string;
+	/** A test run: in the creator's DM, nothing written (Orbit refuses the writes). */
+	test: boolean;
+	/** `normal`, `script` or `dry`, as Orbit decided (and enforces). */
+	writes: string;
+	/** The exact code Orbit stored with the run; `run_saved_script` runs only this. */
+	script: { name: string; code: string; hash: string } | null;
+	/** The end of the run was reported to Orbit. */
+	reported: boolean;
+};
+
+/** One tool call of a routine run, for its history. `would_do`: a write a dry run did not make. */
+export type RunCall = { name: string; args: string; status: "ok" | "error" | "dry_run"; would_do?: string };
+
 /**
  * One Orbit chat thread's agent state, kept in its Pi conversation. Tools read the driver from here, so a
  * tool always acts as the person whose run it is in.
@@ -47,6 +64,10 @@ export type ThreadState = {
 	integrations?: string | null;
 	/** Summaries Orbit asked this thread's runs to write: `scope:lo-hi` → claim. */
 	claims?: Record<string, string>;
+	/** The routine run the current run is; `null` or absent: a chat run. */
+	routineRun?: RoutineRunState | null;
+	/** The tool calls of the current routine run (scripts' calls included), oldest first. */
+	runCalls?: RunCall[];
 };
 
 export const ThreadDoc = defineDoc<ThreadState>({

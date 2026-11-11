@@ -673,3 +673,93 @@ test("cards: the card builds live in the progress edits, a bad card leaves the t
 		orbit.server.close();
 	}
 });
+
+/** Orbit with routine runs: a dry run's session gets 409 `agent_dry_run` for a write, as Orbit's scope layer answers. */
+class RoutineOrbit extends FakeOrbit {
+	/** Sessions issued for these threads are dry runs. */
+	readonly dryThreads = new Set<string>();
+	readonly sessionThreads: (string | undefined)[] = [];
+	readonly reports = new Map<string, any>();
+
+	async route(method: string, url: string, headers: Record<string, unknown>, body: any): Promise<[number, unknown]> {
+		const path = url.split("?")[0];
+		if (path === "/api/internal/agent/sessions") {
+			this.sessionThreads.push(body.thread_key);
+			const [status, value] = await super.route(method, url, headers, body);
+			// The token says whether the session is a dry run.
+			return status === 200 && this.dryThreads.has(body.thread_key) ? [200, { ...(value as object), token: `orbit-agent.${body.user_id}.dry` }] : [status, value];
+		}
+		const run = /^\/api\/internal\/agent\/routine-runs\/(.+)$/.exec(path);
+		if (run && method === "PUT") {
+			this.reports.set(run[1], body);
+			return [204, undefined];
+		}
+		const dry = String(headers.authorization ?? "").endsWith(".dry");
+		const headersOf = dry ? { ...headers, authorization: String(headers.authorization).replace(/\.dry$/, "") } : headers;
+		if (dry && method !== "GET") {
+			this.calls.push({ method, path: path.slice(`/api/v1/workspaces/${WS}`.length), as: "dry" });
+			return [409, { code: "agent_dry_run", detail: "Test run: Orbit did not do this write." }];
+		}
+		return super.route(method, url, headersOf, body);
+	}
+}
+
+test("code mode: a script calls only the agent's own tools, as the driver", async () => {
+	const orbit = new RoutineOrbit();
+	current = orbit;
+	await orbit.listen();
+	const agent = new Agent(config(orbit, mkdtempSync(join(tmpdir(), "agent-"))), new OrbitClient(config(orbit, "")));
+	await agent.open();
+	await agent.start();
+	try {
+		const thread = id();
+		const code = 'const found = await tools.search_tasks({});\ntext("read " + found.length);\ntry { await tools.create_task({ title: "Sneaky" }); } catch (error) { text("refused: " + error.message); }';
+		const agentCard = { user_id: "0199c3a0-0000-7000-8000-0000000000c1", name: "Reader", instructions: "", tools: ["search_tasks"], model: null, thinking: null };
+		const run = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> run code:\n${code}`, agent: agentCard });
+		await until("the script's answer", () => progressOf(orbit, run).startsWith("Done (codemode)"));
+		const answer = progressOf(orbit, run);
+		assert.match(answer, /read \d+/);
+		assert.match(answer, /refused:/);
+		// The script read as Ann, and its write of a tool this agent does not have never reached Orbit.
+		assert.ok(orbit.calls.some((call) => call.method === "GET" && call.path === "/tasks" && call.as === ANN));
+		assert.equal(orbit.calls.filter((call) => call.method === "POST").length, 0);
+	} finally {
+		await agent.stop();
+		orbit.server.close();
+	}
+});
+
+test("a test run of a saved script writes nothing, lists what it would do, and reports its calls", async () => {
+	const orbit = new RoutineOrbit();
+	current = orbit;
+	await orbit.listen();
+	const agent = new Agent(config(orbit, mkdtempSync(join(tmpdir(), "agent-"))), new OrbitClient(config(orbit, "")));
+	await agent.open();
+	await agent.start();
+	try {
+		const thread = id();
+		orbit.dryThreads.add(thread);
+		const code = 'const runs = (load("runs") ?? 0) + 1;\nstore("runs", runs);\nawait tools.search_tasks({});\nawait tools.create_task({ title: "Digest " + runs });\ntext("digest " + runs);';
+		const routine = { id: id(), name: "Digest", schedule: "0 9 * * 1-5", time_zone: "UTC", test: true, writes: "dry", script: { id: id(), name: "Digest script", code, hash: "abc" }, state: { runs: 2 } };
+		const run = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: "Post the digest.", routine });
+		await until("the report", () => orbit.reports.has(run));
+		const answer = progressOf(orbit, run);
+		assert.match(answer, /^🧪 \*\*Test run\*\* · 🔁 \*\*Digest\*\*/);
+		assert.match(answer, /digest 3/);
+		assert.match(answer, /\*\*Would do\*\* \(test run: not done\):\n- create_task \{"title":"Digest 3"\}/);
+		// The write reached Orbit only as a dry run's request, which Orbit refused.
+		assert.deepEqual(orbit.calls.filter((call) => call.method === "POST"), [{ method: "POST", path: "/tasks", as: "dry" }]);
+		assert.ok(orbit.sessionThreads.includes(thread));
+		const report = orbit.reports.get(run);
+		assert.equal(report.status, "done");
+		assert.deepEqual(
+			report.tool_calls.map((call: { name: string; status: string }) => `${call.name}:${call.status}`),
+			["search_tasks:ok", "create_task:dry_run"],
+		);
+		// The script's state goes back to Orbit, which keeps it only for runs that may write.
+		assert.deepEqual(report.state, { runs: 3 });
+	} finally {
+		await agent.stop();
+		orbit.server.close();
+	}
+});

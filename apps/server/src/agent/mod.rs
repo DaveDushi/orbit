@@ -15,7 +15,7 @@ mod memory_routes;
 mod oauth;
 mod outbound;
 pub mod profiles;
-mod routes;
+pub(crate) mod routes;
 pub mod scope;
 pub(crate) mod sessions;
 pub mod settings;

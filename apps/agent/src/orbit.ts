@@ -79,6 +79,23 @@ export type RoutineRun = {
 	/** 5-field cron. */
 	readonly schedule: string;
 	readonly time_zone: string;
+	/** A test run: in the creator's DM, nothing written. Absent from an older Orbit. */
+	readonly test?: boolean;
+	/** `normal`, `script` or `dry`: what the run may write (Orbit enforces it). */
+	readonly writes?: string;
+	/** The saved script the run runs, exactly as it was when the run started. */
+	readonly script?: { readonly id: string; readonly name: string; readonly code: string; readonly hash: string } | null;
+	/** The script's `store()` values from the routine's last run. */
+	readonly state?: Record<string, unknown> | null;
+};
+
+/** The end of a routine run, for its history in Orbit. */
+export type RunReport = {
+	readonly status: "done" | "failed";
+	readonly output?: string;
+	readonly error?: string;
+	readonly tool_calls: readonly { name: string; args: string; status: string; would_do?: string }[];
+	readonly state?: Record<string, unknown> | null;
 };
 
 /** What Orbit stored for a click or form send on the agent's card: the card's own data, and the form values. */
@@ -204,11 +221,22 @@ export class OrbitClient {
 		await this.internal("POST", `/credentials/${userId}/invalid`);
 	}
 
-	async #session(userId: string, workspaceId: string, agentUserId: string | null, fresh: boolean): Promise<string> {
-		const key = `${userId}:${workspaceId}:${agentUserId ?? ""}`;
+	/** Records the end of a routine run; a second report of the same run changes nothing. */
+	async finishRoutineRun(runId: string, report: RunReport): Promise<void> {
+		await this.internal("PUT", `/routine-runs/${runId}`, report);
+	}
+
+	async #session(userId: string, workspaceId: string, agentUserId: string | null, threadKey: string | null, fresh: boolean): Promise<string> {
+		// Per thread: a test run's thread gets a session whose writes Orbit refuses.
+		const key = `${userId}:${workspaceId}:${agentUserId ?? ""}:${threadKey ?? ""}`;
 		const cached = this.#sessions.get(key);
 		if (!fresh && cached && cached.expiresAt - Date.now() > 60_000) return cached.token;
-		const issued = (await this.internal("POST", "/sessions", { user_id: userId, workspace_id: workspaceId, ...(agentUserId ? { agent_user_id: agentUserId } : {}) })) as {
+		const issued = (await this.internal("POST", "/sessions", {
+			user_id: userId,
+			workspace_id: workspaceId,
+			...(agentUserId ? { agent_user_id: agentUserId } : {}),
+			...(threadKey ? { thread_key: threadKey } : {}),
+		})) as {
 			token: string;
 			expires_at: number;
 		};
@@ -219,14 +247,14 @@ export class OrbitClient {
 	/**
 	 * Orbit's public API as `userId`, below `/api/v1/workspaces/{workspaceId}`. Everything the person cannot do
 	 * fails here, exactly as in their browser. `agentUserId`: a custom agent's session, which Orbit limits to the
-	 * routes of its tools.
+	 * routes of its tools. `threadKey`: the run's thread, which decides whether Orbit refuses its writes (a test run).
 	 */
-	async asUser(userId: string, workspaceId: string, method: string, path: string, body?: unknown, agentUserId: string | null = null): Promise<unknown> {
+	async asUser(userId: string, workspaceId: string, method: string, path: string, body?: unknown, agentUserId: string | null = null, threadKey: string | null = null): Promise<unknown> {
 		const call = async (fresh: boolean) =>
 			this.#fetch(
 				method,
 				`/api/v1/workspaces/${workspaceId}${path}`,
-				{ authorization: `Bearer ${await this.#session(userId, workspaceId, agentUserId, fresh)}` },
+				{ authorization: `Bearer ${await this.#session(userId, workspaceId, agentUserId, threadKey, fresh)}` },
 				body,
 				`${method} ${path}`,
 			);

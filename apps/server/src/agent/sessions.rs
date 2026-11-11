@@ -2,7 +2,7 @@
 //! rows, so the whole API judges them like the person's browser; `agent_sessions` marks them for
 //! the scope layer (`super::scope`).
 
-use orbit_platform::{Database, Id, Row, TimestampMillis, generate_opaque_token};
+use orbit_platform::{Database, Flag, Id, Row, TimestampMillis, generate_opaque_token};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -15,6 +15,8 @@ pub(crate) const LIFETIME_MS: i64 = 15 * 60 * 1_000;
 pub struct IssuedAgentSession {
     pub token: String,
     pub expires_at: i64,
+    /// Orbit refuses this session's writes (a test run).
+    pub dry_run: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -28,12 +30,18 @@ pub enum SessionRefused {
 }
 
 /// A new agent session for `user_id` in `workspace_id`. Only for an active member who drives a
-/// running or waiting agent thread there.
+/// running or waiting agent thread there (`thread_key`: that thread).
+///
+/// The session is a **dry run** (`agent_sessions.dry_run`, see `super::scope`) when its thread is a
+/// routine run that may not write (`agent_routine_runs.writes = 'dry'`: a test run, or a script
+/// changed since its approval). Without `thread_key` (an older sidecar) it is one whenever the
+/// person drives such a run, so a missing thread never turns writes on.
 pub(crate) async fn issue(
     database: &Database,
     user_id: Id,
     workspace_id: Id,
     agent: Option<Id>,
+    thread_key: Option<Id>,
 ) -> Result<IssuedAgentSession, SessionRefused> {
     let now = TimestampMillis::now().as_millis();
     let mut tx = database.immediate_transaction().await?;
@@ -59,18 +67,23 @@ pub(crate) async fn issue(
     {
         return Err(SessionRefused::NoRun);
     }
-    let driving = sqlx::query_scalar::<_, String>(
-        "SELECT thread_key FROM agent_threads WHERE workspace_id = $1 AND driver_user_id = $2 \
-         AND status IN ('running', 'waiting') AND agent_user_id IS NOT DISTINCT FROM $3 LIMIT 1",
+    let driving = sqlx::query(
+        "SELECT t.thread_key, EXISTS (SELECT 1 FROM agent_routine_runs r \
+         WHERE r.thread_key = t.thread_key AND r.writes = 'dry') AS dry \
+         FROM agent_threads t WHERE t.workspace_id = $1 AND t.driver_user_id = $2 \
+         AND t.status IN ('running', 'waiting') AND t.agent_user_id IS NOT DISTINCT FROM $3 \
+         AND ($4 = '' OR t.thread_key = $4)",
     )
     .bind(workspace_id.to_string())
     .bind(user_id.to_string())
     .bind(agent.map(|id| id.to_string()))
-    .fetch_optional(&mut *tx)
+    .bind(thread_key.map(|id| id.to_string()).unwrap_or_default())
+    .fetch_all(&mut *tx)
     .await?;
-    if driving.is_none() {
+    if driving.is_empty() {
         return Err(SessionRefused::NoRun);
     }
+    let dry_run = driving.iter().any(|row| row.get::<Flag, _>("dry").0);
     // Ended agent sessions go here; the session rows go with them (and expire anyway).
     sqlx::query(
         "DELETE FROM sessions WHERE id IN (SELECT session_id FROM agent_sessions WHERE expires_at < $1)",
@@ -94,18 +107,23 @@ pub(crate) async fn issue(
     .execute(&mut *tx)
     .await?;
     sqlx::query(
-        "INSERT INTO agent_sessions (session_id, user_id, workspace_id, expires_at, agent_user_id) \
-         VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO agent_sessions (session_id, user_id, workspace_id, expires_at, agent_user_id, dry_run) \
+         VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(id.to_string())
     .bind(user_id.to_string())
     .bind(workspace_id.to_string())
     .bind(expires_at)
     .bind(agent.map(|id| id.to_string()))
+    .bind(i64::from(dry_run))
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
-    Ok(IssuedAgentSession { token, expires_at })
+    Ok(IssuedAgentSession {
+        token,
+        expires_at,
+        dry_run,
+    })
 }
 
 /// Which agent an agent session belongs to: `None` for a person's session, `Some(None)` for the

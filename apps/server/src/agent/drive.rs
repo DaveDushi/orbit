@@ -49,6 +49,15 @@ const TOOLS: [&str; 8] = [
 ];
 
 /// The sandbox tools ([`media`]).
+/// The Drive tools that change nothing: the only ones a dry run (a routine's test run) runs.
+const READ_TOOLS: [&str; 5] = [
+    "drive_list",
+    "drive_search",
+    "drive_info",
+    "drive_read",
+    "drive_fetch",
+];
+
 const MEDIA_TOOLS: [&str; 4] = [
     "drive_fetch",
     "drive_upload_begin",
@@ -175,6 +184,8 @@ fn describe(tool: &str, detail: &DriveNodeDetail, expires_in_days: Option<i64>) 
     )
 }
 
+// An axum handler: each extractor is one argument.
+#[allow(clippy::too_many_arguments)]
 async fn call(
     State(state): State<AgentState>,
     Path(workspace_id): Path<String>,
@@ -182,6 +193,7 @@ async fn call(
     uri: Uri,
     request_id: RequestIdExtension,
     custom: Option<Extension<super::profiles::AgentTools>>,
+    dry: Option<Extension<super::scope::DryRun>>,
     Json(body): Json<CallBody>,
 ) -> Result<Json<Value>, ApiError> {
     let (user, workspace_id, _role) =
@@ -204,6 +216,13 @@ async fn call(
         return Ok(refused("Drive is not available on this server."));
     };
     let tool = body.tool.as_str();
+    // A test run reads Drive, and only says what it would change.
+    if dry.is_some() && !READ_TOOLS.contains(&tool) {
+        return Ok(Json(json!({
+            "status": "dry_run",
+            "action": format!("Drive: {tool} {}", Value::Object(body.arguments.clone())),
+        })));
+    }
     // `replace` would move the old file to the trash, which needs an approval.
     if tool == "drive_upload_text" && body.arguments.get("on_conflict") == Some(&json!("replace")) {
         return Ok(refused(

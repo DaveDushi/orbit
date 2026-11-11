@@ -50,7 +50,7 @@ pub const MAX_CHANNELS: usize = 100;
 /// The default agent's tools, by group, as the sidecar names them (`apps/agent/src/tools.ts`,
 /// `media.ts`; `apps/agent/test/profiles.test.ts` keeps both lists the same). `true`: the tool
 /// writes or posts.
-pub const TOOL_CATALOG: [(&str, &str, bool); 47] = [
+pub const TOOL_CATALOG: [(&str, &str, bool); 51] = [
     ("list_projects", "Tasks", false),
     ("search_tasks", "Tasks", false),
     ("get_task", "Tasks", false),
@@ -93,6 +93,10 @@ pub const TOOL_CATALOG: [(&str, &str, bool); 47] = [
     ("schedule_routine", "Routines and reminders", true),
     ("remind_me", "Routines and reminders", true),
     ("send_later", "Routines and reminders", true),
+    ("list_scripts", "Routines and reminders", false),
+    ("save_script", "Routines and reminders", true),
+    ("test_routine", "Routines and reminders", true),
+    ("approve_routine_script", "Routines and reminders", true),
     ("use_integration", "Connected services", true),
     ("media_shell", "Media", true),
     ("work_from_drive", "Media", false),
@@ -155,6 +159,15 @@ const CONVERSATION_LIST_TOOLS: &[&str] = &[
     "list_routines",
     "send_later",
 ];
+/// The tools that create through `/agent-tools/scheduled` (each one is checked there).
+const SCHEDULED_ROUTE_TOOLS: &[&str] = &[
+    "schedule_routine",
+    "remind_me",
+    "send_later",
+    "save_script",
+    "test_routine",
+    "approve_routine_script",
+];
 
 /// What a workspace route needs from a custom agent's tools.
 #[derive(Debug, Eq, PartialEq)]
@@ -212,9 +225,15 @@ pub fn route_need(method: &Method, rest: &str) -> RouteNeed {
         ["agent-tools", "drive"] if method == Method::POST => RouteNeed::Any(DRIVE_ROUTE_TOOLS),
         // The tool itself is checked there (`crate::scheduled`).
         ["agent-tools", "scheduled"] if method == Method::POST => {
-            RouteNeed::Any(&["schedule_routine", "remind_me", "send_later"])
+            RouteNeed::Any(SCHEDULED_ROUTE_TOOLS)
         }
-        ["routines"] if get => RouteNeed::Any(&["schedule_routine", "list_routines"]),
+        ["routines"] if get => RouteNeed::Any(&[
+            "schedule_routine",
+            "list_routines",
+            "test_routine",
+            "approve_routine_script",
+        ]),
+        ["scripts"] if get => RouteNeed::Any(&["list_scripts", "save_script", "schedule_routine"]),
         ["scheduled-messages"] if get => RouteNeed::Any(&["remind_me", "send_later"]),
         _ => RouteNeed::Never,
     }
@@ -1928,7 +1947,7 @@ mod tests {
         assert!(checked_tools(&tools(&["delete_everything"])).is_err());
         assert!(checked_tools(&tools(&[""])).is_err());
         assert_eq!(checked_tools(&[]), Ok(Vec::new()));
-        assert_eq!(tool_catalog().count(), 47);
+        assert_eq!(tool_catalog().count(), 51);
     }
 
     #[test]

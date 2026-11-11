@@ -21,7 +21,10 @@
  *   remove drive file block <block> from page <id|it>
  *   show my open tasks as a table (searches tasks, then answers with text and a ```spec card: table row by row, bar
  *     chart by status, buttons and a "New task" form; sending that form creates the task)
- *   schedule routine "Name" at "cron" to "Instruction" [in #channel]     list routines
+ *   schedule routine "Name" at "cron" to "Instruction" [with script "Script"] [in #channel]     list routines
+ *   run code: <JavaScript>          save script "Name" with code: <JavaScript>          list scripts
+ *   test routine "Name"            approve script of routine "Name"
+ *   (a routine run of a saved script calls run_saved_script)
  *   remind me at <2026-11-11T17:00> "Text"     send later at <2026-11-11T17:00> "Text" [in #channel]
  *   (a routine's scheduled run carries its saved instruction, which these same rules read)
  *   show a broken card (answers with a card that is not in the catalog)
@@ -245,6 +248,11 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 	// The page context is data: only the person's own words are the command.
 	const instruction = message.replace(/\n\nSent from the Ask bar[\s\S]*$/, "");
 	const fromPage = (kind: "task" | "page" | "drive") => (open?.kind === PAGE_KINDS[kind] ? open.id : undefined);
+	// Code first: a script's text may contain the words of other rules.
+	if (/call run_saved_script once/.test(instruction)) return { name: "run_saved_script", args: {} };
+	let code: RegExpExecArray | null;
+	if ((code = /\bsave script "([^"]+)" with code:\s*([\s\S]+)$/i.exec(instruction))) return { name: "save_script", args: { name: code[1], code: code[2].trim() } };
+	if ((code = /\brun code:\s*([\s\S]+)$/i.exec(instruction))) return { name: "codemode", args: { code: code[1].trim() } };
 	const target = (value: string, kind: "task" | "page" | "drive"): string => (/^(it|that|this)$/i.test(value) ? (lastId(messages, kind) ?? fromPage(kind)) : value) ?? value;
 	let match: RegExpExecArray | null;
 	if (/what is (?:this|open|here)/i.test(instruction) && open) {
@@ -276,9 +284,12 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 	if ((match = /share drive (?:file|folder) (\S+)/i.exec(instruction))) return { name: "drive_share", args: { node_id: target(match[1], "drive") } };
 	if ((match = /read (?:page|doc|file) (\S+)/i.exec(instruction))) return { name: "read_page", args: { page_id: target(match[1], "page") } };
 	if ((match = /search tasks "([^"]+)"/i.exec(instruction))) return { name: "search_tasks", args: { query: match[1] } };
-	if ((match = /schedule (?:a )?routine "([^"]+)" at "([^"]+)" to "([^"]+)"(?: in (#[\w-]+(?:\([0-9a-f-]+\))?))?/i.exec(instruction)))
-		return { name: "schedule_routine", args: { name: match[1], cron: match[2], instruction: match[3], ...(match[4] ? { post_in: match[4] } : {}) } };
+	if ((match = /schedule (?:a )?routine "([^"]+)" at "([^"]+)" to "([^"]+)"(?: with script "([^"]+)")?(?: in (#[\w-]+(?:\([0-9a-f-]+\))?))?/i.exec(instruction)))
+		return { name: "schedule_routine", args: { name: match[1], cron: match[2], instruction: match[3], ...(match[4] ? { script: match[4] } : {}), ...(match[5] ? { post_in: match[5] } : {}) } };
 	if (/list (?:my )?routines/i.test(instruction)) return { name: "list_routines", args: {} };
+	if (/list (?:my )?(?:saved )?scripts/i.test(instruction)) return { name: "list_scripts", args: {} };
+	if ((match = /test (?:my )?routine "([^"]+)"/i.exec(instruction))) return { name: "test_routine", args: { routine: match[1] } };
+	if ((match = /approve (?:the )?script of (?:my )?routine "([^"]+)"/i.exec(instruction))) return { name: "approve_routine_script", args: { routine: match[1] } };
 	if ((match = /remind me at (\S+) "([^"]+)"/i.exec(instruction))) return { name: "remind_me", args: { at: match[1], text: match[2] } };
 	if ((match = /send later at (\S+) "([^"]+)"(?: in (#[\w-]+(?:\([0-9a-f-]+\))?))?/i.exec(instruction)))
 		return { name: "send_later", args: { at: match[1], text: match[2], ...(match[3] ? { post_in: match[3] } : {}) } };
@@ -301,7 +312,7 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 		return { name: "use_integration", args: { tool: match[1], arguments: parsed } };
 	}
 	if (/^(?:Answer|Instruction) from [^\n]*\n\s*(yes|approved?)\b/i.test(instruction)) {
-		const again = lastCall(messages, ["use_integration", "drive_trash", "drive_share", "schedule_routine", "send_later"]);
+		const again = lastCall(messages, ["use_integration", "drive_trash", "drive_share", "schedule_routine", "send_later", "approve_routine_script"]);
 		if (again) return again;
 	}
 	return undefined;

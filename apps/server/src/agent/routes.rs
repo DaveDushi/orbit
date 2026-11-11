@@ -237,7 +237,7 @@ async fn sidecar(
 // The sidecar's routes.
 
 /// Constant-time check of the shared secret.
-fn sidecar_only(
+pub(crate) fn sidecar_only(
     state: &AgentState,
     headers: &HeaderMap,
     uri: &Uri,
@@ -659,6 +659,10 @@ struct SessionBody {
     /// A custom agent's session, which reaches only what its tools need; absent: the default agent.
     #[serde(default)]
     agent_user_id: Option<Id>,
+    /// The thread the session works in: a dry-run thread (a test run) gets a session whose writes
+    /// Orbit refuses. Absent (an older sidecar): dry when any thread the person drives is.
+    #[serde(default)]
+    thread_key: Option<Id>,
 }
 
 async fn issue_session(
@@ -674,6 +678,7 @@ async fn issue_session(
         body.user_id,
         body.workspace_id,
         body.agent_user_id,
+        body.thread_key,
     )
     .await
     {

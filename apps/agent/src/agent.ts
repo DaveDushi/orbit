@@ -16,7 +16,10 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 
 import { compactionSettings } from "./compaction.ts";
 import { THINKING, type Config } from "./config.ts";
-import { IndexDoc, ThreadDoc, type ThreadState } from "./docs.ts";
+import { CodemodeStoreDoc } from "@earendil-works/pi-durable/codemode";
+
+import { closeCodemode, RUN_SCRIPT } from "./codemode.ts";
+import { IndexDoc, ThreadDoc, type RunCall, type ThreadState } from "./docs.ts";
 import { withMessageFiles } from "./files.ts";
 import { loadIntegrations } from "./integrations.ts";
 import { loadWake } from "./memory.ts";
@@ -53,14 +56,37 @@ export function clockLine(timeZone: string | null | undefined, now: Date): strin
 	}
 }
 
-/** The line above a routine run's progress and answer. */
+/** The line above a routine run's progress and answer; a test run says so first. */
 export function routineTitle(routine: RoutineRun): string {
-	return `🔁 **${routine.name.replaceAll("*", "").replaceAll("\n", " ")}**`;
+	const name = `🔁 **${routine.name.replaceAll("*", "").replaceAll("\n", " ")}**`;
+	return routine.test ? `🧪 **Test run** · ${name}` : name;
 }
 
-/** A scheduled run: the routine and its creator's saved instruction (their own words, with their permissions only). */
+/**
+ * A routine run: the routine and its creator's saved instruction (their own words, with their permissions only). A
+ * script run says to run the saved script; a test run that nothing is written; a script changed since its approval
+ * that this run writes nothing.
+ */
 export function routineText(routine: RoutineRun, author: string, instruction: string): string {
-	return `Scheduled run of the routine “${routine.name.replaceAll("\n", " ")}” (cron \`${routine.schedule}\`, ${routine.time_zone}) that ${author} (the driver of this run) set up earlier. Do the job now and answer with the result; nobody is waiting to confirm it. Their saved instruction:\n${instruction}`;
+	const name = routine.name.replaceAll("\n", " ");
+	const lines = [`${routine.test ? "Test run" : "Scheduled run"} of the routine “${name}” (cron \`${routine.schedule}\`, ${routine.time_zone}) that ${author} (the driver of this run) set up earlier.`];
+	if (routine.test) {
+		lines.push(`This is a test run, asked for by ${author}: do the whole job as the real run would, but nothing is written or posted (each write comes back as "would do", and Orbit lists those for them). Answer with the result, as the real run would post it.`);
+	}
+	if (routine.script) {
+		lines.push(`This routine runs the saved script “${routine.script.name.replaceAll("\n", " ")}”: call run_saved_script once (you cannot change it), then answer with its result as the instruction below says.`);
+		if (!routine.test && routine.writes === "dry") {
+			lines.push(`The script changed since ${author} approved it, so this run makes no writes. Start your answer with that, and say that they can approve the new version in Settings → Agentic → Routines, or ask you to.`);
+		}
+	}
+	lines.push(`Do the job now and answer with the result; nobody is waiting to confirm it. Their saved instruction:\n${instruction}`);
+	return lines.join("\n");
+}
+
+/** The "would do" part of a dry run's answer: each write it did not make, in order. */
+export function wouldDoSection(calls: readonly RunCall[] | undefined): string {
+	const lines = (calls ?? []).filter((call) => call.status === "dry_run").map((call) => `- ${(call.would_do ?? call.name).replaceAll("\n", " ").slice(0, 400)}`);
+	return lines.length ? `**Would do** (test run: not done):\n${lines.join("\n")}` : "**Would do:** nothing (this test run made no writes to skip).";
 }
 
 /**
@@ -118,6 +144,12 @@ const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
 	list_routines: () => "Reading routines",
 	remind_me: () => "Setting a reminder",
 	send_later: () => "Scheduling a message",
+	save_script: (args) => `Saving the script “${args.name}”`,
+	list_scripts: () => "Reading scripts",
+	test_routine: (args) => `Starting a test run of “${args.routine}”`,
+	approve_routine_script: (args) => `Asking to approve the script of “${args.routine}”`,
+	codemode: () => "Running a script",
+	run_saved_script: () => "Running the saved script",
 	memory_note: (args) => `Remembering (${args.scope})`,
 	memory_summarize: () => "Summarizing memory",
 	memory_recall: (args) => `Searching memory for “${args.query}”`,
@@ -337,6 +369,7 @@ export class Agent {
 		this.#stopped = true;
 		clearInterval(this.#sandboxSweep);
 		await this.#harness?.close(context);
+		await closeCodemode();
 	}
 
 	async #loop(): Promise<void> {
@@ -542,11 +575,27 @@ export class Agent {
 			doc.agentInstructions = agent?.instructions ?? input.default_agent?.instructions ?? "";
 			doc.allowedTools = agent ? [...agent.tools] : null;
 			doc.teamInstructions = input.team_instructions ?? "";
+			const routine = input.routine ?? null;
+			doc.routineRun = routine
+				? {
+						runId: input.message_id,
+						routineName: routine.name,
+						test: routine.test === true,
+						writes: routine.writes ?? "normal",
+						script: routine.script ? { name: routine.script.name, code: routine.script.code, hash: routine.script.hash } : null,
+						reported: false,
+					}
+				: null;
+			doc.runCalls = [];
+			// A script run starts with the routine's `store()` values, kept from its last run.
+			if (routine?.script) (await tx.doc(CodemodeStoreDoc, conversation.id)).values = (routine.state ?? {}) as Record<string, never>;
 			// Each run takes the model chosen now and the driver's answer level; a run already going keeps its own.
-			// A custom agent is offered only its own tools (Orbit refuses the others too).
+			// A custom agent is offered only its own tools (Orbit refuses the others too). A script run offers only the
+			// saved script, whose calls reach the agent's tools; other runs never offer it.
 			await configure(tx, conversation.id, {
 				...this.#runModel(agent ?? input.default_agent ?? null, input.answer_level),
 				tools: agent ? toolRegistrations(agent.tools, Boolean(this.#sandbox)) : null,
+				modelTools: routine?.script ? [RUN_SCRIPT] : { remove: [RUN_SCRIPT] },
 			});
 		}, context);
 		// Orbit issues agent sessions only to the driver of a running thread: set it before any tool runs.
@@ -554,7 +603,7 @@ export class Agent {
 		const allowed = (tool: string) => !agent || agent.tools.includes(tool);
 		const memory = allowed("memory_recall") || allowed("memory_note") ? await this.#memoryFor({ ...state, conversationMembers: input.conversation_members, driverId, driverName }) : null;
 		const integrations = allowed("use_integration")
-			? await loadIntegrations((method, path) => this.#orbit.asUser(driverId, state.workspaceId, method, path, undefined, state.agentUserId ?? null)).catch((error: unknown) => {
+			? await loadIntegrations((method, path) => this.#orbit.asUser(driverId, state.workspaceId, method, path, undefined, state.agentUserId ?? null, state.threadKey || null)).catch((error: unknown) => {
 					console.warn("agent: reading integration tools failed", String(error));
 					return null;
 				})
@@ -586,7 +635,7 @@ export class Agent {
 	/** The run's memory section, read as the driver. A failure only costs the run its memory. */
 	async #memoryFor(state: ThreadState & { driverId: string }): Promise<string | null> {
 		try {
-			return await loadWake((method, path) => this.#orbit.asUser(state.driverId, state.workspaceId, method, path, undefined, state.agentUserId ?? null), state, this.#config.memoryTokens);
+			return await loadWake((method, path) => this.#orbit.asUser(state.driverId, state.workspaceId, method, path, undefined, state.agentUserId ?? null, state.threadKey || null), state, this.#config.memoryTokens);
 		} catch (error) {
 			console.warn("agent: reading memory failed", String(error));
 			return null;
@@ -630,7 +679,11 @@ export class Agent {
 		}
 		const after = ((await this.#harness.snapshot(ThreadDoc, conversationId, context)) as ThreadState | undefined) ?? state;
 		const people = await this.peopleOf(state.workspaceId);
-		const { body, card } = await this.#answer(conversation, settled, after, progress.steps, people);
+		const answer = await this.#answer(conversation, settled, after, progress.steps, people);
+		const routine = after.routineRun?.reported === false ? after.routineRun : null;
+		// A test run (and a script run that may not write) lists the writes it did not make.
+		const body = routine && routine.writes === "dry" ? `${answer.body}\n\n${wouldDoSection(after.runCalls)}` : answer.body;
+		const card = answer.card;
 		const [first, ...rest] = splitBody(body);
 		if (card === "invalid") {
 			await edit(`${first}\n\n${CARD_FAILED}`);
@@ -648,9 +701,28 @@ export class Agent {
 		for (const [index, chunk] of rest.entries()) {
 			await this.#orbit.postMessage({ workspaceId: state.workspaceId, conversationId: state.conversationId, rootMessageId: state.rootMessageId, body: chunk, nonce: `agent:${run.inputId}:${index + 1}`, agentUserId });
 		}
+		if (routine) await this.#reportRun(conversationId, routine.runId, settled, answer.body, after);
 		await this.#orbit.updateThread(threadKey, this.#threadUpdate(after, after.waitingFor ? "waiting" : "idle", after.driverId, after.waitingFor));
 		await conversation.commit(async (tx) => {
 			(await tx.doc(ThreadDoc, conversationId)).run = null;
+		}, context);
+	}
+
+	/** Reports the end of a routine run to Orbit, for its history; its script's `store()` values go with it. */
+	async #reportRun(conversationId: ConversationId, runId: string, settled: SettledSubmissionRecord, body: string, state: ThreadState): Promise<void> {
+		const failed = settled.status !== "done" || settled.type !== "input";
+		const store = state.routineRun?.script ? await this.#harness.snapshot(CodemodeStoreDoc, conversationId, context) : undefined;
+		await this.#orbit.finishRoutineRun(runId, {
+			status: failed ? "failed" : "done",
+			output: body.slice(0, 4_000),
+			...(failed ? { error: `${settled.reason ?? "stopped"}${settled.detail ? `: ${typeof settled.detail === "string" ? settled.detail : JSON.stringify(settled.detail)}` : ""}`.slice(0, 1_000) } : {}),
+			tool_calls: state.runCalls ?? [],
+			...(store ? { state: store.values as Record<string, unknown> } : {}),
+		});
+		const conversation = await this.#harness.conversation(conversationId, context);
+		await conversation?.commit(async (tx) => {
+			const doc = await tx.doc(ThreadDoc, conversationId);
+			if (doc.routineRun) doc.routineRun.reported = true;
 		}, context);
 	}
 

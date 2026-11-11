@@ -5,8 +5,10 @@
 
 mod routes;
 pub mod runner;
+pub mod runs;
 pub mod schedule;
+pub mod scripts;
 pub mod store;
 
 pub use routes::router;
-pub use runner::{Round, run_due, run_service};
+pub use runner::{Round, run_due, run_service, test_run};

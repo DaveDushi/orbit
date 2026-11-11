@@ -171,13 +171,60 @@ level. An answer to a waiting run uses the driver's level, not the answerer's.
   that shows the text, where it posts and when. A reminder (`remind_me`) needs no approval. A message that
   cannot be posted any more (the person left the channel, it was archived) stays in the list as not sent with the
   reason. At most 100 waiting messages and reminders per person, up to one year ahead.
-- **Guests** cannot use routines, reminders or send later.
+- **Guests** cannot use routines, reminders, send later, scripts or test runs.
 - **How it runs.** Each server runs a loop every 10 seconds (`apps/server/src/scheduled/runner.rs`). A routine run is
   claimed with a compare-and-set on `next_run_at`, which moves to the next run after *now*, so a routine that was due
   while the server was down runs once, and two servers never run it twice. The claim keeps `pending_run_id`, which is
   the nonce of the run's first message and the id of its agent input, so a run that a restart interrupts is finished
   later, never posted twice. Scheduled messages and reminders use the nonce `scheduled:<id>`. Without
   `ORBIT_AGENT_URL`, routines wait (each runs once when the agent is back); send later still works.
+
+## Code mode, saved scripts and test runs
+
+- **Code mode** (every agent, the default agent and custom ones). The `codemode` tool of Pi Durable
+  (`@earendil-works/pi-durable/codemode` 1.4.0 with `@earendil-works/pi-codemode` 1.4.0, `apps/agent/src/codemode.ts`)
+  runs a short JavaScript the model writes, in a QuickJS sandbox: no network, no files, no timers, no modules, 64 MiB
+  heap, 5 minutes. The script's only power is `await tools.<name>(args)`: a nested call of one of **this agent's own
+  tools**. Each nested call goes through the same hook as a call of the model (a custom agent's tool list, the run's
+  `AGENT_MAX_TOOL_CALLS`) and the same Orbit checks (the driver's session and permissions, the agent's connected
+  services, the driver's yes to a write; a write that needs a yes stops at the question). Scripts cannot call
+  `codemode`, `run_saved_script` or `ask_teammate` (`callers: ["model"]`), and `models.*` is off.
+- **Saved scripts** (`agent_scripts`). The agent saves a script for the driver with `save_script` (name, code up to
+  20,000 characters, description); saving under the same name (any case) replaces the code. No approval: saving runs
+  nothing. At most 50 per person per workspace. Settings → Agentic → Routines has a **Scripts** card: the owner views,
+  edits (name, description, code) and deletes; owners and admins see every script and may delete. `list_scripts` lists
+  them. Routes: `GET …/scripts`, `PATCH|DELETE …/scripts/{id}` (agent sessions may only list).
+- **A routine with a script.** `schedule_routine` takes `script` (name or id; only the creator's own). The approval
+  question shows the script's code and version (the first 12 hex digits of its SHA-256), and the yes stores that hash
+  (`agent_routines.script_approved_hash`). Each run then runs **exactly the code stored with the run**
+  (`agent_routine_runs.script_code`, taken when the run is claimed): the model is offered only `run_saved_script`, which
+  takes no arguments, and Orbit grants the run's approval-gated writes (connected services, Drive trash and links)
+  without a new yes, only while that run goes and only for the creator (`scheduled::runs::approved_script_run` in
+  `agent::integrations::approve`). Routines, send later and script approvals always ask. **Any change of the code**
+  (by the agent, or in Settings) changes the hash: until the creator approves the new version (Settings → Agentic →
+  Routines → **Review and approve**, which sends the hash they looked at, or `approve_routine_script` with a yes in
+  chat), its runs are dry runs (below) and say so. Picking another script in the routine's Edit dialog, with its code in
+  view, approves that version. Deleting a script takes its routines back to their instruction.
+- **Script state.** `store(key, value)` / `load(key)` work per routine: a script run starts with the routine's saved
+  values (`agent_routines.script_state`, JSON, at most 64 KiB) and the sidecar reports the new ones at the end. Only a
+  run that may write (an approved script, not a test run) keeps them.
+- **Test runs.** The **Test run** button of a routine (`POST …/routines/{id}/test`, the creator only) or `test_routine`
+  ("test my routine") runs it now as the creator, as a normal run of its script or instruction, but posts **only in the
+  creator's DM with the routine's agent**, under "🧪 Test run · 🔁 <name>". It needs the creator's ChatGPT connection,
+  and one test run of a routine at a time (15 minutes at most). It is a **dry run**, enforced by Orbit, not the prompt:
+  the run's thread is marked (`agent_routine_runs.writes = 'dry'`), its agent sessions are issued with `dry_run`
+  (`agent::sessions::issue`, by the sidecar's `thread_key`; without one, any dry thread of the driver makes the session
+  dry), and the scope layer refuses every write of such a session with `409 agent_dry_run` (`agent::scope::dry_allows`:
+  only GET/HEAD and the three agent tool routes pass). Those routes run reads and answer writes with
+  `{ "status": "dry_run", "action": … }`: integration writes, Drive changes, and every scheduling tool (reminders, send
+  later, routines, scripts, test runs). The sidecar turns each refusal into a "would do" result, and the answer ends with
+  **Would do** and one line per write it did not make.
+- **Run history** (`agent_routine_runs`, the last 20 per routine, `GET …/routines/{id}/runs`): scheduled runs and test
+  runs with the start and end time, status (`started`, `skipped`, `done`, `failed`), what they could write (`normal`,
+  `script`, `dry`), the script's name and version, a summary of the answer (4,000 characters), the error, and the tool
+  calls (name, arguments cut to 300 characters, `ok`/`error`/`dry_run`, and the would-do text; scripts' calls
+  included). The sidecar reports the end once (`PUT /api/internal/agent/routine-runs/{run_id}`); a second report changes
+  nothing. Settings → Agentic → Routines shows it under **History**.
 
 ## Memory
 
@@ -414,6 +461,9 @@ docker compose -f deploy/compose.yaml --profile agent up -d --build
 
 - Orbit stores each person's ChatGPT credential sealed with `ORBIT_APP_KEY` (`agent_credentials`). Without an app key
   nobody can connect. Disconnecting deletes it.
+- Saved scripts are in `agent_scripts` (code and its SHA-256); a routine's script, approved hash and script state on
+  `agent_routines` (migration `0094_routine_scripts`); run history in `agent_routine_runs` (with each run's script code);
+  dry-run agent sessions are marked in `agent_sessions.dry_run`.
 - Agent tools and their sealed credentials are in `agent_integrations`; the driver's approvals of writes in
   `agent_integration_approvals`. Removing an integration deletes both. An OAuth client ID and secret are sealed
   together in `oauth_sealed_client`, apart from `sealed_secret`. The sign-in of a connected MCP server (tokens and the registered client) is
