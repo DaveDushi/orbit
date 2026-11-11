@@ -403,11 +403,34 @@ pub(crate) struct ChatSearchQuery {
     /// Only messages with a file.
     #[serde(default)]
     has_file: bool,
+    /// Only messages that mention the caller (also `@channel` and `@here` where the caller is a
+    /// member).
+    #[serde(default)]
+    mentions_me: bool,
+    /// Only messages with an `http(s)://` link.
+    #[serde(default)]
+    has_link: bool,
+    /// Only thread replies.
+    #[serde(default)]
+    threads_only: bool,
+    /// `newest` (the default) or `oldest` first.
+    #[serde(default)]
+    #[param(inline)]
+    sort: SearchSort,
     /// The `cursor` of the page before.
     cursor: Option<String>,
 }
 
-/// Messages in the conversations the caller can read, newest first, 20 for each page.
+#[derive(Clone, Copy, Default, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum SearchSort {
+    #[default]
+    Newest,
+    Oldest,
+}
+
+/// Messages in the conversations the caller can read, newest (or oldest) first, 20 for each
+/// page. The filters combine: a message must pass every one.
 #[utoipa::path(get, path = "/api/v1/workspaces/{workspace_id}/chat/search", params(ChatSearchQuery, ("workspace_id" = String, Path)), responses((status = 200, body = SearchPage)))]
 pub(crate) async fn list_chat_search(
     State(state): State<ChatState>,
@@ -429,6 +452,10 @@ pub(crate) async fn list_chat_search(
         author_id: id(&query.author_id, "author_id")?,
         cursor: id(&query.cursor, "cursor")?,
         has_file: query.has_file,
+        mentions_me: query.mentions_me,
+        has_link: query.has_link,
+        threads_only: query.threads_only,
+        oldest_first: matches!(query.sort, SearchSort::Oldest),
         query: query.query,
     };
     call.read(

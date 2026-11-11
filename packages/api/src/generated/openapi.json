@@ -21430,7 +21430,7 @@
         "tags": [
           "crate::chat_routes::messages"
         ],
-        "summary": "Messages in the conversations the caller can read, newest first, 20 for each page.",
+        "summary": "Messages in the conversations the caller can read, newest (or oldest) first, 20 for each\npage. The filters combine: a message must pass every one.",
         "operationId": "list_chat_search",
         "parameters": [
           {
@@ -21467,6 +21467,46 @@
             "required": false,
             "schema": {
               "type": "boolean"
+            }
+          },
+          {
+            "name": "mentions_me",
+            "in": "query",
+            "description": "Only messages that mention the caller (also `@channel` and `@here` where the caller is a\nmember).",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "has_link",
+            "in": "query",
+            "description": "Only messages with an `http(s)://` link.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "threads_only",
+            "in": "query",
+            "description": "Only thread replies.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "`newest` (the default) or `oldest` first.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "newest",
+                "oldest"
+              ]
             }
           },
           {
@@ -57133,7 +57173,7 @@
               "string",
               "null"
             ],
-            "description": "Null when there is nothing older."
+            "description": "Null when there is nothing more."
           },
           "items": {
             "type": "array",

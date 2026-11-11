@@ -1,6 +1,6 @@
 //! Message search (FTS5, migration 0037) over the conversations the caller can read. Every word
-//! must match (the last one as a prefix); case and diacritics are ignored. Newest message first,
-//! paged by message id.
+//! must match (the last one as a prefix); case and diacritics are ignored. Newest (or oldest)
+//! message first, paged by message id.
 
 use orbit_platform::Id;
 use orbit_platform::Row;
@@ -24,7 +24,16 @@ pub struct SearchInput {
     pub author_id: Option<Id>,
     /// Only messages with a file.
     pub has_file: bool,
-    /// The `cursor` of the page before: messages older than it.
+    /// Only messages that mention the caller: `<@caller>`, or `@channel`/`@here` in a
+    /// conversation the caller is a member of.
+    pub mentions_me: bool,
+    /// Only messages with an `http://` or `https://` link in the text.
+    pub has_link: bool,
+    /// Only thread replies.
+    pub threads_only: bool,
+    /// Oldest message first instead of newest.
+    pub oldest_first: bool,
+    /// The `cursor` of the page before: messages after it in the chosen order.
     pub cursor: Option<Id>,
 }
 
@@ -40,7 +49,7 @@ pub struct SearchHitRecord {
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct SearchPage {
     pub items: Vec<SearchHitRecord>,
-    /// Null when there is nothing older.
+    /// Null when there is nothing more.
     #[schema(value_type = Option<String>, required = true)]
     pub cursor: Option<Id>,
 }
@@ -70,8 +79,12 @@ impl ChatRepository {
         } else {
             fts_query(&input.query)
         };
-        let filtered =
-            input.conversation_id.is_some() || input.author_id.is_some() || input.has_file;
+        let filtered = input.conversation_id.is_some()
+            || input.author_id.is_some()
+            || input.has_file
+            || input.mentions_me
+            || input.has_link
+            || input.threads_only;
         if expression.is_none() && !filtered {
             return Ok(SearchPage {
                 items: Vec::new(),
@@ -126,15 +139,38 @@ impl ChatRepository {
         if input.has_file {
             sql.push_str(" AND EXISTS (SELECT 1 FROM chat_message_files WHERE message_id = m.id)");
         }
+        if input.mentions_me {
+            sql.push_str(
+                " AND (EXISTS (SELECT 1 FROM chat_message_mentions mention \
+                  WHERE mention.message_id = m.id AND mention.user_id = $2) \
+                  OR ((m.mention_channel <> 0 OR m.mention_here <> 0) AND EXISTS (SELECT 1 \
+                  FROM chat_members WHERE chat_members.conversation_id = c.id \
+                  AND chat_members.user_id = $2)))",
+            );
+        }
+        if input.has_link {
+            // The links the web app turns into anchors (`messageText.ts`).
+            sql.push_str(
+                " AND (lower(m.body) LIKE '%http://%' OR lower(m.body) LIKE '%https://%')",
+            );
+        }
+        if input.threads_only {
+            sql.push_str(" AND m.thread_root_id IS NOT NULL");
+        }
+        let (direction, after) = if input.oldest_first {
+            ("ASC", ">")
+        } else {
+            ("DESC", "<")
+        };
         if input.cursor.is_some() {
-            sql.push_str(&format!(" AND m.id < {}", param()));
+            sql.push_str(&format!(" AND m.id {after} {}", param()));
         }
         // `row_id` grows with the message id, and the index gives its matches in that order.
         let limit = param();
         sql.push_str(&if expression.is_some() {
-            format!(" ORDER BY chat_search.rowid DESC LIMIT {limit}")
+            format!(" ORDER BY chat_search.rowid {direction} LIMIT {limit}")
         } else {
-            format!(" ORDER BY m.id DESC LIMIT {limit}")
+            format!(" ORDER BY m.id {direction} LIMIT {limit}")
         });
         let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(workspace_id.to_string())

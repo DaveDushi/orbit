@@ -61,8 +61,18 @@ export interface SearchInput {
   conversationId?: string
   authorId?: string
   hasFile?: boolean
+  /** `<@me>`, or `@channel`/`@here` in a conversation I am a member of. */
+  mentionsMe?: boolean
+  /** An `http(s)://` link in the text. */
+  hasLink?: boolean
+  /** Thread replies only. */
+  threadsOnly?: boolean
+  /** Newest first when not set. */
+  sort?: SearchSort
   cursor?: string
 }
+
+export type SearchSort = 'newest' | 'oldest'
 
 export interface WebhookInput {
   name: string
