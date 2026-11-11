@@ -85,7 +85,7 @@ export function InboxPage() {
                 <Button variant="outline" type="button" onClick={() => void allQuery.refetch()}>Retry</Button>
               </div>
             ) : (
-              <EmptyState icon={Bell} title="You're all caught up" description="Assignments and mentions appear here." />
+              <EmptyState icon={Bell} title="You're all caught up" description="Assignments, mentions and tasks you follow appear here." />
             )}
           </div>
         ) : (

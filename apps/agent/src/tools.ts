@@ -263,6 +263,17 @@ const commentOnTask = defineTool({
 		}),
 });
 
+const followTask = defineTool({
+	name: "follow_task",
+	description: "Follow or unfollow a task for the driver: followers get a notification for each new comment and status change.",
+	parameters: Type.Object({ task_id: Type.String(), follow: Type.Boolean() }),
+	execute: (args, api, context) =>
+		asDriver(api, context, async (as) => {
+			const result = (await as(args.follow ? "PUT" : "DELETE", `/tasks/${args.task_id}/followers/me`)) as Json;
+			return ok("followers", { task_id: args.task_id, following: result.following, followers: (result.user_ids as unknown[]).length });
+		}),
+});
+
 const listMembers = defineTool({
 	name: "list_members",
 	description: "List the workspace's members (names and user ids).",
@@ -596,6 +607,7 @@ export const ORBIT_TOOLS = [
 	createTask,
 	updateTask,
 	commentOnTask,
+	followTask,
 	listMembers,
 	listPages,
 	searchPages,

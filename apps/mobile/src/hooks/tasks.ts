@@ -16,6 +16,7 @@ import { errorMessage } from '../session-context'
  */
 export const taskKeys = {
   relations: (workspaceId: string, taskId: string) => [...keys.task(workspaceId, taskId), 'relations'] as const,
+  followers: (workspaceId: string, taskId: string) => [...keys.task(workspaceId, taskId), 'followers'] as const,
   attachments: (workspaceId: string, taskId: string) => [...keys.task(workspaceId, taskId), 'attachments'] as const,
   commentAttachments: (workspaceId: string, taskId: string, commentId: string) => [...keys.comments(workspaceId, taskId), commentId, 'attachments'] as const,
   subIssues: (workspaceId: string, parentId: string) => [...keys.tasks(workspaceId), 'sub-issues', parentId] as const,
@@ -25,6 +26,22 @@ export const taskKeys = {
 export function useTaskRelations(taskId: string) {
   const { client, workspaceId } = useOrbit()
   return useQuery({ queryKey: taskKeys.relations(workspaceId, taskId), queryFn: () => taskApi.relations(client, workspaceId, taskId) })
+}
+
+export function useTaskFollowers(taskId: string) {
+  const { client, workspaceId } = useOrbit()
+  return useQuery({ queryKey: taskKeys.followers(workspaceId, taskId), queryFn: () => taskApi.followers(client, workspaceId, taskId) })
+}
+
+/** Follows (`true`) or unfollows (`false`) the task. */
+export function useSetFollowing(taskId: string) {
+  const { client, workspaceId } = useOrbit()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (follow: boolean) => taskApi.setFollowing(client, workspaceId, taskId, follow),
+    onSuccess: (followers) => queryClient.setQueryData(taskKeys.followers(workspaceId, taskId), followers),
+    onError: (error) => Alert.alert('Could not change following', errorMessage(error)),
+  })
 }
 
 export function useSubIssues(taskId: string) {

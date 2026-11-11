@@ -17,6 +17,7 @@ pub mod page_versions;
 pub mod pages;
 pub mod sub_issues;
 pub mod task_filter;
+pub mod task_followers;
 pub mod task_relations;
 pub mod tasks;
 pub mod teamspaces;

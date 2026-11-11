@@ -7,7 +7,7 @@ use axum::http::header::CONTENT_TYPE;
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, patch, post};
+use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
 use orbit_platform::{Id, RequestId, Row, TimestampMillis};
 use serde::de::DeserializeOwned;
@@ -22,6 +22,7 @@ use crate::repositories::task_filter::{
     self, Condition, FilterField, FilterGroup, FilterNode, FilterOperator, GroupOp, OrderBy,
     OrderDirection, ShowCompleted, SubIssuesDisplay,
 };
+use crate::repositories::task_followers::TaskFollowers;
 use crate::repositories::task_relations::{NewTaskRelationType, TaskRelationRecord};
 use crate::repositories::tasks::{
     CommentContent, CreateTask, NotificationRecord, Page, ProjectAutomationPatch, SortOrder,
@@ -158,6 +159,14 @@ pub fn task_router(state: TaskState) -> Router {
         .route(
             "/api/v1/workspaces/{workspace_id}/tasks/{task_id}/github-links",
             get(list_github_links),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/tasks/{task_id}/followers",
+            get(list_task_followers),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/tasks/{task_id}/followers/me",
+            put(follow_task).delete(unfollow_task),
         )
         .route(
             "/api/v1/workspaces/{workspace_id}/tasks/{task_id}/restore",
@@ -1302,6 +1311,67 @@ pub(crate) async fn list_github_links(
             })
             .collect(),
     ))
+}
+
+#[utoipa::path(get, path = "/api/v1/workspaces/{workspace_id}/tasks/{task_id}/followers", params(("workspace_id" = String, Path), ("task_id" = String, Path)), responses((status = 200, body = TaskFollowers)))]
+pub(crate) async fn list_task_followers(
+    State(state): State<TaskState>,
+    Path((workspace, task)): Path<(String, String)>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<TaskFollowers>, ApiError> {
+    set_following(state, &workspace, &task, None, headers, request_id).await
+}
+
+/// The caller follows the task: its new comments and status changes notify them.
+#[utoipa::path(put, path = "/api/v1/workspaces/{workspace_id}/tasks/{task_id}/followers/me", params(("workspace_id" = String, Path), ("task_id" = String, Path)), responses((status = 200, body = TaskFollowers)))]
+pub(crate) async fn follow_task(
+    State(state): State<TaskState>,
+    Path((workspace, task)): Path<(String, String)>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<TaskFollowers>, ApiError> {
+    set_following(state, &workspace, &task, Some(true), headers, request_id).await
+}
+
+/// The caller stops following the task until they follow it again, comment on it, are
+/// assigned to it or are @mentioned in it.
+#[utoipa::path(delete, path = "/api/v1/workspaces/{workspace_id}/tasks/{task_id}/followers/me", params(("workspace_id" = String, Path), ("task_id" = String, Path)), responses((status = 200, body = TaskFollowers)))]
+pub(crate) async fn unfollow_task(
+    State(state): State<TaskState>,
+    Path((workspace, task)): Path<(String, String)>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<TaskFollowers>, ApiError> {
+    set_following(state, &workspace, &task, Some(false), headers, request_id).await
+}
+
+/// The followers of a task, after the caller follows (`Some(true)`) or unfollows it.
+async fn set_following(
+    state: TaskState,
+    workspace: &str,
+    task: &str,
+    follow: Option<bool>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<TaskFollowers>, ApiError> {
+    let me = if follow.is_some() { "/me" } else { "" };
+    let instance = format!("/api/v1/workspaces/{workspace}/tasks/{task}/followers{me}");
+    let (workspace_id, actor_id) =
+        scope(&state, &headers, workspace, &instance, request_id.as_ref()).await?;
+    let task_id = parse_id(task, &instance, request_id.as_ref())?;
+    state
+        .tasks
+        .task_followers(
+            workspace_id,
+            task_id,
+            actor_id,
+            follow,
+            TimestampMillis::now(),
+        )
+        .await
+        .map(Json)
+        .map_err(|error| task_problem(error, instance, request_id.as_ref()))
 }
 
 #[utoipa::path(get, path = "/api/v1/workspaces/{workspace_id}/tasks/{task_id}/activity", params(PageQuery, ("workspace_id" = String, Path), ("task_id" = String, Path)), responses((status = 200, body = Page<crate::audit::AuditEvent>)))]

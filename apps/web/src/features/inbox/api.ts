@@ -128,5 +128,11 @@ export function notificationCopy(notification: NotificationRecord, pageTitle?: s
   if (notification.kind === 'description_mentioned') {
     return { title: 'You were mentioned', body: 'Someone mentioned you in a task description.' }
   }
+  if (notification.kind === 'task_commented') {
+    return { title: `${actorName ?? 'Someone'} commented on a task you follow`, body: 'Open the task to read the comment.' }
+  }
+  if (notification.kind === 'task_status_changed') {
+    return { title: `${actorName ?? 'Someone'} changed the status of a task you follow`, body: 'Open the task to see its status.' }
+  }
   return { title: 'You were assigned a task', body: 'A task was assigned to you.' }
 }

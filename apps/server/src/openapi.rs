@@ -168,6 +168,9 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::task_routes::create_task_relation,
         crate::task_routes::delete_task_relation,
         crate::task_routes::list_github_links,
+        crate::task_routes::list_task_followers,
+        crate::task_routes::follow_task,
+        crate::task_routes::unfollow_task,
         crate::task_routes::list_task_activity,
         crate::task_routes::create_task,
         crate::task_routes::update_task,
@@ -1250,6 +1253,9 @@ fn task_operation(operation_id: &str) -> bool {
             | "list_task_relations"
             | "create_task_relation"
             | "delete_task_relation"
+            | "list_task_followers"
+            | "follow_task"
+            | "unfollow_task"
             | "create_task"
             | "update_task"
             | "bulk_tasks"

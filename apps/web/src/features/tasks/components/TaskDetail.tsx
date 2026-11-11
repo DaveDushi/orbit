@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from
 import { cn } from 'cn'
 import { useQueryClient } from '@tanstack/react-query'
 import { confirmAction } from '@/components/common/confirmAction'
-import { Add as Plus, ArrowLeft, Calendar, Hierarchy2, Link2, Tag, TaskSquare as SquareCheck, User as UserIcon, Xmark as X } from 'reicon-react'
+import { Add as Plus, ArrowLeft, Bell, BellOff, Calendar, Hierarchy2, Link2, Tag, TaskSquare as SquareCheck, User as UserIcon, Xmark as X } from 'reicon-react'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Tip } from '@/components/common/Tip'
@@ -31,7 +31,7 @@ import { cachedDescendantIds, type PageTaskRecord } from '@/features/tasks/api/o
 import { useProjects } from '@/features/tasks/api/projects'
 import {
   useAddTaskRelation, useCreateTaskComment, useDeleteTask, useDeleteTaskAttachment, useRemoveTaskRelation,
-  subIssuesQuery, useSubIssues, useTaskGithubLinks, useTaskRelations, useUpdateTask,
+  subIssuesQuery, useSetTaskFollowing, useSubIssues, useTaskFollowers, useTaskGithubLinks, useTaskRelations, useUpdateTask,
 } from '@/features/tasks/api/tasks'
 import { pickerTitle, relatedTaskIds, type RelationKind } from '@/features/tasks/relationsLib'
 import { useDuplicateActions } from '@/features/tasks/useDuplicateActions'
@@ -461,6 +461,10 @@ export function TaskDetail({ task, project, state, onClose, onOpenTask, onOpenPr
               </Popover>
             </PropertyGroup>
 
+            <PropertyGroup title="Followers">
+              <TaskFollowersProperty workspaceId={workspace.id} taskId={task.id} users={users} />
+            </PropertyGroup>
+
             <PropertyGroup title="Due date">
               <Popover open={dueDateOpen} onOpenChange={setDueDateOpen}>
                 <PopoverTrigger
@@ -535,6 +539,35 @@ function PropertyGroup({ title, className, children }: { title: string; classNam
       <h4 data-slot="property-heading" className="mb-1.5 text-xs font-medium text-muted-foreground/70">{title}</h4>
       {children}
     </div>
+  )
+}
+
+/** Who gets the task's new comments and status changes, and the button that adds or removes the signed-in member. */
+function TaskFollowersProperty({ workspaceId, taskId, users }: { workspaceId: string; taskId: string; users: TaskViewState['users'] }) {
+  const followers = useTaskFollowers(workspaceId, taskId)
+  const setFollowing = useSetTaskFollowing(workspaceId, taskId)
+  const people = users.filter((user) => followers.data?.user_ids.includes(user.id))
+  const following = followers.data?.following ?? false
+  return (
+    <>
+      {people.length > 0 ? (
+        <div className="flex max-w-full min-w-0 items-center gap-1.5 py-1 text-[13px] max-[899px]:text-xs" aria-label={`Followers: ${people.map((user) => user.name).join(', ')}`}>
+          <UserAvatarStack users={people} size={16} />
+          <span className="truncate">{people.map((user) => user.name).join(', ')}</span>
+        </div>
+      ) : (
+        <span className="py-1 text-xs text-muted-foreground/70">{followers.isPending ? '…' : 'No followers'}</span>
+      )}
+      <PropertyButton
+        className="text-muted-foreground"
+        disabled={!followers.data || setFollowing.isPending}
+        onClick={() => setFollowing.mutate(!following)}
+      >
+        {following ? <BellOff className="size-3.5" aria-hidden="true" /> : <Bell className="size-3.5" aria-hidden="true" />}
+        {following ? 'Unfollow' : 'Follow'}
+      </PropertyButton>
+      {setFollowing.isError ? <p role="alert" className="text-xs text-destructive">{following ? "Couldn't unfollow the task." : "Couldn't follow the task."}</p> : null}
+    </>
   )
 }
 

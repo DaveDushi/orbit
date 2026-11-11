@@ -213,6 +213,7 @@ export const NOTIFICATION_CHOICES: readonly { field: keyof NotificationPrefs; la
   { field: 'channel_messages', label: 'All messages in channels set to "All messages"', chat: true },
   { field: 'task_assigned', label: 'Tasks assigned to me' },
   { field: 'mentions', label: 'Mentions in comments and pages' },
+  { field: 'followed_tasks', label: 'Comments and status changes on tasks I follow' },
 ]
 
 // ---- workspace

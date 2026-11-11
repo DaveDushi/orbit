@@ -66,6 +66,14 @@ Core files: `TasksPage.tsx`, `components/TaskList.tsx`, `components/TaskBoard.ts
 - Comments: Cmd/Ctrl+Enter sends; edits use the same editor (Cmd/Ctrl+Enter saves, Esc cancels; Save on an emptied
   comment asks to delete it; an unchanged Save sends nothing); the server reads mentions from the mention nodes and
   notifies only newly mentioned members on edit.
+- Followers (migration 0090, `task_followers`, `repositories/task_followers.rs`): the creator (a person, not a service
+  account), assignees, comment authors and @mentioned members follow a task; the Followers field of the task side panel
+  (web and mobile) lists them and has Follow / Unfollow (`GET …/tasks/{id}/followers`, `PUT`/`DELETE …/followers/me`).
+  A new comment notifies the other followers (`task_commented`; a member it @mentions gets only `comment_mentioned`),
+  and a chosen status (not one a project move picks) notifies them (`task_status_changed`; a member assigned in the
+  same change gets only `task_assigned`). Never the actor; service-account writes notify nobody; Donna comments as the
+  driver, so the other followers are notified. Guests cannot follow, and followers who are no longer active members
+  are neither listed nor notified. The push preference is `followed_tasks`. No email.
 - Projects, workflows, labels, tasks, comments, and task attachments persist in SQLite.
 - Labels belong to one project (Project settings → Labels); a task takes only its project's labels. Moving a task keeps the labels whose name the target project also has. Views across projects merge same-named labels: label filters store the label key (the name) and the server matches it case-insensitively in every project (an id saved before migration 0051 stands for its name and becomes a key when the filter is edited); group-by-label, filter pickers and bulk label menus show one entry per name. Views across projects show no labels of trashed projects.
 - Writes include the observed record version. Stale writes restore the server record and expose a conflict prompt.

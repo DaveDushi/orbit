@@ -320,7 +320,7 @@ async fn a_notice_goes_to_the_active_tab_or_else_to_every_browser_and_respects_t
 
     // A kind the user turned off, and "do not disturb".
     let prefs = json!({ "direct_messages": false, "chat_mentions": true, "thread_replies": true,
-        "channel_messages": true, "task_assigned": true, "mentions": true });
+        "channel_messages": true, "task_assigned": true, "mentions": true, "followed_tasks": false });
     let (status, _) = fixture
         .send(
             "PUT",
@@ -339,6 +339,19 @@ async fn a_notice_goes_to_the_active_tab_or_else_to_every_browser_and_respects_t
         )
         .await;
     assert_eq!(stored, prefs);
+    // An older client does not send `followed_tasks`: it is on then.
+    let mut older = prefs.clone();
+    older.as_object_mut().unwrap().remove("followed_tasks");
+    let (status, saved) = fixture
+        .send(
+            "PUT",
+            "/api/v1/notification-preferences",
+            &fixture.owner_cookie,
+            Some(older),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved["followed_tasks"], true);
     push.notify(owner, PushKind::DirectMessages, &notice())
         .await
         .unwrap();
@@ -500,7 +513,7 @@ async fn inbox_notifications_are_pushed_once() {
     .await
     .unwrap();
     // A real assignment, so the notification is the one the task writer makes.
-    let (created, _) = fixture
+    let (created, task) = fixture
         .send(
             "POST",
             &format!("/api/v1/workspaces/{}/tasks", fixture.workspace_id),
@@ -527,6 +540,61 @@ async fn inbox_notifications_are_pushed_once() {
     // The owner has no picture: the app's icon shows.
     assert!(sent[0].1["icon"].is_null());
     assert_eq!(fixture.push.push_inbox().await.unwrap(), 0);
+    assert!(fixture.sent().is_empty());
+
+    // Ada follows the task she is assigned to: a comment on it is pushed too.
+    let task_path = format!(
+        "/api/v1/workspaces/{}/tasks/{}",
+        fixture.workspace_id,
+        task["id"].as_str().unwrap()
+    );
+    let (commented, _) = fixture
+        .send(
+            "POST",
+            &format!("{task_path}/comments"),
+            &fixture.owner_cookie,
+            Some(json!({ "body": "Parser notes" })),
+        )
+        .await;
+    assert_eq!(commented, StatusCode::CREATED);
+    fixture.push.push_inbox().await.unwrap();
+    let sent = fixture.sent();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].1["title"], "Owner commented on a task you follow");
+    assert_eq!(sent[0].1["body"], "Ship the parser");
+
+    // With followed tasks turned off, a status change is in her Inbox but not pushed.
+    let (saved, _) = fixture
+        .send(
+            "PUT",
+            "/api/v1/notification-preferences",
+            &ada_cookie,
+            Some(
+                json!({ "direct_messages": true, "chat_mentions": true, "thread_replies": true,
+                "channel_messages": true, "task_assigned": true, "mentions": true,
+                "followed_tasks": false }),
+            ),
+        )
+        .await;
+    assert_eq!(saved, StatusCode::OK);
+    let other: String = sqlx::query_scalar(
+        "SELECT id FROM task_statuses WHERE project_id = $1 AND id <> $2 ORDER BY position LIMIT 1",
+    )
+    .bind(&project)
+    .bind(&status)
+    .fetch_one(fixture.database.pool())
+    .await
+    .unwrap();
+    let (moved, _) = fixture
+        .send(
+            "PATCH",
+            &task_path,
+            &fixture.owner_cookie,
+            Some(json!({ "expected_version": task["version"], "status_id": other })),
+        )
+        .await;
+    assert_eq!(moved, StatusCode::OK);
+    assert_eq!(fixture.push.push_inbox().await.unwrap(), 1);
     assert!(fixture.sent().is_empty());
 }
 

@@ -595,6 +595,11 @@ impl MigrationRunner {
                     include_str!("../../../../apps/server/migrations/0089_agent_page_context.sql"),
                     false,
                 ),
+                Migration::new(
+                    90,
+                    include_str!("../../../../apps/server/migrations/0090_task_followers.sql"),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -862,6 +867,11 @@ impl MigrationRunner {
                 include_str!(
                     "../../../../apps/server/migrations/postgres/0089_agent_page_context.sql"
                 ),
+                false,
+            ),
+            Migration::new(
+                90,
+                include_str!("../../../../apps/server/migrations/postgres/0090_task_followers.sql"),
                 false,
             ),
         ];

@@ -67,16 +67,19 @@ pub enum PushKind {
     ChannelMessages,
     TaskAssigned,
     Mentions,
+    /// New notes and status changes of a task the user follows.
+    FollowedTasks,
 }
 
 impl PushKind {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::DirectMessages,
         Self::ChatMentions,
         Self::ThreadReplies,
         Self::ChannelMessages,
         Self::TaskAssigned,
         Self::Mentions,
+        Self::FollowedTasks,
     ];
 
     #[must_use]
@@ -88,13 +91,14 @@ impl PushKind {
             Self::ChannelMessages => "channel_messages",
             Self::TaskAssigned => "task_assigned",
             Self::Mentions => "mentions",
+            Self::FollowedTasks => "followed_tasks",
         }
     }
 
     /// The sound an open tab plays: `mention` for what is addressed to the user.
     const fn sound(self) -> &'static str {
         match self {
-            Self::ThreadReplies | Self::ChannelMessages => "message",
+            Self::ThreadReplies | Self::ChannelMessages | Self::FollowedTasks => "message",
             _ => "mention",
         }
     }
@@ -169,6 +173,14 @@ pub struct NotificationPrefs {
     pub task_assigned: bool,
     /// Mentions in task comments, pages and page comments.
     pub mentions: bool,
+    /// New notes and status changes of tasks the user follows. An older client that does not
+    /// send it keeps it on.
+    #[serde(default = "default_on")]
+    pub followed_tasks: bool,
+}
+
+const fn default_on() -> bool {
+    true
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -459,7 +471,7 @@ impl PushService {
     pub async fn prefs(&self, user_id: Id) -> Result<NotificationPrefs, sqlx::Error> {
         let row = sqlx::query(
             "SELECT direct_messages, chat_mentions, thread_replies, channel_messages, task_assigned, \
-             mentions FROM notification_prefs WHERE user_id = $1",
+             mentions, followed_tasks FROM notification_prefs WHERE user_id = $1",
         )
         .bind(user_id.to_string())
         .fetch_optional(self.database.pool())
@@ -475,6 +487,7 @@ impl PushService {
             channel_messages: on("channel_messages"),
             task_assigned: on("task_assigned"),
             mentions: on("mentions"),
+            followed_tasks: on("followed_tasks"),
         })
     }
 
@@ -486,11 +499,13 @@ impl PushService {
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
             "INSERT INTO notification_prefs (user_id, direct_messages, chat_mentions, thread_replies, \
-             channel_messages, task_assigned, mentions, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+             channel_messages, task_assigned, mentions, followed_tasks, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
              ON CONFLICT (user_id) DO UPDATE SET direct_messages = excluded.direct_messages, \
              chat_mentions = excluded.chat_mentions, thread_replies = excluded.thread_replies, \
              channel_messages = excluded.channel_messages, task_assigned = excluded.task_assigned, \
-             mentions = excluded.mentions, updated_at = excluded.updated_at",
+             mentions = excluded.mentions, followed_tasks = excluded.followed_tasks, \
+             updated_at = excluded.updated_at",
         )
         .bind(user_id.to_string())
         .bind(i64::from(prefs.direct_messages))
@@ -499,6 +514,7 @@ impl PushService {
         .bind(i64::from(prefs.channel_messages))
         .bind(i64::from(prefs.task_assigned))
         .bind(i64::from(prefs.mentions))
+        .bind(i64::from(prefs.followed_tasks))
         .bind(now.as_millis())
         .execute(self.database.pool())
         .await?;
@@ -902,6 +918,16 @@ impl PushService {
                 "description_mentioned" => (
                     PushKind::Mentions,
                     format!("{actor} mentioned you in a task"),
+                    subject("task_title"),
+                ),
+                "task_commented" => (
+                    PushKind::FollowedTasks,
+                    format!("{actor} commented on a task you follow"),
+                    subject("task_title"),
+                ),
+                "task_status_changed" => (
+                    PushKind::FollowedTasks,
+                    format!("{actor} changed the status of a task you follow"),
                     subject("task_title"),
                 ),
                 "page_comment_mentioned" => (
