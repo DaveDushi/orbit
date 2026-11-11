@@ -63,6 +63,11 @@ pub fn allows(workspace_id: &str, method: &Method, path: &str) -> bool {
     if segment == "members" {
         return method == Method::GET;
     }
+    // The agent lists and makes routines, reminders and scheduled messages when the driver asks;
+    // only people change, pause or delete them (Settings → Agentic → Routines, the composer).
+    if segment == "routines" || segment == "scheduled-messages" {
+        return method == Method::GET || (method == Method::POST && rest == segment);
+    }
     // The agent notes and reads memory; only people delete it.
     if segment == "agent-memory" {
         return method != Method::DELETE;
@@ -181,6 +186,10 @@ mod tests {
             (Method::GET, "/agent-tools"),
             (Method::POST, "/agent-tools/call"),
             (Method::POST, "/agent-tools/drive"),
+            (Method::GET, "/routines"),
+            (Method::POST, "/routines"),
+            (Method::GET, "/scheduled-messages"),
+            (Method::POST, "/scheduled-messages"),
         ] {
             assert!(allows(WORKSPACE, &method, &path(rest)), "{method} {rest}");
         }
@@ -224,6 +233,11 @@ mod tests {
             (Method::POST, "/drive/nodes/abc/shares"),
             (Method::DELETE, "/drive/nodes/abc"),
             (Method::POST, "/drive/trash/empty"),
+            (Method::PATCH, "/routines/abc"),
+            (Method::DELETE, "/routines/abc"),
+            (Method::POST, "/routines/abc"),
+            (Method::PATCH, "/scheduled-messages/abc"),
+            (Method::DELETE, "/scheduled-messages/abc"),
         ] {
             assert!(!allows(WORKSPACE, &method, &path(rest)), "{method} {rest}");
         }

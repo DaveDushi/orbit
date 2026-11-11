@@ -21,12 +21,14 @@ pub mod settings;
 
 use std::sync::Arc;
 
-/// The agent's routes: the sidecar's, the ChatGPT connection, the memory, the integrations and Drive.
+/// The agent's routes: the sidecar's, the ChatGPT connection, the memory, the integrations, Drive,
+/// and routines, reminders and scheduled messages.
 pub fn router(state: AgentState) -> axum::Router {
     routes::router(state.clone())
         .merge(memory_routes::router(state.clone()))
         .merge(integrations::router(state.clone()))
-        .merge(drive::router(state))
+        .merge(drive::router(state.clone()))
+        .merge(crate::scheduled::router(state))
 }
 
 use crate::auth_routes::CookieMode;

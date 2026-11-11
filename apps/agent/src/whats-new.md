@@ -6,6 +6,11 @@ build: "## YYYY-MM-DD" (the deploy date), then 1-4 short "- " lines about what p
 members, not developers. Keep the 8 newest entries; the prompt shows the 5 newest.
 -->
 
+## 2026-11-13
+- Routines: ask Donna for a recurring job ("every weekday at 9, summarize yesterday in #support"). She does it as you, with your permissions, and posts the result where you chose. See, pause, edit and delete them in Settings → Agentic → Routines.
+- Reminders: "remind me at 5pm to call Ana" and Donna sends you a direct message then.
+- Send later: the arrow next to Send in chat → Send later…. Your message is posted as you at that time; edit or cancel it in Scheduled messages. Donna can schedule one for you too.
+
 ## 2026-11-12
 - Follow tasks: you follow a task you created, are assigned to, comment on or are @mentioned in. Each new comment and status change shows in Activity and as a desktop or phone notification (not your own). The Followers field of a task lists who follows and has Follow / Unfollow. Turn it off in Account settings → Notifications → "Comments and status changes on tasks I follow".
 

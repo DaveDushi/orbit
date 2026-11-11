@@ -79,6 +79,8 @@ pub struct App {
     object_storage: ObjectStorage,
     blob_store: TieredBlobStore,
     workspace_exports: WorkspaceExportService,
+    /// Runs routines, reminders and scheduled messages (`crate::scheduled`).
+    agent: crate::agent::AgentState,
     production_services: Option<ProductionServices>,
     /// Set when the server stops: readiness fails, so a load balancer takes it out.
     draining: Arc<AtomicBool>,
@@ -340,6 +342,7 @@ impl App {
         )
         .with_drive(drive.clone(), &config.http.public_origin)
         .with_public_origin(&config.http.public_origin);
+        let scheduled = agent.clone();
         let metrics = Metrics::default();
         let apps = crate::apps::AppsState::new(
             Arc::clone(&identity),
@@ -511,6 +514,7 @@ impl App {
             object_storage,
             blob_store,
             workspace_exports,
+            agent: scheduled,
             production_services: Some(production_services),
             draining,
         })
@@ -653,6 +657,13 @@ impl App {
             service_shutdown.clone(),
         );
         spawn_service(&mut services, "object storage mover", mover);
+        let agent = self.agent.clone();
+        let token = service_shutdown.clone();
+        spawn_service(
+            &mut services,
+            "routines and scheduled messages",
+            crate::scheduled::run_service(agent, token),
+        );
         let attachments = self.attachments.clone();
         let token = service_shutdown.clone();
         spawn_service(&mut services, "attachment reconciliation", async move {

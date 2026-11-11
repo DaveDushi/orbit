@@ -19,6 +19,11 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useCustomStickers } from '@/features/workspaces/customStickers'
+import { useIsGuest } from '@/features/workspaces/permissions'
+import { useScheduleMessage } from '@/features/scheduled/api'
+import { problemDetail } from '@/features/scheduled/problem'
+import { whenLabel } from '@/features/scheduled/times'
+import { toast } from 'sonner'
 import { clipboardFiles } from '@/lib/attachmentLib'
 import { useMentionAutocomplete } from '@/lib/useMentionAutocomplete'
 import { useChatContext } from '../../api/chatContext'
@@ -34,6 +39,7 @@ import { ComposerInput } from './ComposerInput'
 import { completeCodeFence, inOpenCodeBlock } from './composerSegments'
 import { ComposerUploads } from './ComposerUploads'
 import { EmojiSuggestions } from './EmojiSuggestions'
+import { ScheduledBar, ScheduledMessagesDialog, SendLaterDialog, SendLaterMenu } from './SendLater'
 import { StickerPicker } from './StickerPicker'
 import { useAutosize } from './useAutosize'
 import { useEmojiAutocomplete } from './useEmojiAutocomplete'
@@ -93,6 +99,12 @@ export function Composer({ ref, conversation, threadRootId = null, replyTo = nul
   const [emojiOpen, setEmojiOpen] = useState(false)
   const [stickerOpen, setStickerOpen] = useState(false)
   const stickers = useCustomStickers(workspaceId).data ?? []
+  // Send later: the main list of a conversation, not a thread or the Ask panel, and not for guests.
+  const guest = useIsGuest()
+  const sendLater = !inThread && !pageContext && !guest
+  const [laterOpen, setLaterOpen] = useState(false)
+  const [scheduledOpen, setScheduledOpen] = useState(false)
+  const schedule = useScheduleMessage(workspaceId)
   const input = useRef<HTMLTextAreaElement>(null)
   const filePicker = useRef<HTMLInputElement>(null)
   useAutosize(input, text)
@@ -159,6 +171,22 @@ export function Composer({ ref, conversation, threadRootId = null, replyTo = nul
     emoji.close()
     onSent?.()
     input.current?.focus()
+  }
+
+  /** Schedules the text (files and quotes stay out: a scheduled message is text) and empties the composer. */
+  function scheduleAt(at: Date) {
+    schedule.mutate(
+      { conversationId, body, sendAt: at },
+      {
+        onSuccess: (message) => {
+          setLaterOpen(false)
+          setTextState('')
+          clearDraft(workspaceId, conversationId, threadRootId)
+          toast(`Scheduled for ${whenLabel(message.send_at)}`)
+        },
+        onError: (error) => toast.error(problemDetail(error, 'The message could not be scheduled.')),
+      },
+    )
   }
 
   /**
@@ -261,6 +289,7 @@ export function Composer({ ref, conversation, threadRootId = null, replyTo = nul
       data-realtime-safe=""
       className="shrink-0 px-4 pb-3 max-[899px]:px-2 max-[899px]:pb-2 max-[899px]:not-focus-within:pb-[max(0.5rem,env(safe-area-inset-bottom,0px))]"
     >
+      {sendLater ? <ScheduledBar conversationId={conversationId} onOpen={() => setScheduledOpen(true)} /> : null}
       <div className="relative">
         {mention.open ? (
           <MentionPopover suggestions={mention.suggestions} activeIndex={mention.activeIndex} onSelect={mention.insert} onHover={mention.setActiveIndex} />
@@ -393,9 +422,18 @@ export function Composer({ ref, conversation, threadRootId = null, replyTo = nul
                 <Send2 className="size-5" />
               </Button>
             </Tip>
+            {sendLater ? (
+              <SendLaterMenu
+                canSchedule={body !== '' && attachments.length === 0 && uploads.length === 0 && remaining >= 0}
+                onSendLater={() => setLaterOpen(true)}
+                onShowScheduled={() => setScheduledOpen(true)}
+              />
+            ) : null}
           </div>
         </div>
       </div>
+      {laterOpen ? <SendLaterDialog pending={schedule.isPending} onPick={scheduleAt} onClose={() => setLaterOpen(false)} /> : null}
+      {scheduledOpen ? <ScheduledMessagesDialog onClose={() => setScheduledOpen(false)} /> : null}
       {inThread ? (
         <div className="flex flex-col gap-1 pt-1.5 text-xs text-muted-foreground">
           <label className="flex w-fit items-center gap-2">

@@ -23,7 +23,7 @@ import { loadWake } from "./memory.ts";
 import { namesToTokens, splitBody, tokensToNames, type Person } from "./mentions.ts";
 import { mockModels } from "./mock.ts";
 import { codexModels, PROVIDER, PeopleModels, routedModels } from "./models.ts";
-import { OrbitError, type OrbitClient, type PendingInput } from "./orbit.ts";
+import { OrbitError, type OrbitClient, type PendingInput, type RoutineRun } from "./orbit.ts";
 import { withPageContext } from "./page.ts";
 import { DEFAULT_AGENT_NAME } from "./prompt.ts";
 import { Sandbox } from "./sandbox.ts";
@@ -53,13 +53,26 @@ export function clockLine(timeZone: string | null | undefined, now: Date): strin
 	}
 }
 
+/** The line above a routine run's progress and answer. */
+export function routineTitle(routine: RoutineRun): string {
+	return `🔁 **${routine.name.replaceAll("*", "").replaceAll("\n", " ")}**`;
+}
+
+/** A scheduled run: the routine and its creator's saved instruction (their own words, with their permissions only). */
+export function routineText(routine: RoutineRun, author: string, instruction: string): string {
+	return `Scheduled run of the routine “${routine.name.replaceAll("\n", " ")}” (cron \`${routine.schedule}\`, ${routine.time_zone}) that ${author} (the driver of this run) set up earlier. Do the job now and answer with the result; nobody is waiting to confirm it. Their saved instruction:\n${instruction}`;
+}
+
 /**
  * What the model is told a message is, after its sender's current time (`TIME_RULE`). An action's text frames itself
  * (`actionText`).
  */
-export function frame(kind: "instruction" | "answer" | "steer" | "action", author: string, driver: string, text: string, timeZone: string | null | undefined, now: Date): string {
+export function frame(kind: "instruction" | "answer" | "steer" | "action" | "routine", author: string, driver: string, text: string, timeZone: string | null | undefined, now: Date): string {
 	const clock = clockLine(timeZone, now);
 	switch (kind) {
+		case "routine":
+			// `text` starts with the routine line (`routineText`).
+			return `${clock}\n${text}`;
 		case "action":
 			return `${clock}\n${text}`;
 		case "instruction":
@@ -89,6 +102,10 @@ const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
 	read_messages: () => "Reading messages",
 	search_messages: (args) => `Searching messages for “${args.query}”`,
 	ask_teammate: (args) => `Asking ${args.person}`,
+	schedule_routine: (args) => `Scheduling the routine “${args.name}”`,
+	list_routines: () => "Reading routines",
+	remind_me: () => "Setting a reminder",
+	send_later: () => "Scheduling a message",
 	memory_note: (args) => `Remembering (${args.scope})`,
 	memory_summarize: () => "Summarizing memory",
 	memory_recall: (args) => `Searching memory for “${args.query}”`,
@@ -390,7 +407,9 @@ export class Agent {
 		const conversation = await this.#conversationFor(input);
 		const state = (await this.#harness.snapshot(ThreadDoc, conversation.id, context)) as ThreadState;
 		const people = await this.peopleOf(input.workspace_id);
-		const text = input.kind === "action" ? actionText(input) : withPageContext(withMessageFiles(tokensToNames(input.body, people), input.files), input.page_context);
+		const body = tokensToNames(input.body, people);
+		const text =
+			input.kind === "action" ? actionText(input) : input.routine ? routineText(input.routine, input.author_name, body) : withPageContext(withMessageFiles(body, input.files), input.page_context);
 		const timeZone = people.find((person) => person.id === input.author_id)?.timezone;
 
 		// This input started the current run before a restart: finish what is missing.
@@ -423,7 +442,7 @@ export class Agent {
 
 		let driverId = input.author_id;
 		let driverName = input.author_name;
-		let kind: "instruction" | "answer" | "action" = input.kind === "action" ? "action" : "instruction";
+		let kind: "instruction" | "answer" | "action" | "routine" = input.kind === "action" ? "action" : input.routine ? "routine" : "instruction";
 		if (input.kind === "answer" && state.driverId) {
 			driverId = state.driverId;
 			driverName = state.driverName ?? "the driver";
@@ -437,7 +456,9 @@ export class Agent {
 				kind === "answer"
 					? `<@${driverId}> I need your ChatGPT connection to continue. Connect it in [Agentic](${this.#config.publicUrl}/profile/agentic), then mention me again.`
 					: `<@${driverId}> To use me, connect your ChatGPT account first: [Agentic](${this.#config.publicUrl}/profile/agentic). Then mention me again.`;
-			await this.#orbit.postMessage({ workspaceId: input.workspace_id, conversationId: input.conversation_id, rootMessageId: state.rootMessageId, body, nonce: `agent:${input.message_id}` });
+			const messageId = await this.#orbit.postMessage({ workspaceId: input.workspace_id, conversationId: input.conversation_id, rootMessageId: state.rootMessageId, body, nonce: `agent:${input.message_id}` });
+			// A routine's run already has its message (Orbit posted it with this nonce): say it there.
+			if (input.routine) await this.#orbit.editMessage(messageId, input.workspace_id, `${routineTitle(input.routine)}\n\n${body}`);
 			await this.#orbit.updateThread(input.thread_key, this.#threadUpdate(state, "idle", state.driverId, null));
 			await this.#orbit.acknowledge(input.message_id);
 			return "done";
@@ -474,7 +495,7 @@ export class Agent {
 			doc.driverName = driverName;
 			doc.waitingFor = null;
 			doc.toolCalls = 0;
-			doc.run = { inputId: input.message_id, submissionId: null, progressMessageId, startedAt: Date.now() };
+			doc.run = { inputId: input.message_id, submissionId: null, progressMessageId, startedAt: Date.now(), title: input.routine ? routineTitle(input.routine) : null };
 			doc.agentName = this.botName;
 			doc.teamInstructions = input.team_instructions ?? "";
 			// Each run takes the model chosen now; a run already going keeps its own.
@@ -551,7 +572,7 @@ export class Agent {
 		const run = state.run;
 		const submission = await this.#harness.submission(run.submissionId as SubmissionId, context);
 		if (!submission) return;
-		const edit = (body: string, blocks?: unknown[]) => (run.progressMessageId ? this.#orbit.editMessage(run.progressMessageId, state.workspaceId, body, blocks) : Promise.resolve());
+		const edit = (body: string, blocks?: unknown[]) => (run.progressMessageId ? this.#orbit.editMessage(run.progressMessageId, state.workspaceId, run.title ? `${run.title}\n\n${body}` : body, blocks) : Promise.resolve());
 		const progress = new Progress(edit);
 		const events = await watchEvents(this.#harness, conversationId, context);
 		events.start(async (batch) => progress.apply(batch));

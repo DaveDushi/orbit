@@ -23,6 +23,9 @@
 - Orbit refuses to start on an unknown `ORBIT_*` environment variable. A new setting needs its key in `crates/platform/src/config.rs` (or an ignored prefix there, as `ORBIT_AGENT_` for the agent), or the server will not boot (2026-10-29).
 - The origin policy refuses a write without `Origin` unless it carries `Authorization: Bearer` (and no cookie). A server-to-server caller (a sidecar, a script) sends its secret as a bearer token. Route tests that skip `HttpPlatformLayer` do not see this: check such callers against a running server.
 
+## Cron expressions
+- The `cron` crate (0.15) counts weekdays from Sunday = 1 (`1-5` is Sunday–Thursday), and wants a seconds field first. People and models write standard 5-field cron (0 or 7 = Sunday, `1-5` = Monday–Friday): translate the weekday field to names first, as `scheduled::schedule` does (2026-11-11).
+
 ## Several servers on one Postgres database
 - Any process-local state (maps, locks, counters, caches, "running" flags, background loops) is per server. If it must hold for every server, keep it in the database (a serialized `immediate_transaction`, `Database::try_singleton`) or send it through `crate::cluster`. Test such changes with two `App`s on one database (`apps/server/tests/shared_postgres`), and prove the test fails without the fix.
 - `immediate_transaction()` takes one advisory lock for the whole Postgres database, so every writer of the cluster waits for it. A hot counter that needs no read-then-write logic uses one atomic statement on the pool instead (`INSERT … ON CONFLICT … DO UPDATE SET n = t.n + 1 RETURNING n`, as `rate_limit_windows` does); keep per-request state of very frequent requests in memory and document that it is per server.

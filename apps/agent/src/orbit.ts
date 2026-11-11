@@ -42,6 +42,17 @@ export type PendingInput = {
 	readonly files?: readonly ChatFile[];
 	/** Sent from the Ask bar: the page the author is on (`page.ts`); absent from Chat and an older Orbit. */
 	readonly page_context?: PageContext | null;
+	/** A scheduled run of the author's routine; `body` is its saved instruction. Absent from an older Orbit. */
+	readonly routine?: RoutineRun | null;
+};
+
+/** The routine behind a scheduled run (Settings → Agentic → Routines). */
+export type RoutineRun = {
+	readonly id: string;
+	readonly name: string;
+	/** 5-field cron. */
+	readonly schedule: string;
+	readonly time_zone: string;
 };
 
 /** What Orbit stored for a click or form send on the agent's card: the card's own data, and the form values. */

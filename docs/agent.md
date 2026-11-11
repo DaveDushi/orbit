@@ -81,6 +81,42 @@ reasons: `.ai/agent-design.md`.
   The agent gets it after the message in an `<orbit-data source="page context">` block, as data, and reads the item
   with its tools as the driver, so the context names nothing the driver cannot read.
 
+## Routines, reminders and send later
+
+- **Routines.** A member asks the agent in chat for a recurring job ("every weekday at 9, summarize yesterday's
+  #support messages here"). The agent turns the words into a 5-field cron expression (`0 9 * * 1-5`) and calls
+  `schedule_routine`. The time zone is the creator's profile zone unless they name another (a time inside a clock
+  change that skips it does not run that day; a time that happens twice runs once). Each run is a normal agent run
+  **driven by the creator**: their permissions, their ChatGPT account, and the same write approvals as chat. Orbit
+  posts the run's message as the agent in the chosen conversation; the answer replaces it, and questions and approval
+  cards go to the thread under it, for the creator. The saved instruction is the creator's own words and gives no more
+  than their permissions. A routine stores the agent's user (`agent_user_id`), so other agents can have routines later.
+- **Where it posts.** A channel the creator is in (the agent joins a private one), or a DM that has the agent (by
+  default the creator's DM with it). **Settings → Agentic → Routines** lists them with the schedule, the next run,
+  the last run and its status: pause, resume, edit (name, instruction, schedule, time zone, target) and delete. The
+  creator does everything; owners and admins (`routines.manage`) see every routine of the workspace and may pause and
+  delete, but not edit or resume someone else's. Agent sessions may only list and create (`agent::scope`).
+- **Pauses.** Before each run Orbit checks the creator: still an active member, not a guest, still in the target
+  conversation, the channel not archived or deleted, the agent still in the workspace. If not, the routine pauses with
+  that reason (no retry loop). Without a ChatGPT connection the run is skipped (`last_error`) and the next one waits.
+- **Limits.** 25 routines per person per workspace; at most one run every 15 minutes (checked on the next 200 runs of
+  the schedule); instruction at most 4,000 characters.
+- **Reminders.** "Remind me at 5pm to call Ana" (`remind_me`): at that time the agent sends the person "⏰ Reminder: …"
+  in their DM with it, with the usual notification and push. No model call.
+- **Send later.** In the composer, the arrow next to Send → **Send later…** (in an hour, tomorrow at 9:00, Monday at
+  9:00, or a date and time). The message (text only) is posted **as the person** through the normal chat send at that
+  time. **Scheduled messages** (the same menu, or the bar above the composer) lists the person's messages and
+  reminders to edit the text or time, or cancel. The agent can schedule one (`send_later`) when asked. A message that
+  cannot be posted any more (the person left the channel, it was archived) stays in the list as not sent with the
+  reason. At most 100 waiting messages and reminders per person, up to one year ahead.
+- **Guests** cannot use routines, reminders or send later.
+- **How it runs.** Each server runs a loop every 10 seconds (`apps/server/src/scheduled/runner.rs`). A routine run is
+  claimed with a compare-and-set on `next_run_at`, which moves to the next run after *now*, so a routine that was due
+  while the server was down runs once, and two servers never run it twice. The claim keeps `pending_run_id`, which is
+  the nonce of the run's first message and the id of its agent input, so a run that a restart interrupts is finished
+  later, never posted twice. Scheduled messages and reminders use the nonce `scheduled:<id>`. Without
+  `ORBIT_AGENT_URL`, routines wait (each runs once when the agent is back); send later still works.
+
 ## Memory
 
 The agent keeps one-line memories in Orbit's database, in two scopes:

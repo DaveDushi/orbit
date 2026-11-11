@@ -62,10 +62,13 @@ pub enum Permission {
     /// Turn off public Drive links that other members made.
     #[serde(rename = "drive.shares.manage")]
     DriveSharesManage,
+    /// See every member's agent routines, pause them and delete them.
+    #[serde(rename = "routines.manage")]
+    RoutinesManage,
 }
 
 impl Permission {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::WorkspaceUpdate,
         Self::WorkspaceDelete,
         Self::WorkspaceTransfer,
@@ -85,6 +88,7 @@ impl Permission {
         Self::WorkspaceExport,
         Self::DrivePurge,
         Self::DriveSharesManage,
+        Self::RoutinesManage,
     ];
 }
 
@@ -169,6 +173,18 @@ impl Actor {
             Some(owner) => self.user_id == owner,
             None => self.can(Permission::AgentMemoryManage),
         }
+    }
+
+    /// A routine runs as its creator, so only the creator changes what it does, where and when, or
+    /// resumes it. Those who manage routines may pause or delete any routine.
+    #[must_use]
+    pub fn can_edit_routine(self, creator: Id) -> bool {
+        self.user_id == creator
+    }
+
+    #[must_use]
+    pub fn can_stop_routine(self, creator: Id) -> bool {
+        self.user_id == creator || self.can(Permission::RoutinesManage)
     }
 
     /// A Drive upload in progress belongs to the member who started it: only they send its parts,
@@ -320,7 +336,8 @@ impl Policy {
             | Permission::AppsManage
             | Permission::WorkspaceExport
             | Permission::DrivePurge
-            | Permission::DriveSharesManage => {
+            | Permission::DriveSharesManage
+            | Permission::RoutinesManage => {
                 matches!(role, WorkspaceRole::Owner | WorkspaceRole::Admin)
             }
         }

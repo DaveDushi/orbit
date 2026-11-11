@@ -16,7 +16,7 @@ const bot = { id: "0199c3a0-0000-7000-8000-00000000000c", name: "Orbit Agent" };
 test("tokens become names for the model", () => {
 	assert.equal(
 		tokensToNames(`<@${bot.id}> ask <@${annLee.id}> in <#${ann.id}>, <!here> <@0199c3a0-0000-7000-8000-0000000000ff>`, [ann, annLee, bot]),
-		"@Orbit Agent ask @Ann Lee in #channel, @here @unknown",
+		`@Orbit Agent ask @Ann Lee in #channel(${ann.id}), @here @unknown`,
 	);
 });
 

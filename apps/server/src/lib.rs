@@ -39,6 +39,7 @@ pub mod public_api;
 pub mod push;
 pub mod repositories;
 pub mod router;
+pub mod scheduled;
 mod secret_box;
 pub mod socket_ticket;
 pub mod static_assets;

@@ -18,6 +18,9 @@
  *   trash drive file <id|it>       share drive file <id|it>
  *   show my open tasks as a table (searches tasks, then answers with text and a ```spec card: table row by row, bar
  *     chart by status, buttons and a "New task" form; sending that form creates the task)
+ *   schedule routine "Name" at "cron" to "Instruction" [in #channel]     list routines
+ *   remind me at <2026-11-11T17:00> "Text"     send later at <2026-11-11T17:00> "Text" [in #channel]
+ *   (a routine's scheduled run carries its saved instruction, which these same rules read)
  *   show a broken card (answers with a card that is not in the catalog)
  *   what is this (from the Ask bar: reads the task, page or Drive folder of the page context; "it" and "this" in the
  *     other instructions also mean that item when the run has no newer one)
@@ -262,6 +265,12 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 	if ((match = /share drive (?:file|folder) (\S+)/i.exec(instruction))) return { name: "drive_share", args: { node_id: target(match[1], "drive") } };
 	if ((match = /read (?:page|doc|file) (\S+)/i.exec(instruction))) return { name: "read_page", args: { page_id: target(match[1], "page") } };
 	if ((match = /search tasks "([^"]+)"/i.exec(instruction))) return { name: "search_tasks", args: { query: match[1] } };
+	if ((match = /schedule (?:a )?routine "([^"]+)" at "([^"]+)" to "([^"]+)"(?: in (#[\w-]+(?:\([0-9a-f-]+\))?))?/i.exec(instruction)))
+		return { name: "schedule_routine", args: { name: match[1], cron: match[2], instruction: match[3], ...(match[4] ? { post_in: match[4] } : {}) } };
+	if (/list (?:my )?routines/i.test(instruction)) return { name: "list_routines", args: {} };
+	if ((match = /remind me at (\S+) "([^"]+)"/i.exec(instruction))) return { name: "remind_me", args: { at: match[1], text: match[2] } };
+	if ((match = /send later at (\S+) "([^"]+)"(?: in (#[\w-]+(?:\([0-9a-f-]+\))?))?/i.exec(instruction)))
+		return { name: "send_later", args: { at: match[1], text: match[2], ...(match[3] ? { post_in: match[3] } : {}) } };
 	if (/list projects/i.test(instruction)) return { name: "list_projects", args: {} };
 	if (/read messages/i.test(instruction)) return { name: "read_messages", args: {} };
 	if (/read (?:the )?(?:chat )?files/i.test(instruction)) {
