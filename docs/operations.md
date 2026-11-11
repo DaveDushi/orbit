@@ -38,6 +38,7 @@ Orbit reads its configuration only from environment variables that start with `O
 | `ORBIT_TRIAL_TASKS` | `50` | The most tasks (not counting the trash) a workspace holds during its trial. A whole number, 0 or more. Only with `ORBIT_CLOUD=true`. |
 | `ORBIT_TRIAL_PAGES` | `20` | The most pages (not counting the trash) a workspace holds during its trial. A whole number, 0 or more. Only with `ORBIT_CLOUD=true`. |
 | `ORBIT_TRIAL_MEMBERS` | `3` | The most members, pending invitations included, a workspace holds during its trial. A whole number, 1 or more (the owner counts). Only with `ORBIT_CLOUD=true`. |
+| `ORBIT_WEBHOOK_BOT_TEST_HOSTS` | none | Comma-separated hosts that webhook bots (`docs/webhook-bots.md`) may reach over plain HTTP and on local addresses, for local tests with fake bots (for example `127.0.0.1`). **Never set it in production**: it turns off the address check for those hosts. Orbit logs a warning when it is set. |
 
 Create the app key once with `openssl rand -base64 32` and keep a copy outside the server. Orbit does not start without it. See [Email, registration and the app key](#email-registration-and-the-app-key).
 

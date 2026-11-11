@@ -546,6 +546,15 @@ turns its routes, navigation and shortcuts off.
   a banner shows while the sockets and core queries reconnect; after a minute "Orbit is unavailable" covers
   the app (`app/ConnectionScreen.tsx`, the animated logo and Retry) until the connection is back. A page
   shows its error state only with no data or on an answer that is not a connection failure.
+- Webhook bots (`apps/server/src/webhook_bots/`, `docs/webhook-bots.md`, Settings → Agentic → Bots, owners and
+  admins): a bot user per bot (as an agent profile) with an https URL, channels and an encrypted signing secret
+  (shown once, rotatable). A mention in its channels, any message in a DM of one person and the bot, or a mention in
+  a group DM writes a `webhook_bot_deliveries` row in the send transaction; the dispatcher (`run_service`, every
+  server, woken after the commit) POSTs it signed (`v1=` HMAC-SHA256 of `v1:{ts}:{body}`) through the agent's
+  guarded client (`agent::outbound`: public addresses after DNS, no redirects, no proxy). The answer comes in the
+  HTTP body or once through `POST /api/v1/hooks/bots/{bot}/replies/{token}` within 30 s; else the bot posts a
+  "No answer" note. Not in its channels: a DM from the bot. Guests, bots and agents never reach a bot; 30 messages a
+  minute per bot.
 
 ## Notifications, profile, and settings
 

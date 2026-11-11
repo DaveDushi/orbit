@@ -48,6 +48,7 @@ pub mod task_routes;
 pub mod teamspace_routes;
 pub mod token_api;
 pub mod view_routes;
+pub mod webhook_bots;
 pub mod workspace_export;
 pub mod workspace_export_routes;
 pub mod workspace_routes;

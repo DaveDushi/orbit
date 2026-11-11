@@ -752,7 +752,7 @@ async fn checked_model(
 }
 
 /// Whether another account has this name (any case, trimmed): `@Name` must reach one account.
-async fn name_taken(
+pub(crate) async fn name_taken(
     conn: &mut AnyConnection,
     own: Option<Id>,
     name: &str,

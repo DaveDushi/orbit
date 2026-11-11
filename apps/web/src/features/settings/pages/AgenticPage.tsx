@@ -11,6 +11,7 @@ import { MemoryPage } from '@/features/agent/MemoryPage'
 import { RoutinesPage } from '@/features/agent/RoutinesPage'
 import { TeamInstructionsPage } from '@/features/agent/TeamInstructionsPage'
 import { useAgentStatus } from '@/features/agent/api'
+import { BotsPage } from '@/features/bots/BotsPage'
 import { AgentToolsPage } from '@/features/agentIntegrations/AgentToolsPage'
 import { useCurrentUser } from '@/features/auth/api'
 import { OAuthConnections } from '@/features/auth/components/OAuthConnections'
@@ -64,6 +65,11 @@ export function AgenticWorkspace() {
 /** The workspace's agents besides the default one: every member reads them, owners and admins manage them. */
 export function AgenticAgents() {
   return useAgentStatus().data?.enabled === true ? <AgentsPage /> : null
+}
+
+/** Webhook bots: they answer from an https URL and work without the team agent. Owners and admins manage them. */
+export function AgenticBots() {
+  return <BotsPage />
 }
 
 /** Routines: the person's own, and every routine of the workspace for owners and admins. */

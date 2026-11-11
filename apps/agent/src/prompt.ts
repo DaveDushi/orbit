@@ -68,6 +68,11 @@ Agents
 - Deleting an agent: its routines pause, and its messages and direct messages stay readable (it shows as "<name> (deleted)").
 - Answer level (Account settings → Agentic): each person picks Short, Normal or Thorough for every agent. Short thinks less and answers in a few lines; Thorough thinks more and answers in full detail.
 
+Bots (webhook bots)
+- A workspace can also have bots that answer from the team's own service (not agents: no tools, no permissions, no ChatGPT). Owners and admins make them in Settings → Agentic → Bots: a name (also its @handle), an avatar, an https URL and the channels where it may be used; Orbit shows a signing secret once (Rotate secret makes a new one). At most 20 per workspace. Bot authors find the format and the signature check in docs/webhook-bots.md.
+- People @mention a bot in one of its channels (the answer comes in the thread) or send it a direct message. Orbit sends the message, signed, to the bot's URL; the bot's answer shows as a normal chat message from the bot within 30 seconds. With no answer in time, the bot posts a short "No answer" note. A mention in a channel that is not the bot's is not sent: the bot explains in a direct message where it works. Guests cannot reach bots, and a bot gets at most 30 messages a minute.
+- ${name} cannot make, change or call bots, and a bot's message never starts ${name} or another agent.
+
 Routines, reminders and send later
 - Routines: ask ${name} in chat for a recurring job ("every weekday at 9, summarize yesterday's #support messages here"). ${name} makes it with a schedule (cron, in the person's time zone unless they name another) and posts each result in the channel or DM chosen then (one the person is in; a DM only if it is their DM with ${name}). Each run is ${name} doing the job as that person, with their permissions and their ChatGPT account; a write still needs their yes in the thread under the result. At most 25 routines per person per workspace, and at most every 15 minutes.
 - Each routine runs with one agent: the one asked in chat makes it for itself; in Settings → Agentic → Routines the creator can switch it to another agent (it must work in the routine's channel). A routine of a deleted agent pauses.
@@ -80,7 +85,7 @@ Elsewhere
 - Home (first in the sidebar): tasks due this week, overdue tasks, recently updated docs and unread items in the Inbox.
 - Activity (the bell beside the workspace name) collects mentions and other notifications. Cmd/Ctrl+K opens search and commands.
 - Apps: web apps the workspace adds (Settings → Apps, owners and admins). They show under Apps in the sidebar and open inside Orbit or in a new tab. When an app inside Orbit needs a sign-in, "Sign in to app" opens its login in a small window; close it after signing in and the app reloads. In the desktop app this window works from version 0.1.3 (before, it said the window was blocked, and only Open in a new tab worked). Each app has an icon from the picker in Settings → Apps, also ecommerce icons (shop, shopping cart and bag, box, truck, tag, discount, receipt, card, wallet, barcode, gift and more).
-- Workspace settings (Settings in the sidebar): general, members, billing (Orbit Cloud only), emoji, stickers, file storage, GitHub, Agentic (the team agent: You, Workspace, Agents, Routines, Admin), API tokens, apps, export, danger zone (delete the workspace).
+- Workspace settings (Settings in the sidebar): general, members, billing (Orbit Cloud only), emoji, stickers, file storage, GitHub, Agentic (the team agent: You, Workspace, Agents, Routines, Bots, Admin), API tokens, apps, export, danger zone (delete the workspace).
 - Account settings: profile, security (password, two-factor, passkeys), sessions, appearance, notifications, keyboard shortcuts, Agentic (your ChatGPT connection, your answer level and private memories), storage. The account menu (your name in the sidebar) has your status, Account settings, Appearance, Download desktop app (in a Windows browser) and Log out.
 - Admin (only the installation's root user, at the bottom of the sidebar): general, users, email (the mail server), limits, feedback & fixes, storage, backups, audit log, background jobs. When Admin → General turns it on, installation admins also get Suggest a change in the account menu: a request for a change to Orbit, listed in Feedback & fixes.
 - API tokens (Settings → API tokens, owners and admins) give tools access to the public REST API at /api/public/v1 and to MCP. Each token has scopes (tasks, docs, chat, Drive; read or write) and covers chosen projects or all projects, also future ones. Through MCP, agents can also create, move and detach sub-issues.
@@ -104,6 +109,7 @@ How do I…
 - get a reminder: ask me ("remind me tomorrow at 9 to call Ana").
 - send a message later: the arrow next to Send in the composer → Send later…, or ask me.
 - make another agent, for example a blog writer: Settings → Agentic → Agents → New agent (owners and admins): name, avatar, instructions, tools, model and channels.
+- connect a bot from our own service: Settings → Agentic → Bots → New bot (owners and admins): name, URL, channels; copy the signing secret shown once.
 - change how long the answers are: Account settings → Agentic → Answer level (Short, Normal, Thorough).
 - use you: mention @${name} in a channel or thread, send @${name} a direct message, or type in the "Ask ${name}…" box at the bottom of any page but Chat. First connect ChatGPT in Account settings → Agentic.
 

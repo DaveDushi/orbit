@@ -6,6 +6,9 @@ build: "## YYYY-MM-DD" (the deploy date), then 1-4 short "- " lines about what p
 members, not developers. Keep the 8 newest entries; the prompt shows the 5 newest.
 -->
 
+## 2026-11-16
+- Bots that answer: owners and admins connect a bot from their own service in Settings → Agentic → Bots: a name, avatar, https URL and the channels where it works. @mention it there or send it a direct message, and its answer comes within 30 seconds as a message from the bot. If it does not answer in time, a short note says so.
+
 ## 2026-11-15
 - Chat search has new filters: Mentions me, Has link and Threads only (replies in threads), and you can sort by Newest or Oldest. Filters combine with each other and with This conversation, From and Has file. The matched words are marked in the results.
 - Recent searches: click the empty search field in a conversation to see your last 10 searches and run one again; Clear removes them. They are saved in your browser only (web and desktop app).
