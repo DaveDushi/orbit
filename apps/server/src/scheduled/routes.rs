@@ -166,12 +166,25 @@ async fn create_routine(
     if state.config.is_none() {
         return Err(failure(ScheduledError::AgentOff, &uri, &request_id));
     }
+    // An agent makes routines for itself: its session decides the agent, not the body.
+    let session = authenticate_session(
+        &state.identity,
+        state.cookie_mode,
+        &headers,
+        uri.path(),
+        request_id.as_ref(),
+    )
+    .await?;
+    let session_agent = crate::agent::sessions::agent_of(state.database(), session.id)
+        .await
+        .map_err(|error| failure(ScheduledError::Database(error), &uri, &request_id))?;
     store(&state)
         .create_routine(
             &state.chat,
             workspace_id,
             user_id,
             body,
+            session_agent,
             TimestampMillis::now(),
         )
         .await
@@ -394,10 +407,17 @@ async fn agent_call(
     headers: HeaderMap,
     uri: Uri,
     request_id: RequestIdExtension,
+    custom: Option<Extension<crate::agent::profiles::AgentTools>>,
     Json(body): Json<AgentCall>,
 ) -> Result<Json<Value>, ApiError> {
     let (user_id, workspace_id, _role) =
         driver(&state, &headers, &workspace_id, &uri, &request_id).await?;
+    // A custom agent runs only the scheduling tools it has.
+    if let Some(Extension(crate::agent::profiles::AgentTools(tools))) = &custom
+        && !tools.iter().any(|own| *own == body.tool)
+    {
+        return Ok(refused("This agent's tools do not include this."));
+    }
     let thread = (
         body.conversation_id.as_str(),
         body.root_message_id.as_deref(),
@@ -482,8 +502,21 @@ async fn agent_call(
                     "Give name, prompt, schedule, time_zone and conversation_id only.",
                 ));
             };
+            // The routine is the session's agent's: the default agent or this custom agent.
+            let session = authenticate_session(
+                &state.identity,
+                state.cookie_mode,
+                &headers,
+                uri.path(),
+                request_id.as_ref(),
+            )
+            .await?;
+            let agent = crate::agent::sessions::agent_of(state.database(), session.id)
+                .await
+                .map_err(unavailable(&uri, &request_id))?
+                .flatten();
             let preview = match store
-                .preview_routine(workspace_id, user_id, input, now)
+                .preview_routine(workspace_id, user_id, input, agent, now)
                 .await
             {
                 Ok(preview) => preview,
@@ -503,7 +536,14 @@ async fn agent_call(
                 return Ok(question);
             }
             match store
-                .create_routine(&state.chat, workspace_id, user_id, preview.input, now)
+                .create_routine(
+                    &state.chat,
+                    workspace_id,
+                    user_id,
+                    preview.input,
+                    Some(agent),
+                    now,
+                )
                 .await
             {
                 Ok(record) => Ok(created("routine created", record)),

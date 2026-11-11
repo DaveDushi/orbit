@@ -44,6 +44,22 @@ export type PendingInput = {
 	readonly page_context?: PageContext | null;
 	/** A scheduled run of the author's routine; `body` is its saved instruction. Absent from an older Orbit. */
 	readonly routine?: RoutineRun | null;
+	/** A custom agent (Settings → Agentic → Agents); `null` or absent: the default agent. */
+	readonly agent?: InputAgent | null;
+	/** The driver's answer level: `short`, `normal` or `thorough`; absent from an older Orbit. */
+	readonly answer_level?: string;
+};
+
+/** A custom agent: its own bot user, name, instructions, tools and model. Orbit also enforces its tools. */
+export type InputAgent = {
+	readonly user_id: string;
+	readonly name: string;
+	readonly instructions: string;
+	/** The tool names it may use (a subset of the default agent's). */
+	readonly tools: readonly string[];
+	/** `null`: the installation's choice. */
+	readonly model: string | null;
+	readonly thinking: string | null;
 };
 
 /** The routine behind a scheduled run (Settings → Agentic → Routines). */
@@ -80,6 +96,8 @@ export type ThreadUpdate = {
 	readonly status: "idle" | "running" | "waiting";
 	readonly driver_user_id: string | null;
 	readonly waiting_for_user_id: string | null;
+	/** The thread's custom agent; `null`: the default agent. */
+	readonly agent_user_id?: string | null;
 };
 
 /** Orbit's internal agent API (shared secret) and its public API as one person (agent session). */
@@ -133,13 +151,14 @@ export class OrbitClient {
 		await this.internal("PUT", `/threads/${threadKey}`, update);
 	}
 
-	/** Sends a message as the agent. The same nonce returns the first message. */
+	/** Sends a message as the agent (`agentUserId`: a custom agent). The same nonce returns the first message. */
 	async postMessage(message: {
 		workspaceId: string;
 		conversationId: string;
 		rootMessageId: string | null;
 		body: string;
 		nonce: string;
+		agentUserId?: string | null;
 	}): Promise<string> {
 		const result = (await this.internal("POST", "/messages", {
 			workspace_id: message.workspaceId,
@@ -147,13 +166,14 @@ export class OrbitClient {
 			root_message_id: message.rootMessageId,
 			body: message.body,
 			nonce: message.nonce,
+			...(message.agentUserId ? { agent_user_id: message.agentUserId } : {}),
 		})) as { id: string };
 		return result.id;
 	}
 
-	/** `blocks`: the answer's card (one `ui` block), which Orbit checks again. */
-	async editMessage(messageId: string, workspaceId: string, body: string, blocks?: readonly unknown[]): Promise<void> {
-		await this.internal("PATCH", `/messages/${messageId}`, { workspace_id: workspaceId, body, ...(blocks ? { blocks } : {}) });
+	/** `blocks`: the answer's card (one `ui` block), which Orbit checks again. `agentUserId`: a custom agent's message. */
+	async editMessage(messageId: string, workspaceId: string, body: string, blocks?: readonly unknown[], agentUserId?: string | null): Promise<void> {
+		await this.internal("PATCH", `/messages/${messageId}`, { workspace_id: workspaceId, body, ...(blocks ? { blocks } : {}), ...(agentUserId ? { agent_user_id: agentUserId } : {}) });
 	}
 
 	async readCredential(userId: string): Promise<Record<string, unknown> | undefined> {
@@ -174,11 +194,11 @@ export class OrbitClient {
 		await this.internal("POST", `/credentials/${userId}/invalid`);
 	}
 
-	async #session(userId: string, workspaceId: string, fresh: boolean): Promise<string> {
-		const key = `${userId}:${workspaceId}`;
+	async #session(userId: string, workspaceId: string, agentUserId: string | null, fresh: boolean): Promise<string> {
+		const key = `${userId}:${workspaceId}:${agentUserId ?? ""}`;
 		const cached = this.#sessions.get(key);
 		if (!fresh && cached && cached.expiresAt - Date.now() > 60_000) return cached.token;
-		const issued = (await this.internal("POST", "/sessions", { user_id: userId, workspace_id: workspaceId })) as {
+		const issued = (await this.internal("POST", "/sessions", { user_id: userId, workspace_id: workspaceId, ...(agentUserId ? { agent_user_id: agentUserId } : {}) })) as {
 			token: string;
 			expires_at: number;
 		};
@@ -188,14 +208,15 @@ export class OrbitClient {
 
 	/**
 	 * Orbit's public API as `userId`, below `/api/v1/workspaces/{workspaceId}`. Everything the person cannot do
-	 * fails here, exactly as in their browser.
+	 * fails here, exactly as in their browser. `agentUserId`: a custom agent's session, which Orbit limits to the
+	 * routes of its tools.
 	 */
-	async asUser(userId: string, workspaceId: string, method: string, path: string, body?: unknown): Promise<unknown> {
+	async asUser(userId: string, workspaceId: string, method: string, path: string, body?: unknown, agentUserId: string | null = null): Promise<unknown> {
 		const call = async (fresh: boolean) =>
 			this.#fetch(
 				method,
 				`/api/v1/workspaces/${workspaceId}${path}`,
-				{ authorization: `Bearer ${await this.#session(userId, workspaceId, fresh)}` },
+				{ authorization: `Bearer ${await this.#session(userId, workspaceId, agentUserId, fresh)}` },
 				body,
 				`${method} ${path}`,
 			);

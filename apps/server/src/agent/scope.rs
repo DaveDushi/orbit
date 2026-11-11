@@ -8,7 +8,7 @@ use axum::extract::{Request, State};
 use axum::http::{Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::Response;
-use orbit_platform::{Database, Problem, RequestId};
+use orbit_platform::{Database, Problem, RequestId, Row};
 use sha2::{Digest, Sha256};
 
 /// Every agent session token starts with this. Normal session tokens are base64url and never
@@ -19,9 +19,10 @@ pub const TOKEN_PREFIX: &str = "orbit-agent.";
 /// data export, administration, the agent's own team instructions and its integrations. Drive too:
 /// the agent uses it only through `/agent-tools/drive`, which asks the driver before it moves
 /// anything to the trash or makes a public link (`super::drive`).
-const DENIED: [&str; 15] = [
+const DENIED: [&str; 16] = [
     "agent",
     "agent-integrations",
+    "agents",
     "api-tokens",
     "apps",
     "audit",
@@ -84,8 +85,22 @@ pub fn allows(workspace_id: &str, method: &Method, path: &str) -> bool {
     true
 }
 
-/// The layer: checks agent tokens, leaves every other request alone.
-pub async fn layer(State(database): State<Database>, request: Request, next: Next) -> Response {
+/// Whether a custom agent with these tools may make this request (after [`allows`]): only the
+/// routes its tools need (`profiles::route_need`).
+#[must_use]
+pub fn custom_allows(workspace_id: &str, tools: &[String], method: &Method, path: &str) -> bool {
+    let rest = path
+        .strip_prefix("/api/v1/workspaces/")
+        .and_then(|rest| rest.strip_prefix(workspace_id))
+        .unwrap_or_default()
+        .trim_end_matches('/');
+    let rest = rest.strip_prefix('/').unwrap_or(rest);
+    super::profiles::tools_allow(tools, method, rest)
+}
+
+/// The layer: checks agent tokens, leaves every other request alone. A custom agent's session
+/// also passes only for the routes of its tools, and carries them for the Drive route.
+pub async fn layer(State(database): State<Database>, mut request: Request, next: Next) -> Response {
     let Some(token) = orbit_platform::bearer_token(request.headers())
         .filter(|token| token.starts_with(TOKEN_PREFIX))
         .map(str::to_owned)
@@ -93,40 +108,70 @@ pub async fn layer(State(database): State<Database>, request: Request, next: Nex
         return next.run(request).await;
     };
     let hash: [u8; 32] = Sha256::digest(token.as_bytes()).into();
-    let workspace_id = sqlx::query_scalar::<_, String>(
-        "SELECT agent_sessions.workspace_id FROM sessions \
-         JOIN agent_sessions ON agent_sessions.session_id = sessions.id \
+    let row = sqlx::query(
+        "SELECT agent_sessions.workspace_id, agent_sessions.agent_user_id, p.tools, p.deleted_at \
+         FROM sessions JOIN agent_sessions ON agent_sessions.session_id = sessions.id \
+         LEFT JOIN agent_profiles p ON p.user_id = agent_sessions.agent_user_id \
          WHERE sessions.token_hash = $1 AND sessions.revoked_at IS NULL",
     )
     .bind(hash.to_vec())
     .fetch_optional(database.pool())
     .await;
-    match workspace_id {
-        Ok(Some(workspace_id)) if allows(&workspace_id, request.method(), request.uri().path()) => {
-            next.run(request).await
+    let row = match row {
+        Ok(Some(row)) => row,
+        Ok(None) => {
+            return refuse(
+                &request,
+                StatusCode::UNAUTHORIZED,
+                "authentication_required",
+                "The agent session is not valid.",
+            );
         }
-        Ok(Some(_)) => refuse(
-            &request,
-            StatusCode::FORBIDDEN,
-            "agent_scope",
-            "The agent cannot use this route.",
-        ),
-        Ok(None) => refuse(
-            &request,
-            StatusCode::UNAUTHORIZED,
-            "authentication_required",
-            "The agent session is not valid.",
-        ),
         Err(error) => {
             tracing::warn!(%error, "agent session scope");
-            refuse(
+            return refuse(
                 &request,
                 StatusCode::SERVICE_UNAVAILABLE,
                 "unavailable",
                 "Try again in a moment.",
-            )
+            );
         }
+    };
+    let workspace_id: String = row.get("workspace_id");
+    // A custom agent: its tools, or none at all once it is deleted.
+    let custom = row.get::<Option<String>, _>("agent_user_id").map(|_| {
+        match row.get::<Option<i64>, _>("deleted_at") {
+            None => row
+                .get::<Option<String>, _>("tools")
+                .and_then(|tools| serde_json::from_str::<Vec<String>>(&tools).ok())
+                .unwrap_or_default(),
+            Some(_) => Vec::new(),
+        }
+    });
+    let path = request.uri().path().to_owned();
+    let method = request.method().clone();
+    let allowed = allows(&workspace_id, &method, &path)
+        && custom
+            .as_ref()
+            .is_none_or(|tools| custom_allows(&workspace_id, tools, &method, &path));
+    if !allowed {
+        return refuse(
+            &request,
+            StatusCode::FORBIDDEN,
+            "agent_scope",
+            if custom.is_some() {
+                "This agent's tools do not include this."
+            } else {
+                "The agent cannot use this route."
+            },
+        );
     }
+    if let Some(tools) = custom {
+        request
+            .extensions_mut()
+            .insert(super::profiles::AgentTools(std::sync::Arc::new(tools)));
+    }
+    next.run(request).await
 }
 
 fn refuse(request: &Request, status: StatusCode, code: &str, detail: &str) -> Response {
@@ -221,6 +266,9 @@ mod tests {
             (Method::GET, "/apps/demo/frame"),
             (Method::GET, "/workspace-apps"),
             (Method::POST, "/workspace-apps/abc/rotate-secret"),
+            (Method::GET, "/agents"),
+            (Method::POST, "/agents"),
+            (Method::PATCH, "/agents/abc"),
             (Method::GET, "/chat/files/abc"),
             (Method::POST, "/chat/files"),
             (Method::GET, "/chat/files"),

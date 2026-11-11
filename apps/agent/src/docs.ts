@@ -34,6 +34,13 @@ export type ThreadState = {
 	/** The agent's name and the workspace's team instructions, read at the start of the current run. */
 	agentName?: string;
 	teamInstructions?: string;
+	/** The thread's custom agent (its bot user); absent or `null`: the default agent. Fixed for the thread. */
+	agentUserId?: string | null;
+	/** A custom agent's instructions and tools, read at the start of the current run; `null` tools: every tool. */
+	agentInstructions?: string;
+	allowedTools?: string[] | null;
+	/** The default agent's name, so a custom agent can point people to it. */
+	defaultAgentName?: string;
 	/** The memory section of the current run (the wake view read at its start), as the model sees it. */
 	memory?: string | null;
 	/** The integration tools section of the current run (the driver's tools, read at its start). */

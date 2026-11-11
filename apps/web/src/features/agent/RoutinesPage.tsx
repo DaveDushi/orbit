@@ -20,7 +20,7 @@ import { useDeleteRoutine, useRoutines, useUpdateRoutine } from '@/features/sche
 import { problemDetail } from '@/features/scheduled/problem'
 import { whenLabel } from '@/features/scheduled/times'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
-import { useAgentStatus } from './api'
+import { useAgentProfiles, useAgentStatus } from './api'
 
 /** Settings → Agentic → Routines: the person's routines (every routine for owners and admins), to pause, edit or delete. */
 export function RoutinesPage() {
@@ -53,6 +53,8 @@ export function RoutinesPage() {
               </div>
               <p className="line-clamp-2 text-sm text-muted-foreground">{routine.prompt}</p>
               <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                <dt>Agent</dt>
+                <dd className="text-foreground">{routine.agent_name}</dd>
                 <dt>Schedule</dt>
                 <dd>
                   <code className="font-mono text-foreground">{routine.schedule}</code> ({routine.time_zone})
@@ -131,9 +133,16 @@ function EditRoutineDialog({ routine, onClose }: { routine: Routine; onClose: ()
   const { currentUserId } = useChatContext()
   const people = useChatPeople()
   const status = useAgentStatus().data
-  const botId = status?.enabled ? status.bot_user_id : null
+  const profiles = useAgentProfiles(workspace.id).data
+  const [agentId, setAgentId] = useState(routine.agent_user_id)
+  const defaultId = status?.enabled ? status.bot_user_id : null
+  const agents = [
+    ...(defaultId && status?.enabled ? [{ id: defaultId, name: status.name }] : []),
+    ...(profiles?.agents ?? []).map((agent) => ({ id: agent.user_id, name: agent.name })),
+  ]
+  if (!agents.some((agent) => agent.id === routine.agent_user_id)) agents.push({ id: routine.agent_user_id, name: routine.agent_name })
   const conversations = (useConversations().data ?? []).filter(
-    (conversation) => conversation.isMember && !conversation.archived && (conversation.kind !== 'dm' || (botId !== null && conversation.memberIds.includes(botId))),
+    (conversation) => conversation.isMember && !conversation.archived && (conversation.kind !== 'dm' || conversation.memberIds.includes(agentId)),
   )
   const update = useUpdateRoutine(workspace.id)
   const [name, setName] = useState(routine.name)
@@ -148,7 +157,17 @@ function EditRoutineDialog({ routine, onClose }: { routine: Routine; onClose: ()
   }
   const save = () =>
     update.mutate(
-      { id: routine.id, change: { name, prompt, schedule, time_zone: timeZone, ...(target && target !== routine.conversation_id ? { conversation_id: target } : {}) } },
+      {
+        id: routine.id,
+        change: {
+          name,
+          prompt,
+          schedule,
+          time_zone: timeZone,
+          ...(target && target !== routine.conversation_id ? { conversation_id: target } : {}),
+          ...(agentId !== routine.agent_user_id ? { agent_user_id: agentId } : {}),
+        },
+      },
       { onSuccess: onClose },
     )
 
@@ -159,6 +178,22 @@ function EditRoutineDialog({ routine, onClose }: { routine: Routine; onClose: ()
           <span className="text-muted-foreground">Name</span>
           <Input value={name} maxLength={80} onChange={(event) => setName(event.target.value)} />
         </label>
+        <div className="flex flex-col gap-1.5 text-sm">
+          <span className="text-muted-foreground">Agent</span>
+          <Select value={agentId} onValueChange={(value) => setAgentId(String(value ?? routine.agent_user_id))}>
+            <SelectTrigger aria-label="Agent">
+              <SelectValue>{agents.find((agent) => agent.id === agentId)?.name ?? routine.agent_name}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {agents.map((agent) => (
+                <SelectItem key={agent.id} value={agent.id}>
+                  {agent.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <span className="text-xs text-muted-foreground">It runs the routine as you. Another agent must work in the channel where the routine posts.</span>
+        </div>
         <label className="flex flex-col gap-1.5 text-sm">
           <span className="text-muted-foreground">Instruction</span>
           <Textarea value={prompt} maxLength={4000} className="min-h-24" onChange={(event) => setPrompt(event.target.value)} />

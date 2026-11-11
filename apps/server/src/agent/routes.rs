@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use super::inputs::{self, ThreadUpdate};
 use super::{AgentState, bot, credentials, sessions};
 use crate::push::PushService;
-use crate::repositories::chat::{BlocksError, SendInput, parse_agent_blocks};
+use crate::repositories::chat::{BlocksError, ChatError, SendInput, parse_agent_blocks};
 use crate::task_routes::{ApiError, authenticate_session};
 
 pub(super) const SECRET_HEADER: &str = "x-orbit-agent-secret";
@@ -308,9 +308,14 @@ async fn list_inputs(
     }
     let deadline = tokio::time::Instant::now() + Duration::from_secs(query.wait.min(25));
     loop {
-        let pending = inputs::pending(database, 50)
+        let (refused, pending): (Vec<_>, Vec<_>) = inputs::pending(database, 50)
             .await
-            .map_err(|_| unavailable(&uri, &request_id))?;
+            .map_err(|_| unavailable(&uri, &request_id))?
+            .into_iter()
+            .partition(|input| input.refused.is_some());
+        for input in &refused {
+            refuse(&state, input).await;
+        }
         if !pending.is_empty() || tokio::time::Instant::now() >= deadline {
             let mut conn = database
                 .pool()
@@ -333,6 +338,108 @@ async fn list_inputs(
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
+}
+
+/// Answers a mention of a custom agent where it may not be used: in the author's DM with the
+/// agent, never in that channel. The agent does not join the channel and nothing runs.
+async fn refuse(state: &AgentState, input: &inputs::PendingInput) {
+    let ids = (
+        input.workspace_id.parse::<Id>(),
+        input.author_id.parse::<Id>(),
+        input.message_id.parse::<Id>(),
+        input
+            .agent
+            .as_ref()
+            .map(|agent| agent.user_id.parse::<Id>()),
+    );
+    let (Ok(workspace_id), Ok(author), Ok(message_id), Some(Ok(agent))) = ids else {
+        if let Ok(message_id) = input.message_id.parse() {
+            let _ = inputs::acknowledge(state.database(), message_id).await;
+        }
+        return;
+    };
+    let chat = &state.chat;
+    let answered = async {
+        let channels = {
+            let mut conn = state.database().pool().acquire().await?;
+            match super::profiles::live_agent(&mut conn, workspace_id, agent).await? {
+                Some(profile) => super::profiles::channel_names(&mut conn, &profile).await?,
+                None => return Ok(()),
+            }
+        };
+        let dm = match chat
+            .publish(workspace_id, agent, chat.chat.open_dm(workspace_id, agent, vec![author]))
+            .await
+        {
+            Ok((written, _)) => written.value.id,
+            Err(ChatError::Unavailable(error)) => return Err(error),
+            Err(error) => {
+                tracing::warn!(%error, "agent refusal DM");
+                return Ok(());
+            }
+        };
+        let list = if channels.is_empty() {
+            "only in direct messages".to_owned()
+        } else {
+            format!(
+                "only in {} and in direct messages",
+                channels
+                    .iter()
+                    .map(|name| format!("#{name}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        let body = format!(
+            "I can't help in #{}: I work {list}. Ask me here, or ask an owner or admin to add that channel in Settings → Agentic → Agents.",
+            input.conversation_name
+        );
+        let send = SendInput {
+            conversation_id: dm,
+            thread_root_id: None,
+            reply_to_id: None,
+            body,
+            sticker_id: None,
+            file_ids: Vec::new(),
+            online: chat.hub.online(workspace_id),
+            also_in_channel: false,
+            nonce: format!("agent:{message_id}"),
+            page_context: None,
+        };
+        match chat
+            .publish(workspace_id, agent, chat.chat.send_message(workspace_id, agent, send))
+            .await
+        {
+            Ok((written, _)) => PushService::of(state.database()).chat_message(&written.value),
+            Err(ChatError::Unavailable(error)) => return Err(error),
+            Err(error) => tracing::warn!(%error, "agent refusal"),
+        }
+        Ok::<_, sqlx::Error>(())
+    }
+    .await;
+    // A busy database tries again on the next poll; anything else is answered once.
+    if let Err(error) = answered {
+        tracing::warn!(%error, "agent refusal");
+        return;
+    }
+    let _ = inputs::acknowledge(state.database(), message_id).await;
+}
+
+/// The bot user that posts for the sidecar: a live custom agent of the workspace, or the default
+/// agent.
+async fn poster(
+    database: &orbit_platform::Database,
+    workspace_id: Id,
+    agent: Option<Id>,
+) -> Result<Id, sqlx::Error> {
+    let Some(agent) = agent else {
+        return bot::ensure(database).await;
+    };
+    let mut conn = database.pool().acquire().await?;
+    super::profiles::live_agent(&mut conn, workspace_id, agent)
+        .await?
+        .map(|profile| profile.user_id)
+        .ok_or_else(|| sqlx::Error::Protocol("the agent was deleted".to_owned()))
 }
 
 async fn acknowledge_input(
@@ -379,6 +486,9 @@ struct PostMessageBody {
     body: String,
     /// The same nonce returns the first message.
     nonce: String,
+    /// A custom agent posts; absent: the default agent.
+    #[serde(default)]
+    agent_user_id: Option<Id>,
 }
 
 /// Sends a message as the bot. Runs in a task of its own so a dropped request cannot stop it
@@ -394,7 +504,7 @@ async fn post_message(
     let chat = state.chat.clone();
     let database = state.database().clone();
     let written = tokio::spawn(async move {
-        let bot = bot::ensure(&database).await?;
+        let bot = poster(&database, body.workspace_id, body.agent_user_id).await?;
         let input = SendInput {
             conversation_id: body.conversation_id,
             thread_root_id: body.root_message_id,
@@ -443,6 +553,9 @@ struct EditMessageBody {
     /// The answer's card: one `ui` block (`chat::parse_agent_blocks`). Absent: no card.
     #[serde(default)]
     blocks: Option<Value>,
+    /// The message's custom agent; absent: the default agent.
+    #[serde(default)]
+    agent_user_id: Option<Id>,
 }
 
 async fn edit_message(
@@ -471,7 +584,7 @@ async fn edit_message(
     let chat = state.chat.clone();
     let database = state.database().clone();
     let edited = tokio::spawn(async move {
-        let bot = bot::ensure(&database).await?;
+        let bot = poster(&database, body.workspace_id, body.agent_user_id).await?;
         chat.publish(
             body.workspace_id,
             bot,
@@ -543,6 +656,9 @@ async fn list_people(
 struct SessionBody {
     user_id: Id,
     workspace_id: Id,
+    /// A custom agent's session, which reaches only what its tools need; absent: the default agent.
+    #[serde(default)]
+    agent_user_id: Option<Id>,
 }
 
 async fn issue_session(
@@ -553,7 +669,14 @@ async fn issue_session(
     Json(body): Json<SessionBody>,
 ) -> Result<Response, ApiError> {
     sidecar_only(&state, &headers, &uri, &request_id)?;
-    match sessions::issue(state.database(), body.user_id, body.workspace_id).await {
+    match sessions::issue(
+        state.database(),
+        body.user_id,
+        body.workspace_id,
+        body.agent_user_id,
+    )
+    .await
+    {
         Ok(issued) => Ok(Json(issued).into_response()),
         Err(sessions::SessionRefused::Database(failure)) => {
             tracing::warn!(error = %failure, "agent session");

@@ -5,6 +5,8 @@ import { CopyCodeButton } from '@/components/common/CopyCodeButton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AgentNamePage } from '@/features/agent/AgentNamePage'
 import { AgentPage } from '@/features/agent/AgentPage'
+import { AgentsPage } from '@/features/agent/AgentsPage'
+import { AnswerLevelPage } from '@/features/agent/AnswerLevelPage'
 import { MemoryPage } from '@/features/agent/MemoryPage'
 import { RoutinesPage } from '@/features/agent/RoutinesPage'
 import { TeamInstructionsPage } from '@/features/agent/TeamInstructionsPage'
@@ -41,6 +43,7 @@ export function AgenticYou() {
   return (
     <>
       {agent ? <AgentPage /> : null}
+      {agent ? <AnswerLevelPage /> : null}
       <McpSetup />
       <OAuthConnections />
       {agent ? <MemoryPage /> : null}
@@ -56,6 +59,11 @@ export function AgenticWorkspace() {
       <AgentToolsPage />
     </>
   )
+}
+
+/** The workspace's agents besides the default one: every member reads them, owners and admins manage them. */
+export function AgenticAgents() {
+  return useAgentStatus().data?.enabled === true ? <AgentsPage /> : null
 }
 
 /** Routines: the person's own, and every routine of the workspace for owners and admins. */

@@ -181,10 +181,19 @@ async fn call(
     headers: HeaderMap,
     uri: Uri,
     request_id: RequestIdExtension,
+    custom: Option<Extension<super::profiles::AgentTools>>,
     Json(body): Json<CallBody>,
 ) -> Result<Json<Value>, ApiError> {
     let (user, workspace_id, _role) =
         driver(&state, &headers, &workspace_id, &uri, &request_id).await?;
+    // A custom agent runs only the Drive tools it has.
+    if let Some(Extension(super::profiles::AgentTools(tools))) = &custom
+        && !super::profiles::drive_tool_allowed(tools, &body.tool)
+    {
+        return Ok(refused(
+            "This agent's tools do not include this Drive action.",
+        ));
+    }
     let database = state.database();
     let thread = (
         body.conversation_id.as_str(),

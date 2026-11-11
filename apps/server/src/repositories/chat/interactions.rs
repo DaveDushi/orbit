@@ -20,7 +20,7 @@ use super::{
     MessageKind, MessageRecord, Written, finish, load_conversation, load_message,
     load_message_access, mentioned_user_ids, parse_id,
 };
-use crate::agent::inputs::{InputKind, bot_user_id, thread_of};
+use crate::agent::inputs::{InputKind, agent_thread_key, bot_user_id, thread_of};
 
 /// How long and how often an integration may answer one click (as Slack's `response_url`).
 const RESPONSE_TTL_MS: i64 = 30 * 60 * 1000;
@@ -122,8 +122,15 @@ impl ChatRepository {
         let mut tx = self.database.immediate_transaction().await?;
         let (access, message) =
             load_message_access(&mut tx, workspace_id, actor_id, message_id).await?;
-        let agent = bot_user_id(&mut tx).await?;
-        if message.bot.is_some() || agent != Some(message.author_id) {
+        let donna = bot_user_id(&mut tx).await?;
+        let custom = if message.bot.is_some() || donna == Some(message.author_id) {
+            None
+        } else {
+            crate::agent::profiles::live_agent(&mut tx, workspace_id, message.author_id)
+                .await?
+                .map(|profile| profile.user_id)
+        };
+        if message.bot.is_some() || (donna != Some(message.author_id) && custom.is_none()) {
             return Ok(false);
         }
         if access.actor.is_guest() {
@@ -190,10 +197,11 @@ impl ChatRepository {
         }
         let is_dm = access.conversation.kind == ConversationKind::Dm;
         let (thread_key, root) = thread_of(&message, message.conversation_id, is_dm);
+        let thread_key = agent_thread_key(custom, thread_key);
         sqlx::query(
             "INSERT INTO agent_inputs (message_id, workspace_id, conversation_id, thread_key, \
-             root_message_id, author_id, kind, created_at, card_message_id, action) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+             root_message_id, author_id, kind, created_at, card_message_id, action, agent_user_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
         )
         .bind(Id::new_v7().to_string())
         .bind(workspace_id.to_string())
@@ -205,6 +213,7 @@ impl ChatRepository {
         .bind(now.as_millis())
         .bind(message.id.to_string())
         .bind(action.to_string())
+        .bind(custom.map(|id| id.to_string()))
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;

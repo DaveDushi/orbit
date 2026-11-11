@@ -175,11 +175,40 @@ pub(crate) async fn bot_user_id(conn: &mut AnyConnection) -> Result<Option<Id>, 
     Ok(id.and_then(|id| id.parse().ok()))
 }
 
-/// Queues `message` for the agent when it is for the agent. Called by `send_message` in its
-/// transaction, after the message row is written. Never fails for a reason of its own: on
-/// Postgres an error would end the whole transaction and lose the message. A click on the
-/// agent's card is queued without a message (`ChatRepository::queue_agent_action`).
-/// `page_context` is kept only when the message is queued.
+/// The thread key of a custom agent's work in a thread: derived from the agent and the thread's
+/// own key (`thread_of`), so the default agent and every custom agent can work in one chat thread,
+/// each with its own state and transcript. The default agent (`None`) keeps the thread's key.
+#[must_use]
+pub fn agent_thread_key(agent: Option<Id>, base: Id) -> Id {
+    use sha2::{Digest, Sha256};
+    let Some(agent) = agent else {
+        return base;
+    };
+    let digest = Sha256::digest(format!("orbit-agent-thread:{agent}:{base}").as_bytes());
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    // Shaped as a version 7 UUID, which `Id` requires.
+    bytes[6] = (bytes[6] & 0x0f) | 0x70;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+    .parse()
+    .unwrap_or(base)
+}
+
+/// Queues `message` for an agent when it is for one: the first agent it mentions, the agent of a
+/// DM, or the agent that runs or waits in its thread. The default agent's rows keep a NULL
+/// `agent_user_id`. Called by `send_message` in its transaction, after the message row is
+/// written. Never fails for a reason of its own: on Postgres an error would end the whole
+/// transaction and lose the message. A click on an agent's card is queued without a message
+/// (`ChatRepository::queue_agent_action`). `page_context` is kept only when the message is queued.
 pub(crate) async fn record(
     conn: &mut AnyConnection,
     workspace_id: Id,
@@ -188,14 +217,32 @@ pub(crate) async fn record(
     message: &MessageRecord,
     page_context: Option<&PageContext>,
 ) -> Result<(), sqlx::Error> {
-    let Some(bot) = bot_user_id(conn).await? else {
-        return Ok(());
-    };
-    if message.author_id == bot {
+    let donna = bot_user_id(conn).await?;
+    let custom = super::profiles::workspace_agents(conn, workspace_id).await?;
+    if donna == Some(message.author_id) || custom.iter().any(|(id, _)| *id == message.author_id) {
         return Ok(());
     }
-    let mentioned = message.mentions.user_ids.contains(&bot);
-    if !mentioned && !is_dm && message.thread_root_id.is_none() {
+    let live_agents: Vec<Id> = donna
+        .into_iter()
+        .chain(
+            custom
+                .iter()
+                .filter(|(_, deleted)| !deleted)
+                .map(|(id, _)| *id),
+        )
+        .collect();
+    if live_agents.is_empty() {
+        return Ok(());
+    }
+    let live = |id: &Id| live_agents.contains(id);
+    let mentioned: Vec<Id> = message
+        .mentions
+        .user_ids
+        .iter()
+        .copied()
+        .filter(|id| live(id))
+        .collect();
+    if mentioned.is_empty() && !is_dm && message.thread_root_id.is_none() {
         return Ok(());
     }
     // The agent never works for a guest: a guest's mention, DM, answer or reply starts nothing.
@@ -211,19 +258,70 @@ pub(crate) async fn record(
     if guest {
         return Ok(());
     }
-    let bot_member = sqlx::query_scalar::<_, Flag>(
-        "SELECT EXISTS (SELECT 1 FROM chat_members WHERE conversation_id = $1 AND user_id = $2)",
-    )
-    .bind(conversation_id.to_string())
-    .bind(bot.to_string())
-    .fetch_one(&mut *conn)
-    .await?
-    .0;
-    // A DM keeps the people it was opened with: the agent cannot be added to one.
-    if is_dm && !bot_member {
-        return Ok(());
+    // The live agents in the conversation.
+    let mut query = SqlBuilder::new("SELECT user_id FROM chat_members WHERE conversation_id = ");
+    query.push_bind(conversation_id.to_string());
+    query.push(" AND user_id IN (");
+    let mut ids = query.separated(", ");
+    for id in &live_agents {
+        ids.push_bind(id.to_string());
     }
-    let (thread_key, root) = thread_of(message, conversation_id, is_dm);
+    query.push(")");
+    let members: Vec<Id> = query
+        .build()
+        .fetch_all(&mut *conn)
+        .await?
+        .iter()
+        .filter_map(|row| row.get::<String, _>("user_id").parse().ok())
+        .collect();
+    // Which agent: in a DM, one that is in it (a mentioned one first); elsewhere the first one
+    // mentioned, else the one that runs or waits in this thread.
+    let addressed_agent = if is_dm {
+        mentioned
+            .iter()
+            .find(|id| members.contains(id))
+            .or_else(|| members.first())
+            .copied()
+    } else {
+        mentioned.first().copied()
+    };
+    let (agent, addressed) = match (addressed_agent, message.thread_root_id) {
+        (Some(agent), _) => (agent, true),
+        // A DM keeps the people it was opened with: an agent cannot be added to one.
+        (None, _) if is_dm => return Ok(()),
+        (None, Some(root)) => {
+            let current = sqlx::query_scalar::<_, Option<String>>(
+                "SELECT agent_user_id FROM agent_threads WHERE conversation_id = $1 \
+                 AND root_message_id = $2 AND status IN ('running', 'waiting') \
+                 ORDER BY updated_at DESC LIMIT 1",
+            )
+            .bind(conversation_id.to_string())
+            .bind(root.to_string())
+            .fetch_optional(&mut *conn)
+            .await?;
+            let agent = match current {
+                Some(Some(agent)) => agent.parse().ok(),
+                Some(None) => donna,
+                None => None,
+            };
+            match agent.filter(|agent| live(agent)) {
+                Some(agent) => (agent, false),
+                None => return Ok(()),
+            }
+        }
+        (None, None) => return Ok(()),
+    };
+    let profile = if donna == Some(agent) {
+        None
+    } else {
+        match super::profiles::live_agent(conn, workspace_id, agent).await? {
+            Some(profile) => Some(profile),
+            None => return Ok(()),
+        }
+    };
+    let agent_column = profile.as_ref().map(|profile| profile.user_id);
+    let (base_key, root) = thread_of(message, conversation_id, is_dm);
+    let thread_key = agent_thread_key(agent_column, base_key);
     let thread =
         sqlx::query("SELECT status, driver_user_id FROM agent_threads WHERE thread_key = $1")
             .bind(thread_key.to_string())
@@ -237,10 +335,19 @@ pub(crate) async fn record(
                         .and_then(|id| id.parse().ok()),
                 })
             });
-    let Some(kind) = classify(mentioned || is_dm, thread, message.author_id) else {
+    let Some(kind) = classify(addressed, thread, message.author_id) else {
         return Ok(());
     };
-    if !bot_member {
+    // A custom agent works only in its channels: a mention elsewhere gets a refusal in the
+    // author's DM with the agent (`refusals`), and the agent does not join the channel.
+    let refused = match &profile {
+        Some(profile) => !super::profiles::allowed_in(conn, profile, conversation_id).await?,
+        None => false,
+    };
+    if refused && kind != InputKind::Instruction {
+        return Ok(());
+    }
+    if !refused && !members.contains(&agent) {
         // Mentioned in a private channel: a member brought the agent in. It joins with
         // everything read, the way a new member of a public channel does.
         sqlx::query(
@@ -253,7 +360,7 @@ pub(crate) async fn record(
              ON CONFLICT (conversation_id, user_id) DO NOTHING",
         )
         .bind(conversation_id.to_string())
-        .bind(bot.to_string())
+        .bind(agent.to_string())
         .bind(message.id.to_string())
         .bind(message.created_at.as_millis())
         .execute(&mut *conn)
@@ -263,8 +370,8 @@ pub(crate) async fn record(
     let page_context = page_context.and_then(|context| serde_json::to_string(context).ok());
     sqlx::query(
         "INSERT INTO agent_inputs (message_id, workspace_id, conversation_id, thread_key, \
-         root_message_id, author_id, kind, created_at, page_context) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (message_id) DO NOTHING",
+         root_message_id, author_id, kind, created_at, page_context, agent_user_id, refused) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT (message_id) DO NOTHING",
     )
     .bind(message.id.to_string())
     .bind(workspace_id.to_string())
@@ -275,6 +382,8 @@ pub(crate) async fn record(
     .bind(kind.as_str())
     .bind(message.created_at.as_millis())
     .bind(page_context)
+    .bind(agent_column.map(|id| id.to_string()))
+    .bind(refused.then_some("channel"))
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -308,6 +417,27 @@ pub struct PendingInput {
     /// The message's files, so the run knows them without a call. The agent reads them with
     /// the chat file content route.
     pub files: Vec<InputFile>,
+    /// The custom agent this input is for; `None`: the default agent.
+    pub agent: Option<InputAgent>,
+    /// The driver's answer level (`profiles::ANSWER_LEVELS`): the author's, or for an answer the
+    /// waiting run's driver's.
+    pub answer_level: String,
+    /// `channel`: the agent may not be used where it was mentioned. Orbit answers these itself
+    /// (`refusals`); the sidecar never gets them.
+    #[serde(skip)]
+    pub refused: Option<String>,
+}
+
+/// A custom agent, as a run needs it. Its tools are also enforced by Orbit (`scope`).
+#[derive(Clone, Debug, Serialize)]
+pub struct InputAgent {
+    pub user_id: String,
+    pub name: String,
+    pub instructions: String,
+    pub tools: Vec<String>,
+    /// `None`: the installation's choice.
+    pub model: Option<String>,
+    pub thinking: Option<String>,
 }
 
 /// The routine behind an input (`crate::scheduled`): its instruction is the creator's own words, saved
@@ -340,13 +470,21 @@ pub(crate) async fn pending(
          r.schedule AS routine_schedule, r.time_zone AS routine_time_zone, c.kind AS conversation_kind, \
          c.name AS conversation_name, t.body AS team_instructions, \
          (SELECT COUNT(*) FROM chat_members cm WHERE cm.conversation_id = i.conversation_id) \
-         AS conversation_members \
+         AS conversation_members, i.agent_user_id, i.refused, au.display_name AS agent_name, \
+         p.instructions AS agent_instructions, p.tools AS agent_tools, p.model AS agent_model, \
+         p.thinking AS agent_thinking, COALESCE(ap.answer_level, 'normal') AS answer_level \
          FROM agent_inputs i \
          LEFT JOIN chat_messages m ON m.id = i.message_id \
          LEFT JOIN agent_routines r ON r.id = i.routine_id \
          JOIN chat_conversations c ON c.id = i.conversation_id \
          JOIN users u ON u.id = i.author_id \
          LEFT JOIN agent_team_instructions t ON t.workspace_id = i.workspace_id \
+         LEFT JOIN agent_profiles p ON p.user_id = i.agent_user_id \
+         LEFT JOIN users au ON au.id = i.agent_user_id \
+         LEFT JOIN agent_threads th ON th.thread_key = i.thread_key \
+         LEFT JOIN agent_preferences ap ON ap.user_id = CASE \
+             WHEN i.kind = 'answer' AND th.driver_user_id IS NOT NULL THEN th.driver_user_id \
+             ELSE i.author_id END \
          WHERE i.acked_at IS NULL ORDER BY i.message_id LIMIT $1",
     )
     .bind(limit)
@@ -386,6 +524,25 @@ pub(crate) async fn pending(
                 .get::<Option<String>, _>("team_instructions")
                 .unwrap_or_default(),
             files: Vec::new(),
+            agent: row
+                .get::<Option<String>, _>("agent_user_id")
+                .map(|user_id| InputAgent {
+                    user_id,
+                    name: row
+                        .get::<Option<String>, _>("agent_name")
+                        .unwrap_or_default(),
+                    instructions: row
+                        .get::<Option<String>, _>("agent_instructions")
+                        .unwrap_or_default(),
+                    tools: row
+                        .get::<Option<String>, _>("agent_tools")
+                        .and_then(|tools| serde_json::from_str(&tools).ok())
+                        .unwrap_or_default(),
+                    model: row.get("agent_model"),
+                    thinking: row.get("agent_thinking"),
+                }),
+            answer_level: row.get("answer_level"),
+            refused: row.get("refused"),
         })
         .collect();
     if inputs.is_empty() {
@@ -438,6 +595,9 @@ pub struct ThreadUpdate {
     pub status: ThreadStatus,
     pub driver_user_id: Option<Id>,
     pub waiting_for_user_id: Option<Id>,
+    /// The custom agent of the thread; absent: the default agent.
+    #[serde(default)]
+    pub agent_user_id: Option<Id>,
 }
 
 pub(crate) async fn update_thread(
@@ -447,8 +607,8 @@ pub(crate) async fn update_thread(
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO agent_threads (thread_key, workspace_id, conversation_id, root_message_id, \
-         status, driver_user_id, waiting_for_user_id, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+         status, driver_user_id, waiting_for_user_id, updated_at, agent_user_id) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
          ON CONFLICT (thread_key) DO UPDATE SET status = excluded.status, \
          driver_user_id = excluded.driver_user_id, \
          waiting_for_user_id = excluded.waiting_for_user_id, updated_at = excluded.updated_at",
@@ -461,6 +621,7 @@ pub(crate) async fn update_thread(
     .bind(update.driver_user_id.map(|id| id.to_string()))
     .bind(update.waiting_for_user_id.map(|id| id.to_string()))
     .bind(TimestampMillis::now().as_millis())
+    .bind(update.agent_user_id.map(|id| id.to_string()))
     .execute(database.pool())
     .await?;
     Ok(())

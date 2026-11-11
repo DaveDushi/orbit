@@ -231,6 +231,40 @@ docs: `docs/agent.md`, "Routines, reminders and send later".
   none either (the creator approved it); writes in a run keep their own approvals. Agent sessions cannot change,
   pause or delete routines or scheduled messages.
 
+## Agent profiles
+
+Status: built on branch `agent-profiles` (2026-11-11). Code: `apps/server/src/agent/profiles.rs` (catalog, route map,
+routes), `inputs.rs` (`record`, `agent_thread_key`), `scope.rs`, `routes.rs` (`refuse`, `poster`), migration
+`0092_agent_profiles.sql`, `apps/agent/src/prompt.ts` (`agentInstructionsBlock`), `apps/web/src/features/agent/AgentsPage.tsx`.
+
+- **P1. Identity.** Each agent is a bot user with a membership in its one workspace and an `agent_profiles` row. The
+  default agent keeps `agent_bot`; every `agent_user_id` column (inputs, threads, sessions) is NULL for it, so its
+  path did not change. Names are unique over all accounts, as for the default agent.
+- **P2. Threads.** A custom agent's thread key is derived from its user and the thread's own key (SHA-256, shaped as a
+  v7 UUID). So two agents in one chat thread have separate runs, queues and Pi conversations. A plain reply goes to
+  the agent that runs or waits in that thread (`agent_threads` by conversation and root, newest first).
+- **P3. Tools enforced by Orbit.** An agent session stores its agent. `scope::layer` reads the agent's tools with the
+  session (one query) and refuses every route that none of its tools needs (`route_need`; a route not in the map is
+  refused, so new routes stay closed). The Drive route checks the exact tool (`drive_tool_allowed`); `/agent-tools/call`
+  needs `use_integration`. The sidecar also configures Pi with only those tools and blocks other calls in
+  `beforeTool`. A session is issued only for a running or waiting thread of that same agent; a deleted agent's
+  sessions are deleted and the scope refuses it.
+- **P4. Permissions.** Nothing changes: every call is the driver's agent session, so the agent never has more than
+  the driver, and approvals are bound to the driver and the thread as before.
+- **P5. Instructions.** Admin instructions are trusted as much as an admin: they sit in `<agent-instructions>` after
+  the fixed rules and About Orbit, cannot close their block, and the block says the rules win. The tool list in the
+  prompt is informative; enforcement is P3.
+- **P6. Channels.** A mention outside the agent's channels writes an input with `refused = 'channel'`; the inputs
+  route answers it (DM from the agent, nonce `agent:<message id>`) and acknowledges it, and the sidecar never sees
+  it. The agent does not join that channel.
+- **P7. Deletion.** Soft: `deleted_at`, the bot user suspended and renamed "(deleted)", routines paused, waiting
+  inputs acknowledged, threads idle, sessions deleted. DMs stay readable.
+- **P8. Answer level.** Per person (`agent_preferences`), sent with each input (the driver's: for an answer, the
+  waiting run's driver). The sidecar sets the run's thinking level and adds one line to the run's message, never to
+  the system prompt (the prompt cache stays warm).
+- **Open.** Reminders made through a custom agent still come from the default agent. Mobile has no Agents or
+  answer-level settings yet (agents show in chat like members).
+
 ## Memory
 
 Status: built on branch `agent-memory` (2026-10-29). The design follows OptMem

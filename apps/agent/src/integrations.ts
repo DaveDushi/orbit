@@ -94,6 +94,7 @@ export async function askForApproval(
 		rootMessageId: state.rootMessageId,
 		body: approvalQuestion(driverId, approval.action, what),
 		nonce: `approve:${approval.approval_id}`.slice(0, 64),
+		agentUserId: state.agentUserId ?? null,
 	});
 	await api.commit(async (tx) => {
 		(await tx.doc(ThreadDoc, api.conversationId)).waitingFor = driverId;

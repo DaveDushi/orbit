@@ -22,7 +22,7 @@ import { mediaTools } from "./media.ts";
 import { canReadPrivate, dueText, fenced, lineText, type DueSummary, type MemoryLine, type MemoryScope } from "./memory.ts";
 import { namesToTokens, tokensToNames, type Person } from "./mentions.ts";
 import { OrbitError, type OrbitClient } from "./orbit.ts";
-import { aboutOrbit, DEFAULT_AGENT_NAME, teamInstructionsBlock, TIME_RULE } from "./prompt.ts";
+import { aboutOrbit, agentInstructionsBlock, DEFAULT_AGENT_NAME, teamInstructionsBlock, TIME_RULE } from "./prompt.ts";
 import type { Sandbox } from "./sandbox.ts";
 import { scheduledTools } from "./scheduled.ts";
 import { uiPrompt } from "./ui-catalog.ts";
@@ -59,7 +59,7 @@ async function asDriver(api: Api, context: Context, call: (as: (method: string, 
 	await api.commit(async (tx) => {
 		(await tx.doc(ThreadDoc, api.conversationId)).toolCalls += 1;
 	}, context);
-	return call((method, path, body) => deps().orbit.asUser(state.driverId, state.workspaceId, method, path, body), state).catch(
+	return call((method, path, body) => deps().orbit.asUser(state.driverId, state.workspaceId, method, path, body, state.agentUserId ?? null), state).catch(
 		(error: unknown) => {
 			if (error instanceof OrbitError) {
 				const why =
@@ -280,7 +280,7 @@ const listMembers = defineTool({
 	description: "List the workspace's members (names and user ids).",
 	parameters: Type.Object({}),
 	execute: (_args, api, context) =>
-		asDriver(api, context, async (as) => ok("members", (await people(as)).filter((person) => person.id !== deps().botUserId()))),
+		asDriver(api, context, async (as, state) => ok("members", (await people(as)).filter((person) => person.id !== deps().botUserId() && person.id !== state.agentUserId))),
 });
 
 function pageView(page: Json): Json {
@@ -492,6 +492,7 @@ const askTeammate = defineTool({
 				rootMessageId: state.rootMessageId,
 				body: `<@${personId}> ${namesToTokens(args.question, everyone)}`,
 				nonce: `ask:${api.callId}`.slice(0, 64),
+				agentUserId: state.agentUserId ?? null,
 			});
 			await api.commit(async (tx) => {
 				(await tx.doc(ThreadDoc, api.conversationId)).waitingFor = personId;
@@ -631,6 +632,15 @@ export const ORBIT_TOOLS = [
 	...SCHEDULED_TOOLS,
 ];
 
+/**
+ * A custom agent's tools as Pi registrations, in Pi's order: the run offers only these (`configure`). Unknown names
+ * and media tools without a sandbox are left out.
+ */
+export function toolRegistrations(names: readonly string[], media: boolean) {
+	const all = media ? [...ORBIT_TOOLS, ...MEDIA_TOOLS] : ORBIT_TOOLS;
+	return all.filter((tool) => names.includes(tool.name));
+}
+
 /** The rules for the media tools, only when the server has a media sandbox. */
 const MEDIA_RULES = `
 
@@ -690,6 +700,12 @@ export function orbitExtension(toolDeps: ToolDeps) {
 			section("orbit-about", async (input, context) => aboutOrbit(await agentName(input, context), Boolean(toolDeps.sandbox)), { tag: false }),
 			section("orbit-version", async () => versionBlock(await orbitRevision(deps().orbit)), { tag: false }),
 			section("orbit-team", async (input, context) => teamInstructionsBlock((await input.read.snapshot(ThreadDoc, input.conversationId, context))?.teamInstructions), { tag: false }),
+			// A custom agent: its admins' instructions and its tools, after the fixed rules and About Orbit.
+			section("orbit-agent", async (input, context) => {
+				const state = await input.read.snapshot(ThreadDoc, input.conversationId, context);
+				if (!state?.allowedTools) return undefined;
+				return agentInstructionsBlock(state.agentName || DEFAULT_AGENT_NAME, state.agentInstructions, state.allowedTools, state.defaultAgentName || DEFAULT_AGENT_NAME);
+			}, { tag: false }),
 			section("orbit-context", async (input, context) => {
 				const state = await input.read.snapshot(ThreadDoc, input.conversationId, context);
 				if (!state?.workspaceId) return undefined;
@@ -702,9 +718,11 @@ export function orbitExtension(toolDeps: ToolDeps) {
 		],
 		hooks: [
 			hook(ToolTask, {
-				beforeTool: async (_call, api, context) => {
+				beforeTool: async (call, api, context) => {
 					// Counted in the thread document, so a restart does not reset the limit of a run.
 					const state = await api.snapshot(ThreadDoc, api.conversationId, context);
+					// A custom agent is offered only its tools; this also stops a call of another one (Orbit refuses it too).
+					if (state?.allowedTools && !state.allowedTools.includes(call.name)) return { block: `${state.agentName ?? "This agent"} does not have the tool ${call.name}.` };
 					if ((state?.toolCalls ?? 0) >= deps().maxToolCalls) return { block: `This run reached its limit of ${deps().maxToolCalls} tool calls. Finish with what you have.` };
 					return undefined;
 				},

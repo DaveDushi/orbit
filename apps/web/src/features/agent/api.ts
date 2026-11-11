@@ -13,7 +13,16 @@ import {
   saveTeamInstructions,
   readAgentStatus,
   startChatgptLogin,
+  createAgentProfile,
+  deleteAgentProfile,
+  readAgentProfiles,
+  readAnswerLevel,
+  saveAnswerLevel,
+  setAgentProfileAvatar,
+  updateAgentProfile,
   type AgentMemoryScope,
+  type AgentProfileInput,
+  type AnswerLevel,
 } from '@orbit/api/agent'
 import { apiClient } from '@/api/client'
 
@@ -127,5 +136,54 @@ export function useSaveTeamInstructions(workspaceId: string) {
   return useMutation({
     mutationFn: (instructions: string) => saveTeamInstructions(apiClient, workspaceId, instructions),
     onSuccess: (saved) => queryClient.setQueryData(teamKey(workspaceId), saved),
+  })
+}
+
+const profilesKey = (workspaceId: string) => ['agent', 'profiles', workspaceId] as const
+
+/** Agentic → Agents: the workspace's agents besides the default one. Every member reads them; owners and admins change them. */
+export function useAgentProfiles(workspaceId: string, enabled = true) {
+  return useQuery({ queryKey: profilesKey(workspaceId), queryFn: () => readAgentProfiles(apiClient, workspaceId), enabled })
+}
+
+/** An agent's name and avatar are in the member lists too. */
+function useRefreshAgents(workspaceId: string) {
+  const queryClient = useQueryClient()
+  return () => {
+    void queryClient.invalidateQueries({ queryKey: profilesKey(workspaceId) })
+    void queryClient.invalidateQueries({ predicate: (query) => query.queryKey.at(-1) === 'members' })
+  }
+}
+
+export function useSaveAgentProfile(workspaceId: string) {
+  const refresh = useRefreshAgents(workspaceId)
+  return useMutation({
+    mutationFn: async ({ id, input, avatar }: { id: string | null; input: AgentProfileInput; avatar?: Blob | null }) => {
+      const saved = id ? await updateAgentProfile(apiClient, workspaceId, id, input) : await createAgentProfile(apiClient, workspaceId, input)
+      // `undefined`: the avatar stays as it is.
+      if (avatar !== undefined) await setAgentProfileAvatar(apiClient, workspaceId, saved.id, avatar)
+      return saved
+    },
+    onSettled: refresh,
+  })
+}
+
+export function useDeleteAgentProfile(workspaceId: string) {
+  const refresh = useRefreshAgents(workspaceId)
+  return useMutation({ mutationFn: (id: string) => deleteAgentProfile(apiClient, workspaceId, id), onSettled: refresh })
+}
+
+const answerLevelKey = ['agent', 'answer-level'] as const
+
+/** Account settings → Agentic: how much every agent thinks and writes for the signed-in person. */
+export function useAnswerLevel() {
+  return useQuery({ queryKey: answerLevelKey, queryFn: () => readAnswerLevel(apiClient) })
+}
+
+export function useSaveAnswerLevel() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (level: AnswerLevel) => saveAnswerLevel(apiClient, level),
+    onSuccess: (level) => queryClient.setQueryData(answerLevelKey, level),
   })
 }

@@ -3,6 +3,7 @@
  * agent stays a separate module; see `.ai/agent-design.md`.
  */
 import type { Client } from './generated/client/index'
+import { formDataBodySerializer } from './generated/client/index'
 
 /** A ChatGPT sign-in in progress (device code) or its result. */
 export interface AgentLogin {
@@ -205,4 +206,96 @@ export async function readTeamInstructions(client: Client, workspaceId: string):
 export async function saveTeamInstructions(client: Client, workspaceId: string, instructions: string): Promise<TeamInstructions> {
   const { data } = await client.put({ url: `/api/v1/workspaces/${workspaceId}/agent`, body: { instructions }, headers: { 'Content-Type': 'application/json' }, throwOnError: true })
   return data as TeamInstructions
+}
+
+/** Settings → Agentic → Agents: a workspace's agent besides the default one. Owners and admins manage them. */
+export interface AgentProfile {
+  id: string
+  /** Its bot user: people mention and DM it like a person. */
+  user_id: string
+  name: string
+  avatar_url: string | null
+  instructions: string
+  /** Tool names, a subset of the default agent's tools. Orbit refuses the others. */
+  tools: string[]
+  /** `null`: the installation's model and thinking level. */
+  model: string | null
+  thinking: string | null
+  /** Every channel; else only `channels`. Direct messages always work. */
+  all_channels: boolean
+  channels: { id: string; name: string; kind: 'public' | 'private' }[]
+  created_at: number
+  updated_at: number
+}
+
+export interface AgentToolInfo {
+  name: string
+  group: string
+  /** It writes, posts or changes something. */
+  writes: boolean
+}
+
+export interface AgentProfiles {
+  agents: AgentProfile[]
+  /** Owners and admins. */
+  can_manage: boolean
+  tools: AgentToolInfo[]
+  /** For managers, while the agent service answers; else `null`. */
+  models: AgentModelSettings['available']
+  thinking_levels: string[]
+  max_instructions_chars: number
+  max_agents: number
+}
+
+export interface AgentProfileInput {
+  name?: string
+  instructions?: string
+  tools?: string[]
+  model?: string | null
+  thinking?: string | null
+  all_channels?: boolean
+  channel_ids?: string[]
+}
+
+const agentsUrl = (workspaceId: string) => `/api/v1/workspaces/${workspaceId}/agents`
+
+export async function readAgentProfiles(client: Client, workspaceId: string): Promise<AgentProfiles> {
+  const { data } = await client.get({ url: agentsUrl(workspaceId), throwOnError: true })
+  return data as AgentProfiles
+}
+
+/** 409 `agent_name_taken` when an account already has the name. */
+export async function createAgentProfile(client: Client, workspaceId: string, input: AgentProfileInput): Promise<AgentProfile> {
+  const { data } = await client.post({ url: agentsUrl(workspaceId), body: input, headers: { 'Content-Type': 'application/json' }, throwOnError: true })
+  return data as AgentProfile
+}
+
+export async function updateAgentProfile(client: Client, workspaceId: string, id: string, input: AgentProfileInput): Promise<AgentProfile> {
+  const { data } = await client.patch({ url: `${agentsUrl(workspaceId)}/${id}`, body: input, headers: { 'Content-Type': 'application/json' }, throwOnError: true })
+  return data as AgentProfile
+}
+
+/** Its routines pause; its messages and DMs stay readable. */
+export async function deleteAgentProfile(client: Client, workspaceId: string, id: string): Promise<void> {
+  await client.delete({ url: `${agentsUrl(workspaceId)}/${id}`, throwOnError: true })
+}
+
+/** A PNG, JPEG or WebP of at most 512 KiB (`avatarImage` makes a 256 px square); `null` removes it. */
+export async function setAgentProfileAvatar(client: Client, workspaceId: string, id: string, image: Blob | null): Promise<void> {
+  const url = `${agentsUrl(workspaceId)}/${id}/avatar`
+  if (image) await client.put({ ...formDataBodySerializer, url, body: { file: image }, headers: { 'Content-Type': null }, throwOnError: true })
+  else await client.delete({ url, throwOnError: true })
+}
+
+/** How much every agent thinks and writes for the signed-in person. */
+export type AnswerLevel = 'short' | 'normal' | 'thorough'
+
+export async function readAnswerLevel(client: Client): Promise<AnswerLevel> {
+  const { data } = await client.get({ url: '/api/v1/agent/preferences', throwOnError: true })
+  return (data as { answer_level: AnswerLevel }).answer_level
+}
+
+export async function saveAnswerLevel(client: Client, level: AnswerLevel): Promise<AnswerLevel> {
+  const { data } = await client.put({ url: '/api/v1/agent/preferences', body: { answer_level: level }, headers: { 'Content-Type': 'application/json' }, throwOnError: true })
+  return (data as { answer_level: AnswerLevel }).answer_level
 }

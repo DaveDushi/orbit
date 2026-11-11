@@ -321,19 +321,19 @@ pub(crate) async fn model_choice(
 
 /// What the sidecar offers: its default model and every model of the ChatGPT (Codex) provider.
 #[derive(Deserialize, Serialize)]
-struct SidecarModels {
+pub(super) struct SidecarModels {
     default_model: String,
-    models: Vec<ModelOption>,
+    pub(super) models: Vec<ModelOption>,
 }
 
 #[derive(Deserialize, Serialize)]
-struct ModelOption {
-    id: String,
+pub(super) struct ModelOption {
+    pub(super) id: String,
     name: String,
 }
 
 /// The sidecar's models; `None` when it does not answer.
-async fn sidecar_models(state: &AgentState) -> Option<SidecarModels> {
+pub(super) async fn sidecar_models(state: &AgentState) -> Option<SidecarModels> {
     let config = state.config.as_ref()?;
     let response = state
         .http

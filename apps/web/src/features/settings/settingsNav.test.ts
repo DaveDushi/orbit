@@ -4,9 +4,9 @@ import { AGENTIC_TABS, agenticTabsView } from './settingsNav'
 const labels = (view: ReturnType<typeof agenticTabsView>) => view.tabs.map((tab) => tab.label)
 
 test('an instance admin gets every section and stays on the address', () => {
-  for (const [path, label] of [['/settings/agentic', 'You'], ['/settings/agentic/', 'You'], ['/settings/agentic/workspace', 'Workspace'], ['/settings/agentic/routines', 'Routines'], ['/settings/agentic/admin', 'Admin']]) {
+  for (const [path, label] of [['/settings/agentic', 'You'], ['/settings/agentic/', 'You'], ['/settings/agentic/workspace', 'Workspace'], ['/settings/agentic/agents', 'Agents'], ['/settings/agentic/routines', 'Routines'], ['/settings/agentic/admin', 'Admin']]) {
     const view = agenticTabsView(AGENTIC_TABS, true, true, path)
-    expect(labels(view)).toEqual(['You', 'Workspace', 'Routines', 'Admin'])
+    expect(labels(view)).toEqual(['You', 'Workspace', 'Agents', 'Routines', 'Admin'])
     expect(view.current?.label).toBe(label)
     expect(view.redirect).toBeNull()
   }
@@ -14,7 +14,7 @@ test('an instance admin gets every section and stays on the address', () => {
 
 test('anyone else has no Admin tab, and its address goes to the first section', () => {
   const view = agenticTabsView(AGENTIC_TABS, false, true, '/settings/agentic/admin')
-  expect(labels(view)).toEqual(['You', 'Workspace', 'Routines'])
+  expect(labels(view)).toEqual(['You', 'Workspace', 'Agents', 'Routines'])
   expect(view.redirect).toBe('/settings/agentic')
   expect(agenticTabsView(AGENTIC_TABS, false, true, '/settings/agentic/workspace').redirect).toBeNull()
 })

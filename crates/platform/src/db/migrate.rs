@@ -607,6 +607,11 @@ impl MigrationRunner {
                     ),
                     false,
                 ),
+                Migration::new(
+                    92,
+                    include_str!("../../../../apps/server/migrations/0092_agent_profiles.sql"),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -886,6 +891,11 @@ impl MigrationRunner {
                 include_str!(
                     "../../../../apps/server/migrations/postgres/0091_routines_and_scheduled_messages.sql"
                 ),
+                false,
+            ),
+            Migration::new(
+                92,
+                include_str!("../../../../apps/server/migrations/postgres/0092_agent_profiles.sql"),
                 false,
             ),
         ];

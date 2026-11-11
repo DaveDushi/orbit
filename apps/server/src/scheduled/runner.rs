@@ -424,19 +424,28 @@ async fn start(
             .await;
         }
     };
+    // A custom agent's run has its own thread key, as in chat (`inputs::agent_thread_key`).
+    let custom = {
+        let mut conn = database.pool().acquire().await?;
+        crate::agent::profiles::live_agent(&mut conn, workspace_id, agent)
+            .await?
+            .map(|profile| profile.user_id)
+    };
     let mut tx = database.immediate_transaction().await?;
     sqlx::query(
         "INSERT INTO agent_inputs (message_id, workspace_id, conversation_id, thread_key, root_message_id, \
-         author_id, kind, created_at, routine_id) VALUES ($1, $2, $3, $4, $4, $5, 'instruction', $6, $7) \
-         ON CONFLICT (message_id) DO NOTHING",
+         author_id, kind, created_at, routine_id, agent_user_id) \
+         VALUES ($1, $2, $3, $4, $5, $6, 'instruction', $7, $8, $9) ON CONFLICT (message_id) DO NOTHING",
     )
     .bind(run.to_string())
     .bind(workspace_id.to_string())
     .bind(conversation.to_string())
+    .bind(crate::agent::inputs::agent_thread_key(custom, header.id).to_string())
     .bind(header.id.to_string())
     .bind(creator.to_string())
     .bind(now.as_millis())
     .bind(id.to_string())
+    .bind(custom.map(|id| id.to_string()))
     .execute(&mut *tx)
     .await?;
     sqlx::query(

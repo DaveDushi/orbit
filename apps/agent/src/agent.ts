@@ -23,12 +23,12 @@ import { loadWake } from "./memory.ts";
 import { namesToTokens, splitBody, tokensToNames, type Person } from "./mentions.ts";
 import { mockModels } from "./mock.ts";
 import { codexModels, PROVIDER, PeopleModels, routedModels } from "./models.ts";
-import { OrbitError, type OrbitClient, type PendingInput, type RoutineRun } from "./orbit.ts";
+import { OrbitError, type InputAgent, type OrbitClient, type PendingInput, type RoutineRun } from "./orbit.ts";
 import { withPageContext } from "./page.ts";
 import { DEFAULT_AGENT_NAME } from "./prompt.ts";
 import { Sandbox } from "./sandbox.ts";
 import { groupSteps } from "./steps.ts";
-import { orbitExtension } from "./tools.ts";
+import { orbitExtension, toolRegistrations } from "./tools.ts";
 import { actionText, cardTitle, finalCard, liveCard, splitAnswer, uiBlock } from "./ui.ts";
 import type { UiSpec } from "./ui-catalog.ts";
 
@@ -67,8 +67,20 @@ export function routineText(routine: RoutineRun, author: string, instruction: st
  * What the model is told a message is, after its sender's current time (`TIME_RULE`). An action's text frames itself
  * (`actionText`).
  */
-export function frame(kind: "instruction" | "answer" | "steer" | "action" | "routine", author: string, driver: string, text: string, timeZone: string | null | undefined, now: Date): string {
-	const clock = clockLine(timeZone, now);
+/** How long and how deep the driver wants answers (Account settings → Agentic → Answer level). */
+export const ANSWER_LEVELS = {
+	short: { thinking: "low", line: "Answer level: short. Keep the answer to a few lines; no preamble." },
+	normal: { thinking: null, line: "" },
+	thorough: { thinking: "high", line: "Answer level: thorough. Check your work and answer in full detail." },
+} as const satisfies Record<string, { thinking: ThinkingLevel | null; line: string }>;
+
+export function answerLevel(value: string | null | undefined): keyof typeof ANSWER_LEVELS {
+	return value === "short" || value === "thorough" ? value : "normal";
+}
+
+export function frame(kind: "instruction" | "answer" | "steer" | "action" | "routine", author: string, driver: string, text: string, timeZone: string | null | undefined, now: Date, level: string | null | undefined = "normal"): string {
+	const levelLine = ANSWER_LEVELS[answerLevel(level)].line;
+	const clock = levelLine && kind !== "steer" ? `${clockLine(timeZone, now)}\n${levelLine}` : clockLine(timeZone, now);
 	switch (kind) {
 		case "routine":
 			// `text` starts with the routine line (`routineText`).
@@ -186,6 +198,29 @@ class Progress {
 		this.#timer = undefined;
 		await this.#writing;
 	}
+}
+
+/**
+ * The model and thinking level of a new run: a custom agent's own choice, else the installation admin's, else the
+ * defaults (`AGENT_MODEL`, Pi's thinking level). Orbit checks choices against this sidecar's models, but a sidecar of
+ * another version may not have one: then the run takes the default. The driver's answer level sets the thinking level
+ * of short and thorough answers.
+ */
+export function runModel(
+	defaultModel: string,
+	choice: { model: string | null; thinking: string | null },
+	agent: InputAgent | null,
+	level: string | null | undefined,
+): { model: { provider: string; modelId: string }; thinkingLevel: ThinkingLevel | null } {
+	const model = agent?.model ?? choice.model;
+	const thinking = ANSWER_LEVELS[answerLevel(level)].thinking ?? agent?.thinking ?? choice.thinking;
+	let modelId = defaultModel;
+	if (model && codexModels().some((known) => known.id === model)) modelId = model;
+	else if (model) console.warn(`agent: the chosen model ${model} is not a ChatGPT (Codex) model here; this run uses ${modelId}`);
+	let thinkingLevel: ThinkingLevel | null = null;
+	if (thinking && THINKING.includes(thinking as ThinkingLevel)) thinkingLevel = thinking as ThinkingLevel;
+	else if (thinking) console.warn(`agent: the chosen thinking level ${thinking} is unknown; this run uses the default`);
+	return { model: { provider: PROVIDER, modelId }, thinkingLevel };
 }
 
 export class Agent {
@@ -352,6 +387,7 @@ export class Agent {
 				rootMessageId: input.root_message_id,
 				body: `⚠️ I could not take this message: ${error instanceof Error ? error.message : String(error)}`.slice(0, 3_900),
 				nonce: `agent:${input.message_id}`,
+				agentUserId: input.agent?.user_id ?? null,
 			})
 			.catch(() => undefined);
 		await this.#orbit.acknowledge(input.message_id).catch(() => undefined);
@@ -384,6 +420,7 @@ export class Agent {
 						conversationKind: input.conversation_kind,
 						conversationMembers: input.conversation_members,
 						rootMessageId: input.root_message_id,
+						agentUserId: input.agent?.user_id ?? null,
 					});
 					// The provider session id exists from the start, so its payer can be known before a request.
 					await tx.doc(ProviderDoc, id);
@@ -429,7 +466,7 @@ export class Agent {
 		const busy = state.run !== null;
 		if (busy && state.driverId === input.author_id && input.kind !== "answer") {
 			// The driver adds to their own run.
-			await conversation.submit({ type: "input", content: frame(input.kind === "action" ? "action" : "steer", input.author_name, input.author_name, text, timeZone, this.#now()), requestId: input.message_id, whenBusy: "steer" }, context);
+			await conversation.submit({ type: "input", content: frame(input.kind === "action" ? "action" : "steer", input.author_name, input.author_name, text, timeZone, this.#now(), input.answer_level), requestId: input.message_id, whenBusy: "steer" }, context);
 			await this.#orbit.acknowledge(input.message_id);
 			return "done";
 		}
@@ -456,15 +493,16 @@ export class Agent {
 				kind === "answer"
 					? `<@${driverId}> I need your ChatGPT connection to continue. Connect it in [Agentic](${this.#config.publicUrl}/profile/agentic), then mention me again.`
 					: `<@${driverId}> To use me, connect your ChatGPT account first: [Agentic](${this.#config.publicUrl}/profile/agentic). Then mention me again.`;
-			const messageId = await this.#orbit.postMessage({ workspaceId: input.workspace_id, conversationId: input.conversation_id, rootMessageId: state.rootMessageId, body, nonce: `agent:${input.message_id}` });
+			const agentUserId = input.agent?.user_id ?? null;
+			const messageId = await this.#orbit.postMessage({ workspaceId: input.workspace_id, conversationId: input.conversation_id, rootMessageId: state.rootMessageId, body, nonce: `agent:${input.message_id}`, agentUserId });
 			// A routine's run already has its message (Orbit posted it with this nonce): say it there.
-			if (input.routine) await this.#orbit.editMessage(messageId, input.workspace_id, `${routineTitle(input.routine)}\n\n${body}`);
+			if (input.routine) await this.#orbit.editMessage(messageId, input.workspace_id, `${routineTitle(input.routine)}\n\n${body}`, undefined, agentUserId);
 			await this.#orbit.updateThread(input.thread_key, this.#threadUpdate(state, "idle", state.driverId, null));
 			await this.#orbit.acknowledge(input.message_id);
 			return "done";
 		}
 
-		await this.#startRun(conversation, state, input, driverId, driverName, frame(kind, input.author_name, driverName, text, timeZone, this.#now()));
+		await this.#startRun(conversation, state, input, driverId, driverName, frame(kind, input.author_name, driverName, text, timeZone, this.#now(), input.answer_level));
 		return "done";
 	}
 
@@ -476,17 +514,20 @@ export class Agent {
 			status,
 			driver_user_id: driverId,
 			waiting_for_user_id: waitingFor,
+			agent_user_id: state.agentUserId ?? null,
 		};
 	}
 
 	async #startRun(conversation: Conversation, state: ThreadState, input: PendingInput, driverId: string, driverName: string, content: string): Promise<void> {
 		// The same nonce gives the same message if this is tried again.
+		const agent = input.agent ?? null;
 		const progressMessageId = await this.#orbit.postMessage({
 			workspaceId: state.workspaceId,
 			conversationId: state.conversationId,
 			rootMessageId: state.rootMessageId,
 			body: "⏳ Working on it…",
 			nonce: `agent:${input.message_id}`,
+			agentUserId: state.agentUserId ?? null,
 		});
 		await this.#rememberPayer(conversation.id, driverId);
 		await conversation.commit(async (tx) => {
@@ -496,18 +537,28 @@ export class Agent {
 			doc.waitingFor = null;
 			doc.toolCalls = 0;
 			doc.run = { inputId: input.message_id, submissionId: null, progressMessageId, startedAt: Date.now(), title: input.routine ? routineTitle(input.routine) : null };
-			doc.agentName = this.botName;
+			doc.agentName = agent?.name || this.botName;
+			doc.defaultAgentName = this.botName;
+			doc.agentInstructions = agent?.instructions ?? "";
+			doc.allowedTools = agent ? [...agent.tools] : null;
 			doc.teamInstructions = input.team_instructions ?? "";
-			// Each run takes the model chosen now; a run already going keeps its own.
-			await configure(tx, conversation.id, this.#runModel());
+			// Each run takes the model chosen now and the driver's answer level; a run already going keeps its own.
+			// A custom agent is offered only its own tools (Orbit refuses the others too).
+			await configure(tx, conversation.id, {
+				...this.#runModel(agent, input.answer_level),
+				tools: agent ? toolRegistrations(agent.tools, Boolean(this.#sandbox)) : null,
+			});
 		}, context);
 		// Orbit issues agent sessions only to the driver of a running thread: set it before any tool runs.
 		await this.#orbit.updateThread(input.thread_key, this.#threadUpdate(state, "running", driverId, null));
-		const memory = await this.#memoryFor({ ...state, conversationMembers: input.conversation_members, driverId, driverName });
-		const integrations = await loadIntegrations((method, path) => this.#orbit.asUser(driverId, state.workspaceId, method, path)).catch((error: unknown) => {
-			console.warn("agent: reading integration tools failed", String(error));
-			return null;
-		});
+		const allowed = (tool: string) => !agent || agent.tools.includes(tool);
+		const memory = allowed("memory_recall") || allowed("memory_note") ? await this.#memoryFor({ ...state, conversationMembers: input.conversation_members, driverId, driverName }) : null;
+		const integrations = allowed("use_integration")
+			? await loadIntegrations((method, path) => this.#orbit.asUser(driverId, state.workspaceId, method, path, undefined, state.agentUserId ?? null)).catch((error: unknown) => {
+					console.warn("agent: reading integration tools failed", String(error));
+					return null;
+				})
+			: null;
 		await conversation.commit(async (tx) => {
 			const doc = await tx.doc(ThreadDoc, conversation.id);
 			doc.conversationMembers = input.conversation_members;
@@ -528,21 +579,14 @@ export class Agent {
 	 * thinking level). Orbit checks the choice against this sidecar's models, but a sidecar of another version may
 	 * not have it: then the run takes the default.
 	 */
-	#runModel(): { model: { provider: string; modelId: string }; thinkingLevel: ThinkingLevel | null } {
-		const { model, thinking } = this.choice;
-		let modelId = this.#config.model;
-		if (model && codexModels().some((known) => known.id === model)) modelId = model;
-		else if (model) console.warn(`agent: the chosen model ${model} is not a ChatGPT (Codex) model here; this run uses ${modelId}`);
-		let thinkingLevel: ThinkingLevel | null = null;
-		if (thinking && THINKING.includes(thinking as ThinkingLevel)) thinkingLevel = thinking as ThinkingLevel;
-		else if (thinking) console.warn(`agent: the chosen thinking level ${thinking} is unknown; this run uses the default`);
-		return { model: { provider: PROVIDER, modelId }, thinkingLevel };
+	#runModel(agent: InputAgent | null = null, level?: string): { model: { provider: string; modelId: string }; thinkingLevel: ThinkingLevel | null } {
+		return runModel(this.#config.model, this.choice, agent, level);
 	}
 
 	/** The run's memory section, read as the driver. A failure only costs the run its memory. */
 	async #memoryFor(state: ThreadState & { driverId: string }): Promise<string | null> {
 		try {
-			return await loadWake((method, path) => this.#orbit.asUser(state.driverId, state.workspaceId, method, path), state, this.#config.memoryTokens);
+			return await loadWake((method, path) => this.#orbit.asUser(state.driverId, state.workspaceId, method, path, undefined, state.agentUserId ?? null), state, this.#config.memoryTokens);
 		} catch (error) {
 			console.warn("agent: reading memory failed", String(error));
 			return null;
@@ -572,7 +616,8 @@ export class Agent {
 		const run = state.run;
 		const submission = await this.#harness.submission(run.submissionId as SubmissionId, context);
 		if (!submission) return;
-		const edit = (body: string, blocks?: unknown[]) => (run.progressMessageId ? this.#orbit.editMessage(run.progressMessageId, state.workspaceId, run.title ? `${run.title}\n\n${body}` : body, blocks) : Promise.resolve());
+		const agentUserId = state.agentUserId ?? null;
+		const edit = (body: string, blocks?: unknown[]) => (run.progressMessageId ? this.#orbit.editMessage(run.progressMessageId, state.workspaceId, run.title ? `${run.title}\n\n${body}` : body, blocks, agentUserId) : Promise.resolve());
 		const progress = new Progress(edit);
 		const events = await watchEvents(this.#harness, conversationId, context);
 		events.start(async (batch) => progress.apply(batch));
@@ -601,7 +646,7 @@ export class Agent {
 			await edit(first);
 		}
 		for (const [index, chunk] of rest.entries()) {
-			await this.#orbit.postMessage({ workspaceId: state.workspaceId, conversationId: state.conversationId, rootMessageId: state.rootMessageId, body: chunk, nonce: `agent:${run.inputId}:${index + 1}` });
+			await this.#orbit.postMessage({ workspaceId: state.workspaceId, conversationId: state.conversationId, rootMessageId: state.rootMessageId, body: chunk, nonce: `agent:${run.inputId}:${index + 1}`, agentUserId });
 		}
 		await this.#orbit.updateThread(threadKey, this.#threadUpdate(after, after.waitingFor ? "waiting" : "idle", after.driverId, after.waitingFor));
 		await conversation.commit(async (tx) => {
@@ -628,7 +673,8 @@ export class Agent {
 			.join("");
 		const { text, card } = finalCard(written);
 		const waiting = state.waitingFor ? `⏸ Waiting for an answer from <@${state.waitingFor}>.` : "";
-		const answer = namesToTokens(text, people.filter((person) => person.id !== this.botUserId)) || (card && card !== "invalid" ? cardTitle(card) : "");
+		const self = state.agentUserId ?? this.botUserId;
+		const answer = namesToTokens(text, people.filter((person) => person.id !== self)) || (card && card !== "invalid" ? cardTitle(card) : "");
 		const main = [waiting, answer].filter(Boolean).join("\n\n").trim();
 		return { body: `${main || "Done."}${footer}`, card };
 	}
