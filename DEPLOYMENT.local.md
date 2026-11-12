@@ -256,6 +256,57 @@ It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-ag
 
 ## Verification performed
 
+### November 12, 2026 attempt: label overflow fix and label rules (schema 99) — ROLLED BACK
+
+Production stays on `9b163ce` (schema 98). The new web bundle did not load: every page was blank with
+`TypeError: i is not a function` at module load (two `shared~index~…` chunks import each other, the Rolldown cycle
+of `.ai/lessons.md`, "Tooling"). Health, smoke test, `verify-production.sh` and `vm-health` all passed: none of them
+runs the SPA's JavaScript. Only the signed-in browser check found it.
+
+`main` from `aae50d2e` to `ceb396f1` (local, not pushed): `label-overflow` (was `9b1caada` on `fb131eb4`) rebased as
+`14b904e5`; `label-rules` (was `901b6615` + `e3b9dca7`, also on `fb131eb4`, not on `aae50d2e`) rebased on top as
+`db764124` + `a0baffc4`; main fast-forwarded; `ceb396f1` adds the what's-new line of the overflow fix. Rebase conflicts:
+schema 98 → 99 in `backup.rs` and the tests (`app_smoke`, platform `database`, `backup`); `migrate.rs` keeps 0098 and
+adds 0099 in both catalogs; OpenAPI counts 269 paths / 347 operations (259 → 262 / 334 → 339 of the branch on top of
+main's 266 / 342); generated client made again from the merged `openapi.json`; `prompt.ts` keeps main's GitHub section
+and adds the label rules line; `whats-new.md` lines on top of `2026-11-12`. Semantic conflict found by the build: main
+and the branch each added 2 agent tools, so `TOOL_CATALOG` is `[…; 55]` and its unit test counts 55 (folded into
+`db764124`).
+
+Checks on the merged `main`: agent `tsc` and `npm test` (80 pass, 11 skipped, 0 fail); mobile `tsc`, `activity.test.ts`
+(6 pass); web `tsc -b`; web `bun test src/features/tasks` 387 pass, 2 fail (`TaskList.test.tsx` bulk toolbar tests:
+they fail the same way on `aae50d2e`); e2e `label-overflow.spec.ts` 5 pass (Vite dev server, so it did not see the
+bundle bug). Rust under `orbit-build`, `CARGO_PROFILE_*_DEBUG=0`, SQLite: platform `database` + `backup` 76 pass, 1 flaky
+(`page_search_migration_backfills_and_tracks_pages`, passes 3/3 alone); server `--lib` (276), `label_rules_api` 8,
+`openapi_contract` 19, `guest_access` 1, `app_smoke` 21, `agent_profiles` 9, `integrations_api` 13, `tasks_api` 99: all
+pass. `target` removed.
+
+Deploy id `20261112T181905Z-3816669`. `orbit:ceb396f` (image
+`sha256:fd8ad716b7bb17096d75cfe19523666afabe2eb2f1fd2f2bd8684135a48bf8b2`); `deploy/smoke.sh` and `orbit config check`
+passed. Migration dry run of 0099 on a hot read-only copy and again on a copy of the stopped database: 1 applied,
+schema 98 → 99, quick-check ok, 0 foreign-key rows, counts unchanged (8 users, 110 tasks, 17 labels, 140 task labels,
+76 assignees, 1030 chat messages); copies deleted.
+
+Switch: stopped both services at 20:23:19 UTC; snapshot `01a1d16d-d932-74d2-a660-0f966c0ab9d1` with
+`/usr/local/bin/orbit-9b163ce`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-ceb396f.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-ceb396f.tgz`; installed `orbit-ceb396f`, ready 20:23:39. Services
+active, readiness 200, revision `ceb396f1`, schema 99, label-rules routes 401/400 without a session. Then the
+signed-in check (temporary v7 session as David Dusi) showed the blank pages.
+
+Rollback (20:26:26 → ready 20:26:33): `orbit-ceb396f backup verify` + `restore` of `01a1d16d…` (the restore kept the
+schema-99 data as snapshot `01a1d170-b3da-7405-b30c-1163969deb3d`), the `9b163ce` binary installed again, sidecar code
+`/opt/orbit-agent.before-ceb396f` moved back. Nothing but the test session had been written between the switch and the
+rollback. Verified: services active, readiness 200, revision `9b163ced`, schema 98, quick-check ok, 0 foreign-key rows,
+counts as before; the signed-in probe renders `/` and `/tasks` with no page error. Test session logged out (204, revoked);
+socat stopped. `vm-health.conf` back to its `.before-ceb396f` copy (`PROD_TAG=9b163ce`, `ROLLBACK_TAG=eb0baae`).
+`/usr/local/bin/orbit-ceb396f` and the image stay until cleanup.
+
+Cause, local: the built `apps/web/dist` of `main` fails at load the same way (static server, no API); a build of
+`label-overflow` alone (`14b904e5`) loads fine, so the cycle comes with the `label-rules` web changes
+(`ProjectRulesCard` and its imports into the lazy task pages). Before the next try: fix the chunk cycle, then load the
+built app in a browser (not only Vite dev).
+
 ### November 12, 2026 upgrade: routine script fixes, chat media and Office previews (schema 98)
 
 `main` from `fb131eb4` to `9b163ced`: two `--no-ff` merges, `routine-script-fixes` (`1c17ec63`; merge `3780f712`) then
