@@ -634,6 +634,11 @@ impl MigrationRunner {
                     ),
                     false,
                 ),
+                Migration::new(
+                    98,
+                    include_str!("../../../../apps/server/migrations/0098_chat_media_previews.sql"),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -941,6 +946,13 @@ impl MigrationRunner {
                 96,
                 include_str!(
                     "../../../../apps/server/migrations/postgres/0096_agent_answer_level_and_memory.sql"
+                ),
+                false,
+            ),
+            Migration::new(
+                98,
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0098_chat_media_previews.sql"
                 ),
                 false,
             ),

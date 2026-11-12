@@ -12,7 +12,9 @@ import {
   customEmojiName,
   decodeMentions,
   emojiGroups,
+  fileNote,
   fileSize,
+  fileToOpen,
   hasReaction,
   leadToFirstMatch,
   messageActions,
@@ -34,7 +36,7 @@ import {
   upsertMessage,
   upsertThreadMessage,
 } from './chat'
-import type { EmojibaseData, FollowedThreadRecord, ThreadPage } from './chat-api'
+import type { ChatFileRecord, EmojibaseData, FollowedThreadRecord, ThreadPage } from './chat-api'
 import type { ConversationRecord, ConversationStateRecord, MemberRecord, MessageRecord } from './orbit'
 
 const conversation = (id: string, fields: Partial<ConversationRecord>): ConversationRecord => ({
@@ -355,4 +357,26 @@ test('"Add people" never offers a guest for a public channel, and a channel with
   expect(hasGuests({ kind: 'private', member_ids: ['me', 'gus'] }, people)).toBe(true)
   expect(hasGuests({ kind: 'private', member_ids: ['me', 'ann'] }, people)).toBe(false)
   expect(hasGuests({ kind: 'dm', member_ids: ['me', 'gus'] }, people)).toBe(false)
+})
+
+test('a chat file opens from Drive, its playable copy or itself, and says where it is', () => {
+  const file = {
+    id: 'f1',
+    url: '/api/v1/workspaces/w/chat/files/f1',
+    file_name: 'IMG_1.MOV',
+    mime_type: 'video/quicktime',
+    size_bytes: 2_500_000,
+    width: null,
+    height: null,
+    deleted: false,
+    drive_node_id: null,
+    preview: { kind: 'video', status: 'pending', play_url: null, poster_url: null, pdf_url: null },
+  } satisfies ChatFileRecord
+  expect(fileNote(file)).toBe('2.4 MB · Processing the video…')
+  expect(fileToOpen(file)).toEqual({ kind: 'url', url: file.url })
+  const ready = { ...file, preview: { ...file.preview, status: 'ready', play_url: `${file.url}/preview/play` } } satisfies ChatFileRecord
+  expect(fileToOpen(ready)).toEqual({ kind: 'url', url: `${file.url}/preview/play` })
+  const big = { ...file, drive_node_id: 'n1', preview: null } satisfies ChatFileRecord
+  expect(fileNote(big)).toBe('2.4 MB · in Drive')
+  expect(fileToOpen(big)).toEqual({ kind: 'drive', nodeId: 'n1' })
 })

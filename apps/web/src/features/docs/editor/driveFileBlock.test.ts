@@ -24,6 +24,7 @@ function file(name: string, mime: string): DriveNode {
     updated_at: '2026-11-11T00:00:00Z',
     trashed_at: null,
     media: null,
+    preview: null,
   }
 }
 

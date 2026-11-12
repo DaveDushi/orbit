@@ -1,4 +1,5 @@
 import type { ClipboardEvent } from 'react'
+import type { FilePreview } from '@orbit/api/generated/types.gen'
 
 /** A file on a message, comment or page. Images can carry their size, so a list can reserve the space before they load. */
 export interface Attachment {
@@ -11,6 +12,10 @@ export interface Attachment {
   height?: number
   /** An admin deleted the stored file: it shows as "Deleted file", with no image or download. */
   deleted?: boolean
+  /** A file larger than the chat limit, kept in the conversation's Drive folder. */
+  driveNodeId?: string
+  /** The playable copy of a video or the PDF of an office file (chat files). */
+  preview?: FilePreview
 }
 
 export function formatSize(bytes: number): string {

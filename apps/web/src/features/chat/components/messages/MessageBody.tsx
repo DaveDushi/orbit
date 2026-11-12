@@ -147,7 +147,7 @@ export function MessageBody({ message }: { message: Message }) {
       ) : card ? (
         <AgentCard card={card} messageId={message.id} />
       ) : null}
-      <Attachments attachments={message.attachments} hasTextContent={text !== ''} />
+      <Attachments attachments={message.attachments} hasTextContent={text !== ''} previews />
       <LinkCards body={linkBody} />
     </div>
   )

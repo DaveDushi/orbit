@@ -247,7 +247,7 @@ async fn copy_and_verify(
     let hash = format!("{:x}", digest.finalize());
     if size_bytes != upload.size_bytes
         || hash != upload.sha256
-        || detect_media_type(&sniffed) != upload.detected_media_type
+        || detect_media_type(&sniffed, &upload.display_name) != upload.detected_media_type
     {
         return Err(BlobStoreError::StagedContentChanged);
     }

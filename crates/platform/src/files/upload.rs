@@ -18,7 +18,7 @@ const HOUR_MILLIS: i64 = 60 * 60 * 1000;
 const QUARANTINE_MILLIS: i64 = 24 * HOUR_MILLIS;
 const SNIFF_BYTES: usize = 8 * 1024;
 /// References to one blob (bind its id twice): task/comment attachments, docs page files and their
-/// old versions, chat files, profile pictures, custom emoji and stickers. The second parameter is used for all of the
+/// old versions, chat files, profile pictures, custom emoji, stickers and the files that file previews made. The second parameter is used for all of the
 /// newer tables.
 pub const BLOB_REFERENCE_COUNT: &str = "SELECT (SELECT COUNT(*) FROM attachment_references WHERE blob_id = $1) \
      + (SELECT COUNT(*) FROM page_files WHERE blob_id = $2) \
@@ -26,9 +26,10 @@ pub const BLOB_REFERENCE_COUNT: &str = "SELECT (SELECT COUNT(*) FROM attachment_
      + (SELECT COUNT(*) FROM chat_message_files WHERE blob_id = $2) \
      + (SELECT COUNT(*) FROM user_avatars WHERE blob_id = $2) \
      + (SELECT COUNT(*) FROM custom_emoji WHERE blob_id = $2) \
-     + (SELECT COUNT(*) FROM custom_stickers WHERE blob_id = $2)";
+     + (SELECT COUNT(*) FROM custom_stickers WHERE blob_id = $2) \
+     + (SELECT COUNT(*) FROM file_preview_outputs WHERE blob_id = $2)";
 /// Every table that references blobs by `blob_id`.
-const BLOB_REFERENCE_TABLES: [&str; 7] = [
+const BLOB_REFERENCE_TABLES: [&str; 8] = [
     "attachment_references",
     "page_files",
     "page_file_versions",
@@ -36,6 +37,7 @@ const BLOB_REFERENCE_TABLES: [&str; 7] = [
     "user_avatars",
     "custom_emoji",
     "custom_stickers",
+    "file_preview_outputs",
 ];
 /// Raster image types that are served inline; everything else downloads as an attachment.
 pub const INLINE_IMAGE_TYPES: [&str; 5] = [
@@ -558,7 +560,7 @@ impl UploadService {
             let id = Id::new_v7();
             let now = self.database.database_now().await?.as_millis();
             let sha256 = format!("{:x}", digest.finalize());
-            let detected_media_type = detect_media_type(&sniffed).to_owned();
+            let detected_media_type = detect_media_type(&sniffed, &display_name).to_owned();
             let size_i64 = i64::try_from(size_bytes).map_err(|_| UploadError::SizeOverflow)?;
             sqlx::query(
                 "INSERT INTO pending_uploads (\
@@ -805,7 +807,7 @@ impl UploadService {
             owner_id: Id::new_v7(),
             sha256: format!("{:x}", Sha256::digest(bytes)),
             size_bytes,
-            detected_media_type: detect_media_type(bytes).to_owned(),
+            detected_media_type: detect_media_type(bytes, "").to_owned(),
             display_name: String::new(),
             temporary_path,
         };
@@ -1028,7 +1030,145 @@ fn header_filename(value: &str) -> String {
         .collect()
 }
 
-pub(super) fn detect_media_type(bytes: &[u8]) -> &'static str {
+/// The media type of a file from its first bytes ([`SNIFF_BYTES`]), never from the client's label. `name` only
+/// tells apart formats whose bytes look alike: the kind of office file in a ZIP or OLE container, a QuickTime
+/// file without an `ftyp` box, and CSV text. Unknown bytes are `application/octet-stream`.
+pub fn detect_media_type(bytes: &[u8], name: &str) -> &'static str {
+    let known = detect_basic_type(bytes);
+    if known != "application/octet-stream" {
+        return known;
+    }
+    let extension = name
+        .rsplit_once('.')
+        .map(|(_, extension)| extension.to_ascii_lowercase())
+        .unwrap_or_default();
+    let extension = extension.as_str();
+    let at = |offset: usize, magic: &[u8]| bytes.get(offset..offset + magic.len()) == Some(magic);
+    if at(4, b"ftyp") {
+        return match bytes.get(8..12).unwrap_or_default() {
+            b"qt  " => "video/quicktime",
+            b"M4A " | b"M4B " => "audio/mp4",
+            b"heic" | b"heix" | b"hevc" | b"heim" | b"heis" | b"mif1" | b"msf1" => "image/heic",
+            brand if brand.starts_with(b"3g") => "video/3gpp",
+            _ => "video/mp4",
+        };
+    }
+    // An old QuickTime file starts with another atom than `ftyp`.
+    if matches!(extension, "mov" | "qt")
+        && [b"moov", b"mdat", b"wide", b"free", b"skip", b"pnot"]
+            .iter()
+            .any(|atom| at(4, *atom))
+    {
+        return "video/quicktime";
+    }
+    if at(0, b"\x1a\x45\xdf\xa3") {
+        let head = &bytes[..bytes.len().min(64)];
+        return if head.windows(4).any(|window| window == b"webm") {
+            "video/webm"
+        } else {
+            "video/x-matroska"
+        };
+    }
+    if at(0, b"RIFF") && at(8, b"AVI ") {
+        return "video/x-msvideo";
+    }
+    if at(0, b"RIFF") && at(8, b"WAVE") {
+        return "audio/wav";
+    }
+    if at(0, b"OggS") {
+        return if extension == "ogv" {
+            "video/ogg"
+        } else {
+            "audio/ogg"
+        };
+    }
+    if at(0, b"fLaC") {
+        return "audio/flac";
+    }
+    if at(0, b"ID3")
+        || (extension == "mp3" && bytes.len() > 1 && bytes[0] == 0xff && bytes[1] & 0xe0 == 0xe0)
+    {
+        return "audio/mpeg";
+    }
+    if at(0, b"PK\x03\x04") {
+        return zip_type(bytes, extension);
+    }
+    if at(0, b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1") {
+        return match extension {
+            "xls" => "application/vnd.ms-excel",
+            "doc" => "application/msword",
+            "ppt" => "application/vnd.ms-powerpoint",
+            _ => "application/octet-stream",
+        };
+    }
+    if matches!(extension, "csv" | "tsv") && is_text(bytes) {
+        return if extension == "csv" {
+            "text/csv"
+        } else {
+            "text/tab-separated-values"
+        };
+    }
+    "application/octet-stream"
+}
+
+/// An OpenDocument file names its type in its first entry (`mimetype`, stored); an Office Open XML file has
+/// `[Content_Types].xml` and the folder of its kind.
+fn zip_type(bytes: &[u8], extension: &str) -> &'static str {
+    if bytes.get(30..38) == Some(b"mimetype") {
+        let rest = &bytes[38..bytes.len().min(38 + 80)];
+        for (name, media_type) in [
+            (
+                &b"application/vnd.oasis.opendocument.text"[..],
+                "application/vnd.oasis.opendocument.text",
+            ),
+            (
+                b"application/vnd.oasis.opendocument.spreadsheet",
+                "application/vnd.oasis.opendocument.spreadsheet",
+            ),
+            (
+                b"application/vnd.oasis.opendocument.presentation",
+                "application/vnd.oasis.opendocument.presentation",
+            ),
+        ] {
+            if rest.starts_with(name) {
+                return media_type;
+            }
+        }
+    }
+    let contains = |needle: &[u8]| bytes.windows(needle.len()).any(|window| window == needle);
+    if contains(b"[Content_Types].xml") || contains(b"_rels/.rels") {
+        return match extension {
+            "xlsx" | "xlsm" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            _ if contains(b"xl/") => {
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            }
+            _ if contains(b"word/") => {
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            }
+            _ if contains(b"ppt/") => {
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            }
+            _ => "application/zip",
+        };
+    }
+    "application/zip"
+}
+
+/// UTF-8 text without NUL bytes; a character cut at the end of the sniffed bytes is fine.
+fn is_text(bytes: &[u8]) -> bool {
+    if bytes.contains(&0) {
+        return false;
+    }
+    match std::str::from_utf8(bytes) {
+        Ok(_) => true,
+        Err(error) => error.error_len().is_none() && bytes.len() >= SNIFF_BYTES - 4,
+    }
+}
+
+/// Images, PDF, SVG and HTML: the types whose serving rules matter (inline images, never-inline markup).
+fn detect_basic_type(bytes: &[u8]) -> &'static str {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         "image/png"
     } else if bytes.starts_with(b"\xff\xd8\xff") {
@@ -1104,5 +1244,118 @@ impl Drop for TemporaryFile {
                 let _ = store.delete_temporary(&path).await;
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::detect_media_type;
+
+    fn ftyp(brand: &[u8; 4]) -> Vec<u8> {
+        let mut bytes = vec![0, 0, 0, 0x20];
+        bytes.extend_from_slice(b"ftyp");
+        bytes.extend_from_slice(brand);
+        bytes.extend_from_slice(&[0; 20]);
+        bytes
+    }
+
+    #[test]
+    fn videos_and_audio_are_known_by_their_bytes_whatever_their_name() {
+        assert_eq!(
+            detect_media_type(&ftyp(b"qt  "), "IMG_0001.MOV"),
+            "video/quicktime"
+        );
+        // The client's name does not decide: an iPhone video named .bin is still a video.
+        assert_eq!(
+            detect_media_type(&ftyp(b"qt  "), "clip.bin"),
+            "video/quicktime"
+        );
+        assert_eq!(detect_media_type(&ftyp(b"isom"), "a.mp4"), "video/mp4");
+        assert_eq!(detect_media_type(&ftyp(b"mp42"), "a"), "video/mp4");
+        assert_eq!(detect_media_type(&ftyp(b"3gp5"), "a.3gp"), "video/3gpp");
+        assert_eq!(detect_media_type(&ftyp(b"M4A "), "a.m4a"), "audio/mp4");
+        assert_eq!(detect_media_type(&ftyp(b"heic"), "a.heic"), "image/heic");
+        assert_eq!(detect_media_type(&ftyp(b"avif"), "a.avif"), "image/avif");
+        let mut old_mov = vec![0, 0, 0, 8];
+        old_mov.extend_from_slice(b"wide\0\0\0\0mdat");
+        assert_eq!(detect_media_type(&old_mov, "old.MOV"), "video/quicktime");
+        assert_eq!(
+            detect_media_type(&old_mov, "old.txt"),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            detect_media_type(b"\x1a\x45\xdf\xa3\x9f\x42\x82\x84webm", "a"),
+            "video/webm"
+        );
+        assert_eq!(
+            detect_media_type(b"\x1a\x45\xdf\xa3\x9f\x42\x82\x88matroska", "a"),
+            "video/x-matroska"
+        );
+        assert_eq!(
+            detect_media_type(b"RIFF\0\0\0\0AVI LIST", "a"),
+            "video/x-msvideo"
+        );
+        assert_eq!(detect_media_type(b"RIFF\0\0\0\0WAVEfmt ", "a"), "audio/wav");
+        assert_eq!(detect_media_type(b"ID3\x04\0\0", "song"), "audio/mpeg");
+        // A label alone makes nothing a video.
+        assert_eq!(
+            detect_media_type(b"just some text", "fake.mov"),
+            "application/octet-stream"
+        );
+    }
+
+    #[test]
+    fn office_files_are_known_by_their_container_and_name() {
+        let mut ooxml = b"PK\x03\x04".to_vec();
+        ooxml.extend_from_slice(&[0; 26]);
+        ooxml.extend_from_slice(b"[Content_Types].xml....xl/workbook.xml");
+        assert_eq!(
+            detect_media_type(&ooxml, "Budget.xlsx"),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
+        assert_eq!(
+            detect_media_type(&ooxml, "renamed.docx"),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        );
+        assert_eq!(
+            detect_media_type(&ooxml, "no-extension"),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
+        let mut odf = b"PK\x03\x04".to_vec();
+        odf.extend_from_slice(&[0; 26]);
+        odf.extend_from_slice(b"mimetypeapplication/vnd.oasis.opendocument.spreadsheetPK");
+        assert_eq!(
+            detect_media_type(&odf, "x.zip"),
+            "application/vnd.oasis.opendocument.spreadsheet"
+        );
+        let mut zip = b"PK\x03\x04".to_vec();
+        zip.extend_from_slice(&[0; 26]);
+        zip.extend_from_slice(b"photos/1.jpg");
+        assert_eq!(detect_media_type(&zip, "photos.xlsx"), "application/zip");
+        let ole = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1\0\0";
+        assert_eq!(
+            detect_media_type(ole, "old.XLS"),
+            "application/vnd.ms-excel"
+        );
+        assert_eq!(detect_media_type(ole, "old.doc"), "application/msword");
+        assert_eq!(
+            detect_media_type(ole, "old.ppt"),
+            "application/vnd.ms-powerpoint"
+        );
+        assert_eq!(
+            detect_media_type(ole, "old.msg"),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            detect_media_type(b"name;amount\nAnna;3\n", "list.csv"),
+            "text/csv"
+        );
+        assert_eq!(
+            detect_media_type(b"a\0b", "list.csv"),
+            "application/octet-stream"
+        );
+        // Images and markup keep their earlier rules.
+        assert_eq!(detect_media_type(b"%PDF-1.7", "x.docx"), "application/pdf");
+        assert_eq!(detect_media_type(b"<html><body>", "x.csv"), "text/html");
     }
 }

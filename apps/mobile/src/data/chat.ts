@@ -470,6 +470,27 @@ export function leadToFirstMatch(segments: readonly TextSegment[], lead = 60): T
 export const isImage = (file: ChatFileRecord) => file.mime_type.startsWith('image/')
 
 /** `512 B`, `12 KB`, `3.4 MB`. */
+/**
+ * The line under a chat file's name: its size, "in Drive" for a file larger than the chat limit, and that the
+ * server still makes the playable copy of a video.
+ */
+export function fileNote(file: ChatFileRecord): string {
+  const parts = [fileSize(file.size_bytes)]
+  if (file.drive_node_id) parts.push('in Drive')
+  if (file.preview?.kind === 'video' && file.preview.status === 'pending') parts.push('Processing the video…')
+  return parts.join(' · ')
+}
+
+/**
+ * What to open for a chat file: a file in Drive through a Drive download URL (its chat URL sends to the bucket, which
+ * refuses the session's token), a video through its playable copy once it is made, else the file itself.
+ */
+export function fileToOpen(file: ChatFileRecord): { kind: 'drive'; nodeId: string } | { kind: 'url'; url: string } {
+  if (file.drive_node_id) return { kind: 'drive', nodeId: file.drive_node_id }
+  if (file.preview?.kind === 'video' && file.preview.status === 'ready' && file.preview.play_url) return { kind: 'url', url: file.preview.play_url }
+  return { kind: 'url', url: file.url }
+}
+
 export function fileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`

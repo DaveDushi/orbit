@@ -251,6 +251,8 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::drive_routes::restore_drive_node,
         crate::drive_routes::list_drive_folder_files,
         crate::drive_routes::get_drive_download,
+        crate::drive_routes::request_drive_preview,
+        crate::drive_routes::get_drive_preview_file,
         crate::drive_routes::begin_drive_media,
         crate::drive_routes::complete_drive_media,
         crate::drive_share_routes::create_drive_share,
@@ -333,6 +335,12 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::chat_routes::state::restore_chat_read,
         crate::chat_routes::files::upload_chat_file,
         crate::chat_routes::files::download_chat_file,
+        crate::chat_routes::files::get_chat_file_preview,
+        crate::chat_routes::files::request_chat_file_preview,
+        crate::chat_routes::files::get_chat_file_preview_file,
+        crate::chat_routes::files::get_chat_upload_limit,
+        crate::chat_routes::files::get_chat_drive_folder,
+        crate::chat_routes::files::attach_chat_drive_file,
         crate::chat_routes::files::get_chat_file_content,
         crate::chat_routes::files::list_chat_files,
         crate::chat_routes::messages::list_chat_search,
@@ -1525,8 +1533,24 @@ fn chat_errors(operation_id: &str, responses: &mut BTreeMap<&'static str, Vec<&'
     }
     if matches!(
         operation_id,
-        "download_chat_file" | "get_chat_emoji_image" | "get_chat_sticker_image"
+        "download_chat_file" | "get_chat_file_preview_file"
     ) {
+        add_code(responses, "410", "file_deleted");
+        return;
+    }
+    if matches!(
+        operation_id,
+        "get_chat_emoji_image"
+            | "get_chat_sticker_image"
+            | "get_chat_upload_limit"
+            | "get_chat_file_preview"
+            | "request_chat_file_preview"
+    ) {
+        return;
+    }
+    if operation_id == "get_chat_drive_folder" {
+        add_code(responses, "404", "drive_not_found");
+        add_code(responses, "409", "drive_storage_not_configured");
         return;
     }
     if operation_id == "get_chat_file_content" {
@@ -1653,7 +1677,7 @@ fn add_download_media_types(operation_id: &str, operation: &mut utoipa::openapi:
     let schema = match operation_id {
         "download_task_attachment" | "download_comment_attachment" => "AttachmentDownload",
         "download_page_file" | "download_page_file_version" => "PageFileDownload",
-        "download_chat_file" => "ChatFileDownload",
+        "download_chat_file" | "get_chat_file_preview_file" => "ChatFileDownload",
         _ => return,
     };
     let Some(RefOr::T(response)) = operation.responses.responses.get_mut("200") else {

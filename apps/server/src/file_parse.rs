@@ -90,7 +90,11 @@ pub fn classify(file_name: &str, mime_type: &str) -> FileKind {
     if mime_type == "application/pdf" {
         return FileKind::Pdf;
     }
-    if mime_type != "application/octet-stream" {
+    // Office files and CSV are known by their bytes too (`detect_media_type`); their name says how to read them.
+    if ["image/", "video/", "audio/", "text/html"]
+        .iter()
+        .any(|prefix| mime_type.starts_with(prefix))
+    {
         return FileKind::Other;
     }
     let extension = file_name

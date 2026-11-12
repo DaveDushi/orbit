@@ -6,6 +6,11 @@ build: "## YYYY-MM-DD" (the deploy date), then 1-4 short "- " lines about what p
 members, not developers. Keep the 8 newest entries; the prompt shows the 5 newest.
 -->
 
+## 2026-11-13
+- Videos play in chat: iPhone .mov files and other videos show a player with a picture in the message. Orbit makes a copy that plays in every browser; until then the message says "Processing the video…".
+- Big files in chat: files larger than the chat limit now go to Drive → Uploads → the channel's folder (for a direct message, a folder only its members see) and show in the message like any file. The upload goes straight to storage with a progress bar, and "Try again" continues where it stopped.
+- Previews of Excel, Word and PowerPoint files (and csv, odt, ods): click the file in chat or Drive to see it as pages, with its cell colors. Click a video or PDF in chat to open it large.
+
 ## 2026-11-12
 - Each agent now has its own memory (team and private); Donna keeps everything she remembered so far, and Account settings → Agentic → Memories has an agent picker. Donna now notes lasting facts on her own and checks her memory before she says she does not know. The answer level (Short, Normal, Thorough) is set on each agent's card in Settings → Agentic → Agents, and the default model moved there too (the Admin tab is gone).
 - Routines can run a saved script: Donna can write a short script that uses her tools, save it ("save this as a script"), and run it on each run of a routine. Its changes need your yes to that exact script; after any change of the script, the routine makes no changes until you approve the new version. See, edit and delete scripts in Settings → Agentic → Routines.

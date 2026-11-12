@@ -62,6 +62,8 @@ export function toAttachment(record: ChatFileRecord): Attachment {
     url: record.url,
     deleted: record.deleted,
     ...(record.width !== null && record.height !== null ? { width: record.width, height: record.height } : {}),
+    ...(record.drive_node_id ? { driveNodeId: record.drive_node_id } : {}),
+    ...(record.preview ? { preview: record.preview } : {}),
   }
 }
 
