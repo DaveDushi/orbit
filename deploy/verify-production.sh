@@ -24,5 +24,12 @@ else
   echo "skip HSTS (origin is not https)"
 fi
 
+if [[ "${ORBIT_VERIFY_SPA:-}" == 1 ]]; then
+  # Loads the app in headless Chromium (needs bun and the repo's node_modules); see deploy/verify-spa.ts.
+  bun "$(dirname "$0")/verify-spa.ts" || fail "the web app does not load cleanly"
+else
+  echo "skip web app load check (set ORBIT_VERIFY_SPA=1)"
+fi
+
 echo "Production verification against ${origin} passed the automated subset."
 echo "Still required with an operator: Secure/HttpOnly cookies after login, restart persistence, and no development seeding."

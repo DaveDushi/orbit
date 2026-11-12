@@ -423,4 +423,4 @@ Ownership template (fill with real names before rollout):
 | Upgrades and rollback | | |
 | Incident response | | |
 
-Automated subset: `ORBIT_VERIFY_ORIGIN=https://… deploy/verify-production.sh`. Restore rehearsal: `deploy/backup-rehearsal.sh <backup-id> /path/to/scratch` (with the same `ORBIT_*` variables as the server). Both require an operator-chosen host and off-host backup destination; they do not complete Tasks 10, 11, or 14 by themselves.
+Automated subset: `ORBIT_VERIFY_ORIGIN=https://… deploy/verify-production.sh`; with `ORBIT_VERIFY_SPA=1` it also loads the web app in headless Chromium and fails on a page or console error (`deploy/verify-spa.ts`, signed in too with `ORBIT_VERIFY_SESSION_TOKEN_FILE`). Restore rehearsal: `deploy/backup-rehearsal.sh <backup-id> /path/to/scratch` (with the same `ORBIT_*` variables as the server). Both require an operator-chosen host and off-host backup destination; they do not complete Tasks 10, 11, or 14 by themselves.
