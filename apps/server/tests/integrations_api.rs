@@ -1632,6 +1632,127 @@ async fn github_closed_issues_prefer_the_done_status() {
 }
 
 #[tokio::test]
+async fn github_labels_sync_one_way_and_keep_manual_labels() {
+    let fixture = fixture().await;
+    let app = github_app(&fixture).await;
+    let pool = fixture.database.pool();
+    let workspace = fixture.workspace_id.to_string();
+    let project = fixture.project_id.to_string();
+    let add_label = |name: &'static str, color: &'static str| {
+        sqlx::query("INSERT INTO labels (id, workspace_id, project_id, name, color, version, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, 0, 0, 0)")
+            .bind(orbit_platform::Id::new_v7().to_string()).bind(&workspace).bind(&project)
+            .bind(name).bind(color).execute(pool)
+    };
+    add_label("Bug", "#ff0000").await.unwrap();
+    add_label("Docs", "#00ff00").await.unwrap();
+    let task_labels = || async {
+        sqlx::query_scalar::<_, String>(
+            "SELECT labels.name FROM github_issue_links JOIN task_labels ON task_labels.task_id = github_issue_links.task_id \
+             JOIN labels ON labels.id = task_labels.label_id WHERE github_issue_links.issue_number = 9 ORDER BY labels.name",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    };
+    let project_labels = || async {
+        sqlx::query_scalar::<_, String>(
+            "SELECT name || ' ' || color FROM labels WHERE project_id = $1 ORDER BY name",
+        )
+        .bind(&project)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    };
+    let label_activity = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT CAST(COUNT(*) AS BIGINT) FROM audit_events WHERE action = 'task.updated' AND metadata_json LIKE '%\"labels\"%'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    };
+    let send = |action: &str, labels: Value| {
+        let mut body = github_issue(9);
+        body["action"] = json!(action);
+        body["issue"]["labels"] = labels;
+        app.clone().oneshot(github_request("issues", body, true))
+    };
+
+    // "bug" matches "Bug" (other case, no new label, its color stays); "Enhancement" is new and
+    // gets the GitHub color; the sync label "Orbit" is not copied.
+    let labels = json!([{"name":"Orbit","color":"ededed"},{"name":"bug","color":"d73a4a"},{"name":"Enhancement","color":"A2EEEF"}]);
+    assert_eq!(
+        send("opened", labels.clone()).await.unwrap().status(),
+        StatusCode::OK
+    );
+    assert_eq!(task_labels().await, ["Bug", "Enhancement", "GitHub"]);
+    let created = project_labels().await;
+    assert_eq!(
+        created,
+        [
+            "Bug #ff0000",
+            "Docs #00ff00",
+            "Enhancement #a2eeef",
+            "GitHub #6e7681"
+        ]
+    );
+
+    // The same labels again change nothing and create nothing.
+    assert_eq!(
+        send("edited", labels).await.unwrap().status(),
+        StatusCode::OK
+    );
+    assert_eq!(task_labels().await, ["Bug", "Enhancement", "GitHub"]);
+    assert_eq!(project_labels().await, created);
+    assert_eq!(label_activity().await, 0);
+
+    // "Docs" was added by hand before GitHub had it: it stays the person's.
+    let task_id: String =
+        sqlx::query_scalar("SELECT task_id FROM github_issue_links WHERE issue_number = 9")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    sqlx::query(
+        "INSERT INTO task_labels (task_id, label_id) SELECT $1, id FROM labels WHERE name = 'Docs'",
+    )
+    .bind(&task_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    let with_docs = json!([{"name":"Orbit","color":"ededed"},{"name":"bug","color":"d73a4a"},{"name":"Enhancement","color":"a2eeef"},{"name":"docs","color":"0075ca"}]);
+    assert_eq!(
+        send("labeled", with_docs).await.unwrap().status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        task_labels().await,
+        ["Bug", "Docs", "Enhancement", "GitHub"]
+    );
+    assert_eq!(label_activity().await, 0);
+
+    // GitHub drops every label but the sync label: only the labels the sync added go.
+    assert_eq!(
+        send("unlabeled", json!([{"name":"Orbit","color":"ededed"}]))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(task_labels().await, ["Docs", "GitHub"]);
+    assert_eq!(label_activity().await, 1);
+
+    // Without the sync label the task is paused and its labels stay.
+    assert_eq!(
+        send("unlabeled", json!([{"name":"bug","color":"d73a4a"}]))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(task_labels().await, ["Docs", "GitHub"]);
+}
+
+#[tokio::test]
 async fn github_webhooks_skip_secrets_that_cannot_be_decrypted() {
     let fixture = fixture().await;
     let other = orbit_server::repositories::workspaces::WorkspaceRepository::new(
@@ -2117,6 +2238,7 @@ async fn revoking_a_token_of_the_github_account_keeps_the_account_enabled() {
         kind: "issue",
         state: "open",
         state_changed: false,
+        labels: Vec::new(),
     };
     let task_id = tasks
         .sync_github_work_item(

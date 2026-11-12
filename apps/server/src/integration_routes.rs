@@ -26,7 +26,7 @@ use crate::repositories::billing;
 use crate::repositories::identity::IdentityRepository;
 use crate::repositories::membership;
 use crate::repositories::tasks::{
-    DiscordTask, GithubWorkItem, TaskError, TaskRecord, TaskRepository,
+    DiscordTask, GithubLabel, GithubWorkItem, TaskError, TaskRecord, TaskRepository,
 };
 use crate::secret_box::{
     decrypt_secret as decrypt_github_secret, encrypt_secret as encrypt_github_secret,
@@ -1037,6 +1037,29 @@ async fn github_webhook_from_database(
             ));
         }
     };
+    // Every other GitHub label goes to the task too (one way); the sync label does not.
+    let sync_label = connection.get::<String, _>("label").to_lowercase();
+    let github_labels = labels
+        .iter()
+        .filter_map(|label| {
+            let name = label.get("name").and_then(Value::as_str)?.trim();
+            if name.is_empty() || name.chars().count() > 100 || name.to_lowercase() == sync_label {
+                return None;
+            }
+            let color = label
+                .get("color")
+                .and_then(Value::as_str)
+                .filter(|color| color.len() == 6 && color.bytes().all(|b| b.is_ascii_hexdigit()))
+                .map_or_else(
+                    || "#6e7681".to_owned(),
+                    |color| format!("#{}", color.to_ascii_lowercase()),
+                );
+            Some(GithubLabel {
+                name: name.to_owned(),
+                color,
+            })
+        })
+        .collect();
     let project_id: Id = connection
         .get::<String, _>("project_id")
         .parse()
@@ -1092,6 +1115,7 @@ async fn github_webhook_from_database(
                 kind,
                 state: state_value,
                 state_changed: matches!(action, "closed" | "reopened"),
+                labels: github_labels,
             },
             id.map_or("github-webhook", RequestId::as_str),
             TimestampMillis::now(),

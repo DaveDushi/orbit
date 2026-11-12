@@ -7,6 +7,7 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 -->
 
 ## 2026-11-12
+- GitHub labels now come to Orbit: a task synced from a GitHub issue or pull request gets its GitHub labels (all except the project's sync label). A label that the project does not have yet is made with its GitHub color, and a label removed on GitHub is removed from the task. Labels you add in Orbit stay. Nothing goes back to GitHub.
 - Each agent now has its own memory (team and private); Donna keeps everything she remembered so far, and Account settings → Agentic → Memories has an agent picker. Donna now notes lasting facts on her own and checks her memory before she says she does not know. The answer level (Short, Normal, Thorough) is set on each agent's card in Settings → Agentic → Agents, and the default model moved there too (the Admin tab is gone).
 - Routines can run a saved script: Donna can write a short script that uses her tools, save it ("save this as a script"), and run it on each run of a routine. Its changes need your yes to that exact script; after any change of the script, the routine makes no changes until you approve the new version. See, edit and delete scripts in Settings → Agentic → Routines.
 - Test run: the "Test run" button of a routine (or "test my routine" to Donna) runs it now, as you. The result comes only in your DM with Donna, marked "Test run", and nothing is changed or posted: it lists what it would do. Each routine shows its last runs with the result, errors and the tool calls of its script.
