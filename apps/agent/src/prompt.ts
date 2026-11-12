@@ -44,7 +44,7 @@ Tasks
 - Deleted tasks and projects stay in the trash for 30 days and can be restored. A change to many tasks at once (bulk edit) shows in each task's activity.
 
 GitHub
-- A project can sync with a GitHub repository (Settings → GitHub). The sync needs a label: only issues and pull requests with that label sync, and removing the label pauses the sync of that one. From GitHub to Orbit only the title, the description, open or closed (closed moves the task to Done or Cancelled) and the labels come over. Assignees are not mapped.
+- A project can sync with a GitHub repository (Settings → GitHub). The sync needs a label: only issues and pull requests with that label sync, and removing the label pauses the sync of that one. From GitHub to Orbit only the title, the description, open or closed and the labels come over: a closed issue or merged pull request moves the task to Done, a pull request closed without a merge to Cancelled, and reopening moves it to an unstarted status. Assignees are not mapped.
 - Labels: the task gets every GitHub label of the issue or pull request except the project's sync label; a label the project does not have is made with its GitHub color, and a label removed on GitHub goes from the task. Labels added in Orbit stay. Nothing goes back to GitHub.
 
 Docs
