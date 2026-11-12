@@ -1001,6 +1001,110 @@ async fn agents_can_claim_unassign_and_comment_within_the_grant() {
 }
 
 #[tokio::test]
+async fn agents_set_replace_and_clear_task_labels() {
+    let f = Fixture::new().await;
+    sqlx::query("UPDATE api_tokens SET scopes = 'tasks:read tasks:write' WHERE id = $1")
+        .bind(f.token_id.to_string())
+        .execute(f.database.pool())
+        .await
+        .unwrap();
+    let label = |project: Id, name: &str| {
+        let tasks = &f.tasks;
+        let name = name.to_string();
+        async move {
+            tasks
+                .create_label(
+                    f.workspace,
+                    project,
+                    f.user,
+                    name,
+                    "#ff0000".into(),
+                    "test",
+                    TimestampMillis::now(),
+                )
+                .await
+                .unwrap()
+                .id
+                .to_string()
+        }
+    };
+    let (bug, feature, secret) = (
+        label(f.project, "Bug").await,
+        label(f.project, "Feature").await,
+        label(f.other_project, "Secret").await,
+    );
+    let listed = f
+        .tool("list_labels", json!({"project_id": f.project}))
+        .await;
+    let names: Vec<&str> = listed["result"]["structuredContent"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["Bug", "Feature"], "{listed}");
+    let status: String = sqlx::query_scalar(
+        "SELECT id FROM task_statuses WHERE project_id = $1 ORDER BY position LIMIT 1",
+    )
+    .bind(f.project.to_string())
+    .fetch_one(f.database.pool())
+    .await
+    .unwrap();
+    let created = f
+        .tool(
+            "create_task",
+            json!({"project_id": f.project, "status_id": status, "title": "Crash", "label_ids": [bug]}),
+        )
+        .await;
+    let created = &created["result"]["structuredContent"];
+    assert_eq!(created["label_ids"], json!([bug]), "{created}");
+    let foreign = f
+        .tool(
+            "create_task",
+            json!({"project_id": f.project, "status_id": status, "title": "Leak", "label_ids": [secret]}),
+        )
+        .await;
+    assert_eq!(foreign["result"]["isError"], true, "{foreign}");
+    assert!(foreign.to_string().contains("label_ids"), "{foreign}");
+
+    let replaced = f
+        .tool(
+            "update_task",
+            json!({"task_id": created["id"], "expected_version": created["version"], "label_ids": [feature]}),
+        )
+        .await;
+    let replaced = &replaced["result"]["structuredContent"];
+    assert_eq!(replaced["label_ids"], json!([feature]), "{replaced}");
+    // A missing label_ids keeps the labels.
+    let renamed = f
+        .tool(
+            "update_task",
+            json!({"task_id": created["id"], "expected_version": replaced["version"], "title": "Crash on save"}),
+        )
+        .await;
+    let renamed = &renamed["result"]["structuredContent"];
+    assert_eq!(renamed["label_ids"], json!([feature]), "{renamed}");
+    let duplicate = f
+        .tool(
+            "update_task",
+            json!({"task_id": created["id"], "expected_version": renamed["version"], "label_ids": [bug, bug]}),
+        )
+        .await;
+    assert_eq!(duplicate["result"]["isError"], true, "{duplicate}");
+    let cleared = f
+        .tool(
+            "update_task",
+            json!({"task_id": created["id"], "expected_version": renamed["version"], "label_ids": []}),
+        )
+        .await;
+    assert_eq!(
+        cleared["result"]["structuredContent"]["label_ids"],
+        json!([]),
+        "{cleared}"
+    );
+}
+
+#[tokio::test]
 async fn projects_can_be_created_only_by_all_projects_writers() {
     let f = Fixture::new().await;
     let create = json!({"name": "Agent tools", "key": "agt"});
