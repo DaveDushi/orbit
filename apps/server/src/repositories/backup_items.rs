@@ -1244,7 +1244,7 @@ impl<'a> BlobStaging<'a> {
             {
                 match self
                     .uploads
-                    .stage(
+                    .stage_original(
                         self.workspace_id,
                         self.actor_id,
                         file_name(names.get(id).copied()).as_str(),

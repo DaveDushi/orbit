@@ -676,7 +676,7 @@ impl PreviewService {
                 let file = tokio::fs::File::open(path).await?;
                 let staged = match self
                     .uploads
-                    .stage(pending.workspace_id, source.owner_id, &name, file)
+                    .stage_original(pending.workspace_id, source.owner_id, &name, file)
                     .await
                 {
                     Ok(staged) => staged,

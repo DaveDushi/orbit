@@ -44,9 +44,10 @@ pub use files::{
     BlobObject, BlobReader, BlobStore, BlobStoreError, ContentDisposition, DownloadMetadata,
     FinalizedAttachment, FinalizedBlob, INLINE_IMAGE_TYPES, LocalBlobStore, NewAttachmentReference,
     ObjectStorage, ObjectStorageState, ReconcileResult, S3_DELETE_DELAY_MILLIS, S3_MAX_PARTS,
-    S3_MIN_PART_BYTES, S3Bucket, S3Config, S3Error, S3Object, S3Part, StagedUpload, StoredObject,
-    TieredBlobStore, UploadError, UploadFinalization, UploadLimitError, UploadLimits,
-    UploadService, WORKSPACE_STORAGE_USED, WorkspaceBucket, detect_media_type,
+    S3_MIN_PART_BYTES, S3Bucket, S3Config, S3Error, S3Object, S3Part, SHRINK_MIN_BYTES,
+    StagedUpload, StoredObject, TieredBlobStore, UploadError, UploadFinalization,
+    UploadLimitError, UploadLimits, UploadService, WORKSPACE_STORAGE_USED, WorkspaceBucket,
+    detect_media_type, shrink_image,
 };
 pub use health::{HealthCheck, HealthCheckResult, HealthRegistry, ReadinessReport};
 pub use http::{
