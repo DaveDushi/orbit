@@ -331,6 +331,17 @@ origin without a port", was there before). `vm-health` OK except nginx (24 lines
 docker (`cmp-test-s3`, not Orbit). `.git/config` and `.git/packed-refs` had been rewritten by root at 15:26 (not by this
 deploy); given back to `exedev`.
 
+Signed-in smoke test on production (15:38 UTC, as David Dusi: a temporary v7 session row, socat TLS hop, Playwright;
+logged out after, 204): (a) a test script row and a new paused test routine; Edit → Script → the script → Save attached
+it to that routine ("its writes are approved"); (b) one message in David's own DM (no other member) with a PNG, a 3 s
+H.264 MP4 and an xlsx: the image shows, the video shows its poster and plays, the xlsx opens in the viewer as a PDF
+page made by LibreOffice (`file_previews` video and document `ready`). Afterwards the message, the routine and the script
+were deleted through the API (0 rows left); the two unreferenced blobs and their previews go with the attachment
+reconcile. Console: only the known `/sw.js` 400, and once, with the routine Edit dialog open, a CSP "Applying inline
+style" refusal (not compared with `eb0baae`; nothing visible broke). Screenshots in
+`/root/.local/share/com.jean.desktop/pasted-images/deploy-routines-media/` (`01-routine-edit-attach-script`,
+`02-routine-with-script`, `03-chat-image-video-xlsx`, `04-office-preview-xlsx`, `05-video-playing-inline`).
+
 Rollback (the old binary refuses schema 98: restore the snapshot together with the binary; work after 15:34 UTC is
 lost). To go back to `eb0baae`:
 
