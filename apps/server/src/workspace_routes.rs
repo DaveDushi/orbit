@@ -1769,6 +1769,8 @@ struct StorageView {
     /// New backups are uploaded to the bucket instead of kept on this server.
     backups_in_s3: bool,
     backup_schedule: BackupSchedule,
+    /// Orbit has not counted the files to move since the switch changed yet; `files_to_move` is 0 until it has.
+    checking: bool,
     /// Attachment files still waiting to move between this server's disk and the bucket.
     files_to_move: u64,
     /// Why moving files stopped last time. Orbit retries every ten minutes.
@@ -1827,8 +1829,9 @@ async fn settings_view(
     let moving = state
         .object_storage
         .as_ref()
-        .map(|(_, store)| store.status())
-        .unwrap_or_default();
+        .map(|(_, store)| store.status());
+    let checking = matches!(moving, Some(None));
+    let moving = moving.flatten().unwrap_or_default();
     Ok(Json(InstanceSettingsView {
         storage: StorageView {
             s3: storage.s3.map(|s3| S3View {
@@ -1842,6 +1845,7 @@ async fn settings_view(
             attachments_in_s3: storage.attachments_in_s3,
             backups_in_s3: storage.backups_in_s3,
             backup_schedule: storage.backup_schedule,
+            checking,
             files_to_move: u64::try_from(moving.remaining).unwrap_or(u64::MAX),
             move_error: moving.error,
             image_compression: state.image_compressor.as_ref().map(ImageCompressor::status),
