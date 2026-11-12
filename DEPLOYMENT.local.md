@@ -7,12 +7,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 9b163ced9a1153d9501444f640e7ee40b3f9e356
-  (routine script fixes, chat media and Office previews; schema 98; November 12, 2026).
+- Source: DaveDushi/orbit, `main` at 72fc504965e4c5f9157f688a91ff0b1860e58878
+  (label overflow fix, label rules and the chunk-order build fix; schema 99; November 12, 2026).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:9b163ce`); fork commits have no published upstream image.
-- Image ID: sha256:9d89ecfe6a19c758c4c8ba3bca953ab9d974cd7f7a739c1731b8e3d2e5057931
-- Team agent sidecar code (`/opt/orbit-agent`): commit 9b163ce.
+  (`orbit:72fc504`); fork commits have no published upstream image.
+- Image ID: sha256:17dbdbf22e865b70ce3f062b0b36a44b9252fcc55c9c77c7393c0a7474f819d4
+- Team agent sidecar code (`/opt/orbit-agent`): commit 72fc504.
 - LibreOffice (Calc, Writer, Impress 24.2, `--no-install-recommends`) is installed for Office previews
   (`docs/file-previews.md`); ffmpeg makes the chat video copies.
 - Desktop app downloads: https://orbit.wellrox.com/downloads/desktop/ (installer, zip, `latest.json` for the app's update
@@ -255,6 +255,82 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 12, 2026 upgrade: label overflow fix and label rules, second try (schema 99)
+
+`main` `72fc5049` (what the rolled-back `ceb396f1` had, plus `72fc5049`: `output.strictExecutionOrder` in
+`apps/web/vite.config.ts` against the Rolldown chunk cycle) and `bcbb8add` (deploy tooling only, not in the binary).
+What is new for people (`whats-new.md`, `2026-11-12`): a task row shows 2 labels and a board card 3, a "+N" chip shows
+the rest; Project settings → Rules (if a task has label X, assign person Y; owner:<name> switch; owner name map); Donna
+can list and add rules. Migration `0099_label_rules`. The code checks of the rolled-back entry below still hold (only the
+web build config changed after them); the image build ran `tsc -b && vite build` again.
+
+New check, `bcbb8add`: `ORBIT_VERIFY_SPA=1 deploy/verify-production.sh` runs `deploy/verify-spa.ts` (Playwright from
+the repo's `node_modules`): loads `/` signed out and, with `ORBIT_VERIFY_SESSION_TOKEN_FILE`, `/` and `/tasks` signed in;
+fails on a page error, a console error (the signed-out 401 of `/auth/me` is allowed) or a blank page; logs the session
+out at the end. Passed on production `9b163ce` (signed out and in); failed on the `ceb396f` binary (`i is not a
+function`, blank page; local seeded server in `unshare -n`). Known gap: a workspace with no saved task view gets a 404
+from `view-preferences/all` on `/tasks`, a console error (seen on seeded DBs and in the Slate workspace, also on
+`9b163ce`), so the signed-in check fails for such a person's default workspace. How it was run here (as root):
+
+```sh
+# TLS hop: socat openssl-listen:8443,bind=127.0.0.1,reuseaddr,fork,cert=<self-signed pem>,verify=0 tcp:127.0.0.1:8000
+# CURL_HOME/.curlrc: connect-to = "orbit.easytomanage.com:443:127.0.0.1:8443", insecure, header = "X-Forwarded-Proto: https"
+# token: a temporary v7 sessions row (see the memory note on signed-in checks), token in a mode-600 file
+PLAYWRIGHT_CHROMIUM_EXECUTABLE=/root/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell \
+CURL_HOME=<dir> ORBIT_VERIFY_SPA=1 ORBIT_VERIFY_SESSION_TOKEN_FILE=<token file> \
+ORBIT_VERIFY_ORIGIN=https://orbit.easytomanage.com ORBIT_VERIFY_CONNECT=127.0.0.1:8443 \
+ORBIT_VERIFY_HEADER='X-Forwarded-Proto: https' bash deploy/verify-production.sh
+```
+
+Deploy id `20261112T213252Z-3980354`. `orbit:72fc504` (image
+`sha256:17dbdbf22e865b70ce3f062b0b36a44b9252fcc55c9c77c7393c0a7474f819d4`); `deploy/smoke.sh` and `orbit config check`
+passed. Before the switch (`.ai/lessons.md`, Rolldown): the release binary's embedded `dist` on a seeded DB in
+`unshare -n`, signed in as the seed user: `/`, `/tasks`, `/docs`, `/drive`, `/chat`, `/activity`, `/settings`,
+`/settings/members`, `/settings/agentic/routines`, `/admin` and project settings with the Rules card render, 0 page
+errors; only the `view-preferences/all` 404 above, the same as `9b163ce`. Migration dry run of 0099 on a hot read-only
+copy and again on a copy of the stopped database: 1 applied, schema 98 → 99, quick-check ok, 0 foreign-key rows, counts
+unchanged (8 users, 110 tasks, 17 labels, 140 task labels, 76 assignees, 1091 chat messages); copies deleted.
+
+Switch: stopped both services at 22:35:37 UTC; snapshot `01a1d1e6-f76d-72bf-917e-a73a36d51c61` with
+`/usr/local/bin/orbit-9b163ce`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-72fc504.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-72fc504.tgz`; old sidecar code `/opt/orbit-agent.before-72fc504`; new
+sidecar `src` (`package*.json`, `tsconfig.json` unchanged, no `npm ci`); binary installed (`/usr/local/bin/orbit-72fc504`
+too); `orbit` started 22:35:56, ready 22:35:57, then `orbit-agent`. `vm-health.conf` (old copy `.before-72fc504`):
+`PROD_TAG=72fc504`, `ROLLBACK_TAG=9b163ce`, `ROLLBACK_BACKUP=01a1d1e6-f76d-72bf-917e-a73a36d51c61`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness and `/health/live` 200; revision `72fc5049`;
+schema 99; live quick-check ok, 0 foreign-key rows; without a session `GET .../label-rules` 401, `POST` 400, `GET
+.../label-rule-settings` 405 (no GET route); with the test session `GET .../label-rules` of Slate 200 (no rules, owner
+labels off); an unknown API route 404; web `/`, `/tasks`, `/settings` 200; sidecar `/health` ok and `src` equal to
+`72fc5049`; 0 error lines in the journal (the known "allowed origin without a port" WARN); `verify-production.sh` with
+`ORBIT_VERIFY_SPA=1` passed (signed out `/`, signed in `/` and `/tasks`, session logged out). `vm-health` OK except nginx
+(2 lines, upstream refused at 22:35:56, the start window) and docker (`cmp-test-s3`, not Orbit). Signed-in browser
+check (temporary v7 session as David Dusi, read only, nothing written; revoked after, 0 open test sessions): Slate →
+project settings shows the Rules card; the task list shows 2 labels and "+N" per row, hover shows the rest.
+Screenshots in `/root/.local/share/com.jean.desktop/pasted-images/label-fixes/` (`live-01-label-rules-settings`,
+`live-02-task-row-many-labels`, `live-03-label-overflow-popover`).
+
+Cleanup: `/usr/local/bin/orbit-ceb396f` and `orbit:ceb396f` removed by hand (the broken build; `orbit-deploy cleanup`
+kept it as a newest copy). `orbit-deploy cleanup --apply` not run (it would remove 6 older binaries and images).
+
+Rollback (the old binary refuses schema 99: restore the snapshot together with the binary; work after 22:35 UTC is
+lost). To go back to `9b163ce`:
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-72fc504 backup verify 01a1d1e6-f76d-72bf-917e-a73a36d51c61 && /usr/local/bin/orbit-72fc504 backup restore 01a1d1e6-f76d-72bf-917e-a73a36d51c61'
+sudo install -m 755 /usr/local/bin/orbit-9b163ce /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-72fc504 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-72fc504.tgz
+# Plain copy of the database before the migration: /var/backups/orbit/pre-migration/orbit-before-72fc504.sqlite
+```
+
+After this rollback, set `PROD_TAG=9b163ce`, `ROLLBACK_TAG=eb0baae`,
+`ROLLBACK_BACKUP=01a1d065-150e-7023-821e-2f907b9762bd` in `/root/ops/vm-health.conf`.
 
 ### November 12, 2026 attempt: label overflow fix and label rules (schema 99) — ROLLED BACK
 
