@@ -3,14 +3,18 @@
 Private team trial; upstream explicitly labels Orbit alpha, not production-ready.
 
 - Canonical URL: https://orbit.wellrox.com/
+  Since November 12, 2026 (12:15 UTC, outside a deploy) nginx, `ORBIT_PUBLIC_ORIGIN` and the sidecar's
+  `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
+  `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 5def7724822100713eb36480b2a91f3f064694ad
-  (steps 9-13: chat search filters, webhook bots, agent settings, code mode, memory per agent; schema 96;
-  November 11, 2026; not pushed yet).
+- Source: DaveDushi/orbit, `main` at 9b163ced9a1153d9501444f640e7ee40b3f9e356
+  (routine script fixes, chat media and Office previews; schema 98; November 12, 2026).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:5def772`); fork commits have no published upstream image.
-- Image ID: sha256:3063fca5fca4f103294119f16467af7cf851cf07b687aca41ba9319bd22b010b
-- Team agent sidecar code (`/opt/orbit-agent`): commit 5def772.
+  (`orbit:9b163ce`); fork commits have no published upstream image.
+- Image ID: sha256:9d89ecfe6a19c758c4c8ba3bca953ab9d974cd7f7a739c1731b8e3d2e5057931
+- Team agent sidecar code (`/opt/orbit-agent`): commit 9b163ce.
+- LibreOffice (Calc, Writer, Impress 24.2, `--no-install-recommends`) is installed for Office previews
+  (`docs/file-previews.md`); ffmpeg makes the chat video copies.
 - Desktop app downloads: https://orbit.wellrox.com/downloads/desktop/ (installer, zip, `latest.json` for the app's update
   check; behind the exe.dev login like the rest). nginx `location /downloads/desktop/` in
   `/etc/nginx/conf.d/orbit.conf` serves `/srv/orbit-downloads/desktop/` (outside the deploy, so deploys keep it; the
@@ -251,6 +255,98 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 12, 2026 upgrade: routine script fixes, chat media and Office previews (schema 98)
+
+`main` from `fb131eb4` to `9b163ced`: two `--no-ff` merges, `routine-script-fixes` (`1c17ec63`; merge `3780f712`) then
+`chat-media-previews` (`55bc80ee`; merge `0bd97ceb`), both on `09781634`, and `9b163ced` (docs(agent): the exact GitHub
+status mapping in `aboutOrbit()`). What is new for people:
+- Routines: Donna attaches a saved script to an existing routine after a yes (or Settings → Agentic → Routines → Edit →
+  Script); a failed script in a scheduled run is fixed and run again by Donna (at most 2 times, the fix makes no writes
+  until approved); a run with no result after an hour counts as failed; the dialogs fit the screen.
+- Chat: videos (also iPhone .mov) play with a poster (the server makes an MP4 copy); click a video, PDF or Office file to
+  open it large; files over the chat limit (25 MiB here) go to Drive → Uploads → the conversation's folder (presigned
+  multipart upload to the bucket); previews of xlsx, xls, csv, docx, doc, pptx, ppt, odt, ods (LibreOffice → PDF) in
+  chat and Drive. Docs: `docs/file-previews.md`.
+
+Merge conflicts: `apps/agent/src/prompt.ts` (the branch's own GitHub section, with the label sync of `eb0baae` added);
+`whats-new.md` (both branches dated `2026-11-13`: their 6 lines go on top of the `2026-11-12` entry, now 14 lines, one
+entry per date); `0098_chat_media_previews` after `0097_github_task_labels` in both catalogs of `migrate.rs`;
+`SUPPORTED_SCHEMA_VERSION` and the test versions 98. `aboutOrbit()` names both features (routines: lines on attach,
+self-repair, the one-hour rule; chat: media, big files in Drive, Office previews) and its GitHub section now says:
+closed issue or merged pull request → Done, pull request closed without a merge → Cancelled, reopen → unstarted, and the
+labels (one way).
+
+Migration: `0098_chat_media_previews` (SQLite and Postgres): `drive_nodes.chat_conversation_id` and `chat_root`, new
+tables `chat_drive_files`, `file_previews`, `file_preview_outputs`. `SUPPORTED_SCHEMA_VERSION` 98: the old binary
+refuses the migrated database.
+
+Host change: `apt-get install --no-install-recommends libreoffice-calc libreoffice-writer libreoffice-impress
+libreoffice-core fonts-dejavu-core fonts-liberation2` (24.2.7); a csv → PDF conversion as `orbit` in
+`unshare --user --map-root-user --net` works. Rollback of it: `sudo apt-get purge -y 'libreoffice*' && sudo apt-get
+autoremove -y` (previews then say "Preview not available"). **Not done:** the R2 CORS rule of `wellrox-files` (the
+Drive bucket): every preflight from any origin answers 403, so browser uploads straight to the bucket (chat files over
+25 MiB, Drive uploads) and pdf.js/players that read Drive objects cross-origin can fail. It needs the rule of
+`docs/file-previews.md` (GET, PUT, HEAD from `https://orbit.easytomanage.com`, `AllowedHeaders *`, `ExposeHeaders`
+ETag, Content-Range, Accept-Ranges, Content-Length) set in the Cloudflare dashboard.
+
+Checks on the merged `main` (after `bun install --frozen-lockfile`, `npm ci` in `apps/agent`, fresh web `dist`):
+agent `tsc` and `node --test` (76 pass, 11 skipped, 0 fail); web `bun test` of `features/chat`, `features/drive`,
+`features/agent`, `lib`, `components/common` and `driveFileBlock` (313 pass, 0 fail); mobile `tsc` and
+`src/data/chat.test.ts` (23 pass); web build (`tsc -b && vite build`, also in the image). Rust, under `orbit-build`
+with `CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`, SQLite: `cargo test -p orbit-platform`
+(all pass, 0 fail); `cargo test -p orbit-server --lib` and `routine_scripts`, `scheduled_api`, `agent_profiles`,
+`agent_api`, `chat_media`, `chat_api`, `attachments_api`, `drive_api`, `drive_shares_api`, `page_drive_files_api`,
+`agent_drive`, `mcp_drive_api`, `guest_access`, `openapi_contract`, `app_smoke`, `integrations_api` (467 pass, 0 fail,
+1 ignored). Not run: Postgres, the rest of the server suite. `target` removed afterwards.
+
+Migration dry run with the release binary on a hot read-only copy of production (14:50 UTC) and again on a copy of the
+stopped database at the switch: 1 applied, schema 97 → 98, quick-check ok, 0 foreign-key rows, counts unchanged (8
+users, 109 tasks, 915 chat messages, 24 chat files, 53 attachment blobs, 539 Drive nodes, 1 routine, 1 routine run);
+copies deleted.
+
+`orbit-deploy image` (deploy id `20261112T141500Z-3663194`) built `orbit:9b163ce` (image
+`sha256:9d89ecfe6a19c758c4c8ba3bca953ab9d974cd7f7a739c1731b8e3d2e5057931`, 14:50 UTC); `deploy/smoke.sh` passed;
+`orbit config check` passed with the extracted binary.
+
+At the switch: stopped `orbit-agent` and `orbit` at 15:34:07 UTC, created snapshot
+`01a1d065-150e-7023-821e-2f907b9762bd` with the old CLI (`/usr/local/bin/orbit-eb0baae`) and verified it,
+`deploy/backup-rehearsal.sh` with the old binary passed (verify), kept a plain copy of the stopped database as
+`/var/backups/orbit/pre-migration/orbit-before-9b163ce.sqlite` (mode 600), saved the sidecar data as
+`/var/backups/orbit-agent/orbit-agent-before-9b163ce.tgz`, kept the old sidecar code as `/opt/orbit-agent.before-9b163ce`,
+installed the binary (`/usr/local/bin/orbit-9b163ce` too) and the new sidecar `src` (`package*.json` and
+`tsconfig.json` unchanged, so no `npm ci`), and started `orbit` (15:34:47, ready 15:34:48) then `orbit-agent`.
+`vm-health` (`/root/ops/vm-health.conf`, old copy `.before-9b163ce`): `PROD_TAG=9b163ce`, `ROLLBACK_TAG=eb0baae`,
+`ROLLBACK_BACKUP=01a1d065-150e-7023-821e-2f907b9762bd`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all checks) and `/health/live` 200;
+`/orbit-build.json` revision `9b163ced`; schema 98; live quick-check ok, 0 foreign-key rows; the backfill logged "chat
+file types fixed and video previews queued" (6 fixed, 3 queued) and the 3 video previews are `ready`; web `/`, `/chat`,
+`/drive`, `/settings/agentic/routines` 200; without a session `GET`/`POST .../chat/files/{id}/preview`, `GET
+.../preview/{role}`, `POST .../drive/nodes/{id}/preview`, `GET .../drive/nodes/{id}/preview/{role}`, `GET
+.../chat/upload-limit` 401; an unknown API route 404; `deploy/verify-production.sh` passes against
+`http://127.0.0.1:8000` (headers via a `CURL_HOME` `.curlrc`); sidecar `/health` `{"ok":true,"mock":false}` and
+`/opt/orbit-agent/src` equal to `apps/agent/src` of `9b163ced`; 0 error lines in the journal (the one WARN line, "allowed
+origin without a port", was there before). `vm-health` OK except nginx (24 lines, all in the stop window 15:34) and
+docker (`cmp-test-s3`, not Orbit). `.git/config` and `.git/packed-refs` had been rewritten by root at 15:26 (not by this
+deploy); given back to `exedev`.
+
+Rollback (the old binary refuses schema 98: restore the snapshot together with the binary; work after 15:34 UTC is
+lost). To go back to `eb0baae`:
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-9b163ce backup verify 01a1d065-150e-7023-821e-2f907b9762bd && /usr/local/bin/orbit-9b163ce backup restore 01a1d065-150e-7023-821e-2f907b9762bd'
+sudo install -m 755 /usr/local/bin/orbit-eb0baae /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-9b163ce /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-9b163ce.tgz
+# Plain copy of the database before the migration: /var/backups/orbit/pre-migration/orbit-before-9b163ce.sqlite
+```
+
+After this rollback, set `PROD_TAG=eb0baae`, `ROLLBACK_TAG=5def772`,
+`ROLLBACK_BACKUP=01a1cf69-99c2-76de-a139-15a66dcf7d5b` in `/root/ops/vm-health.conf`.
 
 ### November 12, 2026 upgrade: GitHub label sync (schema 97)
 
