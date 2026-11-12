@@ -64,6 +64,8 @@ impl PublicApiState {
 }
 
 pub fn router(state: PublicApiState) -> Router {
+    // A retry of a POST with the same `Idempotency-Key` gets the first response (task and comment creates).
+    let idempotent = middleware::from_fn_with_state(state.clone(), idempotency::idempotency);
     // Workspace paths leave room for tokens with more than one workspace; today the path must
     // name the token's only workspace.
     let workspace = Router::new()
@@ -73,12 +75,20 @@ pub fn router(state: PublicApiState) -> Router {
         .route("/projects/{project_id}/milestones", get(milestones))
         .route("/projects/{project_id}/cycles", get(cycles))
         .route("/members", get(members))
-        .route("/tasks", get(list_tasks).post(create_task))
+        .route(
+            "/tasks",
+            get(list_tasks)
+                .post(create_task)
+                .route_layer(idempotent.clone()),
+        )
         .route(
             "/tasks/{task}",
             get(get_task).patch(update_task).delete(delete_task),
         )
-        .route("/tasks/{task}/comments", get(comments).post(create_comment))
+        .route(
+            "/tasks/{task}/comments",
+            get(comments).post(create_comment).route_layer(idempotent),
+        )
         .route("/docs", get(docs).post(create_doc))
         .route(
             "/docs/{page_id}",
@@ -1003,6 +1013,8 @@ macro_rules! path_id {
     };
 }
 
+mod idempotency;
+
 #[utoipa::path(
     get,
     path = "/api/public/v1/me",
@@ -1332,9 +1344,13 @@ async fn get_task(
     operation_id = "public_create_task",
     tag = "public-api",
     summary = "Create a task",
-    params(("workspace_id" = String, Path, description = "The token's workspace, from `GET /me`.")),
+    params(("workspace_id" = String, Path, description = "The token's workspace, from `GET /me`."), ("Idempotency-Key" = Option<String>, Header, description = "Makes a retry safe. A repeat with the same key and body returns the first response (header `Idempotent-Replayed: true`); the same key with another body or path gets `422`. Kept 24 hours per token.")),
     request_body = CreateTaskBody,
-    responses((status = 201, description = "The new task", body = TaskView)),
+    responses(
+        (status = 201, description = "The new task", body = TaskView),
+        (status = 409, description = "`idempotency_request_running`: the first request with this `Idempotency-Key` has not finished", body = Problem),
+        (status = 422, description = "`idempotency_key_reused`: this `Idempotency-Key` was used for another body or path", body = Problem),
+    ),
     security(("bearerAuth" = []))
 )]
 async fn create_task(
@@ -1741,9 +1757,13 @@ async fn comments(
     operation_id = "public_create_comment",
     tag = "public-api",
     summary = "Comment on a task",
-    params(("workspace_id" = String, Path, description = "The token's workspace, from `GET /me`."), ("task" = String, Path, description = "A task UUID or identifier such as `ENG-12` (any letter case).")),
+    params(("workspace_id" = String, Path, description = "The token's workspace, from `GET /me`."), ("task" = String, Path, description = "A task UUID or identifier such as `ENG-12` (any letter case)."), ("Idempotency-Key" = Option<String>, Header, description = "Makes a retry safe. A repeat with the same key and body returns the first response (header `Idempotent-Replayed: true`); the same key with another body or path gets `422`. Kept 24 hours per token.")),
     request_body = CommentBody,
-    responses((status = 201, description = "The new comment", body = CommentOut)),
+    responses(
+        (status = 201, description = "The new comment", body = CommentOut),
+        (status = 409, description = "`idempotency_request_running`: the first request with this `Idempotency-Key` has not finished", body = Problem),
+        (status = 422, description = "`idempotency_key_reused`: this `Idempotency-Key` was used for another body or path", body = Problem),
+    ),
     security(("bearerAuth" = []))
 )]
 async fn create_comment(

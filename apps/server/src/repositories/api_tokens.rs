@@ -178,7 +178,7 @@ pub enum ApiTokenError {
 
 #[derive(Clone, Debug)]
 pub struct ApiTokenRepository {
-    database: Database,
+    pub(super) database: Database,
 }
 
 impl ApiTokenRepository {
