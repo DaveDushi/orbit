@@ -1055,7 +1055,7 @@ async fn app_tokens_and_mcp_tokens_never_cross_over() {
                 .header(header::COOKIE, &fixture.owner.cookie)
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({"approved":true,"csrf_token":consent["csrf_token"],"workspace_id":fixture.workspace,"project_ids":[fixture.project]}).to_string(),
+                    json!({"approved":true,"csrf_token":consent["csrf_token"],"workspaces":[{"workspace_id":fixture.workspace,"project_ids":[fixture.project]}]}).to_string(),
                 ))
                 .unwrap(),
         )
