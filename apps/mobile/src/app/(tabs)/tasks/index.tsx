@@ -88,6 +88,7 @@ export default function TasksScreen() {
         </View>
         <IconButton icon="filter" label="Filter" size={32} onPress={() => setSheet('filter')} color={assignedToMe ? colors.primary : undefined} />
         <IconButton icon="display" label="Display" size={32} onPress={() => setSheet('display')} />
+        {project ? <IconButton icon="settings" label={`${project.name} settings`} size={32} onPress={() => router.push(`/tasks/settings/${project.id}`)} /> : null}
         <IconButton icon="plus" label="New task" size={32} variant="primary" onPress={() => newTask()} />
         <View
           className="h-8.5 mt-1 basis-full flex-row items-center border border-input rounded-lg bg-input/30"

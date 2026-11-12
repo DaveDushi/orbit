@@ -1589,6 +1589,8 @@ fn task_problem(error: TaskError, request_id: Option<&RequestId>) -> ApiError {
         | TaskError::Forbidden
         | TaskError::ParentCycle
         | TaskError::ParentInvalid
+        | TaskError::CycleOverlap
+        | TaskError::NoNextCycle
         | TaskError::ProjectNotTrashed
         | TaskError::TaskNotTrashed) => ApiError::internal(request_id).cause(error),
     }

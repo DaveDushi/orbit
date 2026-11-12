@@ -5,6 +5,7 @@ import { useMemo } from 'react'
 import { chatBadge, type Person } from './data/chat'
 import { keys } from './data/keys'
 import * as api from './data/orbit'
+import * as taskApi from './data/task-api'
 import { useOrbit } from './orbit-context'
 
 export function useProjects() {
@@ -34,6 +35,18 @@ export function useTasks(view?: string) {
 export function useLabels() {
   const { client, workspaceId } = useOrbit()
   return useQuery({ queryKey: keys.labels(workspaceId), queryFn: () => api.labels(client, workspaceId) })
+}
+
+/** One project's milestones; off (`null`) on a page across projects. */
+export function useMilestones(projectId: string | null) {
+  const { client, workspaceId } = useOrbit()
+  return useQuery({ queryKey: keys.milestones(workspaceId, projectId ?? ''), queryFn: () => taskApi.milestones(client, workspaceId, projectId!), enabled: projectId !== null })
+}
+
+/** One project's cycles; off (`null`) on a page across projects. */
+export function useCycles(projectId: string | null) {
+  const { client, workspaceId } = useOrbit()
+  return useQuery({ queryKey: keys.cycles(workspaceId, projectId ?? ''), queryFn: () => taskApi.cycles(client, workspaceId, projectId!), enabled: projectId !== null })
 }
 
 export function useMembers() {

@@ -1524,6 +1524,8 @@ fn every_public_api_route_is_documented() {
             "order",
             "label_id",
             "priority",
+            "milestone_id",
+            "cycle_id",
             "parent_task_id",
             "q",
             "cursor",
