@@ -124,8 +124,12 @@ export default defineConfig({
   build: {
     // The lazy pages share many small modules. Without this, each set of pages that shares them gets its own chunk
     // (about 100 requests for one page). Rolldown merges a shared chunk under 100 kB into the closest one.
+    // The merge can make shared chunks that import each other; a module then runs before one it needs, and the built app
+    // fails at load with "_ is not a function" (Vite dev works). `strictExecutionOrder` keeps the source order of
+    // module bodies across such chunks (https://rolldown.rs/reference/OutputOptions.strictExecutionOrder).
     rolldownOptions: {
       output: {
+        strictExecutionOrder: true,
         codeSplitting: {
           groups: [{ name: 'shared', minShareCount: 2, entriesAware: true, entriesAwareMergeThreshold: 100 * 1024 }],
         },
