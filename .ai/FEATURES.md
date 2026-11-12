@@ -121,6 +121,25 @@ Core files: `apps/server/src/repositories/sub_issues.rs` (parent checks, tree wa
 - Deleting a task trashes its subtree; restoring it restores what was trashed with it. A task restored alone under a trashed
   parent comes back top-level.
 
+### Milestones, cycles and estimates
+
+Core files: server `repositories/tasks/milestones.rs`, `repositories/tasks/cycles.rs` (migrations `20261113100600`,
+`20261113100700`, upstream `20261111122213` and `20261112175306`); web `ProjectMilestonesCard.tsx`, `ProjectCyclesCard.tsx`, `PlanningPickers.tsx`, `planningLib.ts`,
+`timeline/`; mobile `tasks/settings/[projectId].tsx`.
+
+- Both belong to one project. A task has at most one milestone (`milestone_id`) and one cycle (`cycle_id`), independent of
+  each other and of sub-issues: a milestone is the "what" (a workstream; it spans cycles), a cycle the "when".
+- Milestone: name, description, `target_at`, order; "Late" when the target passed and a task is open. Cycle: number,
+  optional name, `[starts_at, ends_at)` in epoch ms (the client picks days in its local time zone); overlapping cycles of a
+  project → 409 `cycle_overlap`.
+- Progress (`plan_progress_sql`): live tasks without cancelled and duplicate ones, each sub-issue counted as its own
+  task; done = `completed` category; points sum the estimates (0-1000).
+- "Move unfinished tasks to next cycle" (409 `no_next_cycle`) moves open tasks to the first later cycle and writes a
+  `task_cycle_carryovers` row per task; the old cycle's `carried_over_count` keeps them, so a past cycle does not look
+  done. There is no cycle close state and no "back to backlog" policy (bulk-clear the cycle instead).
+- Moving a task to another project keeps the milestone only when that project has one with the same name, and always
+  clears the cycle. Recurrence keeps the milestone and estimate, not the cycle.
+
 ### Project workflows
 
 - Statuses are per-project entities, not a fixed enum.
