@@ -252,6 +252,67 @@ It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-ag
 
 ## Verification performed
 
+### November 12, 2026 upgrade: GitHub label sync (schema 97)
+
+`main` from `09781634` to `eb0baaeb`: one `--no-ff` merge of `github-label-sync` (`134b9b03` feat(github), `0ac8a8f2`
+docs(lessons)). What is new for people: a task synced from a GitHub issue or pull request gets its GitHub labels (all
+except the project's sync label); a missing project label is made with the GitHub color; a label removed on GitHub goes
+from the task; labels added in Orbit stay; nothing goes back to GitHub. Docs: `docs/github.md`. What's new: one line on
+top of the `2026-11-12` entry (now 8 lines); `aboutOrbit()` in `apps/agent/src/prompt.ts` names the label sync.
+
+Migration: `0097_github_task_labels` (SQLite and Postgres) only adds the table `github_task_labels`.
+`SUPPORTED_SCHEMA_VERSION` 97: the old binary refuses the migrated database.
+
+Checks on the merged `main` (after `bun install --frozen-lockfile` and a fresh web `dist`; the web build needs
+`/root/.local/node/bin` on `PATH`, Node 18 fails in rolldown): under `orbit-build` with `CARGO_PROFILE_*_DEBUG=0`,
+`cargo test -p orbit-server --test integrations_api` 13 pass on SQLite and 13 pass on Postgres (`orbit-dev-pg`).
+
+Migration dry run on a hot read-only copy of production (10:51 UTC) and again on a copy of the stopped database at the
+switch: 1 applied, schema 96 → 97, quick-check ok, 0 foreign-key rows, counts unchanged (7 users, 74 tasks, 1 label, 2
+task labels, 889 chat messages, 66 agent memories); copies deleted.
+
+`orbit-deploy image` (deploy id `20261112T100528Z-3485043`) built `orbit:eb0baae` (image
+`sha256:6671fe3099a0168b5f96ec0866b69f5c02fecd2d95151fc8f1174f530d1b992c`, 10:39 UTC); `deploy/smoke.sh` passed;
+`orbit config check` passed with the extracted binary.
+
+At the switch: stopped `orbit-agent` and `orbit` at 10:59:26 UTC, created snapshot
+`01a1cf69-99c2-76de-a139-15a66dcf7d5b` with the old CLI (`/usr/local/bin/orbit-5def772`) and verified it,
+`deploy/backup-rehearsal.sh` with the old binary passed (verify), kept a plain copy of the stopped database as
+`/var/backups/orbit/pre-migration/orbit-before-eb0baae.sqlite` (mode 600), saved the sidecar data as
+`/var/backups/orbit-agent/orbit-agent-before-eb0baae.tgz`, kept the old sidecar code as `/opt/orbit-agent.before-eb0baae`,
+installed the binary (`/usr/local/bin/orbit-eb0baae` too) and the new sidecar `src` (only `prompt.ts` and
+`whats-new.md` changed; `package*.json` and `tsconfig.json` unchanged, so no `npm ci`), and started `orbit` (11:00:21)
+then `orbit-agent` (11:00:26). `main` is **not** pushed. `vm-health` (`/root/ops/vm-health.conf`, old copy
+`.before-eb0baae`): `PROD_TAG=eb0baae`, `ROLLBACK_TAG=5def772`, `ROLLBACK_BACKUP=01a1cf69-99c2-76de-a139-15a66dcf7d5b`.
+
+Verified: `orbit`, `orbit-agent` active, 0 restarts; readiness (all checks) and `/health/live` 200;
+`/orbit-build.json` revision `eb0baaeb`; schema 97; live quick-check ok, 0 foreign-key rows, `github_task_labels` empty;
+web `/`, `/settings/agentic/agents` and an SPA route 200; an unsigned `POST /api/v1/integrations/github/webhook` 401
+(`invalid_github_signature`); an unknown API route 404; `deploy/verify-production.sh` passes against
+`http://127.0.0.1:8000` (headers via a `CURL_HOME` `.curlrc`); sidecar `/health` `{"ok":true,"mock":false}` and
+`/opt/orbit-agent/src` equal to `apps/agent/src` of `eb0baaeb`; no warning lines in the journal. `vm-health` OK except
+nginx (23 "connection refused" lines, all in the stop window 10:59:26-11:00:21; 0 5xx). **Not** verified on
+production: a real signed GitHub event with labels, a signed-in check of the GitHub card. Open: the webhook's problem
+body names `instance` `/api/public/v1/integrations/discord/events` (`INSTANCE` in `integration_routes.rs`, since
+`c60a45f6`; cosmetic, not from this deploy).
+
+Rollback (the old binary refuses schema 97: restore the snapshot together with the binary; work after 10:59 UTC is
+lost). To go back to `5def772`:
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-eb0baae backup verify 01a1cf69-99c2-76de-a139-15a66dcf7d5b && /usr/local/bin/orbit-eb0baae backup restore 01a1cf69-99c2-76de-a139-15a66dcf7d5b'
+sudo install -m 755 /usr/local/bin/orbit-5def772 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-eb0baae /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-eb0baae.tgz
+# Plain copy of the database before the migration: /var/backups/orbit/pre-migration/orbit-before-eb0baae.sqlite
+```
+
+After this rollback, set `PROD_TAG=5def772`, `ROLLBACK_TAG=8b0df85`,
+`ROLLBACK_BACKUP=01a1cd01-f234-71e3-9540-8b06c009985f` in `/root/ops/vm-health.conf`.
+
 ### November 11, 2026 upgrade: steps 9-13, chat search filters, webhook bots, agent settings, code mode, memory per agent (schema 96)
 
 `main` from `49bcc1c5` to `5def7724`: five `--no-ff` merges, in this order: `chat-search-filters` (`30ce235e`, step 9;
