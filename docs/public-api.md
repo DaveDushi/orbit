@@ -71,8 +71,8 @@ API tokens and MCP OAuth connections use the same five scopes. In
 | --- | --- | --- |
 | `tasks:read` | Tasks: **Read** | `GET` projects, statuses, labels, members, tasks and comments |
 | `tasks:write` | Tasks: **Write** | Create, update and delete tasks, add comments, `POST /integrations/discord/events` |
-| `docs:read` | Docs: **Read** | `GET /docs`, `GET /docs/{page_id}` |
-| `docs:write` | Docs: **Write** | `POST /docs`, `PATCH /docs/{page_id}` |
+| `docs:read` | Docs: **Read** | `GET /docs`, `GET /docs/{page_id}`, `GET /docs/{page_id}/versions`, `GET /docs/{page_id}/versions/{version_id}` |
+| `docs:write` | Docs: **Write** | `POST /docs`, `PATCH /docs/{page_id}`, `POST /docs/{page_id}/move`, `DELETE /docs/{page_id}` |
 | `chat:read` | Chat: **Read** | None. Chat is available through MCP only. A bot that reads and writes one channel uses a [chat webhook with events](chat-webhooks.md#events). |
 
 `tasks:write` includes `tasks:read`, and `docs:write` includes `docs:read`.
@@ -407,6 +407,43 @@ icon writes; edit its content in Orbit, or split it into several docs.
 curl -sS -X PATCH "$ORBIT_WS/docs/$PAGE_ID" -H "Authorization: Bearer $ORBIT_TOKEN" \
   -H 'Content-Type: application/json' -d '{"expected_version":4503599627370495,"markdown":"Updated."}'
 ```
+
+`POST /workspaces/{workspace_id}/docs/{page_id}/move`. Scope: `docs:write`. Body:
+`expected_version` (required), `parent_id` (required: a doc ID, or `null` for a
+space root) and optional `position`, `teamspace_id` and `private`. The doc and
+its sub-docs go under the new parent and take the parent's space. With
+`parent_id: null`, `teamspace_id` moves the doc to that teamspace and
+`private: true` moves it to the token creator's private space; with neither,
+the doc keeps its space. `position` is the index among the new siblings, from 0;
+without it, or past the last sibling, the doc goes last. Response: `200` with
+the doc record, as `GET` shows it after the move. `expected_version` works as
+in `PATCH`: a stale value gets `409`. A move under the doc itself or under one
+of its sub-docs gets `422`; moving teamspace docs that others created into a
+private space needs a workspace owner or admin (`403`,
+`workspace_action_forbidden`).
+
+```bash
+curl -sS "$ORBIT_WS/docs/$PAGE_ID/move" -H "Authorization: Bearer $ORBIT_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d "{\"expected_version\":4503599627370495,\"parent_id\":\"$PARENT_ID\",\"position\":0}"
+```
+
+`DELETE /workspaces/{workspace_id}/docs/{page_id}?expected_version=…`. Scope:
+`docs:write`. Moves the doc and its live sub-docs to the trash, where people can
+restore them in Orbit. Deleting forever, and restoring, are not part of the API.
+Response: `204`. A stale `expected_version` gets `409`. Afterwards `GET` on the
+doc answers `404`.
+
+`GET /workspaces/{workspace_id}/docs/{page_id}/versions`. Scope: `docs:read`.
+The history of a doc, newest first, without content: `id`, `kind` (`auto`,
+`restore` or `import`), `title`, `icon`, `created_at` and `created_by`. Query:
+`cursor` and `limit` (1 to 100, default 50), as in other lists. Orbit keeps a
+version when someone edits the title or content, at most one per 10 minutes.
+
+`GET /workspaces/{workspace_id}/docs/{page_id}/versions/{version_id}`. Scope:
+`docs:read`. One version with its `content` and its `markdown`, the format that
+doc writes take. Restoring a version is not part of the API: send the version's
+`markdown` in a `PATCH`.
 
 ### Discord integration
 

@@ -10,7 +10,9 @@ use orbit_platform::{
 use orbit_server::public_api::{PublicApiState, router};
 use orbit_server::repositories::api_tokens::{ApiTokenError, ApiTokenRepository, ApiTokenScope};
 use orbit_server::repositories::identity::{IdentityRepository, SetupRequest};
-use orbit_server::repositories::pages::{CreatePage, PageChanges, PageRepository, SpaceRequest};
+use orbit_server::repositories::pages::{
+    CreatePage, PageChanges, PageRepository, SpaceRequest, revision,
+};
 use orbit_server::repositories::tasks::{CreateTask, TaskRepository};
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -813,6 +815,181 @@ async fn docs_need_their_scope_and_a_personal_token_and_unserved_paths_are_not_f
     }
     let (code, _) = f.call(Some(&service), "GET", "/tasks", None).await;
     assert_eq!(code, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn docs_write_moves_and_trashes_docs_and_docs_read_shows_versions() {
+    let f = Fixture::new().await;
+    let (writer, _) = f.token(&[ApiTokenScope::DocsWrite], false).await;
+    let make = |body: Value| {
+        let writer = writer.clone();
+        let f = &f;
+        async move {
+            let (code, doc) = f.call(Some(&writer), "POST", "/docs", Some(body)).await;
+            assert_eq!(code, StatusCode::CREATED, "{doc}");
+            doc
+        }
+    };
+    let parent = make(json!({"title": "Parent"})).await;
+    let doc = make(json!({"title": "Note", "markdown": "text"})).await;
+    let id = doc["id"].as_str().unwrap().to_owned();
+    let path = format!("/docs/{id}/move");
+
+    // `parent_id` is required: a move never lands at the root by accident.
+    let (code, problem) = f
+        .call(
+            Some(&writer),
+            "POST",
+            &path,
+            Some(json!({"expected_version": doc["version"]})),
+        )
+        .await;
+    assert_eq!(code, StatusCode::BAD_REQUEST, "{problem}");
+    let (code, _) = f
+        .call(
+            Some(&writer),
+            "POST",
+            &path,
+            Some(json!({"expected_version": 1, "parent_id": parent["id"]})),
+        )
+        .await;
+    assert_eq!(code, StatusCode::CONFLICT);
+    let (code, moved) = f
+        .call(
+            Some(&writer),
+            "POST",
+            &path,
+            Some(json!({"expected_version": doc["version"], "parent_id": parent["id"], "position": 0})),
+        )
+        .await;
+    assert_eq!(code, StatusCode::OK, "{moved}");
+    assert_eq!(moved["parent_id"], parent["id"]);
+    assert_eq!(moved["markdown"], "text\n");
+    // The version in the answer is the one that a read shows.
+    let (_, read) = f
+        .call(Some(&writer), "GET", &format!("/docs/{id}"), None)
+        .await;
+    assert_eq!(read["version"], moved["version"], "{read}");
+    // A doc cannot go under its own sub-doc.
+    let (code, _) = f
+        .call(
+            Some(&writer),
+            "POST",
+            &format!("/docs/{}/move", parent["id"].as_str().unwrap()),
+            Some(json!({"expected_version": parent["version"], "parent_id": id})),
+        )
+        .await;
+    assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Versions come with `docs:read`, newest first, with Markdown for one version.
+    sqlx::query(
+        "INSERT INTO page_versions (id, workspace_id, page_id, title, icon, content_json, kind, created_at) \
+         SELECT $1, workspace_id, id, 'Old', NULL, \
+         '[{\"id\":\"b\",\"type\":\"paragraph\",\"props\":{},\"content\":[{\"type\":\"text\",\"text\":\"old\",\"styles\":{}}],\"children\":[]}]', \
+         'auto', 1700000000000 FROM pages WHERE id = $2",
+    )
+    .bind(Id::new_v7().to_string())
+    .bind(&id)
+    .execute(f.database.pool())
+    .await
+    .unwrap();
+    let (reader, _) = f.token(&[ApiTokenScope::DocsRead], false).await;
+    let (code, list) = f
+        .call(Some(&reader), "GET", &format!("/docs/{id}/versions"), None)
+        .await;
+    assert_eq!(code, StatusCode::OK, "{list}");
+    assert_eq!(list["items"][0]["title"], "Old");
+    assert_eq!(list["next_cursor"], Value::Null);
+    let version_id = list["items"][0]["id"].as_str().unwrap();
+    let (code, version) = f
+        .call(
+            Some(&reader),
+            "GET",
+            &format!("/docs/{id}/versions/{version_id}"),
+            None,
+        )
+        .await;
+    assert_eq!(code, StatusCode::OK, "{version}");
+    assert_eq!(version["markdown"], "old\n");
+    // A reader cannot move or trash.
+    let (code, _) = f
+        .call(
+            Some(&reader),
+            "DELETE",
+            &format!("/docs/{id}?expected_version={}", read["version"]),
+            None,
+        )
+        .await;
+    assert_eq!(code, StatusCode::FORBIDDEN);
+
+    // Trashing needs the current version, and the doc is gone afterwards.
+    let (code, _) = f
+        .call(
+            Some(&writer),
+            "DELETE",
+            &format!("/docs/{id}?expected_version=1"),
+            None,
+        )
+        .await;
+    assert_eq!(code, StatusCode::CONFLICT);
+    let (code, _) = f
+        .call(
+            Some(&writer),
+            "DELETE",
+            &format!("/docs/{id}?expected_version={}", read["version"]),
+            None,
+        )
+        .await;
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    let (code, _) = f
+        .call(Some(&writer), "GET", &format!("/docs/{id}"), None)
+        .await;
+    assert_eq!(code, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn doc_moves_trash_and_versions_do_not_reach_another_members_private_doc() {
+    let f = Fixture::new().await;
+    let member = add_member(&f, "member@example.com", "member").await;
+    let secret = f
+        .pages
+        .create_page(
+            f.workspace,
+            member,
+            CreatePage {
+                parent_id: None,
+                space: SpaceRequest {
+                    private: Some(true),
+                    teamspace_id: None,
+                },
+                title: "Secret plans".into(),
+                icon: None,
+                position: None,
+            },
+            "test",
+            TimestampMillis::now(),
+        )
+        .await
+        .unwrap();
+    let version = revision(secret.version, secret.updated_at);
+    // The owner's token does not see the member's private doc: every doc route answers 404.
+    let (writer, _) = f.token(&[ApiTokenScope::DocsWrite], false).await;
+    let id = secret.id;
+    for (method, path, body) in [
+        (
+            "POST",
+            format!("/docs/{id}/move"),
+            Some(json!({"expected_version": version, "parent_id": null, "private": false})),
+        ),
+        ("DELETE", format!("/docs/{id}?expected_version={version}"), None),
+        ("GET", format!("/docs/{id}/versions"), None),
+    ] {
+        let (code, problem) = f.call(Some(&writer), method, &path, body).await;
+        assert_eq!(code, StatusCode::NOT_FOUND, "{method} {path}: {problem}");
+    }
+    let still = f.pages.get_page(f.workspace, id, member).await.unwrap();
+    assert_eq!(still.version, secret.version);
+    assert!(still.private);
 }
 
 #[tokio::test]

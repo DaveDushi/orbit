@@ -142,6 +142,10 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::public_api::doc,
         crate::public_api::create_doc,
         crate::public_api::update_doc,
+        crate::public_api::delete_doc,
+        crate::public_api::move_doc,
+        crate::public_api::doc_versions,
+        crate::public_api::doc_version,
         crate::integration_routes::create_discord_event,
         crate::integration_routes::github_webhook,
         crate::integration_routes::github_manifest_callback,
@@ -595,6 +599,7 @@ fn public_api_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             | "public_list_tasks"
             | "public_get_task"
             | "public_list_comments"
+            | "public_list_doc_versions"
     ) {
         add_code(&mut responses, "400", "invalid_request");
     }
@@ -604,6 +609,7 @@ fn public_api_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             | "public_list_labels"
             | "public_list_tasks"
             | "public_list_comments"
+            | "public_list_doc_versions"
     ) {
         add_code(&mut responses, "400", "invalid_cursor");
     }
@@ -615,6 +621,8 @@ fn public_api_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             | "public_create_comment"
             | "public_create_doc"
             | "public_update_doc"
+            | "public_move_doc"
+            | "public_delete_doc"
     );
     if write {
         add_code(&mut responses, "400", "invalid_request");
@@ -632,12 +640,17 @@ fn public_api_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             | "public_create_comment"
             | "public_create_doc"
             | "public_update_doc"
+            | "public_move_doc"
     ) {
         add_code(&mut responses, "422", "validation_failed");
     }
     if matches!(
         operation_id,
-        "public_update_task" | "public_delete_task" | "public_update_doc"
+        "public_update_task"
+            | "public_delete_task"
+            | "public_update_doc"
+            | "public_move_doc"
+            | "public_delete_doc"
     ) {
         add_code(&mut responses, "409", "conflict");
     }
@@ -665,6 +678,9 @@ fn public_api_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
         "public_update_doc" => {
             add_code(&mut responses, "423", "page_locked");
             add_code(&mut responses, "503", "page_busy");
+        }
+        "public_move_doc" => {
+            add_code(&mut responses, "403", "workspace_action_forbidden");
         }
         _ => {}
     }
