@@ -382,7 +382,7 @@ async fn app_build_migrates_checks_readiness_and_returns_first_run_setup_url() {
             .scalar::<i64>("SELECT MAX(version) FROM schema_migrations")
             .await
             .unwrap(),
-        100
+        orbit_platform::MigrationRunner::embedded(env!("CARGO_PKG_VERSION")).latest_version()
     );
 
     let readiness = app
@@ -431,7 +431,7 @@ async fn stays_ready_when_a_newer_release_migrates_the_database() {
     app.database()
         .execute(
             "INSERT INTO schema_migrations (version, checksum, applied_at, app_version) \
-             VALUES (999, 'newer', 0, 'newer')",
+             VALUES (99999999999999, 'newer', 0, 'newer')",
         )
         .await
         .unwrap();
