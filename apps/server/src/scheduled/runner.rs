@@ -36,6 +36,8 @@ pub struct Round {
     pub routines_started: usize,
     pub routines_skipped: usize,
     pub routines_paused: usize,
+    /// Runs that never ended, failed now (`runs::fail_stale`).
+    pub runs_failed_stale: u64,
 }
 
 pub async fn run_service(state: AgentState, token: CancellationToken) -> Result<(), String> {
@@ -56,6 +58,7 @@ pub async fn run_service(state: AgentState, token: CancellationToken) -> Result<
 /// Runs everything due at `now`.
 pub async fn run_due(state: &AgentState, now: TimestampMillis) -> Result<Round, sqlx::Error> {
     let mut round = Round::default();
+    round.runs_failed_stale = super::runs::fail_stale(state.database(), now).await?;
     send_due_messages(state, now, &mut round).await?;
     // Without the agent, routines wait; each runs once when it is back.
     if state.config.is_some() {

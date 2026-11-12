@@ -50,7 +50,7 @@ pub const MAX_CHANNELS: usize = 100;
 /// The default agent's tools, by group, as the sidecar names them (`apps/agent/src/tools.ts`,
 /// `media.ts`; `apps/agent/test/profiles.test.ts` keeps both lists the same). `true`: the tool
 /// writes or posts.
-pub const TOOL_CATALOG: [(&str, &str, bool); 51] = [
+pub const TOOL_CATALOG: [(&str, &str, bool); 53] = [
     ("list_projects", "Tasks", false),
     ("search_tasks", "Tasks", false),
     ("get_task", "Tasks", false),
@@ -97,6 +97,8 @@ pub const TOOL_CATALOG: [(&str, &str, bool); 51] = [
     ("save_script", "Routines and reminders", true),
     ("test_routine", "Routines and reminders", true),
     ("approve_routine_script", "Routines and reminders", true),
+    ("set_routine_script", "Routines and reminders", true),
+    ("repair_routine_script", "Routines and reminders", true),
     ("use_integration", "Connected services", true),
     ("media_shell", "Media", true),
     ("work_from_drive", "Media", false),
@@ -167,6 +169,8 @@ const SCHEDULED_ROUTE_TOOLS: &[&str] = &[
     "save_script",
     "test_routine",
     "approve_routine_script",
+    "set_routine_script",
+    "repair_routine_script",
 ];
 
 /// What a workspace route needs from a custom agent's tools.
@@ -232,8 +236,14 @@ pub fn route_need(method: &Method, rest: &str) -> RouteNeed {
             "list_routines",
             "test_routine",
             "approve_routine_script",
+            "set_routine_script",
         ]),
-        ["scripts"] if get => RouteNeed::Any(&["list_scripts", "save_script", "schedule_routine"]),
+        ["scripts"] if get => RouteNeed::Any(&[
+            "list_scripts",
+            "save_script",
+            "schedule_routine",
+            "set_routine_script",
+        ]),
         ["scheduled-messages"] if get => RouteNeed::Any(&["remind_me", "send_later"]),
         _ => RouteNeed::Never,
     }
@@ -1892,7 +1902,7 @@ mod tests {
         assert!(checked_tools(&tools(&["delete_everything"])).is_err());
         assert!(checked_tools(&tools(&[""])).is_err());
         assert_eq!(checked_tools(&[]), Ok(Vec::new()));
-        assert_eq!(tool_catalog().count(), 51);
+        assert_eq!(tool_catalog().count(), 53);
     }
 
     #[test]

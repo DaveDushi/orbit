@@ -218,6 +218,15 @@ async fn name_taken(
     Ok(taken.is_some())
 }
 
+/// A script that the agent repaired in a routine run: the script now, and the version that failed.
+#[derive(Clone, Debug, Serialize)]
+pub struct Repaired {
+    pub run_id: String,
+    pub routine_name: String,
+    pub script: ScriptRecord,
+    pub previous_hash: String,
+}
+
 impl Store {
     /// Own scripts; every script of the workspace for those who manage routines.
     pub async fn list_scripts(
@@ -375,6 +384,93 @@ impl Store {
         let script = load_script(&mut tx, workspace_id, script_id, actor).await?;
         tx.commit().await?;
         Ok(script)
+    }
+
+    /// New code for the script of the routine run in this thread (`conversation`, its first message
+    /// `root`), from the agent in that run after the script failed. Only while the run goes, only in a
+    /// scheduled run (a test run changes nothing), and only the creator's own script.
+    ///
+    /// The routine's approval stays on the old code, so the new version makes no writes until the
+    /// creator approves it: the rest of this run becomes a dry run (`writes = 'dry'`, with the new
+    /// code and hash), and the creator's agent sessions end, so the sidecar's next session for this
+    /// thread is a dry one (`agent::sessions::issue`). Reads and the run's own answer still work.
+    pub async fn repair_run_script(
+        &self,
+        workspace_id: Id,
+        user_id: Id,
+        (conversation, root): (&str, Option<&str>),
+        code: &str,
+        now: TimestampMillis,
+    ) -> Result<Repaired, ScheduledError> {
+        let code = clean_code(code)?;
+        let hash = code_hash(&code);
+        let mut tx = self.database.immediate_transaction().await?;
+        let actor = member(&mut tx, workspace_id, user_id).await?;
+        let run = sqlx::query(
+            "SELECT r.id, r.test, r.script_id, a.name FROM agent_routine_runs r \
+             JOIN agent_routines a ON a.id = r.routine_id \
+             WHERE r.conversation_id = $1 AND r.message_id = $2 AND r.status = 'started' \
+             AND r.script_id IS NOT NULL AND a.creator_id = $3 AND a.workspace_id = $4",
+        )
+        .bind(conversation)
+        .bind(root.unwrap_or_default())
+        .bind(user_id.to_string())
+        .bind(workspace_id.to_string())
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(ScheduledError::Invalid(
+            "Only a running routine run of a saved script can repair that script.",
+        ))?;
+        if run.get::<bool, _>("test") {
+            return Err(ScheduledError::Invalid(
+                "A test run changes nothing: say what fails and how to fix it.",
+            ));
+        }
+        let script_id: Id = run
+            .get::<String, _>("script_id")
+            .parse()
+            .map_err(|_| ScheduledError::NotFound)?;
+        let (_, _, previous_hash) = own_script(&mut tx, workspace_id, user_id, script_id).await?;
+        if previous_hash == hash {
+            return Err(ScheduledError::Invalid(
+                "This is the script's code already: change it first.",
+            ));
+        }
+        sqlx::query(
+            "UPDATE agent_scripts SET code = $1, code_hash = $2, updated_at = $3 WHERE id = $4",
+        )
+        .bind(&code)
+        .bind(&hash)
+        .bind(now.as_millis())
+        .bind(script_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+        let run_id: String = run.get("id");
+        sqlx::query(
+            "UPDATE agent_routine_runs SET writes = 'dry', script_hash = $1, script_code = $2 WHERE id = $3",
+        )
+        .bind(&hash)
+        .bind(&code)
+        .bind(&run_id)
+        .execute(&mut *tx)
+        .await?;
+        // A session issued before was not a dry run: it must not outlive the old code.
+        sqlx::query(
+            "DELETE FROM sessions WHERE id IN (SELECT session_id FROM agent_sessions \
+             WHERE user_id = $1 AND workspace_id = $2)",
+        )
+        .bind(user_id.to_string())
+        .bind(workspace_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+        let script = load_script(&mut tx, workspace_id, script_id, actor).await?;
+        tx.commit().await?;
+        Ok(Repaired {
+            run_id,
+            routine_name: run.get("name"),
+            script,
+            previous_hash,
+        })
     }
 
     /// Routines that ran it go back to their instruction (`ON DELETE SET NULL`).

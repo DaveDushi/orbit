@@ -19,7 +19,7 @@ import { THINKING, type Config } from "./config.ts";
 import { CodemodeStoreDoc } from "@earendil-works/pi-durable/codemode";
 
 import { closeCodemode, RUN_SCRIPT } from "./codemode.ts";
-import { IndexDoc, ThreadDoc, type RunCall, type ThreadState } from "./docs.ts";
+import { IndexDoc, ThreadDoc, type RoutineRunState, type RunCall, type ThreadState } from "./docs.ts";
 import { withMessageFiles } from "./files.ts";
 import { loadIntegrations } from "./integrations.ts";
 import { loadWake } from "./memory.ts";
@@ -31,7 +31,7 @@ import { withPageContext } from "./page.ts";
 import { DEFAULT_AGENT_NAME, MEMORY_CHECK } from "./prompt.ts";
 import { Sandbox } from "./sandbox.ts";
 import { groupSteps } from "./steps.ts";
-import { orbitExtension, toolRegistrations } from "./tools.ts";
+import { orbitExtension, REPAIR_SCRIPT, toolRegistrations } from "./tools.ts";
 import { actionText, cardTitle, finalCard, liveCard, splitAnswer, uiBlock } from "./ui.ts";
 import type { UiSpec } from "./ui-catalog.ts";
 
@@ -74,7 +74,7 @@ export function routineText(routine: RoutineRun, author: string, instruction: st
 		lines.push(`This is a test run, asked for by ${author}: do the whole job as the real run would, but nothing is written or posted (each write comes back as "would do", and Orbit lists those for them). Answer with the result, as the real run would post it.`);
 	}
 	if (routine.script) {
-		lines.push(`This routine runs the saved script “${routine.script.name.replaceAll("\n", " ")}”: call run_saved_script once (you cannot change it), then answer with its result as the instruction below says.`);
+		lines.push(`This routine runs the saved script “${routine.script.name.replaceAll("\n", " ")}”: call run_saved_script, then answer with its result as the instruction below says.${routine.test ? "" : " If it fails, its result says how you may repair it."}`);
 		if (!routine.test && routine.writes === "dry") {
 			lines.push(`The script changed since ${author} approved it, so this run makes no writes. Start your answer with that, and say that they can approve the new version in Settings → Agentic → Routines, or ask you to.`);
 		}
@@ -84,9 +84,25 @@ export function routineText(routine: RoutineRun, author: string, instruction: st
 }
 
 /** The "would do" part of a dry run's answer: each write it did not make, in order. */
-export function wouldDoSection(calls: readonly RunCall[] | undefined): string {
+export function wouldDoSection(calls: readonly RunCall[] | undefined, test = true): string {
 	const lines = (calls ?? []).filter((call) => call.status === "dry_run").map((call) => `- ${(call.would_do ?? call.name).replaceAll("\n", " ").slice(0, 400)}`);
-	return lines.length ? `**Would do** (test run: not done):\n${lines.join("\n")}` : "**Would do:** nothing (this test run made no writes to skip).";
+	const why = test ? "test run" : "script not approved";
+	return lines.length ? `**Would do** (${why}: not done):\n${lines.join("\n")}` : `**Would do:** nothing (this ${test ? "test run" : "run"} made no writes to skip).`;
+}
+
+/**
+ * The note in a routine's thread after its agent repaired the run's saved script: each new version and what changed,
+ * and that its writes wait for the creator's approval. `null` when the run changed nothing.
+ */
+export function repairNote(run: Pick<RoutineRunState, "routineName" | "script" | "repairs">, creatorId: string, publicUrl: string): string | null {
+	const repairs = run.repairs ?? [];
+	if (!repairs.length || !run.script) return null;
+	const lines = repairs.map((repair) => `- version \`${repair.from}\` → \`${repair.to}\` (+${repair.added} −${repair.removed} lines): ${repair.change.slice(0, 300)}`);
+	return [
+		`🔧 The saved script “${run.script.name.replaceAll("\n", " ")}” failed in this run, so I changed it:`,
+		...lines,
+		`<@${creatorId}> the new version makes no writes until you approve it: [Settings → Agentic → Routines](${publicUrl}/settings/agentic/routines) → “${run.routineName.replaceAll("\n", " ")}” → Review and approve, or ask me to approve the script of this routine.`,
+	].join("\n");
 }
 
 /**
@@ -155,6 +171,8 @@ const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
 	list_scripts: () => "Reading scripts",
 	test_routine: (args) => `Starting a test run of “${args.routine}”`,
 	approve_routine_script: (args) => `Asking to approve the script of “${args.routine}”`,
+	set_routine_script: (args) => `Setting the script of “${args.routine}”`,
+	repair_routine_script: () => "Repairing the saved script",
 	codemode: () => "Running a script",
 	run_saved_script: () => "Running the saved script",
 	memory_note: (args) => `Remembering (${args.scope})`,
@@ -535,8 +553,11 @@ export class Agent {
 					: `<@${driverId}> To use me, connect your ChatGPT account first: [Agentic](${this.#config.publicUrl}/profile/agentic). Then mention me again.`;
 			const agentUserId = input.agent?.user_id ?? null;
 			const messageId = await this.#orbit.postMessage({ workspaceId: input.workspace_id, conversationId: input.conversation_id, rootMessageId: state.rootMessageId, body, nonce: `agent:${input.message_id}`, agentUserId });
-			// A routine's run already has its message (Orbit posted it with this nonce): say it there.
-			if (input.routine) await this.#orbit.editMessage(messageId, input.workspace_id, `${routineTitle(input.routine)}\n\n${body}`, undefined, agentUserId);
+			// A routine's run already has its message (Orbit posted it with this nonce): say it there, and end the run.
+			if (input.routine) {
+				await this.#orbit.editMessage(messageId, input.workspace_id, `${routineTitle(input.routine)}\n\n${body}`, undefined, agentUserId);
+				await this.#orbit.finishRoutineRun(input.message_id, { status: "failed", error: "Not run: its creator has no ChatGPT connection.", tool_calls: [] });
+			}
 			await this.#orbit.updateThread(input.thread_key, this.#threadUpdate(state, "idle", state.driverId, null));
 			await this.#orbit.acknowledge(input.message_id);
 			return "done";
@@ -602,7 +623,7 @@ export class Agent {
 			await configure(tx, conversation.id, {
 				...this.#runModel(agent ?? input.default_agent ?? null, input.answer_level),
 				tools: agent ? toolRegistrations(agent.tools, Boolean(this.#sandbox)) : null,
-				modelTools: routine?.script ? [RUN_SCRIPT] : { remove: [RUN_SCRIPT] },
+				modelTools: routine?.script ? (routine.test || (agent && !agent.tools.includes(REPAIR_SCRIPT.name)) ? [RUN_SCRIPT] : [RUN_SCRIPT, REPAIR_SCRIPT]) : { remove: [RUN_SCRIPT, REPAIR_SCRIPT] },
 			});
 		}, context);
 		// Orbit issues agent sessions only to the driver of a running thread: set it before any tool runs.
@@ -689,7 +710,7 @@ export class Agent {
 		const answer = await this.#answer(conversation, settled, after, progress.steps, people);
 		const routine = after.routineRun?.reported === false ? after.routineRun : null;
 		// A test run (and a script run that may not write) lists the writes it did not make.
-		const body = routine && routine.writes === "dry" ? `${answer.body}\n\n${wouldDoSection(after.runCalls)}` : answer.body;
+		const body = routine && routine.writes === "dry" ? `${answer.body}\n\n${wouldDoSection(after.runCalls, routine.test)}` : answer.body;
 		const card = answer.card;
 		const [first, ...rest] = splitBody(body);
 		if (card === "invalid") {
@@ -708,6 +729,9 @@ export class Agent {
 		for (const [index, chunk] of rest.entries()) {
 			await this.#orbit.postMessage({ workspaceId: state.workspaceId, conversationId: state.conversationId, rootMessageId: state.rootMessageId, body: chunk, nonce: `agent:${run.inputId}:${index + 1}`, agentUserId });
 		}
+		// A repaired script: a note in the routine's thread, for its creator (the driver of the run).
+		const note = routine && after.driverId ? repairNote(routine, after.driverId, this.#config.publicUrl) : null;
+		if (note) await this.#orbit.postMessage({ workspaceId: state.workspaceId, conversationId: state.conversationId, rootMessageId: state.rootMessageId, body: note, nonce: `agent:${run.inputId}:repair`, agentUserId });
 		if (routine) await this.#reportRun(conversationId, routine.runId, settled, answer.body, after);
 		await this.#orbit.updateThread(threadKey, this.#threadUpdate(after, after.waitingFor ? "waiting" : "idle", after.driverId, after.waitingFor));
 		await conversation.commit(async (tx) => {

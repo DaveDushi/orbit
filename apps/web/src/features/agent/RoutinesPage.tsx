@@ -232,8 +232,8 @@ function ApproveScriptDialog({ routine, onClose }: { routine: Routine; onClose: 
   const script = useScripts(workspace.id).data?.find((item) => item.id === routine.script_id)
   const update = useUpdateRoutine(workspace.id)
   return (
-    <Modal title={`Approve the script of “${routine.name}”`} onClose={onClose} className="sm:max-w-2xl">
-      <div className="flex flex-col gap-3 text-sm">
+    <Modal title={`Approve the script of “${routine.name}”`} onClose={onClose} className="grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-2xl">
+      <div className="-mx-1 flex min-h-0 min-w-0 flex-col gap-3 overflow-y-auto px-1 text-sm">
         <p className="text-muted-foreground">
           Each run of the routine runs this code as you. After your approval its writes need no new yes. A later change of the script turns them off again until you approve it.
         </p>
@@ -242,7 +242,7 @@ function ApproveScriptDialog({ routine, onClose }: { routine: Routine; onClose: 
             <p className="text-xs text-muted-foreground">
               “{script.name}”, version <code className="font-mono">{script.code_hash.slice(0, 12)}</code>
             </p>
-            <pre className="max-h-80 overflow-auto rounded-md bg-muted p-3 font-mono text-xs whitespace-pre-wrap">{script.code}</pre>
+            <pre className="max-h-80 min-w-0 overflow-auto rounded-md bg-muted p-3 font-mono text-xs">{script.code}</pre>
           </>
         ) : (
           <p className="text-muted-foreground">Loading the script…</p>
@@ -336,19 +336,27 @@ function ScriptDialog({ script, onClose }: { script: Script; onClose: () => void
   const readOnly = !script.can_edit
   const changedCode = code.trimEnd() !== script.code
   return (
-    <Modal title={readOnly ? script.name : 'Edit script'} onClose={onClose} className="sm:max-w-2xl">
-      <div className="flex flex-col gap-3">
-        <label className="flex flex-col gap-1.5 text-sm">
+    <Modal title={readOnly ? script.name : 'Edit script'} onClose={onClose} className="grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-[min(90vw,80rem)]">
+      <div className="-mx-1 flex min-h-0 min-w-0 flex-col gap-3 overflow-y-auto px-1">
+        <label className="flex min-w-0 flex-col gap-1.5 text-sm">
           <span className="text-muted-foreground">Name</span>
           <Input value={name} maxLength={80} readOnly={readOnly} onChange={(event) => setName(event.target.value)} />
         </label>
-        <label className="flex flex-col gap-1.5 text-sm">
+        <label className="flex min-w-0 flex-col gap-1.5 text-sm">
           <span className="text-muted-foreground">Description</span>
           <Input value={description} maxLength={500} readOnly={readOnly} onChange={(event) => setDescription(event.target.value)} />
         </label>
-        <label className="flex flex-col gap-1.5 text-sm">
+        <label className="flex min-w-0 flex-col gap-1.5 text-sm">
           <span className="text-muted-foreground">Code (JavaScript; calls tools as await tools.name(args))</span>
-          <Textarea value={code} maxLength={20000} readOnly={readOnly} spellCheck={false} className="min-h-64 font-mono text-xs" onChange={(event) => setCode(event.target.value)} />
+          <Textarea
+            value={code}
+            maxLength={20000}
+            readOnly={readOnly}
+            spellCheck={false}
+            wrap="off"
+            className="h-[55vh] min-h-48 resize-y overflow-auto field-sizing-fixed font-mono text-xs md:text-xs"
+            onChange={(event) => setCode(event.target.value)}
+          />
         </label>
         {changedCode && script.routines.length > 0 ? (
           <p role="status" className="text-xs text-destructive">
@@ -381,14 +389,20 @@ function LastRun({ routine }: { routine: Routine }) {
   if (!routine.last_run_at) return <span>Not yet</span>
   const when = whenLabel(routine.last_run_at)
   if (routine.last_run_status === 'skipped') return <span className="text-destructive">{when} · {routine.last_error ?? 'Skipped'}</span>
-  if (routine.last_run_message_id && routine.conversation_id) {
-    return (
-      <Link to={conversationPath(routine.conversation_id, { m: routine.last_run_message_id })} className="text-foreground underline underline-offset-2">
-        {when} · see the result
-      </Link>
-    )
-  }
-  return <span className="text-foreground">{when} · started</span>
+  const failed = routine.last_run_status === 'failed'
+  const label = routine.last_run_status === 'started' ? 'running' : failed ? 'failed' : 'done'
+  return (
+    <span className={failed ? 'text-destructive' : 'text-foreground'}>
+      {routine.last_run_message_id && routine.conversation_id ? (
+        <Link to={conversationPath(routine.conversation_id, { m: routine.last_run_message_id })} className="underline underline-offset-2">
+          {when} · {label}, see the result
+        </Link>
+      ) : (
+        `${when} · ${label}`
+      )}
+      {failed && routine.last_error ? ` · ${routine.last_error}` : null}
+    </span>
+  )
 }
 
 /** The script choice "none" (Select values cannot be empty). */
@@ -446,8 +460,8 @@ function EditRoutineDialog({ routine, onClose }: { routine: Routine; onClose: ()
     )
 
   return (
-    <Modal title="Edit routine" onClose={onClose} className="sm:max-w-lg">
-      <div className="flex flex-col gap-3">
+    <Modal title="Edit routine" onClose={onClose} className="grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-lg">
+      <div className="-mx-1 flex min-h-0 min-w-0 flex-col gap-3 overflow-y-auto px-1">
         <label className="flex flex-col gap-1.5 text-sm">
           <span className="text-muted-foreground">Name</span>
           <Input value={name} maxLength={80} onChange={(event) => setName(event.target.value)} />
@@ -470,7 +484,7 @@ function EditRoutineDialog({ routine, onClose }: { routine: Routine; onClose: ()
         </div>
         <label className="flex flex-col gap-1.5 text-sm">
           <span className="text-muted-foreground">Instruction</span>
-          <Textarea value={prompt} maxLength={4000} className="min-h-24" onChange={(event) => setPrompt(event.target.value)} />
+          <Textarea value={prompt} maxLength={4000} className="max-h-60 min-h-24" onChange={(event) => setPrompt(event.target.value)} />
         </label>
         <label className="flex flex-col gap-1.5 text-sm">
           <span className="text-muted-foreground">Schedule (cron: minute hour day month weekday)</span>
@@ -515,7 +529,7 @@ function EditRoutineDialog({ routine, onClose }: { routine: Routine; onClose: ()
           </Select>
           {newScript && script ? (
             <>
-              <pre className="max-h-48 overflow-auto rounded-md bg-muted p-2 font-mono text-xs whitespace-pre-wrap">{script.code}</pre>
+              <pre className="max-h-48 min-w-0 overflow-auto rounded-md bg-muted p-2 font-mono text-xs">{script.code}</pre>
               <span className="text-xs text-muted-foreground">Saving approves this version: its writes run without a new yes. A later change of the script needs a new yes.</span>
             </>
           ) : null}

@@ -212,6 +212,20 @@ dropped `agent_preferences`.
   Routines → **Review and approve**, which sends the hash they looked at, or `approve_routine_script` with a yes in
   chat), its runs are dry runs (below) and say so. Picking another script in the routine's Edit dialog, with its code in
   view, approves that version. Deleting a script takes its routines back to their instruction.
+- **Attach a script to an existing routine.** In Settings: the routine's Edit dialog → Script (`PATCH …/routines/{id}`
+  with `script_id`, `""` for none; another script drops the approval). In chat: `set_routine_script` (routine, script
+  or `none`) changes the same routine after the driver's yes, whose question shows the code and approves exactly that
+  version (`approve_script_hash` with the change).
+- **Self-repair.** When `run_saved_script` fails in a scheduled run (not a test run), its result tells the model it may
+  fix the script: `repair_routine_script` (the whole fixed code and one line on the change) goes to
+  `/agent-tools/scheduled`, which accepts it only from the thread of that started run, by its creator
+  (`Store::repair_run_script`, allowed in a dry run). Orbit saves the code as the script's new version (other routines
+  that run it lose their approval too), stores it with the run, sets the run to `writes = 'dry'` and deletes the
+  creator's agent sessions, so the sidecar's next session is a dry one; the routine's approval stays on the old hash.
+  The model then calls `run_saved_script` again. At most 2 repairs per run (`MAX_SCRIPT_REPAIRS`, kept in the thread
+  document and checked by `blockedCall`); after that it answers with the error. The sidecar posts a note in the run's
+  thread (`agent:<run>:repair`) with each old → new version, the changed lines and the model's reason, and asks the
+  creator to approve the new version.
 - **Script state.** `store(key, value)` / `load(key)` work per routine: a script run starts with the routine's saved
   values (`agent_routines.script_state`, JSON, at most 64 KiB) and the sidecar reports the new ones at the end. Only a
   run that may write (an approved script, not a test run) keeps them.
@@ -231,7 +245,9 @@ dropped `agent_preferences`.
   `script`, `dry`), the script's name and version, a summary of the answer (4,000 characters), the error, and the tool
   calls (name, arguments cut to 300 characters, `ok`/`error`/`dry_run`, and the would-do text; scripts' calls
   included). The sidecar reports the end once (`PUT /api/internal/agent/routine-runs/{run_id}`); a second report changes
-  nothing. Settings → Agentic → Routines shows it under **History**.
+  nothing. Settings → Agentic → Routines shows it under **History**. A routine's `last_run_status` and `last_error` come
+  from its newest scheduled run. A run still `started` an hour after it began failed (`runs::fail_stale`, each round of
+  the scheduler): the sidecar lost it. A late report of such a run still counts.
 
 ## Memory
 
