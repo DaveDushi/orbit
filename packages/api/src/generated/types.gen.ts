@@ -2121,6 +2121,62 @@ export type LabelRecord = {
     workspace_id: string;
 };
 
+export type LabelRuleBody = {
+    /**
+     * Default `true`.
+     */
+    enabled?: boolean | null;
+    /**
+     * A label of this project.
+     */
+    label_id: string;
+    /**
+     * The member to assign (not a guest, not suspended).
+     */
+    user_id: string;
+};
+
+export type LabelRulePatchBody = {
+    enabled?: boolean | null;
+    label_id?: string | null;
+    user_id?: string | null;
+};
+
+export type LabelRuleRecord = {
+    created_at: string;
+    enabled: boolean;
+    id: string;
+    label_color: string;
+    label_id: string;
+    label_name: string;
+    project_id: string;
+    updated_at: string;
+    user_id: string;
+    user_name: string;
+};
+
+/**
+ * A project's rules and its owner switch.
+ */
+export type LabelRuleSettings = {
+    /**
+     * `owner:<name>` labels assign the member `<name>`.
+     */
+    owner_labels: boolean;
+    rules: Array<LabelRuleRecord>;
+    /**
+     * The `<name>` of each `owner:` label of the project that names no member (or more than one).
+     */
+    unmatched_owner_names: Array<string>;
+};
+
+export type LabelRuleSettingsBody = {
+    /**
+     * `owner:<name>` labels assign the member `<name>`.
+     */
+    owner_labels: boolean;
+};
+
 export type LabelUpdateBody = {
     color: string;
     expected_version: number;
@@ -3647,7 +3703,7 @@ export type PasswordConfirmationBody = {
  * A workspace capability that depends on the member's role. Actions open to
  * every member (tasks, projects, attachments, docs) are not listed here.
  */
-export type Permission = 'workspace.update' | 'workspace.delete' | 'workspace.transfer' | 'members.manage' | 'audit.view' | 'api_tokens.manage' | 'integrations.manage' | 'teamspaces.delete' | 'pages.purge' | 'views.manage_shared' | 'comments.moderate' | 'chat.manage' | 'billing.manage' | 'storage.manage' | 'agent_memory.manage' | 'apps.manage' | 'workspace.export' | 'drive.purge' | 'drive.shares.manage' | 'routines.manage';
+export type Permission = 'workspace.update' | 'workspace.delete' | 'workspace.transfer' | 'members.manage' | 'audit.view' | 'api_tokens.manage' | 'integrations.manage' | 'teamspaces.delete' | 'pages.purge' | 'views.manage_shared' | 'comments.moderate' | 'chat.manage' | 'billing.manage' | 'storage.manage' | 'agent_memory.manage' | 'apps.manage' | 'workspace.export' | 'drive.purge' | 'drive.shares.manage' | 'routines.manage' | 'label_rules.manage';
 
 export type PlanInterval = 'month' | 'year';
 
@@ -22090,6 +22146,315 @@ export type SaveGithubProjectConnectionResponses = {
 };
 
 export type SaveGithubProjectConnectionResponse = SaveGithubProjectConnectionResponses[keyof SaveGithubProjectConnectionResponses];
+
+export type PutLabelRuleSettingsData = {
+    body: LabelRuleSettingsBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/projects/{project_id}/label-rule-settings';
+};
+
+export type PutLabelRuleSettingsErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden, task_action_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * validation_failed
+     */
+    422: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type PutLabelRuleSettingsError = PutLabelRuleSettingsErrors[keyof PutLabelRuleSettingsErrors];
+
+export type PutLabelRuleSettingsResponses = {
+    200: LabelRuleSettings;
+};
+
+export type PutLabelRuleSettingsResponse = PutLabelRuleSettingsResponses[keyof PutLabelRuleSettingsResponses];
+
+export type ListLabelRulesData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/projects/{project_id}/label-rules';
+};
+
+export type ListLabelRulesErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * task_action_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type ListLabelRulesError = ListLabelRulesErrors[keyof ListLabelRulesErrors];
+
+export type ListLabelRulesResponses = {
+    200: LabelRuleSettings;
+};
+
+export type ListLabelRulesResponse = ListLabelRulesResponses[keyof ListLabelRulesResponses];
+
+export type CreateLabelRuleData = {
+    body: LabelRuleBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/projects/{project_id}/label-rules';
+};
+
+export type CreateLabelRuleErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden, task_action_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch, task_conflict
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * validation_failed
+     */
+    422: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type CreateLabelRuleError = CreateLabelRuleErrors[keyof CreateLabelRuleErrors];
+
+export type CreateLabelRuleResponses = {
+    201: LabelRuleRecord;
+};
+
+export type CreateLabelRuleResponse = CreateLabelRuleResponses[keyof CreateLabelRuleResponses];
+
+export type DeleteLabelRuleData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        project_id: string;
+        rule_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/projects/{project_id}/label-rules/{rule_id}';
+};
+
+export type DeleteLabelRuleErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden, task_action_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type DeleteLabelRuleError = DeleteLabelRuleErrors[keyof DeleteLabelRuleErrors];
+
+export type DeleteLabelRuleResponses = {
+    204: void;
+};
+
+export type DeleteLabelRuleResponse = DeleteLabelRuleResponses[keyof DeleteLabelRuleResponses];
+
+export type UpdateLabelRuleData = {
+    body: LabelRulePatchBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        project_id: string;
+        rule_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/projects/{project_id}/label-rules/{rule_id}';
+};
+
+export type UpdateLabelRuleErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden, task_action_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch, task_conflict
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * validation_failed
+     */
+    422: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type UpdateLabelRuleError = UpdateLabelRuleErrors[keyof UpdateLabelRuleErrors];
+
+export type UpdateLabelRuleResponses = {
+    200: LabelRuleRecord;
+};
+
+export type UpdateLabelRuleResponse = UpdateLabelRuleResponses[keyof UpdateLabelRuleResponses];
 
 export type ListProjectLabelsData = {
     body?: never;

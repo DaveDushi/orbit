@@ -800,6 +800,17 @@ async fn a_guest_reaches_only_chat() {
         )
         .await;
 
+    let rule = id_of(
+        &server
+            .ok(
+                &owner,
+                "POST",
+                &format!("{base}/projects/{project}/label-rules"),
+                json!({"label_id": label, "user_id": member_id.to_string()}),
+            )
+            .await,
+    );
+
     let records = Records {
         ids: BTreeMap::from([
             ("workspace_id", workspace.clone()),
@@ -816,6 +827,7 @@ async fn a_guest_reaches_only_chat() {
             ("comment_id", comment),
             ("label_id", label.clone()),
             ("label_ids", label),
+            ("rule_id", rule),
             ("teamspace_id", teamspace),
             ("page_id", page.clone()),
             ("parent_id", page),

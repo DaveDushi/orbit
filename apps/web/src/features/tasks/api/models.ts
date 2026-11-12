@@ -77,6 +77,8 @@ export interface TaskActivity {
   change?: TaskChange
   createdAt: string
   statusId?: string
+  /** A line without a person (a label rule assigned someone): the feed shows `text` alone. */
+  system?: boolean
 }
 
 export interface Task {
@@ -144,6 +146,14 @@ const RELATION_FALLBACK: Record<string, string> = {
 
 const ACTIVITY_TEXT: Record<string, string> = {
   'backup.item_restored': 'restored from a backup',
+}
+
+/** "Assigned by rule: bug → Raymond" for a label rule's assignment. */
+function ruleActivity(action: string, metadata: Record<string, unknown>): Pick<TaskActivity, 'text' | 'system'> | null {
+  if (action !== 'task.assigned_by_rule') return null
+  const label = typeof metadata.label_name === 'string' ? metadata.label_name : 'a label'
+  const person = typeof metadata.assignee_name === 'string' ? metadata.assignee_name : 'someone'
+  return { text: `Assigned by rule: ${label} → ${person}`, system: true }
 }
 
 function genericActivityText(action: string): string {
@@ -340,8 +350,8 @@ export function taskFromRecord(
     })),
     activity: activity.flatMap((event): TaskActivity[] => {
       const metadata = (event.metadata ?? {}) as Record<string, unknown>
-      const sentence: Pick<TaskActivity, 'text' | 'related' | 'statusId'> | null =
-        relationActivity(event.action, metadata, identifierOf) ?? subIssueActivity(event.action, metadata, identifierOf)
+      const sentence: Pick<TaskActivity, 'text' | 'related' | 'statusId' | 'system'> | null =
+        relationActivity(event.action, metadata, identifierOf) ?? subIssueActivity(event.action, metadata, identifierOf) ?? ruleActivity(event.action, metadata)
       const base: TaskActivity = {
         id: event.id,
         actorId: event.actor_id ?? '',
@@ -350,6 +360,7 @@ export function taskFromRecord(
         text: sentence?.text ?? genericActivityText(event.action),
         related: sentence?.related,
         statusId: sentence?.statusId,
+        system: sentence?.system,
         createdAt: event.occurred_at,
       }
       const changes = event.action === 'task.updated' ? updateChanges(metadata, (id) => projectFor(id)?.name ?? 'another project') : null

@@ -75,6 +75,7 @@ pub fn production_router(
         axum::middleware::from_fn_with_state(database.clone(), crate::agent::scope::layer);
     let realtime = crate::realtime::router(api.tasks.clone());
     let views = view_router(api.tasks.clone());
+    let label_rules = crate::label_rule_routes::label_rule_router(api.tasks.clone());
     let identity = std::sync::Arc::clone(&api.tasks.identity);
     let cookie_mode = api.tasks.cookie_mode;
     let router = auth_router(api.auth)
@@ -87,6 +88,7 @@ pub fn production_router(
         .merge(backup_item_router(api.backup_items))
         .merge(task_router(api.tasks))
         .merge(views)
+        .merge(label_rules)
         .merge(page_router(api.pages))
         .merge(page_file_router(api.page_files))
         .merge(crate::page_drive_routes::page_drive_router(

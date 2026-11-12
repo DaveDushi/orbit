@@ -29,6 +29,8 @@ export interface ActivityRow {
   text: string
   /** A status change or an automatic close: the row shows this status's glyph instead of the actor's avatar. */
   statusId?: string
+  /** A line without a person (a label rule assigned someone): the row shows `text` alone. */
+  system?: boolean
   createdAt: string
 }
 
@@ -140,17 +142,25 @@ function changeRows(metadata: Record<string, unknown>, context: ActivityContext)
   })
 }
 
+/** "Assigned by rule: bug → Raymond" for a label rule's assignment, as on the web. */
+function ruleText(action: string, metadata: Record<string, unknown>): string | null {
+  if (action !== 'task.assigned_by_rule') return null
+  return `Assigned by rule: ${string(metadata.label_name) ?? 'a label'} → ${string(metadata.assignee_name) ?? 'someone'}`
+}
+
 const ACTIVITY_TEXT: Record<string, string> = {
   'backup.item_restored': 'restored from a backup',
 }
 
 /** Audit events to feed rows: a `task.updated` event gives one row per field, the rest one row each. */
 export function activityRows(events: readonly TaskActivityEvent[], context: ActivityContext): ActivityRow[] {
-  return events.flatMap((event) => {
+  return events.flatMap((event): ActivityRow[] => {
     const metadata = (event.metadata ?? {}) as Record<string, unknown>
     const base = { id: event.id, actorId: event.actor_id ?? '', actorName: string(metadata.actor_service_account_name), createdAt: event.occurred_at }
     const changes = event.action === 'task.updated' ? changeRows(metadata, context) : null
     if (changes) return changes.map((change) => ({ ...base, id: `${event.id}:${change.field}`, text: change.text, statusId: change.statusId }))
+    const rule = ruleText(event.action, metadata)
+    if (rule) return [{ ...base, text: rule, system: true }]
     const related = relationText(event.action, metadata, context)
     const subIssue = related ? null : subIssueText(event.action, metadata, context)
     return [{ ...base, text: related ?? subIssue?.text ?? ACTIVITY_TEXT[event.action] ?? event.action.split('.').reverse().join(' '), statusId: subIssue?.statusId }]
@@ -164,8 +174,12 @@ export function buildFeed(rows: readonly ActivityRow[], comments: readonly Comme
     .filter((comment) => !comment.parent_id)
     .sort(byTime)
     .map((root) => ({ root, replies: comments.filter((comment) => comment.parent_id === root.id).sort(byTime) }))
+  // Rows of one write share a time: they keep the order they were written in (ids grow with it; the server lists
+  // newest first), and a label rule's row follows the person's rows of that write. As on the web (`activityOrder`).
+  const eventId = (row: ActivityRow) => row.id.split(':')[0]!
+  const ordered = [...rows].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || Number(Boolean(a.system)) - Number(Boolean(b.system)) || eventId(a).localeCompare(eventId(b)))
   const mixed = [
-    ...rows.map((row) => ({ at: row.createdAt, row })),
+    ...ordered.map((row) => ({ at: row.createdAt, row })),
     ...threads.map((thread) => ({ at: thread.root.created_at, thread })),
   ].sort((a, b) => a.at.localeCompare(b.at))
   const feed: FeedEntry[] = []

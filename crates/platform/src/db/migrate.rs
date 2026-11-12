@@ -644,6 +644,11 @@ impl MigrationRunner {
                     include_str!("../../../../apps/server/migrations/0098_chat_media_previews.sql"),
                     false,
                 ),
+                Migration::new(
+                    99,
+                    include_str!("../../../../apps/server/migrations/0099_label_rules.sql"),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -966,6 +971,11 @@ impl MigrationRunner {
                 include_str!(
                     "../../../../apps/server/migrations/postgres/0098_chat_media_previews.sql"
                 ),
+                false,
+            ),
+            Migration::new(
+                99,
+                include_str!("../../../../apps/server/migrations/postgres/0099_label_rules.sql"),
                 false,
             ),
         ];

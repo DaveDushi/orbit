@@ -50,7 +50,7 @@ pub const MAX_CHANNELS: usize = 100;
 /// The default agent's tools, by group, as the sidecar names them (`apps/agent/src/tools.ts`,
 /// `media.ts`; `apps/agent/test/profiles.test.ts` keeps both lists the same). `true`: the tool
 /// writes or posts.
-pub const TOOL_CATALOG: [(&str, &str, bool); 53] = [
+pub const TOOL_CATALOG: [(&str, &str, bool); 55] = [
     ("list_projects", "Tasks", false),
     ("search_tasks", "Tasks", false),
     ("get_task", "Tasks", false),
@@ -58,6 +58,8 @@ pub const TOOL_CATALOG: [(&str, &str, bool); 53] = [
     ("update_task", "Tasks", true),
     ("comment_on_task", "Tasks", true),
     ("follow_task", "Tasks", true),
+    ("list_label_rules", "Tasks", false),
+    ("create_label_rule", "Tasks", true),
     ("list_members", "People", false),
     ("ask_teammate", "People", true),
     ("list_pages", "Docs", false),
@@ -119,6 +121,8 @@ const TASK_TOOLS: &[&str] = &[
     "update_task",
     "comment_on_task",
     "follow_task",
+    "list_label_rules",
+    "create_label_rule",
 ];
 const PAGE_TOOLS: &[&str] = &[
     "list_pages",
@@ -197,6 +201,9 @@ pub fn route_need(method: &Method, rest: &str) -> RouteNeed {
         ["projects", ..] if get => RouteNeed::Any(TASK_TOOLS),
         ["tasks", ..] if get => RouteNeed::Any(TASK_TOOLS),
         ["tasks"] if method == Method::POST => RouteNeed::Any(&["create_task"]),
+        ["projects", _, "label-rules"] if method == Method::POST => {
+            RouteNeed::Any(&["create_label_rule"])
+        }
         ["tasks", _] if method == Method::PATCH => RouteNeed::Any(&["update_task"]),
         ["tasks", _, "comments"] if method == Method::POST => RouteNeed::Any(&["comment_on_task"]),
         ["tasks", _, "followers", "me"] if method == Method::PUT || method == Method::DELETE => {
@@ -1902,7 +1909,7 @@ mod tests {
         assert!(checked_tools(&tools(&["delete_everything"])).is_err());
         assert!(checked_tools(&tools(&[""])).is_err());
         assert_eq!(checked_tools(&[]), Ok(Vec::new()));
-        assert_eq!(tool_catalog().count(), 53);
+        assert_eq!(tool_catalog().count(), 55);
     }
 
     #[test]
@@ -1967,6 +1974,38 @@ mod tests {
         assert!(tools_allow(&tasks, &Method::POST, "tasks/abc/comments"));
         assert!(!tools_allow(&tasks, &Method::PATCH, "tasks/abc"));
         assert!(!tools_allow(&tasks, &Method::POST, "tasks"));
+        assert!(!tools_allow(
+            &tasks,
+            &Method::POST,
+            "projects/abc/label-rules"
+        ));
+        // Label rules: reading them needs a task tool, making one needs its own.
+        let rules = tools(&["create_label_rule"]);
+        assert!(tools_allow(
+            &rules,
+            &Method::GET,
+            "projects/abc/label-rules"
+        ));
+        assert!(tools_allow(
+            &rules,
+            &Method::POST,
+            "projects/abc/label-rules"
+        ));
+        assert!(!tools_allow(
+            &rules,
+            &Method::PATCH,
+            "projects/abc/label-rules/r"
+        ));
+        assert!(!tools_allow(
+            &rules,
+            &Method::DELETE,
+            "projects/abc/label-rules/r"
+        ));
+        assert!(!tools_allow(
+            &rules,
+            &Method::PUT,
+            "projects/abc/label-rule-settings"
+        ));
         // Routines and send later are made only through `/agent-tools/scheduled`.
         let scheduler = tools(&["send_later"]);
         assert!(tools_allow(

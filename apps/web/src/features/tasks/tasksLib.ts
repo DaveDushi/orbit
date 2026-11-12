@@ -60,9 +60,18 @@ export function agoLabel(iso: string): string {
 
 export type FeedEntry = { kind: 'activity'; at: string; items: TaskActivity[] } | { kind: 'thread'; at: string; thread: CommentThread }
 
+/**
+ * Events of one write share a time: they keep the order they were written in (ids grow with it; the server lists newest
+ * first), and a label rule's line follows the person's lines of that write.
+ */
+function activityOrder(a: Pick<TaskActivity, 'id' | 'createdAt' | 'system'>, b: Pick<TaskActivity, 'id' | 'createdAt' | 'system'>): number {
+  const eventId = (row: { id: string }) => row.id.split(':')[0]!
+  return a.createdAt.localeCompare(b.createdAt) || Number(Boolean(a.system)) - Number(Boolean(b.system)) || eventId(a).localeCompare(eventId(b))
+}
+
 /** Activity events and comment threads in one chronological list; consecutive events share a timeline block. */
 export function buildFeed(task: Task): FeedEntry[] {
-  const events = [...task.activity].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  const events = [...task.activity].sort(activityOrder)
   const threads = commentThreads(task)
   const mixed: Array<{ at: string; event?: TaskActivity; thread?: CommentThread }> = [
     ...events.map((event) => ({ at: event.createdAt, event })),

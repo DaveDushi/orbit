@@ -9,6 +9,7 @@ pub mod drive_refs;
 pub mod drive_shares;
 pub mod identity;
 pub mod instance_settings;
+pub mod label_rules;
 pub(crate) mod membership;
 pub mod page_comments;
 pub mod page_export;

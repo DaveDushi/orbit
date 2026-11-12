@@ -1,5 +1,5 @@
 import { Fragment, useState, type ReactNode } from 'react'
-import { ChevronDown } from 'reicon-react'
+import { ChevronDown, Flash } from 'reicon-react'
 import { cn } from 'cn'
 import { Button } from '@/components/ui/button'
 import { UserAvatar } from '@/components/common/UserAvatar'
@@ -78,6 +78,8 @@ export function ActivityFeed({ task, state, onOpenTask }: ActivityFeedProps) {
               <span className="inline-flex size-3.5 shrink-0 items-center justify-center">
                 {status ? (
                   <TaskStatusIcon status={status} size={14} />
+                ) : item.system ? (
+                  <Flash className="relative z-1 size-3.5 text-muted-foreground" aria-hidden="true" />
                 ) : (
                   <ProfileTrigger userId={actor?.id} name={actor?.name ?? 'Someone'} kind="avatar" tabIndex={-1} className="relative z-1 flex">
                     <UserAvatar user={actor} size={14} />
@@ -85,9 +87,11 @@ export function ActivityFeed({ task, state, onOpenTask }: ActivityFeedProps) {
                 )}
               </span>
               <span className="truncate">
-                <ProfileTrigger userId={actor?.id} name={actor?.name ?? item.actorName ?? 'Someone'} className="font-medium text-foreground">
-                  {item.actorName ?? actor?.name ?? 'Someone'}
-                </ProfileTrigger>{' '}
+                {item.system ? null : <>
+                  <ProfileTrigger userId={actor?.id} name={actor?.name ?? item.actorName ?? 'Someone'} className="font-medium text-foreground">
+                    {item.actorName ?? actor?.name ?? 'Someone'}
+                  </ProfileTrigger>{' '}
+                </>}
                 <ActivityText item={item} state={state} onOpenTask={onOpenTask} /> · {agoLabel(item.createdAt)}
               </span>
             </TimelineRow>

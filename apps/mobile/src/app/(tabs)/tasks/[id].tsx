@@ -627,10 +627,10 @@ function Timeline({
         key={item.id}
         first={index === 0}
         last={index === items.length - 1 && folded.hidden === 0}
-        glyph={status ? <StatusIcon status={status} size={14} /> : <Avatar id={item.actorId} name={actor} size={14} />}
+        glyph={status ? <StatusIcon status={status} size={14} /> : item.system ? <Icon name="flash" size={14} color={colors.mutedForeground} /> : <Avatar id={item.actorId} name={actor} size={14} />}
       >
         <Text numberOfLines={1} className="text-[12px] leading-[16px] flex-1 text-muted-foreground">
-          <Text className="font-noto-medium text-[12px] leading-[16px] text-foreground">{actor}</Text> {item.text} · {relativeAgo(item.createdAt)}
+          {item.system ? null : <><Text className="font-noto-medium text-[12px] leading-[16px] text-foreground">{actor}</Text> </>}{item.text} · {relativeAgo(item.createdAt)}
         </Text>
       </TimelineRow>,
     )

@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import type { AttachmentRecord, AuditEvent, CommentRecord, ProjectRecord, TaskRecord } from '@orbit/api/generated/types.gen'
 import { refIdentifier, taskFromRecord, taskIdentifier } from './models'
+import { buildFeed } from '../tasksLib'
 
 const project: ProjectRecord = {
   id: 'project-1', workspace_id: 'workspace-1', name: 'Launch', key: 'LCH', color: '#123456',
@@ -181,6 +182,25 @@ test('parent changes and automatic closes read as sentences that link the other 
   ])
   expect(task.activity[0]!.related).toEqual({ taskId: '01HZYPARENT0000000000012', identifier: 'ORB-12' })
   expect(task.activity[2]!.statusId).toBe('status-done')
+})
+
+test('a label rule assignment reads as a line without a person', () => {
+  const task = taskFromRecord(record, project, [], [], [
+    { ...activity, id: 'rule', action: 'task.assigned_by_rule', actor_id: null, metadata: { label_name: 'owner:raymond', assignee_id: 'u1', assignee_name: 'Raymond' } },
+  ])
+  expect(task.activity[0]).toMatchObject({ text: 'Assigned by rule: owner:raymond → Raymond', system: true })
+})
+
+test('the feed keeps the written order of one write, a label rule line after the person\'s lines', () => {
+  const at = '2026-09-04T12:10:00Z'
+  // the server lists the newest event first
+  const task = taskFromRecord(record, project, [], [], [
+    { ...activity, id: '0003', action: 'task.updated', occurred_at: at, metadata: { changes: { labels: { added: ['label-1'], removed: [] } } } },
+    { ...activity, id: '0002', action: 'task.assigned_by_rule', actor_id: null, occurred_at: at, metadata: { label_name: 'bug', assignee_name: 'Raymond' } },
+    { ...activity, id: '0001', action: 'task.created', occurred_at: at },
+  ])
+  const [entry] = buildFeed(task)
+  expect(entry?.kind === 'activity' ? entry.items.map((item) => item.id) : []).toEqual(['0001', '0003:labels', '0002'])
 })
 
 test('an update event becomes one row per changed field; an event with nothing to show is dropped', () => {

@@ -186,6 +186,11 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::task_routes::list_notifications,
         crate::task_routes::read_notification,
         crate::task_routes::read_all_notifications,
+        crate::label_rule_routes::list_label_rules,
+        crate::label_rule_routes::create_label_rule,
+        crate::label_rule_routes::update_label_rule,
+        crate::label_rule_routes::delete_label_rule,
+        crate::label_rule_routes::put_label_rule_settings,
         crate::view_routes::list_views,
         crate::view_routes::create_view,
         crate::view_routes::get_view,
@@ -982,6 +987,16 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             add_code(&mut responses, "404", "attachment_not_found");
         }
         id if view_operation(id) => view_errors(id, &mut responses),
+        id if label_rule_operation(id) => {
+            add_code(&mut responses, "403", "task_action_forbidden");
+            add_code(&mut responses, "404", "task_resource_not_found");
+            if id != "list_label_rules" && id != "delete_label_rule" {
+                add_code(&mut responses, "422", "validation_failed");
+            }
+            if id == "create_label_rule" || id == "update_label_rule" {
+                add_code(&mut responses, "409", "task_conflict");
+            }
+        }
         "upload_page_file" => {
             add_code(&mut responses, "400", "invalid_multipart");
             add_code(&mut responses, "404", "page_file_not_found");
@@ -1157,6 +1172,9 @@ fn invalid_request_operation(operation_id: &str) -> bool {
             | "update_view"
             | "reorder_view_favorites"
             | "put_view_preference"
+            | "create_label_rule"
+            | "update_label_rule"
+            | "put_label_rule_settings"
             | "create_page"
             | "update_page"
             | "move_page"
@@ -1371,6 +1389,17 @@ fn task_errors(operation_id: &str, responses: &mut BTreeMap<&'static str, Vec<&'
     if matches!(operation_id, "update_comment" | "delete_comment") {
         add_code(responses, "403", "task_action_forbidden");
     }
+}
+
+fn label_rule_operation(operation_id: &str) -> bool {
+    matches!(
+        operation_id,
+        "list_label_rules"
+            | "create_label_rule"
+            | "update_label_rule"
+            | "delete_label_rule"
+            | "put_label_rule_settings"
+    )
 }
 
 fn view_operation(operation_id: &str) -> bool {

@@ -351,6 +351,54 @@ const followTask = defineTool({
 		}),
 });
 
+function projectFor(list: readonly Json[], id: string): Json | undefined {
+	const wanted = id.toLowerCase();
+	return list.find((project) => project.id === id || String(project.key).toLowerCase() === wanted || String(project.name).toLowerCase() === wanted);
+}
+
+function ruleView(rule: Json): Json {
+	return { id: rule.id, label: rule.label_name, person: rule.user_name, enabled: rule.enabled };
+}
+
+const listLabelRules = defineTool({
+	name: "list_label_rules",
+	description: "List a project's label rules (a task that gets the label is assigned to the person) and its owner:<name> switch. Only workspace owners and admins may see them.",
+	parameters: Type.Object({ project_id: Type.Optional(Type.String({ description: "Project id, key or name. Without it: every project." })) }),
+	execute: (args, api, context) =>
+		asDriver(api, context, async (as) => {
+			const list = await projects(as);
+			const chosen = args.project_id ? [projectFor(list, args.project_id)].filter((project) => project !== undefined) : list;
+			if (chosen.length === 0) return { output: [{ type: "text", text: "No such project." }], isError: true };
+			const result = [];
+			for (const project of chosen) {
+				const settings = (await as("GET", `/projects/${project.id}/label-rules`)) as Json;
+				result.push({ project: project.name, rules: ((settings.rules as Json[]) ?? []).map(ruleView), owner_labels: settings.owner_labels, unmatched_owner_names: settings.unmatched_owner_names });
+			}
+			return ok("label rules", result);
+		}),
+});
+
+const createLabelRule = defineTool({
+	name: "create_label_rule",
+	description: "Add a label rule to a project: every task that gets the label (when it is created with it or when the label is added later) is assigned to the person too. Rules only add assignees. Only workspace owners and admins may do this.",
+	parameters: Type.Object({
+		project_id: Type.String({ description: "Project id, key or name" }),
+		label: Type.String({ description: "Name of a label of the project" }),
+		person: Type.String({ description: "Member name or user id" }),
+	}),
+	execute: (args, api, context) =>
+		asDriver(api, context, async (as) => {
+			const project = projectFor(await projects(as), args.project_id);
+			if (!project) return { output: [{ type: "text", text: "No such project." }], isError: true };
+			const labels = ((await as("GET", `/projects/${project.id}/labels?limit=100`)).items ?? []) as Json[];
+			const label = labels.find((candidate) => String(candidate.name).toLowerCase() === args.label.trim().toLowerCase());
+			if (!label) return { output: [{ type: "text", text: `No label "${args.label}" in ${project.name}. Labels: ${labels.map((item) => item.name).join(", ")}` }], isError: true };
+			const [userId] = personIds([args.person], await people(as)) ?? [];
+			const rule = (await as("POST", `/projects/${project.id}/label-rules`, { label_id: label.id, user_id: userId })) as Json;
+			return ok("created label rule", { project: project.name, ...ruleView(rule) });
+		}),
+});
+
 const listMembers = defineTool({
 	name: "list_members",
 	description: "List the workspace's members (names and user ids).",
@@ -791,6 +839,8 @@ export const ORBIT_TOOLS = [
 	updateTask,
 	commentOnTask,
 	followTask,
+	listLabelRules,
+	createLabelRule,
 	listMembers,
 	listPages,
 	searchPages,

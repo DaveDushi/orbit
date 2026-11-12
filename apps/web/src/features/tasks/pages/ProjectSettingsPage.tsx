@@ -25,6 +25,7 @@ import { ConfirmDeleteModal } from '@/components/common/ConfirmDeleteModal'
 import { SettingsCard } from '@/components/common/SettingsCard'
 import { ColorSwatch, CustomColorSwatch } from '@/components/common/ColorSwatch'
 import { ProjectGithubCard, type PendingProjectSave } from '@/features/tasks/components/ProjectGithubCard'
+import { ProjectRulesCard } from '@/features/tasks/components/ProjectRulesCard'
 import { useSlowPending } from '@/lib/useDebouncedValue'
 import { loadFailed } from '@/lib/connection'
 
@@ -252,6 +253,8 @@ export function ProjectSettingsPage() {
               <ProjectLabelsCard projectId={project.id} />
 
               <ProjectGithubCard workspaceId={workspace.id} projectId={project.id} onPendingChange={setGithubPending} />
+
+              <ProjectRulesCard projectId={project.id} />
 
               <SubIssueSettingsCard project={project} />
 

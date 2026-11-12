@@ -8,6 +8,7 @@ use sqlx::{Any, Transaction};
 use thiserror::Error;
 use utoipa::ToSchema;
 
+use super::label_rules::{self, LabelWrite};
 use super::membership;
 use super::page_mentions::mentioned_users;
 use super::pages::revision;
@@ -1704,7 +1705,13 @@ impl TaskRepository {
             notify_description_mentions(&mut tx, workspace_id, id, &[], blocks, actor_id, now)
                 .await?;
         }
-        replace_labels(&mut tx, id, &input.label_ids).await?;
+        let write = LabelWrite {
+            workspace_id,
+            actor_id,
+            request_id,
+            now,
+        };
+        replace_labels(&mut tx, &write, id, &input.label_ids).await?;
         if self.notifies() {
             notify_users(
                 &mut tx,
@@ -1954,6 +1961,7 @@ impl TaskRepository {
                 issue.project_id,
                 task_id,
                 &issue.labels,
+                actor_id,
                 (service_account_id, &service_account_name),
                 request_id,
                 now,
@@ -2038,17 +2046,20 @@ impl TaskRepository {
             .bind(&status_id).bind(&issue.title).bind(&issue.description).bind(&issue_url).bind(position)
             .bind(actor_id.to_string()).bind(service_account_id.to_string())
             .bind(now.as_millis()).bind(now.as_millis()).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO task_labels (task_id, label_id) VALUES ($1, $2)")
-            .bind(task_id.to_string())
-            .bind(&label_id)
-            .execute(&mut *tx)
-            .await?;
+        let write = LabelWrite {
+            workspace_id,
+            actor_id,
+            request_id,
+            now,
+        };
+        label_rules::insert_task_label(&mut tx, &write, task_id, &label_id).await?;
         sync_github_labels_in_tx(
             &mut tx,
             workspace_id,
             issue.project_id,
             task_id,
             &issue.labels,
+            actor_id,
             (service_account_id, &service_account_name),
             request_id,
             now,
@@ -2173,11 +2184,13 @@ impl TaskRepository {
         .bind(task_id.to_string()).bind(workspace_id.to_string()).bind(input.project_id.to_string()).bind(status_id.to_string())
         .bind(&input.title).bind(&input.description).bind(&input.source_url).bind(position).bind(actor_id.to_string()).bind(service_account_id.map(|id| id.to_string())).bind(now.as_millis()).bind(now.as_millis())
         .execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO task_labels (task_id, label_id) VALUES ($1, $2)")
-            .bind(task_id.to_string())
-            .bind(label_id.to_string())
-            .execute(&mut *tx)
-            .await?;
+        let write = LabelWrite {
+            workspace_id,
+            actor_id,
+            request_id,
+            now,
+        };
+        label_rules::insert_task_label(&mut tx, &write, task_id, &label_id.to_string()).await?;
         sqlx::query("INSERT INTO integration_events (workspace_id, provider, external_event_id, payload_hash, task_id, created_at) VALUES ($1, 'discord', $2, $3, $4, $5)")
             .bind(workspace_id.to_string()).bind(&input.event_id).bind(input.payload_hash.to_vec()).bind(task_id.to_string()).bind(now.as_millis())
             .execute(&mut *tx).await?;
@@ -3413,7 +3426,13 @@ pub(super) async fn update_task_in_tx(
         }
     }
     if let Some(labels) = &label_ids {
-        replace_labels(tx, update.id, labels).await?;
+        let write = LabelWrite {
+            workspace_id,
+            actor_id,
+            request_id,
+            now,
+        };
+        replace_labels(tx, &write, update.id, labels).await?;
     }
     // A status someone chose (not one a project move picks); a new assignee hears of the task
     // through its assignment.
@@ -3950,21 +3969,28 @@ async fn replace_assignees(
     Ok(())
 }
 
+/// Sets the task's labels; only a label the task did not have is added (and runs the label rules).
 async fn replace_labels(
     tx: &mut Transaction<'_, Any>,
+    write: &LabelWrite<'_>,
     task_id: Id,
     ids: &[Id],
 ) -> Result<(), TaskError> {
-    sqlx::query("DELETE FROM task_labels WHERE task_id = $1")
-        .bind(task_id.to_string())
-        .execute(&mut **tx)
-        .await?;
-    for id in ids {
-        sqlx::query("INSERT INTO task_labels (task_id, label_id) VALUES ($1, $2)")
+    let wanted: Vec<String> = ids.iter().map(ToString::to_string).collect();
+    let current: Vec<String> =
+        sqlx::query_scalar("SELECT label_id FROM task_labels WHERE task_id = $1")
             .bind(task_id.to_string())
-            .bind(id.to_string())
+            .fetch_all(&mut **tx)
+            .await?;
+    for id in current.iter().filter(|id| !wanted.contains(id)) {
+        sqlx::query("DELETE FROM task_labels WHERE task_id = $1 AND label_id = $2")
+            .bind(task_id.to_string())
+            .bind(id)
             .execute(&mut **tx)
             .await?;
+    }
+    for id in wanted.iter().filter(|id| !current.contains(id)) {
+        label_rules::insert_task_label(tx, write, task_id, id).await?;
     }
     // A GitHub label removed by hand is no longer the sync's: added back by hand, it stays.
     sqlx::query(
@@ -3988,6 +4014,7 @@ async fn sync_github_labels_in_tx(
     project_id: Id,
     task_id: Id,
     labels: &[GithubLabel],
+    actor_id: Id,
     service_account: (Id, &str),
     request_id: &str,
     now: TimestampMillis,
@@ -4038,16 +4065,18 @@ async fn sync_github_labels_in_tx(
             wanted.push(id);
         }
     }
+    let write = LabelWrite {
+        workspace_id,
+        actor_id,
+        request_id,
+        now,
+    };
     let mut added = Vec::new();
     for id in &wanted {
         if current.contains(id) {
             continue;
         }
-        sqlx::query("INSERT INTO task_labels (task_id, label_id) VALUES ($1, $2)")
-            .bind(task_id.to_string())
-            .bind(id)
-            .execute(&mut **tx)
-            .await?;
+        label_rules::insert_task_label(tx, &write, task_id, id).await?;
         sqlx::query("INSERT INTO github_task_labels (task_id, label_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
             .bind(task_id.to_string())
             .bind(id)
@@ -4115,11 +4144,12 @@ fn updated_fields(update: &TaskUpdate, before: &TaskRecord, after: &TaskRecord) 
             json!({ "from": before.priority, "to": after.priority }),
         );
     }
-    if before.assignee_ids != after.assignee_ids {
-        changes.insert(
-            "assignees".into(),
-            moved(&before.assignee_ids, &after.assignee_ids),
-        );
+    // The assignees the person set: a label rule's own event names the ones it added.
+    if let Some(assignees) = update.changes.assignee_ids.as_ref().filter(|assignees| {
+        before.assignee_ids.iter().any(|id| !assignees.contains(id))
+            || assignees.iter().any(|id| !before.assignee_ids.contains(id))
+    }) {
+        changes.insert("assignees".into(), moved(&before.assignee_ids, assignees));
     }
     if before.label_ids != after.label_ids {
         changes.insert("labels".into(), moved(&before.label_ids, &after.label_ids));

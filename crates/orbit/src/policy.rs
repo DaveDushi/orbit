@@ -65,10 +65,13 @@ pub enum Permission {
     /// See every member's agent routines, pause them and delete them.
     #[serde(rename = "routines.manage")]
     RoutinesManage,
+    /// Add, change and delete a project's label rules (labels that assign people).
+    #[serde(rename = "label_rules.manage")]
+    LabelRulesManage,
 }
 
 impl Permission {
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 21] = [
         Self::WorkspaceUpdate,
         Self::WorkspaceDelete,
         Self::WorkspaceTransfer,
@@ -89,6 +92,7 @@ impl Permission {
         Self::DrivePurge,
         Self::DriveSharesManage,
         Self::RoutinesManage,
+        Self::LabelRulesManage,
     ];
 }
 
@@ -337,7 +341,8 @@ impl Policy {
             | Permission::WorkspaceExport
             | Permission::DrivePurge
             | Permission::DriveSharesManage
-            | Permission::RoutinesManage => {
+            | Permission::RoutinesManage
+            | Permission::LabelRulesManage => {
                 matches!(role, WorkspaceRole::Owner | WorkspaceRole::Admin)
             }
         }

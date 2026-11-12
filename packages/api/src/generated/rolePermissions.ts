@@ -20,7 +20,8 @@ export const ROLE_PERMISSIONS: Record<WorkspaceRole, Permission[]> = {
     "workspace.export",
     "drive.purge",
     "drive.shares.manage",
-    "routines.manage"
+    "routines.manage",
+    "label_rules.manage"
   ],
   "guest": [],
   "member": [],
@@ -44,6 +45,7 @@ export const ROLE_PERMISSIONS: Record<WorkspaceRole, Permission[]> = {
     "workspace.export",
     "drive.purge",
     "drive.shares.manage",
-    "routines.manage"
+    "routines.manage",
+    "label_rules.manage"
   ]
 }

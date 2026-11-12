@@ -9,6 +9,7 @@
 
 ## Build VM tooling
 - The VM's system Node is 18, but Vite/rolldown and Playwright need Node 20+. Build the web app with `bun --bun run build` (also under `orbit-build`) and run Playwright scripts with `bun`, not `node`. The server embeds `apps/web/dist`, so a fresh worktree needs this web build before any `cargo test -p orbit-server`.
+- `bun run api:generate` (`just api`) runs `openapi-ts` on the system Node and fails on Node 18 after it has emptied `packages/api/src/generated`. Run it with `PATH=/root/.local/node/bin:$PATH bun --bun run api:generate`, and regenerate `openapi.json` first (`target/debug/orbit openapi --output …`) if the failed run deleted it.
 
 ## Two database backends (SQLite + Postgres)
 - All SQL goes through sqlx `Any`: write `$1, $2, …` (SQLite binds them by number too), import `orbit_platform::Row` (not `sqlx::Row`) so 0/1 flags decode as `bool`, decode boolean scalars as `Flag`, bind `i64` (never `bool`/`u32`), and build dynamic SQL with `SqlBuilder`. SQLite silently ignores extra bound values, so clashing `$N` numbers in `format!`-glued fragments only fail on Postgres.

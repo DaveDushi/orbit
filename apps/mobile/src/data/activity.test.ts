@@ -92,6 +92,11 @@ describe('activityRows', () => {
       ['updated task', undefined],
     ])
   })
+
+  test('a label rule assignment reads as a line without a person', () => {
+    const [row] = activityRows([{ ...event('e1', 'task.assigned_by_rule', { label_name: 'bug', assignee_name: 'Raymond' }), actor_id: null }], context)
+    expect(row).toMatchObject({ text: 'Assigned by rule: bug → Raymond', system: true })
+  })
 })
 
 describe('buildFeed', () => {
@@ -106,6 +111,17 @@ describe('buildFeed', () => {
       ['root+reply'],
       ['c'],
     ])
+  })
+
+  test('rows of one write keep their written order, a label rule row last', () => {
+    const at = '2026-10-15T09:00:00Z'
+    const rows: ActivityRow[] = [
+      { id: '0003', actorId: 'ada', text: 'updated', createdAt: at },
+      { id: '0002', actorId: '', text: 'rule', createdAt: at, system: true },
+      { id: '0001', actorId: 'ada', text: 'created', createdAt: at },
+    ]
+    const [entry] = buildFeed(rows, [])
+    expect(entry?.kind === 'activity' ? entry.items.map((item) => item.text) : []).toEqual(['created', 'updated', 'rule'])
   })
 })
 
