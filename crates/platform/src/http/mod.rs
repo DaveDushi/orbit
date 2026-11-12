@@ -26,6 +26,11 @@ pub use limits::HttpLimits;
 pub use request_id::RequestId;
 use security::Csp;
 pub use security::{ClientIp, CspSources, OriginPolicy, RequestTransport, bearer_token};
+
+/// Why a handler answered 500. The handler puts it in the response extensions, and the HTTP layer writes it to the
+/// `http request failed` log line. The client never sees it: it gets only the request ID.
+#[derive(Clone, Debug)]
+pub struct ErrorCause(pub String);
 use security::{add_security_headers, inspect_request, strip_forwarding_headers};
 
 /// Applies Orbit's request identity, proxy, origin, limit, and response policy.
@@ -407,7 +412,17 @@ where
                 too_large_response(&request_id, &instance)
             } else if response.status() == StatusCode::INTERNAL_SERVER_ERROR {
                 let status = response.status();
-                tracing::error!(request_id = request_id.as_str(), %status, "http request failed");
+                let cause = response
+                    .extensions()
+                    .get::<ErrorCause>()
+                    .map_or("not recorded", |cause| cause.0.as_str());
+                tracing::error!(
+                    request_id = request_id.as_str(),
+                    %method,
+                    %status,
+                    cause,
+                    "http request failed"
+                );
                 Problem::internal(request_id.as_str(), &instance).into_response()
             } else {
                 response

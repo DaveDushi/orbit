@@ -99,7 +99,7 @@ pub(super) async fn list_passkeys(
         .list_passkeys(session.user.id)
         .await
         .map(Json)
-        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))
+        .map_err(|error| ApiError::internal(instance, request_id.as_ref()).cause(error))
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -136,7 +136,7 @@ pub(super) async fn start_passkey_registration(
         .repository
         .passkeys_of(session.user.id)
         .await
-        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?
+        .map_err(|error| ApiError::internal(instance, request_id.as_ref()).cause(error))?
         .iter()
         .map(|passkey| passkey.cred_id().clone())
         .collect::<Vec<_>>();
@@ -147,9 +147,9 @@ pub(super) async fn start_passkey_registration(
             &session.user.display_name,
             Some(existing),
         )
-        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?;
+        .map_err(|error| ApiError::internal(instance, request_id.as_ref()).cause(error))?;
     let mut options = serde_json::to_value(options)
-        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?;
+        .map_err(|error| ApiError::internal(instance, request_id.as_ref()).cause(error))?;
     // Ask for a discoverable credential: signing in starts without an email, so the passkey must name the account.
     // "preferred", not "required": Enpass hands a request with both this and user verification required to iCloud
     // Keychain. Password managers and phones make discoverable passkeys anyway; finishing refuses one that is not.
@@ -168,7 +168,7 @@ pub(super) async fn start_passkey_registration(
             state: Box::new(registration),
         })
         .await
-        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?
+        .map_err(|error| ApiError::internal(instance, request_id.as_ref()).cause(error))?
         .ok_or_else(|| busy(instance, request_id.as_ref()))?;
     Ok(Json(PasskeyChallenge {
         challenge_token,
@@ -221,7 +221,7 @@ pub(super) async fn finish_passkey_registration(
         .pending
         .take(&body.challenge_token)
         .await
-        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?
+        .map_err(|error| ApiError::internal(instance, request_id.as_ref()).cause(error))?
     else {
         return Err(invalid_passkey(instance, request_id.as_ref()));
     };
@@ -304,7 +304,7 @@ pub(super) async fn delete_passkey(
             TimestampMillis::now(),
         )
         .await
-        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?;
+        .map_err(|error| ApiError::internal(instance, request_id.as_ref()).cause(error))?;
     if !deleted {
         return Err(not_found());
     }
@@ -324,9 +324,9 @@ pub(super) async fn start_passkey_login(
         .ok_or_else(|| unavailable(instance, request_id.as_ref()))?;
     let (options, authentication) = webauthn
         .start_discoverable_authentication()
-        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?;
+        .map_err(|error| ApiError::internal(instance, request_id.as_ref()).cause(error))?;
     let mut options = serde_json::to_value(options)
-        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?;
+        .map_err(|error| ApiError::internal(instance, request_id.as_ref()).cause(error))?;
     // The sign-in page asks with a button, not in the email field's autofill.
     if let Some(options) = options.as_object_mut() {
         options.remove("mediation");
@@ -338,7 +338,7 @@ pub(super) async fn start_passkey_login(
             state: Box::new(authentication),
         })
         .await
-        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?
+        .map_err(|error| ApiError::internal(instance, request_id.as_ref()).cause(error))?
         .ok_or_else(|| busy(instance, request_id.as_ref()))?;
     Ok(Json(PasskeyChallenge {
         challenge_token,
@@ -388,7 +388,7 @@ pub(super) async fn finish_passkey_login(
         .pending
         .take(&body.challenge_token)
         .await
-        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?
+        .map_err(|error| ApiError::internal(instance, request_id.as_ref()).cause(error))?
     else {
         return Err(rejected());
     };
@@ -401,7 +401,7 @@ pub(super) async fn finish_passkey_login(
         .repository
         .passkey_by_credential(credential_id)
         .await
-        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?
+        .map_err(|error| ApiError::internal(instance, request_id.as_ref()).cause(error))?
         .filter(|stored| user_handle(stored.user_id) == handle);
     let Some(mut stored) = stored else {
         record_failure(&state, None, request_id.as_ref()).await;

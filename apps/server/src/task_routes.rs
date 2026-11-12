@@ -2856,9 +2856,16 @@ pub(crate) struct ConflictBody {
 pub(crate) struct ApiError {
     status: StatusCode,
     body: Box<ProblemBody>,
+    cause: Option<String>,
 }
 
 impl ApiError {
+    /// Records why this 500 happened. The HTTP layer logs it with the request ID; the client does not see it.
+    pub(crate) fn cause(mut self, error: impl std::fmt::Display) -> Self {
+        self.cause = Some(error.to_string());
+        self
+    }
+
     pub(crate) fn new(
         status: StatusCode,
         code: &'static str,
@@ -2882,6 +2889,7 @@ impl ApiError {
                 conflict: None,
                 path: None,
             }),
+            cause: None,
         }
     }
 
@@ -3021,6 +3029,11 @@ impl IntoResponse for ApiError {
             CONTENT_TYPE,
             HeaderValue::from_static("application/problem+json"),
         );
+        if let Some(cause) = self.cause {
+            response
+                .extensions_mut()
+                .insert(orbit_platform::ErrorCause(cause));
+        }
         response
     }
 }

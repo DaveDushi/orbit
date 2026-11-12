@@ -160,7 +160,7 @@ pub(crate) async fn get_billing(
     let database = state.billing.database();
     let subscription = repository::subscription(database, workspace_id)
         .await
-        .map_err(|_| internal(&instance, id))?;
+        .map_err(|error| internal(&instance, id).cause(error))?;
     let now = TimestampMillis::now();
     let trial_config = &state.billing.config().trial;
     let access = subscription.access(now, trial_config);
@@ -172,7 +172,7 @@ pub(crate) async fn get_billing(
                     used,
                     limit: limit.limit(trial_config),
                 })
-                .map_err(|_| internal(&instance, id))
+                .map_err(|error| internal(&instance, id).cause(error))
         };
         Some(TrialView {
             ends_at: TimestampMillis::from_millis(subscription.trial_ends_at(trial_config)),
@@ -233,7 +233,7 @@ pub(crate) async fn billing_checkout(
     let database = state.billing.database();
     let subscription = repository::subscription(database, workspace_id)
         .await
-        .map_err(|_| internal(&instance, id))?;
+        .map_err(|error| internal(&instance, id).cause(error))?;
     if subscription.access(TimestampMillis::now(), &state.billing.config().trial)
         == WorkspaceAccess::Full
     {
@@ -253,7 +253,7 @@ pub(crate) async fn billing_checkout(
                 .bind(workspace_id.to_string())
                 .fetch_one(database.pool())
                 .await
-                .map_err(|_| internal(&instance, id))?;
+                .map_err(|error| internal(&instance, id).cause(error))?;
             let created = state
                 .billing
                 .stripe()
@@ -262,7 +262,7 @@ pub(crate) async fn billing_checkout(
                 .map_err(|error| stripe_failed(&error, &instance, id))?;
             repository::save_customer(database, workspace_id, &created, TimestampMillis::now())
                 .await
-                .map_err(|_| internal(&instance, id))?
+                .map_err(|error| internal(&instance, id).cause(error))?
         }
     };
     let origin = state.billing.public_origin();
@@ -299,7 +299,7 @@ pub(crate) async fn billing_portal(
     let (workspace_id, _) = manager(&state, &workspace, &headers, &instance, id).await?;
     let customer_id = repository::subscription(state.billing.database(), workspace_id)
         .await
-        .map_err(|_| internal(&instance, id))?
+        .map_err(|error| internal(&instance, id).cause(error))?
         .stripe_customer_id
         .ok_or_else(|| {
             ApiError::new(
@@ -399,7 +399,7 @@ pub(crate) async fn stripe_webhook(
     let database = state.billing.database();
     let new = repository::record_event(database, event_id, TimestampMillis::now())
         .await
-        .map_err(|_| internal(WEBHOOK, id))?;
+        .map_err(|error| internal(WEBHOOK, id).cause(error))?;
     if new && let Err(error) = sync::enqueue(database, subscription_id, workspace_id).await {
         tracing::warn!(%error, event_id, "queueing the Stripe sync failed");
         // Stripe redelivers after an error; let that delivery queue the job.
@@ -435,7 +435,7 @@ async fn member(
         session.user.id,
     )
     .await
-    .map_err(|_| internal(instance, id))?
+    .map_err(|error| internal(instance, id).cause(error))?
     .ok_or_else(not_found)?;
     Ok((workspace_id, actor, session))
 }
