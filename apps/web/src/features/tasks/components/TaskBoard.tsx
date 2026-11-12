@@ -22,7 +22,7 @@ import { AssigneePicker } from './AssigneePicker'
 import { BlockedIndicator } from './BlockedIndicator'
 import { PriorityPicker } from './PriorityPicker'
 import { SubIssueProgress, completedStatusColor } from './SubIssueProgress'
-import { LabelPill } from './TaskLabels'
+import { LabelList } from './TaskLabels'
 import { NestChip } from './NestChip'
 import { TaskPickerDialog } from './TaskPickerDialog'
 import { DateStamp, ProjectChip } from './TaskPropertyChips'
@@ -214,9 +214,7 @@ export function TaskBoard({ tasks, users, labels, statuses, projects, display, g
         ) : null}
         <h3 className="text-[13px] leading-[18px] font-medium text-foreground">{task.title || 'Untitled'}</h3>
         {cardLabels.length > 0 ? (
-          <div className="flex flex-wrap gap-1">
-            {cardLabels.map((label) => <LabelPill key={label.id} label={label} />)}
-          </div>
+          <LabelList labels={cardLabels} max={3} className="flex-wrap" />
         ) : null}
         {showMeta ? (
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground/70">

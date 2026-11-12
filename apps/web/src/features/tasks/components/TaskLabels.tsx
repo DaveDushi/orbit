@@ -1,5 +1,6 @@
 import { useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import { useNavigate } from 'react-router'
+import { cn } from 'cn'
 import { Add as Plus, Setting2 as Settings } from 'reicon-react'
 import type { LabelRecord } from '@orbit/api/generated/types.gen'
 import { Badge } from '@/components/ui/badge'
@@ -27,14 +28,43 @@ const LABEL_PALETTE = [
 
 export const LABEL_COLORS = LABEL_PALETTE.map((swatch) => swatch.color)
 
-/** A label as an outline badge with its colour dot; `children` go after the name (e.g. a remove button). */
+/** A label as an outline badge with its colour dot; `children` go after the name (e.g. a remove button). A long name ends in an ellipsis. */
 export function LabelPill({ label, className, children }: { label: Pick<LabelRecord, 'name' | 'color'>; className?: string; children?: React.ReactNode }) {
   return (
-    <Badge variant="outline" data-slot="label-pill" className={className}>
+    <Badge variant="outline" data-slot="label-pill" className={cn('max-w-full', className)}>
       <ColorDot color={label.color} />
-      {label.name}
+      <span className="truncate">{label.name}</span>
       {children}
     </Badge>
+  )
+}
+
+/**
+ * A task's labels in a space that never grows: the first `max` pills (they shrink and truncate), then a "+N" chip that
+ * shows every label on hover or click. Clicks on the chip and in its popup do not reach the row or card around it.
+ */
+export function LabelList({ labels, max, className }: { labels: Array<Pick<LabelRecord, 'id' | 'name' | 'color'>>; max: number; className?: string }) {
+  const hidden = labels.length - max
+  return (
+    <span className={cn('flex min-w-0 items-center gap-1', className)}>
+      {labels.slice(0, max).map((label) => <LabelPill key={label.id} label={label} className="min-w-0 shrink" />)}
+      {hidden > 0 ? (
+        <Popover>
+          <PopoverTrigger
+            openOnHover
+            delay={150}
+            aria-label={`${hidden} more labels: ${labels.map((label) => label.name).join(', ')}`}
+            onClick={(event) => event.stopPropagation()}
+            render={<Badge variant="outline" render={<button type="button" />} className="cursor-pointer text-muted-foreground hover:bg-muted aria-expanded:bg-muted" />}
+          >
+            +{hidden}
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-auto max-w-80 flex-row flex-wrap gap-1 p-2" onClick={(event) => event.stopPropagation()}>
+            {labels.map((label) => <LabelPill key={label.id} label={label} />)}
+          </PopoverContent>
+        </Popover>
+      ) : null}
+    </span>
   )
 }
 

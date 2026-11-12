@@ -247,9 +247,10 @@ export function Dot({ color, size = 8 }: { color: string; size?: number }) {
 /** A label: the round outline pill with its colour dot, as on the web. */
 export function LabelPill({ label, children }: { label: Pick<LabelRecord, 'name' | 'color'>; children?: ReactNode }) {
   return (
-    <View className="h-5 flex-row items-center gap-1 px-2 rounded-full border border-input bg-input/30">
+    <View className="h-5 max-w-full flex-row items-center gap-1 px-2 rounded-full border border-input bg-input/30">
       <Dot color={label.color} size={6} />
-      <Text numberOfLines={1} className="font-noto-medium text-[12px] leading-[16px]">
+      {/* shrinks so a long name ends in an ellipsis instead of leaving the screen */}
+      <Text numberOfLines={1} className="shrink font-noto-medium text-[12px] leading-[16px]">
         {label.name}
       </Text>
       {children}

@@ -17,7 +17,7 @@ import { DueDatePicker } from './DueDatePicker'
 import { SubIssueProgress, completedStatusColor } from './SubIssueProgress'
 import { TreeGutter } from './TreeGutter'
 import { NestChip } from './NestChip'
-import { LabelPill } from './TaskLabels'
+import { LabelList } from './TaskLabels'
 import type { NestRowProps } from '@/features/views/useNestDrop'
 
 /** A row's place in the nested list's tree. */
@@ -122,7 +122,7 @@ export function TaskRow({ task, statuses, labels, users, assignees, project, pro
       {has('status') ? <StatusPicker task={task} statuses={statuses} onRequestDuplicate={() => onRequestDuplicate(task)} /> : null}
       {!has('id') && task.blocked ? <BlockedIndicator /> : null}
       {showParent && task.parent ? (
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px]">
+        <span className="flex min-w-32 flex-1 items-center gap-1.5 text-[13px]">
           <Tip label={`Open ${refIdentifier(task.parent)}`}>
             <Button
               type="button"
@@ -140,15 +140,11 @@ export function TaskRow({ task, statuses, labels, users, assignees, project, pro
           <span className="min-w-0 flex-1 truncate font-medium"><LinkifiedText text={task.title || 'Untitled'} /></span>
         </span>
       ) : (
-        <span className="min-w-0 flex-1 truncate text-[13px] font-medium"><LinkifiedText text={task.title || 'Untitled'} /></span>
+        <span className="min-w-32 flex-1 truncate text-[13px] font-medium"><LinkifiedText text={task.title || 'Untitled'} /></span>
       )}
       {has('labels') && task.labels.length > 0 ? (
-        <span className="flex shrink-0 gap-1 max-[1099px]:hidden">
-          {task.labels.map((labelId) => {
-            const label = labels.find((item) => item.id === labelId)
-            return label ? <LabelPill key={label.id} label={label} /> : null
-          })}
-        </span>
+        // capped and shrinkable, so many or long labels never widen the row or move the columns after it
+        <LabelList labels={task.labels.flatMap((id) => labels.find((label) => label.id === id) ?? [])} max={2} className="max-w-72 justify-end max-[1099px]:hidden" />
       ) : null}
       {/* fixed-width progress, project, due date and assignee slots keep the columns aligned across rows;
           the progress slot is a min width (right-aligned) so rare 3-digit counts grow it instead of overflowing */}
