@@ -2173,7 +2173,8 @@ export type LabelRuleSettings = {
     owner_labels: boolean;
     rules: Array<LabelRuleRecord>;
     /**
-     * The `<name>` of each `owner:` label of the project that names no member (or more than one).
+     * The `<name>` of each `owner:` label of the project that has no rule (name map entry) and
+     * names no member (or more than one).
      */
     unmatched_owner_names: Array<string>;
 };
