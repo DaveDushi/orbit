@@ -544,8 +544,8 @@ async fn setup_complete(
                 "/api/v1/setup/complete",
                 request_id.as_ref(),
             ),
-            SetupError::Unavailable(_) => {
-                ApiError::internal("/api/v1/setup/complete", request_id.as_ref())
+            SetupError::Unavailable(error) => {
+                ApiError::internal("/api/v1/setup/complete", request_id.as_ref()).cause(error)
             }
         })?;
     let session = result.session;
@@ -800,11 +800,8 @@ async fn login(
                 request_id.as_ref(),
             ));
         }
-        Err(_) => {
-            return Err(ApiError::internal(
-                "/api/v1/auth/login",
-                request_id.as_ref(),
-            ));
+        Err(error) => {
+            return Err(ApiError::internal("/api/v1/auth/login", request_id.as_ref()).cause(error));
         }
     };
     Ok(signed_in_response(
@@ -897,10 +894,10 @@ async fn logout(
             ApiError::internal("/api/v1/auth/logout", request_id.as_ref()).cause(error)
         })?;
     if !revoked {
-        return Err(ApiError::internal(
-            "/api/v1/auth/logout",
-            request_id.as_ref(),
-        ));
+        return Err(
+            ApiError::internal("/api/v1/auth/logout", request_id.as_ref())
+                .cause("session was not revoked"),
+        );
     }
     let mut response = StatusCode::NO_CONTENT.into_response();
     if let Some(SessionCredential::Cookie(_)) = state.cookie_mode.session_credential(&headers) {
@@ -973,9 +970,9 @@ async fn socket_ticket(
 ) -> Result<Json<SocketTicketResponse>, ApiError> {
     const INSTANCE: &str = "/api/v1/auth/socket-ticket";
     let session = authenticate(&state, &headers, INSTANCE, request_id.as_ref()).await?;
-    let app_key = state
-        .app_key
-        .ok_or_else(|| ApiError::internal(INSTANCE, request_id.as_ref()))?;
+    let app_key = state.app_key.ok_or_else(|| {
+        ApiError::internal(INSTANCE, request_id.as_ref()).cause("app key missing")
+    })?;
     let expires_at = TimestampMillis::from_millis(
         TimestampMillis::now().as_millis() + crate::socket_ticket::TICKET_LIFETIME_MS,
     );
@@ -1322,10 +1319,9 @@ async fn upload_avatar(
             request_id.as_ref(),
         )
     })?;
-    let uploads = state
-        .uploads
-        .as_ref()
-        .ok_or_else(|| ApiError::internal(instance, request_id.as_ref()))?;
+    let uploads = state.uploads.as_ref().ok_or_else(|| {
+        ApiError::internal(instance, request_id.as_ref()).cause("upload storage not configured")
+    })?;
     state
         .repository
         .set_avatar_audited(
@@ -1386,10 +1382,9 @@ async fn user_avatar(
         )
     };
     let user_id = user_id.parse::<Id>().map_err(|_| not_found())?;
-    let uploads = state
-        .uploads
-        .as_ref()
-        .ok_or_else(|| ApiError::internal(instance, request_id.as_ref()))?;
+    let uploads = state.uploads.as_ref().ok_or_else(|| {
+        ApiError::internal(instance, request_id.as_ref()).cause("upload storage not configured")
+    })?;
     let avatar = state
         .repository
         .avatar(uploads, session.user.id, user_id)
@@ -1435,7 +1430,10 @@ async fn change_password(
         .find_by_email(&session.user.email)
         .await
         .map_err(|error| ApiError::internal(instance, request_id.as_ref()).cause(error))?
-        .ok_or_else(|| ApiError::internal(instance, request_id.as_ref()))?;
+        .ok_or_else(|| {
+            ApiError::internal(instance, request_id.as_ref())
+                .cause("signed-in user's identity missing")
+        })?;
     // Throttled like sign-in, so a stolen session cannot guess the password here.
     let ip = client_ip
         .map(|Extension(client_ip)| client_ip.0)
@@ -1762,7 +1760,9 @@ async fn registration_complete(
                 instance,
                 request_id.as_ref(),
             ),
-            RegistrationError::Unavailable(_) => ApiError::internal(instance, request_id.as_ref()),
+            RegistrationError::Unavailable(error) => {
+                ApiError::internal(instance, request_id.as_ref()).cause(error)
+            }
         })?;
     let session = account.session;
     let mut response = (
@@ -1819,8 +1819,9 @@ async fn recovery_complete(
                 TimestampMillis::now(),
             )
             .await
-            .map_err(|_| {
+            .map_err(|error| {
                 ApiError::internal("/api/v1/auth/recovery/complete", request_id.as_ref())
+                    .cause(error)
             })?;
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
@@ -1852,7 +1853,12 @@ async fn recovery_complete(
                 "/api/v1/auth/recovery/complete",
                 request_id.as_ref(),
             ),
-            _ => ApiError::internal("/api/v1/auth/recovery/complete", request_id.as_ref()),
+            IdentityError::Unavailable(error) => {
+                ApiError::internal("/api/v1/auth/recovery/complete", request_id.as_ref())
+                    .cause(error)
+            }
+            error => ApiError::internal("/api/v1/auth/recovery/complete", request_id.as_ref())
+                .cause(error),
         })?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -2013,8 +2019,8 @@ fn password_problem(
     let detail = match error {
         PasswordError::InvalidLength => "Password must contain between 12 and 128 characters.",
         PasswordError::CommonPassword => "Choose a password that is not commonly used.",
-        PasswordError::InvalidHash | PasswordError::HashingFailed => {
-            return ApiError::internal(instance, request_id);
+        error @ (PasswordError::InvalidHash | PasswordError::HashingFailed) => {
+            return ApiError::internal(instance, request_id).cause(error);
         }
     };
     ApiError::new(

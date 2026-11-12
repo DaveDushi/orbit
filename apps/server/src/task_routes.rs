@@ -2793,14 +2793,15 @@ pub(crate) fn task_problem(
             instance,
             request_id,
         ),
-        TaskError::Unavailable(_) => ApiError::new(
+        TaskError::Unavailable(error) => ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal_error",
             "Internal server error",
             "An unexpected error occurred. Use the request ID when contacting support.",
             instance,
             request_id,
-        ),
+        )
+        .cause(error),
     }
 }
 

@@ -342,7 +342,7 @@ pub(super) async fn login_second_factor(
         .await),
         // The password changed or the account was suspended after the first step.
         Err(IdentityError::InvalidCredential) => Err(expired()),
-        Err(_) => Err(ApiError::internal(instance, request_id.as_ref())),
+        Err(error) => Err(ApiError::internal(instance, request_id.as_ref()).cause(error)),
     }
 }
 
@@ -471,17 +471,19 @@ pub(super) async fn setup_totp(
         request_id.as_ref(),
     )
     .await?;
-    let app_key = state
-        .app_key
-        .ok_or_else(|| ApiError::internal(instance, request_id.as_ref()))?;
+    let app_key = state.app_key.ok_or_else(|| {
+        ApiError::internal(instance, request_id.as_ref()).cause("app key missing")
+    })?;
     let mut bytes = [0_u8; 20];
     OsRng.fill_bytes(&mut bytes);
     let secret = Secret::from(bytes.to_vec());
     let encoded = secret.to_base32();
-    let totp = totp_for(secret, &session.user.email)
-        .ok_or_else(|| ApiError::internal(instance, request_id.as_ref()))?;
-    let encrypted = encrypt_secret(&app_key, &encoded)
-        .map_err(|()| ApiError::internal(instance, request_id.as_ref()))?;
+    let totp = totp_for(secret, &session.user.email).ok_or_else(|| {
+        ApiError::internal(instance, request_id.as_ref()).cause("could not build the TOTP")
+    })?;
+    let encrypted = encrypt_secret(&app_key, &encoded).map_err(|()| {
+        ApiError::internal(instance, request_id.as_ref()).cause("could not encrypt the secret")
+    })?;
     let started = state
         .repository
         .begin_totp_setup(session.user.id, &encrypted, TimestampMillis::now())
@@ -566,8 +568,9 @@ pub(super) async fn enable_totp(
         .enable_totp(
             session.user.id,
             step,
-            &recovery_code_key(&state)
-                .ok_or_else(|| ApiError::internal(instance, request_id.as_ref()))?,
+            &recovery_code_key(&state).ok_or_else(|| {
+                ApiError::internal(instance, request_id.as_ref()).cause("app key missing")
+            })?,
             request_id_value(request_id.as_ref()),
             TimestampMillis::now(),
         )
@@ -635,8 +638,9 @@ pub(super) async fn regenerate_recovery_codes(
         .repository
         .regenerate_recovery_codes(
             session.user.id,
-            &recovery_code_key(&state)
-                .ok_or_else(|| ApiError::internal(instance, request_id.as_ref()))?,
+            &recovery_code_key(&state).ok_or_else(|| {
+                ApiError::internal(instance, request_id.as_ref()).cause("app key missing")
+            })?,
             request_id_value(request_id.as_ref()),
             TimestampMillis::now(),
         )
@@ -687,7 +691,8 @@ pub(super) async fn confirm_password(
         .await
         .map_err(|decision| match decision {
             ThrottleDecision::RetryAfter(delay) => ApiError::throttled(delay, instance, request_id),
-            ThrottleDecision::Allowed => ApiError::internal(instance, request_id),
+            ThrottleDecision::Allowed => ApiError::internal(instance, request_id)
+                .cause("throttler refused an allowed reservation"),
         })?;
     let identity = state
         .repository

@@ -18,6 +18,7 @@ use axum::http::{Request, Response, StatusCode};
 use axum::response::Response as AxumResponse;
 use http_body_util::BodyExt;
 use tower::{Layer, Service};
+use tracing::Instrument;
 
 use crate::{Database, Problem, RateLimitConfig};
 use rate_limit::RateLimiter;
@@ -27,7 +28,7 @@ pub use request_id::RequestId;
 use security::Csp;
 pub use security::{ClientIp, CspSources, OriginPolicy, RequestTransport, bearer_token};
 
-/// Why a handler answered 500. The handler puts it in the response extensions, and the HTTP layer writes it to the
+/// Why a handler answered 5xx. The handler puts it in the response extensions, and the HTTP layer writes it to the
 /// `http request failed` log line. The client never sees it: it gets only the request ID.
 #[derive(Clone, Debug)]
 pub struct ErrorCause(pub String);
@@ -360,14 +361,31 @@ where
             tracing::debug!(
                 request_id = request_id.as_str(),
                 %method,
+                path = %instance,
                 "http request"
             );
-            let call = inner.call(Request::from_parts(parts, body));
+            // Logs written while the handler runs carry the request ID, method and path, so an error a handler
+            // logs can be matched to the request that failed.
+            let span = tracing::info_span!(
+                "request",
+                request_id = request_id.as_str(),
+                %method,
+                path = %instance
+            );
+            let call = inner
+                .call(Request::from_parts(parts, body))
+                .instrument(span);
             let result = match timeout {
                 Some(timeout) => match tokio::time::timeout(timeout, call).await {
                     Ok(result) => result,
                     Err(_) => {
-                        tracing::warn!(request_id = request_id.as_str(), "request timed out");
+                        tracing::warn!(
+                            request_id = request_id.as_str(),
+                            %method,
+                            path = %instance,
+                            ?timeout,
+                            "request timed out"
+                        );
                         return Ok(finish_response(
                             problem_response(
                                 StatusCode::REQUEST_TIMEOUT,
@@ -390,6 +408,8 @@ where
                 Err(_) => {
                     tracing::error!(
                         request_id = request_id.as_str(),
+                        %method,
+                        path = %instance,
                         error_type = std::any::type_name::<S::Error>(),
                         "inner HTTP service failed"
                     );
@@ -406,23 +426,39 @@ where
             {
                 rate_limiter.charge(charge).await;
             }
-            let response = if response.status() == StatusCode::INTERNAL_SERVER_ERROR
-                && body_too_large.load(Ordering::Relaxed)
-            {
-                too_large_response(&request_id, &instance)
-            } else if response.status() == StatusCode::INTERNAL_SERVER_ERROR {
-                let status = response.status();
+            let status = response.status();
+            // A body over the limit fails inside the handler as a 500; it is the client's 413, not a failure.
+            let too_large =
+                status == StatusCode::INTERNAL_SERVER_ERROR && body_too_large.load(Ordering::Relaxed);
+            if status.is_server_error() && !too_large {
                 let cause = response
                     .extensions()
                     .get::<ErrorCause>()
                     .map_or("not recorded", |cause| cause.0.as_str());
-                tracing::error!(
-                    request_id = request_id.as_str(),
-                    %method,
-                    %status,
-                    cause,
-                    "http request failed"
-                );
+                // A 500 is a bug or an outage; a 502, 503 or 504 (an upstream or a busy resource) is a warning.
+                if status == StatusCode::INTERNAL_SERVER_ERROR {
+                    tracing::error!(
+                        request_id = request_id.as_str(),
+                        %method,
+                        path = %instance,
+                        %status,
+                        cause,
+                        "http request failed"
+                    );
+                } else {
+                    tracing::warn!(
+                        request_id = request_id.as_str(),
+                        %method,
+                        path = %instance,
+                        %status,
+                        cause,
+                        "http request failed"
+                    );
+                }
+            }
+            let response = if too_large {
+                too_large_response(&request_id, &instance)
+            } else if status == StatusCode::INTERNAL_SERVER_ERROR {
                 Problem::internal(request_id.as_str(), &instance).into_response()
             } else {
                 response
