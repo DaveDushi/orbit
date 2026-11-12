@@ -104,6 +104,8 @@ pub struct StorageSettings {
     pub attachments_in_s3: bool,
     pub backups_in_s3: bool,
     pub backup_schedule: BackupSchedule,
+    /// Days a deleted or replaced attachment file stays in S3.
+    pub s3_keep_deleted_days: u32,
 }
 
 #[derive(Debug, Error)]
@@ -394,7 +396,8 @@ impl InstanceSettingsRepository {
     pub async fn storage(&self) -> Result<StorageSettings, sqlx::Error> {
         let row = sqlx::query(
             "SELECT s3_endpoint, s3_region, s3_bucket, s3_prefix, s3_access_key_id, s3_secret_access_key, \
-             s3_path_style, attachments_in_s3, backups_in_s3, backup_schedule FROM instance_settings WHERE id = 1",
+             s3_path_style, attachments_in_s3, backups_in_s3, backup_schedule, s3_keep_deleted_days FROM instance_settings \
+             WHERE id = 1",
         )
         .fetch_one(self.database.pool())
         .await?;
@@ -424,6 +427,8 @@ impl InstanceSettingsRepository {
             backups_in_s3: s3.is_some() && row.get::<i64, _>("backups_in_s3") == 1,
             s3,
             backup_schedule: BackupSchedule::parse(&row.get::<String, _>("backup_schedule")),
+            s3_keep_deleted_days: u32::try_from(row.get::<i64, _>("s3_keep_deleted_days"))
+                .unwrap_or(40),
         })
     }
 
@@ -503,6 +508,7 @@ impl InstanceSettingsRepository {
         attachments_in_s3: bool,
         backups_in_s3: bool,
         backup_schedule: BackupSchedule,
+        s3_keep_deleted_days: Option<u32>,
         request_id: &str,
         now: TimestampMillis,
     ) -> Result<(), StorageSettingsError> {
@@ -519,11 +525,12 @@ impl InstanceSettingsRepository {
         }
         sqlx::query(
             "UPDATE instance_settings SET attachments_in_s3 = $1, backups_in_s3 = $2, backup_schedule = $3, \
-             updated_at = $4 WHERE id = 1",
+             s3_keep_deleted_days = COALESCE($4, s3_keep_deleted_days), updated_at = $5 WHERE id = 1",
         )
         .bind(i64::from(attachments_in_s3))
         .bind(i64::from(backups_in_s3))
         .bind(backup_schedule.as_str())
+        .bind(s3_keep_deleted_days.map(i64::from))
         .bind(now.as_millis())
         .execute(&mut *transaction)
         .await?;
@@ -539,6 +546,7 @@ impl InstanceSettingsRepository {
                 "attachments_in_s3": attachments_in_s3,
                 "backups_in_s3": backups_in_s3,
                 "backup_schedule": backup_schedule.as_str(),
+                "s3_keep_deleted_days": s3_keep_deleted_days,
             }),
             now,
         )

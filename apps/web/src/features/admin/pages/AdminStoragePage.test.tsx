@@ -7,7 +7,7 @@ import { AdminStoragePage } from './AdminStoragePage'
 const originalFetch = globalThis.fetch
 afterEach(() => { globalThis.fetch = originalFetch })
 
-const NO_BUCKET = { s3: null, attachments_in_s3: false, backups_in_s3: false, backup_schedule: 'off', files_to_move: 0, move_error: null }
+const NO_BUCKET = { s3: null, attachments_in_s3: false, backups_in_s3: false, backup_schedule: 'off', s3_keep_deleted_days: 40, checking: false, files_to_move: 0, move_error: null }
 const S3 = { endpoint: 'http://minio:9000', region: 'us-east-1', bucket: 'orbit-files', prefix: '', access_key_id: 'orbit', path_style: true }
 
 test('a bucket is saved first, then a switch sends the other options unchanged', async () => {
@@ -46,6 +46,6 @@ test('a bucket is saved first, then a switch sends the other options unchanged',
   await waitFor(() => expect(requests).toHaveLength(2))
   expect(requests[1]).toEqual({
     url: '/api/v1/admin/settings/storage',
-    body: { attachments_in_s3: true, backups_in_s3: false, backup_schedule: 'daily' },
+    body: { attachments_in_s3: true, backups_in_s3: false, backup_schedule: 'daily', s3_keep_deleted_days: 40 },
   })
 })

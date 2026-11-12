@@ -1,13 +1,13 @@
 import { type Href, router, useNavigation, usePathname } from 'expo-router'
 import type { Permission } from '@orbit/api/generated/types.gen'
-import type { ReactNode } from 'react'
+import { type ReactNode, useState } from 'react'
 import { KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, Switch, View } from 'react-native'
 
 import { guestMayOpen, isGuestRole } from '../../data/guest'
 import { useAgentEnabled } from '../../hooks/agent'
 import { useOrbit } from '../../orbit-context'
 import { alpha, cssColors, setSchemePreference, useLayout, useTheme } from '../../theme'
-import { Icon, type IconName, IconButton, PaneHeader, SafeAreaView, Spinner, Text } from '../../ui'
+import { Icon, type IconName, IconButton, PaneHeader, PickerSheet, SafeAreaView, Spinner, Text } from '../../ui'
 import { MenuButton } from '../Drawer'
 
 export interface SettingsNavItem {
@@ -199,6 +199,39 @@ export function OptionText({ title, children }: { title: string; children?: Reac
       <Text className="font-noto-medium text-[13px]">{title}</Text>
       {children}
     </View>
+  )
+}
+
+/** A compact select: the current choice, which opens a picker sheet of the options. */
+export function Select<T extends string>({ value, options, onChange, label, disabled = false }: { value: T; options: readonly { value: T; label: string }[]; onChange: (value: T) => void; label: string; disabled?: boolean }) {
+  const { colors } = useTheme()
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        accessibilityState={{ disabled }}
+        disabled={disabled}
+        onPress={() => setOpen(true)}
+        className={`h-8 flex-row items-center justify-between gap-1.5 rounded-lg border border-input pr-2 pl-2.5 dark:bg-input/30 active:bg-input/50 ${disabled ? 'opacity-50' : ''}`}
+      >
+        <Text numberOfLines={1} className="shrink text-[14px] text-foreground">
+          {options.find((option) => option.value === value)?.label}
+        </Text>
+        <Icon name="chevronDown" size={16} color={colors.mutedForeground} />
+      </Pressable>
+      <PickerSheet
+        visible={open}
+        title={label}
+        options={options.map((option) => ({ key: option.value, label: option.label, selected: option.value === value }))}
+        onSelect={(key) => {
+          setOpen(false)
+          onChange(key as T)
+        }}
+        onClose={() => setOpen(false)}
+      />
+    </>
   )
 }
 

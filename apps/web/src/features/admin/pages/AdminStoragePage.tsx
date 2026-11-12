@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import type { BackupSchedule, CompressionStatus, S3View, StorageView } from '@orbit/api/generated/types.gen'
 import { ApiProblem } from '@orbit/api/problem'
 import { confirmAction } from '@/components/common/confirmAction'
+import { InfoTip } from '@/components/common/InfoTip'
 import { SettingsCard } from '@/components/common/SettingsCard'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -19,6 +20,12 @@ const SCHEDULE_OPTIONS: { value: BackupSchedule; label: string }[] = [
   { value: 'hourly', label: 'Every hour' },
   { value: 'daily', label: 'Every day' },
 ]
+
+const KEEP_DELETED_DAYS = [1, 7, 14, 30, 40, 90, 180, 365]
+
+function daysLabel(days: number) {
+  return days === 1 ? '1 day' : `${days} days`
+}
 
 function problemText(error: unknown, fallback: string) {
   return error instanceof ApiProblem ? error.detail : fallback
@@ -81,11 +88,12 @@ function UsageCard({ storage }: { storage: StorageView }) {
   // Set when the admin flips "Files in S3" here, so the row says when the move is done, even if it was too quick
   // to show any progress.
   const [watchingMove, setWatchingMove] = useState(false)
-  function change(options: Partial<Pick<StorageView, 'attachments_in_s3' | 'backups_in_s3' | 'backup_schedule'>>, message: string) {
+  function change(options: Partial<Pick<StorageView, 'attachments_in_s3' | 'backups_in_s3' | 'backup_schedule' | 's3_keep_deleted_days'>>, message: string) {
     save.mutate({
       attachments_in_s3: storage.attachments_in_s3,
       backups_in_s3: storage.backups_in_s3,
       backup_schedule: storage.backup_schedule,
+      s3_keep_deleted_days: storage.s3_keep_deleted_days,
       ...options,
     }, {
       onSuccess: () => {
@@ -95,6 +103,9 @@ function UsageCard({ storage }: { storage: StorageView }) {
       onError: (error) => toast.error(problemText(error, 'Storage settings could not be saved.')),
     })
   }
+  const keepOptions = [...new Set([...KEEP_DELETED_DAYS, storage.s3_keep_deleted_days])]
+    .sort((left, right) => left - right)
+    .map((days) => ({ value: String(days), label: daysLabel(days) }))
   const moving = storage.checking
     ? 'Checking which files to move…'
     : storage.files_to_move > 0
@@ -164,6 +175,24 @@ function UsageCard({ storage }: { storage: StorageView }) {
             </SelectContent>
           </Select>
         </SettingsRow>
+        {ready ? (
+          <SettingsRow className="flex-nowrap">
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5 text-[0.8125rem]">
+              <span className="inline-flex items-center gap-1.5 font-medium text-foreground">Keep deleted files in S3 <InfoTip text="A deleted or replaced attachment file (for example an image original after Compress images) stays in the bucket this long, then Orbit deletes it. Backups do not contain S3 files: restoring a backup older than this can miss files. The default, 40 days, covers all kept backups." /></span>
+            </div>
+            <Select
+              items={keepOptions}
+              value={String(storage.s3_keep_deleted_days)}
+              disabled={save.isPending}
+              onValueChange={(value) => change({ s3_keep_deleted_days: Number(value) }, 'Deleted files setting saved')}
+            >
+              <SelectTrigger aria-label="Keep deleted files in S3" className="w-36"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {keepOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </SettingsRow>
+        ) : null}
       </div>
     </SettingsCard>
   )

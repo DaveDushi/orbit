@@ -2,11 +2,12 @@ import { useState } from 'react'
 import { View } from 'react-native'
 
 import { ConfirmDialog, type ConfirmRequest } from '../../../../components/settings/Dialog'
-import { AdminShell, FieldLabel, Note, OptionHint, OptionText, Segmented, SettingsCard, SettingsRow, Toggle } from '../../../../components/settings/Shell'
+import { AdminShell, FieldLabel, Note, OptionHint, OptionText, Segmented, Select, SettingsCard, SettingsRow, Toggle } from '../../../../components/settings/Shell'
 import {
   BACKUP_SCHEDULE_OPTIONS,
   type CompressionStatus,
   compressionText,
+  keepDeletedOptions,
   movedText,
   movingText,
   s3Body,
@@ -165,6 +166,20 @@ function UsageCard({ storage }: { storage: StorageView }) {
         </OptionText>
         <Segmented label="Automatic backups" value={storage.backup_schedule} options={BACKUP_SCHEDULE_OPTIONS} onChange={(backup_schedule) => (save.isPending ? undefined : change({ backup_schedule }))} />
       </View>
+      {ready ? (
+        <View className="gap-2 border-t border-border px-4 py-3">
+          <OptionText title="Keep deleted files in S3">
+            <OptionHint>A deleted or replaced attachment file (for example an image original after Compress images) stays in the bucket this long, then Orbit deletes it. Backups do not contain S3 files: restoring a backup older than this can miss files. The default, 40 days, covers all kept backups.</OptionHint>
+          </OptionText>
+          <Select
+            label="Keep deleted files in S3"
+            value={String(storage.s3_keep_deleted_days)}
+            options={keepDeletedOptions(storage.s3_keep_deleted_days)}
+            disabled={save.isPending}
+            onChange={(days) => change({ s3_keep_deleted_days: Number(days) })}
+          />
+        </View>
+      ) : null}
       {save.isError ? <View className="border-t border-border px-4 py-3"><Note error>{errorMessage(save.error)}</Note></View> : null}
     </SettingsCard>
   )

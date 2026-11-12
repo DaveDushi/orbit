@@ -1769,6 +1769,8 @@ struct StorageView {
     /// New backups are uploaded to the bucket instead of kept on this server.
     backups_in_s3: bool,
     backup_schedule: BackupSchedule,
+    /// Days a deleted or replaced attachment file stays in S3, so restoring an older backup still finds it.
+    s3_keep_deleted_days: u32,
     /// Orbit has not counted the files to move since the switch changed yet; `files_to_move` is 0 until it has.
     checking: bool,
     /// Attachment files still waiting to move between this server's disk and the bucket.
@@ -1845,6 +1847,7 @@ async fn settings_view(
             attachments_in_s3: storage.attachments_in_s3,
             backups_in_s3: storage.backups_in_s3,
             backup_schedule: storage.backup_schedule,
+            s3_keep_deleted_days: storage.s3_keep_deleted_days,
             checking,
             files_to_move: u64::try_from(moving.remaining).unwrap_or(u64::MAX),
             move_error: moving.error,
@@ -2779,6 +2782,9 @@ struct StorageOptionsBody {
     /// New backups are uploaded to the bucket.
     backups_in_s3: bool,
     backup_schedule: BackupSchedule,
+    /// Days (1–365) a deleted or replaced attachment file stays in S3 before Orbit deletes it. Omitted: unchanged.
+    #[serde(default)]
+    s3_keep_deleted_days: Option<u32>,
 }
 
 /// Saves the limits of a shared installation; `null` or 0 is unlimited. A lower limit refuses new workspaces and
@@ -2836,6 +2842,19 @@ async fn save_storage_options(
     let instance = "/api/v1/admin/settings/storage";
     let session = require_root(&state, &headers, instance, request_id.as_ref()).await?;
     let database = state.identity.database();
+    if body
+        .s3_keep_deleted_days
+        .is_some_and(|days| !(1..=365).contains(&days))
+    {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_keep_deleted_days",
+            "Invalid number of days",
+            "Keep deleted files for 1 to 365 days.",
+            instance,
+            request_id.as_ref(),
+        ));
+    }
     if !body.attachments_in_s3 && crate::cluster::Cluster::of(database).others() > 0 {
         let current = InstanceSettingsRepository::new(database.clone())
             .storage()
@@ -2858,6 +2877,7 @@ async fn save_storage_options(
             body.attachments_in_s3,
             body.backups_in_s3,
             body.backup_schedule,
+            body.s3_keep_deleted_days,
             request_id_value(request_id.as_ref()),
             TimestampMillis::now(),
         )
