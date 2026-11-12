@@ -284,11 +284,11 @@ refuses the migrated database.
 Host change: `apt-get install --no-install-recommends libreoffice-calc libreoffice-writer libreoffice-impress
 libreoffice-core fonts-dejavu-core fonts-liberation2` (24.2.7); a csv → PDF conversion as `orbit` in
 `unshare --user --map-root-user --net` works. Rollback of it: `sudo apt-get purge -y 'libreoffice*' && sudo apt-get
-autoremove -y` (previews then say "Preview not available"). **Not done:** the R2 CORS rule of `wellrox-files` (the
-Drive bucket): every preflight from any origin answers 403, so browser uploads straight to the bucket (chat files over
-25 MiB, Drive uploads) and pdf.js/players that read Drive objects cross-origin can fail. It needs the rule of
-`docs/file-previews.md` (GET, PUT, HEAD from `https://orbit.easytomanage.com`, `AllowedHeaders *`, `ExposeHeaders`
-ETag, Content-Range, Accept-Ranges, Content-Length) set in the Cloudflare dashboard.
+autoremove -y` (previews then say "Preview not available"). **Not checked:** the R2 CORS rule of `wellrox-files` (the Drive bucket). A `curl` preflight
+answers 403 from any origin, but David's browser uploads to Drive (presigned PUT: a 137 MB mp4 on November 6, an xlsx
+on November 12 at 13:09) worked, so a rule exists. Whether it has the `ExposeHeaders` of `docs/file-previews.md` (ETag,
+Content-Range, Accept-Ranges, Content-Length; for pdf.js ranges and players on Drive objects) is not known: check it in
+the Cloudflare dashboard. A chat file over 25 MiB was not tried.
 
 Checks on the merged `main` (after `bun install --frozen-lockfile`, `npm ci` in `apps/agent`, fresh web `dist`):
 agent `tsc` and `node --test` (76 pass, 11 skipped, 0 fail); web `bun test` of `features/chat`, `features/drive`,
