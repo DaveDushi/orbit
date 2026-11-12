@@ -1390,6 +1390,7 @@ pub fn redacted_config(config: &Config) -> String {
         format!("ORBIT_BIND={}", config.http.bind),
         format!("ORBIT_PORT={}", config.http.port),
         format!("ORBIT_PUBLIC_ORIGIN={}", config.http.public_origin),
+        format!("ORBIT_PUBLIC_HOOKS_URL={}", config.http.hooks_origin()),
         format!("ORBIT_TRUSTED_PROXIES={proxies}"),
         format!(
             "ORBIT_SHUTDOWN_DELAY_SECONDS={}",

@@ -43,7 +43,8 @@ pub struct ChatState {
     pub(crate) cookie_mode: CookieMode,
     pub(crate) link_previews: Arc<LinkPreviewer>,
     pub(crate) reader: FileReader,
-    /// The origin of the webhook URLs that Orbit shows (`ORBIT_PUBLIC_ORIGIN`).
+    /// The origin of the webhook URLs that Orbit shows and of `response_url`
+    /// (`ORBIT_PUBLIC_HOOKS_URL`, else `ORBIT_PUBLIC_ORIGIN`).
     pub(crate) public_origin: Arc<str>,
     /// Encrypts the signing secrets of interactive webhooks; `None` turns interactivity off.
     pub(crate) app_key: Option<[u8; 32]>,

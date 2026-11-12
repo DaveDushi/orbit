@@ -20,6 +20,12 @@ the workspace.
 **Make new URL** (rotate) gives the same webhook a new secret. The old URL stops working at once.
 **Delete** stops the URL for good. The messages that the webhook posted stay.
 
+The URL starts with the server's public origin (`ORBIT_PUBLIC_ORIGIN`). When the public origin is
+behind a login gateway, the operator sets `ORBIT_PUBLIC_HOOKS_URL` to an origin that lets
+`POST /api/v1/hooks/chat/…` through, for example `https://orbit-hooks.example.com`. Then the webhook
+URL, the **Try it** command and each click's `response_url` use that origin. The path stays the same,
+so an old URL works when you change only its start to the hooks origin.
+
 ## Post a message
 
 ```bash

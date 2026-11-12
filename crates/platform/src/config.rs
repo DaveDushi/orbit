@@ -14,6 +14,7 @@ const MAX_SECRET_FILE_BYTES: u64 = 64 * 1024;
 const HTTP_PORT_ENV: &str = "ORBIT_PORT";
 const HTTP_BIND_ENV: &str = "ORBIT_BIND";
 const HTTP_PUBLIC_ORIGIN_ENV: &str = "ORBIT_PUBLIC_ORIGIN";
+const HTTP_PUBLIC_HOOKS_URL_ENV: &str = "ORBIT_PUBLIC_HOOKS_URL";
 const HTTP_TRUSTED_PROXIES_ENV: &str = "ORBIT_TRUSTED_PROXIES";
 const HTTP_SHUTDOWN_DELAY_ENV: &str = "ORBIT_SHUTDOWN_DELAY_SECONDS";
 const ENVIRONMENT_ENV: &str = "ORBIT_ENV";
@@ -106,6 +107,9 @@ pub struct HttpConfig {
     pub bind: IpAddr,
     pub port: u16,
     pub public_origin: String,
+    /// The origin of the chat webhook URLs (incoming webhooks and `response_url`), for a gateway
+    /// that lets only `/api/v1/hooks/` through. `None`: `public_origin`.
+    pub public_hooks_url: Option<String>,
     pub trusted_proxies: Vec<IpNet>,
     /// How long the server still serves after a stop signal while `/health/ready` reports 503,
     /// so a load balancer takes it out first.
@@ -118,6 +122,7 @@ impl Default for HttpConfig {
             bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 8080,
             public_origin: "http://127.0.0.1:8080".to_owned(),
+            public_hooks_url: None,
             trusted_proxies: Vec::new(),
             shutdown_delay_seconds: 0,
         }
@@ -125,6 +130,15 @@ impl Default for HttpConfig {
 }
 
 impl HttpConfig {
+    /// The origin of the chat webhook URLs, without a trailing slash.
+    #[must_use]
+    pub fn hooks_origin(&self) -> &str {
+        self.public_hooks_url
+            .as_deref()
+            .unwrap_or(&self.public_origin)
+            .trim_end_matches('/')
+    }
+
     #[must_use]
     pub const fn listen_addr(&self) -> SocketAddr {
         SocketAddr::new(self.bind, self.port)
@@ -694,23 +708,28 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
-        let valid_origin = self
-            .http
-            .public_origin
-            .parse::<Uri>()
-            .ok()
-            .is_some_and(|origin| {
+        let valid_origin = |value: &str| {
+            value.parse::<Uri>().ok().is_some_and(|origin| {
                 matches!(origin.scheme_str(), Some("http" | "https"))
                     && origin.authority().is_some()
                     && origin.path() == "/"
                     && origin.query().is_none()
-            });
-        if !valid_origin {
-            return Err(ConfigError::InvalidSetting {
-                key: HTTP_PUBLIC_ORIGIN_ENV,
-                detail: "must be an absolute http or https origin without a path or query"
-                    .to_owned(),
-            });
+            })
+        };
+        for (key, value) in [
+            (HTTP_PUBLIC_ORIGIN_ENV, Some(&self.http.public_origin)),
+            (
+                HTTP_PUBLIC_HOOKS_URL_ENV,
+                self.http.public_hooks_url.as_ref(),
+            ),
+        ] {
+            if value.is_some_and(|value| !valid_origin(value)) {
+                return Err(ConfigError::InvalidSetting {
+                    key,
+                    detail: "must be an absolute http or https origin without a path or query"
+                        .to_owned(),
+                });
+            }
         }
         match self.environment {
             EnvironmentMode::Unspecified => {
@@ -828,6 +847,9 @@ fn apply_environment(
             config.http.bind = parse_environment(key, value)?;
         } else if key == HTTP_PUBLIC_ORIGIN_ENV {
             config.http.public_origin = value.clone();
+        } else if key == HTTP_PUBLIC_HOOKS_URL_ENV {
+            config.http.public_hooks_url =
+                Some(value.trim().to_owned()).filter(|value| !value.is_empty());
         } else if key == HTTP_TRUSTED_PROXIES_ENV {
             config.http.trusted_proxies = value
                 .split(',')
@@ -1005,6 +1027,45 @@ mod tests {
         let warnings = config.warnings();
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].starts_with("ORBIT_TRUSTED_PROXIES contains ::/0"));
+    }
+
+    #[test]
+    fn hooks_origin_is_the_hooks_url_or_the_public_origin() {
+        let config = production(&[]);
+        assert_eq!(config.http.hooks_origin(), "https://orbit.example");
+        let config = production(&[("ORBIT_PUBLIC_HOOKS_URL", "")]);
+        assert_eq!(config.http.hooks_origin(), "https://orbit.example");
+        let config = production(&[("ORBIT_PUBLIC_HOOKS_URL", "https://hooks.example/")]);
+        assert_eq!(config.http.hooks_origin(), "https://hooks.example");
+    }
+
+    #[test]
+    fn hooks_url_must_be_an_origin() {
+        let env = |value: &str| {
+            [
+                ("ORBIT_ENV", "development"),
+                ("ORBIT_PUBLIC_HOOKS_URL", value),
+            ]
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value.to_owned()))
+            .collect::<BTreeMap<_, _>>()
+        };
+        for value in [
+            "hooks.example",
+            "https://hooks.example/api",
+            "ftp://hooks.example",
+        ] {
+            assert!(
+                matches!(
+                    Config::from_environment(env(value)),
+                    Err(ConfigError::InvalidSetting {
+                        key: "ORBIT_PUBLIC_HOOKS_URL",
+                        ..
+                    })
+                ),
+                "{value}"
+            );
+        }
     }
 
     #[test]
