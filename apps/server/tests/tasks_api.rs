@@ -1376,6 +1376,77 @@ async fn durable_retention_purges_expired_projects_and_tasks() {
 }
 
 #[tokio::test]
+async fn durable_retention_purges_token_granted_projects_and_idle_sessions() {
+    let fixture = Fixture::new().await;
+    let now = TimestampMillis::now().as_millis();
+    let month_ago = now - 31 * 24 * 60 * 60 * 1_000;
+    // A revoked token that was granted the project both ways (ON DELETE RESTRICT).
+    let token_id = Id::new_v7().to_string();
+    sqlx::query(
+        "INSERT INTO api_tokens (id, workspace_id, name, token_hash, token_prefix, created_by, \
+         created_at, revoked_at, project_id) VALUES ($1, $2, 'Old', $3, 'orb_old', $4, $5, $5, $6)",
+    )
+    .bind(&token_id)
+    .bind(&fixture.workspace_id)
+    .bind(vec![7_u8; 32])
+    .bind(fixture.owner_id.to_string())
+    .bind(now)
+    .bind(&fixture.project_id)
+    .execute(fixture.database.pool())
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO api_token_projects (token_id, project_id) VALUES ($1, $2)")
+        .bind(&token_id)
+        .bind(&fixture.project_id)
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE projects SET deleted_at = $1 WHERE id = $2")
+        .bind(month_ago)
+        .bind(&fixture.project_id)
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    // The owner's session, last used a month ago.
+    sqlx::query("UPDATE sessions SET last_activity_at = $1 WHERE user_id = $2")
+        .bind(month_ago)
+        .bind(fixture.owner_id.to_string())
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+
+    WorkspaceRepository::new((*fixture.database).clone())
+        .purge_retention(TimestampMillis::now())
+        .await
+        .unwrap();
+
+    for sql in [
+        "SELECT COUNT(*) FROM projects WHERE id = $1",
+        "SELECT COUNT(*) FROM api_token_projects WHERE project_id = $1",
+    ] {
+        let rows: i64 = sqlx::query_scalar(sql)
+            .bind(&fixture.project_id)
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap();
+        assert_eq!(rows, 0, "{sql}");
+    }
+    let token_project: Option<String> =
+        sqlx::query_scalar("SELECT project_id FROM api_tokens WHERE id = $1")
+            .bind(&token_id)
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap();
+    assert_eq!(token_project, None);
+    let sessions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE user_id = $1")
+        .bind(fixture.owner_id.to_string())
+        .fetch_one(fixture.database.pool())
+        .await
+        .unwrap();
+    assert_eq!(sessions, 0);
+}
+
+#[tokio::test]
 async fn workspace_retention_cascades_through_task_records() {
     let fixture = Fixture::new().await;
     fixture.create_task("Workspace child").await;
