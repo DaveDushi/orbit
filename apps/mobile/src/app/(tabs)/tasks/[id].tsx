@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { openURL } from 'expo-linking'
 import { router, useLocalSearchParams } from 'expo-router'
 import { type ReactNode, useMemo, useState } from 'react'
-import { Alert, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, View } from 'react-native'
+import { Alert, Image, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, View } from 'react-native'
 import { TextInput } from '../../../ui/scaled'
 
 import { Attachments, type ShownFile } from '../../../components/tasks/Attachments'
@@ -664,16 +664,23 @@ function TimelineRow({ first, last, glyph, children }: { first: boolean; last: b
 
 /** A comment and its replies in one card. */
 function Thread({ thread, nameOf, filesOf }: { thread: CommentThread; nameOf: (userId: string) => string; filesOf: (comment: api.CommentRecord) => ShownFile[] }) {
+  /** A comment from GitHub shows its GitHub login; one from a service account its name. */
+  const authorOf = (comment: api.CommentRecord) => comment.github_author_login ?? comment.author_service_account_name ?? nameOf(comment.author_id)
   return (
     <View className="my-3 rounded-lg border border-border bg-card/50 overflow-hidden">
       {[thread.root, ...thread.replies].map((comment, index) => (
         <View key={comment.id} className={`flex-row gap-2 px-3.5 py-2.5 border-border ${index === 0 ? 'border-t-0' : 'border-t'}`}>
-          <Avatar id={comment.author_id} name={nameOf(comment.author_id)} size={20} />
+          {comment.github_author_avatar_url ? (
+            <Image source={{ uri: comment.github_author_avatar_url }} accessibilityLabel={authorOf(comment)} className="size-5 rounded-full bg-muted" />
+          ) : (
+            <Avatar id={comment.author_id} name={authorOf(comment)} size={20} />
+          )}
           <View className="flex-1 min-w-0">
             <View className="min-h-5 flex-row items-center gap-1.5">
               <Text numberOfLines={1} className="font-noto-semibold text-[13px] shrink">
-                {nameOf(comment.author_id)}
+                {authorOf(comment)}
               </Text>
+              {comment.github_author_login ? <Text className="font-noto-medium text-[11px] text-muted-foreground">via GitHub</Text> : null}
               <Text className="text-[11px] text-muted-foreground/70 leading-[21px]">·</Text>
               <Text className="font-noto-medium text-[11px] text-muted-foreground">
                 {relativeAgo(comment.created_at)}

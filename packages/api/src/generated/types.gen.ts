@@ -1183,6 +1183,14 @@ export type CommentRecord = {
      */
     can_edit: boolean;
     created_at: string;
+    /**
+     * The avatar of `github_author_login` on `avatars.githubusercontent.com`.
+     */
+    github_author_avatar_url: string | null;
+    /**
+     * The GitHub login of a comment that came from GitHub (its service account is "GitHub").
+     */
+    github_author_login: string | null;
     id: string;
     parent_id?: string | null;
     task_id: string;
@@ -3442,6 +3450,14 @@ export type PageCommentRecord = {
          */
         can_edit: boolean;
         created_at: string;
+        /**
+         * The avatar of `github_author_login` on `avatars.githubusercontent.com`.
+         */
+        github_author_avatar_url: string | null;
+        /**
+         * The GitHub login of a comment that came from GitHub (its service account is "GitHub").
+         */
+        github_author_login: string | null;
         id: string;
         parent_id?: string | null;
         task_id: string;

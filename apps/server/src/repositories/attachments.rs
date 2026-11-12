@@ -527,6 +527,8 @@ impl AttachmentRepository {
                 author_id: session.user.id,
                 author_service_account_id: None,
                 author_service_account_name: None,
+                github_author_login: None,
+                github_author_avatar_url: None,
                 parent_id: None,
                 body: String::new(),
                 body_json: None,

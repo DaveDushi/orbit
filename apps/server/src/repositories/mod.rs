@@ -7,6 +7,7 @@ pub mod chat;
 pub mod drive;
 pub mod drive_refs;
 pub mod drive_shares;
+pub mod github_comments;
 pub mod identity;
 pub mod instance_settings;
 pub mod label_rules;

@@ -310,6 +310,7 @@ impl App {
             workspace_exports.clone(),
             billing.clone(),
             mailer.clone(),
+            app_key,
             config.jobs.concurrency,
         )
         .await?;
@@ -995,6 +996,7 @@ async fn initialize_production_services(
     workspace_exports: WorkspaceExportService,
     billing: Option<crate::billing::Billing>,
     mailer: Mailer,
+    app_key: Option<[u8; 32]>,
     concurrency: usize,
 ) -> Result<ProductionServices, AppError> {
     let store = JobStore::new(database.clone());
@@ -1094,6 +1096,7 @@ async fn initialize_production_services(
         .and_then(|worker| crate::notion::import::register_jobs(worker, notion_imports))
         .and_then(|worker| crate::workspace_export::register_job(worker, workspace_exports))
         .and_then(|worker| crate::previews::register_jobs(worker, previews))
+        .and_then(|worker| crate::github_comments::register_job(worker, database.clone(), app_key))
         .and_then(|worker| match billing {
             Some(billing) => crate::billing::register_jobs(worker, billing),
             None => Ok(worker),

@@ -627,8 +627,8 @@ pub(crate) async fn start_github_manifest(
             "redirect_url": format!("{origin}/api/v1/integrations/github/manifest/callback"),
             "setup_url": format!("{origin}/settings/github?workspace={workspace}&github=installed"),
             "public": false,
-            "default_permissions": { "issues": "read", "pull_requests": "read" },
-            "default_events": ["issues", "pull_request"]
+            "default_permissions": { "issues": "write", "pull_requests": "write" },
+            "default_events": ["issues", "issue_comment", "pull_request"]
         }),
     }))
 }
@@ -932,7 +932,7 @@ async fn github_webhook_from_database(
         update_github_installation(state, &workspace, &payload, &event, action, id).await?;
         return Ok(StatusCode::OK);
     }
-    if !matches!(event.as_str(), "issues" | "pull_request") {
+    if !matches!(event.as_str(), "issues" | "pull_request" | "issue_comment") {
         return Ok(StatusCode::ACCEPTED);
     }
     let workspace_id: Id = workspace.parse().map_err(|_| ApiError::internal(id))?;
@@ -940,6 +940,26 @@ async fn github_webhook_from_database(
         // A 2xx keeps GitHub from disabling the hook; the change is dropped.
         tracing::info!(%workspace_id, event, "GitHub event dropped: the workspace is read-only");
         return Ok(StatusCode::ACCEPTED);
+    }
+    if event == "issue_comment" {
+        let request = id.map_or("github-webhook", RequestId::as_str);
+        let changed = crate::github_comments::webhook(
+            state.tasks.database(),
+            workspace_id,
+            app_id,
+            &payload,
+            request,
+        )
+        .await
+        .map_err(|error| {
+            tracing::warn!(?error, "GitHub comment sync failed");
+            ApiError::internal(id)
+        })?;
+        return Ok(if changed {
+            StatusCode::OK
+        } else {
+            StatusCode::ACCEPTED
+        });
     }
     let repository = payload
         .pointer("/repository/full_name")

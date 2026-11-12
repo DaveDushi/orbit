@@ -66,7 +66,12 @@ async fn database_github_app_routes_issues_without_orbit_tokens() {
     );
     assert_eq!(
         manifest["manifest"]["default_events"],
-        json!(["issues", "pull_request"])
+        json!(["issues", "issue_comment", "pull_request"])
+    );
+    // Comment sync posts, edits and deletes comments on issues and pull requests.
+    assert_eq!(
+        manifest["manifest"]["default_permissions"],
+        json!({"issues": "write", "pull_requests": "write"})
     );
     assert_eq!(manifest["manifest"]["public"], false);
     assert_eq!(

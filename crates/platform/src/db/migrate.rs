@@ -649,6 +649,11 @@ impl MigrationRunner {
                     include_str!("../../../../apps/server/migrations/0099_label_rules.sql"),
                     false,
                 ),
+                Migration::new(
+                    100,
+                    include_str!("../../../../apps/server/migrations/0100_github_comment_sync.sql"),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -976,6 +981,13 @@ impl MigrationRunner {
             Migration::new(
                 99,
                 include_str!("../../../../apps/server/migrations/postgres/0099_label_rules.sql"),
+                false,
+            ),
+            Migration::new(
+                100,
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0100_github_comment_sync.sql"
+                ),
                 false,
             ),
         ];

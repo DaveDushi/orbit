@@ -17,7 +17,7 @@ const record: TaskRecord = {
   parent: null, parent_task_id: null, sub_issue_count: 0, sub_issue_closed_count: 0,
 }
 const comment: CommentRecord = {
-  id: 'comment-1', workspace_id: 'workspace-1', task_id: record.id, author_id: 'user-1', author_service_account_id: null, author_service_account_name: null,
+  id: 'comment-1', workspace_id: 'workspace-1', task_id: record.id, author_id: 'user-1', author_service_account_id: null, author_service_account_name: null, github_author_login: null, github_author_avatar_url: null,
   body: 'Looks good', body_json: null, can_edit: true, can_delete: true, created_at: '2026-09-04T12:00:00Z', updated_at: '2026-09-04T12:05:00Z', version: 3,
 }
 const attachment: AttachmentRecord = {

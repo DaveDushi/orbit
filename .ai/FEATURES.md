@@ -66,6 +66,12 @@ Core files: `TasksPage.tsx`, `components/TaskList.tsx`, `components/TaskBoard.ts
 - Comments: Cmd/Ctrl+Enter sends; edits use the same editor (Cmd/Ctrl+Enter saves, Esc cancels; Save on an emptied
   comment asks to delete it; an unchanged Save sends nothing); the server reads mentions from the mention nodes and
   notifies only newly mentioned members on edit.
+- GitHub comment sync (migration 0100, `github_comments.rs` + `repositories/github_comments.rs`, `docs/github.md`):
+  `issue_comment` webhooks of a linked, unpaused issue or pull request become notes of the GitHub service account with
+  `github_author_login`/`github_author_avatar_url` (not editable in Orbit; a moderator delete is Orbit-only). A note
+  written in Orbit queues a `github.comment` job in its transaction (concurrency 1 on all servers) that reconciles the
+  GitHub comment (POST/PATCH/DELETE with the App installation token). Echoes are skipped by the App's bot login or
+  `performed_via_github_app` and by the stored `github_comment_id`. Debug builds honour `ORBIT_DEV_GITHUB_API_URL`.
 - Followers (migration 0090, `task_followers`, `repositories/task_followers.rs`): the creator (a person, not a service
   account), assignees, comment authors and @mentioned members follow a task; the Followers field of the task side panel
   (web and mobile) lists them and has Follow / Unfollow (`GET …/tasks/{id}/followers`, `PUT`/`DELETE …/followers/me`).

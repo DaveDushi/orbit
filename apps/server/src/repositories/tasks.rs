@@ -22,6 +22,7 @@ use crate::collab::markdown_import::markdown_to_blocks;
 use crate::collab::sanitize::{sanitize_blocks_for, trim_comment_blocks};
 use crate::collab::{CollabError, CollabHub, CollabWrite, DocKey, DocKind, LinkPolicy};
 use crate::export::markdown::{KeepLinks, blocks_to_markdown};
+use crate::repositories::github_comments;
 
 const TRASH_RETENTION_MILLIS: i64 = 30 * 24 * 60 * 60 * 1_000;
 
@@ -178,6 +179,12 @@ pub struct CommentRecord {
     pub author_service_account_id: Option<Id>,
     #[schema(required = true)]
     pub author_service_account_name: Option<String>,
+    /// The GitHub login of a comment that came from GitHub (its service account is "GitHub").
+    #[schema(required = true)]
+    pub github_author_login: Option<String>,
+    /// The avatar of `github_author_login` on `avatars.githubusercontent.com`.
+    #[schema(required = true)]
+    pub github_author_avatar_url: Option<String>,
     #[schema(value_type = Option<String>)]
     pub parent_id: Option<Id>,
     /// Markdown copy of `body_json`.
@@ -2763,8 +2770,8 @@ impl TaskRepository {
         let after = cursor_i64_pair(cursor, &fingerprint)?;
         let mut query = SqlBuilder::new(
             "SELECT task_comments.id, task_comments.workspace_id, task_id, author_id, author_service_account_id, \
-             service_accounts.name AS author_service_account_name, parent_id, body, body_json, task_comments.version, \
-             task_comments.created_at, task_comments.updated_at FROM task_comments \
+             service_accounts.name AS author_service_account_name, github_author_login, github_author_avatar_url, \
+             parent_id, body, body_json, task_comments.version, task_comments.created_at, task_comments.updated_at FROM task_comments \
              LEFT JOIN service_accounts ON service_accounts.id = task_comments.author_service_account_id \
              WHERE task_comments.workspace_id = ",
         );
@@ -2878,6 +2885,7 @@ impl TaskRepository {
             task_followers::follow_in_tx(&mut tx, task_id, &[actor_id], now).await?;
             task_followers::follow_in_tx(&mut tx, task_id, &mentioned_user_ids, now).await?;
         }
+        github_comments::queue_in(&mut tx, workspace_id, task_id, id, now).await?;
         self.record_write(
             &mut tx,
             workspace_id,
@@ -2897,6 +2905,8 @@ impl TaskRepository {
             author_id: actor_id,
             author_service_account_id: service_account.map(|(id, _)| id),
             author_service_account_name: service_account.map(|(_, name)| name.to_owned()),
+            github_author_login: None,
+            github_author_avatar_url: None,
             parent_id,
             body,
             body_json: Some(blocks),
@@ -2955,6 +2965,7 @@ impl TaskRepository {
         )
         .await?;
         task_followers::follow_in_tx(&mut tx, task_id, &added, now).await?;
+        github_comments::queue_in(&mut tx, workspace_id, task_id, comment_id, now).await?;
         record_mutation(
             &mut tx,
             workspace_id,
@@ -2994,6 +3005,7 @@ impl TaskRepository {
             return Err(TaskError::Forbidden);
         }
         check_version(expected_version, current.version, &current)?;
+        github_comments::queue_in(&mut tx, workspace_id, task_id, comment_id, now).await?;
         sqlx::query("DELETE FROM task_comments WHERE id = $1 AND workspace_id = $2 AND task_id = $3 AND version = $4").bind(comment_id.to_string()).bind(workspace_id.to_string()).bind(task_id.to_string()).bind(expected_version as i64).execute(&mut *tx).await?;
         record_mutation(
             &mut tx,
@@ -4221,7 +4233,7 @@ async fn imported_description(
 }
 
 /// The users of `candidates` who can be notified: active members of the workspace, not `author`.
-async fn mentionable(
+pub(super) async fn mentionable(
     tx: &mut Transaction<'_, Any>,
     workspace_id: Id,
     candidates: Vec<Id>,
@@ -4247,7 +4259,7 @@ async fn mentionable(
 
 /// A comment's markdown and blocks: blocks are sanitized (an empty comment is invalid) and
 /// rendered as markdown; markdown is kept as written and converted to blocks.
-async fn comment_content(
+pub(super) async fn comment_content(
     tx: &mut Transaction<'_, Any>,
     workspace_id: Id,
     task_id: Id,
@@ -4446,7 +4458,7 @@ pub(super) async fn record_mutation(
     Ok(())
 }
 
-async fn github_service_account_in_tx(
+pub(super) async fn github_service_account_in_tx(
     tx: &mut Transaction<'_, Any>,
     workspace_id: Id,
     actor_id: Id,
@@ -4467,7 +4479,7 @@ async fn github_service_account_in_tx(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn record_principal_mutation(
+pub(super) async fn record_principal_mutation(
     tx: &mut Transaction<'_, Any>,
     workspace_id: Id,
     actor_id: Id,
@@ -4649,7 +4661,7 @@ async fn comment_in_tx(
     comment_id: Id,
     actor: Actor,
 ) -> Result<CommentRecord, TaskError> {
-    let row = sqlx::query("SELECT task_comments.id, task_comments.workspace_id, task_id, author_id, author_service_account_id, service_accounts.name AS author_service_account_name, parent_id, body, body_json, task_comments.version, task_comments.created_at, task_comments.updated_at FROM task_comments LEFT JOIN service_accounts ON service_accounts.id = task_comments.author_service_account_id WHERE task_comments.id = $1 AND task_comments.workspace_id = $2 AND task_id = $3")
+    let row = sqlx::query("SELECT task_comments.id, task_comments.workspace_id, task_id, author_id, author_service_account_id, service_accounts.name AS author_service_account_name, github_author_login, github_author_avatar_url, parent_id, body, body_json, task_comments.version, task_comments.created_at, task_comments.updated_at FROM task_comments LEFT JOIN service_accounts ON service_accounts.id = task_comments.author_service_account_id WHERE task_comments.id = $1 AND task_comments.workspace_id = $2 AND task_id = $3")
         .bind(comment_id.to_string()).bind(workspace_id.to_string()).bind(task_id.to_string()).fetch_optional(&mut **tx).await?.ok_or(TaskError::NotFound)?;
     comment_from_row(row, actor)
 }
@@ -4964,6 +4976,8 @@ fn comment_from_row(row: sqlx::any::AnyRow, actor: Actor) -> Result<CommentRecor
         author_id,
         author_service_account_id,
         author_service_account_name: row.get("author_service_account_name"),
+        github_author_login: row.get("github_author_login"),
+        github_author_avatar_url: row.get("github_author_avatar_url"),
         can_edit: actor.can_edit_comment(member_author),
         can_delete: actor.can_delete_comment(member_author),
         parent_id: row

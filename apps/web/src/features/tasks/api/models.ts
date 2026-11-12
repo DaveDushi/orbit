@@ -42,6 +42,8 @@ export interface TaskComment {
   authorId: string
   /** Set when a service account wrote the comment through an API token; it is the author then. */
   authorServiceAccountName?: string
+  /** Set for a comment that came from GitHub: its GitHub author. */
+  githubAuthor?: { login: string; avatarUrl?: string }
   /** Markdown copy of `bodyJson`. */
   body: string
   /** BlockNote blocks; null for a comment written before rich text (only `body` exists). */
@@ -336,6 +338,9 @@ export function taskFromRecord(
       id: comment.id,
       authorId: comment.author_id,
       authorServiceAccountName: comment.author_service_account_name ?? undefined,
+      githubAuthor: comment.github_author_login
+        ? { login: comment.github_author_login, avatarUrl: comment.github_author_avatar_url ?? undefined }
+        : undefined,
       body: comment.body,
       bodyJson: comment.body_json ?? null,
       canEdit: comment.can_edit,

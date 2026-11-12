@@ -50132,6 +50132,8 @@
           "author_id",
           "author_service_account_id",
           "author_service_account_name",
+          "github_author_login",
+          "github_author_avatar_url",
           "body",
           "body_json",
           "can_edit",
@@ -50183,6 +50185,20 @@
           "created_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "github_author_avatar_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The avatar of `github_author_login` on `avatars.githubusercontent.com`."
+          },
+          "github_author_login": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The GitHub login of a comment that came from GitHub (its service account is \"GitHub\")."
           },
           "id": {
             "type": "string"
@@ -56124,6 +56140,8 @@
                 "author_id",
                 "author_service_account_id",
                 "author_service_account_name",
+                "github_author_login",
+                "github_author_avatar_url",
                 "body",
                 "body_json",
                 "can_edit",
@@ -56175,6 +56193,20 @@
                 "created_at": {
                   "type": "string",
                   "format": "date-time"
+                },
+                "github_author_avatar_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The avatar of `github_author_login` on `avatars.githubusercontent.com`."
+                },
+                "github_author_login": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The GitHub login of a comment that came from GitHub (its service account is \"GitHub\")."
                 },
                 "id": {
                   "type": "string"

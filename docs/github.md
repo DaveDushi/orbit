@@ -20,7 +20,16 @@ For local development, `just dev` also loads a root `.env.local` file. Put `ORBI
 
 If GitHub rejects the App manifest, fix the problem and select **Register GitHub App** again. A new attempt replaces the pending registration. GitHub sends [`installation` and `installation_repositories` events](https://docs.github.com/en/webhooks/webhook-events-and-payloads#installation) to all GitHub Apps automatically; these events must not appear in the manifest's `default_events` list.
 
-The task title and description are read-only in Orbit. Other task fields remain editable. Comments do not sync. Orbit does not send task edits to GitHub.
+The task title and description are read-only in Orbit. Other task fields remain editable. Orbit does not send task edits to GitHub.
+
+Comments sync both ways, for issues and for pull requests (the pull request conversation; review comments on code lines do not sync):
+
+- A GitHub comment becomes a task comment. It shows the GitHub author's login and avatar, marked **via GitHub**, and links to the author's GitHub profile. A GitHub edit or delete changes or removes that comment in Orbit. Nobody can edit these comments in Orbit. Owners and admins can delete one in Orbit; that removes only the Orbit copy. `@Name` of a workspace member in a GitHub comment mentions that member, and followers are notified as for any comment.
+- A comment written in Orbit (also by Donna or through an API token) is posted on GitHub by the workspace App, with a last line "— *name* via Orbit". An edit in Orbit edits the GitHub comment, and a delete in Orbit deletes it. Orbit sends this in the background and retries when GitHub fails, so the comment is saved in Orbit also when GitHub is unavailable. @mentions of members are sent as code (`` `@Name` ``) so they do not notify a GitHub user of that name. Files in a comment are not sent; a reply is posted as a normal comment.
+- Orbit stores the GitHub comment ID of each synced comment and ignores the webhook events of the comments its App wrote, so a comment never comes back as a copy.
+- While sync is paused (the sync label is removed), comments do not sync in either direction. Comments made during the pause are not copied later.
+
+Comment sync needs the App permissions **Issues: Read and write** and **Pull requests: Read and write** and the **Issue comment** event. A new App gets them from the manifest. For an App registered before, add them on GitHub (App settings → Permissions & events), then accept the new permissions on the installation.
 
 GitHub labels sync one way to the task. On each event Orbit gives the task every GitHub label of the issue or pull request except the project's sync label. A name matches a label of the project without regard to case (`bug` uses an existing `Bug`). If the project has no such label, Orbit creates it with the GitHub color. When a label is removed on GitHub, Orbit removes it from the task, but only if the sync added it: labels added in Orbit stay, also when GitHub has the same label. Orbit never changes labels on GitHub. While sync is paused (the sync label is removed), Orbit does not change the task's labels. A label that the sync adds runs the project's label rules (Project settings → Rules), as a label added in Orbit does.
 

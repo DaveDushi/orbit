@@ -44,7 +44,8 @@ export function CommentItem({ state, taskId, comment, reply }: CommentItemProps)
   const [saved, setSaved] = useState<{ version: number; content: unknown[] } | null>(null)
   const shown = saved?.version === comment.version ? saved.content : null
   const author = comment.authorServiceAccountName ? undefined : state.users.find((u) => u.id === comment.authorId)
-  const name = comment.authorServiceAccountName || author?.name || 'Someone'
+  const github = comment.githubAuthor
+  const name = github?.login || comment.authorServiceAccountName || author?.name || 'Someone'
   const mentions = useMemo(() => ({ members: state.users, candidates: state.users.filter((user) => !user.suspended), privatePage: false }), [state.users])
   const fileScope = useMemo(() => ({ workspaceId: workspace.id, taskId }), [workspace.id, taskId])
   const [bodyRef, nearScreen] = useNearViewport<HTMLDivElement>()
@@ -84,14 +85,29 @@ export function CommentItem({ state, taskId, comment, reply }: CommentItemProps)
         )}
         data-reply={reply || undefined}
       >
-        <ProfileTrigger userId={author?.id} name={name} kind="avatar" tabIndex={-1} className="flex shrink-0 self-start">
-          <UserAvatar user={author} size={20} name={name} />
-        </ProfileTrigger>
+        {github ? (
+          <a href={`https://github.com/${github.login}`} target="_blank" rel="noopener noreferrer" tabIndex={-1} className="flex shrink-0 self-start">
+            <UserAvatar user={{ name, color: 'var(--muted-foreground)', avatarUrl: github.avatarUrl }} size={20} />
+          </a>
+        ) : (
+          <ProfileTrigger userId={author?.id} name={name} kind="avatar" tabIndex={-1} className="flex shrink-0 self-start">
+            <UserAvatar user={author} size={20} name={name} />
+          </ProfileTrigger>
+        )}
         <div className="min-w-0 flex-1">
           <div className="flex min-h-5 items-center gap-1.5">
-            <ProfileTrigger userId={author?.id} name={name} className="min-w-0 truncate text-[13px] font-semibold text-foreground">
-              {name}
-            </ProfileTrigger>
+            {github ? (
+              <>
+                <a href={`https://github.com/${github.login}`} target="_blank" rel="noopener noreferrer" className="min-w-0 truncate text-[13px] font-semibold text-foreground hover:underline">
+                  {name}
+                </a>
+                <span className="shrink-0 text-[11px] font-medium text-muted-foreground">via GitHub</span>
+              </>
+            ) : (
+              <ProfileTrigger userId={author?.id} name={name} className="min-w-0 truncate text-[13px] font-semibold text-foreground">
+                {name}
+              </ProfileTrigger>
+            )}
             <span className="shrink-0 text-[11px] leading-none text-muted-foreground/70" aria-hidden="true">·</span>
             <time className="shrink-0 text-[11px] font-medium text-muted-foreground" dateTime={comment.createdAt}>
               {agoLabel(comment.createdAt)}
