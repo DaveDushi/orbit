@@ -22,6 +22,8 @@ If GitHub rejects the App manifest, fix the problem and select **Register GitHub
 
 The task title and description are read-only in Orbit. Other task fields remain editable. Comments do not sync. Orbit does not send task edits to GitHub.
 
+GitHub labels sync one way to the task. On each event Orbit gives the task every GitHub label of the issue or pull request except the project's sync label. A name matches a label of the project without regard to case (`bug` uses an existing `Bug`). If the project has no such label, Orbit creates it with the GitHub color. When a label is removed on GitHub, Orbit removes it from the task, but only if the sync added it: labels added in Orbit stay, also when GitHub has the same label. Orbit never changes labels on GitHub. While sync is paused (the sync label is removed), Orbit does not change the task's labels.
+
 A labeled pull request creates its own Orbit task, with its GitHub title, body, and pull-request link. Orbit does not search the pull request title, body, or branch for an Orbit task URL. An unlabeled pull request does not create a task. Removing its project label pauses sync, and adding the label again resumes the same task.
 
 If you delete a linked task in Orbit, the next GitHub event with the project label restores that same task and applies the current GitHub title, body, and status. An event without the label keeps the task deleted and pauses sync.

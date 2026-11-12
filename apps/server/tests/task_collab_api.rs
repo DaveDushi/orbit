@@ -350,6 +350,7 @@ async fn github_sync_replaces_doc() {
         kind: "issue",
         state: "open",
         state_changed: false,
+        labels: Vec::new(),
     };
     let id = tasks
         .sync_github_work_item(

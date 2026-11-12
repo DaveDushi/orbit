@@ -283,6 +283,15 @@ pub struct GithubWorkItem {
     pub kind: &'static str,
     pub state: &'static str,
     pub state_changed: bool,
+    /// The item's GitHub labels without the project's sync label.
+    pub labels: Vec<GithubLabel>,
+}
+
+/// A GitHub label: its name and its color as `#rrggbb`.
+#[derive(Clone, Debug)]
+pub struct GithubLabel {
+    pub name: String,
+    pub color: String,
 }
 
 /// What a comment says: BlockNote blocks (mentions are read from them), or markdown with the
@@ -1939,6 +1948,43 @@ impl TaskRepository {
                 )
                 .await?;
             }
+            let (added, removed) = sync_github_labels_in_tx(
+                &mut tx,
+                workspace_id,
+                issue.project_id,
+                task_id,
+                &issue.labels,
+                (service_account_id, &service_account_name),
+                request_id,
+                now,
+            )
+            .await?;
+            if !added.is_empty() || !removed.is_empty() {
+                sqlx::query(
+                    "UPDATE tasks SET version = version + 1, updated_at = $1 WHERE id = $2",
+                )
+                .bind(now.as_millis())
+                .bind(task_id.to_string())
+                .execute(&mut *tx)
+                .await?;
+                audit::record(
+                    &mut tx,
+                    workspace_id,
+                    None,
+                    "task.updated",
+                    AuditOutcome::Success,
+                    "task",
+                    Some(task_id),
+                    request_id,
+                    json!({
+                        "changes": { "labels": { "added": added, "removed": removed } },
+                        "actor_service_account_id": service_account_id,
+                        "actor_service_account_name": service_account_name,
+                    }),
+                    now,
+                )
+                .await?;
+            }
             let resumed = sqlx::query("UPDATE github_issue_links SET sync_paused = 0, pull_state = $1 WHERE task_id = $2 AND (sync_paused != 0 OR pull_state IS DISTINCT FROM $3)")
                     .bind(issue.state)
                     .bind(task_id.to_string())
@@ -1997,6 +2043,17 @@ impl TaskRepository {
             .bind(&label_id)
             .execute(&mut *tx)
             .await?;
+        sync_github_labels_in_tx(
+            &mut tx,
+            workspace_id,
+            issue.project_id,
+            task_id,
+            &issue.labels,
+            (service_account_id, &service_account_name),
+            request_id,
+            now,
+        )
+        .await?;
         sqlx::query("INSERT INTO github_issue_links (workspace_id, repository, issue_number, task_id, kind, pull_state) VALUES ($1, $2, $3, $4, $5, $6)")
             .bind(workspace_id.to_string()).bind(&issue.repository).bind(issue.number)
             .bind(task_id.to_string()).bind(issue.kind).bind(issue.state).execute(&mut *tx).await?;
@@ -3909,7 +3966,112 @@ async fn replace_labels(
             .execute(&mut **tx)
             .await?;
     }
+    // A GitHub label removed by hand is no longer the sync's: added back by hand, it stays.
+    sqlx::query(
+        "DELETE FROM github_task_labels WHERE task_id = $1 \
+         AND label_id NOT IN (SELECT label_id FROM task_labels WHERE task_id = $1)",
+    )
+    .bind(task_id.to_string())
+    .execute(&mut **tx)
+    .await?;
     Ok(())
+}
+
+/// Gives the task the GitHub labels in `labels` (one way, GitHub → Orbit). A name matches a project
+/// label case-insensitively; a missing label is created with the GitHub color. Only labels the sync
+/// added (`github_task_labels`) are removed when GitHub drops them; a label the task already had
+/// stays the person's. Returns the label ids added and removed.
+#[allow(clippy::too_many_arguments)]
+async fn sync_github_labels_in_tx(
+    tx: &mut Transaction<'_, Any>,
+    workspace_id: Id,
+    project_id: Id,
+    task_id: Id,
+    labels: &[GithubLabel],
+    service_account: (Id, &str),
+    request_id: &str,
+    now: TimestampMillis,
+) -> Result<(Vec<String>, Vec<String>), TaskError> {
+    let current: Vec<String> =
+        sqlx::query_scalar("SELECT label_id FROM task_labels WHERE task_id = $1")
+            .bind(task_id.to_string())
+            .fetch_all(&mut **tx)
+            .await?;
+    let synced: Vec<String> =
+        sqlx::query_scalar("SELECT label_id FROM github_task_labels WHERE task_id = $1")
+            .bind(task_id.to_string())
+            .fetch_all(&mut **tx)
+            .await?;
+    let mut wanted = Vec::new();
+    for label in labels {
+        let existing: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM labels WHERE workspace_id = $1 AND project_id = $2 AND lower(name) = lower($3) ORDER BY id LIMIT 1",
+        )
+        .bind(workspace_id.to_string())
+        .bind(project_id.to_string())
+        .bind(&label.name)
+        .fetch_optional(&mut **tx)
+        .await?;
+        let id = if let Some(id) = existing {
+            id
+        } else {
+            let id = Id::new_v7();
+            sqlx::query("INSERT INTO labels (id, workspace_id, project_id, name, color, version, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, 0, $6, $7)")
+                .bind(id.to_string()).bind(workspace_id.to_string()).bind(project_id.to_string())
+                .bind(&label.name).bind(&label.color).bind(now.as_millis()).bind(now.as_millis())
+                .execute(&mut **tx).await?;
+            record_principal_mutation(
+                tx,
+                workspace_id,
+                service_account.0,
+                Some(service_account),
+                "label.created",
+                "label",
+                id,
+                request_id,
+                now,
+            )
+            .await?;
+            id.to_string()
+        };
+        if !wanted.contains(&id) {
+            wanted.push(id);
+        }
+    }
+    let mut added = Vec::new();
+    for id in &wanted {
+        if current.contains(id) {
+            continue;
+        }
+        sqlx::query("INSERT INTO task_labels (task_id, label_id) VALUES ($1, $2)")
+            .bind(task_id.to_string())
+            .bind(id)
+            .execute(&mut **tx)
+            .await?;
+        sqlx::query("INSERT INTO github_task_labels (task_id, label_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+            .bind(task_id.to_string())
+            .bind(id)
+            .execute(&mut **tx)
+            .await?;
+        added.push(id.clone());
+    }
+    let mut removed = Vec::new();
+    for id in synced.iter().filter(|id| !wanted.contains(id)) {
+        sqlx::query("DELETE FROM task_labels WHERE task_id = $1 AND label_id = $2")
+            .bind(task_id.to_string())
+            .bind(id)
+            .execute(&mut **tx)
+            .await?;
+        sqlx::query("DELETE FROM github_task_labels WHERE task_id = $1 AND label_id = $2")
+            .bind(task_id.to_string())
+            .bind(id)
+            .execute(&mut **tx)
+            .await?;
+        if current.contains(id) {
+            removed.push(id.clone());
+        }
+    }
+    Ok((added, removed))
 }
 
 async fn insert_default_statuses(
