@@ -6,6 +6,12 @@ build: "## YYYY-MM-DD" (the deploy date), then 1-4 short "- " lines about what p
 members, not developers. Keep the 8 newest entries; the prompt shows the 5 newest.
 -->
 
+## 2026-11-13
+- Link a task anywhere: type # in a chat message, a Docs page, a task description or a comment, then a task name or ID (like ENG-12). Hover a task ID or a mention to see a preview. Cmd/Ctrl+K now shows results in sections (Tasks, Docs, Chat, Navigation), and typing a task ID finds that task first.
+- The bell beside the workspace name now opens your 10 newest notifications, with Mark as read, Mark all read and View all activity.
+- The project and assignee pickers in tasks, and the GitHub repository picker, have a search box.
+- AI tools connected with MCP can now read and write task comments, set assignees and labels, and create projects. Sessions not used for 30 days are signed out.
+
 ## 2026-11-12
 - GitHub comments now sync both ways: a comment on a synced GitHub issue or pull request shows on the Orbit task with the GitHub author's name and picture, and a comment you write on the task is posted on GitHub (edits and deletes too). While the sync is paused, comments stay where they are.
 - Tasks with many or long labels no longer push the row wider: a list row shows 2 labels and a board card 3, and a "+N" chip shows the rest on hover or click.
