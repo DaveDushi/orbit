@@ -39,6 +39,11 @@ Orbit reads its configuration only from environment variables that start with `O
 | `ORBIT_TRIAL_PAGES` | `20` | The most pages (not counting the trash) a workspace holds during its trial. A whole number, 0 or more. Only with `ORBIT_CLOUD=true`. |
 | `ORBIT_TRIAL_MEMBERS` | `3` | The most members, pending invitations included, a workspace holds during its trial. A whole number, 1 or more (the owner counts). Only with `ORBIT_CLOUD=true`. |
 | `ORBIT_WEBHOOK_BOT_TEST_HOSTS` | none | Comma-separated hosts that webhook bots (`docs/webhook-bots.md`) may reach over plain HTTP and on local addresses, for local tests with fake bots (for example `127.0.0.1`). **Never set it in production**: it turns off the address check for those hosts. Orbit logs a warning when it is set. |
+| `ORBIT_APNS_KEY_FILE` | none (iPhone push off) | The path of the APNs auth key (`AuthKey_<KEY_ID>.p8`, Apple Developer → Keys, with Apple Push Notifications service). Readable by the Orbit user only (`chmod 600`). Without it, iPhones still register, and get no pushes. See [iPhone push (APNs)](#iphone-push-apns). |
+| `ORBIT_APNS_KEY_ID` | none | The 10-character Key ID of that key. Required with `ORBIT_APNS_KEY_FILE`. |
+| `ORBIT_APNS_TEAM_ID` | none | The Apple Developer Team ID. Required with `ORBIT_APNS_KEY_FILE`. |
+| `ORBIT_APNS_TOPIC` | `com.wellrox.orbit` | The iPhone app's bundle identifier. |
+| `ORBIT_APNS_SANDBOX` | `false` | `true` sends to the development APNs (`api.sandbox.push.apple.com`), for development builds only. TestFlight and App Store builds need `false`. |
 
 Create the app key once with `openssl rand -base64 32` and keep a copy outside the server. Orbit does not start without it. See [Email, registration and the app key](#email-registration-and-the-app-key).
 
@@ -127,6 +132,21 @@ A person can also delete their account in **Account → Profile**, after typing 
 Saved secrets (the SMTP password, GitHub App keys, Notion import tokens) are encrypted with the app key. `ORBIT_APP_KEY` (base64 of 32 random bytes, from `openssl rand -base64 32`) is required. Orbit does not create a key. Keep a copy outside the server and its backups: a database restored without the same key cannot read its saved secrets, and the root user must enter them again. Users with two-factor authentication must set it up again.
 
 Older versions created an `app.key` file beside the SQLite database. If that file still exists, Orbit starts only when `ORBIT_APP_KEY` holds the same key. Set `ORBIT_APP_KEY` to the contents of the file, start Orbit, and then you can delete the file.
+
+## iPhone push (APNs)
+
+The iPhone app (`apps/mobile`, bundle `com.wellrox.orbit`) registers its APNs device token after sign-in
+(`POST /api/v1/push/devices`) and removes it before sign-out (`DELETE /api/v1/push/devices/{token}`). Orbit sends the
+pushes itself, straight to Apple with the token-based key (no Expo or other relay): the same events and rules as Web
+Push (the user's notification settings, "do not disturb", nobody for their own actions, nothing while they are active
+in an open tab). A device row belongs to the session that registered it, like a browser's subscription: signing out,
+revoking the session in **Account → Sessions** or deleting the account stops its pushes. A device that Apple reports
+as gone (`410`, `BadDeviceToken`) is removed at once; one that fails 5 times in a row too.
+
+Set `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID` and `ORBIT_APNS_TEAM_ID`. At start Orbit logs `iPhone push (APNs) is on`,
+or `iPhone push (APNs) is off` with the reason when a setting is wrong (Orbit still starts). One key works for all
+apps of the team and for both APNs environments; only `ORBIT_APNS_SANDBOX` picks the environment. **Account →
+Notifications → Send a test notification** in a browser (`POST /api/v1/push/test`) counts the iPhones that took the push too.
 
 ## Postgres
 

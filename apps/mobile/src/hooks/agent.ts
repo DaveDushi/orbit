@@ -20,11 +20,12 @@ import { useOrbit } from '../orbit-context'
 
 const key = ['agent'] as const
 
-/** Polls while a ChatGPT sign-in waits for its code to be entered. */
-export function useAgentStatus() {
+/** Polls while a ChatGPT sign-in waits for its code to be entered. `enabled: false` skips it (a guest's Ask Donna). */
+export function useAgentStatus(enabled = true) {
   const { client } = useOrbit()
   return useQuery({
     queryKey: key,
+    enabled,
     queryFn: () => readAgentStatus(client),
     refetchInterval: (query) => {
       const data = query.state.data

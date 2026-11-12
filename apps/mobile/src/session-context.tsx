@@ -3,6 +3,7 @@ import { createContext, type ReactNode, use, useEffect, useRef, useState } from 
 
 import { createClient, currentUser, type OrbitClient, signOut as endSession, type User } from './data/orbit'
 import { launchErrorEndsSession } from './data/session-launch'
+import { unregisterPush } from './push'
 import { clearSession, loadSession, saveSession, type StoredSession } from './session'
 
 export type SessionState =
@@ -82,7 +83,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const signOut = async () => {
     current.current = null
-    if (state.status === 'signed_in') await endSession(state.client).catch(() => undefined)
+    if (state.status === 'signed_in') {
+      // while the session still works: the phone gets no more pushes for it
+      await unregisterPush(state.client)
+      await endSession(state.client).catch(() => undefined)
+    }
     await end()
   }
 

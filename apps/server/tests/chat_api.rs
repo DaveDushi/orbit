@@ -4331,3 +4331,99 @@ async fn a_guest_push_names_no_public_channel() {
     assert_eq!(body_for(&ada), Some(json!("@ada @guest see #general")));
     assert_eq!(body_for(&guest), Some(json!("@ada @guest see #channel")));
 }
+
+/// Records the iPhone pushes it is asked to send: the device token and the notice.
+#[derive(Default)]
+struct RecordedDevicePushes(std::sync::Mutex<Vec<(String, orbit_server::push::Notice)>>);
+
+impl orbit_server::push::apns::DeviceSender for RecordedDevicePushes {
+    fn send(
+        &self,
+        token: String,
+        notice: orbit_server::push::Notice,
+    ) -> futures_util::future::BoxFuture<'static, Result<(), orbit_server::push::SendError>> {
+        self.0.lock().unwrap().push((token, notice));
+        Box::pin(async { Ok(()) })
+    }
+}
+
+#[tokio::test]
+async fn a_message_reaches_the_iphones_it_is_for_never_the_authors_and_a_guest_sees_no_public_names()
+ {
+    let fixture = Fixture::new().await;
+    let devices = Arc::new(RecordedDevicePushes::default());
+    // Before the first send: the database keeps the first push service it gets.
+    let push = orbit_server::push::PushService::with_senders(
+        &fixture.database,
+        Arc::new(RecordedPushes::default()),
+        devices.clone(),
+    );
+    let ada = fixture.add_member("ada").await;
+    let guest = fixture.add_guest("guest").await;
+    let phone = |member: &Member| format!("{:0>64}", member.id.to_string().replace('-', ""));
+    for member in [&ada, &guest, &fixture.owner] {
+        let session: String = sqlx::query_scalar("SELECT id FROM sessions WHERE user_id = $1")
+            .bind(member.id.to_string())
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap();
+        push.register_device(
+            member.id,
+            session.parse().unwrap(),
+            &phone(member),
+            "iPhone",
+            TimestampMillis::now(),
+        )
+        .await
+        .unwrap();
+    }
+    let pushed = |count: usize| {
+        let devices = devices.clone();
+        async move {
+            for _ in 0..100 {
+                if devices.0.lock().unwrap().len() >= count {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let mut sent = std::mem::take(&mut *devices.0.lock().unwrap());
+            sent.sort_by(|a, b| a.0.cmp(&b.0));
+            sent
+        }
+    };
+    let general = fixture.general().await;
+    let room = fixture
+        .channel(&fixture.owner, "room", "private", &[&ada, &guest])
+        .await;
+
+    // Everyone of the channel is mentioned: Ada and the guest get it, the author does not. The
+    // guest's text has no name of a public channel.
+    let body = format!("<!channel> see <#{general}>");
+    fixture.send(&fixture.owner, &room, &body).await;
+    let sent = pushed(2).await;
+    let mut expected = vec![phone(&ada), phone(&guest)];
+    expected.sort();
+    assert_eq!(
+        sent.iter()
+            .map(|(token, _)| token.clone())
+            .collect::<Vec<_>>(),
+        expected
+    );
+    for (token, notice) in &sent {
+        assert_eq!(notice.title, "Owner in #room");
+        assert_eq!(notice.url, format!("/chat/{room}"));
+        let channel = if *token == phone(&guest) {
+            "#channel"
+        } else {
+            "#general"
+        };
+        assert_eq!(notice.body, format!("@channel see {channel}"));
+    }
+
+    // Ada answers: the owner and the guest get it, Ada does not.
+    fixture.send(&ada, &room, "<!channel> done").await;
+    let sent = pushed(2).await;
+    assert!(sent.iter().all(|(token, _)| *token != phone(&ada)));
+    assert_eq!(sent.len(), 2);
+}

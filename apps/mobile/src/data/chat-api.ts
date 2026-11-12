@@ -40,6 +40,7 @@ import {
   uploadChatFile,
 } from '@orbit/api/generated/sdk.gen'
 import type { CardValues, SentAction } from './agent-card'
+import type { PageContext } from './ask-donna'
 import type {
   ChatChannelUpdateBody,
   ChatEvent,
@@ -158,6 +159,8 @@ export interface OutgoingMessage {
   fileIds?: string[]
   /** A thread reply that also shows in the conversation. */
   alsoInChannel?: boolean
+  /** Sent from Ask Donna: the page the person is on, for the agent (never shown in chat). */
+  pageContext?: PageContext | null
 }
 
 export async function send(client: OrbitClient, workspaceId: string, conversationId: string, message: OutgoingMessage): Promise<ChatWrite<MessageRecord>> {
@@ -168,6 +171,7 @@ export async function send(client: OrbitClient, workspaceId: string, conversatio
     reply_to_id: message.replyToId ?? null,
     file_ids: message.fileIds ?? [],
     also_in_channel: message.alsoInChannel ?? false,
+    ...(message.pageContext ? { page_context: message.pageContext } : {}),
   }
   return write((await sendChatMessage({ ...inConversation(client, workspaceId, conversationId), body })).data)
 }

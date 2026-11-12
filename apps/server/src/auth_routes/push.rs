@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::{ApiError, ApiJson, AuthState, ProblemBody, authenticate};
+use crate::push::apns::{PushDeviceRecord, normalized_token};
 use crate::push::{
     Notice, NotificationPrefs, PushService, PushSubscriptionRecord, allowed_endpoint, webpush,
 };
@@ -114,9 +115,77 @@ pub(super) async fn delete_push_subscription(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PushDeviceBody {
+    /// The iPhone app's APNs device token, hex.
+    token: String,
+    /// What the list of devices shows, e.g. "iPhone".
+    label: String,
+}
+
+fn invalid_device(instance: &str, request_id: Option<&Extension<RequestId>>) -> ApiError {
+    ApiError::new(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "invalid_device",
+        "Invalid device",
+        "The token is not an APNs device token.",
+        instance,
+        request_id,
+    )
+}
+
+/// Registers the iPhone the app runs on for push notifications, for the signed-in user and this
+/// session: signing out (or the session ending) stops its pushes. A token registered by another
+/// user moves to this one.
+#[utoipa::path(post, path = "/api/v1/push/devices", request_body = PushDeviceBody, responses((status = 200, body = PushDeviceRecord), (status = 401, description = "authentication_required", body = ProblemBody, content_type = "application/problem+json"), (status = 422, description = "invalid_device", body = ProblemBody, content_type = "application/problem+json")))]
+pub(super) async fn register_push_device(
+    State(state): State<AuthState>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+    ApiJson(body): ApiJson<PushDeviceBody>,
+) -> Result<Json<PushDeviceRecord>, ApiError> {
+    let instance = "/api/v1/push/devices";
+    let session = authenticate(&state, &headers, instance, request_id.as_ref()).await?;
+    let token = normalized_token(&body.token)
+        .ok_or_else(|| invalid_device(instance, request_id.as_ref()))?;
+    let label: String = body.label.trim().chars().take(120).collect();
+    PushService::of(state.repository.database())
+        .register_device(
+            session.user.id,
+            session.id,
+            &token,
+            &label,
+            TimestampMillis::now(),
+        )
+        .await
+        .map(Json)
+        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))
+}
+
+/// Stops the pushes to one of the user's iPhones (the app calls it before it signs out). Nothing
+/// happens for a token of another user.
+#[utoipa::path(delete, path = "/api/v1/push/devices/{token}", params(("token" = String, Path)), responses((status = 204), (status = 401, description = "authentication_required", body = ProblemBody, content_type = "application/problem+json"), (status = 422, description = "invalid_device", body = ProblemBody, content_type = "application/problem+json")))]
+pub(super) async fn unregister_push_device(
+    State(state): State<AuthState>,
+    Path(token): Path<String>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<StatusCode, ApiError> {
+    let instance = "/api/v1/push/devices/{token}";
+    let session = authenticate(&state, &headers, instance, request_id.as_ref()).await?;
+    let token =
+        normalized_token(&token).ok_or_else(|| invalid_device(instance, request_id.as_ref()))?;
+    PushService::of(state.repository.database())
+        .unregister_device(session.user.id, &token)
+        .await
+        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[derive(Serialize, ToSchema)]
 pub(super) struct TestPushResult {
-    /// How many of the user's browsers took the push.
+    /// How many of the user's browsers and iPhones took the push.
     sent: usize,
 }
 

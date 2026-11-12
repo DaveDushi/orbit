@@ -39,6 +39,8 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::auth_routes::push::list_push_subscriptions,
         crate::auth_routes::push::create_push_subscription,
         crate::auth_routes::push::delete_push_subscription,
+        crate::auth_routes::push::register_push_device,
+        crate::auth_routes::push::unregister_push_device,
         crate::auth_routes::push::send_test_push,
         crate::auth_routes::push::get_notification_preferences,
         crate::auth_routes::push::put_notification_preferences,

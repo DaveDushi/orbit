@@ -20,6 +20,7 @@ import { pickImage } from '../../../hooks/account'
 import { useFavorites, usePageThreads, usePageTrash, useSavePage, useToggleFavorite, useTrashPage, useUploadPageImage } from '../../../hooks/docs'
 import { useOrbit } from '../../../orbit-context'
 import { useMembers, usePages } from '../../../queries'
+import { usePublishPageItem } from '../../../components/AskDonna'
 import { errorMessage } from '../../../session-context'
 import { alpha, useTheme } from '../../../theme'
 import { Button, CountBadge, ErrorView, Icon, IconButton, LoadingView, PaneHeader, SafeAreaView, Text } from '../../../ui'
@@ -36,6 +37,7 @@ export default function DocScreen() {
   const { client, workspaceId, session } = useOrbit()
   const { colors } = useTheme()
   const page = useQuery({ queryKey: keys.page(workspaceId, id), queryFn: () => api.page(client, workspaceId, id) })
+  usePublishPageItem('doc', id, page.data?.title)
   const pages = usePages()
   const favorites = useFavorites()
   const threads = usePageThreads(id)

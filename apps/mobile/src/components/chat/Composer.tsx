@@ -6,6 +6,7 @@ import { useState } from 'react'
 import { Image, Platform, Pressable, ScrollView, View } from 'react-native'
 import { TextInput } from '../../ui/scaled'
 
+import type { PageContext } from '../../data/ask-donna'
 import { newNonce, type ThreadPages, upsertThreadMessage } from '../../data/chat'
 import * as chat from '../../data/chat-api'
 import type { MessageRecord } from '../../data/orbit'
@@ -42,7 +43,7 @@ type Mode = { kind: 'new'; replyTo: MessageRecord | null } | { kind: 'edit'; mes
  * The composer's state and its writes for one conversation or thread: the draft, the picked files and their uploads,
  * the reply or edit target, and the messages on their way.
  */
-export function useComposer(conversationId: string, threadRootId: string | null) {
+export function useComposer(conversationId: string, threadRootId: string | null, pageContext?: () => PageContext | null) {
   const { client, workspaceId } = useOrbit()
   const queryClient = useQueryClient()
   const [draft, setDraft] = useState('')
@@ -109,7 +110,7 @@ export function useComposer(conversationId: string, threadRootId: string | null)
     setFiles([])
     setMode({ kind: 'new', replyTo: null })
     setPending((list) => [...list, item])
-    chat.send(client, workspaceId, conversationId, { body, nonce: item.nonce, threadRootId, replyToId: replyTo?.id ?? null, fileIds, alsoInChannel: threadRootId !== null && alsoInChannel }).then(
+    chat.send(client, workspaceId, conversationId, { body, nonce: item.nonce, threadRootId, replyToId: replyTo?.id ?? null, fileIds, alsoInChannel: threadRootId !== null && alsoInChannel, pageContext: pageContext?.() }).then(
       ({ result, events }) => {
         applyChatEvents(queryClient, workspaceId, events)
         received(result)

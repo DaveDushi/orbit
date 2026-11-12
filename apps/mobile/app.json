@@ -9,17 +9,25 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "backgroundColor": "#0a0a0a"
+      "backgroundColor": "#0a0a0a",
+      "bundleIdentifier": "com.wellrox.orbit",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#0a0a0a",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "userInterfaceStyle": "automatic"
+      "userInterfaceStyle": "automatic",
+      "package": "com.wellrox.orbit",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -29,8 +37,29 @@
       "expo-router",
       "expo-font",
       "expo-system-ui",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-notifications",
+        {
+          "mode": "production"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Orbit attaches the photos and videos you pick to messages, tasks and pages.",
+          "cameraPermission": "Orbit attaches the photos you take to messages, tasks and pages.",
+          "microphonePermission": "Orbit records sound with the videos you take for messages, tasks and pages."
+        }
+      ],
+      "expo-status-bar"
     ],
-    "backgroundColor": "#0a0a0a"
+    "backgroundColor": "#0a0a0a",
+    "owner": "davedushi",
+    "extra": {
+      "eas": {
+        "projectId": "5299b999-c455-4c7f-a0ff-f9ae31149e33"
+      }
+    }
   }
 }

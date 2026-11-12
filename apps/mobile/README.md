@@ -10,6 +10,8 @@ The app signs in to an Orbit server and works in one workspace at a time. It fol
 - Chat: channels and DMs, new channel/DM, browse, unreads, threads, search, members, pins, files, reactions, emoji, attachments and message actions.
 - Activity (from the drawer): notifications with All, Unread and Mentions.
 - Settings: workspace General and Members, the account pages (Profile, Notifications, Security, Sessions), and Admin for instance admins.
+- Ask Donna: an "Ask Donna…" bar above the dock on every tab but Chat opens a sheet with the person's DM with the agent. Each message carries the page context (the area, and the open task or Docs page). Same rule as the web's Ask bar: not for guests, and only while the person's ChatGPT is connected (`src/data/ask-donna.ts`).
+- Push notifications (iPhone): after sign-in the app asks for permission and registers its APNs device token (`POST /api/v1/push/devices`); sign-out removes it first. The server pushes through APNs itself (`apps/server/src/push/apns.rs`, settings in `docs/operations.md`). A tap opens the conversation, the thread or Activity (`src/push.ts`, `src/data/push.ts`).
 
 Every action runs in the app; nothing opens the web.
 
@@ -89,6 +91,21 @@ bun scripts/api-check-settings.ts   # profile, avatar, notifications, sessions, 
 bunx expo-doctor
 ```
 
+## iPhone build (EAS) and TestFlight
+
+The app is `com.wellrox.orbit` (Expo account `davedushi`, project `orbit-mobile`). `eas.json` has one `production` profile: the build number lives on EAS and goes up by one with each build, and the sign-in screen is prefilled with the team's server. EAS makes and keeps the distribution certificate and the provisioning profile (with the Push Notifications capability); the APNs key for the server is separate and never goes to EAS.
+
+```bash
+cd apps/mobile
+export EXPO_TOKEN=…                      # a personal access token of davedushi
+# App Store Connect API key (outside the repo; delete the file afterwards)
+export EXPO_ASC_API_KEY_PATH=/tmp/AuthKey.p8 EXPO_ASC_KEY_ID=… EXPO_ASC_ISSUER_ID=… EXPO_APPLE_TEAM_ID=… EXPO_APPLE_TEAM_TYPE=COMPANY_OR_ORGANIZATION
+bunx eas-cli build -p ios --profile production --non-interactive
+bunx eas-cli submit -p ios --latest --non-interactive
+```
+
+Apple processes the upload for 5–30 minutes; then the build shows in App Store Connect → TestFlight. Push needs the server's `ORBIT_APNS_*` settings with `ORBIT_APNS_SANDBOX=false` (TestFlight builds use the production APNs).
+
 ## Theme and icons
 
 The colors, radii and icons come from the web app. Do not edit the generated files; regenerate them from the repo root after the web changes:
@@ -104,5 +121,6 @@ To add an icon, add its reicon name to `ICONS` in `scripts/generate-icons.ts` an
 
 ## Next steps
 
-- Move to a development build (`bunx expo run:ios|android`, or EAS) when the app needs native modules that Expo Go does not include, for example APNs/FCM push.
+- Push needs the EAS build: Expo Go cannot register for APNs (the app skips it there). Android push (FCM) is not done.
+- Drive is not in the app yet (Ask Donna sends no Drive folder).
 - Browser-sheet sign-in for passkeys and SSO.

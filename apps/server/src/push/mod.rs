@@ -1,7 +1,9 @@
 //! Notifications that reach a user who is not looking at the event: a signal to the tabs where
-//! they are active now, or else a Web Push message to every browser they subscribed with.
+//! they are active now, or else a Web Push message to every browser they subscribed with and an
+//! APNs push to every iPhone they signed in on with the app.
 //!
 //! - [`webpush`]: the encryption and the VAPID header.
+//! - [`apns`]: the iPhone app's devices and the APNs sender.
 //! - [`PushService`]: who is notified (their preferences, "do not disturb"), and where.
 //!
 //! Chat messages are notified when they are sent ([`PushService::chat_message`]). Inbox
@@ -12,6 +14,7 @@
 //! ones that wait. A notification is worth little minutes later, and the unread counts and
 //! the Inbox show what was missed, so pushes are not kept in the job queue.
 
+pub mod apns;
 pub mod webpush;
 
 use std::collections::HashMap;
@@ -303,6 +306,8 @@ impl PushSender for WebPushSender {
 
 struct Inner {
     sender: Arc<dyn PushSender>,
+    /// `None` when APNs is not set up (`ORBIT_APNS_*`): the devices are kept, and get nothing.
+    devices: Option<Arc<dyn apns::DeviceSender>>,
     key: OnceCell<SecretKey>,
     subject: OnceLock<String>,
 }
@@ -318,19 +323,39 @@ impl PushService {
     /// The push service of this database (one for each open database; made on first use).
     #[must_use]
     pub fn of(database: &Database) -> Self {
-        // The sender and its HTTP client are made once, with the service.
-        Self::with(database, || Arc::new(WebPushSender::new()))
+        // The senders and their HTTP clients are made once, with the service.
+        Self::with(
+            database,
+            || Arc::new(WebPushSender::new()),
+            apns::ApnsSender::from_env,
+        )
     }
 
-    /// As [`Self::of`], with another sender if the database has no push service yet (tests).
+    /// As [`Self::of`], with another sender and no APNs if the database has no push service yet
+    /// (tests).
     #[must_use]
     pub fn with_sender(database: &Database, sender: Arc<dyn PushSender>) -> Self {
-        Self::with(database, move || sender)
+        Self::with(database, move || sender, || None)
     }
 
-    fn with(database: &Database, sender: impl FnOnce() -> Arc<dyn PushSender>) -> Self {
+    /// As [`Self::with_sender`], with a sender for the iPhone devices too (tests).
+    #[must_use]
+    pub fn with_senders(
+        database: &Database,
+        sender: Arc<dyn PushSender>,
+        devices: Arc<dyn apns::DeviceSender>,
+    ) -> Self {
+        Self::with(database, move || sender, move || Some(devices))
+    }
+
+    fn with(
+        database: &Database,
+        sender: impl FnOnce() -> Arc<dyn PushSender>,
+        devices: impl FnOnce() -> Option<Arc<dyn apns::DeviceSender>>,
+    ) -> Self {
         let inner = database.extension(move || Inner {
             sender: sender(),
+            devices: devices(),
             key: OnceCell::new(),
             subject: OnceLock::new(),
         });
@@ -464,6 +489,23 @@ impl PushService {
         })
     }
 
+    /// Stores an iPhone's APNs token for the user and the session (see [`apns::register`]).
+    pub async fn register_device(
+        &self,
+        user_id: Id,
+        session_id: Id,
+        token: &str,
+        label: &str,
+        now: TimestampMillis,
+    ) -> Result<apns::PushDeviceRecord, sqlx::Error> {
+        apns::register(&self.database, user_id, session_id, token, label, now).await
+    }
+
+    /// Removes the user's device with this token; nothing happens when it is not theirs.
+    pub async fn unregister_device(&self, user_id: Id, token: &str) -> Result<(), sqlx::Error> {
+        apns::unregister(&self.database, user_id, token).await
+    }
+
     /// Removes one of the user's subscriptions; nothing happens when it is not theirs.
     pub async fn unsubscribe(&self, user_id: Id, id: &str) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM push_subscriptions WHERE id = $1 AND user_id = $2")
@@ -566,15 +608,28 @@ impl PushService {
         self.deliver(user_id, notice).await.map(|_| ())
     }
 
-    /// Pushes to every browser of the user whose session is still good; returns how many took
-    /// it. A subscription that the browser ended is removed.
+    /// Pushes to every browser and iPhone of the user whose session is still good; returns how
+    /// many took it. A subscription that the browser ended, or a device APNs no longer knows, is
+    /// removed.
     pub async fn push(&self, user_id: Id, notice: &Notice) -> Result<usize, sqlx::Error> {
         self.deliver(user_id, &notice.clamped()).await
     }
 
-    /// [`Self::push`] of a notice that was clamped. The browsers get it at the same time: a
-    /// user has [`MAX_SUBSCRIPTIONS`] at most.
+    /// [`Self::push`] of a notice that was clamped: the browsers and the iPhones at the same time.
     async fn deliver(&self, user_id: Id, notice: &Notice) -> Result<usize, sqlx::Error> {
+        let devices = async {
+            match &self.inner.devices {
+                Some(sender) => apns::deliver(&self.database, sender, user_id, notice).await,
+                None => Ok(0),
+            }
+        };
+        let (browsers, devices) = tokio::join!(self.deliver_web(user_id, notice), devices);
+        Ok(browsers? + devices?)
+    }
+
+    /// The Web Push part of [`Self::deliver`]. The browsers get it at the same time: a user has
+    /// [`MAX_SUBSCRIPTIONS`] at most.
+    async fn deliver_web(&self, user_id: Id, notice: &Notice) -> Result<usize, sqlx::Error> {
         let now = TimestampMillis::now().as_millis();
         let rows = sqlx::query(
             "SELECT push.id, push.endpoint, push.p256dh, push.auth FROM push_subscriptions AS push \
@@ -955,6 +1010,10 @@ impl PushService {
             let Ok(user_id) = row.get::<String, _>("recipient_user_id").parse::<Id>() else {
                 continue;
             };
+            // Nobody is notified of what they did themselves.
+            if row.get::<String, _>("actor_user_id") == user_id.to_string() {
+                continue;
+            }
             let notice = Notice {
                 title,
                 body,

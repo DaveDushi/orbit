@@ -11,7 +11,7 @@
 - A rebuilt table becomes the *newest* FK child, and SQLite runs parent-delete cascades newest-child first. A `RESTRICT` reference to the rebuilt table (e.g. `tasks.status_id`) can then block a cascade that used to work. Hard deletes must delete the restricting children explicitly first.
 
 ## Build VM tooling
-- The VM's system Node is 18, but Vite/rolldown and Playwright need Node 20+. Build the web app with `bun --bun run build` (also under `orbit-build`) and run Playwright scripts with `bun`, not `node`. The server embeds `apps/web/dist`, so a fresh worktree needs this web build before any `cargo test -p orbit-server`.
+- The VM's system Node is 18, but Vite/rolldown and Playwright need Node 20+. Build the web app with `bun --bun run build` (also under `orbit-build`) and run Playwright scripts with `bun`, not `node`. The same holds for the Expo CLI (`bunx --bun expo export …`; plain `bunx expo export` fails with `configs.toReversed is not a function`); `eas-cli` needs a real Node 20+ in `PATH` (under `bun --bun` its upload fails with "Request body of 0 bytes"). The server embeds `apps/web/dist`, so a fresh worktree needs this web build before any `cargo test -p orbit-server`.
 - `bun run api:generate` (`just api`) runs `openapi-ts` on the system Node and fails on Node 18 after it has emptied `packages/api/src/generated`. Run it with `PATH=/root/.local/node/bin:$PATH bun --bun run api:generate`, and regenerate `openapi.json` first (`target/debug/orbit openapi --output …`) if the failed run deleted it.
 
 ## Two database backends (SQLite + Postgres)

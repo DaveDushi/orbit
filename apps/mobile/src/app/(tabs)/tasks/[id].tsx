@@ -47,6 +47,7 @@ import {
 import { useAdoptSubIssue, useCommentAttachments, useCreateTask, useRelationWrites, useSetFollowing, useSubIssues, useTaskAttachments, useTaskFollowers, useTaskRelations, useTaskWrite, taskKeys } from '../../../hooks/tasks'
 import { useOrbit } from '../../../orbit-context'
 import { useLabels, usePeople, useProjects, useStatuses } from '../../../queries'
+import { usePublishPageItem } from '../../../components/AskDonna'
 import { errorMessage } from '../../../session-context'
 import { alpha, useTheme } from '../../../theme'
 import { Avatar, Button, ErrorView, Icon, type IconName, IconButton, LoadingView, PaneHeader, PriorityIcon, SafeAreaView, StatusIcon, Text } from '../../../ui'
@@ -110,6 +111,7 @@ export default function TaskScreen() {
     // the list row the user tapped, until the full task arrives
     placeholderData: () => queryClient.getQueryData<api.TaskRecord[]>(keys.tasks(workspaceId))?.find((item) => item.id === id),
   })
+  usePublishPageItem('task', id, task.data?.title)
   const comments = useQuery({ queryKey: keys.comments(workspaceId, id), queryFn: () => api.comments(client, workspaceId, id) })
   const activity = useQuery({ queryKey: keys.taskActivity(workspaceId, id), queryFn: () => api.taskActivity(client, workspaceId, id) })
   const relations = useTaskRelations(id)
