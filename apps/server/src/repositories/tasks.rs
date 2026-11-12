@@ -211,8 +211,11 @@ pub struct NotificationRecord {
     pub workspace_id: Id,
     #[schema(value_type = String)]
     pub recipient_user_id: Id,
-    #[schema(value_type = String)]
-    pub actor_user_id: Id,
+    /// The member who caused it; unset when it came from GitHub (see `actor_github_login`).
+    #[schema(value_type = Option<String>)]
+    pub actor_user_id: Option<Id>,
+    /// The GitHub login of the author of a note from GitHub; set only when `actor_user_id` is not.
+    pub actor_github_login: Option<String>,
     /// `task_assigned`, `comment_mentioned` (task comment), `description_mentioned` (task
     /// description), `task_commented` (a new note on a followed task), `task_status_changed` (a
     /// followed task's new status), `page_comment_mentioned`, `page_mentioned` (an @mention in a
@@ -3034,7 +3037,7 @@ impl TaskRepository {
         let fingerprint = format!("notifications:{actor_id}:{}", unread_only);
         let after = cursor_i64_pair(cursor, &fingerprint)?;
         let mut query = SqlBuilder::new(
-            "SELECT id, workspace_id, recipient_user_id, actor_user_id, kind, task_id, comment_id, page_id, \
+            "SELECT id, workspace_id, recipient_user_id, actor_user_id, actor_github_login, kind, task_id, comment_id, page_id, \
              page_thread_id, page_comment_id, page_block_id, chat_conversation_id, chat_message_id, read_at, created_at FROM notifications WHERE workspace_id = ",
         );
         query
@@ -3110,7 +3113,7 @@ impl TaskRepository {
         .execute(&mut *tx)
         .await?;
         let row = sqlx::query(
-            "SELECT id, workspace_id, recipient_user_id, actor_user_id, kind, task_id, comment_id, page_id, \
+            "SELECT id, workspace_id, recipient_user_id, actor_user_id, actor_github_login, kind, task_id, comment_id, page_id, \
              page_thread_id, page_comment_id, page_block_id, chat_conversation_id, chat_message_id, read_at, created_at FROM notifications WHERE id = $1 AND workspace_id = $2 AND recipient_user_id = $3",
         )
         .bind(notification_id.to_string())
@@ -3853,13 +3856,28 @@ pub(super) struct NotificationRequest<'a> {
     pub recipients: &'a [Id],
 }
 
-pub(super) async fn notify_users(
+/// Who a notification is from: a member, or the GitHub author of a note from GitHub (not a
+/// member, so no recipient is skipped as the actor).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum NotificationActor<'a> {
+    User(Id),
+    Github(&'a str),
+}
+
+impl From<Id> for NotificationActor<'_> {
+    fn from(id: Id) -> Self {
+        Self::User(id)
+    }
+}
+
+pub(super) async fn notify_users<'a>(
     tx: &mut Transaction<'_, Any>,
     workspace_id: Id,
-    actor_id: Id,
+    actor: impl Into<NotificationActor<'a>>,
     request: NotificationRequest<'_>,
     now: TimestampMillis,
 ) -> Result<(), TaskError> {
+    let actor = actor.into();
     let field = if matches!(request.kind, "comment_mentioned" | "description_mentioned") {
         "mentioned_user_ids"
     } else {
@@ -3875,7 +3893,7 @@ pub(super) async fn notify_users(
         .recipients
         .iter()
         .copied()
-        .filter(|id| *id != actor_id)
+        .filter(|id| actor != NotificationActor::User(*id))
     {
         let exists: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM memberships JOIN users ON users.id = memberships.user_id \
@@ -3904,13 +3922,20 @@ pub(super) async fn notify_users(
         }
         sqlx::query(
             "INSERT INTO notifications \
-             (id, workspace_id, recipient_user_id, actor_user_id, kind, task_id, comment_id, dedupe_key, created_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT DO NOTHING",
+             (id, workspace_id, recipient_user_id, actor_user_id, actor_github_login, kind, task_id, comment_id, \
+             dedupe_key, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT DO NOTHING",
         )
         .bind(Id::new_v7().to_string())
         .bind(workspace_id.to_string())
         .bind(recipient.to_string())
-        .bind(actor_id.to_string())
+        .bind(match actor {
+            NotificationActor::User(id) => Some(id.to_string()),
+            NotificationActor::Github(_) => None,
+        })
+        .bind(match actor {
+            NotificationActor::User(_) => None,
+            NotificationActor::Github(login) => Some(login),
+        })
         .bind(request.kind)
         .bind(request.task_id.to_string())
         .bind(request.comment_id.map(|id| id.to_string()))
@@ -4233,14 +4258,18 @@ async fn imported_description(
 }
 
 /// The users of `candidates` who can be notified: active members of the workspace, not `author`.
-pub(super) async fn mentionable(
+pub(super) async fn mentionable<'a>(
     tx: &mut Transaction<'_, Any>,
     workspace_id: Id,
     candidates: Vec<Id>,
-    author: Id,
+    author: impl Into<NotificationActor<'a>>,
 ) -> Result<Vec<Id>, TaskError> {
+    let author = author.into();
     let mut recipients = Vec::new();
-    for user_id in candidates.into_iter().filter(|id| *id != author) {
+    for user_id in candidates
+        .into_iter()
+        .filter(|id| author != NotificationActor::User(*id))
+    {
         let Flag(member) = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM memberships JOIN users ON users.id = memberships.user_id \
              WHERE memberships.workspace_id = $1 AND memberships.user_id = $2 \
@@ -4945,7 +4974,8 @@ fn notification_from_row(row: sqlx::any::AnyRow) -> Result<NotificationRecord, T
         id: parse_id(row.get("id"))?,
         workspace_id: parse_id(row.get("workspace_id"))?,
         recipient_user_id: parse_id(row.get("recipient_user_id"))?,
-        actor_user_id: parse_id(row.get("actor_user_id"))?,
+        actor_user_id: optional_id(row.get("actor_user_id"))?,
+        actor_github_login: row.get("actor_github_login"),
         kind: row.get("kind"),
         task_id: optional_id(row.get("task_id"))?,
         comment_id: optional_id(row.get("comment_id"))?,

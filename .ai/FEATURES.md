@@ -72,6 +72,8 @@ Core files: `TasksPage.tsx`, `components/TaskList.tsx`, `components/TaskBoard.ts
   written in Orbit queues a `github.comment` job in its transaction (concurrency 1 on all servers) that reconciles the
   GitHub comment (POST/PATCH/DELETE with the App installation token). Echoes are skipped by the App's bot login or
   `performed_via_github_app` and by the stored `github_comment_id`. Debug builds honour `ORBIT_DEV_GITHUB_API_URL`.
+  Their notifications have no `actor_user_id` but `actor_github_login` (`NotificationActor::Github`), so no member
+  is skipped as the actor; the inbox and push show "login (GitHub)".
 - Followers (migration 0090, `task_followers`, `repositories/task_followers.rs`): the creator (a person, not a service
   account), assignees, comment authors and @mentioned members follow a task; the Followers field of the task side panel
   (web and mobile) lists them and has Follow / Unfollow (`GET …/tasks/{id}/followers`, `PUT`/`DELETE …/followers/me`).

@@ -10,8 +10,9 @@ use sqlx::{Any, Transaction};
 use super::page_mentions::mentioned_users;
 use super::task_followers::{self, FollowerNotice};
 use super::tasks::{
-    CommentContent, NotificationRequest, TaskError, comment_content, github_service_account_in_tx,
-    mentionable, notify_users, parse_id, record_principal_mutation, require_access_tx,
+    CommentContent, NotificationActor, NotificationRequest, TaskError, comment_content,
+    github_service_account_in_tx, mentionable, notify_users, parse_id, record_principal_mutation,
+    require_access_tx,
 };
 
 pub const JOB_KIND: &str = "github.comment";
@@ -92,8 +93,9 @@ pub enum GithubCommentAction {
 }
 
 /// Applies a GitHub comment event to the note of the linked task, as `actor_id` (the sync actor)
-/// on behalf of the "GitHub" service account. Returns whether a note changed; `false` for a task
-/// that is not linked, a paused sync, a comment Orbit already has, or an unknown comment.
+/// on behalf of the "GitHub" service account; its notifications are from the GitHub author.
+/// Returns whether a note changed; `false` for a task that is not linked, a paused sync, a
+/// comment Orbit already has, or an unknown comment.
 #[allow(clippy::too_many_arguments)]
 pub async fn apply(
     database: &Database,
@@ -195,11 +197,13 @@ async fn create(
     let (service_account_id, service_account_name) =
         github_service_account_in_tx(tx, workspace_id, actor_id, now).await?;
     let (body, blocks) = markdown(tx, workspace_id, task_id, &comment.body).await?;
+    // The GitHub author is not a member: nobody is skipped as the author of their own note.
+    let author = NotificationActor::Github(&comment.login);
     let mentioned = mentionable(
         tx,
         workspace_id,
         mentioned_users(&blocks).into_keys().collect(),
-        actor_id,
+        author,
     )
     .await?;
     let id = Id::new_v7();
@@ -221,11 +225,11 @@ async fn create(
     .bind(comment.avatar_url.as_deref())
     .execute(&mut **tx)
     .await?;
-    // As for a note written in Orbit; the sync actor does not start following the task.
+    // As for a note written in Orbit, from the GitHub author.
     notify_users(
         tx,
         workspace_id,
-        actor_id,
+        author,
         NotificationRequest {
             kind: "comment_mentioned",
             task_id,
@@ -238,7 +242,7 @@ async fn create(
     task_followers::notify_followers_in_tx(
         tx,
         workspace_id,
-        actor_id,
+        author,
         FollowerNotice {
             kind: "task_commented",
             task_id,
@@ -299,7 +303,8 @@ async fn edit(
         .into_keys()
         .filter(|id| !known.contains_key(id))
         .collect();
-    let added = mentionable(tx, workspace_id, added, actor_id).await?;
+    let author = NotificationActor::Github(&comment.login);
+    let added = mentionable(tx, workspace_id, added, author).await?;
     sqlx::query(
         "UPDATE task_comments SET body = $1, body_json = $2, version = version + 1, updated_at = $3, \
          github_author_login = $4, github_author_avatar_url = $5 WHERE id = $6",
@@ -315,7 +320,7 @@ async fn edit(
     notify_users(
         tx,
         workspace_id,
-        actor_id,
+        author,
         NotificationRequest {
             kind: "comment_mentioned",
             task_id,

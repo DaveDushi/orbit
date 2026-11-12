@@ -54337,13 +54337,23 @@
           "id",
           "workspace_id",
           "recipient_user_id",
-          "actor_user_id",
           "kind",
           "created_at"
         ],
         "properties": {
+          "actor_github_login": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The GitHub login of the author of a note from GitHub; set only when `actor_user_id` is not."
+          },
           "actor_user_id": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The member who caused it; unset when it came from GitHub (see `actor_github_login`)."
           },
           "chat_conversation_id": {
             "type": [
@@ -56450,13 +56460,23 @@
                 "id",
                 "workspace_id",
                 "recipient_user_id",
-                "actor_user_id",
                 "kind",
                 "created_at"
               ],
               "properties": {
+                "actor_github_login": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The GitHub login of the author of a note from GitHub; set only when `actor_user_id` is not."
+                },
                 "actor_user_id": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The member who caused it; unset when it came from GitHub (see `actor_github_login`)."
                 },
                 "chat_conversation_id": {
                   "type": [

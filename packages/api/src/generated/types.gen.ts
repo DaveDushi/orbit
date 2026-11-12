@@ -2691,7 +2691,14 @@ export type NotificationPrefs = {
 };
 
 export type NotificationRecord = {
-    actor_user_id: string;
+    /**
+     * The GitHub login of the author of a note from GitHub; set only when `actor_user_id` is not.
+     */
+    actor_github_login?: string | null;
+    /**
+     * The member who caused it; unset when it came from GitHub (see `actor_github_login`).
+     */
+    actor_user_id?: string | null;
     /**
      * Conversation and message of a `chat_mentioned` notification.
      */
@@ -3529,7 +3536,14 @@ export type PageMemberRecord = {
 
 export type PageNotificationRecord = {
     items: Array<{
-        actor_user_id: string;
+        /**
+         * The GitHub login of the author of a note from GitHub; set only when `actor_user_id` is not.
+         */
+        actor_github_login?: string | null;
+        /**
+         * The member who caused it; unset when it came from GitHub (see `actor_github_login`).
+         */
+        actor_user_id?: string | null;
         /**
          * Conversation and message of a `chat_mentioned` notification.
          */

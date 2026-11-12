@@ -873,9 +873,10 @@ impl PushService {
     pub async fn push_inbox(&self) -> Result<usize, sqlx::Error> {
         let rows = sqlx::query(
             "SELECT notifications.id, notifications.recipient_user_id, notifications.kind, \
-             notifications.actor_user_id, user_avatars.updated_at AS avatar_updated_at, \
-             users.display_name AS actor, tasks.title AS task_title, pages.title AS page_title \
-             FROM notifications JOIN users ON users.id = notifications.actor_user_id \
+             notifications.actor_user_id, notifications.actor_github_login, \
+             user_avatars.updated_at AS avatar_updated_at, users.display_name AS actor, \
+             tasks.title AS task_title, pages.title AS page_title \
+             FROM notifications LEFT JOIN users ON users.id = notifications.actor_user_id \
              LEFT JOIN user_avatars ON user_avatars.user_id = users.id \
              LEFT JOIN tasks ON tasks.id = notifications.task_id \
              LEFT JOIN pages ON pages.id = notifications.page_id \
@@ -898,7 +899,10 @@ impl PushService {
             if claimed == 0 {
                 continue;
             }
-            let actor: String = row.get("actor");
+            let actor = match row.get::<Option<String>, _>("actor_github_login") {
+                Some(login) => format!("{login} (GitHub)"),
+                None => row.get::<Option<String>, _>("actor").unwrap_or_default(),
+            };
             let subject = |column: &str| {
                 row.get::<Option<String>, _>(column)
                     .filter(|title| !title.is_empty())
@@ -952,9 +956,8 @@ impl PushService {
                 tag: format!("inbox:{id}"),
                 sound: kind.sound(),
                 icon: row
-                    .get::<String, _>("actor_user_id")
-                    .parse()
-                    .ok()
+                    .get::<Option<String>, _>("actor_user_id")
+                    .and_then(|id| id.parse().ok())
                     .and_then(|actor_id| avatar_url(actor_id, row.get("avatar_updated_at"))),
             };
             self.notify(user_id, kind, &notice).await?;

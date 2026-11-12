@@ -10,7 +10,7 @@ import { VirtualList } from '@/components/common/VirtualList'
 import { Pane, PaneHeader, PaneTitle } from '@/components/common/Pane'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import { useMembers } from '@/features/workspaces/api'
-import { isMention, notificationCopy, notificationTarget, useMarkAllNotificationsRead, useMarkNotificationRead, useNotifications } from '@/features/inbox/api'
+import { isMention, notificationActor, notificationCopy, notificationTarget, useMarkAllNotificationsRead, useMarkNotificationRead, useNotifications } from '@/features/inbox/api'
 import { usePageTree } from '@/features/docs/api/pages'
 import { useSlowPending } from '@/lib/useDebouncedValue'
 import { ProfileTrigger } from '@/components/common/ProfileTrigger'
@@ -92,7 +92,7 @@ export function InboxPage() {
           <VirtualList className="min-h-0 flex-1" count={items.length} rowHeight={56} rowKey={(index) => items[index].id}>
             {(index) => {
               const notification = items[index]
-              const actor = members.data?.find((member) => member.id === notification.actor_user_id)
+              const actor = notificationActor(notification, members.data)
               const page = notification.page_id ? pageTree.data?.find((item) => item.id === notification.page_id) : undefined
               const copy = notificationCopy(notification, page?.title, actor?.name)
               return (

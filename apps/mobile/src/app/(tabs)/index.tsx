@@ -5,7 +5,7 @@ import { Pressable, RefreshControl, ScrollView, View } from 'react-native'
 
 import { MenuButton } from '../../components/Drawer'
 import { relativeTime } from '../../data/format'
-import { notificationCopy, notificationTarget } from '../../data/inbox'
+import { notificationActor, notificationCopy, notificationTarget } from '../../data/inbox'
 import { keys } from '../../data/keys'
 import * as api from '../../data/orbit'
 import { dueLabel, identifier } from '../../data/tasks'
@@ -108,7 +108,7 @@ export default function HomeScreen() {
             ) : (
               unreadItems.slice(0, CARD_LIMIT).map((notification, index, list) => {
                 const page = pages.data?.find((item) => item.id === notification.page_id)
-                const actor = people.find((person) => person.id === notification.actor_user_id)
+                const actor = notificationActor(notification, people)
                 return (
                   <CardRow key={notification.id} href={(notificationTarget(notification) ?? '/activity') as Href} last={index === list.length - 1}>
                     <Icon name="directInbox" size={16} color={alpha(colors.mutedForeground, 0.7)} />

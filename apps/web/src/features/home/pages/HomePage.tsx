@@ -13,7 +13,7 @@ import { useMembers } from '@/features/workspaces/api'
 import { useAllStatuses, useProjects } from '@/features/tasks/api/projects'
 import { taskFromRecord, type Task } from '@/features/tasks/api/models'
 import { useTasks } from '@/features/tasks/api/tasks'
-import { notificationCopy, notificationTarget, useNotifications } from '@/features/inbox/api'
+import { notificationActor, notificationCopy, notificationTarget, useNotifications } from '@/features/inbox/api'
 import { usePageTree } from '@/features/docs/api/pages'
 import { taskPath } from '@/lib/taskLinks'
 import { docsHidden } from '@/app/shell/productNavigation'
@@ -143,7 +143,7 @@ export function HomePage() {
                 ) : (
                   unread.slice(0, CARD_LIMIT).map((notification) => {
                     const page = pageTree.data?.find((item) => item.id === notification.page_id)
-                    const actor = members.data?.find((member) => member.id === notification.actor_user_id)
+                    const actor = notificationActor(notification, members.data)
                     return (
                       <CardRow key={notification.id} to={notificationTarget(notification) ?? '/inbox'}>
                         <Inbox className="size-4 shrink-0 text-muted-foreground/70" />

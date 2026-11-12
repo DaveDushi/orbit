@@ -11,6 +11,15 @@ export function notificationTarget(notification: NotificationRecord): string | n
 export const isMention = (notification: NotificationRecord) =>
   ['comment_mentioned', 'description_mentioned', 'page_comment_mentioned', 'page_mentioned', 'chat_mentioned'].includes(notification.kind)
 
+/** Who caused a notification: a member, or the GitHub author of a note from GitHub (as on the web). */
+export function notificationActor(
+  notification: NotificationRecord,
+  people: readonly { id: string; name: string }[],
+): { id?: string; name: string } | undefined {
+  if (notification.actor_github_login) return { name: `${notification.actor_github_login} (GitHub)` }
+  return people.find((person) => person.id === notification.actor_user_id)
+}
+
 /** The web inbox's wording (`notificationCopy` in `features/inbox/api.ts`). */
 export function notificationCopy(notification: NotificationRecord, pageTitle: string | undefined, actorName: string | undefined): { title: string; body: string } {
   const actor = actorName ?? 'Someone'

@@ -9,7 +9,7 @@ use serde::Serialize;
 use sqlx::{Any, Transaction};
 use utoipa::ToSchema;
 
-use super::tasks::{NotificationRequest, TaskError, notify_users, parse_id};
+use super::tasks::{NotificationActor, NotificationRequest, TaskError, notify_users, parse_id};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
 pub struct TaskFollowers {
@@ -86,23 +86,24 @@ pub(super) struct FollowerNotice<'a> {
     pub skip: &'a [Id],
 }
 
-/// Notifies the task's followers of a change by `actor_id`; never the actor.
-pub(super) async fn notify_followers_in_tx(
+/// Notifies the task's followers of a change by `actor`; never the actor.
+pub(super) async fn notify_followers_in_tx<'a>(
     tx: &mut Transaction<'_, Any>,
     workspace_id: Id,
-    actor_id: Id,
+    actor: impl Into<NotificationActor<'a>>,
     notice: FollowerNotice<'_>,
     now: TimestampMillis,
 ) -> Result<(), TaskError> {
+    let actor = actor.into();
     let recipients: Vec<Id> = followers_in_tx(tx, workspace_id, notice.task_id)
         .await?
         .into_iter()
-        .filter(|id| *id != actor_id && !notice.skip.contains(id))
+        .filter(|id| actor != NotificationActor::User(*id) && !notice.skip.contains(id))
         .collect();
     notify_users(
         tx,
         workspace_id,
-        actor_id,
+        actor,
         NotificationRequest {
             kind: notice.kind,
             task_id: notice.task_id,

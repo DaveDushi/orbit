@@ -376,6 +376,57 @@ async fn github_comments_become_notes_and_follow_edits_and_deletes() {
 }
 
 #[tokio::test]
+async fn github_notes_notify_followers_and_mentioned_members_from_the_github_author() {
+    let fixture = fixture().await;
+    let task = fixture.linked("issue", 9).await;
+    let mira = Id::new_v7();
+    let now = TimestampMillis::now();
+    sqlx::query("INSERT INTO users (id, email, normalized_email, display_name, password_hash, created_at, updated_at) VALUES ($1, 'mira@example.com', 'mira@example.com', 'Mira', 'unused', $2, $2)")
+        .bind(mira.to_string()).bind(now.as_millis()).execute(fixture.database.pool()).await.unwrap();
+    sqlx::query("INSERT INTO memberships (id, workspace_id, user_id, role, version, created_at, updated_at) VALUES ($1, $2, $3, 'member', 0, $4, $4)")
+        .bind(Id::new_v7().to_string()).bind(fixture.workspace_id.to_string()).bind(mira.to_string()).bind(now.as_millis())
+        .execute(fixture.database.pool()).await.unwrap();
+    // The owner (the member the sync acts as) follows the task.
+    fixture
+        .tasks
+        .task_followers(fixture.workspace_id, task, fixture.user_id, Some(true), now)
+        .await
+        .unwrap();
+
+    let created = comment_event("created", 9, 3001, "octocat", "Can @Mira look?", false);
+    assert_eq!(fixture.send("issue_comment", created).await, StatusCode::OK);
+    // The owner too is mentioned like any member.
+    let created = comment_event("created", 9, 3002, "octocat", "And @Owner, please", false);
+    assert_eq!(fixture.send("issue_comment", created).await, StatusCode::OK);
+
+    let inbox = |user: Id| {
+        let tasks = fixture.tasks.clone();
+        let workspace_id = fixture.workspace_id;
+        async move {
+            let mut items: Vec<_> = tasks
+                .notifications(workspace_id, user, false, None, 50)
+                .await
+                .unwrap()
+                .items
+                .into_iter()
+                .map(|n| (n.kind, n.actor_user_id, n.actor_github_login))
+                .collect();
+            items.sort();
+            items
+        }
+    };
+    let from_github = |kind: &str| (kind.to_owned(), None, Some("octocat".to_owned()));
+    // A follower gets each note, as a mention when it names them; nobody is skipped as the actor.
+    let both = [
+        from_github("comment_mentioned"),
+        from_github("task_commented"),
+    ];
+    assert_eq!(inbox(fixture.user_id).await, both);
+    // The mention made Mira a follower, so the second note notifies Mira too.
+    assert_eq!(inbox(mira).await, both);
+}
+
+#[tokio::test]
 async fn pull_request_conversation_comments_sync() {
     let fixture = fixture().await;
     let task = fixture.linked("pull_request", 8).await;

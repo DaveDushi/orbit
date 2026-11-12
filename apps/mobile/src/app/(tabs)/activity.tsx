@@ -5,7 +5,7 @@ import { Alert, FlatList, Pressable, RefreshControl, View } from 'react-native'
 
 import { MenuButton } from '../../components/Drawer'
 import { relativeTime } from '../../data/format'
-import { isMention, notificationCopy, notificationTarget } from '../../data/inbox'
+import { isMention, notificationActor, notificationCopy, notificationTarget } from '../../data/inbox'
 import * as api from '../../data/orbit'
 import { useOrbit } from '../../orbit-context'
 import { useNotifications, usePages, usePeople } from '../../queries'
@@ -85,7 +85,7 @@ export default function ActivityScreen() {
           refreshControl={<RefreshControl refreshing={notifications.isRefetching} onRefresh={() => void notifications.refetch()} tintColor={colors.mutedForeground} />}
           ListEmptyComponent={<EmptyState icon="inbox" title="You're all caught up" description="Assignments, mentions and tasks you follow appear here." />}
           renderItem={({ item }) => {
-            const actor = people.find((person) => person.id === item.actor_user_id)
+            const actor = notificationActor(item, people)
             const page = item.page_id ? pages.data?.find((entry) => entry.id === item.page_id) : undefined
             const copy = notificationCopy(item, page?.title, actor?.name)
             const unread = !item.read_at

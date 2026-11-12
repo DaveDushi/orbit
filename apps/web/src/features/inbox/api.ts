@@ -110,6 +110,15 @@ export function isMention(notification: NotificationRecord): boolean {
   )
 }
 
+/** Who caused a notification: a member, or the GitHub author of a note from GitHub. */
+export function notificationActor(
+  notification: NotificationRecord,
+  members: readonly { id: string; name: string }[] | undefined,
+): { id?: string; name: string } | undefined {
+  if (notification.actor_github_login) return { name: `${notification.actor_github_login} (GitHub)` }
+  return members?.find((member) => member.id === notification.actor_user_id)
+}
+
 export function notificationCopy(notification: NotificationRecord, pageTitle?: string, actorName?: string): { title: string; body: string } {
   if (notification.kind === 'chat_mentioned') {
     return { title: `${actorName ?? 'Someone'} mentioned you in chat`, body: 'Open the conversation to see the message.' }
