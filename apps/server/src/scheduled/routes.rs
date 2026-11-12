@@ -449,8 +449,8 @@ async fn delete_scheduled(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AgentCall {
-    /// `schedule_routine`, `send_later`, `remind_me`, `save_script`, `test_routine` or
-    /// `approve_routine_script`.
+    /// `schedule_routine`, `send_later`, `remind_me`, `save_script`, `test_routine`,
+    /// `approve_routine_script`, `set_routine_script` or `repair_routine_script`.
     tool: String,
     #[serde(default)]
     arguments: Map<String, Value>,
@@ -482,6 +482,20 @@ struct ReminderArgs {
 #[serde(deny_unknown_fields)]
 struct RoutineArgs {
     routine_id: Id,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RoutineScriptArgs {
+    routine_id: Id,
+    /// `null`: the routine runs no script any more.
+    script_id: Option<Id>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RepairArgs {
+    code: String,
 }
 
 fn refused(detail: &str) -> Json<Value> {
@@ -576,6 +590,21 @@ async fn agent_call(
     let now = TimestampMillis::now();
     let caller = (workspace_id, user_id);
     let arguments = Value::Object(body.arguments);
+    // The routine run whose saved script failed: its agent may save a fixed version and run it, also
+    // in a dry run (an earlier repair made it one). The fixed version writes nothing until the creator
+    // approves it; a test run is refused there.
+    if body.tool == "repair_routine_script" {
+        let Ok(args) = serde_json::from_value::<RepairArgs>(arguments) else {
+            return Ok(refused("Give code only."));
+        };
+        return match store
+            .repair_run_script(workspace_id, user_id, thread, &args.code, now)
+            .await
+        {
+            Ok(repaired) => Ok(created("script repaired", repaired)),
+            Err(error) => refusal(error, &uri, &request_id),
+        };
+    }
     // A test run makes nothing here: no routine, message, reminder, script or other test run.
     if dry.is_some() {
         return Ok(Json(json!({
@@ -640,6 +669,41 @@ async fn agent_call(
                 .await
             {
                 Ok(record) => Ok(created("script approved", record)),
+                Err(error) => refusal(error, &uri, &request_id),
+            }
+        }
+        // The same routine runs a saved script from now on (or none): after the driver's yes to that
+        // change, which shows the script's code and approves exactly that code.
+        "set_routine_script" => {
+            let Ok(args) = serde_json::from_value::<RoutineScriptArgs>(arguments) else {
+                return Ok(refused("Give routine_id and script_id only."));
+            };
+            let preview = match store
+                .preview_routine_script(workspace_id, user_id, args.routine_id, args.script_id)
+                .await
+            {
+                Ok(preview) => preview,
+                Err(error) => return refusal(error, &uri, &request_id),
+            };
+            let input = json!({ "routine_id": args.routine_id, "change": &preview.input });
+            if let Some(question) = approval_question(
+                &state,
+                caller,
+                thread,
+                "set_routine_script",
+                preview.action,
+                &input,
+                (&uri, &request_id),
+            )
+            .await?
+            {
+                return Ok(question);
+            }
+            match store
+                .update_routine(workspace_id, user_id, args.routine_id, preview.input, now)
+                .await
+            {
+                Ok(record) => Ok(created("routine script changed", record)),
                 Err(error) => refusal(error, &uri, &request_id),
             }
         }

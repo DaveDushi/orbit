@@ -233,7 +233,8 @@ pub struct RoutineRecord {
     pub paused_reason: Option<String>,
     pub next_run_at: Option<i64>,
     pub last_run_at: Option<i64>,
-    /// `started` (the agent got the run) or `skipped` (see `last_error`).
+    /// Of the newest scheduled run (`super::runs`): `started` while it runs, then `done` or `failed`
+    /// (see `last_error`); `skipped` (see `last_error`).
     pub last_run_status: Option<String>,
     pub last_run_message_id: Option<String>,
     pub last_error: Option<String>,
@@ -278,7 +279,7 @@ pub struct NewRoutine {
     pub script_hash: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoutineChange {
     #[serde(default)]
@@ -310,8 +311,13 @@ pub struct RoutineChange {
 const ROUTINE_SELECT: &str = "SELECT r.id, r.workspace_id, r.agent_user_id, ag.display_name AS agent_name, \
      r.creator_id, u.display_name AS creator_name, \
      r.conversation_id, c.name AS conversation_name, c.kind AS conversation_kind, r.name, r.prompt, r.schedule, \
-     r.time_zone, r.status, r.paused_reason, r.next_run_at, r.last_run_at, r.last_run_status, \
-     r.last_run_message_id, r.last_error, r.created_at, r.updated_at, r.script_id, s.name AS script_name, \
+     r.time_zone, r.status, r.paused_reason, r.next_run_at, r.last_run_at, \
+     COALESCE((SELECT x.status FROM agent_routine_runs x WHERE x.routine_id = r.id AND x.test = 0 \
+         ORDER BY x.started_at DESC, x.id DESC LIMIT 1), r.last_run_status) AS last_run_status, \
+     r.last_run_message_id, \
+     COALESCE((SELECT x.error FROM agent_routine_runs x WHERE x.routine_id = r.id AND x.test = 0 \
+         ORDER BY x.started_at DESC, x.id DESC LIMIT 1), r.last_error) AS last_error, \
+     r.created_at, r.updated_at, r.script_id, s.name AS script_name, \
      s.code_hash AS script_hash, r.script_approved_hash \
      FROM agent_routines r JOIN users u ON u.id = r.creator_id JOIN users ag ON ag.id = r.agent_user_id \
      LEFT JOIN chat_conversations c ON c.id = r.conversation_id LEFT JOIN agent_scripts s ON s.id = r.script_id";
@@ -809,6 +815,58 @@ impl Store {
                 script_approval_text(&name, &code, &hash)
             ),
             input: hash,
+        })
+    }
+
+    /// What the creator approves when the agent attaches a saved script to an existing routine (or
+    /// takes it off): the change in words with the script's exact code, and the change itself. The
+    /// yes approves that exact code, as for a new routine with a script.
+    pub async fn preview_routine_script(
+        &self,
+        workspace_id: Id,
+        user_id: Id,
+        routine_id: Id,
+        script_id: Option<Id>,
+    ) -> Result<Preview<RoutineChange>, ScheduledError> {
+        let mut conn = self.database.pool().acquire().await?;
+        let actor = member(&mut conn, workspace_id, user_id).await?;
+        let routine = load_routine(&mut conn, workspace_id, routine_id, actor).await?;
+        if !routine.can_edit {
+            return Err(ScheduledError::Forbidden(
+                "Only the person who made this routine can change its script.",
+            ));
+        }
+        let Some(script) = script_id else {
+            let Some(current) = routine.script_name else {
+                return Err(ScheduledError::Invalid(
+                    "This routine runs no saved script.",
+                ));
+            };
+            return Ok(Preview {
+                action: format!(
+                    "Routine \"{}\": stop running your saved script \"{current}\". Its runs go back to its \
+                     instruction only.",
+                    routine.name
+                ),
+                input: RoutineChange {
+                    script_id: Some(String::new()),
+                    ..RoutineChange::default()
+                },
+            });
+        };
+        let (name, code, hash) =
+            super::scripts::own_script(&mut conn, workspace_id, user_id, script).await?;
+        Ok(Preview {
+            action: format!(
+                "Routine \"{}\" (the same routine, same schedule and place): run your saved script{}",
+                routine.name,
+                script_approval_text(&name, &code, &hash)
+            ),
+            input: RoutineChange {
+                script_id: Some(script.to_string()),
+                approve_script_hash: Some(hash),
+                ..RoutineChange::default()
+            },
         })
     }
 

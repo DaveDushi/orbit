@@ -44,6 +44,13 @@ test("scripts call only the agent's own tools; a script run offers the model onl
 	assert.match(blockedCall(scriptRun, "codemode", false, 40)!, /call run_saved_script/);
 	assert.match(blockedCall(scriptRun, "create_task", false, 40)!, /call run_saved_script/);
 	assert.equal(blockedCall(scriptRun, "create_task", true, 40), undefined);
+	// Only the model of a scheduled script run repairs the script, at most twice; a test run and a script never do.
+	assert.equal(blockedCall(scriptRun, "repair_routine_script", false, 40), undefined);
+	assert.match(blockedCall(scriptRun, "repair_routine_script", true, 40)!, /Only the model/);
+	assert.match(blockedCall({ ...scriptRun, routineRun: { ...scriptRun.routineRun, test: true } }, "repair_routine_script", false, 40)!, /Only the model/);
+	const repair = { from: "a", to: "b", change: "x", added: 1, removed: 1 };
+	assert.match(blockedCall({ ...scriptRun, routineRun: { ...scriptRun.routineRun, repairs: [repair, repair] } }, "repair_routine_script", false, 40)!, /no repairs left/);
+	assert.match(blockedCall({ allowedTools: null, toolCalls: 0, routineRun: null }, "repair_routine_script", false, 40)!, /Only the model/);
 	// No other run can run a saved script.
 	assert.match(blockedCall({ allowedTools: null, toolCalls: 0, routineRun: null }, "run_saved_script", false, 40)!, /no saved script/);
 });

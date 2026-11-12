@@ -29,7 +29,8 @@ export interface Routine {
   paused_reason: string | null
   next_run_at: number | null
   last_run_at: number | null
-  last_run_status: 'started' | 'skipped' | null
+  /** Of the newest scheduled run: `started` while it runs, then `done` or `failed`; `skipped` (see `last_error`). */
+  last_run_status: 'started' | 'done' | 'failed' | 'skipped' | null
   last_run_message_id: string | null
   last_error: string | null
   created_at: number

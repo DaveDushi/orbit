@@ -24,6 +24,11 @@ use super::store::{ScheduledError, Store, member};
 pub const RUNS_KEPT: i64 = 20;
 /// A test run that has not ended after this long no longer blocks the next one.
 pub const TEST_RUN_STALE_MS: i64 = 15 * 60 * 1000;
+/// A run that the sidecar has not reported after this long failed ([`fail_stale`]): the sidecar lost it
+/// (a restart, a crash, a credential that went away before the run began).
+pub const RUN_STALE_MS: i64 = 60 * 60 * 1000;
+/// The error of such a run. A late report of it is still taken ([`finish`]).
+pub const STALE_ERROR: &str = "No result: the agent did not finish this run within an hour.";
 pub const OUTPUT_MAX_CHARS: usize = 4000;
 pub const ERROR_MAX_CHARS: usize = 1000;
 /// Tool calls kept per run, and the largest `store()` state (JSON) kept per routine.
@@ -315,9 +320,11 @@ pub async fn finish(
         .filter(|state| state.len() <= STATE_MAX_BYTES);
     let mut tx = database.immediate_transaction().await?;
     let Some(row) = sqlx::query(
-        "SELECT routine_id, test, writes FROM agent_routine_runs WHERE id = $1 AND status = 'started'",
+        "SELECT routine_id, test, writes FROM agent_routine_runs WHERE id = $1 \
+         AND (status = 'started' OR (status = 'failed' AND output IS NULL AND error = $2))",
     )
     .bind(run_id.to_string())
+    .bind(STALE_ERROR)
     .fetch_optional(&mut *tx)
     .await?
     else {
@@ -349,4 +356,29 @@ pub async fn finish(
     }
     tx.commit().await?;
     Ok(true)
+}
+
+/// Fails the runs that are still `started` [`RUN_STALE_MS`] after they began, so no run (and no
+/// routine's last run) shows "running" for ever. Writes only when there is such a run.
+pub async fn fail_stale(database: &Database, now: TimestampMillis) -> Result<u64, sqlx::Error> {
+    let before = now.as_millis() - RUN_STALE_MS;
+    let stale: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM agent_routine_runs WHERE status = 'started' AND started_at < $1 LIMIT 1",
+    )
+    .bind(before)
+    .fetch_optional(database.pool())
+    .await?;
+    if stale.is_none() {
+        return Ok(0);
+    }
+    let done = sqlx::query(
+        "UPDATE agent_routine_runs SET status = 'failed', finished_at = $1, error = $2 \
+         WHERE status = 'started' AND started_at < $3",
+    )
+    .bind(now.as_millis())
+    .bind(STALE_ERROR)
+    .bind(before)
+    .execute(database.pool())
+    .await?;
+    Ok(done.rows_affected())
 }

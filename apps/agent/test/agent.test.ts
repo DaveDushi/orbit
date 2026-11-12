@@ -680,9 +680,23 @@ class RoutineOrbit extends FakeOrbit {
 	readonly dryThreads = new Set<string>();
 	readonly sessionThreads: (string | undefined)[] = [];
 	readonly reports = new Map<string, any>();
+	/** The code of each script repair, in order. */
+	readonly repairs: string[] = [];
+	/** People whose sessions Orbit ended (a repair does): their old token gets 401. */
+	readonly revoked = new Set<string>();
 
 	async route(method: string, url: string, headers: Record<string, unknown>, body: any): Promise<[number, unknown]> {
 		const path = url.split("?")[0];
+		const bearer = String(headers.authorization ?? "");
+		if ([...this.revoked].some((user) => bearer === `Bearer orbit-agent.${user}`)) return [401, { code: "authentication_required" }];
+		// As Orbit: the repaired code runs on in a dry run, and the sessions issued before end.
+		if (path === `/api/v1/workspaces/${WS}/agent-tools/scheduled` && body?.tool === "repair_routine_script") {
+			this.repairs.push(body.arguments.code);
+			this.dryThreads.add(body.root_message_id);
+			this.revoked.add(bearer.replace(/^Bearer orbit-agent\./, "").replace(/\.dry$/, ""));
+			const hash = `fix${this.repairs.length}`.padEnd(16, "0");
+			return [200, { status: "ok", label: "script repaired", result: { run_id: "r", routine_name: "Digest", previous_hash: this.repairs.length === 1 ? "abc".padEnd(16, "0") : `fix${this.repairs.length - 1}`.padEnd(16, "0"), script: { name: "Digest script", code: body.arguments.code, code_hash: hash } } }];
+		}
 		if (path === "/api/internal/agent/sessions") {
 			this.sessionThreads.push(body.thread_key);
 			const [status, value] = await super.route(method, url, headers, body);
@@ -758,6 +772,71 @@ test("a test run of a saved script writes nothing, lists what it would do, and r
 		);
 		// The script's state goes back to Orbit, which keeps it only for runs that may write.
 		assert.deepEqual(report.state, { runs: 3 });
+	} finally {
+		await agent.stop();
+		orbit.server.close();
+	}
+});
+
+test("a scheduled run repairs its failed script, runs the fix without writes, and notes the change in the thread", async () => {
+	const orbit = new RoutineOrbit();
+	current = orbit;
+	await orbit.listen();
+	const agent = new Agent(config(orbit, mkdtempSync(join(tmpdir(), "agent-"))), new OrbitClient(config(orbit, "")));
+	await agent.open();
+	await agent.start();
+	try {
+		const thread = id();
+		const fixed = 'await tools.search_tasks({});\nawait tools.create_task({ title: "Digest" });\ntext("fixed digest");';
+		const routine = { id: id(), name: "Digest", schedule: "0 9 * * *", time_zone: "UTC", test: false, writes: "script", script: { id: id(), name: "Digest script", code: 'throw new Error("boom");', hash: "abc".padEnd(16, "0") }, state: {} };
+		const run = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `Post the digest.\nfix it with: ${fixed}`, routine });
+		await until("the report", () => orbit.reports.has(run));
+		assert.deepEqual(orbit.repairs, [fixed]);
+		const answer = progressOf(orbit, run);
+		assert.match(answer, /fixed digest/);
+		// The fixed version wrote nothing: its write reached Orbit only as a dry run's, and the answer lists it.
+		assert.deepEqual(orbit.calls.filter((call) => call.method === "POST" && call.path === "/tasks"), [{ method: "POST", path: "/tasks", as: "dry" }]);
+		assert.match(answer, /\*\*Would do\*\* \(script not approved: not done\):\n- create_task/);
+		const note = orbit.messages.get(`agent:${run}:repair`);
+		assert.ok(note, "a note in the routine's thread");
+		assert.equal(note.root, thread);
+		assert.match(note.body, /version `abc000000000` → `fix100000000` \(\+3 −1 lines\): Replaced the step that failed/);
+		assert.match(note.body, new RegExp(`<@${ANN}> the new version makes no writes until you approve it`));
+		const report = orbit.reports.get(run);
+		assert.equal(report.status, "done");
+		assert.ok(report.tool_calls.some((call: { name: string; status: string }) => call.name === "repair_routine_script" && call.status === "ok"));
+	} finally {
+		await agent.stop();
+		orbit.server.close();
+	}
+});
+
+test("a script that still fails after two repairs ends with its error, and a test run never repairs", async () => {
+	const orbit = new RoutineOrbit();
+	current = orbit;
+	await orbit.listen();
+	const agent = new Agent(config(orbit, mkdtempSync(join(tmpdir(), "agent-"))), new OrbitClient(config(orbit, "")));
+	await agent.open();
+	await agent.start();
+	try {
+		const broken = 'throw new Error("still broken");';
+		const script = { id: id(), name: "Digest script", code: 'throw new Error("boom");', hash: "abc".padEnd(16, "0") };
+		const thread = id();
+		const run = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `Post the digest.\nfix it with: ${broken}`, routine: { id: id(), name: "Digest", schedule: "0 9 * * *", time_zone: "UTC", test: false, writes: "script", script, state: {} } });
+		await until("the report", () => orbit.reports.has(run));
+		assert.equal(orbit.repairs.length, 2);
+		const answer = progressOf(orbit, run);
+		assert.match(answer, /still broken/);
+		assert.match(answer, /no repairs left/);
+		assert.equal((orbit.messages.get(`agent:${run}:repair`)?.body.match(/^- version/gm) ?? []).length, 2);
+
+		const testThread = id();
+		orbit.dryThreads.add(testThread);
+		const testRun = orbit.add({ thread_key: testThread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `Post the digest.\nfix it with: ${broken}`, routine: { id: id(), name: "Digest", schedule: "0 9 * * *", time_zone: "UTC", test: true, writes: "dry", script, state: {} } });
+		await until("the test run's report", () => orbit.reports.has(testRun));
+		assert.equal(orbit.repairs.length, 2, "a test run asks Orbit for no repair");
+		assert.match(progressOf(orbit, testRun), /test run, so you cannot change the script/);
+		assert.equal(orbit.messages.has(`agent:${testRun}:repair`), false);
 	} finally {
 		await agent.stop();
 		orbit.server.close();

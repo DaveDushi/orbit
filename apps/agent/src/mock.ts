@@ -24,7 +24,9 @@
  *   schedule routine "Name" at "cron" to "Instruction" [with script "Script"] [in #channel]     list routines
  *   run code: <JavaScript>          save script "Name" with code: <JavaScript>          list scripts
  *   test routine "Name"            approve script of routine "Name"
- *   (a routine run of a saved script calls run_saved_script)
+ *   (a routine run of a saved script calls run_saved_script; when the script fails and the run may repair it, a
+ *     routine instruction that ends with "fix it with: <JavaScript>" saves that code with repair_routine_script and
+ *     runs the script again)
  *   remind me at <2026-11-11T17:00> "Text"     send later at <2026-11-11T17:00> "Text" [in #channel]
  *   (a routine's scheduled run carries its saved instruction, which these same rules read)
  *   show a broken card (answers with a card that is not in the catalog)
@@ -251,7 +253,7 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 	const instruction = message.replace(/\n\nSent from the Ask bar[\s\S]*$/, "");
 	const fromPage = (kind: "task" | "page" | "drive") => (open?.kind === PAGE_KINDS[kind] ? open.id : undefined);
 	// Code first: a script's text may contain the words of other rules.
-	if (/call run_saved_script once/.test(instruction)) return { name: "run_saved_script", args: {} };
+	if (/call run_saved_script\b/.test(instruction)) return { name: "run_saved_script", args: {} };
 	let code: RegExpExecArray | null;
 	if ((code = /\bsave script "([^"]+)" with code:\s*([\s\S]+)$/i.exec(instruction))) return { name: "save_script", args: { name: code[1], code: code[2].trim() } };
 	if ((code = /\brun code:\s*([\s\S]+)$/i.exec(instruction))) return { name: "codemode", args: { code: code[1].trim() } };
@@ -346,6 +348,12 @@ export function respond(messages: readonly Message[], modelId = "mock", thinking
 			return fauxAssistantMessage(fauxText(`Done (\`read_chat_file\` ×${reads.length}).\n\n${parts.join("\n\n")}`));
 		}
 		const instruction = newestInstruction(messages);
+		// A routine's failed script: the fix its instruction names, then the script again.
+		const fix = /fix it with:\s*([\s\S]+)$/i.exec(instruction);
+		if (fix && last.toolName === "run_saved_script" && last.isError && /call repair_routine_script/.test(textOf(last.content))) {
+			return fauxAssistantMessage(fauxToolCall("repair_routine_script", { code: fix[1].trim(), change: "Replaced the step that failed (mock fix)." }), { stopReason: "toolUse" });
+		}
+		if (last.toolName === "repair_routine_script" && !last.isError) return fauxAssistantMessage(fauxToolCall("run_saved_script", {}), { stopReason: "toolUse" });
 		const media = mediaStep(instruction, messages);
 		if (media) return "text" in media ? fauxAssistantMessage(fauxText(media.text)) : fauxAssistantMessage(fauxToolCall(media.name, media.args as JsonObject), { stopReason: "toolUse" });
 		if (CARD_REQUEST.test(instruction) && last.toolName === "search_tasks" && !last.isError) {

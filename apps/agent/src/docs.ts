@@ -23,7 +23,12 @@ export type RoutineRunState = {
 	script: { name: string; code: string; hash: string } | null;
 	/** The end of the run was reported to Orbit. */
 	reported: boolean;
+	/** The script's repairs in this run (`repair_routine_script`), oldest first; at most `MAX_SCRIPT_REPAIRS`. */
+	repairs?: ScriptRepair[];
 };
+
+/** One repair of a routine's script in a run: the version that failed, the new one, and what changed. */
+export type ScriptRepair = { from: string; to: string; change: string; added: number; removed: number };
 
 /** One tool call of a routine run, for its history. `would_do`: a write a dry run did not make. */
 export type RunCall = { name: string; args: string; status: "ok" | "error" | "dry_run"; would_do?: string };

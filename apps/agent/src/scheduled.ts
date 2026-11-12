@@ -1,7 +1,8 @@
 /**
- * Routines, reminders, send later, saved scripts and test runs (`apps/server/src/scheduled/`). The tools only list and create, as the driver;
- * people change, pause and delete in Settings → Agentic → Routines and in the chat composer (`agent::scope` refuses
- * anything else from an agent session). Creating goes to `/agent-tools/scheduled`: a routine or a message posted as
+ * Routines, reminders, send later, saved scripts and test runs (`apps/server/src/scheduled/`). The tools list and create, as the driver,
+ * attach or detach a routine's saved script, and repair a routine's failed script in its own run; people change, pause
+ * and delete in Settings → Agentic → Routines and in the chat composer (`agent::scope` refuses anything else from an
+ * agent session). Creating goes to `/agent-tools/scheduled`: a routine or a message posted as
  * the driver is made only after the driver's "yes" in the thread to exactly that action (Orbit keeps and checks the
  * approval); a reminder, a DM to the driver only, needs none. A routine runs later as its creator, with the creator's
  * permissions only, and without a new approval.
@@ -12,9 +13,10 @@ import { defineTool } from "@earendil-works/pi-durable";
 import type { ToolExecutionApi, ToolExecutionResult } from "@earendil-works/pi-durable";
 import type { Context } from "@earendil-works/chord/context";
 
+import { MAX_SCRIPT_REPAIRS, REPAIR_SCRIPT_TOOL, RUN_SCRIPT_TOOL } from "./codemode.ts";
 import { untrusted } from "./files.ts";
 import { askForApproval, type Driver } from "./integrations.ts";
-import type { ThreadState } from "./docs.ts";
+import { ThreadDoc, type ScriptRepair, type ThreadState } from "./docs.ts";
 import type { OrbitClient } from "./orbit.ts";
 
 type Json = Record<string, unknown>;
@@ -84,6 +86,18 @@ async function scriptFor(as: As, value: string): Promise<Json | undefined> {
 	return scripts.find((script) => script.id === value.trim()) ?? scripts.find((script) => String(script.name).toLowerCase() === wanted);
 }
 
+/** Lines of `after` that `before` does not have, and the reverse: a short size of a script change. */
+export function lineChanges(before: string, after: string): { added: number; removed: number } {
+	const count = (text: string) => {
+		const lines = new Map<string, number>();
+		for (const line of text.split("\n")) lines.set(line, (lines.get(line) ?? 0) + 1);
+		return lines;
+	};
+	const [old, next] = [count(before), count(after)];
+	const missing = (from: Map<string, number>, other: Map<string, number>) => [...from].reduce((sum, [line, n]) => sum + Math.max(0, n - (other.get(line) ?? 0)), 0);
+	return { added: missing(next, old), removed: missing(old, next) };
+}
+
 function iso(value: unknown): string | null {
 	return typeof value === "number" ? new Date(value).toISOString() : null;
 }
@@ -93,6 +107,12 @@ type Answer =
 	| { status: "ok"; label: string; result: Json }
 	| { status: "approval_required"; approval_id: string; action: string; expires_at: number }
 	| { status: "refused" | "failed"; detail: string };
+
+/** What the driver's yes is for, in the approval question. */
+const APPROVAL_PURPOSE: Record<string, string> = {
+	approve_routine_script: "to let this routine's script write",
+	set_routine_script: "to change this routine's script",
+};
 
 /** The tools; `asDriver` and the client come from the Orbit tools. */
 export function scheduledTools(asDriver: Driver, orbit: () => OrbitClient) {
@@ -118,7 +138,7 @@ export function scheduledTools(asDriver: Driver, orbit: () => OrbitClient) {
 					case "ok":
 						return ok(answer.label, view(answer.result));
 					case "approval_required":
-						return askForApproval(api, context, orbit(), state, answer, tool === "approve_routine_script" ? "to let this routine's script write" : "to schedule this", `call ${tool} again with exactly the same arguments`);
+						return askForApproval(api, context, orbit(), state, answer, APPROVAL_PURPOSE[tool] ?? "to schedule this", `call ${tool} again with exactly the same arguments`);
 					default:
 						return refused(`${answer.status === "refused" ? "Refused" : "Failed"}: ${answer.detail}`);
 				}
@@ -206,6 +226,61 @@ export function scheduledTools(asDriver: Driver, orbit: () => OrbitClient) {
 			)(api, context),
 	});
 
+	const setRoutineScript = defineTool({
+		name: "set_routine_script",
+		description:
+			"Make one of the driver's existing routines run a saved script on each run, or run none again (script \"none\"). It changes the same routine (no new one, same schedule and place). Use it when the driver asks to attach, use or change a routine's script; do it yourself, do not send them to Settings. It needs the driver's yes, which shows the script's code and approves exactly that version: then stop, and after their yes call it again with exactly the same arguments.",
+		parameters: Type.Object({
+			routine: routineArg,
+			script: Type.String({ description: 'The saved script\'s name or id (list_scripts), or "none" to stop running a script' }),
+		}),
+		execute: (args, api, context) =>
+			create(
+				"set_routine_script",
+				async (as) => {
+					const routine = await routineFor(as, args.routine);
+					if (!routine) return `I found no routine named ${args.routine}.`;
+					if (args.script.trim().toLowerCase() === "none") return { routine_id: routine.id, script_id: null };
+					const script = await scriptFor(as, args.script);
+					return script ? { routine_id: routine.id, script_id: script.id } : `I found no saved script named ${args.script}.`;
+				},
+				(routine) => ({ ...routineView(routine), manage: "Settings → Agentic → Routines" }),
+			)(api, context),
+	});
+
+	const repairRoutineScript = defineTool({
+		name: REPAIR_SCRIPT_TOOL,
+		description: `Only in a scheduled routine run whose saved script failed: save the fixed script as its new version, then call ${RUN_SCRIPT_TOOL} again. Give the whole script. At most ${MAX_SCRIPT_REPAIRS} repairs per run. The new version makes no writes until the driver approves it; reads and your answer in the routine's thread still work.`,
+		parameters: Type.Object({
+			code: Type.String({ minLength: 1, maxLength: 20_000, description: "The whole fixed script" }),
+			change: Type.String({ minLength: 1, maxLength: 300, description: "What you changed and why, in one line, for the note in the routine's thread" }),
+		}),
+		execute: (args, api, context) =>
+			asDriver(api, context, async (as, state) => {
+				const run = state.routineRun;
+				if (!run?.script || run.test) return refused("Only a scheduled routine run of a saved script can repair it.");
+				if ((run.repairs?.length ?? 0) >= MAX_SCRIPT_REPAIRS) return refused(`This run has no repairs left (${MAX_SCRIPT_REPAIRS} per run): answer with the error and stop.`);
+				const answer = (await as("POST", "/agent-tools/scheduled", {
+					tool: REPAIR_SCRIPT_TOOL,
+					arguments: { code: args.code },
+					conversation_id: state.conversationId,
+					root_message_id: state.rootMessageId,
+				})) as Answer;
+				if (answer.status !== "ok") return refused(answer.status === "approval_required" ? "Orbit asked for an approval, which a repair does not take." : `Refused: ${answer.detail}`);
+				const script = (answer.result as Json).script as Json;
+				const repair: ScriptRepair = { from: String((answer.result as Json).previous_hash).slice(0, 12), to: String(script.code_hash).slice(0, 12), change: args.change.replaceAll("\n", " "), ...lineChanges(run.script.code, String(script.code)) };
+				// The rest of the run runs the new code, and Orbit refuses its writes.
+				await api.commit(async (tx) => {
+					const doc = await tx.doc(ThreadDoc, api.conversationId);
+					if (!doc.routineRun) return;
+					doc.routineRun.script = { name: String(script.name), code: String(script.code), hash: String(script.code_hash) };
+					doc.routineRun.writes = "dry";
+					doc.routineRun.repairs = [...(doc.routineRun.repairs ?? []), repair];
+				}, context);
+				return ok("script repaired", { version: repair.to, repair: `${(run.repairs?.length ?? 0) + 1} of ${MAX_SCRIPT_REPAIRS}`, next: `Call ${RUN_SCRIPT_TOOL} again. This version makes no writes until the driver approves it.` });
+			}),
+	});
+
 	const listRoutines = defineTool({
 		name: "list_routines",
 		description: "List the driver's routines (for an owner or admin: every routine of the workspace), with their schedule, status, last and next run.",
@@ -239,5 +314,5 @@ export function scheduledTools(asDriver: Driver, orbit: () => OrbitClient) {
 			)(api, context),
 	});
 
-	return [scheduleRoutine, listRoutines, remindMe, sendLater, listScripts, saveScript, testRoutine, approveRoutineScript];
+	return [scheduleRoutine, listRoutines, remindMe, sendLater, listScripts, saveScript, testRoutine, approveRoutineScript, setRoutineScript, repairRoutineScript];
 }

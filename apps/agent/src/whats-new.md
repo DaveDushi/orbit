@@ -6,6 +6,11 @@ build: "## YYYY-MM-DD" (the deploy date), then 1-4 short "- " lines about what p
 members, not developers. Keep the 8 newest entries; the prompt shows the 5 newest.
 -->
 
+## 2026-11-13
+- Routines and scripts: Donna can now put a saved script on a routine you already have (ask "use the script X in my routine Y"; she asks for your yes first). You can also do it yourself: Settings → Agentic → Routines → Edit → Script. The script and routine windows now fit the screen, and long code scrolls inside its box.
+- When a routine's script fails, Donna can fix the script and run it again (at most 2 times). She posts the result and a short note in the routine's thread that says what she changed. The fixed script makes no changes until you approve it on the routine.
+- A routine's last run now shows Done or Failed, not "started" forever.
+
 ## 2026-11-12
 - Each agent now has its own memory (team and private); Donna keeps everything she remembered so far, and Account settings → Agentic → Memories has an agent picker. Donna now notes lasting facts on her own and checks her memory before she says she does not know. The answer level (Short, Normal, Thorough) is set on each agent's card in Settings → Agentic → Agents, and the default model moved there too (the Admin tab is gone).
 - Routines can run a saved script: Donna can write a short script that uses her tools, save it ("save this as a script"), and run it on each run of a routine. Its changes need your yes to that exact script; after any change of the script, the routine makes no changes until you approve the new version. See, edit and delete scripts in Settings → Agentic → Routines.

@@ -989,3 +989,458 @@ async fn run_history_keeps_the_last_runs_and_the_sidecars_report() {
         0
     );
 }
+
+impl Fixture {
+    /// A script of the owner in another workspace (where the owner is a member too).
+    async fn script_elsewhere(&self) -> String {
+        let (workspace, membership, script) = (Id::new_v7(), Id::new_v7(), Id::new_v7());
+        let now = now();
+        // A workspace and its owner membership reference each other (deferred foreign key).
+        let mut tx = self.database.pool().begin().await.unwrap();
+        sqlx::query(
+            "INSERT INTO workspaces (id, name, owner_membership_id, created_at, updated_at) VALUES ($1, 'Other', $2, $3, $3)",
+        )
+        .bind(workspace.to_string())
+        .bind(membership.to_string())
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO memberships (id, workspace_id, user_id, role, created_at, updated_at) VALUES ($1, $2, $3, 'owner', $4, $4)",
+        )
+        .bind(membership.to_string())
+        .bind(workspace.to_string())
+        .bind(self.owner.id.to_string())
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO agent_scripts (id, workspace_id, owner_id, name, description, code, code_hash, created_at, updated_at) \
+             VALUES ($1, $2, $3, 'Elsewhere', '', 'text(9)', 'h', $4, $4)",
+        )
+        .bind(script.to_string())
+        .bind(workspace.to_string())
+        .bind(self.owner.id.to_string())
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        script.to_string()
+    }
+
+    async fn routines(&self) -> Vec<Value> {
+        self.ok(&self.owner, "GET", "/routines", None).await["routines"]
+            .as_array()
+            .unwrap()
+            .clone()
+    }
+}
+
+#[tokio::test]
+async fn an_existing_routine_gets_a_script_and_loses_it_again_with_a_new_approval_each_time() {
+    let fixture = Fixture::new().await;
+    let (bearer, general) = fixture.agent_run().await;
+    let first = fixture
+        .agent_tool(
+            &bearer,
+            &general,
+            "save_script",
+            json!({ "name": "Digest", "code": "text(1)" }),
+        )
+        .await["result"]
+        .clone();
+    let second = fixture
+        .agent_tool(
+            &bearer,
+            &general,
+            "save_script",
+            json!({ "name": "Totals", "code": "text(2)" }),
+        )
+        .await["result"]
+        .clone();
+    let (status, made) = fixture
+        .routine(
+            &fixture.owner,
+            json!({ "name": "Daily", "prompt": "Post the digest.", "schedule": "0 9 * * *", "conversation_id": general }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{made}");
+    let routine = made["id"].as_str().unwrap().to_owned();
+    let path = format!("/routines/{routine}");
+
+    // Attached in Settings without a yes: its runs make no writes yet.
+    let attached = fixture
+        .ok(
+            &fixture.owner,
+            "PATCH",
+            &path,
+            Some(json!({ "script_id": first["id"] })),
+        )
+        .await;
+    assert_eq!(attached["script_id"], first["id"]);
+    assert_eq!(attached["script_approved"], false);
+    let approved = fixture
+        .ok(
+            &fixture.owner,
+            "PATCH",
+            &path,
+            Some(json!({ "approve_script_hash": first["code_hash"] })),
+        )
+        .await;
+    assert_eq!(approved["script_approved"], true);
+    // Another script drops the approval: the yes was for the other code.
+    let switched = fixture
+        .ok(
+            &fixture.owner,
+            "PATCH",
+            &path,
+            Some(json!({ "script_id": second["id"] })),
+        )
+        .await;
+    assert_eq!(switched["script_id"], second["id"]);
+    assert_eq!(switched["script_approved"], false);
+    let hash: Option<String> =
+        sqlx::query_scalar("SELECT script_approved_hash FROM agent_routines WHERE id = $1")
+            .bind(&routine)
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap();
+    assert_eq!(hash, None);
+    // A script of another workspace, or another person's, is refused.
+    let elsewhere = fixture.script_elsewhere().await;
+    let (status, refused) = fixture
+        .api(
+            &fixture.owner,
+            "PATCH",
+            &path,
+            Some(json!({ "script_id": elsewhere })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    // Detached: the routine runs its instruction again.
+    let detached = fixture
+        .ok(
+            &fixture.owner,
+            "PATCH",
+            &path,
+            Some(json!({ "script_id": "" })),
+        )
+        .await;
+    assert_eq!(detached["script_id"], Value::Null);
+    assert_eq!(detached["script_approved"], false);
+
+    // The agent attaches a script to the same routine after the driver's yes to its code.
+    let args = json!({ "routine_id": routine, "script_id": first["id"] });
+    let asked = fixture
+        .agent_tool(&bearer, &general, "set_routine_script", args.clone())
+        .await;
+    assert_eq!(asked["status"], "approval_required", "{asked}");
+    let action = asked["action"].as_str().unwrap();
+    assert!(
+        action.contains("\"Digest\"") && action.contains("text(1)"),
+        "{action}"
+    );
+    fixture.say(&fixture.owner, &general, "yes").await;
+    let done = fixture
+        .agent_tool(&bearer, &general, "set_routine_script", args)
+        .await;
+    assert_eq!(done["status"], "ok", "{done}");
+    assert_eq!(done["result"]["script_id"], first["id"]);
+    assert_eq!(done["result"]["script_approved"], true);
+    assert_eq!(
+        fixture.routines().await.len(),
+        1,
+        "the same routine, no new one"
+    );
+    // Not with a script of another workspace.
+    let refused = fixture
+        .agent_tool(
+            &bearer,
+            &general,
+            "set_routine_script",
+            json!({ "routine_id": routine, "script_id": elsewhere }),
+        )
+        .await;
+    assert_eq!(refused["status"], "refused", "{refused}");
+    // And off again, after a yes too.
+    let off = json!({ "routine_id": routine, "script_id": null });
+    let asked = fixture
+        .agent_tool(&bearer, &general, "set_routine_script", off.clone())
+        .await;
+    assert_eq!(asked["status"], "approval_required", "{asked}");
+    fixture.say(&fixture.owner, &general, "yes").await;
+    let done = fixture
+        .agent_tool(&bearer, &general, "set_routine_script", off)
+        .await;
+    assert_eq!(done["status"], "ok", "{done}");
+    assert_eq!(done["result"]["script_id"], Value::Null);
+}
+
+#[tokio::test]
+async fn a_failed_script_is_repaired_in_its_own_run_and_the_new_code_writes_nothing_until_approved()
+{
+    let fixture = Fixture::new().await;
+    let (bearer, general) = fixture.agent_run().await;
+    let saved = fixture
+        .agent_tool(
+            &bearer,
+            &general,
+            "save_script",
+            json!({ "name": "Digest", "code": "text(1)" }),
+        )
+        .await;
+    let script = saved["result"]["id"].as_str().unwrap().to_owned();
+    let first_hash = saved["result"]["code_hash"].as_str().unwrap().to_owned();
+    let args = json!({ "name": "Daily", "prompt": "Post the digest.", "schedule": "0 9 * * *", "conversation_id": general, "script_id": script });
+    fixture
+        .agent_tool(&bearer, &general, "schedule_routine", args.clone())
+        .await;
+    fixture.say(&fixture.owner, &general, "yes").await;
+    let made = fixture
+        .agent_tool(&bearer, &general, "schedule_routine", args)
+        .await;
+    assert_eq!(made["result"]["script_approved"], true, "{made}");
+    let routine = made["result"]["id"].as_str().unwrap().to_owned();
+
+    // Outside a run of the routine's script, nothing can repair it.
+    let outside = fixture
+        .agent_tool(
+            &bearer,
+            &general,
+            "repair_routine_script",
+            json!({ "code": "text(2)" }),
+        )
+        .await;
+    assert_eq!(outside["status"], "refused", "{outside}");
+
+    let start = now();
+    fixture.set_due(&routine, start - 1_000).await;
+    run_due(&fixture.agent, at(start)).await.unwrap();
+    let (run, writes, thread_key, conversation, root) = fixture.newest_run(&routine, false).await;
+    assert_eq!(writes, "script");
+    let (session, dry) = fixture
+        .thread_session(
+            &fixture.owner,
+            (&thread_key, &conversation, Some(&root)),
+            true,
+        )
+        .await;
+    assert!(!dry);
+    let thread = (conversation.as_str(), root.as_str());
+    let same = fixture
+        .agent_tool_in(
+            &session,
+            thread,
+            "repair_routine_script",
+            json!({ "code": "text(1)" }),
+        )
+        .await;
+    assert_eq!(same["status"], "refused", "{same}");
+    let repaired = fixture
+        .agent_tool_in(
+            &session,
+            thread,
+            "repair_routine_script",
+            json!({ "code": "text(2)" }),
+        )
+        .await;
+    assert_eq!(repaired["status"], "ok", "{repaired}");
+    assert_eq!(repaired["result"]["run_id"], run.as_str());
+    assert_eq!(repaired["result"]["previous_hash"], first_hash.as_str());
+    let second_hash = repaired["result"]["script"]["code_hash"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_ne!(second_hash, first_hash);
+    assert_eq!(
+        repaired["result"]["script"]["routines"][0]["approved"],
+        false
+    );
+
+    // The rest of the run runs the new code as a dry run: no approved-script writes, and the session
+    // issued before ended, so the next one refuses writes.
+    let row = sqlx::query(
+        "SELECT writes, script_hash, script_code FROM agent_routine_runs WHERE id = $1",
+    )
+    .bind(&run)
+    .fetch_one(fixture.database.pool())
+    .await
+    .unwrap();
+    assert_eq!(row.get::<String, _>("writes"), "dry");
+    assert_eq!(row.get::<String, _>("script_hash"), second_hash);
+    assert_eq!(row.get::<String, _>("script_code"), "text(2)");
+    assert_eq!(
+        orbit_server::scheduled::runs::approved_script_run(
+            &fixture.database,
+            &conversation,
+            Some(&root),
+            fixture.owner.id
+        )
+        .await
+        .unwrap(),
+        None
+    );
+    let (status, _) = fixture.post_message(&session, &general).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (fresh, dry) = fixture
+        .thread_session(
+            &fixture.owner,
+            (&thread_key, &conversation, Some(&root)),
+            true,
+        )
+        .await;
+    assert!(dry);
+    let (status, refused) = fixture.post_message(&fresh, &general).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_eq!(refused["code"], "agent_dry_run");
+    // A dry run (after a first repair) may still repair; the routine stays unapproved.
+    let again = fixture
+        .agent_tool_in(
+            &fresh,
+            thread,
+            "repair_routine_script",
+            json!({ "code": "text(3)" }),
+        )
+        .await;
+    assert_eq!(again["status"], "ok", "{again}");
+    let listed = fixture.routines().await;
+    assert_eq!(listed[0]["script_approved"], false);
+    assert_eq!(listed[0]["last_run_status"], "started");
+
+    // After the run ended, nothing repairs it.
+    assert_eq!(
+        fixture
+            .finish(
+                &run,
+                json!({ "status": "failed", "error": "boom", "tool_calls": [] })
+            )
+            .await,
+        StatusCode::NO_CONTENT
+    );
+    // That repair ended the sessions again: the sidecar takes a new one.
+    let (fresh, _) = fixture
+        .thread_session(
+            &fixture.owner,
+            (&thread_key, &conversation, Some(&root)),
+            true,
+        )
+        .await;
+    let ended = fixture
+        .agent_tool_in(
+            &fresh,
+            thread,
+            "repair_routine_script",
+            json!({ "code": "text(4)" }),
+        )
+        .await;
+    assert_eq!(ended["status"], "refused", "{ended}");
+    let listed = fixture.routines().await;
+    assert_eq!(listed[0]["last_run_status"], "failed");
+    assert_eq!(listed[0]["last_error"], "boom");
+
+    // A test run never changes the script.
+    let test = fixture
+        .ok(
+            &fixture.owner,
+            "POST",
+            &format!("/routines/{routine}/test"),
+            None,
+        )
+        .await;
+    let (_, _, test_key, test_conversation, test_root) = fixture.newest_run(&routine, true).await;
+    let (test_session, _) = fixture
+        .thread_session(
+            &fixture.owner,
+            (&test_key, &test_conversation, Some(&test_root)),
+            true,
+        )
+        .await;
+    let refused = fixture
+        .agent_tool_in(
+            &test_session,
+            (&test_conversation, &test_root),
+            "repair_routine_script",
+            json!({ "code": "text(5)" }),
+        )
+        .await;
+    assert_eq!(refused["status"], "refused", "{refused} {test}");
+    let code: String = sqlx::query_scalar("SELECT code FROM agent_scripts WHERE id = $1")
+        .bind(&script)
+        .fetch_one(fixture.database.pool())
+        .await
+        .unwrap();
+    assert_eq!(code, "text(3)");
+}
+
+#[tokio::test]
+async fn a_run_that_never_ends_fails_after_an_hour_and_the_routine_shows_its_last_status() {
+    use orbit_server::scheduled::runs::{RUN_STALE_MS, STALE_ERROR};
+    let fixture = Fixture::new().await;
+    fixture.connect_chatgpt(&fixture.owner).await;
+    let general = fixture.general().await;
+    let (_, made) = fixture
+        .routine(
+            &fixture.owner,
+            json!({ "name": "Daily", "prompt": "Post the digest.", "schedule": "0 9 * * *", "conversation_id": general }),
+        )
+        .await;
+    let routine = made["id"].as_str().unwrap().to_owned();
+    let start = now();
+    fixture.set_due(&routine, start - 1_000).await;
+    run_due(&fixture.agent, at(start)).await.unwrap();
+    let (run, ..) = fixture.newest_run(&routine, false).await;
+    assert_eq!(fixture.routines().await[0]["last_run_status"], "started");
+    assert_eq!(
+        fixture
+            .finish(
+                &run,
+                json!({ "status": "done", "output": "ok", "tool_calls": [] })
+            )
+            .await,
+        StatusCode::NO_CONTENT
+    );
+    // The routine's last run is the run's own status, not "started" for ever.
+    assert_eq!(fixture.routines().await[0]["last_run_status"], "done");
+    assert_eq!(
+        fixture.routine_row(&routine).await.3.as_deref(),
+        Some("started")
+    );
+
+    // A run the sidecar never reports fails an hour after it began, and a late report still counts.
+    let later = start + 2 * HOUR;
+    fixture.set_due(&routine, later - 1_000).await;
+    run_due(&fixture.agent, at(later)).await.unwrap();
+    let (stuck, ..) = fixture.newest_run(&routine, false).await;
+    assert_ne!(stuck, run);
+    // No other run starts meanwhile.
+    fixture.set_due(&routine, later + 100 * HOUR).await;
+    let round = run_due(&fixture.agent, at(later + RUN_STALE_MS - 1_000))
+        .await
+        .unwrap();
+    assert_eq!(round.runs_failed_stale, 0);
+    let round = run_due(&fixture.agent, at(later + RUN_STALE_MS + 1_000))
+        .await
+        .unwrap();
+    assert_eq!(round.runs_failed_stale, 1);
+    let listed = fixture.routines().await;
+    assert_eq!(listed[0]["last_run_status"], "failed");
+    assert_eq!(listed[0]["last_error"], STALE_ERROR);
+    assert_eq!(
+        fixture
+            .finish(
+                &stuck,
+                json!({ "status": "done", "output": "late", "tool_calls": [] })
+            )
+            .await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(fixture.routines().await[0]["last_run_status"], "done");
+    // Nothing else is stale: the next round writes nothing.
+    let round = run_due(&fixture.agent, at(later + 2 * RUN_STALE_MS))
+        .await
+        .unwrap();
+    assert_eq!(round.runs_failed_stale, 0);
+}
