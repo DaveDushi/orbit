@@ -374,6 +374,11 @@ and fail on a locked doc. A doc can have at most 4,000 blocks (nested ones inclu
 `markdown` for a doc that already has more, fail with "A doc can have at most 4,000 blocks"
 and change nothing. A database outage on a doc or chat tool is a JSON-RPC internal error
 (-32603), not "Resource is not available".
+`list_docs` takes an optional `project_id` (an approved project). A teamspace can hold the docs
+of one project (Project settings → Docs). With `project_id`, the list leaves out the docs of
+teamspaces of other projects: you get the global docs (teamspaces without a project), that
+project's docs and private docs. This filter is not a permission: without `project_id`, and in
+`get_doc`, every visible doc stays available.
 Chat message and thread tools accept `before` and `limit` (1–100) for pagination.
 `search_messages` takes `query` (up to 500 characters; every word must match, the last one as a
 prefix) and optional `conversation_id`, `author_id`, `has_file` and `cursor` filters. It returns

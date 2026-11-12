@@ -9,7 +9,7 @@ import { docSpaces, favoritePages, pageTitle, trashPrompt, type TreeRow } from '
 import type { PageSummary, Teamspace } from '../../../data/orbit'
 import { useCreatePage, useDuplicatePage, useFavorites, useTeamspaceWrites, useToggleFavorite, useTrashPage } from '../../../hooks/docs'
 import { useOrbit } from '../../../orbit-context'
-import { usePages, useTeamspaces } from '../../../queries'
+import { usePages, useProjects, useTeamspaces } from '../../../queries'
 import { errorMessage } from '../../../session-context'
 import { alpha, useTheme } from '../../../theme'
 import { ErrorView, HeaderTitle, Icon, type IconName, IconButton, LoadingView, PaneHeader, SafeAreaView, Text } from '../../../ui'
@@ -22,6 +22,8 @@ export default function DocsScreen() {
   const { workspace } = useOrbit()
   const pages = usePages()
   const teamspaces = useTeamspaces()
+  // Only projects the member sees: a teamspace of a hidden private project shows no project.
+  const projects = useProjects()
   const favorites = useFavorites()
   const create = useCreatePage()
   const duplicate = useDuplicatePage()
@@ -175,6 +177,7 @@ export default function DocsScreen() {
                 <View key={space.key}>
                   <TreeItem
                     label={space.name}
+                    hint={projects.data?.find((project) => project.id === teamspace?.project_id)?.name}
                     leading={teamspace?.icon ? <Text className="text-[14px]">{teamspace.icon}</Text> : <Icon name="people" size={15} color={muted} />}
                     paddingLeft={8}
                     onPress={() => toggle(space.key)}
@@ -273,6 +276,7 @@ function PageRows({
 /** One 32px tree row: an optional chevron slot, the icon, the name, and the row actions. */
 function TreeItem({
   label,
+  hint,
   leading,
   paddingLeft,
   chevron,
@@ -280,6 +284,8 @@ function TreeItem({
   actions,
 }: {
   label: string
+  /** Muted text after the label: the project of a teamspace. */
+  hint?: string | null
   leading: ReactNode
   paddingLeft: number
   chevron?: { open: boolean; onPress: () => void } | null
@@ -303,6 +309,7 @@ function TreeItem({
         <View className={`w-[15px] items-center ${chevron !== undefined ? 'mr-[7px]' : 'mr-2'}`}>{leading}</View>
         <Text numberOfLines={1} className="font-noto-medium text-[13px] flex-1">
           {label}
+          {hint ? <Text className="font-noto text-[13px] text-muted-foreground/70">{`  ${hint}`}</Text> : null}
         </Text>
       </Pressable>
       <View className="flex-row gap-0.5 pl-1 pr-1.5">{actions}</View>

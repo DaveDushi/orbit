@@ -584,6 +584,198 @@ async fn teamspace_icons_are_set_and_cleared_with_bounded_values() {
     assert_eq!(cleared["icon"], Value::Null);
 }
 
+#[tokio::test]
+async fn a_teamspace_holds_the_docs_of_one_visible_project() {
+    let fixture = Fixture::new().await;
+    let general = insert_project(&fixture, "Web", "WEBX", false).await;
+    let secret = insert_project(&fixture, "Secret", "SEC", true).await;
+    let (_, member_cookie) =
+        add_member(&fixture, &fixture.workspace_id, "member@example.com").await;
+    let docs = fixture.create("Project docs").await;
+    let other = fixture.create("Other").await;
+    assert_eq!(docs["project_id"], Value::Null);
+    let link = |version: u64, project_id: Value| json!({"expected_version": version, "project_id": project_id});
+
+    let (status, linked) = fixture
+        .call(
+            "PATCH",
+            &fixture.teamspace_uri(id_of(&docs)),
+            Some(link(0, json!(general))),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{linked}");
+    assert_eq!(linked["project_id"], general);
+    assert_eq!(linked["name"], "Project docs");
+    let listed = fixture.list().await;
+    let listed = listed.iter().find(|item| item["id"] == docs["id"]).unwrap();
+    assert_eq!(listed["project_id"], general);
+
+    // A project has one teamspace.
+    let (status, problem) = fixture
+        .call(
+            "PATCH",
+            &fixture.teamspace_uri(id_of(&other)),
+            Some(link(0, json!(general))),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{problem}");
+    assert_eq!(problem["code"], "project_has_teamspace");
+
+    // A member cannot link a private project that they do not see, nor an unknown one.
+    for project_id in [secret.clone(), Id::new_v7().to_string()] {
+        let (status, problem) = call_as(
+            &fixture,
+            &member_cookie,
+            "PATCH",
+            &fixture.teamspace_uri(id_of(&other)),
+            Some(link(0, json!(project_id))),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+        assert_eq!(problem["code"], "project_not_found");
+    }
+    // The owner sees every project.
+    let (status, body) = fixture
+        .call(
+            "PATCH",
+            &fixture.teamspace_uri(id_of(&other)),
+            Some(link(0, json!(secret))),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // A rename keeps the link; `null` makes the docs global again.
+    let (status, renamed) = fixture
+        .call(
+            "PATCH",
+            &fixture.teamspace_uri(id_of(&docs)),
+            Some(json!({"expected_version": 1, "name": "Renamed"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{renamed}");
+    assert_eq!(renamed["project_id"], general);
+    let (status, cleared) = fixture
+        .call(
+            "PATCH",
+            &fixture.teamspace_uri(id_of(&docs)),
+            Some(link(2, Value::Null)),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{cleared}");
+    assert_eq!(cleared["project_id"], Value::Null);
+
+    // A deleted project leaves a global teamspace.
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(&secret)
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    let listed = fixture.list().await;
+    let listed = listed
+        .iter()
+        .find(|item| item["id"] == other["id"])
+        .unwrap();
+    assert_eq!(listed["project_id"], Value::Null);
+}
+
+/// Fork (private projects, guests): a member who does not see a private project gets `null` for
+/// the project of its teamspace, and cannot unlink it or link the teamspace elsewhere; a rename
+/// keeps the link. A member of the project sees the link; a guest gets no teamspaces.
+#[tokio::test]
+async fn the_link_to_a_private_project_is_hidden_from_members_who_cannot_see_it() {
+    let fixture = Fixture::new().await;
+    let secret = insert_project(&fixture, "Secret", "SEC", true).await;
+    let open = insert_project(&fixture, "Open", "OPN", false).await;
+    let (_, outsider) = add_member(&fixture, &fixture.workspace_id, "outsider@example.com").await;
+    let (insider_id, insider) =
+        add_member(&fixture, &fixture.workspace_id, "insider@example.com").await;
+    sqlx::query(
+        "INSERT INTO project_members (project_id, workspace_id, user_id, created_at) VALUES ($1, $2, $3, 0)",
+    )
+    .bind(&secret)
+    .bind(&fixture.workspace_id)
+    .bind(insider_id.to_string())
+    .execute(fixture.database.pool())
+    .await
+    .unwrap();
+    let docs = fixture.create("Secret docs").await;
+    let uri = fixture.teamspace_uri(id_of(&docs));
+    let (status, body) = fixture
+        .call("PATCH", &uri, Some(json!({"expected_version": 0, "project_id": secret})))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let project_seen_by = |cookie: String| {
+        let fixture = &fixture;
+        let docs_id = docs["id"].clone();
+        async move {
+            let (status, list) = call_as(fixture, &cookie, "GET", &fixture.teamspaces_uri(), None).await;
+            assert_eq!(status, StatusCode::OK, "{list}");
+            list["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|item| item["id"] == docs_id)
+                .unwrap()["project_id"]
+                .clone()
+        }
+    };
+    assert_eq!(project_seen_by(outsider.clone()).await, Value::Null);
+    assert_eq!(project_seen_by(insider.clone()).await, json!(secret));
+
+    for project_id in [json!(open), Value::Null] {
+        let (status, problem) = call_as(
+            &fixture,
+            &outsider,
+            "PATCH",
+            &uri,
+            Some(json!({"expected_version": 1, "project_id": project_id})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+        assert_eq!(problem["code"], "project_not_found");
+    }
+    let (status, renamed) = call_as(
+        &fixture,
+        &outsider,
+        "PATCH",
+        &uri,
+        Some(json!({"expected_version": 1, "name": "Renamed"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{renamed}");
+    assert_eq!(renamed["project_id"], Value::Null);
+    assert_eq!(project_seen_by(insider.clone()).await, json!(secret));
+
+    let (guest_id, guest) = add_member(&fixture, &fixture.workspace_id, "guest@example.com").await;
+    sqlx::query("UPDATE memberships SET role = 'guest' WHERE user_id = $1")
+        .bind(guest_id.to_string())
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    let (status, body) = call_as(&fixture, &guest, "GET", &fixture.teamspaces_uri(), None).await;
+    assert_ne!(status, StatusCode::OK, "{body}");
+}
+
+async fn insert_project(fixture: &Fixture, name: &str, key: &str, private: bool) -> String {
+    let id = Id::new_v7().to_string();
+    let now = TimestampMillis::now().as_millis();
+    sqlx::query(
+        "INSERT INTO projects (id, workspace_id, name, project_key, color, private, created_at, updated_at) \
+         VALUES ($1, $2, $3, $4, '#ff0000', $5, $6, $6)",
+    )
+    .bind(&id)
+    .bind(&fixture.workspace_id)
+    .bind(name)
+    .bind(key)
+    .bind(i64::from(private))
+    .bind(now)
+    .execute(fixture.database.pool())
+    .await
+    .unwrap();
+    id
+}
+
 fn names(teamspaces: &[Value]) -> Vec<&str> {
     teamspaces
         .iter()

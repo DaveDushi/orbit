@@ -1,7 +1,8 @@
 //! Docs teamspaces: shared page spaces inside a workspace. Every member sees, creates and renames
 //! them; owners and admins delete them, and only while they hold no live pages. The default
 //! teamspace is derived, never stored: the lowest `(position, id)` in the workspace, so moving a
-//! teamspace to the top makes it the default.
+//! teamspace to the top makes it the default. A teamspace can hold the docs of one project
+//! (`project_id`, #64); the others hold the workspace's global docs.
 
 use orbit_domain::Permission;
 use orbit_platform::{Database, Flag, Id, Row, TimestampMillis};
@@ -11,13 +12,24 @@ use sqlx::{Any, Transaction};
 use thiserror::Error;
 use utoipa::ToSchema;
 
-use super::tasks::{TaskError, record_mutation, require_access, require_access_tx};
+use super::project_access::ProjectScope;
+use super::tasks::{
+    TaskError, record_mutation, require_access, require_access_tx, require_project_tx,
+};
 use super::workspaces::{WorkspaceError, require_permission};
 
 /// Name of the teamspace every new workspace starts with.
 pub const DEFAULT_TEAMSPACE_NAME: &str = "General";
-const TEAMSPACE_COLUMNS: &str =
-    "id, workspace_id, name, icon, position, version, created_at, updated_at";
+
+/// The columns of a teamspace as `scope` sees them: `project_id` is `NULL` for a member who
+/// cannot see that project (a private one, #37). The teamspace and its docs stay visible.
+fn teamspace_columns(scope: ProjectScope) -> String {
+    format!(
+        "id, workspace_id, name, icon, position, version, \
+         CASE WHEN {} THEN project_id END AS project_id, created_at, updated_at",
+        scope.project("teamspaces.project_id")
+    )
+}
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
 #[schema(as = Teamspace)]
@@ -31,6 +43,10 @@ pub struct TeamspaceRecord {
     pub icon: Option<String>,
     pub position: i64,
     pub version: u64,
+    /// The project whose docs this teamspace holds; `null` for global docs. The project may be
+    /// trashed or not visible to the caller.
+    #[schema(value_type = Option<String>, required = true)]
+    pub project_id: Option<Id>,
     /// True for the workspace's first teamspace by position; new root pages go there by default.
     pub is_default: bool,
     #[schema(value_type = String, format = DateTime)]
@@ -44,11 +60,12 @@ pub struct TeamspaceList {
     pub items: Vec<TeamspaceRecord>,
 }
 
-/// `None` leaves a field unchanged; `Some(None)` clears the icon.
+/// `None` leaves a field unchanged; `Some(None)` clears the icon or the project.
 #[derive(Clone, Debug, Default)]
 pub struct TeamspaceChanges {
     pub name: Option<String>,
     pub icon: Option<Option<String>>,
+    pub project_id: Option<Option<Id>>,
 }
 
 #[derive(Debug, Error)]
@@ -61,6 +78,10 @@ pub enum TeamspaceError {
     NotEmpty,
     #[error("the last teamspace of a workspace cannot be deleted")]
     LastTeamspace,
+    #[error("the project does not exist or is not visible")]
+    ProjectNotFound,
+    #[error("the project already has a teamspace")]
+    ProjectTaken,
     #[error("stale version")]
     VersionConflict { current: Box<Value> },
     #[error("stored teamspace data is invalid")]
@@ -106,9 +127,9 @@ impl TeamspaceRepository {
         workspace_id: Id,
         actor_id: Id,
     ) -> Result<TeamspaceList, TeamspaceError> {
-        require_access(self.database.pool(), workspace_id, actor_id).await?;
+        let scope = ProjectScope::of(require_access(self.database.pool(), workspace_id, actor_id).await?);
         let mut connection = self.database.pool().acquire().await?;
-        ordered_teamspaces(&mut connection, workspace_id).await
+        ordered_teamspaces(&mut connection, workspace_id, scope).await
     }
 
     /// Appends a teamspace after the last one.
@@ -164,6 +185,7 @@ impl TeamspaceRepository {
             icon,
             position,
             version: 0,
+            project_id: None,
             is_default,
             created_at: now,
             updated_at: now,
@@ -182,17 +204,51 @@ impl TeamspaceRepository {
         now: TimestampMillis,
     ) -> Result<TeamspaceRecord, TeamspaceError> {
         let mut tx = self.database.immediate_transaction().await?;
-        require_access_tx(&mut tx, workspace_id, actor_id).await?;
-        let current = teamspace_in_tx(&mut tx, workspace_id, teamspace_id).await?;
+        let scope = ProjectScope::of(require_access_tx(&mut tx, workspace_id, actor_id).await?);
+        let current = teamspace_in_tx(&mut tx, workspace_id, teamspace_id, scope).await?;
         check_version(expected_version, &current)?;
         let name = changes.name.unwrap_or_else(|| current.name.clone());
         let icon = changes.icon.unwrap_or_else(|| current.icon.clone());
+        // `current.project_id` is what the actor sees; a link to a project they cannot see stays.
+        let stored: Option<String> =
+            sqlx::query_scalar("SELECT project_id FROM teamspaces WHERE id = $1")
+                .bind(teamspace_id.to_string())
+                .fetch_one(&mut *tx)
+                .await?;
+        let stored = stored.map(parse_id).transpose()?;
+        let project_id = match changes.project_id {
+            None => stored,
+            // Only a member who sees the linked project may unlink it or link another one.
+            Some(next) if stored.is_some() && current.project_id.is_none() && next != stored => {
+                return Err(TeamspaceError::ProjectNotFound);
+            }
+            Some(next) => next,
+        };
+        if let Some(project_id) = project_id.filter(|id| stored != Some(*id)) {
+            require_project_tx(&mut tx, workspace_id, project_id, actor_id)
+                .await
+                .map_err(|error| match error {
+                    TaskError::Unavailable(error) => TeamspaceError::Unavailable(error),
+                    _ => TeamspaceError::ProjectNotFound,
+                })?;
+            let Flag(taken) = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM teamspaces WHERE project_id = $1 AND id <> $2)",
+            )
+            .bind(project_id.to_string())
+            .bind(teamspace_id.to_string())
+            .fetch_one(&mut *tx)
+            .await?;
+            if taken {
+                return Err(TeamspaceError::ProjectTaken);
+            }
+        }
         sqlx::query(
-            "UPDATE teamspaces SET name = $1, icon = $2, updated_at = $3, version = version + 1 \
-             WHERE id = $4 AND workspace_id = $5 AND version = $6",
+            "UPDATE teamspaces SET name = $1, icon = $2, project_id = $3, updated_at = $4, \
+             version = version + 1 WHERE id = $5 AND workspace_id = $6 AND version = $7",
         )
         .bind(&name)
         .bind(&icon)
+        .bind(project_id.map(|id| id.to_string()))
         .bind(now.as_millis())
         .bind(teamspace_id.to_string())
         .bind(workspace_id.to_string())
@@ -214,6 +270,7 @@ impl TeamspaceRepository {
         Ok(TeamspaceRecord {
             name,
             icon,
+            project_id: changes.project_id.unwrap_or(current.project_id),
             version: current.version + 1,
             updated_at: now,
             ..current
@@ -235,8 +292,8 @@ impl TeamspaceRepository {
         now: TimestampMillis,
     ) -> Result<TeamspaceList, TeamspaceError> {
         let mut tx = self.database.immediate_transaction().await?;
-        require_access_tx(&mut tx, workspace_id, actor_id).await?;
-        let current = teamspace_in_tx(&mut tx, workspace_id, teamspace_id).await?;
+        let scope = ProjectScope::of(require_access_tx(&mut tx, workspace_id, actor_id).await?);
+        let current = teamspace_in_tx(&mut tx, workspace_id, teamspace_id, scope).await?;
         check_version(expected_version, &current)?;
         let mut order = sqlx::query_scalar::<_, String>(
             "SELECT id FROM teamspaces WHERE workspace_id = $1 ORDER BY position, id",
@@ -288,7 +345,7 @@ impl TeamspaceRepository {
             now,
         )
         .await?;
-        let list = ordered_teamspaces(&mut tx, workspace_id).await?;
+        let list = ordered_teamspaces(&mut tx, workspace_id, scope).await?;
         tx.commit().await?;
         Ok(list)
     }
@@ -336,7 +393,8 @@ impl TeamspaceRepository {
             Permission::TeamspacesDelete,
         )
         .await?;
-        let current = teamspace_in_tx(&mut tx, workspace_id, teamspace_id).await?;
+        // Owners and admins (the only ones who may delete) see every project.
+        let current = teamspace_in_tx(&mut tx, workspace_id, teamspace_id, ProjectScope::All).await?;
         check_version(expected_version, &current)?;
         let (teamspaces, live_pages): (i64, i64) = sqlx::query_as(
             "SELECT (SELECT COUNT(*) FROM teamspaces WHERE workspace_id = $1), \
@@ -383,9 +441,11 @@ impl TeamspaceRepository {
 async fn ordered_teamspaces(
     connection: &mut sqlx::AnyConnection,
     workspace_id: Id,
+    scope: ProjectScope,
 ) -> Result<TeamspaceList, TeamspaceError> {
     let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
-        "SELECT {TEAMSPACE_COLUMNS} FROM teamspaces WHERE workspace_id = $1 ORDER BY position, id"
+        "SELECT {} FROM teamspaces WHERE workspace_id = $1 ORDER BY position, id",
+        teamspace_columns(scope)
     )))
     .bind(workspace_id.to_string())
     .fetch_all(&mut *connection)
@@ -457,9 +517,11 @@ async fn teamspace_in_tx(
     tx: &mut Transaction<'_, Any>,
     workspace_id: Id,
     teamspace_id: Id,
+    scope: ProjectScope,
 ) -> Result<TeamspaceRecord, TeamspaceError> {
     let row = sqlx::query(sqlx::AssertSqlSafe(format!(
-        "SELECT {TEAMSPACE_COLUMNS} FROM teamspaces WHERE id = $1 AND workspace_id = $2"
+        "SELECT {} FROM teamspaces WHERE id = $1 AND workspace_id = $2",
+        teamspace_columns(scope)
     )))
     .bind(teamspace_id.to_string())
     .bind(workspace_id.to_string())
@@ -492,6 +554,10 @@ fn teamspace_from_row(
         position: row.get("position"),
         version: u64::try_from(row.get::<i64, _>("version"))
             .map_err(|_| TeamspaceError::Corrupt)?,
+        project_id: row
+            .get::<Option<String>, _>("project_id")
+            .map(parse_id)
+            .transpose()?,
         is_default,
         created_at: TimestampMillis::from_millis(row.get("created_at")),
         updated_at: TimestampMillis::from_millis(row.get("updated_at")),
