@@ -96,10 +96,10 @@ function UsageCard({ storage }: { storage: StorageView }) {
       <div className="flex flex-col divide-y">
         <SettingsRow className="flex-nowrap">
           <div className="flex min-w-0 flex-1 flex-col gap-0.5 text-[13px]">
-            <span className="font-medium text-foreground">Attachments in S3</span>
+            <span className="font-medium text-foreground">Files in S3</span>
             <span className="text-xs text-muted-foreground">
               {ready
-                ? 'On: new files go to the bucket and existing files move there in the background. Off: they move back to this server.'
+                ? 'All uploaded files: task and comment attachments, doc and chat files, custom emoji, stickers, mail attachments and profile pictures. On: new files go to the bucket and existing files move there in the background. Off: they move back to this server.'
                 : 'Save a bucket above first.'}
             </span>
             {moving ? (
@@ -112,10 +112,10 @@ function UsageCard({ storage }: { storage: StorageView }) {
             {storage.move_error ? <span role="alert" className="text-xs text-destructive">Moving files stopped: {storage.move_error} Orbit tries again every ten minutes.</span> : null}
           </div>
           <Switch
-            aria-label="Attachments in S3"
+            aria-label="Files in S3"
             checked={storage.attachments_in_s3}
             disabled={(!ready && !storage.attachments_in_s3) || save.isPending}
-            onCheckedChange={(checked: boolean) => change({ attachments_in_s3: checked }, checked ? 'Attachments go to S3' : 'Attachments move back to this server')}
+            onCheckedChange={(checked: boolean) => change({ attachments_in_s3: checked }, checked ? 'Files go to S3' : 'Files move back to this server')}
           />
         </SettingsRow>
         <SettingsRow className="flex-nowrap">
