@@ -298,6 +298,13 @@ fn rule_event(activity: &[Value]) -> &Value {
         .unwrap()
 }
 
+fn rule_events(activity: &[Value]) -> usize {
+    activity
+        .iter()
+        .filter(|event| event["action"] == "task.assigned_by_rule")
+        .count()
+}
+
 fn actions(activity: &[Value]) -> Vec<&str> {
     activity
         .iter()
@@ -483,6 +490,70 @@ async fn owner_labels_assign_by_handle_or_name_only_when_switched_on() {
 }
 
 #[tokio::test]
+async fn the_name_map_wins_over_the_handle_match_and_falls_back_when_removed() {
+    let fixture = Fixture::new().await;
+    let erol = fixture.person("erol@example.com", "Erol", "member").await;
+    let david = fixture.person("ds@example.com", "David S", "member").await;
+    let other = fixture.person("dd@example.com", "Dee", "member").await;
+    let owner_erol = fixture.label("owner:erol").await;
+    let owner_dd = fixture.label("owner:david-d").await;
+    fixture.label("owner:nobody").await;
+    let settings_path = format!("/projects/{}/label-rules", fixture.project_id);
+    fixture
+        .call(
+            "PUT",
+            &format!("/projects/{}/label-rule-settings", fixture.project_id),
+            &fixture.owner_cookie,
+            Some(json!({ "owner_labels": true })),
+        )
+        .await;
+    let (_, settings) = fixture
+        .call("GET", &settings_path, &fixture.owner_cookie, None)
+        .await;
+    assert_eq!(
+        settings["unmatched_owner_names"],
+        json!(["david-d", "nobody"])
+    );
+
+    // A mapped name assigns its member and is no longer unmatched.
+    fixture.rule(&owner_dd, other.id).await;
+    let task = fixture.task(&[&owner_dd], &[]).await;
+    assert_eq!(assignees(&task), ids(&[other.id]));
+    let (_, settings) = fixture
+        .call("GET", &settings_path, &fixture.owner_cookie, None)
+        .await;
+    assert_eq!(settings["unmatched_owner_names"], json!(["nobody"]));
+
+    // The map wins over the handle match: only the mapped member, once.
+    let entry = fixture.rule(&owner_erol, david.id).await;
+    let task = fixture.task(&[&owner_erol], &[]).await;
+    assert_eq!(assignees(&task), ids(&[david.id]));
+    let activity = fixture.activity(task["id"].as_str().unwrap()).await;
+    assert_eq!(rule_events(&activity), 1);
+
+    // An entry that is off still wins: the label assigns nobody.
+    let entry_path = format!("{settings_path}/{}", entry["id"].as_str().unwrap());
+    fixture
+        .call(
+            "PATCH",
+            &entry_path,
+            &fixture.owner_cookie,
+            Some(json!({ "enabled": false })),
+        )
+        .await;
+    let task = fixture.task(&[&owner_erol], &[]).await;
+    assert!(assignees(&task).is_empty());
+
+    // Without the entry, the label falls back to the handle match.
+    let (status, _) = fixture
+        .call("DELETE", &entry_path, &fixture.owner_cookie, None)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let task = fixture.task(&[&owner_erol], &[]).await;
+    assert_eq!(assignees(&task), ids(&[erol.id]));
+}
+
+#[tokio::test]
 async fn github_sync_runs_the_rules_on_create_and_on_new_labels() {
     let fixture = Fixture::new().await;
     let raymond = fixture
@@ -576,6 +647,11 @@ async fn only_owners_and_admins_manage_rules() {
     let one = format!("{rules}/{}", rule["id"].as_str().unwrap());
     let settings = format!("/projects/{}/label-rule-settings", fixture.project_id);
     let create = json!({ "label_id": bug, "user_id": admin.id.to_string() });
+    // A name map entry is a rule of an `owner:` label: the same permission guards it.
+    let owner_dd = fixture.label("owner:david-d").await;
+    let entry = fixture.rule(&owner_dd, admin.id).await;
+    let entry_path = format!("{rules}/{}", entry["id"].as_str().unwrap());
+    let map = json!({ "label_id": owner_dd, "user_id": member.id.to_string() });
 
     for (method, path, body) in [
         ("GET", &rules, None),
@@ -583,10 +659,28 @@ async fn only_owners_and_admins_manage_rules() {
         ("PATCH", &one, Some(json!({ "enabled": false }))),
         ("DELETE", &one, None),
         ("PUT", &settings, Some(json!({ "owner_labels": true }))),
+        ("POST", &rules, Some(map)),
+        (
+            "PATCH",
+            &entry_path,
+            Some(json!({ "user_id": member.id.to_string() })),
+        ),
+        ("DELETE", &entry_path, None),
     ] {
         let (status, _) = fixture.call(method, path, &member.cookie, body).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "member {method} {path}");
     }
+    let (_, listed) = fixture
+        .call("GET", &rules, &fixture.owner_cookie, None)
+        .await;
+    let entries: Vec<&Value> = listed["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|rule| rule["label_id"] == owner_dd.as_str())
+        .collect();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["user_id"], admin.id.to_string());
     let (status, _) = fixture.call("GET", &rules, &guest.cookie, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
@@ -628,7 +722,7 @@ async fn only_owners_and_admins_manage_rules() {
     assert_eq!(status, StatusCode::OK);
     let (status, listed) = fixture.call("GET", &rules, &admin.cookie, None).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(listed["rules"].as_array().unwrap().len(), 2);
+    assert_eq!(listed["rules"].as_array().unwrap().len(), 3);
     let (status, _) = fixture.call("DELETE", &one, &admin.cookie, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 }

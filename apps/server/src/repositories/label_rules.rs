@@ -1,7 +1,9 @@
 //! Label rules: "if a task has label X, assign person Y", per project. A rule only adds
 //! assignees: it never removes one, and a person already assigned gets nothing. With the
 //! project's owner switch on, a label `owner:<name>` also assigns the member whose handle (the
-//! part of the email before `@`) or name is `<name>`, without regard to case.
+//! part of the email before `@`) or name is `<name>`, without regard to case. A rule of an
+//! `owner:` label is the name map entry of `<name>` (Rules card → owner names): it wins over that
+//! match, so an `owner:` label with a rule assigns only the rule's people.
 //!
 //! Every label that a task gets goes through [`insert_task_label`], whatever the path (web, API
 //! tokens, MCP, GitHub sync, Discord), so the rules run in one place. A backup restore does not
@@ -49,7 +51,8 @@ pub struct LabelRuleSettings {
     pub rules: Vec<LabelRuleRecord>,
     /// `owner:<name>` labels assign the member `<name>`.
     pub owner_labels: bool,
-    /// The `<name>` of each `owner:` label of the project that names no member (or more than one).
+    /// The `<name>` of each `owner:` label of the project that has no rule (name map entry) and
+    /// names no member (or more than one).
     pub unmatched_owner_names: Vec<String>,
 }
 
@@ -91,13 +94,21 @@ pub(super) async fn insert_task_label(
     };
     let label_name: String = label.get("name");
     let project_id: String = label.get("project_id");
-    let mut people: Vec<String> = sqlx::query_scalar(
-        "SELECT user_id FROM label_rules WHERE label_id = $1 AND enabled = 1 ORDER BY created_at, id",
+    let rules = sqlx::query(
+        "SELECT user_id, enabled FROM label_rules WHERE label_id = $1 ORDER BY created_at, id",
     )
     .bind(label_id)
     .fetch_all(&mut **tx)
     .await?;
-    if let Some(name) = owner_name(&label_name)
+    let mut people: Vec<String> = rules
+        .iter()
+        .filter(|rule| rule.get::<bool, _>("enabled"))
+        .map(|rule| rule.get("user_id"))
+        .collect();
+    // A rule of an `owner:` label is its name map entry: it wins over the handle match, even
+    // when it is off (then the label assigns nobody).
+    if rules.is_empty()
+        && let Some(name) = owner_name(&label_name)
         && owner_labels_in_tx(tx, &project_id).await?
         && let Some(user_id) = owner_member(tx, write.workspace_id, name).await?
     {
@@ -569,8 +580,10 @@ async fn settings_in_tx(
         .map(rule_from_row)
         .collect::<Result<Vec<_>, _>>()?;
     let owner_labels = owner_labels_in_tx(tx, &project_id.to_string()).await?;
+    // A name with a map entry (a rule of its label) is not unmatched.
     let labels: Vec<String> = sqlx::query_scalar(
-        "SELECT name FROM labels WHERE project_id = $1 AND lower(name) LIKE 'owner:%' ORDER BY lower(name)",
+        "SELECT name FROM labels WHERE project_id = $1 AND lower(name) LIKE 'owner:%' \
+         AND NOT EXISTS (SELECT 1 FROM label_rules WHERE label_rules.label_id = labels.id) ORDER BY lower(name)",
     )
     .bind(project_id.to_string())
     .fetch_all(&mut **tx)

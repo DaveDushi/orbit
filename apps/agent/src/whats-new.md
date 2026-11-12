@@ -8,6 +8,7 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 
 ## 2026-11-12
 - Label rules: in Project settings → Rules, owners and admins set "if a task has label X, assign person Y". It works when a task is created with the label and when the label is added later (also from GitHub, Discord, the API and Donna). Rules only add people, never remove them. A switch makes owner:<name> labels assign that member. Ask Donna to list or add a rule.
+- Owner names: under the owner:<name> switch in Rules, pick a member for an owner: name that matches nobody (for example owner:david-s → David). A mapped name wins over the name match; remove the entry to go back to it.
 - Routines and scripts: Donna can now put a saved script on a routine you already have (ask "use the script X in my routine Y"; she asks for your yes first). You can also do it yourself: Settings → Agentic → Routines → Edit → Script. The script and routine windows now fit the screen, and long code scrolls inside its box.
 - When a routine's script fails, Donna can fix the script and run it again (at most 2 times). She posts the result and a short note in the routine's thread that says what she changed. The fixed script makes no changes until you approve it on the routine.
 - A routine's last run now shows Done or Failed, not "started" forever.
