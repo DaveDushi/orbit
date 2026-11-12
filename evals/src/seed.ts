@@ -53,8 +53,8 @@ async function fill(session: string, name: string, extra: number): Promise<Omit<
     projectId: project.id,
     statusId: statuses[0].id,
     taskId: task.id,
-    readToken: await token(['read']),
-    writeToken: await token(['read', 'write', 'docs:read', 'tasks:write']),
+    readToken: await token(['tasks:read']),
+    writeToken: await token(['tasks:write', 'docs:read']),
   }
 }
 

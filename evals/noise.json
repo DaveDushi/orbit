@@ -1,0 +1,842 @@
+{
+  "_about": "Run-to-run noise per perf metric: max - min over `runs` runs of one commit on one machine. evals/src/compare.ts counts a metric as worse only when it moves by more than this. Re-measure with `evals/run.sh --noise` after a change to the VM or to the measurements.",
+  "commit": "66dc33c36cd04ea883a1e5c48eb19e7a6d80b1d1",
+  "runs": 5,
+  "date": "2026-11-10T22:02:23.848Z",
+  "quick": false,
+  "machine": {
+    "cpu": "AMD EPYC 9554P 64-Core Processor",
+    "cpus": 4,
+    "memory_gb": 16
+  },
+  "metrics": {
+    "perf.bundle.all_css.brotli_kb": {
+      "median": 41.6,
+      "min": 41.6,
+      "max": 41.6,
+      "noise": 0
+    },
+    "perf.bundle.all_css.gzip_kb": {
+      "median": 53.2,
+      "min": 53.2,
+      "max": 53.2,
+      "noise": 0
+    },
+    "perf.bundle.all_css.raw_kb": {
+      "median": 363,
+      "min": 363,
+      "max": 363,
+      "noise": 0
+    },
+    "perf.bundle.all_js.brotli_kb": {
+      "median": 2895.8,
+      "min": 2895.8,
+      "max": 2895.8,
+      "noise": 0
+    },
+    "perf.bundle.all_js.gzip_kb": {
+      "median": 3494.9,
+      "min": 3494.9,
+      "max": 3494.9,
+      "noise": 0
+    },
+    "perf.bundle.all_js.raw_kb": {
+      "median": 11933.4,
+      "min": 11933.4,
+      "max": 11933.4,
+      "noise": 0
+    },
+    "perf.bundle.entry_css.brotli_kb": {
+      "median": 35.6,
+      "min": 35.6,
+      "max": 35.6,
+      "noise": 0
+    },
+    "perf.bundle.entry_css.gzip_kb": {
+      "median": 46.3,
+      "min": 46.3,
+      "max": 46.3,
+      "noise": 0
+    },
+    "perf.bundle.entry_css.raw_kb": {
+      "median": 325.7,
+      "min": 325.7,
+      "max": 325.7,
+      "noise": 0
+    },
+    "perf.bundle.entry_js.brotli_kb": {
+      "median": 367.2,
+      "min": 367.2,
+      "max": 367.2,
+      "noise": 0
+    },
+    "perf.bundle.entry_js.gzip_kb": {
+      "median": 424.8,
+      "min": 424.8,
+      "max": 424.8,
+      "noise": 0
+    },
+    "perf.bundle.entry_js.raw_kb": {
+      "median": 1321.6,
+      "min": 1321.6,
+      "max": 1321.6,
+      "noise": 0
+    },
+    "perf.bundle.largest_lazy_gzip_kb": {
+      "median": 437.6,
+      "min": 437.6,
+      "max": 437.6,
+      "noise": 0
+    },
+    "perf.latency.endpoints.app_list.non_200": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "noise": 0
+    },
+    "perf.latency.endpoints.app_list.p50_ms": {
+      "median": 0.83,
+      "min": 0.63,
+      "max": 1.1,
+      "noise": 0.47
+    },
+    "perf.latency.endpoints.app_list.p95_ms": {
+      "median": 2.82,
+      "min": 1.22,
+      "max": 5.7,
+      "noise": 4.48
+    },
+    "perf.latency.endpoints.app_list.p99_ms": {
+      "median": 3.75,
+      "min": 3.34,
+      "max": 8.67,
+      "noise": 5.33
+    },
+    "perf.latency.endpoints.app_list.rps": {
+      "median": 9206,
+      "min": 5673,
+      "max": 13358,
+      "noise": 7685
+    },
+    "perf.latency.endpoints.docs_list.non_200": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "noise": 0
+    },
+    "perf.latency.endpoints.docs_list.p50_ms": {
+      "median": 2.36,
+      "min": 1.92,
+      "max": 3.42,
+      "noise": 1.5
+    },
+    "perf.latency.endpoints.docs_list.p95_ms": {
+      "median": 4.02,
+      "min": 3.08,
+      "max": 11.03,
+      "noise": 7.95
+    },
+    "perf.latency.endpoints.docs_list.p99_ms": {
+      "median": 8.02,
+      "min": 4,
+      "max": 18.01,
+      "noise": 14.01
+    },
+    "perf.latency.endpoints.docs_list.rps": {
+      "median": 3828,
+      "min": 2216,
+      "max": 4871,
+      "noise": 2655
+    },
+    "perf.latency.endpoints.docs_read.non_200": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "noise": 0
+    },
+    "perf.latency.endpoints.docs_read.p50_ms": {
+      "median": 1.11,
+      "min": 0.85,
+      "max": 4.18,
+      "noise": 3.33
+    },
+    "perf.latency.endpoints.docs_read.p95_ms": {
+      "median": 6.21,
+      "min": 1.6,
+      "max": 13.81,
+      "noise": 12.21
+    },
+    "perf.latency.endpoints.docs_read.p99_ms": {
+      "median": 12.68,
+      "min": 2.03,
+      "max": 20.73,
+      "noise": 18.7
+    },
+    "perf.latency.endpoints.docs_read.rps": {
+      "median": 5624,
+      "min": 1820,
+      "max": 10438,
+      "noise": 8618
+    },
+    "perf.latency.endpoints.docs_search.non_200": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "noise": 0
+    },
+    "perf.latency.endpoints.docs_search.p50_ms": {
+      "median": 1.35,
+      "min": 1.02,
+      "max": 1.98,
+      "noise": 0.96
+    },
+    "perf.latency.endpoints.docs_search.p95_ms": {
+      "median": 5.76,
+      "min": 1.87,
+      "max": 10.51,
+      "noise": 8.64
+    },
+    "perf.latency.endpoints.docs_search.p99_ms": {
+      "median": 13.83,
+      "min": 2.34,
+      "max": 26.33,
+      "noise": 23.99
+    },
+    "perf.latency.endpoints.docs_search.rps": {
+      "median": 4436,
+      "min": 2917,
+      "max": 8585,
+      "noise": 5668
+    },
+    "perf.latency.endpoints.file_read.non_200": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "noise": 0
+    },
+    "perf.latency.endpoints.file_read.p50_ms": {
+      "median": 0.87,
+      "min": 0.75,
+      "max": 1.45,
+      "noise": 0.7
+    },
+    "perf.latency.endpoints.file_read.p95_ms": {
+      "median": 1.89,
+      "min": 1.68,
+      "max": 5.95,
+      "noise": 4.27
+    },
+    "perf.latency.endpoints.file_read.p99_ms": {
+      "median": 5.85,
+      "min": 2.67,
+      "max": 8.42,
+      "noise": 5.75
+    },
+    "perf.latency.endpoints.file_read.rps": {
+      "median": 9368,
+      "min": 4810,
+      "max": 10892,
+      "noise": 6082
+    },
+    "perf.latency.endpoints.health_ready.non_200": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "noise": 0
+    },
+    "perf.latency.endpoints.health_ready.p50_ms": {
+      "median": 7.67,
+      "min": 5.56,
+      "max": 9.47,
+      "noise": 3.91
+    },
+    "perf.latency.endpoints.health_ready.p95_ms": {
+      "median": 14.94,
+      "min": 11.27,
+      "max": 27.69,
+      "noise": 16.42
+    },
+    "perf.latency.endpoints.health_ready.p99_ms": {
+      "median": 19.45,
+      "min": 15.04,
+      "max": 50.42,
+      "noise": 35.38
+    },
+    "perf.latency.endpoints.health_ready.rps": {
+      "median": 1162,
+      "min": 860,
+      "max": 1573,
+      "noise": 713
+    },
+    "perf.latency.endpoints.index_html.non_200": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "noise": 0
+    },
+    "perf.latency.endpoints.index_html.p50_ms": {
+      "median": 0.13,
+      "min": 0.12,
+      "max": 0.19,
+      "noise": 0.07
+    },
+    "perf.latency.endpoints.index_html.p95_ms": {
+      "median": 0.51,
+      "min": 0.31,
+      "max": 1.26,
+      "noise": 0.95
+    },
+    "perf.latency.endpoints.index_html.p99_ms": {
+      "median": 1.6,
+      "min": 0.89,
+      "max": 2.15,
+      "noise": 1.26
+    },
+    "perf.latency.endpoints.index_html.rps": {
+      "median": 45371,
+      "min": 27001,
+      "max": 50690,
+      "noise": 23689
+    },
+    "perf.latency.endpoints.session_me.non_200": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "noise": 0
+    },
+    "perf.latency.endpoints.session_me.p50_ms": {
+      "median": 1.96,
+      "min": 1.41,
+      "max": 3.41,
+      "noise": 2
+    },
+    "perf.latency.endpoints.session_me.p95_ms": {
+      "median": 7.52,
+      "min": 4.84,
+      "max": 12.33,
+      "noise": 7.49
+    },
+    "perf.latency.endpoints.session_me.p99_ms": {
+      "median": 20.76,
+      "min": 9.85,
+      "max": 27.77,
+      "noise": 17.92
+    },
+    "perf.latency.endpoints.session_me.rps": {
+      "median": 2964,
+      "min": 1929,
+      "max": 4499,
+      "noise": 2570
+    },
+    "perf.latency.endpoints.task_read.non_200": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "noise": 0
+    },
+    "perf.latency.endpoints.task_read.p50_ms": {
+      "median": 1.24,
+      "min": 1.19,
+      "max": 4.06,
+      "noise": 2.87
+    },
+    "perf.latency.endpoints.task_read.p95_ms": {
+      "median": 2.18,
+      "min": 1.84,
+      "max": 12.79,
+      "noise": 10.95
+    },
+    "perf.latency.endpoints.task_read.p99_ms": {
+      "median": 3.36,
+      "min": 2.5,
+      "max": 17.34,
+      "noise": 14.84
+    },
+    "perf.latency.endpoints.task_read.rps": {
+      "median": 7508,
+      "min": 1960,
+      "max": 7834,
+      "noise": 5874
+    },
+    "perf.latency.endpoints.tasks_list.non_200": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "noise": 0
+    },
+    "perf.latency.endpoints.tasks_list.p50_ms": {
+      "median": 18.98,
+      "min": 16.68,
+      "max": 24.11,
+      "noise": 7.43
+    },
+    "perf.latency.endpoints.tasks_list.p95_ms": {
+      "median": 36.75,
+      "min": 22.23,
+      "max": 57.83,
+      "noise": 35.6
+    },
+    "perf.latency.endpoints.tasks_list.p99_ms": {
+      "median": 50.59,
+      "min": 24.54,
+      "max": 70.82,
+      "noise": 46.28
+    },
+    "perf.latency.endpoints.tasks_list.rps": {
+      "median": 496,
+      "min": 361,
+      "max": 584,
+      "noise": 223
+    },
+    "perf.latency.endpoints.workspace_list.non_200": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "noise": 0
+    },
+    "perf.latency.endpoints.workspace_list.p50_ms": {
+      "median": 0.59,
+      "min": 0.5,
+      "max": 0.85,
+      "noise": 0.35
+    },
+    "perf.latency.endpoints.workspace_list.p95_ms": {
+      "median": 1.58,
+      "min": 1.05,
+      "max": 2.85,
+      "noise": 1.8
+    },
+    "perf.latency.endpoints.workspace_list.p99_ms": {
+      "median": 2.42,
+      "min": 2.03,
+      "max": 5.01,
+      "noise": 2.98
+    },
+    "perf.latency.endpoints.workspace_list.rps": {
+      "median": 14103,
+      "min": 8261,
+      "max": 15157,
+      "noise": 6896
+    },
+    "perf.pageload.pages.app_tasks.desktop.cls": {
+      "median": 0,
+      "min": 0.001,
+      "max": 0.002,
+      "noise": 0
+    },
+    "perf.pageload.pages.app_tasks.desktop.css_kb": {
+      "median": 42.3,
+      "min": 42.3,
+      "max": 42.3,
+      "noise": 0
+    },
+    "perf.pageload.pages.app_tasks.desktop.fcp_ms": {
+      "median": 1576,
+      "min": 1432,
+      "max": 1600,
+      "noise": 168
+    },
+    "perf.pageload.pages.app_tasks.desktop.js_kb": {
+      "median": 1069.2,
+      "min": 1069.2,
+      "max": 1069.2,
+      "noise": 0
+    },
+    "perf.pageload.pages.app_tasks.desktop.lcp_ms": {
+      "median": 1804,
+      "min": 1688,
+      "max": 1848,
+      "noise": 160
+    },
+    "perf.pageload.pages.app_tasks.desktop.requests": {
+      "median": 53,
+      "min": 53,
+      "max": 54,
+      "noise": 1
+    },
+    "perf.pageload.pages.app_tasks.desktop.tbt_ms": {
+      "median": 160,
+      "min": 130,
+      "max": 224,
+      "noise": 94
+    },
+    "perf.pageload.pages.app_tasks.desktop.transfer_kb": {
+      "median": 1199.1,
+      "min": 1199.1,
+      "max": 1199.4,
+      "noise": 0.3
+    },
+    "perf.pageload.pages.app_tasks.phone.cls": {
+      "median": 0,
+      "min": 0,
+      "max": 0.001,
+      "noise": 0
+    },
+    "perf.pageload.pages.app_tasks.phone.css_kb": {
+      "median": 42.3,
+      "min": 42.3,
+      "max": 42.3,
+      "noise": 0
+    },
+    "perf.pageload.pages.app_tasks.phone.fcp_ms": {
+      "median": 6268,
+      "min": 6160,
+      "max": 6616,
+      "noise": 456
+    },
+    "perf.pageload.pages.app_tasks.phone.js_kb": {
+      "median": 1069.2,
+      "min": 1069.2,
+      "max": 1069.2,
+      "noise": 0
+    },
+    "perf.pageload.pages.app_tasks.phone.lcp_ms": {
+      "median": 7228,
+      "min": 6844,
+      "max": 7532,
+      "noise": 688
+    },
+    "perf.pageload.pages.app_tasks.phone.requests": {
+      "median": 54,
+      "min": 53,
+      "max": 54,
+      "noise": 1
+    },
+    "perf.pageload.pages.app_tasks.phone.tbt_ms": {
+      "median": 1074,
+      "min": 925,
+      "max": 1351,
+      "noise": 426
+    },
+    "perf.pageload.pages.app_tasks.phone.transfer_kb": {
+      "median": 1199.4,
+      "min": 1199.1,
+      "max": 1199.4,
+      "noise": 0.3
+    },
+    "perf.pageload.pages.docs.desktop.cls": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "noise": 0
+    },
+    "perf.pageload.pages.docs.desktop.css_kb": {
+      "median": 42.3,
+      "min": 42.3,
+      "max": 42.3,
+      "noise": 0
+    },
+    "perf.pageload.pages.docs.desktop.fcp_ms": {
+      "median": 1216,
+      "min": 1164,
+      "max": 1488,
+      "noise": 324
+    },
+    "perf.pageload.pages.docs.desktop.js_kb": {
+      "median": 787.9,
+      "min": 787.9,
+      "max": 787.9,
+      "noise": 0
+    },
+    "perf.pageload.pages.docs.desktop.lcp_ms": {
+      "median": 2052,
+      "min": 2008,
+      "max": 2324,
+      "noise": 316
+    },
+    "perf.pageload.pages.docs.desktop.requests": {
+      "median": 48,
+      "min": 48,
+      "max": 48,
+      "noise": 0
+    },
+    "perf.pageload.pages.docs.desktop.tbt_ms": {
+      "median": 424,
+      "min": 381,
+      "max": 532,
+      "noise": 151
+    },
+    "perf.pageload.pages.docs.desktop.transfer_kb": {
+      "median": 893.7,
+      "min": 893.7,
+      "max": 893.7,
+      "noise": 0
+    },
+    "perf.pageload.pages.docs.phone.cls": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "noise": 0
+    },
+    "perf.pageload.pages.docs.phone.css_kb": {
+      "median": 42.3,
+      "min": 42.3,
+      "max": 42.3,
+      "noise": 0
+    },
+    "perf.pageload.pages.docs.phone.fcp_ms": {
+      "median": 4244,
+      "min": 4104,
+      "max": 4464,
+      "noise": 360
+    },
+    "perf.pageload.pages.docs.phone.js_kb": {
+      "median": 787.9,
+      "min": 787.9,
+      "max": 787.9,
+      "noise": 0
+    },
+    "perf.pageload.pages.docs.phone.lcp_ms": {
+      "median": 7240,
+      "min": 6828,
+      "max": 7328,
+      "noise": 500
+    },
+    "perf.pageload.pages.docs.phone.requests": {
+      "median": 50,
+      "min": 50,
+      "max": 50,
+      "noise": 0
+    },
+    "perf.pageload.pages.docs.phone.tbt_ms": {
+      "median": 1236,
+      "min": 988,
+      "max": 1516,
+      "noise": 528
+    },
+    "perf.pageload.pages.docs.phone.transfer_kb": {
+      "median": 894.3,
+      "min": 894.3,
+      "max": 894.3,
+      "noise": 0
+    },
+    "perf.pageload.pages.home.desktop.cls": {
+      "median": 0,
+      "min": 0.001,
+      "max": 0.001,
+      "noise": 0
+    },
+    "perf.pageload.pages.home.desktop.css_kb": {
+      "median": 42.3,
+      "min": 42.3,
+      "max": 42.3,
+      "noise": 0
+    },
+    "perf.pageload.pages.home.desktop.fcp_ms": {
+      "median": 1192,
+      "min": 1128,
+      "max": 1608,
+      "noise": 480
+    },
+    "perf.pageload.pages.home.desktop.js_kb": {
+      "median": 745.4,
+      "min": 745.4,
+      "max": 745.4,
+      "noise": 0
+    },
+    "perf.pageload.pages.home.desktop.lcp_ms": {
+      "median": 1192,
+      "min": 1128,
+      "max": 1608,
+      "noise": 480
+    },
+    "perf.pageload.pages.home.desktop.requests": {
+      "median": 49,
+      "min": 49,
+      "max": 49,
+      "noise": 0
+    },
+    "perf.pageload.pages.home.desktop.tbt_ms": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "noise": 0
+    },
+    "perf.pageload.pages.home.desktop.transfer_kb": {
+      "median": 847.2,
+      "min": 847.2,
+      "max": 847.2,
+      "noise": 0
+    },
+    "perf.pageload.pages.home.phone.cls": {
+      "median": 0,
+      "min": 0.002,
+      "max": 0.002,
+      "noise": 0
+    },
+    "perf.pageload.pages.home.phone.css_kb": {
+      "median": 42.3,
+      "min": 42.3,
+      "max": 42.3,
+      "noise": 0
+    },
+    "perf.pageload.pages.home.phone.fcp_ms": {
+      "median": 4148,
+      "min": 3924,
+      "max": 4440,
+      "noise": 516
+    },
+    "perf.pageload.pages.home.phone.js_kb": {
+      "median": 745.4,
+      "min": 745.4,
+      "max": 745.4,
+      "noise": 0
+    },
+    "perf.pageload.pages.home.phone.lcp_ms": {
+      "median": 4464,
+      "min": 4228,
+      "max": 4688,
+      "noise": 460
+    },
+    "perf.pageload.pages.home.phone.requests": {
+      "median": 50,
+      "min": 50,
+      "max": 50,
+      "noise": 0
+    },
+    "perf.pageload.pages.home.phone.tbt_ms": {
+      "median": 53,
+      "min": 0,
+      "max": 73,
+      "noise": 73
+    },
+    "perf.pageload.pages.home.phone.transfer_kb": {
+      "median": 847.5,
+      "min": 847.5,
+      "max": 847.5,
+      "noise": 0
+    },
+    "perf.pageload.pages.login.desktop.cls": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "noise": 0
+    },
+    "perf.pageload.pages.login.desktop.css_kb": {
+      "median": 35.9,
+      "min": 35.9,
+      "max": 35.9,
+      "noise": 0
+    },
+    "perf.pageload.pages.login.desktop.fcp_ms": {
+      "median": 696,
+      "min": 672,
+      "max": 792,
+      "noise": 120
+    },
+    "perf.pageload.pages.login.desktop.js_kb": {
+      "median": 371.7,
+      "min": 371.7,
+      "max": 371.7,
+      "noise": 0
+    },
+    "perf.pageload.pages.login.desktop.lcp_ms": {
+      "median": 696,
+      "min": 672,
+      "max": 792,
+      "noise": 120
+    },
+    "perf.pageload.pages.login.desktop.requests": {
+      "median": 20,
+      "min": 20,
+      "max": 20,
+      "noise": 0
+    },
+    "perf.pageload.pages.login.desktop.tbt_ms": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "noise": 0
+    },
+    "perf.pageload.pages.login.desktop.transfer_kb": {
+      "median": 445.2,
+      "min": 445.2,
+      "max": 445.2,
+      "noise": 0
+    },
+    "perf.pageload.pages.login.phone.cls": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "noise": 0
+    },
+    "perf.pageload.pages.login.phone.css_kb": {
+      "median": 35.9,
+      "min": 35.9,
+      "max": 35.9,
+      "noise": 0
+    },
+    "perf.pageload.pages.login.phone.fcp_ms": {
+      "median": 3320,
+      "min": 3240,
+      "max": 3552,
+      "noise": 312
+    },
+    "perf.pageload.pages.login.phone.js_kb": {
+      "median": 371.7,
+      "min": 371.7,
+      "max": 371.7,
+      "noise": 0
+    },
+    "perf.pageload.pages.login.phone.lcp_ms": {
+      "median": 3320,
+      "min": 3240,
+      "max": 3552,
+      "noise": 312
+    },
+    "perf.pageload.pages.login.phone.requests": {
+      "median": 20,
+      "min": 20,
+      "max": 20,
+      "noise": 0
+    },
+    "perf.pageload.pages.login.phone.tbt_ms": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "noise": 0
+    },
+    "perf.pageload.pages.login.phone.transfer_kb": {
+      "median": 445.2,
+      "min": 445.2,
+      "max": 445.2,
+      "noise": 0
+    },
+    "perf.server.cold_start_ms": {
+      "median": 159,
+      "min": 142,
+      "max": 222,
+      "noise": 80
+    },
+    "perf.server.fresh_start_ms": {
+      "median": 163,
+      "min": 145,
+      "max": 268,
+      "noise": 123
+    },
+    "perf.server.rss_after_latency_mb": {
+      "median": 94,
+      "min": 94,
+      "max": 94,
+      "noise": 0
+    },
+    "perf.server.rss_after_pageload_mb": {
+      "median": 119,
+      "min": 118,
+      "max": 119,
+      "noise": 1
+    },
+    "perf.server.rss_idle_mb": {
+      "median": 63,
+      "min": 63,
+      "max": 64,
+      "noise": 1
+    },
+    "perf.server.rss_peak_mb": {
+      "median": 119,
+      "min": 118,
+      "max": 119,
+      "noise": 1
+    }
+  }
+}
