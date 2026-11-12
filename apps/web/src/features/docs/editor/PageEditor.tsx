@@ -39,7 +39,9 @@ import { watchDeletedFiles } from '@orbit/editor/deletedFiles'
 import type { PageEditorInstance } from '@orbit/editor/schema'
 import { EDITOR_BLOCK_TYPES, markdownToTaskBlocks, pageEditorSchema, TASK_EDITOR_BLOCK_TYPES, taskEditorSchema } from './schema'
 import { getPageSlashMenuItems, getTaskSlashMenuItems } from './slashMenu'
-import { PageMentionMenu } from './MentionMenu'
+import { PageMentionMenu, TaskMenu } from './MentionMenu'
+import { TabCompletesSuggestion } from './TabCompletesSuggestion'
+import { EditorReferencePreview } from './EditorReferencePreview'
 import { PageMentionNamesContext, type PageMentionOptions } from './pageMentions'
 import { ThemedBlockNoteView } from './ThemedBlockNoteView'
 import { commentsApi, threadsQueryOptions } from '../comments/api'
@@ -542,6 +544,9 @@ function PageEditorInner({
           />
           <FormattingToolbarController formattingToolbar={formattingToolbar} />
           <PageMentionMenu editor={editor} options={() => mentionsRef.current} />
+          <TaskMenu editor={editor} />
+          <TabCompletesSuggestion />
+          <EditorReferencePreview />
           {collab && !task ? (
             <MentionNamesContext value={names}>
               <MentionCandidatesContext value={comments?.mentionable ?? []}>
