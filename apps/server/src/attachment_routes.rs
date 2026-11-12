@@ -8,7 +8,9 @@ use axum::extract::{
     DefaultBodyLimit, Extension, FromRequest, FromRequestParts, Multipart, Path, Query, Request,
     State,
 };
-use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
+use axum::http::header::{
+    ACCEPT_RANGES, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE,
+};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -18,6 +20,7 @@ use futures_util::TryStreamExt;
 use orbit_platform::{BlobStoreError, Id, RequestId, TimestampMillis, UploadError, UploadService};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncReadExt;
 use tokio_util::io::{ReaderStream, StreamReader};
 use tokio_util::sync::CancellationToken;
 use utoipa::{IntoParams, ToSchema};
@@ -831,6 +834,76 @@ pub(crate) fn download_response(download: orbit_platform::BlobDownload) -> Optio
     Some(response)
 }
 
+/// As [`download_response`], for a blob of `size` bytes, with one `Range: bytes=…` answered by 206 (video players
+/// seek with it, and Safari plays no video without it).
+pub(crate) async fn ranged_download_response(
+    download: orbit_platform::BlobDownload,
+    size: u64,
+    range: Option<&HeaderValue>,
+) -> Option<Response> {
+    let deleted = download.deleted;
+    let range = range
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| byte_range(value, size))
+        .filter(|_| !deleted);
+    let Some((start, end)) = range else {
+        let mut response = download_response(download)?;
+        if !deleted {
+            response
+                .headers_mut()
+                .insert(ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+            response.headers_mut().insert(CONTENT_LENGTH, size.into());
+        }
+        return Some(response);
+    };
+    let content_type = HeaderValue::from_str(&download.metadata.content_type).ok()?;
+    let disposition = HeaderValue::from_str(&download.metadata.content_disposition).ok()?;
+    let mut reader = download.reader;
+    tokio::io::copy(&mut (&mut reader).take(start), &mut tokio::io::sink())
+        .await
+        .ok()?;
+    let length = end - start + 1;
+    let mut response = Response::new(Body::from_stream(ReaderStream::new(reader.take(length))));
+    *response.status_mut() = StatusCode::PARTIAL_CONTENT;
+    let headers = response.headers_mut();
+    headers.insert(CONTENT_TYPE, content_type);
+    headers.insert(CONTENT_DISPOSITION, disposition);
+    headers.insert(ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    headers.insert(CONTENT_LENGTH, length.into());
+    headers.insert(
+        CONTENT_RANGE,
+        HeaderValue::from_str(&format!("bytes {start}-{end}/{size}")).ok()?,
+    );
+    headers.insert(
+        "x-content-type-options",
+        HeaderValue::from_static(download.metadata.x_content_type_options),
+    );
+    Some(response)
+}
+
+/// The first and last byte of one `bytes=a-b`, `bytes=a-` or `bytes=-n` range within `size`; `None` for other
+/// ranges (several ranges, out of the file), which get the whole file.
+pub(crate) fn byte_range(value: &str, size: u64) -> Option<(u64, u64)> {
+    let spec = value.trim().strip_prefix("bytes=")?;
+    if spec.contains(',') || size == 0 {
+        return None;
+    }
+    let (first, last) = spec.split_once('-')?;
+    let (start, end) = if first.trim().is_empty() {
+        let suffix: u64 = last.trim().parse().ok().filter(|suffix| *suffix > 0)?;
+        (size.saturating_sub(suffix), size - 1)
+    } else {
+        let start: u64 = first.trim().parse().ok()?;
+        let end = if last.trim().is_empty() {
+            size - 1
+        } else {
+            last.trim().parse::<u64>().ok()?.min(size - 1)
+        };
+        (start, end)
+    };
+    (start <= end && start < size).then_some((start, end))
+}
+
 async fn authorize_task(
     state: &AttachmentState,
     headers: &HeaderMap,
@@ -1099,4 +1172,29 @@ pub(crate) fn storage_quota_exceeded(
         instance,
         request_id,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::byte_range;
+
+    #[test]
+    fn one_byte_range_is_answered_and_other_ranges_get_the_whole_file() {
+        assert_eq!(byte_range("bytes=0-", 100), Some((0, 99)));
+        assert_eq!(byte_range("bytes=10-19", 100), Some((10, 19)));
+        assert_eq!(byte_range("bytes=90-500", 100), Some((90, 99)));
+        assert_eq!(byte_range("bytes=-30", 100), Some((70, 99)));
+        assert_eq!(byte_range("bytes=-300", 100), Some((0, 99)));
+        for refused in [
+            "bytes=100-",
+            "bytes=20-10",
+            "bytes=0-1,5-6",
+            "items=0-1",
+            "bytes=-0",
+            "bytes=a-b",
+        ] {
+            assert_eq!(byte_range(refused, 100), None, "{refused}");
+        }
+        assert_eq!(byte_range("bytes=0-", 0), None);
+    }
 }

@@ -12,7 +12,8 @@ use utoipa::ToSchema;
 use crate::audit::{self, AuditOutcome};
 use crate::repositories::drive::{
     DriveCrumb, DriveError, DriveNode, DriveNodeKind, DriveNodePage, DriveObject, DriveSort,
-    Paging, SortOrder, list_children, live_chain, load_node, optional_id, parse_id, require_actor,
+    Paging, SortOrder, Visible, list_children, live_chain, load_node, optional_id, parse_id,
+    require_actor, scope_of,
 };
 
 /// A public link as members see it (the token is shown once, when the link is made).
@@ -76,7 +77,7 @@ impl DriveShareRepository {
     ) -> Result<DriveShare, DriveError> {
         let mut transaction = self.database.immediate_transaction().await?;
         let actor = require_actor(&mut transaction, workspace_id, user_id).await?;
-        live_chain(&mut transaction, workspace_id, node_id).await?;
+        live_chain(&mut transaction, workspace_id, node_id, Some(user_id)).await?;
         let id = Id::new_v7();
         sqlx::query(
             "INSERT INTO drive_shares (id, workspace_id, node_id, token_hash, created_by, created_at, expires_at, \
@@ -121,7 +122,7 @@ impl DriveShareRepository {
     ) -> Result<Vec<DriveShare>, DriveError> {
         let mut connection = self.database.pool().acquire().await?;
         let actor = require_actor(&mut connection, workspace_id, user_id).await?;
-        live_chain(&mut connection, workspace_id, node_id).await?;
+        live_chain(&mut connection, workspace_id, node_id, Some(user_id)).await?;
         let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {SHARE_COLUMNS} FROM drive_shares WHERE workspace_id = $1 AND node_id = $2 \
              ORDER BY created_at DESC, id DESC LIMIT 200"
@@ -206,7 +207,7 @@ impl DriveShareRepository {
                 .try_get::<Option<i64>, _>("expires_at")?
                 .map(TimestampMillis::from_millis),
         };
-        match live_chain(&mut connection, access.workspace_id, access.node_id).await {
+        match live_chain(&mut connection, access.workspace_id, access.node_id, None).await {
             Ok(_) => Ok(Some(access)),
             Err(DriveError::NotFound) => Ok(None),
             Err(error) => Err(error),
@@ -232,6 +233,7 @@ impl DriveShareRepository {
         let mut connection = self.database.pool().acquire().await?;
         let folder_id = folder_id.unwrap_or(access.node_id);
         let path = below_share(&mut connection, access, folder_id, DriveNodeKind::Folder).await?;
+        let scope = scope_of(&mut connection, Some(access.node_id)).await?;
         let page = list_children(
             &mut connection,
             access.workspace_id,
@@ -239,6 +241,7 @@ impl DriveShareRepository {
             DriveSort::Name,
             SortOrder::Asc,
             paging,
+            &Visible::Scope(scope),
         )
         .await?;
         Ok((path, page))
@@ -289,12 +292,17 @@ async fn below_share(
     node_id: Id,
     kind: DriveNodeKind,
 ) -> Result<Vec<DriveCrumb>, DriveError> {
-    let chain = live_chain(connection, access.workspace_id, node_id).await?;
+    let chain = live_chain(connection, access.workspace_id, node_id, None).await?;
     let start = chain
         .iter()
         .position(|link| link.id == access.node_id)
         .ok_or(DriveError::NotFound)?;
-    if chain[chain.len() - 1].kind != kind {
+    // A chat folder nested below the shared folder is not part of the link.
+    if chain[chain.len() - 1].kind != kind
+        || chain[start..]
+            .iter()
+            .any(|link| link.scope != chain[start].scope)
+    {
         return Err(DriveError::NotFound);
     }
     Ok(chain[start..]

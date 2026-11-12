@@ -43,7 +43,7 @@ pub use conversations::{
     ChannelCreate, ChannelUpdate, MAX_GUEST_CHANNELS, join_invited_channels, require_guest_channels,
 };
 pub use emoji::{CustomEmojiImage, CustomEmojiRecord, EMOJI_MAX_BYTES};
-pub use files::SentChatFile;
+pub use files::{ChatFileSource, SentChatFile};
 pub use interactions::{Click, ResponseTarget, SentAction};
 pub use messages::BotPost;
 pub use messages::{ForwardInput, MessageCursor, SendInput};
@@ -224,8 +224,16 @@ pub struct ChatFileRecord {
     pub width: Option<i64>,
     #[schema(required = true)]
     pub height: Option<i64>,
-    /// An admin deleted the stored file: show "Deleted file"; `url` serves a "Deleted file" image (410).
+    /// An admin deleted the stored file (or, for a file in Drive, it went to the trash or was deleted): show
+    /// "Deleted file"; `url` serves a "Deleted file" image (410).
     pub deleted: bool,
+    /// A file too large for chat, kept in Drive (`Uploads/…`, seen by the conversation's readers): `url` sends to
+    /// its bytes in the bucket.
+    #[schema(value_type = Option<String>, required = true)]
+    pub drive_node_id: Option<Id>,
+    /// The playable copy of a video or the PDF of an office file; `null` for other files.
+    #[schema(required = true)]
+    pub preview: Option<crate::previews::FilePreview>,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]

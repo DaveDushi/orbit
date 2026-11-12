@@ -1,10 +1,11 @@
+import { getDriveDownload } from '@orbit/api/generated/sdk.gen'
 import { File, Paths } from 'expo-file-system'
 import { useState } from 'react'
 import { Image, Modal, Platform, Pressable, ScrollView, Share, useWindowDimensions, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { agentCardOf } from '../../data/agent-card'
-import { fileSize, hasReaction, isImage } from '../../data/chat'
+import { fileNote, fileToOpen, hasReaction, isImage } from '../../data/chat'
 import type { ChatFileRecord } from '../../data/chat-api'
 import { relativeAgo, timeOfDay } from '../../data/format'
 import { splitTables, type TextPart } from '../../data/markdown'
@@ -259,15 +260,23 @@ const fit = (width: number, height: number, maxWidth: number, maxHeight: number)
  * iOS, the app for its type on Android), where it can be saved or shared.
  */
 function useOpenFile() {
-  const { session } = useOrbit()
+  const { client, session, workspaceId } = useOrbit()
   const image = useServerImage()
   const [opening, setOpening] = useState<string | null>(null)
   const open = async (file: ChatFileRecord) => {
-    if (Platform.OS === 'web') return void window.open(image(file.url).uri, '_blank')
+    const target = fileToOpen(file)
+    // A file in Drive downloads from a presigned bucket URL, without the session's token.
+    const source = async (): Promise<{ uri: string; headers: Record<string, string> }> =>
+      target.kind === 'drive'
+        ? { uri: (await getDriveDownload({ client, path: { workspace_id: workspaceId, node_id: target.nodeId }, throwOnError: true })).data.url, headers: {} }
+        : { uri: image(target.url).uri, headers: { Authorization: `Bearer ${session.token}` } }
+    if (Platform.OS === 'web') return void window.open((await source()).uri, '_blank')
     setOpening(file.id)
     try {
-      const target = new File(Paths.cache, `chat-${file.id}-${file.file_name.replace(/[/\\]/g, '_')}`)
-      const local = target.exists ? target : await File.downloadFileAsync(image(file.url).uri, target, { headers: { Authorization: `Bearer ${session.token}` }, idempotent: true })
+      const name = target.kind === 'url' && target.url !== file.url ? file.file_name.replace(/\.[^.]*$/, '.mp4') : file.file_name
+      const cached = new File(Paths.cache, `chat-${file.id}-${name.replace(/[/\\]/g, '_')}`)
+      const from = cached.exists ? null : await source()
+      const local = from ? await File.downloadFileAsync(from.uri, cached, { headers: from.headers, idempotent: true }) : cached
       if (await local.canPreview()) await local.preview()
       else await Share.share({ url: local.uri, title: file.file_name })
     } catch (error) {
@@ -296,7 +305,7 @@ function FileCard({ file }: { file: ChatFileRecord }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Open ${file.file_name}, ${fileSize(file.size_bytes)}`}
+      accessibilityLabel={`Open ${file.file_name}, ${fileNote(file)}`}
       onPress={() => void open(file)}
       className="max-w-112 flex-row items-center gap-3 p-3 rounded-lg border border-border bg-background active:bg-muted"
     >
@@ -305,7 +314,7 @@ function FileCard({ file }: { file: ChatFileRecord }) {
         <Text numberOfLines={1} className="font-noto-medium text-[14px] leading-[20px]">
           {file.file_name}
         </Text>
-        <Text className="text-[12px] leading-[16px] text-muted-foreground">{fileSize(file.size_bytes)}</Text>
+        <Text className="text-[12px] leading-[16px] text-muted-foreground">{fileNote(file)}</Text>
       </View>
       {opening === file.id ? <Spinner /> : <Icon name="download" size={20} color={colors.mutedForeground} />}
     </Pressable>

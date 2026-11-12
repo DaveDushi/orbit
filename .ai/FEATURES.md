@@ -480,6 +480,7 @@ turns its routes, navigation and shortcuts off.
 
 - One chat space for each workspace: public and private channels, direct messages (1:1 and
   group), shared categories, personal favorites. `#general` has every member.
+- Media and big files (`docs/file-previews.md`): types come from file bytes; videos play inline (server MP4 copy + poster from the `file.preview` job, "Processing the video…" until then, original as fallback); PDFs, videos and office files open in `FileViewer` (`components/common/FileViewer.tsx`, shared with `DriveViewer`); office files show a LibreOffice PDF. Files above the chat limit upload to Drive `Uploads/<conversation>` (`features/chat/api/largeFiles.ts`, resumable) and attach as `chat_drive_files`; nodes with `chat_conversation_id` are visible only to the conversation's readers.
 - Threads are the only reply model (side pane and full view), with follow state for each member.
 - Reactions, pins, files, mentions (`@user`, `@channel`, `@here`, `#channel`), search, the
   Unreads and Threads views, a notify level for each conversation.

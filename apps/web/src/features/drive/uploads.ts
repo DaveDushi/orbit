@@ -147,7 +147,15 @@ class UploadQueue {
 
   private async run(job: Job) {
     try {
-      let node = await uploadFile(job, (patch) => this.update(job, patch))
+      let node = await sendToDrive({
+        workspaceId: job.item.workspaceId,
+        parentId: job.item.parentId,
+        file: job.file,
+        resume: job.resume,
+        signal: job.controller.signal,
+        onStarted: (upload) => this.update(job, { uploadId: upload.id }),
+        onProgress: (sent) => this.update(job, { sent }),
+      })
       // The thumbnail comes from the local file; without one the file shows its icon.
       node = (await makeThumbnail(job.item.workspaceId, node, job.file).catch(() => null)) ?? node
       this.update(job, { status: 'done', sent: job.item.size, node })
@@ -180,45 +188,64 @@ if (typeof window !== 'undefined') {
   })
 }
 
-async function uploadFile(job: Job, update: (patch: Partial<UploadItem>) => void): Promise<DriveNode> {
-  const { item, file } = job
-  let upload = job.resume
+/** One file to send to Drive. */
+export interface DriveSend {
+  workspaceId: string
+  /** The folder; `null`: the top level. */
+  parentId: string | null
+  file: File
+  /** An unfinished upload of this file to continue: only the parts the bucket lacks are sent. */
+  resume?: DriveUploadView
+  signal: AbortSignal
+  /** The server's upload, once started: pass it as `resume` to continue after a failure. */
+  onStarted?: (upload: DriveUploadView) => void
+  /** Bytes the bucket has. */
+  onProgress: (sent: number) => void
+}
+
+/**
+ * Sends a file from the browser to the bucket (one PUT up to 32 MiB, else parts with retries) and adds it to the
+ * folder. A failed upload can be continued with `resume`.
+ */
+export async function sendToDrive(send: DriveSend): Promise<DriveNode> {
+  const { workspaceId, file } = send
+  let upload = send.resume
   let singleUrl: string | null | undefined
   if (upload && upload.part_size == null) {
     // A single-PUT URL is not signed again: the old upload goes and a new one starts.
-    await cancelUpload(item.workspaceId, upload.id)
+    await cancelUpload(workspaceId, upload.id)
     upload = undefined
   }
   if (!upload) {
     const { data } = await startDriveUpload({
       client: apiClient,
-      path: { workspace_id: item.workspaceId },
-      body: { parent_id: item.parentId, name: file.name, size: file.size, mime: file.type || undefined, on_conflict: 'rename' },
+      path: { workspace_id: workspaceId },
+      body: { parent_id: send.parentId, name: file.name, size: file.size, mime: file.type || undefined, on_conflict: 'rename' },
       throwOnError: true,
     })
     upload = data.upload
     singleUrl = data.url
-    update({ uploadId: upload.id })
+    send.onStarted?.(upload)
   }
   if (singleUrl) {
-    await put(singleUrl, file, (loaded) => update({ sent: loaded }), job.controller.signal)
+    await put(singleUrl, file, send.onProgress, send.signal)
   } else {
-    await sendParts(job, upload, update)
+    await sendParts(send, upload)
   }
   const { data } = await completeDriveUpload({
     client: apiClient,
-    path: { workspace_id: item.workspaceId, upload_id: upload.id },
+    path: { workspace_id: workspaceId, upload_id: upload.id },
     throwOnError: true,
   })
   return data
 }
 
-async function sendParts(job: Job, upload: DriveUploadView, update: (patch: Partial<UploadItem>) => void) {
-  const { item, file, controller } = job
+async function sendParts(send: DriveSend, upload: DriveUploadView) {
+  const { workspaceId, file, signal } = send
   const partSize = upload.part_size ?? upload.size
   const { data: status } = await getDriveUpload({
     client: apiClient,
-    path: { workspace_id: item.workspaceId, upload_id: upload.id },
+    path: { workspace_id: workspaceId, upload_id: upload.id },
     throwOnError: true,
   })
   const left = missingParts(upload, status.uploaded_parts)
@@ -228,7 +255,7 @@ async function sendParts(job: Job, upload: DriveUploadView, update: (patch: Part
     let sent = 0
     for (const number of done) sent += partBytes(number, partSize, upload.size)
     for (const loaded of inFlight.values()) sent += loaded
-    update({ sent })
+    send.onProgress(sent)
   }
   report()
 
@@ -236,7 +263,7 @@ async function sendParts(job: Job, upload: DriveUploadView, update: (patch: Part
   const sign = async (numbers: number[]) => {
     const { data } = await signDriveUploadParts({
       client: apiClient,
-      path: { workspace_id: item.workspaceId, upload_id: upload.id },
+      path: { workspace_id: workspaceId, upload_id: upload.id },
       body: { part_numbers: numbers },
       throwOnError: true,
     })
@@ -252,13 +279,13 @@ async function sendParts(job: Job, upload: DriveUploadView, update: (patch: Part
           await put(urls.get(number) ?? '', file.slice(start, end), (loaded) => {
             inFlight.set(number, loaded)
             report()
-          }, controller.signal)
+          }, signal)
           break
         } catch (error) {
           inFlight.delete(number)
           // An expired or refused URL is signed again on the next try.
           urls.delete(number)
-          if (controller.signal.aborted || attempt >= PART_TRIES) throw error
+          if (signal.aborted || attempt >= PART_TRIES) throw error
           await new Promise((resolve) => setTimeout(resolve, 1000 * attempt))
         }
       }
@@ -291,7 +318,7 @@ function put(url: string, body: Blob, onProgress: (loaded: number) => void, sign
   })
 }
 
-async function cancelUpload(workspaceId: string, uploadId: string) {
+export async function cancelUpload(workspaceId: string, uploadId: string) {
   try {
     await cancelDriveUpload({ client: apiClient, path: { workspace_id: workspaceId, upload_id: uploadId }, throwOnError: true })
   } catch {
@@ -299,7 +326,7 @@ async function cancelUpload(workspaceId: string, uploadId: string) {
   }
 }
 
-function uploadError(error: unknown): string {
+export function uploadError(error: unknown): string {
   if (error instanceof ApiProblem) return error.detail
   if (error instanceof TransferError) return `Upload stopped: ${error.message}. Resume it later.`
   return 'Upload failed.'

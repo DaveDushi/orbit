@@ -89,7 +89,7 @@ export function Composer({ ref, conversation, threadRootId = null, replyTo = nul
   const coarse = useCoarsePointer()
   const { send } = useSendMessage()
   const sendTyping = useSendTyping()
-  const { uploads, add, remove, retry, clear } = useUploads()
+  const { uploads, add, remove, retry, clear } = useUploads(conversation.id)
   const conversationId = conversation.id
   const title = conversationTitle(conversation, people, currentUserId)
   const inThread = threadRootId !== null

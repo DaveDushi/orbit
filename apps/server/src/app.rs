@@ -293,9 +293,16 @@ impl App {
             );
         }
         let drive = crate::drive::DriveService::new(database.clone(), object_storage.clone());
+        let previews = crate::previews::PreviewService::new(
+            database.clone(),
+            attachment_state.uploads.clone(),
+            drive.clone(),
+            crate::previews::PreviewSettings::from_env().map_err(AppError::Config)?,
+        );
         let production_services = initialize_production_services(
             &database,
             drive.clone(),
+            previews,
             backups.clone(),
             Arc::clone(&workspaces),
             integrity.clone(),
@@ -349,6 +356,7 @@ impl App {
             attachment_state.uploads.clone(),
             cookie_mode,
         )
+        .with_drive(drive.clone())
         .with_public_origin(&config.http.public_origin)
         .with_interactivity(
             app_key,
@@ -979,6 +987,7 @@ fn health_registry(
 async fn initialize_production_services(
     database: &Database,
     drive: crate::drive::DriveService,
+    previews: crate::previews::PreviewService,
     backups: BackupService,
     workspaces: Arc<WorkspaceRepository>,
     integrity: IntegrityService,
@@ -1084,6 +1093,7 @@ async fn initialize_production_services(
         })
         .and_then(|worker| crate::notion::import::register_jobs(worker, notion_imports))
         .and_then(|worker| crate::workspace_export::register_job(worker, workspace_exports))
+        .and_then(|worker| crate::previews::register_jobs(worker, previews))
         .and_then(|worker| match billing {
             Some(billing) => crate::billing::register_jobs(worker, billing),
             None => Ok(worker),
@@ -1144,6 +1154,9 @@ async fn initialize_production_services(
         now,
     )
     .await?;
+    crate::previews::queue_backfill(database)
+        .await
+        .map_err(AppError::ProductionServices)?;
     scheduler
         .validate_enabled()
         .await

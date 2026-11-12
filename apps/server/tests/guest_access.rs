@@ -160,6 +160,7 @@ fn guest_may_use(operation: &str) -> bool {
             | "list_chat_stickers"
             | "get_chat_sticker_image"
             | "upload_chat_file"
+            | "get_chat_upload_limit"
             | "download_chat_file"
             | "get_chat_link_preview"
             | "read_all_chat"
@@ -455,6 +456,12 @@ const UNCHECKED: &[&str] = &[
     "download_comment_attachment",
     "create_obsidian_import",
     "delete_storage_file",
+    // Chat files kept in Drive and file previews (`tests/chat_media.rs` checks who reaches them).
+    "attach_chat_drive_file",
+    "get_chat_file_preview",
+    "request_chat_file_preview",
+    "get_chat_file_preview_file",
+    "get_drive_preview_file",
     // Imports check their token with the outside service first.
     "create_asana_import",
     "get_asana_import",

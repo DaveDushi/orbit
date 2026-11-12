@@ -1,4 +1,6 @@
 //! Orbit Drive: the folder tree of a workspace's files (one drive per workspace, every member reads and writes).
+//! The one exception are the folders of chat ([`DriveRepository::chat_folder`]): a node with a
+//! `chat_conversation_id` is seen only by the people who can read that conversation (a DM's files by its members).
 //! Only names, the tree and object keys are here; the bytes are in S3 and move between the browser and the
 //! bucket ([`crate::drive`]). Every function checks the caller's membership in its own transaction.
 //!
@@ -31,10 +33,16 @@ const MAX_NAME_SUFFIX: u32 = 1_000;
 const NODE_COLUMNS: &str = "drive_nodes.id, drive_nodes.parent_id, drive_nodes.kind, drive_nodes.name, \
     drive_nodes.size, drive_nodes.mime, drive_nodes.created_by, drive_nodes.created_at, drive_nodes.updated_by, \
     drive_nodes.updated_at, drive_nodes.trashed_at, drive_media.width, drive_media.height, drive_media.duration_ms, \
-    drive_media.status AS media_status, drive_media.thumb_key, drive_media.poster_key";
-/// The nodes with their media (images and videos the browser measured).
-const NODE_FROM: &str =
-    "drive_nodes LEFT JOIN drive_media ON drive_media.blob_id = drive_nodes.blob_id";
+    drive_media.status AS media_status, drive_media.thumb_key, drive_media.poster_key, drive_nodes.workspace_id, \
+    pv.status AS preview_status, \
+    EXISTS (SELECT 1 FROM file_preview_outputs po WHERE po.preview_id = pv.id AND po.role = 'play') AS preview_play, \
+    EXISTS (SELECT 1 FROM file_preview_outputs po WHERE po.preview_id = pv.id AND po.role = 'poster') AS preview_poster, \
+    EXISTS (SELECT 1 FROM file_preview_outputs po WHERE po.preview_id = pv.id AND po.role = 'pdf') AS preview_pdf";
+/// The nodes with their media (images and videos the browser measured) and their preview (one per blob).
+const NODE_FROM: &str = "drive_nodes LEFT JOIN drive_media ON drive_media.blob_id = drive_nodes.blob_id \
+     LEFT JOIN file_previews pv ON pv.drive_blob_id = drive_nodes.blob_id";
+/// The top-level folder of the chat folders.
+pub const UPLOADS_FOLDER: &str = "Uploads";
 /// The largest thumbnail and poster objects that are kept.
 pub const MAX_THUMB_BYTES: u64 = 1024 * 1024;
 pub const MAX_POSTER_BYTES: u64 = 4 * 1024 * 1024;
@@ -92,6 +100,9 @@ pub struct DriveNode {
     /// A 5-minute URL of a large frame of a video, for the player.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub poster_url: Option<String>,
+    /// The playable copy of a video or the PDF of an office file; `null` for other files.
+    #[schema(required = true)]
+    pub preview: Option<crate::previews::FilePreview>,
     #[serde(skip)]
     pub thumb_key: Option<String>,
     #[serde(skip)]
@@ -393,7 +404,7 @@ impl DriveRepository {
     ) -> Result<DriveNodePage, DriveError> {
         let mut connection = self.database.pool().acquire().await?;
         require_actor(&mut connection, workspace_id, user_id).await?;
-        live_folder(&mut connection, workspace_id, parent_id).await?;
+        live_folder(&mut connection, workspace_id, parent_id, Some(user_id)).await?;
         list_children(
             &mut connection,
             workspace_id,
@@ -401,6 +412,7 @@ impl DriveRepository {
             sort,
             order,
             paging,
+            &Visible::Member(user_id),
         )
         .await
     }
@@ -414,7 +426,7 @@ impl DriveRepository {
     ) -> Result<DriveNodeDetail, DriveError> {
         let mut connection = self.database.pool().acquire().await?;
         require_actor(&mut connection, workspace_id, user_id).await?;
-        let chain = live_chain(&mut connection, workspace_id, node_id).await?;
+        let chain = live_chain(&mut connection, workspace_id, node_id, Some(user_id)).await?;
         let node = load_node(&mut connection, workspace_id, node_id)
             .await?
             .ok_or(DriveError::NotFound)?;
@@ -442,7 +454,7 @@ impl DriveRepository {
         let name = valid_name(name)?;
         let mut transaction = self.database.immediate_transaction().await?;
         require_actor(&mut transaction, workspace_id, user_id).await?;
-        live_folder(&mut transaction, workspace_id, parent_id).await?;
+        live_folder(&mut transaction, workspace_id, parent_id, Some(user_id)).await?;
         let name = match on_conflict {
             OnConflict::Fail | OnConflict::Replace => {
                 if sibling(&mut transaction, workspace_id, parent_id, &name, None)
@@ -468,6 +480,7 @@ impl DriveRepository {
                 name: &name,
                 blob: None,
                 user_id,
+                chat_root: None,
             },
             now,
         )
@@ -490,7 +503,7 @@ impl DriveRepository {
         let name = valid_name(name)?;
         let mut transaction = self.database.immediate_transaction().await?;
         require_actor(&mut transaction, workspace_id, user_id).await?;
-        let chain = live_chain(&mut transaction, workspace_id, node_id).await?;
+        let chain = live_chain(&mut transaction, workspace_id, node_id, Some(user_id)).await?;
         let parent_id = chain.len().checked_sub(2).map(|index| chain[index].id);
         if sibling(
             &mut transaction,
@@ -532,10 +545,11 @@ impl DriveRepository {
     ) -> Result<DriveNode, DriveError> {
         let mut transaction = self.database.immediate_transaction().await?;
         require_actor(&mut transaction, workspace_id, user_id).await?;
-        let chain = live_chain(&mut transaction, workspace_id, node_id).await?;
+        let chain = live_chain(&mut transaction, workspace_id, node_id, Some(user_id)).await?;
         let node = &chain[chain.len() - 1];
         if let Some(parent_id) = parent_id {
-            let target = live_chain(&mut transaction, workspace_id, parent_id).await?;
+            let target =
+                live_chain(&mut transaction, workspace_id, parent_id, Some(user_id)).await?;
             if target.iter().any(|link| link.id == node_id) {
                 return Err(DriveError::MoveCycle);
             }
@@ -564,6 +578,7 @@ impl DriveRepository {
         .bind(node_id.to_string())
         .execute(&mut *transaction)
         .await?;
+        rescope(&mut transaction, node_id).await?;
         let node = load_node(&mut transaction, workspace_id, node_id)
             .await?
             .ok_or(DriveError::NotFound)?;
@@ -581,7 +596,7 @@ impl DriveRepository {
     ) -> Result<(), DriveError> {
         let mut transaction = self.database.immediate_transaction().await?;
         require_actor(&mut transaction, workspace_id, user_id).await?;
-        live_chain(&mut transaction, workspace_id, node_id).await?;
+        live_chain(&mut transaction, workspace_id, node_id, Some(user_id)).await?;
         trash_node(&mut transaction, node_id, user_id, now).await?;
         transaction.commit().await?;
         Ok(())
@@ -598,7 +613,7 @@ impl DriveRepository {
     ) -> Result<DriveNode, DriveError> {
         let mut transaction = self.database.immediate_transaction().await?;
         require_actor(&mut transaction, workspace_id, user_id).await?;
-        let chain = chain(&mut transaction, workspace_id, node_id).await?;
+        let chain = chain(&mut transaction, workspace_id, node_id, Some(user_id)).await?;
         let Some((node, above)) = chain.split_last() else {
             return Err(DriveError::NotFound);
         };
@@ -623,6 +638,7 @@ impl DriveRepository {
         .bind(node_id.to_string())
         .execute(&mut *transaction)
         .await?;
+        rescope(&mut transaction, node_id).await?;
         let node = load_node(&mut transaction, workspace_id, node_id)
             .await?
             .ok_or(DriveError::NotFound)?;
@@ -643,6 +659,7 @@ impl DriveRepository {
             "SELECT {NODE_COLUMNS} FROM {NODE_FROM} WHERE drive_nodes.workspace_id = "
         ));
         query.push_bind(workspace_id.to_string());
+        push_visible(&mut query, "drive_nodes", user_id);
         query.push(
             " AND drive_nodes.trashed_at IS NOT NULL ORDER BY drive_nodes.trashed_at DESC, drive_nodes.id DESC",
         );
@@ -764,6 +781,7 @@ impl DriveRepository {
         query.push(format!(
             " SELECT {NODE_COLUMNS}, live.folder_path FROM {NODE_FROM} JOIN live ON live.id = drive_nodes.id WHERE 1 = 1"
         ));
+        push_visible(&mut query, "drive_nodes", user_id);
         if let Some(text) = search
             .query
             .as_deref()
@@ -811,7 +829,13 @@ impl DriveRepository {
     ) -> Result<DriveEntryPage, DriveError> {
         let mut connection = self.database.pool().acquire().await?;
         require_actor(&mut connection, workspace_id, user_id).await?;
-        live_folder(&mut connection, workspace_id, Some(folder_id)).await?;
+        live_folder(
+            &mut connection,
+            workspace_id,
+            Some(folder_id),
+            Some(user_id),
+        )
+        .await?;
         let mut query = SqlBuilder::new(
             "WITH RECURSIVE live(id, folder_path, depth) AS (SELECT id, CAST('' AS TEXT), 0 FROM drive_nodes \
              WHERE trashed_at IS NULL AND parent_id = ",
@@ -820,8 +844,10 @@ impl DriveRepository {
         push_live_walk(&mut query);
         query.push(format!(
             " SELECT {NODE_COLUMNS}, live.folder_path FROM {NODE_FROM} JOIN live ON live.id = drive_nodes.id \
-             WHERE drive_nodes.kind = 'file' ORDER BY live.folder_path, drive_nodes.name_lower, drive_nodes.id"
+             WHERE drive_nodes.kind = 'file'"
         ));
+        push_visible(&mut query, "drive_nodes", user_id);
+        query.push(" ORDER BY live.folder_path, drive_nodes.name_lower, drive_nodes.id");
         let rows = page_rows(&mut query, paging, &mut connection).await?;
         entry_page(&rows, paging)
     }
@@ -837,7 +863,7 @@ impl DriveRepository {
         require_actor(&mut connection, workspace_id, user_id).await?;
         let mut objects = Vec::with_capacity(node_ids.len());
         for node_id in node_ids {
-            match live_chain(&mut connection, workspace_id, *node_id).await {
+            match live_chain(&mut connection, workspace_id, *node_id, Some(user_id)).await {
                 Ok(chain) if chain[chain.len() - 1].kind == DriveNodeKind::File => {}
                 Ok(_) | Err(DriveError::NotFound) => continue,
                 Err(error) => return Err(error),
@@ -875,7 +901,7 @@ impl DriveRepository {
     ) -> Result<MediaTarget, DriveError> {
         let mut transaction = self.database.immediate_transaction().await?;
         require_actor(&mut transaction, workspace_id, user_id).await?;
-        let chain = live_chain(&mut transaction, workspace_id, node_id).await?;
+        let chain = live_chain(&mut transaction, workspace_id, node_id, Some(user_id)).await?;
         if chain[chain.len() - 1].kind != DriveNodeKind::File {
             return Err(DriveError::NotMedia);
         }
@@ -928,7 +954,7 @@ impl DriveRepository {
     ) -> Result<MediaTarget, DriveError> {
         let mut connection = self.database.pool().acquire().await?;
         require_actor(&mut connection, workspace_id, user_id).await?;
-        live_chain(&mut connection, workspace_id, node_id).await?;
+        live_chain(&mut connection, workspace_id, node_id, Some(user_id)).await?;
         let row = sqlx::query(
             "SELECT drive_media.blob_id, drive_media.thumb_key, drive_media.poster_key FROM drive_nodes \
              JOIN drive_media ON drive_media.blob_id = drive_nodes.blob_id WHERE drive_nodes.id = $1",
@@ -957,7 +983,7 @@ impl DriveRepository {
     ) -> Result<DriveNode, DriveError> {
         let mut transaction = self.database.immediate_transaction().await?;
         require_actor(&mut transaction, workspace_id, user_id).await?;
-        live_chain(&mut transaction, workspace_id, node_id).await?;
+        live_chain(&mut transaction, workspace_id, node_id, Some(user_id)).await?;
         sqlx::query(
             "UPDATE drive_media SET thumb_key = $1, poster_key = $2, status = $3, updated_at = $4 \
              WHERE blob_id = (SELECT blob_id FROM drive_nodes WHERE id = $5)",
@@ -992,7 +1018,13 @@ impl DriveRepository {
         let name = valid_name(&upload.name)?;
         let mut transaction = self.database.immediate_transaction().await?;
         require_actor(&mut transaction, workspace_id, user_id).await?;
-        live_folder(&mut transaction, workspace_id, upload.parent_id).await?;
+        live_folder(
+            &mut transaction,
+            workspace_id,
+            upload.parent_id,
+            Some(user_id),
+        )
+        .await?;
         let existing = sibling(
             &mut transaction,
             workspace_id,
@@ -1090,9 +1122,23 @@ impl DriveRepository {
     ) -> Result<DriveNode, DriveError> {
         let mut transaction = self.database.immediate_transaction().await?;
         let upload = own_upload(&mut transaction, workspace_id, user_id, blob_id).await?;
-        let parent_id = match live_folder(&mut transaction, workspace_id, upload.parent_id).await {
+        let parent_id = match live_folder(
+            &mut transaction,
+            workspace_id,
+            upload.parent_id,
+            Some(user_id),
+        )
+        .await
+        {
             Ok(()) => upload.parent_id,
-            Err(DriveError::NotFound | DriveError::NotAFolder) => None,
+            // A file for a chat folder never lands where more people would see it.
+            Err(DriveError::NotFound | DriveError::NotAFolder)
+                if scope_of(&mut transaction, upload.parent_id)
+                    .await?
+                    .is_none() =>
+            {
+                None
+            }
             Err(error) => return Err(error),
         };
         let existing = sibling(
@@ -1122,6 +1168,7 @@ impl DriveRepository {
                 name: &name,
                 blob: Some((blob_id, upload.size, &upload.mime)),
                 user_id,
+                chat_root: None,
             },
             now,
         )
@@ -1134,6 +1181,16 @@ impl DriveRepository {
         .bind(blob_id.to_string())
         .execute(&mut *transaction)
         .await?;
+        if let Some(kind) = crate::previews::preview_kind(&upload.mime, &name) {
+            crate::previews::queue_in(
+                &mut transaction,
+                workspace_id,
+                crate::previews::Source::Drive(blob_id),
+                kind,
+                now,
+            )
+            .await?;
+        }
         let node = load_node(&mut transaction, workspace_id, id)
             .await?
             .ok_or(DriveError::NotFound)?;
@@ -1187,7 +1244,8 @@ impl DriveRepository {
         Ok((nodes, uploads))
     }
 
-    /// Blobs whose objects wait to be deleted from the bucket, oldest first.
+    /// Blobs whose objects wait to be deleted from the bucket (with their thumbnail, poster and preview
+    /// objects), oldest first.
     pub async fn deletions(&self, limit: i64) -> Result<Vec<BlobDeletion>, DriveError> {
         let rows = sqlx::query(
             "SELECT drive_blobs.id, drive_blobs.workspace_id, drive_blobs.r2_key, drive_blobs.upload_id, \
@@ -1198,23 +1256,220 @@ impl DriveRepository {
         .bind(limit)
         .fetch_all(self.database.pool())
         .await?;
-        rows.iter()
-            .map(|row| {
-                Ok(BlobDeletion {
-                    blob_id: parse_id(row.try_get("id")?)?,
-                    workspace_id: parse_id(row.try_get("workspace_id")?)?,
-                    r2_key: row.try_get("r2_key")?,
-                    upload_id: row.try_get("upload_id")?,
-                    extra_keys: [
-                        row.try_get::<Option<String>, _>("thumb_key")?,
-                        row.try_get::<Option<String>, _>("poster_key")?,
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .collect(),
-                })
+        let mut deletions = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let blob_id: String = row.try_get("id")?;
+            let previews: Vec<String> = sqlx::query_scalar(
+                "SELECT o.object_key FROM file_previews p JOIN file_preview_outputs o ON o.preview_id = p.id \
+                 WHERE p.drive_blob_id = $1 AND o.object_key IS NOT NULL",
+            )
+            .bind(&blob_id)
+            .fetch_all(self.database.pool())
+            .await?;
+            deletions.push(BlobDeletion {
+                blob_id: parse_id(blob_id)?,
+                workspace_id: parse_id(row.try_get("workspace_id")?)?,
+                r2_key: row.try_get("r2_key")?,
+                upload_id: row.try_get("upload_id")?,
+                extra_keys: [
+                    row.try_get::<Option<String>, _>("thumb_key")?,
+                    row.try_get::<Option<String>, _>("poster_key")?,
+                ]
+                .into_iter()
+                .flatten()
+                .chain(previews)
+                .collect(),
+            });
+        }
+        Ok(deletions)
+    }
+
+    /// The Drive folder of a chat conversation, made when it is first needed: `Uploads/#sales` for a channel,
+    /// `Uploads/Anna, Ben` for a direct message. Its files are seen by the people who read the conversation
+    /// ([`push_visible`]). Only a member of the conversation who can write in it gets the folder.
+    pub async fn chat_folder(
+        &self,
+        workspace_id: Id,
+        user_id: Id,
+        conversation_id: Id,
+        now: TimestampMillis,
+    ) -> Result<DriveNode, DriveError> {
+        let mut transaction = self.database.immediate_transaction().await?;
+        require_actor(&mut transaction, workspace_id, user_id).await?;
+        let conversation = sqlx::query(
+            "SELECT c.kind, c.name FROM chat_conversations c \
+             JOIN chat_members m ON m.conversation_id = c.id AND m.user_id = $2 \
+             WHERE c.id = $1 AND c.workspace_id = $3 AND c.archived_at IS NULL",
+        )
+        .bind(conversation_id.to_string())
+        .bind(user_id.to_string())
+        .bind(workspace_id.to_string())
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or(DriveError::NotFound)?;
+        let folders: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM drive_nodes WHERE workspace_id = $1 AND chat_root = 1 AND chat_conversation_id = $2 \
+             AND trashed_at IS NULL ORDER BY created_at, id",
+        )
+        .bind(workspace_id.to_string())
+        .bind(conversation_id.to_string())
+        .fetch_all(&mut *transaction)
+        .await?;
+        for folder in folders {
+            let folder = parse_id(folder)?;
+            if live_chain(&mut transaction, workspace_id, folder, Some(user_id))
+                .await
+                .is_ok()
+            {
+                let node = load_node(&mut transaction, workspace_id, folder)
+                    .await?
+                    .ok_or(DriveError::NotFound)?;
+                transaction.commit().await?;
+                return Ok(node);
+            }
+        }
+        let uploads = match sibling(&mut transaction, workspace_id, None, UPLOADS_FOLDER, None)
+            .await?
+        {
+            Some((id, DriveNodeKind::Folder))
+                if scope_of(&mut transaction, Some(id)).await?.is_none() =>
+            {
+                id
+            }
+            _ => {
+                let name = free_name(&mut transaction, workspace_id, None, UPLOADS_FOLDER).await?;
+                let id = Id::new_v7();
+                insert_node(
+                    &mut transaction,
+                    &NewNode {
+                        id,
+                        workspace_id,
+                        parent_id: None,
+                        kind: DriveNodeKind::Folder,
+                        name: &name,
+                        blob: None,
+                        user_id,
+                        chat_root: None,
+                    },
+                    now,
+                )
+                .await?;
+                id
+            }
+        };
+        let kind: String = conversation.try_get("kind")?;
+        let name = if kind == "dm" {
+            let names: Vec<String> = sqlx::query_scalar(
+                "SELECT u.display_name FROM chat_members m JOIN users u ON u.id = m.user_id \
+                 WHERE m.conversation_id = $1 ORDER BY lower(u.display_name), u.id",
+            )
+            .bind(conversation_id.to_string())
+            .fetch_all(&mut *transaction)
+            .await?;
+            names.join(", ")
+        } else {
+            format!("#{}", conversation.try_get::<String, _>("name")?)
+        };
+        let name: String = name
+            .chars()
+            .map(|c| {
+                if c == '/' || c == '\\' || c.is_control() {
+                    '-'
+                } else {
+                    c
+                }
             })
-            .collect()
+            .take(200)
+            .collect();
+        let name = valid_name(&name).unwrap_or_else(|_| "Direct message".to_owned());
+        let name = free_name(&mut transaction, workspace_id, Some(uploads), &name).await?;
+        let id = Id::new_v7();
+        insert_node(
+            &mut transaction,
+            &NewNode {
+                id,
+                workspace_id,
+                parent_id: Some(uploads),
+                kind: DriveNodeKind::Folder,
+                name: &name,
+                blob: None,
+                user_id,
+                chat_root: Some(conversation_id),
+            },
+            now,
+        )
+        .await?;
+        let node = load_node(&mut transaction, workspace_id, id)
+            .await?
+            .ok_or(DriveError::NotFound)?;
+        transaction.commit().await?;
+        Ok(node)
+    }
+
+    /// Queues the preview of a live file that has none (a file from before previews), and returns the file.
+    pub async fn request_preview(
+        &self,
+        workspace_id: Id,
+        user_id: Id,
+        node_id: Id,
+        now: TimestampMillis,
+    ) -> Result<DriveNode, DriveError> {
+        let mut transaction = self.database.immediate_transaction().await?;
+        require_actor(&mut transaction, workspace_id, user_id).await?;
+        live_chain(&mut transaction, workspace_id, node_id, Some(user_id)).await?;
+        let node = load_node(&mut transaction, workspace_id, node_id)
+            .await?
+            .ok_or(DriveError::NotFound)?;
+        let blob_id: Option<String> =
+            sqlx::query_scalar("SELECT blob_id FROM drive_nodes WHERE id = $1")
+                .bind(node_id.to_string())
+                .fetch_one(&mut *transaction)
+                .await?;
+        let kind = node
+            .mime
+            .as_deref()
+            .and_then(|mime| crate::previews::preview_kind(mime, &node.name));
+        if let (Some(kind), Some(blob_id)) = (kind, blob_id) {
+            crate::previews::queue_in(
+                &mut transaction,
+                workspace_id,
+                crate::previews::Source::Drive(parse_id(blob_id)?),
+                kind,
+                now,
+            )
+            .await?;
+        }
+        let node = load_node(&mut transaction, workspace_id, node_id)
+            .await?
+            .ok_or(DriveError::NotFound)?;
+        transaction.commit().await?;
+        Ok(node)
+    }
+
+    /// The preview output `role` of a live file the caller sees.
+    pub async fn preview_output(
+        &self,
+        workspace_id: Id,
+        user_id: Id,
+        node_id: Id,
+        role: &str,
+    ) -> Result<crate::previews::PreviewOutput, DriveError> {
+        let mut connection = self.database.pool().acquire().await?;
+        require_actor(&mut connection, workspace_id, user_id).await?;
+        live_chain(&mut connection, workspace_id, node_id, Some(user_id)).await?;
+        let blob_id: Option<String> =
+            sqlx::query_scalar("SELECT blob_id FROM drive_nodes WHERE id = $1")
+                .bind(node_id.to_string())
+                .fetch_one(&mut *connection)
+                .await?;
+        let blob_id = parse_id(blob_id.ok_or(DriveError::NotFound)?)?;
+        crate::previews::output(
+            &mut connection,
+            crate::previews::Source::Drive(blob_id),
+            role,
+        )
+        .await?
+        .ok_or(DriveError::NotFound)
     }
 
     /// Drops a deleted blob whose objects are gone from the bucket.
@@ -1238,6 +1493,7 @@ pub(crate) async fn list_children(
     sort: DriveSort,
     order: SortOrder,
     paging: Paging,
+    visible: &Visible,
 ) -> Result<DriveNodePage, DriveError> {
     let column = match sort {
         DriveSort::Name => "drive_nodes.name_lower",
@@ -1252,6 +1508,17 @@ pub(crate) async fn list_children(
     query.push("drive_nodes.workspace_id = ");
     query.push_bind(workspace_id.to_string());
     push_parent(&mut query, "drive_nodes.parent_id", parent_id);
+    match visible {
+        Visible::Member(user_id) => push_visible(&mut query, "drive_nodes", *user_id),
+        Visible::Scope(None) => {
+            query.push(" AND drive_nodes.chat_conversation_id IS NULL");
+        }
+        Visible::Scope(Some(scope)) => {
+            query.push(" AND (drive_nodes.chat_conversation_id IS NULL OR drive_nodes.chat_conversation_id = ");
+            query.push_bind(scope.clone());
+            query.push(")");
+        }
+    }
     query.push(format!(
             " AND drive_nodes.trashed_at IS NULL ORDER BY CASE WHEN drive_nodes.kind = 'folder' THEN 0 ELSE 1 END, \
              {column} {direction}, drive_nodes.id {direction}"
@@ -1334,38 +1601,95 @@ pub(crate) struct Link {
     pub(crate) name: String,
     pub(crate) kind: DriveNodeKind,
     trashed: bool,
+    /// The chat conversation whose readers see the node ([`push_visible`]).
+    pub(crate) scope: Option<String>,
 }
 
-/// The node and the folders above it, from the top level down; empty when the node is not in the workspace.
+/// The node and the folders above it, from the top level down; empty when the node is not in the workspace, or
+/// when `viewer` (a member; `None`: no person, as for a public share link) cannot see it.
 async fn chain(
     connection: &mut AnyConnection,
     workspace_id: Id,
     node_id: Id,
+    viewer: Option<Id>,
 ) -> Result<Vec<Link>, DriveError> {
     let rows = sqlx::query(
-        "WITH RECURSIVE chain(id, parent_id, name, kind, trashed_at, depth) AS ( \
-             SELECT id, parent_id, name, kind, trashed_at, 0 FROM drive_nodes WHERE id = $1 AND workspace_id = $2 \
+        "WITH RECURSIVE chain(id, parent_id, name, kind, trashed_at, scope, depth) AS ( \
+             SELECT id, parent_id, name, kind, trashed_at, chat_conversation_id, 0 FROM drive_nodes \
+             WHERE id = $1 AND workspace_id = $2 \
              UNION ALL \
              SELECT drive_nodes.id, drive_nodes.parent_id, drive_nodes.name, drive_nodes.kind, \
-             drive_nodes.trashed_at, chain.depth + 1 FROM drive_nodes JOIN chain ON drive_nodes.id = chain.parent_id \
-             WHERE chain.depth < $3) \
-         SELECT id, name, kind, trashed_at FROM chain ORDER BY depth DESC",
+             drive_nodes.trashed_at, drive_nodes.chat_conversation_id, chain.depth + 1 FROM drive_nodes \
+             JOIN chain ON drive_nodes.id = chain.parent_id WHERE chain.depth < $3) \
+         SELECT id, name, kind, trashed_at, scope FROM chain ORDER BY depth DESC",
     )
     .bind(node_id.to_string())
     .bind(workspace_id.to_string())
     .bind(MAX_DEPTH)
     .fetch_all(&mut *connection)
     .await?;
-    rows.iter()
+    let links = rows
+        .iter()
         .map(|row| {
             Ok(Link {
                 id: parse_id(row.try_get("id")?)?,
                 name: row.try_get("name")?,
                 kind: parse_kind(&row.try_get::<String, _>("kind")?)?,
                 trashed: row.try_get::<Option<i64>, _>("trashed_at")?.is_some(),
+                scope: row.try_get("scope")?,
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, DriveError>>()?;
+    if let Some(viewer) = viewer {
+        let mut scopes: Vec<&str> = links
+            .iter()
+            .filter_map(|link| link.scope.as_deref())
+            .collect();
+        scopes.dedup();
+        for scope in scopes {
+            if !conversation_readable(connection, scope, viewer).await? {
+                return Ok(Vec::new());
+            }
+        }
+    }
+    Ok(links)
+}
+
+/// Whether `user_id` (a member of the conversation's workspace, not a guest) reads the conversation.
+async fn conversation_readable(
+    connection: &mut AnyConnection,
+    conversation_id: &str,
+    user_id: Id,
+) -> Result<bool, DriveError> {
+    let readable: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM chat_conversations c WHERE c.id = $1 AND (c.kind = 'public' \
+         OR EXISTS (SELECT 1 FROM chat_members m WHERE m.conversation_id = c.id AND m.user_id = $2))",
+    )
+    .bind(conversation_id)
+    .bind(user_id.to_string())
+    .fetch_one(&mut *connection)
+    .await?;
+    Ok(readable > 0)
+}
+
+/// Who a listing is for.
+pub(crate) enum Visible {
+    /// A member: nodes of chat conversations they do not read are left out.
+    Member(Id),
+    /// A public link: only nodes of the shared node's own scope, never a chat folder nested below it.
+    Scope(Option<String>),
+}
+
+/// Keeps the nodes (`alias`) that `user_id` can see: those outside chat folders, and those of conversations the
+/// user reads.
+fn push_visible(query: &mut SqlBuilder, alias: &str, user_id: Id) {
+    query.push(format!(
+        " AND ({alias}.chat_conversation_id IS NULL OR EXISTS (SELECT 1 FROM chat_conversations vc \
+         WHERE vc.id = {alias}.chat_conversation_id AND (vc.kind = 'public' OR EXISTS (SELECT 1 FROM chat_members vm \
+         WHERE vm.conversation_id = vc.id AND vm.user_id = "
+    ));
+    query.push_bind(user_id.to_string());
+    query.push("))))");
 }
 
 /// As [`chain`], for a live node only.
@@ -1373,24 +1697,26 @@ pub(crate) async fn live_chain(
     connection: &mut AnyConnection,
     workspace_id: Id,
     node_id: Id,
+    viewer: Option<Id>,
 ) -> Result<Vec<Link>, DriveError> {
-    let chain = chain(connection, workspace_id, node_id).await?;
+    let chain = chain(connection, workspace_id, node_id, viewer).await?;
     if chain.is_empty() || chain.iter().any(|link| link.trashed) {
         return Err(DriveError::NotFound);
     }
     Ok(chain)
 }
 
-/// `None` (the top level) or a live folder.
+/// `None` (the top level) or a live folder that `viewer` sees.
 async fn live_folder(
     connection: &mut AnyConnection,
     workspace_id: Id,
     folder_id: Option<Id>,
+    viewer: Option<Id>,
 ) -> Result<(), DriveError> {
     let Some(folder_id) = folder_id else {
         return Ok(());
     };
-    let chain = live_chain(connection, workspace_id, folder_id).await?;
+    let chain = live_chain(connection, workspace_id, folder_id, viewer).await?;
     if chain[chain.len() - 1].kind == DriveNodeKind::Folder {
         Ok(())
     } else {
@@ -1466,6 +1792,8 @@ struct NewNode<'a> {
     /// Files: the blob, its size and MIME type.
     blob: Option<(Id, i64, &'a str)>,
     user_id: Id,
+    /// The folder of this chat conversation; every other node takes its parent's scope.
+    chat_root: Option<Id>,
 }
 
 async fn insert_node(
@@ -1475,7 +1803,9 @@ async fn insert_node(
 ) -> Result<(), DriveError> {
     sqlx::query(
         "INSERT INTO drive_nodes (id, workspace_id, parent_id, kind, name, name_lower, blob_id, size, mime, \
-         created_by, created_at, updated_by, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $10, $11)",
+         created_by, created_at, updated_by, updated_at, chat_conversation_id, chat_root) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $10, $11, \
+         COALESCE($12, (SELECT p.chat_conversation_id FROM drive_nodes p WHERE p.id = $3)), $13)",
     )
     .bind(node.id.to_string())
     .bind(node.workspace_id.to_string())
@@ -1488,8 +1818,55 @@ async fn insert_node(
     .bind(node.blob.map(|(_, _, mime)| mime.to_owned()))
     .bind(node.user_id.to_string())
     .bind(now.as_millis())
+    .bind(node.chat_root.map(|id| id.to_string()))
+    .bind(i64::from(node.chat_root.is_some()))
     .execute(&mut *connection)
     .await?;
+    Ok(())
+}
+
+/// The scope of a node (any state), or `None` for the top level.
+pub(crate) async fn scope_of(
+    connection: &mut AnyConnection,
+    node_id: Option<Id>,
+) -> Result<Option<String>, DriveError> {
+    let Some(node_id) = node_id else {
+        return Ok(None);
+    };
+    Ok(sqlx::query_scalar::<_, Option<String>>(
+        "SELECT chat_conversation_id FROM drive_nodes WHERE id = $1",
+    )
+    .bind(node_id.to_string())
+    .fetch_optional(&mut *connection)
+    .await?
+    .flatten())
+}
+
+/// Gives a moved or restored node, and everything below it, the scope of its new place: a chat folder keeps its
+/// own conversation, every other node takes its parent's.
+async fn rescope(connection: &mut AnyConnection, node_id: Id) -> Result<(), DriveError> {
+    let rows = sqlx::query(
+        "WITH RECURSIVE tree(id, scope, depth) AS ( \
+             SELECT n.id, CASE WHEN n.chat_root = 1 THEN n.chat_conversation_id \
+             ELSE (SELECT p.chat_conversation_id FROM drive_nodes p WHERE p.id = n.parent_id) END, 0 \
+             FROM drive_nodes n WHERE n.id = $1 \
+             UNION ALL \
+             SELECT c.id, CASE WHEN c.chat_root = 1 THEN c.chat_conversation_id ELSE tree.scope END, tree.depth + 1 \
+             FROM drive_nodes c JOIN tree ON c.parent_id = tree.id WHERE tree.depth < $2) \
+         SELECT tree.id, tree.scope FROM tree JOIN drive_nodes n ON n.id = tree.id \
+         WHERE n.chat_conversation_id IS DISTINCT FROM tree.scope",
+    )
+    .bind(node_id.to_string())
+    .bind(MAX_DEPTH)
+    .fetch_all(&mut *connection)
+    .await?;
+    for row in rows {
+        sqlx::query("UPDATE drive_nodes SET chat_conversation_id = $1 WHERE id = $2")
+            .bind(row.try_get::<Option<String>, _>("scope")?)
+            .bind(row.try_get::<String, _>("id")?)
+            .execute(&mut *connection)
+            .await?;
+    }
     Ok(())
 }
 
@@ -1677,6 +2054,21 @@ fn node_from_row(row: &sqlx::any::AnyRow) -> Result<DriveNode, sqlx::Error> {
             .transpose()?,
         thumbnail_url: None,
         poster_url: None,
+        preview: match (
+            row.try_get::<Option<String>, _>("mime")?,
+            row.try_get::<String, _>("workspace_id"),
+        ) {
+            (Some(mime), Ok(workspace_id)) => crate::previews::preview_from_row(
+                row,
+                &mime,
+                &row.try_get::<String, _>("name")?,
+                &format!(
+                    "/api/v1/workspaces/{workspace_id}/drive/nodes/{}/preview",
+                    row.try_get::<String, _>("id")?
+                ),
+            )?,
+            _ => None,
+        },
         thumb_key: row.try_get("thumb_key")?,
         poster_key: row.try_get("poster_key")?,
     })

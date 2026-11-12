@@ -639,6 +639,11 @@ impl MigrationRunner {
                     include_str!("../../../../apps/server/migrations/0097_github_task_labels.sql"),
                     false,
                 ),
+                Migration::new(
+                    98,
+                    include_str!("../../../../apps/server/migrations/0098_chat_media_previews.sql"),
+                    false,
+                ),
             ],
         );
         runner.postgres = vec![
@@ -953,6 +958,13 @@ impl MigrationRunner {
                 97,
                 include_str!(
                     "../../../../apps/server/migrations/postgres/0097_github_task_labels.sql"
+                ),
+                false,
+            ),
+            Migration::new(
+                98,
+                include_str!(
+                    "../../../../apps/server/migrations/postgres/0098_chat_media_previews.sql"
                 ),
                 false,
             ),

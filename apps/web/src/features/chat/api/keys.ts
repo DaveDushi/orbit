@@ -32,6 +32,8 @@ export const chatKeys = {
   sentActions: (workspaceId: string, messageId: string) => ['chat-sent-actions', workspaceId, messageId] as const,
   /** Integration replies only this user sees, for one conversation. Client-only: they are gone after a reload. */
   ephemeral: (workspaceId: string, conversationId: string) => ['chat-ephemeral', workspaceId, conversationId] as const,
+  /** Outside the `all` prefix: it does not change while the server runs. */
+  uploadLimit: (workspaceId: string) => ['chat-upload-limit', workspaceId] as const,
   /** Outside the `all` prefix: a resync must not touch the messages that only this tab has. */
   outbox: (workspaceId: string) => ['chat-outbox', workspaceId] as const,
 }

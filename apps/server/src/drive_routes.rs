@@ -64,6 +64,14 @@ pub fn drive_router(state: DriveState) -> Router {
             get(list_drive_folder_files),
         )
         .route(&route("/nodes/{node_id}/download"), get(get_drive_download))
+        .route(
+            &route("/nodes/{node_id}/preview"),
+            post(request_drive_preview),
+        )
+        .route(
+            &route("/nodes/{node_id}/preview/{role}"),
+            get(get_drive_preview_file),
+        )
         .route(&route("/nodes/{node_id}/media"), post(begin_drive_media))
         .route(
             &route("/nodes/{node_id}/media/complete"),
@@ -623,6 +631,63 @@ async fn get_drive_download(
         url,
         expires_at: expires_in(DOWNLOAD_URL_LIFETIME),
     }))
+}
+
+/// Queues the preview of a video or office file that has none yet (a file from before previews) and returns the
+/// file; its `preview` says how far it is.
+#[utoipa::path(post, path = "/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}/preview", params(("workspace_id" = String, Path), ("node_id" = String, Path)), responses((status = 200, body = DriveNode)))]
+async fn request_drive_preview(
+    State(state): State<DriveState>,
+    Path((workspace, node)): Path<(String, String)>,
+    headers: HeaderMap,
+    request_id: RequestIdExtension,
+) -> Result<Json<DriveNode>, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace}/drive/nodes/{node}/preview");
+    let caller = caller(&state, &headers, &workspace, instance, request_id.as_ref()).await?;
+    let node_id = caller.id(&node)?;
+    state
+        .drive
+        .repository()
+        .request_preview(
+            caller.workspace_id,
+            caller.user_id,
+            node_id,
+            TimestampMillis::now(),
+        )
+        .await
+        .map(Json)
+        .map_err(|error| caller.fail(error))
+}
+
+/// A file of a file's preview: `play` (an MP4 every browser plays), `poster` (a JPEG) or `pdf`. Sends to it in
+/// the bucket (a 5-minute URL).
+#[utoipa::path(get, path = "/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}/preview/{role}", params(("workspace_id" = String, Path), ("node_id" = String, Path), ("role" = String, Path)), responses((status = 307, description = "To the file in the bucket")))]
+async fn get_drive_preview_file(
+    State(state): State<DriveState>,
+    Path((workspace, node, role)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    request_id: RequestIdExtension,
+) -> Result<axum::response::Redirect, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace}/drive/nodes/{node}/preview/{role}");
+    let caller = caller(&state, &headers, &workspace, instance, request_id.as_ref()).await?;
+    let node_id = caller.id(&node)?;
+    if !matches!(role.as_str(), "play" | "poster" | "pdf") {
+        return Err(caller.fail(DriveError::NotFound));
+    }
+    let output = state
+        .drive
+        .repository()
+        .preview_output(caller.workspace_id, caller.user_id, node_id, &role)
+        .await
+        .map_err(|error| caller.fail(error))?;
+    let crate::previews::PreviewOutput::Object { key, .. } = output else {
+        return Err(caller.fail(DriveError::NotFound));
+    };
+    let url = state
+        .drive
+        .object_url(caller.workspace_id, &key, None)
+        .map_err(|error| caller.fail(error))?;
+    Ok(axum::response::Redirect::temporary(&url))
 }
 
 /// Records what the browser measured of an image or video and gives PUT URLs for its thumbnail (at most 1 MiB)

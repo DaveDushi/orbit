@@ -48,6 +48,8 @@ pub struct ChatState {
     /// Encrypts the signing secrets of interactive webhooks; `None` turns interactivity off.
     pub(crate) app_key: Option<[u8; 32]>,
     pub(crate) clicks: Arc<interactions::ClickSender>,
+    /// Where files larger than the chat limit go (the conversation's folder in Drive); `None`: they are refused.
+    pub(crate) drive: Option<crate::drive::DriveService>,
 }
 
 impl ChatState {
@@ -67,7 +69,15 @@ impl ChatState {
             public_origin: Arc::from(""),
             app_key: None,
             clicks: Arc::new(interactions::ClickSender::new(false)),
+            drive: None,
         }
+    }
+
+    /// Sends files larger than the chat limit to the conversation's folder in `drive`.
+    #[must_use]
+    pub fn with_drive(mut self, drive: crate::drive::DriveService) -> Self {
+        self.drive = Some(drive);
+        self
     }
 
     /// Tests run in a test binary, which cannot be the file parser.

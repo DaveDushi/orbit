@@ -302,6 +302,8 @@ Workspace owners and admins can connect their own bucket in **Settings → File 
 
 ### Drive files
 
+Chat files larger than the upload limit, video playback copies and office previews also use Drive and its bucket: see [file-previews.md](file-previews.md) (LibreOffice install, CORS `ExposeHeaders`, `ORBIT_MEDIA_*`).
+
 Drive (one drive per workspace, all members read and write) stores its files in the workspace's own bucket while it is active, else in the installation's bucket; without a bucket, Drive answers `drive_storage_not_configured`. Objects are `drive/{workspace_id}/{blob_id}` under the bucket's prefix, outside `blobs/` and `backups/`, so the attachment mover and cleanup never touch them.
 
 - Browsers send and fetch the bytes directly with presigned URLs (5 minutes for downloads, 1 hour per upload part). The bucket needs a CORS rule for the Orbit origin that allows `GET`, `PUT` and `HEAD` (any request header); without it, uploads and folder ZIP downloads fail in the browser. The `ETag` header does not need to be exposed: Orbit completes multipart uploads from the bucket's own part list.

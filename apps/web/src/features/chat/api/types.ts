@@ -1,4 +1,4 @@
-import type { MessageBlock } from '@orbit/api/generated/types.gen'
+import type { FilePreview, MessageBlock } from '@orbit/api/generated/types.gen'
 import type { PresenceEntry } from '@/features/realtime/presence'
 
 /** Ids are opaque strings; message ids sort by creation time. Times are integer milliseconds. */
@@ -46,6 +46,10 @@ export interface Attachment {
   height?: number
   /** An admin deleted the stored file. */
   deleted?: boolean
+  /** A file larger than the chat limit, kept in the conversation's Drive folder. */
+  driveNodeId?: string
+  /** The playable copy of a video or the PDF of an office file. */
+  preview?: FilePreview
 }
 
 /** What an external URL shows as a card. Image URLs are always `https`. */

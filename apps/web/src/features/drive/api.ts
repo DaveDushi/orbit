@@ -12,6 +12,7 @@ import {
   moveDriveNode,
   purgeDriveNode,
   renameDriveNode,
+  requestDrivePreview,
   restoreDriveNode,
   searchDrive,
   trashDriveNode,
@@ -201,6 +202,12 @@ export function useEmptyTrash(workspaceId: string) {
 export async function downloadUrl(workspaceId: string, nodeId: string, inline = false) {
   const { data } = await getDriveDownload({ client: apiClient, path: { workspace_id: workspaceId, node_id: nodeId }, query: { inline }, throwOnError: true })
   return data.url
+}
+
+/** Queues the preview of a file that has none yet and returns the file, whose `preview` says how far it is. */
+export async function requestPreview(workspaceId: string, nodeId: string) {
+  const { data } = await requestDrivePreview({ client: apiClient, path: { workspace_id: workspaceId, node_id: nodeId }, throwOnError: true })
+  return data
 }
 
 /** Download URLs of up to 100 files, by node id. */

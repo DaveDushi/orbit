@@ -23,8 +23,8 @@ const message: MessageRecord = {
   edited_at: '2026-10-02T08:01:00.000Z',
   deleted: false,
   attachments: [
-    { id: 'f1', url: '/api/v1/workspaces/w1/chat/files/f1', file_name: 'plan.png', mime_type: 'image/png', size_bytes: 68, width: 640, height: 400, deleted: false },
-    { id: 'f2', url: '/api/v1/workspaces/w1/chat/files/f2', file_name: 'notes.txt', mime_type: 'text/plain', size_bytes: 12, width: null, height: null, deleted: true },
+    { id: 'f1', url: '/api/v1/workspaces/w1/chat/files/f1', file_name: 'plan.png', mime_type: 'image/png', size_bytes: 68, width: 640, height: 400, deleted: false, drive_node_id: null, preview: null },
+    { id: 'f2', url: '/api/v1/workspaces/w1/chat/files/f2', file_name: 'notes.txt', mime_type: 'text/plain', size_bytes: 12, width: null, height: null, deleted: true, drive_node_id: null, preview: null },
   ],
   reactions: [{ emoji: '👍', user_ids: ['u1', 'u2'] }],
   pinned: true,

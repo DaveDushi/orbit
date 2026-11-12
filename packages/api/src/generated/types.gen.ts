@@ -114,6 +114,13 @@ export type ApiTokenRecord = {
  */
 export type ApiTokenScope = 'tasks:read' | 'tasks:write' | 'docs:read' | 'docs:write' | 'chat:read' | 'drive:read' | 'drive:write';
 
+export type AttachChatDriveFile = {
+    /**
+     * A file the caller just uploaded to the conversation's Drive folder.
+     */
+    node_id: string;
+};
+
 /**
  * A legacy attachment, cleaned: texts are Orbit Markdown, links http(s) and images https.
  */
@@ -746,9 +753,15 @@ export type ChatFileDownload = Blob | File;
  */
 export type ChatFileRecord = {
     /**
-     * An admin deleted the stored file: show "Deleted file"; `url` serves a "Deleted file" image (410).
+     * An admin deleted the stored file (or, for a file in Drive, it went to the trash or was deleted): show
+     * "Deleted file"; `url` serves a "Deleted file" image (410).
      */
     deleted: boolean;
+    /**
+     * A file too large for chat, kept in Drive (`Uploads/…`, seen by the conversation's readers): `url` sends to
+     * its bytes in the bucket.
+     */
+    drive_node_id: string | null;
     file_name: string;
     height: number | null;
     id: string;
@@ -756,6 +769,7 @@ export type ChatFileRecord = {
      * Detected from the file's bytes, not taken from the client.
      */
     mime_type: string;
+    preview: null | FilePreview;
     size_bytes: number;
     /**
      * Same-origin download path; usable as an image `src` or a file link.
@@ -888,6 +902,20 @@ export type ChatStickerUploadBody = {
 export type ChatThreadCursorBody = {
     last_read_reply_id?: string | null;
     root_id: string;
+};
+
+/**
+ * How large a chat file may be, and whether larger files can go to Drive.
+ */
+export type ChatUploadLimit = {
+    /**
+     * Larger files go to the conversation's folder in Drive (the workspace has Drive storage).
+     */
+    drive: boolean;
+    /**
+     * Larger files cannot be chat files.
+     */
+    max_file_bytes: number;
 };
 
 export type ChatUserIdsBody = {
@@ -1633,6 +1661,7 @@ export type DriveNode = {
      * A 5-minute URL of a large frame of a video, for the player.
      */
     poster_url?: string | null;
+    preview: null | FilePreview;
     /**
      * Bytes; `null` for folders.
      */
@@ -1801,6 +1830,26 @@ export type EnableTotpBody = {
  * knows no spreadsheets or text formats.
  */
 export type FileKind = 'sheet' | 'legacy_sheet' | 'delimited' | 'text' | 'pdf' | 'docx' | 'image' | 'other';
+
+/**
+ * The preview of a file. Its URLs are same-origin paths; they are set when that file exists.
+ */
+export type FilePreview = {
+    kind: PreviewKind;
+    /**
+     * A PDF of an office file.
+     */
+    pdf_url: string | null;
+    /**
+     * An MP4 (H.264/AAC) that every browser plays; seekable (HTTP Range).
+     */
+    play_url: string | null;
+    /**
+     * A JPEG frame of a video.
+     */
+    poster_url: string | null;
+    status: PreviewStatus;
+};
 
 export type FilterField = 'status' | 'status_category' | 'assignee' | 'creator' | 'label' | 'priority' | 'project' | 'due_date' | 'created_at' | 'updated_at' | 'text' | 'parent' | 'sub_issues';
 
@@ -3639,6 +3688,10 @@ export type Presence = 'online' | 'idle' | 'dnd' | 'invisible';
 export type PreviewInvitationBody = {
     token: string;
 };
+
+export type PreviewKind = 'video' | 'document';
+
+export type PreviewStatus = 'none' | 'pending' | 'ready' | 'failed' | 'skipped';
 
 /**
  * An RFC 9457 response body with Orbit's stable machine-readable extensions.
@@ -12426,6 +12479,61 @@ export type ArchiveChatChannelResponses = {
 
 export type ArchiveChatChannelResponse = ArchiveChatChannelResponses[keyof ArchiveChatChannelResponses];
 
+export type GetChatDriveFolderData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        conversation_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/chat/conversations/{conversation_id}/drive-folder';
+};
+
+export type GetChatDriveFolderErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * chat_not_found, drive_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch, drive_storage_not_configured
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type GetChatDriveFolderError = GetChatDriveFolderErrors[keyof GetChatDriveFolderErrors];
+
+export type GetChatDriveFolderResponses = {
+    200: DriveNode;
+};
+
+export type GetChatDriveFolderResponse = GetChatDriveFolderResponses[keyof GetChatDriveFolderResponses];
+
 export type ListChatFilesData = {
     body?: never;
     headers?: {
@@ -14108,6 +14216,68 @@ export type UploadChatFileResponses = {
 
 export type UploadChatFileResponse = UploadChatFileResponses[keyof UploadChatFileResponses];
 
+export type AttachChatDriveFileData = {
+    body: AttachChatDriveFile;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/chat/files/drive';
+};
+
+export type AttachChatDriveFileErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden, chat_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * chat_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * validation_failed
+     */
+    422: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type AttachChatDriveFileError = AttachChatDriveFileErrors[keyof AttachChatDriveFileErrors];
+
+export type AttachChatDriveFileResponses = {
+    201: ChatFileRecord;
+};
+
+export type AttachChatDriveFileResponse = AttachChatDriveFileResponses[keyof AttachChatDriveFileResponses];
+
 export type DownloadChatFileData = {
     body?: never;
     headers?: {
@@ -14120,7 +14290,9 @@ export type DownloadChatFileData = {
         workspace_id: string;
         file_id: string;
     };
-    query?: never;
+    query?: {
+        inline?: boolean;
+    };
     url: '/api/v1/workspaces/{workspace_id}/chat/files/{file_id}';
 };
 
@@ -14141,6 +14313,10 @@ export type DownloadChatFileErrors = {
      * contract_mismatch
      */
     409: TaskProblem;
+    /**
+     * file_deleted
+     */
+    410: TaskProblem;
     /**
      * request_too_large
      */
@@ -14234,6 +14410,180 @@ export type GetChatFileContentResponses = {
 };
 
 export type GetChatFileContentResponse = GetChatFileContentResponses[keyof GetChatFileContentResponses];
+
+export type GetChatFilePreviewData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        file_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/chat/files/{file_id}/preview';
+};
+
+export type GetChatFilePreviewErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * chat_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type GetChatFilePreviewError = GetChatFilePreviewErrors[keyof GetChatFilePreviewErrors];
+
+export type GetChatFilePreviewResponses = {
+    200: FilePreview;
+};
+
+export type GetChatFilePreviewResponse = GetChatFilePreviewResponses[keyof GetChatFilePreviewResponses];
+
+export type RequestChatFilePreviewData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        file_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/chat/files/{file_id}/preview';
+};
+
+export type RequestChatFilePreviewErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * chat_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type RequestChatFilePreviewError = RequestChatFilePreviewErrors[keyof RequestChatFilePreviewErrors];
+
+export type RequestChatFilePreviewResponses = {
+    200: FilePreview;
+};
+
+export type RequestChatFilePreviewResponse = RequestChatFilePreviewResponses[keyof RequestChatFilePreviewResponses];
+
+export type GetChatFilePreviewFileData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        file_id: string;
+        role: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/chat/files/{file_id}/preview/{role}';
+};
+
+export type GetChatFilePreviewFileErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * chat_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * file_deleted
+     */
+    410: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type GetChatFilePreviewFileError = GetChatFilePreviewFileErrors[keyof GetChatFilePreviewFileErrors];
+
+export type GetChatFilePreviewFileResponses = {
+    200: ChatFileDownload;
+};
+
+export type GetChatFilePreviewFileResponse = GetChatFilePreviewFileResponses[keyof GetChatFilePreviewFileResponses];
 
 export type GetChatLinkPreviewData = {
     body?: never;
@@ -15690,6 +16040,60 @@ export type ReadChatThreadResponses = {
 
 export type ReadChatThreadResponse = ReadChatThreadResponses[keyof ReadChatThreadResponses];
 
+export type GetChatUploadLimitData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/chat/upload-limit';
+};
+
+export type GetChatUploadLimitErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * chat_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type GetChatUploadLimitError = GetChatUploadLimitErrors[keyof GetChatUploadLimitErrors];
+
+export type GetChatUploadLimitResponses = {
+    200: ChatUploadLimit;
+};
+
+export type GetChatUploadLimitResponse = GetChatUploadLimitResponses[keyof GetChatUploadLimitResponses];
+
 export type CreateDriveDownloadsData = {
     body: CreateDriveDownloads;
     headers?: {
@@ -16240,6 +16644,116 @@ export type MoveDriveNodeResponses = {
 };
 
 export type MoveDriveNodeResponse = MoveDriveNodeResponses[keyof MoveDriveNodeResponses];
+
+export type RequestDrivePreviewData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        node_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}/preview';
+};
+
+export type RequestDrivePreviewErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type RequestDrivePreviewError = RequestDrivePreviewErrors[keyof RequestDrivePreviewErrors];
+
+export type RequestDrivePreviewResponses = {
+    200: DriveNode;
+};
+
+export type RequestDrivePreviewResponse = RequestDrivePreviewResponses[keyof RequestDrivePreviewResponses];
+
+export type GetDrivePreviewFileData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        node_id: string;
+        role: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}/preview/{role}';
+};
+
+export type GetDrivePreviewFileErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type GetDrivePreviewFileError = GetDrivePreviewFileErrors[keyof GetDrivePreviewFileErrors];
+
+export type GetDrivePreviewFileResponses = {
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type GetDrivePreviewFileResponse = GetDrivePreviewFileResponses[keyof GetDrivePreviewFileResponses];
 
 export type RenameDriveNodeData = {
     body: RenameDriveNode;

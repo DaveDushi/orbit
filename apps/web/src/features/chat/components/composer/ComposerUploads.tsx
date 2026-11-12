@@ -1,5 +1,6 @@
 import { Xmark } from 'reicon-react'
 import { Attachments } from '@/components/common/Attachments'
+import { formatSize } from '@/lib/attachmentLib'
 import { Button } from '@/components/ui/button'
 import type { Upload } from './useUploads'
 
@@ -35,6 +36,7 @@ export function ComposerUploads({
           className="flex max-w-md items-center gap-2 rounded-md border border-border py-1 pr-1 pl-2.5 text-xs data-[status=failed]:border-destructive/40"
         >
           <span className="min-w-0 flex-1 truncate font-medium">{upload.file.name || 'Pasted file'}</span>
+          {upload.toDrive && upload.status === 'uploading' ? <span className="shrink-0 text-muted-foreground">To Drive · {formatSize(upload.file.size)}</span> : null}
           {upload.status === 'uploading' ? (
             <span
               role="progressbar"
@@ -47,9 +49,9 @@ export function ComposerUploads({
               <span className="block h-full bg-primary" style={{ width: `${Math.round(upload.progress * 100)}%` }} />
             </span>
           ) : (
-            <span role="alert" className="flex shrink-0 items-center gap-1.5 text-destructive">
-              {upload.storageFull ? 'The workspace storage is full.' : 'Upload failed.'}
-              <Button variant="link" size="xs" className="h-6 px-0 text-destructive" onClick={() => onRetry(upload.id)}>
+            <span role="alert" className="flex min-w-0 items-center gap-1.5 text-destructive">
+              <span className="truncate" title={upload.error}>{upload.storageFull ? 'The workspace storage is full.' : upload.error ?? 'Upload failed.'}</span>
+              <Button variant="link" size="xs" className="h-6 shrink-0 px-0 text-destructive" onClick={() => onRetry(upload.id)}>
                 Try again
               </Button>
             </span>

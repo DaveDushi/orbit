@@ -36,6 +36,7 @@ pub mod page_comment_routes;
 pub mod page_drive_routes;
 pub mod page_file_routes;
 pub mod page_routes;
+pub mod previews;
 pub mod public_api;
 pub mod push;
 pub mod repositories;

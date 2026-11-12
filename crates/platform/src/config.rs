@@ -42,9 +42,11 @@ const STRIPE_API_BASE: &str = "https://api.stripe.com";
 /// Hosts that webhook bots may reach over plain HTTP and on local addresses: for local tests only.
 /// `apps/server/src/webhook_bots` reads it itself.
 const WEBHOOK_BOT_TEST_HOSTS_ENV: &str = "ORBIT_WEBHOOK_BOT_TEST_HOSTS";
-/// Variables that scripts and tests use, not the server, and the team agent's settings, which
-/// `apps/server/src/agent` reads itself (`ORBIT_AGENT_URL`, `ORBIT_AGENT_SECRET`).
-const IGNORED_ENV_PREFIXES: [&str; 3] = ["ORBIT_DEV_", "ORBIT_TEST_", "ORBIT_AGENT_"];
+/// Variables that scripts and tests use, not the server, the team agent's settings, which
+/// `apps/server/src/agent` reads itself (`ORBIT_AGENT_URL`, `ORBIT_AGENT_SECRET`), and the file preview
+/// settings, which `apps/server/src/previews` reads and checks itself (`ORBIT_MEDIA_*`).
+const IGNORED_ENV_PREFIXES: [&str; 4] =
+    ["ORBIT_DEV_", "ORBIT_TEST_", "ORBIT_AGENT_", "ORBIT_MEDIA_"];
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Config {

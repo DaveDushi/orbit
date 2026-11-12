@@ -2087,6 +2087,11 @@ impl WorkspaceRepository {
             .bind(now.as_millis().saturating_sub(24 * 60 * 60 * 1000))
             .execute(&mut *transaction)
             .await?;
+        // The same for big files kept in Drive (the Drive file stays in the chat's Drive folder).
+        sqlx::query("DELETE FROM chat_drive_files WHERE message_id IS NULL AND created_at <= $1")
+            .bind(now.as_millis().saturating_sub(24 * 60 * 60 * 1000))
+            .execute(&mut *transaction)
+            .await?;
         let expired = sqlx::query_scalar::<_, String>(
             "SELECT id FROM workspaces WHERE deleted_at IS NOT NULL AND deleted_at <= $1 \
              ORDER BY deleted_at, id",
@@ -2171,8 +2176,13 @@ impl WorkspaceRepository {
                     .await?
                     .rows_affected();
             // Page files and chat files hold their blobs with ON DELETE RESTRICT, so they go
-            // before the blobs.
-            for table in ["page_file_versions", "page_files", "chat_message_files"] {
+            // before the blobs; so do file previews, whose outputs count as references.
+            for table in [
+                "page_file_versions",
+                "page_files",
+                "chat_message_files",
+                "file_previews",
+            ] {
                 attachment_references_purged += sqlx::query(sqlx::AssertSqlSafe(format!(
                     "DELETE FROM {table} WHERE workspace_id = $1"
                 )))

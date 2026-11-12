@@ -95,7 +95,7 @@ pub async fn resolve(
     {
         return Ok(DriveRefState::Locked);
     }
-    let chain = match live_chain(connection, workspace_id, node_id).await {
+    let chain = match live_chain(connection, workspace_id, node_id, Some(user_id)).await {
         Ok(chain) => chain,
         Err(super::drive::DriveError::Database(error)) => return Err(error),
         Err(_) => return Ok(DriveRefState::Unavailable),
