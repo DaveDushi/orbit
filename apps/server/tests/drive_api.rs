@@ -11,6 +11,7 @@ use orbit_platform::{
     TestDatabase, TimestampMillis, start_fake_s3,
 };
 use orbit_server::drive::{DriveService, MIN_PART_BYTES};
+use orbit_server::drive_content_routes::drive_content_router;
 use orbit_server::drive_routes::{DriveState, drive_router};
 use orbit_server::repositories::drive::TRASH_RETENTION_MILLIS;
 use orbit_server::repositories::identity::{IdentityRepository, SetupRequest};
@@ -63,11 +64,13 @@ async fn fixture() -> Fixture {
         ..Default::default()
     });
     let drive = DriveService::new((*database).clone(), storage);
-    let app = drive_router(DriveState::new(
+    let state = DriveState::new(
         Arc::clone(&identity),
         drive.clone(),
         orbit_server::auth_routes::CookieMode::secure(),
-    ));
+    )
+    .with_parser(env!("CARGO_BIN_EXE_orbit"));
+    let app = drive_router(state.clone()).merge(drive_content_router(state));
     Fixture {
         database,
         identity,
@@ -284,6 +287,7 @@ async fn every_route_refuses_callers_outside_the_workspace_before_signing() {
         ("POST", format!("/nodes/{file}/restore"), None),
         ("GET", format!("/nodes/{folder}/files"), None),
         ("GET", format!("/nodes/{file}/download"), None),
+        ("GET", format!("/nodes/{file}/content"), None),
         (
             "POST",
             "/downloads".to_owned(),
@@ -1237,4 +1241,134 @@ async fn concurrent_creates_of_one_name_give_one_item_and_a_conflict_never_a_ser
         );
     }
     assert_eq!(fixture.names(None).await.len(), 1);
+}
+
+/// A workbook with the sheets `Plan` (`rows` rows: a name and a number) and `Other` (one cell).
+fn xlsx(rows: usize) -> Vec<u8> {
+    use std::io::Write;
+    let cells: String = (1..=rows)
+        .map(|row| {
+            format!(
+                r#"<row r="{row}"><c r="A{row}" t="inlineStr"><is><t>name {row}</t></is></c><c r="B{row}"><v>{row}</v></c></row>"#
+            )
+        })
+        .collect();
+    let sheet = |data: &str| {
+        format!(
+            r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>{data}</sheetData></worksheet>"#
+        )
+    };
+    let mut output = std::io::Cursor::new(Vec::new());
+    let mut zip = zip::ZipWriter::new(&mut output);
+    for (name, body) in [
+        (
+            "[Content_Types].xml",
+            r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>"#.to_owned(),
+        ),
+        (
+            "_rels/.rels",
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#.to_owned(),
+        ),
+        (
+            "xl/workbook.xml",
+            r#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Plan" sheetId="1" r:id="rId1"/><sheet name="Other" sheetId="2" r:id="rId2"/></sheets></workbook>"#.to_owned(),
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/></Relationships>"#.to_owned(),
+        ),
+        ("xl/worksheets/sheet1.xml", sheet(&cells)),
+        (
+            "xl/worksheets/sheet2.xml",
+            sheet(r#"<row r="1"><c r="A1"><v>7</v></c></row>"#),
+        ),
+    ] {
+        zip.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(body.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap();
+    output.into_inner()
+}
+
+#[tokio::test]
+async fn the_content_of_a_file_is_read_in_parts_by_members_with_the_checks_of_its_download() {
+    const XLSX: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    let fixture = fixture().await;
+    let plan = fixture.typed_file(None, "plan.xlsx", &xlsx(5), XLSX).await;
+    let member = fixture.user("member@example.com", Some("member")).await;
+    let read = async |cookie: &str, query: &str| {
+        let path = fixture.path(&format!("/nodes/{plan}/content{query}"));
+        fixture.call("GET", &path, Some(cookie), None).await
+    };
+
+    // A member reads the first sheet in parts, then another sheet.
+    let (status, first) = read(&member, "?limit=2").await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(first["kind"], "sheet");
+    assert_eq!(first["file"]["name"], "plan.xlsx");
+    assert_eq!(first["sheets"], json!(["Plan", "Other"]));
+    assert_eq!(first["sheet"], "Plan");
+    assert_eq!(first["rows"], json!([["name 1", "1"], ["name 2", "2"]]));
+    assert_eq!(first["row_numbers"], json!([1, 2]));
+    assert_eq!(first["next_offset"], 2);
+    let (_, last) = read(&member, "?offset=4&limit=2").await;
+    assert_eq!(last["rows"], json!([["name 5", "5"]]));
+    assert!(last["next_offset"].is_null());
+    let (_, other) = read(&member, "?sheet=Other").await;
+    assert_eq!(other["sheet"], "Other");
+    assert_eq!(other["rows"], json!([["7"]]));
+    let (status, missing) = read(&member, "?sheet=Nope").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{missing}");
+
+    // A guest and a person outside the workspace get the answer of an unknown file.
+    for cookie in [
+        fixture.user("guest@example.com", Some("guest")).await,
+        fixture.user("outsider@example.com", None).await,
+    ] {
+        let (status, value) = read(&cookie, "").await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{value}");
+        assert_eq!(value["code"], "drive_not_found");
+        assert!(value["rows"].is_null());
+    }
+    // Another workspace does not have the file.
+    let (status, _) = fixture
+        .call(
+            "GET",
+            &format!(
+                "/api/v1/workspaces/{}/drive/nodes/{plan}/content",
+                Id::new_v7()
+            ),
+            Some(&fixture.owner),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // A damaged workbook is refused, so the viewer keeps its PDF preview.
+    let broken = fixture
+        .typed_file(None, "broken.xlsx", b"not a workbook", XLSX)
+        .await;
+    let (status, value) = fixture
+        .call(
+            "GET",
+            &fixture.path(&format!("/nodes/{broken}/content")),
+            Some(&member),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{value}");
+    assert_eq!(value["code"], "file_unreadable");
+
+    // A file in the trash is not read.
+    fixture
+        .owner(
+            "POST",
+            &format!("/nodes/{plan}/trash"),
+            None,
+            StatusCode::NO_CONTENT,
+        )
+        .await;
+    let (status, _) = read(&member, "").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

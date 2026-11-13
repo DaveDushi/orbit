@@ -27,9 +27,14 @@ export interface PreviewFile {
   preview?: FilePreview | null
 }
 
+/** Whether a file shows as a table with sheet tabs in the viewer (the server reads these kinds): xlsx, xls, csv, tsv. */
+export function isSheetFile(fileName: string): boolean {
+  return /\.(xlsx|xlsm|xls|csv|tsv)$/i.test(fileName)
+}
+
 /** Whether a file opens in the viewer (rather than downloads) when clicked. */
-export function hasViewer(file: Pick<PreviewFile, 'mimeType' | 'preview'>): boolean {
-  return /^(image|video|audio)\//.test(file.mimeType) || file.mimeType === 'application/pdf' || Boolean(file.preview)
+export function hasViewer(file: Pick<PreviewFile, 'mimeType' | 'fileName' | 'preview'>): boolean {
+  return /^(image|video|audio)\//.test(file.mimeType) || file.mimeType === 'application/pdf' || Boolean(file.preview) || isSheetFile(file.fileName)
 }
 
 /** Whether a file plays as a video: by its type, or because the server makes a playable copy of it. */

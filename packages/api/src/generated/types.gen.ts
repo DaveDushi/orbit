@@ -1582,6 +1582,34 @@ export type DriveEntryPage = {
 };
 
 /**
+ * A Drive file and one part of its content: the fields of a chat file's content.
+ */
+export type DriveFileContent = {
+    file: DriveNode;
+    /**
+     * Cells among `rows` that hold a formula, as `B2`.
+     */
+    formula_cells: Array<string>;
+    kind: FileKind;
+    /**
+     * Where the next part starts; `null` at the end.
+     */
+    next_offset?: number | null;
+    /**
+     * A PDF or Word file without text, such as a scan.
+     */
+    no_text: boolean;
+    row_numbers?: Array<number> | null;
+    rows?: Array<Array<string>> | null;
+    sheet?: string | null;
+    /**
+     * Sheet names of a workbook.
+     */
+    sheets: Array<string>;
+    text?: string | null;
+};
+
+/**
  * What the caller may see of one Drive file reference, now.
  */
 export type DriveFileReference = {
@@ -16674,6 +16702,62 @@ export type GetDriveNodeResponses = {
 };
 
 export type GetDriveNodeResponse = GetDriveNodeResponses[keyof GetDriveNodeResponses];
+
+export type GetDriveFileContentData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        node_id: string;
+    };
+    query?: {
+        sheet?: string;
+        offset?: number;
+        limit?: number;
+        extract?: boolean;
+    };
+    url: '/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}/content';
+};
+
+export type GetDriveFileContentErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type GetDriveFileContentError = GetDriveFileContentErrors[keyof GetDriveFileContentErrors];
+
+export type GetDriveFileContentResponses = {
+    200: DriveFileContent;
+};
+
+export type GetDriveFileContentResponse = GetDriveFileContentResponses[keyof GetDriveFileContentResponses];
 
 export type GetDriveDownloadData = {
     body?: never;

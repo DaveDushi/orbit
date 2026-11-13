@@ -3,8 +3,9 @@
 import { useState } from 'react'
 import { Download, Expand, Paperclip2 as Paperclip, Play, Xmark as X } from 'reicon-react'
 import { formatSize, isImage, type Attachment } from '@/lib/attachmentLib'
-import { hasViewer, isVideoFile, previewView, useFilePreview } from '@/lib/filePreview'
+import { hasViewer, isSheetFile, isVideoFile, previewView, useFilePreview } from '@/lib/filePreview'
 import { FileViewer, PreviewBody } from './FileViewer'
+import { SheetPreview } from './SheetPreview'
 import { ImageViewer } from './ImageViewer'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -264,8 +265,18 @@ function InlineVideo({ attachment, onOpen }: { attachment: Attachment; onOpen: (
   )
 }
 
-/** One file in the viewer; a file from before previews gets its preview queued when it is opened here. */
+/**
+ * One file in the viewer: a workbook, csv or tsv as a table (its PDF when the server cannot read it), else its
+ * preview. A file kept in Drive is too large for the table and keeps its PDF.
+ */
 function ViewerBody({ attachment }: { attachment: Attachment }) {
+  const preview = <PreviewViewerBody attachment={attachment} />
+  if (!isSheetFile(attachment.fileName) || attachment.driveNodeId) return preview
+  return <SheetPreview contentUrl={`${attachment.url}/content`} fallback={preview} />
+}
+
+/** The preview of a file; a file from before previews gets its preview queued when it is opened here. */
+function PreviewViewerBody({ attachment }: { attachment: Attachment }) {
   const preview = useFilePreview(attachment, true)
   return (
     <PreviewBody

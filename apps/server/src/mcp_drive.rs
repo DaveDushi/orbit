@@ -464,7 +464,7 @@ pub(crate) async fn run(
 /// How a Drive file is read. Drive keeps the real MIME type, while [`file_parse::classify`] expects attachments
 /// (everything but PDF and images stored as `application/octet-stream`): the extension decides, and a `text/*` or
 /// JSON file without a known extension is text.
-fn drive_kind(name: &str, mime: &str) -> FileKind {
+pub(crate) fn drive_kind(name: &str, mime: &str) -> FileKind {
     if mime == "application/pdf" {
         return FileKind::Pdf;
     }

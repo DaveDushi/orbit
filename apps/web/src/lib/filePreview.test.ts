@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import type { FilePreview } from '@orbit/api/generated/types.gen'
-import { hasViewer, previewView } from './filePreview'
+import { hasViewer, isSheetFile, previewView } from './filePreview'
 
 const url = '/api/v1/workspaces/w/chat/files/f'
 const preview = (change: Partial<FilePreview>): FilePreview => ({ kind: 'video', status: 'pending', play_url: null, poster_url: null, pdf_url: null, ...change })
@@ -33,6 +33,13 @@ test('an office file shows its PDF, waits while it is made, and says when there 
   expect(previewView({ ...file, preview: document('skipped') }).kind).toBe('unavailable')
   expect(previewView({ ...file, preview: document('failed') }).kind).toBe('unavailable')
   expect(hasViewer({ ...file, preview: document('skipped') })).toBe(true)
-  expect(hasViewer({ mimeType: 'application/zip', preview: null })).toBe(false)
+  expect(hasViewer({ mimeType: 'application/zip', fileName: 'a.zip', preview: null })).toBe(false)
   expect(previewView({ mimeType: 'application/pdf', fileName: 'a.pdf', url })).toEqual({ kind: 'pdf', src: url })
+})
+
+test('workbooks and delimited text open as a sheet grid, other office files keep their PDF', () => {
+  for (const name of ['Plan.XLSX', 'a.xlsm', 'old.xls', 'export.csv', 'data.tsv']) expect(isSheetFile(name)).toBe(true)
+  for (const name of ['report.docx', 'deck.pptx', 'notes.txt', 'xlsx', 'a.csv.zip']) expect(isSheetFile(name)).toBe(false)
+  // A csv gets no PDF from the server, but it opens in the viewer as a table.
+  expect(hasViewer({ mimeType: 'text/csv', fileName: 'export.csv', preview: null })).toBe(true)
 })

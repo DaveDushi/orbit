@@ -24702,6 +24702,155 @@
         ]
       }
     },
+    "/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}/content": {
+      "get": {
+        "tags": [
+          "crate::drive_content_routes"
+        ],
+        "summary": "One part of a Drive file, as rows or text, with the query of a chat file's content. Images and other files\nhave no content here. Files over 16 MiB are not read (`file_over_limit`).",
+        "operationId": "get_drive_file_content",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sheet",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "extract",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "X-Orbit-Contract",
+            "in": "header",
+            "description": "Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DriveFileContent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_proxy_headers",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "contract_mismatch",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "internal_error or another documented stable code",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/drive/nodes/{node_id}/download": {
       "get": {
         "tags": [
@@ -51570,6 +51719,87 @@
               "null"
             ],
             "format": "int64"
+          }
+        }
+      },
+      "DriveFileContent": {
+        "type": "object",
+        "description": "A Drive file and one part of its content: the fields of a chat file's content.",
+        "required": [
+          "file",
+          "kind",
+          "sheets",
+          "formula_cells",
+          "no_text"
+        ],
+        "properties": {
+          "file": {
+            "$ref": "#/components/schemas/DriveNode"
+          },
+          "formula_cells": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Cells among `rows` that hold a formula, as `B2`."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FileKind"
+          },
+          "next_offset": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Where the next part starts; `null` at the end.",
+            "minimum": 0
+          },
+          "no_text": {
+            "type": "boolean",
+            "description": "A PDF or Word file without text, such as a scan."
+          },
+          "row_numbers": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          "rows": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "sheet": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sheets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Sheet names of a workbook."
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

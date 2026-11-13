@@ -28,6 +28,8 @@ pub struct DriveState {
     pub(crate) identity: Arc<IdentityRepository>,
     pub(crate) drive: DriveService,
     pub(crate) cookie_mode: CookieMode,
+    /// Reads sheets and text for the viewer ([`crate::drive_content_routes`]).
+    pub(crate) reader: crate::file_content::FileReader,
 }
 
 impl DriveState {
@@ -41,7 +43,15 @@ impl DriveState {
             identity,
             drive,
             cookie_mode,
+            reader: crate::file_content::FileReader::new(),
         }
+    }
+
+    /// Tests parse with the `orbit` binary (see [`crate::file_content::FileReader::with_parser`]).
+    #[must_use]
+    pub fn with_parser(mut self, program: impl Into<std::path::PathBuf>) -> Self {
+        self.reader = crate::file_content::FileReader::with_parser(program);
+        self
     }
 }
 
@@ -302,19 +312,19 @@ pub struct DriveTrashEmptied {
 }
 
 /// The session's user and the workspace of the path.
-struct Caller<'a> {
-    user_id: Id,
-    workspace_id: Id,
-    instance: String,
-    request_id: Option<&'a Extension<RequestId>>,
+pub(crate) struct Caller<'a> {
+    pub(crate) user_id: Id,
+    pub(crate) workspace_id: Id,
+    pub(crate) instance: String,
+    pub(crate) request_id: Option<&'a Extension<RequestId>>,
 }
 
 impl Caller<'_> {
-    fn fail(&self, error: DriveError) -> ApiError {
+    pub(crate) fn fail(&self, error: DriveError) -> ApiError {
         problem(error, &self.instance, self.request_id)
     }
 
-    fn id(&self, value: &str) -> Result<Id, ApiError> {
+    pub(crate) fn id(&self, value: &str) -> Result<Id, ApiError> {
         value.parse().map_err(|_| self.fail(DriveError::NotFound))
     }
 
@@ -323,7 +333,7 @@ impl Caller<'_> {
     }
 }
 
-async fn caller<'a>(
+pub(crate) async fn caller<'a>(
     state: &DriveState,
     headers: &HeaderMap,
     workspace: &str,

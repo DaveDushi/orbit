@@ -2,7 +2,8 @@ import { useQuery } from '@tanstack/react-query'
 import type { DriveNode } from '@orbit/api/generated/types.gen'
 import { driveFileKind } from '@orbit/api/drive'
 import { FileViewer, PreviewBody } from '@/components/common/FileViewer'
-import { previewView, type PreviewView } from '@/lib/filePreview'
+import { SheetPreview } from '@/components/common/SheetPreview'
+import { isSheetFile, previewView, type PreviewView } from '@/lib/filePreview'
 import { formatBytes } from '@/lib/formatBytes'
 import { driveKeys, downloadUrl, requestPreview } from '../api'
 import { NodeIcon } from './NodeIcon'
@@ -23,7 +24,8 @@ interface DriveViewerProps {
 
 /**
  * Full-screen preview: images, videos (HTML5 player, with Range from the bucket; the server's playable copy once it
- * is made), audio, PDFs (pdf.js) and office files (the server's PDF of them).
+ * is made), audio, PDFs (pdf.js), workbooks, csv and tsv (a table with sheet tabs) and other office files (the
+ * server's PDF of them).
  */
 export function DriveViewer({ workspaceId, files, startId, onDownload, onClose }: DriveViewerProps) {
   return (
@@ -35,7 +37,11 @@ export function DriveViewer({ workspaceId, files, startId, onDownload, onClose }
         [node.size != null ? formatBytes(node.size) : '', node.media?.width && node.media.height ? `${node.media.width} × ${node.media.height}` : '']
           .filter(Boolean)
           .join(' · ')}
-      renderBody={(node) => <DriveBody key={node.id} workspaceId={workspaceId} node={node} onDownload={() => onDownload(node)} />}
+      renderBody={(node) => {
+        const body = <DriveBody key={node.id} workspaceId={workspaceId} node={node} onDownload={() => onDownload(node)} />
+        if (!isSheetFile(node.name)) return body
+        return <SheetPreview key={node.id} contentUrl={`/api/v1/workspaces/${workspaceId}/drive/nodes/${node.id}/content`} fallback={body} />
+      }}
       onDownload={onDownload}
       onClose={onClose}
     />

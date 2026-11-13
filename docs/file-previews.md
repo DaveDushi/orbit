@@ -17,6 +17,11 @@ files. Code: `apps/server/src/previews/`, `apps/server/src/repositories/chat/fil
 - **Office previews** (xlsx, xls, csv, tsv, docx, doc, pptx, ppt, odt, ods, odp, rtf) in chat and Drive: LibreOffice
   converts the file to PDF on the server, and the viewer shows it with pdf.js, cell colors included. Without
   LibreOffice the viewer says "Preview not available" and offers the download.
+- **Sheet grid:** xlsx, xlsm, xls, csv and tsv files open in the viewer as a read-only table (the Docs file table) with
+  a tab per sheet, 200 rows per request as the reader scrolls. The rows come from `GET …/chat/files/{id}/content` and
+  `GET …/drive/nodes/{id}/content` (the Docs file reader, in a child process; the Drive route reads files up to 16
+  MiB, with the checks of the download URL). When the server cannot read the file (damaged, protected, over a limit),
+  the viewer shows the PDF preview instead. A chat file kept in Drive keeps the PDF.
 - **Files larger than the chat limit** (`ORBIT_UPLOAD_MAX_FILE_BYTES`, 25 MiB by default) go to Drive →
   `Uploads/#channel`, or `Uploads/<members' names>` for a direct message. The browser sends them straight to the bucket
   in parts (presigned URLs), shows progress, and "Try again" continues an upload that dropped (only the missing parts

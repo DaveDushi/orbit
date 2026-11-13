@@ -9,7 +9,7 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 ## 2026-11-13
 - Orbit for iPhone (beta, by TestFlight invitation): the pink W app with Home, Tasks, Docs, Chat, Activity and Settings. Allow notifications after sign-in to get messages, mentions and task updates on the phone (signing out stops them). With your ChatGPT connected, the "Ask Donna…" bar above the bottom bar opens your conversation with Donna, and she knows the task or page you have open.
 - Link a task anywhere: type # in a chat message, a Docs page, a task description or a comment, then a task name or ID (like ENG-12). Hover a task ID or a mention to see a preview. Cmd/Ctrl+K shows results in sections, and a task ID finds that task first.
-- The bell beside the workspace name opens your 10 newest notifications. The project, assignee and GitHub repository pickers have a search box.
+- Excel and csv files (xlsx, xls, csv, tsv) in chat or Drive now open as a read-only table, with a tab for each sheet. The bell beside the workspace name opens your 10 newest notifications; the project, assignee and GitHub repository pickers have a search box.
 - AI tools connected with MCP can now read and write task comments, set assignees and labels, and create projects. Sessions not used for 30 days are signed out. Chat webhooks now work from outside tools: a webhook URL starts with https://orbit-hooks.easytomanage.com, which needs no login (for an older webhook, change only the start of its URL).
 
 ## 2026-11-12

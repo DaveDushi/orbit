@@ -94,6 +94,9 @@ pub fn production_router(
         .merge(crate::page_drive_routes::page_drive_router(
             api.drive.clone(),
         ))
+        .merge(crate::drive_content_routes::drive_content_router(
+            api.drive.clone(),
+        ))
         .merge(crate::drive_routes::drive_router(api.drive))
         .merge(
             api.drive_shares
