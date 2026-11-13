@@ -98,7 +98,8 @@ Core files: `TasksPage.tsx`, `components/TaskList.tsx`, `components/TaskBoard.ts
   anchored on the due date in the time zone of the member who set it. Completing an occurrence creates the next one in
   the same write transaction (`spawn_next_in_tx`, after the sub-issue automation, on every write path); its
   `recurrence_next_id` makes it spawn only once, also when reopened and completed again. `recurrence` on `PATCH tasks/{id}`,
-  MCP `update_task` and Donna's `update_task`; web: Repeat in the due date picker.
+  MCP `update_task` and Donna's `update_task`; web: the Repeat field under Due date in the task panel. The next occurrence copies the assignees who still see the
+  project, the labels and the followers.
 
 ### Sub-issues
 

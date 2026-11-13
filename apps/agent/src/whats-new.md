@@ -8,7 +8,7 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 
 ## 2026-11-14
 - Private projects: in New project or Project settings → Access, make a project private. Only its members (and owners and admins) see it and its tasks, also in search, notifications and Donna's answers.
-- Recurring tasks: in a task's due date, pick Repeat (daily, weekly on chosen days, monthly or yearly). When you complete it, the next one is created with the new due date.
+- Recurring tasks: open a task and use Repeat, under Due date (daily, weekly on chosen days, monthly or yearly). When you complete it, the next one is created with the new due date.
 - Drag projects in the Tasks sidebar to put them in your own order.
 - The tasks trash has search and previews, and owners and admins can delete items forever or empty the trash. The Docs trash has search and page previews too.
 
