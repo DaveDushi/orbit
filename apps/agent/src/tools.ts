@@ -287,16 +287,37 @@ const searchTasks = defineTool({
 		}),
 });
 
+/** The newest comments of a task (at most `TASK_COMMENTS`), oldest first, each cut to 1,500 characters. */
+const TASK_COMMENTS = 20;
+
+async function taskComments(as: (method: string, path: string) => Promise<any>, taskId: string, everyone: readonly Person[]): Promise<Json[]> {
+	const comments: Json[] = [];
+	let cursor: string | null = null;
+	// Oldest first, 100 a page: a task with very many comments shows the newest of its first 500.
+	for (let page = 0; page < 5; page++) {
+		const result = (await as("GET", `/tasks/${taskId}/comments?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`)) as { items: Json[]; next_cursor: string | null };
+		comments.push(...result.items);
+		cursor = result.next_cursor;
+		if (!cursor) break;
+	}
+	return comments.slice(-TASK_COMMENTS).map((comment) => {
+		const body = String(comment.body ?? "");
+		const author = comment.github_author_login ? `${comment.github_author_login} (GitHub)` : (comment.author_service_account_name ?? everyone.find((person) => person.id === comment.author_id)?.name ?? comment.author_id);
+		return { id: comment.id, author, at: comment.created_at, body: body.length > 1_500 ? `${body.slice(0, 1_500)}…` : body };
+	});
+}
+
 const getTask = defineTool({
 	name: "get_task",
-	description: "Read one task with its description.",
+	description: `Read one task with its description and its newest ${TASK_COMMENTS} comments.`,
 	parameters: Type.Object({ task_id: Type.String() }),
 	execute: (args, api, context) =>
 		asDriver(api, context, async (as) => {
 			const task = (await as("GET", `/tasks/${args.task_id}`)) as Json;
 			const [list, everyone] = await Promise.all([projects(as), people(as)]);
 			const status = (await statuses(as, String(task.project_id))).find((candidate) => candidate.id === task.status_id);
-			return ok("task", taskView(task, list.find((project) => project.id === task.project_id), status, everyone));
+			const comments = await taskComments(as, String(task.id), everyone);
+			return ok("task", { ...taskView(task, list.find((project) => project.id === task.project_id), status, everyone), comments });
 		}),
 });
 

@@ -7,10 +7,10 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 -->
 
 ## 2026-11-14
+- Agents can work on tasks: assign a task to Donna (or another agent), or @mention her in a task comment, and she starts at once with your permissions. She writes her progress and result as a comment on the task, and asks you in your DM with her when she needs your answer or your yes. Unassign her or delete the task to stop her.
 - MCP and API: one OAuth connection (for example Claude or Codex) can now cover several workspaces, each with its own projects; tick them on the consent page. The public API can move docs, put them in the trash and list their versions, filters tasks by due date, and makes a retried task or comment create safe with an Idempotency-Key.
 - Admin → Storage: turning "Files in S3" on or off now says when the move is done, and "Keep deleted files in S3" sets how many days (1 to 365, default 40) a deleted file stays in the bucket.
-- Chat: a # button beside @ mentions a channel or a task. Project settings: each part (General, Access, Statuses, Labels, Rules, Docs…) is its own page in the sidebar, and Project settings → Docs links a teamspace to the project for its docs.
-- Large images you upload are made smaller on the server (screenshots as sharp, lossless WebP). Double-click an image in a doc to open it, and zoom it with the mouse wheel.
+- Chat: a # button beside @ mentions a channel or a task. Project settings: each part (General, Access, Statuses, Labels, Rules, Docs…) is its own page in the sidebar, and Project settings → Docs links a teamspace to the project for its docs. Large images you upload are made smaller on the server (screenshots as sharp, lossless WebP). Double-click an image in a doc to open it, and zoom it with the mouse wheel.
 
 ## 2026-11-13
 - Orbit for iPhone (beta, by TestFlight invitation): Home, Tasks, Docs, Chat, Activity, phone notifications and an "Ask Donna…" bar.

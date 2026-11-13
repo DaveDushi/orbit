@@ -30,6 +30,19 @@ export type RoutineRunState = {
 /** One repair of a routine's script in a run: the version that failed, the new one, and what changed. */
 export type ScriptRepair = { from: string; to: string; change: string; added: number; removed: number };
 
+/**
+ * The task run of a thread (Orbit's `agent_task_runs`): the run whose input is `runId` writes its progress and result
+ * into one comment on the task; a later run in the same thread (after an answer or a yes) writes its result there too.
+ */
+export type TaskRunState = {
+	runId: string;
+	taskId: string;
+	identifier: string;
+	title: string;
+	/** Set when Orbit cancelled the run: why (the agent was unassigned, the task deleted). */
+	stopped?: string | null;
+};
+
 /** One tool call of a routine run, for its history. `would_do`: a write a dry run did not make. */
 export type RunCall = { name: string; args: string; status: "ok" | "error" | "dry_run"; would_do?: string };
 
@@ -73,6 +86,8 @@ export type ThreadState = {
 	routineRun?: RoutineRunState | null;
 	/** The tool calls of the current routine run (scripts' calls included), oldest first. */
 	runCalls?: RunCall[];
+	/** The task run that made this thread; `null` or absent: a chat thread. */
+	taskRun?: TaskRunState | null;
 };
 
 export const ThreadDoc = defineDoc<ThreadState>({

@@ -842,3 +842,97 @@ test("a script that still fails after two repairs ends with its error, and a tes
 		orbit.server.close();
 	}
 });
+
+/** Orbit with task runs: the agent's task comments, and the cancelled runs it must stop. */
+class TaskOrbit extends FakeOrbit {
+	/** Each write of a run's comment, in order: run id → bodies. */
+	readonly comments = new Map<string, string[]>();
+	stops: { run_id: string; thread_key: string; reason: string }[] = [];
+	readonly stopped: string[] = [];
+
+	async route(method: string, url: string, headers: Record<string, unknown>, body: any): Promise<[number, unknown]> {
+		const path = url.split("?")[0];
+		let match: RegExpExecArray | null;
+		if ((match = /^\/api\/internal\/agent\/task-runs\/(.+)\/comment$/.exec(path)) && method === "PUT") {
+			this.comments.set(match[1], [...(this.comments.get(match[1]) ?? []), body.body]);
+			return [200, { comment_id: `comment-${match[1]}` }];
+		}
+		if ((match = /^\/api\/internal\/agent\/task-runs\/(.+)\/stopped$/.exec(path)) && method === "POST") {
+			this.stopped.push(match[1]);
+			this.stops = this.stops.filter((stop) => stop.run_id !== match![1]);
+			return [204, undefined];
+		}
+		const [status, value] = await super.route(method, url, headers, body);
+		if (path === "/api/internal/agent/inputs") return [status, { ...(value as object), stops: this.stops }];
+		return [status, value];
+	}
+}
+
+const TASK = "0199c3a0-0000-7000-8000-0000000000c1";
+
+function taskInput(orbit: TaskOrbit, body: string): string {
+	const thread = id();
+	const runId = orbit.add({ thread_key: thread, root_message_id: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body, conversation_kind: "dm", conversation_members: 2 });
+	const input = orbit.queue.find((candidate) => candidate.message_id === runId)!;
+	Object.assign(input, { task: { run_id: runId, task_id: TASK, identifier: "ORB-7", title: "Write docs", cause: "mentioned", comment_id: id() } });
+	// Orbit posted the run's header in Ann's DM with the agent, with the nonce the progress message uses.
+	orbit.messages.set(`agent:${runId}`, { id: id(), body: "📋 You mentioned me on [ORB-7 Write docs](…).", root: null });
+	return runId;
+}
+
+test("a task run works as its driver, writes progress and result as its comment, and says where in the DM", async () => {
+	const orbit = new TaskOrbit();
+	current = orbit;
+	await orbit.listen();
+	const agent = new Agent(config(orbit, mkdtempSync(join(tmpdir(), "agent-"))), new OrbitClient(config(orbit, "")));
+	await agent.open();
+	await agent.start();
+	try {
+		const run = taskInput(orbit, 'create task "Sub task"');
+		await until("the result comment", () => (orbit.comments.get(run)?.at(-1) ?? "").startsWith("Done (create_task)"));
+		assert.ok(orbit.calls.length > 0);
+		assert.ok(orbit.calls.every((call) => call.as === ANN), JSON.stringify(orbit.calls));
+		// The progress went to the comment, not the DM; the DM says where the result is.
+		assert.ok(orbit.comments.get(run)!.slice(0, -1).every((body) => body.startsWith("⏳ Working on it")), JSON.stringify(orbit.comments.get(run)));
+		await until("the DM line", () => progressOf(orbit, run).startsWith("✅ Done on [ORB-7 Write docs](https://orbit.test/tasks/"));
+		await until("the idle thread", () => [...orbit.threads.values()].some((thread) => thread.status === "idle"));
+		assert.ok(orbit.edits.every((edit) => !edit.body.startsWith("⏳")), JSON.stringify(orbit.edits));
+
+		// A question waits in the DM; the task comment names the person (no chat token) and says where.
+		const asking = taskInput(orbit, 'ask @Bob "Which title?"');
+		await until("the waiting comment", () => (orbit.comments.get(asking)?.at(-1) ?? "").startsWith("⏸ Waiting for an answer from @Bob in our direct message."));
+		assert.equal(progressOf(orbit, asking), "📋 You mentioned me on [ORB-7 Write docs](…).");
+	} finally {
+		await agent.stop();
+		orbit.server.close();
+	}
+});
+
+test("a task run that Orbit cancels is aborted, says why in its comment, and is reported stopped", async () => {
+	// A slow answer, so the run is still going when Orbit cancels it.
+	const before = process.env.AGENT_MOCK_TOKENS_PER_SECOND;
+	process.env.AGENT_MOCK_TOKENS_PER_SECOND = "2";
+	const orbit = new TaskOrbit();
+	current = orbit;
+	await orbit.listen();
+	const agent = new Agent(config(orbit, mkdtempSync(join(tmpdir(), "agent-"))), new OrbitClient(config(orbit, "")));
+	await agent.open();
+	await agent.start();
+	try {
+		const run = taskInput(orbit, "please write a very long explanation of everything that happened in this project so far, with every detail");
+		await until("the run", () => (orbit.comments.get(run)?.length ?? 0) > 0);
+		const thread = orbit.queue.find((input) => input.message_id === run)!.thread_key;
+		orbit.stops.push({ run_id: run, thread_key: thread, reason: "I was unassigned from this task" });
+		await until("stopped", () => orbit.stopped.includes(run));
+		await until("the stop comment", () => orbit.comments.get(run)?.at(-1) === "⏹ Stopped: I was unassigned from this task.", 20_000);
+		await until("the DM line", () => progressOf(orbit, run).startsWith("⏹ Stopped on [ORB-7 Write docs]"));
+		// Another stop of a run this process does not have is only reported.
+		orbit.stops.push({ run_id: "unknown-run", thread_key: id(), reason: "the task was deleted" });
+		await until("the unknown stop", () => orbit.stopped.includes("unknown-run"));
+	} finally {
+		if (before === undefined) delete process.env.AGENT_MOCK_TOKENS_PER_SECOND;
+		else process.env.AGENT_MOCK_TOKENS_PER_SECOND = before;
+		await agent.stop();
+		orbit.server.close();
+	}
+});
