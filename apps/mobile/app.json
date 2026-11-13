@@ -52,7 +52,22 @@
           "microphonePermission": "Orbit records sound with the videos you take for messages, tasks and pages."
         }
       ],
-      "expo-status-bar"
+      "expo-status-bar",
+      [
+        "expo-sharing",
+        {
+          "ios": {
+            "enabled": true,
+            "activationRule": {
+              "supportsText": true,
+              "supportsWebUrlWithMaxCount": 1,
+              "supportsImageWithMaxCount": 10,
+              "supportsMovieWithMaxCount": 10,
+              "supportsFileWithMaxCount": 10
+            }
+          }
+        }
+      ]
     ],
     "backgroundColor": "#0a0a0a",
     "owner": "davedushi",

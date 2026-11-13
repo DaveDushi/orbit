@@ -1,5 +1,6 @@
-import { Redirect, usePathname } from 'expo-router'
+import { Redirect, router, usePathname } from 'expo-router'
 import { Tabs } from 'expo-router/js-tabs'
+import { useEffect } from 'react'
 
 import { AskDonnaBar } from '../../components/AskDonna'
 import { BillingBanner } from '../../components/BillingBanner'
@@ -10,6 +11,7 @@ import { guestHome, guestMayOpen } from '../../data/guest'
 import { useLiveUpdates } from '../../live'
 import { useIsGuest, useOrbit } from '../../orbit-context'
 import { usePushNotifications } from '../../push'
+import { hasPendingShare } from '../../share-intent'
 import { useTheme } from '../../theme'
 
 export default function TabsLayout() {
@@ -18,6 +20,10 @@ export default function TabsLayout() {
   usePushNotifications(useOrbit().client)
   const guest = useIsGuest()
   const pathname = usePathname()
+  // a share that came while signed out (or before the app was ready) opens once the tabs are there
+  useEffect(() => {
+    if (hasPendingShare()) router.navigate('/share')
+  }, [])
   // a guest only opens Chat and its account settings: any other tab sends it to Chat
   if (guest && !guestMayOpen(pathname)) return <Redirect href={guestHome} />
   return (

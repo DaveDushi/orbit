@@ -125,10 +125,15 @@ export function commentAttachments(client: OrbitClient, workspaceId: string, tas
  * links it by its download path. The app's part is an expo-file-system `File`, which the SDK's serializer would turn
  * into JSON, so this one builds the form itself.
  */
-export async function uploadInline(client: OrbitClient, workspaceId: string, taskId: string, file: PickedFile): Promise<AttachmentRecord> {
+export function uploadInline(client: OrbitClient, workspaceId: string, taskId: string, file: PickedFile): Promise<AttachmentRecord> {
+  return uploadTaskFile(client, workspaceId, taskId, file, true)
+}
+
+/** Uploads a file to the task's attachment list (`inline`: for a comment's or the description's text instead). */
+export async function uploadTaskFile(client: OrbitClient, workspaceId: string, taskId: string, file: Pick<PickedFile, 'name' | 'blob'>, inline = false): Promise<AttachmentRecord> {
   const { data } = await uploadTaskAttachments({
     ...task(client, workspaceId, taskId),
-    query: { inline: '1' },
+    query: inline ? { inline: '1' } : undefined,
     body: { file: file.blob },
     bodySerializer: () => {
       const form = new FormData()

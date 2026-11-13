@@ -7,7 +7,8 @@ export interface Person {
 }
 
 const isMember = (conversation: ConversationRecord, userId: string) => conversation.member_ids.includes(userId)
-const isVisible = (conversation: ConversationRecord, userId: string) => isMember(conversation, userId) && !conversation.archived
+/** A conversation the person is in that is not archived: what the Chat list shows. */
+export const isVisible = (conversation: ConversationRecord, userId: string) => isMember(conversation, userId) && !conversation.archived
 
 /**
  * The count badge of a sidebar row, like the web: every unread message when notify is `all`, else mentions only. `unread`

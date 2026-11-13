@@ -1757,3 +1757,107 @@ async fn wait_until_read<T>(sender: &tokio::sync::mpsc::Sender<T>) {
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 }
+
+/// The phone's "Share to Orbit → New task": the task is made first, then each shared file is sent
+/// to the new task's id as its own attachment. They stay: listed with their names and bytes, also
+/// by a fresh router on the same data (as after a restart).
+#[tokio::test]
+async fn files_shared_into_a_new_task_are_its_attachments_and_stay() {
+    let fixture = Fixture::new(UploadLimits::default()).await;
+    let pool = fixture.database.pool();
+    let (project_id, status_id): (String, String) = {
+        let project: String = sqlx::query_scalar("SELECT id FROM projects LIMIT 1")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        let status = sqlx::query_scalar(
+            "SELECT id FROM task_statuses WHERE project_id = $1 ORDER BY position LIMIT 1",
+        )
+        .bind(&project)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        (project, status)
+    };
+    let created = fixture
+        .app
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            &format!("/api/v1/workspaces/{}/tasks", fixture.workspace_id),
+            &fixture.owner_cookie,
+            json!({ "project_id": project_id, "status_id": status_id, "title": "Shared from the phone" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let task_id = response_json(created).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let attachments = format!(
+        "/api/v1/workspaces/{}/tasks/{task_id}/attachments",
+        fixture.workspace_id
+    );
+    let files: [(&str, &[u8]); 3] = [
+        ("receipt.png", PNG),
+        ("notes.txt", b"shared text file"),
+        ("quote.pdf", b"%PDF-1.4 shared"),
+    ];
+    for (name, bytes) in files {
+        let response = fixture
+            .app
+            .clone()
+            .oneshot(multipart_request(
+                &attachments,
+                &fixture.owner_cookie,
+                &[(name, bytes)],
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED, "{name}");
+    }
+
+    // A fresh router on the same database and files.
+    let restarted = task_router(TaskState::new(
+        Arc::clone(&fixture.identity),
+        CookieMode::secure(),
+    ))
+    .merge(attachment_router(AttachmentState::new(
+        Arc::clone(&fixture.identity),
+        fixture.uploads.clone(),
+        CookieMode::secure(),
+    )));
+    let listed = restarted
+        .clone()
+        .oneshot(cookie_request("GET", &attachments, &fixture.owner_cookie))
+        .await
+        .unwrap();
+    assert_eq!(listed.status(), StatusCode::OK);
+    let items = response_json(listed).await["items"]
+        .as_array()
+        .unwrap()
+        .clone();
+    let mut names: Vec<&str> = items
+        .iter()
+        .map(|item| item["display_name"].as_str().unwrap())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(names, ["notes.txt", "quote.pdf", "receipt.png"]);
+    for item in &items {
+        let name = item["display_name"].as_str().unwrap();
+        let download = restarted
+            .clone()
+            .oneshot(cookie_request(
+                "GET",
+                &format!("{attachments}/{}/download", item["id"].as_str().unwrap()),
+                &fixture.owner_cookie,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(download.status(), StatusCode::OK, "{name}");
+        let bytes = to_bytes(download.into_body(), usize::MAX).await.unwrap();
+        let expected = files.iter().find(|(file, _)| *file == name).unwrap().1;
+        assert_eq!(bytes.as_ref(), expected, "{name}");
+    }
+}

@@ -22,3 +22,8 @@ export async function pickDriveFiles(source: DriveSource): Promise<DriveFile[]> 
   if (result.canceled) return []
   return Promise.all(result.assets.map((asset) => driveFile(asset.uri, asset.name, asset.mimeType)))
 }
+
+/** A shared file (Share to Orbit), as a Drive upload. */
+export function driveFileOf(uri: string, name: string, mimeType: string | undefined): Promise<DriveFile> {
+  return driveFile(uri, name, mimeType)
+}
