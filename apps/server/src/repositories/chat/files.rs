@@ -88,7 +88,18 @@ pub enum ChatFileSource {
         drive_blob_id: Option<Id>,
         key: Option<String>,
         file_name: String,
+        mime_type: String,
     },
+}
+
+impl ChatFileSource {
+    /// The MIME type the sender's file was saved with.
+    #[must_use]
+    pub fn mime_type(&self) -> &str {
+        match self {
+            Self::Stored { mime_type, .. } | Self::Drive { mime_type, .. } => mime_type,
+        }
+    }
 }
 
 fn file_from_row(row: &AnyRow) -> Result<ChatFileRecord, ChatError> {
@@ -368,7 +379,7 @@ impl ChatRepository {
             });
         }
         let row = sqlx::query(sqlx::AssertSqlSafe(format!(
-            "SELECT f.file_name, b.id AS blob_id, b.r2_key FROM chat_drive_files f \
+            "SELECT f.file_name, f.mime_type, b.id AS blob_id, b.r2_key FROM chat_drive_files f \
              LEFT JOIN drive_nodes n ON n.id = f.node_id AND n.trashed_at IS NULL \
              LEFT JOIN drive_blobs b ON b.id = n.blob_id AND b.status = 'ready' {}",
             readable_file()
@@ -383,6 +394,7 @@ impl ChatRepository {
             drive_blob_id: parse_optional_id(row.get("blob_id"))?,
             key: row.get("r2_key"),
             file_name: row.get("file_name"),
+            mime_type: row.get("mime_type"),
         })
     }
 

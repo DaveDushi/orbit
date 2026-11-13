@@ -78,13 +78,14 @@ pub fn allows(workspace_id: &str, method: &Method, path: &str) -> bool {
     if segment == "agent-memory" {
         return method != Method::DELETE;
     }
-    // Chat files: the agent reads their content, and never uploads or downloads them.
+    // Chat files: the agent reads their content and downloads images to look at them
+    // (`download_chat_file` refuses it every other file); it never uploads them.
     if let Some(file) = rest.strip_prefix("chat/files") {
-        return method == Method::GET
-            && file
-                .strip_prefix('/')
-                .and_then(|file| file.strip_suffix("/content"))
-                .is_some_and(|id| !id.is_empty() && !id.contains('/'));
+        let Some(file) = file.strip_prefix('/') else {
+            return false;
+        };
+        let id = file.strip_suffix("/content").unwrap_or(file);
+        return method == Method::GET && !id.is_empty() && !id.contains('/');
     }
     true
 }
@@ -272,6 +273,7 @@ mod tests {
             (Method::POST, "/tasks/abc/comments"),
             (Method::GET, "/chat/threads/abc"),
             (Method::GET, "/chat/files/abc/content"),
+            (Method::GET, "/chat/files/abc"),
             (Method::GET, "/chat/conversations/abc/files"),
             (Method::GET, "/members"),
             (Method::GET, ""),
@@ -326,13 +328,14 @@ mod tests {
             (Method::PATCH, "/agents/abc"),
             (Method::GET, "/bots"),
             (Method::POST, "/bots/abc/secret"),
-            (Method::GET, "/chat/files/abc"),
             (Method::POST, "/chat/files"),
             (Method::GET, "/chat/files"),
             (Method::PUT, "/chat/files/abc/content"),
             (Method::GET, "/chat/files//content"),
             (Method::GET, "/chat/files/abc/def/content"),
             (Method::GET, "/chat/filesabc/content"),
+            (Method::GET, "/chat/files/abc/preview"),
+            (Method::DELETE, "/chat/files/abc"),
             (Method::GET, "/drive/nodes"),
             (Method::POST, "/drive/nodes/abc/trash"),
             (Method::POST, "/drive/nodes/abc/shares"),

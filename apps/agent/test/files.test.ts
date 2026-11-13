@@ -167,6 +167,17 @@ test("the files of the run's message come after its text as data", () => {
 	assert.match(text, /file_id f1, csv\)/);
 });
 
+test("an image sent with the run's message asks for view_image only when the run has it", () => {
+	const files = [
+		{ id: "f1", file_name: "IMG_3888.png", mime_type: "image/png" },
+		{ id: "f2", file_name: "notes.csv", mime_type: "text/csv" },
+	];
+	assert.match(withMessageFiles("this one", files, true), /\(look at the images with view_image \(chat_file_ids\) before you answer; read the other files with read_chat_file\)/);
+	assert.match(withMessageFiles("this one", files, false), /\(read them with read_chat_file\)/);
+	// No image: nothing to look at.
+	assert.match(withMessageFiles("this one", [files[1]], true), /\(read them with read_chat_file\)/);
+});
+
 test("read_chat_file reads a chat file in parts as the driver, as data, without versions", async () => {
 	const chatFile = { id: "f9", file_name: "spec.xlsx", kind: "sheet", size_bytes: 10 };
 	const { calls, run } = harness((_method, path) =>

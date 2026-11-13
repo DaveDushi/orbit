@@ -303,6 +303,31 @@ export class OrbitClient {
 			throw error;
 		}
 	}
+
+	/**
+	 * A GET of bytes as `userId` (a chat image), like `asUser`: the response, with its body still to read. A file kept
+	 * in Drive answers with a redirect to the bucket, which fetch follows without the session token.
+	 */
+	async downloadAsUser(userId: string, workspaceId: string, path: string, agentUserId: string | null = null, threadKey: string | null = null): Promise<Response> {
+		const call = async (fresh: boolean) =>
+			fetch(`${this.#config.orbitUrl}/api/v1/workspaces/${workspaceId}${path}`, {
+				headers: {
+					authorization: `Bearer ${await this.#session(userId, workspaceId, agentUserId, threadKey, fresh)}`,
+					...(this.#config.forwardedProto ? { "x-forwarded-proto": this.#config.forwardedProto } : {}),
+				},
+				signal: AbortSignal.timeout(600_000),
+			});
+		let response = await call(false);
+		if (response.status === 401) {
+			await response.body?.cancel();
+			response = await call(true);
+		}
+		if (!response.ok) {
+			const text = await response.text();
+			throw new OrbitError(response.status, (text ? safeJson(text) : undefined) as OrbitError["problem"], `GET ${path}`);
+		}
+		return response;
+	}
 }
 
 function safeJson(text: string): unknown {

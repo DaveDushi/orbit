@@ -59,11 +59,16 @@ export function fileReadText(content: FileContent, offset: number): string {
 /** A file of a chat message, as Orbit lists it on the message. */
 export type ChatFile = { id: string; file_name: string; mime_type: string; size_bytes?: number; deleted?: boolean };
 
-/** The files of the message that starts or joins a run, after its text, so the model knows them without a call. */
-export function withMessageFiles(text: string, files: readonly ChatFile[] | undefined): string {
+/**
+ * The files of the message that starts or joins a run, after its text, so the model knows them without a call.
+ * `canView`: the run has view_image, so the model looks at the images itself.
+ */
+export function withMessageFiles(text: string, files: readonly ChatFile[] | undefined, canView = false): string {
 	const list = chatFilesText(files);
 	if (!list) return text;
-	return `${text}\n\nFiles sent with this message (read them with read_chat_file):\n${untrusted("message files", list)}`;
+	const images = canView && files?.some((file) => !file.deleted && chatFileKind(file) === "image");
+	const how = images ? "look at the images with view_image (chat_file_ids) before you answer; read the other files with read_chat_file" : "read them with read_chat_file";
+	return `${text}\n\nFiles sent with this message (${how}):\n${untrusted("message files", list)}`;
 }
 
 /** A short kind for a chat file: what read_chat_file can do with it is clear from it. */

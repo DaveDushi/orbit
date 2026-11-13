@@ -769,3 +769,132 @@ async fn a_private_projects_rules_name_and_assign_only_people_who_see_it() {
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+#[tokio::test]
+async fn a_new_or_enabled_rule_assigns_the_open_tasks_that_already_have_the_label() {
+    // 2026-11-13: owner:david-d was mapped to David, but the tasks that already had the label
+    // stayed unassigned until he removed the label and added it again.
+    let fixture = Fixture::new().await;
+    let david = fixture.person("dd@example.com", "David D", "member").await;
+    let raymond = fixture
+        .person("raymond@example.com", "Raymond", "member")
+        .await;
+    let owner_dd = fixture.label("owner:david-dusi").await;
+    let open = fixture.task(&[&owner_dd], &[]).await;
+    let done = fixture.task(&[&owner_dd], &[]).await;
+    let done_status: String = sqlx::query_scalar(
+        "SELECT id FROM task_statuses WHERE project_id = $1 AND category = 'completed' ORDER BY position LIMIT 1",
+    )
+    .bind(&fixture.project_id)
+    .fetch_one(fixture.database.pool())
+    .await
+    .unwrap();
+    fixture
+        .update(&done, json!({ "status_id": done_status }))
+        .await;
+    let deleted = fixture.task(&[&owner_dd], &[]).await;
+    let (status, _) = fixture
+        .call(
+            "DELETE",
+            &format!(
+                "/tasks/{}?expected_version={}",
+                deleted["id"].as_str().unwrap(),
+                deleted["version"]
+            ),
+            &fixture.owner_cookie,
+            None,
+        )
+        .await;
+    assert!(status.is_success(), "{status}");
+    let open_id = open["id"].as_str().unwrap();
+
+    // Owner names: map david-dusi to David. The open task gets him at once, once, with its history.
+    fixture.rule(&owner_dd, david.id).await;
+    assert_eq!(
+        assignees(&fixture.get_task(open_id).await),
+        ids(&[david.id])
+    );
+    let activity = fixture.activity(open_id).await;
+    assert_eq!(rule_events(&activity), 1);
+    assert_eq!(
+        rule_event(&activity)["metadata"]["label_name"],
+        "owner:david-dusi"
+    );
+    assert_eq!(fixture.assigned_notifications(david.id, open_id).await, 1);
+    // Done and deleted tasks keep their assignees.
+    let done = fixture.get_task(done["id"].as_str().unwrap()).await;
+    assert!(assignees(&done).is_empty());
+    let deleted_assignees: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM task_assignees WHERE task_id = $1")
+            .bind(deleted["id"].as_str().unwrap())
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap();
+    assert_eq!(deleted_assignees, 0);
+
+    // A rule made off assigns nobody; turning it on assigns the open tasks with its label.
+    let bug = fixture.label("bug").await;
+    let task = fixture.task(&[&bug], &[]).await;
+    let task_id = task["id"].as_str().unwrap();
+    let (status, rule) = fixture
+        .call(
+            "POST",
+            &format!("/projects/{}/label-rules", fixture.project_id),
+            &fixture.owner_cookie,
+            Some(json!({ "label_id": bug, "user_id": raymond.id.to_string(), "enabled": false })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{rule}");
+    assert!(assignees(&fixture.get_task(task_id).await).is_empty());
+    let (status, _) = fixture
+        .call(
+            "PATCH",
+            &format!(
+                "/projects/{}/label-rules/{}",
+                fixture.project_id,
+                rule["id"].as_str().unwrap()
+            ),
+            &fixture.owner_cookie,
+            Some(json!({ "enabled": true })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        assignees(&fixture.get_task(task_id).await),
+        ids(&[raymond.id])
+    );
+
+    // Rules only add: a person taken off by hand stays off until a rule changes again.
+    let task = fixture.get_task(task_id).await;
+    let task = fixture.update(&task, json!({ "assignee_ids": [] })).await;
+    assert!(assignees(&task).is_empty());
+
+    // The owner switch: owner:raymond labels already on open tasks assign Raymond when it is turned on.
+    let owner_raymond = fixture.label("owner:raymond").await;
+    let labeled = fixture.task(&[&owner_raymond], &[]).await;
+    let labeled_id = labeled["id"].as_str().unwrap();
+    assert!(assignees(&labeled).is_empty());
+    let (status, _) = fixture
+        .call(
+            "PUT",
+            &format!("/projects/{}/label-rule-settings", fixture.project_id),
+            &fixture.owner_cookie,
+            Some(json!({ "owner_labels": true })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        assignees(&fixture.get_task(labeled_id).await),
+        ids(&[raymond.id])
+    );
+    // Turning it on again changes nothing more.
+    fixture
+        .call(
+            "PUT",
+            &format!("/projects/{}/label-rule-settings", fixture.project_id),
+            &fixture.owner_cookie,
+            Some(json!({ "owner_labels": true })),
+        )
+        .await;
+    assert_eq!(rule_events(&fixture.activity(labeled_id).await), 1);
+}

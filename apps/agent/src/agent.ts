@@ -216,7 +216,7 @@ const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
 	memory_zoom: () => "Reading older memory",
 	media_shell: () => "Running a media command",
 	work_from_drive: () => "Copying a Drive file to the sandbox",
-	view_image: (args) => `Looking at ${[...((args.paths as unknown[]) ?? []), ...((args.node_ids as unknown[]) ?? [])].length || "an"} image(s)`,
+	view_image: (args) => `Looking at ${[...((args.paths as unknown[]) ?? []), ...((args.node_ids as unknown[]) ?? []), ...((args.chat_file_ids as unknown[]) ?? [])].length || "an"} image(s)`,
 	work_to_drive: (args) => `Saving “${String(args.name ?? args.path).replaceAll("_", " ")}” to Drive`,
 	// The steps are shown in italics, where `_` would start or end the emphasis.
 	use_integration: (args) => `Using ${String(args.tool).replace("__", " → ").replaceAll("_", " ")}`,
@@ -537,6 +537,11 @@ export class Agent {
 		if (provider?.sessionId) this.#payers.set(provider.sessionId, userId);
 	}
 
+	/** Whether the run of `input` can look at images: a media sandbox, and view_image among a custom agent's tools. */
+	#canView(input: PendingInput): boolean {
+		return this.#sandbox !== undefined && (!input.agent || input.agent.tools.includes("view_image"));
+	}
+
 	async #handle(input: PendingInput): Promise<"done" | "defer"> {
 		const conversation = await this.#conversationFor(input);
 		const state = (await this.#harness.snapshot(ThreadDoc, conversation.id, context)) as ThreadState;
@@ -549,7 +554,7 @@ export class Agent {
 					? routineText(input.routine, input.author_name, body)
 					: input.task
 						? taskText(input.task, input.author_name, body)
-						: withPageContext(withMessageFiles(body, input.files), input.page_context);
+						: withPageContext(withMessageFiles(body, input.files, this.#canView(input)), input.page_context);
 		const timeZone = people.find((person) => person.id === input.author_id)?.timezone;
 
 		// This input started the current run before a restart: finish what is missing.

@@ -22,8 +22,10 @@ reasons: `.ai/agent-design.md`.
 - It reads files that people send in chat messages (`read_chat_file`: the same file types and paging as `read_file`,
   through `GET …/chat/files/{file_id}/content`). It sees only files of sent messages that the driver can read (a file of
   a private channel or DM without the driver answers like an unknown file), and never files of deleted messages. It
-  cannot read images, and it cannot change, upload, download or delete chat files: agent sessions reach only the
-  content route. `read_messages` and `search_messages` show each message's files (name, id, kind), and the files of the
+  cannot change, upload or delete chat files. Agent sessions reach the content route, and the download route
+  `GET …/chat/files/{file_id}` only for images (Orbit answers `403 chat_forbidden` for every other type): with the
+  media sandbox, `view_image` (`chat_file_ids`) looks at images sent in chat, also from the Ask panel, which uses the
+  same DM. `read_messages` and `search_messages` show each message's files (name, id, kind), and the files of the
   message that starts or joins a run come with that message (`files` of the run input), so no call is needed to find them.
 - It uses **Drive** only through `POST …/agent-tools/drive` (agent sessions cannot reach the normal Drive routes), as
   the driver: `drive_list`, `drive_search`, `drive_info`, `drive_read` (the same file types, paging and untrusted
@@ -39,8 +41,8 @@ reasons: `.ai/agent-design.md`.
   touches the file. `read_page` shows these blocks as `[Drive file <node id> (block <id>)]`.
 - With the **media sandbox** (`AGENT_SANDBOX_SOCKET`, set up by `deploy/donna-sandbox/setup.sh`) it works with images,
   video and scanned PDFs: `media_shell` runs bash with ffmpeg, ffprobe, ImageMagick, ghostscript, poppler and exiftool
-  in the conversation's `/work`; `work_from_drive` copies a Drive file there; `view_image` sends images from `/work` or
-  Drive to the model as image blocks (at most 4 per call, at most 2048 px, converted in the sandbox); `work_to_drive` saves
+  in the conversation's `/work`; `work_from_drive` copies a Drive file there; `view_image` sends images from `/work`,
+  Drive or chat to the model as image blocks (at most 4 per call, at most 2048 px, converted in the sandbox); `work_to_drive` saves
   a file as a **new** Drive file. It chooses video frames itself (scene changes, chosen times, contact sheets) and renders
   scan pages to images. It cannot hear audio. Drive bytes move through `/agent-tools/drive` tools only the sidecar uses
   (`drive_fetch`: a 5-minute download URL of a file the driver can see; `drive_upload_begin` with `fail` or `rename`,

@@ -243,6 +243,7 @@ pub fn route_need(method: &Method, rest: &str) -> RouteNeed {
         ["chat", "threads", _] if get => RouteNeed::Any(&["read_messages"]),
         ["chat", "search"] if get => RouteNeed::Any(&["search_messages"]),
         ["chat", "files", _, "content"] if get => RouteNeed::Any(&["read_chat_file"]),
+        ["chat", "files", _] if get => RouteNeed::Any(&["view_image"]),
         ["agent-memory", ..] => RouteNeed::Any(MEMORY_TOOLS),
         ["agent-tools"] if get => RouteNeed::Any(&["use_integration"]),
         ["agent-tools", "call"] if method == Method::POST => RouteNeed::Any(&["use_integration"]),
@@ -1991,6 +1992,17 @@ mod tests {
             &writer,
             &Method::POST,
             "pages/abc/drive-files"
+        ));
+        // Chat files: reading content and downloading an image each need their own tool.
+        let reader = tools(&["read_chat_file"]);
+        let viewer = tools(&["view_image"]);
+        assert!(tools_allow(&reader, &Method::GET, "chat/files/abc/content"));
+        assert!(!tools_allow(&reader, &Method::GET, "chat/files/abc"));
+        assert!(tools_allow(&viewer, &Method::GET, "chat/files/abc"));
+        assert!(!tools_allow(
+            &viewer,
+            &Method::GET,
+            "chat/files/abc/content"
         ));
         let tasks = tools(&["get_task", "comment_on_task"]);
         assert!(tools_allow(&tasks, &Method::GET, "tasks/abc"));
