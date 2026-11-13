@@ -79,6 +79,14 @@ async fn a_daily_task_repeats_once_at_the_same_local_time_across_a_clock_change(
     assert_eq!(next.1, Some(millis("2027-03-14T21:00:00Z")));
     assert_eq!(next.2, tasks[0].2, "the occurrences share the rule");
     assert_eq!(next.3, "unstarted");
+    // The creator followed the first occurrence and follows the next one too.
+    let followers: Vec<String> =
+        sqlx::query_scalar("SELECT user_id FROM task_followers WHERE task_id = $1")
+            .bind(&next.0)
+            .fetch_all(fixture.database.pool())
+            .await
+            .unwrap();
+    assert_eq!(followers, [owner.id.to_string()]);
 
     // Reopened and completed again, the first occurrence makes no second successor.
     let open = fixture.status("unstarted").await;

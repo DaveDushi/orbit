@@ -397,6 +397,16 @@ pub(super) async fn spawn_next_in_tx(
             .bind(closed_id.to_string())
             .execute(&mut **tx)
             .await?;
+        // The series keeps its followers; who no longer sees the project is left out when read.
+        sqlx::query(
+            "INSERT INTO task_followers (task_id, user_id, created_at) \
+             SELECT $1, user_id, $2 FROM task_followers WHERE task_id = $3 ON CONFLICT DO NOTHING",
+        )
+        .bind(next_id.to_string())
+        .bind(actor.now.as_millis())
+        .bind(closed_id.to_string())
+        .execute(&mut **tx)
+        .await?;
         let mut metadata = json!({ "recurrence_of": closed_id });
         let user = match actor.service_account {
             Some((id, name)) => {
