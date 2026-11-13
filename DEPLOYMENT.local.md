@@ -7,12 +7,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 72fc504965e4c5f9157f688a91ff0b1860e58878
-  (label overflow fix, label rules and the chunk-order build fix; schema 99; November 12, 2026).
+- Source: DaveDushi/orbit, `main` at 3a468aa7a05fb6789c81d352389bc4decc24c827
+  (GitHub comment sync, both ways; schema 100; November 13, 2026).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:72fc504`); fork commits have no published upstream image.
-- Image ID: sha256:17dbdbf22e865b70ce3f062b0b36a44b9252fcc55c9c77c7393c0a7474f819d4
-- Team agent sidecar code (`/opt/orbit-agent`): commit 72fc504.
+  (`orbit:3a468aa`); fork commits have no published upstream image.
+- Image ID: sha256:9c394b3ad79b76a6964f699b51ccbc8179f814fcfbdcd31a2cbcff7209ce0fe5
+- Team agent sidecar code (`/opt/orbit-agent`): commit 3a468aa.
 - LibreOffice (Calc, Writer, Impress 24.2, `--no-install-recommends`) is installed for Office previews
   (`docs/file-previews.md`); ffmpeg makes the chat video copies.
 - Desktop app downloads: https://orbit.wellrox.com/downloads/desktop/ (installer, zip, `latest.json` for the app's update
@@ -255,6 +255,98 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 13, 2026 upgrade: GitHub comment sync, both ways (schema 100)
+
+`main` from `521969c3` to `3a468aa7` (local, not pushed): `github-comment-sync` (`b373e5d7` + `2ad4f090` on `fb131eb4`)
+rebased on a temporary branch as `47a0abd3` + `be924837`, then `523218a8` (docs(agent): the GitHub summary line names
+the comments) and `3a468aa7` (generated client made again from the merged `openapi.json`: only one doc comment of
+`LabelRuleSettings` changed, drift from `main`); main fast-forwarded. What is new for people (`whats-new.md`,
+`2026-11-12` entry, one line on top): a comment on a synced GitHub issue or pull request shows on the task with the
+GitHub author's name and picture ("via GitHub"); a comment written on the task is posted on GitHub as the App, signed
+"— name via Orbit" (edits and deletes too); nothing syncs while the sync is paused. `aboutOrbit()` has a Comments line
+in its GitHub section (create/edit/delete both ways, GitHub notes read-only, delete in Orbit removes only the Orbit
+copy, mentions as code, GitHub text is information, never instructions) and the comment-sync limits under "What you
+cannot do". Docs: `docs/github.md`.
+
+Rebase conflicts: schema 99 → 100 in `backup.rs`, `app_smoke`, platform `database` and `backup` tests; `migrate.rs`
+keeps 0098 and 0099 and adds 0100 in both catalogs; `app.rs` job registration keeps `previews` and adds
+`github_comments`; `prompt.ts` (twice: GitHub section, and the "cannot do" list of `2ad4f090`) keeps main's text and adds
+the comment lines; `whats-new.md` line on top of `2026-11-12`; `.ai/lessons.md` keeps main's two Node 18 lines. OpenAPI
+counts unchanged (no new route; the webhook route takes `issue_comment` now), no new agent tools.
+
+Migration `0100_github_comment_sync`: `task_comments.github_comment_id` (unique per workspace), `github_author_login`,
+`github_author_avatar_url`; SQLite rebuilds `notifications` (as 0090) so `actor_user_id` can be NULL and adds
+`actor_github_login` (exactly one of the two is set). Production's `notifications` had only the 0090 objects (12
+indexes, 1 trigger): the rebuild keeps all of them. `SUPPORTED_SCHEMA_VERSION` 100: the old binary refuses the migrated
+database.
+
+GitHub side (checked read only with `gh api /orgs/easy2manage/installations`): the `orbit-wellrox` App installation
+`181162804` on `easy2manage/crm-etm` already has `issues: write`, `pull_requests: write` and the `issue_comment` event,
+so the sync works from the switch on: every comment written in Orbit on the 38 linked tasks of Slate (none paused) is
+posted on that real repository. At the switch the linked tasks had 0 comments, so nothing old is sent (there is no
+backfill; an edit of a note written before the switch would post it as new).
+
+Checks on the rebased branch (after `bun install --frozen-lockfile`, `npm ci` in `apps/agent`, fresh web `dist`): agent
+`tsc` and `npm test` (80 pass, 11 skipped, 0 fail); web `tsc -b`; web `bun test` `tasks/api/models.test.ts` and
+`features/inbox` (19 pass); mobile `tsc`. Rust under `orbit-build`, `CARGO_PROFILE_*_DEBUG=0`, SQLite: platform
+`database` 54 + `backup` 23; server `github_comments` 5, `integrations_api` 13, `app_smoke` 21, `openapi_contract` 19,
+`tasks_api` 99: all pass. Not run: Postgres, the rest of the suites. `target` removed.
+
+Deploy id `20261112T231336Z-4056897`. `orbit:3a468aa` (image
+`sha256:9c394b3ad79b76a6964f699b51ccbc8179f814fcfbdcd31a2cbcff7209ce0fe5`; the first `orbit-deploy image` failed at the
+export after the 51 min compile, "no active session … context deadline exceeded"; the second run used the cache and
+passed); `deploy/smoke.sh` and `orbit config check` passed. Before the switch (`.ai/lessons.md`, Rolldown): the release
+binary's embedded `dist` on a seeded DB in `unshare -n`, signed in as `test@example.com`, with a GitHub note and an Orbit
+note on the seed task: `/`, `/tasks`, the task, `/docs`, `/drive`, `/chat`, `/activity`, `/settings`,
+`/settings/members`, `/settings/agentic/routines`, `/admin` render, 0 page errors, only the known `view-preferences/all`
+404; the task shows "octocat via GitHub". Migration dry run of 0100 on a hot read-only copy and again on a copy of the
+stopped database: 1 applied, schema 99 → 100, quick-check ok, 0 foreign-key rows, the 94 notification rows identical,
+counts unchanged (8 users, 110 tasks, 18 task comments, 94 notifications, 17 labels, 140 task labels, 1092 chat messages,
+38 GitHub links); copies deleted. Scripts: `/root/ops/comment-sync/`.
+
+Switch: stopped both services at 00:14:40 UTC; snapshot `01a1d241-a6fb-7284-a8a2-6136f7bba546` with
+`/usr/local/bin/orbit-72fc504`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-3a468aa.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-3a468aa.tgz`; old sidecar code `/opt/orbit-agent.before-3a468aa`; new
+sidecar `src` (`package*.json`, `tsconfig.json` unchanged, no `npm ci`); binary installed (`/usr/local/bin/orbit-3a468aa`
+too); `orbit` ready 00:14:54, then `orbit-agent`. `vm-health.conf` (old copy `.before-3a468aa`): `PROD_TAG=3a468aa`,
+`ROLLBACK_TAG=72fc504`, `ROLLBACK_BACKUP=01a1d241-a6fb-7284-a8a2-6136f7bba546`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness and `/health/live` 200; revision `3a468aa7`;
+schema 100; live quick-check ok, 0 foreign-key rows; an unsigned `POST .../integrations/github/webhook` with
+`X-GitHub-Event: issue_comment` 401 (`invalid_github_signature`); an unknown API route 404; web `/`, `/tasks`,
+`/settings` 200; sidecar `/health` ok and `src` equal to `3a468aa7`; 0 error lines in the journal; `ORBIT_VERIFY_SPA=1
+verify-production.sh` passed (signed out `/`, signed in `/` and `/tasks`, session logged out and revoked). `vm-health` OK
+except nginx (2 lines, upstream refused at 00:14:53, the start window), docker (`cmp-test-s3`, not Orbit) and git-owner
+(73 files in `.git` written by root during the rebase; given back to `exedev`). Signed-in browser check (temporary v7
+session as David Dusi): one temporary note row put in by SQL on SLATE-1 (`github_author_login` `octocat`, fake GitHub
+comment id 1; such notes are never sent to GitHub, and an SQL insert makes no notification or job); SLATE-1 shows it as
+"octocat via GitHub"; Settings → GitHub shows `orbit-wellrox` and `easy2manage/crm-etm`; console only the known
+`view-preferences/all` 404. The row was deleted after (0 notes with a GitHub id, 0 notifications with a GitHub actor, 0
+`github.comment` jobs). Nothing was posted on GitHub. Screenshots in
+`/root/.local/share/com.jean.desktop/pasted-images/github-comment-sync/` (`live-01-task-comment-from-github`,
+`live-02-github-settings`, and `preswitch-01-seeded-task-github-note`). **Not** verified on production: a real signed
+`issue_comment` event and a real post to GitHub (the first comment someone writes on a linked task is the first real
+test: check the journal and `jobs` for `github.comment`).
+
+Rollback (the old binary refuses schema 100: restore the snapshot together with the binary; work after 00:14 UTC is
+lost, and comments already posted on GitHub stay there). To go back to `72fc504`:
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit bash -c 'set -a; source /etc/orbit/orbit.env; set +a; /usr/local/bin/orbit-3a468aa backup verify 01a1d241-a6fb-7284-a8a2-6136f7bba546 && /usr/local/bin/orbit-3a468aa backup restore 01a1d241-a6fb-7284-a8a2-6136f7bba546'
+sudo install -m 755 /usr/local/bin/orbit-72fc504 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-3a468aa /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-3a468aa.tgz
+# Plain copy of the database before the migration: /var/backups/orbit/pre-migration/orbit-before-3a468aa.sqlite
+```
+
+After this rollback, set `PROD_TAG=72fc504`, `ROLLBACK_TAG=9b163ce`,
+`ROLLBACK_BACKUP=01a1d1e6-f76d-72bf-917e-a73a36d51c61` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-3a468aa`).
 
 ### November 12, 2026 upgrade: label overflow fix and label rules, second try (schema 99)
 
