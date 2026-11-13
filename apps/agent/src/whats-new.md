@@ -9,8 +9,8 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 ## 2026-11-13
 - Orbit for iPhone (beta, by TestFlight invitation): Home, Tasks, Docs, Chat, Activity, phone notifications and an "Ask Donna…" bar.
 - Tasks: make a project private (Project settings → Access), set Repeat under Due date, drag projects in the sidebar into your own order, and search the trash (owners and admins can delete forever). Type # anywhere to link a task. Images and files in a new task's description are now saved with it.
-- Excel and csv files in chat or Drive open as a read-only table. The bell beside the workspace name shows your newest notifications, pickers have a search box, and Cmd/Ctrl+K shows results in sections.
-- MCP tools can now handle comments, assignees, labels and projects. Chat webhook URLs start with https://orbit-hooks.easytomanage.com (no login). Sessions not used for 30 days are signed out.
+- Excel and csv files in chat or Drive open as a read-only table. The bell beside the workspace name shows your newest notifications, pickers have a search box, and Cmd/Ctrl+K shows results in sections. MCP tools can handle comments, assignees, labels and projects. Sessions not used for 30 days are signed out.
+- Chat: Unreads also shows threads with new replies, followed or not. A webhook can be a two-way bot (Edit channel → Integrations → Interactivity → Send messages as events) that gets messages and answers in the thread; it replaces Settings → Agentic → Bots. Webhook URLs start with https://orbit-hooks.easytomanage.com (no login).
 
 ## 2026-11-12
 - GitHub comments now sync both ways: a comment on a synced GitHub issue or pull request shows on the Orbit task with the GitHub author's name and picture, and a comment you write on the task is posted on GitHub (edits and deletes too). While the sync is paused, comments stay where they are.
@@ -28,7 +28,6 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 - Routines can run a saved script: Donna can write a short script that uses her tools, save it ("save this as a script"), and run it on each run of a routine. Its changes need your yes to that exact script; after any change of the script, the routine makes no changes until you approve the new version. See, edit and delete scripts in Settings → Agentic → Routines.
 - Test run: the "Test run" button of a routine (or "test my routine" to Donna) runs it now, as you. The result comes only in your DM with Donna, marked "Test run", and nothing is changed or posted: it lists what it would do. Each routine shows its last runs with the result, errors and the tool calls of its script.
 - Donna has her own card in Settings → Agentic → Agents, first and marked Default: owners and admins change her instructions and model for the workspace there, and installation admins her name and avatar (the default model is at the bottom of the Agents tab). Each agent card, Donna's too, ticks the connected services (for example TikTok or Shopify) that the agent may use; a new service is on for Donna and off for the other agents until ticked.
-- Bots that answer: owners and admins connect a bot from their own service in Settings → Agentic → Bots: a name, avatar, https URL and the channels where it works. @mention it there or send it a direct message, and its answer comes within 30 seconds as a message from the bot. If it does not answer in time, a short note says so.
 - Chat search has new filters: Mentions me, Has link and Threads only (replies in threads), and you can sort by Newest or Oldest. Filters combine with each other and with This conversation, From and Has file. The matched words are marked in the results.
 - Recent searches: click the empty search field in a conversation to see your last 10 searches and run one again; Clear removes them. They are saved in your browser only (web and desktop app).
 
@@ -58,9 +57,3 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 ## 2026-11-07
 - Donna can work in Drive: find, read, move and rename files, create folders and save text files. She moves items to the trash or makes a public link only after you say yes.
 - The wellrox-cloud files are now in Drive.
-
-## 2026-11-06
-- The Drive folder tree shows in the app sidebar.
-- API tokens can cover all projects, also future ones, and give access to the public REST API and MCP.
-- Chat incoming webhooks: other tools can post to a channel, also with Slack Block Kit and buttons.
-- Agentic moved to workspace settings.
