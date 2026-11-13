@@ -6,17 +6,11 @@ build: "## YYYY-MM-DD" (the deploy date), then 1-4 short "- " lines about what p
 members, not developers. Keep the 8 newest entries; the prompt shows the 5 newest.
 -->
 
-## 2026-11-14
-- Private projects: in New project or Project settings → Access, make a project private. Only its members (and owners and admins) see it and its tasks, also in search, notifications and Donna's answers.
-- Recurring tasks: open a task and use Repeat, under Due date (daily, weekly on chosen days, monthly or yearly). When you complete it, the next one is created with the new due date.
-- Drag projects in the Tasks sidebar to put them in your own order.
-- The tasks trash has search and previews, and owners and admins can delete items forever or empty the trash. The Docs trash has search and page previews too.
-
 ## 2026-11-13
-- Orbit for iPhone (beta, by TestFlight invitation): the pink W app with Home, Tasks, Docs, Chat, Activity and Settings. Allow notifications after sign-in to get messages, mentions and task updates on the phone (signing out stops them). With your ChatGPT connected, the "Ask Donna…" bar above the bottom bar opens your conversation with Donna, and she knows the task or page you have open.
-- Link a task anywhere: type # in a chat message, a Docs page, a task description or a comment, then a task name or ID (like ENG-12). Hover a task ID or a mention to see a preview. Cmd/Ctrl+K shows results in sections, and a task ID finds that task first.
-- Excel and csv files (xlsx, xls, csv, tsv) in chat or Drive now open as a read-only table, with a tab for each sheet. The bell beside the workspace name opens your 10 newest notifications; the project, assignee and GitHub repository pickers have a search box.
-- AI tools connected with MCP can now read and write task comments, set assignees and labels, and create projects. Sessions not used for 30 days are signed out. Chat webhooks now work from outside tools: a webhook URL starts with https://orbit-hooks.easytomanage.com, which needs no login (for an older webhook, change only the start of its URL).
+- Orbit for iPhone (beta, by TestFlight invitation): Home, Tasks, Docs, Chat, Activity, phone notifications and an "Ask Donna…" bar.
+- Tasks: make a project private (Project settings → Access), set Repeat under Due date, drag projects in the sidebar into your own order, and search the trash (owners and admins can delete forever). Type # anywhere to link a task.
+- Excel and csv files in chat or Drive open as a read-only table. The bell beside the workspace name shows your newest notifications, pickers have a search box, and Cmd/Ctrl+K shows results in sections.
+- MCP tools can now handle comments, assignees, labels and projects. Chat webhook URLs start with https://orbit-hooks.easytomanage.com (no login). Sessions not used for 30 days are signed out.
 
 ## 2026-11-12
 - GitHub comments now sync both ways: a comment on a synced GitHub issue or pull request shows on the Orbit task with the GitHub author's name and picture, and a comment you write on the task is posted on GitHub (edits and deletes too). While the sync is paused, comments stay where they are.
