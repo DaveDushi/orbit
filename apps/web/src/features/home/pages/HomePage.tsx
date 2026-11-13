@@ -1,39 +1,21 @@
-import type { ComponentProps } from 'react'
+import { useState, type DragEvent, type ReactNode } from 'react'
 import { Link } from 'react-router'
-import { DirectInbox as Inbox, DocumentText as FileText } from 'reicon-react'
-import { relativeTime } from '@/lib/format'
-import { cn } from 'cn'
-import { buttonVariants } from '@/components/ui/button'
+import { toast } from 'sonner'
+import { Add, ArrowDown2, ArrowUp2, Edit2, Menu, Trash } from 'reicon-react'
+import { Button, buttonVariants } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Pane } from '@/components/common/Pane'
-import { Emoji } from '@/components/common/Emoji'
-import { TaskStatusIcon } from '@/features/tasks/components/TaskStatusIcon'
+import { Tip } from '@/components/common/Tip'
 import { useCurrentUser } from '@/features/auth/api'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
-import { useMembers } from '@/features/workspaces/api'
-import { useAllStatuses, useProjects } from '@/features/tasks/api/projects'
-import { taskFromRecord, type Task } from '@/features/tasks/api/models'
+import { useIsGuest } from '@/features/workspaces/permissions'
+import { useNotifications } from '@/features/inbox/api'
 import { useTasks } from '@/features/tasks/api/tasks'
-import { notificationActor, notificationCopy, notificationTarget, useNotifications } from '@/features/inbox/api'
-import { usePageTree } from '@/features/docs/api/pages'
-import { taskPath } from '@/lib/taskLinks'
-import { docsHidden } from '@/app/shell/productNavigation'
-
-/** Most rows a card shows: Home is a short brief, the full lists live in Tasks, Inbox and Docs. */
-const CARD_LIMIT = 7
-
-/** One linked row inside a home card. */
-function CardRow({ className, ...props }: ComponentProps<typeof Link>) {
-  return <Link data-slot="card-row" className={cn('flex min-h-10 w-full min-w-0 cursor-pointer items-center gap-2.5 border-b px-3 py-1.5 text-left transition-colors last:border-b-0 hover:bg-foreground/[0.02]', className)} {...props} />
-}
-
-function CardEmpty({ children }: { children: React.ReactNode }) {
-  return <div data-slot="card-empty" className="p-4 text-[13px] text-muted-foreground/70">{children}</div>
-}
-
-/** Quiet trailing detail of a row (identifier, time). */
-function RowMeta({ className, children }: { className?: string; children: React.ReactNode }) {
-  return <span data-slot="row-meta" className={cn('shrink-0 text-xs text-muted-foreground/70', className)}>{children}</span>
-}
+import { chatEnabled, docsHidden } from '@/app/shell/productNavigation'
+import { useHomeLayout, useSaveHomeLayout } from '../api'
+import { HomeCardBody } from '../components/HomeCards'
+import { addableCards, addCard, HOME_CARDS, CARD_LIMITS, cardLimit, dropCard, removeCard, setCardLimit, type HomeCardEntry } from '../layout'
 
 function greetingFor(hour: number): string {
   if (hour < 12) return 'Good morning'
@@ -41,133 +23,215 @@ function greetingFor(hour: number): string {
   return 'Good evening'
 }
 
-/** `Overdue`, `Today`, `Tomorrow` or the weekday and date. */
-function dueLabel(dueAt: string, now: Date): string {
-  const day = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
-  const days = Math.round((day(new Date(dueAt)) - day(now)) / 86_400_000)
-  if (days < 0) return 'Overdue'
-  if (days === 0) return 'Today'
-  if (days === 1) return 'Tomorrow'
-  return new Date(dueAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+/** A card this build can show: known to the web, and its product is not turned off. */
+function shown(id: string) {
+  return id in HOME_CARDS && !(docsHidden && id === 'recent_docs') && !(!chatEnabled && id === 'unread_chat')
 }
 
-function TaskRow({ task, status, now }: { task: Task; status: ComponentProps<typeof TaskStatusIcon>['status']; now: Date }) {
+/** Tasks due this week and unread notifications, under the greeting (members only: a guest has neither). */
+function MemberSummary({ workspaceId }: { workspaceId: string }) {
+  const thisWeek = useTasks(workspaceId, { view: 'my_week', sort: 'due_date', order: 'asc', limit: 7 })
+  const unread = useNotifications(workspaceId, true).data ?? []
+  // a full first page with a next page means there are more tasks than it holds
+  const page = thisWeek.data?.pages[0]
+  const weekCount = `${page?.items.length ?? 0}${page?.next_cursor ? '+' : ''}`
   return (
-    <CardRow to={taskPath(task)}>
-      <TaskStatusIcon status={status} />
-      <RowMeta>{task.identifier}</RowMeta>
-      <span className="flex-1 truncate text-[13px]">{task.title}</span>
-      {task.dueAt ? <RowMeta className={cn(dueLabel(task.dueAt, now) === 'Overdue' && 'text-destructive')}>{dueLabel(task.dueAt, now)}</RowMeta> : null}
-    </CardRow>
+    <p className="text-[13px] text-muted-foreground [&_a]:text-muted-foreground [&_a]:no-underline [&_a:hover]:text-foreground [&_a:hover]:underline">
+      <Link to="/tasks?view=my_week">
+        {weekCount} {weekCount === '1' ? 'task' : 'tasks'} due this week
+      </Link>
+      {' · '}
+      <Link to="/inbox">
+        {unread.length} unread {unread.length === 1 ? 'notification' : 'notifications'}
+      </Link>
+    </p>
   )
 }
 
-function HomeCard({ title, viewAllTo, children }: { title: string; viewAllTo: string; children: React.ReactNode }) {
+interface CardControls {
+  index: number
+  count: number
+  limit: number
+  onMove: (step: -1 | 1) => void
+  onLimit: (limit: number) => void
+  onRemove: () => void
+}
+
+function HomeCard({ id, title, viewAllTo, controls, children }: { id: string; title: string; viewAllTo?: string; controls: CardControls | null; children: ReactNode }) {
   return (
-    <section className="flex w-full min-w-0 flex-col rounded-lg bg-card shadow-[0_0_0_1px_var(--border)]">
-      <header className="flex min-h-12 items-center gap-2 py-2 pr-2 pl-4 text-sm font-medium text-muted-foreground">
-        {title}
-        <span className="flex-1" />
-        <Link to={viewAllTo} className={buttonVariants({ variant: 'ghost' })}>
-          View all
-        </Link>
+    <>
+      <header className="flex min-h-12 items-center gap-1 py-2 pr-2 pl-4 text-sm font-medium text-muted-foreground">
+        {controls ? <Menu aria-hidden="true" className="-ml-1 mr-1 size-4 shrink-0 cursor-grab text-muted-foreground/70" /> : null}
+        <span className="min-w-0 flex-1 truncate">{title}</span>
+        {controls ? (
+          <>
+            {id === 'ask_donna' ? null : (
+              <Select items={CARD_LIMITS.map((value) => ({ value: String(value), label: `${value} rows` }))} value={String(controls.limit)} onValueChange={(value) => controls.onLimit(Number(value))}>
+                <SelectTrigger size="sm" aria-label={`Rows in ${title}`} className="w-auto">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CARD_LIMITS.map((value) => <SelectItem key={value} value={String(value)}>{value} rows</SelectItem>)}
+                </SelectContent>
+              </Select>
+            )}
+            <Tip label="Move up">
+              <Button variant="ghost" size="icon-sm" aria-label={`Move ${title} up`} disabled={controls.index === 0} onClick={() => controls.onMove(-1)}>
+                <ArrowUp2 className="size-4" />
+              </Button>
+            </Tip>
+            <Tip label="Move down">
+              <Button variant="ghost" size="icon-sm" aria-label={`Move ${title} down`} disabled={controls.index === controls.count - 1} onClick={() => controls.onMove(1)}>
+                <ArrowDown2 className="size-4" />
+              </Button>
+            </Tip>
+            <Tip label="Remove">
+              <Button variant="ghost" size="icon-sm" aria-label={`Remove ${title}`} onClick={controls.onRemove}>
+                <Trash className="size-4" />
+              </Button>
+            </Tip>
+          </>
+        ) : viewAllTo ? (
+          <Link to={viewAllTo} className={buttonVariants({ variant: 'ghost' })}>
+            View all
+          </Link>
+        ) : null}
       </header>
-      <div className="relative min-w-0 overflow-hidden rounded-lg bg-background shadow-[0_0_0_1px_var(--muted)]">{children}</div>
-    </section>
+      {/* while customizing, the rows are a preview: links and fields do not take clicks */}
+      <div inert={controls !== null} className="relative min-w-0 overflow-hidden rounded-lg bg-background shadow-[0_0_0_1px_var(--muted)]">
+        {children}
+      </div>
+    </>
   )
 }
 
 export function HomePage() {
   const { workspace } = useWorkspace()
   const me = useCurrentUser()
-  const projects = useProjects(workspace.id)
-  const statuses = useAllStatuses(workspace.id, projects.data ?? [])
-  const members = useMembers(workspace.id)
-  const pageTree = usePageTree(workspace.id, !docsHidden)
-  const notifications = useNotifications(workspace.id, true)
-  const myId = me.data?.id
-  // each card shows the first rows of its Tasks page; the overdue page has no assignee, so the card adds it
-  const overdue = useTasks(workspace.id, { view: 'overdue', assignee_id: myId, sort: 'due_date', order: 'asc', limit: CARD_LIMIT })
-  const thisWeek = useTasks(workspace.id, { view: 'my_week', sort: 'due_date', order: 'asc', limit: CARD_LIMIT })
+  const guest = useIsGuest()
+  const layout = useHomeLayout(workspace.id)
+  const save = useSaveHomeLayout(workspace.id)
+  const [customizing, setCustomizing] = useState(false)
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [overId, setOverId] = useState<string | null>(null)
   const firstName = me.data?.display_name.split(' ')[0] ?? 'there'
   const now = new Date()
 
-  const toTasks = (query: typeof overdue): Task[] => query.data?.pages[0]?.items.map((record) => taskFromRecord(record, projects.data?.find((project) => project.id === record.project_id))) ?? []
-  // the overdue query runs once before the user loads, without the assignee
-  const overdueTasks = toTasks(overdue).filter((task) => task.assigneeIds.includes(myId ?? ''))
-  const weekTasks = toTasks(thisWeek)
-  // a full card with a next page means there are more tasks than the card shows
-  const weekCount = `${weekTasks.length}${thisWeek.data?.pages[0]?.next_cursor ? '+' : ''}`
-  const unread = notifications.data ?? []
-  const recentDocs = [...(pageTree.data ?? [])].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, CARD_LIMIT)
+  // edits change the whole saved list; cards this build hides keep their place in it
+  const saved = layout.data?.cards ?? []
+  const cards = saved.filter((card) => shown(card.id))
+  const addable = addableCards(saved, (layout.data?.available ?? []).filter(shown))
+  const change = (next: HomeCardEntry[]) => save.mutate(next, { onError: () => toast.error('Could not save your Home. Try again.') })
+
+  const dragProps = (id: string) =>
+    customizing
+      ? {
+          draggable: true,
+          onDragStart: (event: DragEvent) => {
+            event.dataTransfer.effectAllowed = 'move'
+            event.dataTransfer.setData('text/plain', id)
+            setDragId(id)
+          },
+          onDragEnd: () => {
+            setDragId(null)
+            setOverId(null)
+          },
+          onDragOver: (event: DragEvent) => {
+            if (dragId === null) return
+            event.preventDefault()
+            event.dataTransfer.dropEffect = 'move'
+            setOverId(id)
+          },
+          onDrop: (event: DragEvent) => {
+            event.preventDefault()
+            if (dragId !== null && dragId !== id) change(dropCard(saved, dragId, id))
+            setDragId(null)
+            setOverId(null)
+          },
+        }
+      : {}
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
       <Pane>
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto flex max-w-[960px] flex-col gap-6 px-6 pt-12 pb-8 max-[599px]:px-4 max-[599px]:pt-8 max-[599px]:pb-6">
-            <div>
-              <h1 className="mb-1.5">
-                {greetingFor(now.getHours())}, {firstName}
-              </h1>
-              <p className="text-[13px] text-muted-foreground [&_a]:text-muted-foreground [&_a]:no-underline [&_a:hover]:text-foreground [&_a:hover]:underline">
-                <Link to="/tasks?view=my_week">
-                  {weekCount} {weekCount === '1' ? 'task' : 'tasks'} due this week
-                </Link>
-                {' · '}
-                <Link to="/inbox">
-                  {unread.length} unread {unread.length === 1 ? 'notification' : 'notifications'}
-                </Link>
-              </p>
+            <div className="flex flex-wrap items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <h1 className="mb-1.5">
+                  {greetingFor(now.getHours())}, {firstName}
+                </h1>
+                {guest ? null : <MemberSummary workspaceId={workspace.id} />}
+              </div>
+              {layout.data ? (
+                <div className="flex items-center gap-2">
+                  {customizing ? (
+                    <>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger render={<Button variant="outline" disabled={addable.length === 0} />}>
+                          <Add className="size-4" />
+                          Add card
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-auto min-w-48">
+                          {addable.map((id) => (
+                            <DropdownMenuItem key={id} onClick={() => change(addCard(saved, id))}>
+                              {HOME_CARDS[id].title}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                      <Button onClick={() => setCustomizing(false)}>Done</Button>
+                    </>
+                  ) : (
+                    <Button variant="ghost" onClick={() => setCustomizing(true)}>
+                      <Edit2 className="size-4" />
+                      Customize
+                    </Button>
+                  )}
+                </div>
+              ) : null}
             </div>
+            {layout.isError ? <p className="text-[13px] text-muted-foreground">Home could not load. Reload the page to try again.</p> : null}
+            {layout.data && cards.length === 0 ? (
+              <div className="rounded-lg border border-dashed p-8 text-center text-[13px] text-muted-foreground">
+                {customizing ? 'Add a card to start.' : 'Your Home has no cards. Choose Customize to add some.'}
+              </div>
+            ) : null}
             <div className="grid grid-cols-1 items-start gap-4 min-[900px]:grid-cols-2">
-              {overdueTasks.length === 0 ? null : (
-                <HomeCard title="Overdue" viewAllTo="/tasks?view=overdue">
-                  {overdueTasks.map((task) => (
-                    <TaskRow key={task.id} task={task} status={statuses.data.find((s) => s.id === task.statusId)} now={now} />
-                  ))}
-                </HomeCard>
-              )}
-
-              <HomeCard title="Due this week" viewAllTo="/tasks?view=my_week">
-                {weekTasks.length === 0 ? (
-                  <CardEmpty>Nothing due this week.</CardEmpty>
-                ) : (
-                  weekTasks.map((task) => <TaskRow key={task.id} task={task} status={statuses.data.find((s) => s.id === task.statusId)} now={now} />)
-                )}
-              </HomeCard>
-
-              <HomeCard title="Unread in Inbox" viewAllTo="/inbox">
-                {unread.length === 0 ? (
-                  <CardEmpty>You are all caught up.</CardEmpty>
-                ) : (
-                  unread.slice(0, CARD_LIMIT).map((notification) => {
-                    const page = pageTree.data?.find((item) => item.id === notification.page_id)
-                    const actor = notificationActor(notification, members.data)
-                    return (
-                      <CardRow key={notification.id} to={notificationTarget(notification) ?? '/inbox'}>
-                        <Inbox className="size-4 shrink-0 text-muted-foreground/70" />
-                        <span className="flex-1 truncate text-[13px]">{notificationCopy(notification, page?.title, actor?.name).title}</span>
-                        <RowMeta>{relativeTime(notification.created_at)}</RowMeta>
-                      </CardRow>
-                    )
-                  })
-                )}
-              </HomeCard>
-
-              {docsHidden ? null : <HomeCard title="Recently updated docs" viewAllTo="/docs">
-                {recentDocs.length === 0 ? (
-                  <CardEmpty>No docs yet.</CardEmpty>
-                ) : (
-                  recentDocs.map((page) => (
-                    <CardRow key={page.id} to={`/docs/${page.id}`}>
-                      {page.icon ? <Emoji value={page.icon} /> : <FileText className="size-4 shrink-0 text-muted-foreground/70" />}
-                      <span className="flex-1 truncate text-[13px]">{page.title.trim() || 'Untitled'}</span>
-                      <RowMeta>{relativeTime(page.updated_at)}</RowMeta>
-                    </CardRow>
-                  ))
-                )}
-              </HomeCard>}
+              {cards.map((card, index) => {
+                const meta = HOME_CARDS[card.id]
+                const move = (step: -1 | 1) => change(dropCard(saved, card.id, cards[index + step].id))
+                return (
+                  <section
+                    key={card.id}
+                    aria-label={meta.title}
+                    data-dragging={dragId === card.id || undefined}
+                    data-drop={(overId === card.id && dragId !== card.id) || undefined}
+                    className="flex w-full min-w-0 flex-col rounded-lg bg-card shadow-[0_0_0_1px_var(--border)] transition-opacity data-dragging:opacity-40 data-drop:shadow-[0_0_0_2px_var(--primary)]"
+                    {...dragProps(card.id)}
+                  >
+                    <HomeCard
+                      id={card.id}
+                      title={meta.title}
+                      viewAllTo={meta.viewAllTo}
+                      controls={
+                        customizing
+                          ? {
+                              index,
+                              count: cards.length,
+                              limit: cardLimit(card),
+                              onMove: move,
+                              onLimit: (limit) => change(setCardLimit(saved, card.id, limit)),
+                              onRemove: () => change(removeCard(saved, card.id)),
+                            }
+                          : null
+                      }
+                    >
+                      <HomeCardBody id={card.id} limit={cardLimit(card)} />
+                    </HomeCard>
+                  </section>
+                )
+              })}
             </div>
           </div>
         </div>
