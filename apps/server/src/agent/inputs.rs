@@ -411,6 +411,8 @@ pub struct PendingInput {
     pub page_context: Option<PageContext>,
     /// A scheduled run of the author's routine: `body` is its saved instruction.
     pub routine: Option<RoutineRun>,
+    /// A run on a task (`task_runs`), driven by the author; `body` is the comment that started it.
+    pub task: Option<super::task_runs::TaskInput>,
     pub created_at: i64,
     /// The workspace's team instructions (`settings`), empty when it has none.
     pub team_instructions: String,
@@ -492,7 +494,7 @@ pub(crate) async fn pending(
     let rows = sqlx::query(
         "SELECT i.message_id, i.workspace_id, i.conversation_id, i.thread_key, i.root_message_id, \
          i.author_id, i.kind, i.created_at, i.action, i.page_context, u.display_name, \
-         COALESCE(m.body, r.prompt, '') AS body, r.id AS routine_id, r.name AS routine_name, \
+         COALESCE(m.body, r.prompt, tc.body, '') AS body, r.id AS routine_id, r.name AS routine_name, \
          r.schedule AS routine_schedule, r.time_zone AS routine_time_zone, r.script_state AS routine_state, \
          rr.test AS run_test, rr.writes AS run_writes, rr.script_id AS run_script_id, \
          rr.script_name AS run_script_name, rr.script_code AS run_script_code, rr.script_hash AS run_script_hash, \
@@ -503,7 +505,10 @@ pub(crate) async fn pending(
          p.instructions AS agent_instructions, p.tools AS agent_tools, p.model AS agent_model, \
          p.thinking AS agent_thinking, COALESCE(p.answer_level, dp.answer_level, 'normal') AS answer_level, \
          dp.workspace_id AS default_set, dp.instructions AS default_instructions, \
-         dp.model AS default_model, dp.thinking AS default_thinking \
+         dp.model AS default_model, dp.thinking AS default_thinking, \
+         tr.id AS task_run_id, tr.task_id AS task_run_task, tr.cause AS task_run_cause, \
+         tr.comment_id AS task_run_comment, tt.title AS task_title, tt.number AS task_number, \
+         tp.project_key AS task_project_key \
          FROM agent_inputs i \
          LEFT JOIN chat_messages m ON m.id = i.message_id \
          LEFT JOIN agent_routines r ON r.id = i.routine_id \
@@ -514,6 +519,10 @@ pub(crate) async fn pending(
          LEFT JOIN agent_profiles p ON p.user_id = i.agent_user_id \
          LEFT JOIN agent_default_profiles dp ON dp.workspace_id = i.workspace_id AND i.agent_user_id IS NULL \
          LEFT JOIN users au ON au.id = i.agent_user_id \
+         LEFT JOIN agent_task_runs tr ON tr.id = i.message_id \
+         LEFT JOIN tasks tt ON tt.id = tr.task_id \
+         LEFT JOIN projects tp ON tp.id = tt.project_id \
+         LEFT JOIN task_comments tc ON tc.id = tr.comment_id \
          WHERE i.acked_at IS NULL ORDER BY i.message_id LIMIT $1",
     )
     .bind(limit)
@@ -570,6 +579,27 @@ pub(crate) async fn pending(
                         .get::<Option<String>, _>("routine_state")
                         .and_then(|state| serde_json::from_str(&state).ok()),
                 }),
+            task: row.get::<Option<String>, _>("task_run_id").map(|run_id| {
+                super::task_runs::TaskInput {
+                    run_id,
+                    task_id: row
+                        .get::<Option<String>, _>("task_run_task")
+                        .unwrap_or_default(),
+                    identifier: format!(
+                        "{}-{}",
+                        row.get::<Option<String>, _>("task_project_key")
+                            .unwrap_or_default(),
+                        row.get::<Option<i64>, _>("task_number").unwrap_or_default()
+                    ),
+                    title: row
+                        .get::<Option<String>, _>("task_title")
+                        .unwrap_or_default(),
+                    cause: row
+                        .get::<Option<String>, _>("task_run_cause")
+                        .unwrap_or_default(),
+                    comment_id: row.get("task_run_comment"),
+                }
+            }),
             created_at: row.get("created_at"),
             team_instructions: row
                 .get::<Option<String>, _>("team_instructions")
@@ -663,6 +693,7 @@ pub(crate) async fn update_thread(
     thread_key: Id,
     update: &ThreadUpdate,
 ) -> Result<(), sqlx::Error> {
+    let status = super::task_runs::thread_reported(database, thread_key, update.status).await?;
     sqlx::query(
         "INSERT INTO agent_threads (thread_key, workspace_id, conversation_id, root_message_id, \
          status, driver_user_id, waiting_for_user_id, updated_at, agent_user_id) \
@@ -675,9 +706,14 @@ pub(crate) async fn update_thread(
     .bind(update.workspace_id.to_string())
     .bind(update.conversation_id.to_string())
     .bind(update.root_message_id.map(|id| id.to_string()))
-    .bind(update.status.as_str())
+    .bind(status.as_str())
     .bind(update.driver_user_id.map(|id| id.to_string()))
-    .bind(update.waiting_for_user_id.map(|id| id.to_string()))
+    .bind(
+        update
+            .waiting_for_user_id
+            .filter(|_| status == ThreadStatus::Waiting)
+            .map(|id| id.to_string()),
+    )
     .bind(TimestampMillis::now().as_millis())
     .bind(update.agent_user_id.map(|id| id.to_string()))
     .execute(database.pool())

@@ -2118,6 +2118,13 @@ async fn delete_task_relation(
         .map_err(|error| task_problem(error, instance, request_id.as_ref()))
 }
 
+/// Whether the request carries an agent session (`agent::scope` has checked it): its writes start
+/// no agent run on a task.
+fn agent_session(headers: &HeaderMap) -> bool {
+    orbit_platform::bearer_token(headers)
+        .is_some_and(|token| token.starts_with(crate::agent::scope::TOKEN_PREFIX))
+}
+
 #[utoipa::path(post, path = "/api/v1/workspaces/{workspace_id}/tasks", params(("workspace_id" = String, Path)), request_body = CreateTaskBody, responses((status = 201, body = TaskUpdateResponse)))]
 async fn create_task(
     State(state): State<TaskState>,
@@ -2169,6 +2176,7 @@ async fn create_task(
     };
     state
         .tasks
+        .with_agent_session(agent_session(&headers))
         .create_task(
             workspace_id,
             actor_id,
@@ -2201,6 +2209,7 @@ async fn update_task(
     let update = task_update(task, body, &instance, request_id.as_ref())?;
     state
         .tasks
+        .with_agent_session(agent_session(&headers))
         .update_task(
             workspace_id,
             actor_id,
@@ -2272,6 +2281,7 @@ async fn bulk_tasks(
     )?;
     state
         .tasks
+        .with_agent_session(agent_session(&headers))
         .bulk_update_tasks(
             workspace_id,
             actor_id,
@@ -2571,6 +2581,7 @@ async fn create_comment(
     )?;
     state
         .tasks
+        .with_agent_session(agent_session(&headers))
         .create_comment(
             workspace_id,
             task_id,

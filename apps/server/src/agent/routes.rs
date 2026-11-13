@@ -17,7 +17,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::inputs::{self, ThreadUpdate};
-use super::{AgentState, bot, credentials, sessions};
+use super::{AgentState, bot, credentials, sessions, task_runs};
 use crate::push::PushService;
 use crate::repositories::chat::{BlocksError, ChatError, SendInput, parse_agent_blocks};
 use crate::task_routes::{ApiError, authenticate_session};
@@ -49,6 +49,14 @@ pub fn router(state: AgentState) -> Router {
             patch(edit_message),
         )
         .route("/api/internal/agent/sessions", post(issue_session))
+        .route(
+            "/api/internal/agent/task-runs/{run_id}/comment",
+            put(write_task_comment),
+        )
+        .route(
+            "/api/internal/agent/task-runs/{run_id}/stopped",
+            post(task_run_stopped),
+        )
         .route(
             "/api/internal/agent/workspaces/{workspace_id}/people",
             get(list_people),
@@ -288,9 +296,10 @@ struct InputsQuery {
     wait: u64,
 }
 
-/// The queued inputs, oldest first, the bot's current name and the model and thinking level of new
-/// runs (`null`: the sidecar's default). Waits up to `wait` seconds for an
-/// input. Also puts the bot into workspaces made since the last call.
+/// The queued inputs, oldest first, the bot's current name, the model and thinking level of new
+/// runs (`null`: the sidecar's default), and the task runs to stop (`stops`). Waits up to `wait`
+/// seconds for an input or a stop. Also puts the bot into workspaces made since the last call, and
+/// starts queued task runs (`task_runs::start_queued`).
 async fn list_inputs(
     State(state): State<AgentState>,
     headers: HeaderMap,
@@ -308,6 +317,13 @@ async fn list_inputs(
     }
     let deadline = tokio::time::Instant::now() + Duration::from_secs(query.wait.min(25));
     loop {
+        // Never fatal: a busy database starts them on the next poll.
+        if let Err(error) = task_runs::start_queued(&state).await {
+            tracing::warn!(%error, "agent task runs");
+        }
+        let stops = task_runs::stopping(database)
+            .await
+            .map_err(|_| unavailable(&uri, &request_id))?;
         let (refused, pending): (Vec<_>, Vec<_>) = inputs::pending(database, 50)
             .await
             .map_err(|_| unavailable(&uri, &request_id))?
@@ -316,7 +332,7 @@ async fn list_inputs(
         for input in &refused {
             refuse(&state, input).await;
         }
-        if !pending.is_empty() || tokio::time::Instant::now() >= deadline {
+        if !pending.is_empty() || !stops.is_empty() || tokio::time::Instant::now() >= deadline {
             let mut conn = database
                 .pool()
                 .acquire()
@@ -334,6 +350,7 @@ async fn list_inputs(
                 "model": model,
                 "thinking": thinking,
                 "inputs": pending,
+                "stops": stops,
             })));
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
@@ -473,6 +490,73 @@ async fn update_thread(
             tracing::warn!(%error, "agent thread update");
             unavailable(&uri, &request_id)
         })?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TaskCommentBody {
+    body: String,
+}
+
+/// Writes a task run's comment as its agent: progress, then the result (`task_runs::write_comment`).
+async fn write_task_comment(
+    State(state): State<AgentState>,
+    Path(run_id): Path<String>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+    Json(body): Json<TaskCommentBody>,
+) -> Result<Json<Value>, ApiError> {
+    sidecar_only(&state, &headers, &uri, &request_id)?;
+    let run_id = id_of(&run_id, &uri, &request_id)?;
+    match task_runs::write_comment(state.database(), run_id, &body.body).await {
+        Ok(comment_id) => Ok(Json(json!({ "comment_id": comment_id.to_string() }))),
+        Err(
+            task_runs::CommentRefused::Database(failure)
+            | task_runs::CommentRefused::Task(crate::repositories::tasks::TaskError::Unavailable(
+                failure,
+            )),
+        ) => {
+            tracing::warn!(error = %failure, "agent task comment");
+            Err(unavailable(&uri, &request_id))
+        }
+        Err(
+            task_runs::CommentRefused::NotFound
+            | task_runs::CommentRefused::Task(crate::repositories::tasks::TaskError::NotFound),
+        ) => Err(error(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "The task or the run is gone.",
+            &uri,
+            &request_id,
+        )),
+        Err(failure) => {
+            tracing::warn!(error = %failure, "agent task comment refused");
+            Err(error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "agent_comment_failed",
+                "The agent's comment could not be written.",
+                &uri,
+                &request_id,
+            ))
+        }
+    }
+}
+
+/// The sidecar stopped a cancelled task run (or did not have it).
+async fn task_run_stopped(
+    State(state): State<AgentState>,
+    Path(run_id): Path<String>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+) -> Result<StatusCode, ApiError> {
+    sidecar_only(&state, &headers, &uri, &request_id)?;
+    let run_id = id_of(&run_id, &uri, &request_id)?;
+    task_runs::stopped(state.database(), run_id)
+        .await
+        .map_err(|_| unavailable(&uri, &request_id))?;
     Ok(StatusCode::NO_CONTENT)
 }
 
