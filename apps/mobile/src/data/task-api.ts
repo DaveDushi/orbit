@@ -15,8 +15,11 @@ import {
   deleteTaskAttachment,
   deleteTaskRelation,
   followTask,
+  linkDoc as linkDocCall,
   listCommentAttachments,
   listCycles,
+  listLinkedDocs,
+  listLinkedTasks,
   listMilestones,
   listTaskAttachments,
   listTaskFollowers,
@@ -25,6 +28,7 @@ import {
   moveUnfinishedCycleTasks,
   reorderMilestones,
   unfollowTask,
+  unlinkDoc as unlinkDocCall,
   updateCycle,
   updateMilestone,
   uploadTaskAttachments,
@@ -32,6 +36,8 @@ import {
 import type {
   AttachmentRecord,
   CreateTaskBody,
+  LinkedDoc,
+  LinkedTask,
   NewTaskRelationType,
   TaskCycle,
   TaskCycleBody,
@@ -50,6 +56,8 @@ import type { PickedFile } from './tasks'
 export type {
   AttachmentRecord,
   CreateTaskBody,
+  LinkedDoc,
+  LinkedTask,
   NewTaskRelationType,
   TaskCycle,
   TaskCycleBody,
@@ -135,6 +143,24 @@ export async function relations(client: OrbitClient, workspaceId: string, taskId
 
 export async function addRelation(client: OrbitClient, workspaceId: string, taskId: string, body: { type: NewTaskRelationType; task_id: string }): Promise<TaskRelationRecord> {
   return (await createTaskRelation({ ...task(client, workspaceId, taskId), body })).data
+}
+
+/** The Docs pages linked to the task that the reader sees. */
+export async function linkedDocs(client: OrbitClient, workspaceId: string, taskId: string): Promise<LinkedDoc[]> {
+  return (await listLinkedDocs(task(client, workspaceId, taskId))).data
+}
+
+export async function linkDoc(client: OrbitClient, workspaceId: string, taskId: string, pageId: string): Promise<LinkedDoc> {
+  return (await linkDocCall({ ...task(client, workspaceId, taskId), body: { page_id: pageId } })).data
+}
+
+export async function unlinkDoc(client: OrbitClient, workspaceId: string, taskId: string, pageId: string): Promise<void> {
+  await unlinkDocCall({ client, path: { workspace_id: workspaceId, task_id: taskId, page_id: pageId }, throwOnError: true })
+}
+
+/** The tasks linked to a Docs page that the reader sees. */
+export async function linkedTasks(client: OrbitClient, workspaceId: string, pageId: string): Promise<LinkedTask[]> {
+  return (await listLinkedTasks({ client, path: { workspace_id: workspaceId, page_id: pageId }, throwOnError: true })).data
 }
 
 export async function removeRelation(client: OrbitClient, workspaceId: string, taskId: string, relationId: string): Promise<void> {

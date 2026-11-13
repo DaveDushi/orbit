@@ -75,6 +75,14 @@ function relationText(action: string, metadata: Record<string, unknown>, context
   }
 }
 
+/** "linked doc Plan", as on the web; the server names the page only for readers who see it, the others read "a doc". */
+function docText(action: string, metadata: Record<string, unknown>): string | null {
+  const verb = action === 'task.doc_linked' ? 'linked' : action === 'task.doc_unlinked' ? 'unlinked' : null
+  if (!verb) return null
+  const title = string(metadata.page_title)
+  return title === undefined ? `${verb} a doc` : `${verb} doc ${title || 'Untitled'}`
+}
+
 function subIssueText(action: string, metadata: Record<string, unknown>, context: ActivityContext): { text: string; statusId?: string } | null {
   const task = (key: string) => {
     const taskId = string(metadata[key])
@@ -176,7 +184,7 @@ export function activityRows(events: readonly TaskActivityEvent[], context: Acti
     if (rule) return [{ ...base, text: rule, system: true }]
     const related = relationText(event.action, metadata, context)
     const subIssue = related ? null : subIssueText(event.action, metadata, context)
-    return [{ ...base, text: related ?? subIssue?.text ?? ACTIVITY_TEXT[event.action] ?? event.action.split('.').reverse().join(' '), statusId: subIssue?.statusId }]
+    return [{ ...base, text: related ?? subIssue?.text ?? docText(event.action, metadata) ?? ACTIVITY_TEXT[event.action] ?? event.action.split('.').reverse().join(' '), statusId: subIssue?.statusId }]
   })
 }
 

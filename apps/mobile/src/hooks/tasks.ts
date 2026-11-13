@@ -16,6 +16,9 @@ import { errorMessage } from '../session-context'
  */
 export const taskKeys = {
   relations: (workspaceId: string, taskId: string) => [...keys.task(workspaceId, taskId), 'relations'] as const,
+  linkedDocs: (workspaceId: string, taskId: string) => [...keys.task(workspaceId, taskId), 'linked-docs'] as const,
+  /** Under the page's key, which the workspace events socket refreshes. */
+  linkedTasks: (workspaceId: string, pageId: string) => [...keys.page(workspaceId, pageId), 'linked-tasks'] as const,
   followers: (workspaceId: string, taskId: string) => [...keys.task(workspaceId, taskId), 'followers'] as const,
   attachments: (workspaceId: string, taskId: string) => [...keys.task(workspaceId, taskId), 'attachments'] as const,
   commentAttachments: (workspaceId: string, taskId: string, commentId: string) => [...keys.comments(workspaceId, taskId), commentId, 'attachments'] as const,
@@ -169,6 +172,38 @@ export function useRelationWrites(taskId: string) {
     onError: (error) => Alert.alert('Couldn’t remove the relation', errorMessage(error)),
   })
   return { add, remove }
+}
+
+export function useLinkedDocs(taskId: string) {
+  const { client, workspaceId } = useOrbit()
+  return useQuery({ queryKey: taskKeys.linkedDocs(workspaceId, taskId), queryFn: () => taskApi.linkedDocs(client, workspaceId, taskId) })
+}
+
+export function useLinkedTasks(pageId: string) {
+  const { client, workspaceId } = useOrbit()
+  return useQuery({ queryKey: taskKeys.linkedTasks(workspaceId, pageId), queryFn: () => taskApi.linkedTasks(client, workspaceId, pageId) })
+}
+
+/** "Add doc" and the unlink button of a task's Docs list; both refresh the task's docs and activity and the page's tasks. */
+export function useDocLinkWrites(taskId: string) {
+  const { client, workspaceId } = useOrbit()
+  const queryClient = useQueryClient()
+  const refresh = (pageId: string) => {
+    void queryClient.invalidateQueries({ queryKey: taskKeys.linkedDocs(workspaceId, taskId) })
+    void queryClient.invalidateQueries({ queryKey: keys.taskActivity(workspaceId, taskId) })
+    void queryClient.invalidateQueries({ queryKey: taskKeys.linkedTasks(workspaceId, pageId) })
+  }
+  const link = useMutation({
+    mutationFn: (pageId: string) => taskApi.linkDoc(client, workspaceId, taskId, pageId),
+    onSuccess: (_doc, pageId) => refresh(pageId),
+    onError: (error) => Alert.alert('Couldn’t link the doc', errorMessage(error)),
+  })
+  const unlink = useMutation({
+    mutationFn: (pageId: string) => taskApi.unlinkDoc(client, workspaceId, taskId, pageId),
+    onSuccess: (_result, pageId) => refresh(pageId),
+    onError: (error) => Alert.alert('Couldn’t unlink the doc', errorMessage(error)),
+  })
+  return { link, unlink }
 }
 
 /** Creates a task from a full body (a sub-issue, the New task dialog). */

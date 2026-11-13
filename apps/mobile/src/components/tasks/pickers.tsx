@@ -36,7 +36,7 @@ import {
   toggleId,
 } from '../../data/tasks'
 import { useCreateLabel, useTaskSearch } from '../../hooks/tasks'
-import { useCycles, useLabels, useMilestones, useProjects, useStatuses } from '../../queries'
+import { useCycles, useLabels, useMilestones, usePages, useProjects, useStatuses } from '../../queries'
 import { useTheme } from '../../theme'
 import { Avatar, Button, Icon, type IconName, Input, PriorityIcon, StatusIcon, Text } from '../../ui'
 import { DayPicker } from './DayPicker'
@@ -273,6 +273,32 @@ export function TaskChoices({ excludeIds, excludeDuplicates = false, onSelect }:
           />
         ))}
         {candidates.length === 0 ? <SheetNote>{search.isFetching || search.isPending ? 'Searching…' : search.isError ? 'Could not search the tasks.' : 'No matching tasks'}</SheetNote> : null}
+      </SheetList>
+    </>
+  )
+}
+
+/** "Add doc": the Docs pages the member sees (the page tree), filtered by title; pages the task links are left out. */
+export function DocChoices({ excludeIds, onSelect }: { excludeIds: readonly string[]; onSelect: (pageId: string) => void }) {
+  const { colors } = useTheme()
+  const [query, setQuery] = useState('')
+  const pages = usePages()
+  const wanted = query.trim().toLowerCase()
+  const candidates = (pages.data ?? []).filter((page) => !excludeIds.includes(page.id) && (!wanted || (page.title || 'Untitled').toLowerCase().includes(wanted)))
+  return (
+    <>
+      <SheetSearch value={query} onChange={setQuery} placeholder="Search pages…" autoFocus={Platform.OS !== 'web'} />
+      <SheetList>
+        {candidates.map((page) => (
+          <SheetRow
+            key={page.id}
+            label={page.title || 'Untitled'}
+            subtitle={page.teamspace_id ? undefined : 'Private'}
+            leading={page.icon ? <Text className="text-[16px]">{page.icon}</Text> : <Icon name="docs" size={18} color={colors.mutedForeground} />}
+            onPress={() => onSelect(page.id)}
+          />
+        ))}
+        {candidates.length === 0 ? <SheetNote>{pages.isPending ? 'Loading…' : pages.isError ? 'Could not load the pages.' : 'No pages found'}</SheetNote> : null}
       </SheetList>
     </>
   )

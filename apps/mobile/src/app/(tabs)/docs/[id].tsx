@@ -7,6 +7,7 @@ import { Image, KeyboardAvoidingView, Linking, Platform, RefreshControl, ScrollV
 import { TextInput } from '../../../ui/scaled'
 
 import { CommentsSheet } from '../../../components/docs/Comments'
+import { LinkedTasksSection } from '../../../components/tasks/sections'
 import { EditorToolbar } from '../../../components/docs/EditorToolbar'
 import { IconDialog } from '../../../components/docs/IconDialog'
 import PageEditor, { type PageCardInfo, type PageEditorProps, type PageEditorRef } from '../../../components/docs/PageEditor.dom'
@@ -17,9 +18,10 @@ import { keys } from '../../../data/keys'
 import * as api from '../../../data/orbit'
 import { BLOCK_KINDS, type BlockKind, type EditorCommand, type FormatState, IDLE_FORMAT, PROBLEM_RESPONSES, type ProblemResponse, whileMounted } from '../../../data/page-editor'
 import { pickImage } from '../../../hooks/account'
+import { useLinkedTasks } from '../../../hooks/tasks'
 import { useFavorites, usePageThreads, usePageTrash, useSavePage, useToggleFavorite, useTrashPage, useUploadPageImage } from '../../../hooks/docs'
 import { useOrbit } from '../../../orbit-context'
-import { useMembers, usePages } from '../../../queries'
+import { useMembers, usePages, useStatuses } from '../../../queries'
 import { usePublishPageItem } from '../../../components/AskDonna'
 import { errorMessage } from '../../../session-context'
 import { alpha, useTheme } from '../../../theme'
@@ -38,6 +40,8 @@ export default function DocScreen() {
   const { colors } = useTheme()
   const page = useQuery({ queryKey: keys.page(workspaceId, id), queryFn: () => api.page(client, workspaceId, id) })
   usePublishPageItem('doc', id, page.data?.title)
+  const linkedTasks = useLinkedTasks(id)
+  const statuses = useStatuses()
   const pages = usePages()
   const favorites = useFavorites()
   const threads = usePageThreads(id)
@@ -215,7 +219,7 @@ export default function DocScreen() {
             scrollEventThrottle={16}
             onScroll={(event) => (scrollY.current = event.nativeEvent.contentOffset.y)}
             onLayout={(event) => (viewportHeight.current = event.nativeEvent.layout.height)}
-            refreshControl={<RefreshControl refreshing={page.isRefetching} onRefresh={() => void page.refetch()} tintColor={colors.mutedForeground} />}
+            refreshControl={<RefreshControl refreshing={page.isRefetching} onRefresh={() => void Promise.all([page.refetch(), linkedTasks.refetch()])} tintColor={colors.mutedForeground} />}
           >
             {page.data.cover_url ? (
               <View>
@@ -262,6 +266,7 @@ export default function DocScreen() {
                 returnKeyType="done"
                 className="font-noto-bold text-[16px] leading-[20px] mb-[17px] p-0 text-foreground"
               />
+              <LinkedTasksSection tasks={linkedTasks.data ?? []} statuses={statuses.data ?? []} />
             </View>
             <View onLayout={(event) => (editorTop.current = event.nativeEvent.layout.y)}>
               {problem?.stop ? null : (
