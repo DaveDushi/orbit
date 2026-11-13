@@ -1,8 +1,13 @@
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use axum::body::Body;
-use axum::extract::{Extension, FromRequest, FromRequestParts, Path, Query, Request, State};
+use axum::extract::{
+    DefaultBodyLimit, Extension, FromRequest, FromRequestParts, Multipart, Path, Query, Request,
+    State,
+};
 use axum::http::header::{
     CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE, RETRY_AFTER,
 };
@@ -23,7 +28,10 @@ use tokio_stream::wrappers::ReceiverStream;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::auth_routes::throttle::SharedThrottler;
-use crate::auth_routes::{CookieMode, issued_session_cookie, request_session};
+use crate::auth_routes::{
+    CookieMode, ImageUploadError, MAX_AVATAR_BYTES, issued_session_cookie, read_image_upload,
+    request_session,
+};
 use crate::email_quota::{self, Quota};
 use crate::image_compression::{CompressionStatus, ImageCompressor};
 use crate::mail::{self, Mailer};
@@ -184,6 +192,14 @@ pub fn workspace_router(state: WorkspaceState) -> Router {
             get(get_workspace)
                 .patch(rename_workspace)
                 .delete(delete_workspace),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/logo",
+            get(get_workspace_logo)
+                .put(upload_workspace_logo)
+                .delete(remove_workspace_logo)
+                // the image plus the multipart framing
+                .layer(DefaultBodyLimit::max(MAX_AVATAR_BYTES + 16 * 1024)),
         )
         .route(
             "/api/v1/workspaces/{workspace_id}/storage",
@@ -515,6 +531,156 @@ async fn rename_workspace(
         .await
         .map(Json)
         .map_err(|error| workspace_problem(error, instance, request_id.as_ref()))
+}
+
+/// Sets or replaces the workspace logo (owners and admins). The apps crop it to a square first, like a profile
+/// picture.
+#[utoipa::path(put, path = "/api/v1/workspaces/{workspace_id}/logo", params(("workspace_id" = String, Path)), request_body(content = crate::auth_routes::AvatarUploadBody, content_type = "multipart/form-data"), responses((status = 200, body = crate::repositories::workspaces::WorkspaceRecord), (status = 400, description = "invalid_multipart", body = ProblemBody, content_type = "application/problem+json"), (status = 403, description = "workspace_action_forbidden", body = ProblemBody, content_type = "application/problem+json"), (status = 404, description = "workspace_resource_not_found", body = ProblemBody, content_type = "application/problem+json"), (status = 413, description = "logo_too_large", body = ProblemBody, content_type = "application/problem+json"), (status = 422, description = "invalid_logo", body = ProblemBody, content_type = "application/problem+json")))]
+async fn upload_workspace_logo(
+    State(state): State<WorkspaceState>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+    mut multipart: Multipart,
+) -> Result<Json<crate::repositories::workspaces::WorkspaceRecord>, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace_id}/logo");
+    let session = authenticate(&state, &headers, &instance, request_id.as_ref()).await?;
+    let workspace_id = parse_id(&workspace_id, &instance, request_id.as_ref())?;
+    let (image, mime_type) = read_image_upload(&mut multipart)
+        .await
+        .map_err(|error| match error {
+            ImageUploadError::InvalidMultipart => ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_multipart",
+                "Invalid multipart upload",
+                "Send the image as the multipart field \"file\".",
+                &instance,
+                request_id.as_ref(),
+            ),
+            ImageUploadError::TooLarge => ApiError::new(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "logo_too_large",
+                "Image too large",
+                "The image must be at most 512 KiB.",
+                &instance,
+                request_id.as_ref(),
+            ),
+            ImageUploadError::InvalidImage => ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_logo",
+                "Invalid image",
+                "Upload a PNG, JPEG or WebP image.",
+                &instance,
+                request_id.as_ref(),
+            ),
+        })?;
+    let uploads = state
+        .uploads
+        .as_ref()
+        .ok_or_else(|| internal(&instance, request_id.as_ref()))?;
+    state
+        .workspaces
+        .set_logo(
+            uploads,
+            workspace_id,
+            session.user.id,
+            mime_type,
+            &image,
+            request_id_value(request_id.as_ref()),
+            TimestampMillis::now(),
+        )
+        .await
+        .map(Json)
+        .map_err(|error| workspace_problem(error, instance, request_id.as_ref()))
+}
+
+/// Removes the workspace logo (owners and admins); the apps show the workspace's first letter again.
+#[utoipa::path(delete, path = "/api/v1/workspaces/{workspace_id}/logo", params(("workspace_id" = String, Path)), responses((status = 200, body = crate::repositories::workspaces::WorkspaceRecord), (status = 403, description = "workspace_action_forbidden", body = ProblemBody, content_type = "application/problem+json"), (status = 404, description = "workspace_resource_not_found", body = ProblemBody, content_type = "application/problem+json")))]
+async fn remove_workspace_logo(
+    State(state): State<WorkspaceState>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<crate::repositories::workspaces::WorkspaceRecord>, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace_id}/logo");
+    let session = authenticate(&state, &headers, &instance, request_id.as_ref()).await?;
+    let workspace_id = parse_id(&workspace_id, &instance, request_id.as_ref())?;
+    state
+        .workspaces
+        .remove_logo(
+            workspace_id,
+            session.user.id,
+            request_id_value(request_id.as_ref()),
+            TimestampMillis::now(),
+        )
+        .await
+        .map(Json)
+        .map_err(|error| workspace_problem(error, instance, request_id.as_ref()))
+}
+
+/// The workspace logo, for its members (guests too). A workspace without a logo and one the caller is not a
+/// member of look the same.
+#[utoipa::path(get, path = "/api/v1/workspaces/{workspace_id}/logo", params(("workspace_id" = String, Path)), responses((status = 200, body = crate::auth_routes::AvatarImage, content_type = "image/*"), (status = 404, description = "workspace_resource_not_found", body = ProblemBody, content_type = "application/problem+json")))]
+async fn get_workspace_logo(
+    State(state): State<WorkspaceState>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Response, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace_id}/logo");
+    let session = authenticate(&state, &headers, &instance, request_id.as_ref()).await?;
+    let workspace_id = parse_id(&workspace_id, &instance, request_id.as_ref())?;
+    let logo = state
+        .workspaces
+        .logo(workspace_id, session.user.id)
+        .await
+        .map_err(|error| workspace_problem(error, &instance, request_id.as_ref()))?
+        .ok_or(WorkspaceError::NotFound)
+        .map_err(|error| workspace_problem(error, &instance, request_id.as_ref()))?;
+    let (mime_type, bytes) = read_logo(&state, logo)
+        .await
+        .ok_or_else(|| internal(&instance, request_id.as_ref()))?;
+    let content_type =
+        HeaderValue::from_str(&mime_type).map_err(|_| internal(&instance, request_id.as_ref()))?;
+    let mut response = bytes.into_response();
+    let response_headers = response.headers_mut();
+    response_headers.insert(CONTENT_TYPE, content_type);
+    response_headers.insert(
+        "x-content-type-options",
+        HeaderValue::from_static("nosniff"),
+    );
+    // the URL carries the upload time, so a new logo is a new URL
+    response_headers.insert(
+        CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=31536000, immutable"),
+    );
+    Ok(response)
+}
+
+/// The type and bytes of a stored logo; `None` when the file cannot be read.
+async fn read_logo(
+    state: &WorkspaceState,
+    logo: crate::repositories::workspaces::LogoFile,
+) -> Option<(String, Vec<u8>)> {
+    let bytes = state
+        .uploads
+        .as_ref()?
+        .read_blob(&logo.storage_key)
+        .await
+        .ok()?;
+    Some((logo.mime_type, bytes))
+}
+
+/// The logo of an invitation's workspace, for the invitation page and email. A logo that cannot be read is left
+/// out: the invitation works without it.
+async fn invitation_logo(state: &WorkspaceState, workspace_id: Id) -> Option<(String, Vec<u8>)> {
+    let logo = state
+        .workspaces
+        .invitation_logo(workspace_id)
+        .await
+        .ok()
+        .flatten()?;
+    read_logo(state, logo).await
 }
 
 #[derive(Deserialize, IntoParams, ToSchema)]
@@ -1026,12 +1192,16 @@ async fn create_invitation(
                 .await
                 .map(|preview| (preview.workspace_name, preview.channels))
                 .unwrap_or_else(|_| ("Orbit".to_owned(), Vec::new()));
+            let logo = invitation_logo(&state, workspace_id)
+                .await
+                .map(|(mime_type, bytes)| mail::EmailImage { mime_type, bytes });
             mailer
                 .send(mail::templates::invitation(
                     &issued.invitation.email,
                     &workspace_name,
                     &channels,
                     &link,
+                    logo,
                 ))
                 .await
                 .map_err(|error| email_failed(&error, &instance, request_id.as_ref()))
@@ -1127,12 +1297,22 @@ async fn preview_invitation(
     body: Result<ApiJson<PreviewInvitationBody>, ApiError>,
 ) -> Response {
     let result = match body {
-        Ok(ApiJson(body)) => state
+        Ok(ApiJson(body)) => match state
             .workspaces
             .preview_invitation(&body.token, TimestampMillis::now())
             .await
-            .map(Json)
-            .map_err(|error| {
+        {
+            Ok(mut preview) => {
+                preview.workspace_logo = invitation_logo(&state, preview.workspace_id)
+                    .await
+                    .map(|(mime_type, bytes)| {
+                        format!("data:{mime_type};base64,{}", BASE64_STANDARD.encode(bytes))
+                    });
+                Ok(Json(preview))
+            }
+            Err(error) => Err(error),
+        }
+        .map_err(|error| {
                 workspace_problem(
                     error,
                     "/api/v1/workspaces/invitations/preview",

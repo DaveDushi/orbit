@@ -48,6 +48,21 @@ pub struct WorkspaceRecord {
     pub version: u64,
     #[schema(value_type = Option<String>, format = DateTime)]
     pub deleted_at: Option<TimestampMillis>,
+    /// The workspace logo (a square PNG, JPEG or WebP); absent while it has none.
+    pub logo_url: Option<String>,
+}
+
+/// The URL of a workspace's logo; it carries the upload time, so a new logo is a new URL.
+#[must_use]
+pub fn logo_url(workspace_id: impl fmt::Display, updated_at: Option<i64>) -> Option<String> {
+    updated_at.map(|version| format!("/api/v1/workspaces/{workspace_id}/logo?v={version}"))
+}
+
+/// Where a workspace logo is stored.
+#[derive(Clone, Debug)]
+pub struct LogoFile {
+    pub mime_type: String,
+    pub storage_key: String,
 }
 
 /// What a profile popover shows of a member beside the member list's fields.
@@ -125,6 +140,11 @@ pub struct InvitationRecord {
 pub struct InvitationPreview {
     pub email: String,
     pub workspace_name: String,
+    /// The workspace logo as a `data:` URL (the invitee is not a member yet, so it cannot load the logo URL);
+    /// absent while the workspace has none.
+    pub workspace_logo: Option<String>,
+    #[serde(skip)]
+    pub workspace_id: Id,
     /// The private channels a guest invitation adds the guest to; empty for other roles.
     pub channels: Vec<String>,
 }
@@ -203,7 +223,7 @@ pub struct StorageFile {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
 pub struct StorageFileUse {
     pub kind: StorageFileUseKind,
-    /// The task title, page title or channel name; `null` for emoji, stickers and private places.
+    /// The task title, page title or channel name; `null` for emoji, stickers, the logo and private places.
     pub title: Option<String>,
 }
 
@@ -215,6 +235,8 @@ pub enum StorageFileUseKind {
     Channel,
     Emoji,
     Sticker,
+    /// The workspace logo.
+    Logo,
     /// A personal page, a private channel, a direct message or an unsent chat upload. Its names stay hidden.
     Private,
 }
@@ -240,6 +262,7 @@ const LARGEST_FILE_USES: &str = "SELECT b.id AS blob_id, b.byte_size, u.kind, u.
          WHERE f.workspace_id = $1 \
        UNION ALL SELECT blob_id, 'emoji', name, NULL FROM custom_emoji WHERE workspace_id = $1 AND blob_id IS NOT NULL \
        UNION ALL SELECT blob_id, 'sticker', name, NULL FROM custom_stickers WHERE workspace_id = $1 AND blob_id IS NOT NULL \
+       UNION ALL SELECT blob_id, 'logo', NULL, NULL FROM workspace_logos WHERE workspace_id = $1 \
      ) u ON u.blob_id = b.id \
      WHERE b.id IN (SELECT id FROM attachment_blobs WHERE workspace_id = $1 AND deleted_at IS NULL \
        ORDER BY byte_size DESC, id LIMIT $2 OFFSET $3) \
@@ -346,7 +369,9 @@ impl WorkspaceRepository {
     pub async fn list_for_user(&self, user_id: Id) -> Result<Vec<WorkspaceRecord>, WorkspaceError> {
         let rows = sqlx::query(
             "SELECT workspaces.id, workspaces.name, workspaces.version, workspaces.deleted_at, \
-             memberships.role FROM workspaces JOIN memberships ON memberships.workspace_id = workspaces.id \
+             memberships.role, workspace_logos.updated_at AS logo_updated_at \
+             FROM workspaces JOIN memberships ON memberships.workspace_id = workspaces.id \
+             LEFT JOIN workspace_logos ON workspace_logos.workspace_id = workspaces.id \
              WHERE memberships.user_id = $1 AND workspaces.deleted_at IS NULL ORDER BY workspaces.id",
         )
         .bind(user_id.to_string())
@@ -358,7 +383,9 @@ impl WorkspaceRepository {
     pub async fn list_trash(&self, user_id: Id) -> Result<Vec<WorkspaceRecord>, WorkspaceError> {
         let rows = sqlx::query(
             "SELECT workspaces.id, workspaces.name, workspaces.version, workspaces.deleted_at, \
-             memberships.role FROM workspaces JOIN memberships ON memberships.workspace_id = workspaces.id \
+             memberships.role, workspace_logos.updated_at AS logo_updated_at \
+             FROM workspaces JOIN memberships ON memberships.workspace_id = workspaces.id \
+             LEFT JOIN workspace_logos ON workspace_logos.workspace_id = workspaces.id \
              WHERE memberships.user_id = $1 AND memberships.role = 'owner' AND workspaces.deleted_at IS NOT NULL \
              AND workspaces.deleted_at > $2 \
              ORDER BY workspaces.id DESC",
@@ -431,6 +458,7 @@ impl WorkspaceRepository {
             permissions: Policy::permissions(WorkspaceRole::Owner),
             version: 0,
             deleted_at: None,
+            logo_url: None,
         })
     }
 
@@ -440,8 +468,10 @@ impl WorkspaceRepository {
         actor_id: Id,
     ) -> Result<WorkspaceRecord, WorkspaceError> {
         let row = sqlx::query(
-            "SELECT workspaces.id, workspaces.name, workspaces.version, workspaces.deleted_at, memberships.role \
+            "SELECT workspaces.id, workspaces.name, workspaces.version, workspaces.deleted_at, memberships.role, \
+             workspace_logos.updated_at AS logo_updated_at \
              FROM workspaces JOIN memberships ON memberships.workspace_id = workspaces.id \
+             LEFT JOIN workspace_logos ON workspace_logos.workspace_id = workspaces.id \
              WHERE workspaces.id = $1 AND memberships.user_id = $2 AND workspaces.deleted_at IS NULL",
         )
         .bind(workspace_id.to_string())
@@ -527,6 +557,7 @@ impl WorkspaceRepository {
                 Some("channel") => StorageFileUseKind::Channel,
                 Some("emoji") => StorageFileUseKind::Emoji,
                 Some("sticker") => StorageFileUseKind::Sticker,
+                Some("logo") => StorageFileUseKind::Logo,
                 Some(_) => StorageFileUseKind::Private,
                 None => continue,
             };
@@ -562,11 +593,7 @@ impl WorkspaceRepository {
             uploads
                 .delete_blob(workspace_id, file_id)
                 .await
-                .map_err(|error| match error {
-                    UploadError::Database(error) => WorkspaceError::Unavailable(error),
-                    UploadError::BlobStore(error) => WorkspaceError::Storage(error),
-                    _ => WorkspaceError::Conflict,
-                })?;
+                .map_err(upload_error)?;
         if !deleted {
             return Err(WorkspaceError::NotFound);
         }
@@ -651,6 +678,12 @@ impl WorkspaceRepository {
             now,
         )
         .await?;
+        let logo_updated_at = sqlx::query_scalar::<_, i64>(
+            "SELECT updated_at FROM workspace_logos WHERE workspace_id = $1",
+        )
+        .bind(workspace_id.to_string())
+        .fetch_optional(&mut *transaction)
+        .await?;
         let version = current_version + 1;
         transaction.commit().await?;
         Ok(WorkspaceRecord {
@@ -660,7 +693,138 @@ impl WorkspaceRepository {
             permissions: Policy::permissions(actor.role),
             version,
             deleted_at: None,
+            logo_url: logo_url(workspace_id, logo_updated_at),
         })
+    }
+
+    /// Replaces the workspace logo, for owners and admins. Callers check the format and size first. The image is
+    /// an attachment blob of the workspace (like a profile picture, it is saved even when the workspace is at its
+    /// storage quota); reconcile deletes the replaced one.
+    pub async fn set_logo(
+        &self,
+        uploads: &UploadService,
+        workspace_id: Id,
+        actor_id: Id,
+        mime_type: &str,
+        bytes: &[u8],
+        request_id: &str,
+        now: TimestampMillis,
+    ) -> Result<WorkspaceRecord, WorkspaceError> {
+        let finalization = uploads.begin_finalization().await;
+        let mut transaction = self.database.immediate_transaction().await?;
+        let actor = require_chat_actor(&mut *transaction, workspace_id, actor_id).await?;
+        if !actor.can(Permission::WorkspaceUpdate) {
+            return Err(WorkspaceError::Forbidden);
+        }
+        let blob = finalization
+            .finalize_unmetered_bytes_in_transaction(&mut transaction, workspace_id, bytes, now)
+            .await
+            .map_err(upload_error)?;
+        sqlx::query(
+            "INSERT INTO workspace_logos (workspace_id, mime_type, blob_id, updated_at) VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (workspace_id) DO UPDATE SET mime_type = excluded.mime_type, \
+             blob_id = excluded.blob_id, updated_at = excluded.updated_at",
+        )
+        .bind(workspace_id.to_string())
+        .bind(mime_type)
+        .bind(blob.id.to_string())
+        .bind(now.as_millis())
+        .execute(&mut *transaction)
+        .await?;
+        audit::record(
+            &mut transaction,
+            workspace_id,
+            Some(actor_id),
+            "workspace.logo_updated",
+            AuditOutcome::Success,
+            "workspace",
+            Some(workspace_id),
+            request_id,
+            json!({}),
+            now,
+        )
+        .await?;
+        transaction.commit().await?;
+        self.get(workspace_id, actor_id).await
+    }
+
+    /// Removes the workspace logo, for owners and admins; nothing happens when it has none. Reconcile deletes the
+    /// file once nothing else uses it.
+    pub async fn remove_logo(
+        &self,
+        workspace_id: Id,
+        actor_id: Id,
+        request_id: &str,
+        now: TimestampMillis,
+    ) -> Result<WorkspaceRecord, WorkspaceError> {
+        let mut transaction = self.database.immediate_transaction().await?;
+        let actor = require_chat_actor(&mut *transaction, workspace_id, actor_id).await?;
+        if !actor.can(Permission::WorkspaceUpdate) {
+            return Err(WorkspaceError::Forbidden);
+        }
+        let removed = sqlx::query("DELETE FROM workspace_logos WHERE workspace_id = $1")
+            .bind(workspace_id.to_string())
+            .execute(&mut *transaction)
+            .await?
+            .rows_affected();
+        if removed > 0 {
+            audit::record(
+                &mut transaction,
+                workspace_id,
+                Some(actor_id),
+                "workspace.logo_removed",
+                AuditOutcome::Success,
+                "workspace",
+                Some(workspace_id),
+                request_id,
+                json!({}),
+                now,
+            )
+            .await?;
+        }
+        transaction.commit().await?;
+        self.get(workspace_id, actor_id).await
+    }
+
+    /// The workspace logo, for its members (guests too); `None` when it has none or `viewer_id` is not a member.
+    pub async fn logo(
+        &self,
+        workspace_id: Id,
+        viewer_id: Id,
+    ) -> Result<Option<LogoFile>, WorkspaceError> {
+        let row = sqlx::query(
+            "SELECT l.mime_type, b.storage_key FROM workspace_logos l \
+             JOIN attachment_blobs b ON b.id = l.blob_id \
+             JOIN workspaces w ON w.id = l.workspace_id AND w.deleted_at IS NULL \
+             JOIN memberships m ON m.workspace_id = l.workspace_id AND m.user_id = $2 \
+             WHERE l.workspace_id = $1",
+        )
+        .bind(workspace_id.to_string())
+        .bind(viewer_id.to_string())
+        .fetch_optional(self.database.pool())
+        .await?;
+        Ok(row.map(|row| LogoFile {
+            mime_type: row.get("mime_type"),
+            storage_key: row.get("storage_key"),
+        }))
+    }
+
+    /// The logo of the workspace a live invitation is for, for the invitation page and email.
+    pub async fn invitation_logo(
+        &self,
+        workspace_id: Id,
+    ) -> Result<Option<LogoFile>, WorkspaceError> {
+        let row = sqlx::query(
+            "SELECT l.mime_type, b.storage_key FROM workspace_logos l \
+             JOIN attachment_blobs b ON b.id = l.blob_id WHERE l.workspace_id = $1",
+        )
+        .bind(workspace_id.to_string())
+        .fetch_optional(self.database.pool())
+        .await?;
+        Ok(row.map(|row| LogoFile {
+            mime_type: row.get("mime_type"),
+            storage_key: row.get("storage_key"),
+        }))
     }
 
     /// The workspace's members. A guest gets itself and the people it shares a conversation
@@ -1349,7 +1513,7 @@ impl WorkspaceRepository {
         now: TimestampMillis,
     ) -> Result<InvitationPreview, WorkspaceError> {
         let row = sqlx::query(
-            "SELECT invitations.id, invitations.email, workspaces.name AS workspace_name \
+            "SELECT invitations.id, invitations.email, workspaces.id AS workspace_id, workspaces.name AS workspace_name \
              FROM workspace_invitations AS invitations \
              JOIN workspaces ON workspaces.id = invitations.workspace_id \
              WHERE invitations.token_hash = $1 AND invitations.expires_at > $2 \
@@ -1373,6 +1537,8 @@ impl WorkspaceRepository {
         Ok(InvitationPreview {
             email: row.get("email"),
             workspace_name: row.get("workspace_name"),
+            workspace_logo: None,
+            workspace_id: parse_id(row.get("workspace_id"))?,
             channels,
         })
     }
@@ -2189,13 +2355,14 @@ impl WorkspaceRepository {
                     .execute(&mut *transaction)
                     .await?
                     .rows_affected();
-            // Page files and chat files hold their blobs with ON DELETE RESTRICT, so they go
-            // before the blobs; so do file previews, whose outputs count as references.
+            // Page files, chat files and the logo hold their blobs with ON DELETE RESTRICT, so they
+            // go before the blobs; so do file previews, whose outputs count as references.
             for table in [
                 "page_file_versions",
                 "page_files",
                 "chat_message_files",
                 "file_previews",
+                "workspace_logos",
             ] {
                 attachment_references_purged += sqlx::query(sqlx::AssertSqlSafe(format!(
                     "DELETE FROM {table} WHERE workspace_id = $1"
@@ -2488,8 +2655,9 @@ async fn ensure_may_own_another(
 
 fn workspace_from_row(row: sqlx::any::AnyRow) -> Result<WorkspaceRecord, WorkspaceError> {
     let role = parse_role(&row.get::<String, _>("role"))?;
+    let id = parse_id(row.get("id"))?;
     Ok(WorkspaceRecord {
-        id: parse_id(row.get("id"))?,
+        id,
         name: row.get("name"),
         role,
         permissions: Policy::permissions(role),
@@ -2498,6 +2666,7 @@ fn workspace_from_row(row: sqlx::any::AnyRow) -> Result<WorkspaceRecord, Workspa
         deleted_at: row
             .get::<Option<i64>, _>("deleted_at")
             .map(TimestampMillis::from_millis),
+        logo_url: logo_url(id, row.get("logo_updated_at")),
     })
 }
 
@@ -2563,6 +2732,14 @@ fn invitation_from_row(
 }
 
 /// The acting member, or `NotFound` for outsiders and trashed workspaces.
+fn upload_error(error: UploadError) -> WorkspaceError {
+    match error {
+        UploadError::Database(error) => WorkspaceError::Unavailable(error),
+        UploadError::BlobStore(error) => WorkspaceError::Storage(error),
+        _ => WorkspaceError::Conflict,
+    }
+}
+
 pub(super) async fn require_actor<'e, E>(
     executor: E,
     workspace_id: Id,

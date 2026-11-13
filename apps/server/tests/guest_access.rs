@@ -152,6 +152,8 @@ fn guest_may_use(operation: &str) -> bool {
     matches!(
         operation,
         "get_workspace"
+            // the switcher shows the logo to everyone; `workspace_logo_api.rs` checks who reads it
+            | "get_workspace_logo"
             | "list_members"
             | "list_chat_conversations"
             | "list_chat_categories"
@@ -457,6 +459,7 @@ const UNCHECKED: &[&str] = &[
     "download_comment_attachment",
     "create_obsidian_import",
     "delete_storage_file",
+    "upload_workspace_logo",
     // Chat files kept in Drive and file previews (`tests/chat_media.rs` checks who reaches them).
     "attach_chat_drive_file",
     "get_chat_file_preview",

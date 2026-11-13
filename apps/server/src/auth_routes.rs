@@ -1235,9 +1235,46 @@ pub(crate) fn avatar_mime_type(bytes: &[u8]) -> Option<&'static str> {
     }
 }
 
+/// Why an image upload was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ImageUploadError {
+    /// No multipart field `file`, or a broken body.
+    InvalidMultipart,
+    /// Over [`MAX_AVATAR_BYTES`].
+    TooLarge,
+    /// Not a PNG, JPEG or WebP image.
+    InvalidImage,
+}
+
+/// The `file` field of a profile picture or workspace logo upload and its type: a PNG, JPEG or WebP image of at
+/// most [`MAX_AVATAR_BYTES`].
+pub(crate) async fn read_image_upload(
+    multipart: &mut Multipart,
+) -> Result<(axum::body::Bytes, &'static str), ImageUploadError> {
+    let refusal = |error: axum::extract::multipart::MultipartError| {
+        if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            ImageUploadError::TooLarge
+        } else {
+            ImageUploadError::InvalidMultipart
+        }
+    };
+    let mut image = None;
+    while let Some(field) = multipart.next_field().await.map_err(refusal)? {
+        if field.name() == Some("file") {
+            image = Some(field.bytes().await.map_err(refusal)?);
+        }
+    }
+    let image = image.ok_or(ImageUploadError::InvalidMultipart)?;
+    if image.len() > MAX_AVATAR_BYTES {
+        return Err(ImageUploadError::TooLarge);
+    }
+    let mime_type = avatar_mime_type(&image).ok_or(ImageUploadError::InvalidImage)?;
+    Ok((image, mime_type))
+}
+
 #[derive(ToSchema)]
 #[allow(dead_code)]
-struct AvatarUploadBody {
+pub(crate) struct AvatarUploadBody {
     /// A PNG, JPEG or WebP image of at most 512 KiB.
     #[schema(value_type = String, format = Binary)]
     file: Vec<u8>,
@@ -1246,7 +1283,7 @@ struct AvatarUploadBody {
 #[derive(ToSchema)]
 #[schema(value_type = String, format = Binary)]
 #[allow(dead_code)]
-struct AvatarImage(Vec<u8>);
+pub(crate) struct AvatarImage(Vec<u8>);
 
 #[utoipa::path(put, path = "/api/v1/auth/avatar", request_body(content = AvatarUploadBody, content_type = "multipart/form-data"), responses((status = 200, body = AuthUserResponse), (status = 400, description = "invalid_multipart", body = ProblemBody, content_type = "application/problem+json"), (status = 401, description = "authentication_required", body = ProblemBody, content_type = "application/problem+json"), (status = 413, description = "avatar_too_large", body = ProblemBody, content_type = "application/problem+json"), (status = 422, description = "invalid_avatar", body = ProblemBody, content_type = "application/problem+json")))]
 async fn upload_avatar(
@@ -1257,59 +1294,34 @@ async fn upload_avatar(
 ) -> Result<Json<AuthUserResponse>, ApiError> {
     let instance = "/api/v1/auth/avatar";
     let session = authenticate(&state, &headers, instance, request_id.as_ref()).await?;
-    let invalid_multipart = || {
-        ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_multipart",
-            "Invalid multipart upload",
-            "Send the image as the multipart field \"file\".",
-            instance,
-            request_id.as_ref(),
-        )
-    };
-    let too_large = || {
-        ApiError::new(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "avatar_too_large",
-            "Image too large",
-            "The image must be at most 512 KiB.",
-            instance,
-            request_id.as_ref(),
-        )
-    };
-    let mut image = None;
-    while let Some(field) = multipart.next_field().await.map_err(|error| {
-        if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
-            too_large()
-        } else {
-            invalid_multipart()
-        }
-    })? {
-        if field.name() == Some("file") {
-            let bytes = field.bytes().await.map_err(|error| {
-                if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
-                    too_large()
-                } else {
-                    invalid_multipart()
-                }
-            })?;
-            image = Some(bytes);
-        }
-    }
-    let image = image.ok_or_else(invalid_multipart)?;
-    if image.len() > MAX_AVATAR_BYTES {
-        return Err(too_large());
-    }
-    let mime_type = avatar_mime_type(&image).ok_or_else(|| {
-        ApiError::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "invalid_avatar",
-            "Invalid image",
-            "Upload a PNG, JPEG or WebP image.",
-            instance,
-            request_id.as_ref(),
-        )
-    })?;
+    let (image, mime_type) = read_image_upload(&mut multipart)
+        .await
+        .map_err(|error| match error {
+            ImageUploadError::InvalidMultipart => ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_multipart",
+                "Invalid multipart upload",
+                "Send the image as the multipart field \"file\".",
+                instance,
+                request_id.as_ref(),
+            ),
+            ImageUploadError::TooLarge => ApiError::new(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "avatar_too_large",
+                "Image too large",
+                "The image must be at most 512 KiB.",
+                instance,
+                request_id.as_ref(),
+            ),
+            ImageUploadError::InvalidImage => ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_avatar",
+                "Invalid image",
+                "Upload a PNG, JPEG or WebP image.",
+                instance,
+                request_id.as_ref(),
+            ),
+        })?;
     let uploads = state
         .uploads
         .as_ref()
