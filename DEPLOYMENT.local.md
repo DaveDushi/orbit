@@ -7,15 +7,15 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 18568f91b0cfa365ae2ba9db15c7da5de2070103
-  (upstream port 2: trash, recurring tasks, private projects, project order; schema 20261113100200; November 13, 2026).
+- Source: DaveDushi/orbit, `main` at 68b2d488be78f2de5036f91d56321d6eb3a5bdec
+  (upstream fixes: new-task description uploads, 5xx cause logging, info tips; schema 20261113100200; November 13, 2026).
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
   f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:18568f9`); fork commits have no published upstream image.
-- Image ID: sha256:e0b1d43cde95ef4929ea9dad3e428ca505a1b2cb134b94d898dbccab1f114d3c
-- Team agent sidecar code (`/opt/orbit-agent`): commit 18568f9.
+  (`orbit:68b2d48`); fork commits have no published upstream image.
+- Image ID: sha256:80cd2eabe3003ecc6db25e7038e96ee29f09e884d9092e1ffe474f137ca0b05e
+- Team agent sidecar code (`/opt/orbit-agent`): commit 68b2d48.
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): off. No `ORBIT_APNS_*` setting is in `/etc/orbit/orbit.env`
   yet, so Orbit keeps the iPhones' device rows and sends them nothing (no log line). To turn it on, put the team's `.p8`
   key on the VM (owner `orbit`, mode 600), set `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID` (and
@@ -262,6 +262,66 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 13, 2026 upgrade: upstream fixes (new-task description uploads, 5xx logging, info tips; no migration)
+
+`main` from `e06631e6` to `68b2d488` (local, not pushed): `upstream-fixes` (10 commits on `e06631e6`) fast-forwarded.
+`e0bfc4f4` images and files in a new task's description (/image, /file) stay as `blob:` URLs until the task exists, then
+upload as task attachments; `027968cb` info icons get a pointer and open their tooltip after 100 ms; `8bd700e9` admin
+"Files in S3"; `371331d5` a deleted backup also loses its S3 copy; `41507914`, `1204bf25`, `f46f3195` log the cause,
+path and request of every 5xx (avatars whose file is gone are dropped); `6134c0c8` test; `5ffbe311` what's new (today's
+`2026-11-13` entry, tasks line: "Images and files in a new task's description are now saved with it") and `aboutOrbit()`;
+`68b2d488` lesson. Checks: web `tsc -b` (merged main); the image build ran `tsc -b && vite build` and the release
+server build. The branch was tested in its worktree. No migration: the new binary on a hot copy applies 0 (schema
+20261113100200, 104 rows); copy deleted. Scripts and logs: `/root/ops/upstream-fixes/`.
+
+Deploy id `20261113T141157Z-463767`. `orbit:68b2d48` (image
+`sha256:80cd2eabe3003ecc6db25e7038e96ee29f09e884d9092e1ffe474f137ca0b05e`, label `68b2d488…`, 31 min after the
+`orbit-build` lock of other worktrees); `deploy/smoke.sh` and `orbit config check` (production env) passed.
+
+Switch: stopped both services at 14:51:19 UTC; snapshot `01a1d564-40f0-740c-9831-68328951d98d` with
+`/usr/local/bin/orbit-18568f9`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-68b2d48.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-68b2d48.tgz`; old sidecar code `/opt/orbit-agent.before-68b2d48`; new
+sidecar `src` (`package*.json` unchanged); env unchanged; binary installed (`/usr/local/bin/orbit-68b2d48` too); `orbit`
+ready 14:51:36, then `orbit-agent`. `vm-health.conf` (old copy `.before-68b2d48`): `PROD_TAG=68b2d48`,
+`ROLLBACK_TAG=18568f9`, `ROLLBACK_BACKUP=01a1d564-40f0-740c-9831-68328951d98d`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) and `/health/live` 200; revision
+`68b2d488`; schema 20261113100200 (104 rows, unchanged); live quick-check ok; 0 error lines in the journal (only the
+known "allowed origin without a port" WARN); sidecar `src` equal to `main`. Built bundle on production as David Dusi
+(temporary v7 session, `ui-check.ts`, all API writes blocked in the browser): Tasks → New task → description `/image`
+→ upload a PNG → the `blob:` image shows in the editor (dialog closed, no task created); Project settings → the Tag
+info icon has `cursor: pointer` and its tooltip opens in ~200 ms; 0 console or page errors. Screenshots
+`/root/.local/share/com.jean.desktop/pasted-images/upstream-fixes/prod-{new-task-slash-menu,new-task-image,info-tooltip}.png`.
+`ORBIT_VERIFY_SPA=1 verify-production.sh` passed (signed out `/` → `/login`, signed in `/` and `/tasks`; session logged
+out, the row deleted after: 46 sessions, as before). `vm-health` OK except oom (1 line from 03:06 UTC, an earlier
+build), nginx (19 lines, upstream refused 14:51:35–14:51:36, the start window) and docker (other worktrees'
+containers). **Not** verified on production: creating a task with an image (the upload after create), the 5xx log
+lines, a backup delete with S3.
+
+Side effect: an earlier run of the check script (before the write block) picked the chat bar's file input and
+uploaded the test PNG as an unsent chat file of David Dusi (`chat_message_files` `01a1d565-81a3-71eb-a628-4a134852d773`,
+blob `01a1d565-81a2-7263-b147-82432031e959`, 574 bytes, no message, no conversation; `POST chat/dms` opened his
+existing DM). Nobody else can see it. The daily retention job deletes unsent chat files after 24 h, then the hourly
+attachment job removes the blob; not deleted by hand.
+
+Rollback to `18568f9` (no migration, env unchanged):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-18568f9 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-68b2d48 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/upstream-fixes/rollback.sh)
+# Data, only if needed (work after 14:51 UTC is lost), Orbit stopped: /usr/local/bin/orbit-18568f9 backup verify +
+#   backup restore 01a1d564-40f0-740c-9831-68328951d98d (as user orbit, with /etc/orbit/orbit.env)
+```
+
+After this rollback, set `PROD_TAG=18568f9`, `ROLLBACK_TAG=7b548ac`,
+`ROLLBACK_BACKUP=01a1d4af-7c96-711d-ab7b-ceb6798d5ff3` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-68b2d48`).
 
 ### November 13, 2026 upgrade: upstream port 2 (trash, recurring tasks, private projects, project order; schema 20261113100200)
 
