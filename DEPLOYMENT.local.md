@@ -7,16 +7,15 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 4b1b607183d4dcc4cc3a06fabb109316689a6823
-  (iPhone release: Home cards, iPhone app icon badge; schema 20261113115539; November 13, 2026; `881fdfb2` after it
-  changes only a test).
+- Source: DaveDushi/orbit, `main` at e53e93c62190aed860027ed71d8eb34060e8a31b
+  (Donna tool `drive_image_to_shopify`; schema 20261113115539, unchanged; November 13, 2026).
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
   f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:4b1b607`); fork commits have no published upstream image.
-- Image ID: sha256:f8b9bf3b8f3ca1eab0799bd689bca1a82cdf0024d256bc05170e4e3850253489
-- Team agent sidecar code (`/opt/orbit-agent`): commit 4b1b607.
+  (`orbit:e53e93c`); fork commits have no published upstream image.
+- Image ID: sha256:1f76809f9e45cc7cfe6e6973ce32a88b110d55c089c7168c480468fd5325506d
+- Team agent sidecar code (`/opt/orbit-agent`): commit e53e93c.
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): off. No `ORBIT_APNS_*` setting is in `/etc/orbit/orbit.env`
   yet, so Orbit keeps the iPhones' device rows and sends them nothing (no log line). To turn it on, put the team's `.p8`
   key on the VM (owner `orbit`, mode 600), set `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID` (and
@@ -263,6 +262,63 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 13, 2026 upgrade: Donna tool drive_image_to_shopify (no migration)
+
+`main` from `92e1681b` to `e53e93c6` (fast-forward of `drive-to-shopify`, rebased on `92e1681b`): `cd48a1b9` + `b0f93551`
+(new tool `drive_image_to_shopify`: `POST /api/v1/agent-tools/shopify-image` uploads a Drive image to a Shopify store's
+Files through a ticked Shopify HTTP API integration, optionally as a blog article's image or at the end of its body;
+needs the driver's yes; tool catalog 55 → 56), `e53e93c6` (what's new). What is new for people: one line added to
+today's `2026-11-13` entry ("Drive pictures to Shopify…", now 5 lines). `aboutOrbit()` names the tool and the
+Shopify scopes `write_files` / `write_content`. No migration, no new env key, `package*.json` of the sidecar unchanged.
+
+Checks after the rebase (`orbit-build`, `CARGO_PROFILE_*_DEBUG=0`): SQLite `agent_shopify_image` 5 pass; `apps/agent`
+`tsc --noEmit` ok, `npm test` with `/opt/orbit-node` (Node 24) 82 pass, 0 fail (Node 18 in `/usr/bin` cannot run `.ts`
+tests). Postgres and the full suites were not run. Scripts and logs: `/root/ops/drive-to-shopify/`.
+
+Deploy id `20261113T185830Z-723278`. `orbit:e53e93c` (image
+`sha256:1f76809f9e45cc7cfe6e6973ce32a88b110d55c089c7168c480468fd5325506d`, label `e53e93c6…`, one cold build, 50 min with the
+wait for the build lock); `deploy/smoke.sh` and `orbit config check` (production env) passed. Migration dry run
+(release binary on a hot copy, and in the switch on a copy of the stopped database): 0 applied, schema 20261113115539
+(108 rows), counts, names and checksums unchanged (9 users, 110 tasks, 1131 chat messages), quick-check ok, 0
+foreign-key rows.
+
+Switch: stopped both services at 20:10:11 UTC; snapshot `01a1d688-2f92-74b7-b90d-b0f423e4aa13` with
+`/usr/local/bin/orbit-4b1b607`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-e53e93c.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-e53e93c.tgz`; old sidecar code `/opt/orbit-agent.before-e53e93c`; new
+sidecar `src`; env unchanged. Binary installed (`/usr/local/bin/orbit-e53e93c` too), `orbit` ready 20:10:30, then
+`orbit-agent` (19 s down). `vm-health.conf` (old copy `.before-e53e93c`): `PROD_TAG=e53e93c`, `ROLLBACK_TAG=4b1b607`,
+`ROLLBACK_BACKUP=01a1d688-2f92-74b7-b90d-b0f423e4aa13`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) and `/health/live` 200; schema
+20261113115539 (108 rows), quick-check ok; 0 error lines in the journal; sidecar `src` equal to `main`, its
+`ORBIT_TOOLS` (52) has `drive_image_to_shopify`; deployed `aboutOrbit()` names the tool, `write_files` and
+`write_content`. `GET /workspaces/{Wellrox}/agents` without a session 401; with a temporary v7 session of David Dusi
+(inserted live, logged out 204 after, row deleted, token file removed) 200: the tool catalog has 56 tools with
+`drive_image_to_shopify` (Connected services, writes), so Donna (the default agent, all tools) has it; the custom
+agent Arthur does not (off until ticked). `vm-health` OK except oom (the 03:06 one), nginx (the switch window),
+docker (other worktrees' containers) and git-owner (other worktrees' metadata in `.git`). **Not** verified on
+production: a real upload to Shopify (a write in the store).
+
+Rollback to `4b1b607` (no schema change, so no data is lost):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-4b1b607 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-e53e93c /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/drive-to-shopify/rollback.sh)
+# Way 2, only for a data problem (work after 20:10 UTC is lost), Orbit stopped: /usr/local/bin/orbit-4b1b607 backup verify +
+#   backup restore 01a1d688-2f92-74b7-b90d-b0f423e4aa13 (as user orbit, with /etc/orbit/orbit.env), then the lines above
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-e53e93c.tgz
+# Plain copy of the database before the switch: /var/backups/orbit/pre-migration/orbit-before-e53e93c.sqlite
+```
+
+After this rollback, set `PROD_TAG=4b1b607`, `ROLLBACK_TAG=d5dfd47`,
+`ROLLBACK_BACKUP=01a1d63c-8b2f-77a1-9f83-4360004da19b` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-e53e93c`).
 
 ### November 13, 2026 upgrade: iPhone release server part (Home cards, app icon badge; schema 20261113115539)
 
