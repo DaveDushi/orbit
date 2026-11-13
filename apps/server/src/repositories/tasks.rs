@@ -15,6 +15,7 @@ use super::pages::revision;
 use super::sub_issues::{self, AutoClosed};
 use super::task_filter::{self, FilterError, FilterGroup, ShowCompleted, SubIssuesDisplay};
 use super::task_followers::{self, FollowerNotice, TaskFollowers};
+use super::task_recurrences::{self, RecurrenceRule, TaskRecurrence};
 use super::task_relations::{self, RelationActor};
 use crate::audit::{self, AuditOutcome};
 use crate::collab::kind_task::members;
@@ -152,6 +153,9 @@ pub struct TaskRecord {
     pub due_start_at: Option<TimestampMillis>,
     #[schema(value_type = Option<String>, format = DateTime)]
     pub due_at: Option<TimestampMillis>,
+    /// How the task repeats; null when it does not. Completing it creates the next occurrence.
+    #[schema(required = true)]
+    pub recurrence: Option<TaskRecurrence>,
     pub version: u64,
     #[schema(value_type = Option<String>, format = DateTime)]
     pub deleted_at: Option<TimestampMillis>,
@@ -373,6 +377,8 @@ pub struct TaskChanges {
     pub duplicate_of_id: Option<Option<Id>>,
     /// `Some(Some(id))` makes the task a sub-issue of `id`; `Some(None)` detaches it.
     pub parent_task_id: Option<Option<Id>>,
+    /// `Some(Some(rule))` sets or replaces the series' rule; `Some(None)` stops repeating.
+    pub recurrence: Option<Option<RecurrenceRule>>,
 }
 
 #[derive(Clone, Debug)]
@@ -1897,78 +1903,27 @@ impl TaskRepository {
         if let Some(parent_id) = input.parent_task_id {
             sub_issues::validate_parent_in_tx(&mut tx, workspace_id, None, parent_id).await?;
         }
-        let position = match input.position {
-            Some(position) => position,
-            None => sqlx::query_scalar::<_, i64>(
-                "SELECT COALESCE(MAX(position) + 1, 0) FROM tasks WHERE workspace_id = $1 AND project_id = $2 AND status_id = $3 AND deleted_at IS NULL",
-            )
-            .bind(workspace_id.to_string())
-            .bind(input.project_id.to_string())
-            .bind(input.status_id.to_string())
-            .fetch_one(&mut *tx)
-            .await?,
-        };
-        // A markdown description stays markdown until the description is first opened.
-        let (description, blocks) = match &input.description_json {
-            Some(blocks) => {
-                let (markdown, blocks) = description_from_blocks(workspace_id, id, blocks);
-                (markdown, Some(blocks))
-            }
-            // markdown (API, MCP, chat): converted now, so its mentions notify like typed ones
-            None if input.description.trim().is_empty() => (input.description.clone(), None),
-            None => {
-                let members = members(&mut *tx, workspace_id).await?;
-                let blocks = sanitize_blocks_for(
-                    &markdown_to_blocks(&input.description, &members),
-                    &task_policy(workspace_id, id),
-                );
-                (input.description.clone(), Some(blocks))
-            }
-        };
-        let description_json = blocks
-            .as_ref()
-            .map(|blocks| Value::Array(blocks.clone()).to_string());
-        sqlx::query(
-            "INSERT INTO tasks (id, workspace_id, project_id, status_id, title, description, source_url, priority, position, creator_id, due_start_at, due_at, parent_task_id, version, created_at, updated_at, description_json, creator_service_account_id) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 0, $14, $15, $16, $17)",
+        let blocks = insert_task_rows_in_tx(
+            &mut tx,
+            id,
+            workspace_id,
+            actor_id,
+            self.service_account().map(|(id, _)| id),
+            &input,
+            None,
+            request_id,
+            now,
         )
-        .bind(id.to_string())
-        .bind(workspace_id.to_string())
-        .bind(input.project_id.to_string())
-        .bind(input.status_id.to_string())
-        .bind(&input.title)
-        .bind(&description)
-        .bind(&input.source_url)
-        .bind(&input.priority)
-        .bind(position)
-        .bind(actor_id.to_string())
-        .bind(input.due_start_at.map(TimestampMillis::as_millis))
-        .bind(input.due_at.map(TimestampMillis::as_millis))
-        .bind(input.parent_task_id.map(|id| id.to_string()))
-        .bind(now.as_millis())
-        .bind(now.as_millis())
-        .bind(description_json)
-        .bind(self.service_account().map(|(id, _)| id.to_string()))
-        .execute(&mut *tx)
         .await?;
-        replace_assignees(&mut tx, id, &input.assignee_ids).await?;
-        // The creator (a person, not a service account) and the assignees follow the task.
+        // The creator (a person, not a service account) follows the task too.
         if self.notifies() {
             task_followers::follow_in_tx(&mut tx, id, &[actor_id], now).await?;
         }
-        task_followers::follow_in_tx(&mut tx, id, &input.assignee_ids, now).await?;
         if let Some(blocks) = blocks.as_ref().filter(|_| self.notifies()) {
             // everyone the new description mentions is newly mentioned
             notify_description_mentions(&mut tx, workspace_id, id, &[], blocks, actor_id, now)
                 .await?;
         }
-        let write = LabelWrite {
-            workspace_id,
-            actor_id,
-            request_id,
-            now,
-        };
-        replace_labels(&mut tx, &write, id, &input.label_ids).await?;
         if self.notifies() {
             notify_users(
                 &mut tx,
@@ -2007,6 +1962,8 @@ impl TaskRepository {
             };
             sub_issues::close_ancestors_in_tx(&mut tx, actor, parent_id, id, &mut auto_closed)
                 .await?;
+            // A recurring parent the new sub-issue closed repeats.
+            task_recurrences::spawn_next_in_tx(&self.database, &mut tx, actor).await?;
         }
         let task = task_in_tx(&mut tx, workspace_id, id, false).await?;
         tx.commit().await?;
@@ -2193,14 +2150,14 @@ impl TaskRepository {
             }
             // Spec §4: the automation follows every write path, GitHub's included.
             let after = sub_issues::snapshot_in_tx(&mut tx, task_id).await?;
+            let actor = sub_issues::AutomationActor {
+                workspace_id,
+                actor_id,
+                service_account: Some((service_account_id, &service_account_name)),
+                request_id,
+                now,
+            };
             if let (Some(before), Some(after)) = (before, after) {
-                let actor = sub_issues::AutomationActor {
-                    workspace_id,
-                    actor_id,
-                    service_account: Some((service_account_id, &service_account_name)),
-                    request_id,
-                    now,
-                };
                 let mut auto_closed = Vec::new();
                 sub_issues::run_automation_in_tx(
                     &mut tx,
@@ -2250,6 +2207,7 @@ impl TaskRepository {
                 )
                 .await?;
             }
+            task_recurrences::spawn_next_in_tx(&self.database, &mut tx, actor).await?;
             let resumed = sqlx::query("UPDATE github_issue_links SET sync_paused = 0, pull_state = $1 WHERE task_id = $2 AND (sync_paused != 0 OR pull_state IS DISTINCT FROM $3)")
                     .bind(issue.state)
                     .bind(task_id.to_string())
@@ -2528,14 +2486,14 @@ impl TaskRepository {
         )
         .await?;
         let mut auto_closed = Vec::new();
+        let actor = sub_issues::AutomationActor {
+            workspace_id,
+            actor_id,
+            service_account: self.service_account(),
+            request_id,
+            now,
+        };
         if let (Some(before), Some(after)) = (before, after) {
-            let actor = sub_issues::AutomationActor {
-                workspace_id,
-                actor_id,
-                service_account: self.service_account(),
-                request_id,
-                now,
-            };
             sub_issues::run_automation_in_tx(
                 &mut tx,
                 actor,
@@ -2546,6 +2504,7 @@ impl TaskRepository {
             )
             .await?;
         }
+        task_recurrences::spawn_next_in_tx(&self.database, &mut tx, actor).await?;
         // Re-read: the automation may have changed this task's sub-issue counts.
         let task = task_in_tx(&mut tx, workspace_id, update.id, false).await?;
         tx.commit().await?;
@@ -2676,6 +2635,7 @@ impl TaskRepository {
                 .await?;
             }
         }
+        task_recurrences::spawn_next_in_tx(&self.database, &mut tx, actor).await?;
         let mut tasks = Vec::with_capacity(updates.len());
         for update in updates {
             tasks.push(task_in_tx(&mut tx, workspace_id, update.id, false).await?);
@@ -3607,6 +3567,88 @@ impl TaskRepository {
     }
 }
 
+/// Writes a new task with its assignees and labels, validated by the caller; no notifications
+/// and no audit record. Returns the description's blocks (for the mention notifications).
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn insert_task_rows_in_tx(
+    tx: &mut Transaction<'_, Any>,
+    id: Id,
+    workspace_id: Id,
+    actor_id: Id,
+    creator_service_account_id: Option<Id>,
+    input: &CreateTask,
+    recurrence_id: Option<&str>,
+    request_id: &str,
+    now: TimestampMillis,
+) -> Result<Option<Vec<Value>>, TaskError> {
+    let position = match input.position {
+        Some(position) => position,
+        None => sqlx::query_scalar::<_, i64>(
+            "SELECT COALESCE(MAX(position) + 1, 0) FROM tasks WHERE workspace_id = $1 AND project_id = $2 AND status_id = $3 AND deleted_at IS NULL",
+        )
+        .bind(workspace_id.to_string())
+        .bind(input.project_id.to_string())
+        .bind(input.status_id.to_string())
+        .fetch_one(&mut **tx)
+        .await?,
+    };
+    // A markdown description stays markdown until the description is first opened.
+    let (description, blocks) = match &input.description_json {
+        Some(blocks) => {
+            let (markdown, blocks) = description_from_blocks(workspace_id, id, blocks);
+            (markdown, Some(blocks))
+        }
+        // markdown (API, MCP, chat): converted now, so its mentions notify like typed ones
+        None if input.description.trim().is_empty() => (input.description.clone(), None),
+        None => {
+            let members = members(&mut **tx, workspace_id).await?;
+            let blocks = sanitize_blocks_for(
+                &markdown_to_blocks(&input.description, &members),
+                &task_policy(workspace_id, id),
+            );
+            (input.description.clone(), Some(blocks))
+        }
+    };
+    let description_json = blocks
+        .as_ref()
+        .map(|blocks| Value::Array(blocks.clone()).to_string());
+    sqlx::query(
+        "INSERT INTO tasks (id, workspace_id, project_id, status_id, title, description, source_url, priority, position, creator_id, due_start_at, due_at, parent_task_id, version, created_at, updated_at, description_json, creator_service_account_id, recurrence_id) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 0, $14, $15, $16, $17, $18)",
+    )
+    .bind(id.to_string())
+    .bind(workspace_id.to_string())
+    .bind(input.project_id.to_string())
+    .bind(input.status_id.to_string())
+    .bind(&input.title)
+    .bind(&description)
+    .bind(&input.source_url)
+    .bind(&input.priority)
+    .bind(position)
+    .bind(actor_id.to_string())
+    .bind(input.due_start_at.map(TimestampMillis::as_millis))
+    .bind(input.due_at.map(TimestampMillis::as_millis))
+    .bind(input.parent_task_id.map(|id| id.to_string()))
+    .bind(now.as_millis())
+    .bind(now.as_millis())
+    .bind(description_json)
+    .bind(creator_service_account_id.map(|id| id.to_string()))
+    .bind(recurrence_id)
+    .execute(&mut **tx)
+    .await?;
+    replace_assignees(tx, id, &input.assignee_ids).await?;
+    // The assignees follow the task.
+    task_followers::follow_in_tx(tx, id, &input.assignee_ids, now).await?;
+    let write = LabelWrite {
+        workspace_id,
+        actor_id,
+        request_id,
+        now,
+    };
+    replace_labels(tx, &write, id, &input.label_ids).await?;
+    Ok(blocks)
+}
+
 pub(super) async fn update_task_in_tx(
     tx: &mut Transaction<'_, Any>,
     workspace_id: Id,
@@ -3771,6 +3813,10 @@ pub(super) async fn update_task_in_tx(
     // and keeps the old identifier in `task_number_aliases`.
     sqlx::query("UPDATE tasks SET project_id = $1, number = CASE WHEN project_id = $2 THEN number ELSE NULL END, status_id = $3, title = $4, description = $5, source_url = $6, priority = $7, position = $8, due_start_at = $9, due_at = $10, parent_task_id = $11, version = version + 1, updated_at = $12 WHERE id = $13 AND workspace_id = $14 AND deleted_at IS NULL AND version = $15")
         .bind(project_id.to_string()).bind(project_id.to_string()).bind(status_id.to_string()).bind(&title).bind(&description).bind(&source_url).bind(&priority).bind(position).bind(due_start_at.map(TimestampMillis::as_millis)).bind(due_at.map(TimestampMillis::as_millis)).bind(parent_task_id.map(|id| id.to_string())).bind(now.as_millis()).bind(update.id.to_string()).bind(workspace_id.to_string()).bind(update.expected_version as i64).execute(&mut **tx).await?;
+    if let Some(rule) = update.changes.recurrence {
+        task_recurrences::set_in_tx(tx, workspace_id, update.id, actor_id, rule, due_at, now)
+            .await?;
+    }
     if parent_task_id != current.parent_task_id {
         // Project ids let the activity feed build cross-project identifiers (ORB-91C0). A hidden
         // old parent (trashed, or in a trashed project) has no `current.parent`, so read its
@@ -4640,6 +4686,9 @@ fn updated_fields(update: &TaskUpdate, before: &TaskRecord, after: &TaskRecord) 
     if before.source_url != after.source_url {
         changes.insert("source_url".into(), json!(true));
     }
+    if before.recurrence != after.recurrence {
+        changes.insert("recurrence".into(), json!(after.recurrence));
+    }
     Value::Object(changes)
 }
 
@@ -5299,7 +5348,8 @@ fn task_columns(backend: Backend, rich: bool) -> String {
          tasks.source_url, tasks.priority, tasks.position, tasks.creator_id, \
          tasks.creator_service_account_id, \
          (SELECT name FROM service_accounts WHERE id = tasks.creator_service_account_id) AS creator_service_account_name, \
-         tasks.due_start_at, tasks.due_at, tasks.version, tasks.deleted_at, tasks.created_at, tasks.updated_at, \
+         tasks.due_start_at, tasks.due_at, {} AS recurrence_json, \
+         tasks.version, tasks.deleted_at, tasks.created_at, tasks.updated_at, \
          {} AS duplicate_of_json, \
          EXISTS (SELECT 1 FROM task_relations AS blocker_relation \
                  JOIN tasks AS blocker ON blocker.id = blocker_relation.task_id \
@@ -5323,6 +5373,10 @@ fn task_columns(backend: Backend, rich: bool) -> String {
             "tasks.description_json"
         } else {
             "NULL"
+        },
+        {
+            let (open, close) = json_object_sql(backend);
+            task_recurrences::json_subquery(open, close)
         },
         duplicate_of_subquery(backend, "tasks.id"),
         sub_issues::parent_subquery(backend, "tasks.parent_task_id")
@@ -5402,6 +5456,7 @@ fn task_record_from_row(
         due_at: row
             .get::<Option<i64>, _>("due_at")
             .map(TimestampMillis::from_millis),
+        recurrence: task_recurrences::from_json(row.get("recurrence_json")),
         version: parse_version(row.get("version"))?,
         deleted_at: row
             .get::<Option<i64>, _>("deleted_at")

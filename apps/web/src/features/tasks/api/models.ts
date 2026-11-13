@@ -1,6 +1,6 @@
 import type { User } from '@/features/workspaces/models'
 import { formatTaskIdentifier } from '@/lib/taskLinks'
-import type { AttachmentRecord, AuditEvent, CommentRecord, LabelRecord, ProjectRecord, TaskRecord } from '@orbit/api/generated/types.gen'
+import type { AttachmentRecord, AuditEvent, CommentRecord, LabelRecord, ProjectRecord, TaskRecord, TaskRecurrence } from '@orbit/api/generated/types.gen'
 
 export type StatusCategory = 'unstarted' | 'started' | 'completed' | 'cancelled' | 'duplicate'
 export type TaskPriority = 'none' | 'low' | 'medium' | 'high' | 'urgent'
@@ -66,6 +66,7 @@ export type TaskChange =
   | { field: 'due'; start: string | null; end: string | null }
   | { field: 'title' | 'project'; from: string; to: string }
   | { field: 'description' | 'source_url' }
+  | { field: 'recurrence'; rule: TaskRecurrence | null }
 
 export interface TaskActivity {
   id: string
@@ -110,6 +111,8 @@ export interface Task {
   attachments: Attachment[]
   dueStartAt?: string | null
   dueAt: string | null
+  /** How the task repeats; null when it does not. */
+  recurrence?: TaskRecurrence | null
   createdAt: string
   updatedAt: string
   comments: TaskComment[]
@@ -234,6 +237,7 @@ function updateChanges(metadata: Record<string, unknown>, projectName: (projectI
   const ids = (value: unknown) => (Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [])
   return Object.entries(changes as Record<string, Record<string, unknown> | true>).flatMap(([field, value]): TaskChange[] => {
     if (field === 'description' || field === 'source_url') return [{ field }]
+    if (field === 'recurrence') return [{ field, rule: (value as TaskRecurrence | null) ?? null }]
     if (typeof value !== 'object' || value === null) return []
     if (field === 'status' || field === 'priority' || field === 'title') return [{ field, from: text(value.from), to: text(value.to) }]
     if (field === 'project') return [{ field, from: projectName(text(value.from)), to: projectName(text(value.to)) }]
@@ -332,6 +336,7 @@ export function taskFromRecord(
     attachments: attachments.filter((attachment) => !attachment.comment_id).map(attachmentView),
     dueStartAt: record.due_start_at ?? null,
     dueAt: record.due_at ?? null,
+    recurrence: record.recurrence ?? null,
     createdAt: record.created_at,
     updatedAt: record.updated_at,
     comments: comments.map((comment) => ({
