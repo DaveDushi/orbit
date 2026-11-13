@@ -7,15 +7,15 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at f14e780723e26fbb9f0a931d18b15dc80c572384
-  (`ORBIT_PUBLIC_HOOKS_URL`; schema 20261113042745; November 13, 2026).
+- Source: DaveDushi/orbit, `main` at 7b548ac03a0fdd993ae4d22db1c19939e70967e8
+  (sheet grid viewer; schema 20261113042745; November 13, 2026).
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
   f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:f14e780`); fork commits have no published upstream image.
-- Image ID: sha256:abda8967f005b235cb4dc39e03a7f2e615777a74726973017cb9ead83f7cfbd8
-- Team agent sidecar code (`/opt/orbit-agent`): commit f14e780.
+  (`orbit:7b548ac`); fork commits have no published upstream image.
+- Image ID: sha256:25735ec548f00a2460d821a4829496f017ea3fd1448097fe9d965966ae8789a8
+- Team agent sidecar code (`/opt/orbit-agent`): commit 7b548ac.
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): off. No `ORBIT_APNS_*` setting is in `/etc/orbit/orbit.env`
   yet, so Orbit keeps the iPhones' device rows and sends them nothing (no log line). To turn it on, put the team's `.p8`
   key on the VM (owner `orbit`, mode 600), set `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID` (and
@@ -262,6 +262,64 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 13, 2026 upgrade: sheet grid viewer (xlsx, xls, csv, tsv; no migration)
+
+`main` from `3463ad1d` to `7b548ac0` (local, not pushed): `sheet-grid` (`8b2d3b55`, on an older main `bdc34371`)
+cherry-picked onto main. New route `GET /api/v1/workspaces/{id}/drive/nodes/{id}/content` (`drive_content_routes.rs`:
+member, not guest, live file of the workspace, files up to 16 MiB); web `SheetPreview` in the chat viewer and
+`DriveViewer` (Word and PowerPoint keep the PDF; the PDF is the fallback). Conflicts: `openapi_contract.rs` (counts
+merged: 272 paths, 351 operations), `whats-new.md`, generated client (`index.ts` deleted on main stays deleted;
+`openapi.json` and the client made again from the merged server with `orbit openapi` + `api:generate`: `openapi.json` and
+`types.gen.ts` equal the auto-merge, `sdk.gen.ts` gets `getDriveFileContent`). What is new for people: today's
+`2026-11-13` entry stays 4 lines; line 3 starts with the sheet sentence (xlsx, xls, csv, tsv in chat or Drive open as a
+read-only table with a tab for each sheet), then the bell and pickers sentences shortened into one. `aboutOrbit()` has the
+branch's sheet text under "Drive" and "Chat".
+
+Checks on merged `main` (through `orbit-build`, `CARGO_PROFILE_*_DEBUG=0`): `drive_api` (11), `openapi_contract` (19),
+`app_smoke` (21) on SQLite; `drive_api` (11) with `ORBIT_TEST_POSTGRES_URL`; web `tsc -b` and `bun test
+src/lib/filePreview.test.ts` (3 pass); agent `tsc` and `npm test` with Node 24 (80 pass, 11 skipped, 0 fail). No
+migration: the new binary on a hot copy applies 0 (schema 20261113042745, 101 rows). Scripts: `/root/ops/sheet-grid/`.
+
+Deploy id `20261113T080829Z-184059`. `orbit:7b548ac` (image
+`sha256:25735ec548f00a2460d821a4829496f017ea3fd1448097fe9d965966ae8789a8`, waited for the build lock behind other
+worktrees); `deploy/smoke.sh` and `orbit config check` (production env) passed.
+
+Switch: stopped both services at 09:40:52 UTC; snapshot `01a1d448-08e5-76ee-9499-bb1be86b74d9` with
+`/usr/local/bin/orbit-f14e780`, verified; plain copy `/var/backups/orbit/pre-migration/orbit-before-7b548ac.sqlite`;
+sidecar data `/var/backups/orbit-agent/orbit-agent-before-7b548ac.tgz`; old sidecar code
+`/opt/orbit-agent.before-7b548ac`; new sidecar `src` (`package*.json` unchanged); env unchanged; binary installed
+(`/usr/local/bin/orbit-7b548ac` too); `orbit` ready 09:41:09, then `orbit-agent`. `vm-health.conf` (old copy
+`.before-7b548ac`): `PROD_TAG=7b548ac`, `ROLLBACK_TAG=f14e780`, `ROLLBACK_BACKUP=01a1d448-08e5-76ee-9499-bb1be86b74d9`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) and `/health/live` 200; revision
+`7b548ac0`; schema 20261113042745 (101 rows, unchanged); 0 error lines in the journal (only the known "allowed origin
+without a port" WARN); sidecar `/health` ok and `src` equal to `main`; the new content route without a session 401.
+Sheet grid with a temporary v7 session (David Dusi), reads only: Drive → Wellrox → the existing
+`adjust_ETM_Inventory_Import_2026-11-09.xlsx` opened as the table (content request 200, rows shown, 0 console or page
+errors; screenshot `/root/.local/share/com.jean.desktop/pasted-images/sheet-grid/drive-xlsx-sheet-grid.png`).
+`ORBIT_VERIFY_SPA=1 verify-production.sh` passed (signed out `/` → `/login`, signed in `/` and `/tasks`, 0 console or
+page errors; session logged out, the row deleted after: 46 sessions, as before). `vm-health` OK except oom (3 lines from
+03:06 UTC, an earlier build), nginx (16 lines, upstream refused 09:40:57–09:41:08, the start window), docker (another
+worktree's `d2s-s3` container) and git-owner. **Not** verified on production: a csv/tsv file, a workbook with several
+sheets, and the sheet grid in chat (no such files there).
+
+Rollback to `f14e780` (no migration, env unchanged):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-f14e780 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-7b548ac /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/sheet-grid/rollback.sh)
+# Data, only if needed (work after 09:40 UTC is lost), Orbit stopped: /usr/local/bin/orbit-f14e780 backup verify +
+#   backup restore 01a1d448-08e5-76ee-9499-bb1be86b74d9 (as user orbit, with /etc/orbit/orbit.env)
+```
+
+After this rollback, set `PROD_TAG=f14e780`, `ROLLBACK_TAG=08067fd`,
+`ROLLBACK_BACKUP=01a1d3f0-85dc-73c7-ba6e-4f293864e460` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-7b548ac`).
 
 ### November 13, 2026 upgrade: public hooks URL (`ORBIT_PUBLIC_HOOKS_URL`, no migration)
 
