@@ -197,6 +197,7 @@ function taskView(task: Json, project: Json | undefined, status: Json | undefine
 		priority: task.priority,
 		assignees: ((task.assignee_ids as string[]) ?? []).map((id) => everyone.find((person) => person.id === id)?.name ?? id),
 		due_at: task.due_at ?? null,
+		...(task.recurrence ? { repeats: task.recurrence } : {}),
 		description: description.length > 2000 ? `${description.slice(0, 2000)}…` : description,
 		url: `${deps().publicUrl}/tasks/${task.id}`,
 		version: task.version,
@@ -205,14 +206,14 @@ function taskView(task: Json, project: Json | undefined, status: Json | undefine
 
 const listProjects = defineTool({
 	name: "list_projects",
-	description: "List the workspace's task projects with their statuses.",
+	description: "List the task projects the driver sees, with their statuses. A private project (private: true) is seen only by its members, owners and admins.",
 	parameters: Type.Object({}),
 	execute: (_args, api, context) =>
 		asDriver(api, context, async (as) => {
 			const list = await projects(as);
 			const result = [];
 			for (const project of list) {
-				result.push({ id: project.id, key: project.key, name: project.name, statuses: (await statuses(as, String(project.id))).map((status) => status.name) });
+				result.push({ id: project.id, key: project.key, name: project.name, private: Boolean(project.private), statuses: (await statuses(as, String(project.id))).map((status) => status.name) });
 			}
 			return ok("projects", result);
 		}),
@@ -259,6 +260,21 @@ const getTask = defineTool({
 		}),
 });
 
+const recurrence = Type.Optional(
+	Type.Union(
+		[
+			Type.Object({
+				frequency: Type.Union([Type.Literal("daily"), Type.Literal("weekly"), Type.Literal("monthly"), Type.Literal("yearly")]),
+				interval: Type.Number({ minimum: 1, maximum: 365, description: "Every N days, weeks, months or years" }),
+				weekdays: Type.Optional(Type.Array(Type.Union(["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map((day) => Type.Literal(day))), { description: "Weekly rules from the due date only" })),
+				base: Type.Union([Type.Literal("due"), Type.Literal("completion")], { description: "due: a fixed calendar from the due date; completion: counted from the day it is completed" }),
+			}),
+			Type.Null(),
+		],
+		{ description: "Makes the task repeat: completing it creates the next occurrence. null stops repeating." },
+	),
+);
+
 const priority = Type.Optional(Type.Union([Type.Literal("none"), Type.Literal("low"), Type.Literal("medium"), Type.Literal("high"), Type.Literal("urgent")]));
 
 const createTask = defineTool({
@@ -297,7 +313,7 @@ const createTask = defineTool({
 
 const updateTask = defineTool({
 	name: "update_task",
-	description: "Change a task: title, description (Markdown, replaces it), status by name, priority, assignees, due date.",
+	description: "Change a task: title, description (Markdown, replaces it), status by name, priority, assignees, due date, repeat rule.",
 	parameters: Type.Object({
 		task_id: Type.String(),
 		title: Type.Optional(Type.String({ minLength: 1 })),
@@ -306,6 +322,7 @@ const updateTask = defineTool({
 		priority,
 		assignees: Type.Optional(Type.Array(Type.String())),
 		due_at: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+		recurrence,
 	}),
 	execute: (args, api, context) =>
 		asDriver(api, context, async (as) => {
@@ -318,6 +335,7 @@ const updateTask = defineTool({
 			if (args.priority !== undefined) change.priority = args.priority;
 			if (args.assignees !== undefined) change.assignee_ids = personIds(args.assignees, everyone);
 			if (args.due_at !== undefined) change.due_at = args.due_at;
+			if (args.recurrence !== undefined) change.recurrence = args.recurrence === null ? null : { weekdays: [], ...args.recurrence };
 			if (args.status !== undefined) {
 				const status = projectStatuses.find((candidate) => String(candidate.name).toLowerCase() === args.status!.toLowerCase());
 				if (!status) return { output: [{ type: "text", text: `No status "${args.status}". Statuses: ${projectStatuses.map((s) => s.name).join(", ")}` }], isError: true };

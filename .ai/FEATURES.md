@@ -35,7 +35,7 @@ Home, Mail, Profile and webhooks still use isolated frontend seed data. Their ro
 Core files: `TasksPage.tsx`, `components/TaskList.tsx`, `components/TaskBoard.tsx`, `components/TaskDetail.tsx`, `ProjectSettingsPage.tsx`.
 
 - Project rail: color square, project name, hover settings gear.
-- Sidebar project order is per member (`project_positions`, migration 0099, `GET`/`PUT /project-order`): drag a project row or press Alt+Arrow on it (web), long-press → Move up / Move down (mobile drawer). Projects not placed yet follow by name; the API project list stays by name.
+- Sidebar project order is per member (`project_positions`, migration 20261113100200, `GET`/`PUT /project-order`): drag a project row or press Alt+Arrow on it (web), long-press → Move up / Move down in the mobile drawer (not ported to this fork's mobile app yet). Projects not placed yet follow by name; the API project list stays by name.
 - The task-list title is a project picker: All tasks or any project can be selected without opening the project rail.
 - List and Kanban layouts share filtering and sorting.
 - Sorting: manual, priority, created, updated, title.
@@ -88,7 +88,17 @@ Core files: `TasksPage.tsx`, `components/TaskList.tsx`, `components/TaskBoard.ts
 - Label rules (Project settings → Rules, owners and admins: `label_rules.manage`; migration 0099): "if a task has label X, assign person Y". Every label a task gets goes through `repositories::label_rules::insert_task_label` (create, update, bulk, project move, API tokens, MCP, the agent, GitHub sync, Discord), so the rules run in one place; a backup item restore does not run them (the task keeps the assignees it had). Rules only add assignees, skip people already assigned and people who cannot be assigned (not a member, guest, suspended), and never fail the task write. Each assignment notifies like a normal one (from the person who added the label) and writes a `task.assigned_by_rule` event without an actor: the activity reads "Assigned by rule: label → person". The owner switch (off by default) makes `owner:<name>` assign the one member whose handle (email before `@`), name, or name with dashes for spaces is `<name>`, without regard to case; a rule of an `owner:` label is that name's map entry ("Owner names" under the switch: a member picker for each unmatched name, and the mapped names to change or remove): it wins over the handle match even when it is off or the switch is off, and the name no longer counts as unmatched; without a rule the label falls back to the handle match. The card lists the `owner:` names that match nobody (or several members). The agent has `list_label_rules` and `create_label_rule`.
 - Writes include the observed record version. Stale writes restore the server record and expose a conflict prompt.
 - Bulk and reorder requests are one atomic request of at most 100 items. Empty unchanged choices are local no-ops.
-- Task and project trash have server-backed restore flows and 30-day retention.
+- Task and project trash have server-backed restore flows and 30-day retention. The trash page has a search box and
+  read-only previews (`/tasks-trash/task/:id`, `/tasks-trash/project/:id`; `GET tasks/trash/{id}`, `projects/trash/{id}`
+  and `projects/trash/{id}/tasks`) with who trashed the item (from the audit log), when, and when it is purged. Owners and
+  admins (`can_purge_task`) delete forever (`DELETE tasks/{id}/permanent`, `projects/{id}/permanent`) or empty the trash
+  (`POST tasks/trash/empty`); a project is purged 200 tasks per write transaction. Mobile trash screens are not ported yet.
+- Recurring tasks (migration 20261113100000, `task_recurrences`; `repositories/task_recurrences.rs`): a rule per series
+  (daily/weekly/monthly/yearly, interval, weekdays for weekly rules from the due date, base `due` or `completion`),
+  anchored on the due date in the time zone of the member who set it. Completing an occurrence creates the next one in
+  the same write transaction (`spawn_next_in_tx`, after the sub-issue automation, on every write path); its
+  `recurrence_next_id` makes it spawn only once, also when reopened and completed again. `recurrence` on `PATCH tasks/{id}`,
+  MCP `update_task` and Donna's `update_task`; web: Repeat in the due date picker.
 
 ### Sub-issues
 
@@ -116,7 +126,7 @@ Core files: `apps/server/src/repositories/sub_issues.rs` (parent checks, tree wa
 - Categories are Unstarted, Started, Completed, Cancelled.
 - Project settings can add, edit, delete, and reorder statuses inside a category.
 - General project settings use a local draft and bottom unsaved-changes bar.
-- Access (#37, migration 0093): a project is Workspace (every non-guest member) or Private (members listed in `project_members`, plus workspace owners and admins, who are not listed). Project settings → Access switches it and adds or removes people (anyone who sees the project may; creating or making it private lists the actor). The rule is `Policy::can_see_project`; `repositories/project_access.rs` is its only SQL form (`ProjectScope`, `user_sees_project_sql`). An unseen project and everything in it (tasks, comments, labels, statuses, files, relations, parent/duplicate data, inbox, push, collab, API tokens, OAuth/MCP grants) answers like a missing one. Assigning someone who cannot see the project is 422; web and mobile assignee and mention pickers offer only people who see it. Private projects show a lock (sidebar/drawer, pickers). Known gaps: the `blocked` flag and activity metadata can still reflect a private related task; existing assignees keep their assignment after losing access.
+- Access (#37, migration 20261113100100): a project is Workspace (every non-guest member) or Private (members listed in `project_members`, plus workspace owners and admins, who are not listed). Project settings → Access switches it and adds or removes people (anyone who sees the project may; creating or making it private lists the actor). The rule is `Policy::can_see_project`; `repositories/project_access.rs` is its only SQL form (`ProjectScope`, `user_sees_project_sql`). An unseen project and everything in it (tasks, comments, labels, statuses, files, relations, parent/duplicate data, inbox, push, collab, API tokens, OAuth/MCP grants) answers like a missing one. Assigning someone who cannot see the project is 422; web and mobile assignee and mention pickers offer only people who see it. Private projects show a lock (sidebar/drawer, pickers). Known gaps: the `blocked` flag and activity metadata can still reflect a private related task; existing assignees keep their assignment after losing access.
 
 ## Docs
 
