@@ -57,6 +57,9 @@ export const queryKeys = {
     [...workspace(workspaceId), 'tasks', 'detail', taskId, 'attachments'] as const,
   taskRelations: (workspaceId: string, taskId: string) =>
     [...workspace(workspaceId), 'tasks', 'detail', taskId, 'relations'] as const,
+  /** The Docs pages linked to the task that the caller sees. */
+  taskLinkedDocs: (workspaceId: string, taskId: string) =>
+    [...workspace(workspaceId), 'tasks', 'detail', taskId, 'linked-docs'] as const,
   /** Who follows the task (gets its new comments and status changes), and whether the caller does. */
   taskFollowers: (workspaceId: string, taskId: string) =>
     [...workspace(workspaceId), 'tasks', 'detail', taskId, 'followers'] as const,
@@ -89,6 +92,8 @@ export const queryKeys = {
     recent: (workspaceId: string) => [...workspace(workspaceId), 'pages', 'recent'] as const,
     versions: (workspaceId: string, pageId: string) => [...workspace(workspaceId), 'pages', 'versions', pageId] as const,
     threads: (workspaceId: string, pageId: string) => [...workspace(workspaceId), 'pages', 'threads', pageId] as const,
+    /** The tasks linked to the page that the caller sees. */
+    linkedTasks: (workspaceId: string, pageId: string) => [...workspace(workspaceId), 'pages', 'linked-tasks', pageId] as const,
     version: (workspaceId: string, pageId: string, versionId: string) =>
       [...workspace(workspaceId), 'pages', 'versions', pageId, versionId] as const,
   },

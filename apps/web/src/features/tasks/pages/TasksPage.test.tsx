@@ -60,7 +60,7 @@ function serve(override: (request: Recorded) => Response | Promise<Response> | u
       : problem(404, 'task_resource_not_found')
     const detail = TASKS.find(({ id }) => path.endsWith(`/tasks/${id}`))
     if (detail) return Response.json(detail)
-    if (path.endsWith('/github-links') || path.endsWith('/relations')) return Response.json([])
+    if (path.endsWith('/github-links') || path.endsWith('/relations') || path.endsWith('/linked-docs')) return Response.json([])
     return Response.json({ items: [], next_cursor: null })
   }) as unknown as typeof fetch
   return requests

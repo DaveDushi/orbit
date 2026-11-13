@@ -78,6 +78,7 @@ import { FilePanel } from './FilePanel'
 import { FileSplit, type FileSplitHandle } from './FileSplit'
 import { PageHistoryPane } from './PageHistoryPane'
 import { PageLinkDialog } from './PageLinkDialog'
+import { LinkedTasks } from './LinkedTasks'
 import { DriveFilePicker } from './DriveFilePicker'
 import type { DriveFileRef } from '@/features/docs/api/driveFiles'
 
@@ -994,6 +995,7 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
                 }
               }}
             />
+            <LinkedTasks workspaceId={workspaceId} pageId={pageId} />
             <div
               onBlur={() => void saver.flush()}
               onClick={(event) => {
@@ -1089,7 +1091,7 @@ export function DocEditor({ workspaceId, page, pages, teamspaces, onRequestTrash
         ) : null}
         </div>
         {linkOpen ? (
-          <PageLinkDialog pages={pages} excludeId={pageId} onPick={(picked) => closeLinkDialog(picked.id)} onClose={() => closeLinkDialog(null)} />
+          <PageLinkDialog pages={pages} excludeIds={[pageId]} onPick={(picked) => closeLinkDialog(picked.id)} onClose={() => closeLinkDialog(null)} />
         ) : null}
         {drivePickerOpen ? (
           <DriveFilePicker

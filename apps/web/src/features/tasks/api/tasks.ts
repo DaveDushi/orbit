@@ -16,8 +16,10 @@ import {
   emptyTaskTrash,
   getTask,
   getTrashedTask,
+  linkDoc,
   listComments,
   listGithubLinks,
+  listLinkedDocs,
   listTaskActivity,
   listCommentAttachments,
   listTaskAttachments,
@@ -29,6 +31,7 @@ import {
   reorderTasks,
   restoreTask,
   unfollowTask,
+  unlinkDoc,
   updateComment,
   updateTask,
 } from '@orbit/api/generated/sdk.gen'
@@ -37,6 +40,7 @@ import type {
   CreateTaskBody,
   ProjectRecord,
   CreateTaskRelationData,
+  LinkedDoc,
   ListTasksData,
   PageTaskRecord,
   ReorderItem,
@@ -181,6 +185,14 @@ function taskDetailQueries(workspaceId: string, taskId: string | undefined) {
         return required(data, 'Task relations response was empty.')
       },
     }),
+    linkedDocs: queryOptions({
+      queryKey: queryKeys.taskLinkedDocs(workspaceId, id),
+      enabled,
+      queryFn: async (): Promise<LinkedDoc[]> => {
+        const { data } = await listLinkedDocs({ client: apiClient, path: { workspace_id: workspaceId, task_id: id }, throwOnError: true })
+        return required(data, 'Linked docs response was empty.')
+      },
+    }),
     followers: queryOptions({
       queryKey: queryKeys.taskFollowers(workspaceId, id),
       enabled,
@@ -220,6 +232,7 @@ export async function prefetchTaskDetail(queryClient: QueryClient, workspaceId: 
     queryClient.prefetchQuery(queries.activity),
     queryClient.prefetchQuery(queries.attachments),
     queryClient.prefetchQuery(queries.relations),
+    queryClient.prefetchQuery(queries.linkedDocs),
     queryClient.prefetchQuery(queries.followers),
     queryClient.prefetchQuery(queries.subIssues),
     queryClient.fetchQuery(queries.comments)
@@ -555,6 +568,38 @@ export function useRemoveTaskRelation(workspaceId: string, taskId: string) {
       await deleteTaskRelation({ client: apiClient, path: { workspace_id: workspaceId, task_id: taskId, relation_id: relationId }, throwOnError: true })
     },
     onSettled: () => void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.all(workspaceId) }),
+  })
+}
+
+export function useLinkedDocs(workspaceId: string, taskId: string | undefined) {
+  return useQuery(taskDetailQueries(workspaceId, taskId).linkedDocs)
+}
+
+/** After a link or unlink: the task's docs and activity, and the page's linked tasks. */
+function invalidateDocLink(queryClient: QueryClient, workspaceId: string, taskId: string, pageId: string) {
+  void queryClient.invalidateQueries({ queryKey: queryKeys.taskLinkedDocs(workspaceId, taskId) })
+  void queryClient.invalidateQueries({ queryKey: queryKeys.taskActivity(workspaceId, taskId) })
+  void queryClient.invalidateQueries({ queryKey: queryKeys.pages.linkedTasks(workspaceId, pageId) })
+}
+
+export function useLinkDoc(workspaceId: string, taskId: string) {
+  const queryClient = useQueryClient()
+  return useMutation<LinkedDoc, Error, string>({
+    mutationFn: async (pageId) => {
+      const { data } = await linkDoc({ client: apiClient, path: { workspace_id: workspaceId, task_id: taskId }, body: { page_id: pageId }, throwOnError: true })
+      return required(data, 'Link doc response was empty.')
+    },
+    onSettled: (_doc, _error, pageId) => invalidateDocLink(queryClient, workspaceId, taskId, pageId),
+  })
+}
+
+export function useUnlinkDoc(workspaceId: string, taskId: string) {
+  const queryClient = useQueryClient()
+  return useMutation<void, Error, string>({
+    mutationFn: async (pageId) => {
+      await unlinkDoc({ client: apiClient, path: { workspace_id: workspaceId, task_id: taskId, page_id: pageId }, throwOnError: true })
+    },
+    onSettled: (_result, _error, pageId) => invalidateDocLink(queryClient, workspaceId, taskId, pageId),
   })
 }
 

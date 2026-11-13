@@ -130,6 +130,16 @@ test('cross-project relation events use the other project key; missing metadata 
   expect(task.activity.map((item) => item.text)).toEqual(['added blocker API-91C0', 'added relation', 'updated task'])
 })
 
+test('doc link events name the page only when the server sent its title', () => {
+  const task = taskFromRecord(record, project, [], [], [
+    relationEvent('task.doc_linked', { page_id: 'page-1', page_title: 'Launch plan' }),
+    relationEvent('task.doc_linked', { page_id: 'page-2' }),
+    relationEvent('task.doc_unlinked', { page_id: 'page-1', page_title: '' }),
+    relationEvent('task.doc_unlinked', { page_id: 'page-2' }),
+  ])
+  expect(task.activity.map((item) => item.text)).toEqual(['linked doc Launch plan', 'linked a doc', 'unlinked doc Untitled', 'unlinked a doc'])
+})
+
 test('activity names a loaded task by its number', () => {
   const task = taskFromRecord(record, project, [], [], [
     relationEvent('task.relation_added', { ...other, type: 'blocks', direction: 'incoming' }),

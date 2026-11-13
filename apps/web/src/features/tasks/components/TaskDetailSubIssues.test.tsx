@@ -39,7 +39,7 @@ function api(calls: Call[], tree: Record<string, unknown[]>, all: unknown[]) {
     const url = new URL(request.url)
     const body = request.method === 'PATCH' || request.method === 'POST' ? await request.json() : undefined
     calls.push({ method: request.method, path: url.pathname, body })
-    if (url.pathname.endsWith('/github-links') || url.pathname.endsWith('/relations')) return Response.json([])
+    if (url.pathname.endsWith('/github-links') || url.pathname.endsWith('/relations') || url.pathname.endsWith('/linked-docs')) return Response.json([])
     if (url.pathname.endsWith('/projects')) return Response.json({ items: [project], next_cursor: null })
     if (request.method === 'PATCH') return Response.json({ ...record(url.pathname.split('/').at(-1)!, 'x'), version: 2, auto_closed: [] })
     if (url.pathname.endsWith('/tasks')) {

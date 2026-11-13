@@ -36,7 +36,10 @@ import { CyclePicker, EstimatePicker, MilestonePicker } from './PlanningPickers'
 import {
   useAddTaskRelation, useCreateTaskComment, useDeleteTask, useDeleteTaskAttachment, useRemoveTaskRelation,
   subIssuesQuery, useSetTaskFollowing, useSubIssues, useTaskFollowers, useTaskGithubLinks, useTaskRelations, useUpdateTask,
+  useLinkDoc, useLinkedDocs, useUnlinkDoc,
 } from '@/features/tasks/api/tasks'
+import { usePageTree } from '@/features/docs/api/pages'
+import { PageLinkDialog } from '@/features/docs/components/PageLinkDialog'
 import { pickerTitle, relatedTaskIds, type RelationKind } from '@/features/tasks/relationsLib'
 import { useDuplicateActions } from '@/features/tasks/useDuplicateActions'
 import { useParentActions } from '@/features/tasks/useParentActions'
@@ -45,6 +48,7 @@ import { ColorDot } from '@/components/common/ColorDot'
 import { descendantCount, parentPickerTitle, trashConfirmDescription } from '@/features/tasks/subIssuesLib'
 import { TaskPickerDialog } from './TaskPickerDialog'
 import { AddRelationMenu, DuplicateBanner, TaskRelationsSection } from './TaskRelations'
+import { AddDocButton, TaskLinkedDocsSection } from './TaskLinkedDocs'
 import { TaskBreadcrumb } from './TaskBreadcrumb'
 import { SubIssuesSection } from './TaskSubIssues'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
@@ -104,6 +108,12 @@ export function TaskDetail({ task, project, state, onClose, onOpenTask, onOpenPr
   const relations = useTaskRelations(workspace.id, task?.id).data ?? []
   const addRelation = useAddTaskRelation(workspace.id, task?.id ?? '')
   const removeRelation = useRemoveTaskRelation(workspace.id, task?.id ?? '')
+  const linkedDocs = useLinkedDocs(workspace.id, task?.id).data ?? []
+  const linkDoc = useLinkDoc(workspace.id, task?.id ?? '')
+  const unlinkDoc = useUnlinkDoc(workspace.id, task?.id ?? '')
+  const [docPickerOpen, setDocPickerOpen] = useState(false)
+  // the pages the member sees, loaded only for the picker
+  const pageTree = usePageTree(workspace.id, docPickerOpen)
   const duplicates = useDuplicateActions(workspace.id)
   const [picker, setPicker] = useState<RelationKind | null>(null)
   const [newRelationId, setNewRelationId] = useState<string | null>(null)
@@ -224,6 +234,7 @@ export function TaskDetail({ task, project, state, onClose, onOpenTask, onOpenPr
                   Add sub-issue
                 </Button>
               ) : null}
+              <AddDocButton onClick={() => setDocPickerOpen(true)} />
             </div>
             {githubLinks.data?.some((link) => link.source) ? <p className="mt-2 text-xs text-muted-foreground">This task's title and description are read-only while it is linked to GitHub.</p> : null}
             {githubSyncPaused ? <p className="mt-2 text-xs text-muted-foreground">Add the project label to the GitHub issue or pull request again to resume updates.</p> : null}
@@ -232,6 +243,8 @@ export function TaskDetail({ task, project, state, onClose, onOpenTask, onOpenPr
             {deleteTask.isError ? <p role="alert" className="text-xs text-destructive">Task deletion failed. <Button variant="ghost" onClick={() => deleteTask.variables && void deleteAndClose(deleteTask.variables)}>Retry</Button></p> : null}
             {addRelation.isError ? <p role="alert" className="text-xs text-destructive">Couldn't add the relation. {addRelation.error.message}</p> : null}
             {removeRelation.isError ? <p role="alert" className="text-xs text-destructive">Couldn't remove the relation. {removeRelation.error.message}</p> : null}
+            {linkDoc.isError ? <p role="alert" className="text-xs text-destructive">Couldn't link the doc. {linkDoc.error.message}</p> : null}
+            {unlinkDoc.isError ? <p role="alert" className="text-xs text-destructive">Couldn't unlink the doc. {unlinkDoc.error.message}</p> : null}
 
             {githubPullRequests.length > 0 ? <section aria-label="GitHub links" className="mt-6 border-t pt-4">
               <h3 className="mb-2 text-xs font-semibold text-muted-foreground">GitHub</h3>
@@ -267,6 +280,23 @@ export function TaskDetail({ task, project, state, onClose, onOpenTask, onOpenPr
               onOpen={openTask}
               onRemove={(relationId) => removeRelation.mutate(relationId)}
             />
+            <TaskLinkedDocsSection
+              docs={linkedDocs}
+              removingId={unlinkDoc.isPending ? unlinkDoc.variables : undefined}
+              onRemove={(pageId) => unlinkDoc.mutate(pageId)}
+            />
+            {docPickerOpen ? (
+              <PageLinkDialog
+                title="Add doc"
+                pages={pageTree.data ?? []}
+                excludeIds={linkedDocs.map((doc) => doc.id)}
+                onPick={(page) => {
+                  setDocPickerOpen(false)
+                  linkDoc.mutate(page.id)
+                }}
+                onClose={() => setDocPickerOpen(false)}
+              />
+            ) : null}
 
           </div>
 
