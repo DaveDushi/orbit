@@ -128,7 +128,8 @@ export function Composer({ ref, conversation, threadRootId = null, replyTo = nul
         { id: '!here', name: 'here', handle: 'everyone online' },
       ]
   const { taskKeys } = useChatHost()
-  const mention = useMentionAutocomplete([...candidates, ...everyone], text, setText, input, undefined, undefined, people.channels, workspaceId)
+  // "#" lists the caller's own channels; a guest cannot read tasks, so their "#" lists channels only
+  const mention = useMentionAutocomplete([...candidates, ...everyone], text, setText, input, undefined, undefined, people.channels, guest ? undefined : workspaceId)
   const emoji = useEmojiAutocomplete(text, setText, input)
   const emojiListId = useId()
 
