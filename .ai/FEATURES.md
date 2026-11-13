@@ -617,6 +617,15 @@ turns its routes, navigation and shortcuts off.
   sessions, tokens, personal data and memberships; refused with `owns_workspaces` (lists them) and `root_account`.
   Admin → Users shows it as Deleted and cannot reinstate it. Mobile has both flows in Settings → Profile.
 - Workspace Settings: General, Members, Sessions.
+- Workspace logo (Settings → General, owner/admin `workspace.update`; members and guests get 403):
+  `PUT/DELETE /api/v1/workspaces/{id}/logo` (multipart `file`, PNG/JPEG/WebP by magic bytes, ≤512 KiB, SVG refused;
+  the apps crop to a 256 px square like avatars). Stored like avatars: table `workspace_logos` → an unmetered
+  attachment blob of the workspace, listed in every blob-reference list (`BLOB_REFERENCE_COUNT`, reconcile, storage
+  delete guard, `replace_blob`, workspace purge, largest files kind `logo`); remove or replace deletes the row and
+  reconcile deletes the file. `GET …/logo` serves it to members (guests too) only; `WorkspaceRecord.logo_url` and the
+  OAuth consent workspaces carry a versioned URL; the invitation preview carries a `data:` URL (invitee is no member)
+  and the invitation email gets an HTML part with the logo inline (`cid:logo`). Shown by `WorkspaceLogo` (web and
+  mobile; letter tile fallback) in the switcher/sidebar, phone top bar, consent page, invitation page and mobile drawer.
 - Workspace creation, members, invitations, fixed roles, ownership transfer, and sessions use persistent APIs.
 - Sessions lists the current account's active devices. It shows device/browser and last active only, with controls to revoke any non-current session.
 - Chat administration remains separate at `/chat/settings`.
