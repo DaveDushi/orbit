@@ -381,6 +381,61 @@ impl Outbound {
         ))
     }
 
+    /// A `multipart/form-data` POST of `fields`, then the file as `file` (a signed upload target,
+    /// such as Shopify's staged uploads): no credential, same checks as every call here. Only the
+    /// status comes back.
+    pub(crate) async fn post_file(
+        &self,
+        url: &Url,
+        fields: &[(String, String)],
+        (file_name, mime, bytes): (&str, &str, Vec<u8>),
+    ) -> Result<u16, OutboundError> {
+        let url = check_url(url.as_str(), &self.test_hosts)?;
+        let safe = |text: &str| !text.contains(['"', '\r', '\n']);
+        if !fields
+            .iter()
+            .all(|(name, value)| safe(name) && !value.contains(['\r', '\n']))
+            || !safe(file_name)
+            || !safe(mime)
+        {
+            return Err(OutboundError::Refused("The upload target is not valid."));
+        }
+        let boundary = format!(
+            "orbit-{}",
+            orbit_platform::Id::new_v7().to_string().replace('-', "")
+        );
+        let mut body = Vec::with_capacity(bytes.len() + 4_096);
+        for (name, value) in fields {
+            body.extend_from_slice(
+                format!(
+                    "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+                )
+                .as_bytes(),
+            );
+        }
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{file_name}\"\r\nContent-Type: {mime}\r\n\r\n"
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(&bytes);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let response = self
+            .send(
+                self.client
+                    .post(url)
+                    .header(
+                        CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .timeout(Duration::from_secs(120))
+                    .body(body),
+            )
+            .await?;
+        Ok(response.status().as_u16())
+    }
+
     /// A GET of a JSON document (OAuth metadata): the status and the JSON (`Null` when it is not
     /// JSON). Same checks and limits as every call here.
     pub(crate) async fn get_json(&self, url: &Url) -> Result<(u16, Value), OutboundError> {

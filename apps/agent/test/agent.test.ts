@@ -608,6 +608,47 @@ test("integrations: a write waits for the driver's yes and then runs the same ca
 	}
 });
 
+/** Orbit's Drive image to Shopify route: it asks for a yes, then answers with the Shopify URL. */
+class ShopifyImageOrbit extends FakeOrbit {
+	readonly uploads: { arguments: unknown; as: string }[] = [];
+	approved = false;
+
+	async route(method: string, url: string, headers: Record<string, unknown>, body: any): Promise<[number, unknown]> {
+		if (url.split("?")[0] === `/api/v1/workspaces/${WS}/agent-tools/shopify-image`) {
+			if (!this.approved) return [200, { status: "approval_required", approval_id: "approval-2", action: `Shop: upload the Drive image "hero.png" to the store's Files`, expires_at: Date.now() + 1e6 }];
+			this.uploads.push({ arguments: body.arguments, as: String(headers.authorization ?? "").replace(/^Bearer orbit-agent\./, "") });
+			return [200, { status: "ok", label: "integration shop", result: { url: "https://cdn.shopify.com/s/files/hero.png", shopify_file_id: "gid://shopify/MediaImage/1", article: { id: "gid://shopify/Article/7", placed: "image" } } }];
+		}
+		return super.route(method, url, headers, body);
+	}
+}
+
+test("a Drive image goes to Shopify in one call after the driver's yes, and the URL comes back as data", async () => {
+	const orbit = new ShopifyImageOrbit();
+	current = orbit;
+	await orbit.listen();
+	const agent = new Agent(config(orbit, mkdtempSync(join(tmpdir(), "agent-"))), new OrbitClient(config(orbit, "")));
+	await agent.open();
+	await agent.start();
+	try {
+		const thread = id();
+		orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> send drive image n-1 to shopify shop as image of article 7 alt "Hero"` });
+		await until("the approval question", () => orbit.messages.get("approve:approval-2")?.body.includes("hero.png") === true);
+		assert.match(orbit.messages.get("approve:approval-2")!.body, /approval to send this image to Shopify/);
+		await until("waiting for Ann", () => orbit.threads.get(thread)?.status === "waiting");
+		assert.equal(orbit.uploads.length, 0);
+
+		orbit.approved = true;
+		const yes = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "answer", body: "yes" });
+		await until("the upload", () => progressOf(orbit, yes).startsWith("Done (drive_image_to_shopify)"));
+		assert.deepEqual(orbit.uploads, [{ arguments: { integration: "shop", node_id: "n-1", article_id: "7", place: "image", alt: "Hero" }, as: ANN }]);
+		assert.match(progressOf(orbit, yes), /"url": "https:\/\/cdn\.shopify\.com\/s\/files\/hero\.png"/);
+	} finally {
+		await agent.stop();
+		orbit.server.close();
+	}
+});
+
 test("cards: the card builds live in the progress edits, a bad card leaves the text, and a click runs as the clicker", async () => {
 	const orbit = new FakeOrbit();
 	current = orbit;

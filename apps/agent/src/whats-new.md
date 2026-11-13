@@ -6,6 +6,9 @@ build: "## YYYY-MM-DD" (the deploy date), then 1-4 short "- " lines about what p
 members, not developers. Keep the 8 newest entries; the prompt shows the 5 newest.
 -->
 
+## 2026-11-14
+- Drive pictures to Shopify: ask an agent to put a Drive image on a Shopify blog article (as the article's image or in its text), or just into the store's Files. It asks for your yes, then does it in one step and gives you the Shopify link. A custom agent needs the drive_image_to_shopify tool ticked on its card (Settings → Agentic → Agents), and the Shopify app needs file access (write_files).
+
 ## 2026-11-13
 - Orbit for iPhone (beta, by TestFlight invitation): Home, Tasks, Docs, Chat, Drive (browse, open, upload), Activity, phone notifications with the unread count on the app icon, an "Ask Donna…" bar, Share → Orbit from other apps (to a chat, a Drive folder or a new task), and settings for agents, routines, custom emoji, project settings and this iPhone's notifications.
 - Tasks: make a project private (Project settings → Access), set Repeat under Due date, drag projects in the sidebar into your own order, and search the trash (owners and admins can delete forever). Type # anywhere to link a task. Images and files in a new task's description are now saved with it.
