@@ -60,7 +60,8 @@ Core files: `TasksPage.tsx`, `components/TaskList.tsx`, `components/TaskBoard.ts
   attachments with `inline = 1`, left out of the attachment list (which shows only older attachments). Images and files
   pasted into a task's description or comments from another task or a docs page are copied into the task (download,
   inline upload, the block points at the copy), so they stay when the source goes to the trash. The new task dialog has
-  no task to upload to: images of other tasks stay as links, docs page images are dropped. The server accepts any task
+  no task to upload to: images of other tasks stay as links, docs page images are dropped. Images and files picked there (/image, /file) stay
+  in the browser as `blob:` URLs and upload as inline attachments once the task exists. The server accepts any task
   attachment URL of the workspace (API writes). Comments mount their editors only near the screen (the markdown copy
   shows until then), and reply fields when first used. The new task
   dialog keeps file chips and appends the files to the description after create.
