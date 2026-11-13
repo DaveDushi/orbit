@@ -5,7 +5,7 @@ import { NativeText as RNText } from '../ui/scaled'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
 
-import { useOrbit } from '../orbit-context'
+import { useIsGuest, useOrbit } from '../orbit-context'
 import { useChatBadge, useProjects, useUnreadNotifications } from '../queries'
 import { splitAlpha } from '../data/color'
 import { customSidebarTheme } from '../data/custom-theme'
@@ -26,12 +26,14 @@ export function MenuButton() {
   const { colors } = useTheme()
   const open = use(DrawerContext)
   const pathname = usePathname()
-  const unread = (useUnreadNotifications().data?.length ?? 0) > 0
+  // a guest has no Activity (the drawer hides its bell too)
+  const guest = useIsGuest()
+  const unread = (useUnreadNotifications(!guest).data?.length ?? 0) > 0
   const onActivity = pathname === '/activity'
   return (
     <>
       <IconButton icon="menu" label="Menu" iconSize={18} color={alpha(colors.mutedForeground, 0.7)} onPress={open ?? undefined} />
-      <Pressable
+      {guest ? null : <Pressable
         accessibilityRole="link"
         accessibilityLabel={unread ? 'Activity, unread' : 'Activity'}
         accessibilityState={{ selected: onActivity }}
@@ -41,7 +43,7 @@ export function MenuButton() {
       >
         <Icon name="bell" size={17} color={onActivity ? colors.foreground : alpha(colors.mutedForeground, 0.7)} />
         {unread ? <View className="absolute top-0.5 right-0.5 size-2 rounded-full bg-primary" /> : null}
-      </Pressable>
+      </Pressable>}
     </>
   )
 }
@@ -300,6 +302,7 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
             </>
           ) : guest ? (
             <>
+              <NavRow link={{ label: 'Home', icon: 'home', href: '/', active: pathname === '/' }} onPress={() => go('/')} />
               <NavRow link={{ label: 'Chat', icon: 'chat', href: '/chat', active: pathname.startsWith('/chat'), badge: chatBadge.count, dot: chatBadge.unread }} onPress={() => go('/chat')} />
               {/* a guest's Settings is its account menu */}
               <NavRow link={{ label: 'Settings', icon: 'settings', href: '/settings', active: onSettings && !onAdmin }} onPress={() => go('/settings')} />

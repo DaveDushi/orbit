@@ -307,6 +307,11 @@ export async function notifications(client: OrbitClient, workspaceId: string): P
   return (await listNotifications({ ...at(client, workspaceId), query: { limit: 100 } })).data.items
 }
 
+/** The newest `limit` notifications, read or not. */
+export async function latestNotifications(client: OrbitClient, workspaceId: string, limit: number): Promise<NotificationRecord[]> {
+  return (await listNotifications({ ...at(client, workspaceId), query: { limit } })).data.items
+}
+
 export function unreadNotifications(client: OrbitClient, workspaceId: string): Promise<NotificationRecord[]> {
   return allPages(async (cursor) => (await listNotifications({ ...at(client, workspaceId), query: { unread: true, cursor, limit: 100 } })).data)
 }

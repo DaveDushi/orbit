@@ -18,8 +18,8 @@ const ITEMS: { route: string; href: Href; label: string; icon: IconName }[] = [
   { route: 'settings', href: '/settings', label: 'Settings', icon: 'settings' },
 ]
 
-/** A guest's dock: Chat and Settings, which shows a guest its own account settings (the web's `/profile`). */
-const GUEST_ITEMS = ITEMS.filter((item) => item.route === 'chat' || item.route === 'settings')
+/** A guest's dock: Home, Chat and Settings, which shows a guest its own account settings (the web's `/profile`). */
+const GUEST_ITEMS = ITEMS.filter((item) => item.route === 'index' || item.route === 'chat' || item.route === 'settings')
 
 export function Dock({ state }: BottomTabBarProps) {
   const { colors } = useTheme()
