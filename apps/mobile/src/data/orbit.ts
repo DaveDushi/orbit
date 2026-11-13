@@ -88,6 +88,12 @@ export type {
 /** One entry of a task's audit trail (`GET …/tasks/{id}/activity`). */
 export type TaskActivityEvent = PageAuditEvent['items'][number]
 
+/**
+ * The Server field's first value, so most users only type their email and password; self-hosted users replace it.
+ * EAS builds set `EXPO_PUBLIC_ORBIT_SERVER` (`eas.json`). Once signed in, the app only uses the session's server.
+ */
+export const DEFAULT_SERVER = process.env.EXPO_PUBLIC_ORBIT_SERVER || 'https://orbit-app.easytomanage.com'
+
 /** `orbit.example.com` → `https://orbit.example.com`. Keeps an explicit `http://` for local servers. */
 export function normalizeServer(input: string): string {
   const trimmed = input.trim().replace(/\/+$/, '')

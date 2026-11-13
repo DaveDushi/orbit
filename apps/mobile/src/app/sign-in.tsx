@@ -1,15 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { KeyboardAvoidingView, Linking, Platform, ScrollView, View } from 'react-native'
 
-import { createClient, normalizeServer, signIn as signInWithPassword, signInSecondFactor } from '../data/orbit'
+import { createClient, DEFAULT_SERVER, normalizeServer, signIn as signInWithPassword, signInSecondFactor } from '../data/orbit'
+import { loadLastServer } from '../session'
 import { errorMessage, useSession } from '../session-context'
 import { alpha, useTheme } from '../theme'
 import { Button, Input, Text } from '../ui'
 
 type Step = { name: 'credentials' } | { name: 'two_factor'; server: string; twoFactorToken: string }
-
-// Orbit Cloud, so cloud users only type their email and password; self-hosted users replace it
-const DEFAULT_SERVER = process.env.EXPO_PUBLIC_ORBIT_SERVER || 'https://app.orbit.so'
 
 export default function SignInScreen() {
   const { state, signIn } = useSession()
@@ -21,6 +19,13 @@ export default function SignInScreen() {
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(state.status === 'signed_out' ? state.error : undefined)
+
+  // after a sign-out or an ended session, the server the user signed in with last, not the default
+  useEffect(() => {
+    void loadLastServer().then((last) => {
+      if (last) setServer((current: string) => (current === DEFAULT_SERVER ? last : current))
+    })
+  }, [])
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true)

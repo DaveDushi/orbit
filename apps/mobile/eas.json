@@ -7,7 +7,7 @@
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_ORBIT_SERVER": "https://orbit.easytomanage.com"
+        "EXPO_PUBLIC_ORBIT_SERVER": "https://orbit-app.easytomanage.com"
       }
     }
   },
