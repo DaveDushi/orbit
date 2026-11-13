@@ -7,15 +7,16 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at d5dfd4767c559d8e36c01475058b62b5bee6871b
-  (upstream port 3: unread thread replies, two-way webhook bots replace webhook_bots; schema 20261113100500; November 13, 2026).
+- Source: DaveDushi/orbit, `main` at 4b1b607183d4dcc4cc3a06fabb109316689a6823
+  (iPhone release: Home cards, iPhone app icon badge; schema 20261113115539; November 13, 2026; `881fdfb2` after it
+  changes only a test).
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
   f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:d5dfd47`); fork commits have no published upstream image.
-- Image ID: sha256:a863be61e13e16cc4bd78798c550b1bd515748622a69d28138c5dfabcf72590a
-- Team agent sidecar code (`/opt/orbit-agent`): commit d5dfd47.
+  (`orbit:4b1b607`); fork commits have no published upstream image.
+- Image ID: sha256:f8b9bf3b8f3ca1eab0799bd689bca1a82cdf0024d256bc05170e4e3850253489
+- Team agent sidecar code (`/opt/orbit-agent`): commit 4b1b607.
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): off. No `ORBIT_APNS_*` setting is in `/etc/orbit/orbit.env`
   yet, so Orbit keeps the iPhones' device rows and sends them nothing (no log line). To turn it on, put the team's `.p8`
   key on the VM (owner `orbit`, mode 600), set `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID` (and
@@ -262,6 +263,84 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 13, 2026 upgrade: iPhone release server part (Home cards, app icon badge; schema 20261113115539)
+
+`main` from `0cb2486a` to `4b1b6071` (local, not pushed): merge `05079580` of `iphone-home-cards` (`7a357b5e`: contains
+`iphone-followup` `03cba6e6` with the server APNs badge, `iphone-settings` `49bb83d5`, `home-cards` `dad0e3c3`).
+Conflicts, both sides kept: `guest_access.rs` (unread threads + home layout routes), `attachments_api.rs` (both new
+tests), `openapi_contract.rs` (368 operations; the path count 286 came in `881fdfb2`, a test-only commit after the
+build), what's new; the generated client made again from the merged server (every path and schema of both sides).
+`4b1b6071` fixes a semantic conflict: port 3 replaced `unreadConversations`/`useUnreadConversations` with
+`unreadGroups`, so the Home "Unread chat" card (web and iPhone) now takes the conversation groups of `unreadGroups`
+(unread conversations only, as before). New: `GET/PUT /workspaces/{id}/home-layout` (one layout per user, web and
+iPhone), `GET /push/badge` (unread chat + unread inbox, all workspaces) and the APNs badge count (APNs is still off
+here). What is new for people: today's `2026-11-13` entry has the full iPhone line (Drive, badge, Share → Orbit,
+settings), a Home cards line, and the port 3 Chat line merged with the MCP/sessions line.
+
+Migration (SQLite + Postgres): `20261113115539_home_layouts` (new table `home_layouts`, no data change).
+
+Checks on `main` (`orbit-build`, `CARGO_PROFILE_*_DEBUG=0`): SQLite `home_layout_api` 6, `attachments_api` 34,
+`chat_api` 38 (1 ignored), `chat_live` 9, `guest_access` 1, `agent_api` 18, `app_smoke` 21, lib `push` 9, platform
+`database` 55; `openapi_contract` failed on the path count (284 → 286, fixed in `881fdfb2`; its rerun with
+`push_devices_api` on SQLite was queued behind other sessions' builds); with `ORBIT_TEST_POSTGRES_URL` the same plus
+`push_devices_api` 4: all pass. Web build (`tsc -b && vite build`), `tsc` of `packages/api`, `apps/agent`,
+`apps/mobile`; mobile `bun test src` (224 pass), web home/shell/chat wire tests (19 pass), agent `npm test` (pass).
+Scripts and logs: `/root/ops/iphone-release/`.
+
+Deploy id `20261113T164413Z-589869`. `orbit:4b1b607` (image
+`sha256:f8b9bf3b8f3ca1eab0799bd689bca1a82cdf0024d256bc05170e4e3850253489`, label `4b1b6071…`, one cold build of 39 min);
+`deploy/smoke.sh` and `orbit config check` (production env) passed. Migration dry run (release binary on a hot copy,
+and in the switch on a copy of the stopped database): 1 applied, a second run 0, schema 20261113115539 (108 rows), the
+107 old checksums, counts and user names unchanged (9 users, 110 tasks, 1130 chat messages), 0 `home_layouts` rows,
+quick-check ok, 0 foreign-key rows. Rollback test on the same copies: the old binary refuses, `rollback-schema.sql`
+brings `sqlite_master` back equal to the source, counts and checksums equal, the old binary applies 0.
+
+Switch: stopped both services at 18:47:34 UTC; snapshot `01a1d63c-8b2f-77a1-9f83-4360004da19b` with
+`/usr/local/bin/orbit-d5dfd47`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-4b1b607.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-4b1b607.tgz`; old sidecar code `/opt/orbit-agent.before-4b1b607`; new
+sidecar `src` (`package*.json` unchanged); env unchanged. `switch.sh` stopped after `config check` with exit 127
+(`bun` is not in `sudo`'s `PATH` for the test-session id; fixed to `/root/.bun/bin/bun`); its last part ran at once
+as `switch-rest.sh`: binary installed (`/usr/local/bin/orbit-4b1b607` too), `orbit` ready 18:48:04, then
+`orbit-agent` (30 s down). `vm-health.conf` (old copy `.before-4b1b607`): `PROD_TAG=4b1b607`, `ROLLBACK_TAG=d5dfd47`,
+`ROLLBACK_BACKUP=01a1d63c-8b2f-77a1-9f83-4360004da19b`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) and `/health/live` 200; schema
+20261113115539 (108 rows); live quick-check ok, 0 foreign-key rows; 0 error lines in the journal (only the known
+"allowed origin without a port" WARN); sidecar `/health` ok and `src` equal to `main`; deployed `aboutOrbit()` has
+"Customize", "iPhone", "Share" and port 3's "Unread replies" and "Two-way bots". Without a session `GET push/badge` and
+`GET workspaces/{id}/home-layout` answer 401; with one 200 (`{"count":1}`; the default 5 cards, `customized: false`).
+Built bundle on production as David Dusi (temporary v7 session, `ui-check.ts`, all API writes blocked, none was
+attempted): Home loads with `home-layout` 200 and 5 cards (Overdue, Due soon, Unread in Inbox, Recently updated docs,
+Unread chat with 2 conversations); Customize shows Add card and the Remove buttons, Done closes it; `push/badge` 200
+from the page; Unreads loads with `unread-threads` 200 and 3 groups; 0 console or page errors. Screenshots
+`/root/.local/share/com.jean.desktop/pasted-images/iphone-release/prod-{home,home-customize,unreads}.png`.
+`ORBIT_VERIFY_SPA=1 verify-production.sh` passed (signed out `/` → `/login`, signed in `/` and `/tasks`; session logged
+out, the row deleted after; token file, TLS hop and its pem removed). `vm-health` OK except disk (81%), oom (the 03:06
+one), nginx (12 lines, upstream refused 18:47:34–18:48:04, the switch window) and docker (other worktrees'
+containers). **Not** verified on production: saving a Home layout (a write), an APNs badge push (APNs is off).
+
+Rollback to `d5dfd47`. Way 1 keeps the work done after the switch, but loses saved Home layouts.
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit sqlite3 /var/lib/orbit/orbit.sqlite < /root/ops/iphone-release/rollback-schema.sql
+sudo install -m 755 /usr/local/bin/orbit-d5dfd47 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-4b1b607 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/iphone-release/rollback.sh, which also keeps a copy of the database first)
+# rollback-schema.sql: DROP TABLE home_layouts; delete the version row 20261113115539 (one transaction)
+# Way 2, only for a data problem (work after 18:47 UTC is lost), Orbit stopped: /usr/local/bin/orbit-d5dfd47 backup verify +
+#   backup restore 01a1d63c-8b2f-77a1-9f83-4360004da19b (as user orbit, with /etc/orbit/orbit.env), then the binary and sidecar lines above
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-4b1b607.tgz
+# Plain copy of the database before the switch: /var/backups/orbit/pre-migration/orbit-before-4b1b607.sqlite
+```
+
+After this rollback, set `PROD_TAG=d5dfd47`, `ROLLBACK_TAG=68b2d48`,
+`ROLLBACK_BACKUP=01a1d5c1-30a9-7617-b5e3-732fab04b6f6` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-4b1b607`).
 
 ### November 13, 2026 upgrade: upstream port 3 (unread thread replies, two-way webhook bots; schema 20261113100500, one destructive)
 
