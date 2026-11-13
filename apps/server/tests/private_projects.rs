@@ -808,6 +808,12 @@ async fn search_finds_a_private_task_only_for_those_who_see_the_project() {
     assert!(found(&server.get(&world.alice, &search).await));
     assert!(found(&server.get(&world.owner, &search).await));
     assert!(!found(&server.get(&world.bob, &search).await));
+    // The chat # list searches tasks this way: a guest gets no tasks at all.
+    let (_, guest) = server
+        .person(&world.workspace, "searching-guest", Some("guest"))
+        .await;
+    let status = server.status(&guest, "GET", &search, Value::Null).await;
+    assert!(matches!(status, 403 | 404), "guest search: {status}");
 
     // The public API and the MCP tools search with a token through the same `TokenApi`; an
     // all-projects token finds what its creator (an admin here) sees.

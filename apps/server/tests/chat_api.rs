@@ -649,6 +649,34 @@ async fn a_thread_is_followed_by_its_participants_and_by_mentioned_members() {
     fixture.assert_counters_exact("the follow rules").await;
 }
 
+/// The composer's # list shows the channels of `GET /conversations`: a guest gets only the
+/// channels they were added to, not public channels nor other private ones.
+#[tokio::test]
+async fn a_guest_lists_only_the_channels_they_were_added_to() {
+    let fixture = Fixture::new().await;
+    let ada = fixture.add_member("ada").await;
+    let guest = fixture.add_guest("guest").await;
+    let general = fixture.general().await;
+    let secret = fixture
+        .channel(&fixture.owner, "secret", "private", &[&ada])
+        .await;
+    let shared = fixture
+        .channel(&fixture.owner, "with-guest", "private", &[&ada, &guest])
+        .await;
+    let listed = fixture.ok(&guest, "GET", "/conversations", None).await;
+    let ids: Vec<&str> = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|conversation| conversation["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, [shared.as_str()], "{listed}");
+    let listed = fixture.ok(&ada, "GET", "/conversations", None).await.to_string();
+    for id in [&general, &secret, &shared] {
+        assert!(listed.contains(id.as_str()), "{listed}");
+    }
+}
+
 #[tokio::test]
 async fn private_channels_and_dms_do_not_exist_for_other_members() {
     let fixture = Fixture::new().await;
