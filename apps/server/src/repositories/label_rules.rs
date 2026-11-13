@@ -18,6 +18,7 @@ use sqlx::{Any, Transaction};
 use utoipa::ToSchema;
 
 use super::membership;
+use super::project_access::{user_sees_project_sql, user_sees_task_sql};
 use super::task_followers;
 use super::tasks::{NotificationRequest, TaskError, notify_users};
 use crate::audit::{self, AuditOutcome};
@@ -121,7 +122,8 @@ pub(super) async fn insert_task_label(
 }
 
 /// Assigns one person by a rule, unless they are assigned already or may not be assigned (not
-/// a member any more, a guest, suspended): then nothing happens and the task write goes on.
+/// a member any more, a guest, suspended, or not on the member list of a private project): then
+/// nothing happens and the task write goes on.
 async fn assign_by_rule(
     tx: &mut Transaction<'_, Any>,
     write: &LabelWrite<'_>,
@@ -129,13 +131,15 @@ async fn assign_by_rule(
     label_name: &str,
     user_id: &str,
 ) -> Result<(), TaskError> {
-    let Some(member) = sqlx::query(
+    let Some(member) = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT memberships.id, users.display_name FROM memberships JOIN users ON users.id = memberships.user_id \
          WHERE memberships.workspace_id = $1 AND memberships.user_id = $2 AND memberships.role <> 'guest' \
-         AND users.suspended_at IS NULL AND users.deleted_at IS NULL",
-    )
+         AND users.suspended_at IS NULL AND users.deleted_at IS NULL AND {}",
+        user_sees_task_sql("$3", "users.id")
+    )))
     .bind(write.workspace_id.to_string())
     .bind(user_id)
+    .bind(task_id.to_string())
     .fetch_optional(&mut **tx)
     .await?
     else {
@@ -490,13 +494,16 @@ async fn check_rule(
     if !label {
         return Err(TaskError::Invalid { field: "label_id" });
     }
-    let Flag(member) = sqlx::query_scalar(
+    // The person must see the project: a private project's rule names one of its members.
+    let Flag(member) = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT EXISTS(SELECT 1 FROM memberships JOIN users ON users.id = memberships.user_id \
          WHERE memberships.workspace_id = $1 AND memberships.user_id = $2 AND memberships.role <> 'guest' \
-         AND users.suspended_at IS NULL AND users.deleted_at IS NULL)",
-    )
+         AND users.suspended_at IS NULL AND users.deleted_at IS NULL AND {})",
+        user_sees_project_sql("$3", "users.id")
+    )))
     .bind(workspace_id.to_string())
     .bind(user_id.to_string())
+    .bind(project_id.to_string())
     .fetch_one(&mut **tx)
     .await?;
     if !member {

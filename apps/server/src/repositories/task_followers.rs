@@ -9,6 +9,7 @@ use serde::Serialize;
 use sqlx::{Any, Transaction};
 use utoipa::ToSchema;
 
+use super::project_access::user_sees_task_sql;
 use super::tasks::{NotificationActor, NotificationRequest, TaskError, notify_users, parse_id};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
@@ -54,20 +55,22 @@ pub(super) async fn unfollow_in_tx(
     Ok(())
 }
 
-/// The task's followers who are active members of the workspace and not guests.
+/// The task's followers who are active members of the workspace, not guests, and still see the
+/// task's project (a member taken off a private project stays in the table).
 pub(super) async fn followers_in_tx(
     tx: &mut Transaction<'_, Any>,
     workspace_id: Id,
     task_id: Id,
 ) -> Result<Vec<Id>, TaskError> {
-    sqlx::query(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT task_followers.user_id FROM task_followers \
          JOIN memberships ON memberships.user_id = task_followers.user_id \
          AND memberships.workspace_id = $1 AND memberships.role <> 'guest' \
          JOIN users ON users.id = task_followers.user_id AND users.suspended_at IS NULL \
-         WHERE task_followers.task_id = $2 \
+         WHERE task_followers.task_id = $2 AND {} \
          ORDER BY task_followers.created_at, task_followers.user_id",
-    )
+        user_sees_task_sql("task_followers.task_id", "task_followers.user_id")
+    )))
     .bind(workspace_id.to_string())
     .bind(task_id.to_string())
     .fetch_all(&mut **tx)

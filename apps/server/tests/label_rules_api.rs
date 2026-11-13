@@ -726,3 +726,46 @@ async fn only_owners_and_admins_manage_rules() {
     let (status, _) = fixture.call("DELETE", &one, &admin.cookie, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 }
+
+#[tokio::test]
+async fn a_private_projects_rules_name_and_assign_only_people_who_see_it() {
+    let fixture = Fixture::new().await;
+    let raymond = fixture
+        .person("raymond@example.com", "Raymond", "member")
+        .await;
+    let erol = fixture.person("erol@example.com", "Erol", "member").await;
+    let bug = fixture.label("bug").await;
+    // Both rules exist before the project becomes private with Raymond on its member list.
+    fixture.rule(&bug, raymond.id).await;
+    fixture.rule(&bug, erol.id).await;
+    sqlx::query("UPDATE projects SET private = 1 WHERE id = $1")
+        .bind(&fixture.project_id)
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO project_members (project_id, workspace_id, user_id, created_at) \
+         VALUES ($1, $2, $3, 0)",
+    )
+    .bind(&fixture.project_id)
+    .bind(&fixture.workspace_id)
+    .bind(raymond.id.to_string())
+    .execute(fixture.database.pool())
+    .await
+    .unwrap();
+
+    let task = fixture.task(&[&bug], &[]).await;
+    assert_eq!(assignees(&task), ids(&[raymond.id]));
+
+    // A new rule cannot name someone who does not see the project.
+    let other = fixture.label("feature").await;
+    let (status, _) = fixture
+        .call(
+            "POST",
+            &format!("/projects/{}/label-rules", fixture.project_id),
+            &fixture.owner_cookie,
+            Some(json!({ "label_id": other, "user_id": erol.id.to_string() })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}

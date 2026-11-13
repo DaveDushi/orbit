@@ -2063,3 +2063,96 @@ async fn the_ask_bars_page_context_reaches_only_the_agents_input() {
     assert_eq!(status, StatusCode::OK, "{value}");
     assert_eq!(fixture.pending().await.1.len(), 2);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Private projects.
+
+#[tokio::test]
+async fn an_agent_session_sees_only_the_private_projects_its_driver_sees() {
+    let fixture = Fixture::new().await;
+    let member = fixture.add_member("member").await;
+    let base = format!("/api/v1/workspaces/{}", fixture.workspace_id);
+    let owner = ("cookie", fixture.owner.cookie.as_str());
+    let (status, project) = fixture
+        .request(
+            "POST",
+            &format!("{base}/projects"),
+            owner,
+            Some(json!({"name": "Secret", "key": "SEC", "color": "#336699", "private": true})),
+        )
+        .await;
+    assert!(status.is_success(), "{project}");
+    let project = project["id"].as_str().unwrap().to_owned();
+    let (_, statuses) = fixture
+        .request(
+            "GET",
+            &format!("{base}/projects/{project}/statuses"),
+            owner,
+            None,
+        )
+        .await;
+    let (status, task) = fixture
+        .request(
+            "POST",
+            &format!("{base}/tasks"),
+            owner,
+            Some(json!({
+                "project_id": project,
+                "status_id": statuses["items"][0]["id"],
+                "title": "Hidden plan",
+            })),
+        )
+        .await;
+    assert!(status.is_success(), "{task}");
+    let task = task["id"].as_str().unwrap().to_owned();
+
+    // Donna's tools call these routes with the driver's agent session.
+    let bearer = fixture.agent_session(&member).await;
+    let agent = ("authorization", bearer.as_str());
+    let found = |value: &Value| {
+        value["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["id"] == task.as_str())
+            .count()
+    };
+    let (status, searched) = fixture
+        .request("GET", &format!("{base}/tasks?search=Hidden"), agent, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{searched}");
+    assert_eq!(found(&searched), 0);
+    let (_, projects) = fixture
+        .request("GET", &format!("{base}/projects"), agent, None)
+        .await;
+    assert!(
+        projects["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["id"] != project.as_str())
+    );
+    let (status, _) = fixture
+        .request("GET", &format!("{base}/tasks/{task}"), agent, None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // On the member list, the driver's agent finds it too.
+    let (status, added) = fixture
+        .request(
+            "POST",
+            &format!("{base}/projects/{project}/members"),
+            owner,
+            Some(json!({"user_id": member.id})),
+        )
+        .await;
+    assert!(status.is_success(), "{added}");
+    let (_, searched) = fixture
+        .request("GET", &format!("{base}/tasks?search=Hidden"), agent, None)
+        .await;
+    assert_eq!(found(&searched), 1);
+    let (status, _) = fixture
+        .request("GET", &format!("{base}/tasks/{task}"), agent, None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+}

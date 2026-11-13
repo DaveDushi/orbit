@@ -797,3 +797,47 @@ async fn an_all_projects_token_covers_what_its_creator_sees() {
     assert_eq!(column(&listed, "name"), ["General", "Secret"]);
     world.server.stop().await;
 }
+
+#[tokio::test]
+async fn search_finds_a_private_task_only_for_those_who_see_the_project() {
+    let world = World::new().await;
+    let server = &world.server;
+    let hidden = world.hidden.as_str();
+    let search = world.path("/tasks?search=Hidden");
+    let found = |list: &Value| column(list, "id").contains(&hidden.to_owned());
+    assert!(found(&server.get(&world.alice, &search).await));
+    assert!(found(&server.get(&world.owner, &search).await));
+    assert!(!found(&server.get(&world.bob, &search).await));
+
+    // The public API and the MCP tools search with a token through the same `TokenApi`; an
+    // all-projects token finds what its creator (an admin here) sees.
+    let issued = server
+        .ok(
+            &world.admin,
+            "POST",
+            &world.path("/api-tokens"),
+            json!({"name": "search", "scopes": ["tasks:read"], "all_projects": true}),
+        )
+        .await;
+    let token = issued["token"].as_str().unwrap();
+    let public = format!(
+        "/api/public/v1/workspaces/{}/tasks?q=Hidden",
+        world.workspace
+    );
+    let (status, listed) = server.bearer(token, &public).await;
+    assert_eq!(status, 200, "{listed}");
+    assert!(found(&listed));
+    sqlx::query("UPDATE memberships SET role = 'member' WHERE user_id = $1")
+        .bind(world.admin_id.to_string())
+        .execute(server.database.pool())
+        .await
+        .unwrap();
+    let (status, listed) = server.bearer(token, &public).await;
+    assert_eq!(status, 200, "{listed}");
+    assert!(!found(&listed));
+
+    // Once on the member list, Bob finds it.
+    assert_eq!(world.add_member(&world.alice, world.bob_id).await.0, 201);
+    assert!(found(&server.get(&world.bob, &search).await));
+    world.server.stop().await;
+}
