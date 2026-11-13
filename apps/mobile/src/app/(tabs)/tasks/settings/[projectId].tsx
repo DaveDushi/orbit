@@ -1,9 +1,9 @@
 import { router, useLocalSearchParams } from 'expo-router'
 import { useEffect, useState } from 'react'
-import { Alert, Pressable, ScrollView, View } from 'react-native'
+import { Alert, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, View } from 'react-native'
 
 import { ActionSheet, ConfirmDialog, type ConfirmRequest, Dialog, type SheetAction } from '../../../../components/settings/Dialog'
-import { Badge, Note, RowText, SettingsCard, SettingsRow, SmallOutlineButton } from '../../../../components/settings/Shell'
+import { Badge, Note, RowText, SettingsCard, SettingsRow } from '../../../../components/settings/Shell'
 import { DayPicker } from '../../../../components/tasks/DayPicker'
 import type { TaskCycle, TaskMilestone } from '../../../../data/task-api'
 import {
@@ -26,7 +26,7 @@ import {
 import { useCycleWrites, useMilestoneWrites } from '../../../../hooks/tasks'
 import { useCycles, useMilestones, useProjects } from '../../../../queries'
 import { alpha, useTheme } from '../../../../theme'
-import { Button, Icon, IconButton, Input, KeyboardSpace, PaneHeader, PullRefresh, SafeAreaView, Text } from '../../../../ui'
+import { Button, Icon, IconButton, Input, PaneHeader, SafeAreaView, Text } from '../../../../ui'
 
 const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`
 const longDate = (date: Date) => date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
@@ -145,17 +145,17 @@ export default function ProjectSettingsScreen() {
           </Text>
         </View>
       </PaneHeader>
-      <KeyboardSpace className="flex-1">
+      <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView
           contentContainerClassName="px-5 pt-5 pb-8 gap-6"
           keyboardShouldPersistTaps="handled"
-          refreshControl={<PullRefresh onRefresh={() => Promise.all([milestones.refetch(), cycles.refetch()])} />}
+          refreshControl={<RefreshControl refreshing={milestones.isRefetching || cycles.isRefetching} onRefresh={() => void Promise.all([milestones.refetch(), cycles.refetch()])} tintColor={colors.mutedForeground} />}
         >
           <SettingsCard
             title="Milestones"
             description="Steps toward the project's goal, in order. Progress counts the done tasks of each."
             flush={orderedMilestones.length > 0}
-            actions={<SmallOutlineButton label="New milestone" icon="plus" onPress={() => setForm({ kind: 'milestone', milestone: null })} />}
+            actions={<Button variant="outline" size="sm" label="New milestone" icon="plus" onPress={() => setForm({ kind: 'milestone', milestone: null })} />}
           >
             {milestones.isPending ? <Note loading>Loading milestones…</Note> : null}
             {milestones.isError ? <Note error>Could not load the milestones. Pull to retry.</Note> : null}
@@ -177,7 +177,7 @@ export default function ProjectSettingsScreen() {
             title="Cycles"
             description="Time boxes for the project's work. Tasks that are not done can move on to the next cycle."
             flush={orderedCycles.length > 0}
-            actions={<SmallOutlineButton label="New cycle" icon="plus" onPress={() => setForm({ kind: 'cycle', cycle: null })} />}
+            actions={<Button variant="outline" size="sm" label="New cycle" icon="plus" onPress={() => setForm({ kind: 'cycle', cycle: null })} />}
           >
             {cycles.isPending ? <Note loading>Loading cycles…</Note> : null}
             {cycles.isError ? <Note error>Could not load the cycles. Pull to retry.</Note> : null}
@@ -198,7 +198,7 @@ export default function ProjectSettingsScreen() {
             })}
           </SettingsCard>
         </ScrollView>
-      </KeyboardSpace>
+      </KeyboardAvoidingView>
 
       <ActionSheet
         visible={menu !== null}
