@@ -373,6 +373,7 @@ async fn read_endpoints_return_public_fields_of_approved_projects_only() {
             "parent_task_id",
             "priority",
             "project_id",
+            "recurrence",
             "status_id",
             "title",
             "updated_at",

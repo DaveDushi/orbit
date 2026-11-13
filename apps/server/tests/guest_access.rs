@@ -429,6 +429,7 @@ fn body_for(operation: &str, records: &Records) -> Option<Value> {
         }
         "bulk_tasks" => json!({"updates": [{"id": id("task_id"), "expected_version": 0}]}),
         "create_task_relation" => json!({"type": "blocks", "task_id": id("other_task_id")}),
+        "put_project_order" => json!({"project_ids": []}),
         _ => return None,
     })
 }
@@ -512,7 +513,12 @@ const UNCHECKED: &[&str] = &[
     "insert_page_drive_file",
     "replace_page_drive_file",
     "remove_page_drive_file",
-    // A restore needs a deleted record, and a purge a trashed one; deletes run last.
+    // A restore needs a deleted record, and a purge or a trash preview a trashed one; deletes
+    // run last (`tests/task_trash_api.rs` checks who reaches the tasks trash).
+    "get_trashed_page",
+    "get_trashed_project",
+    "list_trashed_project_tasks",
+    "get_trashed_task",
     "restore_drive_node",
     "purge_drive_node",
     "restore_page",
