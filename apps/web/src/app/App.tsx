@@ -134,7 +134,7 @@ export default function App() {
                 <Route index element={<HomePage />} />
                 <Route path="apps/:slug" element={<AppPage />} />
                 <Route path="tasks" element={<TasksPage />} />
-                <Route path="tasks/projects/:projectId/settings" element={<ProjectSettingsPage />} />
+                <Route path="tasks/projects/:projectId/settings/:section?" element={<ProjectSettingsPage />} />
                 <Route path="tasks/:taskId" element={<TasksPage />} />
                 <Route path="tasks-trash" element={<TaskTrashPage />} />
                 <Route path="tasks-trash/task/:taskId" element={<TrashedTaskPage />} />
