@@ -506,7 +506,12 @@ turns its routes, navigation and shortcuts off.
 - Media and big files (`docs/file-previews.md`): types come from file bytes; videos play inline (server MP4 copy + poster from the `file.preview` job, "Processing the video…" until then, original as fallback); PDFs, videos and office files open in `FileViewer` (`components/common/FileViewer.tsx`, shared with `DriveViewer`); office files show a LibreOffice PDF. Files above the chat limit upload to Drive `Uploads/<conversation>` (`features/chat/api/largeFiles.ts`, resumable) and attach as `chat_drive_files`; nodes with `chat_conversation_id` are visible only to the conversation's readers.
 - Threads are the only reply model (side pane and full view), with follow state for each member.
 - Reactions, pins, files, mentions (`@user`, `@channel`, `@here`, `#channel`), search, the
-  Unreads and Threads views, a notify level for each conversation.
+  Unreads and Threads views, a notify level for each conversation. Unreads also has a group for each thread with
+  unread replies, followed or not, in a joined conversation that is not muted (`GET …/chat/unread-threads`,
+  `unreadGroups` in `lib/sidebar.ts`). Following only decides notifications and the Threads view. In a thread with no
+  `chat_thread_members` row, the replies after the later of `chat_members.joined_at` and `threads_read_to` (migration
+  `20261113100300_chat_thread_unreads`: the newest message at upgrade) are unread; reading the thread or "Mark all as read" writes a row that does not
+  follow. A reply also sent to the channel shows in the channel's group only.
 - Search (`GET …/chat/search`, `repositories/chat/search.rs`; FTS5 on SQLite, `tsvector` on Postgres) opens in the
   right pane (`panes/SearchPane.tsx`) with the matched words marked from server offsets (`ranges`, never HTML).
   Filters are SQL `AND`s, so they combine: conversation, author, has file, mentions me (a `chat_message_mentions` row,

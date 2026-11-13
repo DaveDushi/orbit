@@ -34,6 +34,7 @@ import {
   listChatStates,
   listChatThreads,
   listFollowedChatThreads,
+  listUnreadChatThreads,
   markChatMessageUnread,
   moveChatItem,
   placeChatChannel,
@@ -256,6 +257,9 @@ export function createHttpChatClient(options: HttpChatClientOptions): ChatClient
     },
     async listFollowedThreads() {
       return (await call(listFollowedChatThreads(at({})))).map(toFollowedThread)
+    },
+    async listUnreadThreads() {
+      return (await call(listUnreadChatThreads(at({})))).map(toFollowedThread)
     },
     async listPins(conversationId) {
       return (await call(listChatPins(at({ conversation_id: conversationId })))).map(toMessage)
