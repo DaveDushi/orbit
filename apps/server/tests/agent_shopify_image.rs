@@ -427,13 +427,18 @@ impl Fixture {
 
     /// A Drive file of `workspace` with these bytes.
     async fn file(&self, workspace: Id, name: &str, bytes: &[u8]) -> String {
+        self.file_in(workspace, None, name, bytes).await
+    }
+
+    /// A Drive file in the folder `parent` (or the top level) of `workspace`, made by the owner.
+    async fn file_in(&self, workspace: Id, parent: Option<Id>, name: &str, bytes: &[u8]) -> String {
         let started = self
             .drive
             .start_upload(
                 workspace,
                 self.owner.0,
                 StartUpload {
-                    parent_id: None,
+                    parent_id: parent,
                     name: name.to_owned(),
                     size: i64::try_from(bytes.len()).unwrap(),
                     mime: "application/octet-stream".to_owned(),
@@ -733,4 +738,138 @@ async fn files_the_driver_cannot_read_and_non_images_are_refused_before_anything
         .await
         .unwrap();
     assert_eq!(approvals, 0, "nobody is asked about a refused call");
+}
+
+#[tokio::test]
+async fn only_the_drivers_yes_lets_the_image_go() {
+    let fixture = Fixture::new().await;
+    let (shop, seen) = fake_shopify().await;
+    fixture
+        .integration("Shopify", &format!("{shop}/admin/api/2025-10"))
+        .await;
+    let image = fixture.file(fixture.workspace_id, "hero.png", PNG).await;
+    let bea = fixture.add_member("bea").await;
+    let run = fixture.run().await;
+    let arguments = json!({ "integration": "shopify", "node_id": image });
+    let asked = fixture.call(&run, arguments.clone()).await;
+    assert_eq!(asked["status"], "approval_required", "{asked}");
+
+    // Bea is in the thread, but the owner drives: her yes is no approval.
+    fixture
+        .send_as(&bea, &run.conversation, "yes", Some(&run.root))
+        .await;
+    let again = fixture.call(&run, arguments.clone()).await;
+    assert_eq!(again["status"], "approval_required", "{again}");
+    assert!(seen.lock().unwrap().graphql.is_empty());
+
+    // A person's own session (not the agent's) never reaches the tool route.
+    let (status, value) = fixture
+        .request(
+            "POST",
+            &format!(
+                "/api/v1/workspaces/{}/agent-tools/shopify-image",
+                fixture.workspace_id
+            ),
+            ("cookie", &fixture.owner.1),
+            Some(json!({
+                "arguments": arguments,
+                "conversation_id": run.conversation,
+                "root_message_id": run.root,
+            })),
+        )
+        .await;
+    assert!(status.is_client_error(), "{status} {value}");
+    assert!(seen.lock().unwrap().graphql.is_empty());
+
+    fixture
+        .send(&run.conversation, "yes", Some(&run.root))
+        .await;
+    let done = fixture.call(&run, arguments).await;
+    assert_eq!(done["status"], "ok", "{done}");
+    assert_eq!(done["result"]["url"], CDN);
+    assert!(done["result"].get("article").is_none(), "{done}");
+}
+
+#[tokio::test]
+async fn private_dm_files_big_files_and_guests_are_refused() {
+    let fixture = Fixture::new().await;
+    let (shop, seen) = fake_shopify().await;
+    fixture
+        .integration("Shopify", &format!("{shop}/admin/api/2025-10"))
+        .await;
+    let bea = fixture.add_member("bea").await;
+    let cid = fixture.add_member("cid").await;
+    // The Drive folder of the owner's direct message with Cid: Bea does not see it.
+    let (status, dm) = fixture
+        .request(
+            "POST",
+            &format!("/api/v1/workspaces/{}/chat/dms", fixture.workspace_id),
+            ("cookie", &fixture.owner.1),
+            Some(json!({ "user_ids": [cid.0.to_string()] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{dm}");
+    let dm: Id = dm["result"]["id"].as_str().unwrap().parse().unwrap();
+    let folder = fixture
+        .drive
+        .repository()
+        .chat_folder(
+            fixture.workspace_id,
+            fixture.owner.0,
+            dm,
+            TimestampMillis::now(),
+        )
+        .await
+        .unwrap();
+    let private = fixture
+        .file_in(fixture.workspace_id, Some(folder.id), "private.png", PNG)
+        .await;
+    let mut big = PNG.to_vec();
+    big.resize(16 * 1024 * 1024 + 1, 0);
+    let big = fixture.file(fixture.workspace_id, "big.png", &big).await;
+    let image = fixture.file(fixture.workspace_id, "hero.png", PNG).await;
+
+    let run = fixture.run_as(&bea).await;
+    let answer = fixture
+        .call(&run, json!({ "integration": "shopify", "node_id": private }))
+        .await;
+    assert_eq!(answer["status"], "failed", "{answer}");
+    assert!(
+        answer["detail"].as_str().unwrap().contains("not available"),
+        "{answer}"
+    );
+    let answer = fixture
+        .call(&run, json!({ "integration": "shopify", "node_id": big }))
+        .await;
+    assert_eq!(answer["status"], "refused", "{answer}");
+    assert!(
+        answer["detail"].as_str().unwrap().contains("16 MiB"),
+        "{answer}"
+    );
+
+    // Bea becomes a guest while her run goes on: her agent session no longer reaches the tool.
+    sqlx::query("UPDATE memberships SET role = 'guest' WHERE user_id = $1")
+        .bind(bea.0.to_string())
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    let (status, value) = fixture
+        .request(
+            "POST",
+            &format!(
+                "/api/v1/workspaces/{}/agent-tools/shopify-image",
+                fixture.workspace_id
+            ),
+            ("authorization", &run.bearer),
+            Some(json!({
+                "arguments": { "integration": "shopify", "node_id": image },
+                "conversation_id": run.conversation,
+                "root_message_id": run.root,
+            })),
+        )
+        .await;
+    assert!(status.is_client_error(), "{status} {value}");
+
+    let shop = seen.lock().unwrap();
+    assert!(shop.graphql.is_empty() && shop.uploads.is_empty());
 }

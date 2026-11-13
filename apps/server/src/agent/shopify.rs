@@ -33,6 +33,7 @@ use super::integrations::{
 };
 use super::outbound::join_api_url;
 use crate::audit::AuditOutcome;
+use crate::drive::MAX_READ_BYTES;
 use crate::mcp_drive::drive_failure;
 use crate::repositories::drive::DriveNodeKind;
 use crate::task_routes::ApiError;
@@ -299,6 +300,15 @@ async fn call(
         Ok(_) => return Ok(refused("This is a folder: give an image file.")),
         Err(error) => return Ok(failed(drive_failure(&error))),
     };
+    if detail
+        .node
+        .size
+        .is_some_and(|size| u64::try_from(size).unwrap_or(0) > MAX_READ_BYTES)
+    {
+        return Ok(refused(
+            "The image is larger than 16 MiB, the most Orbit sends to Shopify.",
+        ));
+    }
     let (node, bytes) = match drive.service.file_bytes(workspace_id, user, node_id).await {
         Ok(file) => file,
         Err(error) => return Ok(failed(drive_failure(&error))),
