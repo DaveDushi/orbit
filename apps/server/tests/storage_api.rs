@@ -204,6 +204,52 @@ async fn storage_options_need_a_bucket_and_the_bucket_stays_while_attachments_us
 }
 
 #[tokio::test]
+async fn deleted_s3_files_stay_1_to_365_days_and_an_omitted_value_keeps_the_saved_one() {
+    let fixture = fixture().await;
+    let (status, _) = fixture
+        .call("PUT", "/api/v1/admin/settings/s3", Some(s3_body().await))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let options = |days: Value| {
+        json!({"attachments_in_s3": true, "backups_in_s3": false, "backup_schedule": "off", "s3_keep_deleted_days": days})
+    };
+    for days in [0, 366] {
+        let (status, problem) = fixture
+            .call(
+                "PUT",
+                "/api/v1/admin/settings/storage",
+                Some(options(json!(days))),
+            )
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{days}");
+        assert_eq!(problem["code"], "invalid_keep_deleted_days");
+    }
+    let (status, view) = fixture
+        .call(
+            "PUT",
+            "/api/v1/admin/settings/storage",
+            Some(options(json!(7))),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    assert_eq!(view["storage"]["s3_keep_deleted_days"], 7);
+    assert_eq!(
+        fixture.storage.current().keep_released_millis,
+        7 * 24 * 60 * 60 * 1000
+    );
+    // A client that does not know the setting leaves it as saved.
+    let (status, view) = fixture
+        .call(
+            "PUT",
+            "/api/v1/admin/settings/storage",
+            Some(json!({"attachments_in_s3": false, "backups_in_s3": false, "backup_schedule": "off"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    assert_eq!(view["storage"]["s3_keep_deleted_days"], 7);
+}
+
+#[tokio::test]
 async fn settings_another_server_saved_apply_on_reload() {
     let fixture = fixture().await;
     let (status, _) = fixture
