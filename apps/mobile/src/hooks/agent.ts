@@ -13,9 +13,18 @@ import {
   saveTeamInstructions,
   readAgentStatus,
   startChatgptLogin,
+  createAgentProfile,
+  deleteAgentProfile,
+  updateAgentProfile,
+  updateDefaultAgent,
   type AgentMemoryScope,
+  type AgentProfileInput,
+  type DefaultAgentInput,
 } from '@orbit/api/agent'
+import { deleteRoutine, deleteScript, listRoutineRuns, listRoutines, listScripts, testRoutine, updateRoutine, updateScript, type RoutineChange, type ScriptChange } from '@orbit/api/scheduled'
 
+import { setAgentAvatar } from '../data/agentic'
+import { keys } from '../data/keys'
 import { useOrbit } from '../orbit-context'
 
 const key = ['agent'] as const
@@ -56,7 +65,7 @@ const memoryKey = (workspaceId: string) => ['agent-memory', workspaceId] as cons
 /** The workspace's agents (the default one and the others), for the memory's agent picker. */
 export function useAgentProfiles() {
   const { client, workspaceId } = useOrbit()
-  return useQuery({ queryKey: ['agent', 'profiles', workspaceId], queryFn: () => readAgentProfiles(client, workspaceId) })
+  return useQuery({ queryKey: profilesKey(workspaceId), queryFn: () => readAgentProfiles(client, workspaceId) })
 }
 
 /** One agent's memory (`agent` null: the default agent) in the current workspace, newest first; older pages load with `before`. */
@@ -125,5 +134,130 @@ export function useSaveTeamInstructions() {
   return useMutation({
     mutationFn: (instructions: string) => saveTeamInstructions(client, workspaceId, instructions),
     onSuccess: (saved) => queryClient.setQueryData(teamKey(workspaceId), saved),
+  })
+}
+
+const profilesKey = (workspaceId: string) => ['agent', 'profiles', workspaceId] as const
+
+/** An agent's name and avatar are in the member lists too. */
+function useRefreshAgents() {
+  const { workspaceId } = useOrbit()
+  const queryClient = useQueryClient()
+  return () => {
+    void queryClient.invalidateQueries({ queryKey: profilesKey(workspaceId) })
+    void queryClient.invalidateQueries({ queryKey: keys.members(workspaceId) })
+  }
+}
+
+/** Creates (`id` null) or changes a custom agent; `avatar` undefined keeps the picture, null removes it. */
+export function useSaveAgentProfile() {
+  const { client, workspaceId } = useOrbit()
+  const refresh = useRefreshAgents()
+  return useMutation({
+    mutationFn: async ({ id, input, avatar }: { id: string | null; input: AgentProfileInput; avatar?: Blob | null }) => {
+      const saved = id ? await updateAgentProfile(client, workspaceId, id, input) : await createAgentProfile(client, workspaceId, input)
+      if (avatar !== undefined) await setAgentAvatar(client, workspaceId, saved.id, avatar)
+      return saved
+    },
+    onSettled: refresh,
+  })
+}
+
+/** The default agent's card. Its name is also in the agent status (Ask Donna). */
+export function useSaveDefaultAgent() {
+  const { client, workspaceId } = useOrbit()
+  const queryClient = useQueryClient()
+  const refresh = useRefreshAgents()
+  return useMutation({
+    mutationFn: async ({ input, avatar }: { input: DefaultAgentInput; avatar?: Blob | null }) => {
+      const saved = await updateDefaultAgent(client, workspaceId, input)
+      if (avatar !== undefined) await setAgentAvatar(client, workspaceId, 'default', avatar)
+      return saved
+    },
+    onSettled: () => {
+      refresh()
+      void queryClient.invalidateQueries({ queryKey: key, exact: true })
+    },
+  })
+}
+
+export function useDeleteAgentProfile() {
+  const { client, workspaceId } = useOrbit()
+  const refresh = useRefreshAgents()
+  return useMutation({ mutationFn: (id: string) => deleteAgentProfile(client, workspaceId, id), onSettled: refresh })
+}
+
+const routinesKey = (workspaceId: string) => ['workspace', workspaceId, 'routines'] as const
+const runsKey = (workspaceId: string, routineId: string) => ['workspace', workspaceId, 'routines', routineId, 'runs'] as const
+const scriptsKey = (workspaceId: string) => ['workspace', workspaceId, 'scripts'] as const
+
+/** The person's routines; every routine of the workspace for owners and admins. A run moves the times, so it refreshes each minute. */
+export function useRoutines() {
+  const { client, workspaceId } = useOrbit()
+  return useQuery({ queryKey: routinesKey(workspaceId), queryFn: () => listRoutines(client, workspaceId), refetchInterval: 60_000 })
+}
+
+export function useUpdateRoutine() {
+  const { client, workspaceId } = useOrbit()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, change }: { id: string; change: RoutineChange }) => updateRoutine(client, workspaceId, id, change),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: routinesKey(workspaceId) })
+      void queryClient.invalidateQueries({ queryKey: scriptsKey(workspaceId) })
+    },
+  })
+}
+
+export function useDeleteRoutine() {
+  const { client, workspaceId } = useOrbit()
+  const queryClient = useQueryClient()
+  return useMutation({ mutationFn: (id: string) => deleteRoutine(client, workspaceId, id), onSettled: () => void queryClient.invalidateQueries({ queryKey: routinesKey(workspaceId) }) })
+}
+
+/** A routine's last runs; while one runs the list refreshes every 5 seconds. */
+export function useRoutineRuns(routineId: string) {
+  const { client, workspaceId } = useOrbit()
+  return useQuery({
+    queryKey: runsKey(workspaceId, routineId),
+    queryFn: () => listRoutineRuns(client, workspaceId, routineId),
+    refetchInterval: (query) => (query.state.data?.some((run) => run.status === 'started') ? 5_000 : false),
+  })
+}
+
+export function useTestRoutine() {
+  const { client, workspaceId } = useOrbit()
+  const queryClient = useQueryClient()
+  return useMutation({ mutationFn: (id: string) => testRoutine(client, workspaceId, id), onSettled: (_run, _error, id) => void queryClient.invalidateQueries({ queryKey: runsKey(workspaceId, id) }) })
+}
+
+/** The person's saved scripts; every script of the workspace for owners and admins. */
+export function useScripts() {
+  const { client, workspaceId } = useOrbit()
+  return useQuery({ queryKey: scriptsKey(workspaceId), queryFn: () => listScripts(client, workspaceId) })
+}
+
+/** A new script changes which routines may write: both lists refresh. */
+export function useUpdateScript() {
+  const { client, workspaceId } = useOrbit()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, change }: { id: string; change: ScriptChange }) => updateScript(client, workspaceId, id, change),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: scriptsKey(workspaceId) })
+      void queryClient.invalidateQueries({ queryKey: routinesKey(workspaceId), exact: true })
+    },
+  })
+}
+
+export function useDeleteScript() {
+  const { client, workspaceId } = useOrbit()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => deleteScript(client, workspaceId, id),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: scriptsKey(workspaceId) })
+      void queryClient.invalidateQueries({ queryKey: routinesKey(workspaceId), exact: true })
+    },
   })
 }

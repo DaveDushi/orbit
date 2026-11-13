@@ -67,7 +67,8 @@
             }
           }
         }
-      ]
+      ],
+      "expo-web-browser"
     ],
     "backgroundColor": "#0a0a0a",
     "owner": "davedushi",
