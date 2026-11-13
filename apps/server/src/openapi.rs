@@ -192,6 +192,10 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::task_routes::list_task_relations,
         crate::task_routes::create_task_relation,
         crate::task_routes::delete_task_relation,
+        crate::task_routes::list_linked_docs,
+        crate::task_routes::link_doc,
+        crate::task_routes::unlink_doc,
+        crate::task_routes::list_linked_tasks,
         crate::task_routes::list_github_links,
         crate::task_routes::list_task_followers,
         crate::task_routes::follow_task,
@@ -1371,6 +1375,10 @@ fn task_operation(operation_id: &str) -> bool {
             | "list_task_relations"
             | "create_task_relation"
             | "delete_task_relation"
+            | "list_linked_docs"
+            | "link_doc"
+            | "unlink_doc"
+            | "list_linked_tasks"
             | "list_task_followers"
             | "follow_task"
             | "unfollow_task"
@@ -1428,6 +1436,7 @@ fn task_errors(operation_id: &str, responses: &mut BTreeMap<&'static str, Vec<&'
             | "update_comment"
             | "create_task_relation"
             | "delete_task_relation"
+            | "link_doc"
     ) || operation_id == "list_tasks"
     {
         add_code(responses, "422", "validation_failed");

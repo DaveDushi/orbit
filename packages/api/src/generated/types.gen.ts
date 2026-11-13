@@ -2320,6 +2320,13 @@ export type LimitsView = {
     workspace_storage_quota_bytes?: number | null;
 };
 
+export type LinkDocBody = {
+    /**
+     * The Docs page to link.
+     */
+    page_id: string;
+};
+
 /**
  * What a URL shows as a card. Image URLs are always `https`.
  */
@@ -2355,6 +2362,31 @@ export type LinkPreview = {
 };
 
 export type LinkPreviewKind = 'link' | 'x' | 'youtube' | 'image';
+
+/**
+ * A Docs page linked to a task, as its reader sees it.
+ */
+export type LinkedDoc = {
+    icon: string | null;
+    /**
+     * The page's id.
+     */
+    id: string;
+    linked_at: string;
+    /**
+     * True when the page is in the reader's private space.
+     */
+    private: boolean;
+    title: string;
+};
+
+/**
+ * A task linked to a Docs page, as its reader sees it.
+ */
+export type LinkedTask = {
+    linked_at: string;
+    task: RelatedTask;
+};
 
 export type ListStyle = 'bullet' | 'ordered';
 
@@ -22235,6 +22267,61 @@ export type RestorePageFileVersionResponses = {
 
 export type RestorePageFileVersionResponse = RestorePageFileVersionResponses[keyof RestorePageFileVersionResponses];
 
+export type ListLinkedTasksData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        page_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/pages/{page_id}/linked-tasks';
+};
+
+export type ListLinkedTasksErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type ListLinkedTasksError = ListLinkedTasksErrors[keyof ListLinkedTasksErrors];
+
+export type ListLinkedTasksResponses = {
+    200: Array<LinkedTask>;
+};
+
+export type ListLinkedTasksResponse = ListLinkedTasksResponses[keyof ListLinkedTasksResponses];
+
 export type SetPageLockData = {
     body: PageLockBody;
     headers?: {
@@ -27933,6 +28020,184 @@ export type ListGithubLinksResponses = {
 };
 
 export type ListGithubLinksResponse = ListGithubLinksResponses[keyof ListGithubLinksResponses];
+
+export type ListLinkedDocsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        task_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/tasks/{task_id}/linked-docs';
+};
+
+export type ListLinkedDocsErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type ListLinkedDocsError = ListLinkedDocsErrors[keyof ListLinkedDocsErrors];
+
+export type ListLinkedDocsResponses = {
+    200: Array<LinkedDoc>;
+};
+
+export type ListLinkedDocsResponse = ListLinkedDocsResponses[keyof ListLinkedDocsResponses];
+
+export type LinkDocData = {
+    body: LinkDocBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        task_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/tasks/{task_id}/linked-docs';
+};
+
+export type LinkDocErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * validation_failed
+     */
+    422: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type LinkDocError = LinkDocErrors[keyof LinkDocErrors];
+
+export type LinkDocResponses = {
+    201: LinkedDoc;
+};
+
+export type LinkDocResponse = LinkDocResponses[keyof LinkDocResponses];
+
+export type UnlinkDocData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        task_id: string;
+        page_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/tasks/{task_id}/linked-docs/{page_id}';
+};
+
+export type UnlinkDocErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type UnlinkDocError = UnlinkDocErrors[keyof UnlinkDocErrors];
+
+export type UnlinkDocResponses = {
+    204: void;
+};
+
+export type UnlinkDocResponse = UnlinkDocResponses[keyof UnlinkDocResponses];
 
 export type PurgeTaskData = {
     body?: never;

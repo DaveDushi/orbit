@@ -19,6 +19,7 @@ use crate::auth_routes::{CookieMode, request_session};
 use crate::repositories::identity::{AuthenticatedSession, IdentityRepository};
 use crate::repositories::project_members::ProjectMemberRecord;
 use crate::repositories::sub_issues::AutoClosed;
+use crate::repositories::task_doc_links::{LinkedDoc, LinkedTask};
 use crate::repositories::task_filter::{
     self, Condition, FilterField, FilterGroup, FilterNode, FilterOperator, GroupOp, OrderBy,
     OrderDirection, ShowCompleted, SubIssuesDisplay,
@@ -213,6 +214,18 @@ pub fn task_router(state: TaskState) -> Router {
         .route(
             "/api/v1/workspaces/{workspace_id}/tasks/{task_id}/relations/{relation_id}",
             delete(delete_task_relation),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/tasks/{task_id}/linked-docs",
+            get(list_linked_docs).post(link_doc),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/tasks/{task_id}/linked-docs/{page_id}",
+            delete(unlink_doc),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/pages/{page_id}/linked-tasks",
+            get(list_linked_tasks),
         )
         .route(
             "/api/v1/workspaces/{workspace_id}/tasks/{task_id}/github-links",
@@ -2115,6 +2128,110 @@ async fn delete_task_relation(
         )
         .await
         .map(|()| StatusCode::NO_CONTENT)
+        .map_err(|error| task_problem(error, instance, request_id.as_ref()))
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct LinkDocBody {
+    /// The Docs page to link.
+    page_id: String,
+}
+
+#[utoipa::path(get, path = "/api/v1/workspaces/{workspace_id}/tasks/{task_id}/linked-docs", params(("workspace_id" = String, Path), ("task_id" = String, Path)), responses((status = 200, body = Vec<LinkedDoc>)))]
+async fn list_linked_docs(
+    State(state): State<TaskState>,
+    Path((workspace, task)): Path<(String, String)>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<Vec<LinkedDoc>>, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace}/tasks/{task}/linked-docs");
+    let (workspace_id, actor_id) =
+        scope(&state, &headers, &workspace, &instance, request_id.as_ref()).await?;
+    let task_id = parse_id(&task, &instance, request_id.as_ref())?;
+    state
+        .tasks
+        .linked_docs(workspace_id, task_id, actor_id)
+        .await
+        .map(Json)
+        .map_err(|error| task_problem(error, instance, request_id.as_ref()))
+}
+
+#[utoipa::path(post, path = "/api/v1/workspaces/{workspace_id}/tasks/{task_id}/linked-docs", params(("workspace_id" = String, Path), ("task_id" = String, Path)), request_body = LinkDocBody, responses((status = 201, body = LinkedDoc)))]
+async fn link_doc(
+    State(state): State<TaskState>,
+    Path((workspace, task)): Path<(String, String)>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+    ApiJson(body): ApiJson<LinkDocBody>,
+) -> Result<Response, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace}/tasks/{task}/linked-docs");
+    let (workspace_id, actor_id) =
+        scope(&state, &headers, &workspace, &instance, request_id.as_ref()).await?;
+    let task_id = parse_id(&task, &instance, request_id.as_ref())?;
+    let page_id = body
+        .page_id
+        .parse()
+        .map_err(|_| validation("page_id", &instance, request_id.as_ref()))?;
+    state
+        .tasks
+        .link_doc(
+            workspace_id,
+            task_id,
+            actor_id,
+            page_id,
+            request_id_value(request_id.as_ref()),
+            TimestampMillis::now(),
+        )
+        .await
+        .map(|doc| (StatusCode::CREATED, Json(doc)).into_response())
+        .map_err(|error| task_problem(error, instance, request_id.as_ref()))
+}
+
+#[utoipa::path(delete, path = "/api/v1/workspaces/{workspace_id}/tasks/{task_id}/linked-docs/{page_id}", params(("workspace_id" = String, Path), ("task_id" = String, Path), ("page_id" = String, Path)), responses((status = 204)))]
+async fn unlink_doc(
+    State(state): State<TaskState>,
+    Path((workspace, task, page)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<StatusCode, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace}/tasks/{task}/linked-docs/{page}");
+    let (workspace_id, actor_id) =
+        scope(&state, &headers, &workspace, &instance, request_id.as_ref()).await?;
+    let task_id = parse_id(&task, &instance, request_id.as_ref())?;
+    let page_id = parse_id(&page, &instance, request_id.as_ref())?;
+    state
+        .tasks
+        .unlink_doc(
+            workspace_id,
+            task_id,
+            actor_id,
+            page_id,
+            request_id_value(request_id.as_ref()),
+            TimestampMillis::now(),
+        )
+        .await
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(|error| task_problem(error, instance, request_id.as_ref()))
+}
+
+/// The tasks linked to a Docs page that the caller sees.
+#[utoipa::path(get, path = "/api/v1/workspaces/{workspace_id}/pages/{page_id}/linked-tasks", params(("workspace_id" = String, Path), ("page_id" = String, Path)), responses((status = 200, body = Vec<LinkedTask>)))]
+async fn list_linked_tasks(
+    State(state): State<TaskState>,
+    Path((workspace, page)): Path<(String, String)>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<Vec<LinkedTask>>, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace}/pages/{page}/linked-tasks");
+    let (workspace_id, actor_id) =
+        scope(&state, &headers, &workspace, &instance, request_id.as_ref()).await?;
+    let page_id = parse_id(&page, &instance, request_id.as_ref())?;
+    state
+        .tasks
+        .linked_tasks(workspace_id, page_id, actor_id)
+        .await
+        .map(Json)
         .map_err(|error| task_problem(error, instance, request_id.as_ref()))
 }
 

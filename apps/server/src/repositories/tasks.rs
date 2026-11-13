@@ -739,7 +739,7 @@ impl TaskRepository {
             .map(str::parse)
             .transpose()
             .map_err(|_| TaskError::InvalidCursor)?;
-        let (items, next) = audit::list_resource(
+        let (mut items, next) = audit::list_resource(
             &self.database,
             workspace_id,
             "task",
@@ -748,6 +748,8 @@ impl TaskRepository {
             limit.clamp(1, 100),
         )
         .await?;
+        self.add_doc_titles(workspace_id, actor_id, &mut items)
+            .await?;
         Ok(Page {
             items,
             next_cursor: next.map(|id| id.to_string()),

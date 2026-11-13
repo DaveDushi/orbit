@@ -22,6 +22,7 @@ pub mod pages;
 pub(crate) mod project_access;
 pub mod project_members;
 pub mod sub_issues;
+pub mod task_doc_links;
 pub mod task_filter;
 pub mod task_followers;
 pub mod task_recurrences;
