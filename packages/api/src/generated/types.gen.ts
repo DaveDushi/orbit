@@ -4199,6 +4199,26 @@ export type PublicWorkspaceGrant = {
     scopes: Array<ApiTokenScope>;
 };
 
+export type PushDeviceBody = {
+    /**
+     * What the list of devices shows, e.g. "iPhone".
+     */
+    label: string;
+    /**
+     * The iPhone app's APNs device token, hex.
+     */
+    token: string;
+};
+
+/**
+ * A phone the user gets pushes on.
+ */
+export type PushDeviceRecord = {
+    created_at: string;
+    id: string;
+    label: string;
+};
+
 export type PushKey = {
     /**
      * The `applicationServerKey` a browser subscribes with.
@@ -5143,7 +5163,7 @@ export type TeamspaceUpdateBody = {
 
 export type TestPushResult = {
     /**
-     * How many of the user's browsers took the push.
+     * How many of the user's browsers and iPhones took the push.
      */
     sent: number;
 };
@@ -10886,6 +10906,120 @@ export type UnlockPublicShareResponses = {
 };
 
 export type UnlockPublicShareResponse = UnlockPublicShareResponses[keyof UnlockPublicShareResponses];
+
+export type RegisterPushDeviceData = {
+    body: PushDeviceBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/push/devices';
+};
+
+export type RegisterPushDeviceErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * invalid_device
+     */
+    422: AuthProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type RegisterPushDeviceError = RegisterPushDeviceErrors[keyof RegisterPushDeviceErrors];
+
+export type RegisterPushDeviceResponses = {
+    200: PushDeviceRecord;
+};
+
+export type RegisterPushDeviceResponse = RegisterPushDeviceResponses[keyof RegisterPushDeviceResponses];
+
+export type UnregisterPushDeviceData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        token: string;
+    };
+    query?: never;
+    url: '/api/v1/push/devices/{token}';
+};
+
+export type UnregisterPushDeviceErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * invalid_device
+     */
+    422: AuthProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type UnregisterPushDeviceError = UnregisterPushDeviceErrors[keyof UnregisterPushDeviceErrors];
+
+export type UnregisterPushDeviceResponses = {
+    204: void;
+};
+
+export type UnregisterPushDeviceResponse = UnregisterPushDeviceResponses[keyof UnregisterPushDeviceResponses];
 
 export type GetPushKeyData = {
     body?: never;

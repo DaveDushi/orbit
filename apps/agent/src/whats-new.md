@@ -7,7 +7,7 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 -->
 
 ## 2026-11-14
-- Orbit for iPhone (beta): a real app with a white W icon, through TestFlight by invitation. Sign in with your Orbit address, email and password. It has Home, Tasks, Docs, Chat, Activity and Settings.
+- Orbit for iPhone (beta): a real app with the pink W icon, through TestFlight by invitation. Sign in with your Orbit address, email and password. It has Home, Tasks, Docs, Chat, Activity and Settings.
 - Ask Donna on the phone: the "Ask Donna…" bar above the bottom bar (on every tab but Chat) opens your conversation with Donna, and she knows which task or page you have open. It shows only when your ChatGPT is connected.
 - Push notifications on the iPhone app: allow them after sign-in to get messages, mentions and task updates, as on the web. Signing out stops them.
 
