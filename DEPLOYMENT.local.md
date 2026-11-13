@@ -7,15 +7,15 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 7b548ac03a0fdd993ae4d22db1c19939e70967e8
-  (sheet grid viewer; schema 20261113042745; November 13, 2026).
+- Source: DaveDushi/orbit, `main` at 18568f91b0cfa365ae2ba9db15c7da5de2070103
+  (upstream port 2: trash, recurring tasks, private projects, project order; schema 20261113100200; November 13, 2026).
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
   f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:7b548ac`); fork commits have no published upstream image.
-- Image ID: sha256:25735ec548f00a2460d821a4829496f017ea3fd1448097fe9d965966ae8789a8
-- Team agent sidecar code (`/opt/orbit-agent`): commit 7b548ac.
+  (`orbit:18568f9`); fork commits have no published upstream image.
+- Image ID: sha256:e0b1d43cde95ef4929ea9dad3e428ca505a1b2cb134b94d898dbccab1f114d3c
+- Team agent sidecar code (`/opt/orbit-agent`): commit 18568f9.
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): off. No `ORBIT_APNS_*` setting is in `/etc/orbit/orbit.env`
   yet, so Orbit keeps the iPhones' device rows and sends them nothing (no log line). To turn it on, put the team's `.p8`
   key on the VM (owner `orbit`, mode 600), set `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID` (and
@@ -262,6 +262,92 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 13, 2026 upgrade: upstream port 2 (trash, recurring tasks, private projects, project order; schema 20261113100200)
+
+`main` from `53a80bc0` to `18568f91` (local, not pushed): `upstream-port2` (13 commits on `c5735ed8`, old tip
+`ba21bbda`) rebased onto main in its worktree, main fast-forwarded. Rebased commits `f7a6063a` (trash: delete forever, empty trash, search, read-only previews) …
+`77ce3d70` (lesson), plus 3 new: `fdc4d273` (what's new), `607f6ada` (generated client), `18568f91` (follower test).
+Conflicts: `openapi_contract.rs` counts (main 272/351 + branch 10 paths/12 operations = 282 paths, 363 operations) and
+`sdk.gen.ts` (branch side, then made again from the merged binary: `orbit openapi` gives an `openapi.json` equal to the
+merged file, `types.gen.ts` unchanged, `sdk.gen.ts` gets back main's push device and Drive file content calls).
+`prompt.ts` and `whats-new.md` merged without a conflict. `aboutOrbit()` keeps main's iPhone, hooks and sheet-grid text
+and has private projects, recurring tasks, sidebar order and the trash previews / delete forever. What is new for
+people: the branch's `2026-11-14` entry folded into today's `2026-11-13` entry, still 4 lines (all 4 rewritten shorter;
+line 2 is the tasks line: private projects, Repeat, own sidebar order, trash search / delete forever, # task links).
+
+Security (private projects): tests cover hidden tasks, comments, relations, search (REST and the public API that MCP
+uses), notifications (a mention of a non-member, inbox after removal), label rules, Donna's session and guests. Follower
+scoping (`989859bc`) had no test: added `a_member_taken_off_a_private_project_stops_following_its_tasks`
+(`private_projects.rs`); it fails without the filter in `followers_in_tx` (checked, file restored).
+
+Migrations (SQLite + Postgres): `20261113100000_task_recurrences` (table `task_recurrences`, `tasks.recurrence_id`,
+`tasks.recurrence_next_id`, index), `20261113100100_private_projects` (`projects.private` default 0, table
+`project_members`), `20261113100200_project_positions` (table `project_positions`); additive. The old binary refuses
+the migrated database ("schema version 20261113100200 is newer than binary schema version 20261113042745").
+
+Checks on the rebased tree (= `main`; `orbit-build`, `CARGO_PROFILE_*_DEBUG=0`): SQLite `private_projects` 7,
+`recurring_tasks_api` 3, `task_trash_api` 2, `views_api` 25 (project order), `label_rules_api` 9,
+`task_followers_api` 5, `agent_api` 18, `guest_access` 1, `public_api` 30, `openapi_contract` 19, `app_smoke` 21,
+platform `database` 54 and `backup` 23; the same (without `openapi_contract`, `app_smoke`) with
+`ORBIT_TEST_POSTGRES_URL`: all pass. Web `tsc -b`; web `bun test` of the 11 touched test files (72 pass); `packages/api`
+`projectOrder` + `recurrence` (7 pass); agent `tsc` and `npm test` with Node 24 (80 pass, 11 skipped, 0 fail). Scripts
+and logs: `/root/ops/upstream-port2/`.
+
+Deploy id `20261113T094334Z-251697`. `orbit:18568f9` (image
+`sha256:e0b1d43cde95ef4929ea9dad3e428ca505a1b2cb134b94d898dbccab1f114d3c`, label `18568f91…`); `deploy/smoke.sh` and
+`orbit config check` (production env) passed. Migration dry run (debug binary on a hot copy, release binary on a hot
+copy, and in the switch on a copy of the stopped database): 3 applied, a second run 0, schema 20261113100200 (104
+rows), the 101 old checksums and the counts unchanged (8 users, 110 tasks, 18 comments, 102 followers, 94
+notifications, 6 projects, 12 memberships), quick-check ok, 0 foreign-key rows, no backup file made. Rollback test on
+the same copies: the old binary refuses, `rollback-schema.sql` (DROP steps) brings the schema text back equal to the
+source, counts equal, the old binary applies 0.
+
+Switch: stopped both services at 11:33:52 UTC; snapshot `01a1d4af-7c96-711d-ab7b-ceb6798d5ff3` with
+`/usr/local/bin/orbit-7b548ac`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-18568f9.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-18568f9.tgz`; old sidecar code `/opt/orbit-agent.before-18568f9`; new
+sidecar `src` (`package*.json` unchanged); env unchanged; binary installed (`/usr/local/bin/orbit-18568f9` too); `orbit`
+ready 11:34:11, then `orbit-agent`. `vm-health.conf` (old copy `.before-18568f9`): `PROD_TAG=18568f9`,
+`ROLLBACK_TAG=7b548ac`, `ROLLBACK_BACKUP=01a1d4af-7c96-711d-ab7b-ceb6798d5ff3`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) and `/health/live` 200; revision
+`18568f91`; schema top 20261113100200 (104 rows); live quick-check ok, 0 foreign-key rows; 0 private projects, 0
+`project_members` rows; 0 error lines in the journal (only the known "allowed origin without a port" WARN); sidecar
+`/health` ok and `src` equal to `main`. Without a session all 12 new operations answer 401 (`PUT project-order` and
+`POST projects/{id}/members` with a valid body; with `{}` they give 400 first). Existing projects: as David Dusi (owner)
+with a temporary v7 session, `GET projects` lists 2 of 2 live projects in Wellrox and in Slate, `GET project-order`
+200; in the database every membership sees all live projects of its workspace (members 17 of 17, owners 5 of 5).
+`ORBIT_VERIFY_SPA=1 verify-production.sh` passed (signed out `/` → `/login`, signed in `/` and `/tasks`, 0 console or
+page errors; session logged out, the row deleted after: 47 sessions, as before). `vm-health` OK except oom (1 line from
+03:06 UTC, an earlier build), nginx (19 lines, upstream refused 11:34:01–11:34:11, the start window), docker (other
+worktrees' containers) and git-owner. **Not** verified on production: creating a private project, a repeat rule, a
+sidebar reorder, or delete forever (no user data changed).
+
+Rollback to `7b548ac`. Way 1 keeps the work done after the switch, but loses what only port 2 stores: private
+projects become workspace-wide again (everyone sees them), member lists, repeat rules and sidebar orders are gone. If a
+private project exists by then, check with its owners before Way 1, or use Way 2.
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit sqlite3 /var/lib/orbit/orbit.sqlite < /root/ops/upstream-port2/rollback-schema.sql
+sudo install -m 755 /usr/local/bin/orbit-7b548ac /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-18568f9 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/upstream-port2/rollback.sh, which also keeps a copy of the database first)
+# rollback-schema.sql: DROP TABLE project_positions, project_members; DROP COLUMN projects.private; DROP INDEX
+#   tasks_recurrence_pending; DROP COLUMN tasks.recurrence_next_id, tasks.recurrence_id; DROP TABLE task_recurrences;
+#   delete the 3 version rows (one transaction)
+# Way 2, only for a data problem (work after 11:33 UTC is lost), Orbit stopped: /usr/local/bin/orbit-7b548ac backup verify +
+#   backup restore 01a1d4af-7c96-711d-ab7b-ceb6798d5ff3 (as user orbit, with /etc/orbit/orbit.env), then the binary and sidecar lines above
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-18568f9.tgz
+# Plain copy of the database before the switch: /var/backups/orbit/pre-migration/orbit-before-18568f9.sqlite
+```
+
+After this rollback, set `PROD_TAG=7b548ac`, `ROLLBACK_TAG=f14e780`,
+`ROLLBACK_BACKUP=01a1d448-08e5-76ee-9499-bb1be86b74d9` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-18568f9`).
 
 ### November 13, 2026 upgrade: sheet grid viewer (xlsx, xls, csv, tsv; no migration)
 
