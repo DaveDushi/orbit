@@ -34,7 +34,7 @@ const TOPIC_ENV: &str = "ORBIT_APNS_TOPIC";
 /// `true`: the development (sandbox) APNs, for development builds. TestFlight and App Store builds
 /// get production tokens, which the sandbox refuses.
 const SANDBOX_ENV: &str = "ORBIT_APNS_SANDBOX";
-pub const DEFAULT_TOPIC: &str = "com.wellrox.orbit";
+pub const DEFAULT_TOPIC: &str = "com.easytomanage.orbit";
 
 const PRODUCTION_HOST: &str = "https://api.push.apple.com";
 const SANDBOX_HOST: &str = "https://api.sandbox.push.apple.com";

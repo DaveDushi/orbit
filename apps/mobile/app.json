@@ -10,7 +10,7 @@
     "ios": {
       "supportsTablet": true,
       "backgroundColor": "#0a0a0a",
-      "bundleIdentifier": "com.wellrox.orbit",
+      "bundleIdentifier": "com.easytomanage.orbit",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -24,7 +24,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "userInterfaceStyle": "automatic",
-      "package": "com.wellrox.orbit",
+      "package": "com.easytomanage.orbit",
       "permissions": [
         "android.permission.RECORD_AUDIO"
       ]
