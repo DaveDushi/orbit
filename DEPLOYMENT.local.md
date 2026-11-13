@@ -7,12 +7,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 3a468aa7a05fb6789c81d352389bc4decc24c827
-  (GitHub comment sync, both ways; schema 100; November 13, 2026).
+- Source: DaveDushi/orbit, `main` at c5735ed824d836073c07c4ecea8d846778195258
+  (upstream port 1; schema 100; November 13, 2026).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:3a468aa`); fork commits have no published upstream image.
-- Image ID: sha256:9c394b3ad79b76a6964f699b51ccbc8179f814fcfbdcd31a2cbcff7209ce0fe5
-- Team agent sidecar code (`/opt/orbit-agent`): commit 3a468aa.
+  (`orbit:c5735ed`); fork commits have no published upstream image.
+- Image ID: sha256:1e483169009763c751e1789779b20c422930aea1749d1bab7f7c126729c6469f
+- Team agent sidecar code (`/opt/orbit-agent`): commit c5735ed.
 - LibreOffice (Calc, Writer, Impress 24.2, `--no-install-recommends`) is installed for Office previews
   (`docs/file-previews.md`); ffmpeg makes the chat video copies.
 - Desktop app downloads: https://orbit.wellrox.com/downloads/desktop/ (installer, zip, `latest.json` for the app's update
@@ -255,6 +255,112 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 13, 2026 upgrade: upstream port 1 (schema 100, no new migration)
+
+`main` from `bdc34371` to `c5735ed8` (local, not pushed): `upstream-port1` (21 commits `20800092` … `d73f7dea` on
+`fb131eb4`) rebased on a temporary branch, main fast-forwarded. Kept 19 (new shas `f64427dc` … `157a7c4b`): generated
+migration catalog (`f64427dc`), push hosts (#100), spinner, root account cannot be deleted, OAuth consent (workspaces
+without projects; one workspace skips the picker), idle sessions removed after 30 days, `#` task references + sectioned
+⌘K + reference previews (#93), "Searching tasks…", mention ranking, searchable pickers (#96), bell popover (#110), MCP
+comments / assignees / lookups / `create_project` and labels (#101), retention purge with token grants, api-token badges
+on phones, retention tests, aboutOrbit + what's new. Dropped 2, main has them: `75ac9ccc` (`strictExecutionOrder`, main's
+`72fc5049` with its comment) and `d73f7dea` (lesson; main's Rolldown lesson is fuller). Added 2: `25a40b77` (generated
+client made again from the merged `openapi.json`: the rebase kept the branch's `sdk.gen.ts`, without main's label-rule,
+chat Drive file and Drive preview calls; `openapi.json` from the binary equals the merged file) and `c5735ed8` (main's
+`label_rules_go_with_their_label_and_project` test came back: the conflict resolution of `tests/database.rs` had dropped
+it). What is new for people (`whats-new.md`, new `2026-11-13` entry, 4 lines): `#` task links and previews, ⌘K
+sections; the bell popover; search in the project, assignee and repository pickers; MCP comments, assignees, labels,
+projects, and sessions idle 30 days are signed out. `aboutOrbit()` keeps main's label-chip sentence and adds the
+task-reference and picker lines.
+
+Rebase conflicts: schema numbers in `backup.rs`, `app_smoke`, platform `database` and `backup` tests (branch side:
+`MigrationRunner::latest_version()`); `migrate.rs` (branch side; main had only changed catalog entries); `build.rs`
+`LAST_SEQUENTIAL_VERSION` 97 → 100 (also "after 0100" in `.ai/lessons.md`, "0001–0100" in `AGENTS.md`, and the commit
+message); `workspaces.rs` retention keeps main's `chat_drive_files` delete and adds the session delete; generated
+`index.ts` removed (the new generator does not write it, nothing imports it); `openapi_contract` 347 + 1 = 348
+operations (paths 269); `InboxPage.tsx` takes the branch's `NotificationRow`, and `useNotificationRows.actor` gets main's
+GitHub actor ("login (GitHub)"); `prompt.ts` as above.
+
+Migrations: no new one. Build-time catalog checked against main's hand-written one: SQLite 1–100 (100), Postgres 46–100
+(55), same order, same SHA-256 per file, same destructive flags (21 and 76; Postgres 76). The runner stores only
+`version` + `checksum` (SHA-256 of the SQL) in `schema_migrations`, no file name; `0021_task_relations` and
+`0076_api_token_scopes` (SQLite + Postgres) are renames to `.destructive.sql` with the same bytes (R100), so nothing
+re-runs and no backup is forced. New migrations now need a UTC timestamp version (`just new-migration`): a 4-digit
+`0101` (iphone-app `push_devices`) is refused by `build.rs` unless that branch sets `LAST_SEQUENTIAL_VERSION` to 101 or
+takes a timestamp.
+
+Retention: the job is a persisted daily schedule (runs at about 14:09 UTC; the last 8 runs passed with 0 purged), so the
+first run with the new code is not at the switch. Its new statements, run on a copy as of 2026-11-13 14:10 UTC: sessions
+49 → 48 (one session of David Dusi, idle since 2026-10-12, idle-expired 2026-11-11, no push subscription, no agent
+session), 0 projects (1 trashed, not 30 days old), 0 token grants changed; push subscriptions, agent sessions and tasks
+unchanged.
+
+Checks (after `bun install --frozen-lockfile`, `npm ci` in `apps/agent`, fresh web `dist`): agent `tsc` and `npm test`
+(80 pass, 11 skipped, 0 fail); web `tsc -b`; mobile `tsc`; web `bun test` of `app/shell`, `components/common`,
+`features/inbox`, OAuth consent, chat composer, docs editor, task references, `useHoverPreview`,
+`useMentionAutocomplete` (241 pass); `features/tasks` 392 pass, 2 fail (the known `TaskList` bulk toolbar tests). Rust
+under `orbit-build`, `CARGO_PROFILE_*_DEBUG=0`, SQLite: platform `backup` 23, `database` 54 (53 before `c5735ed8`); server
+`--lib` 276, `account_api` 14, `api_tokens_backends` 4, `app_smoke` 21, `mcp_api` 19, `mcp_drive_api` 3,
+`notifications_api` 3, `oauth_api` 12, `openapi_contract` 19, `public_api` 30, `push_api` 6, `tasks_api` 100,
+`workspaces_api` 30: all pass. Not run: Postgres, the rest of the suites.
+
+Image: the first `orbit-deploy image` (of `25a40b77`) was killed after 2 h 15 min: rustc OOM in the BuildKit container,
+which had `--memory=4g` (2.5 billion limit hits, it thrashed); the release compile of `orbit-server` now needs about
+5 GiB. `docker update --memory=6g --memory-swap=6g orbit-buildkit` (inside `orbit-builds.slice`, 8G/10G; undo with
+`4g`), `deploy/README.md` updated. Second build of `c5735ed8`: about 30 min, peak 5.0 GiB. Deploy id
+`20261113T002000Z-4106014`. `orbit:c5735ed` (image
+`sha256:1e483169009763c751e1789779b20c422930aea1749d1bab7f7c126729c6469f`); `deploy/smoke.sh` and `orbit config check`
+passed. Before the switch (`.ai/lessons.md`, Rolldown): the release binary's embedded `dist` on a seeded DB in
+`unshare -n`, signed in as `test@example.com`: `/`, `/tasks`, a task, `/docs`, `/drive`, `/chat`, `/activity`,
+`/settings`, `/settings/members`, `/settings/api-tokens`, `/settings/agentic/routines`, `/admin` render, 0 page errors,
+only the known `view-preferences/all` 404; bell popover, ⌘K "Tasks" section for `GEN-1`, the assignee picker's search
+box and the `#` task list in chat all show. Migration dry run on a hot read-only copy and again on a copy of the stopped
+database: 0 applied, the 100 stored checksums accepted, no pre-migration backup made, quick-check ok, 0 foreign-key
+rows, counts unchanged (schema 100, 8 users, 110 tasks, 18 task comments, 94 notifications, 17 labels, 140 task labels,
+1093 chat messages, 38 GitHub links, 49 sessions, 6 projects). Scripts: `/root/ops/upstream-port1/`.
+
+Switch: stopped both services at 04:05:52 UTC; snapshot `01a1d315-5386-73ad-a657-d92c30da0283` with
+`/usr/local/bin/orbit-3a468aa`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-c5735ed.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-c5735ed.tgz`; old sidecar code `/opt/orbit-agent.before-c5735ed`; new
+sidecar `src` (`package*.json`, `tsconfig.json` unchanged, no `npm ci`); binary installed (`/usr/local/bin/orbit-c5735ed`
+too); `orbit` ready 04:06:06, then `orbit-agent`. `vm-health.conf` (old copy `.before-c5735ed`): `PROD_TAG=c5735ed`,
+`ROLLBACK_TAG=3a468aa`, `ROLLBACK_BACKUP=01a1d315-5386-73ad-a657-d92c30da0283`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) and `/health/live` 200; revision
+`c5735ed8`; schema 100 (100 rows); live quick-check ok, 0 foreign-key rows; `POST /mcp` without a token 401; an unknown
+API route 404; web `/`, `/tasks`, `/settings` 200; sidecar `/health` ok and `src` equal to `c5735ed8`; 0 error lines in
+the journal; `ORBIT_VERIFY_SPA=1 verify-production.sh` passed (signed out `/`, signed in `/` and `/tasks`, session logged
+out and revoked). `vm-health` OK except oom (3 lines: the build's rustc in the BuildKit container, not Orbit) and nginx
+(1 line, upstream refused at 04:06:06, the start window); git-owner (774 tracked files and 4 in `.git` written by root
+during the rebase) given back to `exedev`. Signed-in browser check (temporary v7 session as David Dusi, Slate
+workspace, read only): the bell popover, ⌘K with `SLATE-1` in the "Tasks" section, the assignee picker of SLATE-1 with
+its search box, and the `#` task list in his DM with Donna (typed, not sent); 0 console or page errors. Nothing written
+after the switch (0 new sessions, chat messages, task changes or comments); the test session row was deleted after the
+logout (49 sessions, as before). Screenshots in `/root/.local/share/com.jean.desktop/pasted-images/upstream-port1/`
+(`live-01-bell-popover`, `live-02-command-palette-task-id`, `live-03-assignee-picker`, `live-04-chat-hash-task-picker`,
+and `preswitch-01` … `preswitch-04` of the seeded check). **Not** verified on production: the MCP tools with a real
+token, the OAuth consent page, the retention run (first one about 14:09 UTC today: expect 1 session deleted).
+
+Rollback (no migration, so the old binary starts on this database: checked on a copy, 0 applied, 100 checksums
+accepted; the snapshot is only for a data problem). To go back
+to `3a468aa`:
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-3a468aa /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-c5735ed /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Data, only if needed (work after 04:05 UTC is lost): /usr/local/bin/orbit-c5735ed backup verify + backup restore 01a1d315-5386-73ad-a657-d92c30da0283 (as user orbit, with /etc/orbit/orbit.env)
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-c5735ed.tgz
+# Plain copy of the database before the switch: /var/backups/orbit/pre-migration/orbit-before-c5735ed.sqlite
+```
+
+After this rollback, set `PROD_TAG=3a468aa`, `ROLLBACK_TAG=72fc504`,
+`ROLLBACK_BACKUP=01a1d241-a6fb-7284-a8a2-6136f7bba546` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-c5735ed`).
 
 ### November 13, 2026 upgrade: GitHub comment sync, both ways (schema 100)
 

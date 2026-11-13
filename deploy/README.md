@@ -71,7 +71,7 @@ sudo install -m 0644 deploy/buildkitd.toml /etc/orbit-buildkit.toml
 sudo install -m 0644 deploy/orbit-buildkit.service /etc/systemd/system/orbit-buildkit.service
 sudo /usr/bin/docker volume create orbit-buildkit-state
 sudo /usr/bin/docker create --name orbit-buildkit --restart=no --privileged \
-  --cgroup-parent=orbit-builds.slice --memory=4g --memory-swap=4g \
+  --cgroup-parent=orbit-builds.slice --memory=6g --memory-swap=6g \
   -v orbit-buildkit-state:/var/lib/buildkit \
   -v /etc/orbit-buildkit.toml:/etc/buildkit/buildkitd.toml:ro \
   moby/buildkit:v0.26.2
@@ -87,8 +87,10 @@ sudo -H -u exedev /usr/bin/docker buildx inspect orbit-limited --bootstrap
 
 Creation commands are one-time steps: inspect existing containers/builders instead of recreating
 them blindly. The privileged worker is dedicated to trusted local builds; expose no BuildKit TCP port.
-Systemd owns restart behavior (`--restart=no` on the container). `--memory-swap=4g` equals its 4 GiB
-memory limit, disabling additional swap allowance. BuildKit schedules one OCI build operation at a
+Systemd owns restart behavior (`--restart=no` on the container). `--memory-swap=6g` equals its 6 GiB
+memory limit, disabling additional swap allowance. The release compile of `orbit-server` needs about 5 GiB: with
+4 GiB it thrashed for 2 hours and was killed (2026-11-13). `docker update --memory=6g --memory-swap=6g orbit-buildkit`
+changes a running container. BuildKit schedules one OCI build operation at a
 time. Its GC rules reserve 512 MB, target at most 6 GB cache, and aim for 2 GB free disk; these are
 GC targets, **not hard disk quotas**. The first build has a cold, independent cache and may take longer.
 A cold build needs about 2.4 GB in the cargo target cache mount, and later builds compile only Orbit's own
