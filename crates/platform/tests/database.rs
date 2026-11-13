@@ -3444,3 +3444,73 @@ async fn answer_level_and_memory_migration_moves_both_to_the_agents() {
         );
     }
 }
+
+#[tokio::test]
+async fn label_rules_go_with_their_label_and_project() {
+    let db = TestDatabase::new().await.unwrap();
+    let [user, workspace, owner, project, bug, rule] =
+        std::array::from_fn::<Id, 6, _>(|_| Id::new_v7());
+    db.execute(&format!(
+        "BEGIN;
+         INSERT INTO users (id, email, normalized_email, display_name, password_hash, created_at, updated_at)
+         VALUES ('{user}', 'raymond@example.com', 'raymond@example.com', 'Raymond', 'x', 1, 1);
+         INSERT INTO workspaces (id, name, owner_membership_id, created_at, updated_at)
+         VALUES ('{workspace}', 'W', '{owner}', 1, 1);
+         INSERT INTO memberships (id, workspace_id, user_id, role, created_at, updated_at)
+         VALUES ('{owner}', '{workspace}', '{user}', 'owner', 1, 1);
+         INSERT INTO projects (id, workspace_id, name, project_key, color, created_at, updated_at)
+         VALUES ('{project}', '{workspace}', 'First', 'ONE', '#111111', 1, 1);
+         INSERT INTO labels (id, workspace_id, project_id, name, color, created_at, updated_at)
+         VALUES ('{bug}', '{workspace}', '{project}', 'Bug', '#ff0000', 1, 1);
+         INSERT INTO label_rules (id, workspace_id, project_id, label_id, user_id, created_at, updated_at)
+         VALUES ('{rule}', '{workspace}', '{project}', '{bug}', '{user}', 1, 1);
+         INSERT INTO project_label_rule_settings (project_id, owner_labels, updated_at)
+         VALUES ('{project}', 1, 1);
+         COMMIT;"
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        db.scalar::<i64>(&format!(
+            "SELECT enabled FROM label_rules WHERE id = '{rule}'"
+        ))
+        .await
+        .unwrap(),
+        1
+    );
+    // One rule per label and person; flags are 0 or 1.
+    assert!(
+        db.execute(&format!(
+            "INSERT INTO label_rules (id, workspace_id, project_id, label_id, user_id, created_at, updated_at) \
+             VALUES ('{}', '{workspace}', '{project}', '{bug}', '{user}', 1, 1)",
+            Id::new_v7()
+        ))
+        .await
+        .is_err()
+    );
+    assert!(
+        db.execute(&format!(
+            "UPDATE label_rules SET enabled = 2 WHERE id = '{rule}'"
+        ))
+        .await
+        .is_err()
+    );
+    db.execute(&format!("DELETE FROM labels WHERE id = '{bug}'"))
+        .await
+        .unwrap();
+    assert_eq!(
+        db.scalar::<i64>("SELECT COUNT(*) FROM label_rules")
+            .await
+            .unwrap(),
+        0
+    );
+    db.execute(&format!("DELETE FROM projects WHERE id = '{project}'"))
+        .await
+        .unwrap();
+    assert_eq!(
+        db.scalar::<i64>("SELECT COUNT(*) FROM project_label_rule_settings")
+            .await
+            .unwrap(),
+        0
+    );
+}
