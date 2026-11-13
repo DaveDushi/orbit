@@ -10,6 +10,7 @@ use crate::audit::{self, AuditOutcome};
 
 use super::identity::AuthenticatedSession;
 use super::membership;
+use super::project_access::user_sees_project_sql;
 use super::tasks::CommentRecord;
 
 const DAY_MILLIS: i64 = 24 * 60 * 60 * 1_000;
@@ -361,7 +362,7 @@ impl AttachmentRepository {
         attachment_id: Id,
     ) -> Result<AuthorizedAttachment, AttachmentRepositoryError> {
         let now = self.database.database_now().await?;
-        let row = sqlx::query(
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT attachment_blobs.storage_key, attachment_blobs.deleted_at, attachment_references.media_type, \
              attachment_references.display_name FROM attachment_references JOIN attachment_blobs \
              ON attachment_blobs.id = attachment_references.blob_id \
@@ -379,8 +380,9 @@ impl AttachmentRepository {
              AND sessions.revoked_at IS NULL AND sessions.idle_expires_at > $7 \
              AND sessions.absolute_expires_at > $8 AND tasks.deleted_at IS NULL \
              AND projects.deleted_at IS NULL AND workspaces.deleted_at IS NULL \
-             AND users.suspended_at IS NULL",
-        )
+             AND users.suspended_at IS NULL AND {}",
+            user_sees_project_sql("tasks.project_id", "users.id")
+        )))
         .bind(session.user.id.to_string())
         .bind(session.id.to_string())
         .bind(attachment_id.to_string())
@@ -579,7 +581,7 @@ async fn task_access<'e, E>(
 where
     E: sqlx::Executor<'e, Database = sqlx::Any>,
 {
-    sqlx::query_scalar(
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT COUNT(*) FROM sessions JOIN users ON users.id = sessions.user_id \
          JOIN memberships ON memberships.user_id = users.id AND memberships.workspace_id = $1 \
          AND memberships.role <> 'guest' \
@@ -589,8 +591,9 @@ where
          WHERE sessions.id = $3 AND sessions.user_id = $4 AND sessions.revoked_at IS NULL \
          AND sessions.idle_expires_at > $5 AND sessions.absolute_expires_at > $6 \
          AND users.suspended_at IS NULL AND tasks.deleted_at IS NULL \
-         AND projects.deleted_at IS NULL AND workspaces.deleted_at IS NULL",
-    )
+         AND projects.deleted_at IS NULL AND workspaces.deleted_at IS NULL AND {}",
+        user_sees_project_sql("tasks.project_id", "users.id")
+    )))
     .bind(workspace_id.to_string())
     .bind(task_id.to_string())
     .bind(session.id.to_string())

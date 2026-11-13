@@ -57,6 +57,9 @@
   server once `page_search` rows were updated. `IntegrityService::full` now confirms such findings with FTS5's own check
   (2026-09-25). Check new virtual tables against `integrity_check` with the bundled SQLite, not the system one.
 
+## Project visibility
+- Projects can be private (#37). Every new query that reads projects, tasks or anything inside them (comments, labels, files, notifications, counts or titles of related tasks) must filter with `repositories/project_access.rs` (`ProjectScope::of(actor)`, or `user_sees_*_sql` for other users), never with `workspace_id` alone. Server-side work (integrations, automation) uses `ProjectScope::All` on purpose.
+
 ## API retry load
 - A failed `invalidateQueries` call can refetch many active queries. Do not retry it on a short fixed UI timer; use bounded backoff so an API error cannot exhaust the shared rate limit.
 
