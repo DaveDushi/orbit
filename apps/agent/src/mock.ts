@@ -6,6 +6,7 @@
  * Understood instructions (quotes required around titles and text):
  *   create task "Title"            rename task <id|it> to "Title"       move task <id|it> to <Status>
  *   create page "Title" with "Text"   append "Text" to page <id|it>       read page <id|it>
+ *   link page <id|it> to task <id|it>     unlink page <id|it> from task <id|it>
  *   search tasks "words"            list projects                         read messages
  *   ask @Name "Question"           show prompt (answers with the system prompt, to check names and team instructions)
  *   show model (answers with the run's model and thinking level)
@@ -286,6 +287,10 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 	if ((match = /create (?:a )?(?:drive )?folder "([^"]+)"/i.exec(instruction))) return { name: "drive_create_folder", args: { name: match[1] } };
 	if ((match = /trash drive (?:file|folder) (\S+)/i.exec(instruction))) return { name: "drive_trash", args: { node_id: target(match[1], "drive") } };
 	if ((match = /share drive (?:file|folder) (\S+)/i.exec(instruction))) return { name: "drive_share", args: { node_id: target(match[1], "drive") } };
+	if ((match = /\bunlink (?:page|doc) (\S+) from task (\S+?)\.?$/i.exec(instruction)))
+		return { name: "unlink_doc_from_task", args: { page_id: target(match[1], "page"), task_id: target(match[2], "task") } };
+	if ((match = /\blink (?:page|doc) (\S+) to task (\S+?)\.?$/i.exec(instruction)))
+		return { name: "link_doc_to_task", args: { page_id: target(match[1], "page"), task_id: target(match[2], "task") } };
 	if ((match = /read (?:page|doc|file) (\S+)/i.exec(instruction))) return { name: "read_page", args: { page_id: target(match[1], "page") } };
 	if ((match = /search tasks "([^"]+)"/i.exec(instruction))) return { name: "search_tasks", args: { query: match[1] } };
 	if ((match = /schedule (?:a )?routine "([^"]+)" at "([^"]+)" to "([^"]+)"(?: with script "([^"]+)")?(?: in (#[\w-]+(?:\([0-9a-f-]+\))?))?/i.exec(instruction)))

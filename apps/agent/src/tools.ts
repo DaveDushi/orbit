@@ -289,14 +289,14 @@ const searchTasks = defineTool({
 
 const getTask = defineTool({
 	name: "get_task",
-	description: "Read one task with its description.",
+	description: "Read one task with its description and the Docs pages linked to it.",
 	parameters: Type.Object({ task_id: Type.String() }),
 	execute: (args, api, context) =>
 		asDriver(api, context, async (as) => {
 			const task = (await as("GET", `/tasks/${args.task_id}`)) as Json;
-			const [list, everyone] = await Promise.all([projects(as), people(as)]);
+			const [list, everyone, docs] = await Promise.all([projects(as), people(as), as("GET", `/tasks/${args.task_id}/linked-docs`) as Promise<Json[]>]);
 			const status = (await statuses(as, String(task.project_id))).find((candidate) => candidate.id === task.status_id);
-			return ok("task", taskView(task, list.find((project) => project.id === task.project_id), status, everyone));
+			return ok("task", { ...taskView(task, list.find((project) => project.id === task.project_id), status, everyone), linked_docs: docs.map(linkedDocView) });
 		}),
 });
 
@@ -429,6 +429,33 @@ const followTask = defineTool({
 		}),
 });
 
+/** A Docs page linked to a task: only pages the driver sees (Orbit leaves the others out). */
+function linkedDocView(doc: Json): Json {
+	return { id: doc.id, title: doc.title || "Untitled", private: doc.private, url: `${deps().publicUrl}/docs/${doc.id}` };
+}
+
+const linkDocToTask = defineTool({
+	name: "link_doc_to_task",
+	description: "Link a Docs page to a task (it shows under the task's Docs and in the page's Linked tasks). Only pages and tasks the driver sees. Linking again changes nothing.",
+	parameters: Type.Object({ task_id: Type.String(), page_id: Type.String() }),
+	execute: (args, api, context) =>
+		asDriver(api, context, async (as) => {
+			const doc = (await as("POST", `/tasks/${args.task_id}/linked-docs`, { page_id: args.page_id })) as Json;
+			return ok("linked doc", { task_id: args.task_id, ...linkedDocView(doc) });
+		}),
+});
+
+const unlinkDocFromTask = defineTool({
+	name: "unlink_doc_from_task",
+	description: "Remove the link between a Docs page and a task. The page and the task stay.",
+	parameters: Type.Object({ task_id: Type.String(), page_id: Type.String() }),
+	execute: (args, api, context) =>
+		asDriver(api, context, async (as) => {
+			await as("DELETE", `/tasks/${args.task_id}/linked-docs/${args.page_id}`);
+			return ok("unlinked doc", { task_id: args.task_id, page_id: args.page_id });
+		}),
+});
+
 function projectFor(list: readonly Json[], id: string): Json | undefined {
 	const wanted = id.toLowerCase();
 	return list.find((project) => project.id === id || String(project.key).toLowerCase() === wanted || String(project.name).toLowerCase() === wanted);
@@ -542,14 +569,23 @@ const searchPages = defineTool({
 
 const readPage = defineTool({
 	name: "read_page",
-	description: "Read a Docs page as Markdown, with the list of its files (ids, names, kinds, versions).",
+	description: "Read a Docs page as Markdown, with the list of its files (ids, names, kinds, versions) and the tasks linked to it.",
 	parameters: Type.Object({ page_id: Type.String() }),
 	execute: (args, api, context) =>
 		asDriver(api, context, async (as) => {
 			const page = (await as("GET", `/pages/${args.page_id}`)) as Json;
-			const files = ((await as("GET", `/pages/${args.page_id}/files`)).items ?? []) as Json[];
+			const [files, linked] = await Promise.all([
+				as("GET", `/pages/${args.page_id}/files`).then((result) => (result.items ?? []) as Json[]),
+				as("GET", `/pages/${args.page_id}/linked-tasks`) as Promise<{ task: Json }[]>,
+			]);
+			// An agent without task tools cannot list projects: then the tasks have no ref.
+			const list = linked.length > 0 ? await projects(as).catch(() => [] as Json[]) : [];
 			return ok("page", {
 				...pageView(page),
+				linked_tasks: linked.map(({ task }) => {
+					const project = list.find((candidate) => candidate.id === task.project_id);
+					return { id: task.id, ...(project ? { ref: `${project.key}-${task.number}` } : {}), title: task.title, url: `${deps().publicUrl}/tasks/${task.id}` };
+				}),
 				markdown: blocksToMarkdown((page.content as Block[]) ?? []),
 				files: files.map((file) => ({ id: file.id, name: file.file_name, kind: file.kind, version: file.version, can_write: file.can_edit, size_bytes: file.size_bytes })),
 			});
@@ -952,6 +988,8 @@ export const ORBIT_TOOLS = [
 	updateTask,
 	commentOnTask,
 	followTask,
+	linkDocToTask,
+	unlinkDocFromTask,
 	listLabelRules,
 	createLabelRule,
 	listMilestonesCycles,

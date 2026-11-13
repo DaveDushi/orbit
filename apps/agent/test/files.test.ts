@@ -115,7 +115,7 @@ test("a read of a workbook names its formula cells", () => {
 
 test("read_page lists the page's files", async () => {
 	const { run } = harness((_method, path) =>
-		path.endsWith("/files") ? { items: [{ ...file, id: "f9" }] } : { id: "p1", title: "Plan", content: [{ type: "file", props: { name: "a.csv" } }], version: 1 },
+		path.endsWith("/files") ? { items: [{ ...file, id: "f9" }] } : path.endsWith("/linked-tasks") ? [] : { id: "p1", title: "Plan", content: [{ type: "file", props: { name: "a.csv" } }], version: 1 },
 	);
 	const output = (await run("read_page", { page_id: "p1" })).output[0].text;
 	assert.match(output, /"id": "f9"/);

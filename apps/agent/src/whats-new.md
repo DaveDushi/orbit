@@ -7,6 +7,7 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 -->
 
 ## 2026-11-14
+- Tasks: "Add doc" links Docs pages to a task (beside Add relation). The task lists them, and the page shows its Linked tasks. You only see the pages and tasks you can open. Donna can link and unlink docs too.
 - MCP and API: one OAuth connection (for example Claude or Codex) can now cover several workspaces, each with its own projects; tick them on the consent page. The public API can move docs, put them in the trash and list their versions, filters tasks by due date, and makes a retried task or comment create safe with an Idempotency-Key.
 - Admin → Storage: turning "Files in S3" on or off now says when the move is done, and "Keep deleted files in S3" sets how many days (1 to 365, default 40) a deleted file stays in the bucket.
 
