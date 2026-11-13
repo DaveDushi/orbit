@@ -127,7 +127,8 @@ impl TeamspaceRepository {
         workspace_id: Id,
         actor_id: Id,
     ) -> Result<TeamspaceList, TeamspaceError> {
-        let scope = ProjectScope::of(require_access(self.database.pool(), workspace_id, actor_id).await?);
+        let scope =
+            ProjectScope::of(require_access(self.database.pool(), workspace_id, actor_id).await?);
         let mut connection = self.database.pool().acquire().await?;
         ordered_teamspaces(&mut connection, workspace_id, scope).await
     }
@@ -394,7 +395,8 @@ impl TeamspaceRepository {
         )
         .await?;
         // Owners and admins (the only ones who may delete) see every project.
-        let current = teamspace_in_tx(&mut tx, workspace_id, teamspace_id, ProjectScope::All).await?;
+        let current =
+            teamspace_in_tx(&mut tx, workspace_id, teamspace_id, ProjectScope::All).await?;
         check_version(expected_version, &current)?;
         let (teamspaces, live_pages): (i64, i64) = sqlx::query_as(
             "SELECT (SELECT COUNT(*) FROM teamspaces WHERE workspace_id = $1), \

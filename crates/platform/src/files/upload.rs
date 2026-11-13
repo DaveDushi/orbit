@@ -511,8 +511,15 @@ impl UploadService {
     where
         R: AsyncRead + Unpin,
     {
-        self.stage_with(workspace_id, owner_id, display_name, request_bytes_received, reader, true)
-            .await
+        self.stage_with(
+            workspace_id,
+            owner_id,
+            display_name,
+            request_bytes_received,
+            reader,
+            true,
+        )
+        .await
     }
 
     async fn stage_with<R>(

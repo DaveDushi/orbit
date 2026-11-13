@@ -701,7 +701,11 @@ async fn the_link_to_a_private_project_is_hidden_from_members_who_cannot_see_it(
     let docs = fixture.create("Secret docs").await;
     let uri = fixture.teamspace_uri(id_of(&docs));
     let (status, body) = fixture
-        .call("PATCH", &uri, Some(json!({"expected_version": 0, "project_id": secret})))
+        .call(
+            "PATCH",
+            &uri,
+            Some(json!({"expected_version": 0, "project_id": secret})),
+        )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
 
@@ -709,7 +713,8 @@ async fn the_link_to_a_private_project_is_hidden_from_members_who_cannot_see_it(
         let fixture = &fixture;
         let docs_id = docs["id"].clone();
         async move {
-            let (status, list) = call_as(fixture, &cookie, "GET", &fixture.teamspaces_uri(), None).await;
+            let (status, list) =
+                call_as(fixture, &cookie, "GET", &fixture.teamspaces_uri(), None).await;
             assert_eq!(status, StatusCode::OK, "{list}");
             list["items"]
                 .as_array()

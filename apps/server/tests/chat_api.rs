@@ -671,7 +671,10 @@ async fn a_guest_lists_only_the_channels_they_were_added_to() {
         .map(|conversation| conversation["id"].as_str().unwrap())
         .collect();
     assert_eq!(ids, [shared.as_str()], "{listed}");
-    let listed = fixture.ok(&ada, "GET", "/conversations", None).await.to_string();
+    let listed = fixture
+        .ok(&ada, "GET", "/conversations", None)
+        .await
+        .to_string();
     for id in [&general, &secret, &shared] {
         assert!(listed.contains(id.as_str()), "{listed}");
     }

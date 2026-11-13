@@ -993,10 +993,16 @@ async fn milestones_and_cycles_of_a_private_project_answer_like_missing_ones() {
     }
 
     // A task Bob sees cannot point at the hidden milestone or cycle.
-    let open = world.task(&world.bob, false, json!({"title": "Open"})).await;
+    let open = world
+        .task(&world.bob, false, json!({"title": "Open"}))
+        .await;
     let version = world.get_task(&world.bob, &open).await["version"].clone();
     for field in ["milestone_id", "cycle_id"] {
-        let target = if field == "milestone_id" { &milestone } else { &cycle };
+        let target = if field == "milestone_id" {
+            &milestone
+        } else {
+            &cycle
+        };
         let status = server
             .status(
                 &world.bob,
@@ -1008,7 +1014,10 @@ async fn milestones_and_cycles_of_a_private_project_answer_like_missing_ones() {
         assert!(!(200..300).contains(&status), "{field}: {status}");
     }
     let task = world.get_task(&world.bob, &open).await;
-    assert_eq!((&task["milestone_id"], &task["cycle_id"]), (&Value::Null, &Value::Null));
+    assert_eq!(
+        (&task["milestone_id"], &task["cycle_id"]),
+        (&Value::Null, &Value::Null)
+    );
 
     // The project's people see the progress, and a moved task stays counted as carried over.
     let milestones = server.get(alice, &plan("/milestones")).await;
