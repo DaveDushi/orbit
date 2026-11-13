@@ -19,9 +19,9 @@ import { notificationActor, notificationCopy, notificationTarget, useLatestNotif
 import { usePageTree } from '@/features/docs/api/pages'
 import { useDriveSearch } from '@/features/drive/api'
 import { useRoutines } from '@/features/scheduled/api'
-import { useUnreadConversations } from '@/features/chat/api/queries'
+import { useConversations, useConversationStates } from '@/features/chat/api/queries'
 import { useChatContext } from '@/features/chat/api/chatContext'
-import { conversationTitle } from '@/features/chat/lib/sidebar'
+import { conversationTitle, unreadGroups } from '@/features/chat/lib/sidebar'
 import { useAskDonnaContext } from '@/features/askDonna/askDonnaContext'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import { docsHidden } from '@/app/shell/productNavigation'
@@ -131,7 +131,12 @@ function ActivityCard({ limit }: { limit: number }) {
 function UnreadChatCard({ limit }: { limit: number }) {
   const { workspaceId, currentUserId } = useChatContext()
   const members = useMembers(workspaceId).data ?? []
-  const unread = useUnreadConversations().slice(0, limit)
+  const conversations = useConversations().data
+  const states = useConversationStates().data
+  // Unread conversations only (no threads), as the card's title says.
+  const unread = unreadGroups(conversations ?? [], states ?? [], [])
+    .flatMap((group) => (group.kind === 'conversation' ? [group] : []))
+    .slice(0, limit)
   if (unread.length === 0) return <CardEmpty>No unread messages.</CardEmpty>
   return unread.map(({ conversation, state }) => (
     <CardRow key={conversation.id} to={`/chat/${conversation.id}`}>

@@ -7,7 +7,7 @@ import type { ReactNode } from 'react'
 import { Pressable, View } from 'react-native'
 
 import { requestAskDonna } from '../../data/ask-donna'
-import { conversationTitle, unreadConversations } from '../../data/chat'
+import { conversationTitle, unreadGroups } from '../../data/chat'
 import { relativeTime } from '../../data/format'
 import { newestFirst, routinesByNextRun } from '../../data/home'
 import { notificationActor, notificationCopy, notificationTarget } from '../../data/inbox'
@@ -174,7 +174,10 @@ function UnreadChatCard({ limit }: { limit: number }) {
   const states = useChatStates()
   const people = usePeople()
   if (conversations.isPending || states.isPending) return null
-  const rows = unreadConversations(conversations.data ?? [], states.data ?? [], user.id).slice(0, limit)
+  // Unread conversations only (no threads), as the card's title says.
+  const rows = unreadGroups(conversations.data ?? [], states.data ?? [], [], user.id)
+    .flatMap((group) => (group.kind === 'conversation' ? [group] : []))
+    .slice(0, limit)
   if (rows.length === 0) return <CardEmpty>No unread messages.</CardEmpty>
   return rows.map(({ conversation, state }, index) => (
     <CardRow key={conversation.id} href={`/chat/${conversation.id}`} last={index === rows.length - 1}>
