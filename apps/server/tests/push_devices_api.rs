@@ -232,13 +232,19 @@ async fn a_device_is_registered_for_its_user_and_only_its_user_removes_it() {
     assert_eq!(record["label"], "iPhone");
     // The same phone again: still one row, stored in lowercase.
     fixture.register(owner, &phone).await;
-    assert_eq!(fixture.devices(fixture.owner_id).await, [phone.clone()]);
+    assert_eq!(
+        fixture.devices(fixture.owner_id).await,
+        std::slice::from_ref(&phone)
+    );
 
     // Somebody else cannot remove it (no error tells them it exists).
     let uri = format!("/api/v1/push/devices/{phone}");
     let (status, _) = fixture.send("DELETE", &uri, &ada_cookie, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    assert_eq!(fixture.devices(fixture.owner_id).await, [phone.clone()]);
+    assert_eq!(
+        fixture.devices(fixture.owner_id).await,
+        std::slice::from_ref(&phone)
+    );
 
     // The phone signs in as Ada: the row moves to her, and the owner gets nothing more on it.
     fixture.register(&ada_cookie, &phone).await;

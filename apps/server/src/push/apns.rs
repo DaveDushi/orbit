@@ -123,7 +123,6 @@ pub fn payload(notice: &Notice) -> Vec<u8> {
 }
 
 /// What an APNs answer means for the device.
-#[must_use]
 pub fn outcome(status: u16, reason: &str) -> Result<(), SendError> {
     match (status, reason) {
         (200, _) => Ok(()),
