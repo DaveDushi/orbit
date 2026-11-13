@@ -3528,23 +3528,8 @@ impl TaskRepository {
             .push_bind(workspace_id.to_string())
             .push(" AND recipient_user_id = ")
             .push_bind(actor_id.to_string())
-            // Page-comment mentions stay hidden while the page is trashed or out of the
-            // recipient's reach (moved into someone else's private space).
-            .push(
-                " AND (page_id IS NULL OR EXISTS (SELECT 1 FROM pages WHERE pages.id = notifications.page_id \
-                 AND pages.deleted_at IS NULL \
-                 AND (pages.teamspace_id IS NOT NULL OR pages.owner_id = notifications.recipient_user_id)))",
-            )
-            // Chat mentions stay hidden once the recipient cannot read the conversation
-            // (it left a private channel).
-            .push(
-                " AND (chat_conversation_id IS NULL OR EXISTS (SELECT 1 FROM chat_conversations c \
-                 WHERE c.id = notifications.chat_conversation_id AND (c.kind = 'public' \
-                 OR EXISTS (SELECT 1 FROM chat_members WHERE chat_members.conversation_id = c.id \
-                 AND chat_members.user_id = notifications.recipient_user_id)) AND ",
-            )
-            .push(crate::repositories::chat::reachable_dm())
-            .push("))")
+            .push(" AND ")
+            .push(&notification_reachable_sql())
             // Task notifications stay hidden once the recipient no longer sees the project.
             .push(" AND (task_id IS NULL OR ")
             .push(scope.task("notifications.task_id"))
@@ -4077,6 +4062,23 @@ struct Cursor {
     version: u8,
     fingerprint: String,
     key: Vec<String>,
+}
+
+/// Whether a notification's page or conversation is still in its recipient's reach: page mentions
+/// stay hidden while the page is trashed or moved into someone else's private space, and chat
+/// mentions once the recipient cannot read the conversation (it left a private channel). Names
+/// the `notifications` table; the inbox and the app icon's badge count by it.
+pub(crate) fn notification_reachable_sql() -> String {
+    format!(
+        "(notifications.page_id IS NULL OR EXISTS (SELECT 1 FROM pages WHERE pages.id = notifications.page_id \
+         AND pages.deleted_at IS NULL \
+         AND (pages.teamspace_id IS NOT NULL OR pages.owner_id = notifications.recipient_user_id))) \
+         AND (notifications.chat_conversation_id IS NULL OR EXISTS (SELECT 1 FROM chat_conversations c \
+         WHERE c.id = notifications.chat_conversation_id AND (c.kind = 'public' \
+         OR EXISTS (SELECT 1 FROM chat_members WHERE chat_members.conversation_id = c.id \
+         AND chat_members.user_id = notifications.recipient_user_id)) AND {}))",
+        crate::repositories::chat::reachable_dm()
+    )
 }
 
 fn finish_page<T>(

@@ -1,21 +1,19 @@
-import { useQuery } from '@tanstack/react-query'
-import { type Href, router } from 'expo-router'
-import type { ReactNode } from 'react'
-import { Pressable, RefreshControl, ScrollView, View } from 'react-native'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { router, useFocusEffect } from 'expo-router'
+import { useCallback, useState } from 'react'
+import { RefreshControl, ScrollView, View } from 'react-native'
 
+import { useAskDonnaAgent } from '../../components/AskDonna'
 import { MenuButton } from '../../components/Drawer'
-import { relativeTime } from '../../data/format'
-import { notificationActor, notificationCopy, notificationTarget } from '../../data/inbox'
+import { HomeCardBody, HomeCardFrame } from '../../components/home/HomeCards'
+import { addableCards, addCard, CARD_LIMITS, cardLimit, cardTitle, HOME_CARDS, removeCard, setCardLimit, stepCard, visibleCards } from '../../data/home'
 import { keys } from '../../data/keys'
 import * as api from '../../data/orbit'
-import { dueLabel, identifier } from '../../data/tasks'
-import { useOrbit } from '../../orbit-context'
-import { usePages, usePeople, useProjects, useStatuses, useUnreadNotifications } from '../../queries'
-import { alpha, useTheme } from '../../theme'
-import { HeaderTitle, Icon, IconButton, PaneHeader, SafeAreaView, StatusIcon, Text } from '../../ui'
-
-/** Most rows a card shows: Home is a short brief, the full lists live in Tasks, Activity and Docs. */
-const CARD_LIMIT = 7
+import { useHomeLayout, useSaveHomeLayout } from '../../hooks/home'
+import { useIsGuest, useOrbit } from '../../orbit-context'
+import { useUnreadNotifications } from '../../queries'
+import { useTheme } from '../../theme'
+import { Button, HeaderTitle, IconButton, PaneHeader, PickerSheet, SafeAreaView, Text } from '../../ui'
 
 function greetingFor(hour: number): string {
   if (hour < 12) return 'Good morning'
@@ -23,45 +21,65 @@ function greetingFor(hour: number): string {
   return 'Good evening'
 }
 
-export default function HomeScreen() {
-  const { client, user, workspaceId } = useOrbit()
-  const { colors } = useTheme()
-  const projects = useProjects()
-  const statuses = useStatuses()
-  const people = usePeople()
-  const pages = usePages()
-  const unread = useUnreadNotifications()
-  // the web's cards: the first rows of the "My week" and "Overdue" task pages
+/** Tasks due this week and unread notifications, under the greeting (members only: a guest has neither). */
+function MemberSummary() {
+  const { client, workspaceId } = useOrbit()
   const week = useQuery({
     queryKey: keys.taskView(workspaceId, 'home-week'),
-    queryFn: () => api.taskPage(client, workspaceId, { view: 'my_week', sort: 'due_date', order: 'asc', limit: CARD_LIMIT }),
+    queryFn: () => api.taskPage(client, workspaceId, { view: 'my_week', sort: 'due_date', order: 'asc', limit: 7 }),
   })
-  const overdue = useQuery({
-    queryKey: keys.taskView(workspaceId, 'home-overdue'),
-    queryFn: () => api.taskPage(client, workspaceId, { view: 'overdue', assignee_id: user.id, sort: 'due_date', order: 'asc', limit: CARD_LIMIT }),
-  })
+  const unread = useUnreadNotifications().data ?? []
+  const weekCount = `${week.data?.items.length ?? 0}${week.data?.more ? '+' : ''}`
+  return (
+    <Text className="text-[13px] text-muted-foreground">
+      <Text onPress={() => router.navigate('/tasks?view=my_week')} className="text-[13px] text-muted-foreground">
+        {weekCount} {weekCount === '1' ? 'task' : 'tasks'} due this week
+      </Text>
+      {' · '}
+      <Text onPress={() => router.navigate('/activity')} className="text-[13px] text-muted-foreground">
+        {unread.length} unread {unread.length === 1 ? 'notification' : 'notifications'}
+      </Text>
+    </Text>
+  )
+}
+
+type Sheet = { kind: 'add' } | { kind: 'rows'; id: string } | null
+
+/**
+ * Home: the person's cards, one layout shared with the web and saved on the server. Customize adds, removes, moves
+ * and sizes cards; every change saves at once.
+ */
+export default function HomeScreen() {
+  const { user } = useOrbit()
+  const { colors } = useTheme()
+  const guest = useIsGuest()
+  const agent = useAskDonnaAgent()
+  const layout = useHomeLayout()
+  const save = useSaveHomeLayout()
+  const queryClient = useQueryClient()
+  const [customizing, setCustomizing] = useState(false)
+  const [sheet, setSheet] = useState<Sheet>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  // the web may have changed the layout meanwhile
+  useFocusEffect(
+    useCallback(() => {
+      void layout.refetch()
+    }, [layout.refetch]),
+  )
+
   const now = new Date()
   const firstName = user.display_name.split(' ')[0] ?? user.display_name
+  // edits change the whole saved list; cards the phone hides keep their place in it
+  const saved = layout.data?.cards ?? []
+  const cards = layout.data ? visibleCards(layout.data, agent !== null) : []
+  const addable = layout.data ? addableCards(layout.data, agent !== null) : []
+  const rowsCard = sheet?.kind === 'rows' ? saved.find((card) => card.id === sheet.id) : undefined
 
-  const queries = [week, overdue, unread, pages, projects, statuses]
-  const refresh = () => Promise.all(queries.map((query) => query.refetch()))
-  const weekTasks = week.data?.items ?? []
-  const weekCount = `${weekTasks.length}${week.data?.more ? '+' : ''}`
-  const unreadItems = unread.data ?? []
-  const recentDocs = [...(pages.data ?? [])].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, CARD_LIMIT)
-  const statusOf = (task: api.TaskRecord) => statuses.data?.find((status) => status.id === task.status_id)
-  const taskRow = (task: api.TaskRecord, index: number, list: readonly api.TaskRecord[]) => {
-    const due = task.due_at ? dueLabel(task.due_at, now) : null
-    return (
-      <CardRow key={task.id} href={`/tasks/${task.id}`} last={index === list.length - 1}>
-        <StatusIcon status={statusOf(task)} size={14} />
-        <Meta>{identifier(task, projects.data ?? [])}</Meta>
-        <Text numberOfLines={1} className="text-[13px] flex-1">
-          {task.title}
-        </Text>
-        {due ? <Meta destructive={due === 'Overdue'}>{due}</Meta> : null}
-      </CardRow>
-    )
+  const refresh = async () => {
+    setRefreshing(true)
+    // the layout and the data of the cards on screen
+    await queryClient.refetchQueries({ type: 'active' })
+    setRefreshing(false)
   }
 
   return (
@@ -70,115 +88,82 @@ export default function HomeScreen() {
         <MenuButton />
         <HeaderTitle size={14}>Home</HeaderTitle>
         <View className="flex-1" />
-        <IconButton icon="search" label="Search" onPress={() => router.navigate('/tasks?search=1')} />
+        {guest ? null : <IconButton icon="search" label="Search" onPress={() => router.navigate('/tasks?search=1')} />}
       </PaneHeader>
       <ScrollView
         contentContainerClassName="px-4 pt-8 pb-6 gap-6"
-        refreshControl={<RefreshControl refreshing={queries.some((query) => query.isRefetching)} onRefresh={() => void refresh()} tintColor={colors.mutedForeground} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} tintColor={colors.mutedForeground} />}
       >
-        <View>
-          <Text className="font-noto-semibold text-[24px] leading-[28px] tracking-[-0.6px] mb-1.5">
-            {greetingFor(now.getHours())}, {firstName}
-          </Text>
-          <Text className="text-[13px] text-muted-foreground">
-            <Text onPress={() => router.navigate('/tasks?view=my_week')} className="text-[13px] text-muted-foreground">
-              {weekCount} {weekCount === '1' ? 'task' : 'tasks'} due this week
+        <View className="flex-row items-start gap-3">
+          <View className="flex-1">
+            <Text className="font-noto-semibold text-[24px] leading-[28px] tracking-[-0.6px] mb-1.5">
+              {greetingFor(now.getHours())}, {firstName}
             </Text>
-            {' · '}
-            <Text onPress={() => router.navigate('/activity')} className="text-[13px] text-muted-foreground">
-              {unreadItems.length} unread {unreadItems.length === 1 ? 'notification' : 'notifications'}
-            </Text>
-          </Text>
+            {guest ? null : <MemberSummary />}
+          </View>
+          {layout.data && !customizing ? <IconButton icon="edit" label="Customize Home" size={32} color={colors.mutedForeground} onPress={() => setCustomizing(true)} /> : null}
         </View>
+
+        {customizing ? (
+          <View className="flex-row items-center gap-2">
+            <Button label="Add card" variant="outline" icon="plus" disabled={addable.length === 0} onPress={() => setSheet({ kind: 'add' })} />
+            <View className="flex-1" />
+            <Button label="Done" onPress={() => setCustomizing(false)} />
+          </View>
+        ) : null}
+
+        {layout.isError ? <Text className="text-[13px] text-muted-foreground">Home could not load. Pull down to try again.</Text> : null}
+        {layout.data && cards.length === 0 ? (
+          <View className="rounded-lg border border-dashed border-border p-8">
+            <Text className="text-center text-[13px] text-muted-foreground">{customizing ? 'Add a card to start.' : 'Your Home has no cards. Tap the pencil to add some.'}</Text>
+          </View>
+        ) : null}
 
         <View className="gap-4">
-          {overdue.data && overdue.data.items.length > 0 ? (
-            <HomeCard title="Overdue" href="/tasks?view=overdue">
-              {overdue.data.items.map(taskRow)}
-            </HomeCard>
-          ) : null}
-
-          <HomeCard title="Due this week" href="/tasks?view=my_week">
-            {weekTasks.length === 0 ? <CardEmpty>Nothing due this week.</CardEmpty> : weekTasks.map(taskRow)}
-          </HomeCard>
-
-          <HomeCard title="Unread in Inbox" href="/activity">
-            {unreadItems.length === 0 ? (
-              <CardEmpty>You are all caught up.</CardEmpty>
-            ) : (
-              unreadItems.slice(0, CARD_LIMIT).map((notification, index, list) => {
-                const page = pages.data?.find((item) => item.id === notification.page_id)
-                const actor = notificationActor(notification, people)
-                return (
-                  <CardRow key={notification.id} href={(notificationTarget(notification) ?? '/activity') as Href} last={index === list.length - 1}>
-                    <Icon name="directInbox" size={16} color={alpha(colors.mutedForeground, 0.7)} />
-                    <Text numberOfLines={1} className="text-[13px] flex-1">
-                      {notificationCopy(notification, page?.title, actor?.name).title}
-                    </Text>
-                    <Meta>{relativeTime(notification.created_at, now)}</Meta>
-                  </CardRow>
-                )
-              })
-            )}
-          </HomeCard>
-
-          <HomeCard title="Recently updated docs" href="/docs">
-            {recentDocs.length === 0 ? (
-              <CardEmpty>No docs yet.</CardEmpty>
-            ) : (
-              recentDocs.map((page, index) => (
-                <CardRow key={page.id} href={`/docs/${page.id}`} last={index === recentDocs.length - 1}>
-                  {page.icon ? <Text className="text-[16px]">{page.icon}</Text> : <Icon name="docs" size={16} color={alpha(colors.mutedForeground, 0.7)} />}
-                  <Text numberOfLines={1} className="text-[13px] flex-1">
-                    {page.title.trim() || 'Untitled'}
-                  </Text>
-                  <Meta>{relativeTime(page.updated_at, now)}</Meta>
-                </CardRow>
-              ))
-            )}
-          </HomeCard>
+          {cards.map((card, index) => (
+            <HomeCardFrame
+              key={card.id}
+              title={cardTitle(card.id, agent?.name ?? null)}
+              href={HOME_CARDS[card.id]?.href}
+              controls={
+                customizing
+                  ? {
+                      first: index === 0,
+                      last: index === cards.length - 1,
+                      limit: card.id === 'ask_donna' ? null : cardLimit(card),
+                      onLimit: () => setSheet({ kind: 'rows', id: card.id }),
+                      onMove: (step) => void save(stepCard(saved, cards, card.id, step)),
+                      onRemove: () => void save(removeCard(saved, card.id)),
+                    }
+                  : null
+              }
+            >
+              <HomeCardBody id={card.id} limit={cardLimit(card)} agentName={agent?.name ?? null} />
+            </HomeCardFrame>
+          ))}
         </View>
       </ScrollView>
+
+      <PickerSheet
+        visible={sheet?.kind === 'add'}
+        title="Add card"
+        options={addable.map((id) => ({ key: id, label: cardTitle(id, agent?.name ?? null) }))}
+        onSelect={(id) => {
+          setSheet(null)
+          void save(addCard(saved, id))
+        }}
+        onClose={() => setSheet(null)}
+      />
+      <PickerSheet
+        visible={rowsCard !== undefined}
+        title={rowsCard ? `Rows in ${cardTitle(rowsCard.id, agent?.name ?? null)}` : 'Rows'}
+        options={CARD_LIMITS.map((limit) => ({ key: String(limit), label: `${limit} rows`, selected: rowsCard ? cardLimit(rowsCard) === limit : false }))}
+        onSelect={(limit) => {
+          setSheet(null)
+          if (rowsCard) void save(setCardLimit(saved, rowsCard.id, Number(limit)))
+        }}
+        onClose={() => setSheet(null)}
+      />
     </SafeAreaView>
   )
-}
-
-/** A card with a muted title and "View all" on the card surface, the rows on an inset background panel. */
-function HomeCard({ title, href, children }: { title: string; href: Href; children: ReactNode }) {
-  return (
-    <View className="rounded-lg bg-card shadow-[0_0_0_1px_var(--color-border)]">
-      <View className="min-h-12 flex-row items-center py-2 pr-2 pl-4">
-        <Text className="font-noto-medium text-[14px] flex-1 text-muted-foreground">{title}</Text>
-        <Pressable
-          accessibilityRole="link"
-          accessibilityLabel={`View all: ${title}`}
-          onPress={() => router.navigate(href)}
-          className="h-8 px-2.5 rounded-lg justify-center active:bg-muted"
-        >
-          <Text className="font-noto-medium text-[14px] text-muted-foreground">View all</Text>
-        </Pressable>
-      </View>
-      <View className="rounded-lg overflow-hidden bg-background shadow-[0_0_0_1px_var(--color-muted)]">{children}</View>
-    </View>
-  )
-}
-
-function CardRow({ href, last, children }: { href: Href; last: boolean; children: ReactNode }) {
-  return (
-    <Pressable
-      accessibilityRole="link"
-      onPress={() => router.navigate(href)}
-      className={`min-h-10 flex-row items-center gap-2.5 px-3 py-1.5 border-border active:bg-foreground/2 ${last ? 'border-b-0' : 'border-b'}`}
-    >
-      {children}
-    </Pressable>
-  )
-}
-
-function CardEmpty({ children }: { children: ReactNode }) {
-  return <Text className="text-[13px] p-4 text-muted-foreground/70">{children}</Text>
-}
-
-function Meta({ children, destructive = false }: { children: ReactNode; destructive?: boolean }) {
-  return <Text className={`text-[12px] leading-[16px] ${destructive ? 'text-destructive' : 'text-muted-foreground/70'}`}>{children}</Text>
 }

@@ -22,8 +22,12 @@ export async function pickFiles(source: FileSource): Promise<PickedFile[]> {
   return withParts(result.assets.map((asset) => ({ name: asset.name, mimeType: asset.mimeType ?? 'application/octet-stream', uri: asset.uri })))
 }
 
-/** Fetches the file with the session token and opens it in a new tab. */
-export async function openFile(url: string, _name: string, token: string): Promise<void> {
+/** Fetches the file with the session token and opens it in a new tab; a presigned URL (a Drive file) opens as it is. */
+export async function openFile(url: string, _name: string, token?: string): Promise<void> {
+  if (!token) {
+    window.open(url, '_blank')
+    return
+  }
   const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
   if (!response.ok) throw new Error(`Download failed (${response.status})`)
   window.open(URL.createObjectURL(await response.blob()), '_blank')

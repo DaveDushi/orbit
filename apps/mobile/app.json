@@ -10,7 +10,7 @@
     "ios": {
       "supportsTablet": true,
       "backgroundColor": "#0a0a0a",
-      "bundleIdentifier": "com.wellrox.orbit",
+      "bundleIdentifier": "com.easytomanage.orbit",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -24,7 +24,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "userInterfaceStyle": "automatic",
-      "package": "com.wellrox.orbit",
+      "package": "com.easytomanage.orbit",
       "permissions": [
         "android.permission.RECORD_AUDIO"
       ]
@@ -52,7 +52,23 @@
           "microphonePermission": "Orbit records sound with the videos you take for messages, tasks and pages."
         }
       ],
-      "expo-status-bar"
+      "expo-status-bar",
+      [
+        "expo-sharing",
+        {
+          "ios": {
+            "enabled": true,
+            "activationRule": {
+              "supportsText": true,
+              "supportsWebUrlWithMaxCount": 1,
+              "supportsImageWithMaxCount": 10,
+              "supportsMovieWithMaxCount": 10,
+              "supportsFileWithMaxCount": 10
+            }
+          }
+        }
+      ],
+      "expo-web-browser"
     ],
     "backgroundColor": "#0a0a0a",
     "owner": "davedushi",

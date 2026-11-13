@@ -88,6 +88,12 @@ export type {
 /** One entry of a task's audit trail (`GET …/tasks/{id}/activity`). */
 export type TaskActivityEvent = PageAuditEvent['items'][number]
 
+/**
+ * The Server field's first value, so most users only type their email and password; self-hosted users replace it.
+ * EAS builds set `EXPO_PUBLIC_ORBIT_SERVER` (`eas.json`). Once signed in, the app only uses the session's server.
+ */
+export const DEFAULT_SERVER = process.env.EXPO_PUBLIC_ORBIT_SERVER || 'https://orbit-app.easytomanage.com'
+
 /** `orbit.example.com` → `https://orbit.example.com`. Keeps an explicit `http://` for local servers. */
 export function normalizeServer(input: string): string {
   const trimmed = input.trim().replace(/\/+$/, '')
@@ -299,6 +305,11 @@ export async function markConversationRead(client: OrbitClient, workspaceId: str
 
 export async function notifications(client: OrbitClient, workspaceId: string): Promise<NotificationRecord[]> {
   return (await listNotifications({ ...at(client, workspaceId), query: { limit: 100 } })).data.items
+}
+
+/** The newest `limit` notifications, read or not. */
+export async function latestNotifications(client: OrbitClient, workspaceId: string, limit: number): Promise<NotificationRecord[]> {
+  return (await listNotifications({ ...at(client, workspaceId), query: { limit } })).data.items
 }
 
 export function unreadNotifications(client: OrbitClient, workspaceId: string): Promise<NotificationRecord[]> {

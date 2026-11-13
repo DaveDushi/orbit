@@ -18,12 +18,17 @@ use tower::ServiceExt;
 /// app (410), one with "bad" is refused every time, and one with "busy" is busy the first time.
 #[derive(Default)]
 struct FakeApns {
-    sent: Mutex<Vec<(String, Notice)>>,
+    sent: Mutex<Vec<(String, Notice, i64)>>,
     tried: Mutex<Vec<String>>,
 }
 
 impl DeviceSender for FakeApns {
-    fn send(&self, token: String, notice: Notice) -> BoxFuture<'static, Result<(), SendError>> {
+    fn send(
+        &self,
+        token: String,
+        notice: Notice,
+        badge: i64,
+    ) -> BoxFuture<'static, Result<(), SendError>> {
         let earlier = {
             let mut tried = self.tried.lock().unwrap();
             tried.push(token.clone());
@@ -36,7 +41,7 @@ impl DeviceSender for FakeApns {
         } else if token.starts_with("b0") && earlier == 0 {
             Err(SendError::Busy("busy".to_owned()))
         } else {
-            self.sent.lock().unwrap().push((token, notice));
+            self.sent.lock().unwrap().push((token, notice, badge));
             Ok(())
         };
         Box::pin(async move { result })
@@ -198,7 +203,7 @@ impl Fixture {
             .unwrap()
     }
 
-    fn sent(&self) -> Vec<(String, Notice)> {
+    fn sent(&self) -> Vec<(String, Notice, i64)> {
         std::mem::take(&mut self.apns.sent.lock().unwrap())
     }
 }
@@ -307,7 +312,11 @@ async fn apns_cleanup_removes_a_device_it_no_longer_knows_and_retries_a_busy_one
 
     // The good one and the busy one (on its second try) take it; the removed app's row goes.
     assert_eq!(fixture.push.push(ada, &notice()).await.unwrap(), 2);
-    let mut sent: Vec<String> = fixture.sent().into_iter().map(|(token, _)| token).collect();
+    let mut sent: Vec<String> = fixture
+        .sent()
+        .into_iter()
+        .map(|(token, _, _)| token)
+        .collect();
     sent.sort();
     assert_eq!(sent, [good.clone(), busy.clone()]);
     let mut left = vec![good.clone(), busy.clone(), bad.clone()];
@@ -369,4 +378,13 @@ async fn nobody_gets_a_push_for_what_they_did_themselves() {
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].1.title, "Owner assigned you a task");
     assert_eq!(sent[0].1.url, "/activity");
+    // The icon's badge: both unread inbox rows (the app shows the same number).
+    assert_eq!(sent[0].2, 2);
+    let (status, badge) = fixture
+        .send("GET", "/api/v1/push/badge", &ada_cookie, None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(badge, json!({ "count": 2 }));
+    let (status, _) = fixture.send("GET", "/api/v1/push/badge", "", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }

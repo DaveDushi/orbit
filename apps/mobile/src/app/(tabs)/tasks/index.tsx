@@ -24,6 +24,9 @@ const PRESET_TITLE: Record<string, string> = {
 type Sheet = 'project' | 'filter' | 'display'
 type Grouping = 'status' | 'none'
 
+/** The project sheet's last row: the selected project's settings. */
+const PROJECT_SETTINGS = 'project-settings'
+
 export default function TasksScreen() {
   const { view: viewParam, search: searchParam, project: projectParam } = useLocalSearchParams<{ view?: string; search?: string; project?: string }>()
   const view = viewParam && viewParam in PRESET_TITLE ? viewParam : undefined
@@ -111,7 +114,7 @@ export default function TasksScreen() {
     </>
   )
 
-  const projectOptions = [{ key: 'all', label: 'All projects', selected: projectId === null }, ...(projects.data ?? []).map((item) => ({ key: item.id, label: item.name, selected: item.id === projectId, leading: <View className="size-2 rounded-full" style={{ backgroundColor: item.color }} /> }))]
+  const projectOptions = [{ key: 'all', label: 'All projects', selected: projectId === null }, ...(projects.data ?? []).map((item) => ({ key: item.id, label: item.name, selected: item.id === projectId, leading: <View className="size-2 rounded-full" style={{ backgroundColor: item.color }} /> })), ...(project ? [{ key: PROJECT_SETTINGS, label: `${project.name} settings`, leading: <Icon name="settings" size={14} color={colors.mutedForeground} /> }] : [])]
 
   return (
     <SafeAreaView edges={['top', 'left', 'right']} className="flex-1 bg-background">
@@ -153,7 +156,9 @@ export default function TasksScreen() {
         options={projectOptions}
         onSelect={(key) => {
           setSheet(null)
-          setProjectId(key === 'all' ? null : key)
+          // the web's gear beside each project: its settings
+          if (key === PROJECT_SETTINGS && project) router.push(`/tasks/project/${project.id}`)
+          else setProjectId(key === 'all' ? null : key)
         }}
         onClose={() => setSheet(null)}
       />

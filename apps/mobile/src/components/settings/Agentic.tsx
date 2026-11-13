@@ -1,40 +1,37 @@
-import { useState } from 'react'
+import { router, useLocalSearchParams } from 'expo-router'
 import { mcpClientCommands, mcpUrl } from '@orbit/api/mcp'
 import { View } from 'react-native'
 
-import { AdminAgent } from '../agentic/AdminAgent'
 import { AgentConnection } from '../agentic/AgentConnection'
 import { AgentMemory } from '../agentic/AgentMemory'
+import { AgentsCard } from '../agentic/Agents'
+import { DefaultModelCard } from '../agentic/DefaultModel'
+import { RoutinesSection } from '../agentic/Routines'
 import { TeamInstructions } from '../agentic/TeamInstructions'
-import { Note, RowIcon, RowText, Segmented, SettingsCard, SettingsRow, SettingsShell, type SettingsNavItem } from './Shell'
+import { LineTabs, WebSetupRow } from './Fields'
+import { Note, RowIcon, RowText, SettingsCard, SettingsRow, SettingsShell, type SettingsNavItem } from './Shell'
+import { agenticTabs, pickedTab } from '../../data/agentic'
 import { useDisconnectOAuth, useOAuthConnections } from '../../hooks/account'
 import { useAgentEnabled } from '../../hooks/agent'
 import { useOrbit } from '../../orbit-context'
 import { errorMessage } from '../../session-context'
 import { Button, Text } from '../../ui'
 
-type Section = 'you' | 'workspace' | 'admin'
-
 /**
- * The web's Agentic page: every AI setting, in sections by role. Each section keeps its own access check. Agent tools
- * are set up on the web; this app has no screen for them. As on the web, the workspace settings show every section
- * and the account settings show only You.
+ * The web's Agentic page with its tabs: You, Workspace, Agents, Routines (with the team agent) and Bots. Each tab keeps
+ * its own access check; the installation's default model is on Agents, as on the web (there is no Admin tab). Bots are
+ * set up in the web app, opened in an in-app browser. The account settings show only You. `?tab=routines` opens a tab.
  */
 export function AgenticScreen({ title, nav, personal = false }: { title: string; nav: readonly SettingsNavItem[]; personal?: boolean }) {
-  const { user } = useOrbit()
   const agent = useAgentEnabled()
   const connections = useOAuthConnections()
-  const [picked, setPicked] = useState<Section>('you')
-  const sections: { value: Section; label: string }[] = [
-    { value: 'you', label: 'You' },
-    ...(agent && !personal ? [{ value: 'workspace' as const, label: 'Workspace' }] : []),
-    ...(agent && !personal && user.installation_admin ? [{ value: 'admin' as const, label: 'Admin' }] : []),
-  ]
-  const section = sections.some((option) => option.value === picked) ? picked : 'you'
+  const { tab } = useLocalSearchParams<{ tab?: string }>()
+  const tabs = agenticTabs(agent, personal)
+  const section = pickedTab(tabs, tab)
 
   return (
     <SettingsShell title={title} nav={nav} refreshing={connections.isRefetching} onRefresh={() => void connections.refetch()}>
-      {sections.length > 1 ? <Segmented label="Section" value={section} options={sections} onChange={setPicked} /> : null}
+      {tabs.length > 1 ? <LineTabs label="Agentic" value={section} tabs={tabs} onChange={(next) => router.setParams({ tab: next })} /> : null}
       {section === 'you' ? (
         <>
           {agent ? <AgentConnection /> : null}
@@ -43,8 +40,26 @@ export function AgenticScreen({ title, nav, personal = false }: { title: string;
         </>
       ) : null}
       {section === 'workspace' ? <TeamInstructions /> : null}
-      {section === 'admin' ? <AdminAgent /> : null}
+      {section === 'agents' ? (
+        <>
+          <AgentsCard />
+          <DefaultModelCard />
+        </>
+      ) : null}
+      {section === 'routines' ? <RoutinesSection /> : null}
+      {section === 'bots' ? <BotsCard /> : null}
     </SettingsShell>
+  )
+}
+
+/** Webhook bots answer from an https URL and work without the team agent. Their setup (URLs, secrets) stays on the web. */
+function BotsCard() {
+  const { workspace } = useOrbit()
+  const manage = workspace.permissions.includes('workspace.update')
+  return (
+    <SettingsCard title="Bots" description={manage ? 'Bots answer in chat from your own https service. Set them up in the web app.' : 'Bots answer in chat from an https service. Owners and admins set them up in the web app.'} flush>
+      <WebSetupRow first path="/settings/agentic/bots" label="Bots" description="Opens the web app in this app. Sign in there if it asks." icon="cpu" />
+    </SettingsCard>
   )
 }
 

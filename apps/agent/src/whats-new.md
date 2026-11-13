@@ -7,10 +7,10 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 -->
 
 ## 2026-11-13
-- Orbit for iPhone (beta, by TestFlight invitation): Home, Tasks, Docs, Chat, Activity, phone notifications and an "Ask Donna…" bar.
+- Orbit for iPhone (beta, by TestFlight invitation): Home, Tasks, Docs, Chat, Drive (browse, open, upload), Activity, phone notifications with the unread count on the app icon, an "Ask Donna…" bar, Share → Orbit from other apps (to a chat, a Drive folder or a new task), and settings for agents, routines, custom emoji, project settings and this iPhone's notifications.
 - Tasks: make a project private (Project settings → Access), set Repeat under Due date, drag projects in the sidebar into your own order, and search the trash (owners and admins can delete forever). Type # anywhere to link a task. Images and files in a new task's description are now saved with it.
-- Excel and csv files in chat or Drive open as a read-only table. The bell beside the workspace name shows your newest notifications, pickers have a search box, and Cmd/Ctrl+K shows results in sections. MCP tools can handle comments, assignees, labels and projects. Sessions not used for 30 days are signed out.
-- Chat: Unreads also shows threads with new replies, followed or not. A webhook can be a two-way bot (Edit channel → Integrations → Interactivity → Send messages as events) that gets messages and answers in the thread; it replaces Settings → Agentic → Bots. Webhook URLs start with https://orbit-hooks.easytomanage.com (no login).
+- Home: choose your own cards (Customize, top right: add, remove, drag to reorder, rows per card), for example My tasks, Unread chat, recent Drive files or Routines; it saves at once. The iPhone app shows the same cards: tap the pencil on its Home to change them there. Excel and csv files in chat or Drive open as a read-only table. The bell beside the workspace name shows your newest notifications, pickers have a search box, and Cmd/Ctrl+K shows results in sections.
+- Chat: Unreads also shows threads with new replies, followed or not. A webhook can be a two-way bot (Edit channel → Integrations → Interactivity → Send messages as events) that gets messages and answers in the thread; it replaces Settings → Agentic → Bots. Webhook URLs start with https://orbit-hooks.easytomanage.com (no login). MCP tools can now handle comments, assignees, labels and projects. Sessions not used for 30 days are signed out.
 
 ## 2026-11-12
 - GitHub comments now sync both ways: a comment on a synced GitHub issue or pull request shows on the Orbit task with the GitHub author's name and picture, and a comment you write on the task is posted on GitHub (edits and deletes too). While the sync is paused, comments stay where they are.

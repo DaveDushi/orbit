@@ -28,11 +28,12 @@ export async function pickFiles(source: FileSource): Promise<PickedFile[]> {
 
 /**
  * Downloads an attachment with the session token (never in the URL) into the cache and opens it in the system
- * preview: Quick Look on iOS, the app for its type on Android.
+ * preview: Quick Look on iOS, the app for its type on Android. A presigned URL (a Drive file) goes without a token.
  */
-export async function openFile(url: string, name: string, token: string): Promise<void> {
+export async function openFile(url: string, name: string, token?: string): Promise<void> {
   const folder = new Directory(Paths.cache, 'attachments', String(Date.now()))
   folder.create({ intermediates: true, idempotent: true })
-  const file = await File.downloadFileAsync(url, new File(folder, name.replace(/[/\\]/g, '_') || 'file'), { headers: { Authorization: `Bearer ${token}` }, idempotent: true })
+  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+  const file = await File.downloadFileAsync(url, new File(folder, name.replace(/[/\\]/g, '_') || 'file'), { headers, idempotent: true })
   await file.preview()
 }

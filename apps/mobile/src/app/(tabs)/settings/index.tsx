@@ -5,8 +5,11 @@ import { useState } from 'react'
 import { Linking, View } from 'react-native'
 
 import { ConfirmDialog, type ConfirmRequest } from '../../../components/settings/Dialog'
+import { WebSetupRow } from '../../../components/settings/Fields'
 import { ACCOUNT_NAV, allowedNav, Note, RowIcon, RowText, SettingsCard, SettingsRow, SettingsShell, WORKSPACE_NAV } from '../../../components/settings/Shell'
+import { webSetupLinks } from '../../../data/agentic'
 import { useAuthOptions, useMemberWrites, useRenameWorkspace } from '../../../hooks/account'
+import { useAgentEnabled } from '../../../hooks/agent'
 import { useIsGuest, useOrbit } from '../../../orbit-context'
 import { useMembers } from '../../../queries'
 import { errorMessage } from '../../../session-context'
@@ -30,6 +33,8 @@ export default function GeneralScreen() {
       {workspace.permissions.includes('workspace.update') ? <WorkspaceName key={workspace.id} /> : null}
 
       {guest ? null : <AppsCard />}
+
+      {guest ? null : <WebSetupCard />}
 
       <SettingsCard title="Account" description={`${user.email} on ${session.server}`} flush>
         {allowedNav(ACCOUNT_NAV, workspace.permissions, true, guest).map((item, index) => (
@@ -97,6 +102,18 @@ function AppsCard() {
           <Icon name="chevronRight" size={14} color={colors.mutedForeground} />
         </SettingsRow>
       ))}
+    </SettingsCard>
+  )
+}
+
+/** The rare admin pages that stay on the web (agent tools, API tokens), for the roles the web shows them to. */
+function WebSetupCard() {
+  const { workspace } = useOrbit()
+  const links = webSetupLinks(workspace.permissions, useAgentEnabled())
+  if (links.length === 0) return null
+  return (
+    <SettingsCard title="Set up in the web app" description="These open the web app in this app. Sign in there if it asks." flush>
+      {links.map((link, index) => <WebSetupRow key={link.path} first={index === 0} {...link} icon={link.path.endsWith('api-tokens') ? 'key' : 'cpu'} />)}
     </SettingsCard>
   )
 }
