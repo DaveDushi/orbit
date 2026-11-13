@@ -93,7 +93,7 @@ bunx expo-doctor
 
 ## iPhone build (EAS) and TestFlight
 
-The app is `com.wellrox.orbit` (Expo account `davedushi`, project `orbit-mobile`). `eas.json` has one `production` profile: the build number lives on EAS and goes up by one with each build, and the sign-in screen is prefilled with the team's server. EAS makes and keeps the distribution certificate and the provisioning profile (with the Push Notifications capability); the APNs key for the server is separate and never goes to EAS.
+The app is `com.easytomanage.orbit` (Expo account `davedushi`, project `orbit-mobile`). `eas.json` has one `production` profile: the build number lives on EAS and goes up by one with each build, and the sign-in screen is prefilled with the team's server. EAS makes and keeps the distribution certificate and the provisioning profile (with the Push Notifications capability); the APNs key for the server is separate and never goes to EAS.
 
 ```bash
 cd apps/mobile

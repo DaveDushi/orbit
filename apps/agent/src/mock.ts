@@ -13,6 +13,7 @@
  *   remember "Fact"                 remember privately "Fact"             recall "words"
  *   recall privately "words"        what do you remember about "word"
  *   use <integration>__<tool> with {"json": "arguments"}
+ *   send drive image <id|it> to shopify <integration> [as image|body of article <id>] [alt "Text"]
  *   read the files (reads every file sent with the message, one read_chat_file call each, then reports them all)
  *   find drive file "words"        read drive file <id|it>              create folder "Name"
  *   trash drive file <id|it>       share drive file <id|it>
@@ -38,7 +39,7 @@
  * AGENT_MOCK_TOKENS_PER_SECOND slows the streamed text (default 400), to watch a card build.
  *
  * A "yes" to an approval question (an answer, or the driver's next message in a DM) calls the last integration,
- * drive_trash, drive_share, schedule_routine or send_later tool again with the same arguments.
+ * drive_image_to_shopify, drive_trash, drive_share, schedule_routine or send_later tool again with the same arguments.
  * When a memory tool result asks for a summary, the mock writes one from the halves it was shown. A compaction gets a
  * short placeholder summary.
  */
@@ -306,6 +307,11 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 	if ((match = /ask @([\w .-]+?) "([^"]+)"/i.exec(instruction))) return { name: "ask_teammate", args: { person: match[1], question: match[2] } };
 	if ((match = /remember (privately )?"([^"]+)"/i.exec(instruction))) return { name: "memory_note", args: { scope: match[1] ? "private" : "team", text: match[2] } };
 	if ((match = /recall (privately )?"([^"]+)"/i.exec(instruction))) return { name: "memory_recall", args: { scope: match[1] ? "private" : "team", query: match[2] } };
+	if ((match = /send drive image (\S+) to shopify (\S+?)(?: as (image|body) of article (\S+?))?(?: alt "([^"]+)")?\.?$/i.exec(instruction)))
+		return {
+			name: "drive_image_to_shopify",
+			args: { integration: match[2], node_id: target(match[1], "drive"), ...(match[3] ? { article_id: match[4], place: match[3].toLowerCase() } : {}), ...(match[5] ? { alt: match[5] } : {}) },
+		};
 	if ((match = /use (\w+__[\w.-]+)(?: with (\{[\s\S]*\}))?\s*$/i.exec(instruction))) {
 		let parsed: unknown = {};
 		try {
@@ -316,7 +322,7 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 		return { name: "use_integration", args: { tool: match[1], arguments: parsed } };
 	}
 	if (/^(?:Answer|Instruction) from [^\n]*\n\s*(yes|approved?)\b/i.test(instruction)) {
-		const again = lastCall(messages, ["use_integration", "drive_trash", "drive_share", "schedule_routine", "send_later", "approve_routine_script"]);
+		const again = lastCall(messages, ["use_integration", "drive_image_to_shopify", "drive_trash", "drive_share", "schedule_routine", "send_later", "approve_routine_script"]);
 		if (again) return again;
 	}
 	return undefined;

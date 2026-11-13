@@ -110,6 +110,7 @@ pub fn dry_allows(method: &Method, path: &str) -> bool {
             "/agent-tools/call",
             "/agent-tools/drive",
             "/agent-tools/scheduled",
+            "/agent-tools/shopify-image",
         ]
         .iter()
         .any(|tool| path.ends_with(tool))
@@ -362,6 +363,7 @@ mod tests {
             (Method::POST, "/agent-tools/call"),
             (Method::POST, "/agent-tools/drive"),
             (Method::POST, "/agent-tools/scheduled"),
+            (Method::POST, "/agent-tools/shopify-image"),
         ] {
             assert!(dry_allows(&method, &path(rest)), "{method} {rest}");
         }

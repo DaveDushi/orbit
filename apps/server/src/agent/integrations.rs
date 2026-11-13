@@ -131,12 +131,12 @@ pub(crate) fn invalid(
 // Storage.
 
 #[derive(Clone, Debug)]
-struct Integration {
-    id: String,
-    slug: String,
-    name: String,
-    kind: String,
-    url: String,
+pub(super) struct Integration {
+    pub(super) id: String,
+    pub(super) slug: String,
+    pub(super) name: String,
+    pub(super) kind: String,
+    pub(super) url: String,
     auth_header: Option<String>,
     sealed_secret: Option<Vec<u8>>,
     /// OAuth client credentials: where to get the token, and the sealed [`OAuthClient`]. Apart
@@ -151,7 +151,7 @@ struct Integration {
     graphql_reads_enabled: bool,
     allowed_roles: Vec<String>,
     enabled_tools: Vec<String>,
-    allowed_methods: Vec<String>,
+    pub(super) allowed_methods: Vec<String>,
     /// MCP: the server's tools at the last test.
     tools: Option<Vec<Value>>,
     tools_checked_at: Option<i64>,
@@ -221,7 +221,7 @@ impl Integration {
         }
     }
 
-    fn allows(&self, role: WorkspaceRole) -> bool {
+    pub(super) fn allows(&self, role: WorkspaceRole) -> bool {
         self.allowed_roles
             .iter()
             .any(|allowed| allowed == role.as_str())
@@ -289,7 +289,7 @@ async fn load_all(database: &Database, workspace_id: Id) -> Result<Vec<Integrati
 }
 
 /// `column` is `id` or `slug`, never input.
-async fn load_one(
+pub(super) async fn load_one(
     database: &Database,
     workspace_id: Id,
     column: &'static str,
@@ -306,7 +306,7 @@ async fn load_one(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn record(
+pub(super) async fn record(
     database: &Database,
     workspace_id: Id,
     actor: Id,
@@ -1706,7 +1706,7 @@ pub(crate) async fn driver(
 }
 
 /// As [`driver`], with the integrations the session's agent may use (its card's ticks).
-async fn driver_access(
+pub(super) async fn driver_access(
     state: &AgentState,
     headers: &HeaderMap,
     workspace_id: &str,
@@ -2236,6 +2236,31 @@ async fn api_request_with_token(
         .outbound
         .api_request(url, method.clone(), body, Some(&credential))
         .await
+}
+
+/// One API call with the integration's credential (fixed, or an OAuth token as in [`call`]).
+pub(super) async fn api_send(
+    state: &AgentState,
+    integration: &Integration,
+    url: &Url,
+    method: reqwest::Method,
+    body: Option<&Value>,
+) -> Result<ApiAnswer, OutboundError> {
+    let key = state.app_key.as_ref();
+    match integration.oauth(key).map_err(OutboundError::Refused)? {
+        Some(oauth) => {
+            api_request_with_token(state, integration, &oauth, (url, &method), body).await
+        }
+        None => {
+            let credential = integration
+                .credential(key)
+                .map_err(OutboundError::Refused)?;
+            state
+                .outbound
+                .api_request(url, method, body, credential.as_ref())
+                .await
+        }
+    }
 }
 
 /// Refuses unless `user` drives the current run of this thread: tools act only there.

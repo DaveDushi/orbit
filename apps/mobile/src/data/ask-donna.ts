@@ -90,3 +90,15 @@ export function subscribePageItem(listener: () => void): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)
 }
+
+// Another control (the Home "Ask Donna" card) asks the bar to open its sheet.
+const openListeners = new Set<() => void>()
+
+export function requestAskDonna() {
+  for (const listener of openListeners) listener()
+}
+
+export function subscribeAskDonnaRequest(listener: () => void): () => void {
+  openListeners.add(listener)
+  return () => openListeners.delete(listener)
+}

@@ -20,7 +20,17 @@ export async function loadSession(): Promise<StoredSession | null> {
 
 export const saveSession = (session: StoredSession) => storage.set(KEY, JSON.stringify(session))
 
-export const clearSession = () => storage.remove(KEY)
+const SERVER_KEY = 'orbit.server'
+
+/** Ends the saved session but keeps its server, so the sign-in screen offers it again (also for older app versions' sessions). */
+export async function clearSession() {
+  const session = await loadSession()
+  if (session) await storage.set(SERVER_KEY, session.server)
+  await storage.remove(KEY)
+}
+
+/** The server of the last session that ended, or `null`. */
+export const loadLastServer = () => storage.get(SERVER_KEY).catch(() => null)
 
 const WORKSPACE_KEY = 'orbit.workspace'
 

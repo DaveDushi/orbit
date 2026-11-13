@@ -396,6 +396,19 @@ Orbit renews them. Shopify's GraphQL Admin API uses POST also for reads, and its
 GraphQL with no question for each read, allow POST and turn on **Run GraphQL reads without approval** (below). The form
 fills in the path `/graphql.json`, but the switch stays off until you turn it on.
 
+**Drive image to Shopify (`drive_image_to_shopify`).** One tool call sends a Drive image to a Shopify integration
+(an HTTP API whose base URL ends with `/admin/api/<version>`, POST allowed): Orbit reads the file as the driver
+(refused when the driver cannot see it), checks from its first bytes that it is a JPEG, PNG, GIF or WebP image (at most
+16 MiB; SVG and other files are refused), and asks the driver for a yes with the file's path and what happens. After
+the yes it runs `stagedUploadsCreate`, a multipart POST of the bytes to the signed target (without the store token),
+`fileCreate`, and waits up to 20 seconds until the file is `READY`. It returns the Shopify CDN URL. With `article_id`
+and `place`, it then sets the image as the article's image (`articleUpdate` with `image { url altText }`) or adds
+`<p><img src alt></p>` at the end of the article's body (alt text and URL escaped). The bytes and the signed target
+never reach the agent service or the model. The store needs the `write_files` scope, and `write_content` for
+articles. The role rule and the agent's tick of the integration apply; a custom agent also needs the tool ticked.
+Audit: `agent_integration.shopify_image` (Drive node, article, Shopify file id, approval; no URLs of the upload, no
+bodies). Route: `POST /api/v1/workspaces/{id}/agent-tools/shopify-image` (`apps/server/src/agent/shopify.rs`).
+
 **GraphQL reads without approval (HTTP APIs).** This setting is off by default, per integration. When it is on, a POST
 to the one exact **GraphQL path** runs without the driver's approval only if Orbit's own GraphQL parser finds a read in
 the body that it sends. It does not trust what the agent says. All these cases still need approval:

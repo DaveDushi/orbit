@@ -4,6 +4,7 @@
 //!
 //! - [`webpush`]: the encryption and the VAPID header.
 //! - [`apns`]: the iPhone app's devices and the APNs sender.
+//! - [`badge`]: the number on the iPhone app's icon, sent with each APNs push.
 //! - [`PushService`]: who is notified (their preferences, "do not disturb"), and where.
 //!
 //! Chat messages are notified when they are sent ([`PushService::chat_message`]). Inbox
@@ -15,6 +16,7 @@
 //! the Inbox show what was missed, so pushes are not kept in the job queue.
 
 pub mod apns;
+pub mod badge;
 pub mod webpush;
 
 use std::collections::HashMap;

@@ -1,17 +1,18 @@
 /**
  * Guests: outside people who are only in some private chat channels. The server refuses them everything else; the app
- * shows them only Chat and their account settings (the web's `guestMayOpen`).
+ * shows them only Home (its chat cards, which the server filters), Chat and their account settings (the web's
+ * `guestMayOpen`).
  */
 
 /** Where a guest lands. */
 export const guestHome = '/chat'
 
 /**
- * What a guest may open: Chat, the Settings tab's own page (the account links for a guest), the account settings
+ * What a guest may open: Home, Chat, the Settings tab's own page (the account links for a guest), the account settings
  * and Admin (the installation's, which checks the user itself).
  */
 export function guestMayOpen(pathname: string): boolean {
-  return pathname === '/settings' || /^\/(chat|settings\/(account|profile|appearance|notifications|security|sessions|admin))(\/|$)/.test(pathname)
+  return pathname === '/' || pathname === '/settings' || /^\/(chat|settings\/(account|profile|appearance|notifications|security|sessions|admin))(\/|$)/.test(pathname)
 }
 
 export const isGuestRole = (role: string | undefined) => role === 'guest'

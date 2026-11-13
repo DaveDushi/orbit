@@ -120,6 +120,7 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
         <Stack.Screen name="chat/unreads" />
         <Stack.Screen name="chat/threads" />
         <Stack.Screen name="chat/browse" />
+        <Stack.Screen name="share" />
       </Stack.Protected>
       <Stack.Protected guard={!signedIn}>
         <Stack.Screen name="sign-in" />

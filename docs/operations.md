@@ -42,7 +42,7 @@ Orbit reads its configuration only from environment variables that start with `O
 | `ORBIT_APNS_KEY_FILE` | none (iPhone push off) | The path of the APNs auth key (`AuthKey_<KEY_ID>.p8`, Apple Developer → Keys, with Apple Push Notifications service). Readable by the Orbit user only (`chmod 600`). Without it, iPhones still register, and get no pushes. See [iPhone push (APNs)](#iphone-push-apns). |
 | `ORBIT_APNS_KEY_ID` | none | The 10-character Key ID of that key. Required with `ORBIT_APNS_KEY_FILE`. |
 | `ORBIT_APNS_TEAM_ID` | none | The Apple Developer Team ID. Required with `ORBIT_APNS_KEY_FILE`. |
-| `ORBIT_APNS_TOPIC` | `com.wellrox.orbit` | The iPhone app's bundle identifier. |
+| `ORBIT_APNS_TOPIC` | `com.easytomanage.orbit` | The iPhone app's bundle identifier. |
 | `ORBIT_APNS_SANDBOX` | `false` | `true` sends to the development APNs (`api.sandbox.push.apple.com`), for development builds only. TestFlight and App Store builds need `false`. |
 
 Create the app key once with `openssl rand -base64 32` and keep a copy outside the server. Orbit does not start without it. See [Email, registration and the app key](#email-registration-and-the-app-key).
@@ -135,7 +135,7 @@ Older versions created an `app.key` file beside the SQLite database. If that fil
 
 ## iPhone push (APNs)
 
-The iPhone app (`apps/mobile`, bundle `com.wellrox.orbit`) registers its APNs device token after sign-in
+The iPhone app (`apps/mobile`, bundle `com.easytomanage.orbit`) registers its APNs device token after sign-in
 (`POST /api/v1/push/devices`) and removes it before sign-out (`DELETE /api/v1/push/devices/{token}`). Orbit sends the
 pushes itself, straight to Apple with the token-based key (no Expo or other relay): the same events and rules as Web
 Push (the user's notification settings, "do not disturb", nobody for their own actions, nothing while they are active

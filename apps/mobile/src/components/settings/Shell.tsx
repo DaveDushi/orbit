@@ -22,14 +22,16 @@ export interface SettingsNavItem {
 
 
 /**
- * The web's settings areas at phone size. API tokens, Emoji, Stickers, GitHub and Billing are desktop setup work, and
- * Keyboard shortcuts and Storage (this browser's chat cache) have no phone counterpart, so they are left out.
+ * The web's settings areas at phone size. Stickers, GitHub and Billing are desktop setup work; API tokens and agent
+ * tools open the web app in an in-app browser (General → Set up in the web app); Keyboard shortcuts and Storage (this
+ * browser's chat cache) have no phone counterpart, so they are left out.
  */
 export const WORKSPACE_NAV: readonly SettingsNavItem[] = [
   { href: '/settings', label: 'General', icon: 'settings' },
   { href: '/settings/file-storage', label: 'File storage', icon: 'cloudConnection' },
   { href: '/settings/workspace-agentic', label: 'Agentic', icon: 'magicStar' },
   { href: '/settings/members', label: 'Members', icon: 'people' },
+  { href: '/settings/emoji', label: 'Emoji', icon: 'emojiHappy', permission: 'chat.manage' },
 ]
 
 /**

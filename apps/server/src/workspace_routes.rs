@@ -40,7 +40,9 @@ use crate::repositories::instance_settings::{
     adjustable_job_kinds,
 };
 use crate::repositories::workspace_storage::{WorkspaceStorageError, WorkspaceStorageRepository};
-use crate::repositories::workspaces::{InvitationDelivery, WorkspaceError, WorkspaceRepository};
+use crate::repositories::workspaces::{
+    HomeCard, HomeLayout, InvitationDelivery, WorkspaceError, WorkspaceRepository,
+};
 
 #[derive(Clone)]
 pub struct WorkspaceState {
@@ -214,6 +216,10 @@ pub fn workspace_router(state: WorkspaceState) -> Router {
         .route(
             "/api/v1/workspaces/{workspace_id}/profiles/{user_id}/note",
             put(put_member_note),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/home-layout",
+            get(get_home_layout).put(put_home_layout),
         )
         .route(
             "/api/v1/workspaces/{workspace_id}/members/{membership_id}",
@@ -575,6 +581,71 @@ async fn get_member_profile(
     state
         .workspaces
         .profile(workspace_id, session.user.id, user_id)
+        .await
+        .map(Json)
+        .map_err(|error| workspace_problem(error, &instance, request_id.as_ref()))
+}
+
+/// Far above the card catalog: a longer list is refused, not trimmed.
+const MAX_HOME_CARDS: usize = 40;
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct HomeLayoutBody {
+    /// The cards in order, at most 40. Unknown, repeated and not-allowed cards are dropped.
+    cards: Vec<HomeCard>,
+}
+
+/// The caller's Home cards (one layout per user, shared by every app), as this workspace lets
+/// them see it; the default layout when they never saved one. Guests get the chat cards only.
+#[utoipa::path(get, path = "/api/v1/workspaces/{workspace_id}/home-layout", params(("workspace_id" = String, Path)), responses((status = 200, body = HomeLayout)))]
+async fn get_home_layout(
+    State(state): State<WorkspaceState>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<HomeLayout>, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace_id}/home-layout");
+    let session = authenticate(&state, &headers, &instance, request_id.as_ref()).await?;
+    let workspace_id = parse_id(&workspace_id, &instance, request_id.as_ref())?;
+    state
+        .workspaces
+        .home_layout(workspace_id, session.user.id)
+        .await
+        .map(Json)
+        .map_err(|error| workspace_problem(error, &instance, request_id.as_ref()))
+}
+
+/// Replaces the caller's Home cards and returns the saved layout.
+#[utoipa::path(put, path = "/api/v1/workspaces/{workspace_id}/home-layout", params(("workspace_id" = String, Path)), request_body = HomeLayoutBody, responses((status = 200, body = HomeLayout)))]
+async fn put_home_layout(
+    State(state): State<WorkspaceState>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+    ApiJson(body): ApiJson<HomeLayoutBody>,
+) -> Result<Json<HomeLayout>, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace_id}/home-layout");
+    let session = authenticate(&state, &headers, &instance, request_id.as_ref()).await?;
+    let workspace_id = parse_id(&workspace_id, &instance, request_id.as_ref())?;
+    if body.cards.len() > MAX_HOME_CARDS {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_home_layout",
+            "Invalid Home layout",
+            "A Home layout may have 40 cards.",
+            instance,
+            request_id.as_ref(),
+        ));
+    }
+    state
+        .workspaces
+        .save_home_layout(
+            workspace_id,
+            session.user.id,
+            &body.cards,
+            TimestampMillis::now(),
+        )
         .await
         .map(Json)
         .map_err(|error| workspace_problem(error, &instance, request_id.as_ref()))
