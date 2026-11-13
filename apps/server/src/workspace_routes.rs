@@ -2684,7 +2684,7 @@ async fn save_workspace_bucket(
     let others = repository
         .all()
         .await
-        .map_err(|_| internal(instance, request_id.as_ref()))?;
+        .map_err(|error| internal(instance, request_id.as_ref()).cause(error))?;
     if others.iter().any(|other| {
         other.workspace_id != workspace_id && crate::object_storage::overlaps(&other.s3, &s3)
     }) {

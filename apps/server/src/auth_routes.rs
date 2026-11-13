@@ -1452,7 +1452,7 @@ async fn change_password(
         .passwords
         .verify(body.current_password, identity.password_hash)
         .await
-        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?;
+        .map_err(|error| ApiError::internal(instance, request_id.as_ref()).cause(error))?;
     if verification.valid {
         state.throttler.finish_success(reservation).await;
     } else {

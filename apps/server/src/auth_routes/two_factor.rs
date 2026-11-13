@@ -698,7 +698,7 @@ pub(super) async fn confirm_password(
         .repository
         .find_by_email(&session.user.email)
         .await
-        .map_err(|_| ApiError::internal(instance, request_id))?
+        .map_err(|error| ApiError::internal(instance, request_id).cause(error))?
         .ok_or_else(|| ApiError::internal(instance, request_id))?;
     let valid = state
         .passwords
