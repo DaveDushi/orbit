@@ -16,8 +16,9 @@ const DOCK_LINKS = [
   { to: '/settings', label: 'Settings', icon: Settings },
 ].filter((link) => !(docsHidden && link.to === '/docs'))
 
-/** A guest's dock: Chat and its own account settings. */
+/** A guest's dock: Home, Chat and its own account settings. */
 const GUEST_DOCK_LINKS = [
+  { to: '/', label: 'Home', icon: Home },
   { to: '/chat', label: 'Chat', icon: MessageSquare },
   { to: '/profile', label: 'Settings', icon: Settings },
 ]

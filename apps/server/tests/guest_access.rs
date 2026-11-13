@@ -168,6 +168,9 @@ fn guest_may_use(operation: &str) -> bool {
             | "list_chat_search"
             | "list_chat_states"
             | "list_followed_chat_threads"
+            // Home cards: a guest gets the chat cards only (`home_layout_api.rs`)
+            | "get_home_layout"
+            | "put_home_layout"
     )
 }
 

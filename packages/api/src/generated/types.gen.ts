@@ -2004,6 +2004,46 @@ export type GroupBy = 'status' | 'assignee' | 'priority' | 'project' | 'label' |
 export type GroupOp = 'and' | 'or';
 
 /**
+ * One card of a Home layout.
+ */
+export type HomeCard = {
+    /**
+     * `my_tasks`, `due_soon`, `overdue`, `inbox`, `activity`, `unread_chat`, `recent_docs`,
+     * `recent_files`, `ask_donna` or `routines`. Other ids are dropped.
+     */
+    id: string;
+    /**
+     * Rows the card shows, 3–20 (a value outside is moved into the range). Absent: 7.
+     */
+    limit?: number | null;
+};
+
+/**
+ * The caller's Home cards in one workspace.
+ */
+export type HomeLayout = {
+    /**
+     * Every card the caller may add here, in picker order.
+     */
+    available: Array<string>;
+    /**
+     * The cards in order, only those the caller may use here.
+     */
+    cards: Array<HomeCard>;
+    /**
+     * `false` while the caller never saved a layout (the default shows).
+     */
+    customized: boolean;
+};
+
+export type HomeLayoutBody = {
+    /**
+     * The cards in order, at most 40. Unknown, repeated and not-allowed cards are dropped.
+     */
+    cards: Array<HomeCard>;
+};
+
+/**
  * What a tool posts: the payload of a Slack incoming webhook. Fields that Orbit does not use
  * (`channel`, `thread_ts`, `unfurl_links`) are ignored, so a Slack payload posts as it is.
  */
@@ -18395,6 +18435,122 @@ export type StartGithubManifestResponses = {
 };
 
 export type StartGithubManifestResponse = StartGithubManifestResponses[keyof StartGithubManifestResponses];
+
+export type GetHomeLayoutData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/home-layout';
+};
+
+export type GetHomeLayoutErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * workspace_resource_not_found
+     */
+    404: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type GetHomeLayoutError = GetHomeLayoutErrors[keyof GetHomeLayoutErrors];
+
+export type GetHomeLayoutResponses = {
+    200: HomeLayout;
+};
+
+export type GetHomeLayoutResponse = GetHomeLayoutResponses[keyof GetHomeLayoutResponses];
+
+export type PutHomeLayoutData = {
+    body: HomeLayoutBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/home-layout';
+};
+
+export type PutHomeLayoutErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * workspace_resource_not_found
+     */
+    404: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * invalid_home_layout
+     */
+    422: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type PutHomeLayoutError = PutHomeLayoutErrors[keyof PutHomeLayoutErrors];
+
+export type PutHomeLayoutResponses = {
+    200: HomeLayout;
+};
+
+export type PutHomeLayoutResponse = PutHomeLayoutResponses[keyof PutHomeLayoutResponses];
 
 export type ListNotionImportsData = {
     body?: never;

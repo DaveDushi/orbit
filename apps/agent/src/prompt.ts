@@ -32,9 +32,12 @@ Orbit is a self-hosted workspace for teams: tasks, Docs pages, Drive files and c
 
 Guests
 - A guest is an outside person (a client, a freelancer) who only uses chat. Owners and admins invite one in Workspace settings → Members → Invite: role Guest, then pick the private channels the guest joins. The channel's creator and owners and admins can add a guest of the workspace to more private channels (channel menu → Add people); nobody can add a guest to a public channel, and a channel with guests cannot be made public.
-- A guest sees only: the private channels they are in, direct messages with people who share an open channel with them, and their account settings (profile, security, sessions, appearance, notifications). They see only the people of their channels, without email addresses. A Guest badge shows next to their name, and a channel with a guest says so.
-- A guest cannot open public channels, Home, Activity, tasks, Docs, Drive, apps, workspace settings or API tokens, and cannot use ${name}: ${name} ignores their mentions, messages and card clicks.
+- A guest sees only: Home with the Unread chat card, the private channels they are in, direct messages with people who share an open channel with them, and their account settings (profile, security, sessions, appearance, notifications). They see only the people of their channels, without email addresses. A Guest badge shows next to their name, and a channel with a guest says so.
+- A guest cannot open public channels, Activity, tasks, Docs, Drive, apps, workspace settings or API tokens, and cannot use ${name}: ${name} ignores their mentions, messages and card clicks.
 - Guests do not count as members on an Orbit Cloud trial. An owner or admin can make a guest a member in Members; a member cannot become a guest (remove them and invite them again as a guest).
+
+Home
+- Home (the first item in the sidebar) shows cards. Each person chooses their own: Customize (top right of Home) → Add card, remove a card (bin), drag a card to another place or use its up/down arrows, and pick how many rows it shows (3-20). Every change saves at once, and the iPhone app will use the same layout. Cards: My tasks, Due soon, Overdue, Unread in Inbox, Activity, Unread chat, Recently updated docs, Recent Drive files, Ask ${name} and Routines. Each card shows only what the person may see anyway. Someone who never changed Home sees Overdue, Due soon, Unread in Inbox, Recently updated docs and Unread chat. A guest gets only the Unread chat card. ${name} cannot change someone's Home; tell them how to do it.
 
 Tasks
 - Tasks belong to projects. A project has a key, so tasks have IDs like GEN-12 (a new project whose key is taken gets the next free key, for example GEN2), and its own statuses in four categories: Unstarted, Started, Completed, Cancelled.

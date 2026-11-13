@@ -9,7 +9,7 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 ## 2026-11-13
 - Orbit for iPhone (beta, by TestFlight invitation): Home, Tasks, Docs, Chat, Activity, phone notifications and an "Ask Donna…" bar.
 - Tasks: make a project private (Project settings → Access), set Repeat under Due date, drag projects in the sidebar into your own order, and search the trash (owners and admins can delete forever). Type # anywhere to link a task.
-- Excel and csv files in chat or Drive open as a read-only table. The bell beside the workspace name shows your newest notifications, pickers have a search box, and Cmd/Ctrl+K shows results in sections.
+- Home: choose your own cards (Customize, top right: add, remove, drag to reorder, rows per card), for example My tasks, Unread chat, recent Drive files or Routines; it saves at once. Excel and csv files in chat or Drive open as a read-only table. The bell beside the workspace name shows your newest notifications, pickers have a search box, and Cmd/Ctrl+K shows results in sections.
 - MCP tools can now handle comments, assignees, labels and projects. Chat webhook URLs start with https://orbit-hooks.easytomanage.com (no login). Sessions not used for 30 days are signed out.
 
 ## 2026-11-12
