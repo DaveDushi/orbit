@@ -299,7 +299,8 @@ pub(crate) async fn set_chat_webhook_interactivity(
                 &key,
                 state.clicks.development,
             )
-            .await,
+            .await
+            .map(|webhook| super::hooks::located(&state, webhook)),
     )
 }
 

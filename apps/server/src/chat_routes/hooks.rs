@@ -96,8 +96,20 @@ fn with_url(state: &ChatState, created: WebhookWithSecret) -> ChatWebhookWithUrl
             created.webhook.id,
             created.secret
         ),
-        webhook: created.webhook,
+        webhook: located(state, created.webhook),
     }
+}
+
+/// The webhook with its read URL on the hooks origin, when its events are on.
+pub(super) fn located(state: &ChatState, mut webhook: WebhookRecord) -> WebhookRecord {
+    webhook.messages_url = webhook.events.then(|| {
+        format!(
+            "{}/api/v1/hooks/chat/{}/messages",
+            state.public_origin.trim_end_matches('/'),
+            webhook.id
+        )
+    });
+    webhook
 }
 
 /// The live incoming webhooks of a channel. Only its creator and workspace owners and admins.
@@ -115,7 +127,13 @@ pub(crate) async fn list_chat_webhooks(
         state
             .chat
             .list_webhooks(call.workspace_id, call.actor_id, conversation_id)
-            .await,
+            .await
+            .map(|webhooks| {
+                webhooks
+                    .into_iter()
+                    .map(|webhook| located(&state, webhook))
+                    .collect()
+            }),
     )
 }
 
@@ -167,7 +185,8 @@ pub(crate) async fn update_chat_webhook(
                 webhook_id,
                 body.into(),
             )
-            .await,
+            .await
+            .map(|webhook| located(&state, webhook)),
     )
 }
 

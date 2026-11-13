@@ -408,14 +408,6 @@ impl ChatRepository {
             input.page_context.as_ref(),
         )
         .await?;
-        let for_bots = crate::webhook_bots::record(
-            &mut tx,
-            workspace_id,
-            conversation_id,
-            access.conversation.kind == ConversationKind::Dm,
-            &message,
-        )
-        .await?;
         events.conversation(
             conversation_id,
             ChatEvent::MessageCreated {
@@ -466,11 +458,7 @@ impl ChatRepository {
         {
             events.user(actor_id, ChatEvent::StateChanged { state });
         }
-        let written = finish(tx, events, message).await?;
-        if for_bots {
-            crate::webhook_bots::wake();
-        }
-        Ok(written)
+        finish(tx, events, message).await
     }
 
     /// Posts a message as an integration into a channel, or as a reply in one of its threads. The

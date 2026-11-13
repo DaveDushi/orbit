@@ -26,8 +26,9 @@ the workspace.
 
 The URL starts with the server's public origin (`ORBIT_PUBLIC_ORIGIN`). When the public origin is
 behind a login gateway, the operator sets `ORBIT_PUBLIC_HOOKS_URL` to an origin that lets
-`POST /api/v1/hooks/chat/…` through, for example `https://orbit-hooks.example.com`. Then the webhook
-URL, the **Try it** command and each click's `response_url` use that origin. The path stays the same,
+`POST /api/v1/hooks/chat/…` (and, for [events](#events), `GET /api/v1/hooks/chat/<webhook_id>/messages`)
+through, for example `https://orbit-hooks.example.com`. Then the webhook URL, the **Try it** command,
+each click's `response_url` and the **Read URL** of a webhook with events use that origin. The path stays the same,
 so an old URL works when you change only its start to the hooks origin.
 
 ## Post a message
@@ -297,7 +298,8 @@ curl -sS -H 'Authorization: Bearer <secret>' \
   'https://orbit.example.com/api/v1/hooks/chat/<webhook_id>/messages?thread_ts=<root message id>'
 ```
 
-`<secret>` is the last part of the webhook URL. The answer:
+`<secret>` is the last part of the webhook URL. With events on, Interactivity shows this address as
+**Read URL** (on the hooks origin, see [Make a webhook](#make-a-webhook)). The answer:
 
 ```json
 {

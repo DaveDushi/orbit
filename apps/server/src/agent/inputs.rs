@@ -245,10 +245,6 @@ pub(crate) async fn record(
     if mentioned.is_empty() && !is_dm && message.thread_root_id.is_none() {
         return Ok(());
     }
-    // A webhook bot's reply never starts an agent: two bots could answer each other forever.
-    if crate::webhook_bots::is_bot_user(conn, message.author_id).await? {
-        return Ok(());
-    }
     // The agent never works for a guest: a guest's mention, DM, answer or reply starts nothing.
     let guest = sqlx::query_scalar::<_, Flag>(
         "SELECT EXISTS (SELECT 1 FROM memberships WHERE workspace_id = $1 AND user_id = $2 \

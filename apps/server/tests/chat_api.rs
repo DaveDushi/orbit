@@ -1416,6 +1416,75 @@ async fn unread_threads_include_threads_the_member_does_not_follow() {
     );
 }
 
+#[tokio::test]
+async fn unread_threads_of_a_private_channel_reach_only_its_members() {
+    let fixture = Fixture::new().await;
+    let owner = &fixture.owner;
+    let ada = fixture.add_member("ada").await;
+    let bob = fixture.add_member("bob").await;
+    let outsider = fixture.add_member("outsider").await;
+    let guest = fixture.add_guest("guest").await;
+    let private = fixture
+        .channel(owner, "secret", "private", &[&ada, &bob, &guest])
+        .await;
+    let roots = |list: &Value| -> Vec<String> {
+        list.as_array()
+            .unwrap()
+            .iter()
+            .map(|thread| thread["root"]["body"].as_str().unwrap().to_owned())
+            .collect()
+    };
+
+    let root = fixture.send(&ada, &private, "Private root").await;
+    fixture.reply(&bob, &private, &root, "Private reply").await;
+    // A thread of #general, where the guest is not: it never shows for the guest.
+    let general = fixture.general().await;
+    let open = fixture.send(&ada, &general, "Open root").await;
+    fixture.reply(&bob, &general, &open, "Open reply").await;
+
+    // Members of the private channel see its thread, each with its own count.
+    assert_eq!(
+        roots(&fixture.unread_threads(owner).await),
+        ["Open root", "Private root"]
+    );
+    assert_eq!(
+        roots(&fixture.unread_threads(&guest).await),
+        ["Private root"]
+    );
+    // A workspace member outside the private channel gets only the open thread.
+    assert_eq!(
+        roots(&fixture.unread_threads(&outsider).await),
+        ["Open root"]
+    );
+    // The author of the replies has nothing unread there.
+    assert!(roots(&fixture.unread_threads(&bob).await).is_empty());
+
+    // Reading the thread clears it for that member only.
+    fixture
+        .ok(&guest, "POST", &format!("/threads/{root}/read"), None)
+        .await;
+    assert!(roots(&fixture.unread_threads(&guest).await).is_empty());
+    assert_eq!(
+        roots(&fixture.unread_threads(owner).await),
+        ["Open root", "Private root"]
+    );
+
+    // A member removed from the channel stops seeing its threads.
+    fixture
+        .ok(
+            owner,
+            "DELETE",
+            &format!("/conversations/{private}/members/{}", ada.id),
+            None,
+        )
+        .await;
+    fixture.reply(&bob, &private, &root, "After ada left").await;
+    assert_eq!(
+        roots(&fixture.unread_threads(&ada).await),
+        Vec::<String>::new()
+    );
+}
+
 /// The cursors of a `read-all` result, in the shape that `read-restore` takes.
 fn restore_body(result: &Value) -> Value {
     let pick = |list: &Value, keys: [&str; 2]| -> Vec<Value> {

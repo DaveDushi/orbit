@@ -64,7 +64,6 @@ const AgenticTabs = lazy(() => loadSettings().then((module) => ({ default: modul
 const AgenticWorkspace = lazy(() => loadSettings().then((module) => ({ default: module.AgenticWorkspace })))
 const AgenticRoutines = lazy(() => loadSettings().then((module) => ({ default: module.AgenticRoutines })))
 const AgenticAgents = lazy(() => loadSettings().then((module) => ({ default: module.AgenticAgents })))
-const AgenticBots = lazy(() => loadSettings().then((module) => ({ default: module.AgenticBots })))
 const AgenticYou = lazy(() => loadSettings().then((module) => ({ default: module.AgenticYou })))
 const ShortcutsPage = lazy(() => loadSettings().then((module) => ({ default: module.ShortcutsPage })))
 const StickersPage = lazy(() => loadSettings().then((module) => ({ default: module.StickersPage })))
@@ -209,7 +208,6 @@ export default function App() {
                     <Route path="workspace" element={<AgenticWorkspace />} />
                     <Route path="agents" element={<AgenticAgents />} />
                     <Route path="routines" element={<AgenticRoutines />} />
-                    <Route path="bots" element={<AgenticBots />} />
                     {/* the Admin tab's default model is on the Agents tab now */}
                     <Route path="admin" element={<MovedTo path="/settings/agentic/agents" />} />
                   </Route>

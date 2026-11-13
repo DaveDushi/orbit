@@ -48,6 +48,10 @@ pub struct WebhookRecord {
     /// Members' messages in the channel are sent to the request URL, and the webhook's secret
     /// can read the channel. Always false without a request URL.
     pub events: bool,
+    /// With events on: where the integration reads the channel (`GET`, the webhook URL's secret
+    /// as a bearer token), on the hooks origin (`ORBIT_PUBLIC_HOOKS_URL`). Null otherwise.
+    #[schema(required = true)]
+    pub messages_url: Option<String>,
 }
 
 /// One click that Orbit sent to a webhook's request URL.
@@ -167,6 +171,8 @@ fn webhook_from_row(row: &AnyRow) -> Result<WebhookRecord, ChatError> {
         last_used_at: time("last_used_at"),
         request_url: row.get("request_url"),
         events: row.get::<i64, _>("events") != 0,
+        // Set by the routes, which know the hooks origin (`chat_routes::hooks::located`).
+        messages_url: None,
     })
 }
 

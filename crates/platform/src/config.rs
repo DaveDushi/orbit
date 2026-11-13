@@ -40,9 +40,6 @@ const TRIAL_TASKS_ENV: &str = "ORBIT_TRIAL_TASKS";
 const TRIAL_PAGES_ENV: &str = "ORBIT_TRIAL_PAGES";
 const TRIAL_MEMBERS_ENV: &str = "ORBIT_TRIAL_MEMBERS";
 const STRIPE_API_BASE: &str = "https://api.stripe.com";
-/// Hosts that webhook bots may reach over plain HTTP and on local addresses: for local tests only.
-/// `apps/server/src/webhook_bots` reads it itself.
-const WEBHOOK_BOT_TEST_HOSTS_ENV: &str = "ORBIT_WEBHOOK_BOT_TEST_HOSTS";
 /// Variables that scripts and tests use, not the server, the team agent's settings, which
 /// `apps/server/src/agent` reads itself (`ORBIT_AGENT_URL`, `ORBIT_AGENT_SECRET`), and the file preview
 /// settings, which `apps/server/src/previews` reads and checks itself (`ORBIT_MEDIA_*`), and the
@@ -904,8 +901,6 @@ fn apply_environment(
             billing.trial_pages = Some(value.clone());
         } else if key == TRIAL_MEMBERS_ENV {
             billing.trial_members = Some(value.clone());
-        } else if key == WEBHOOK_BOT_TEST_HOSTS_ENV {
-            // Read by the webhook bots' client.
         } else if key.starts_with("ORBIT_")
             && !IGNORED_ENV_PREFIXES
                 .iter()

@@ -122,6 +122,17 @@ test("read_page lists the page's files", async () => {
 	assert.match(output, /\[file: a\.csv\]/);
 });
 
+test("an integration's message names the integration, not the member who made its webhook", () => {
+	const lines = messageLines(
+		[
+			{ kind: "message", author_id: "u1", created_at: "2026-11-04T09:00:00.000Z", body: "Deploy done", bot: { name: "CI" } },
+			{ kind: "message", author_id: "u1", created_at: "2026-11-04T09:01:00.000Z", body: "Thanks" },
+		],
+		[{ id: "u1", name: "Ada" }],
+	);
+	assert.equal(lines, "[2026-11-04T09:00] CI (integration): Deploy done\n[2026-11-04T09:01] Ada: Thanks");
+});
+
 test("message lines name each file with its id and kind; a deleted file has no id", () => {
 	const everyone = [{ id: "u1", name: "Ada" }];
 	const lines = messageLines(

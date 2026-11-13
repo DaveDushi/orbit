@@ -103,6 +103,7 @@ export function toWebhook(record: WebhookRecord): ChannelWebhook {
     lastUsedAt: record.last_used_at === null ? null : millis(record.last_used_at),
     requestUrl: record.request_url,
     events: record.events,
+    messagesUrl: record.messages_url,
   }
 }
 

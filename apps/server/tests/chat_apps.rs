@@ -19,6 +19,9 @@ use sha2::Sha256;
 use tokio::sync::mpsc;
 use tower::ServiceExt;
 
+/// The hooks origin (`ORBIT_PUBLIC_HOOKS_URL`) of webhook, response and read URLs.
+const HOOKS_ORIGIN: &str = "https://orbit-hooks.example";
+
 struct Fixture {
     _root: tempfile::TempDir,
     _database: TestDatabase,
@@ -111,6 +114,7 @@ impl Fixture {
         );
         let app = chat_router(
             ChatState::new(Arc::clone(&identity), uploads, CookieMode::secure())
+                .with_public_origin(HOOKS_ORIGIN)
                 .with_interactivity(Some([7; 32]), true),
         );
         Self {
@@ -494,4 +498,115 @@ async fn only_a_webhook_with_events_reads_its_channel() {
     assert_eq!(record["events"], false);
     let (status, _) = fixture.read_hook(&webhook, &secret, "").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_bot_sees_only_the_channel_of_its_webhook() {
+    let fixture = Fixture::new().await;
+    let general = fixture.general().await;
+    let (status, other) = fixture
+        .call(
+            &fixture.owner,
+            "POST",
+            "/conversations",
+            Some(json!({ "name": "random", "kind": "public", "member_ids": [fixture.member.id.to_string()] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{other}");
+    let other = other["result"]["id"].as_str().unwrap().to_owned();
+    let (webhook, url, secret) = fixture.webhook(&general, "Assistant").await;
+    assert!(url.starts_with(&format!("{HOOKS_ORIGIN}/api/v1/hooks/chat/{webhook}/")));
+    let (request_url, mut received) = receiver().await;
+    let record = fixture
+        .set_events(&general, &webhook, Some(&request_url), true)
+        .await;
+    // The read URL is on the hooks origin, and only while events are on.
+    assert_eq!(
+        record["messages_url"],
+        format!("{HOOKS_ORIGIN}/api/v1/hooks/chat/{webhook}/messages")
+    );
+    let listed = fixture
+        .ok(&fixture.owner, "GET", &format!("/conversations/{general}/webhooks"), None)
+        .await;
+    assert_eq!(listed[0]["messages_url"], record["messages_url"]);
+    let signing_secret = fixture
+        .ok(
+            &fixture.owner,
+            "GET",
+            &format!("/conversations/{general}/webhooks/{webhook}/signing-secret"),
+            None,
+        )
+        .await["signing_secret"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    // A mention in another channel is not sent: the next event is the one of its own channel.
+    let elsewhere = fixture
+        .send(&fixture.member, &other, json!({ "body": "@assistant elsewhere" }))
+        .await;
+    let here = fixture
+        .send(&fixture.member, &general, json!({ "body": "@assistant here" }))
+        .await;
+    let event = next_event(&mut received, &signing_secret).await;
+    assert_eq!(event["event"]["ts"], here);
+    assert_eq!(event["event"]["channel"], general);
+
+    // It reads only its channel: the other channel's message is not in the list, and its thread
+    // cannot be read or answered.
+    let (status, channel) = fixture.read_hook(&webhook, &secret, "").await;
+    assert_eq!(status, StatusCode::OK, "{channel}");
+    let ids: Vec<&str> = channel["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|message| message["ts"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&here.as_str()));
+    assert!(!ids.contains(&elsewhere.as_str()));
+    let (status, _) = fixture
+        .read_hook(&webhook, &secret, &format!("?thread_ts={elsewhere}"))
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let status = fixture
+        .post_hook(&url, json!({ "text": "sneaky", "thread_ts": elsewhere }))
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Events off: no read URL any more.
+    let record = fixture
+        .set_events(&general, &webhook, Some(&request_url), false)
+        .await;
+    assert_eq!(record["messages_url"], Value::Null);
+}
+
+#[tokio::test]
+async fn only_members_who_manage_a_private_channel_give_it_a_bot() {
+    let fixture = Fixture::new().await;
+    // Ana makes a private channel without the owner.
+    let (status, private) = fixture
+        .call(
+            &fixture.member,
+            "POST",
+            "/conversations",
+            Some(json!({ "name": "secret", "kind": "private", "member_ids": [] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{private}");
+    let private = private["result"]["id"].as_str().unwrap().to_owned();
+    let path = format!("/conversations/{private}/webhooks");
+
+    // The workspace owner is not in it: the channel's webhooks are hidden from it, as the channel is.
+    let (status, _) = fixture
+        .call(&fixture.owner, "POST", &path, Some(json!({ "name": "Spy" })))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = fixture.call(&fixture.owner, "GET", &path, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Its creator may add one.
+    let (status, created) = fixture
+        .call(&fixture.member, "POST", &path, Some(json!({ "name": "Helper" })))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
 }

@@ -220,6 +220,7 @@ function WebhookInteractivity({ webhook, conversationId, onClose }: { webhook: C
   const urlId = useId()
   const secretId = useId()
   const eventsId = useId()
+  const readId = useId()
   const changed = requestUrl.trim() !== (webhook.requestUrl ?? '')
 
   const submit = (url: string | null, events: boolean) =>
@@ -305,6 +306,23 @@ function WebhookInteractivity({ webhook, conversationId, onClose }: { webhook: C
               onCheckedChange={(checked: boolean) => submit(webhook.requestUrl, checked)}
             />
           </div>
+
+          {webhook.messagesUrl ? (
+            <Field>
+              <FieldLabel htmlFor={readId}>
+                Read URL
+                <InfoTip text="GET it with the webhook URL's secret as Authorization: Bearer <secret>. Add thread_ts=<message id> to read a thread." />
+              </FieldLabel>
+              <InputGroup>
+                <InputGroupInput id={readId} readOnly value={webhook.messagesUrl} className="font-mono text-xs" />
+                <InputGroupAddon align="inline-end">
+                  <InputGroupButton aria-label="Copy read URL" size="icon-xs" onClick={() => copy(webhook.messagesUrl ?? '', 'Read URL copied')}>
+                    <Copy />
+                  </InputGroupButton>
+                </InputGroupAddon>
+              </InputGroup>
+            </Field>
+          ) : null}
 
           <Field>
             <FieldLabel htmlFor={secretId}>Signing secret</FieldLabel>

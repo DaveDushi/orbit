@@ -10,7 +10,6 @@ import { MemoryPage } from '@/features/agent/MemoryPage'
 import { RoutinesPage } from '@/features/agent/RoutinesPage'
 import { TeamInstructionsPage } from '@/features/agent/TeamInstructionsPage'
 import { useAgentStatus } from '@/features/agent/api'
-import { BotsPage } from '@/features/bots/BotsPage'
 import { AgentToolsPage } from '@/features/agentIntegrations/AgentToolsPage'
 import { OAuthConnections } from '@/features/auth/components/OAuthConnections'
 import { AGENTIC_TABS, agenticTabsView } from '../settingsNav'
@@ -70,11 +69,6 @@ export function AgenticAgents() {
       <DefaultModelCard />
     </>
   )
-}
-
-/** Webhook bots: they answer from an https URL and work without the team agent. Owners and admins manage them. */
-export function AgenticBots() {
-  return <BotsPage />
 }
 
 /** Routines: the person's own, and every routine of the workspace for owners and admins. */

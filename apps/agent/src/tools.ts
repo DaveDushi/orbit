@@ -666,7 +666,10 @@ export function messageLines(items: readonly Json[], everyone: readonly Person[]
 	return items
 		.filter((message) => message.kind === "message" && !message.deleted)
 		.map((message) => {
-			const author = everyone.find((person) => person.id === message.author_id)?.name ?? "someone";
+			// An integration's message has its webhook's maker as author_id: name the integration, so its text is never
+			// read as that person's words (it comes from an outside service).
+			const bot = message.bot as { name?: string } | null | undefined;
+			const author = bot ? `${bot.name ?? "integration"} (integration)` : (everyone.find((person) => person.id === message.author_id)?.name ?? "someone");
 			const files = chatFilesText(message.attachments as ChatFile[] | undefined);
 			return `[${new Date(String(message.created_at)).toISOString().slice(0, 16)}] ${author}: ${tokensToNames(String(message.body), everyone)}${files ? ` [files: ${files}]` : ""}`;
 		})

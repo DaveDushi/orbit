@@ -3514,3 +3514,75 @@ async fn label_rules_go_with_their_label_and_project() {
         0
     );
 }
+
+#[tokio::test]
+async fn dropping_webhook_bots_suspends_live_bot_users_and_drops_the_tables() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = Database::open(&DatabaseConfig::new(directory.path().join("db.sqlite")))
+        .await
+        .unwrap();
+    MigrationRunner::embedded_through("test", 20261113100400)
+        .run(&database)
+        .await
+        .unwrap();
+    let mut transaction = database.transaction().await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO users (id, email, normalized_email, display_name, password_hash, created_at, updated_at)
+         VALUES ('owner', 'owner@example.com', 'owner@example.com', 'Owner', 'x', 1, 1),
+                ('live-bot', 'bot-1@orbit.invalid', 'bot-1@orbit.invalid', 'Helper', 'x', 1, 1),
+                ('gone-bot', 'bot-2@orbit.invalid', 'bot-2@orbit.invalid', 'Old (deleted)', 'x', 1, 1);
+         UPDATE users SET suspended_at = 3 WHERE id = 'gone-bot';
+         INSERT INTO workspaces (id, name, version, owner_membership_id, deleted_at, created_at, updated_at)
+         VALUES ('w', 'Team', 0, 'm-owner', NULL, 1, 1);
+         INSERT INTO memberships (id, workspace_id, user_id, role, version, created_at, updated_at)
+         VALUES ('m-owner', 'w', 'owner', 'owner', 0, 1, 1),
+                ('m-live', 'w', 'live-bot', 'member', 0, 1, 1),
+                ('m-gone', 'w', 'gone-bot', 'member', 0, 1, 1);",
+    )
+    .execute(&mut *transaction)
+    .await
+    .unwrap();
+    for (id, user, updated_at, deleted_at) in [
+        ("b-live", "live-bot", 5_i64, None),
+        ("b-gone", "gone-bot", 3, Some(3_i64)),
+    ] {
+        sqlx::query(
+            "INSERT INTO webhook_bots (id, workspace_id, user_id, url, signing_secret, created_by, \
+             created_at, updated_at, deleted_at) VALUES ($1, 'w', $2, 'https://bot.example', $3, \
+             'owner', 1, $4, $5)",
+        )
+        .bind(id)
+        .bind(user)
+        .bind(vec![1_u8, 2, 3])
+        .bind(updated_at)
+        .bind(deleted_at)
+        .execute(&mut *transaction)
+        .await
+        .unwrap();
+    }
+    transaction.commit().await.unwrap();
+
+    MigrationRunner::embedded("test")
+        .run(&database)
+        .await
+        .unwrap();
+
+    for table in ["webhook_bots", "webhook_bot_channels", "webhook_bot_deliveries"] {
+        assert_eq!(table_count(&database, table).await, 0, "{table}");
+    }
+    let users: Vec<(String, String, Option<i64>)> = sqlx::query_as(
+        "SELECT id, display_name, suspended_at FROM users WHERE id IN ('live-bot', 'gone-bot', 'owner') \
+         ORDER BY id",
+    )
+    .fetch_all(database.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        users,
+        [
+            ("gone-bot".to_owned(), "Old (deleted)".to_owned(), Some(3)),
+            ("live-bot".to_owned(), "Helper (deleted)".to_owned(), Some(5)),
+            ("owner".to_owned(), "Owner".to_owned(), None),
+        ]
+    );
+}
