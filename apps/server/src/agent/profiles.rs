@@ -50,7 +50,7 @@ pub const MAX_CHANNELS: usize = 100;
 /// The default agent's tools, by group, as the sidecar names them (`apps/agent/src/tools.ts`,
 /// `media.ts`; `apps/agent/test/profiles.test.ts` keeps both lists the same). `true`: the tool
 /// writes or posts.
-pub const TOOL_CATALOG: [(&str, &str, bool); 55] = [
+pub const TOOL_CATALOG: [(&str, &str, bool); 56] = [
     ("list_projects", "Tasks", false),
     ("search_tasks", "Tasks", false),
     ("get_task", "Tasks", false),
@@ -60,6 +60,7 @@ pub const TOOL_CATALOG: [(&str, &str, bool); 55] = [
     ("follow_task", "Tasks", true),
     ("list_label_rules", "Tasks", false),
     ("create_label_rule", "Tasks", true),
+    ("list_milestones_cycles", "Tasks", false),
     ("list_members", "People", false),
     ("ask_teammate", "People", true),
     ("list_pages", "Docs", false),
@@ -123,6 +124,7 @@ const TASK_TOOLS: &[&str] = &[
     "follow_task",
     "list_label_rules",
     "create_label_rule",
+    "list_milestones_cycles",
 ];
 const PAGE_TOOLS: &[&str] = &[
     "list_pages",
@@ -1909,7 +1911,7 @@ mod tests {
         assert!(checked_tools(&tools(&["delete_everything"])).is_err());
         assert!(checked_tools(&tools(&[""])).is_err());
         assert_eq!(checked_tools(&[]), Ok(Vec::new()));
-        assert_eq!(tool_catalog().count(), 55);
+        assert_eq!(tool_catalog().count(), 56);
     }
 
     #[test]

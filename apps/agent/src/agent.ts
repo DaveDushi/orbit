@@ -155,6 +155,7 @@ const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
 	follow_task: (args) => (args.follow ? "Following a task" : "Unfollowing a task"),
 	list_label_rules: () => "Reading label rules",
 	create_label_rule: (args) => `Adding the label rule “${args.label}” → ${args.person}`,
+	list_milestones_cycles: () => "Reading milestones and cycles",
 	list_members: () => "Reading members",
 	list_pages: () => "Reading the pages list",
 	search_pages: (args) => `Searching pages for “${args.query}”`,

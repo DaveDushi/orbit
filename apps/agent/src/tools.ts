@@ -186,6 +186,43 @@ function personIds(names: readonly string[] | undefined, everyone: readonly Pers
 	});
 }
 
+/** The project's milestones (in their order) and cycles (by start date), with their task counts. */
+async function plan(as: (method: string, path: string) => Promise<any>, projectId: string): Promise<{ milestones: Json[]; cycles: Json[] }> {
+	const [milestones, cycles] = await Promise.all([as("GET", `/projects/${projectId}/milestones`), as("GET", `/projects/${projectId}/cycles`)]);
+	return { milestones: (milestones.items ?? []) as Json[], cycles: (cycles.items ?? []) as Json[] };
+}
+
+const cycleName = (cycle: Json): string => (cycle.name ? `Cycle ${cycle.number} (${cycle.name})` : `Cycle ${cycle.number}`);
+
+/** `current` (runs at `now`), `next` (the first that starts after it), `previous` (the last that ended before it), or undefined. */
+function cycleWhen(cycle: Json, cycles: readonly Json[], now: number): "current" | "next" | "previous" | undefined {
+	const start = (item: Json) => Date.parse(String(item.starts_at));
+	const end = (item: Json) => Date.parse(String(item.ends_at));
+	if (start(cycle) <= now && now < end(cycle)) return "current";
+	if (cycles.find((item) => start(item) > now) === cycle) return "next";
+	if (cycles.filter((item) => end(item) <= now).at(-1) === cycle) return "previous";
+	return undefined;
+}
+
+/** A milestone by id or name; throws with the project's milestones when none matches. */
+function milestoneFor(milestones: readonly Json[], wanted: string): Json {
+	const name = wanted.trim().toLowerCase();
+	const found = milestones.find((item) => item.id === wanted || String(item.name).toLowerCase() === name);
+	if (!found) throw new Error(`No milestone "${wanted}". Milestones: ${milestones.map((item) => item.name).join(", ") || "none"}`);
+	return found;
+}
+
+/** A cycle by id, number ("3", "cycle 3"), name, or current/next/previous; throws with the project's cycles when none matches. */
+function cycleFor(cycles: readonly Json[], wanted: string, now = Date.now()): Json {
+	const key = wanted.trim().toLowerCase();
+	const number = /^(?:cycle\s*)?(\d+)$/.exec(key)?.[1];
+	const found = cycles.find(
+		(item) => item.id === wanted || (number !== undefined && String(item.number) === number) || (item.name && String(item.name).toLowerCase() === key) || cycleWhen(item, cycles, now) === key,
+	);
+	if (!found) throw new Error(`No cycle "${wanted}". Cycles: ${cycles.map(cycleName).join(", ") || "none"}`);
+	return found;
+}
+
 function taskView(task: Json, project: Json | undefined, status: Json | undefined, everyone: readonly Person[]): Json {
 	const description = String(task.description ?? "");
 	return {
@@ -198,6 +235,9 @@ function taskView(task: Json, project: Json | undefined, status: Json | undefine
 		assignees: ((task.assignee_ids as string[]) ?? []).map((id) => everyone.find((person) => person.id === id)?.name ?? id),
 		due_at: task.due_at ?? null,
 		...(task.recurrence ? { repeats: task.recurrence } : {}),
+		...(task.milestone_id ? { milestone_id: task.milestone_id } : {}),
+		...(task.cycle_id ? { cycle_id: task.cycle_id } : {}),
+		...(task.estimate !== null && task.estimate !== undefined ? { estimate: task.estimate } : {}),
 		description: description.length > 2000 ? `${description.slice(0, 2000)}…` : description,
 		url: `${deps().publicUrl}/tasks/${task.id}`,
 		version: task.version,
@@ -288,6 +328,9 @@ const createTask = defineTool({
 		priority,
 		assignees: Type.Optional(Type.Array(Type.String(), { description: "Member names or user ids" })),
 		due_at: Type.Optional(Type.String({ description: "ISO 8601 date-time" })),
+		milestone: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: "Milestone name or id; null removes it" })),
+		cycle: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: "Cycle number, name or id, or current, next or previous; null removes it" })),
+		estimate: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 1000 }), Type.Null()], { description: "Points, 0 to 1000; null removes it" })),
 	}),
 	execute: (args, api, context) =>
 		asDriver(api, context, async (as) => {
@@ -298,6 +341,7 @@ const createTask = defineTool({
 			const status = args.status ? projectStatuses.find((candidate) => String(candidate.name).toLowerCase() === args.status!.toLowerCase()) : projectStatuses[0];
 			if (!status) return { output: [{ type: "text", text: `No status "${args.status}" in ${project.name}.` }], isError: true };
 			const everyone = await people(as);
+			const planned = await planIds(as, String(project.id), args);
 			const task = (await as("POST", "/tasks", {
 				project_id: project.id,
 				status_id: status.id,
@@ -306,14 +350,26 @@ const createTask = defineTool({
 				priority: args.priority ?? "none",
 				assignee_ids: personIds(args.assignees, everyone) ?? [],
 				...(args.due_at ? { due_at: args.due_at } : {}),
+				...planned,
 			})) as Json;
 			return ok("created task", taskView(task, project, status, everyone));
 		}),
 });
 
+/** `milestone_id`, `cycle_id` and `estimate` for a task write: only the fields the model gave, names resolved in the task's project. */
+async function planIds(as: (method: string, path: string) => Promise<any>, projectId: string, args: { milestone?: string | null; cycle?: string | null; estimate?: number | null }): Promise<Json> {
+	const ids: Json = {};
+	if (args.estimate !== undefined) ids.estimate = args.estimate;
+	if (args.milestone === undefined && args.cycle === undefined) return ids;
+	const { milestones, cycles } = await plan(as, projectId);
+	if (args.milestone !== undefined) ids.milestone_id = args.milestone === null ? null : milestoneFor(milestones, args.milestone).id;
+	if (args.cycle !== undefined) ids.cycle_id = args.cycle === null ? null : cycleFor(cycles, args.cycle).id;
+	return ids;
+}
+
 const updateTask = defineTool({
 	name: "update_task",
-	description: "Change a task: title, description (Markdown, replaces it), status by name, priority, assignees, due date, repeat rule.",
+	description: "Change a task: title, description (Markdown, replaces it), status by name, priority, assignees, due date, repeat rule, milestone, cycle, estimate.",
 	parameters: Type.Object({
 		task_id: Type.String(),
 		title: Type.Optional(Type.String({ minLength: 1 })),
@@ -323,6 +379,9 @@ const updateTask = defineTool({
 		assignees: Type.Optional(Type.Array(Type.String())),
 		due_at: Type.Optional(Type.Union([Type.String(), Type.Null()])),
 		recurrence,
+		milestone: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: "Milestone name or id; null removes it" })),
+		cycle: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: "Cycle number, name or id, or current, next or previous; null removes it" })),
+		estimate: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 1000 }), Type.Null()], { description: "Points, 0 to 1000; null removes it" })),
 	}),
 	execute: (args, api, context) =>
 		asDriver(api, context, async (as) => {
@@ -336,6 +395,7 @@ const updateTask = defineTool({
 			if (args.assignees !== undefined) change.assignee_ids = personIds(args.assignees, everyone);
 			if (args.due_at !== undefined) change.due_at = args.due_at;
 			if (args.recurrence !== undefined) change.recurrence = args.recurrence === null ? null : { weekdays: [], ...args.recurrence };
+			Object.assign(change, await planIds(as, String(task.project_id), args));
 			if (args.status !== undefined) {
 				const status = projectStatuses.find((candidate) => String(candidate.name).toLowerCase() === args.status!.toLowerCase());
 				if (!status) return { output: [{ type: "text", text: `No status "${args.status}". Statuses: ${projectStatuses.map((s) => s.name).join(", ")}` }], isError: true };
@@ -414,6 +474,38 @@ const createLabelRule = defineTool({
 			const [userId] = personIds([args.person], await people(as)) ?? [];
 			const rule = (await as("POST", `/projects/${project.id}/label-rules`, { label_id: label.id, user_id: userId })) as Json;
 			return ok("created label rule", { project: project.name, ...ruleView(rule) });
+		}),
+});
+
+const listMilestonesCycles = defineTool({
+	name: "list_milestones_cycles",
+	description: "List a project's milestones (target date, done tasks and points) and cycles (dates, current/next/previous, done tasks, points, tasks carried over to a later cycle).",
+	parameters: Type.Object({ project_id: Type.Optional(Type.String({ description: "Project id, key or name. Without it: every project." })) }),
+	execute: (args, api, context) =>
+		asDriver(api, context, async (as) => {
+			const list = await projects(as);
+			const chosen = args.project_id ? [projectFor(list, args.project_id)].filter((project) => project !== undefined) : list;
+			if (chosen.length === 0) return { output: [{ type: "text", text: "No such project." }], isError: true };
+			const now = Date.now();
+			const result = [];
+			for (const project of chosen) {
+				const { milestones, cycles } = await plan(as, String(project.id));
+				result.push({
+					project: project.name,
+					milestones: milestones.map((item) => ({ id: item.id, name: item.name, target_at: item.target_at ?? null, done: `${item.completed_count}/${item.task_count}`, points: `${item.estimate_completed}/${item.estimate_total}` })),
+					cycles: cycles.map((item) => ({
+						id: item.id,
+						name: cycleName(item),
+						starts_at: item.starts_at,
+						ends_at: item.ends_at,
+						when: cycleWhen(item, cycles, now) ?? null,
+						done: `${item.completed_count}/${item.task_count}`,
+						points: `${item.estimate_completed}/${item.estimate_total}`,
+						carried_over: item.carried_over_count ?? 0,
+					})),
+				});
+			}
+			return ok("milestones and cycles", result);
 		}),
 });
 
@@ -862,6 +954,7 @@ export const ORBIT_TOOLS = [
 	followTask,
 	listLabelRules,
 	createLabelRule,
+	listMilestonesCycles,
 	listMembers,
 	listPages,
 	searchPages,

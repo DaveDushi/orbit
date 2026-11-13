@@ -8,7 +8,7 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 
 ## 2026-11-13
 - Orbit for iPhone (beta, by TestFlight invitation): Home, Tasks, Docs, Chat, Activity, phone notifications and an "Ask Donna…" bar.
-- Tasks: make a project private (Project settings → Access), set Repeat under Due date, drag projects in the sidebar into your own order, and search the trash (owners and admins can delete forever). Type # anywhere to link a task. Images and files in a new task's description are now saved with it.
+- Tasks: make a project private (Project settings → Access), set Repeat under Due date, drag projects in the sidebar into your own order, and search the trash (owners and admins can delete forever). Type # anywhere to link a task. Images and files in a new task's description are now saved with it. Projects can have milestones and cycles (Project settings), and a task can have an estimate in points; each shows its progress, and "Move unfinished tasks to next cycle" keeps the moved tasks counted as carried over.
 - Excel and csv files in chat or Drive open as a read-only table. The bell beside the workspace name shows your newest notifications, pickers have a search box, and Cmd/Ctrl+K shows results in sections. MCP tools can handle comments, assignees, labels and projects. Sessions not used for 30 days are signed out.
 - Chat: Unreads also shows threads with new replies, followed or not. A webhook can be a two-way bot (Edit channel → Integrations → Interactivity → Send messages as events) that gets messages and answers in the thread; it replaces Settings → Agentic → Bots. Webhook URLs start with https://orbit-hooks.easytomanage.com (no login).
 
