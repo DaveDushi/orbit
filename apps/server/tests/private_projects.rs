@@ -841,3 +841,56 @@ async fn search_finds_a_private_task_only_for_those_who_see_the_project() {
     assert!(found(&server.get(&world.bob, &search).await));
     world.server.stop().await;
 }
+
+#[tokio::test]
+async fn a_member_taken_off_a_private_project_stops_following_its_tasks() {
+    let world = World::new().await;
+    let (server, alice, bob) = (&world.server, world.alice.as_str(), world.bob.as_str());
+    let secret = world.secret_id();
+    let hidden = world.hidden.as_str();
+    let followers = world.path(&format!("/tasks/{hidden}/followers"));
+    let comments = world.path(&format!("/tasks/{hidden}/comments"));
+    // As a project member, Bob follows the task and a comment notifies him.
+    assert_eq!(world.add_member(alice, world.bob_id).await.0, 201);
+    server
+        .ok(bob, "PUT", &format!("{followers}/me"), Value::Null)
+        .await;
+    assert!(
+        server.get(alice, &followers).await["user_ids"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(world.bob_id))
+    );
+    server
+        .ok(alice, "POST", &comments, json!({"body": "first"}))
+        .await;
+    assert_eq!(commented_notifications(&world, world.bob_id).await, 1);
+
+    // Taken off the member list, Bob keeps his follower row but is no longer listed or notified.
+    let bob_row = world.path(&format!("/projects/{secret}/members/{}", world.bob_id));
+    assert_eq!(
+        server.status(alice, "DELETE", &bob_row, Value::Null).await,
+        204
+    );
+    assert!(
+        !server.get(alice, &followers).await["user_ids"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(world.bob_id))
+    );
+    server
+        .ok(alice, "POST", &comments, json!({"body": "second"}))
+        .await;
+    assert_eq!(commented_notifications(&world, world.bob_id).await, 1);
+    world.server.stop().await;
+}
+
+async fn commented_notifications(world: &World, user: Id) -> i64 {
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM notifications WHERE recipient_user_id = $1 AND kind = 'task_commented'",
+    )
+    .bind(user.to_string())
+    .fetch_one(world.server.database.pool())
+    .await
+    .unwrap()
+}
