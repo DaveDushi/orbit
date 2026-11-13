@@ -554,6 +554,12 @@ turns its routes, navigation and shortcuts off.
   redirects, public addresses only outside development), and the integration answers through
   `/api/v1/hooks/chat/{id}/responses/{token}` (5 uses, 30 min): replace, delete, `in_channel`, or an ephemeral reply
   (live-only `message.ephemeral` event, `EphemeralMessages.tsx`). The signing secret is encrypted with the app key.
+  With events on (`chat_webhooks.events`, the Interactivity switch), the webhook is a two-way bot
+  (`chat_routes/events.rs`): each member's new message in its channel goes, signed, as a Slack `event_callback`
+  (`app_mention` when the text has `@<webhook name>`, else `message`) to the request URL in the background; its URL
+  secret reads the channel and threads (`GET /api/v1/hooks/chat/{id}/messages`, `Authorization: Bearer`); and
+  `thread_ts` in a post makes a thread reply. A webhook without events only posts. A bot reply adds no avatar to
+  the thread summary and makes its creator follow nothing (`after_reply`).
 - The team agent's cards (`docs/agent.md`): a `ui` block (json-render spec, catalog `apps/agent/src/ui-catalog.ts`,
   checked by `repositories/chat/ui.rs`) on the agent's answer, shown under the body by `AgentCard.tsx` on the web (own
   SVG chart, `lib/agentCard.ts` falls back to the body) and on the phone (`@json-render/react-native`,

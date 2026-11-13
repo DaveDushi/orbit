@@ -73,7 +73,7 @@ API tokens and MCP OAuth connections use the same five scopes. In
 | `tasks:write` | Tasks: **Write** | Create, update and delete tasks, add comments, `POST /integrations/discord/events` |
 | `docs:read` | Docs: **Read** | `GET /docs`, `GET /docs/{page_id}` |
 | `docs:write` | Docs: **Write** | `POST /docs`, `PATCH /docs/{page_id}` |
-| `chat:read` | Chat: **Read** | None. Chat is available through MCP only. |
+| `chat:read` | Chat: **Read** | None. Chat is available through MCP only. A bot that reads and writes one channel uses a [chat webhook with events](chat-webhooks.md#events). |
 
 `tasks:write` includes `tasks:read`, and `docs:write` includes `docs:read`.
 `GET /me` works with each valid token.

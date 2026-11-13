@@ -427,6 +427,8 @@ impl ChatRepository {
                     name: row.get("name"),
                     icon_url: row.get("icon_url"),
                 },
+                // A response URL only posts; it never reads the channel.
+                events: false,
             },
         }))
     }

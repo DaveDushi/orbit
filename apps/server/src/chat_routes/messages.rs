@@ -175,6 +175,7 @@ pub(crate) async fn send_chat_message(
         )
         .await?;
     PushService::of(state.identity.database()).chat_message(&written.result);
+    super::events::send_message_events(&state, call.workspace_id, &written.result);
     Ok(written)
 }
 
