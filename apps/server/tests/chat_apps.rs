@@ -526,7 +526,12 @@ async fn a_bot_sees_only_the_channel_of_its_webhook() {
         format!("{HOOKS_ORIGIN}/api/v1/hooks/chat/{webhook}/messages")
     );
     let listed = fixture
-        .ok(&fixture.owner, "GET", &format!("/conversations/{general}/webhooks"), None)
+        .ok(
+            &fixture.owner,
+            "GET",
+            &format!("/conversations/{general}/webhooks"),
+            None,
+        )
         .await;
     assert_eq!(listed[0]["messages_url"], record["messages_url"]);
     let signing_secret = fixture
@@ -543,10 +548,18 @@ async fn a_bot_sees_only_the_channel_of_its_webhook() {
 
     // A mention in another channel is not sent: the next event is the one of its own channel.
     let elsewhere = fixture
-        .send(&fixture.member, &other, json!({ "body": "@assistant elsewhere" }))
+        .send(
+            &fixture.member,
+            &other,
+            json!({ "body": "@assistant elsewhere" }),
+        )
         .await;
     let here = fixture
-        .send(&fixture.member, &general, json!({ "body": "@assistant here" }))
+        .send(
+            &fixture.member,
+            &general,
+            json!({ "body": "@assistant here" }),
+        )
         .await;
     let event = next_event(&mut received, &signing_secret).await;
     assert_eq!(event["event"]["ts"], here);
@@ -598,7 +611,12 @@ async fn only_members_who_manage_a_private_channel_give_it_a_bot() {
 
     // The workspace owner is not in it: the channel's webhooks are hidden from it, as the channel is.
     let (status, _) = fixture
-        .call(&fixture.owner, "POST", &path, Some(json!({ "name": "Spy" })))
+        .call(
+            &fixture.owner,
+            "POST",
+            &path,
+            Some(json!({ "name": "Spy" })),
+        )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     let (status, _) = fixture.call(&fixture.owner, "GET", &path, None).await;
@@ -606,7 +624,94 @@ async fn only_members_who_manage_a_private_channel_give_it_a_bot() {
 
     // Its creator may add one.
     let (status, created) = fixture
-        .call(&fixture.member, "POST", &path, Some(json!({ "name": "Helper" })))
+        .call(
+            &fixture.member,
+            "POST",
+            &path,
+            Some(json!({ "name": "Helper" })),
+        )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
+}
+
+#[tokio::test]
+async fn a_bot_needs_its_own_secret_and_a_manager_of_the_channel() {
+    let fixture = Fixture::new().await;
+    let general = fixture.general().await;
+    let (webhook, _, secret) = fixture.webhook(&general, "Assistant").await;
+    let (_, _, other_secret) = fixture.webhook(&general, "Other").await;
+    let (request_url, mut received) = receiver().await;
+    fixture
+        .set_events(&general, &webhook, Some(&request_url), true)
+        .await;
+
+    // Reads need this webhook's own secret.
+    let (status, _) = fixture.read_hook(&webhook, &secret, "").await;
+    assert_eq!(status, StatusCode::OK);
+    for wrong in ["", "not-the-secret", other_secret.as_str()] {
+        let (status, _) = fixture.read_hook(&webhook, wrong, "").await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "secret {wrong:?}");
+    }
+
+    // A member who does not manage the general channel cannot see or rotate its signing secret,
+    // nor change where its events go.
+    let base = format!("/conversations/{general}/webhooks/{webhook}");
+    for (method, path, body) in [
+        ("GET", format!("{base}/signing-secret"), None),
+        ("POST", format!("{base}/signing-secret/rotate"), None),
+        (
+            "PUT",
+            format!("{base}/interactivity"),
+            Some(json!({ "request_url": "https://evil.example/events", "events": true })),
+        ),
+    ] {
+        let (status, body) = fixture.call(&fixture.member, method, &path, body).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{method} {path}: {body}");
+    }
+
+    // After a rotate, the next event is signed with the new secret.
+    let signing_path = format!("{base}/signing-secret");
+    let old = fixture.ok(&fixture.owner, "GET", &signing_path, None).await["signing_secret"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let new = fixture
+        .ok(
+            &fixture.owner,
+            "POST",
+            &format!("{signing_path}/rotate"),
+            None,
+        )
+        .await["signing_secret"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_ne!(old, new);
+    let ts = fixture
+        .send(
+            &fixture.member,
+            &general,
+            json!({ "body": "after the rotate" }),
+        )
+        .await;
+    let event = next_event(&mut received, &new).await;
+    assert_eq!(event["event"]["ts"], ts);
+
+    // A deleted webhook reads nothing and gets no events.
+    let (status, body) = fixture.call(&fixture.owner, "DELETE", &base, None).await;
+    assert!(status.is_success(), "{status}: {body}");
+    let (status, _) = fixture.read_hook(&webhook, &secret, "").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    fixture
+        .send(
+            &fixture.member,
+            &general,
+            json!({ "body": "nobody listens" }),
+        )
+        .await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), received.recv())
+            .await
+            .is_err()
+    );
 }

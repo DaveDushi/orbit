@@ -168,6 +168,7 @@ fn guest_may_use(operation: &str) -> bool {
             | "list_chat_search"
             | "list_chat_states"
             | "list_followed_chat_threads"
+            | "list_unread_chat_threads"
     )
 }
 

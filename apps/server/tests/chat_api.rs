@@ -1469,7 +1469,11 @@ async fn unread_threads_of_a_private_channel_reach_only_its_members() {
         ["Open root", "Private root"]
     );
 
-    // A member removed from the channel stops seeing its threads.
+    // A member removed from the channel stops seeing its threads; her open thread stays.
+    assert_eq!(
+        roots(&fixture.unread_threads(&ada).await),
+        ["Open root", "Private root"]
+    );
     fixture
         .ok(
             owner,
@@ -1479,10 +1483,7 @@ async fn unread_threads_of_a_private_channel_reach_only_its_members() {
         )
         .await;
     fixture.reply(&bob, &private, &root, "After ada left").await;
-    assert_eq!(
-        roots(&fixture.unread_threads(&ada).await),
-        Vec::<String>::new()
-    );
+    assert_eq!(roots(&fixture.unread_threads(&ada).await), ["Open root"]);
 }
 
 /// The cursors of a `read-all` result, in the shape that `read-restore` takes.

@@ -3567,7 +3567,11 @@ async fn dropping_webhook_bots_suspends_live_bot_users_and_drops_the_tables() {
         .await
         .unwrap();
 
-    for table in ["webhook_bots", "webhook_bot_channels", "webhook_bot_deliveries"] {
+    for table in [
+        "webhook_bots",
+        "webhook_bot_channels",
+        "webhook_bot_deliveries",
+    ] {
         assert_eq!(table_count(&database, table).await, 0, "{table}");
     }
     let users: Vec<(String, String, Option<i64>)> = sqlx::query_as(
@@ -3581,7 +3585,11 @@ async fn dropping_webhook_bots_suspends_live_bot_users_and_drops_the_tables() {
         users,
         [
             ("gone-bot".to_owned(), "Old (deleted)".to_owned(), Some(3)),
-            ("live-bot".to_owned(), "Helper (deleted)".to_owned(), Some(5)),
+            (
+                "live-bot".to_owned(),
+                "Helper (deleted)".to_owned(),
+                Some(5)
+            ),
             ("owner".to_owned(), "Owner".to_owned(), None),
         ]
     );
