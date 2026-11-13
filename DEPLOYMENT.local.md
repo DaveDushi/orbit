@@ -7,12 +7,16 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at c5735ed824d836073c07c4ecea8d846778195258
-  (upstream port 1; schema 100; November 13, 2026).
+- Source: DaveDushi/orbit, `main` at 08067fd60edb10a7ac8ab7e47bb069c06dab27d7
+  (iPhone app server part; schema 20261113042745; November 13, 2026).
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:c5735ed`); fork commits have no published upstream image.
-- Image ID: sha256:1e483169009763c751e1789779b20c422930aea1749d1bab7f7c126729c6469f
-- Team agent sidecar code (`/opt/orbit-agent`): commit c5735ed.
+  (`orbit:08067fd`); fork commits have no published upstream image.
+- Image ID: sha256:03607bceb24903bb2bbf3a66959937d3e2e4e504fd4fc6363bb5ef2958868bdf
+- Team agent sidecar code (`/opt/orbit-agent`): commit 08067fd.
+- iPhone push (APNs, `docs/operations.md` "iPhone push"): off. No `ORBIT_APNS_*` setting is in `/etc/orbit/orbit.env`
+  yet, so Orbit keeps the iPhones' device rows and sends them nothing (no log line). To turn it on, put the team's `.p8`
+  key on the VM (owner `orbit`, mode 600), set `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID` (and
+  `ORBIT_APNS_SANDBOX=true` only for development builds), restart `orbit`, and look for `iPhone push (APNs) is on`.
 - LibreOffice (Calc, Writer, Impress 24.2, `--no-install-recommends`) is installed for Office previews
   (`docs/file-previews.md`); ffmpeg makes the chat video copies.
 - Desktop app downloads: https://orbit.wellrox.com/downloads/desktop/ (installer, zip, `latest.json` for the app's update
@@ -255,6 +259,73 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 13, 2026 upgrade: iPhone app server part, APNs push and Ask Donna for the phone (schema 20261113042745)
+
+`main` from `138b8291` to `08067fd6` (local, not pushed): `iphone-app` fast-forwarded (`f3d87510` feature: APNs sender,
+`POST /api/v1/push/devices` and `DELETE /api/v1/push/devices/{token}`, Ask Donna for the phone, `ORBIT_APNS_*` settings;
+`53d02d3c` clippy; `b7433b01` icon; `d8d90afa` generated client), then `08067fd6` (what's new). What is new for people
+(`whats-new.md`): the branch's `2026-11-14` entry became part of today's `2026-11-13` entry, still 4 lines (one iPhone
+line on top: the app by TestFlight invitation, push, the Ask Donna bar; the 3 other lines of upstream port 1 shortened
+into 3). `aboutOrbit()` has the iPhone app line under "Elsewhere", the Ask bar line for the iPhone and a "How do I…" line
+for iPhone notifications. The iPhone app itself is **not** on TestFlight yet (waits for the App Store Connect record).
+
+Migration `20261113042745_push_devices` (SQLite + Postgres): new table `push_devices` (token unique, session cascade,
+2 indexes), additive. `latest_version()` 20261113042745: the old binary refuses the migrated database ("schema version
+20261113042745 is newer than binary schema version 100").
+
+Checks on merged `main` (the tree equals `iphone-app` plus `whats-new.md`; the branch passed push, push_devices_api,
+push_api, chat_api, openapi_contract, app_smoke, platform database + backup on SQLite and Postgres): after
+`bun install --frozen-lockfile` and `npm ci` in `apps/agent`: agent `tsc` and `npm test` (80 pass, 11 skipped, 0 fail);
+mobile `tsc` and `bun test` (175 pass). No Rust test run again on `main` (same Rust tree as the branch).
+
+Deploy id `20261113T055300Z-86905`. `orbit:08067fd` (image
+`sha256:03607bceb24903bb2bbf3a66959937d3e2e4e504fd4fc6363bb5ef2958868bdf`, about 30 min, no OOM);
+`deploy/smoke.sh` and `orbit config check` (production env, no APNs keys) passed. Migration dry run on a hot read-only
+copy and again on a copy of the stopped database: 1 applied, schema 100 → 20261113042745 (101 rows), the 100 old
+checksums unchanged, a second run applies 0, quick-check ok, 0 foreign-key rows, no pre-migration backup made, counts
+unchanged (8 users, 110 tasks, 18 task comments, 94 notifications, 1104 chat messages, 46 sessions, 2 push
+subscriptions, 6 projects). Rollback without the snapshot, tested on a copy: `DROP TABLE push_devices` and delete the
+version row, then the old binary applies 0 and starts (quick-check ok, schema 100). Scripts: `/root/ops/iphone-app/`.
+
+Switch: stopped both services at 06:33:11 UTC; snapshot `01a1d39c-33ee-7608-a91e-264705f889f3` with
+`/usr/local/bin/orbit-c5735ed`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-08067fd.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-08067fd.tgz`; old sidecar code `/opt/orbit-agent.before-08067fd`; new
+sidecar `src` (`package*.json` unchanged, no `npm ci`); binary installed (`/usr/local/bin/orbit-08067fd` too); `orbit`
+ready 06:33:26, then `orbit-agent`. `vm-health.conf` (old copy `.before-08067fd`): `PROD_TAG=08067fd`,
+`ROLLBACK_TAG=c5735ed`, `ROLLBACK_BACKUP=01a1d39c-33ee-7608-a91e-264705f889f3`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) and `/health/live` 200; revision
+`08067fd6`; schema top 20261113042745 (101 rows), `push_devices` 0 rows; live quick-check ok, 0 foreign-key rows; without
+a session `POST /api/v1/push/devices` (valid body) 401, `DELETE /api/v1/push/devices/{token}` 401, `POST
+/api/v1/push/test` 401 (with a `{}` body the POST gives 400 first: the body is read before the session, as on the other
+JSON routes); an unknown API route 404; sidecar `/health` ok and `src` equal to `08067fd6`; 0 error lines in the
+journal (only the known "allowed origin without a port" WARN; no APNs line, as expected with no keys);
+`ORBIT_VERIFY_SPA=1 verify-production.sh` passed (signed out `/` → `/login`, signed in `/` and `/tasks` as David Dusi
+with a temporary v7 session, 0 console or page errors; session logged out, the row deleted after: 46 sessions, as
+before). `vm-health` OK except oom (3 lines from 03:06 UTC, the earlier build) and nginx (15 lines, upstream refused
+06:33:12–06:33:26, the start window). **Not** verified on production: a real iPhone registration and an APNs push (no
+keys yet, no TestFlight build), Ask Donna from the phone.
+
+Rollback to `c5735ed`. Way 1 keeps the work done after the switch (the only loss is the iPhones' device rows):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit sqlite3 /var/lib/orbit/orbit.sqlite "DROP TABLE push_devices; DELETE FROM schema_migrations WHERE version = 20261113042745;"
+sudo install -m 755 /usr/local/bin/orbit-c5735ed /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-08067fd /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# Way 2, only for a data problem (work after 06:33 UTC is lost), Orbit stopped: /usr/local/bin/orbit-08067fd backup verify +
+#   backup restore 01a1d39c-33ee-7608-a91e-264705f889f3 (as user orbit, with /etc/orbit/orbit.env), then the binary and sidecar lines above
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-08067fd.tgz
+# Plain copy of the database before the switch: /var/backups/orbit/pre-migration/orbit-before-08067fd.sqlite
+```
+
+After this rollback, set `PROD_TAG=c5735ed`, `ROLLBACK_TAG=3a468aa`,
+`ROLLBACK_BACKUP=01a1d315-5386-73ad-a657-d92c30da0283` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-08067fd`).
 
 ### November 13, 2026 upgrade: upstream port 1 (schema 100, no new migration)
 
