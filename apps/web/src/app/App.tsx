@@ -35,6 +35,8 @@ const ProjectSettingsPage = lazy(() => loadTasks().then((module) => ({ default: 
 const TasksPage = lazy(() => loadTasks().then((module) => ({ default: module.TasksPage })))
 const HomePage = lazy(() => loadHome().then((module) => ({ default: module.HomePage })))
 const TaskTrashPage = lazy(() => loadTasks().then((module) => ({ default: module.TaskTrashPage })))
+const TrashedTaskPage = lazy(() => loadTasks().then((module) => ({ default: module.TrashedTaskPage })))
+const TrashedProjectPage = lazy(() => loadTasks().then((module) => ({ default: module.TrashedProjectPage })))
 const DocsPage = lazy(() => loadDocs().then((module) => ({ default: module.DocsPage })))
 const DrivePage = lazy(() => loadDrive().then((module) => ({ default: module.DrivePage })))
 const AccountLayout = lazy(() => loadSettings().then((module) => ({ default: module.AccountLayout })))
@@ -136,10 +138,13 @@ export default function App() {
                 <Route path="tasks/projects/:projectId/settings" element={<ProjectSettingsPage />} />
                 <Route path="tasks/:taskId" element={<TasksPage />} />
                 <Route path="tasks-trash" element={<TaskTrashPage />} />
+                <Route path="tasks-trash/task/:taskId" element={<TrashedTaskPage />} />
+                <Route path="tasks-trash/project/:projectId" element={<TrashedProjectPage />} />
                 <Route path="views" element={<ViewsPage />} />
                 <Route path="views/:viewId" element={<TasksPage />} />
                 <Route path="views/:viewId/:taskId" element={<TasksPage />} />
                 <Route path="docs/trash" element={<DocsPage view="trash" />} />
+                <Route path="docs/trash/:pageId" element={<DocsPage view="trash" />} />
                 <Route path="docs/import/:importId?" element={<DocsPage view="import" />} />
                 <Route path="docs/:pageId?" element={<DocsPage />} />
                 <Route path="drive" element={<DrivePage />} />

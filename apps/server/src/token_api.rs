@@ -937,7 +937,7 @@ impl Authorized<'_> {
                 p.workspace_id,
                 id,
                 p.actor_id,
-                expected_version,
+                Some(expected_version),
                 self.request_id,
                 now,
             )

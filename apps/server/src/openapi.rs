@@ -154,6 +154,9 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::task_routes::delete_project,
         crate::task_routes::restore_project,
         crate::task_routes::list_project_trash,
+        crate::task_routes::purge_project,
+        crate::task_routes::get_trashed_project,
+        crate::task_routes::list_trashed_project_tasks,
         crate::task_routes::list_statuses,
         crate::task_routes::create_status,
         crate::task_routes::update_status,
@@ -182,6 +185,9 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::task_routes::delete_task,
         crate::task_routes::restore_task,
         crate::task_routes::list_task_trash,
+        crate::task_routes::empty_task_trash,
+        crate::task_routes::get_trashed_task,
+        crate::task_routes::purge_task,
         crate::task_routes::list_comments,
         crate::task_routes::create_comment,
         crate::task_routes::update_comment,
@@ -221,6 +227,7 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::page_routes::delete_page,
         crate::page_routes::restore_page,
         crate::page_routes::list_page_trash,
+        crate::page_routes::get_trashed_page,
         crate::page_routes::purge_page,
         crate::page_routes::empty_page_trash,
         crate::page_routes::duplicate_page,
@@ -1166,6 +1173,10 @@ fn invalid_request_operation(operation_id: &str) -> bool {
             | "delete_task"
             | "restore_task"
             | "list_task_trash"
+            | "get_trashed_task"
+            | "purge_task"
+            | "get_trashed_project"
+            | "list_trashed_project_tasks"
             | "list_comments"
             | "create_comment"
             | "update_comment"
@@ -1273,6 +1284,12 @@ fn task_operation(operation_id: &str) -> bool {
             | "delete_project"
             | "restore_project"
             | "list_project_trash"
+            | "purge_project"
+            | "empty_task_trash"
+            | "get_trashed_project"
+            | "list_trashed_project_tasks"
+            | "get_trashed_task"
+            | "purge_task"
             | "list_statuses"
             | "create_status"
             | "update_status"
@@ -1318,6 +1335,7 @@ fn task_errors(operation_id: &str, responses: &mut BTreeMap<&'static str, Vec<&'
             | "list_tasks"
             | "query_tasks"
             | "list_task_trash"
+            | "list_trashed_project_tasks"
             | "list_comments"
     ) {
         add_code(responses, "400", "invalid_cursor");
@@ -1393,6 +1411,18 @@ fn task_errors(operation_id: &str, responses: &mut BTreeMap<&'static str, Vec<&'
     if matches!(operation_id, "update_comment" | "delete_comment") {
         add_code(responses, "403", "task_action_forbidden");
     }
+    if matches!(
+        operation_id,
+        "purge_project" | "empty_task_trash" | "purge_task"
+    ) {
+        add_code(responses, "403", "task_action_forbidden");
+    }
+    if operation_id == "purge_task" {
+        add_code(responses, "409", "task_not_trashed");
+    }
+    if operation_id == "purge_project" {
+        add_code(responses, "409", "project_not_trashed");
+    }
 }
 
 fn label_rule_operation(operation_id: &str) -> bool {
@@ -1459,6 +1489,7 @@ fn page_operation(operation_id: &str) -> bool {
             | "delete_page"
             | "restore_page"
             | "list_page_trash"
+            | "get_trashed_page"
             | "purge_page"
             | "empty_page_trash"
             | "duplicate_page"
