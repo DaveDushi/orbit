@@ -4272,6 +4272,14 @@ export type PublicWorkspaceGrant = {
     scopes: Array<ApiTokenScope>;
 };
 
+export type PushBadge = {
+    /**
+     * Unread chat (as the Chat tab counts it) plus unread inbox notifications, in every
+     * workspace of the user.
+     */
+    count: number;
+};
+
 export type PushDeviceBody = {
     /**
      * What the list of devices shows, e.g. "iPhone".
@@ -11066,6 +11074,54 @@ export type UnlockPublicShareResponses = {
 };
 
 export type UnlockPublicShareResponse = UnlockPublicShareResponses[keyof UnlockPublicShareResponses];
+
+export type GetPushBadgeData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/push/badge';
+};
+
+export type GetPushBadgeErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type GetPushBadgeError = GetPushBadgeErrors[keyof GetPushBadgeErrors];
+
+export type GetPushBadgeResponses = {
+    200: PushBadge;
+};
+
+export type GetPushBadgeResponse = GetPushBadgeResponses[keyof GetPushBadgeResponses];
 
 export type RegisterPushDeviceData = {
     body: PushDeviceBody;

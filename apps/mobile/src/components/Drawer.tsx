@@ -47,7 +47,7 @@ export function MenuButton() {
 }
 
 /** The tab roots: on a pushed screen the same edge swipe is iOS's back gesture. */
-const SWIPE_ROOTS = new Set(['/', '/tasks', '/docs', '/chat', '/settings', '/activity'])
+const SWIPE_ROOTS = new Set(['/', '/tasks', '/docs', '/chat', '/drive', '/settings', '/activity'])
 /** A swipe opens the drawer only when it starts this close to the left edge. */
 const EDGE = 24
 
@@ -318,7 +318,7 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
               {newUi ? null : <SubRow label="Views" onPress={() => go('/tasks')} />}
               <NavRow link={{ label: 'Docs', icon: 'docs', href: '/docs', active: pathname.startsWith('/docs') }} onPress={() => go('/docs')} />
               <NavRow link={{ label: 'Chat', icon: 'chat', href: '/chat', active: pathname.startsWith('/chat'), badge: chatBadge.count, dot: chatBadge.unread }} onPress={() => go('/chat')} />
-              <NavRow link={{ label: 'Mail', icon: 'mail', href: '/', active: false }} comingSoon />
+              <NavRow link={{ label: 'Drive', icon: 'folder', href: '/drive', active: pathname.startsWith('/drive') }} onPress={() => go('/drive')} />
               {personal.length > 0 ? <Section label="Personal" /> : null}
               {personal.map((link) => (
                 <NavRow key={link.label} link={link} onPress={() => go(link.href)} />
@@ -455,7 +455,7 @@ function BackRow({ label, onPress }: { label: string; onPress: () => void }) {
  * The web `SidebarNavItem`: a 36px row with a 30px icon tile; the current row's tile turns pink. The Flat style has no
  * tile: an 18px icon on a 32px row, and the current row is filled.
  */
-function NavRow({ link, onPress, comingSoon = false, tone = 'brand' }: { link: NavLink; onPress?: () => void; comingSoon?: boolean; tone?: TileTone }) {
+function NavRow({ link, onPress, tone = 'brand' }: { link: NavLink; onPress?: () => void; tone?: TileTone }) {
   const { colors } = useTheme()
   const flat = useButtonStyle() === 'flat'
   const shape = flat ? `h-8 rounded-md pl-2.5 ${link.active ? 'bg-black/5 dark:bg-white/6' : 'active:bg-black/4 dark:active:bg-white/5'}` : 'h-9 pl-1'
@@ -463,10 +463,10 @@ function NavRow({ link, onPress, comingSoon = false, tone = 'brand' }: { link: N
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={link.badge ? `${link.label}, ${link.badge} unread` : link.dot ? `${link.label}, unread` : link.label}
-      accessibilityState={{ selected: link.active, disabled: comingSoon }}
-      disabled={comingSoon || !onPress}
+      accessibilityState={{ selected: link.active }}
+      disabled={!onPress}
       onPress={onPress}
-      className={`flex-row items-center gap-2.5 pr-2.5 ${shape} ${comingSoon ? 'opacity-[0.48]' : ''}`}
+      className={`flex-row items-center gap-2.5 pr-2.5 ${shape}`}
     >
       {({ pressed }) => (
         <>
@@ -483,7 +483,6 @@ function NavRow({ link, onPress, comingSoon = false, tone = 'brand' }: { link: N
           <RNText numberOfLines={1} className={`flex-1 font-noto-medium text-[13px] ${link.active || pressed ? 'text-sidebar-nav-active' : 'text-sidebar-nav'}`}>
             {link.label}
           </RNText>
-          {comingSoon ? <RNText className="font-noto-medium text-[10px] text-muted-foreground/70">Coming soon</RNText> : null}
           {link.badge ? <CountBadge count={link.badge} /> : link.dot ? <View className="mr-1 size-2 rounded-full bg-primary" /> : null}
         </>
       )}

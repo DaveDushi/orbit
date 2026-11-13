@@ -4,6 +4,8 @@
  */
 export const keys = {
   workspaces: ['workspaces'] as const,
+  /** The number on the app icon: unread chat and inbox of every workspace (`GET /api/v1/push/badge`). */
+  appBadge: ['app-badge'] as const,
   tasks: (workspaceId: string) => ['tasks', workspaceId] as const,
   /** A server view (`mine`, `my_week` …) or a Home card query, under the `tasks` prefix so task changes reach it. */
   taskView: (workspaceId: string, view: string) => ['tasks', workspaceId, view] as const,
@@ -23,6 +25,10 @@ export const keys = {
   notifications: (workspaceId: string) => ['notifications', workspaceId] as const,
   unreadNotifications: (workspaceId: string) => ['notifications', workspaceId, 'unread'] as const,
   pages: (workspaceId: string) => ['pages', workspaceId] as const,
+  drive: (workspaceId: string) => ['drive', workspaceId] as const,
+  /** A Drive folder's items (`top`: the top level). */
+  driveChildren: (workspaceId: string, parentId: string | null) => ['drive', workspaceId, 'children', parentId ?? 'top'] as const,
+  driveNode: (workspaceId: string, nodeId: string) => ['drive', workspaceId, 'node', nodeId] as const,
   page: (workspaceId: string, pageId: string) => ['page', workspaceId, pageId] as const,
   teamspaces: (workspaceId: string) => ['teamspaces', workspaceId] as const,
 }
@@ -34,7 +40,7 @@ export type QueryKey = readonly string[]
  * notifications are in it, as on the web, where the event refreshes the whole workspace.
  */
 export function workspaceDataKeys(workspaceId: string): QueryKey[] {
-  return (['tasks', 'task', 'comments', 'task-activity', 'projects', 'statuses', 'labels', 'members', 'notifications', 'pages', 'page', 'teamspaces'] as const).map(
+  return (['tasks', 'task', 'comments', 'task-activity', 'projects', 'statuses', 'labels', 'members', 'notifications', 'pages', 'page', 'teamspaces', 'drive'] as const).map(
     (resource) => [resource, workspaceId],
   )
 }

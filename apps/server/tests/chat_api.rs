@@ -4341,6 +4341,7 @@ impl orbit_server::push::apns::DeviceSender for RecordedDevicePushes {
         &self,
         token: String,
         notice: orbit_server::push::Notice,
+        _badge: i64,
     ) -> futures_util::future::BoxFuture<'static, Result<(), orbit_server::push::SendError>> {
         self.0.lock().unwrap().push((token, notice));
         Box::pin(async { Ok(()) })
@@ -4426,4 +4427,130 @@ async fn a_message_reaches_the_iphones_it_is_for_never_the_authors_and_a_guest_s
     let sent = pushed(2).await;
     assert!(sent.iter().all(|(token, _)| *token != phone(&ada)));
     assert_eq!(sent.len(), 2);
+}
+
+/// An inbox row for `recipient`: a new task of the first project was assigned to them.
+async fn task_notification(fixture: &Fixture, recipient: Id, key: &str) -> String {
+    use orbit_server::task_routes::{TaskState, task_router};
+    let pool = fixture.database.pool();
+    let project: String = sqlx::query_scalar("SELECT id FROM projects LIMIT 1")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let status: String = sqlx::query_scalar(
+        "SELECT id FROM task_statuses WHERE project_id = $1 ORDER BY position LIMIT 1",
+    )
+    .bind(&project)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let tasks = task_router(TaskState::new(
+        Arc::clone(&fixture.identity),
+        CookieMode::secure(),
+    ));
+    let body = json!({ "project_id": project, "status_id": status, "title": key });
+    let request = Request::builder()
+        .method("POST")
+        .uri(format!("/api/v1/workspaces/{}/tasks", fixture.workspace_id))
+        .header(header::COOKIE, &fixture.owner.cookie)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let response = tasks.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let task: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    let id = Id::new_v7().to_string();
+    sqlx::query(
+        "INSERT INTO notifications (id, workspace_id, recipient_user_id, actor_user_id, kind, \
+         task_id, dedupe_key, created_at) VALUES ($1, $2, $3, $4, 'task_assigned', $5, $6, $7)",
+    )
+    .bind(&id)
+    .bind(&fixture.workspace_id)
+    .bind(recipient.to_string())
+    .bind(fixture.owner.id.to_string())
+    .bind(task["id"].as_str().unwrap())
+    .bind(key)
+    .bind(TimestampMillis::now().as_millis())
+    .execute(pool)
+    .await
+    .unwrap();
+    id
+}
+
+#[tokio::test]
+async fn the_app_badge_counts_unread_chat_and_inbox_per_user_and_reading_clears_it() {
+    use orbit_server::push::badge::count;
+    let fixture = Fixture::new().await;
+    let database = &fixture.database;
+    let ada = fixture.add_member("ada").await;
+    let guest = fixture.add_guest("guest").await;
+    let room = fixture
+        .channel(&fixture.owner, "room", "private", &[&ada, &guest])
+        .await;
+    let state = format!("/conversations/{room}/state");
+    fixture
+        .ok(&ada, "PATCH", &state, Some(json!({ "notify": "all" })))
+        .await;
+    fixture
+        .ok(
+            &guest,
+            "PATCH",
+            &state,
+            Some(json!({ "notify": "mentions" })),
+        )
+        .await;
+
+    // Ada counts every message (level "all"); a mention in the main list counts once, not
+    // again as its inbox row. The guest counts only a mention of her. The author counts none.
+    fixture.send(&fixture.owner, &room, "one").await;
+    let root = fixture.send(&fixture.owner, &room, "two").await;
+    fixture
+        .send(&fixture.owner, &room, &format!("<@{}> look", ada.id))
+        .await;
+    assert_eq!(count(database, ada.id).await.unwrap(), 3);
+    assert_eq!(count(database, guest.id).await.unwrap(), 0);
+    assert_eq!(count(database, fixture.owner.id).await.unwrap(), 0);
+    fixture
+        .send(&fixture.owner, &room, &format!("<@{}> you too", guest.id))
+        .await;
+    assert_eq!(count(database, guest.id).await.unwrap(), 1);
+    assert_eq!(count(database, ada.id).await.unwrap(), 4);
+
+    // A thread reply is not in the Chat tab's count (the Threads view shows it), nor here.
+    fixture
+        .reply(&fixture.owner, &room, &root, &format!("<@{}> here", ada.id))
+        .await;
+    assert_eq!(count(database, ada.id).await.unwrap(), 4);
+
+    // A task notification counts, but never a guest's (a guest has no inbox), and not once Ada
+    // no longer sees the project.
+    let assigned = task_notification(&fixture, ada.id, "ada").await;
+    task_notification(&fixture, guest.id, "guest").await;
+    assert_eq!(count(database, ada.id).await.unwrap(), 5);
+    assert_eq!(count(database, guest.id).await.unwrap(), 1);
+    sqlx::query("UPDATE projects SET private = 1")
+        .execute(database.pool())
+        .await
+        .unwrap();
+    assert_eq!(count(database, ada.id).await.unwrap(), 4);
+    sqlx::query("UPDATE projects SET private = 0")
+        .execute(database.pool())
+        .await
+        .unwrap();
+
+    // Reading the conversation clears its messages and its mentions; reading the inbox row
+    // clears the rest.
+    fixture
+        .ok(&ada, "POST", &format!("/conversations/{room}/read"), None)
+        .await;
+    assert_eq!(count(database, ada.id).await.unwrap(), 1);
+    assert_eq!(count(database, guest.id).await.unwrap(), 1);
+    sqlx::query("UPDATE notifications SET read_at = $1 WHERE id = $2")
+        .bind(TimestampMillis::now().as_millis())
+        .bind(&assigned)
+        .execute(database.pool())
+        .await
+        .unwrap();
+    assert_eq!(count(database, ada.id).await.unwrap(), 0);
 }

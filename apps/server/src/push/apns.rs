@@ -47,9 +47,14 @@ const MAX_COLLAPSE_ID_BYTES: usize = 64;
 /// The phones one user gets pushes on. The oldest go when another registers.
 const MAX_DEVICES: i64 = 20;
 
-/// Where a device's pushes go: the notice, sent to the device token.
+/// Where a device's pushes go: the notice and the app icon's badge, sent to the device token.
 pub trait DeviceSender: Send + Sync {
-    fn send(&self, token: String, notice: Notice) -> BoxFuture<'static, Result<(), SendError>>;
+    fn send(
+        &self,
+        token: String,
+        notice: Notice,
+        badge: i64,
+    ) -> BoxFuture<'static, Result<(), SendError>>;
 }
 
 #[derive(Clone)]
@@ -106,14 +111,16 @@ pub fn provider_token(key: &SecretKey, key_id: &str, team_id: &str, issued_at: i
     format!("{signed}.{}", BASE64.encode(signature.to_bytes()))
 }
 
-/// The APNs body of a notice: the alert, and the page to open (`url`) for the app.
+/// The APNs body of a notice: the alert, the app icon's badge ([`super::badge::count`]), and the
+/// page to open (`url`) for the app.
 #[must_use]
-pub fn payload(notice: &Notice) -> Vec<u8> {
+pub fn payload(notice: &Notice, badge: i64) -> Vec<u8> {
     json!({
         "aps": {
             "alert": { "title": notice.title, "body": notice.body },
             "sound": "default",
             "thread-id": notice.tag,
+            "badge": badge.max(0),
         },
         "url": notice.url,
         "tag": notice.tag,
@@ -199,7 +206,12 @@ impl ApnsSender {
 }
 
 impl DeviceSender for ApnsSender {
-    fn send(&self, token: String, notice: Notice) -> BoxFuture<'static, Result<(), SendError>> {
+    fn send(
+        &self,
+        token: String,
+        notice: Notice,
+        badge: i64,
+    ) -> BoxFuture<'static, Result<(), SendError>> {
         let now = TimestampMillis::now().as_millis() / 1000;
         let bearer = self.bearer(now);
         let host = if self.config.sandbox {
@@ -208,7 +220,7 @@ impl DeviceSender for ApnsSender {
             PRODUCTION_HOST
         };
         let url = format!("{host}/3/device/{token}");
-        let body = payload(&notice);
+        let body = payload(&notice, badge);
         let mut request = self
             .client
             .post(url)
@@ -349,15 +361,19 @@ pub async fn deliver(
     .bind(now)
     .fetch_all(database.pool())
     .await?;
+    if rows.is_empty() {
+        return Ok(0);
+    }
+    let badge = super::badge::count(database, user_id).await?;
     let sends = rows.into_iter().map(|row| {
         let (id, token): (String, String) = (row.get("id"), row.get("token"));
         let (sender, notice) = (Arc::clone(sender), notice.clone());
         async move {
-            let mut result = sender.send(token.clone(), notice.clone()).await;
+            let mut result = sender.send(token.clone(), notice.clone(), badge).await;
             // A busy APNs gets the push once more.
             if matches!(result, Err(SendError::Busy(_))) {
                 tokio::time::sleep(RETRY_AFTER).await;
-                result = sender.send(token, notice).await;
+                result = sender.send(token, notice, badge).await;
             }
             (id, result)
         }
@@ -473,7 +489,7 @@ mod tests {
     }
 
     #[test]
-    fn the_payload_has_the_alert_and_the_page_to_open() {
+    fn the_payload_has_the_alert_the_badge_and_the_page_to_open() {
         let notice = Notice {
             title: "Ada".to_owned(),
             body: "hello".to_owned(),
@@ -482,10 +498,11 @@ mod tests {
             sound: "message",
             icon: None,
         };
-        let body: serde_json::Value = serde_json::from_slice(&payload(&notice)).unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload(&notice, 3)).unwrap();
         assert_eq!(body["aps"]["alert"]["title"], "Ada");
         assert_eq!(body["aps"]["alert"]["body"], "hello");
         assert_eq!(body["aps"]["thread-id"], "chat:1");
+        assert_eq!(body["aps"]["badge"], 3);
         assert_eq!(body["url"], "/chat/1");
     }
 }

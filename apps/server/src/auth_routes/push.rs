@@ -184,6 +184,29 @@ pub(super) async fn unregister_push_device(
 }
 
 #[derive(Serialize, ToSchema)]
+pub(super) struct PushBadge {
+    /// Unread chat (as the Chat tab counts it) plus unread inbox notifications, in every
+    /// workspace of the user.
+    count: i64,
+}
+
+/// The number the iPhone app shows on its icon. Each APNs push carries it too; the app asks
+/// again when it opens and when the user reads something.
+#[utoipa::path(get, path = "/api/v1/push/badge", responses((status = 200, body = PushBadge), (status = 401, description = "authentication_required", body = ProblemBody, content_type = "application/problem+json")))]
+pub(super) async fn get_push_badge(
+    State(state): State<AuthState>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<PushBadge>, ApiError> {
+    let instance = "/api/v1/push/badge";
+    let session = authenticate(&state, &headers, instance, request_id.as_ref()).await?;
+    let count = crate::push::badge::count(state.repository.database(), session.user.id)
+        .await
+        .map_err(|_| ApiError::internal(instance, request_id.as_ref()))?;
+    Ok(Json(PushBadge { count }))
+}
+
+#[derive(Serialize, ToSchema)]
 pub(super) struct TestPushResult {
     /// How many of the user's browsers and iPhones took the push.
     sent: usize,
