@@ -27,7 +27,7 @@ function ownerName(label: string) {
 function PersonPicker({ people, value, label, disabled, onChange }: { people: Option[]; value?: string; label: string; disabled: boolean; onChange: (userId: string) => void }) {
   return (
     <Select items={people} value={value ?? null} disabled={disabled} onValueChange={(next) => { if (next && next !== value) onChange(next) }}>
-      <SelectTrigger aria-label={label} className="w-44">
+      <SelectTrigger aria-label={label} className="min-w-0 flex-1 sm:w-44 sm:flex-initial">
         <SelectValue placeholder="Choose member" />
       </SelectTrigger>
       <SelectContent>
@@ -140,7 +140,7 @@ export function ProjectRulesCard({ projectId }: { projectId: string }) {
               <RuleForm labels={labelOptions} people={peopleOptions} initial={rule} submitLabel="Save" pending={updateRule.isPending} onCancel={() => setEditingId(undefined)} onSubmit={async (labelId, userId) => { await updateRule.mutateAsync({ ruleId: rule.id, label_id: labelId, user_id: userId }); setEditingId(undefined) }} />
             </SettingsRow>
           : <SettingsRow key={rule.id}>
-              <div className="flex min-w-0 flex-1 items-center gap-2 text-sm data-disabled:opacity-60" data-disabled={rule.enabled ? undefined : ''}>
+              <div className="flex min-w-0 basis-full items-center gap-2 text-sm data-disabled:opacity-60 sm:flex-1" data-disabled={rule.enabled ? undefined : ''}>
                 <LabelPill label={{ name: rule.label_name, color: rule.label_color }} />
                 <ArrowRight className="size-3.5 shrink-0 text-muted-foreground" aria-label="assigns" />
                 <span className="truncate font-medium text-foreground">{rule.user_name}</span>
@@ -167,9 +167,9 @@ export function ProjectRulesCard({ projectId }: { projectId: string }) {
         ) : null}
         {mapped.map((rule) => (
           <SettingsRow key={rule.id}>
-            <div className="flex min-w-0 flex-1 items-center gap-2 text-sm data-disabled:opacity-60" data-disabled={rule.enabled ? undefined : ''}>
+            <div className="flex min-w-0 basis-full items-center gap-2 text-sm data-disabled:opacity-60 sm:flex-1" data-disabled={rule.enabled ? undefined : ''}>
               <LabelPill label={{ name: rule.label_name, color: rule.label_color }} />
-              <ArrowRight className="size-3.5 shrink-0 text-muted-foreground" aria-label="assigns" />
+              <ArrowRight className="hidden size-3.5 shrink-0 text-muted-foreground sm:block" aria-label="assigns" />
             </div>
             <PersonPicker people={peopleOptions} value={rule.user_id} label={`Member for ${rule.label_name}`} disabled={mapPending} onChange={(userId) => updateRule.mutate({ ruleId: rule.id, user_id: userId })} />
             <Button variant="ghost" type="button" aria-label={`Remove name map ${rule.label_name}`} disabled={mapPending} onClick={() => deleteRule.mutate(rule.id)}>Remove</Button>
@@ -177,7 +177,7 @@ export function ProjectRulesCard({ projectId }: { projectId: string }) {
         ))}
         {unmapped.map((label) => (
           <SettingsRow key={label.id}>
-            <div className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+            <div className="flex min-w-0 basis-full flex-wrap items-center gap-x-2 gap-y-1 text-sm sm:flex-1">
               <LabelPill label={label} />
               <span className="text-xs text-muted-foreground">No member matches</span>
             </div>
