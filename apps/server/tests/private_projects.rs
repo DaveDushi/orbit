@@ -894,3 +894,132 @@ async fn commented_notifications(world: &World, user: Id) -> i64 {
     .await
     .unwrap()
 }
+
+#[tokio::test]
+async fn milestones_and_cycles_of_a_private_project_answer_like_missing_ones() {
+    let world = World::new().await;
+    let (server, alice) = (&world.server, world.alice.as_str());
+    let secret = world.secret_id();
+    let plan = |suffix: &str| world.path(&format!("/projects/{secret}{suffix}"));
+    let milestone = id(&server
+        .ok(alice, "POST", &plan("/milestones"), json!({"name": "Beta"}))
+        .await);
+    let cycle = id(&server
+        .ok(
+            alice,
+            "POST",
+            &plan("/cycles"),
+            json!({"starts_at": "2026-11-01T00:00:00Z", "ends_at": "2026-11-15T00:00:00Z"}),
+        )
+        .await);
+    server
+        .ok(
+            alice,
+            "POST",
+            &plan("/cycles"),
+            json!({"starts_at": "2026-11-15T00:00:00Z", "ends_at": "2026-11-29T00:00:00Z"}),
+        )
+        .await;
+    let hidden = world.hidden.as_str();
+    let version = world.get_task(alice, hidden).await["version"].clone();
+    server
+        .ok(
+            alice,
+            "PATCH",
+            &world.path(&format!("/tasks/{hidden}")),
+            json!({"expected_version": version, "milestone_id": milestone, "cycle_id": cycle, "estimate": 3}),
+        )
+        .await;
+
+    let (_, guest) = server
+        .person(&world.workspace, "guest2", Some("guest"))
+        .await;
+    for session in [world.bob.as_str(), guest.as_str()] {
+        for (method, suffix, body) in [
+            ("GET", "/milestones".to_owned(), Value::Null),
+            ("POST", "/milestones".to_owned(), json!({"name": "Mine"})),
+            (
+                "PATCH",
+                format!("/milestones/{milestone}"),
+                json!({"expected_version": 0, "name": "Mine"}),
+            ),
+            (
+                "DELETE",
+                format!("/milestones/{milestone}?expected_version=0"),
+                Value::Null,
+            ),
+            (
+                "POST",
+                "/milestones/reorder".to_owned(),
+                json!({"items": [{"id": milestone, "expected_version": 0, "position": 3}]}),
+            ),
+            ("GET", "/cycles".to_owned(), Value::Null),
+            (
+                "POST",
+                "/cycles".to_owned(),
+                json!({"starts_at": "2026-12-01T00:00:00Z", "ends_at": "2026-12-15T00:00:00Z"}),
+            ),
+            (
+                "PATCH",
+                format!("/cycles/{cycle}"),
+                json!({"expected_version": 0, "name": "Mine"}),
+            ),
+            (
+                "DELETE",
+                format!("/cycles/{cycle}?expected_version=0"),
+                Value::Null,
+            ),
+            (
+                "POST",
+                format!("/cycles/{cycle}/move-unfinished"),
+                json!({}),
+            ),
+        ] {
+            let status = server.status(session, method, &plan(&suffix), body).await;
+            // The project is missing for Bob; a guest has no task access at all.
+            let refused = if session == world.bob {
+                status == 404
+            } else {
+                matches!(status, 403 | 404)
+            };
+            assert!(refused, "{method} {suffix}: {status}");
+        }
+    }
+
+    // A task Bob sees cannot point at the hidden milestone or cycle.
+    let open = world.task(&world.bob, false, json!({"title": "Open"})).await;
+    let version = world.get_task(&world.bob, &open).await["version"].clone();
+    for field in ["milestone_id", "cycle_id"] {
+        let target = if field == "milestone_id" { &milestone } else { &cycle };
+        let status = server
+            .status(
+                &world.bob,
+                "PATCH",
+                &world.path(&format!("/tasks/{open}")),
+                json!({"expected_version": version, field: target}),
+            )
+            .await;
+        assert!(!(200..300).contains(&status), "{field}: {status}");
+    }
+    let task = world.get_task(&world.bob, &open).await;
+    assert_eq!((&task["milestone_id"], &task["cycle_id"]), (&Value::Null, &Value::Null));
+
+    // The project's people see the progress, and a moved task stays counted as carried over.
+    let milestones = server.get(alice, &plan("/milestones")).await;
+    assert_eq!(milestones["items"][0]["task_count"], 1);
+    assert_eq!(milestones["items"][0]["estimate_total"], 3);
+    let moved = server
+        .ok(
+            alice,
+            "POST",
+            &plan(&format!("/cycles/{cycle}/move-unfinished")),
+            json!({}),
+        )
+        .await;
+    assert_eq!(moved["moved"], 1);
+    let cycles = server.get(&world.admin, &plan("/cycles")).await;
+    assert_eq!(cycles["items"][0]["task_count"], 0);
+    assert_eq!(cycles["items"][0]["carried_over_count"], 1);
+    assert_eq!(cycles["items"][1]["task_count"], 1);
+    world.server.stop().await;
+}

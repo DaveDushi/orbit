@@ -431,6 +431,12 @@ fn body_for(operation: &str, records: &Records) -> Option<Value> {
         "bulk_tasks" => json!({"updates": [{"id": id("task_id"), "expected_version": 0}]}),
         "create_task_relation" => json!({"type": "blocks", "task_id": id("other_task_id")}),
         "put_project_order" => json!({"project_ids": []}),
+        "create_cycle" => {
+            json!({"starts_at": "2027-01-01T00:00:00Z", "ends_at": "2027-01-15T00:00:00Z"})
+        }
+        "reorder_milestones" => {
+            json!({"items": [{"id": id("milestone_id"), "expected_version": 0, "position": 1}]})
+        }
         _ => return None,
     })
 }
@@ -606,6 +612,26 @@ async fn a_guest_reaches_only_chat() {
                 "POST",
                 &format!("{base}/projects/{project}/labels"),
                 json!({"name": "Secret", "color": "#336699"}),
+            )
+            .await,
+    );
+    let milestone = id_of(
+        &server
+            .ok(
+                &owner,
+                "POST",
+                &format!("{base}/projects/{project}/milestones"),
+                json!({"name": "Secret milestone"}),
+            )
+            .await,
+    );
+    let cycle = id_of(
+        &server
+            .ok(
+                &owner,
+                "POST",
+                &format!("{base}/projects/{project}/cycles"),
+                json!({"starts_at": "2026-01-01T00:00:00Z", "ends_at": "2026-01-15T00:00:00Z"}),
             )
             .await,
     );
@@ -835,6 +861,8 @@ async fn a_guest_reaches_only_chat() {
             ("label_id", label.clone()),
             ("label_ids", label),
             ("rule_id", rule),
+            ("milestone_id", milestone),
+            ("cycle_id", cycle),
             ("teamspace_id", teamspace),
             ("page_id", page.clone()),
             ("parent_id", page),
