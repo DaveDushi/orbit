@@ -140,6 +140,20 @@ Core files: server `repositories/tasks/milestones.rs`, `repositories/tasks/cycle
 - Moving a task to another project keeps the milestone only when that project has one with the same name, and always
   clears the cycle. Recurrence keeps the milestone and estimate, not the cycle.
 
+### Linked docs
+
+- "Add doc" (task detail, beside Add relation and Add sub-issue; also on mobile) links Docs pages to a task
+  (`task_doc_links`, migration 20261114000100; `repositories/task_doc_links.rs`). The task's "Docs" list and the page's
+  "Linked tasks" (under its title) show only what the reader sees: pages in a teamspace or their own private space,
+  live tasks in projects they see. Any non-guest member who sees both may link or unlink; guests reach neither side.
+- Link and unlink are `task.doc_linked` / `task.doc_unlinked` audit events on the task with only the page id; the
+  task activity adds `page_title` for readers who see the page. A trashed page or task hides the link until restore;
+  a hard delete of either side removes it (FK cascade).
+- Routes: `GET/POST /tasks/{id}/linked-docs`, `DELETE /tasks/{id}/linked-docs/{page_id}`,
+  `GET /pages/{id}/linked-tasks`. Donna: `link_doc_to_task`, `unlink_doc_from_task`, `linked_docs` in `get_task`,
+  `linked_tasks` in `read_page`. Not in the public API or MCP (task relations are not there either) and not in the
+  workspace export.
+
 ### Project workflows
 
 - Statuses are per-project entities, not a fixed enum.
