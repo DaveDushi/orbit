@@ -268,6 +268,42 @@ routes), `inputs.rs` (`record`, `agent_thread_key`), `scope.rs`, `routes.rs` (`r
 - **Open.** Reminders made through a custom agent still come from the default agent. Mobile has no Agents or
   answer-level settings yet (agents show in chat like members).
 
+## Task runs
+
+Status: built on branch `agent-assigned-tasks` (2026-11-14). Code: `apps/server/src/agent/task_runs.rs` (triggers,
+queue, start, stop, comment), hooks in `repositories/tasks.rs` (`create_task`, `update_task_in_tx`, `create_comment`,
+`trash_in_tx`, `delete_project`), migration `20261114000300_agent_task_runs`, `apps/agent/src/agent.ts` (`taskText`, `#stop`, the comment
+in `#finishRun`). User docs: `docs/agent.md`, "Tasks for agents".
+
+- **T1. Driver.** The person who assigned the task, or wrote the comment that mentions the agent (or comments on a
+  task assigned to it). Like a routine run (R1), the run is an `agent_inputs` row of kind `instruction` with
+  `author_id` = driver and no chat message of its own; its id is the `agent_task_runs` id. Orbit posts its header as
+  the agent in the driver's DM with the agent (nonce `agent:<run id>`, which the sidecar's progress message finds),
+  so sessions, approvals (bound to the driver and that thread), questions and the ChatGPT payer are exactly as in
+  chat. The driver must see the task (every member who sees a task may edit it); guests see none.
+- **T2. Output.** The progress and the result go into one task comment written as the agent through the internal
+  API (`task_runs::write_comment`, the task repository with the agent's bot as author), never through the driver's
+  session. The DM thread keeps the conversation (answers, approvals); a later run there writes its result into the
+  same comment.
+- **T3. No loops.** Triggers run in the write's transaction and start nothing when the author is an agent's bot, the
+  write came through an agent session (`TaskRepository::with_agent_session`, set by `task_routes` from the
+  `orbit-agent.` bearer) or a service-account token. Label rules do not start runs (an admin's rule would make a
+  member's label change spend that member's ChatGPT).
+- **T4. One run per task.** A partial unique index (`status = 'running'`) and a claim (compare-and-set in an
+  immediate transaction) hold it on every server. Later triggers queue; one by the same driver for the same agent
+  joins its queued run. `task_runs::start_queued` runs on each sidecar poll (`GET …/inputs`), so nothing starts while
+  the agent service is off, and checks the run again before it starts. A thread reported idle or waiting ends its run
+  (`thread_reported`), so a run that waits for an answer does not block the task.
+- **T5. Stop.** Unassign or delete cancels in the same transaction: input acknowledged, thread idle, the driver's
+  sessions with that agent deleted (their other runs get a new session on the next call), and a cancelled run's
+  thread stays idle whatever the sidecar reports, so no new session is issued. The sidecar gets `stops` in each poll,
+  aborts the Pi conversation (`conversation.abort`), writes "Stopped" into the comment and calls
+  `POST …/task-runs/{id}/stopped`.
+- **T6. Injection.** The task's title, description and other people's comments are data (read with `get_task`); only
+  the driver's own comment is the instruction. The blast radius stays the driver's access.
+- **Open.** The phone and web apps show no "agent is working" state on the task (the DM header and the comment show
+  it). Restoring a task from the trash does not restart a cancelled run.
+
 ## Memory
 
 Status: built on branch `agent-memory` (2026-10-29). The design follows OptMem
