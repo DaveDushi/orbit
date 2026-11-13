@@ -7,12 +7,15 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 08067fd60edb10a7ac8ab7e47bb069c06dab27d7
-  (iPhone app server part; schema 20261113042745; November 13, 2026).
+- Source: DaveDushi/orbit, `main` at f14e780723e26fbb9f0a931d18b15dc80c572384
+  (`ORBIT_PUBLIC_HOOKS_URL`; schema 20261113042745; November 13, 2026).
+- Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
+  (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
+  f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:08067fd`); fork commits have no published upstream image.
-- Image ID: sha256:03607bceb24903bb2bbf3a66959937d3e2e4e504fd4fc6363bb5ef2958868bdf
-- Team agent sidecar code (`/opt/orbit-agent`): commit 08067fd.
+  (`orbit:f14e780`); fork commits have no published upstream image.
+- Image ID: sha256:abda8967f005b235cb4dc39e03a7f2e615777a74726973017cb9ead83f7cfbd8
+- Team agent sidecar code (`/opt/orbit-agent`): commit f14e780.
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): off. No `ORBIT_APNS_*` setting is in `/etc/orbit/orbit.env`
   yet, so Orbit keeps the iPhones' device rows and sends them nothing (no log line). To turn it on, put the team's `.p8`
   key on the VM (owner `orbit`, mode 600), set `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID` (and
@@ -259,6 +262,66 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 13, 2026 upgrade: public hooks URL (`ORBIT_PUBLIC_HOOKS_URL`, no migration)
+
+`main` from `c6c03fc5` to `f14e7807` (local, not pushed): `public-hooks-url` (`88756016`, on an older main)
+cherry-picked onto main. Conflict only in `whats-new.md`: the branch's own `2026-11-13` entry was folded into today's
+entry, still 4 lines (one sentence added to line 4: webhook URLs start with https://orbit-hooks.easytomanage.com, no
+login; for an older webhook change only the start of its URL). `aboutOrbit()` keeps the branch's hooks sentence under
+"Chat" (Incoming webhooks). New setting `ORBIT_PUBLIC_HOOKS_URL`: origin of the incoming webhook URL, the "Try it"
+command and each click's `response_url`; unset = `ORBIT_PUBLIC_ORIGIN`; a trailing slash is trimmed, a path or query is
+refused at startup; `orbit config show` prints it. Webhook **bots'** reply URLs still use `ORBIT_PUBLIC_ORIGIN`.
+
+Checks on merged `main` (through `orbit-build`, `CARGO_PROFILE_*_DEBUG=0`): platform `config::` unit tests (5 pass);
+`public_hooks_url` (2), `webhook_bots` (9), `openapi_contract` (19), `app_smoke` (21) on SQLite; `public_hooks_url` and
+`webhook_bots` again with `ORBIT_TEST_POSTGRES_URL`; agent `tsc` and `npm test` with Node 24 (80 pass, 11 skipped, 0 fail).
+
+Deploy id `20261113T063711Z-107115`. `orbit:f14e780` (image
+`sha256:abda8967f005b235cb4dc39e03a7f2e615777a74726973017cb9ead83f7cfbd8`, waited for the build lock behind
+`upstream-port2`); `deploy/smoke.sh` passed. `orbit config check` / `config show` of the new binary with the production env
+plus the new key: valid, `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`; with `https://x.example/api`
+refused; the old binary refuses the key ("unknown Orbit environment setting"). Scripts: `/root/ops/public-hooks/`.
+
+Switch: stopped both services at 08:05:17 UTC; snapshot `01a1d3f0-85dc-73c7-ba6e-4f293864e460` with
+`/usr/local/bin/orbit-08067fd` and the old env, verified; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-f14e780.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-f14e780.tgz`; old sidecar code `/opt/orbit-agent.before-f14e780`; new
+sidecar `src` (`package*.json` unchanged); env copy `/etc/orbit/orbit.env.before-hooks`, then the key added; binary
+installed (`/usr/local/bin/orbit-f14e780` too); `orbit` ready 08:05:37, then `orbit-agent`. `vm-health.conf` (old copy
+`.before-f14e780`): `PROD_TAG=f14e780`, `ROLLBACK_TAG=08067fd`, `ROLLBACK_BACKUP=01a1d3f0-85dc-73c7-ba6e-4f293864e460`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) and `/health/live` 200; revision
+`f14e7807`; schema 20261113042745 (101 rows, unchanged); 0 error lines in the journal (only the known "allowed origin
+without a port" WARN); sidecar `/health` ok and `src` equal to `main`. Webhook URL: with a temporary v7 session (David
+Dusi) a temporary webhook in `#orbit-updates` was created by the API; its URL was
+`https://orbit-hooks.easytomanage.com/api/v1/hooks/chat/<id>/<secret>`. Through the public hooks host: a wrong secret
+of the same shape gave Orbit's 404 `webhook_not_found` (problem+json), the real URL with `{}` gave 422 (nothing posted;
+a secret of another shape gets the gateway's own HTML 404). The webhook was deleted by the API (204) and its revoked row
+removed; 0 new messages in `#orbit-updates`. `ORBIT_VERIFY_SPA=1 verify-production.sh` passed (signed out `/` →
+`/login`, signed in `/` and `/tasks`, 0 console or page errors; session logged out, the row deleted after: 46 sessions,
+as before). `vm-health` OK except oom (3 lines from 03:06 UTC, an earlier build), nginx (20 lines, upstream refused
+08:05:18, the start window) and git-owner (root-owned files in `.git`). **Not** verified: a real outside tool posting a
+message, and a button click's `response_url` on production.
+
+Rollback to `08067fd` (no migration; the env file must go back too, the old binary refuses the new key):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo cp -a /etc/orbit/orbit.env.before-hooks /etc/orbit/orbit.env
+sudo install -m 755 /usr/local/bin/orbit-08067fd /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-f14e780 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/public-hooks/rollback.sh)
+# Data, only if needed (work after 08:05 UTC is lost), Orbit stopped: /usr/local/bin/orbit-08067fd backup verify +
+#   backup restore 01a1d3f0-85dc-73c7-ba6e-4f293864e460 (as user orbit, with the old /etc/orbit/orbit.env)
+```
+
+After this rollback, set `PROD_TAG=08067fd`, `ROLLBACK_TAG=c5735ed`,
+`ROLLBACK_BACKUP=01a1d39c-33ee-7608-a91e-264705f889f3` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-f14e780`). Old webhook URLs on `orbit.easytomanage.com` keep working behind the login;
+URLs on the hooks host also work after a rollback (same path), but new ones show the login origin again.
 
 ### November 13, 2026 upgrade: iPhone app server part, APNs push and Ask Donna for the phone (schema 20261113042745)
 
