@@ -2,10 +2,10 @@ import * as DocumentPicker from 'expo-document-picker'
 import { useState } from 'react'
 import { Image, View } from 'react-native'
 
+import { Emoji } from '../../../components/chat/EmojiPicker'
 import { ConfirmDialog, type ConfirmRequest } from '../../../components/settings/Dialog'
 import { Note, RowText, SettingsCard, SettingsRow, SettingsShell, WORKSPACE_NAV } from '../../../components/settings/Shell'
 import { EMOJI_IMAGE_TYPES, EMOJI_LIMIT, emojiNameFromFile, emojiProblem, emojiServerProblem } from '../../../data/emoji'
-import { absoluteUrl } from '../../../data/docs'
 import { shortDate } from '../../../data/format'
 import { useEmojiGroups } from '../../../hooks/chat'
 import { useCustomEmojiList, useEmojiWrites } from '../../../hooks/settings'
@@ -26,7 +26,7 @@ interface Picked {
  * only (`chat.manage`); the nav hides it from the others and the server refuses them anyway.
  */
 export default function EmojiScreen() {
-  const { session, workspace } = useOrbit()
+  const { workspace } = useOrbit()
   // a standard emoji keeps its name (`:joy:`)
   const standard = useEmojiGroups()
   const canManage = workspace.permissions.includes('chat.manage')
@@ -109,7 +109,7 @@ export default function EmojiScreen() {
             {list.map((entry, index) => (
               <SettingsRow key={entry.id} first={index === 0}>
                 <View className="size-9 rounded-md bg-muted items-center justify-center">
-                  <Image accessibilityLabel={`:${entry.name}:`} source={{ uri: absoluteUrl(session.server, entry.url), headers: { Authorization: `Bearer ${session.token}` } }} style={{ width: 24, height: 24 }} resizeMode="contain" />
+                  <Emoji value={`:${entry.name}:`} size={24} />
                 </View>
                 <RowText title={`:${entry.name}:`} subtitle={`Added by ${memberNames.get(entry.created_by) ?? 'a former member'} · ${shortDate(entry.created_at)}`} />
                 <Button

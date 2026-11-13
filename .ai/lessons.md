@@ -15,6 +15,8 @@
 - `bun run api:generate` (`just api`) runs `openapi-ts` on the system Node and fails on Node 18 after it has emptied `packages/api/src/generated`. Run it with `PATH=/root/.local/node/bin:$PATH bun --bun run api:generate`, and regenerate `openapi.json` first (`target/debug/orbit openapi --output …`) if the failed run deleted it.
 
 - Screenshots of the Expo web build against a test instance: serve `expo export --platform web` and `/api` from one origin (a small Bun proxy), and start Chromium with `--disable-web-security`. Without it the login has a matching `Origin`, so the server sets a cookie and returns no session token, and presigned S3 PUTs fail on CORS. Drive in a test instance needs the installation bucket (Admin → Storage, any URL); a workspace bucket must be public `https` (2026-11-13).
+- React Native Web's `Image` ignores `source.headers`, so images that need the bearer token (custom emoji, profile pictures) stay empty in the Expo web preview; iOS sends the header. Do not "fix" such blank tiles from a web screenshot (2026-11-13).
+- `expo prebuild` (an EAS-style check) rewrites `apps/mobile/package.json` scripts to `expo run:*`: restore them, and delete the generated `ios/` after the check (2026-11-13).
 
 ## Two database backends (SQLite + Postgres)
 - All SQL goes through sqlx `Any`: write `$1, $2, …` (SQLite binds them by number too), import `orbit_platform::Row` (not `sqlx::Row`) so 0/1 flags decode as `bool`, decode boolean scalars as `Flag`, bind `i64` (never `bool`/`u32`), and build dynamic SQL with `SqlBuilder`. SQLite silently ignores extra bound values, so clashing `$N` numbers in `format!`-glued fragments only fail on Postgres.
