@@ -2080,6 +2080,11 @@ export type InvitationPreview = {
      */
     channels: Array<string>;
     email: string;
+    /**
+     * The workspace logo as a `data:` URL (the invitee is not a member yet, so it cannot load the logo URL);
+     * absent while the workspace has none.
+     */
+    workspace_logo?: string | null;
     workspace_name: string;
 };
 
@@ -4930,12 +4935,12 @@ export type StorageFile = {
 export type StorageFileUse = {
     kind: StorageFileUseKind;
     /**
-     * The task title, page title or channel name; `null` for emoji, stickers and private places.
+     * The task title, page title or channel name; `null` for emoji, stickers, the logo and private places.
      */
     title?: string | null;
 };
 
-export type StorageFileUseKind = 'task' | 'page' | 'channel' | 'emoji' | 'sticker' | 'private';
+export type StorageFileUseKind = 'task' | 'page' | 'channel' | 'emoji' | 'sticker' | 'logo' | 'private';
 
 export type StorageOptionsBody = {
     /**
@@ -5665,6 +5670,10 @@ export type WorkspaceProblem = {
 export type WorkspaceRecord = {
     deleted_at?: string | null;
     id: string;
+    /**
+     * The workspace logo (a square PNG, JPEG or WebP); absent while it has none.
+     */
+    logo_url?: string | null;
     name: string;
     /**
      * What the caller's role may do in this workspace.
@@ -18948,6 +18957,180 @@ export type ListLabelsResponses = {
 };
 
 export type ListLabelsResponse = ListLabelsResponses[keyof ListLabelsResponses];
+
+export type RemoveWorkspaceLogoData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/logo';
+};
+
+export type RemoveWorkspaceLogoErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * workspace_resource_not_found
+     */
+    404: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type RemoveWorkspaceLogoError = RemoveWorkspaceLogoErrors[keyof RemoveWorkspaceLogoErrors];
+
+export type RemoveWorkspaceLogoResponses = {
+    200: WorkspaceRecord;
+};
+
+export type RemoveWorkspaceLogoResponse = RemoveWorkspaceLogoResponses[keyof RemoveWorkspaceLogoResponses];
+
+export type GetWorkspaceLogoData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/logo';
+};
+
+export type GetWorkspaceLogoErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * workspace_resource_not_found
+     */
+    404: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type GetWorkspaceLogoError = GetWorkspaceLogoErrors[keyof GetWorkspaceLogoErrors];
+
+export type GetWorkspaceLogoResponses = {
+    200: AvatarImage;
+};
+
+export type GetWorkspaceLogoResponse = GetWorkspaceLogoResponses[keyof GetWorkspaceLogoResponses];
+
+export type UploadWorkspaceLogoData = {
+    body: AvatarUploadBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/logo';
+};
+
+export type UploadWorkspaceLogoErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * workspace_resource_not_found
+     */
+    404: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * invalid_logo
+     */
+    422: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type UploadWorkspaceLogoError = UploadWorkspaceLogoErrors[keyof UploadWorkspaceLogoErrors];
+
+export type UploadWorkspaceLogoResponses = {
+    200: WorkspaceRecord;
+};
+
+export type UploadWorkspaceLogoResponse = UploadWorkspaceLogoResponses[keyof UploadWorkspaceLogoResponses];
 
 export type ListMembersData = {
     body?: never;
