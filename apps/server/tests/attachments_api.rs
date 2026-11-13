@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use axum::body::{Body, Bytes, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use orbit_platform::{
-    AttachmentMutationCoordinator, AuthenticatedUser, HttpLimits, HttpPlatformLayer, Id,
+    AttachmentMutationCoordinator, AuthenticatedUser, BlobStore, HttpLimits, HttpPlatformLayer, Id,
     LocalBlobStore, OriginPolicy, PasswordService, TestDatabase, TimestampMillis, UploadError,
     UploadLimits, UploadService,
 };
@@ -1756,4 +1756,36 @@ async fn wait_until_read<T>(sender: &tokio::sync::mpsc::Sender<T>) {
         );
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
+}
+
+#[tokio::test]
+async fn a_profile_picture_whose_file_is_gone_is_removed() {
+    let fixture = Fixture::new(UploadLimits::default()).await;
+    let owner: Id = fixture.owner_id.parse().unwrap();
+    fixture
+        .identity
+        .set_avatar_audited(&fixture.uploads, owner, "image/png", PNG, "test", TimestampMillis::now())
+        .await
+        .unwrap();
+    let avatar = fixture.identity.avatar(&fixture.uploads, owner, owner).await.unwrap();
+    assert_eq!(avatar.unwrap().bytes, PNG);
+
+    // The file is deleted by hand, as from a bucket: the picture goes, so the app shows initials.
+    let storage_key: String = sqlx::query_scalar(
+        "SELECT b.storage_key FROM user_avatars a JOIN attachment_blobs b ON b.id = a.blob_id \
+         WHERE a.user_id = $1",
+    )
+    .bind(&fixture.owner_id)
+    .fetch_one(fixture.database.pool())
+    .await
+    .unwrap();
+    fixture.store.delete(&storage_key).await.unwrap();
+    let avatar = fixture.identity.avatar(&fixture.uploads, owner, owner).await.unwrap();
+    assert!(avatar.is_none());
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_avatars WHERE user_id = $1")
+        .bind(&fixture.owner_id)
+        .fetch_one(fixture.database.pool())
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
 }
