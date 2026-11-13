@@ -8,12 +8,13 @@ import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Separator } from '@/components/ui/separator'
 import { Tip } from '@/components/common/Tip'
+import { WorkspaceLogo } from '@/components/common/WorkspaceLogo'
 import { useCreateWorkspace } from '@/features/workspaces/api'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 
 /** The panel is a Popover rather than a DropdownMenu: picking a workspace swaps the
     panel for a "create workspace" form, and a menu's typeahead would swallow typing. */
-export function WorkspaceSwitcher({ collapsed = false, topbar = false }: { collapsed?: boolean; /** The phone top bar's look: initial badge, name and an up/down chevron. */ topbar?: boolean }) {
+export function WorkspaceSwitcher({ collapsed = false, topbar = false }: { collapsed?: boolean; /** The phone top bar's look: logo (or initial badge), name and an up/down chevron. */ topbar?: boolean }) {
   const { workspace } = useWorkspace()
   const createWorkspace = useCreateWorkspace()
   const [open, setOpen] = useState(false)
@@ -24,7 +25,7 @@ export function WorkspaceSwitcher({ collapsed = false, topbar = false }: { colla
         <PopoverTrigger
           render={<Button variant="ghost" className="-ml-1 h-8 min-w-0 justify-start gap-1.5 rounded-lg px-2" aria-label={`Workspace: ${workspace.name}`} />}
         >
-          <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-muted text-[11px] font-semibold text-muted-foreground">{workspace.name.charAt(0).toUpperCase()}</span>
+          <WorkspaceLogo workspace={workspace} />
           <span className="truncate text-[13px] font-semibold text-foreground">{workspace.name}</span>
           <ChevronExpandY className="size-4 shrink-0 text-muted-foreground/70" />
         </PopoverTrigger>
@@ -35,7 +36,8 @@ export function WorkspaceSwitcher({ collapsed = false, topbar = false }: { colla
             <Button variant="ghost" className="h-auto min-w-0 shrink items-baseline justify-start gap-[7px] rounded-none border-0 p-0 hover:bg-transparent aria-expanded:bg-transparent dark:hover:bg-transparent" aria-label={`Workspace: ${workspace.name}`} />
           }
         >
-          <span className="truncate text-[17px] font-bold tracking-[-0.02em] text-foreground">{collapsed ? workspace.name.charAt(0) : workspace.name}</span>
+          {workspace.logo_url ? <WorkspaceLogo workspace={workspace} className="self-center" /> : null}
+          {collapsed && workspace.logo_url ? null : <span className="truncate text-[17px] font-bold tracking-[-0.02em] text-foreground">{collapsed ? workspace.name.charAt(0) : workspace.name}</span>}
           {!collapsed ? <ChevronDown className="size-[13px] shrink-0 text-muted-foreground/70" /> : null}
         </PopoverTrigger>
       </Tip>
@@ -89,6 +91,7 @@ function WorkspaceMenu({ onSelect, createWorkspace }: { onSelect: () => void; cr
         aria-current={item.id === workspace.id ? 'true' : undefined}
         onClick={() => { selectWorkspace(item.id); onSelect() }}
       >
+        <WorkspaceLogo workspace={item} />
         {item.name}
       </WorkspaceOption>
     ))}

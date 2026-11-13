@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router'
 import { createApiClient } from '@/api/client'
 import { queryKeys } from '@/api/queryKeys'
 import { Button } from '@/components/ui/button'
+import { WorkspaceLogo } from '@/components/common/WorkspaceLogo'
 import { ApiProblem } from '@orbit/api/problem'
 import { currentUserQueryOptions, isTwoFactorChallenge, useLogin, useLoginSecondFactor, useLogout } from '@/features/auth/api'
 import { AuthForm, AuthInput } from '@/features/auth/components/AuthForm'
@@ -35,11 +36,12 @@ export function AcceptInvitationPage() {
   if (user.isError) return <AuthMessage title="Orbit is unavailable" detail="The server could not verify this session. Try reopening the invitation." />
   if (!invitation.data || user.isPending) return <AuthMessage title="Loading invitation" detail="Checking the invitation and your session." />
 
-  const { email, workspace_name: workspaceName } = invitation.data
+  const { email, workspace_name: workspaceName, workspace_logo: workspaceLogo } = invitation.data
   const mismatch = !!user.data && user.data.email.trim().toLowerCase() !== email.trim().toLowerCase()
   const pending = accept.isPending || login.isPending || secondFactor.isPending || logout.isPending
   return (
     <AuthForm
+      icon={<WorkspaceLogo workspace={{ name: workspaceName, logo_url: workspaceLogo }} size={48} />}
       title={`Join ${workspaceName}`}
       error={accept.error || login.error || secondFactor.error || logout.error}
       pending={pending}

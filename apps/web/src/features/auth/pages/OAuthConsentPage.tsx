@@ -6,6 +6,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { LoadingScreen } from '@/components/common/LoadingScreen'
+import { WorkspaceLogo } from '@/components/common/WorkspaceLogo'
 import { AccessPicker, ProjectPicker, type ScopeResource } from '@/components/common/ScopeAccess'
 import { AuthBrand, AuthCard } from '@/features/auth/components/AuthForm'
 import { currentUserQueryOptions } from '@/features/auth/api'
@@ -47,6 +48,7 @@ export function OAuthConsentPage() {
   const workspaces = consent.data?.workspaces ?? []
   // A single workspace needs no picker.
   const workspace = workspaces.length === 1 ? workspaces[0].id : pickedWorkspace
+  const chosen = workspaces.find(({ id }) => id === workspace)
   const approve = useMutation({
     mutationFn: async (approved: boolean) => {
       const result = await oauthRequest<{ redirect_uri: string }>(`/api/v1/oauth/consent/${encodeURIComponent(request)}`, {
@@ -86,9 +88,9 @@ export function OAuthConsentPage() {
       <p><strong>{consent.data.client_name}</strong> wants to connect to the workspace and projects you select.</p>
       <p className="text-sm text-muted-foreground">Signed in as {user.data?.display_name}.</p>
       {workspaces.length > 1 ? <Label>Workspace<Select value={workspace} onValueChange={(value) => { setWorkspace(value ?? ''); setSelected([]) }}>
-        <SelectTrigger><SelectValue placeholder="Select a workspace">{workspaces.find(({ id }) => id === workspace)?.name ?? 'Select a workspace'}</SelectValue></SelectTrigger>
-        <SelectContent>{workspaces.map(({ id, name }) => <SelectItem key={id} value={id}>{name}</SelectItem>)}</SelectContent>
-      </Select></Label> : workspaces.length ? <p className="text-sm">Workspace: <strong>{workspaces[0].name}</strong></p> : <p className="text-sm text-muted-foreground">No workspaces available. Create a workspace in Orbit, then restart the connection.</p>}
+        <SelectTrigger><SelectValue placeholder="Select a workspace">{chosen ? <><WorkspaceLogo workspace={chosen} />{chosen.name}</> : 'Select a workspace'}</SelectValue></SelectTrigger>
+        <SelectContent>{workspaces.map((item) => <SelectItem key={item.id} value={item.id}><WorkspaceLogo workspace={item} />{item.name}</SelectItem>)}</SelectContent>
+      </Select></Label> : workspaces.length ? <p className="flex items-center gap-2 text-sm">Workspace: <WorkspaceLogo workspace={workspaces[0]} /><strong>{workspaces[0].name}</strong></p> : <p className="text-sm text-muted-foreground">No workspaces available. Create a workspace in Orbit, then restart the connection.</p>}
       {workspaces.length ? <AccessPicker id="consent-access" resources={RESOURCES.map((resource) => resource.name === 'Tasks' ? { ...resource, details: <ProjectPicker id="consent-projects" projects={workspaceProjects} selected={selected} onChange={setSelected} all={allProjects} onAllChange={setAllProjects} empty={workspace && !workspaceProjects.length ? 'No projects available.' : undefined} /> } : resource)} scopes={scopes} onChange={setScopes} /> : null}
       {workspaces.length ? <div className="grid gap-2">
         <Label className="flex items-center gap-2">

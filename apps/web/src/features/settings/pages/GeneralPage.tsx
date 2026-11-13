@@ -1,9 +1,12 @@
 import { useRef, useState } from 'react'
+import { ApiProblem } from '@orbit/api/problem'
 import { UnsavedBar } from '@/components/common/UnsavedBar'
 import { Button } from '@/components/ui/button'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { useRenameWorkspace } from '@/features/workspaces/api'
+import { WorkspaceLogo } from '@/components/common/WorkspaceLogo'
+import { avatarImage } from '@/features/profile/avatarImage'
+import { useRenameWorkspace, useSetWorkspaceLogo } from '@/features/workspaces/api'
 import { useCan } from '@/features/workspaces/permissions'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import { SettingsCard } from '@/components/common/SettingsCard'
@@ -31,7 +34,8 @@ export function GeneralPage() {
 
   return (
     <>
-      {canRename ? <SettingsCard title="Workspace" description="Rename this workspace.">
+      {canRename ? <SettingsCard title="Workspace" description="The name and logo of this workspace.">
+        <LogoField />
         <form ref={formRef} onSubmit={(event) => { event.preventDefault(); saveWorkspace() }}>
           <FieldGrid>
             <Field><FieldLabel htmlFor="workspace-name">Name</FieldLabel><Input id="workspace-name" required disabled={renameSlow} value={name} onChange={(event) => setNameDraft({ workspaceId: workspace.id, value: event.target.value })} /></Field>
@@ -50,5 +54,63 @@ export function GeneralPage() {
         />
       ) : null}
     </>
+  )
+}
+
+/** The workspace logo with upload and remove, for owners and admins. The image is cropped to a square and scaled in
+    the browser first, like a profile picture. */
+function LogoField() {
+  const { workspace } = useWorkspace()
+  const setLogo = useSetWorkspaceLogo(workspace.id)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [readError, setReadError] = useState<string | null>(null)
+
+  const pick = async (file: File | undefined) => {
+    if (!file) return
+    setReadError(null)
+    setLogo.reset()
+    let image: Blob
+    try {
+      image = await avatarImage(file)
+    } catch {
+      setReadError('This image could not be read. Use a PNG, JPEG or WebP file.')
+      return
+    }
+    setLogo.mutate(image)
+  }
+
+  const error = readError ?? (setLogo.isError ? (setLogo.error instanceof ApiProblem ? setLogo.error.detail : 'The logo could not be saved.') : null)
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-4">
+      <WorkspaceLogo workspace={workspace} size={64} />
+      <div className="flex min-w-0 flex-col gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" disabled={setLogo.isPending} onClick={() => inputRef.current?.click()}>
+            {setLogo.isPending ? 'Saving…' : workspace.logo_url ? 'Change logo' : 'Upload logo'}
+          </Button>
+          {workspace.logo_url ? (
+            <Button type="button" variant="ghost" disabled={setLogo.isPending} onClick={() => setLogo.mutate(null)}>
+              Remove
+            </Button>
+          ) : null}
+        </div>
+        {error ? (
+          <p className="text-xs text-destructive" role="alert">{error}</p>
+        ) : (
+          <p className="text-xs text-muted-foreground">PNG, JPEG or WebP, cropped to a square. Everyone in this workspace sees it.</p>
+        )}
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        className="hidden"
+        aria-label="Workspace logo"
+        onChange={(event) => {
+          void pick(event.target.files?.[0])
+          event.target.value = ''
+        }}
+      />
+    </div>
   )
 }
