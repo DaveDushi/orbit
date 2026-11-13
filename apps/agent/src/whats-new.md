@@ -6,6 +6,10 @@ build: "## YYYY-MM-DD" (the deploy date), then 1-4 short "- " lines about what p
 members, not developers. Keep the 8 newest entries; the prompt shows the 5 newest.
 -->
 
+## 2026-11-14
+- MCP and API: one OAuth connection (for example Claude or Codex) can now cover several workspaces, each with its own projects; tick them on the consent page. The public API can move docs, put them in the trash and list their versions, filters tasks by due date, and makes a retried task or comment create safe with an Idempotency-Key.
+- Admin → Storage: turning "Files in S3" on or off now says when the move is done, and "Keep deleted files in S3" sets how many days (1 to 365, default 40) a deleted file stays in the bucket.
+
 ## 2026-11-13
 - Orbit for iPhone (beta, by TestFlight invitation): Home, Tasks, Docs, Chat, Activity, phone notifications and an "Ask Donna…" bar.
 - Tasks: make a project private (Project settings → Access), set Repeat under Due date, drag projects in the sidebar into your own order, and search the trash (owners and admins can delete forever). Type # anywhere to link a task. Images and files in a new task's description are now saved with it. Projects can have milestones and cycles (Project settings), and a task can have an estimate in points; each shows its progress, and "Move unfinished tasks to next cycle" keeps the moved tasks counted as carried over.
