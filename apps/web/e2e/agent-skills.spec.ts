@@ -118,7 +118,7 @@ test.describe('agent skills', () => {
     await expect(async () => {
       const thread = await api(page, 'GET', `/api/v1/workspaces/${workspaceId}/chat/threads/${root}`)
       prompt = ((thread.body as { items: { body: string }[] }).items ?? []).map((item) => item.body).join('\n')
-      expect(prompt).toContain('Skills:')
+      expect(prompt).toContain('</orbit-skills>')
     }).toPass({ timeout: 60_000 })
     expect(prompt).toContain('- weekly-report: Write the weekly status report.')
     expect(prompt).not.toContain('Group them by project')
