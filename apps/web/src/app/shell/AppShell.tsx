@@ -43,6 +43,7 @@ import { useSidebarMenuSurface } from './sidebarMenu'
 import { hostsPageList, SidebarSlotContext } from './sidebarSlot'
 import { AskDonnaBar } from '@/features/askDonna/AskDonnaBar'
 import { useAskDonna } from '@/features/askDonna/useAskDonna'
+import { AskDonnaContext } from '@/features/askDonna/askDonnaContext'
 
 // the chat list and composer load on the first open of the Ask panel
 const AskDonnaPanel = lazy(() => import('@/features/askDonna/AskDonnaPanel'))
@@ -117,6 +118,7 @@ function Shell() {
   const askDonna = useAskDonna()
   const ask = desktop && askDonna?.context ? askDonna : null
   const askConversation = ask?.panel.open ? ask.panel.conversationId : null
+  const askContext = { ask, enabled: askDonna !== null }
 
   useLayoutEffect(() => {
     const viewport = window.visualViewport
@@ -221,7 +223,9 @@ function Shell() {
           <ErrorBoundary resetKey={pathname}>
             {/* a page's code loads on first use (App.tsx); the shell stays while it does */}
             <Suspense fallback={<LoadingScreen />}>
-              <Outlet />
+              <AskDonnaContext value={askContext}>
+                <Outlet />
+              </AskDonnaContext>
             </Suspense>
           </ErrorBoundary>
         </div>

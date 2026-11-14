@@ -145,3 +145,44 @@ export function integrationTool(asDriver: Driver, orbit: () => OrbitClient, untr
 			}),
 	});
 }
+
+type ShopifyImageAnswer =
+	| { status: "ok"; label: string; result: { url: string; shopify_file_id: string; article?: { id: string; placed: string } } }
+	| { status: "approval_required"; approval_id: string; action: string; expires_at: number }
+	| { status: "refused" | "failed"; detail: string };
+
+/**
+ * A Drive image to a Shopify store in one call (`apps/server/src/agent/shopify.rs`): Orbit reads the file as the driver,
+ * uploads it to the store's Files, and can set it as an article's image or add it to the article's body. The bytes never
+ * reach the model. It needs the driver's "yes" each time.
+ */
+export function shopifyImageTool(asDriver: Driver, orbit: () => OrbitClient, untrusted: (label: string, value: unknown) => string) {
+	return defineTool({
+		name: "drive_image_to_shopify",
+		description:
+			"Upload one Drive image (JPEG, PNG, GIF or WebP, at most 16 MiB) to a Shopify store's Files and get its Shopify URL, in one call; never read or send the image yourself. Optionally set it as an article's image (place image) or add it at the end of the article's body (place body). Only when the driver asked for it. It needs the driver's approval each time: then stop, and after their yes call it again with exactly the same arguments.",
+		parameters: Type.Object({
+			integration: Type.String({ minLength: 1, description: "The Shopify integration's name, the part before __ in the integration tools (for example shopify)" }),
+			node_id: Type.String({ description: "The id of the Drive image (from drive_list or drive_search)" }),
+			alt: Type.Optional(Type.String({ maxLength: 512, description: "Alt text of the image" })),
+			article_id: Type.Optional(Type.String({ description: "The article: its number or gid://shopify/Article/<number>" })),
+			place: Type.Optional(Type.Union([Type.Literal("image"), Type.Literal("body")], { description: "With article_id: image sets the article's image; body adds it at the end of the body" })),
+		}),
+		execute: (args, api, context) =>
+			asDriver(api, context, async (as, state) => {
+				const answer = (await as("POST", "/agent-tools/shopify-image", {
+					arguments: Object.fromEntries(Object.entries(args).filter(([, value]) => value !== undefined)),
+					conversation_id: state.conversationId,
+					root_message_id: state.rootMessageId,
+				})) as ShopifyImageAnswer;
+				switch (answer.status) {
+					case "ok":
+						return { output: [{ type: "text", text: untrusted(answer.label, answer.result) }] };
+					case "approval_required":
+						return askForApproval(api, context, orbit(), state, answer, "to send this image to Shopify", "call drive_image_to_shopify again with exactly the same arguments");
+					default:
+						return { output: [{ type: "text", text: `${answer.status === "refused" ? "Refused" : "Failed"}: ${untrusted("shopify", answer.detail)}` }], isError: true };
+				}
+			}),
+	});
+}

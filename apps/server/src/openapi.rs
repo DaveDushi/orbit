@@ -39,6 +39,7 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::auth_routes::push::list_push_subscriptions,
         crate::auth_routes::push::create_push_subscription,
         crate::auth_routes::push::delete_push_subscription,
+        crate::auth_routes::push::get_push_badge,
         crate::auth_routes::push::register_push_device,
         crate::auth_routes::push::unregister_push_device,
         crate::auth_routes::push::send_test_push,
@@ -81,6 +82,8 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::workspace_routes::list_members,
         crate::workspace_routes::get_member_profile,
         crate::workspace_routes::put_member_note,
+        crate::workspace_routes::get_home_layout,
+        crate::workspace_routes::put_home_layout,
         crate::workspace_routes::change_member_role,
         crate::workspace_routes::remove_member,
         crate::workspace_routes::transfer_ownership,
@@ -862,6 +865,13 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
         "put_member_note" => {
             add_code(&mut responses, "404", "workspace_resource_not_found");
             add_code(&mut responses, "422", "invalid_note");
+        }
+        // Home cards: a guest may call both; unknown and not-allowed cards are dropped, not refused.
+        "get_home_layout" => add_code(&mut responses, "404", "workspace_resource_not_found"),
+        "put_home_layout" => {
+            add_code(&mut responses, "400", "invalid_request");
+            add_code(&mut responses, "404", "workspace_resource_not_found");
+            add_code(&mut responses, "422", "invalid_home_layout");
         }
         "change_member_role" | "remove_member" => {
             workspace_resource_errors(&mut responses);

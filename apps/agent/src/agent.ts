@@ -188,6 +188,7 @@ const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
 	work_to_drive: (args) => `Saving “${String(args.name ?? args.path).replaceAll("_", " ")}” to Drive`,
 	// The steps are shown in italics, where `_` would start or end the emphasis.
 	use_integration: (args) => `Using ${String(args.tool).replace("__", " → ").replaceAll("_", " ")}`,
+	drive_image_to_shopify: () => "Sending a Drive image to Shopify",
 };
 
 /**

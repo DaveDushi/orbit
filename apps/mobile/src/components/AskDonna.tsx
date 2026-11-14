@@ -5,11 +5,11 @@
  */
 import { useQueryClient } from '@tanstack/react-query'
 import { router, usePathname } from 'expo-router'
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { KeyboardAvoidingView, Modal, Platform, Pressable, View } from 'react-native'
 
 import { applyChatEvents } from '../chat-cache'
-import { askDonnaAgent, type AskDonnaAgent, clearPageItem, currentPageItem, type PageItemKind, pageContextFor, setPageItem, subscribePageItem } from '../data/ask-donna'
+import { askDonnaAgent, type AskDonnaAgent, clearPageItem, currentPageItem, type PageItemKind, pageContextFor, setPageItem, subscribeAskDonnaRequest, subscribePageItem } from '../data/ask-donna'
 import * as chat from '../data/chat-api'
 import { buildMessageRows } from '../data/chat'
 import { useChatWrite, useMessages } from '../hooks/chat'
@@ -32,7 +32,7 @@ export function usePublishPageItem(kind: PageItemKind, id: string | null | undef
 }
 
 /** The agent the signed-in person can ask here, or `null` (guest, no agent, ChatGPT not connected). */
-function useAskDonnaAgent(): AskDonnaAgent | null {
+export function useAskDonnaAgent(): AskDonnaAgent | null {
   const guest = useIsGuest()
   const status = useAgentStatus(!guest).data
   return askDonnaAgent(status, guest)
@@ -55,10 +55,8 @@ export function AskDonnaBar() {
     if (!agent) setOpen(false)
   }, [agent])
 
-  if (!agent || !pageContextFor(pathname, null)) return null
-
   const ask = async () => {
-    if (busy) return
+    if (!agent || busy) return
     if (conversationId) return setOpen(true)
     setBusy(true)
     const dm = await run(`Could not open your conversation with ${agent.name}`, (client, workspaceId) => chat.openDm(client, workspaceId, [agent.botId]))
@@ -67,6 +65,12 @@ export function AskDonnaBar() {
     setConversationId(dm.id)
     setOpen(true)
   }
+  // the Home card's taps; the latest `ask` sees the current agent and DM
+  const askRef = useRef(ask)
+  askRef.current = ask
+  useEffect(() => subscribeAskDonnaRequest(() => void askRef.current()), [])
+
+  if (!agent || !pageContextFor(pathname, null)) return null
 
   return (
     <>

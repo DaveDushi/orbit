@@ -50,7 +50,7 @@ pub const MAX_CHANNELS: usize = 100;
 /// The default agent's tools, by group, as the sidecar names them (`apps/agent/src/tools.ts`,
 /// `media.ts`; `apps/agent/test/profiles.test.ts` keeps both lists the same). `true`: the tool
 /// writes or posts.
-pub const TOOL_CATALOG: [(&str, &str, bool); 56] = [
+pub const TOOL_CATALOG: [(&str, &str, bool); 57] = [
     ("list_projects", "Tasks", false),
     ("search_tasks", "Tasks", false),
     ("get_task", "Tasks", false),
@@ -103,6 +103,7 @@ pub const TOOL_CATALOG: [(&str, &str, bool); 56] = [
     ("set_routine_script", "Routines and reminders", true),
     ("repair_routine_script", "Routines and reminders", true),
     ("use_integration", "Connected services", true),
+    ("drive_image_to_shopify", "Connected services", true),
     ("media_shell", "Media", true),
     ("work_from_drive", "Media", false),
     ("view_image", "Media", false),
@@ -236,6 +237,9 @@ pub fn route_need(method: &Method, rest: &str) -> RouteNeed {
         ["agent-tools"] if get => RouteNeed::Any(&["use_integration"]),
         ["agent-tools", "call"] if method == Method::POST => RouteNeed::Any(&["use_integration"]),
         ["agent-tools", "drive"] if method == Method::POST => RouteNeed::Any(DRIVE_ROUTE_TOOLS),
+        ["agent-tools", "shopify-image"] if method == Method::POST => {
+            RouteNeed::Any(&["drive_image_to_shopify"])
+        }
         // The tool itself is checked there (`crate::scheduled`).
         ["agent-tools", "scheduled"] if method == Method::POST => {
             RouteNeed::Any(SCHEDULED_ROUTE_TOOLS)
@@ -1911,7 +1915,7 @@ mod tests {
         assert!(checked_tools(&tools(&["delete_everything"])).is_err());
         assert!(checked_tools(&tools(&[""])).is_err());
         assert_eq!(checked_tools(&[]), Ok(Vec::new()));
-        assert_eq!(tool_catalog().count(), 56);
+        assert_eq!(tool_catalog().count(), 57);
     }
 
     #[test]
@@ -1939,6 +1943,7 @@ mod tests {
             (Method::POST, "agent-tools/call"),
             (Method::POST, "agent-tools/drive"),
             (Method::POST, "agent-tools/scheduled"),
+            (Method::POST, "agent-tools/shopify-image"),
             (Method::POST, "routines"),
             (Method::POST, "scheduled-messages"),
             (Method::DELETE, "pages/abc"),
@@ -2022,6 +2027,14 @@ mod tests {
             "scheduled-messages"
         ));
         assert!(!tools_allow(&scheduler, &Method::GET, "routines"));
+        // A Drive image to Shopify has its own route, apart from use_integration.
+        let shopify = tools(&["drive_image_to_shopify"]);
+        assert!(tools_allow(
+            &shopify,
+            &Method::POST,
+            "agent-tools/shopify-image"
+        ));
+        assert!(!tools_allow(&shopify, &Method::POST, "agent-tools/call"));
         // Nothing at all: only the workspace and its members.
         assert!(tools_allow(&[], &Method::GET, "members"));
         assert!(!tools_allow(&[], &Method::GET, "pages"));

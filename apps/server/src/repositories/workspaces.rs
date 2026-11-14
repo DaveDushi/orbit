@@ -32,6 +32,9 @@ use crate::audit::{self, AuditEvent, AuditOutcome};
 use crate::billing::TrialLimit;
 use crate::live::LiveHub;
 
+mod home_layout;
+pub use home_layout::{HomeCard, HomeLayout};
+
 const INVITATION_LIFETIME_MILLIS: i64 = 7 * 24 * 60 * 60 * 1_000;
 const WORKSPACE_TRASH_RETENTION_MILLIS: i64 = 30 * 24 * 60 * 60 * 1_000;
 const SESSION_IDLE_RETENTION_MILLIS: i64 = 30 * 24 * 60 * 60 * 1_000;

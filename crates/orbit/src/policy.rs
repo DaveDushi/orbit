@@ -129,6 +129,13 @@ impl Actor {
         matches!(self.role, WorkspaceRole::Guest)
     }
 
+    /// A Home card shows data from one area: a guest only gets the cards of chat
+    /// (`chat_card`); every other role gets all of them.
+    #[must_use]
+    pub const fn can_use_home_card(self, chat_card: bool) -> bool {
+        chat_card || !self.is_guest()
+    }
+
     /// Owners and admins see every project of the workspace, private ones too.
     #[must_use]
     pub const fn sees_all_projects(self) -> bool {
