@@ -67,7 +67,7 @@ function ManageSkills() {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-mono text-sm font-medium text-foreground">{skill.name}</span>
                     <Badge variant="outline">{SOURCE_LABELS[skill.source]}</Badge>
-                    {skill.files.length ? <Badge variant="secondary">{skill.files.length} files</Badge> : null}
+                    {skill.files.length ? <Badge variant="secondary">{skill.files.length === 1 ? '1 file' : `${skill.files.length} files`}</Badge> : null}
                     {skill.has_scripts ? <Badge variant={data.sandbox ? 'secondary' : 'outline'}>{data.sandbox ? 'Scripts' : 'Scripts cannot run'}</Badge> : null}
                   </div>
                   <p className="line-clamp-2 text-sm text-muted-foreground">{skill.description}</p>

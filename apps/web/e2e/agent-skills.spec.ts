@@ -69,14 +69,14 @@ test.describe('agent skills', () => {
     // A .zip.
     await addSkill(page, 'Upload .zip')
     await page.getByLabel('.zip file').setInputFiles(`${zips}/brand-voice.zip`)
-    await page.getByRole('button', { name: 'Upload' }).click()
+    await page.getByRole('button', { name: 'Upload', exact: true }).click()
     await expect(page.locator('[data-slot="agent-skill"]').filter({ hasText: 'brand-voice' })).toBeVisible()
     await page.screenshot({ path: `${shots}/04-uploaded-zip.png` })
 
     // A .zip whose path leaves the skill folder is refused whole.
     await addSkill(page, 'Upload .zip')
     await page.getByLabel('.zip file').setInputFiles(`${zips}/evil-skill.zip`)
-    await page.getByRole('button', { name: 'Upload' }).click()
+    await page.getByRole('button', { name: 'Upload', exact: true }).click()
     await expect(page.getByRole('dialog').getByRole('alert')).toContainText('not allowed')
     await page.screenshot({ path: `${shots}/05-rejected-bad-zip.png` })
     await page.getByRole('button', { name: 'Cancel' }).click()
@@ -110,6 +110,19 @@ test.describe('agent skills', () => {
     await expect(page.getByText(/Done \(load_skill\)/).first()).toBeVisible({ timeout: 60_000 })
     await page.waitForTimeout(500)
     await page.screenshot({ path: `${shots}/08-agent-loads-skill-in-chat.png` })
+
+    // In a new thread, the system prompt (the mock model shows it) has the skill's name and description, not its body.
+    const asked = await api(page, 'POST', `/api/v1/workspaces/${workspaceId}/chat/conversations/${general.id}/messages`, { body: `<@${bot}> show prompt`, nonce: `prompt-${Date.now()}` })
+    const root = (asked.body as { result: { id: string } }).result.id
+    let prompt = ''
+    await expect(async () => {
+      const thread = await api(page, 'GET', `/api/v1/workspaces/${workspaceId}/chat/threads/${root}`)
+      prompt = ((thread.body as { items: { body: string }[] }).items ?? []).map((item) => item.body).join('\n')
+      expect(prompt).toContain('Skills:')
+    }).toPass({ timeout: 60_000 })
+    expect(prompt).toContain('- weekly-report: Write the weekly status report.')
+    expect(prompt).not.toContain('Group them by project')
+    expect(prompt).not.toContain('pdf-forms')
 
   })
 
