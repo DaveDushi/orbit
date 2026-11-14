@@ -18,6 +18,7 @@ test('files of emoji and stickers are deleted on their own pages', () => {
   expect(canDeleteStorageFile({ id, byte_size: 1, name: 'a.png', uses: [{ kind: 'task', title: 'A' }, { kind: 'page', title: 'B' }] })).toBe(true)
   expect(canDeleteStorageFile({ id, byte_size: 1, name: 'party', uses: [{ kind: 'emoji' }] })).toBe(false)
   expect(canDeleteStorageFile({ id, byte_size: 1, name: 'cat', uses: [{ kind: 'task', title: 'A' }, { kind: 'sticker' }] })).toBe(false)
+  expect(canDeleteStorageFile({ id, byte_size: 1, name: null, uses: [{ kind: 'logo' }] })).toBe(false)
 })
 
 test('pages of the largest files', () => {

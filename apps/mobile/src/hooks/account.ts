@@ -6,7 +6,7 @@ import { Alert } from 'react-native'
 
 import * as account from '../data/account-api'
 import { keys } from '../data/keys'
-import type { MemberRecord, User } from '../data/orbit'
+import type { MemberRecord, User, WorkspaceRecord } from '../data/orbit'
 import { currentStatus, type OwnStatus, type UserStatus } from '../data/status'
 import { useOrbit } from '../orbit-context'
 import { useSignedIn } from '../session-context'
@@ -215,6 +215,16 @@ export function useRenameWorkspace() {
   return useMutation({
     mutationFn: (name: string) => account.renameWorkspace(client, workspace, name),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: keys.workspaces }),
+  })
+}
+
+/** Uploads (an image) or removes (`null`) the workspace logo; the workspace list shows it at once. */
+export function useSetWorkspaceLogo() {
+  const { client, workspaceId } = useOrbit()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (file: account.UploadFile | null) => account.setWorkspaceLogo(client, workspaceId, file),
+    onSuccess: (updated) => queryClient.setQueryData(keys.workspaces, (items: WorkspaceRecord[] | undefined) => items?.map((item) => (item.id === updated.id ? updated : item))),
   })
 }
 

@@ -609,10 +609,14 @@ async fn consent(
         })
         .collect();
     // Listed apart from projects, so a workspace without projects can still be picked.
-    let workspaces: Vec<Value> = sqlx::query("SELECT w.id, w.name FROM workspaces w JOIN memberships m ON m.workspace_id = w.id AND m.role <> 'guest' WHERE m.user_id = $1 AND w.deleted_at IS NULL ORDER BY w.name, w.id")
+    let workspaces: Vec<Value> = sqlx::query("SELECT w.id, w.name, l.updated_at AS logo_updated_at FROM workspaces w JOIN memberships m ON m.workspace_id = w.id AND m.role <> 'guest' LEFT JOIN workspace_logos l ON l.workspace_id = w.id WHERE m.user_id = $1 AND w.deleted_at IS NULL ORDER BY w.name, w.id")
         .bind(user.to_string()).fetch_all(&mut *tx).await?
         .into_iter()
-        .map(|row| json!({"id": row.get::<String, _>("id"), "name": row.get::<String, _>("name")}))
+        .map(|row| {
+            let id = row.get::<String, _>("id");
+            let logo_url = crate::repositories::workspaces::logo_url(&id, row.get("logo_updated_at"));
+            json!({"id": id, "name": row.get::<String, _>("name"), "logo_url": logo_url})
+        })
         .collect();
     let requested: String =
         sqlx::query_scalar("SELECT mcp_scopes FROM oauth_requests WHERE id = $1")

@@ -24,6 +24,7 @@ import {
   removeAvatar,
   removeMember,
   removeWorkspaceBucket,
+  removeWorkspaceLogo,
   renameWorkspace as renameWorkspaceRequest,
   requestEmailChange as requestEmailChangeRequest,
   revokeInvitation as revokeInvitationRequest,
@@ -32,6 +33,7 @@ import {
   setupTotp,
   transferOwnership as transferOwnershipRequest,
   uploadAvatar,
+  uploadWorkspaceLogo,
 } from '@orbit/api/generated/sdk.gen'
 import type {
   AuthOptions,
@@ -217,6 +219,13 @@ export const NOTIFICATION_CHOICES: readonly { field: keyof NotificationPrefs; la
 ]
 
 // ---- workspace
+
+/** Uploads (a square picture) or removes (`null`) the workspace logo; owners and admins only. */
+export async function setWorkspaceLogo(client: OrbitClient, workspaceId: string, file: UploadFile | null): Promise<WorkspaceRecord> {
+  return file
+    ? (await uploadWorkspaceLogo({ client, path: { workspace_id: workspaceId }, body: { file: file as Blob }, bodySerializer: multipart(file), throwOnError: true })).data
+    : (await removeWorkspaceLogo({ client, path: { workspace_id: workspaceId }, throwOnError: true })).data
+}
 
 export async function renameWorkspace(client: OrbitClient, workspace: Pick<WorkspaceRecord, 'id' | 'version'>, name: string): Promise<WorkspaceRecord> {
   return (await renameWorkspaceRequest({ client, path: { workspace_id: workspace.id }, body: { name, expected_version: workspace.version }, throwOnError: true })).data

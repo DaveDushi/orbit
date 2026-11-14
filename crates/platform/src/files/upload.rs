@@ -21,23 +21,25 @@ static SHRINKING: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 const QUARANTINE_MILLIS: i64 = 24 * HOUR_MILLIS;
 const SNIFF_BYTES: usize = 8 * 1024;
 /// References to one blob (bind its id twice): task/comment attachments, docs page files and their
-/// old versions, chat files, profile pictures, custom emoji, stickers and the files that file previews made. The second parameter is used for all of the
+/// old versions, chat files, profile pictures, workspace logos, custom emoji, stickers and the files that file previews made. The second parameter is used for all of the
 /// newer tables.
 pub const BLOB_REFERENCE_COUNT: &str = "SELECT (SELECT COUNT(*) FROM attachment_references WHERE blob_id = $1) \
      + (SELECT COUNT(*) FROM page_files WHERE blob_id = $2) \
      + (SELECT COUNT(*) FROM page_file_versions WHERE blob_id = $2) \
      + (SELECT COUNT(*) FROM chat_message_files WHERE blob_id = $2) \
      + (SELECT COUNT(*) FROM user_avatars WHERE blob_id = $2) \
+     + (SELECT COUNT(*) FROM workspace_logos WHERE blob_id = $2) \
      + (SELECT COUNT(*) FROM custom_emoji WHERE blob_id = $2) \
      + (SELECT COUNT(*) FROM custom_stickers WHERE blob_id = $2) \
      + (SELECT COUNT(*) FROM file_preview_outputs WHERE blob_id = $2)";
 /// Every table that references blobs by `blob_id`.
-const BLOB_REFERENCE_TABLES: [&str; 8] = [
+const BLOB_REFERENCE_TABLES: [&str; 9] = [
     "attachment_references",
     "page_files",
     "page_file_versions",
     "chat_message_files",
     "user_avatars",
+    "workspace_logos",
     "custom_emoji",
     "custom_stickers",
     "file_preview_outputs",
@@ -708,8 +710,8 @@ impl UploadService {
     /// use it then get the "Deleted file" image, and it stops counting toward the workspace's storage at once. Its
     /// row gets a `deleted:<id>` hash and key, so the same bytes can be uploaded again as a new blob, and reconcile
     /// removes the stored object as untracked (after the usual quarantine, which also covers a concurrent upload of
-    /// the same bytes). Returns `false` when there is no such live blob, or a profile picture, custom emoji or
-    /// sticker uses it (those are deleted where they are managed).
+    /// the same bytes). Returns `false` when there is no such live blob, or a profile picture, workspace logo, custom
+    /// emoji or sticker uses it (those are deleted where they are managed).
     pub async fn delete_blob(&self, workspace_id: Id, blob_id: Id) -> Result<bool, UploadError> {
         let _operation = self.operations.lock().await;
         let _mutation = self.mutations.begin().await;
@@ -720,6 +722,7 @@ impl UploadService {
             "UPDATE attachment_blobs SET deleted_at = $1, sha256 = $2, storage_key = $2 \
              WHERE id = $3 AND workspace_id = $4 AND deleted_at IS NULL \
              AND NOT EXISTS (SELECT 1 FROM user_avatars WHERE blob_id = $3) \
+             AND NOT EXISTS (SELECT 1 FROM workspace_logos WHERE blob_id = $3) \
              AND NOT EXISTS (SELECT 1 FROM custom_emoji WHERE blob_id = $3) \
              AND NOT EXISTS (SELECT 1 FROM custom_stickers WHERE blob_id = $3)",
         )
@@ -828,7 +831,7 @@ impl UploadService {
                     .await?;
                 }
             }
-            for table in ["user_avatars", "custom_emoji", "custom_stickers"] {
+            for table in ["user_avatars", "workspace_logos", "custom_emoji", "custom_stickers"] {
                 sqlx::query(sqlx::AssertSqlSafe(format!("UPDATE {table} SET mime_type = $1 WHERE blob_id = $2")))
                     .bind(media_type)
                     .bind(blob_id)

@@ -19,9 +19,9 @@ export function storageFilesPage(offset: number, shown: number, total: number): 
   }
 }
 
-/** Emoji and stickers are deleted on their own settings pages, not as a stored file. */
+/** Emoji, stickers and the workspace logo are deleted on their own settings pages, not as a stored file. */
 export function canDeleteStorageFile(file: StorageFile): boolean {
-  return file.uses.every((use) => use.kind !== 'emoji' && use.kind !== 'sticker')
+  return file.uses.every((use) => use.kind !== 'emoji' && use.kind !== 'sticker' && use.kind !== 'logo')
 }
 
 function usePlace(use: StorageFileUse): string {
@@ -31,6 +31,7 @@ function usePlace(use: StorageFileUse): string {
     case 'channel': return `#${use.title ?? ''}`
     case 'emoji': return 'Custom emoji'
     case 'sticker': return 'Sticker'
+    case 'logo': return 'Workspace logo'
     case 'private': return 'Private page or chat'
   }
 }

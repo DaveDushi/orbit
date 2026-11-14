@@ -19,7 +19,9 @@ import {
   listMembers,
   listWorkspaces,
   removeMember,
+  removeWorkspaceLogo,
   renameWorkspace,
+  uploadWorkspaceLogo,
   revokeInvitation,
   transferOwnership,
 } from '@orbit/api/generated/sdk.gen'
@@ -277,6 +279,21 @@ export function useRenameWorkspace(workspaceId: string) {
         throwOnError: true,
       })
       return required(data, 'Rename workspace response was empty.')
+    },
+    onSuccess: (workspace) => queryClient.setQueryData(queryKeys.workspaces, (items: unknown) =>
+      Array.isArray(items) ? items.map((item) => typeof item === 'object' && item && 'id' in item && item.id === workspaceId ? workspace : item) : items),
+  })
+}
+
+/** Upload (a 256 px square from `avatarImage`) or remove (`null`) the workspace logo. */
+export function useSetWorkspaceLogo(workspaceId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (image: Blob | null) => {
+      const { data } = image
+        ? await uploadWorkspaceLogo({ client: apiClient, path: { workspace_id: workspaceId }, body: { file: image }, throwOnError: true })
+        : await removeWorkspaceLogo({ client: apiClient, path: { workspace_id: workspaceId }, throwOnError: true })
+      return required(data, 'Workspace logo response was empty.')
     },
     onSuccess: (workspace) => queryClient.setQueryData(queryKeys.workspaces, (items: unknown) =>
       Array.isArray(items) ? items.map((item) => typeof item === 'object' && item && 'id' in item && item.id === workspaceId ? workspace : item) : items),

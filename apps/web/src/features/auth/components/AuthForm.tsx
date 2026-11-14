@@ -26,8 +26,8 @@ export function AuthBrand() {
   return <span className="flex items-center gap-2 text-[13px] font-bold tracking-[0.08em] text-primary uppercase"><img src="/logo.svg" alt="" className="size-[22px]" />Orbit</span>
 }
 
-/** Header, an inset panel with the fields and actions, and an optional footer row (Coolify's sign-in layout). */
-export function AuthForm({ title, description, children, error, pending, submitLabel, onSubmit, actions, footer }: { title: string; description?: string; children: React.ReactNode; error: Error | null; pending: boolean; submitLabel: string; onSubmit: () => Promise<unknown>; actions?: React.ReactNode; footer?: React.ReactNode }) {
+/** Header (with an optional `icon` above the title), an inset panel with the fields and actions, and an optional footer row (Coolify's sign-in layout). */
+export function AuthForm({ icon, title, description, children, error, pending, submitLabel, onSubmit, actions, footer }: { icon?: React.ReactNode; title: string; description?: string; children: React.ReactNode; error: Error | null; pending: boolean; submitLabel: string; onSubmit: () => Promise<unknown>; actions?: React.ReactNode; footer?: React.ReactNode }) {
   return (
     <AuthCard className="p-0"><form onSubmit={(event) => {
       event.preventDefault()
@@ -36,6 +36,7 @@ export function AuthForm({ title, description, children, error, pending, submitL
       void onSubmit().catch(() => undefined)
     }}>
       <header className="grid gap-1 px-6 pt-6 pb-5">
+        {icon ? <div className="mb-2">{icon}</div> : null}
         <h1 className="text-xl font-semibold">{title}</h1>
         {description ? <p className="text-[13px] text-muted-foreground">{description}</p> : null}
       </header>

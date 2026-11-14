@@ -94,7 +94,7 @@ async fn invitation_preview_is_public_read_only_and_rejects_inactive_tokens() {
                 assert_eq!(response.status(), StatusCode::OK);
                 assert_eq!(
                     response_json(response).await,
-                    json!({"email": email, "workspace_name": "Orbit", "channels": []})
+                    json!({"email": email, "workspace_name": "Orbit", "workspace_logo": null, "channels": []})
                 );
             } else {
                 assert_eq!(response.status(), StatusCode::NOT_FOUND);

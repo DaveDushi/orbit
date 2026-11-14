@@ -14,6 +14,7 @@ import { ColorScope } from '../theme/ColorScope'
 import { Avatar, CountBadge, Icon, type IconName, IconButton, PickerSheet } from '../ui'
 import { AccountMenu } from './AccountMenu'
 import { NewProjectSheet } from './NewProjectSheet'
+import { WorkspaceLogo } from './WorkspaceLogo'
 import { DRAWER_AREA_TITLES, type DrawerArea, drawerAreaOf, drawerSections, TASK_PRESETS, tasksHref } from './drawerAreas'
 import { ACCOUNT_NAV, ADMIN_NAV, allowedNav, WORKSPACE_NAV } from './settings/Shell'
 import { useAgentEnabled } from '../hooks/agent'
@@ -253,6 +254,7 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
           onPress={() => setSwitching(true)}
           className="shrink flex-row items-center gap-[7px]"
         >
+          {workspace.logo_url ? <WorkspaceLogo workspace={workspace} /> : null}
           <RNText numberOfLines={1} className="shrink font-noto-bold text-[17px] tracking-[-0.34px] text-foreground">
             {workspace.name}
           </RNText>
@@ -358,7 +360,7 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
         visible={switching}
         title="Workspaces"
         surface={newUi ? 'sidebarPopover' : 'popover'}
-        options={workspaces.map((item) => ({ key: item.id, label: item.name, subtitle: item.role, selected: item.id === workspace.id }))}
+        options={workspaces.map((item) => ({ key: item.id, label: item.name, subtitle: item.role, selected: item.id === workspace.id, leading: <WorkspaceLogo workspace={item} size={24} /> }))}
         onSelect={(id) => {
           setSwitching(false)
           onClose()

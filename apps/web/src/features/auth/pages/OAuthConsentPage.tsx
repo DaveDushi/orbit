@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { LoadingScreen } from '@/components/common/LoadingScreen'
+import { WorkspaceLogo } from '@/components/common/WorkspaceLogo'
 import { AccessPicker, ProjectPicker, type ScopeResource } from '@/components/common/ScopeAccess'
 import { AuthBrand, AuthCard } from '@/features/auth/components/AuthForm'
 import { currentUserQueryOptions } from '@/features/auth/api'
@@ -95,11 +96,12 @@ export function OAuthConsentPage() {
       <p className="text-sm text-muted-foreground">Signed in as {user.data?.display_name}.</p>
       {workspaces.length > 1 ? <div role="group" aria-labelledby="consent-workspaces" className="grid gap-3">
         <span id="consent-workspaces" className="text-sm font-medium">Workspaces</span>
-        {workspaces.map(({ id, name }) => <Label key={id} className="flex items-center gap-2">
-          <Checkbox checked={id in picks} onCheckedChange={(checked) => toggleWorkspace(id, Boolean(checked))} />
-          {name}
+        {workspaces.map((item) => <Label key={item.id} className="flex items-center gap-2">
+          <Checkbox checked={item.id in picks} onCheckedChange={(checked) => toggleWorkspace(item.id, Boolean(checked))} />
+          <WorkspaceLogo workspace={item} />
+          {item.name}
         </Label>)}
-      </div> : workspaces.length ? <p className="text-sm">Workspace: <strong>{workspaces[0].name}</strong></p> : <p className="text-sm text-muted-foreground">No workspaces available. Create a workspace in Orbit, then restart the connection.</p>}
+      </div> : workspaces.length ? <p className="flex items-center gap-2 text-sm">Workspace: <WorkspaceLogo workspace={workspaces[0]} /><strong>{workspaces[0].name}</strong></p> : <p className="text-sm text-muted-foreground">No workspaces available. Create a workspace in Orbit, then restart the connection.</p>}
       {workspaces.length ? <AccessPicker id="consent-access" resources={RESOURCES.map((resource) => resource.name === 'Tasks' ? { ...resource, details: <div className="grid gap-4">
         {chosen.length ? chosen.map(({ id, name }) => {
           const projects = consent.data?.projects.filter((project) => project.workspace_id === id) ?? []

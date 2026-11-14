@@ -1,11 +1,12 @@
 //! Outgoing email for the core account flows only: invitations, registration links and password recovery. It goes
-//! through the SMTP server the root user saves in Admin; without one, Orbit sends nothing. Messages are plain text.
+//! through the SMTP server the root user saves in Admin; without one, Orbit sends nothing. Messages are plain text;
+//! an invitation to a workspace with a logo also has an HTML part that shows the logo as an inline image.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use lettre::message::Mailbox;
 use lettre::message::header::ContentType;
+use lettre::message::{Attachment, Mailbox, MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Address, AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use orbit_platform::Database;
@@ -20,6 +21,17 @@ pub struct OutgoingEmail {
     pub to: String,
     pub subject: String,
     pub body: String,
+    /// An HTML version of `body`; it can show `logo` as `cid:logo`.
+    pub html: Option<String>,
+    pub logo: Option<EmailImage>,
+}
+
+/// An image sent inside the email (a workspace logo), not as a link: mail clients block remote images, and the
+/// server may not be reachable from the reader's mail client.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EmailImage {
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
 }
 
 /// Messages a recording mailer kept instead of sending them.
@@ -131,12 +143,30 @@ fn message(smtp: &SmtpSettings, email: &OutgoingEmail) -> Result<Message, MailEr
         Some(smtp.from_name.clone().unwrap_or_else(|| "Orbit".to_owned())),
         address(&smtp.from_address)?,
     );
-    Message::builder()
+    let builder = Message::builder()
         .from(from)
         .to(Mailbox::new(None, address(&email.to)?))
-        .subject(&email.subject)
-        .header(ContentType::TEXT_PLAIN)
-        .body(email.body.clone())
+        .subject(&email.subject);
+    let Some(html) = &email.html else {
+        return builder
+            .header(ContentType::TEXT_PLAIN)
+            .body(email.body.clone())
+            .map_err(|error| MailError::Smtp(error.to_string()));
+    };
+    let mut related = MultiPart::related().singlepart(SinglePart::html(html.clone()));
+    if let Some(logo) = &email.logo {
+        let content_type = ContentType::parse(&logo.mime_type)
+            .map_err(|error| MailError::Smtp(error.to_string()))?;
+        related = related.singlepart(
+            Attachment::new_inline("logo".to_owned()).body(logo.bytes.clone(), content_type),
+        );
+    }
+    builder
+        .multipart(
+            MultiPart::alternative()
+                .singlepart(SinglePart::plain(email.body.clone()))
+                .multipart(related),
+        )
         .map_err(|error| MailError::Smtp(error.to_string()))
 }
 
@@ -170,13 +200,20 @@ fn transport(
 
 /// The text of each email Orbit sends.
 pub mod templates {
-    use super::OutgoingEmail;
+    use super::{EmailImage, OutgoingEmail};
 
     /// The subject is fixed and the body names only the workspace and, for a guest, its
     /// channels, cleaned up: the names come from users, and a name must not make the email say
     /// something Orbit does not.
+    /// With the workspace `logo`, the email also has an HTML part that shows it above the same text.
     #[must_use]
-    pub fn invitation(to: &str, workspace: &str, channels: &[String], url: &str) -> OutgoingEmail {
+    pub fn invitation(
+        to: &str,
+        workspace: &str,
+        channels: &[String],
+        url: &str,
+        logo: Option<EmailImage>,
+    ) -> OutgoingEmail {
         let invited = if channels.is_empty() {
             format!("to join the workspace {}", quoted_name(workspace))
         } else {
@@ -195,7 +232,27 @@ pub mod templates {
                  Accept the invitation:\n{url}\n\n\
                  The link expires in 7 days. If you did not expect this invitation, ignore this email.\n"
             ),
+            html: logo.as_ref().map(|_| {
+                let invited = escape_html(&invited);
+                let url = escape_html(url);
+                format!(
+                    "<!doctype html><html><body style=\"font-family:system-ui,sans-serif;font-size:15px;line-height:1.5\">\
+                     <p><img src=\"cid:logo\" alt=\"\" width=\"48\" height=\"48\" style=\"border-radius:10px\"></p>\
+                     <p>You have been invited {invited} on Orbit.</p>\
+                     <p><a href=\"{url}\">Accept the invitation</a></p>\
+                     <p>The link expires in 7 days. If you did not expect this invitation, ignore this email.</p>\
+                     </body></html>"
+                )
+            }),
+            logo,
         }
+    }
+
+    fn escape_html(text: &str) -> String {
+        text.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
     }
 
     /// `name` on one line in quotes: without control, invisible or direction characters (which
@@ -232,6 +289,8 @@ pub mod templates {
                 "Open this link to finish creating your Orbit account:\n{url}\n\n\
                  The link works once and expires in 60 minutes. If you did not ask for an account, ignore this email.\n"
             ),
+            html: None,
+            logo: None,
         }
     }
 
@@ -245,6 +304,8 @@ pub mod templates {
                  The link works once and expires in 30 minutes. If you did not ask for this, ignore this email; \
                  your password stays the same.\n"
             ),
+            html: None,
+            logo: None,
         }
     }
 
@@ -260,6 +321,8 @@ pub mod templates {
                  The link works once and expires in 30 minutes. If you did not ask for this, contact support; \
                  your password stays the same until the link is used.\n"
             ),
+            html: None,
+            logo: None,
         }
     }
 
@@ -272,6 +335,8 @@ pub mod templates {
             body: "An Orbit administrator set this address as the email of your account.\n\n\
                    If you did not ask for this, contact support.\n"
                 .to_owned(),
+            html: None,
+            logo: None,
         }
     }
 
@@ -284,6 +349,8 @@ pub mod templates {
             body: "An Orbit administrator turned off two-step sign-in for your account. If you did not ask for \
                    this, contact support.\n"
                 .to_owned(),
+            html: None,
+            logo: None,
         }
     }
 
@@ -297,6 +364,8 @@ pub mod templates {
                 "Open this link to make this address the email of your Orbit account:\n{url}\n\n\
                  The link works once and expires in 60 minutes. If you did not ask for this, ignore this email.\n"
             ),
+            html: None,
+            logo: None,
         }
     }
 
@@ -309,6 +378,8 @@ pub mod templates {
             body: format!(
                 "The email of your Orbit account was changed to {new_email}.\n\nIf this was not you, contact support right away.\n"
             ),
+            html: None,
+            logo: None,
         }
     }
 
@@ -342,6 +413,8 @@ pub mod templates {
                 quoted_name(tool),
                 quoted_name(workspace),
             ),
+            html: None,
+            logo: None,
         }
     }
 
@@ -353,6 +426,8 @@ pub mod templates {
             body: "Your Orbit mail settings work. Orbit can now send invitations, registration links and \
                    password reset links.\n"
                 .to_owned(),
+            html: None,
+            logo: None,
         }
     }
 
@@ -365,22 +440,47 @@ pub mod templates {
                 "Acme\n\nYour account is locked: \"visit\" evil.example\u{202E}",
                 &[],
                 "https://orbit.test/accept-invitation?token=t",
+                None,
             );
             assert_eq!(email.subject, "You have been invited to Orbit");
             assert!(email.body.starts_with(
                 "You have been invited to join the workspace \"Acme Your account is locked: 'visit' evil.example\" on Orbit.\n\n"
             ));
-            let long = super::invitation("g@example.com", &"x".repeat(100), &[], "u");
+            assert!(email.html.is_none());
+            let long = super::invitation("g@example.com", &"x".repeat(100), &[], "u", None);
             assert!(long.body.contains(&format!("\"{}…\"", "x".repeat(60))));
             let guest = super::invitation(
                 "g@example.com",
                 "Acme",
                 &["launch".to_owned(), "press\nnews".to_owned()],
                 "u",
+                None,
             );
             assert!(guest.body.starts_with(
                 "You have been invited as a guest to the channels \"launch\", \"press news\" of the workspace \"Acme\" on Orbit.\n\n"
             ));
+        }
+
+        #[test]
+        fn an_invitation_with_a_logo_shows_it_inline_and_escapes_the_names() {
+            let logo = super::EmailImage {
+                mime_type: "image/png".to_owned(),
+                bytes: vec![1, 2, 3],
+            };
+            let email = super::invitation(
+                "g@example.com",
+                "<b>Acme</b> & Co",
+                &[],
+                "https://orbit.test/accept-invitation?token=a&b",
+                Some(logo.clone()),
+            );
+            let html = email.html.expect("an HTML part");
+            assert!(html.contains("<img src=\"cid:logo\""));
+            assert!(html.contains("&quot;&lt;b&gt;Acme&lt;/b&gt; &amp; Co&quot;"));
+            assert!(html.contains("href=\"https://orbit.test/accept-invitation?token=a&amp;b\""));
+            assert_eq!(email.logo, Some(logo));
+            // the plain text part stays the same as without a logo
+            assert!(email.body.starts_with("You have been invited to join the workspace \"<b>Acme</b> & Co\""));
         }
     }
 }

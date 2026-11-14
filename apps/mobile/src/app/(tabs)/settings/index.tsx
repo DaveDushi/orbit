@@ -7,8 +7,9 @@ import { Linking, View } from 'react-native'
 import { ConfirmDialog, type ConfirmRequest } from '../../../components/settings/Dialog'
 import { WebSetupRow } from '../../../components/settings/Fields'
 import { ACCOUNT_NAV, allowedNav, Note, RowIcon, RowText, SettingsCard, SettingsRow, SettingsShell, WORKSPACE_NAV } from '../../../components/settings/Shell'
+import { WorkspaceLogo } from '../../../components/WorkspaceLogo'
 import { webSetupLinks } from '../../../data/agentic'
-import { useAuthOptions, useMemberWrites, useRenameWorkspace } from '../../../hooks/account'
+import { pickImage, useAuthOptions, useMemberWrites, useRenameWorkspace, useSetWorkspaceLogo } from '../../../hooks/account'
 import { useAgentEnabled } from '../../../hooks/agent'
 import { useIsGuest, useOrbit } from '../../../orbit-context'
 import { useMembers } from '../../../queries'
@@ -21,6 +22,9 @@ import { Button, Icon, Input } from '../../../ui'
  * the server and Sign out, which the web keeps in the account menu. A guest has no workspace
  * settings: it gets its account pages, Sign out and Leave workspace.
  */
+/** The server refuses a bigger logo. */
+const MAX_LOGO_BYTES = 512 * 1024
+
 export default function GeneralScreen() {
   const { workspace, session, user, signOut } = useOrbit()
   const { colors } = useTheme()
@@ -74,7 +78,8 @@ function WorkspaceName() {
   const [name, setName] = useState(workspace.name)
   const dirty = name.trim() !== workspace.name
   return (
-    <SettingsCard title="Workspace" description="Rename this workspace.">
+    <SettingsCard title="Workspace" description="The name and logo of this workspace.">
+      <LogoField />
       <Input label="Name" required value={name} onChangeText={setName} maxLength={100} returnKeyType="done" onSubmitEditing={() => dirty && name.trim() && rename.mutate(name.trim())} />
       {rename.isError ? <View className="mt-3"><Note error>Workspace rename failed. {errorMessage(rename.error)}</Note></View> : null}
       {dirty ? (
@@ -84,6 +89,34 @@ function WorkspaceName() {
         </View>
       ) : null}
     </SettingsCard>
+  )
+}
+
+/** The web's logo field: owners and admins pick a picture, cropped to a square, or remove it. */
+function LogoField() {
+  const { workspace } = useOrbit()
+  const setLogo = useSetWorkspaceLogo()
+  const [pickError, setPickError] = useState<string | null>(null)
+  const choose = () => {
+    setPickError(null)
+    setLogo.reset()
+    pickImage({ square: true, maxBytes: MAX_LOGO_BYTES }).then(
+      (file) => file && setLogo.mutate(file),
+      (error: unknown) => setPickError(errorMessage(error)),
+    )
+  }
+  const error = pickError ?? (setLogo.isError ? errorMessage(setLogo.error) : null)
+  return (
+    <View className="mb-4 flex-row items-center gap-4 flex-wrap">
+      <WorkspaceLogo workspace={workspace} size={64} />
+      <View className="flex-1 min-w-45 gap-2">
+        <View className="flex-row gap-2">
+          <Button label={setLogo.isPending ? 'Saving…' : workspace.logo_url ? 'Change logo' : 'Upload logo'} variant="outline" disabled={setLogo.isPending} onPress={choose} />
+          {workspace.logo_url ? <Button label="Remove" variant="ghost" disabled={setLogo.isPending} onPress={() => setLogo.mutate(null)} /> : null}
+        </View>
+        <Note error={error !== null}>{error ?? 'PNG, JPEG or WebP, cropped to a square. Everyone in this workspace sees it.'}</Note>
+      </View>
+    </View>
   )
 }
 
