@@ -35,6 +35,7 @@ const orbitData = (_method: string, path: string): unknown => {
 	if (path.startsWith("/projects/p1/statuses")) return { items: [{ id: "s1", name: "Todo", position: 0 }] };
 	if (path.startsWith("/members")) return { items: [] };
 	if (path === "/tasks/t1") return { id: "t1", project_id: "p1", number: 7, title: "Ship", status_id: "s1", assignee_ids: [], version: 3 };
+	if (path.startsWith("/tasks/t1/comments?")) return { items: [], next_cursor: null };
 	if (path === "/tasks/t1/linked-docs") return [{ id: "d1", title: "", icon: null, private: true, linked_at: "2026-11-14T00:00:00Z" }];
 	if (path === "/pages/d1") return { id: "d1", title: "Plan", private: false, version: 1, content: [] };
 	if (path === "/pages/d1/files") return { items: [] };
@@ -73,6 +74,7 @@ test("get_task lists the linked docs and read_page the linked tasks", async () =
 	const { run } = harness(orbitData);
 	const task = data((await run("get_task", { task_id: "t1" })).output[0].text);
 	assert.deepEqual(task.linked_docs, [{ id: "d1", title: "Untitled", private: true, url: "https://orbit.test/docs/d1" }]);
+	assert.deepEqual(task.comments, []);
 	const page = data((await run("read_page", { page_id: "d1" })).output[0].text);
 	assert.deepEqual(page.linked_tasks, [{ id: "t1", ref: "GEN-7", title: "Ship", url: "https://orbit.test/tasks/t1" }]);
 });

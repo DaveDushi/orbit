@@ -20,6 +20,7 @@ pub mod scope;
 pub(crate) mod sessions;
 pub mod settings;
 mod shopify;
+pub(crate) mod task_runs;
 
 use std::sync::Arc;
 

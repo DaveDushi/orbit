@@ -44,12 +44,36 @@ export type PendingInput = {
 	readonly page_context?: PageContext | null;
 	/** A scheduled run of the author's routine; `body` is its saved instruction. Absent from an older Orbit. */
 	readonly routine?: RoutineRun | null;
+	/** A run on a task, driven by the author; `body` is the comment that started it (empty when none). Absent from an older Orbit. */
+	readonly task?: TaskRunInput | null;
 	/** A custom agent (Settings → Agentic → Agents); `null` or absent: the default agent. */
 	readonly agent?: InputAgent | null;
 	/** The default agent's card in this workspace, for its inputs once set; absent from an older Orbit. */
 	readonly default_agent?: DefaultAgent | null;
 	/** The driver's answer level: `short`, `normal` or `thorough`; absent from an older Orbit. */
 	readonly answer_level?: string;
+};
+
+/**
+ * A run on a task (Orbit's `agent_task_runs`): the author assigned the task to the agent, mentioned it in a comment on
+ * the task, or commented on a task assigned to it. Its progress and result go into one comment on the task, as the agent.
+ */
+export type TaskRunInput = {
+	readonly run_id: string;
+	readonly task_id: string;
+	/** `ENG-12`. */
+	readonly identifier: string;
+	readonly title: string;
+	readonly cause: "assigned" | "mentioned" | "commented";
+	/** The comment that started the run. */
+	readonly comment_id: string | null;
+};
+
+/** A task run that Orbit cancelled after it started (the agent was unassigned, or the task deleted): stop it. */
+export type TaskRunStop = {
+	readonly run_id: string;
+	readonly thread_key: string;
+	readonly reason: string;
 };
 
 /** A custom agent: its own bot user, name, instructions, tools and model. Orbit also enforces its tools. */
@@ -114,6 +138,8 @@ export type PendingInputs = {
 	readonly model?: string | null;
 	readonly thinking?: string | null;
 	readonly inputs: PendingInput[];
+	/** Task runs to stop; absent from an older Orbit. */
+	readonly stops?: readonly TaskRunStop[];
 };
 
 export type ThreadUpdate = {
@@ -219,6 +245,17 @@ export class OrbitClient {
 
 	async invalidateCredential(userId: string): Promise<void> {
 		await this.internal("POST", `/credentials/${userId}/invalid`);
+	}
+
+	/** Writes a task run's comment on its task, as the agent: the first call makes it, later calls replace its text. */
+	async writeTaskComment(runId: string, body: string): Promise<string> {
+		const result = (await this.internal("PUT", `/task-runs/${runId}/comment`, { body })) as { comment_id: string };
+		return result.comment_id;
+	}
+
+	/** Tells Orbit that a cancelled task run is stopped (or was not running here). */
+	async taskRunStopped(runId: string): Promise<void> {
+		await this.internal("POST", `/task-runs/${runId}/stopped`);
 	}
 
 	/** Records the end of a routine run; a second report of the same run changes nothing. */

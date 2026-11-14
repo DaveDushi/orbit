@@ -19,14 +19,14 @@ import { THINKING, type Config } from "./config.ts";
 import { CodemodeStoreDoc } from "@earendil-works/pi-durable/codemode";
 
 import { closeCodemode, RUN_SCRIPT } from "./codemode.ts";
-import { IndexDoc, ThreadDoc, type RoutineRunState, type RunCall, type ThreadState } from "./docs.ts";
+import { IndexDoc, ThreadDoc, type RoutineRunState, type RunCall, type TaskRunState, type ThreadState } from "./docs.ts";
 import { withMessageFiles } from "./files.ts";
 import { loadIntegrations } from "./integrations.ts";
 import { loadWake } from "./memory.ts";
 import { namesToTokens, splitBody, tokensToNames, type Person } from "./mentions.ts";
 import { mockModels } from "./mock.ts";
 import { codexModels, PROVIDER, PeopleModels, routedModels } from "./models.ts";
-import { OrbitError, type InputAgent, type OrbitClient, type PendingInput, type RoutineRun } from "./orbit.ts";
+import { OrbitError, type InputAgent, type OrbitClient, type PendingInput, type RoutineRun, type TaskRunInput, type TaskRunStop } from "./orbit.ts";
 import { withPageContext } from "./page.ts";
 import { DEFAULT_AGENT_NAME, MEMORY_CHECK } from "./prompt.ts";
 import { Sandbox } from "./sandbox.ts";
@@ -83,6 +83,33 @@ export function routineText(routine: RoutineRun, author: string, instruction: st
 	return lines.join("\n");
 }
 
+/**
+ * A task run: what put the agent on the task, and how it works there. `comment` is the driver's comment that started it
+ * (their own words, so an instruction). The answer becomes the agent's comment on the task (Orbit posts it).
+ */
+export function taskText(task: TaskRunInput, author: string, comment: string): string {
+	const name = `${task.identifier} “${task.title.replaceAll("\n", " ")}” (task id ${task.task_id})`;
+	const why =
+		task.cause === "assigned"
+			? `${author} (the driver of this run) assigned you the task ${name}.`
+			: task.cause === "mentioned"
+				? `${author} (the driver of this run) mentioned you in a comment on the task ${name}.`
+				: `${author} (the driver of this run) commented on the task ${name}, which is assigned to you.`;
+	const lines = [
+		why,
+		"Read it with get_task (its description and newest comments), then do the work it asks for with your tools, as far as you can. Your final answer becomes your comment on the task, for everyone who reads it: say what you did and the result, or what you need from whom. Do not post it again with comment_on_task. Questions and approvals go to the driver in your direct message with them.",
+	];
+	const said = comment.trim();
+	if (said) lines.push(`${author}'s comment:\n${said}`);
+	return lines.join("\n");
+}
+
+/** The line in the driver's DM when a task run ends: where its result is. */
+export function taskDoneLine(task: Pick<TaskRunState, "taskId" | "identifier" | "title" | "stopped">, publicUrl: string): string {
+	const link = `[${task.identifier} ${task.title.replaceAll(/[[\]\n]/g, " ").trim()}](${publicUrl}/tasks/${task.taskId})`;
+	return task.stopped ? `⏹ Stopped on ${link}: ${task.stopped}.` : `✅ Done on ${link}: my result is in the task's comments.`;
+}
+
 /** The "would do" part of a dry run's answer: each write it did not make, in order. */
 export function wouldDoSection(calls: readonly RunCall[] | undefined, test = true): string {
 	const lines = (calls ?? []).filter((call) => call.status === "dry_run").map((call) => `- ${(call.would_do ?? call.name).replaceAll("\n", " ").slice(0, 400)}`);
@@ -125,7 +152,7 @@ export function hasMemory(tools: readonly string[] | null | undefined): boolean 
 	return !tools || tools.includes("memory_note") || tools.includes("memory_recall");
 }
 
-export function frame(kind: "instruction" | "answer" | "steer" | "action" | "routine", author: string, driver: string, text: string, timeZone: string | null | undefined, now: Date, level: string | null | undefined = "normal", memory = false): string {
+export function frame(kind: "instruction" | "answer" | "steer" | "action" | "routine" | "task", author: string, driver: string, text: string, timeZone: string | null | undefined, now: Date, level: string | null | undefined = "normal", memory = false): string {
 	const levelLine = ANSWER_LEVELS[answerLevel(level)].line;
 	const clock = levelLine && kind !== "steer" ? `${clockLine(timeZone, now)}\n${levelLine}` : clockLine(timeZone, now);
 	// Only a message that starts a run: a steer joins a run that already has it, and a routine repeats its job.
@@ -135,6 +162,8 @@ export function frame(kind: "instruction" | "answer" | "steer" | "action" | "rou
 			// `text` starts with the routine line (`routineText`).
 			return `${clock}\n${text}`;
 		case "action":
+		case "task":
+			// `text` frames itself (`actionText`, `taskText`).
 			return `${clock}\n${text}${check}`;
 		case "instruction":
 			return `${clock}\nInstruction from ${author} (the driver of this run):\n${text}${check}`;
@@ -418,6 +447,9 @@ export class Agent {
 				this.botName = response.bot_name;
 				this.#names.clear();
 			}
+			for (const stop of response.stops ?? []) {
+				await this.#stop(stop).catch((error: unknown) => console.warn(`agent: stopping the task run ${stop.run_id} failed`, String(error)));
+			}
 			const blocked = new Set<string>();
 			let progressed = false;
 			for (const input of response.inputs) {
@@ -508,7 +540,13 @@ export class Agent {
 		const people = await this.peopleOf(input.workspace_id);
 		const body = tokensToNames(input.body, people);
 		const text =
-			input.kind === "action" ? actionText(input) : input.routine ? routineText(input.routine, input.author_name, body) : withPageContext(withMessageFiles(body, input.files), input.page_context);
+			input.kind === "action"
+				? actionText(input)
+				: input.routine
+					? routineText(input.routine, input.author_name, body)
+					: input.task
+						? taskText(input.task, input.author_name, body)
+						: withPageContext(withMessageFiles(body, input.files), input.page_context);
 		const timeZone = people.find((person) => person.id === input.author_id)?.timezone;
 
 		// This input started the current run before a restart: finish what is missing.
@@ -541,7 +579,7 @@ export class Agent {
 
 		let driverId = input.author_id;
 		let driverName = input.author_name;
-		let kind: "instruction" | "answer" | "action" | "routine" = input.kind === "action" ? "action" : input.routine ? "routine" : "instruction";
+		let kind: "instruction" | "answer" | "action" | "routine" | "task" = input.kind === "action" ? "action" : input.routine ? "routine" : input.task ? "task" : "instruction";
 		if (input.kind === "answer" && state.driverId) {
 			driverId = state.driverId;
 			driverName = state.driverName ?? "the driver";
@@ -562,6 +600,8 @@ export class Agent {
 				await this.#orbit.editMessage(messageId, input.workspace_id, `${routineTitle(input.routine)}\n\n${body}`, undefined, agentUserId);
 				await this.#orbit.finishRoutineRun(input.message_id, { status: "failed", error: "Not run: its creator has no ChatGPT connection.", tool_calls: [] });
 			}
+			// A task run's header too (Orbit posted it with this nonce); the task gets no comment.
+			if (input.task) await this.#orbit.editMessage(messageId, input.workspace_id, `📋 ${input.task.identifier} ${input.task.title}\n\n${body}`, undefined, agentUserId);
 			await this.#orbit.updateThread(input.thread_key, this.#threadUpdate(state, "idle", state.driverId, null));
 			await this.#orbit.acknowledge(input.message_id);
 			return "done";
@@ -619,6 +659,8 @@ export class Agent {
 					}
 				: null;
 			doc.runCalls = [];
+			// A thread keeps its task run: a later run in it (after an answer or a yes) writes its result to the task too.
+			if (input.task) doc.taskRun = { runId: input.message_id, taskId: input.task.task_id, identifier: input.task.identifier, title: input.task.title, stopped: null };
 			// A script run starts with the routine's `store()` values, kept from its last run.
 			if (routine?.script) (await tx.doc(CodemodeStoreDoc, conversation.id)).values = (routine.state ?? {}) as Record<string, never>;
 			// Each run takes the model chosen now and the driver's answer level; a run already going keeps its own.
@@ -698,7 +740,13 @@ export class Agent {
 		const submission = await this.#harness.submission(run.submissionId as SubmissionId, context);
 		if (!submission) return;
 		const agentUserId = state.agentUserId ?? null;
-		const edit = (body: string, blocks?: unknown[]) => (run.progressMessageId ? this.#orbit.editMessage(run.progressMessageId, state.workspaceId, run.title ? `${run.title}\n\n${body}` : body, blocks, agentUserId) : Promise.resolve());
+		// A task run writes its progress and result into its comment on the task (cards cannot show there).
+		const task = state.taskRun ?? null;
+		const onTask = task?.runId === run.inputId;
+		// Task comments show names: `<@id>` mentions are chat's.
+		const comment = async (body: string) => (task ? this.#taskComment(task.runId, tokensToNames(body, await this.peopleOf(state.workspaceId))) : undefined);
+		const edit = (body: string, blocks?: unknown[]) =>
+			onTask ? comment(body) : run.progressMessageId ? this.#orbit.editMessage(run.progressMessageId, state.workspaceId, run.title ? `${run.title}\n\n${body}` : body, blocks, agentUserId) : Promise.resolve();
 		const progress = new Progress(edit);
 		const events = await watchEvents(this.#harness, conversationId, context);
 		events.start(async (batch) => progress.apply(batch));
@@ -717,7 +765,14 @@ export class Agent {
 		const body = routine && routine.writes === "dry" ? `${answer.body}\n\n${wouldDoSection(after.runCalls, routine.test)}` : answer.body;
 		const card = answer.card;
 		const [first, ...rest] = splitBody(body);
-		if (card === "invalid") {
+		const stopped = after.taskRun?.stopped;
+		if (onTask && task) {
+			await comment(stopped ? `⏹ Stopped: ${stopped}.` : body);
+			// The DM header says where the result is; while the run waits for an answer, it stays as it is.
+			if (run.progressMessageId && !after.waitingFor) {
+				await this.#orbit.editMessage(run.progressMessageId, state.workspaceId, taskDoneLine({ ...task, stopped }, this.#config.publicUrl), undefined, agentUserId).catch((error: unknown) => console.warn("agent: editing the task run's message failed", String(error)));
+			}
+		} else if (card === "invalid") {
 			await edit(`${first}\n\n${CARD_FAILED}`);
 		} else if (card) {
 			// Orbit checks the card again; one it refuses must not keep the answer from being posted.
@@ -730,7 +785,9 @@ export class Agent {
 			// Without blocks: a card left from the progress edits goes away.
 			await edit(first);
 		}
-		for (const [index, chunk] of rest.entries()) {
+		// A later run in a task run's thread (after an answer or a yes): its result goes to the task too.
+		if (task && !onTask && !stopped) await comment(body);
+		for (const [index, chunk] of onTask ? [] : rest.entries()) {
 			await this.#orbit.postMessage({ workspaceId: state.workspaceId, conversationId: state.conversationId, rootMessageId: state.rootMessageId, body: chunk, nonce: `agent:${run.inputId}:${index + 1}`, agentUserId });
 		}
 		// A repaired script: a note in the routine's thread, for its creator (the driver of the run).
@@ -741,6 +798,34 @@ export class Agent {
 		await conversation.commit(async (tx) => {
 			(await tx.doc(ThreadDoc, conversationId)).run = null;
 		}, context);
+	}
+
+	/**
+	 * Writes a task run's comment. A task that is gone (deleted, or the agent no longer sees it) or a run Orbit refuses
+	 * only loses the comment: the run must still end.
+	 */
+	async #taskComment(runId: string, body: string): Promise<void> {
+		await this.#orbit.writeTaskComment(runId, body).catch((error: unknown) => {
+			if (error instanceof OrbitError && error.status >= 400 && error.status < 500) console.warn("agent: the task comment was refused", error.message);
+			else throw error;
+		});
+	}
+
+	/** Stops a task run that Orbit cancelled: its reason goes into the thread's state, then the run is aborted. */
+	async #stop(stop: TaskRunStop): Promise<void> {
+		const known = this.#threads.get(stop.thread_key);
+		const conversation = known ? await this.#harness.conversation(known as ConversationId, context) : undefined;
+		if (conversation) {
+			const state = (await this.#harness.snapshot(ThreadDoc, conversation.id, context)) as ThreadState | undefined;
+			if (state?.run) {
+				await conversation.commit(async (tx) => {
+					const doc = await tx.doc(ThreadDoc, conversation.id);
+					if (doc.taskRun?.runId === stop.run_id) doc.taskRun.stopped = stop.reason;
+				}, context);
+				await conversation.abort(context);
+			}
+		}
+		await this.#orbit.taskRunStopped(stop.run_id);
 	}
 
 	/** Reports the end of a routine run to Orbit, for its history; its script's `store()` values go with it. */
@@ -779,7 +864,9 @@ export class Agent {
 			.map((part) => part.text ?? "")
 			.join("");
 		const { text, card } = finalCard(written);
-		const waiting = state.waitingFor ? `⏸ Waiting for an answer from <@${state.waitingFor}>.` : "";
+		// A task run's question is in the driver's DM with the agent, not on the task.
+		const where = state.taskRun && state.taskRun.runId === state.run?.inputId ? " in our direct message" : "";
+		const waiting = state.waitingFor ? `⏸ Waiting for an answer from <@${state.waitingFor}>${where}.` : "";
 		const self = state.agentUserId ?? this.botUserId;
 		const answer = namesToTokens(text, people.filter((person) => person.id !== self)) || (card && card !== "invalid" ? cardTitle(card) : "");
 		const main = [waiting, answer].filter(Boolean).join("\n\n").trim();

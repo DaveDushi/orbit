@@ -756,6 +756,7 @@ impl TaskRepository {
                 request_id,
                 now,
                 true,
+                false,
             )
             .await?;
             record_mutation(

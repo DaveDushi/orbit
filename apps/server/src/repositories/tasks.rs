@@ -561,6 +561,8 @@ pub struct TaskRepository {
     token: Option<TokenActor>,
     /// `expected_version` of task updates and deletes is the task's [`revision`].
     revisions: bool,
+    /// The write comes through an agent session: it starts no agent run on a task.
+    agent_session: bool,
 }
 
 impl TaskRepository {
@@ -763,7 +765,24 @@ impl TaskRepository {
             project_grant: None,
             token: None,
             revisions: false,
+            agent_session: false,
         }
+    }
+
+    /// Writes through an agent session (an agent acting as its driver) start no agent run on a
+    /// task (`agent::task_runs`): no agent can make another agent, or itself, work.
+    #[must_use]
+    pub fn with_agent_session(&self, agent_session: bool) -> Self {
+        Self {
+            agent_session,
+            ..self.clone()
+        }
+    }
+
+    /// Whether a write may start agent runs on tasks: a person's, not an agent session's or a
+    /// service account's.
+    fn starts_agent_runs(&self) -> bool {
+        !self.agent_session && self.service_account().is_none()
     }
 
     #[must_use]
@@ -1041,6 +1060,7 @@ impl TaskRepository {
         .bind(expected_version as i64)
         .execute(&mut *tx)
         .await?;
+        crate::agent::task_runs::cancel_project(&mut tx, project_id, now).await?;
         record_mutation(
             &mut tx,
             workspace_id,
@@ -2057,6 +2077,17 @@ impl TaskRepository {
             )
             .await?;
         }
+        crate::agent::task_runs::assigned(
+            &mut tx,
+            workspace_id,
+            id,
+            actor_id,
+            &input.assignee_ids,
+            &[],
+            !self.starts_agent_runs(),
+            now,
+        )
+        .await?;
         self.record_write(
             &mut tx,
             workspace_id,
@@ -2590,6 +2621,7 @@ impl TaskRepository {
             request_id,
             now,
             self.notifies(),
+            self.starts_agent_runs(),
         )
         .await?;
         if let (Some(collab), Some(blocks)) = (collab.as_mut(), &blocks) {
@@ -2701,6 +2733,7 @@ impl TaskRepository {
                 request_id,
                 now,
                 self.notifies(),
+                self.starts_agent_runs(),
             )
             .await?;
             if let (Some(collab), Some(blocks)) = (collabs.get_mut(&update.id), &blocks) {
@@ -2925,6 +2958,7 @@ impl TaskRepository {
                 .await?;
         }
         for id in std::iter::once(task_id).chain(descendants.iter().copied()) {
+            crate::agent::task_runs::cancel(tx, id, None, "the task was deleted", now).await?;
             self.record_write(
                 tx,
                 workspace_id,
@@ -3419,6 +3453,17 @@ impl TaskRepository {
             task_followers::follow_in_tx(&mut tx, task_id, &[actor_id], now).await?;
             task_followers::follow_in_tx(&mut tx, task_id, &mentioned_user_ids, now).await?;
         }
+        crate::agent::task_runs::commented(
+            &mut tx,
+            workspace_id,
+            task_id,
+            actor_id,
+            id,
+            &mentioned_user_ids,
+            !self.starts_agent_runs(),
+            now,
+        )
+        .await?;
         github_comments::queue_in(&mut tx, workspace_id, task_id, id, now).await?;
         self.record_write(
             &mut tx,
@@ -3792,6 +3837,7 @@ pub(super) async fn update_task_in_tx(
     request_id: &str,
     now: TimestampMillis,
     notify: bool,
+    agent_runs: bool,
 ) -> Result<Option<Vec<Value>>, TaskError> {
     let current = task_in_tx(tx, scope, workspace_id, update.id, false).await?;
     check_version(update.expected_version, current.version, &current)?;
@@ -4074,6 +4120,24 @@ pub(super) async fn update_task_in_tx(
             .collect();
         replace_assignees(tx, update.id, assignees).await?;
         task_followers::follow_in_tx(tx, update.id, &added, now).await?;
+        // An agent added starts a run for the actor; one removed stops its run here.
+        let removed: Vec<Id> = current
+            .assignee_ids
+            .iter()
+            .copied()
+            .filter(|id| !assignees.contains(id))
+            .collect();
+        crate::agent::task_runs::assigned(
+            tx,
+            workspace_id,
+            update.id,
+            actor_id,
+            &added,
+            &removed,
+            !agent_runs,
+            now,
+        )
+        .await?;
         added_assignees.clone_from(&added);
         if notify {
             notify_users(

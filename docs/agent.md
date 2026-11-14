@@ -132,6 +132,41 @@ agent has:
 - Each agent has its own thread state: in one chat thread the default agent and a custom agent each keep their own
   run, queue and transcript (`inputs::agent_thread_key`).
 
+## Tasks for agents
+
+An agent (the default agent or any other) works on tasks like a teammate:
+
+| What a person does | Run | Driver |
+|---|---|---|
+| Assigns a task to an agent (new task, task details, bulk edit, API token, MCP) | Starts at once | The person who assigned it |
+| Comments on a task and `@mentions` an agent | Starts at once | The comment's author |
+| Comments on a task that an agent is assigned to | Starts at once | The comment's author |
+
+- **Driver.** The run acts with the driver's permissions only (an agent session of the driver), uses the driver's
+  ChatGPT connection, and counts against the driver's run limit. Orbit posts a header from the agent in the driver's
+  **DM with the agent** ("📋 You assigned me ENG-12 …"): questions (`ask_teammate`) and write approvals go to the thread
+  under it, to the driver, exactly as in chat. The driver must see the task (so they can edit it); an agent must see it
+  too: in a private project the agent must be on the project's member list.
+- **Comment.** The agent writes its progress and its result into **one comment on the task, as itself**
+  (`PUT /api/internal/agent/task-runs/{run}/comment`): followers are notified once, when it starts. Cards do not show
+  in comments. When the run ends, the DM header says where the result is. A later run in the same DM thread (after an
+  answer or a "yes") writes its result into that comment too. `get_task` returns the task's newest 20 comments.
+- **No loops.** The agent's own comments, any write through an agent session (an agent acting as its driver, so no
+  agent can make another agent or itself work), service-account tokens and label rules start no run. Guests see no
+  task, so they cannot start or drive one.
+- **One run per task.** Triggers while a run is going **queue**; a second trigger by the same person for the same
+  agent while their run is queued **joins** it (the run reads the task and its newest comments when it starts). A run
+  that ends, or waits for an answer, frees the task; the next queued run starts on the agent service's next poll.
+  Before it starts, Orbit checks again that the task exists, the agent is still assigned (or was mentioned), and the
+  driver and the agent still see the task; if not, the run is cancelled.
+- **Stop.** Unassigning the agent cancels its runs on the task; deleting the task or its project (into the trash)
+  cancels all of them. A running run is refused at once (its input is acknowledged, its thread idle, the driver's sessions with that
+  agent deleted, no new session) and the sidecar aborts it (`stops` in the inputs poll) and writes "⏹ Stopped: …" into
+  the comment when the task still exists.
+- Data: `agent_task_runs` (migration `20261114000300_agent_task_runs`), one row per run: task, agent, driver, cause
+  (`assigned`, `mentioned`, `commented`), the starting comment, status (`queued`, `running`, `done`, `cancelled`) and
+  reason, its DM thread and its comment.
+
 ## Answer level
 
 Each agent's card in **Settings → Agentic → Agents** has an answer level: **Short**, **Normal** or **Thorough**
