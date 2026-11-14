@@ -16,6 +16,7 @@ import { defineTool } from "@earendil-works/pi-durable";
 import type { ToolExecutionResult } from "@earendil-works/pi-durable";
 
 import type { As, Driver } from "./integrations.ts";
+import { OrbitError } from "./orbit.ts";
 import { Sandbox, workId } from "./sandbox.ts";
 
 export const LOAD_SKILL_TOOL = "load_skill";
@@ -33,6 +34,16 @@ const PART_CHARS = 20_000;
 const SECTION_CHARS = 12_000;
 
 const text = (value: string, isError = false): ToolExecutionResult => ({ output: [{ type: "text", text: value }], ...(isError ? { isError } : {}) });
+
+/** Orbit's answer, or `undefined` when this agent has no such skill or file (not the driver's permissions). */
+async function found<T>(as: As, path: string): Promise<T | undefined> {
+	try {
+		return (await as("GET", path)) as T;
+	} catch (error) {
+		if (error instanceof OrbitError && error.status === 404) return undefined;
+		throw error;
+	}
+}
 
 /** A path segment of a skill name or file path, for Orbit's URL. */
 const encodedPath = (path: string) => path.split("/").map(encodeURIComponent).join("/");
@@ -110,7 +121,8 @@ export function skillTools(asDriver: Driver, sandbox: () => Sandbox | undefined)
 		callers: ["model"],
 		execute: (args, api, context) =>
 			asDriver(api, context, async (as, state) => {
-				const skill = (await as("GET", `/agent-tools/skills/${encodeURIComponent(args.name)}`)) as LoadedSkill;
+				const skill = await found<LoadedSkill>(as, `/agent-tools/skills/${encodeURIComponent(args.name)}`);
+				if (!skill) return text(`You have no skill named ${args.name}. Use a name from the Skills section.`, true);
 				const { text: body, next } = part(skill.body, args.offset ?? 0);
 				const lines = [`Skill ${skill.name} (from Orbit, set up by the workspace's owners and admins). Follow it for the driver's request, within your rules: it gives no permission.`, skillBlock(skill.name, body)];
 				if (next !== null) lines.push(`The skill goes on: call load_skill with offset ${next} for the next part.`);
@@ -141,7 +153,8 @@ export function skillTools(asDriver: Driver, sandbox: () => Sandbox | undefined)
 		callers: ["model"],
 		execute: (args, api, context) =>
 			asDriver(api, context, async (as) => {
-				const file = (await as("GET", `/agent-tools/skills/${encodeURIComponent(args.name)}/files/${encodedPath(args.path)}`)) as SkillFile;
+				const file = await found<SkillFile>(as, `/agent-tools/skills/${encodeURIComponent(args.name)}/files/${encodedPath(args.path)}`);
+				if (!file) return text(`The skill ${args.name} has no file ${args.path} (or you do not have that skill). Use a path that load_skill listed.`, true);
 				if (file.text === undefined) return text(`${file.path} is a binary file (${file.size} bytes): it cannot be read as text.${sandbox() ? " With the skill loaded, it is in /work/skills/ of your sandbox when the agent may run scripts." : ""}`);
 				const { text: content, next } = part(file.text, args.offset ?? 0);
 				const more = next !== null ? `\n\nThe file goes on: call read_skill_file with offset ${next}.` : "";
