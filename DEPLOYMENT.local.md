@@ -263,6 +263,90 @@ It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-ag
 
 ## Verification performed
 
+### November 14, 2026 upgrade: docs links on tasks (schema 20261114000100, 116 rows; 1 migration)
+
+`main` from `454a0cdd` to `9b483b6a` (local, not pushed): merge of `docs-links` (`617dbcab..d00ce0aa`, worktree
+`/root/jean/orbit/docs-links`, based on `0fbcf7ca`, so before port 5 and logos). "Add doc" on a task (beside Add
+relation and Add sub-issue) opens a page picker and links Docs pages to the task (its "Docs" list, x unlinks); a Docs
+page shows "Linked tasks" under its title. Both sides show only what the reader sees (`pages::visible()`, the same
+visibility as port 5 teamspaces; `ProjectScope` for tasks); guests reach neither side; the audit and task activity
+store only the page id (title added for readers who see the page). Routes `GET/POST /tasks/{id}/linked-docs`,
+`DELETE /tasks/{id}/linked-docs/{page_id}`, `GET /pages/{id}/linked-tasks`. Donna: `link_doc_to_task`,
+`unlink_doc_from_task`, links in `get_task` / `read_page`. Web and mobile. Conflicts: what's new (doc links put on the
+`2026-11-14` Tasks line, still 4 lines), aboutOrbit (the branch's "Docs on tasks" line, `main`'s task references line
+and Agentic list plus doc links), `TOOL_CATALOG` 59 (`main` 57 + 2), `openapi_contract` 301 paths and 391 operations
+(both sides had 298/387 and 298/385 from base 295/381), `sdk.gen.ts` made again (`openapi.json` equal to the
+auto-merge; new schemas only `LinkDocBody`, `LinkedDoc`, `LinkedTask`). What is new for people: the doc-link text on
+the `2026-11-14` Tasks line. Slack text (not posted): `/root/ops/docs-links/slack.json`.
+
+Migration (SQLite + Postgres, not destructive): `20261114000100_task_doc_links` (new table `task_doc_links`: `id` PK,
+`workspace_id`/`task_id`/`page_id` → ON DELETE CASCADE, `created_by` → `users` ON DELETE SET NULL, `UNIQUE (task_id,
+page_id)`, index `task_doc_links_page`). No RESTRICT reference, so no cascade order change.
+
+Checks on the merge commit (main checkout): server debug build; `openapi` + `api:generate`; web `bun --bun run build`
+(`tsc -b` + vite) and `bun test` of the touched parts (task detail, relations, sub-issues, TasksPage, models, `docs`:
+376 pass); mobile `tsc` and 226 tests; `packages/api` `tsc`; agent `tsc` and 88 tests (11 skipped, catalog test
+passes). SQLite and Postgres: `task_doc_links` 2, `tasks_api` 100, `guest_access` 1, `agent_api` 18, `openapi_contract`
+19, `pages_api` 26, `teamspaces_api` 8; lib `agent::profiles` 4: all pass. Not run: the full web suite, the iOS bundle
+on Metro. Scripts and logs: `/root/ops/docs-links/`.
+
+Deploy id `20261114T022204Z-1215243`. `orbit:9b483b6` (image
+`sha256:0963b9c04ad7a5e5c17965309b8264be2bd4f9d9db8e1f07ffd037593f0fbab8`, label `9b483b6a…`, about 35 min);
+`deploy/smoke.sh` and `orbit config check` (production env) passed. Before the switch, the release binary's embedded app
+on a seeded instance in `unshare -n` (signed in, owner; 2 pages made there by API): `/`, `/tasks`, `/docs`, `/drive`,
+`/chat`, `/activity`, `/admin`; task detail "Add doc" → picker "Add doc" with 2 pages → pick → Docs list 1 row and
+"linked doc" in the activity; the page shows "Linked tasks" with the task; Unlink → the Docs list is gone; 0 page or
+console errors. Migration dry run (debug binary on a hot copy, and in the switch the release binary on a copy of the
+stopped database): 1 applied, a second run 0, 116 rows, the 115 old checksums, counts and user names unchanged (9 users,
+110 tasks, 6 projects, 1135 chat messages, 3 teamspaces, 57 pages), `task_doc_links` 0 rows, quick-check ok, 0
+foreign-key rows. Rollback test on the same copies: the old binary refuses ("database schema version 20261114000100 is
+newer"), `rollback-schema.sql` (`DROP INDEX`, `DROP TABLE`, delete the version row) brings `sqlite_master` back equal
+to the source, counts and checksums equal, the old binary applies 0, the new binary applies 1 again.
+
+Switch: stopped both services at 03:27:30 UTC; snapshot `01a1d818-8e21-7714-825a-d235a3b49155` with
+`/usr/local/bin/orbit-fceadb0`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-9b483b6.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-9b483b6.tgz`; old sidecar code `/opt/orbit-agent.before-9b483b6`; new
+sidecar `src` (`package*.json` unchanged); env unchanged. Binary installed (`/usr/local/bin/orbit-9b483b6` too), `orbit`
+ready 03:27:44, then `orbit-agent` (14 s down). `vm-health.conf` (old copy `.before-9b483b6`): `PROD_TAG=9b483b6`,
+`ROLLBACK_TAG=fceadb0`, `ROLLBACK_BACKUP=01a1d818-8e21-7714-825a-d235a3b49155`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness 200 and `/health/live` 200; `/orbit-build.json`
+revision `9b483b6a…`; schema 20261114000100 (116 rows, table and index present, 0 links); live quick-check ok, 0
+foreign-key rows; 0 error lines in the journal (only the known "allowed origin without a port" WARN); sidecar `/health`
+ok and `src` equal to `main`. Built bundle on production as David Dusi (temporary v7 session, `ui-check.ts`, all API
+writes blocked; the only write tried was the app's own Docs page `visit` POST, blocked): a task detail shows "Add doc"
+(linked-docs GET 200 `[]`); "Add doc" opens the picker titled "Add doc" with 46 pages, closed with Escape, no pick; a
+teamspace page's linked-tasks GET 200 `[]` and no section; the same page with that one GET stubbed in the browser (a
+real task) shows "Linked tasks 1 GEN-1 Price Sheet for Studios"; 0 console or page errors. Screenshots
+`/root/.local/share/com.jean.desktop/pasted-images/docs-links/prod-{task-add-doc,add-doc-picker,page-linked-tasks-stubbed}.png`.
+`ORBIT_VERIFY_SPA=1 verify-production.sh` passed (session logged out, the row deleted after; token file, TLS hop and its
+pem removed). `vm-health` OK except nginx (9 lines, upstream refused in the switch window 03:27:40–03:27:44), docker
+(other worktrees' containers) and git-owner (other worktrees' metadata; this merge's root-owned files given back to
+exedev). **Not** verified on production: creating or removing a real link, Donna's link tools (writes).
+
+Rollback to `fceadb0`. Way 1 keeps the work done after the switch, but loses the doc links.
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit sqlite3 /var/lib/orbit/orbit.sqlite < /root/ops/docs-links/rollback-schema.sql
+sudo install -m 755 /usr/local/bin/orbit-fceadb0 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-9b483b6 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/docs-links/rollback.sh, which also keeps a copy of the database first)
+# rollback-schema.sql: DROP INDEX task_doc_links_page; DROP TABLE task_doc_links; delete the version row
+#   (task.doc_linked / task.doc_unlinked audit rows stay)
+# Way 2, only for a data problem (work after 03:27 UTC is lost), Orbit stopped: /usr/local/bin/orbit-fceadb0 backup verify +
+#   backup restore 01a1d818-8e21-7714-825a-d235a3b49155 (as user orbit, with /etc/orbit/orbit.env), then the binary and sidecar lines above
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-9b483b6.tgz
+# Plain copy of the database before the switch: /var/backups/orbit/pre-migration/orbit-before-9b483b6.sqlite
+```
+
+After this rollback, set `PROD_TAG=fceadb0`, `ROLLBACK_TAG=21055b4`,
+`ROLLBACK_BACKUP=01a1d7d8-a29f-70f5-96f7-a42e44a4d7f0` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-9b483b6`).
+
 ### November 14, 2026 upgrade: workspace logos (schema 20261113190031, 115 rows; 1 migration)
 
 `main` from `1ee54bb0` to `fceadb01` (local, not pushed): merge of `workspace-logos` (`715888dd..0eafe1e2`, worktree
