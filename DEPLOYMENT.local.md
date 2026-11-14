@@ -7,15 +7,15 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at e53e93c62190aed860027ed71d8eb34060e8a31b
-  (Donna tool `drive_image_to_shopify`; schema 20261113115539, unchanged; November 13, 2026).
+- Source: DaveDushi/orbit, `main` at da0cf827722f5b250a5fb14e50e2e6781af9e594
+  (upstream ports 3 milestones/cycles and 4; schema 20261113115539, 113 rows; November 14, 2026).
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
   f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:e53e93c`); fork commits have no published upstream image.
-- Image ID: sha256:1f76809f9e45cc7cfe6e6973ce32a88b110d55c089c7168c480468fd5325506d
-- Team agent sidecar code (`/opt/orbit-agent`): commit e53e93c.
+  (`orbit:da0cf82`); fork commits have no published upstream image.
+- Image ID: sha256:2daf023fcf390c7ac968ad6b62b981d9b7a70c966732f202e2a7d672c1ce805b
+- Team agent sidecar code (`/opt/orbit-agent`): commit da0cf82.
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): off. No `ORBIT_APNS_*` setting is in `/etc/orbit/orbit.env`
   yet, so Orbit keeps the iPhones' device rows and sends them nothing (no log line). To turn it on, put the team's `.p8`
   key on the VM (owner `orbit`, mode 600), set `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID` (and
@@ -262,6 +262,99 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 14, 2026 upgrade: upstream ports 3 (milestones, cycles) and 4 (schema 20261113115539, 113 rows; 5 migrations)
+
+`main` from `ccaa8839` to `da0cf827` (local, not pushed at the switch): fast-forward of `upstream-port4`. It holds the
+upstream port 3 milestones work (`e7ea6528` milestones, cycles and estimates #113, `9266dbf5` carried-over tasks #129,
+`b0b94194` Donna tool `list_milestones_cycles`), port 4 (`c8c16734` public API moves, trashes and lists versions of
+docs #121, `727d3f9c` `Idempotency-Key` on public task and comment creates #122, `92be1eef` public task list due-date
+filter #123, `b9c3e5a0` one MCP OAuth connection for several workspaces #132, `a5d82dc1` S3 file move progress,
+`9bd43864` Admin → Storage "Keep deleted files in S3"), merge `10dafbcc` of `main` and `da0cf827`. Merge fixes: the
+generated client made again from the merged server; `openapi_contract` 297 paths, 384 operations; `TOOL_CATALOG` 57
+tools (`drive_image_to_shopify` + `list_milestones_cycles`); the iPhone Share → new task sends the new milestone,
+cycle and estimate fields. Upstream #125 (titles of a database row's sub-page links) is not in this fork: the fork has no
+Docs databases. What is new for people: new entry `2026-11-14` (milestones, cycles and estimates; multi-workspace MCP
+OAuth, public API docs moves/trash/versions, due-date filter, Idempotency-Key, S3 move progress and keep-days).
+`aboutOrbit()` covers all of it.
+
+Migrations (SQLite + Postgres, none destructive): `20261113100600_task_milestones_cycles` (tables `task_milestones`,
+`task_cycles`, columns `tasks.milestone_id`, `cycle_id`, `estimate`, triggers), `20261113100700_task_cycle_carryovers`,
+`20261113100800_api_idempotency_keys`, `20261113100900_oauth_grant_groups` (`oauth_grants.group_id = id` for existing
+grants), `20261113101000_s3_keep_deleted_days` (`instance_settings.s3_keep_deleted_days` default 40). Their versions are
+older than the applied `20261113115539`; the runner applies every version that is not in `schema_migrations`, so the
+max version stays `20261113115539`.
+
+Checks on the merge (`orbit-build`, `CARGO_PROFILE_*_DEBUG=0`): SQLite `oauth_api` 15, `views_api` 25, `storage_api` 7,
+`workspace_storage_api` 3, `tasks_api` 100, `private_projects` 8, `public_api` 34, `mcp_api` 19, `guest_access` 1,
+`agent_api` 18, `agent_profiles` 9, `agent_shopify_image` 5, `home_layout_api` 6, `openapi_contract` 19, platform
+`database` 55, server `--lib` 292; the same (without `openapi_contract` and `--lib`) with `ORBIT_TEST_POSTGRES_URL`: all
+pass. Web build (`tsc -b && vite build`), `tsc` of `packages/api`, `apps/agent`, `apps/mobile`; agent tests 85 pass;
+mobile `bun test src` 225 pass. Not run: the iOS bundle on Metro. Scripts and logs: `/root/ops/upstream-port4/`.
+
+Deploy id `20261113T222638Z-962969` (the first id `20261113T201729Z-807761` lost its lease during the tests, before any
+step; production was unchanged). `orbit:da0cf82` (image
+`sha256:2daf023fcf390c7ac968ad6b62b981d9b7a70c966732f202e2a7d672c1ce805b`, label `da0cf827…`, one cold build);
+`deploy/smoke.sh` and `orbit config check` (production env) passed. Before the switch, the release binary's embedded app
+on a seeded instance in `unshare -n` (signed in): `/`, `/tasks`, project settings (Milestones and Cycles cards),
+`/docs`, `/drive`, `/chat`, `/activity`, `/settings`, `/settings/agentic`, `/admin`, `/admin/storage`, 0 page or
+console errors. Migration dry run (release binary on a hot copy, and in the switch on a copy of the stopped database):
+5 applied, a second run 0, 113 rows, the 108 old checksums, counts and user names unchanged (9 users, 110 tasks, 6
+projects, 1132 chat messages, 0 OAuth grants), `s3_keep_deleted_days` 40, quick-check ok, 0 foreign-key rows. Rollback
+test on the same copies: the old binary refuses ("migration 20261113100600 is not known"), `rollback-schema.sql` brings
+`sqlite_master` back equal to the source, counts and checksums equal, the old binary applies 0, and the new binary
+applies the 5 again. **Production has 0 MCP OAuth grants**, so no existing connection could be tested there. Instead
+`oauth-check.sh` (copy of the stopped database, `unshare -n`) added a grant and token pair as `e53e93c` stores them:
+before the migration `e53e93c` answered `list_projects` (its `get_me` answers "Resource is not available" for every
+OAuth connection, an old bug that port 4 fixes); after the migration the same token got `get_me` and `list_projects`,
+`group_id = id`, a refresh worked, and the refreshed token got `get_me`.
+
+Switch: stopped both services at 00:00:43 UTC; snapshot `01a1d75b-3deb-73a0-8a4b-2915ac8820ae` with
+`/usr/local/bin/orbit-e53e93c`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-da0cf82.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-da0cf82.tgz`; old sidecar code `/opt/orbit-agent.before-da0cf82`; new
+sidecar `src` (`package*.json` unchanged); env unchanged. Binary installed (`/usr/local/bin/orbit-da0cf82` too), `orbit`
+ready 00:01:36, then `orbit-agent` (53 s down). `vm-health.conf` (old copy `.before-da0cf82`): `PROD_TAG=da0cf82`,
+`ROLLBACK_TAG=e53e93c`, `ROLLBACK_BACKUP=01a1d75b-3deb-73a0-8a4b-2915ac8820ae`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) and `/health/live` 200; schema
+20261113115539 (113 rows, the 5 new versions present); live quick-check ok, 0 foreign-key rows; 0 error lines in the
+journal (only the known "allowed origin without a port" WARN); sidecar `/health` ok and `src` equal to `main`, deployed
+`aboutOrbit()` has milestones/cycles, Idempotency-Key and "Keep deleted files in S3". `/.well-known/oauth-protected-
+resource/mcp` 200, `/mcp` without a token 401. Built bundle on production as David Dusi (temporary v7 session,
+`ui-check.ts`, all API writes blocked, none was attempted): General project settings shows the Milestones and Cycles
+cards (`milestones` and `cycles` GET 200); Admin → Storage shows "Keep deleted files in S3" = 40 days; the task list
+loads; 0 console or page errors. Screenshots
+`/root/.local/share/com.jean.desktop/pasted-images/upstream-port4/prod-{project-milestones-cycles,admin-storage-keep-days,tasks}.png`.
+`ORBIT_VERIFY_SPA=1 verify-production.sh` passed (session logged out, the row deleted after; token file, TLS hop and its
+pem removed). `vm-health` OK except oom (an older one), nginx (14 lines, upstream refused 00:01:04–00:01:35, the switch
+window) and docker (other worktrees' containers). **Not** verified on production: a real MCP OAuth consent with several
+workspaces, creating a milestone or cycle, an Idempotency-Key retry (all writes).
+
+Rollback to `e53e93c`. Way 1 keeps the work done after the switch, but loses milestones, cycles, carry-overs, task
+estimates, idempotency keys, OAuth grant groups (the extra grants of a multi-workspace consent stay as separate grants)
+and the keep-days setting (back to the fixed 40).
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit sqlite3 /var/lib/orbit/orbit.sqlite < /root/ops/upstream-port4/rollback-schema.sql
+sudo install -m 755 /usr/local/bin/orbit-e53e93c /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-da0cf82 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/upstream-port4/rollback.sh, which also keeps a copy of the database first)
+# rollback-schema.sql: drop the 4 task triggers, 2 task indexes, task_cycle_carryovers, tasks.milestone_id/cycle_id/
+#   estimate, task_milestones, task_cycles, api_idempotency_keys, oauth_grants_group + group_id,
+#   instance_settings.s3_keep_deleted_days; delete the 5 version rows (one transaction)
+# Way 2, only for a data problem (work after 00:00 UTC is lost), Orbit stopped: /usr/local/bin/orbit-e53e93c backup verify +
+#   backup restore 01a1d75b-3deb-73a0-8a4b-2915ac8820ae (as user orbit, with /etc/orbit/orbit.env), then the binary and sidecar lines above
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-da0cf82.tgz
+# Plain copy of the database before the switch: /var/backups/orbit/pre-migration/orbit-before-da0cf82.sqlite
+```
+
+After this rollback, set `PROD_TAG=e53e93c`, `ROLLBACK_TAG=4b1b607`,
+`ROLLBACK_BACKUP=01a1d688-2f92-74b7-b90d-b0f423e4aa13` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-da0cf82`).
 
 ### November 13, 2026 upgrade: Donna tool drive_image_to_shopify (no migration)
 
