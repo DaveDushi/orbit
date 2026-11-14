@@ -2956,8 +2956,7 @@ impl TaskRepository {
                 .await?;
         }
         for id in std::iter::once(task_id).chain(descendants.iter().copied()) {
-            crate::agent::task_runs::cancel(&mut **tx, id, None, "the task was deleted", now)
-                .await?;
+            crate::agent::task_runs::cancel(tx, id, None, "the task was deleted", now).await?;
             self.record_write(
                 tx,
                 workspace_id,
@@ -4142,7 +4141,7 @@ pub(super) async fn update_task_in_tx(
             .filter(|id| !assignees.contains(id))
             .collect();
         crate::agent::task_runs::assigned(
-            &mut **tx,
+            tx,
             workspace_id,
             update.id,
             actor_id,
