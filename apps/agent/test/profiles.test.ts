@@ -15,13 +15,14 @@ test("Orbit's tool catalog for agent profiles names exactly the sidecar's tools"
 	assert.deepEqual(server, sidecar);
 });
 
-test("a custom agent is offered only its own tools and code mode, media tools only with a sandbox", () => {
+test("a custom agent is offered only its own tools, the skill tools and code mode, media tools only with a sandbox", () => {
+	const always = ["load_skill", "read_skill_file", "codemode", "run_saved_script"];
 	assert.deepEqual(
 		toolRegistrations(["read_page", "create_page", "view_image", "no_such_tool"], false).map((tool) => tool.name),
-		["read_page", "create_page", "codemode", "run_saved_script"],
+		["read_page", "create_page", ...always],
 	);
-	assert.deepEqual(toolRegistrations(["view_image"], true).map((tool) => tool.name), ["view_image", "codemode", "run_saved_script"]);
-	assert.deepEqual(toolRegistrations([], true).map((tool) => tool.name), ["codemode", "run_saved_script"]);
+	assert.deepEqual(toolRegistrations(["view_image"], true).map((tool) => tool.name), ["view_image", ...always]);
+	assert.deepEqual(toolRegistrations([], true).map((tool) => tool.name), always);
 	// A script can neither start a script nor end the run with a question.
 	for (const tool of [...toolRegistrations([], false), ORBIT_TOOLS.find((candidate) => candidate.name === "ask_teammate")!]) {
 		assert.deepEqual(tool.callers, ["model"], tool.name);

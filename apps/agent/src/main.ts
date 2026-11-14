@@ -31,7 +31,8 @@ function send(response: ServerResponse, status: number, body: unknown): void {
 
 const server = createServer((request, response) => {
 	const url = new URL(request.url ?? "/", "http://agent");
-	if (url.pathname === "/health") return send(response, 200, { ok: true, mock: config.mock });
+	// Orbit (with the secret) also learns whether skill scripts can run: they need the media sandbox.
+	if (url.pathname === "/health") return send(response, 200, { ok: true, mock: config.mock, ...(authorized(request) ? { sandbox: Boolean(config.sandboxSocket) } : {}) });
 	if (!authorized(request)) return send(response, 401, { error: "unauthorized" });
 	// The Default model card (Agentic → Agents): what an installation admin can choose; Orbit refuses any other model.
 	if (url.pathname === "/models" && request.method === "GET") return send(response, 200, { default_model: config.model, models: codexModels() });

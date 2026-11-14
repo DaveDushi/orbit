@@ -7,6 +7,7 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 -->
 
 ## 2026-11-14
+- Agent skills: owners and admins add skills (the open SKILL.md format) in Settings → Agentic → Skills: from GitHub or skills.sh, as a .zip, or written there. Turn each skill on for Donna or another agent; it loads a skill only when a request needs it.
 - MCP and API: one OAuth connection (for example Claude or Codex) can now cover several workspaces, each with its own projects; tick them on the consent page. The public API can move docs, put them in the trash and list their versions, filters tasks by due date, and makes a retried task or comment create safe with an Idempotency-Key.
 - Admin → Storage: turning "Files in S3" on or off now says when the move is done, and "Keep deleted files in S3" sets how many days (1 to 365, default 40) a deleted file stays in the bucket.
 - Chat: a # button beside @ mentions a channel or a task. Project settings: each part (General, Access, Statuses, Labels, Rules, Docs…) is its own page in the sidebar, and Project settings → Docs links a teamspace to the project for its docs.

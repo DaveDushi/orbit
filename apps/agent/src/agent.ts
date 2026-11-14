@@ -22,6 +22,7 @@ import { closeCodemode, RUN_SCRIPT } from "./codemode.ts";
 import { IndexDoc, ThreadDoc, type RoutineRunState, type RunCall, type ThreadState } from "./docs.ts";
 import { withMessageFiles } from "./files.ts";
 import { loadIntegrations } from "./integrations.ts";
+import { loadSkills } from "./skills.ts";
 import { loadWake } from "./memory.ts";
 import { namesToTokens, splitBody, tokensToNames, type Person } from "./mentions.ts";
 import { mockModels } from "./mock.ts";
@@ -178,6 +179,8 @@ const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
 	repair_routine_script: () => "Repairing the saved script",
 	codemode: () => "Running a script",
 	run_saved_script: () => "Running the saved script",
+	load_skill: (args) => `Loading the skill “${args.name}”`,
+	read_skill_file: (args) => `Reading ${args.path} of the skill “${args.name}”`,
 	memory_note: (args) => `Remembering (${args.scope})`,
 	memory_summarize: () => "Summarizing memory",
 	memory_recall: (args) => `Searching memory for “${args.query}”`,
@@ -639,11 +642,16 @@ export class Agent {
 					return null;
 				})
 			: null;
+		const skills = await loadSkills((method, path) => this.#orbit.asUser(driverId, state.workspaceId, method, path, undefined, state.agentUserId ?? null, state.threadKey || null)).catch((error: unknown) => {
+			console.warn("agent: reading skills failed", String(error));
+			return null;
+		});
 		await conversation.commit(async (tx) => {
 			const doc = await tx.doc(ThreadDoc, conversation.id);
 			doc.conversationMembers = input.conversation_members;
 			doc.memory = memory;
 			doc.integrations = integrations;
+			doc.skills = skills;
 		}, context);
 		const submission = await conversation.submit({ type: "input", content, requestId: input.message_id }, context);
 		await conversation.commit(async (tx) => {
