@@ -73,7 +73,9 @@ impl HttpLimits {
             || path.ends_with("/export")
             // An agent tool call can wait for a token, the API and one retry, each up to 30 seconds.
             || path.ends_with("/agent-tools/call")
-            || (path.contains("/agent-integrations/") && path.ends_with("/test"));
+            || (path.contains("/agent-integrations/") && path.ends_with("/test"))
+            // Installing an agent skill downloads up to 101 files from GitHub, one after the other.
+            || path.ends_with("/agent-skills/install");
         self.request_timeout.filter(|_| !long)
     }
 
@@ -177,6 +179,7 @@ mod tests {
                 "/api/v1/workspaces/w/agent-integrations/i/test",
                 None,
             ),
+            request("POST", "/api/v1/workspaces/w/agent-skills/install", None),
         ] {
             assert!(
                 limits.request_timeout(&excluded).is_none(),

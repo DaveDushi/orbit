@@ -396,6 +396,32 @@ impl Outbound {
         ))
     }
 
+    /// A GET of at most `max` bytes (an agent skill's files, `super::skill_package`): the status
+    /// and the body. Same checks as every call here; a longer answer fails.
+    pub(crate) async fn get_bytes(
+        &self,
+        url: &Url,
+        max: usize,
+    ) -> Result<(u16, Vec<u8>), OutboundError> {
+        let url = check_url(url.as_str(), &self.test_hosts)?;
+        let mut response = self.send(self.client.get(url)).await?;
+        let status = response.status().as_u16();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|error| OutboundError::Network(network_reason(&error.without_url())))?
+        {
+            if bytes.len() + chunk.len() > max {
+                return Err(OutboundError::Refused(
+                    "The answer is larger than the limit.",
+                ));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok((status, bytes))
+    }
+
     /// A POST of a JSON body (dynamic client registration): the status and the JSON answer.
     pub(crate) async fn post_json(
         &self,

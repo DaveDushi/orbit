@@ -19,6 +19,8 @@ pub(crate) mod routes;
 pub mod scope;
 pub(crate) mod sessions;
 pub mod settings;
+pub(crate) mod skill_package;
+mod skills;
 
 use std::sync::Arc;
 
@@ -30,6 +32,7 @@ pub fn router(state: AgentState) -> axum::Router {
         .merge(integrations::router(state.clone()))
         .merge(drive::router(state.clone()))
         .merge(profiles::router(state.clone()))
+        .merge(skills::router(state.clone()))
         .merge(crate::scheduled::router(state))
 }
 
@@ -110,6 +113,8 @@ pub struct AgentState {
     pub(crate) public_origin: Option<String>,
     /// Orbit Drive for the agent's Drive tools; absent: they answer that Drive is not available.
     pub(crate) drive: Option<drive::AgentDrive>,
+    /// Where agent skills are downloaded from (`skills`): GitHub, or a local server in tests.
+    pub(crate) skill_sources: skill_package::SkillSources,
 }
 
 impl AgentState {
@@ -136,6 +141,7 @@ impl AgentState {
             connect_locks: mcp_oauth::RefreshLocks::default(),
             public_origin: None,
             drive: None,
+            skill_sources: skill_package::SkillSources::from_env(),
         }
     }
 
@@ -161,6 +167,17 @@ impl AgentState {
     #[must_use]
     pub fn with_integration_test_hosts(mut self, hosts: &[&str]) -> Self {
         self.outbound = outbound::Outbound::new(outbound::TestHosts::new(hosts.iter().copied()));
+        self
+    }
+
+    /// Downloads agent skills from these GitHub API and raw file hosts: for tests only (the hosts
+    /// must also be integration test hosts to be local).
+    #[must_use]
+    pub fn with_skill_sources(mut self, api: &str, raw: &str) -> Self {
+        self.skill_sources = skill_package::SkillSources {
+            api: url::Url::parse(api).expect("a valid skills API URL"),
+            raw: url::Url::parse(raw).expect("a valid skills raw URL"),
+        };
         self
     }
 
