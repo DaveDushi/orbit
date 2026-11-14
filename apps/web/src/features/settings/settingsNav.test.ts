@@ -4,9 +4,9 @@ import { AGENTIC_TABS, agenticTabsView } from './settingsNav'
 const labels = (view: ReturnType<typeof agenticTabsView>) => view.tabs.map((tab) => tab.label)
 
 test('every section shows and stays on its address', () => {
-  for (const [path, label] of [['/settings/agentic', 'You'], ['/settings/agentic/', 'You'], ['/settings/agentic/workspace', 'Workspace'], ['/settings/agentic/agents', 'Agents'], ['/settings/agentic/routines', 'Routines']]) {
+  for (const [path, label] of [['/settings/agentic', 'You'], ['/settings/agentic/', 'You'], ['/settings/agentic/workspace', 'Workspace'], ['/settings/agentic/agents', 'Agents'], ['/settings/agentic/routines', 'Routines'], ['/settings/agentic/skills', 'Skills']]) {
     const view = agenticTabsView(AGENTIC_TABS, true, path)
-    expect(labels(view)).toEqual(['You', 'Workspace', 'Agents', 'Routines'])
+    expect(labels(view)).toEqual(['You', 'Workspace', 'Agents', 'Routines', 'Skills'])
     expect(view.current?.label).toBe(label)
     expect(view.redirect).toBeNull()
   }
