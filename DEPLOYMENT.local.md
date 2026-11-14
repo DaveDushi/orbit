@@ -7,15 +7,15 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 21055b4f4480aa42895ecea9ef2831895ed743dd
-  (upstream port 5; schema 20261113115539, 114 rows; November 14, 2026).
+- Source: DaveDushi/orbit, `main` at d4ee5e077cf897450251021f6c59b5e2067df360
+  (agents work on tasks assigned to them; schema 20261114000300, 117 rows; November 14, 2026).
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
   f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:21055b4`); fork commits have no published upstream image.
-- Image ID: sha256:e1c33a27da80e2a19d7c7ea4eb26c4e1b2ba93b8559711058bafec5d8e7e69d9
-- Team agent sidecar code (`/opt/orbit-agent`): commit 21055b4.
+  (`orbit:d4ee5e0`); fork commits have no published upstream image.
+- Image ID: sha256:e21b079d3ccbb0ba865616570c15c1a34566804ea0ce9964037e1061548685d7
+- Team agent sidecar code (`/opt/orbit-agent`): commit d4ee5e0.
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): off. No `ORBIT_APNS_*` setting is in `/etc/orbit/orbit.env`
   yet, so Orbit keeps the iPhones' device rows and sends them nothing (no log line). To turn it on, put the team's `.p8`
   key on the VM (owner `orbit`, mode 600), set `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID` (and
@@ -262,6 +262,91 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 14, 2026 upgrade: agents work on tasks assigned to them (schema 20261114000300, 117 rows; 1 migration)
+
+`main` from `99dd6d6f` to `d4ee5e07` (local, not pushed): merge of `agent-assigned-tasks` (`9f9a8a90..62ae4399`, worktree
+`/root/jean/orbit/agent-assigned-tasks`, based on `4877dd5c` (port 5), so before the port 4 merge fixes, logos and doc
+links). An agent assigned to a task (new task, task details, bulk edit, API, MCP) starts a run at once; the driver is
+the assigner (their permissions, their ChatGPT, approvals and questions in their DM with the agent under "You assigned
+me…"). An `@agent` comment, or a person's new comment on a task assigned to an agent, starts a run for the comment's
+author. Progress and result go into one task comment written as the agent. No trigger from the agent's own comments,
+agent sessions (no agent-to-agent), service-account tokens, label rules or guests. One running run per task (partial
+unique index + claim), later ones queue; unassign or delete (trash) cancels, and the sidecar aborts a started run
+(`stops` in the inputs poll). Design `.ai/agent-design.md` "Task runs" (T1-T6); user docs `docs/agent.md` "Tasks for
+agents". Internal routes only (`/api/internal/agent/task-runs/…`), no OpenAPI change. Conflicts: what's new
+`2026-11-14` (agents line on top; the Chat and workspace logos lines joined, still 4 lines), aboutOrbit (`main`'s text
+plus the branch's task-run parts), `get_task` (linked docs and the newest 20 comments), `agent/mod.rs` and
+`task_routes.rs` (both sides), lessons (both). Fix in the merge: the doc-links sidecar test's fake Orbit answers the
+comments read of `get_task`. What is new for people: the agents line on `2026-11-14`. Slack text (not posted):
+`/root/ops/agent-assigned-tasks/slack.json`.
+
+Migration (SQLite + Postgres, not destructive): `20261114000300_agent_task_runs` (new table `agent_task_runs`:
+`workspace_id`/`task_id`/`agent_user_id`/`driver_user_id` → ON DELETE CASCADE, `comment_id`/`result_comment_id` →
+`task_comments` ON DELETE SET NULL, CHECKs on `cause` and `status`; indexes `agent_task_runs_one_running` (unique,
+`status = 'running'`), `_task`, `_queued`, `_thread`). No RESTRICT reference and nothing references it.
+
+Checks on the merge commit (main checkout, mock model only): server debug build; web `bun --bun run build` (`tsc -b` +
+vite); agent `tsc` and 90 tests (11 skipped). SQLite and Postgres: `agent_task_runs` 6, `tasks_api` 100,
+`agent_api` 18, `guest_access` 1, `task_doc_links` 2, `openapi_contract` 19; lib `agent::` 49: all pass. Mobile and
+`packages/api` not touched (not run). Scripts and logs: `/root/ops/agent-assigned-tasks/`.
+
+Deploy id `20261114T033103Z-1285608`. `orbit:d4ee5e0` (image
+`sha256:e21b079d3ccbb0ba865616570c15c1a34566804ea0ce9964037e1061548685d7`, label `d4ee5e07…`, about 33 min);
+`deploy/smoke.sh` and `orbit config check` (production env) passed. Before the switch, the release binary's embedded app
+on a seeded instance in `unshare -n` with the agent on and no sidecar (signed in, owner): `/`, `/tasks`, `/docs`,
+`/drive`, `/chat`, `/activity`, `/admin`; task detail → Assignees lists "Orbit Agent" → pick → one `agent_task_runs` row
+(`queued`, `assigned`, driver = the test user) → unassign → `cancelled` ("I was unassigned from this task"); 0 page or
+console errors. Migration dry run (debug binary on a hot copy, and in the switch the release binary on a copy of the
+stopped database): 1 applied, a second run 0, 117 rows, the 116 old checksums, counts and user names unchanged (9 users,
+110 tasks, 6 projects, 1136 chat messages, 3 teamspaces, 57 pages), `agent_task_runs` 0 rows and 4 indexes,
+quick-check ok, 0 foreign-key rows. Rollback test on the same copies: the old binary refuses ("database schema version
+20261114000300 is newer"), `rollback-schema.sql` brings `sqlite_master` back equal to the source, counts and checksums
+equal, the old binary applies 0, the new binary applies 1 again.
+
+Switch: stopped both services at 04:33:23 UTC; snapshot `01a1d854-e094-7024-8a2d-13078715882c` with
+`/usr/local/bin/orbit-9b483b6`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-d4ee5e0.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-d4ee5e0.tgz`; old sidecar code `/opt/orbit-agent.before-d4ee5e0`; new
+sidecar `src` (`package*.json` unchanged); env unchanged. Binary installed (`/usr/local/bin/orbit-d4ee5e0` too), `orbit`
+ready 04:33:38, then `orbit-agent` (15 s down). `vm-health.conf` (old copy `.before-d4ee5e0`): `PROD_TAG=d4ee5e0`,
+`ROLLBACK_TAG=9b483b6`, `ROLLBACK_BACKUP=01a1d854-e094-7024-8a2d-13078715882c`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness 200 and `/health/live` 200; `/orbit-build.json`
+revision `d4ee5e07…`; schema 20261114000300 (117 rows, table and 4 indexes, 0 runs); live quick-check ok, 0
+foreign-key rows; 0 error lines in the journal after the start (only the known "allowed origin without a port" WARN;
+no task-run worker error while the sidecar polls); sidecar `/health` ok (`mock: false`) and `src` equal to `main`.
+Built bundle on production as David Dusi (temporary v7 session, `ui-check.ts`, all API writes blocked, none tried): task
+GEN-12 (no assignees) → Assignees picker lists 8 people with "Donna"; closed with Escape, nothing picked, assignees still
+`[]`; 0 console or page errors. Screenshots
+`/root/.local/share/com.jean.desktop/pasted-images/agent-assigned-tasks/prod-{assignee-picker-agent,task-detail}.png`
+(pre-switch: `pre-{assignee-picker,task-assigned-agent}.png`). `ORBIT_VERIFY_SPA=1 verify-production.sh` passed
+(session logged out, the row deleted after; token file, TLS hop and its pem removed). `vm-health` OK except nginx (10
+lines, upstream refused in the switch windows 03:27 and 04:33), docker (other worktrees' containers) and git-owner
+(this merge's root-owned files given back to exedev). **Not** verified on production: a real task run (assigning a
+task to an agent starts a paid model run), the comment output, stop of a running run.
+
+Rollback to `9b483b6`. Way 1 keeps the work done after the switch, but loses the task run rows.
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit sqlite3 /var/lib/orbit/orbit.sqlite < /root/ops/agent-assigned-tasks/rollback-schema.sql
+sudo install -m 755 /usr/local/bin/orbit-9b483b6 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-d4ee5e0 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/agent-assigned-tasks/rollback.sh, which also keeps a copy of the database first)
+# rollback-schema.sql: acknowledge the runs' pending agent_inputs rows, drop the 4 indexes and agent_task_runs,
+#   delete the version row (the runs' DM headers and task comments stay)
+# Way 2, only for a data problem (work after 04:33 UTC is lost), Orbit stopped: /usr/local/bin/orbit-9b483b6 backup verify +
+#   backup restore 01a1d854-e094-7024-8a2d-13078715882c (as user orbit, with /etc/orbit/orbit.env), then the binary and sidecar lines above
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-d4ee5e0.tgz
+# Plain copy of the database before the switch: /var/backups/orbit/pre-migration/orbit-before-d4ee5e0.sqlite
+```
+
+After this rollback, set `PROD_TAG=9b483b6`, `ROLLBACK_TAG=fceadb0`,
+`ROLLBACK_BACKUP=01a1d818-8e21-7714-825a-d235a3b49155` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-d4ee5e0`).
 
 ### November 14, 2026 upgrade: docs links on tasks (schema 20261114000100, 116 rows; 1 migration)
 
