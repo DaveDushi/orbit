@@ -7,6 +7,7 @@ import {
   emptyPageTrash,
   getPage,
   getTrashedPage,
+  listLinkedTasks,
   listPages,
   listPageTrash,
   movePage,
@@ -16,7 +17,7 @@ import {
   updatePage,
   uploadPageFile,
 } from '@orbit/api/generated/sdk.gen'
-import type { CreatePageBody, Page, PageFile, PageSummary, PageTrashEmptied, PageUpdateBody, TrashedPage } from '@orbit/api/generated/types.gen'
+import type { CreatePageBody, LinkedTask, Page, PageFile, PageSummary, PageTrashEmptied, PageUpdateBody, TrashedPage } from '@orbit/api/generated/types.gen'
 import { ApiProblem } from '@orbit/api/problem'
 import { queryKeys } from '@/api/queryKeys'
 import { shrinkUpload } from '@/lib/shrinkUpload'
@@ -142,6 +143,18 @@ export function usePage(workspaceId: string, pageId: string | undefined) {
     queryFn: async () => {
       const { data } = await getPage({ client: apiClient, path: { workspace_id: workspaceId, page_id: pageId! }, throwOnError: true })
       return required(data, 'Page response was empty.')
+    },
+  })
+}
+
+/** The tasks linked to a page that the caller sees ("Linked tasks" on the page). */
+export function useLinkedTasks(workspaceId: string, pageId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.pages.linkedTasks(workspaceId, pageId ?? ''),
+    enabled: Boolean(pageId),
+    queryFn: async (): Promise<LinkedTask[]> => {
+      const { data } = await listLinkedTasks({ client: apiClient, path: { workspace_id: workspaceId, page_id: pageId! }, throwOnError: true })
+      return required(data, 'Linked tasks response was empty.')
     },
   })
 }

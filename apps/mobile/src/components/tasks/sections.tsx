@@ -1,11 +1,12 @@
-/** The main-column sections of the task page under the description: Duplicate banner, Sub-issues, Relations. */
+/** The main-column sections of the task page under the description: Duplicate banner, Sub-issues, Relations, Docs;
+ * and a Docs page's Linked tasks. */
 import { router } from 'expo-router'
 import { type ReactNode, useState } from 'react'
 import { Pressable, View } from 'react-native'
 import { TextInput } from '../../ui/scaled'
 
 import type { StatusRecord, TaskRecord } from '../../data/orbit'
-import type { TaskRelationRecord } from '../../data/task-api'
+import type { LinkedDoc, LinkedTask, TaskRelationRecord } from '../../data/task-api'
 import { defaultStatusOf, groupRelations, identifier, isClosed, refIdentifier } from '../../data/tasks'
 import { useProjects } from '../../queries'
 import { useTheme } from '../../theme'
@@ -172,6 +173,46 @@ export function RelationsSection({ relations, statuses, removingId, onRemove }: 
           )
         }),
       )}
+    </View>
+  )
+}
+
+/** The Docs pages linked to the task (the web's "Docs" section): a tap opens the page, the x unlinks it. */
+export function LinkedDocsSection({ docs, removingId, onRemove }: { docs: readonly LinkedDoc[]; removingId: string | undefined; onRemove: (pageId: string) => void }) {
+  const { colors } = useTheme()
+  if (docs.length === 0) return null
+  return (
+    <View className="border-t border-border pt-3">
+      <SectionTitle title="Docs" count={docs.length} />
+      {docs.map((doc) => {
+        const title = doc.title || 'Untitled'
+        return (
+          <View key={doc.id} className="min-h-9 flex-row items-center gap-2">
+            <Pressable accessibilityRole="link" accessibilityLabel={title} onPress={() => router.push(`/docs/${doc.id}`)} className="flex-1 flex-row items-center gap-2 min-w-0">
+              {doc.icon ? <Text className="text-[14px]">{doc.icon}</Text> : <Icon name="docs" size={14} color={colors.mutedForeground} />}
+              <Text numberOfLines={1} className="text-[13px] shrink">
+                {title}
+              </Text>
+              {doc.private ? <Text className="text-[12px] text-muted-foreground/70">Private</Text> : null}
+            </Pressable>
+            <IconButton icon="close" label={`Unlink ${title}`} size={24} iconSize={12} color={colors.mutedForeground} disabled={removingId === doc.id} onPress={() => onRemove(doc.id)} />
+          </View>
+        )
+      })}
+    </View>
+  )
+}
+
+/** "Linked tasks" of a Docs page: the tasks linked to it that the reader sees; nothing when there are none. */
+export function LinkedTasksSection({ tasks, statuses }: { tasks: readonly LinkedTask[]; statuses: readonly StatusRecord[] }) {
+  const projects = useProjects()
+  if (tasks.length === 0) return null
+  return (
+    <View className="mb-3">
+      <SectionTitle title="Linked tasks" count={tasks.length} />
+      {tasks.map(({ task }) => (
+        <TaskLine key={task.id} taskId={task.id} status={statuses.find((status) => status.id === task.status_id)} id={identifier(task, projects.data ?? [])} title={task.title} />
+      ))}
     </View>
   )
 }

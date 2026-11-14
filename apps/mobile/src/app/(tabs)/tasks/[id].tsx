@@ -19,9 +19,10 @@ import {
   PriorityChoices,
   SourceForm,
   StatusChoices,
+  DocChoices,
   TaskChoices,
 } from '../../../components/tasks/pickers'
-import { DuplicateBanner, RelationsSection, SubIssuesSection } from '../../../components/tasks/sections'
+import { DuplicateBanner, LinkedDocsSection, RelationsSection, SubIssuesSection } from '../../../components/tasks/sections'
 import { Sheet, useSheet } from '../../../components/tasks/Sheet'
 import { activityRows, buildFeed, type ActivityRow, type CommentThread, foldRun } from '../../../data/activity'
 import { relativeAgo } from '../../../data/format'
@@ -50,7 +51,7 @@ import {
   splitInlineFiles,
   subIssueBody,
 } from '../../../data/tasks'
-import { useAdoptSubIssue, useCommentAttachments, useCreateTask, useRelationWrites, useSetFollowing, useSubIssues, useTaskAttachments, useTaskFollowers, useTaskRelations, useTaskWrite, taskKeys } from '../../../hooks/tasks'
+import { useAdoptSubIssue, useCommentAttachments, useCreateTask, useDocLinkWrites, useLinkedDocs, useRelationWrites, useSetFollowing, useSubIssues, useTaskAttachments, useTaskFollowers, useTaskRelations, useTaskWrite, taskKeys } from '../../../hooks/tasks'
 import { useOrbit } from '../../../orbit-context'
 import { useCycles, useLabels, useMilestones, usePeople, useProjects, useStatuses } from '../../../queries'
 import { usePublishPageItem } from '../../../components/AskDonna'
@@ -60,7 +61,7 @@ import { Avatar, Button, ErrorView, Icon, type IconName, IconButton, LoadingView
 
 /** The one sheet of the page and what it shows. */
 type TaskSheet =
-  | { kind: 'status' | 'priority' | 'assignees' | 'labels' | 'due' | 'milestone' | 'cycle' | 'estimate' | 'source' | 'parent-menu' | 'relation-menu' | 'attach' }
+  | { kind: 'status' | 'priority' | 'assignees' | 'labels' | 'due' | 'milestone' | 'cycle' | 'estimate' | 'source' | 'parent-menu' | 'relation-menu' | 'attach' | 'pick-doc' }
   | { kind: 'pick-task'; purpose: 'parent' | 'sub-issue' | RelationKind }
 
 function sheetTitle(sheet: TaskSheet | null, subject: string): string {
@@ -90,6 +91,8 @@ function sheetTitle(sheet: TaskSheet | null, subject: string): string {
       return 'Add relation'
     case 'attach':
       return 'Attach'
+    case 'pick-doc':
+      return `Add a doc to ${subject}…`
     case 'pick-task':
       if (sheet.purpose === 'parent') return `Set parent of ${subject}…`
       if (sheet.purpose === 'sub-issue') return `Add a sub-issue to ${subject}…`
@@ -127,6 +130,8 @@ export default function TaskScreen() {
   const comments = useQuery({ queryKey: keys.comments(workspaceId, id), queryFn: () => api.comments(client, workspaceId, id) })
   const activity = useQuery({ queryKey: keys.taskActivity(workspaceId, id), queryFn: () => api.taskActivity(client, workspaceId, id) })
   const relations = useTaskRelations(id)
+  const linkedDocs = useLinkedDocs(id)
+  const docLinks = useDocLinkWrites(id)
   const followers = useTaskFollowers(id)
   const setFollowing = useSetFollowing(id)
   const following = followers.data?.following ?? false
@@ -300,7 +305,7 @@ export default function TaskScreen() {
           refreshControl={
             <RefreshControl
               refreshing={task.isRefetching}
-              onRefresh={() => void Promise.all([task.refetch(), comments.refetch(), activity.refetch(), relations.refetch(), subIssues.refetch(), attachments.refetch()])}
+              onRefresh={() => void Promise.all([task.refetch(), comments.refetch(), activity.refetch(), relations.refetch(), linkedDocs.refetch(), subIssues.refetch(), attachments.refetch()])}
               tintColor={colors.mutedForeground}
             />
           }
@@ -316,9 +321,10 @@ export default function TaskScreen() {
               </Text>
             ) : null}
             <Attachments files={taskFiles} />
-            <View className={`flex-row ${descriptionText || taskFiles.length > 0 ? 'mt-[43px]' : 'mt-3.5'}`}>
+            <View className={`flex-row flex-wrap ${descriptionText || taskFiles.length > 0 ? 'mt-[43px]' : 'mt-3.5'}`}>
               <QuietAction icon="relation" label="Add relation" onPress={() => sheets.open({ kind: 'relation-menu' })} />
               {current.sub_issue_count === 0 && children.length === 0 && !composingSubIssue ? <QuietAction icon="subIssue" label="Add sub-issue" onPress={() => setComposingSubIssue(true)} /> : null}
+              <QuietAction icon="docs" label="Add doc" onPress={() => sheets.open({ kind: 'pick-doc' })} />
             </View>
           </View>
 
@@ -342,6 +348,11 @@ export default function TaskScreen() {
             statuses={statuses.data ?? []}
             removingId={relationWrites.remove.isPending ? relationWrites.remove.variables : undefined}
             onRemove={(relationId) => relationWrites.remove.mutate(relationId)}
+          />
+          <LinkedDocsSection
+            docs={linkedDocs.data ?? []}
+            removingId={docLinks.unlink.isPending ? docLinks.unlink.variables : undefined}
+            onRemove={(pageId) => docLinks.unlink.mutate(pageId)}
           />
 
           <View className="border-t border-b border-border py-3.5 flex-row flex-wrap gap-x-3 gap-y-3.5">
@@ -602,6 +613,15 @@ export default function TaskScreen() {
         {sheet?.kind === 'pick-task' ? (
           <TaskChoices key={sheet.purpose} excludeIds={pickExcluded(sheet.purpose)} excludeDuplicates={sheet.purpose === 'duplicate'} onSelect={(target) => choose(sheet.purpose, target)} />
         ) : null}
+        {sheet?.kind === 'pick-doc' ? (
+          <DocChoices
+            excludeIds={(linkedDocs.data ?? []).map((doc) => doc.id)}
+            onSelect={(pageId) => {
+              sheets.close()
+              docLinks.link.mutate(pageId)
+            }}
+          />
+        ) : null}
         {sheet?.kind === 'attach' ? (
           <MenuChoices
             items={[
@@ -616,7 +636,7 @@ export default function TaskScreen() {
   )
 }
 
-/** "Add relation" / "Add sub-issue": the web's quiet ghost buttons under the description. */
+/** "Add relation" / "Add sub-issue" / "Add doc": the web's quiet ghost buttons under the description. */
 function QuietAction({ icon, label, onPress }: { icon: IconName; label: string; onPress: () => void }) {
   const { colors } = useTheme()
   const color = alpha(colors.mutedForeground, 0.7)

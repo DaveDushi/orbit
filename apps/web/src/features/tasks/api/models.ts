@@ -170,6 +170,17 @@ function ruleActivity(action: string, metadata: Record<string, unknown>): Pick<T
   return { text: `Assigned by rule: ${label} → ${person}`, system: true }
 }
 
+/**
+ * "linked doc Plan" for a doc link event. The server names the page only for readers who see it
+ * (private pages of others and deleted pages stay "a doc").
+ */
+function docActivity(action: string, metadata: Record<string, unknown>): Pick<TaskActivity, 'text'> | null {
+  const verb = action === 'task.doc_linked' ? 'linked' : action === 'task.doc_unlinked' ? 'unlinked' : null
+  if (!verb) return null
+  const title = typeof metadata.page_title === 'string' ? metadata.page_title || 'Untitled' : null
+  return { text: title ? `${verb} doc ${title}` : `${verb} a doc` }
+}
+
 function genericActivityText(action: string): string {
   return ACTIVITY_TEXT[action] ?? action.split('.').reverse().join(' ')
 }
@@ -377,7 +388,7 @@ export function taskFromRecord(
     activity: activity.flatMap((event): TaskActivity[] => {
       const metadata = (event.metadata ?? {}) as Record<string, unknown>
       const sentence: Pick<TaskActivity, 'text' | 'related' | 'statusId' | 'system'> | null =
-        relationActivity(event.action, metadata, identifierOf) ?? subIssueActivity(event.action, metadata, identifierOf) ?? ruleActivity(event.action, metadata)
+        relationActivity(event.action, metadata, identifierOf) ?? subIssueActivity(event.action, metadata, identifierOf) ?? ruleActivity(event.action, metadata) ?? docActivity(event.action, metadata)
       const base: TaskActivity = {
         id: event.id,
         actorId: event.actor_id ?? '',

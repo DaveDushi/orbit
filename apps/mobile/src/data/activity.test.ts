@@ -95,6 +95,18 @@ describe('activityRows', () => {
     ])
   })
 
+  test('doc link events name the page only when the server sent its title', () => {
+    const rows = activityRows(
+      [
+        event('e1', 'task.doc_linked', { page_id: 'p1', page_title: 'Launch plan' }),
+        event('e2', 'task.doc_linked', { page_id: 'p2' }),
+        event('e3', 'task.doc_unlinked', { page_id: 'p1', page_title: '' }),
+      ],
+      context,
+    )
+    expect(rows.map((row) => row.text)).toEqual(['linked doc Launch plan', 'linked a doc', 'unlinked doc Untitled'])
+  })
+
   test('a label rule assignment reads as a line without a person', () => {
     const [row] = activityRows([{ ...event('e1', 'task.assigned_by_rule', { label_name: 'bug', assignee_name: 'Raymond' }), actor_id: null }], context)
     expect(row).toMatchObject({ text: 'Assigned by rule: bug → Raymond', system: true })

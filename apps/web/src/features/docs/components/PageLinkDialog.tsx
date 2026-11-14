@@ -11,13 +11,16 @@ import { ancestorsOf, pageTitle } from '@/features/docs/pageTree'
 
 export function PageLinkDialog({
   pages,
-  excludeId,
+  excludeIds,
+  title = 'Link a page',
   onPick,
   onClose,
 }: {
   pages: PageSummary[]
-  /** The current page: linking to itself makes no sense (the docs reference excludeId). */
-  excludeId: string
+  /** Pages not offered: the current page (linking to itself makes no sense, the docs reference excludeId), or the
+   *  pages a task already links. */
+  excludeIds: readonly string[]
+  title?: string
   onPick: (page: PageSummary) => void
   onClose: () => void
 }) {
@@ -26,13 +29,13 @@ export function PageLinkDialog({
   const results = useMemo(() => {
     const q = query.trim().toLowerCase()
     return pages
-      .filter((page) => page.id !== excludeId)
+      .filter((page) => !excludeIds.includes(page.id))
       .filter((page) => !q || pageTitle(page).toLowerCase().includes(q))
-  }, [pages, excludeId, query])
+  }, [pages, excludeIds, query])
 
   return (
-    <Modal title="Link a page" onClose={onClose}>
-      <Command shouldFilter={false} label="Link a page" className="gap-2 bg-transparent p-0">
+    <Modal title={title} onClose={onClose}>
+      <Command shouldFilter={false} label={title} className="gap-2 bg-transparent p-0">
         <CommandInput autoFocus placeholder="Search pages…" value={query} onValueChange={setQuery} />
         <CommandList className="max-h-[320px]">
           <CommandEmpty className="px-3 py-7 text-[13px] text-muted-foreground/70">No pages found</CommandEmpty>

@@ -49,6 +49,8 @@ test("markdown and blocks convert both ways", () => {
 
 test("the mock model maps instructions to tool calls, and 'it' to the newest id", () => {
 	assert.deepEqual(plan('please create task "Ship it"', []), { name: "create_task", args: { title: "Ship it" } });
+	assert.deepEqual(plan("@Donna link page p1 to task t1", []), { name: "link_doc_to_task", args: { page_id: "p1", task_id: "t1" } });
+	assert.deepEqual(plan("unlink doc p1 from task t1.", []), { name: "unlink_doc_from_task", args: { page_id: "p1", task_id: "t1" } });
 	const created = [{ role: "toolResult", toolName: "create_task", content: [{ type: "text", text: '{"id": "0199c3a0-0000-7000-8000-0000000000aa"}' }] }];
 	assert.deepEqual(plan('rename task it to "Shipped"', created), { name: "update_task", args: { task_id: "0199c3a0-0000-7000-8000-0000000000aa", title: "Shipped" } });
 	assert.deepEqual(plan('ask @Ann Lee "Which project?"', []), { name: "ask_teammate", args: { person: "Ann Lee", question: "Which project?" } });
