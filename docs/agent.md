@@ -132,6 +132,38 @@ agent has:
 - Each agent has its own thread state: in one chat thread the default agent and a custom agent each keep their own
   run, queue and transcript (`inputs::agent_thread_key`).
 
+## Skills
+
+Owners and admins give the agents **skills** in **Settings → Agentic → Skills**, in the open Agent Skills format
+([agentskills.io/specification](https://agentskills.io/specification)): a folder with `SKILL.md` (YAML front matter
+with `name` and `description`, then Markdown instructions) and optional `scripts/`, `references/` and `assets/`.
+
+- **Add** a skill in one of three ways: install it from a public GitHub folder
+  (`https://github.com/owner/repo/tree/main/skills/name`, a `…/blob/…/SKILL.md` link, a repository with `SKILL.md` at
+  its top, `owner/repo/path` or `owner/repo@name`) or a skills.sh page (`https://skills.sh/owner/repo/name`, which
+  names a GitHub repository); upload a `.zip` with `SKILL.md` at its top or in one folder; or write one (name,
+  description, instructions). A new skill is off for every agent. Members and guests cannot see or change skills
+  (403); agent sessions never reach these routes.
+- **Per agent**: tick the agents that use a skill (the default agent and each custom agent have their own list).
+- **Progressive load**: at the start of each run, the system prompt gets only the name and description of the agent's
+  skills (the `orbit-skills` section, read as the driver). The agent calls `load_skill` for the instructions and the
+  file list when a request needs it, and `read_skill_file` for one file. Orbit answers both only for skills turned on
+  for that agent (`GET …/agent-tools/skills[/{name}[/files/{path}]]`, agent sessions only).
+- **No new permissions**: a skill is text. The prompt says that it is not the driver, gives no permission, cannot
+  change the rules and never replaces the driver's yes. Every tool still acts as the driver, with the same approvals,
+  and Orbit enforces the agent's tools as before. The skill tools are offered to every agent (like code mode); the
+  skills they reach are the ticked ones.
+- **Scripts** run only in the media sandbox (no network, no access to Orbit or the host): `load_skill` copies the
+  skill's files into `/work/skills/<name>/`, where `media_shell` runs them, only when the server has the sandbox
+  (`AGENT_SANDBOX_SOCKET`) and the agent has `media_shell`. Orbit itself never runs them. Without a sandbox they are
+  stored, the agent is told they cannot run, and the Skills page says so (the sidecar's `/health` tells Orbit).
+- **Checks**: names as in the spec (1–64 lowercase letters, digits and single hyphens), descriptions up to 1,024
+  characters, `SKILL.md` up to 256 KiB, at most 100 other files, 512 KiB per file and 2 MiB in all, a `.zip` up to 4
+  MiB. A `.zip` or GitHub folder with a path that could leave the folder (`..`, `/…`, `\`, `:`), a symbolic link or an
+  encrypted entry is refused whole. GitHub is read with the agent tools' guarded client (`api.github.com` tree listing,
+  then `raw.githubusercontent.com` files): HTTPS to public addresses only, no redirects, no proxy, time and size limits.
+  At most 100 skills per workspace. Audit: `agent_skill.create|update|delete`.
+
 ## Answer level
 
 Each agent's card in **Settings → Agentic → Agents** has an answer level: **Short**, **Normal** or **Thorough**
@@ -460,6 +492,7 @@ it calls Orbit back. Both sides share one secret.
 
 | Orbit test setting | Meaning |
 |---|---|
+| `ORBIT_AGENT_SKILLS_GITHUB_API`, `ORBIT_AGENT_SKILLS_GITHUB_RAW` | For local tests only: the GitHub API and raw file hosts that skills install from (default `https://api.github.com` and `https://raw.githubusercontent.com`). A local test server must also be in `ORBIT_AGENT_INTEGRATION_TEST_HOSTS`. |
 | `ORBIT_AGENT_INTEGRATION_TEST_HOSTS` | Comma-separated hosts that agent tools may reach over plain HTTP and on local addresses, for local tests with fake servers (for example `127.0.0.1`). **Never set it in production**: it turns off the address check for those hosts. Orbit logs a warning when it is set. |
 
 ### systemd
@@ -507,6 +540,9 @@ docker compose -f deploy/compose.yaml --profile agent up -d --build
   sealed in `oauth_sealed_connection`; a started sign-in waits in `agent_integration_oauth_states` (state hash, PKCE
   verifier, at most 10 minutes). OAuth access tokens are never written to the
   database: they stay in the memory of each server.
+- Skills are in `agent_skills` (name, description, `SKILL.md` body, source), their files in `agent_skill_files` and the
+  agents that use them in `agent_skill_agents` (`default` or a custom agent's bot user id); migration
+  `20261114000500_agent_skills`.
 - The agent stores transcripts in `AGENT_DATA_DIR`. It stores no tokens.
 - One agent process owns its data directory. Several Orbit servers on one Postgres database can share one agent.
 
