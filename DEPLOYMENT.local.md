@@ -7,15 +7,15 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at da0cf827722f5b250a5fb14e50e2e6781af9e594
-  (upstream ports 3 milestones/cycles and 4; schema 20261113115539, 113 rows; November 14, 2026).
+- Source: DaveDushi/orbit, `main` at 21055b4f4480aa42895ecea9ef2831895ed743dd
+  (upstream port 5; schema 20261113115539, 114 rows; November 14, 2026).
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
   f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:da0cf82`); fork commits have no published upstream image.
-- Image ID: sha256:2daf023fcf390c7ac968ad6b62b981d9b7a70c966732f202e2a7d672c1ce805b
-- Team agent sidecar code (`/opt/orbit-agent`): commit da0cf82.
+  (`orbit:21055b4`); fork commits have no published upstream image.
+- Image ID: sha256:e1c33a27da80e2a19d7c7ea4eb26c4e1b2ba93b8559711058bafec5d8e7e69d9
+- Team agent sidecar code (`/opt/orbit-agent`): commit 21055b4.
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): off. No `ORBIT_APNS_*` setting is in `/etc/orbit/orbit.env`
   yet, so Orbit keeps the iPhones' device rows and sends them nothing (no log line). To turn it on, put the team's `.p8`
   key on the VM (owner `orbit`, mode 600), set `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID` (and
@@ -262,6 +262,83 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 14, 2026 upgrade: upstream port 5 (schema 20261113115539, 114 rows; 1 migration)
+
+`main` from `4734b291` to `21055b4f` (local, not pushed): fast-forward to `21055b4f`, the merge of `main` `4734b291` into
+`upstream-port5` (made and checked in that worktree by its session). Port 5: `76bae889` # button in the chat composer
+(#128, web and mobile; a guest's # list has only their channels and no tasks, `9baf202b`), `8362d489` doc images open on
+double-click and zoom with the mouse wheel, `aa0535da` the server shrinks large uploaded images (PNG as lossless WebP in
+sRGB; the `image`/`webp` crates moved to `crates/platform`, plus `moxcms`), `27be01a6` teamspaces linked to projects for
+project docs (#64/#127; `PATCH /teamspaces/{id}` `project_id`, MCP `list_docs` and `GET /docs` `project_id`), `1369fbac`
+project settings sections in the sidebar (one page per section), docs and lessons. What is new for people: 2 lines on
+top of the `2026-11-14` entry (# button, settings pages, project docs teamspace, image shrink and zoom).
+
+Migration (SQLite + Postgres, not destructive): `20261113101100_teamspace_projects` (`teamspaces.project_id`
+REFERENCES `projects` ON DELETE SET NULL, partial unique index `teamspaces_project`). Its version is older than the
+applied `20261113115539`; the runner applied it, the max version stays `20261113115539`.
+
+Checks on the merge (port 5 session, worktree): web `bun run build` (`tsc -b` + vite); `bun test src` web fails 2 + 1
+error in `TaskList.test.tsx` (bulk toolbar > 100, bulk due date), the same on `main` `4734b291`, so not from this
+merge; mobile `tsc` and 225 tests; agent `tsc` and 85 tests (with the `TOOL_CATALOG` profiles test); `openapi` +
+`api:generate` gave no diff; server debug build; SQLite and Postgres `chat_api` 39, `openapi_contract` 19,
+`teamspaces_api` 8, `guest_access` 1, `mcp_api` 19, `private_projects` 8, `home_layout_api` 6: all pass. Not run: the
+iOS bundle on Metro. Scripts and logs: `/root/ops/upstream-port5/`.
+
+Deploy id `20261114T000950Z-1075791`. `orbit:21055b4` (image
+`sha256:e1c33a27da80e2a19d7c7ea4eb26c4e1b2ba93b8559711058bafec5d8e7e69d9`, label `21055b4f…`, about 35 min);
+`deploy/smoke.sh` and `orbit config check` (production env) passed. Before the switch, the release binary's embedded app
+on a seeded instance in `unshare -n` (signed in): `/`, `/tasks`, project settings (back link + 11 section links),
+`settings/docs` (Docs teamspace select), `settings/milestones`, `/docs`, `/drive`, a channel (# button: Channels and
+Tasks list), `/activity`, `/settings`, `/admin`; 0 page or console errors. Migration dry run (release binary on a hot
+copy, and in the switch on a copy of the stopped database): 1 applied, a second run 0, 114 rows, the 113 old checksums,
+counts and user names unchanged (9 users, 110 tasks, 6 projects, 1133 chat messages, 3 teamspaces, 57 pages),
+quick-check ok, 0 foreign-key rows. Rollback test on the same copies: the old binary refuses ("migration 20261113101100
+is not known"), `rollback-schema.sql` (`DROP INDEX`, `DROP COLUMN`, delete the version row) brings `sqlite_master` back
+equal to the source, counts and checksums equal, the old binary applies 0, the new binary applies 1 again.
+
+Switch: stopped both services at 01:13:58 UTC; snapshot `01a1d79e-4dea-703b-b26b-d220c7d5ce9a` with
+`/usr/local/bin/orbit-da0cf82`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-21055b4.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-21055b4.tgz`; old sidecar code `/opt/orbit-agent.before-21055b4`; new
+sidecar `src` (`package*.json` unchanged); env unchanged. Binary installed (`/usr/local/bin/orbit-21055b4` too), `orbit`
+ready 01:14:16, then `orbit-agent` (18 s down). `vm-health.conf` (old copy `.before-21055b4`): `PROD_TAG=21055b4`,
+`ROLLBACK_TAG=da0cf82`, `ROLLBACK_BACKUP=01a1d79e-4dea-703b-b26b-d220c7d5ce9a`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness 200 and `/health/live` 200; `/orbit-build.json`
+revision `21055b4f…`; schema 20261113115539 (114 rows, `20261113101100` present); live quick-check ok, 0 foreign-key
+rows; 0 error lines in the journal (only the known "allowed origin without a port" WARN); sidecar `/health` ok and `src`
+equal to `main`. Built bundle on production as David Dusi (temporary v7 session, `ui-check.ts`, all API writes blocked;
+one blocked: the doc page `visit` POST): project settings sidebar with the 5 groups and 11 section links, Settings →
+Docs shows "No docs teamspace", the Docs sidebar lists the teamspaces (`teamspaces` GET 200), #general: the # button
+puts "#" in the composer and lists Channels and Tasks (10 rows; the draft is only in `localStorage`); 0 console or page
+errors. Screenshots
+`/root/.local/share/com.jean.desktop/pasted-images/upstream-port5/prod-{project-settings-sidebar,project-settings-docs,docs-teamspaces,chat-hash-list}.png`.
+`ORBIT_VERIFY_SPA=1 verify-production.sh` passed (session logged out, the row deleted after; token file, TLS hop and its
+pem removed). `vm-health` OK except oom (the old one of November 13, 03:06), nginx (9 lines, upstream refused in the
+switch windows 00:01 and 01:13:59–01:14:16) and docker (other worktrees' containers). **Not** verified on production:
+linking a teamspace to a project, a server image shrink of a real upload, sending a # mention (all writes).
+
+Rollback to `da0cf82`. Way 1 keeps the work done after the switch, but loses the teamspace ↔ project links.
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit sqlite3 /var/lib/orbit/orbit.sqlite < /root/ops/upstream-port5/rollback-schema.sql
+sudo install -m 755 /usr/local/bin/orbit-da0cf82 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-21055b4 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/upstream-port5/rollback.sh, which also keeps a copy of the database first)
+# rollback-schema.sql: DROP INDEX teamspaces_project; ALTER TABLE teamspaces DROP COLUMN project_id; delete the version row
+# Way 2, only for a data problem (work after 01:13 UTC is lost), Orbit stopped: /usr/local/bin/orbit-da0cf82 backup verify +
+#   backup restore 01a1d79e-4dea-703b-b26b-d220c7d5ce9a (as user orbit, with /etc/orbit/orbit.env), then the binary and sidecar lines above
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-21055b4.tgz
+# Plain copy of the database before the switch: /var/backups/orbit/pre-migration/orbit-before-21055b4.sqlite
+```
+
+After this rollback, set `PROD_TAG=da0cf82`, `ROLLBACK_TAG=e53e93c`,
+`ROLLBACK_BACKUP=01a1d75b-3deb-73a0-8a4b-2915ac8820ae` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-21055b4`).
 
 ### November 14, 2026 upgrade: upstream ports 3 (milestones, cycles) and 4 (schema 20261113115539, 113 rows; 5 migrations)
 
