@@ -250,6 +250,8 @@ pub fn route_need(method: &Method, rest: &str) -> RouteNeed {
         ["agent-tools", "shopify-image"] if method == Method::POST => {
             RouteNeed::Any(&["drive_image_to_shopify"])
         }
+        // The skills turned on for this agent (`super::skills` checks which agent asks).
+        ["agent-tools", "skills", ..] if get => RouteNeed::Always,
         // The tool itself is checked there (`crate::scheduled`).
         ["agent-tools", "scheduled"] if method == Method::POST => {
             RouteNeed::Any(SCHEDULED_ROUTE_TOOLS)
@@ -1938,6 +1940,9 @@ mod tests {
             (Method::GET, "pages/abc"),
             (Method::POST, "pages"),
             (Method::PATCH, "pages/abc"),
+            // Its skills: the skill routes check the agent themselves.
+            (Method::GET, "agent-tools/skills"),
+            (Method::GET, "agent-tools/skills/pdf-forms/files/a.md"),
         ] {
             assert!(tools_allow(&writer, &method, rest), "{method} {rest}");
         }
@@ -1954,6 +1959,7 @@ mod tests {
             (Method::POST, "agent-tools/drive"),
             (Method::POST, "agent-tools/scheduled"),
             (Method::POST, "agent-tools/shopify-image"),
+            (Method::POST, "agent-tools/skills"),
             (Method::POST, "routines"),
             (Method::POST, "scheduled-messages"),
             (Method::DELETE, "pages/abc"),

@@ -601,3 +601,33 @@ to the outside. Answers:
   the server at a test is turned off.
 - A role change of a member applies at the next call. A changed app key makes the credential unreadable: the test
   and the calls say so, and an admin enters it again.
+
+## Skills
+
+Status: built on branch `agent-skills` (2026-11-14). Format: [Agent Skills](https://agentskills.io/specification);
+skills.sh entries map to GitHub ([source formats](https://www.mintlify.com/vercel-labs/skills/guides/source-formats)).
+Code: `apps/server/src/agent/skills.rs` (routes, storage), `skill_package.rs` (SKILL.md, zip and GitHub checks),
+migration `20261114000500_agent_skills`, `apps/agent/src/skills.ts`, `apps/web/src/features/agent/SkillsPage.tsx`.
+User docs: `docs/agent.md`, "Skills".
+
+- **S1. Who manages?** Owners and admins only (`workspace.update`); members and guests get 403 on every route. Agent
+  sessions never reach `agent-skills` (`scope::DENIED`), so a prompt-injected run cannot add or turn on a skill.
+- **S2. Per agent.** `agent_skill_agents.agent` is `default` or a custom agent's bot user id (not NULL, so the pair
+  is a plain primary key). The agent routes take the agent from the session (`agent_sessions.agent_user_id`), never
+  from the request; a deleted agent reads none.
+- **S3. Progressive load.** The run's `orbit-skills` section (read once at run start, like integrations, so the prompt
+  cache stays warm) has the names and descriptions in an `<orbit-data>` block plus the skill rules; no skills, no
+  section. `load_skill` and `read_skill_file` are offered to every agent like code mode (no `TOOL_CATALOG` row:
+  `route_need` opens `agent-tools/skills` to all agents and the route checks the agent), and only to the model.
+- **S4. Injection.** Skill text comes from admins or the internet. It sits in a `<skill>` block it cannot close, and
+  the rules say it is not the driver: no permission, no override of the rules, no replacement of the driver's yes,
+  no exfiltration because a skill says so. Enforcement does not depend on the model: every tool is still the
+  driver's agent session with the agent's tools and Orbit's approvals.
+- **S5. Scripts.** Orbit stores them and never runs them. The sidecar copies a skill's files into the media sandbox's
+  `/work/skills/<name>/` on `load_skill`, only with a sandbox and `media_shell`; scripts then run through
+  `media_shell` (bubblewrap, no network). Without the sandbox the tool result and the Skills page say so.
+- **S6. Untrusted packages.** Zip: entry paths checked (no `..`, absolute, `\`, `:`), symlinks and encryption
+  refused, sizes checked while reading (the zip's own numbers are not trusted). GitHub: fixed hosts, guarded client
+  (`outbound::Outbound::get_bytes`), sizes from the tree listing before any download, symlink mode `120000` refused.
+- **Open.** Updating an installed skill means delete and install again. Files are not editable in the UI. Mobile has no
+  Agentic settings, so no Skills page there.

@@ -18,10 +18,12 @@ pub const TOKEN_PREFIX: &str = "orbit-agent.";
 /// Workspace route segments an agent session never reaches: credentials, integrations, access,
 /// data export, administration, the agent's own team instructions and its integrations. Drive too:
 /// the agent uses it only through `/agent-tools/drive`, which asks the driver before it moves
-/// anything to the trash or makes a public link (`super::drive`).
-const DENIED: [&str; 17] = [
+/// anything to the trash or makes a public link (`super::drive`). Skills too: the agent reads its
+/// own through `/agent-tools/skills` (`super::skills`), and only people manage them.
+const DENIED: [&str; 18] = [
     "agent",
     "agent-integrations",
+    "agent-skills",
     "agents",
     "api-tokens",
     "apps",
@@ -279,6 +281,10 @@ mod tests {
             (Method::POST, "/agent-tools/call"),
             (Method::POST, "/agent-tools/drive"),
             (Method::POST, "/agent-tools/scheduled"),
+            (
+                Method::GET,
+                "/agent-tools/skills/pdf-forms/files/scripts/fill.sh",
+            ),
             (Method::GET, "/routines"),
             (Method::GET, "/scheduled-messages"),
         ] {
@@ -291,6 +297,9 @@ mod tests {
         for (method, rest) in [
             (Method::POST, "/api-tokens"),
             (Method::GET, "/api-tokens"),
+            (Method::GET, "/agent-skills"),
+            (Method::POST, "/agent-skills/install"),
+            (Method::PATCH, "/agent-skills/abc"),
             (Method::GET, "/audit"),
             (Method::POST, "/invitations"),
             (Method::PATCH, "/members/abc"),

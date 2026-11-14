@@ -8,6 +8,7 @@ import { AgentsPage } from '@/features/agent/AgentsPage'
 import { DefaultModelCard } from '@/features/agent/DefaultModelCard'
 import { MemoryPage } from '@/features/agent/MemoryPage'
 import { RoutinesPage } from '@/features/agent/RoutinesPage'
+import { SkillsPage } from '@/features/agent/SkillsPage'
 import { TeamInstructionsPage } from '@/features/agent/TeamInstructionsPage'
 import { useAgentStatus } from '@/features/agent/api'
 import { AgentToolsPage } from '@/features/agentIntegrations/AgentToolsPage'
@@ -74,6 +75,11 @@ export function AgenticAgents() {
 /** Routines: the person's own, and every routine of the workspace for owners and admins. */
 export function AgenticRoutines() {
   return useAgentStatus().data?.enabled === true ? <RoutinesPage /> : null
+}
+
+/** Skills: owners and admins add them and turn each one on per agent; others see only a note. */
+export function AgenticSkills() {
+  return useAgentStatus().data?.enabled === true ? <SkillsPage /> : null
 }
 
 function McpSetup() {

@@ -31,6 +31,7 @@
  *     runs the script again)
  *   remind me at <2026-11-11T17:00> "Text"     send later at <2026-11-11T17:00> "Text" [in #channel]
  *   (a routine's scheduled run carries its saved instruction, which these same rules read)
+ *   use skill <name>                read skill file <name> <path>
  *   show a broken card (answers with a card that is not in the catalog)
  *   what is this (from the Ask bar: reads the task, page or Drive folder of the page context; "it" and "this" in the
  *     other instructions also mean that item when the run has no newer one)
@@ -266,6 +267,8 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 		if (open.kind === "doc") return { name: "read_page", args: { page_id: open.id } };
 		if (open.kind === "drive_folder") return { name: "drive_list", args: { folder_id: open.id } };
 	}
+	if ((match = /\buse (?:the )?skill ([a-z0-9-]+)/i.exec(instruction))) return { name: "load_skill", args: { name: match[1] } };
+	if ((match = /\bread skill file ([a-z0-9-]+) (\S+?)\.?$/i.exec(instruction))) return { name: "read_skill_file", args: { name: match[1], path: match[2] } };
 	if (CARD_REQUEST.test(instruction)) return { name: "search_tasks", args: { limit: 50 } };
 	if ((match = /sent the form “Create task”[\s\S]*"title": "([^"]+)"/.exec(instruction))) return { name: "create_task", args: { title: match[1] } };
 	if ((match = /create (?:a )?task "([^"]+)"/i.exec(instruction))) return { name: "create_task", args: { title: match[1] } };

@@ -80,6 +80,8 @@ export type ThreadState = {
 	memory?: string | null;
 	/** The integration tools section of the current run (the driver's tools, read at its start). */
 	integrations?: string | null;
+	/** The skills section of the current run (names and descriptions of the agent's skills, read at its start). */
+	skills?: string | null;
 	/** Summaries Orbit asked this thread's runs to write: `scope:lo-hi` → claim. */
 	claims?: Record<string, string>;
 	/** The routine run the current run is; `null` or absent: a chat run. */

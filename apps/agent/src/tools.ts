@@ -26,6 +26,7 @@ import { OrbitError, type OrbitClient } from "./orbit.ts";
 import { aboutOrbit, agentInstructionsBlock, DEFAULT_AGENT_NAME, defaultAgentInstructionsBlock, teamInstructionsBlock, TIME_RULE } from "./prompt.ts";
 import type { Sandbox } from "./sandbox.ts";
 import { scheduledTools } from "./scheduled.ts";
+import { SKILL_TOOL_NAMES, skillTools } from "./skills.ts";
 import { uiPrompt } from "./ui-catalog.ts";
 import { orbitRevision, versionBlock } from "./version.ts";
 
@@ -138,7 +139,9 @@ async function asDriver(api: Api, context: Context, call: (as: (method: string, 
  */
 export function blockedCall(state: Pick<ThreadState, "allowedTools" | "agentName" | "toolCalls" | "routineRun"> | undefined, name: string, nested: boolean, maxToolCalls: number): string | undefined {
 	const code = name === CODEMODE_TOOL || name === RUN_SCRIPT_TOOL;
-	if (state?.allowedTools && !code && !state.allowedTools.includes(name)) return `${state.agentName ?? "This agent"} does not have the tool ${name}.`;
+	// Every agent has the skill tools: Orbit answers only for the skills turned on for it.
+	const always = code || SKILL_TOOL_NAMES.includes(name);
+	if (state?.allowedTools && !always && !state.allowedTools.includes(name)) return `${state.agentName ?? "This agent"} does not have the tool ${name}.`;
 	const run = state?.routineRun;
 	if (name === REPAIR_SCRIPT_TOOL) {
 		if (nested || !run?.script || run.test) return "Only the model of a scheduled routine run of a saved script can repair that script.";
@@ -999,6 +1002,8 @@ const driveImageToShopify = shopifyImageTool(asDriver, () => deps().orbit, untru
 const DRIVE_TOOLS = driveTools(asDriver, () => deps().orbit);
 export const MEDIA_TOOLS = mediaTools(asDriver, () => deps().sandbox);
 const SCHEDULED_TOOLS = scheduledTools(asDriver, () => deps().orbit);
+/** `load_skill` and `read_skill_file`: every agent has them, like code mode (./skills.ts). */
+export const SKILL_TOOLS = skillTools(asDriver, () => deps().sandbox);
 /** `repair_routine_script`: offered to the model only in a scheduled run of a routine's script (`Agent.#startRun`). */
 export const REPAIR_SCRIPT = SCHEDULED_TOOLS.find((tool) => tool.name === REPAIR_SCRIPT_TOOL)!;
 
@@ -1048,7 +1053,7 @@ export const ORBIT_TOOLS = [
  */
 export function toolRegistrations(names: readonly string[], media: boolean) {
 	const all = media ? [...ORBIT_TOOLS, ...MEDIA_TOOLS] : ORBIT_TOOLS;
-	return [...all.filter((tool) => names.includes(tool.name)), ...CODE_TOOLS];
+	return [...all.filter((tool) => names.includes(tool.name)), ...SKILL_TOOLS, ...CODE_TOOLS];
 }
 
 /** The rules for the media tools, only when the server has a media sandbox. */
@@ -1111,7 +1116,7 @@ export function orbitExtension(toolDeps: ToolDeps) {
 	currentDeps = toolDeps;
 	return defineExtension({
 		name: "orbit",
-		tools: [...(toolDeps.sandbox ? [...ORBIT_TOOLS, ...MEDIA_TOOLS] : ORBIT_TOOLS), ...CODE_TOOLS],
+		tools: [...(toolDeps.sandbox ? [...ORBIT_TOOLS, ...MEDIA_TOOLS] : ORBIT_TOOLS), ...SKILL_TOOLS, ...CODE_TOOLS],
 		sections: [
 			// The tools scripts can call (`codemode.ts`); in this extension, so existing conversations get code mode too.
 			...CODEMODE_SECTIONS,
@@ -1136,6 +1141,8 @@ export function orbitExtension(toolDeps: ToolDeps) {
 			// Read once at the start of each run, so it stays the same during the run (no resend, warm cache).
 			section("orbit-memory", async (input, context) => (await input.read.snapshot(ThreadDoc, input.conversationId, context))?.memory ?? undefined),
 			section("orbit-integrations", async (input, context) => (await input.read.snapshot(ThreadDoc, input.conversationId, context))?.integrations ?? undefined),
+			// The names and descriptions of the agent's skills, read at the start of each run (./skills.ts).
+			section("orbit-skills", async (input, context) => (await input.read.snapshot(ThreadDoc, input.conversationId, context))?.skills ?? undefined),
 		],
 		hooks: [
 			hook(ToolTask, {

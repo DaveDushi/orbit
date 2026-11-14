@@ -164,6 +164,7 @@ export const AGENTIC_TABS: readonly AgenticTab[] = [
   { to: '/settings/agentic/workspace', label: 'Workspace', agent: true },
   { to: '/settings/agentic/agents', label: 'Agents', agent: true },
   { to: '/settings/agentic/routines', label: 'Routines', agent: true },
+  { to: '/settings/agentic/skills', label: 'Skills', agent: true },
 ]
 
 /** Sections that moved: the Admin tab's default model is on the Agents tab now. */
