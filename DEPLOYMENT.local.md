@@ -7,15 +7,15 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at d4ee5e077cf897450251021f6c59b5e2067df360
-  (agents work on tasks assigned to them; schema 20261114000300, 117 rows; November 14, 2026).
+- Source: DaveDushi/orbit, `main` at d6c06e95e5f7aeb2da61409e79cc8300845f686e
+  (agent skills; schema 20261114000500, 118 rows; November 14, 2026).
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
   f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:d4ee5e0`); fork commits have no published upstream image.
-- Image ID: sha256:e21b079d3ccbb0ba865616570c15c1a34566804ea0ce9964037e1061548685d7
-- Team agent sidecar code (`/opt/orbit-agent`): commit d4ee5e0.
+  (`orbit:d6c06e9`); fork commits have no published upstream image.
+- Image ID: sha256:23c5f731fa28145a07c2b507af1f83fd3c716c3c5fcf6febd5b4c401567de32d
+- Team agent sidecar code (`/opt/orbit-agent`): commit d6c06e9.
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): off. No `ORBIT_APNS_*` setting is in `/etc/orbit/orbit.env`
   yet, so Orbit keeps the iPhones' device rows and sends them nothing (no log line). To turn it on, put the team's `.p8`
   key on the VM (owner `orbit`, mode 600), set `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID` (and
@@ -262,6 +262,91 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 14, 2026 upgrade: agent skills (schema 20261114000500, 118 rows; 1 migration)
+
+`main` from `ec28d2c3` to `d6c06e95` (local, not pushed): merge of `agent-skills` (`7abb5432..494b9440`, worktree
+`/root/jean/orbit/agent-skills`, based on `4877dd5c` (port 5), so before logos, doc links and agent task runs). Agent
+Skills (agentskills.io SKILL.md format): owners and admins add them in Settings → Agentic → Skills (install from a
+public GitHub folder or a skills.sh page through the agent tools' guarded client: HTTPS to public addresses only, no
+redirects, size and count limits; upload a `.zip` (traversal, symlink, encryption, size and count checks); or write one)
+and tick the agents that use each. Progressive load: the prompt gets only names and descriptions (`orbit-skills`
+section, read as the driver at the start of each run, task runs too); `load_skill` and `read_skill_file` read the rest
+(`GET …/agent-tools/skills…`, only the agent's ticked skills). Scripts run only in the media sandbox, for an agent with
+`media_shell`; Orbit never runs them. Agent sessions are denied `agent-skills` (scope `DENIED`). Not in the OpenAPI
+document (no contract count change). User docs `docs/agent.md` "Skills"; design `.ai/agent-design.md`. Conflicts: what's
+new `2026-11-14` (the skills text joined to the agents line, still 4 lines), `agent/mod.rs` (both), `profiles.rs`
+`route_need` and its test (shopify-image and skills, both), `docs/agent.md` (both sections), lessons (both). Slack text
+(not posted): `/root/ops/agent-skills/slack.json`.
+
+Migration (SQLite + Postgres, not destructive): `20261114000500_agent_skills` (new tables `agent_skills`
+(`workspace_id` → ON DELETE CASCADE, `created_by` → `users` ON DELETE SET NULL, CHECK on `source`, UNIQUE
+`(workspace_id, name)`), `agent_skill_files` and `agent_skill_agents` (both → `agent_skills` ON DELETE CASCADE), index
+`agent_skill_agents_agent`). No RESTRICT reference, no table rebuild.
+
+Checks on the merge commit (main checkout, mock model only, no real network): server debug build (no warnings); web
+`bun --bun run build` (`tsc -b` + vite); web `SkillsPage` + `settingsNav` tests 5; agent `tsc` and 95 tests (11
+skipped). SQLite and Postgres: `agent_skills` 4, `agent_profiles` 9, `agent_api` 18, `agent_task_runs` 6,
+`guest_access` 1, `openapi_contract` 19; lib `agent::` 56: all pass. Mobile not touched. Scripts and logs:
+`/root/ops/agent-skills/`.
+
+Deploy id `20261114T043714Z-1348389`. `orbit:d6c06e9` (image
+`sha256:23c5f731fa28145a07c2b507af1f83fd3c716c3c5fcf6febd5b4c401567de32d`, label `d6c06e95…`, about 33 min);
+`deploy/smoke.sh` and `orbit config check` (production env) passed. Before the switch, the release binary's embedded app
+on a seeded instance in `unshare -n` with the agent on and no sidecar (signed in, owner): `/`, `/tasks`, `/docs`,
+`/drive`, `/chat`, `/activity`, `/admin`, `/settings/agentic/agents`; Settings → Agentic → Skills empty → Add skill (3
+ways: GitHub or skills.sh, Upload .zip, Write; the .zip input is there) → write `weekly-report` (1 `agent_skills` row) →
+tick "Orbit Agent" (1 `agent_skill_agents` row) → delete (0 rows); 0 page or console errors. Migration dry run (debug
+binary on a hot copy, and in the switch the release binary on a copy of the stopped database): 1 applied, a second run
+0, 118 rows, the 117 old checksums, counts and user names unchanged (9 users, 110 tasks, 6 projects, 1137 chat
+messages, 3 teamspaces, 57 pages), 3 tables and the index, 0 rows, quick-check ok, 0 foreign-key rows. Rollback test on
+the same copies: the old binary refuses ("database schema version 20261114000500 is newer"), `rollback-schema.sql`
+brings `sqlite_master` back equal to the source, counts and checksums equal, the old binary applies 0, the new binary
+applies 1 again.
+
+Switch: stopped both services at 05:28:12 UTC; snapshot `01a1d887-0f47-76d7-a8b2-272e6aa01116` with
+`/usr/local/bin/orbit-d4ee5e0`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-d6c06e9.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-d6c06e9.tgz`; old sidecar code `/opt/orbit-agent.before-d6c06e9`; new
+sidecar `src` (`package*.json` unchanged); env unchanged. Binary installed (`/usr/local/bin/orbit-d6c06e9` too), `orbit`
+ready 05:28:24, then `orbit-agent` (12 s down). `vm-health.conf` (old copy `.before-d6c06e9`): `PROD_TAG=d6c06e9`,
+`ROLLBACK_TAG=d4ee5e0`, `ROLLBACK_BACKUP=01a1d887-0f47-76d7-a8b2-272e6aa01116`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness 200 and `/health/live` 200; `/orbit-build.json`
+revision `d6c06e95…`; schema 20261114000500 (118 rows, 3 tables and the index, 0 skills); live quick-check ok, 0
+foreign-key rows; 0 error lines in the journal after the start (only the known "allowed origin without a port" WARN and
+Node's SQLite ExperimentalWarning); sidecar `/health` ok (`mock: false`; with the secret `sandbox: true`, so skill
+scripts can run for agents with `media_shell`) and `src` equal to `main`. Built bundle on production as David Dusi
+(temporary v7 session, `ui-check.ts`, all API writes blocked, none tried): `GET …/agent-skills` 200 (0 skills, max 100,
+agents Donna and Arthur); Settings → Agentic → Skills shows the Skills tab, "No skills yet", the sandbox note and Add
+skill; the Add skill modal has the 3 ways; Cancel, nothing filled or sent; 0 console or page errors. No skill installed
+on production. Screenshots `/root/.local/share/com.jean.desktop/pasted-images/agent-skills/prod-{skills-empty,
+skills-add-modal}.png` (pre-switch: `pre-skills-{empty,write,one}.png`). `ORBIT_VERIFY_SPA=1 verify-production.sh`
+passed (session logged out, the row deleted after; token file, TLS hop and its pem removed). `vm-health` OK except nginx
+(19 lines, upstream refused in the switch windows 04:33 and 05:28; 0 5xx), docker (other worktrees' containers) and
+git-owner (this merge's root-owned files given back to exedev). **Not** verified on production: a real install from
+GitHub or skills.sh, a `.zip` upload, `load_skill` in a real model run, a skill script in the sandbox.
+
+Rollback to `d4ee5e0`. Way 1 keeps the work done after the switch, but loses the skills.
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit sqlite3 /var/lib/orbit/orbit.sqlite < /root/ops/agent-skills/rollback-schema.sql
+sudo install -m 755 /usr/local/bin/orbit-d4ee5e0 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-d6c06e9 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/agent-skills/rollback.sh, which also keeps a copy of the database first)
+# rollback-schema.sql: drop the index and the 3 skill tables, delete the version row
+# Way 2, only for a data problem (work after 05:28 UTC is lost), Orbit stopped: /usr/local/bin/orbit-d4ee5e0 backup verify +
+#   backup restore 01a1d887-0f47-76d7-a8b2-272e6aa01116 (as user orbit, with /etc/orbit/orbit.env), then the binary and sidecar lines above
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-d6c06e9.tgz
+# Plain copy of the database before the switch: /var/backups/orbit/pre-migration/orbit-before-d6c06e9.sqlite
+```
+
+After this rollback, set `PROD_TAG=d4ee5e0`, `ROLLBACK_TAG=9b483b6`,
+`ROLLBACK_BACKUP=01a1d854-e094-7024-8a2d-13078715882c` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-d6c06e9`).
 
 ### November 14, 2026 upgrade: agents work on tasks assigned to them (schema 20261114000300, 117 rows; 1 migration)
 
