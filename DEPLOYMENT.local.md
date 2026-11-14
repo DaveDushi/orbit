@@ -263,6 +263,86 @@ It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-ag
 
 ## Verification performed
 
+### November 14, 2026 upgrade: workspace logos (schema 20261113190031, 115 rows; 1 migration)
+
+`main` from `1ee54bb0` to `fceadb01` (local, not pushed): merge of `workspace-logos` (`715888dd..0eafe1e2`, worktree
+`/root/jean/orbit/workspace-logos`, based on `e06631e6`). Owners and admins upload, change or remove a workspace logo
+in Settings → General (cropped to a square in the app; PNG/JPEG/WebP by magic bytes, ≤ 512 KiB, SVG refused;
+`PUT/DELETE/GET /api/v1/workspaces/{id}/logo`); `logo_url` on workspaces, the OAuth consent list and the invitation
+preview; shown in the switcher and its list (letter tile without a logo), on the consent and invitation pages, in the
+invitation email, and in the mobile drawer, switcher sheet and Settings. Conflicts: what's new (logo text put on the
+image line of the `2026-11-14` entry, still 4 lines; `main`'s `2026-11-13` entry kept), aboutOrbit (`main`'s Agentic
+list without Bots + "name and logo"), mobile settings imports (both), avatar upload (the branch's `read_image_upload`
+with `main`'s `.cause`), OAuth consent (`main`'s multi-workspace checkboxes, each with the branch's logo),
+`openapi_contract` 298 paths and 387 operations, `sdk.gen.ts` made again (`openapi.json`/`types.gen.ts` equal to the
+auto-merge, no schema lost). What is new for people: the logo text on the `2026-11-14` entry.
+
+Migration (SQLite + Postgres, not destructive): `20261113190031_workspace_logos` (new table `workspace_logos`:
+`workspace_id` PK → `workspaces` ON DELETE CASCADE, `blob_id` → `attachment_blobs` ON DELETE RESTRICT, index
+`workspace_logos_blob`). Workspace purge deletes the rows before the blobs, and `BLOB_REFERENCE_COUNT` (also used by the
+task trash purge) and attachment reconcile count them.
+
+Checks on the merge commit (main checkout): server debug build; `openapi` + `api:generate`; web `bun --bun run build`
+(`tsc -b` + vite) and `bun test` of the touched pages (OAuth consent, invitation, General, `app/shell`: 92 pass); mobile
+`tsc` and 225 tests; `packages/api` `tsc` and 27 tests; agent `tsc` and 85 tests. SQLite and Postgres:
+`workspace_logo_api` 5, `workspaces_api` 30, `attachments_api` 34, `guest_access` 1, `oauth_api` 15, `openapi_contract`
+19: all pass. Not run: the full web suite, the iOS bundle on Metro. Scripts and logs: `/root/ops/workspace-logos/`.
+
+Deploy id `20261114T011825Z-1150489`. `orbit:fceadb0` (image
+`sha256:8864da88a0415c3c11842563aa705dd36af08f5c1baed9bb4fb9951d4a04b18d`, label `fceadb01…`, about 30 min);
+`deploy/smoke.sh` and `orbit config check` (production env) passed. Before the switch, the release binary's embedded app
+on a seeded instance in `unshare -n` (signed in, owner): `/`, `/tasks`, project settings (11 section links), `/docs`,
+`/drive`, `/chat`, `/activity`, `/admin`; Settings → General: "Upload logo", upload of a PNG → "Change logo", the
+switcher shows the image (logo GET 200), Remove → the letter tile again; 0 page or console errors. Migration dry run
+(debug binary on a hot copy, and in the switch the release binary on a copy of the stopped database): 1 applied, a
+second run 0, 115 rows, the 114 old checksums, counts and user names unchanged (9 users, 110 tasks, 6 projects, 1134
+chat messages, 3 teamspaces, 57 pages), `workspace_logos` 0 rows, quick-check ok, 0 foreign-key rows. Rollback test
+on the same copies: the old binary refuses ("database schema version 20261113190031 is newer"),
+`rollback-schema.sql` (`DROP INDEX`, `DROP TABLE`, delete the version row) brings `sqlite_master` back equal to the
+source, counts and checksums equal, the old binary applies 0, the new binary applies 1 again.
+
+Switch: stopped both services at 02:17:41 UTC; snapshot `01a1d7d8-a29f-70f5-96f7-a42e44a4d7f0` with
+`/usr/local/bin/orbit-21055b4`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-fceadb0.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-fceadb0.tgz`; old sidecar code `/opt/orbit-agent.before-fceadb0`; new
+sidecar `src` (`package*.json` unchanged); env unchanged. Binary installed (`/usr/local/bin/orbit-fceadb0` too), `orbit`
+ready 02:17:55, then `orbit-agent` (14 s down). `vm-health.conf` (old copy `.before-fceadb0`): `PROD_TAG=fceadb0`,
+`ROLLBACK_TAG=21055b4`, `ROLLBACK_BACKUP=01a1d7d8-a29f-70f5-96f7-a42e44a4d7f0`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness 200 and `/health/live` 200; `/orbit-build.json`
+revision `fceadb01…`; schema 20261113190031 (115 rows, table and index present); live quick-check ok, 0 foreign-key
+rows; 0 error lines in the journal (only the known "allowed origin without a port" WARN); sidecar `/health` ok and `src`
+equal to `main`. Built bundle on production as David Dusi (temporary v7 session, `ui-check.ts`, all API writes blocked,
+none tried; the logo file input not touched): Settings → General shows the "W" letter tile, "Upload logo" and the hint
+for the owner; the switcher has no logo image, and its list shows the letter tiles W (Wellrox) and S (Slate); project
+settings still 11 section links; no workspace has a logo; 0 console or page errors. Screenshots
+`/root/.local/share/com.jean.desktop/pasted-images/workspace-logos/prod-{settings-general-logo,switcher-letter-tiles,project-settings-sidebar}.png`.
+`ORBIT_VERIFY_SPA=1 verify-production.sh` passed (session logged out, the row deleted after; token file, TLS hop and its
+pem removed). `vm-health` OK except oom (the old one of November 13, 03:06), nginx (9 lines, upstream refused in the
+switch window 02:17:52–02:17:54) and docker (other worktrees' containers). **Not** verified on production: uploading
+or removing a real logo, the invitation email with a logo (writes).
+
+Rollback to `21055b4`. Way 1 keeps the work done after the switch, but loses the workspace logos.
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit sqlite3 /var/lib/orbit/orbit.sqlite < /root/ops/workspace-logos/rollback-schema.sql
+sudo install -m 755 /usr/local/bin/orbit-21055b4 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-fceadb0 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/workspace-logos/rollback.sh, which also keeps a copy of the database first)
+# rollback-schema.sql: DROP INDEX workspace_logos_blob; DROP TABLE workspace_logos; delete the version row
+# Way 2, only for a data problem (work after 02:17 UTC is lost), Orbit stopped: /usr/local/bin/orbit-21055b4 backup verify +
+#   backup restore 01a1d7d8-a29f-70f5-96f7-a42e44a4d7f0 (as user orbit, with /etc/orbit/orbit.env), then the binary and sidecar lines above
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-fceadb0.tgz
+# Plain copy of the database before the switch: /var/backups/orbit/pre-migration/orbit-before-fceadb0.sqlite
+```
+
+After this rollback, set `PROD_TAG=21055b4`, `ROLLBACK_TAG=da0cf82`,
+`ROLLBACK_BACKUP=01a1d79e-4dea-703b-b26b-d220c7d5ce9a` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-fceadb0`).
+
 ### November 14, 2026 upgrade: upstream port 5 (schema 20261113115539, 114 rows; 1 migration)
 
 `main` from `4734b291` to `21055b4f` (local, not pushed): fast-forward to `21055b4f`, the merge of `main` `4734b291` into
