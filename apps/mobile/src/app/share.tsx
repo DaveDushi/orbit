@@ -155,7 +155,7 @@ export default function ShareScreen() {
       ) : empty ? (
         <EmptyState icon="import" title="Nothing to share" description="Share photos, videos, files or links to Orbit from another app." />
       ) : (
-        <ScrollView contentContainerClassName="px-4 pb-6 gap-4" keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerClassName="px-4 pb-6 gap-4" keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
           <View accessibilityLabel="Shared items" className="rounded-lg border border-border">
             {content.files.map((file, index) => (
               <View key={`${file.uri}-${index}`} className="h-11 flex-row items-center gap-2.5 px-3 border-b border-border">

@@ -6,7 +6,7 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { router, usePathname } from 'expo-router'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { KeyboardAvoidingView, Modal, Platform, Pressable, View } from 'react-native'
+import { Modal, Pressable, View } from 'react-native'
 
 import { applyChatEvents } from '../chat-cache'
 import { askDonnaAgent, type AskDonnaAgent, clearPageItem, currentPageItem, type PageItemKind, pageContextFor, setPageItem, subscribeAskDonnaRequest, subscribePageItem } from '../data/ask-donna'
@@ -16,7 +16,7 @@ import { useChatWrite, useMessages } from '../hooks/chat'
 import { useAgentStatus } from '../hooks/agent'
 import { useIsGuest, useOrbit } from '../orbit-context'
 import { useTheme } from '../theme'
-import { ErrorView, Icon, IconButton, LoadingView, SafeAreaView, Text } from '../ui'
+import { ErrorView, Icon, IconButton, LoadingView, SafeAreaView, SheetKeyboardView, Text } from '../ui'
 import { ChatColorScope } from './chat/ChatColorScope'
 import { Composer, useComposer } from './chat/Composer'
 import { type ListRow, MessageList, useMessageSheet } from './chat/MessageList'
@@ -153,7 +153,7 @@ function AskDonnaSheet({ agent, conversationId, pathname, onClose }: { agent: As
           </Text>
         </View>
       ) : null}
-      <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <SheetKeyboardView className="flex-1">
         {!messages.data ? (
           messages.isError ? <ErrorView error={messages.error} onRetry={() => void messages.refetch()} /> : <LoadingView />
         ) : (
@@ -167,7 +167,7 @@ function AskDonnaSheet({ agent, conversationId, pathname, onClose }: { agent: As
           />
         )}
         <Composer state={composer} placeholder={`Ask ${agent.name}`} nameOf={handlers.nameOf} />
-      </KeyboardAvoidingView>
+      </SheetKeyboardView>
       {sheet}
     </SafeAreaView>
   )
