@@ -130,10 +130,13 @@ export function useEmojiGroups(): EmojiGroup[] {
   return useMemo(() => (query.data ? emojiGroups(query.data) : BUILT_IN_EMOJI), [query.data])
 }
 
-/** An image source for a server path: the session's bearer token goes with it. */
+/** An image source for a server path: the session's bearer token goes with it (not to a URL of another host). */
 export function useServerImage() {
   const { session } = useOrbit()
-  return (path: string) => ({ uri: chat.serverUrl(session.server, path), headers: { Authorization: `Bearer ${session.token}` } })
+  return (path: string) => {
+    const uri = chat.serverUrl(session.server, path)
+    return { uri, headers: chat.serverHeaders(session.server, uri, session.token) }
+  }
 }
 
 /**

@@ -333,3 +333,16 @@ export async function emojibase(server: string): Promise<EmojibaseData> {
 
 /** The address of a server path (a file's or custom emoji's `url`), for an image that sends the bearer token. */
 export const serverUrl = (server: string, path: string) => (/^https?:\/\//i.test(path) ? path : `${server.replace(/\/+$/, '')}${path}`)
+
+/** The headers of a request to `url`: the session's token goes to the Orbit server only, never to another host. */
+export function serverHeaders(server: string, url: string, token: string): Record<string, string> {
+  const origin = (address: string) => {
+    try {
+      return new URL(address).origin
+    } catch {
+      return null
+    }
+  }
+  const own = origin(server)
+  return own !== null && origin(url) === own ? { Authorization: `Bearer ${token}` } : {}
+}

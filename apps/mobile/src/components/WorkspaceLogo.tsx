@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Image, View } from 'react-native'
 
 import { absoluteUrl } from '../data/docs'
+import { serverHeaders } from '../data/chat-api'
 import { useOrbit } from '../orbit-context'
 import { Text } from '../ui'
 
@@ -20,7 +21,7 @@ export function WorkspaceLogo({ workspace, size = 20 }: { workspace: { name: str
         accessibilityIgnoresInvertColors
         accessibilityElementsHidden
         importantForAccessibility="no-hide-descendants"
-        source={{ uri: absoluteUrl(session.server, url), headers: { Authorization: `Bearer ${session.token}` } }}
+        source={{ uri: absoluteUrl(session.server, url), headers: serverHeaders(session.server, absoluteUrl(session.server, url), session.token) }}
         onError={() => setFailed(url)}
         style={{ width: size, height: size, borderRadius: radius }}
       />

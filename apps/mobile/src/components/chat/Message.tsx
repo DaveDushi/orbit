@@ -263,7 +263,7 @@ const fit = (width: number, height: number, maxWidth: number, maxHeight: number)
  * iOS, the app for its type on Android), where it can be saved or shared.
  */
 function useOpenFile() {
-  const { client, session, workspaceId } = useOrbit()
+  const { client, workspaceId } = useOrbit()
   const image = useServerImage()
   const [opening, setOpening] = useState<string | null>(null)
   const open = async (file: ChatFileRecord) => {
@@ -272,7 +272,7 @@ function useOpenFile() {
     const source = async (): Promise<{ uri: string; headers: Record<string, string> }> =>
       target.kind === 'drive'
         ? { uri: (await getDriveDownload({ client, path: { workspace_id: workspaceId, node_id: target.nodeId }, throwOnError: true })).data.url, headers: {} }
-        : { uri: image(target.url).uri, headers: { Authorization: `Bearer ${session.token}` } }
+        : image(target.url)
     if (Platform.OS === 'web') return void window.open((await source()).uri, '_blank')
     setOpening(file.id)
     try {
