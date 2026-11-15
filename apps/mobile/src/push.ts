@@ -2,8 +2,8 @@
  * Push notifications on the iPhone: after sign-in the app asks once for permission, then registers its APNs device
  * token with the Orbit server, which pushes through APNs itself (no Expo push service). A tapped notification opens
  * its conversation or Activity. The app icon's badge is the server's count of unread chat and inbox: each push sets
- * it, and the app sets it again when it comes to the foreground and when the counts it shows change (something was
- * read, or arrived). `push.web.ts` replaces this in the web preview, which has no APNs.
+ * it, the server sends it alone when it changes without a shown push (a read on another device), and the app sets it
+ * again when it comes to the foreground and when the counts it shows change (something was read, or arrived). `push.web.ts` replaces this in the web preview, which has no APNs.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as Notifications from 'expo-notifications'

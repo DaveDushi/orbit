@@ -4566,20 +4566,39 @@ async fn a_guest_push_names_no_public_channel() {
     assert_eq!(body_for(&guest), Some(json!("@ada @guest see #channel")));
 }
 
-/// Records the iPhone pushes it is asked to send: the device token and the notice.
+/// Records the iPhone pushes it is asked to send: the device token, the notice and the badge;
+/// the badge-only pushes apart.
 #[derive(Default)]
-struct RecordedDevicePushes(std::sync::Mutex<Vec<(String, orbit_server::push::Notice)>>);
+struct RecordedDevicePushes {
+    alerts: std::sync::Mutex<Vec<(String, orbit_server::push::Notice, i64)>>,
+    badges: std::sync::Mutex<Vec<(String, i64)>>,
+}
 
 impl orbit_server::push::apns::DeviceSender for RecordedDevicePushes {
     fn send(
         &self,
         token: String,
-        notice: orbit_server::push::Notice,
-        _badge: i64,
+        notice: Option<orbit_server::push::Notice>,
+        badge: i64,
     ) -> futures_util::future::BoxFuture<'static, Result<(), orbit_server::push::SendError>> {
-        self.0.lock().unwrap().push((token, notice));
+        match notice {
+            Some(notice) => self.alerts.lock().unwrap().push((token, notice, badge)),
+            None => self.badges.lock().unwrap().push((token, badge)),
+        }
         Box::pin(async { Ok(()) })
     }
+}
+
+/// Waits a moment for the pushes that go after the response, then takes them.
+async fn taken<T>(pushes: &std::sync::Mutex<Vec<T>>, count: usize) -> Vec<T> {
+    for _ in 0..100 {
+        if pushes.lock().unwrap().len() >= count {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    std::mem::take(&mut *pushes.lock().unwrap())
 }
 
 #[tokio::test]
@@ -4615,14 +4634,7 @@ async fn a_message_reaches_the_iphones_it_is_for_never_the_authors_and_a_guest_s
     let pushed = |count: usize| {
         let devices = devices.clone();
         async move {
-            for _ in 0..100 {
-                if devices.0.lock().unwrap().len() >= count {
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            let mut sent = std::mem::take(&mut *devices.0.lock().unwrap());
+            let mut sent = taken(&devices.alerts, count).await;
             sent.sort_by(|a, b| a.0.cmp(&b.0));
             sent
         }
@@ -4641,11 +4653,11 @@ async fn a_message_reaches_the_iphones_it_is_for_never_the_authors_and_a_guest_s
     expected.sort();
     assert_eq!(
         sent.iter()
-            .map(|(token, _)| token.clone())
+            .map(|(token, _, _)| token.clone())
             .collect::<Vec<_>>(),
         expected
     );
-    for (token, notice) in &sent {
+    for (token, notice, _) in &sent {
         assert_eq!(notice.title, "Owner in #room");
         assert_eq!(notice.url, format!("/chat/{room}"));
         let channel = if *token == phone(&guest) {
@@ -4659,8 +4671,79 @@ async fn a_message_reaches_the_iphones_it_is_for_never_the_authors_and_a_guest_s
     // Ada answers: the owner and the guest get it, Ada does not.
     fixture.send(&ada, &room, "<!channel> done").await;
     let sent = pushed(2).await;
-    assert!(sent.iter().all(|(token, _)| *token != phone(&ada)));
+    assert!(sent.iter().all(|(token, _, _)| *token != phone(&ada)));
     assert_eq!(sent.len(), 2);
+}
+
+/// The iPhone app's icon (bug of build 14: no number on it). A message from another member
+/// pushes the new unread count with the alert, and a read on any device sends the new count
+/// alone, once.
+#[tokio::test]
+async fn a_message_pushes_the_icon_badge_and_a_read_sends_the_new_badge_alone() {
+    use orbit_server::push::apns::payload;
+
+    let fixture = Fixture::new().await;
+    let devices = Arc::new(RecordedDevicePushes::default());
+    let push = orbit_server::push::PushService::with_senders(
+        &fixture.database,
+        Arc::new(RecordedPushes::default()),
+        devices.clone(),
+    );
+    let ada = fixture.add_member("ada").await;
+    let session: String = sqlx::query_scalar("SELECT id FROM sessions WHERE user_id = $1")
+        .bind(ada.id.to_string())
+        .fetch_one(fixture.database.pool())
+        .await
+        .unwrap();
+    let phone = "a1".repeat(32);
+    push.register_device(
+        ada.id,
+        session.parse().unwrap(),
+        &phone,
+        "iPhone",
+        TimestampMillis::now(),
+    )
+    .await
+    .unwrap();
+    let dm = fixture
+        .ok(
+            &fixture.owner,
+            "POST",
+            "/dms",
+            Some(json!({ "user_ids": [ada.id.to_string()] })),
+        )
+        .await["result"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    // The owner writes to Ada: the alert carries her unread count, as APNs gets it.
+    fixture.send(&fixture.owner, &dm, "lunch?").await;
+    let sent = taken(&devices.alerts, 1).await;
+    assert_eq!(sent.len(), 1);
+    let (token, notice, badge) = &sent[0];
+    assert_eq!(*token, phone);
+    assert_eq!(*badge, 1);
+    let body: Value = serde_json::from_slice(&payload(Some(notice), *badge)).unwrap();
+    assert_eq!(body["aps"]["badge"], 1);
+    assert_eq!(body["aps"]["alert"]["title"], "Owner");
+    assert_eq!(body["aps"]["alert"]["body"], "lunch?");
+    assert!(taken(&devices.badges, 0).await.is_empty());
+
+    // Ada reads it (on the web, say): her iPhones get the count alone, and nothing shows.
+    fixture
+        .ok(&ada, "POST", &format!("/conversations/{dm}/read"), None)
+        .await;
+    assert_eq!(taken(&devices.badges, 1).await, [(phone.clone(), 0)]);
+    let body: Value = serde_json::from_slice(&payload(None, 0)).unwrap();
+    assert_eq!(body, json!({ "aps": { "badge": 0 } }));
+
+    // Reading again does not change it: no push.
+    fixture
+        .ok(&ada, "POST", &format!("/conversations/{dm}/read"), None)
+        .await;
+    assert!(taken(&devices.badges, 1).await.is_empty());
+    assert!(taken(&devices.alerts, 0).await.is_empty());
 }
 
 /// An inbox row for `recipient`: a new task of the first project was assigned to them.

@@ -124,6 +124,8 @@ impl ChatState {
     ) -> Result<(Written<T>, u64), ChatError> {
         let _order = self.hub.write_lock(workspace_id).await;
         let written = write.await?;
+        // A read (or a reply, which reads the conversation) can change the app icon's badge.
+        crate::push::PushService::of(self.identity.database()).badge_changed(actor_id);
         let events: Vec<NewEvent> = written.events.iter().map(Emitted::live).collect();
         // The number of the write's last event. A client that has seen it on its socket knows
         // that the response is not news, and that it must not put it over newer events.

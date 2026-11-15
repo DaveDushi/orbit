@@ -143,6 +143,12 @@ in an open tab). A device row belongs to the session that registered it, like a 
 revoking the session in **Account → Sessions** or deleting the account stops its pushes. A device that Apple reports
 as gone (`410`, `BadDeviceToken`) is removed at once; one that fails 5 times in a row too.
 
+Each push carries the app icon's badge: the user's unread chat (as the Chat tab counts it) plus unread inbox, in every
+workspace (`GET /api/v1/push/badge` gives the same number to the app). When the number changes without a shown push (a
+read on any device, or a notification that "do not disturb", a turned-off setting or an open tab held back), the
+iPhones get the new number alone: a silent badge-only push (`{"aps":{"badge":N}}`, priority 5), only when it differs
+from the last one sent.
+
 Set `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID` and `ORBIT_APNS_TEAM_ID`. At start Orbit logs `iPhone push (APNs) is on`,
 or `iPhone push (APNs) is off` with the reason when a setting is wrong (Orbit still starts). One key works for all
 apps of the team and for both APNs environments; only `ORBIT_APNS_SANDBOX` picks the environment. **Account →

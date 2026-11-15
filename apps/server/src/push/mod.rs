@@ -4,7 +4,9 @@
 //!
 //! - [`webpush`]: the encryption and the VAPID header.
 //! - [`apns`]: the iPhone app's devices and the APNs sender.
-//! - [`badge`]: the number on the iPhone app's icon, sent with each APNs push.
+//! - [`badge`]: the number on the iPhone app's icon, sent with each APNs push, and alone when it
+//!   changed without one ([`PushService::badge_changed`]: a read, or a notice the user was not
+//!   pushed because they are at a tab or set "do not disturb").
 //! - [`PushService`]: who is notified (their preferences, "do not disturb"), and where.
 //!
 //! Chat messages are notified when they are sent ([`PushService::chat_message`]). Inbox
@@ -311,6 +313,7 @@ struct Inner {
     sender: Arc<dyn PushSender>,
     /// `None` when APNs is not set up (`ORBIT_APNS_*`): the devices are kept, and get nothing.
     devices: Option<Arc<dyn apns::DeviceSender>>,
+    badges: apns::SentBadges,
     key: OnceCell<SecretKey>,
     subject: OnceLock<String>,
 }
@@ -359,6 +362,7 @@ impl PushService {
         let inner = database.extension(move || Inner {
             sender: sender(),
             devices: devices(),
+            badges: apns::SentBadges::default(),
             key: OnceCell::new(),
             subject: OnceLock::new(),
         });
@@ -599,11 +603,12 @@ impl PushService {
         notice: &Notice,
     ) -> Result<(), sqlx::Error> {
         if !self.wanted(user_id, kind).await? {
-            return Ok(());
+            // Not shown, still counted: the iPhones' badge shows it.
+            return self.update_badge(user_id).await.map(|_| ());
         }
         let notice = &notice.clamped();
         if self.hub.signal_user(user_id, true, "notify", notice) {
-            return Ok(());
+            return self.update_badge(user_id).await.map(|_| ());
         }
         // Nobody is at an open tab. The open tabs still show it and play the sound, and the
         // other devices get the push.
@@ -618,11 +623,38 @@ impl PushService {
         self.deliver(user_id, &notice.clamped()).await
     }
 
+    /// Sends the user's iPhones the app icon's badge after something changed it without a push
+    /// (they read something), after the response went out. Nothing goes when it did not change.
+    pub fn badge_changed(&self, user_id: Id) {
+        if self.inner.devices.is_none() {
+            return;
+        }
+        let service = self.clone();
+        tokio::spawn(async move {
+            if let Err(error) = service.update_badge(user_id).await {
+                tracing::warn!(error = %error, "iPhone badge push");
+            }
+        });
+    }
+
+    /// As [`Self::badge_changed`], done when it returns; how many iPhones took it.
+    pub async fn update_badge(&self, user_id: Id) -> Result<usize, sqlx::Error> {
+        match &self.inner.devices {
+            Some(sender) => {
+                apns::deliver(&self.database, sender, &self.inner.badges, user_id, None).await
+            }
+            None => Ok(0),
+        }
+    }
+
     /// [`Self::push`] of a notice that was clamped: the browsers and the iPhones at the same time.
     async fn deliver(&self, user_id: Id, notice: &Notice) -> Result<usize, sqlx::Error> {
         let devices = async {
             match &self.inner.devices {
-                Some(sender) => apns::deliver(&self.database, sender, user_id, notice).await,
+                Some(sender) => {
+                    let badges = &self.inner.badges;
+                    apns::deliver(&self.database, sender, badges, user_id, Some(notice)).await
+                }
                 None => Ok(0),
             }
         };
