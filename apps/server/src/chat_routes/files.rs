@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use super::{Call, ChatState, RequestIdExtension};
+use crate::agent::scope::SessionAgent;
 use crate::attachment_routes::{StageFailure, ranged_download_response, stage_single_file};
 use crate::file_content::{ContentQuery, ReadError, read_problem};
 use crate::file_parse::{self, FileKind};
@@ -154,7 +155,7 @@ pub(crate) struct ChatFileDownloadQuery {
 }
 
 /// The bytes of a chat file (one `Range` is answered with 206). A file kept in Drive sends to its bytes in the
-/// bucket (a 5-minute URL).
+/// bucket (a 5-minute URL). An agent session gets images only, which it looks at for the driver.
 #[utoipa::path(get, path = "/api/v1/workspaces/{workspace_id}/chat/files/{file_id}", params(("workspace_id" = String, Path), ("file_id" = String, Path), ChatFileDownloadQuery), responses((status = 200, body = ChatFileDownload, content_type = "application/octet-stream"), (status = 307, description = "To a file kept in Drive")))]
 pub(crate) async fn download_chat_file(
     State(state): State<ChatState>,
@@ -163,6 +164,7 @@ pub(crate) async fn download_chat_file(
     headers: HeaderMap,
     uri: Uri,
     request_id: RequestIdExtension,
+    agent: Option<Extension<SessionAgent>>,
 ) -> Result<Response, ApiError> {
     let call = Call::enter(&state, &headers, &uri, &workspace, &request_id).await?;
     let file_id = call.id(&file)?;
@@ -171,6 +173,11 @@ pub(crate) async fn download_chat_file(
         .file_source(call.workspace_id, call.actor_id, file_id)
         .await
         .map_err(|error| call.problem(error))?;
+    if agent.is_some() && !source.mime_type().starts_with("image/") {
+        return Err(call.problem(ChatError::Forbidden(
+            "The agent downloads only images from chat; it reads other files with their content.",
+        )));
+    }
     match source {
         ChatFileSource::Drive {
             key: Some(key),

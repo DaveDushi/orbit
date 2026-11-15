@@ -6,6 +6,10 @@ build: "## YYYY-MM-DD" (the deploy date), then 1-4 short "- " lines about what p
 members, not developers. Keep the 8 newest entries; the prompt shows the 5 newest.
 -->
 
+## 2026-11-15
+- Donna sees images you send in Chat or in the Ask Donna panel (screenshots, photos): she looks at them herself, with no need to put them in Drive. She sees only images that you can open.
+- Label rules now apply to tasks that already have the label: when an owner or admin adds a rule, turns one on, maps an owner: name to a member, or turns on the owner:<name> switch, the open tasks with that label get the person at once. Done and cancelled tasks stay as they are.
+
 ## 2026-11-14
 - Agents can work on tasks: assign a task to Donna (or another agent), or @mention her in a task comment, and she starts at once with your permissions. She writes her progress and result as a comment on the task, and asks you in your DM with her when she needs your answer or your yes. Unassign her or delete the task to stop her. Agent skills: owners and admins add skills (the open SKILL.md format) in Settings → Agentic → Skills, from GitHub or skills.sh, as a .zip, or written there, and turn each one on per agent; it loads a skill only when a request needs it.
 - Tasks: "Add doc" (beside Add relation) links Docs pages to a task; the page shows its Linked tasks, and you see only the pages and tasks you can open. Projects can have milestones and cycles (Project settings → Milestones and Cycles), and a task can have an estimate in points; each shows its progress, and "Move unfinished tasks to next cycle" keeps the moved tasks counted as carried over. Ask Donna to list them, to set a task's milestone, cycle or estimate, or to link and unlink docs.

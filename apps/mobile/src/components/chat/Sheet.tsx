@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react'
-import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, View } from 'react-native'
+import { Modal, Platform, Pressable, ScrollView, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { useTheme } from '../../theme'
-import { Button, Icon, type IconName, SafeAreaView, Text } from '../../ui'
+import { Button, Icon, type IconName, SafeAreaView, SheetKeyboardView, Text } from '../../ui'
 
 export interface SheetItem {
   key: string
@@ -103,12 +103,12 @@ export function FormSheet({
             {submitLabel && onSubmit ? <Button label={submitLabel} size="sm" loading={busy} disabled={!canSubmit} onPress={onSubmit} /> : null}
           </View>
         </View>
-        <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <SheetKeyboardView className="flex-1">
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerClassName="p-4 gap-4">
             {description ? <Text className="text-[14px] leading-[20px] text-muted-foreground">{description}</Text> : null}
             {children}
           </ScrollView>
-        </KeyboardAvoidingView>
+        </SheetKeyboardView>
       </SafeAreaView>
     </Modal>
   )

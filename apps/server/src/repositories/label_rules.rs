@@ -6,8 +6,10 @@
 //! match, so an `owner:` label with a rule assigns only the rule's people.
 //!
 //! Every label that a task gets goes through [`insert_task_label`], whatever the path (web, API
-//! tokens, MCP, GitHub sync, Discord), so the rules run in one place. A backup restore does not
-//! use it: a restored task keeps the assignees it had. Only owners and admins
+//! tokens, MCP, GitHub sync, Discord), so the rules run in one place. A rule also runs at once for
+//! the open tasks that already have its label when it is made or turned on, when a name map entry
+//! changes, and when the owner switch is turned on ([`apply_to_labeled_tasks`]): nobody has to add
+//! the label again. A backup restore does not use either: a restored task keeps the assignees it had. Only owners and admins
 //! ([`Permission::LabelRulesManage`]) see and change the rules.
 
 use orbit_domain::Permission;
@@ -86,6 +88,16 @@ pub(super) async fn insert_task_label(
         .bind(label_id)
         .execute(&mut **tx)
         .await?;
+    apply_label_rules(tx, write, task_id, label_id).await
+}
+
+/// Assigns the people that the project's rules name for a label that the task has.
+async fn apply_label_rules(
+    tx: &mut Transaction<'_, Any>,
+    write: &LabelWrite<'_>,
+    task_id: Id,
+    label_id: &str,
+) -> Result<(), TaskError> {
     let Some(label) = sqlx::query("SELECT name, project_id FROM labels WHERE id = $1")
         .bind(label_id)
         .fetch_optional(&mut **tx)
@@ -117,6 +129,32 @@ pub(super) async fn insert_task_label(
     }
     for user_id in people {
         assign_by_rule(tx, write, task_id, &label_name, &user_id).await?;
+    }
+    Ok(())
+}
+
+/// Runs the rules of `label_id` for the open tasks that already have the label. Done, cancelled,
+/// duplicate and deleted tasks keep their assignees.
+async fn apply_to_labeled_tasks(
+    tx: &mut Transaction<'_, Any>,
+    write: &LabelWrite<'_>,
+    label_id: &str,
+) -> Result<(), TaskError> {
+    let tasks: Vec<String> = sqlx::query_scalar(
+        "SELECT tasks.id FROM task_labels JOIN tasks ON tasks.id = task_labels.task_id \
+         JOIN task_statuses ON task_statuses.id = tasks.status_id \
+         WHERE task_labels.label_id = $1 AND tasks.workspace_id = $2 AND tasks.deleted_at IS NULL \
+         AND task_statuses.category IN ('unstarted', 'started') ORDER BY tasks.id",
+    )
+    .bind(label_id)
+    .bind(write.workspace_id.to_string())
+    .fetch_all(&mut **tx)
+    .await?;
+    for task_id in tasks {
+        let task_id = task_id
+            .parse()
+            .map_err(|_| TaskError::Invalid { field: "task_id" })?;
+        apply_label_rules(tx, write, task_id, label_id).await?;
     }
     Ok(())
 }
@@ -320,6 +358,15 @@ impl LabelRuleRepository {
             now,
         )
         .await?;
+        if enabled {
+            let write = LabelWrite {
+                workspace_id,
+                actor_id,
+                request_id,
+                now,
+            };
+            apply_to_labeled_tasks(&mut tx, &write, &label_id.to_string()).await?;
+        }
         let rule = rule_in_tx(&mut tx, project_id, id).await?;
         tx.commit().await?;
         Ok(rule)
@@ -352,12 +399,13 @@ impl LabelRuleRepository {
             )
             .await?;
         }
+        let enabled = patch.enabled.unwrap_or(current.enabled);
         sqlx::query(
             "UPDATE label_rules SET label_id = $1, user_id = $2, enabled = $3, updated_at = $4 WHERE id = $5",
         )
         .bind(label_id.to_string())
         .bind(user_id.to_string())
-        .bind(i64::from(patch.enabled.unwrap_or(current.enabled)))
+        .bind(i64::from(enabled))
         .bind(now.as_millis())
         .bind(rule_id.to_string())
         .execute(&mut *tx)
@@ -373,6 +421,19 @@ impl LabelRuleRepository {
             now,
         )
         .await?;
+        let write = LabelWrite {
+            workspace_id,
+            actor_id,
+            request_id,
+            now,
+        };
+        if enabled {
+            apply_to_labeled_tasks(&mut tx, &write, &label_id.to_string()).await?;
+        }
+        // The old label of a moved name map entry may go back to the owner switch's name match.
+        if label_id != current.label_id && owner_name(&current.label_name).is_some() {
+            apply_to_labeled_tasks(&mut tx, &write, &current.label_id.to_string()).await?;
+        }
         let rule = rule_in_tx(&mut tx, project_id, rule_id).await?;
         tx.commit().await?;
         Ok(rule)
@@ -389,7 +450,7 @@ impl LabelRuleRepository {
     ) -> Result<(), TaskError> {
         let mut tx = self.database.immediate_transaction().await?;
         require_manager(&mut tx, workspace_id, project_id, actor_id).await?;
-        rule_in_tx(&mut tx, project_id, rule_id).await?;
+        let rule = rule_in_tx(&mut tx, project_id, rule_id).await?;
         sqlx::query("DELETE FROM label_rules WHERE id = $1")
             .bind(rule_id.to_string())
             .execute(&mut *tx)
@@ -405,6 +466,16 @@ impl LabelRuleRepository {
             now,
         )
         .await?;
+        // Without its name map entry, an `owner:` label goes back to the owner switch's name match.
+        if owner_name(&rule.label_name).is_some() {
+            let write = LabelWrite {
+                workspace_id,
+                actor_id,
+                request_id,
+                now,
+            };
+            apply_to_labeled_tasks(&mut tx, &write, &rule.label_id.to_string()).await?;
+        }
         tx.commit().await?;
         Ok(())
     }
@@ -442,6 +513,23 @@ impl LabelRuleRepository {
             now,
         )
         .await?;
+        if enabled {
+            let labels: Vec<String> = sqlx::query_scalar(
+                "SELECT id FROM labels WHERE project_id = $1 AND lower(name) LIKE 'owner:%' ORDER BY id",
+            )
+            .bind(project_id.to_string())
+            .fetch_all(&mut *tx)
+            .await?;
+            let write = LabelWrite {
+                workspace_id,
+                actor_id,
+                request_id,
+                now,
+            };
+            for label_id in labels {
+                apply_to_labeled_tasks(&mut tx, &write, &label_id).await?;
+            }
+        }
         let settings = settings_in_tx(&mut tx, workspace_id, project_id).await?;
         tx.commit().await?;
         Ok(settings)

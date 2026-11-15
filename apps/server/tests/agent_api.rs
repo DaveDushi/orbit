@@ -88,11 +88,10 @@ impl Fixture {
             CookieMode::secure(),
             Some([3; 32]),
         );
+        let tasks = TaskState::new(Arc::clone(&identity), CookieMode::secure());
         let app = chat_router(chat)
-            .merge(task_router(TaskState::new(
-                Arc::clone(&identity),
-                CookieMode::secure(),
-            )))
+            .merge(task_router(tasks.clone()))
+            .merge(orbit_server::label_rule_routes::label_rule_router(tasks))
             .merge(orbit_server::agent::router(agent))
             .layer(axum::middleware::from_fn_with_state(
                 (*database).clone(),
@@ -532,12 +531,8 @@ async fn agent_sessions_act_as_the_driver_and_only_on_work_routes() {
         ("DELETE", "/api/v1/agent/chatgpt".to_owned()),
         ("GET", format!("/api/v1/workspaces/{}/tasks", Id::new_v7())),
         ("POST", format!("/api/v1/workspaces/{workspace}/api-tokens")),
-        // Chat files: the agent reads their content only, and never uploads or downloads.
+        // Chat files: the agent never uploads them (it downloads only images, see below).
         ("POST", format!("/api/v1/workspaces/{workspace}/chat/files")),
-        (
-            "GET",
-            format!("/api/v1/workspaces/{workspace}/chat/files/{}", Id::new_v7()),
-        ),
     ] {
         let (status, value) = fixture.request(method, &path, auth, None).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{method} {path}");
@@ -720,6 +715,205 @@ async fn inbox_kinds(fixture: &Fixture, member: &Member) -> Vec<String> {
         .iter()
         .map(|item| item["kind"].as_str().unwrap().to_owned())
         .collect()
+}
+
+// ---------------------------------------------------------------------------------------------
+// Chat images.
+
+const PNG: &[u8] = b"\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52\x00\x00\x00\x01\x00\x00\x00\x01\x08\x04\x00\x00\x00\xb5\x1c\x0c\x02\x00\x00\x00\x0b\x49\x44\x41\x54\x78\xda\x63\x64\xf8\x0f\x00\x01\x05\x01\x01\x27\x18\xe3\x66\x00\x00\x00\x00\x49\x45\x4e\x44\xae\x42\x60\x82";
+
+impl Fixture {
+    /// Uploads a chat file as `member`; returns its id.
+    async fn upload(&self, member: &Member, name: &str, bytes: &[u8]) -> String {
+        self.upload_as(("cookie", &member.cookie), name, bytes)
+            .await
+    }
+
+    /// Uploads a chat file with `auth` (a cookie, or the iPhone app's bearer token); returns its id.
+    async fn upload_as(&self, auth: (&str, &str), name: &str, bytes: &[u8]) -> String {
+        let boundary = "orbit-test-boundary";
+        let mut body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\n\r\n"
+        )
+        .into_bytes();
+        body.extend_from_slice(bytes);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!(
+                "/api/v1/workspaces/{}/chat/files",
+                self.workspace_id
+            ))
+            .header(auth.0, auth.1)
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap();
+        let response = self.app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let value: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        assert_eq!(status, StatusCode::CREATED, "{value}");
+        value["id"].as_str().unwrap().to_owned()
+    }
+
+    /// A download of a chat file with `auth`: the status and the bytes.
+    async fn download(&self, auth: &str, file: &str) -> (StatusCode, Vec<u8>) {
+        let request = Request::builder()
+            .uri(format!(
+                "/api/v1/workspaces/{}/chat/files/{file}",
+                self.workspace_id
+            ))
+            .header(header::AUTHORIZATION, auth)
+            .body(Body::empty())
+            .unwrap();
+        let response = self.app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        (status, bytes.to_vec())
+    }
+}
+
+#[tokio::test]
+async fn an_agent_session_downloads_chat_images_the_driver_can_see_and_no_other_files() {
+    let fixture = Fixture::new().await;
+    let ada = fixture.add_member("ada").await;
+    let bob = fixture.add_member("bob").await;
+    let general = fixture.general().await;
+    let image = fixture.upload(&ada, "screen.png", PNG).await;
+    let text = fixture.upload(&ada, "notes.txt", b"plain words").await;
+    let nonce = format!("n{}", fixture.nonce.fetch_add(1, Ordering::Relaxed));
+    fixture
+        .chat(
+            &ada,
+            "POST",
+            &format!("/conversations/{general}/messages"),
+            Some(json!({ "body": "look", "nonce": nonce, "file_ids": [image, text] })),
+        )
+        .await;
+    // Not sent yet: only its uploader (ada) may open it.
+    let unsent = fixture.upload(&ada, "draft.png", PNG).await;
+
+    let ada_agent = fixture.agent_session(&ada).await;
+    let (status, bytes) = fixture.download(&ada_agent, &image).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bytes, PNG);
+    let (status, _) = fixture.download(&ada_agent, &unsent).await;
+    assert_eq!(status, StatusCode::OK);
+    // Other files: the agent reads their content, never their bytes.
+    let (status, bytes) = fixture.download(&ada_agent, &text).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let problem: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(problem["code"], "chat_forbidden", "{problem}");
+
+    // The driver's own access decides: bob cannot open ada's unsent upload, so his agent cannot.
+    let bob_agent = fixture.agent_session(&bob).await;
+    let (status, _) = fixture.download(&bob_agent, &image).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = fixture.download(&bob_agent, &unsent).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn an_agent_session_downloads_a_chat_image_sent_from_the_iphone_app() {
+    // The iPhone app signs in with a bearer token, not a cookie: an image it sends in chat
+    // (also from the Ask Donna sheet) must reach the agent like one sent from the web.
+    let fixture = Fixture::new().await;
+    let ada = fixture.add_member("ada").await;
+    let token = ada.cookie.split_once('=').unwrap().1.to_owned();
+    let bearer = format!("Bearer {token}");
+    let general = fixture.general().await;
+    let image = fixture
+        .upload_as(("authorization", &bearer), "IMG_0001.png", PNG)
+        .await;
+    let nonce = format!("n{}", fixture.nonce.fetch_add(1, Ordering::Relaxed));
+    let (status, message) = fixture
+        .request(
+            "POST",
+            &format!(
+                "/api/v1/workspaces/{}/chat/conversations/{general}/messages",
+                fixture.workspace_id
+            ),
+            ("authorization", &bearer),
+            Some(json!({ "body": "what is this?", "nonce": nonce, "file_ids": [image] })),
+        )
+        .await;
+    assert!(status.is_success(), "{status} {message}");
+
+    let agent = fixture.agent_session(&ada).await;
+    let (status, bytes) = fixture.download(&agent, &image).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bytes, PNG);
+}
+
+#[tokio::test]
+async fn a_label_rule_made_by_the_agent_assigns_the_open_tasks_that_have_the_label() {
+    // Donna's create_label_rule posts the rule with the driver's agent session.
+    let fixture = Fixture::new().await;
+    let ada = fixture.add_member("ada").await;
+    let workspace = fixture.workspace_id.clone();
+    let owner = ("cookie", fixture.owner.cookie.as_str());
+    let (_, projects) = fixture
+        .request(
+            "GET",
+            &format!("/api/v1/workspaces/{workspace}/projects"),
+            owner,
+            None,
+        )
+        .await;
+    let project = projects["items"][0]["id"].as_str().unwrap().to_owned();
+    let (status, label) = fixture
+        .request(
+            "POST",
+            &format!("/api/v1/workspaces/{workspace}/projects/{project}/labels"),
+            owner,
+            Some(json!({ "name": "owner:ada-l", "color": "#ff0000" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{label}");
+    let label = label["id"].as_str().unwrap().to_owned();
+    let status_id: String = sqlx::query_scalar(
+        "SELECT id FROM task_statuses WHERE project_id = $1 ORDER BY position LIMIT 1",
+    )
+    .bind(&project)
+    .fetch_one(fixture.database.pool())
+    .await
+    .unwrap();
+    let (status, task) = fixture
+        .request(
+            "POST",
+            &format!("/api/v1/workspaces/{workspace}/tasks"),
+            owner,
+            Some(json!({ "project_id": project, "status_id": status_id, "title": "Labeled", "label_ids": [label] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{task}");
+    assert_eq!(task["assignee_ids"], json!([]));
+
+    let agent = fixture.agent_session(&fixture.owner).await;
+    let (status, rule) = fixture
+        .request(
+            "POST",
+            &format!("/api/v1/workspaces/{workspace}/projects/{project}/label-rules"),
+            ("authorization", &agent),
+            Some(json!({ "label_id": label, "user_id": ada.id.to_string() })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{rule}");
+    let (_, task) = fixture
+        .request(
+            "GET",
+            &format!(
+                "/api/v1/workspaces/{workspace}/tasks/{}",
+                task["id"].as_str().unwrap()
+            ),
+            owner,
+            None,
+        )
+        .await;
+    assert_eq!(task["assignee_ids"], json!([ada.id.to_string()]));
 }
 
 // ---------------------------------------------------------------------------------------------

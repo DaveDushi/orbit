@@ -16,6 +16,9 @@
  *   use <integration>__<tool> with {"json": "arguments"}
  *   send drive image <id|it> to shopify <integration> [as image|body of article <id>] [alt "Text"]
  *   read the files (reads every file sent with the message, one read_chat_file call each, then reports them all)
+ *   add label rule "Label" for @Name in project "Project" (create_label_rule)
+ *   look at the images (one view_image call with the chat_file_ids of the images sent with the message, then reports
+ *     what reached the model: the image inputs and the originals' sizes)
  *   find drive file "words"        read drive file <id|it>              create folder "Name"
  *   trash drive file <id|it>       share drive file <id|it>
  *   insert drive file <id|it> into page <id|it|this> [at <n>]     list drive files of page <id|it|this>
@@ -308,6 +311,12 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 		return { name: "send_later", args: { at: match[1], text: match[2], ...(match[3] ? { post_in: match[3] } : {}) } };
 	if (/list projects/i.test(instruction)) return { name: "list_projects", args: {} };
 	if (/read messages/i.test(instruction)) return { name: "read_messages", args: {} };
+	if ((match = /add label rule "([^"]+)" for @([\w .-]+?) in project "([^"]+)"/i.exec(instruction)))
+		return { name: "create_label_rule", args: { project_id: match[3], label: match[1], person: match[2] } };
+	if (/look at (?:the |this |my )?(?:images?|screenshots?|pictures?)/i.test(instruction)) {
+		const images = [...instruction.matchAll(/file_id ([0-9a-f-]{36}), image\)/g)].map((found) => found[1]);
+		return images.length ? { name: "view_image", args: { chat_file_ids: images } } : undefined;
+	}
 	if (/read (?:the )?(?:chat )?files/i.test(instruction)) {
 		const [next] = unreadFiles(instruction, messages);
 		return next ? { name: "read_chat_file", args: { file_id: next } } : undefined;
@@ -370,6 +379,12 @@ export function respond(messages: readonly Message[], modelId = "mock", thinking
 		if (last.toolName === "repair_routine_script" && !last.isError) return fauxAssistantMessage(fauxToolCall("run_saved_script", {}), { stopReason: "toolUse" });
 		const media = mediaStep(instruction, messages);
 		if (media) return "text" in media ? fauxAssistantMessage(fauxText(media.text)) : fauxAssistantMessage(fauxToolCall(media.name, media.args as JsonObject), { stopReason: "toolUse" });
+		if (last.toolName === "view_image" && !last.isError) {
+			const parts = (last.content as { type?: string; mimeType?: string; data?: string }[]).filter((part) => part.type === "image");
+			const sizes = [...textOf(last.content).matchAll(/"format": "(\w+)",\s*"width": (\d+),\s*"height": (\d+)/g)].map((size) => `${size[1]} ${size[2]}×${size[3]}`);
+			const kib = parts.map((part) => `${part.mimeType}, ${Math.round(((part.data?.length ?? 0) * 3) / 4 / 1024)} KiB`);
+			return fauxAssistantMessage(fauxText(`(mock model) I received ${parts.length} image input(s) (${kib.join("; ")}) from the chat: originals ${sizes.join(", ")}.`));
+		}
 		if (CARD_REQUEST.test(instruction) && last.toolName === "search_tasks" && !last.isError) {
 			return fauxAssistantMessage(fauxText(taskCard(textOf(last.content))));
 		}

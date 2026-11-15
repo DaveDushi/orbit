@@ -71,7 +71,10 @@ export function approvalQuestion(driverId: string, action: string, what = "to ru
 	return `<@${driverId}> I need your approval ${what}:\n\`\`\`\n${shown.replaceAll("```", "'''")}\n\`\`\`\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it.`;
 }
 
-export type Driver = (api: ToolExecutionApi, context: Context, call: (as: As, state: ThreadState) => Promise<ToolExecutionResult>) => Promise<ToolExecutionResult>;
+/** A GET of bytes from Orbit's public API as the driver (`OrbitClient.downloadAsUser`). */
+export type Download = (path: string) => Promise<Response>;
+
+export type Driver = (api: ToolExecutionApi, context: Context, call: (as: As, state: ThreadState, download: Download) => Promise<ToolExecutionResult>) => Promise<ToolExecutionResult>;
 
 /**
  * Orbit answered that the driver must approve: post the question in the thread, wait for the driver, and end the run.
