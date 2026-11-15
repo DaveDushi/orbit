@@ -13,7 +13,7 @@ import { Linking, Platform } from 'react-native'
 
 import { keys } from './data/keys'
 import type { OrbitClient } from './data/orbit'
-import { appBadge, appPathOf, PUSH_OFF_KEY, registerDevice, shouldRegister, thisDeviceState, type ThisDevice, unregisterDevice } from './data/push'
+import { appBadge, appPathOf, notificationUrl, PUSH_OFF_KEY, registerDevice, shouldRegister, thisDeviceState, type ThisDevice, unregisterDevice } from './data/push'
 import { useIsGuest } from './orbit-context'
 import { useChatBadge, useUnreadNotifications } from './queries'
 import { storage } from './storage'
@@ -61,7 +61,8 @@ export function usePushNotifications(client: OrbitClient) {
   const response = Notifications.useLastNotificationResponse()
   useEffect(() => {
     if (!response || response.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER) return
-    router.navigate(appPathOf(response.notification.request.content.data?.url) as never)
+    const { content, trigger } = response.notification.request
+    router.navigate(appPathOf(notificationUrl(content.data, trigger)) as never)
     Notifications.clearLastNotificationResponse()
   }, [response])
 }

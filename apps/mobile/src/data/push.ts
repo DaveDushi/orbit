@@ -37,6 +37,18 @@ export function appPathOf(url: unknown): string {
   return '/'
 }
 
+/**
+ * The `url` of a tapped notification. `expo-notifications` gives a remote push's data from its `body` object only;
+ * a server that sends `url` at the top level of the APNs payload (Orbit before it sent `body` too) is read from the
+ * push trigger's `payload`.
+ */
+export function notificationUrl(data: unknown, trigger: unknown): unknown {
+  const url = (data as { url?: unknown } | null | undefined)?.url
+  if (url !== undefined) return url
+  const push = trigger as { type?: unknown; payload?: { url?: unknown } } | null | undefined
+  return push?.type === 'push' ? push.payload?.url : undefined
+}
+
 /** The person turned notifications off on this phone (Settings → Notifications); the app then does not register it. */
 export const PUSH_OFF_KEY = 'orbit.push.off'
 

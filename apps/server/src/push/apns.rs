@@ -120,7 +120,9 @@ pub fn provider_token(key: &SecretKey, key_id: &str, team_id: &str, issued_at: i
 }
 
 /// The APNs body of a notice: the alert, the app icon's badge ([`super::badge::count`]), and the
-/// page to open (`url`) for the app. Without a notice, the badge only.
+/// page to open (`url`) for the app. Without a notice, the badge only. The app's
+/// `expo-notifications` reads a remote push's data from its `body` object only, so `url` and `tag`
+/// are there too (at the top level for an app that reads the whole payload).
 #[must_use]
 pub fn payload(notice: Option<&Notice>, badge: i64) -> Vec<u8> {
     let Some(notice) = notice else {
@@ -137,6 +139,7 @@ pub fn payload(notice: Option<&Notice>, badge: i64) -> Vec<u8> {
         },
         "url": notice.url,
         "tag": notice.tag,
+        "body": { "url": notice.url, "tag": notice.tag },
     })
     .to_string()
     .into_bytes()
@@ -530,6 +533,8 @@ mod tests {
         assert_eq!(body["aps"]["thread-id"], "chat:1");
         assert_eq!(body["aps"]["badge"], 3);
         assert_eq!(body["url"], "/chat/1");
+        // What the app's `content.data` is: a tap opens the conversation, not Home.
+        assert_eq!(body["body"], json!({ "url": "/chat/1", "tag": "chat:1" }));
     }
 
     #[test]

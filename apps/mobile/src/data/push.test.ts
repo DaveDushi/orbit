@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { appPathOf, shouldRegister, thisDeviceState } from './push'
+import { appPathOf, notificationUrl, shouldRegister, thisDeviceState } from './push'
 
 describe('appPathOf', () => {
   test('a chat notification opens its conversation, or the thread of a reply', () => {
@@ -35,5 +35,16 @@ describe('this iPhone', () => {
     expect(shouldRegister({ off: false, granted: true, canAskAgain: false })).toBe(true)
     expect(shouldRegister({ off: false, granted: false, canAskAgain: true })).toBe(true)
     expect(shouldRegister({ off: false, granted: false, canAskAgain: false })).toBe(false)
+  })
+})
+
+describe('notificationUrl', () => {
+  test('a tap reads the url from the data, else from the APNs payload of the push', () => {
+    // expo-notifications: `data` is the payload's `body` object (null when the server sent none)
+    expect(notificationUrl({ url: '/chat/1' }, { type: 'push', payload: { url: '/activity' } })).toBe('/chat/1')
+    expect(notificationUrl(null, { type: 'push', payload: { aps: {}, url: '/chat/1', tag: 'chat:1' } })).toBe('/chat/1')
+    expect(appPathOf(notificationUrl(undefined, { type: 'push', payload: { url: '/chat/1?thread=2' } }))).toBe('/chat/thread/2')
+    expect(notificationUrl(null, { type: 'timeInterval', payload: { url: '/chat/1' } })).toBeUndefined()
+    expect(notificationUrl(null, null)).toBeUndefined()
   })
 })
