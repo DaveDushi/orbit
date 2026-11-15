@@ -7,19 +7,19 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 28c5f2d4d89facab2c003c7a3bcd4dcd4e4a52b4
-  (Donna sees chat images, label rules on tasks that have the label; schema 20261114000500, 118 rows; November 15, 2026).
+- Source: DaveDushi/orbit, `main` at 8cd111fd9bc0e811e277a31e71df3298f75ccab6
+  (iPhone badge hotfix: badge-only APNs pushes; schema 20261114000500, 118 rows; November 15, 2026).
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
   f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:28c5f2d`); fork commits have no published upstream image.
-- Image ID: sha256:9fe5fb041c404aa291abf57eacbd6dc21bc01ea51ee6cec0036888dd7e10ba48
-- Team agent sidecar code (`/opt/orbit-agent`): commit 28c5f2d.
-- iPhone push (APNs, `docs/operations.md` "iPhone push"): off. No `ORBIT_APNS_*` setting is in `/etc/orbit/orbit.env`
-  yet, so Orbit keeps the iPhones' device rows and sends them nothing (no log line). To turn it on, put the team's `.p8`
-  key on the VM (owner `orbit`, mode 600), set `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID` (and
-  `ORBIT_APNS_SANDBOX=true` only for development builds), restart `orbit`, and look for `iPhone push (APNs) is on`.
+  (`orbit:8cd111f`); fork commits have no published upstream image.
+- Image ID: sha256:5ab2969fcc8ce004e038edbe45f407f3ea8fcf3a9c3cb568207724a617618ab6
+- Team agent sidecar code (`/opt/orbit-agent`): commit 28c5f2d (the same `apps/agent` as 8cd111f).
+- iPhone push (APNs, `docs/operations.md` "iPhone push"): on since November 15, 2026, 12:07 UTC (set by Ops, outside a
+  deploy): `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID`, `ORBIT_APNS_TOPIC` and `ORBIT_APNS_SANDBOX`
+  are in `/etc/orbit/orbit.env`; the journal shows `iPhone push (APNs) is on` (topic `com.easytomanage.orbit`, sandbox
+  false) at each start. A successful send writes no log line; a failed one writes `iPhone push not sent`.
 - LibreOffice (Calc, Writer, Impress 24.2, `--no-install-recommends`) is installed for Office previews
   (`docs/file-previews.md`); ffmpeg makes the chat video copies.
 - Desktop app downloads: https://orbit.wellrox.com/downloads/desktop/ (installer, zip, `latest.json` for the app's update
@@ -262,6 +262,60 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 15, 2026 hotfix: iPhone icon badge with badge-only APNs pushes (no migration)
+
+`main` from `07735104` to `8cd111fd` (local, not pushed at the deploy): fast-forward to branch `badge-hotfix`
+(worktree `/root/jean/orbit/badge-hotfix`), which is a cherry-pick of `490290fa` from `iphone-b15-fixes`. The
+`SheetKeyboardView.tsx` → `KeyboardView.tsx` rename of `490290fa` is left out (`ui/index.ts` on main still imports the
+old name; the rename belongs to the keyboard commits `c385d513`, `035a30c7`, which are not on main). Server: a notice
+that is not pushed (open web tab, "do not disturb", kind off) and every chat read or inbox read now send the iPhones a
+badge-only push (`{"aps":{"badge":N}}`, collapse id `badge`) when the count is not the one they got last (in-memory per
+server). No migration, no new env key, `apps/agent` unchanged (no sidecar copy, no what's-new entry: a bug fix).
+
+Checks on the branch: mobile typecheck and 226 tests; Rust `chat_api` 40, `push_api` 6, `push_devices_api` 5 on SQLite
+and Postgres; `--lib push` 10. Scripts and logs: `/root/ops/badge-hotfix/`.
+
+Deploy id `20261115T155545Z-2025947`. `orbit:8cd111f` (image
+`sha256:5ab2969fcc8ce004e038edbe45f407f3ea8fcf3a9c3cb568207724a617618ab6`, label `8cd111fd…`, about 38 min);
+`deploy/smoke.sh` and `orbit config check` (production env) passed. No-migration check (release binary on a hot copy,
+and in the switch on a copy of the stopped database): 0 applied, schema 20261114000500 (118 rows), counts, names and
+checksums unchanged, quick-check ok, 0 foreign-key rows.
+
+Switch: stopped both services at 16:35:20 UTC; snapshot `01a1e010-342a-70a0-b5ba-f7f912a244cd` with
+`/usr/local/bin/orbit-28c5f2d`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-8cd111f.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-8cd111f.tgz`; sidecar code unchanged; env unchanged. Binary installed
+(`/usr/local/bin/orbit-8cd111f` too), `orbit` ready 16:35:32, then `orbit-agent` (12 s down). `vm-health.conf` (old copy
+`.before-8cd111f`): `PROD_TAG=8cd111f`, `ROLLBACK_TAG=28c5f2d`, `ROLLBACK_BACKUP=01a1e010-342a-70a0-b5ba-f7f912a244cd`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) and `/health/live` 200;
+`/orbit-build.json` revision `8cd111fd…`; `iPhone push (APNs) is on` (topic `com.easytomanage.orbit`, sandbox false) in the
+journal; the one WARN after the start (allowed origin without a port) was there before too. Badge test (temporary 30-min
+sessions for Arthur, an agent account, and David Dusi, who has the one iPhone device row): Arthur sent a test message in
+their DM (200), David marked the DM read (200; the badge-only push). 0 WARN/ERROR lines in the journal (no `iPhone push
+not sent`), the device row kept with `failures = 0`, the orbit process had TLS connections to Apple (17.188.x.x:443). The
+test message was deleted, both sessions logged out and their rows deleted. `vm-health` OK except nginx (10 lines, the
+switch window; 0 5xx) and git-owner (8 older root files; this deploy's given back to exedev). **Not** verified: the number
+on the real iPhone icon (no log line on a successful send; needs a look at the phone).
+
+Rollback to `28c5f2d` (no schema change, so no data is lost; the sidecar code did not change):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-28c5f2d /usr/local/bin/orbit
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/badge-hotfix/rollback.sh)
+# Way 2, only for a data problem (work after 16:35 UTC is lost), Orbit stopped: /usr/local/bin/orbit-28c5f2d backup verify +
+#   backup restore 01a1e010-342a-70a0-b5ba-f7f912a244cd (as user orbit, with /etc/orbit/orbit.env), then the lines above
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-8cd111f.tgz
+# Plain copy of the database before the switch: /var/backups/orbit/pre-migration/orbit-before-8cd111f.sqlite
+```
+
+After this rollback, set `PROD_TAG=28c5f2d`, `ROLLBACK_TAG=d6c06e9`,
+`ROLLBACK_BACKUP=01a1dec9-e080-70c7-903c-f61c73b4f260` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-8cd111f`).
 
 ### November 15, 2026 upgrade: Donna sees chat images, label rules on tasks that have the label (no migration)
 
