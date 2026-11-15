@@ -725,6 +725,12 @@ const PNG: &[u8] = b"\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x4
 impl Fixture {
     /// Uploads a chat file as `member`; returns its id.
     async fn upload(&self, member: &Member, name: &str, bytes: &[u8]) -> String {
+        self.upload_as(("cookie", &member.cookie), name, bytes)
+            .await
+    }
+
+    /// Uploads a chat file with `auth` (a cookie, or the iPhone app's bearer token); returns its id.
+    async fn upload_as(&self, auth: (&str, &str), name: &str, bytes: &[u8]) -> String {
         let boundary = "orbit-test-boundary";
         let mut body = format!(
             "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\n\r\n"
@@ -738,7 +744,7 @@ impl Fixture {
                 "/api/v1/workspaces/{}/chat/files",
                 self.workspace_id
             ))
-            .header(header::COOKIE, &member.cookie)
+            .header(auth.0, auth.1)
             .header(
                 header::CONTENT_TYPE,
                 format!("multipart/form-data; boundary={boundary}"),
@@ -808,6 +814,38 @@ async fn an_agent_session_downloads_chat_images_the_driver_can_see_and_no_other_
     assert_eq!(status, StatusCode::OK);
     let (status, _) = fixture.download(&bob_agent, &unsent).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn an_agent_session_downloads_a_chat_image_sent_from_the_iphone_app() {
+    // The iPhone app signs in with a bearer token, not a cookie: an image it sends in chat
+    // (also from the Ask Donna sheet) must reach the agent like one sent from the web.
+    let fixture = Fixture::new().await;
+    let ada = fixture.add_member("ada").await;
+    let token = ada.cookie.split_once('=').unwrap().1.to_owned();
+    let bearer = format!("Bearer {token}");
+    let general = fixture.general().await;
+    let image = fixture
+        .upload_as(("authorization", &bearer), "IMG_0001.png", PNG)
+        .await;
+    let nonce = format!("n{}", fixture.nonce.fetch_add(1, Ordering::Relaxed));
+    let (status, message) = fixture
+        .request(
+            "POST",
+            &format!(
+                "/api/v1/workspaces/{}/chat/conversations/{general}/messages",
+                fixture.workspace_id
+            ),
+            ("authorization", &bearer),
+            Some(json!({ "body": "what is this?", "nonce": nonce, "file_ids": [image] })),
+        )
+        .await;
+    assert!(status.is_success(), "{status} {message}");
+
+    let agent = fixture.agent_session(&ada).await;
+    let (status, bytes) = fixture.download(&agent, &image).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bytes, PNG);
 }
 
 #[tokio::test]
