@@ -15,27 +15,40 @@ const RootTop = createContext(0)
  */
 export function KeyboardView({ className, style, pointerEvents, children }: { className?: string; style?: StyleProp<ViewStyle>; pointerEvents?: ViewProps['pointerEvents']; children: ReactNode }) {
   const ref = useRef<ComponentRef<typeof View>>(null)
-  const rootTop = useRef(0)
-  rootTop.current = useContext(RootTop)
+  const rootTop = useContext(RootTop)
+  const rootTopRef = useRef(rootTop)
+  rootTopRef.current = rootTop
+  // the keyboard's top on the screen from its last event; null while it is hidden
+  const keyboardTop = useRef<number | null>(null)
   const [bottom, setBottom] = useState(0)
+  const measure = useRef((animate?: KeyboardEvent) => {
+    if (keyboardTop.current == null && !animate) return
+    ref.current?.measureInWindow((_x, y, _width, height) => {
+      // the padding is inside the measured height, so the view's bottom stays where its parent puts it
+      const covered = keyboardCover({ rootTop: rootTopRef.current, y, height, keyboardTop: keyboardTop.current ?? Number.POSITIVE_INFINITY })
+      if (animate && animate.duration > 0) {
+        const duration = Math.max(animate.duration, 10)
+        LayoutAnimation.configureNext({ duration, update: { duration, type: LayoutAnimation.Types[animate.easing] ?? LayoutAnimation.Types.keyboard } })
+      }
+      setBottom(covered)
+    })
+  }).current
   useEffect(() => {
     if (Platform.OS !== 'ios') return
     const update = (event: KeyboardEvent) => {
-      ref.current?.measureInWindow((_x, y, _width, height) => {
-        // the padding is inside the measured height, so the view's bottom stays where its parent puts it
-        const covered = keyboardCover({ rootTop: rootTop.current, y, height, keyboardTop: event.endCoordinates.screenY })
-        if (event.duration > 0) {
-          const duration = Math.max(event.duration, 10)
-          LayoutAnimation.configureNext({ duration, update: { duration, type: LayoutAnimation.Types[event.easing] ?? LayoutAnimation.Types.keyboard } })
-        }
-        setBottom(covered)
-      })
+      // endCoordinates is the whole keyboard frame on the screen, QuickType bar included
+      keyboardTop.current = event.endCoordinates.screenY < Dimensions.get('screen').height ? event.endCoordinates.screenY : null
+      measure(event)
     }
     const subscriptions = [Keyboard.addListener('keyboardWillChangeFrame', update), Keyboard.addListener('keyboardWillHide', update)]
     return () => subscriptions.forEach((subscription) => subscription.remove())
-  }, [])
+  }, [measure])
+  // the page sheet's top can arrive after the keyboard (the sheet lays out once it is presented): measure again
+  useEffect(() => {
+    if (Platform.OS === 'ios') measure()
+  }, [rootTop, measure])
   return (
-    <View ref={ref} className={className} pointerEvents={pointerEvents} style={[style, { paddingBottom: bottom }]}>
+    <View ref={ref} className={className} pointerEvents={pointerEvents} style={[style, { paddingBottom: bottom }]} onLayout={Platform.OS === 'ios' ? () => measure() : undefined}>
       {children}
     </View>
   )
