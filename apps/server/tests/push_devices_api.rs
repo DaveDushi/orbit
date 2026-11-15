@@ -18,7 +18,8 @@ use tower::ServiceExt;
 /// app (410), one with "bad" is refused every time, and one with "busy" is busy the first time.
 #[derive(Default)]
 struct FakeApns {
-    sent: Mutex<Vec<(String, Notice, i64)>>,
+    /// The token, the notice (`None`: the badge only) and the badge.
+    sent: Mutex<Vec<(String, Option<Notice>, i64)>>,
     tried: Mutex<Vec<String>>,
 }
 
@@ -26,7 +27,7 @@ impl DeviceSender for FakeApns {
     fn send(
         &self,
         token: String,
-        notice: Notice,
+        notice: Option<Notice>,
         badge: i64,
     ) -> BoxFuture<'static, Result<(), SendError>> {
         let earlier = {
@@ -203,7 +204,47 @@ impl Fixture {
             .unwrap()
     }
 
-    fn sent(&self) -> Vec<(String, Notice, i64)> {
+    /// An inbox row for `recipient`: `actor` assigned them a new task. Returns its id.
+    async fn assigned(&self, recipient: Id, actor: Id, key: &str) -> String {
+        let project: String = sqlx::query_scalar("SELECT id FROM projects LIMIT 1")
+            .fetch_one(self.database.pool())
+            .await
+            .unwrap();
+        let status: String = sqlx::query_scalar(
+            "SELECT id FROM task_statuses WHERE project_id = $1 ORDER BY position LIMIT 1",
+        )
+        .bind(&project)
+        .fetch_one(self.database.pool())
+        .await
+        .unwrap();
+        let (created, task) = self
+            .send(
+                "POST",
+                &format!("/api/v1/workspaces/{}/tasks", self.workspace_id),
+                &self.owner_cookie,
+                Some(json!({ "project_id": project, "status_id": status, "title": key })),
+            )
+            .await;
+        assert_eq!(created, StatusCode::CREATED);
+        let id = Id::new_v7().to_string();
+        sqlx::query(
+            "INSERT INTO notifications (id, workspace_id, recipient_user_id, actor_user_id, kind, \
+             task_id, dedupe_key, created_at) VALUES ($1, $2, $3, $4, 'task_assigned', $5, $6, $7)",
+        )
+        .bind(&id)
+        .bind(self.workspace_id.to_string())
+        .bind(recipient.to_string())
+        .bind(actor.to_string())
+        .bind(task["id"].as_str().unwrap())
+        .bind(key)
+        .bind(TimestampMillis::now().as_millis())
+        .execute(self.database.pool())
+        .await
+        .unwrap();
+        id
+    }
+
+    fn sent(&self) -> Vec<(String, Option<Notice>, i64)> {
         std::mem::take(&mut self.apns.sent.lock().unwrap())
     }
 }
@@ -336,48 +377,15 @@ async fn nobody_gets_a_push_for_what_they_did_themselves() {
     let fixture = Fixture::new().await;
     let (ada, ada_cookie) = fixture.member("ada").await;
     fixture.register(&ada_cookie, &token("a2")).await;
-    let project: String = sqlx::query_scalar("SELECT id FROM projects LIMIT 1")
-        .fetch_one(fixture.database.pool())
-        .await
-        .unwrap();
-    let status: String = sqlx::query_scalar(
-        "SELECT id FROM task_statuses WHERE project_id = $1 ORDER BY position LIMIT 1",
-    )
-    .bind(&project)
-    .fetch_one(fixture.database.pool())
-    .await
-    .unwrap();
-    let (created, task) = fixture
-        .send(
-            "POST",
-            &format!("/api/v1/workspaces/{}/tasks", fixture.workspace_id),
-            &fixture.owner_cookie,
-            Some(json!({ "project_id": project, "status_id": status, "title": "Ship it" })),
-        )
-        .await;
-    assert_eq!(created, StatusCode::CREATED);
     // Ada's own action as an inbox row (a writer that forgot to skip her), then the owner's.
-    for (actor, key) in [(ada, "self"), (fixture.owner_id, "owner")] {
-        sqlx::query(
-            "INSERT INTO notifications (id, workspace_id, recipient_user_id, actor_user_id, kind, \
-             task_id, dedupe_key, created_at) VALUES ($1, $2, $3, $4, 'task_assigned', $5, $6, $7)",
-        )
-        .bind(Id::new_v7().to_string())
-        .bind(fixture.workspace_id.to_string())
-        .bind(ada.to_string())
-        .bind(actor.to_string())
-        .bind(task["id"].as_str().unwrap())
-        .bind(key)
-        .bind(TimestampMillis::now().as_millis())
-        .execute(fixture.database.pool())
-        .await
-        .unwrap();
-    }
+    fixture.assigned(ada, ada, "self").await;
+    fixture.assigned(ada, fixture.owner_id, "owner").await;
     assert_eq!(fixture.push.push_inbox().await.unwrap(), 2);
     let sent = fixture.sent();
     assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0].1.title, "Owner assigned you a task");
-    assert_eq!(sent[0].1.url, "/activity");
+    let notice = sent[0].1.as_ref().unwrap();
+    assert_eq!(notice.title, "Owner assigned you a task");
+    assert_eq!(notice.url, "/activity");
     // The icon's badge: both unread inbox rows (the app shows the same number).
     assert_eq!(sent[0].2, 2);
     let (status, badge) = fixture
@@ -387,4 +395,51 @@ async fn nobody_gets_a_push_for_what_they_did_themselves() {
     assert_eq!(badge, json!({ "count": 2 }));
     let (status, _) = fixture.send("GET", "/api/v1/push/badge", "", None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+/// The app icon's badge follows the unread count without an alert: a notice that is not shown
+/// ("do not disturb") still counts, and a read sends the new number, once.
+#[tokio::test]
+async fn the_badge_alone_goes_when_the_count_changes_without_a_shown_push() {
+    let fixture = Fixture::new().await;
+    let (ada, ada_cookie) = fixture.member("ada").await;
+    let phone = token("a3");
+    fixture.register(&ada_cookie, &phone).await;
+    sqlx::query("INSERT INTO user_status (user_id, presence, updated_at) VALUES ($1, 'dnd', $2)")
+        .bind(ada.to_string())
+        .bind(TimestampMillis::now().as_millis())
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    let notification = fixture.assigned(ada, fixture.owner_id, "quiet").await;
+
+    // Do not disturb: no alert, and the icon shows 1.
+    assert_eq!(fixture.push.push_inbox().await.unwrap(), 1);
+    assert_eq!(fixture.sent(), [(phone.clone(), None, 1)]);
+    // The same count again: nothing goes.
+    assert_eq!(fixture.push.update_badge(ada).await.unwrap(), 0);
+    assert!(fixture.sent().is_empty());
+
+    // Ada reads it in the inbox: the icon gets 0, after the response went out.
+    let (status, _) = fixture
+        .send(
+            "POST",
+            &format!(
+                "/api/v1/workspaces/{}/notifications/{notification}/read",
+                fixture.workspace_id
+            ),
+            &ada_cookie,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let mut sent = Vec::new();
+    for _ in 0..100 {
+        sent = fixture.sent();
+        if !sent.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(sent, [(phone, None, 0)]);
 }

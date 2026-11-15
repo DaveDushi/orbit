@@ -11,7 +11,7 @@ The app signs in to an Orbit server and works in one workspace at a time. It fol
 - Activity (from the drawer): notifications with All, Unread and Mentions.
 - Settings: workspace General and Members, the account pages (Profile, Notifications, Security, Sessions), and Admin for instance admins.
 - Ask Donna: an "Ask Donna…" bar above the dock on every tab but Chat opens a sheet with the person's DM with the agent. Each message carries the page context (the area, and the open task or Docs page). Same rule as the web's Ask bar: not for guests, and only while the person's ChatGPT is connected (`src/data/ask-donna.ts`).
-- Push notifications (iPhone): after sign-in the app asks for permission and registers its APNs device token (`POST /api/v1/push/devices`); sign-out removes it first. The server pushes through APNs itself (`apps/server/src/push/apns.rs`, settings in `docs/operations.md`). A tap opens the conversation, the thread or Activity (`src/push.ts`, `src/data/push.ts`).
+- Push notifications (iPhone): after sign-in the app asks for permission and registers its APNs device token (`POST /api/v1/push/devices`); sign-out removes it first. The server pushes through APNs itself (`apps/server/src/push/apns.rs`, settings in `docs/operations.md`). A tap opens the conversation, the thread or Activity (`src/push.ts`, `src/data/push.ts`). The icon badge is the unread count: each push carries it, the server sends it alone after a read, and the app sets it itself when it opens and when its counts change.
 
 Every action runs in the app; nothing opens the web.
 

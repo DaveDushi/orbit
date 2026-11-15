@@ -7,6 +7,7 @@
 //!   is reused for [`TOKEN_LIFETIME`] (APNs refuses a new one more often than every 20 minutes).
 //! - The device rows (`push_devices`) and their delivery, called by [`super::PushService`].
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use base64::Engine;
@@ -46,16 +47,23 @@ const MAX_PAYLOAD_BYTES: usize = 4096;
 const MAX_COLLAPSE_ID_BYTES: usize = 64;
 /// The phones one user gets pushes on. The oldest go when another registers.
 const MAX_DEVICES: i64 = 20;
+/// The `apns-collapse-id` of a badge-only push: a newer one replaces one that still waits.
+const BADGE_COLLAPSE_ID: &str = "badge";
 
-/// Where a device's pushes go: the notice and the app icon's badge, sent to the device token.
+/// Where a device's pushes go: the notice and the app icon's badge, sent to the device token. A
+/// push without a notice changes the badge only: nothing shows and nothing sounds.
 pub trait DeviceSender: Send + Sync {
     fn send(
         &self,
         token: String,
-        notice: Notice,
+        notice: Option<Notice>,
         badge: i64,
     ) -> BoxFuture<'static, Result<(), SendError>>;
 }
+
+/// The badge each user's iPhones got last, so a badge-only push goes only when the number changed.
+/// A user who is not in it (after a restart) gets the next one.
+pub type SentBadges = Mutex<HashMap<Id, i64>>;
 
 #[derive(Clone)]
 pub struct ApnsConfig {
@@ -112,9 +120,14 @@ pub fn provider_token(key: &SecretKey, key_id: &str, team_id: &str, issued_at: i
 }
 
 /// The APNs body of a notice: the alert, the app icon's badge ([`super::badge::count`]), and the
-/// page to open (`url`) for the app.
+/// page to open (`url`) for the app. Without a notice, the badge only.
 #[must_use]
-pub fn payload(notice: &Notice, badge: i64) -> Vec<u8> {
+pub fn payload(notice: Option<&Notice>, badge: i64) -> Vec<u8> {
+    let Some(notice) = notice else {
+        return json!({ "aps": { "badge": badge.max(0) } })
+            .to_string()
+            .into_bytes();
+    };
     json!({
         "aps": {
             "alert": { "title": notice.title, "body": notice.body },
@@ -209,7 +222,7 @@ impl DeviceSender for ApnsSender {
     fn send(
         &self,
         token: String,
-        notice: Notice,
+        notice: Option<Notice>,
         badge: i64,
     ) -> BoxFuture<'static, Result<(), SendError>> {
         let now = TimestampMillis::now().as_millis() / 1000;
@@ -220,22 +233,26 @@ impl DeviceSender for ApnsSender {
             PRODUCTION_HOST
         };
         let url = format!("{host}/3/device/{token}");
-        let body = payload(&notice, badge);
+        let body = payload(notice.as_ref(), badge);
+        // Apple: the `alert` type is for an alert, a sound or a badge. A badge-only push goes at
+        // the priority that saves the phone's power.
+        let priority = if notice.is_some() { "10" } else { "5" };
+        let collapse_id = notice.map_or_else(|| BADGE_COLLAPSE_ID.to_owned(), |notice| notice.tag);
         let mut request = self
             .client
             .post(url)
             .header("authorization", format!("bearer {bearer}"))
             .header("apns-topic", &self.config.topic)
             .header("apns-push-type", "alert")
-            .header("apns-priority", "10")
+            .header("apns-priority", priority)
             .header(
                 "apns-expiration",
                 (now + i64::from(TTL_SECONDS)).to_string(),
             )
             .header("content-type", "application/json")
             .timeout(SEND_TIMEOUT);
-        if notice.tag.len() <= MAX_COLLAPSE_ID_BYTES {
-            request = request.header("apns-collapse-id", notice.tag.clone());
+        if collapse_id.len() <= MAX_COLLAPSE_ID_BYTES {
+            request = request.header("apns-collapse-id", collapse_id);
         }
         let cached = Arc::clone(&self.token);
         Box::pin(async move {
@@ -342,12 +359,14 @@ pub async fn unregister(database: &Database, user_id: Id, token: &str) -> Result
 }
 
 /// Pushes to every device of the user whose session is still good; returns how many took it. A
-/// device that APNs no longer knows is removed, and one that fails again and again too.
+/// device that APNs no longer knows is removed, and one that fails again and again too. Without a
+/// notice, the badge goes only when it is not the one the devices got last (`sent`).
 pub async fn deliver(
     database: &Database,
     sender: &Arc<dyn DeviceSender>,
+    sent: &SentBadges,
     user_id: Id,
-    notice: &Notice,
+    notice: Option<&Notice>,
 ) -> Result<usize, sqlx::Error> {
     let now = TimestampMillis::now().as_millis();
     let rows = sqlx::query(
@@ -365,9 +384,16 @@ pub async fn deliver(
         return Ok(0);
     }
     let badge = super::badge::count(database, user_id).await?;
+    let last = sent
+        .lock()
+        .expect("sent badges lock")
+        .insert(user_id, badge);
+    if notice.is_none() && last == Some(badge) {
+        return Ok(0);
+    }
     let sends = rows.into_iter().map(|row| {
         let (id, token): (String, String) = (row.get("id"), row.get("token"));
-        let (sender, notice) = (Arc::clone(sender), notice.clone());
+        let (sender, notice) = (Arc::clone(sender), notice.cloned());
         async move {
             let mut result = sender.send(token.clone(), notice.clone(), badge).await;
             // A busy APNs gets the push once more.
@@ -498,11 +524,19 @@ mod tests {
             sound: "message",
             icon: None,
         };
-        let body: serde_json::Value = serde_json::from_slice(&payload(&notice, 3)).unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&payload(Some(&notice), 3)).unwrap();
         assert_eq!(body["aps"]["alert"]["title"], "Ada");
         assert_eq!(body["aps"]["alert"]["body"], "hello");
         assert_eq!(body["aps"]["thread-id"], "chat:1");
         assert_eq!(body["aps"]["badge"], 3);
         assert_eq!(body["url"], "/chat/1");
+    }
+
+    #[test]
+    fn a_badge_only_payload_has_the_badge_and_nothing_that_shows_or_sounds() {
+        let body: serde_json::Value = serde_json::from_slice(&payload(None, 4)).unwrap();
+        assert_eq!(body, json!({ "aps": { "badge": 4 } }));
+        let body: serde_json::Value = serde_json::from_slice(&payload(None, -1)).unwrap();
+        assert_eq!(body["aps"]["badge"], 0);
     }
 }

@@ -16,6 +16,7 @@ use serde_json::Value;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::auth_routes::{CookieMode, request_session};
+use crate::push::PushService;
 use crate::repositories::identity::{AuthenticatedSession, IdentityRepository};
 use crate::repositories::project_members::ProjectMemberRecord;
 use crate::repositories::sub_issues::AutoClosed;
@@ -2841,6 +2842,7 @@ async fn read_notification(
             TimestampMillis::now(),
         )
         .await
+        .inspect(|_| PushService::of(state.identity.database()).badge_changed(actor_id))
         .map(Json)
         .map_err(|error| task_problem(error, instance, request_id.as_ref()))
 }
@@ -2859,6 +2861,7 @@ async fn read_all_notifications(
         .tasks
         .mark_notifications_read(workspace_id, actor_id, TimestampMillis::now())
         .await
+        .inspect(|_| PushService::of(state.identity.database()).badge_changed(actor_id))
         .map(|updated| Json(ReadAllResponse { updated }))
         .map_err(|error| task_problem(error, instance, request_id.as_ref()))
 }
