@@ -3,6 +3,7 @@ import { expect, test } from 'bun:test'
 import {
   authorName,
   buildMessageRows,
+  emojiNamed,
   channelNameFinal,
   channelNameInput,
   chatSections,
@@ -429,4 +430,11 @@ test('a chat file opens from Drive, its playable copy or itself, and says where 
   const big = { ...file, drive_node_id: 'n1', preview: null } satisfies ChatFileRecord
   expect(fileNote(big)).toBe('2.4 MB · in Drive')
   expect(fileToOpen(big)).toEqual({ kind: 'drive', nodeId: 'n1' })
+})
+
+test('a bot\'s icon emoji is found by its shortcode, in any case', () => {
+  const groups = [{ key: 'people', title: 'People', emojis: [{ emoji: '👻', names: ['ghost'] }, { emoji: '🚀', names: ['rocket'] }] }]
+  expect(emojiNamed(groups, 'rocket')).toBe('🚀')
+  expect(emojiNamed(groups, 'Ghost')).toBe('👻')
+  expect(emojiNamed(groups, 'nope')).toBeNull()
 })

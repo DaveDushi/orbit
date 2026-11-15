@@ -613,4 +613,14 @@ export function searchEmoji(groups: readonly EmojiGroup[], query: string, limit 
 const BUILT_IN = '😀 😃 😄 😁 😆 😅 😂 🙂 😉 😊 😇 😍 🤩 😘 😋 😜 🤔 🤨 😐 😑 😶 🙄 😏 😬 😌 😴 😷 🤯 😎 🤓 😕 😟 😮 😲 😳 🥺 😢 😭 😱 😤 😡 👍 👎 👏 🙌 🙏 💪 👀 👋 🤝 ✌️ 👌 ❤️ 🧡 💛 💚 💙 💜 🔥 ✨ ⭐ 🎉 🎊 ✅ ❌ ⚠️ 💯 🚀 💡 📌 📎 ☕ 🍕 🎂'
 
 /** The picker's set when the server's emoji data cannot load. */
+/** The standard emoji of a shortcode (`ghost`), as the web's `emojiNamed`; `null` when none has it. */
+export function emojiNamed(groups: readonly EmojiGroup[], name: string): string | null {
+  const text = name.toLowerCase()
+  for (const group of groups) {
+    const found = group.emojis.find((entry) => entry.names.includes(text))
+    if (found) return found.emoji
+  }
+  return null
+}
+
 export const BUILT_IN_EMOJI: EmojiGroup[] = [{ key: 'common', title: 'Common', emojis: BUILT_IN.split(' ').map((emoji) => ({ emoji, names: [] })) }]
