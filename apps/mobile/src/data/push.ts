@@ -38,6 +38,22 @@ export function appPathOf(url: unknown): string {
   return '/'
 }
 
+/** The workspace a notification's `url` names (`?workspace=`): a tap switches to it first. */
+export function workspaceOf(url: unknown): string | null {
+  if (typeof url !== 'string' || !url.startsWith('/')) return null
+  const id = new URLSearchParams(url.split('?')[1] ?? '').get('workspace')
+  return id && /^[\w-]+$/.test(id) ? id : null
+}
+
+/**
+ * Whether a push that arrives while the app is open is about the conversation or thread on screen (`pathname`): its
+ * banner is not shown then, as the message shows in the list.
+ */
+export function isOpenOnScreen(url: unknown, pathname: string | null): boolean {
+  const path = appPathOf(url)
+  return pathname !== null && path.startsWith('/chat/') && path === pathname
+}
+
 /**
  * The `url` of a tapped notification. `expo-notifications` gives a remote push's data from its `body` object only;
  * a server that sends `url` at the top level of the APNs payload (Orbit before it sent `body` too) is read from the

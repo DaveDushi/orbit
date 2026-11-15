@@ -7,20 +7,27 @@
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as Notifications from 'expo-notifications'
-import { router } from 'expo-router'
-import { useEffect } from 'react'
+import { router, usePathname } from 'expo-router'
+import { useEffect, useState } from 'react'
 import { Linking, Platform } from 'react-native'
 
 import { keys } from './data/keys'
 import type { OrbitClient } from './data/orbit'
-import { appBadge, appPathOf, notificationUrl, PUSH_OFF_KEY, registerDevice, shouldRegister, thisDeviceState, type ThisDevice, unregisterDevice } from './data/push'
-import { useIsGuest } from './orbit-context'
+import { appBadge, appPathOf, isOpenOnScreen, notificationUrl, PUSH_OFF_KEY, registerDevice, shouldRegister, thisDeviceState, type ThisDevice, unregisterDevice, workspaceOf } from './data/push'
+import { useIsGuest, useOrbit } from './orbit-context'
 import { useChatBadge, useUnreadNotifications } from './queries'
 import { storage } from './storage'
 
-// A push that arrives while the app is open shows as a banner too.
+/** The screen on show, so a push about it does not show a banner over it. */
+let openPath: string | null = null
+
+// A push that arrives while the app is open shows as a banner too (the server pushes also while the person is active in
+// Orbit), but not over the conversation or thread it is about: the message shows there, without a sound.
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: true }),
+  handleNotification: async ({ request }) => {
+    const open = isOpenOnScreen(notificationUrl(request.content.data, request.trigger), openPath)
+    return { shouldShowBanner: !open, shouldShowList: true, shouldPlaySound: !open, shouldSetBadge: true }
+  },
 })
 
 /** The token this app registered for the current session, so sign-out can remove it. */
@@ -58,13 +65,33 @@ export function usePushNotifications(client: OrbitClient) {
     if (badge.data !== undefined) Notifications.setBadgeCountAsync(badge.data).catch(() => undefined)
   }, [badge.data])
 
+  const pathname = usePathname()
+  useEffect(() => {
+    openPath = pathname
+  }, [pathname])
+
+  // A tap opens its screen in the push's workspace: when that is not the open one, the app switches first, and opens
+  // the screen once the switch is done.
+  const { workspaceId, workspaces, selectWorkspace } = useOrbit()
+  const [tapped, setTapped] = useState<{ path: string; workspaceId: string | null } | null>(null)
   const response = Notifications.useLastNotificationResponse()
   useEffect(() => {
     if (!response || response.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER) return
     const { content, trigger } = response.notification.request
-    router.navigate(appPathOf(notificationUrl(content.data, trigger)) as never)
+    const url = notificationUrl(content.data, trigger)
     Notifications.clearLastNotificationResponse()
+    const target = workspaceOf(url)
+    const known = target !== null && workspaces.some((workspace) => workspace.id === target)
+    setTapped({ path: appPathOf(url), workspaceId: known ? target : null })
+    // Once for each tap: the list of workspaces is a new array on each render.
   }, [response])
+  useEffect(() => {
+    if (!tapped) return
+    if (tapped.workspaceId && tapped.workspaceId !== workspaceId) return selectWorkspace(tapped.workspaceId)
+    router.navigate(tapped.path as never)
+    setTapped(null)
+    // `selectWorkspace` is a new function on each render that does the same: it does not run this again.
+  }, [tapped, workspaceId])
 }
 
 /** Stops the pushes to this phone; called before sign-out, while the session still works. */

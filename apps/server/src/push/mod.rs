@@ -1,12 +1,12 @@
 //! Notifications that reach a user who is not looking at the event: a signal to the tabs where
-//! they are active now, or else a Web Push message to every browser they subscribed with and an
-//! APNs push to every iPhone they signed in on with the app.
+//! they are active now, or else a Web Push message to every browser they subscribed with; and in
+//! both cases an APNs push to every iPhone they signed in on with the app.
 //!
 //! - [`webpush`]: the encryption and the VAPID header.
 //! - [`apns`]: the iPhone app's devices and the APNs sender.
 //! - [`badge`]: the number on the iPhone app's icon, sent with each APNs push, and alone when it
 //!   changed without one ([`PushService::badge_changed`]: a read, or a notice the user was not
-//!   pushed because they are at a tab or set "do not disturb").
+//!   pushed because they turned it off or set "do not disturb").
 //! - [`PushService`]: who is notified (their preferences, "do not disturb"), and where.
 //!
 //! Chat messages are notified when they are sent ([`PushService::chat_message`]). Inbox
@@ -601,8 +601,10 @@ impl PushService {
         })
     }
 
-    /// Notifies a user. The tabs they are at get a signal and show it themselves, and nothing
-    /// is pushed. Without such a tab, every browser they subscribed with gets a push.
+    /// Notifies a user. The tabs they are at get a signal and show it themselves, and their
+    /// browsers get no push. Without such a tab, every browser they subscribed with gets a push.
+    /// Their iPhones get it in both cases, as a phone app does: the app hides the banner when the
+    /// conversation of the push is open on it.
     pub async fn notify(
         &self,
         user_id: Id,
@@ -616,20 +618,21 @@ impl PushService {
             return self.update_badge(user_id).await.map(|_| ());
         }
         let notice = &notice.clamped();
-        if self.hub.signal_user(user_id, true, "notify", notice) {
-            let reason = "the user is at an open tab";
-            tracing::info!(%user_id, kind = kind_name, tag = notice.tag, reason, "push skipped");
-            return self.update_badge(user_id).await.map(|_| ());
+        let at_tab = self.hub.signal_user(user_id, true, "notify", notice);
+        if !at_tab {
+            // Nobody is at an open tab. The open tabs still show it and play the sound.
+            self.hub.signal_user(user_id, false, "notify", notice);
         }
-        // Nobody is at an open tab. The open tabs still show it and play the sound, and the
-        // other devices get the push.
-        self.hub.signal_user(user_id, false, "notify", notice);
-        let (browsers, iphones) = self.deliver_each(user_id, notice).await?;
+        let (browsers, iphones) = self.deliver_each(user_id, notice, !at_tab).await?;
         if browsers + iphones == 0 {
-            let reason = "no browser or iPhone took it (none with a live session, or all failed)";
+            let reason = if at_tab {
+                "the user is at an open tab, and no iPhone took it"
+            } else {
+                "no browser or iPhone took it (none with a live session, or all failed)"
+            };
             tracing::info!(%user_id, kind = kind_name, tag = notice.tag, reason, "push skipped");
         } else {
-            tracing::info!(%user_id, kind = kind_name, tag = notice.tag, browsers, iphones, "push sent");
+            tracing::info!(%user_id, kind = kind_name, tag = notice.tag, at_tab, browsers, iphones, "push sent");
         }
         Ok(())
     }
@@ -667,15 +670,17 @@ impl PushService {
 
     /// [`Self::push`] of a notice that was clamped: the browsers and the iPhones at the same time.
     async fn deliver(&self, user_id: Id, notice: &Notice) -> Result<usize, sqlx::Error> {
-        let (browsers, iphones) = self.deliver_each(user_id, notice).await?;
+        let (browsers, iphones) = self.deliver_each(user_id, notice, true).await?;
         Ok(browsers + iphones)
     }
 
-    /// [`Self::deliver`], with how many browsers and how many iPhones took it.
+    /// [`Self::deliver`], with how many browsers and how many iPhones took it; the iPhones only
+    /// without `browsers`.
     async fn deliver_each(
         &self,
         user_id: Id,
         notice: &Notice,
+        browsers: bool,
     ) -> Result<(usize, usize), sqlx::Error> {
         let devices = async {
             match &self.inner.devices {
@@ -686,7 +691,14 @@ impl PushService {
                 None => Ok(0),
             }
         };
-        let (browsers, devices) = tokio::join!(self.deliver_web(user_id, notice), devices);
+        let web = async {
+            if browsers {
+                self.deliver_web(user_id, notice).await
+            } else {
+                Ok(0)
+            }
+        };
+        let (browsers, devices) = tokio::join!(web, devices);
         Ok((browsers?, devices?))
     }
 
@@ -841,10 +853,13 @@ impl PushService {
             _ => Vec::new(),
         };
 
-        let mut url = format!("/chat/{}", message.conversation_id);
+        // The workspace too: a tap opens the conversation in its workspace, also when another one
+        // is open (the web and the app switch to it).
+        let mut url = format!("/chat/{}?", message.conversation_id);
         if let (true, Some(root_id)) = (thread_only, message.thread_root_id) {
-            url.push_str(&format!("?thread={root_id}"));
+            url.push_str(&format!("thread={root_id}&"));
         }
+        url.push_str(&format!("workspace={workspace_id}"));
         let notice = |kind: PushKind| Notice {
             title: if dm {
                 author.clone()
@@ -1007,7 +1022,7 @@ impl PushService {
     pub async fn push_inbox(&self) -> Result<usize, sqlx::Error> {
         // A task notification whose recipient no longer sees the project is claimed and dropped.
         let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
-            "SELECT notifications.id, notifications.recipient_user_id, notifications.kind, \
+            "SELECT notifications.id, notifications.workspace_id, notifications.recipient_user_id, notifications.kind, \
              notifications.actor_user_id, notifications.actor_github_login, \
              user_avatars.updated_at AS avatar_updated_at, users.display_name AS actor, \
              tasks.title AS task_title, pages.title AS page_title, \
@@ -1093,7 +1108,10 @@ impl PushService {
             let notice = Notice {
                 title,
                 body,
-                url: "/activity".to_owned(),
+                url: format!(
+                    "/activity?workspace={}",
+                    row.get::<String, _>("workspace_id")
+                ),
                 tag: format!("inbox:{id}"),
                 sound: kind.sound(),
                 icon: row
