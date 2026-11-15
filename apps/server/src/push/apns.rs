@@ -418,6 +418,7 @@ pub async fn deliver(
                     .await?;
             }
             Err(SendError::Gone) => {
+                tracing::info!(%user_id, "iPhone push not sent: APNs no longer knows the device, removed");
                 sqlx::query("DELETE FROM push_devices WHERE id = $1")
                     .bind(id)
                     .execute(database.pool())

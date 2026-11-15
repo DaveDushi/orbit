@@ -576,9 +576,13 @@ impl PushService {
         Ok(())
     }
 
-    /// Whether the user wants to be notified of this kind of event now: it is on in their
-    /// preferences and they did not set "do not disturb".
-    async fn wanted(&self, user_id: Id, kind: PushKind) -> Result<bool, sqlx::Error> {
+    /// Why the user does not want to be notified of this kind of event now; `None` when they do:
+    /// it is on in their preferences and they did not set "do not disturb".
+    async fn held_back(
+        &self,
+        user_id: Id,
+        kind: PushKind,
+    ) -> Result<Option<&'static str>, sqlx::Error> {
         let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT COALESCE(prefs.{}, 1) AS wanted, COALESCE(status.presence, 'online') AS presence \
              FROM users LEFT JOIN notification_prefs AS prefs ON prefs.user_id = users.id \
@@ -589,9 +593,12 @@ impl PushService {
         .bind(user_id.to_string())
         .fetch_optional(self.database.pool())
         .await?;
-        Ok(row.is_some_and(|row| {
-            row.get::<i64, _>("wanted") == 1 && row.get::<String, _>("presence") != "dnd"
-        }))
+        Ok(match row {
+            None => Some("the user is suspended"),
+            Some(row) if row.get::<i64, _>("wanted") != 1 => Some("the user turned this kind off"),
+            Some(row) if row.get::<String, _>("presence") == "dnd" => Some("do not disturb"),
+            Some(_) => None,
+        })
     }
 
     /// Notifies a user. The tabs they are at get a signal and show it themselves, and nothing
@@ -602,18 +609,29 @@ impl PushService {
         kind: PushKind,
         notice: &Notice,
     ) -> Result<(), sqlx::Error> {
-        if !self.wanted(user_id, kind).await? {
+        let kind_name = kind.column();
+        if let Some(reason) = self.held_back(user_id, kind).await? {
+            tracing::info!(%user_id, kind = kind_name, tag = notice.tag, reason, "push skipped");
             // Not shown, still counted: the iPhones' badge shows it.
             return self.update_badge(user_id).await.map(|_| ());
         }
         let notice = &notice.clamped();
         if self.hub.signal_user(user_id, true, "notify", notice) {
+            let reason = "the user is at an open tab";
+            tracing::info!(%user_id, kind = kind_name, tag = notice.tag, reason, "push skipped");
             return self.update_badge(user_id).await.map(|_| ());
         }
         // Nobody is at an open tab. The open tabs still show it and play the sound, and the
         // other devices get the push.
         self.hub.signal_user(user_id, false, "notify", notice);
-        self.deliver(user_id, notice).await.map(|_| ())
+        let (browsers, iphones) = self.deliver_each(user_id, notice).await?;
+        if browsers + iphones == 0 {
+            let reason = "no browser or iPhone took it (none with a live session, or all failed)";
+            tracing::info!(%user_id, kind = kind_name, tag = notice.tag, reason, "push skipped");
+        } else {
+            tracing::info!(%user_id, kind = kind_name, tag = notice.tag, browsers, iphones, "push sent");
+        }
+        Ok(())
     }
 
     /// Pushes to every browser and iPhone of the user whose session is still good; returns how
@@ -649,6 +667,16 @@ impl PushService {
 
     /// [`Self::push`] of a notice that was clamped: the browsers and the iPhones at the same time.
     async fn deliver(&self, user_id: Id, notice: &Notice) -> Result<usize, sqlx::Error> {
+        let (browsers, iphones) = self.deliver_each(user_id, notice).await?;
+        Ok(browsers + iphones)
+    }
+
+    /// [`Self::deliver`], with how many browsers and how many iPhones took it.
+    async fn deliver_each(
+        &self,
+        user_id: Id,
+        notice: &Notice,
+    ) -> Result<(usize, usize), sqlx::Error> {
         let devices = async {
             match &self.inner.devices {
                 Some(sender) => {
@@ -659,7 +687,7 @@ impl PushService {
             }
         };
         let (browsers, devices) = tokio::join!(self.deliver_web(user_id, notice), devices);
-        Ok(browsers? + devices?)
+        Ok((browsers?, devices?))
     }
 
     /// The Web Push part of [`Self::deliver`]. The browsers get it at the same time: a user has
@@ -849,9 +877,10 @@ impl PushService {
             };
             let broadcast =
                 message.mentions.channel || (message.mentions.here && online.contains(&user_id));
+            let notify: String = member.get("notify");
             let kind = chat_kind(ChatAudience {
                 dm,
-                notify: &member.get::<String, _>("notify"),
+                notify: &notify,
                 mentioned: member.get::<bool, _>("mentioned") || (!dm && !thread_only && broadcast),
                 thread_only,
                 following: member.get::<bool, _>("following"),
@@ -866,6 +895,15 @@ impl PushService {
                     ..notice(kind)
                 };
                 notices.push((user_id, kind, notice));
+            } else {
+                tracing::info!(
+                    %user_id,
+                    tag = format!("chat:{}", message.conversation_id),
+                    notify,
+                    thread_only,
+                    reason = "the member's notify level, or a thread they do not follow",
+                    "push skipped"
+                );
             }
         }
         // A few members at a time: one slow push service does not hold up a large channel, and
