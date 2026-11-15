@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
-import { KeyboardAvoidingView, Linking, Platform, ScrollView, View } from 'react-native'
+import { Linking, ScrollView, View } from 'react-native'
 
 import { createClient, DEFAULT_SERVER, normalizeServer, signIn as signInWithPassword, signInSecondFactor } from '../data/orbit'
 import { loadLastServer } from '../session'
 import { errorMessage, useSession } from '../session-context'
 import { alpha, useTheme } from '../theme'
-import { Button, Input, Text } from '../ui'
+import { Button, Input, KeyboardView, Text } from '../ui'
 
 type Step = { name: 'credentials' } | { name: 'two_factor'; server: string; twoFactorToken: string }
 
@@ -56,9 +56,8 @@ export default function SignInScreen() {
   const credentials = step.name === 'credentials'
 
   return (
-    <KeyboardAvoidingView
+    <KeyboardView
       className="flex-1 bg-background"
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       // the web sign-in's soft accent glow from the top edge
       style={{ backgroundImage: `radial-gradient(ellipse 60% 45% at 50% 0%, ${alpha(colors.primary, 0.14)}, transparent)` }}
     >
@@ -131,6 +130,6 @@ export default function SignInScreen() {
           </View>
         </View>
       </ScrollView>
-    </KeyboardAvoidingView>
+    </KeyboardView>
   )
 }

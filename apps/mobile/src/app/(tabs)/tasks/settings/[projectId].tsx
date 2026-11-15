@@ -1,6 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router'
 import { useEffect, useState } from 'react'
-import { Alert, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, View } from 'react-native'
+import { Alert, Pressable, RefreshControl, ScrollView, View } from 'react-native'
 
 import { ActionSheet, ConfirmDialog, type ConfirmRequest, Dialog, type SheetAction } from '../../../../components/settings/Dialog'
 import { Badge, Note, RowText, SettingsCard, SettingsRow } from '../../../../components/settings/Shell'
@@ -27,7 +27,7 @@ import {
 import { useCycleWrites, useMilestoneWrites } from '../../../../hooks/tasks'
 import { useCycles, useMilestones, useProjects } from '../../../../queries'
 import { alpha, useTheme } from '../../../../theme'
-import { Button, Icon, IconButton, Input, PaneHeader, SafeAreaView, Text } from '../../../../ui'
+import { Button, Icon, IconButton, Input, KeyboardView, PaneHeader, SafeAreaView, Text } from '../../../../ui'
 
 const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`
 const longDate = (date: Date) => date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
@@ -147,7 +147,7 @@ export default function ProjectSettingsScreen() {
           </Text>
         </View>
       </PaneHeader>
-      <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardView className="flex-1">
         <ScrollView
           contentContainerClassName="px-5 pt-5 pb-8 gap-6"
           keyboardShouldPersistTaps="handled"
@@ -202,7 +202,7 @@ export default function ProjectSettingsScreen() {
 
           {project ? <ProjectDocsCard project={project} /> : null}
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardView>
 
       <ActionSheet
         visible={menu !== null}

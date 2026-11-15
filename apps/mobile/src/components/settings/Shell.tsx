@@ -1,13 +1,13 @@
 import { type Href, router, useNavigation, usePathname } from 'expo-router'
 import type { Permission } from '@orbit/api/generated/types.gen'
 import { type ReactNode, useState } from 'react'
-import { KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, Switch, View } from 'react-native'
+import { Pressable, RefreshControl, ScrollView, Switch, View } from 'react-native'
 
 import { guestMayOpen, isGuestRole } from '../../data/guest'
 import { useAgentEnabled } from '../../hooks/agent'
 import { useOrbit } from '../../orbit-context'
 import { alpha, cssColors, setSchemePreference, useLayout, useTheme } from '../../theme'
-import { Icon, type IconName, IconButton, PaneHeader, PickerSheet, SafeAreaView, Spinner, Text } from '../../ui'
+import { Icon, IconButton, type IconName, KeyboardView, PaneHeader, PickerSheet, SafeAreaView, Spinner, Text } from '../../ui'
 import { MenuButton } from '../Drawer'
 
 export interface SettingsNavItem {
@@ -91,7 +91,7 @@ export function SettingsShell({ title, nav, children, refreshing, onRefresh }: {
           <IconButton icon={scheme === 'dark' ? 'sun' : 'moon'} label="Toggle theme" iconSize={15} color={muted} onPress={() => setSchemePreference(scheme === 'dark' ? 'light' : 'dark')} />
         </View>
       </PaneHeader>
-      <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardView className="flex-1">
         <ScrollView
           contentContainerClassName="px-5 pt-5 pb-8 gap-6"
           keyboardShouldPersistTaps="handled"
@@ -121,7 +121,7 @@ export function SettingsShell({ title, nav, children, refreshing, onRefresh }: {
           )}
           {children}
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardView>
     </SafeAreaView>
   )
 }

@@ -2,7 +2,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { applyChatEvents } from '../../../chat-cache'
 import { router, useLocalSearchParams } from 'expo-router'
 import { useEffect, useMemo } from 'react'
-import { KeyboardAvoidingView, Platform, View } from 'react-native'
+import { View } from 'react-native'
 
 import { Composer, useComposer } from '../../../components/chat/Composer'
 import { MessageItem } from '../../../components/chat/Message'
@@ -13,7 +13,7 @@ import { useChatWrite, useFollowedThreads, useThread, useThreadFollowsRoot } fro
 import { useOrbit } from '../../../orbit-context'
 import { useConversations, usePeople } from '../../../queries'
 import { useTheme } from '../../../theme'
-import { ErrorView, IconButton, LoadingView, SafeAreaView, Text } from '../../../ui'
+import { ErrorView, IconButton, KeyboardView, LoadingView, SafeAreaView, Text } from '../../../ui'
 import { ChatColorScope } from '../../../components/chat/ChatColorScope'
 
 /**
@@ -98,7 +98,7 @@ function ThreadScreenContent() {
         />
         {conversationId ? <IconButton icon="chat" label={`Open ${where}`} size={32} iconSize={20} color={colors.mutedForeground} onPress={() => router.push(`/chat/${conversationId}?message=${rootId}`)} /> : null}
       </View>
-      <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardView className="flex-1">
         {!thread.data || !root ? (
           thread.isError ? (
             <ErrorView error={thread.error} onRetry={() => void thread.refetch()} />
@@ -130,7 +130,7 @@ function ThreadScreenContent() {
           />
         )}
         {root && member && !conversation?.archived ? <Composer state={composer} placeholder="Reply…" nameOf={handlers.nameOf} alsoSendTo={conversation?.kind === 'dm' ? 'this conversation' : where} /> : null}
-      </KeyboardAvoidingView>
+      </KeyboardView>
       {sheet}
     </SafeAreaView>
   )

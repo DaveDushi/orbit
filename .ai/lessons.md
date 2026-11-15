@@ -22,6 +22,8 @@
 - `expo prebuild` (an EAS-style check) rewrites `apps/mobile/package.json` scripts to `expo run:*`: restore them, and delete the generated `ios/` after the check (2026-11-13).
 - A build on the shared VM can wait 30+ minutes for the lock (release images hold it). Before you queue one for new SQL, check every statement with `EXPLAIN` in `sqlite3` on a migrated copy of a dev database (a short script that pulls the SQL strings out of the Rust file): a wrong column name otherwise costs a whole build round (2026-11-14).
 
+- On React Native's New Architecture, `measureInWindow`, `measure` and `KeyboardAvoidingView` measure a view inside a `Modal` from the modal's top, not the screen's (`ModalHostView` is a root node in the shadow tree). A page sheet starts below the status bar, so keyboard math there was ~60 pt short (build 14: the send button stayed under the keyboard). Put every text composer in `KeyboardView`, and the content of a page sheet in `KeyboardSheetRoot` (`apps/mobile/src/ui/KeyboardView.tsx`); never `KeyboardAvoidingView` (2026-11-15).
+
 ## Two database backends (SQLite + Postgres)
 - All SQL goes through sqlx `Any`: write `$1, $2, …` (SQLite binds them by number too), import `orbit_platform::Row` (not `sqlx::Row`) so 0/1 flags decode as `bool`, decode boolean scalars as `Flag`, bind `i64` (never `bool`/`u32`), and build dynamic SQL with `SqlBuilder`. SQLite silently ignores extra bound values, so clashing `$N` numbers in `format!`-glued fragments only fail on Postgres.
 - Run the whole suite on Postgres with `ORBIT_TEST_POSTGRES_URL=postgres://orbit:orbit@127.0.0.1:15432/orbit`; each test database maps from its SQLite path.

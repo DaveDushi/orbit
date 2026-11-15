@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { openURL } from 'expo-linking'
 import { router, useLocalSearchParams } from 'expo-router'
 import { type ReactNode, useMemo, useState } from 'react'
-import { Alert, Image, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, View } from 'react-native'
+import { Alert, Image, Pressable, RefreshControl, ScrollView, View } from 'react-native'
 import { TextInput } from '../../../ui/scaled'
 
 import { Attachments, type ShownFile } from '../../../components/tasks/Attachments'
@@ -57,7 +57,7 @@ import { useCycles, useLabels, useMilestones, usePeople, useProjects, useStatuse
 import { usePublishPageItem } from '../../../components/AskDonna'
 import { errorMessage } from '../../../session-context'
 import { alpha, useTheme } from '../../../theme'
-import { Avatar, Button, ErrorView, Icon, type IconName, IconButton, LoadingView, PaneHeader, PriorityIcon, SafeAreaView, StatusIcon, Text } from '../../../ui'
+import { Avatar, Button, ErrorView, Icon, type IconName, IconButton, KeyboardView, LoadingView, PaneHeader, PriorityIcon, SafeAreaView, StatusIcon, Text } from '../../../ui'
 
 /** The one sheet of the page and what it shows. */
 type TaskSheet =
@@ -298,7 +298,7 @@ export default function TaskScreen() {
   return (
     <SafeAreaView edges={['top', 'left', 'right']} className="flex-1 bg-background">
       {header}
-      <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardView className="flex-1">
         <ScrollView
           contentContainerClassName="px-3.5 pt-4 pb-7 gap-3.5"
           keyboardShouldPersistTaps="handled"
@@ -519,7 +519,7 @@ export default function TaskScreen() {
             />
           </View>
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardView>
 
       <Sheet visible={sheets.visible} title={sheetTitle(sheet, subject)} onClose={sheets.close}>
         {sheet?.kind === 'status' ? (
