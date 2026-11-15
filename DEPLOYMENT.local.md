@@ -7,15 +7,15 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at d6c06e95e5f7aeb2da61409e79cc8300845f686e
-  (agent skills; schema 20261114000500, 118 rows; November 14, 2026).
+- Source: DaveDushi/orbit, `main` at 28c5f2d4d89facab2c003c7a3bcd4dcd4e4a52b4
+  (Donna sees chat images, label rules on tasks that have the label; schema 20261114000500, 118 rows; November 15, 2026).
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
   f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:d6c06e9`); fork commits have no published upstream image.
-- Image ID: sha256:23c5f731fa28145a07c2b507af1f83fd3c716c3c5fcf6febd5b4c401567de32d
-- Team agent sidecar code (`/opt/orbit-agent`): commit d6c06e9.
+  (`orbit:28c5f2d`); fork commits have no published upstream image.
+- Image ID: sha256:9fe5fb041c404aa291abf57eacbd6dc21bc01ea51ee6cec0036888dd7e10ba48
+- Team agent sidecar code (`/opt/orbit-agent`): commit 28c5f2d.
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): off. No `ORBIT_APNS_*` setting is in `/etc/orbit/orbit.env`
   yet, so Orbit keeps the iPhones' device rows and sends them nothing (no log line). To turn it on, put the team's `.p8`
   key on the VM (owner `orbit`, mode 600), set `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID` (and
@@ -262,6 +262,72 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 15, 2026 upgrade: Donna sees chat images, label rules on tasks that have the label (no migration)
+
+`main` from `7414676b` to `28c5f2d4` (local, not pushed at the deploy): `--no-ff` merge of `iphone-b14-fixes`
+(`7c779032..c704cb68`, worktree `/root/jean/orbit/iphone-b14-fixes`, based on `7414676b`, so the merge tree equals the
+branch tip). `7c779032`: Donna looks at images sent in chat and in the Ask Donna panel (`view_image` takes
+`chat_file_ids`; the sidecar downloads them as the driver with `GET …/chat/files/{id}`, which `scope::allows` now lets
+agent sessions reach, `route_need` gives to `view_image`, and `download_chat_file` refuses an agent session every file
+that is not `image/*`; the driver's own file access check still runs); label rules also run for open tasks that already
+have the label; `aboutOrbit()` names chat images (media part); what's new `2026-11-15` (2 lines). `6484869d`: mobile
+`SheetKeyboardView` (Ask Donna, Docs comments, chat sheet, share screen keep the composer above the keyboard; ships with
+iPhone build 14). `c704cb68`: test for bearer-token chat images. No migration, no new env key, `package*.json` of the
+sidecar unchanged.
+
+Checks on the branch (by the Feature Builder): mobile typecheck and 226 tests, iOS bundle export, agent tests 98 pass
+(11 skipped), Rust `agent_api` 21 and `label_rules_api` 10 on SQLite and Postgres. Scripts and logs:
+`/root/ops/iphone-b14/`.
+
+Deploy id `20261115T100250Z-1955718`. `orbit:28c5f2d` (image
+`sha256:9fe5fb041c404aa291abf57eacbd6dc21bc01ea51ee6cec0036888dd7e10ba48`, label `28c5f2d4…`, about 34 min);
+`deploy/smoke.sh` and `orbit config check` (production env) passed. Before the switch, the release binary's embedded app
+on a seeded instance in `unshare -n` with the agent on and no sidecar (signed in, owner): `/`, `/tasks`, `/docs`,
+`/drive`, `/chat`, `/activity`, `/admin`, `/settings/agentic/agents`, `/settings/agentic/skills` render, 0 page or console
+errors (`pre/bundle.log`). No-migration check (release binary on a hot copy, and in the switch on a copy of the stopped
+database): 0 applied, schema 20261114000500 (118 rows), counts, names and checksums unchanged (9 users, 110 tasks, 6
+projects, 1153 chat messages, 57 pages), quick-check ok, 0 foreign-key rows.
+
+Switch: stopped both services at 10:38:54 UTC; snapshot `01a1dec9-e080-70c7-903c-f61c73b4f260` with
+`/usr/local/bin/orbit-d6c06e9`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-28c5f2d.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-28c5f2d.tgz`; old sidecar code `/opt/orbit-agent.before-28c5f2d`; new
+sidecar `src`; env unchanged. Binary installed (`/usr/local/bin/orbit-28c5f2d` too), `orbit` ready 10:39:11, then
+`orbit-agent` (17 s down). `vm-health.conf` (old copy `.before-28c5f2d`): `PROD_TAG=28c5f2d`, `ROLLBACK_TAG=d6c06e9`,
+`ROLLBACK_BACKUP=01a1dec9-e080-70c7-903c-f61c73b4f260`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) and `/health/live` 200;
+`/orbit-build.json` revision `28c5f2d4…`; schema 20261114000500 (118 rows), live quick-check ok; 0 error lines in the
+journal after the start; sidecar `/health` ok (`mock: false`; with the secret `sandbox: true`, so `aboutOrbit()` gets its
+media part) and `src` equal to `main`; the deployed `prompt.ts` names chat images ("looks at images sent in chat", "view_image
+with chat_file_ids"). Built bundle on production as David Dusi (temporary v7 session, `ui-check.ts`, all API writes
+blocked, none tried): `/`, `/chat`, `/tasks`, `/docs`, `/drive` render signed in, `auth/me` 200, 0 console or page errors.
+Screenshots `/root/.local/share/com.jean.desktop/pasted-images/iphone-b14/prod-{home,chat}.png` (pre-switch:
+`pre-{chat,tasks}.png`). `ORBIT_VERIFY_SPA=1 verify-production.sh` passed (session logged out, the row deleted after;
+token file, TLS hop and its pem removed). `vm-health` OK except nginx (25 lines, the switch window; 0 5xx) and
+git-owner (other worktrees' metadata in `.git`; this merge's root-owned files given back to exedev). **Not** verified on
+production: Donna describing a real chat image (it needs a real model run on a person's ChatGPT connection and a post
+in their DM; covered by the sidecar and `agent_api` tests only), a label rule run on real tasks (a write).
+
+Rollback to `d6c06e9` (no schema change, so no data is lost):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-d6c06e9 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-28c5f2d /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/iphone-b14/rollback.sh)
+# Way 2, only for a data problem (work after 10:38 UTC is lost), Orbit stopped: /usr/local/bin/orbit-d6c06e9 backup verify +
+#   backup restore 01a1dec9-e080-70c7-903c-f61c73b4f260 (as user orbit, with /etc/orbit/orbit.env), then the lines above
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-28c5f2d.tgz
+# Plain copy of the database before the switch: /var/backups/orbit/pre-migration/orbit-before-28c5f2d.sqlite
+```
+
+After this rollback, set `PROD_TAG=d6c06e9`, `ROLLBACK_TAG=d4ee5e0`,
+`ROLLBACK_BACKUP=01a1d887-0f47-76d7-a8b2-272e6aa01116` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-28c5f2d`).
 
 ### November 14, 2026 upgrade: agent skills (schema 20261114000500, 118 rows; 1 migration)
 
