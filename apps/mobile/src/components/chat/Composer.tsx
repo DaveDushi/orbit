@@ -9,7 +9,7 @@ import { Image, Platform, Pressable, ScrollView, View } from 'react-native'
 import { TextInput } from '../../ui/scaled'
 
 import type { PageContext } from '../../data/ask-donna'
-import { newNonce, type ThreadPages, upsertThreadMessage } from '../../data/chat'
+import { authorName, newNonce, type ThreadPages, upsertThreadMessage } from '../../data/chat'
 import * as chat from '../../data/chat-api'
 import type { MessageRecord } from '../../data/orbit'
 import { showError } from '../../hooks/chat'
@@ -199,7 +199,7 @@ export function Composer({ state, placeholder, nameOf, alsoSendTo }: { state: Co
     )
   }
 
-  const banner = mode.kind === 'edit' ? 'Editing message' : mode.replyTo ? `Replying to ${nameOf(mode.replyTo.author_id)}` : null
+  const banner = mode.kind === 'edit' ? 'Editing message' : mode.replyTo ? `Replying to ${authorName(mode.replyTo, nameOf)}` : null
   return (
     <View className="m-2 gap-1.5">
       {banner ? (

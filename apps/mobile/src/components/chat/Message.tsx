@@ -5,7 +5,7 @@ import { Image, Modal, Platform, Pressable, ScrollView, Share, useWindowDimensio
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { agentCardOf } from '../../data/agent-card'
-import { fileNote, fileToOpen, hasReaction, isImage } from '../../data/chat'
+import { authorName, fileNote, fileToOpen, hasReaction, isImage } from '../../data/chat'
 import type { ChatFileRecord } from '../../data/chat-api'
 import { relativeAgo, timeOfDay } from '../../data/format'
 import { splitTables, type TextPart } from '../../data/markdown'
@@ -16,6 +16,7 @@ import { cssColors, useTheme } from '../../theme'
 import { Avatar, Icon, IconButton, Spinner, Text } from '../../ui'
 import { ProfilePicture } from '../settings/ProfilePicture'
 import { AgentCard } from './AgentCard'
+import { BotAvatar, BotBadge } from './BotAvatar'
 import { Emoji } from './EmojiPicker'
 
 /** What a message row needs from the screen: names, the shown text of a body, and what a tap does. */
@@ -64,7 +65,8 @@ function MessageTable({ table }: { table: Extract<TextPart, { kind: 'table' }> }
 export function MessageItem({ message, groupStart, highlighted = false, handlers }: { message: MessageRecord; groupStart: boolean; highlighted?: boolean; handlers: MessageHandlers }) {
   const { colors } = useTheme()
   const { user } = useOrbit()
-  const author = handlers.nameOf(message.author_id)
+  // An integration's message shows the integration, not the member who set it up (its `author_id`).
+  const author = authorName(message, handlers.nameOf)
 
   if (message.kind !== 'message') {
     const what = message.kind === 'join' ? 'joined' : message.kind === 'leave' ? 'left' : 'pinned a message'
@@ -84,15 +86,16 @@ export function MessageItem({ message, groupStart, highlighted = false, handlers
       accessibilityHint="Long press for actions"
       className={`${highlighted ? 'bg-primary/12' : 'active:bg-muted/50'} ${groupStart ? 'mt-2' : 'mt-0'}`}
     >
-      {message.reply_to ? <Quote author={handlers.nameOf(message.reply_to.author_id)} body={message.reply_to.sticker && !message.reply_to.body ? 'Sticker' : handlers.text(message.reply_to.body)} /> : null}
+      {message.reply_to ? <Quote author={authorName(message.reply_to, handlers.nameOf)} body={message.reply_to.sticker && !message.reply_to.body ? 'Sticker' : handlers.text(message.reply_to.body)} /> : null}
       <View className={`flex-row gap-2 px-3 pb-0.5 ${groupStart ? 'pt-1' : 'pt-0.5'}`}>
-        <View className="w-7.5 pt-0.5">{groupStart ? <ProfilePicture id={message.author_id} name={author} url={handlers.pictureOf(message.author_id)} size={30} /> : null}</View>
+        <View className="w-7.5 pt-0.5">{groupStart ? message.bot ? <BotAvatar bot={message.bot} size={30} /> : <ProfilePicture id={message.author_id} name={author} url={handlers.pictureOf(message.author_id)} size={30} /> : null}</View>
         <View className="flex-1 min-w-0">
           {groupStart ? (
             <View className="flex-row items-baseline gap-2">
               <Text numberOfLines={1} className="font-noto-medium text-[14px] leading-[20px] shrink">
                 {author}
               </Text>
+              {message.bot ? <BotBadge /> : null}
               <Text className="text-[12px] leading-[16px] text-muted-foreground">{timeOfDay(message.created_at)}</Text>
               {message.pinned ? <Icon name="pinTack" size={12} color={colors.mutedForeground} /> : null}
             </View>
@@ -100,7 +103,7 @@ export function MessageItem({ message, groupStart, highlighted = false, handlers
           {message.forwarded ? (
             <View className="flex-row items-center gap-1">
               <Icon name="forward" size={12} color={colors.mutedForeground} />
-              <Text className="text-[12px] leading-[16px] text-muted-foreground">Forwarded from {handlers.nameOf(message.forwarded.author_id)}</Text>
+              <Text className="text-[12px] leading-[16px] text-muted-foreground">Forwarded from {authorName(message.forwarded, handlers.nameOf)}</Text>
             </View>
           ) : null}
           {(message.deleted ? [{ kind: 'text', text: body } as const] : splitTables(body)).map((part, index, parts) =>
@@ -186,9 +189,9 @@ function ReplySummary({ message, handlers }: { message: MessageRecord; handlers:
       <View className="border-l-2 border-border pl-2.5 gap-1">
         {reply ? (
           <View className="flex-row items-center gap-1.5 min-w-0">
-            <Avatar id={reply.bot_name ? `bot:${reply.bot_name}` : reply.author_id} name={reply.bot_name ?? handlers.nameOf(reply.author_id)} size={16} />
+            {reply.bot_name ? <BotAvatar bot={{ name: reply.bot_name, icon_url: null }} size={16} /> : <Avatar id={reply.author_id} name={authorName(reply, handlers.nameOf)} size={16} />}
             <Text numberOfLines={1} className="font-noto-medium text-[12px] leading-[16px] shrink-0 text-foreground/90">
-              {reply.bot_name ?? handlers.nameOf(reply.author_id)}
+              {authorName(reply, handlers.nameOf)}
             </Text>
             <Text numberOfLines={1} className="text-[13px] leading-[17px] shrink text-muted-foreground">
               {reply.sticker ? 'Sticker' : handlers.text(reply.body)}

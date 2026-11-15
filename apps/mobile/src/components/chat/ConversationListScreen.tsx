@@ -47,7 +47,7 @@ export function ConversationListScreen({ conversationId, kind }: { conversationI
           renderItem={({ item }) => (
             <MessagePreview
               message={item}
-              author={words.nameOf(item.author_id)}
+              author={words.authorOf(item)}
               text={words.text(item.body)}
               context={kind === 'threads' ? `${item.reply_count} ${item.reply_count === 1 ? 'reply' : 'replies'}` : undefined}
               onPress={() => open(item)}

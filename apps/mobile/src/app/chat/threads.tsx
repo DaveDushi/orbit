@@ -64,10 +64,10 @@ function ThreadsScreenContent() {
                   <View className="flex-1" />
                   {unread > 0 ? <CountBadge count={unread} /> : null}
                 </View>
-                <MessagePreview message={thread.root} author={words.nameOf(thread.root.author_id)} text={words.text(thread.root.body)} clamp={2} />
+                <MessagePreview message={thread.root} author={words.authorOf(thread.root)} text={words.text(thread.root.body)} clamp={2} />
                 {thread.last_reply ? (
                   <View className="ml-3 border-l-2 border-border">
-                    <MessagePreview message={thread.last_reply} author={words.nameOf(thread.last_reply.author_id)} text={words.text(thread.last_reply.body)} clamp={2} />
+                    <MessagePreview message={thread.last_reply} author={words.authorOf(thread.last_reply)} text={words.text(thread.last_reply.body)} clamp={2} />
                   </View>
                 ) : null}
               </Pressable>

@@ -125,6 +125,16 @@ export type MessageRow =
 const CONTINUE_WITHIN = 5 * 60_000
 const GROUP_SPAN = 10 * 60_000
 
+/**
+ * A message that the user wrote as themself. An integration's message is nobody's own, also not of the member who set
+ * the integration up (its `author_id`), as on the web.
+ */
+export const isOwnMessage = (message: Pick<MessageRecord, 'author_id' | 'bot'>, userId: string) => !message.bot && message.author_id === userId
+
+/** The name a message shows: an integration's name (`bot`, or `bot_name` of a quote or reply preview), else its author's. */
+export const authorName = (message: { author_id: string; bot?: { name: string } | null; bot_name?: string | null }, nameOf: (userId: string) => string) =>
+  message.bot?.name ?? message.bot_name ?? nameOf(message.author_id)
+
 const groupable = (message: MessageRecord) => message.kind === 'message' && !message.deleted && !message.also_in_channel && !message.forwarded
 const localDay = (iso: string) => new Date(iso).toDateString()
 
@@ -147,6 +157,8 @@ export function buildMessageRows(messages: readonly MessageRecord[]): MessageRow
       groupable(message) &&
       !message.reply_to_id &&
       previous.author_id === message.author_id &&
+      previous.bot?.webhook_id === message.bot?.webhook_id &&
+      previous.bot?.name === message.bot?.name &&
       at - Date.parse(previous.created_at) < CONTINUE_WITHIN &&
       at - groupStartedAt < GROUP_SPAN
     if (!continues) groupStartedAt = at
@@ -255,11 +267,17 @@ export type MessageAction = 'reply' | 'thread' | 'copy' | 'pin' | 'unpin' | 'unr
 
 /**
  * The web's `actionsFor`: system rows have none; a deleted message keeps "Reply in thread"; edit is for your own text
- * (not a forward, not a sticker alone); delete for your own message or a moderator. Reactions sit above the list.
+ * (not a forward, not a sticker alone, not an integration's); delete for your own message or a moderator, and an
+ * integration's message for a moderator or the channel's creator (`channelCreator`). Reactions sit above the list.
  */
-export function messageActions(message: MessageRecord, userId: string, moderator: boolean, options: { inThread: boolean; canWrite: boolean }): MessageAction[] {
+export function messageActions(
+  message: MessageRecord,
+  userId: string,
+  moderator: boolean,
+  options: { inThread: boolean; canWrite: boolean; channelCreator?: boolean },
+): MessageAction[] {
   if (message.kind !== 'message') return []
-  const own = message.author_id === userId
+  const own = isOwnMessage(message, userId)
   const actions: MessageAction[] = []
   if (options.canWrite && !message.deleted) actions.push('reply')
   if (!options.inThread) actions.push('thread')
@@ -267,7 +285,7 @@ export function messageActions(message: MessageRecord, userId: string, moderator
   actions.push('copy', message.pinned ? 'unpin' : 'pin', 'unread')
   const stickerOnly = Boolean(message.sticker_id) && message.body === ''
   if (own && !message.forwarded && !stickerOnly) actions.push('edit')
-  if (own || moderator) actions.push('delete')
+  if (own || moderator || (message.bot && options.channelCreator)) actions.push('delete')
   return actions
 }
 
@@ -416,7 +434,7 @@ export function unreadGroups(
  */
 export function unreadMessages(messages: readonly MessageRecord[], cursor: string | null, userId: string, limit = 5): MessageRecord[] {
   return messages
-    .filter((message) => message.kind === 'message' && !message.deleted && message.author_id !== userId && (cursor === null || message.id > cursor))
+    .filter((message) => message.kind === 'message' && !message.deleted && !isOwnMessage(message, userId) && (cursor === null || message.id > cursor))
     .slice(-limit)
 }
 
