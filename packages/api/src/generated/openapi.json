@@ -12938,6 +12938,124 @@
             "cookieAuth": []
           }
         ]
+      },
+      "delete": {
+        "tags": [
+          "crate::auth_routes::push"
+        ],
+        "summary": "Stops the pushes to one of the user's iPhones (the app calls it before it signs out). Nothing\nhappens for a token of another user. The token is in the body, so no access log keeps it.",
+        "operationId": "unregister_push_device_by_body",
+        "parameters": [
+          {
+            "name": "X-Orbit-Contract",
+            "in": "header",
+            "description": "Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PushDeviceTokenBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "400": {
+            "description": "invalid_proxy_headers",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "origin_forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "contract_mismatch",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "invalid_device",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthProblem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "internal_error or another documented stable code",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ]
       }
     },
     "/api/v1/push/devices/{token}": {
@@ -12945,7 +13063,7 @@
         "tags": [
           "crate::auth_routes::push"
         ],
-        "summary": "Stops the pushes to one of the user's iPhones (the app calls it before it signs out). Nothing\nhappens for a token of another user.",
+        "summary": "As [`unregister_push_device_by_body`], with the token in the path: for the iPhone app builds\nbefore the body route (TestFlight build 15 and older).",
         "operationId": "unregister_push_device",
         "parameters": [
           {
@@ -21132,7 +21250,7 @@
         "tags": [
           "crate::chat_routes::files"
         ],
-        "summary": "The bytes of a chat file (one `Range` is answered with 206). A file kept in Drive sends to its bytes in the\nbucket (a 5-minute URL).",
+        "summary": "The bytes of a chat file (one `Range` is answered with 206). A file kept in Drive sends to its bytes in the\nbucket (a 5-minute URL). An agent session gets images only, which it looks at for the driver.",
         "operationId": "download_chat_file",
         "parameters": [
           {
@@ -65629,6 +65747,19 @@
             "type": "string"
           }
         }
+      },
+      "PushDeviceTokenBody": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "The iPhone app's APNs device token, hex."
+          }
+        },
+        "additionalProperties": false
       },
       "PushKey": {
         "type": "object",

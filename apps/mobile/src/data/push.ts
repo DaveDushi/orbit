@@ -2,7 +2,7 @@
  * The iPhone's push notifications: the device registration calls and where a tapped notification goes. No React, so
  * a Bun test checks the same functions. The server sends through APNs (`apps/server/src/push/apns.rs`).
  */
-import { getPushBadge, registerPushDevice, unregisterPushDevice } from '@orbit/api/generated/sdk.gen'
+import { getPushBadge, registerPushDevice, unregisterPushDeviceByBody } from '@orbit/api/generated/sdk.gen'
 
 import type { OrbitClient } from './orbit'
 
@@ -11,8 +11,9 @@ export async function registerDevice(client: OrbitClient, token: string, label: 
   await registerPushDevice({ client, body: { token, label }, throwOnError: true })
 }
 
+/** The token goes in the body, so no access log of the server or a proxy keeps it. */
 export async function unregisterDevice(client: OrbitClient, token: string): Promise<void> {
-  await unregisterPushDevice({ client, path: { token }, throwOnError: true })
+  await unregisterPushDeviceByBody({ client, body: { token }, throwOnError: true })
 }
 
 /** The number on the app icon: unread chat (as the Chat tab counts it) and unread inbox, in every workspace. */

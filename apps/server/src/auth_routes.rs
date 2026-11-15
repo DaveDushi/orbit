@@ -374,7 +374,10 @@ pub fn auth_router(state: AuthState) -> Router {
             delete(push::delete_push_subscription),
         )
         .route("/api/v1/push/badge", get(push::get_push_badge))
-        .route("/api/v1/push/devices", post(push::register_push_device))
+        .route(
+            "/api/v1/push/devices",
+            post(push::register_push_device).delete(push::unregister_push_device_by_body),
+        )
         .route(
             "/api/v1/push/devices/{token}",
             delete(push::unregister_push_device),

@@ -306,7 +306,32 @@ async fn a_device_is_registered_for_its_user_and_only_its_user_removes_it() {
     assert_eq!(fixture.push.push(ada, &notice()).await.unwrap(), 1);
     assert_eq!(fixture.sent()[0].0, phone);
 
-    // Its user removes it.
+    // Its user removes it, with the token in the body (the old path route stays for build 15).
+    let by_body = |token: &str| Some(json!({ "token": token }));
+    let (status, _) = fixture
+        .send("DELETE", "/api/v1/push/devices", owner, by_body(&phone))
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(fixture.devices(ada).await, std::slice::from_ref(&phone));
+    let (status, _) = fixture
+        .send(
+            "DELETE",
+            "/api/v1/push/devices",
+            &ada_cookie,
+            by_body(&phone),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(fixture.devices(ada).await.is_empty());
+    let (status, _) = fixture
+        .send("DELETE", "/api/v1/push/devices", &ada_cookie, by_body("zz"))
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, _) = fixture
+        .send("DELETE", "/api/v1/push/devices", "", by_body(&phone))
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    fixture.register(&ada_cookie, &phone).await;
     let (status, _) = fixture.send("DELETE", &uri, &ada_cookie, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     assert!(fixture.devices(ada).await.is_empty());

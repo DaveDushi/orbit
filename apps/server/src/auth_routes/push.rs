@@ -163,8 +163,35 @@ pub(super) async fn register_push_device(
         .map_err(|error| ApiError::internal(instance, request_id.as_ref()).cause(error))
 }
 
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PushDeviceTokenBody {
+    /// The iPhone app's APNs device token, hex.
+    token: String,
+}
+
 /// Stops the pushes to one of the user's iPhones (the app calls it before it signs out). Nothing
-/// happens for a token of another user.
+/// happens for a token of another user. The token is in the body, so no access log keeps it.
+#[utoipa::path(delete, path = "/api/v1/push/devices", request_body = PushDeviceTokenBody, responses((status = 204), (status = 401, description = "authentication_required", body = ProblemBody, content_type = "application/problem+json"), (status = 422, description = "invalid_device", body = ProblemBody, content_type = "application/problem+json")))]
+pub(super) async fn unregister_push_device_by_body(
+    State(state): State<AuthState>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+    ApiJson(body): ApiJson<PushDeviceTokenBody>,
+) -> Result<StatusCode, ApiError> {
+    let instance = "/api/v1/push/devices";
+    let session = authenticate(&state, &headers, instance, request_id.as_ref()).await?;
+    let token = normalized_token(&body.token)
+        .ok_or_else(|| invalid_device(instance, request_id.as_ref()))?;
+    PushService::of(state.repository.database())
+        .unregister_device(session.user.id, &token)
+        .await
+        .map_err(|error| ApiError::internal(instance, request_id.as_ref()).cause(error))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// As [`unregister_push_device_by_body`], with the token in the path: for the iPhone app builds
+/// before the body route (TestFlight build 15 and older).
 #[utoipa::path(delete, path = "/api/v1/push/devices/{token}", params(("token" = String, Path)), responses((status = 204), (status = 401, description = "authentication_required", body = ProblemBody, content_type = "application/problem+json"), (status = 422, description = "invalid_device", body = ProblemBody, content_type = "application/problem+json")))]
 pub(super) async fn unregister_push_device(
     State(state): State<AuthState>,
