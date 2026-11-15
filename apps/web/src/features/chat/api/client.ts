@@ -161,6 +161,8 @@ export interface ChatClient {
   deleteWebhook(conversationId: string, webhookId: string): Promise<void>
   /** Where clicks on its buttons go; `null` turns clicks off. */
   setWebhookInteractivity(conversationId: string, webhookId: string, requestUrl: string | null, events: boolean): Promise<ChannelWebhook>
+  /** Lets the webhook's secret read the channel without events (`canRead`), or stops it. */
+  setWebhookRead(conversationId: string, webhookId: string, canRead: boolean): Promise<ChannelWebhook>
   /** The secret that signs its clicks; `rotate` makes a new one first. */
   webhookSigningSecret(conversationId: string, webhookId: string, rotate: boolean): Promise<string>
   listWebhookDeliveries(conversationId: string, webhookId: string): Promise<WebhookDelivery[]>

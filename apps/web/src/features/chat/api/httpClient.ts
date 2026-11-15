@@ -12,6 +12,7 @@ import {
   listSentChatActions,
   rotateChatWebhookSigningSecret,
   setChatWebhookInteractivity,
+  setChatWebhookRead,
   deleteChatWebhook,
   listChatWebhooks,
   rotateChatWebhook,
@@ -353,6 +354,10 @@ export function createHttpChatClient(options: HttpChatClientOptions): ChatClient
     async setWebhookInteractivity(conversationId, webhookId, requestUrl, events) {
       const body = { request_url: requestUrl, events }
       return toWebhook(await call(setChatWebhookInteractivity({ ...at({ conversation_id: conversationId, webhook_id: webhookId }), body })))
+    },
+    async setWebhookRead(conversationId, webhookId, canRead) {
+      const body = { can_read: canRead }
+      return toWebhook(await call(setChatWebhookRead({ ...at({ conversation_id: conversationId, webhook_id: webhookId }), body })))
     },
     async webhookSigningSecret(conversationId, webhookId, rotate) {
       const ids = at({ conversation_id: conversationId, webhook_id: webhookId })

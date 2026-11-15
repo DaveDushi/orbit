@@ -24,7 +24,7 @@ const HOOKS_ORIGIN: &str = "https://orbit-hooks.example";
 
 struct Fixture {
     _root: tempfile::TempDir,
-    _database: TestDatabase,
+    database: TestDatabase,
     app: axum::Router,
     workspace_id: String,
     owner: Member,
@@ -119,7 +119,7 @@ impl Fixture {
         );
         Self {
             _root: root,
-            _database: database,
+            database,
             app,
             workspace_id,
             owner: Member {
@@ -714,4 +714,154 @@ async fn a_bot_needs_its_own_secret_and_a_manager_of_the_channel() {
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn can_read_lets_a_webhook_read_its_channel_without_events() {
+    let fixture = Fixture::new().await;
+    let general = fixture.general().await;
+    let (webhook, _, secret) = fixture.webhook(&general, "Reader").await;
+    let hello = fixture
+        .send(&fixture.member, &general, json!({ "body": "hello" }))
+        .await;
+    let read_path = format!("/conversations/{general}/webhooks/{webhook}/read");
+    let audit = |action: &'static str| {
+        let pool = fixture.database.pool().clone();
+        let webhook = webhook.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM audit_events WHERE action = $1 AND resource_id = $2",
+            )
+            .bind(action)
+            .bind(webhook)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+
+    // Off by default: the secret reads nothing, with the same 404 as an unknown webhook.
+    let (status, off) = fixture.read_hook(&webhook, &secret, "").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{off}");
+    let (status, unknown) = fixture
+        .read_hook(&Id::new_v7().to_string(), &secret, "")
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    for field in ["code", "title", "detail"] {
+        assert_eq!(off[field], unknown[field], "{field}");
+    }
+
+    // A member who does not manage the channel cannot turn it on.
+    let (status, body) = fixture
+        .call(
+            &fixture.member,
+            "PUT",
+            &read_path,
+            Some(json!({ "can_read": true })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(audit("chat_webhook.read_on").await, 0);
+
+    // On: it reads the channel at its read URL, with events still off. The change is audited once.
+    let record = fixture
+        .ok(
+            &fixture.owner,
+            "PUT",
+            &read_path,
+            Some(json!({ "can_read": true })),
+        )
+        .await;
+    assert_eq!(record["can_read"], true);
+    assert_eq!(record["events"], false);
+    assert_eq!(
+        record["messages_url"],
+        format!("{HOOKS_ORIGIN}/api/v1/hooks/chat/{webhook}/messages")
+    );
+    fixture
+        .ok(
+            &fixture.owner,
+            "PUT",
+            &read_path,
+            Some(json!({ "can_read": true })),
+        )
+        .await;
+    assert_eq!(audit("chat_webhook.read_on").await, 1);
+    let (status, channel) = fixture.read_hook(&webhook, &secret, "").await;
+    assert_eq!(status, StatusCode::OK, "{channel}");
+    assert!(
+        channel["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|message| message["ts"] == hello)
+    );
+
+    // A webhook of another channel cannot read this one, even with its own reading on.
+    let (status, other) = fixture
+        .call(
+            &fixture.owner,
+            "POST",
+            "/conversations",
+            Some(json!({ "name": "random", "kind": "public", "member_ids": [] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{other}");
+    let other = other["result"]["id"].as_str().unwrap().to_owned();
+    let (other_webhook, _, other_secret) = fixture.webhook(&other, "Elsewhere").await;
+    fixture
+        .ok(
+            &fixture.owner,
+            "PUT",
+            &format!("/conversations/{other}/webhooks/{other_webhook}/read"),
+            Some(json!({ "can_read": true })),
+        )
+        .await;
+    let (status, _) = fixture.read_hook(&webhook, &other_secret, "").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, elsewhere) = fixture.read_hook(&other_webhook, &other_secret, "").await;
+    assert_eq!(status, StatusCode::OK, "{elsewhere}");
+    assert!(
+        !elsewhere["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|message| message["ts"] == hello)
+    );
+
+    // A rotated URL: the old secret reads nothing, the new one reads.
+    let rotated = fixture
+        .ok(
+            &fixture.owner,
+            "POST",
+            &format!("/conversations/{general}/webhooks/{webhook}/rotate"),
+            None,
+        )
+        .await;
+    let new_secret = rotated["url"]
+        .as_str()
+        .unwrap()
+        .rsplit('/')
+        .next()
+        .unwrap()
+        .to_owned();
+    assert_eq!(rotated["webhook"]["can_read"], true);
+    let (status, _) = fixture.read_hook(&webhook, &secret, "").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = fixture.read_hook(&webhook, &new_secret, "").await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Off again: 404, no read URL, and the change is audited.
+    let record = fixture
+        .ok(
+            &fixture.owner,
+            "PUT",
+            &read_path,
+            Some(json!({ "can_read": false })),
+        )
+        .await;
+    assert_eq!(record["messages_url"], Value::Null);
+    let (status, _) = fixture.read_hook(&webhook, &new_secret, "").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(audit("chat_webhook.read_off").await, 1);
 }

@@ -19,7 +19,7 @@ const MAX_WEBHOOKS_PER_CHANNEL: i64 = 10;
 const NAME_MAX_CHARS: usize = 80;
 const ICON_URL_MAX_CHARS: usize = 2048;
 
-const WEBHOOK_COLUMNS: &str = "id, conversation_id, name, icon_url, created_by, created_at, rotated_at, last_used_at, request_url, events";
+const WEBHOOK_COLUMNS: &str = "id, conversation_id, name, icon_url, created_by, created_at, rotated_at, last_used_at, request_url, events, can_read";
 /// Deliveries kept for each webhook.
 const MAX_DELIVERIES: i64 = 20;
 
@@ -48,8 +48,12 @@ pub struct WebhookRecord {
     /// Members' messages in the channel are sent to the request URL, and the webhook's secret
     /// can read the channel. Always false without a request URL.
     pub events: bool,
-    /// With events on: where the integration reads the channel (`GET`, the webhook URL's secret
-    /// as a bearer token), on the hooks origin (`ORBIT_PUBLIC_HOOKS_URL`). Null otherwise.
+    /// The webhook's secret can read the channel and its threads, also without events. Off by
+    /// default; only the channel's managers turn it on.
+    pub can_read: bool,
+    /// With events or `can_read` on: where the integration reads the channel (`GET`, the webhook
+    /// URL's secret as a bearer token), on the hooks origin (`ORBIT_PUBLIC_HOOKS_URL`). Null
+    /// otherwise.
     #[schema(required = true)]
     pub messages_url: Option<String>,
 }
@@ -103,6 +107,8 @@ pub struct HookTarget {
     pub sender: BotSender,
     /// Events are on: the secret may also read the channel.
     pub events: bool,
+    /// The secret may read the channel without events.
+    pub can_read: bool,
 }
 
 /// A webhook that gets the events of a channel, with its decrypted signing secret.
@@ -171,6 +177,7 @@ fn webhook_from_row(row: &AnyRow) -> Result<WebhookRecord, ChatError> {
         last_used_at: time("last_used_at"),
         request_url: row.get("request_url"),
         events: row.get::<i64, _>("events") != 0,
+        can_read: row.get::<i64, _>("can_read") != 0,
         // Set by the routes, which know the hooks origin (`chat_routes::hooks::located`).
         messages_url: None,
     })
@@ -407,6 +414,53 @@ impl ChatRepository {
         Ok(webhook)
     }
 
+    /// Lets the webhook's secret read the channel without events, or stops it. A change is written
+    /// to the workspace's audit log; setting the same value again changes nothing.
+    pub async fn set_webhook_read(
+        &self,
+        workspace_id: Id,
+        actor_id: Id,
+        conversation_id: Id,
+        webhook_id: Id,
+        can_read: bool,
+        request_id: &str,
+    ) -> Result<WebhookRecord, ChatError> {
+        let mut tx = self.database.immediate_transaction().await?;
+        let access = load_access(&mut tx, workspace_id, actor_id, conversation_id).await?;
+        access.require_manage()?;
+        let before = load_webhook(&mut tx, conversation_id, webhook_id).await?;
+        if before.can_read == can_read {
+            tx.commit().await?;
+            return Ok(before);
+        }
+        let now = TimestampMillis::now();
+        sqlx::query("UPDATE chat_webhooks SET can_read = $1 WHERE id = $2")
+            .bind(i64::from(can_read))
+            .bind(webhook_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        crate::audit::record(
+            &mut tx,
+            workspace_id,
+            Some(actor_id),
+            if can_read {
+                "chat_webhook.read_on"
+            } else {
+                "chat_webhook.read_off"
+            },
+            crate::audit::AuditOutcome::Success,
+            "chat_webhook",
+            Some(webhook_id),
+            request_id,
+            serde_json::json!({ "conversation_id": conversation_id.to_string(), "name": before.name }),
+            now,
+        )
+        .await?;
+        let webhook = load_webhook(&mut tx, conversation_id, webhook_id).await?;
+        tx.commit().await?;
+        Ok(webhook)
+    }
+
     /// The signing secret of a webhook, for its managers. `rotate` makes a new one first: the
     /// integration must then check clicks with the new secret.
     pub async fn signing_secret(
@@ -547,7 +601,7 @@ impl ChatRepository {
     ) -> Result<Option<HookTarget>, ChatError> {
         let row = sqlx::query(
             "SELECT h.workspace_id, h.conversation_id, h.name, h.icon_url, h.created_by, \
-             h.secret_hash, h.events FROM chat_webhooks h JOIN workspaces w ON w.id = h.workspace_id \
+             h.secret_hash, h.events, h.can_read FROM chat_webhooks h JOIN workspaces w ON w.id = h.workspace_id \
              WHERE h.id = $1 AND h.revoked_at IS NULL AND w.deleted_at IS NULL",
         )
         .bind(webhook_id.to_string())
@@ -573,6 +627,7 @@ impl ChatRepository {
                 icon_url: row.get("icon_url"),
             },
             events: row.get::<i64, _>("events") != 0,
+            can_read: row.get::<i64, _>("can_read") != 0,
         }))
     }
 

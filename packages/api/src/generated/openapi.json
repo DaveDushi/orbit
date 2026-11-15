@@ -11300,7 +11300,7 @@
         "tags": [
           "crate::chat_routes::events"
         ],
-        "summary": "Reads the webhook's channel, or one thread of it, for an integration with events on. The\ncredential is the webhook URL's secret in `Authorization: Bearer <secret>`.",
+        "summary": "Reads the webhook's channel, or one thread of it, for an integration with events or \"Can read\nthis channel\" on. The\ncredential is the webhook URL's secret in `Authorization: Bearer <secret>`.",
         "operationId": "read_hook_messages",
         "parameters": [
           {
@@ -19690,6 +19690,157 @@
         ]
       }
     },
+    "/api/v1/workspaces/{workspace_id}/chat/conversations/{conversation_id}/webhooks/{webhook_id}/read": {
+      "put": {
+        "tags": [
+          "crate::chat_routes::hooks"
+        ],
+        "summary": "Lets the webhook's secret read the channel at its read URL, without events, or stops it. Only\nthe channel's creator and workspace owners and admins; each change is in the audit log.",
+        "operationId": "set_chat_webhook_read",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "webhook_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Orbit-Contract",
+            "in": "header",
+            "description": "Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatWebhookReadBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookRecord"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_proxy_headers",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "origin_forbidden, chat_forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "chat_not_found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "contract_mismatch",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "internal_error or another documented stable code",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskProblem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/chat/conversations/{conversation_id}/webhooks/{webhook_id}/rotate": {
       "post": {
         "tags": [
@@ -21132,7 +21283,7 @@
         "tags": [
           "crate::chat_routes::files"
         ],
-        "summary": "The bytes of a chat file (one `Range` is answered with 206). A file kept in Drive sends to its bytes in the\nbucket (a 5-minute URL).",
+        "summary": "The bytes of a chat file (one `Range` is answered with 206). A file kept in Drive sends to its bytes in the\nbucket (a 5-minute URL). An agent session gets images only, which it looks at for the driver.",
         "operationId": "download_chat_file",
         "parameters": [
           {
@@ -55674,6 +55825,19 @@
         },
         "additionalProperties": false
       },
+      "ChatWebhookReadBody": {
+        "type": "object",
+        "required": [
+          "can_read"
+        ],
+        "properties": {
+          "can_read": {
+            "type": "boolean",
+            "description": "The webhook URL's secret can read the channel and its threads, also without events."
+          }
+        },
+        "additionalProperties": false
+      },
       "ChatWebhookWithUrl": {
         "type": "object",
         "description": "A webhook with its URL. The URL holds the secret and is returned only here.",
@@ -69424,9 +69588,14 @@
           "last_used_at",
           "request_url",
           "events",
+          "can_read",
           "messages_url"
         ],
         "properties": {
+          "can_read": {
+            "type": "boolean",
+            "description": "The webhook's secret can read the channel and its threads, also without events. Off by\ndefault; only the channel's managers turn it on."
+          },
           "conversation_id": {
             "type": "string"
           },
@@ -69463,7 +69632,7 @@
               "string",
               "null"
             ],
-            "description": "With events on: where the integration reads the channel (`GET`, the webhook URL's secret\nas a bearer token), on the hooks origin (`ORBIT_PUBLIC_HOOKS_URL`). Null otherwise."
+            "description": "With events or `can_read` on: where the integration reads the channel (`GET`, the webhook\nURL's secret as a bearer token), on the hooks origin (`ORBIT_PUBLIC_HOOKS_URL`). Null\notherwise."
           },
           "name": {
             "type": "string",

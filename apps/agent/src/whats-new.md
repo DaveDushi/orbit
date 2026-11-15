@@ -7,6 +7,7 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 -->
 
 ## 2026-11-15
+- Chat webhooks can read their channel without events: in Edit channel → Integrations, open the webhook's ⋯ menu and turn on "Can read this channel". The Read URL then shows under the webhook. It is off by default; only the channel's creator and workspace owners and admins can change it, and each change is in the audit log.
 - Donna sees images you send in Chat or in the Ask Donna panel (screenshots, photos): she looks at them herself, with no need to put them in Drive. She sees only images that you can open.
 - Label rules now apply to tasks that already have the label: when an owner or admin adds a rule, turns one on, maps an owner: name to a member, or turns on the owner:<name> switch, the open tasks with that label get the person at once. Done and cancelled tasks stay as they are.
 

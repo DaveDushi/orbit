@@ -9,7 +9,8 @@ differences.
 
 A webhook can also be a two-way chat app (a bot): with [events](#events) on, it gets the members'
 messages in its channel, reads the channel and its threads, and answers in a thread. It has its own
-name and avatar, and it needs no member's login.
+name and avatar, and it needs no member's login. A webhook without events can also
+[read its channel](#read-the-channel) when **Can read this channel** is on.
 
 ## Make a webhook
 
@@ -26,9 +27,9 @@ the workspace.
 
 The URL starts with the server's public origin (`ORBIT_PUBLIC_ORIGIN`). When the public origin is
 behind a login gateway, the operator sets `ORBIT_PUBLIC_HOOKS_URL` to an origin that lets
-`POST /api/v1/hooks/chat/…` (and, for [events](#events), `GET /api/v1/hooks/chat/<webhook_id>/messages`)
+`POST /api/v1/hooks/chat/…` (and, for [reading](#read-the-channel), `GET /api/v1/hooks/chat/<webhook_id>/messages`)
 through, for example `https://orbit-hooks.example.com`. Then the webhook URL, the **Try it** command,
-each click's `response_url` and the **Read URL** of a webhook with events use that origin. The path stays the same,
+each click's `response_url` and the **Read URL** use that origin. The path stays the same,
 so an old URL works when you change only its start to the hooks origin.
 
 ## Post a message
@@ -238,7 +239,8 @@ URL, as the Slack Events API does. A bot uses this to answer when a member names
 
 Events need a request URL: **Remove request URL** stops clicks and events. With events on, the secret of the
 webhook URL also [reads the channel](#read-the-channel). Without events, a webhook URL can only post,
-so a URL in a CI configuration cannot read your messages.
+so a URL in a CI configuration cannot read your messages, unless a manager turns on
+[Can read this channel](#let-a-webhook-read-without-events).
 
 ### The event
 
@@ -291,6 +293,18 @@ curl -X POST -H 'Content-Type: application/json' \
 The reply shows the webhook's name and avatar. The member who made the webhook does not follow the
 thread because of it; the root's author and the thread's followers see it as unread.
 
+### Let a webhook read without events
+
+A tool that only reads (for example a report or a summary job) needs no request URL and no events:
+
+1. Open **⋯ > Edit channel > Integrations**, then select **⋯** on the webhook.
+2. Select **Can read this channel** and confirm. The **Read URL** shows under the webhook.
+
+Select it again to turn reading off. It is off for a new webhook. Only the channel's creator and the
+workspace's owners and admins can change it, and each change is in the workspace's audit log
+(`chat_webhook.read_on`, `chat_webhook.read_off`). **Make new URL** keeps the switch; the old secret
+stops reading at once.
+
 ### Read the channel
 
 ```bash
@@ -298,8 +312,9 @@ curl -sS -H 'Authorization: Bearer <secret>' \
   'https://orbit.example.com/api/v1/hooks/chat/<webhook_id>/messages?thread_ts=<root message id>'
 ```
 
-`<secret>` is the last part of the webhook URL. With events on, Interactivity shows this address as
-**Read URL** (on the hooks origin, see [Make a webhook](#make-a-webhook)). The answer:
+`<secret>` is the last part of the webhook URL. With events or **Can read this channel** on, the
+webhook shows this address as **Read URL** in Integrations (on the hooks origin, see
+[Make a webhook](#make-a-webhook)). The answer:
 
 ```json
 {
@@ -321,7 +336,8 @@ curl -sS -H 'Authorization: Bearer <secret>' \
 | `limit` | 1–100 messages. The default is 50. |
 
 A root with replies has `thread_ts` (its own id) and `reply_count`. A deleted message has an empty
-`text`. A webhook without events, an unknown id and a wrong secret all give `404 webhook_not_found`;
+`text`. A webhook with neither events nor **Can read this channel**, an unknown id, a wrong secret and
+the old secret of a rotated URL all give the same `404 webhook_not_found`;
 a `thread_ts` that is no root of the channel gives `422 validation_failed`. The webhook reads only its
 own channel. Reads count against the webhook's rate limit.
 

@@ -407,6 +407,11 @@ export function useSetWebhookInteractivity() {
     client.setWebhookInteractivity(input.conversationId, input.webhookId, input.requestUrl, input.events))
 }
 
+export function useSetWebhookRead() {
+  return useWebhookMutation((client, input: { conversationId: string; webhookId: string; canRead: boolean }) =>
+    client.setWebhookRead(input.conversationId, input.webhookId, input.canRead))
+}
+
 /** Reveals (`rotate: false`) or rotates the signing secret of a webhook. */
 export function useWebhookSigningSecret() {
   return useChatMutation((client, input: { conversationId: string; webhookId: string; rotate: boolean }) =>
