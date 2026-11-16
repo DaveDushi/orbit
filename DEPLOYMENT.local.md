@@ -335,7 +335,9 @@ the phone).
 `PushService::push_inbox` (`apps/server/src/push/mod.rs`, `row.get::<String, _>("actor_user_id")`): a `task_commented`
 notification with no actor, made by the GitHub comment sync (comment author service account, `github_author_login`
 DaveDushi). The rows are marked pushed first, so there is no loop, but each such comment costs a restart (about 6 s
-down). f974107 has the same code. Fix: read it as `Option<String>` (as the `icon` line below it does).
+down). f974107 has the same code: it restarted once for it at 12:31:26 (after the checks above; ready again
+by 12:31:58, 4th such row, all marked pushed). Fix: read it as `Option<String>` (as the `icon` line below it does), then
+a hotfix deploy.
 
 Rollback to `8cd111f`. Way 1 keeps the work done after the switch, but loses the "Can read this channel" switches;
 the 8 repaired pages stay repaired (the old binary reads them; their old versions are in the page history).
