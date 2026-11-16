@@ -375,6 +375,7 @@ impl App {
             cookie_mode,
             &config.http.public_origin,
         )
+        .with_mcp_origin(config.http.mcp_origin())
         .with_apps(apps.clone());
         let router = metrics.instrument(production_router(
             ApiRoutes {

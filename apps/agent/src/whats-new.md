@@ -9,8 +9,8 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 ## 2026-11-16
 - Voice input: tap the mic beside Send (chat, threads, Ask Donna) and speak. Your words show as you talk; you can edit them, and nothing is sent until you press Send. It works in the browser (not in Firefox), in the Windows app from Orbit desktop 0.1.4 (install it once by hand from the download page; it also fixes "Microphone access is off"), in the iPhone app from its next update, and in the Mac app later.
 - Donna can move Docs pages, tasks, and Drive files and folders to the trash, many at once after one yes from you. You can restore them from the trash. Donna also writes tables and links on Docs pages correctly now, and older pages with broken tables are repaired.
-- Chat webhooks can read their channel: in Edit channel → Integrations, open the webhook's ⋯ menu and turn on "Can read this channel". It is off by default; only the channel's creator and workspace owners and admins can change it.
-- iPhone notifications now come also while you use Orbit on another device, and a tap opens the message in its own workspace.
+- Chat webhooks can read their channel: in Edit channel → Integrations, open the webhook's ⋯ menu and turn on "Can read this channel". It is off by default; only the channel's creator and workspace owners and admins can change it. iPhone notifications now come also while you use Orbit on another device, and a tap opens the message in its own workspace.
+- Connect your own agent to Orbit: members can use Codex CLI, Claude Code or another MCP client on their own computer with Orbit's public MCP address. Approve the workspaces and projects once in the browser; Settings → Agentic → Connected apps stops it.
 
 ## 2026-11-15
 - Donna sees images you send in Chat or in the Ask Donna panel (screenshots, photos): she looks at them herself, with no need to put them in Drive. She sees only images that you can open.
