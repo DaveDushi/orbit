@@ -41,6 +41,7 @@ import { ComposerReferencePreview } from './ComposerReferencePreview'
 import { completeCodeFence, inOpenCodeBlock } from './composerSegments'
 import { ComposerUploads } from './ComposerUploads'
 import { EmojiSuggestions } from './EmojiSuggestions'
+import { MicButton } from './MicButton'
 import { ScheduledBar, ScheduledMessagesDialog, SendLaterDialog, SendLaterMenu } from './SendLater'
 import { StickerPicker } from './StickerPicker'
 import { useAutosize } from './useAutosize'
@@ -430,6 +431,7 @@ export function Composer({ ref, conversation, threadRootId = null, replyTo = nul
                 {remaining}
               </span>
             ) : null}
+            <MicButton text={text} setText={setText} />
             <Tip label="Send message">
               <Button
                 variant={canSend ? 'default' : 'ghost'}

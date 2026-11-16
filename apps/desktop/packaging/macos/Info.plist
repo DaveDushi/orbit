@@ -20,6 +20,10 @@
     <string>11.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Orbit uses the microphone for voice input in the message box.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Orbit turns what you say into text in the message box.</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.productivity</string>
 </dict>

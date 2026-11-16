@@ -52,6 +52,14 @@ Orbit pins 1.97.1), `Cargo.lock` and `target/`.
     and the web app said the sign-in window was blocked).
   - Update check: the page reads `/downloads/desktop/latest.json` with its own gateway cookies; when that
     version is newer, a notification says so and the tray gets "Download Orbit x.y.z" (opens the browser).
+- **Voice input** (the mic in the chat composer) is the web app's own: the web view's `webkitSpeechRecognition`, no
+  native code. Windows: WebView2 has it (Microsoft's online speech service, like Edge) and shows its own microphone
+  prompt (wry has no permission handler here). WebView2 runtimes 153+ can fail with a `network` error in some
+  regions ([WebView2Feedback#5724](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5724)); the web app
+  then says the speech service could not be reached. macOS: WKWebView uses Apple's speech recognition and needs
+  `NSMicrophoneUsageDescription` and `NSSpeechRecognitionUsageDescription` in `packaging/macos/Info.plist` (an
+  older build without them gets `not-allowed`: the crossed-out mic); wry grants the media capture, macOS asks.
+  Linux (WebKitGTK) has no recognizer: the mic shows "not available".
 - **Downloads.** Every download goes to the Downloads folder (the home folder when there is none), with
   " (2)", " (3)" … when the name is taken; a notification says where. No save dialog.
 - **One instance.** The first start locks `<data dir>/orbit-desktop/instance.lock` and listens on a loopback
