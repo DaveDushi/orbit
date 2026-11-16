@@ -7,22 +7,22 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at dc59487c01526ef7ad653f58865719d7b76f2245
-  (push inbox NULL actor hotfix on build 16; schema 20261115105242, 119 rows; November 16, 2026).
+- Source: DaveDushi/orbit, `main` at 3acc58682811a9bc27836b8532024662a12d1440
+  (desktop 0.1.4 merge: mic toast text; schema 20261115105242, 119 rows; November 16, 2026).
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
   f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:dc59487`); fork commits have no published upstream image.
-- Image ID: sha256:9f4eeffa525dd4584d447ca8c1e9cf97c11e660e2e64b7f1e798501c5a4e9aa4
-- Team agent sidecar code (`/opt/orbit-agent`): commit f974107 (the same `apps/agent` as dc59487).
+  (`orbit:3acc586`); fork commits have no published upstream image.
+- Image ID: sha256:7a6ae57d47b354ece3c99d6bf82c030999acab8340b7e929d72937c38a19243c
+- Team agent sidecar code (`/opt/orbit-agent`): commit 3acc586.
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): on since November 15, 2026, 12:07 UTC (set by Ops, outside a
   deploy): `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID`, `ORBIT_APNS_TOPIC` and `ORBIT_APNS_SANDBOX`
   are in `/etc/orbit/orbit.env`; the journal shows `iPhone push (APNs) is on` (topic `com.easytomanage.orbit`, sandbox
   false) at each start. A successful send writes no log line; a failed one writes `iPhone push not sent`.
 - LibreOffice (Calc, Writer, Impress 24.2, `--no-install-recommends`) is installed for Office previews
   (`docs/file-previews.md`); ffmpeg makes the chat video copies.
-- Desktop app downloads: https://orbit.wellrox.com/downloads/desktop/ (installer, zip, `latest.json` for the app's update
+- Desktop app downloads: https://orbit.easytomanage.com/downloads/desktop/ (installer, zip, `latest.json` for the app's update
   check; behind the exe.dev login like the rest). nginx `location /downloads/desktop/` in
   `/etc/nginx/conf.d/orbit.conf` serves `/srv/orbit-downloads/desktop/` (outside the deploy, so deploys keep it; the
   conf before this block is `/tmp/orbit.conf.before-downloads` until reboot). Publish a new version: push a tag
@@ -262,6 +262,53 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 16, 2026 upgrade: desktop 0.1.4 merge, web/server part (no migration)
+
+`main` from `a900002e` to `3acc5868` (pushed): `--no-ff` merge `25146515` of `voice-input-desktop` (`88cd0fc3`, no
+conflicts): the "Microphone access is off" toast names the Windows switch in the Windows app, macOS settings in the
+Mac app, site settings in a browser; `aboutOrbit()` names the Windows switch and desktop 0.1.4; desktop app 0.1.4
+(WebView2 microphone grant for the server's origin). Then `3acc5868`: the app loads a saved `orbit.wellrox.com`
+server as `orbit.easytomanage.com` (the 301 since 2026-11-12 made the app's pages "not the server's": no update check,
+notifications, badge or mic grant there); the Desktop workflow's default server is `orbit.easytomanage.com` (tag runs
+wrote wellrox links into `latest.json`). What's new: the 2026-11-16 voice-input line names the Windows app 0.1.4.
+
+Checks: desktop `cargo check` and `clippy -D warnings` for `x86_64-pc-windows-gnu`, `cargo test --workspace` (all
+pass); web `bun test` composer (31), `tsc -b`, oxlint (0 errors); agent `prompt.test.ts` (5). Logs: `/root/ops/desktop-014/`.
+
+Deploy id `20261116T155136Z-2262356`. `orbit:3acc586` (image
+`sha256:7a6ae57d47b354ece3c99d6bf82c030999acab8340b7e929d72937c38a19243c`, ~35 min); `deploy/smoke.sh` and
+`orbit config check` passed. No-migration check (hot copy, and in the switch on a copy of the stopped database): 0
+applied, schema 20261115105242 (119 rows), counts, names and checksums unchanged, quick-check ok, 0 foreign-key rows.
+
+Switch: stopped both services at 16:30:11 UTC; snapshot `01a1e531-d917-75f7-92d7-cf225067a4de` with
+`/usr/local/bin/orbit-dc59487`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-3acc586.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-3acc586.tgz`; sidecar code copied (old `/opt/orbit-agent.before-3acc586`);
+env unchanged. `orbit` ready 16:30:28, then `orbit-agent` (17 s down). `vm-health.conf` (old copy
+`.before-3acc586`): `PROD_TAG=3acc586`, `ROLLBACK_TAG=dc59487`, `ROLLBACK_BACKUP=01a1e531-d917-75f7-92d7-cf225067a4de`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) local and on
+`https://orbit-app.easytomanage.com/health/ready`, `/health/live` 200; `/orbit-build.json` revision `3acc5868…`; the new
+Windows mic text is in the binary; no orbit warnings in the journal. `vm-health` OK except nginx (connection-refused
+lines of the switch at 16:30; 0 5xx), oom (2 older kills) and git-owner (given back to exedev).
+
+Rollback to `dc59487` (no schema change, so no data is lost):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo rm -rf /opt/orbit-agent/src && sudo cp -a /opt/orbit-agent.before-3acc586/src /opt/orbit-agent/src
+sudo install -m 755 /usr/local/bin/orbit-dc59487 /usr/local/bin/orbit
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/desktop-014/rollback.sh)
+# Way 2, only for a data problem (work after 16:30 UTC is lost), Orbit stopped: /usr/local/bin/orbit-dc59487 backup verify +
+#   backup restore 01a1e531-d917-75f7-92d7-cf225067a4de (as user orbit, with /etc/orbit/orbit.env), then the lines above
+```
+
+After this rollback, set `PROD_TAG=dc59487`, `ROLLBACK_TAG=f974107`,
+`ROLLBACK_BACKUP=01a1e48b-ff0e-7656-9d3a-514114f7cf9e` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-3acc586`).
 
 ### November 16, 2026 hotfix: push inbox NULL actor panic (no migration)
 
