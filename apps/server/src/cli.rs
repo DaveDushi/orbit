@@ -123,6 +123,23 @@ pub enum Command {
         #[command(subcommand)]
         command: DriveCommand,
     },
+    /// Docs pages.
+    Pages {
+        #[command(subcommand)]
+        command: PagesCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PagesCommand {
+    /// Turns the GFM tables and Markdown links that the agent wrote as plain text (before build 16) into
+    /// tables and links (see `page_markdown_repair`). Orbit must be stopped (also for a dry run); make a
+    /// backup first (`orbit backup create`). A second run changes nothing.
+    RepairMarkdown {
+        /// List the pages the repair would change, and change nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -260,7 +277,45 @@ pub async fn run(cli: Cli, env: BTreeMap<String, String>) -> Result<String, CliE
         Command::SetupToken { command } => setup_token(config()?, command).await,
         Command::Improvements { command } => improvements(config()?, command).await,
         Command::Drive { command } => drive(config()?, command).await,
+        Command::Pages { command } => pages(config()?, command).await,
     }
+}
+
+async fn pages(config: Config, command: &PagesCommand) -> Result<String, CliError> {
+    let PagesCommand::RepairMarkdown { dry_run } = command;
+    // Only while no Orbit serves this database: its live documents would not see the change.
+    let database = Database::open(&DatabaseConfig::for_data(&config.data))
+        .await
+        .map_err(|error| match error {
+            DatabaseError::AlreadyOwned { .. } => CliError::Operation(
+                "Orbit is running on this database: stop it before the repair (also before a --dry-run)"
+                    .to_owned(),
+            ),
+            error => operation(error),
+        })?;
+    migrate_unless_shared(&config, &database).await?;
+    let report = orbit_server::page_markdown_repair::repair_pages(&database, *dry_run)
+        .await
+        .map_err(operation)?;
+    let mut lines: Vec<String> = report
+        .iter()
+        .map(|page| match &page.skipped {
+            Some(reason) => format!("skipped {} {:?}: {reason}", page.id, page.title),
+            None => format!(
+                "{} {} {:?}",
+                if *dry_run { "would repair" } else { "repaired" },
+                page.id,
+                page.title
+            ),
+        })
+        .collect();
+    let done = report.iter().filter(|page| page.skipped.is_none()).count();
+    lines.push(format!(
+        "{done} page(s) {}, {} skipped",
+        if *dry_run { "to repair" } else { "repaired" },
+        report.len() - done
+    ));
+    Ok(lines.join("\n"))
 }
 
 async fn drive(config: Config, command: &DriveCommand) -> Result<String, CliError> {

@@ -47,6 +47,72 @@ test("markdown and blocks convert both ways", () => {
 	assert.equal(blocksToMarkdown(blocks), markdown);
 });
 
+const plain = (value: string) => ({ type: "text", text: value, styles: {} });
+const linkTo = (href: string, label = href) => ({ type: "link", href, content: [plain(label)] });
+
+test("GFM tables become table blocks with column alignment and links in cells, and read back", () => {
+	const markdown = [
+		"| Check | Fall | Notes |",
+		"| --- | :---: | ---: |",
+		"| Count \\| stock | [Shopify](https://admin.shopify.com/a) | Pending |",
+		"| Labels |  | see https://example.com/x |",
+		"After the table",
+	].join("\n");
+	const [table, after] = markdownToBlocks(markdown);
+	assert.equal(table.type, "table");
+	const content = table.content as { headerRows: number; columnWidths: unknown[]; rows: { cells: { type: string; props: object; content: unknown[] }[] }[] };
+	assert.equal(content.headerRows, 1);
+	assert.deepEqual(content.columnWidths, [null, null, null]);
+	assert.deepEqual(
+		content.rows[0].cells.map((cell) => cell.props),
+		[{}, { textAlignment: "center" }, { textAlignment: "right" }],
+	);
+	assert.deepEqual(content.rows[1].cells[0], { type: "tableCell", props: {}, content: [plain("Count | stock")] });
+	assert.deepEqual(content.rows[1].cells[1].content, [linkTo("https://admin.shopify.com/a", "Shopify")]);
+	assert.deepEqual(content.rows[2].cells[1].content, []);
+	assert.deepEqual(content.rows[2].cells[2].content, [plain("see "), linkTo("https://example.com/x")]);
+	assert.equal(after.type, "paragraph");
+	assert.equal(blocksToMarkdown(markdownToBlocks(markdown)), markdown);
+});
+
+test("labeled links, bare URLs and mailto become links; other schemes stay text", () => {
+	const [paragraph, item, unsafe] = markdownToBlocks(
+		[
+			"See [the plan](https://orbit.example/docs/p1), https://example.com/a?b=1. Or <mailto:ann@example.com>",
+			"- [Mail](mailto:ann@example.com)",
+			"[click](javascript:alert(1)) [data](data:text/html,x)",
+		].join("\n"),
+	);
+	assert.deepEqual(paragraph.content, [
+		plain("See "),
+		linkTo("https://orbit.example/docs/p1", "the plan"),
+		plain(", "),
+		linkTo("https://example.com/a?b=1"),
+		plain(". Or "),
+		linkTo("mailto:ann@example.com"),
+	]);
+	assert.deepEqual(item.content, [linkTo("mailto:ann@example.com", "Mail")]);
+	assert.deepEqual(unsafe.content, [plain("[click](javascript:alert(1)) [data](data:text/html,x)")]);
+	// Read back: a link whose text is its URL stays a bare URL; a destination keeps its parentheses encoded.
+	assert.equal(
+		blocksToMarkdown([{ type: "paragraph", content: [linkTo("https://example.com/a?b=1"), plain(" "), linkTo("https://en.wikipedia.org/wiki/A_(b)", "wiki")] }]),
+		"https://example.com/a?b=1 [wiki](https://en.wikipedia.org/wiki/A_%28b%29)",
+	);
+});
+
+test("Markdown round trip keeps tables and links", () => {
+	const markdown = [
+		"# Plan [doc](https://orbit.example/docs/p1)",
+		"| A | B |",
+		"| --- | ---: |",
+		"| [x](https://x.example) | 2 |",
+		"- see https://example.com",
+		"---",
+	].join("\n");
+	assert.equal(blocksToMarkdown(markdownToBlocks(markdown)), markdown);
+	assert.deepEqual(markdownToBlocks(blocksToMarkdown(markdownToBlocks(markdown))), markdownToBlocks(markdown));
+});
+
 test("the mock model maps instructions to tool calls, and 'it' to the newest id", () => {
 	assert.deepEqual(plan('please create task "Ship it"', []), { name: "create_task", args: { title: "Ship it" } });
 	assert.deepEqual(plan("@Donna link page p1 to task t1", []), { name: "link_doc_to_task", args: { page_id: "p1", task_id: "t1" } });

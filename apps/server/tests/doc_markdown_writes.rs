@@ -846,3 +846,58 @@ async fn the_empty_paragraph_an_open_empty_doc_keeps_does_not_count_against_the_
     assert_eq!(problem["code"], "doc_too_large");
     live.server.stop().await;
 }
+
+/// `orbit pages repair-markdown`: the agent's old plain-text tables and Markdown links become
+/// tables and links, other pages stay, and a second run changes nothing.
+#[tokio::test]
+async fn the_page_markdown_repair_fixes_agent_tables_and_links_once() {
+    use orbit_server::page_markdown_repair::repair_pages;
+
+    let root = tempfile::TempDir::new().unwrap();
+    let live = Live::start(&root).await;
+    let plain = |kind: &str, text: &str| json!({"type": kind, "content": [{"type": "text", "text": text, "styles": {}}]});
+    let page = live
+        .page(
+            "Logistics & Inventory",
+            None,
+            &[
+                plain("paragraph", "Track each color."),
+                plain("paragraph", "| Check | Fall |"),
+                plain("paragraph", "|---|---|"),
+                plain("paragraph", "| Count | Pending |"),
+                plain("bulletListItem", "[GEN-24](https://orbit.example/tasks/1)"),
+            ],
+        )
+        .await;
+    let untouched = live
+        .page("Notes", None, &[plain("paragraph", "| just pipes |")])
+        .await;
+    let notes = live.content_json(untouched).await;
+    let database = &live.server.database;
+
+    let dry = repair_pages(database, true).await.unwrap();
+    assert_eq!(dry.iter().map(|page| page.id).collect::<Vec<_>>(), [page]);
+    let before = live.content_json(page).await;
+    assert!(before.contains("|---|---|"), "a dry run wrote: {before}");
+
+    let repaired = repair_pages(database, false).await.unwrap();
+    assert_eq!(repaired.len(), 1);
+    assert!(repaired[0].skipped.is_none(), "{repaired:?}");
+    let content: Vec<Value> = serde_json::from_str(&live.content_json(page).await).unwrap();
+    let types: Vec<&str> = content
+        .iter()
+        .map(|block| block["type"].as_str().unwrap())
+        .collect();
+    assert_eq!(types, ["paragraph", "table", "bulletListItem"]);
+    assert_eq!(content[1]["content"]["rows"].as_array().unwrap().len(), 2);
+    assert_eq!(content[2]["content"][0]["type"], "link");
+    assert_eq!(
+        content[2]["content"][0]["href"],
+        "https://orbit.example/tasks/1"
+    );
+    assert_eq!(live.content_json(untouched).await, notes);
+    let after = live.content_json(page).await;
+    assert!(repair_pages(database, false).await.unwrap().is_empty());
+    assert_eq!(live.content_json(page).await, after);
+    live.server.stop().await;
+}
