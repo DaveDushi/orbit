@@ -213,23 +213,26 @@ pub async fn run_mover(
     shutdown: CancellationToken,
 ) -> Result<(), String> {
     loop {
-        match move_images_to_blobs(&database, &uploads).await {
-            Ok(0) => {}
-            Ok(moved) => {
-                tracing::info!(moved, "moved images from the database to attachment blobs")
+        crate::app::unless_panic("object storage mover", async {
+            match move_images_to_blobs(&database, &uploads).await {
+                Ok(0) => {}
+                Ok(moved) => {
+                    tracing::info!(moved, "moved images from the database to attachment blobs")
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "moving images to attachment blobs failed; retrying later")
+                }
             }
-            Err(error) => {
-                tracing::warn!(%error, "moving images to attachment blobs failed; retrying later")
+            match store.move_blobs().await {
+                Ok(0) => {}
+                Ok(moved) => tracing::info!(moved, "moved attachment blobs between disk and S3"),
+                Err(error) => tracing::warn!(%error, "moving attachment blobs failed; retrying later"),
             }
-        }
-        match store.move_blobs().await {
-            Ok(0) => {}
-            Ok(moved) => tracing::info!(moved, "moved attachment blobs between disk and S3"),
-            Err(error) => tracing::warn!(%error, "moving attachment blobs failed; retrying later"),
-        }
-        if let Err(error) = forget_drained_buckets(&database, &store, &storage).await {
-            tracing::warn!(%error, "removing emptied workspace buckets failed; retrying later");
-        }
+            if let Err(error) = forget_drained_buckets(&database, &store, &storage).await {
+                tracing::warn!(%error, "removing emptied workspace buckets failed; retrying later");
+            }
+        })
+        .await;
         tokio::select! {
             () = shutdown.cancelled() => return Ok(()),
             () = storage.changed() => {}

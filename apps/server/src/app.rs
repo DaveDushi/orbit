@@ -1197,18 +1197,21 @@ async fn run_scheduler_service(
     shutdown: CancellationToken,
 ) -> Result<(), String> {
     loop {
-        let materialized = match database.database_now().await {
-            Ok(now) => scheduler.materialize_due(now).await.map(drop),
-            Err(error) => Err(ScheduleError::from(error)),
-        };
+        let materialized = unless_panic("scheduler", async {
+            match database.database_now().await {
+                Ok(now) => scheduler.materialize_due(now).await.map(drop),
+                Err(error) => Err(ScheduleError::from(error)),
+            }
+        })
+        .await;
         match materialized {
-            Ok(()) => {}
-            Err(ScheduleError::Database(error))
+            None | Some(Ok(())) => {}
+            Some(Err(ScheduleError::Database(error)))
                 if orbit_platform::is_transient_lock_error(&error) =>
             {
                 tracing::warn!(%error, "scheduler: the database is busy; retrying on the next round");
             }
-            Err(error) => return Err(error.to_string()),
+            Some(Err(error)) => return Err(error.to_string()),
         }
         tokio::select! {
             () = shutdown.cancelled() => return Ok(()),
@@ -1232,6 +1235,32 @@ async fn watch_database_ownership(
             .verify_ownership()
             .await
             .map_err(|error| error.to_string())?;
+    }
+}
+
+/// Runs one round of a background service loop. A panic in the round is logged and ends only that
+/// round: a service that stops stops the whole server (see [`App::serve`]).
+pub(crate) async fn unless_panic<T>(
+    service: &'static str,
+    round: impl Future<Output = T>,
+) -> Option<T> {
+    use futures_util::FutureExt;
+
+    match std::panic::AssertUnwindSafe(round).catch_unwind().await {
+        Ok(value) => Some(value),
+        Err(panic) => {
+            let message = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .unwrap_or("unknown panic");
+            tracing::error!(
+                service,
+                panic = message,
+                "a background round panicked; the service goes on"
+            );
+            None
+        }
     }
 }
 
@@ -1276,6 +1305,24 @@ mod tests {
     use orbit_platform::{EnvironmentMode, Id};
     use tempfile::TempDir;
     use tokio::io::AsyncWriteExt;
+
+    #[tokio::test]
+    async fn a_panicking_round_does_not_stop_its_service_loop() {
+        let mut finished = 0;
+        for round in 0..3 {
+            let result = unless_panic("test", async move {
+                assert_ne!(round, 1, "round 1 panics");
+                round
+            })
+            .await;
+            if let Some(round) = result {
+                finished += 1;
+                assert_ne!(round, 1);
+            }
+        }
+        // Round 1 panicked; rounds 0 and 2 ran.
+        assert_eq!(finished, 2);
+    }
 
     #[tokio::test]
     async fn a_client_that_does_not_finish_its_headers_is_disconnected() {

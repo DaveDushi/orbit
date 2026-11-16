@@ -1048,8 +1048,12 @@ impl PushService {
             let Ok(user_id) = row.get::<String, _>("recipient_user_id").parse::<Id>() else {
                 continue;
             };
+            // Unset for a note from GitHub (`actor_github_login`).
+            let actor_id = row
+                .get::<Option<String>, _>("actor_user_id")
+                .and_then(|id| id.parse::<Id>().ok());
             // Nobody is notified of what they did themselves.
-            if row.get::<String, _>("actor_user_id") == user_id.to_string() {
+            if actor_id == Some(user_id) {
                 continue;
             }
             let notice = Notice {
@@ -1058,9 +1062,7 @@ impl PushService {
                 url: "/activity".to_owned(),
                 tag: format!("inbox:{id}"),
                 sound: kind.sound(),
-                icon: row
-                    .get::<Option<String>, _>("actor_user_id")
-                    .and_then(|id| id.parse().ok())
+                icon: actor_id
                     .and_then(|actor_id| avatar_url(actor_id, row.get("avatar_updated_at"))),
             };
             self.notify(user_id, kind, &notice).await?;
@@ -1071,11 +1073,11 @@ impl PushService {
     /// Pushes new inbox notifications until `shutdown`.
     pub async fn run_inbox_service(self, shutdown: CancellationToken) -> Result<(), String> {
         loop {
-            match self.push_inbox().await {
+            match crate::app::unless_panic("push inbox", self.push_inbox()).await {
                 // A full batch: there can be more.
-                Ok(100) => continue,
-                Ok(_) => {}
-                Err(error) => tracing::warn!(error = %error, "inbox push"),
+                Some(Ok(100)) => continue,
+                Some(Ok(_)) | None => {}
+                Some(Err(error)) => tracing::warn!(error = %error, "inbox push"),
             }
             tokio::select! {
                 () = shutdown.cancelled() => return Ok(()),
