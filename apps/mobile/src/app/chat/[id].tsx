@@ -2,7 +2,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { applyChatEvents } from '../../chat-cache'
 import { router, useLocalSearchParams } from 'expo-router'
 import { useEffect, useMemo, useState } from 'react'
-import { KeyboardAvoidingView, Platform, View } from 'react-native'
+import { View } from 'react-native'
 
 import { AddPeopleSheet } from '../../components/chat/ChannelSheets'
 import { Composer, useComposer } from '../../components/chat/Composer'
@@ -16,7 +16,7 @@ import { useChatWrite, useIsChatAdmin, useMessages } from '../../hooks/chat'
 import { useIsGuest, useOrbit } from '../../orbit-context'
 import { useChatStates, useConversations, useMembers, usePeople } from '../../queries'
 import { useTheme } from '../../theme'
-import { Avatar, Button, ErrorView, Icon, IconButton, LoadingView, SafeAreaView, Text } from '../../ui'
+import { Avatar, Button, ErrorView, Icon, IconButton, KeyboardView, LoadingView, SafeAreaView, Text } from '../../ui'
 import { ChatColorScope } from '../../components/chat/ChatColorScope'
 
 /**
@@ -100,7 +100,7 @@ function ConversationScreenContent() {
           <IconButton icon="more" label={`Options for ${name}`} size={32} iconSize={20} color={colors.mutedForeground} disabled={!conversation} onPress={() => setOptions(true)} />
         </View>
       </View>
-      <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardView className="flex-1">
         {!messages.data ? (
           messages.isError ? (
             <ErrorView error={messages.error} onRetry={() => void messages.refetch()} />
@@ -142,7 +142,7 @@ function ConversationScreenContent() {
             <Button label="Join channel" onPress={() => void run('Could not join the channel', (client, workspaceId) => chat.joinChannel(client, workspaceId, conversation.id))} />
           </View>
         )}
-      </KeyboardAvoidingView>
+      </KeyboardView>
       {sheet}
       {conversation ? <ConversationOptions conversation={conversation} title={name} placement="header" visible={options} onClose={() => setOptions(false)} /> : null}
       {addPeople && conversation ? <AddPeopleSheet conversation={conversation} onClose={() => setAddPeople(false)} /> : null}

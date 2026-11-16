@@ -3,7 +3,7 @@ import { Modal, Platform, Pressable, ScrollView, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { useTheme } from '../../theme'
-import { Button, Icon, type IconName, SafeAreaView, SheetKeyboardView, Text } from '../../ui'
+import { Button, Icon, type IconName, KeyboardSheetRoot, KeyboardView, SafeAreaView, Text } from '../../ui'
 
 export interface SheetItem {
   key: string
@@ -91,25 +91,27 @@ export function FormSheet({
 }) {
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <SafeAreaView edges={Platform.OS === 'ios' ? ['bottom', 'left', 'right'] : ['top', 'bottom', 'left', 'right']} className="flex-1 bg-popover">
-        <View className="h-13 flex-row items-center gap-2 px-3 border-b border-border">
-          <View className="flex-1 items-start">
-            <Button label={submitLabel ? 'Cancel' : 'Close'} variant="ghost" onPress={onClose} />
+      <KeyboardSheetRoot>
+        <SafeAreaView edges={Platform.OS === 'ios' ? ['bottom', 'left', 'right'] : ['top', 'bottom', 'left', 'right']} className="flex-1 bg-popover">
+          <View className="h-13 flex-row items-center gap-2 px-3 border-b border-border">
+            <View className="flex-1 items-start">
+              <Button label={submitLabel ? 'Cancel' : 'Close'} variant="ghost" onPress={onClose} />
+            </View>
+            <Text numberOfLines={1} accessibilityRole="header" className="font-noto-semibold text-[15px] shrink">
+              {title}
+            </Text>
+            <View className="flex-1 items-end">
+              {submitLabel && onSubmit ? <Button label={submitLabel} size="sm" loading={busy} disabled={!canSubmit} onPress={onSubmit} /> : null}
+            </View>
           </View>
-          <Text numberOfLines={1} accessibilityRole="header" className="font-noto-semibold text-[15px] shrink">
-            {title}
-          </Text>
-          <View className="flex-1 items-end">
-            {submitLabel && onSubmit ? <Button label={submitLabel} size="sm" loading={busy} disabled={!canSubmit} onPress={onSubmit} /> : null}
-          </View>
-        </View>
-        <SheetKeyboardView className="flex-1">
-          <ScrollView keyboardShouldPersistTaps="handled" contentContainerClassName="p-4 gap-4">
-            {description ? <Text className="text-[14px] leading-[20px] text-muted-foreground">{description}</Text> : null}
-            {children}
-          </ScrollView>
-        </SheetKeyboardView>
-      </SafeAreaView>
+          <KeyboardView className="flex-1">
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerClassName="p-4 gap-4">
+              {description ? <Text className="text-[14px] leading-[20px] text-muted-foreground">{description}</Text> : null}
+              {children}
+            </ScrollView>
+          </KeyboardView>
+        </SafeAreaView>
+      </KeyboardSheetRoot>
     </Modal>
   )
 }

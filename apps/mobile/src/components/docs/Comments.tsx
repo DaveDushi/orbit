@@ -9,7 +9,7 @@ import { useAddComment, usePageThreads } from '../../hooks/docs'
 import { usePeople } from '../../queries'
 import { errorMessage } from '../../session-context'
 import { alpha, useTheme } from '../../theme'
-import { Avatar, Button, IconButton, LoadingView, PaneHeader, SafeAreaView, SheetKeyboardView, Text } from '../../ui'
+import { Avatar, Button, IconButton, KeyboardSheetRoot, KeyboardView, LoadingView, PaneHeader, SafeAreaView, Text } from '../../ui'
 
 /**
  * The page's comments panel at phone size: every thread with its comments, a reply field under each, and a new
@@ -27,43 +27,45 @@ export function CommentsSheet({ pageId, visible, onClose }: { pageId: string; vi
   }
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <SafeAreaView edges={['top', 'bottom', 'left', 'right']} className="flex-1 bg-background">
-        <PaneHeader className="border-b border-border">
-          <Text className="font-noto-medium text-[13.5px] flex-1 pl-1">Comments</Text>
-          <IconButton icon="close" label="Close comments" color={alpha(colors.mutedForeground, 0.7)} onPress={onClose} />
-        </PaneHeader>
-        <SheetKeyboardView className="flex-1">
-          {!threads.data ? (
-            threads.isError ? (
-              <View className="p-4">
-                <Text className="text-[13px] text-destructive">Comments could not be loaded.</Text>
-              </View>
+      <KeyboardSheetRoot>
+        <SafeAreaView edges={['top', 'bottom', 'left', 'right']} className="flex-1 bg-background">
+          <PaneHeader className="border-b border-border">
+            <Text className="font-noto-medium text-[13.5px] flex-1 pl-1">Comments</Text>
+            <IconButton icon="close" label="Close comments" color={alpha(colors.mutedForeground, 0.7)} onPress={onClose} />
+          </PaneHeader>
+          <KeyboardView className="flex-1">
+            {!threads.data ? (
+              threads.isError ? (
+                <View className="p-4">
+                  <Text className="text-[13px] text-destructive">Comments could not be loaded.</Text>
+                </View>
+              ) : (
+                <LoadingView />
+              )
             ) : (
-              <LoadingView />
-            )
-          ) : (
-            <ScrollView className="flex-1" contentContainerClassName="p-3 gap-3" keyboardShouldPersistTaps="handled">
-              {list.length === 0 ? <Text className="text-[13px] p-1 text-muted-foreground">No comments yet.</Text> : null}
-              {list.map((thread) => (
-                <ThreadCard key={thread.id} pageId={pageId} thread={thread} />
-              ))}
-            </ScrollView>
-          )}
-          <View className="flex-row items-end gap-2 p-3 border-t border-border">
-            <TextInput
-              accessibilityLabel="Comment on this page"
-              placeholder="Comment on this page"
-              placeholderTextColor={colors.mutedForeground}
-              value={text}
-              onChangeText={setText}
-              multiline
-              className="font-noto text-[15px] leading-[1.45] flex-1 max-h-30 min-h-9 px-2.5 py-[7px] rounded-lg border border-input text-foreground"
-            />
-            <Button label="Comment" loading={add.isPending} disabled={!text.trim()} onPress={submit} />
-          </View>
-          {add.isError ? <Text className="text-[12px] px-3 pb-2 text-destructive">{errorMessage(add.error)}</Text> : null}
-        </SheetKeyboardView>
-      </SafeAreaView>
+              <ScrollView className="flex-1" contentContainerClassName="p-3 gap-3" keyboardShouldPersistTaps="handled">
+                {list.length === 0 ? <Text className="text-[13px] p-1 text-muted-foreground">No comments yet.</Text> : null}
+                {list.map((thread) => (
+                  <ThreadCard key={thread.id} pageId={pageId} thread={thread} />
+                ))}
+              </ScrollView>
+            )}
+            <View className="flex-row items-end gap-2 p-3 border-t border-border">
+              <TextInput
+                accessibilityLabel="Comment on this page"
+                placeholder="Comment on this page"
+                placeholderTextColor={colors.mutedForeground}
+                value={text}
+                onChangeText={setText}
+                multiline
+                className="font-noto text-[15px] leading-[1.45] flex-1 max-h-30 min-h-9 px-2.5 py-[7px] rounded-lg border border-input text-foreground"
+              />
+              <Button label="Comment" loading={add.isPending} disabled={!text.trim()} onPress={submit} />
+            </View>
+            {add.isError ? <Text className="text-[12px] px-3 pb-2 text-destructive">{errorMessage(add.error)}</Text> : null}
+          </KeyboardView>
+        </SafeAreaView>
+      </KeyboardSheetRoot>
     </Modal>
   )
 }

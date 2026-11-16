@@ -19,7 +19,7 @@ import { useConversations, usePeople, useProjects, useStatuses } from '../querie
 import { errorMessage } from '../session-context'
 import { useIncomingShareItems } from '../share-intent'
 import { alpha, useTheme } from '../theme'
-import { Button, EmptyState, Icon, IconButton, Input, LoadingView, PaneHeader, SafeAreaView, Text } from '../ui'
+import { Button, EmptyState, Icon, IconButton, Input, KeyboardView, LoadingView, PaneHeader, SafeAreaView, Text } from '../ui'
 import { uploadPart } from '../upload-part'
 
 const TARGET_LABELS: Record<ShareTarget, string> = { chat: 'Chat', drive: 'Drive', task: 'New task' }
@@ -155,90 +155,92 @@ export default function ShareScreen() {
       ) : empty ? (
         <EmptyState icon="import" title="Nothing to share" description="Share photos, videos, files or links to Orbit from another app." />
       ) : (
-        <ScrollView contentContainerClassName="px-4 pb-6 gap-4" keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
-          <View accessibilityLabel="Shared items" className="rounded-lg border border-border">
-            {content.files.map((file, index) => (
-              <View key={`${file.uri}-${index}`} className="h-11 flex-row items-center gap-2.5 px-3 border-b border-border">
-                <Icon name={file.mimeType.startsWith('image/') || file.mimeType.startsWith('video/') ? 'play' : 'attach'} size={15} color={muted} />
-                <Text numberOfLines={1} className="text-[13px] flex-1">
-                  {file.name}
-                </Text>
-                {file.size !== null ? <Text className="text-[12px] text-muted-foreground">{fileSize(file.size)}</Text> : null}
-              </View>
-            ))}
-            {content.texts.map((text, index) => (
-              <View key={`text-${index}`} className="min-h-11 flex-row items-center gap-2.5 px-3 py-2 border-b border-border">
-                <Icon name="text" size={15} color={muted} />
-                <Text numberOfLines={2} className="text-[13px] flex-1">
-                  {text}
-                </Text>
-              </View>
-            ))}
-          </View>
-
-          {targets.length > 1 ? <Segmented label="Share to" value={target} options={targets.map((value) => ({ value, label: TARGET_LABELS[value] }))} onChange={setTarget} /> : null}
-          {filesOnly && content.files.length === 0 ? <Text className="text-[13px] text-muted-foreground">Drive takes files: share links and text to Chat or a new task.</Text> : null}
-          {filesOnly && content.texts.length > 0 && content.files.length > 0 ? <Text className="text-[13px] text-muted-foreground">Only the files go to Drive.</Text> : null}
-
-          {target === 'chat' ? (
-            <View className="gap-3">
-              <Input label="Message" placeholder="Add a message" multiline value={note} onChangeText={setNote} />
-              <View accessibilityRole="radiogroup" accessibilityLabel="Conversation" className="rounded-lg border border-border overflow-hidden">
-                {agent && !agentDm ? <ChoiceRow label={`${agent.name} (your conversation)`} icon="magicStar" selected={conversationId === AGENT_KEY} onPress={() => setConversationId(AGENT_KEY)} /> : null}
-                {conversations.isLoading ? <LoadingView /> : null}
-                {chats.map((item) => {
-                  const isAgent = item.id === agentDm?.id
-                  return (
-                    <ChoiceRow
-                      key={item.id}
-                      label={isAgent && agent ? agent.name : item.kind === 'dm' ? conversationTitle(item, people, user.id) : `#${item.name}`}
-                      icon={isAgent ? 'magicStar' : item.kind === 'dm' ? 'user' : item.kind === 'private' ? 'lock' : 'hashtag'}
-                      selected={conversationId === item.id || (isAgent && conversationId === AGENT_KEY)}
-                      onPress={() => setConversationId(item.id)}
-                    />
-                  )
-                })}
-              </View>
-            </View>
-          ) : null}
-
-          {target === 'drive' ? (
-            <View accessibilityRole="radiogroup" accessibilityLabel="Drive folder" className="rounded-lg border border-border overflow-hidden">
-              <View className="h-11 flex-row items-center gap-2 px-3 bg-muted">
-                {folder ? <IconButton icon="back" label="Up one folder" size={24} iconSize={14} color={muted} onPress={() => setFolderPath((path) => path.slice(0, -1))} /> : null}
-                <Icon name="folder" size={15} color={colors.primary} />
-                <Text numberOfLines={1} className="font-noto-medium text-[13px] flex-1">
-                  {folder?.name ?? 'Drive'}
-                </Text>
-              </View>
-              {folders.isLoading ? <LoadingView /> : null}
-              {folders.error ? <Text className="text-[13px] p-3 text-destructive">{errorMessage(folders.error)}</Text> : null}
-              {(folders.data ?? []).map((item) => (
-                <ChoiceRow key={item.id} label={item.name} icon="folder" chevron onPress={() => setFolderPath((path) => [...path, { id: item.id, name: item.name }])} />
+        <KeyboardView className="flex-1">
+          <ScrollView contentContainerClassName="px-4 pb-6 gap-4" keyboardShouldPersistTaps="handled">
+            <View accessibilityLabel="Shared items" className="rounded-lg border border-border">
+              {content.files.map((file, index) => (
+                <View key={`${file.uri}-${index}`} className="h-11 flex-row items-center gap-2.5 px-3 border-b border-border">
+                  <Icon name={file.mimeType.startsWith('image/') || file.mimeType.startsWith('video/') ? 'play' : 'attach'} size={15} color={muted} />
+                  <Text numberOfLines={1} className="text-[13px] flex-1">
+                    {file.name}
+                  </Text>
+                  {file.size !== null ? <Text className="text-[12px] text-muted-foreground">{fileSize(file.size)}</Text> : null}
+                </View>
+              ))}
+              {content.texts.map((text, index) => (
+                <View key={`text-${index}`} className="min-h-11 flex-row items-center gap-2.5 px-3 py-2 border-b border-border">
+                  <Icon name="text" size={15} color={muted} />
+                  <Text numberOfLines={2} className="text-[13px] flex-1">
+                    {text}
+                  </Text>
+                </View>
               ))}
             </View>
-          ) : null}
 
-          {target === 'task' ? (
-            <View className="gap-3">
-              <Input label="Title" required placeholder="Task title" value={taskTitle} onChangeText={setTitle} />
-              <Input label="Description" placeholder="Add a description" multiline value={note} onChangeText={setNote} />
-              <Text className="font-noto-medium text-[14px]">Project</Text>
-              <View accessibilityRole="radiogroup" accessibilityLabel="Project" className="rounded-lg border border-border overflow-hidden">
-                {(projects.data ?? []).map((item) => (
-                  <ChoiceRow key={item.id} label={item.name} icon="tasks" selected={project?.id === item.id} onPress={() => setProjectId(item.id)} />
+            {targets.length > 1 ? <Segmented label="Share to" value={target} options={targets.map((value) => ({ value, label: TARGET_LABELS[value] }))} onChange={setTarget} /> : null}
+            {filesOnly && content.files.length === 0 ? <Text className="text-[13px] text-muted-foreground">Drive takes files: share links and text to Chat or a new task.</Text> : null}
+            {filesOnly && content.texts.length > 0 && content.files.length > 0 ? <Text className="text-[13px] text-muted-foreground">Only the files go to Drive.</Text> : null}
+
+            {target === 'chat' ? (
+              <View className="gap-3">
+                <Input label="Message" placeholder="Add a message" multiline value={note} onChangeText={setNote} />
+                <View accessibilityRole="radiogroup" accessibilityLabel="Conversation" className="rounded-lg border border-border overflow-hidden">
+                  {agent && !agentDm ? <ChoiceRow label={`${agent.name} (your conversation)`} icon="magicStar" selected={conversationId === AGENT_KEY} onPress={() => setConversationId(AGENT_KEY)} /> : null}
+                  {conversations.isLoading ? <LoadingView /> : null}
+                  {chats.map((item) => {
+                    const isAgent = item.id === agentDm?.id
+                    return (
+                      <ChoiceRow
+                        key={item.id}
+                        label={isAgent && agent ? agent.name : item.kind === 'dm' ? conversationTitle(item, people, user.id) : `#${item.name}`}
+                        icon={isAgent ? 'magicStar' : item.kind === 'dm' ? 'user' : item.kind === 'private' ? 'lock' : 'hashtag'}
+                        selected={conversationId === item.id || (isAgent && conversationId === AGENT_KEY)}
+                        onPress={() => setConversationId(item.id)}
+                      />
+                    )
+                  })}
+                </View>
+              </View>
+            ) : null}
+
+            {target === 'drive' ? (
+              <View accessibilityRole="radiogroup" accessibilityLabel="Drive folder" className="rounded-lg border border-border overflow-hidden">
+                <View className="h-11 flex-row items-center gap-2 px-3 bg-muted">
+                  {folder ? <IconButton icon="back" label="Up one folder" size={24} iconSize={14} color={muted} onPress={() => setFolderPath((path) => path.slice(0, -1))} /> : null}
+                  <Icon name="folder" size={15} color={colors.primary} />
+                  <Text numberOfLines={1} className="font-noto-medium text-[13px] flex-1">
+                    {folder?.name ?? 'Drive'}
+                  </Text>
+                </View>
+                {folders.isLoading ? <LoadingView /> : null}
+                {folders.error ? <Text className="text-[13px] p-3 text-destructive">{errorMessage(folders.error)}</Text> : null}
+                {(folders.data ?? []).map((item) => (
+                  <ChoiceRow key={item.id} label={item.name} icon="folder" chevron onPress={() => setFolderPath((path) => [...path, { id: item.id, name: item.name }])} />
                 ))}
               </View>
-              {content.files.length > 0 ? <Text className="text-[13px] text-muted-foreground">The files are attached to the task.</Text> : null}
-            </View>
-          ) : null}
+            ) : null}
 
-          {progress ? <Text accessibilityRole="progressbar" className="text-[13px] text-muted-foreground">{progress}</Text> : null}
-          {failure ? <Text accessibilityRole="alert" className="text-[13px] text-destructive">{failure}</Text> : null}
-          {target === 'chat' ? <Button label="Send" block loading={busy} disabled={busy || conversationId === null} onPress={() => void sendToChat()} /> : null}
-          {target === 'drive' ? <Button label={`Save to ${folder?.name ?? 'Drive'}`} block loading={busy} disabled={busy || content.files.length === 0} onPress={() => void saveToDrive()} /> : null}
-          {target === 'task' ? <Button label="Create task" block loading={busy} disabled={busy || !project || !taskTitle.trim()} onPress={() => void createTask()} /> : null}
-        </ScrollView>
+            {target === 'task' ? (
+              <View className="gap-3">
+                <Input label="Title" required placeholder="Task title" value={taskTitle} onChangeText={setTitle} />
+                <Input label="Description" placeholder="Add a description" multiline value={note} onChangeText={setNote} />
+                <Text className="font-noto-medium text-[14px]">Project</Text>
+                <View accessibilityRole="radiogroup" accessibilityLabel="Project" className="rounded-lg border border-border overflow-hidden">
+                  {(projects.data ?? []).map((item) => (
+                    <ChoiceRow key={item.id} label={item.name} icon="tasks" selected={project?.id === item.id} onPress={() => setProjectId(item.id)} />
+                  ))}
+                </View>
+                {content.files.length > 0 ? <Text className="text-[13px] text-muted-foreground">The files are attached to the task.</Text> : null}
+              </View>
+            ) : null}
+
+            {progress ? <Text accessibilityRole="progressbar" className="text-[13px] text-muted-foreground">{progress}</Text> : null}
+            {failure ? <Text accessibilityRole="alert" className="text-[13px] text-destructive">{failure}</Text> : null}
+            {target === 'chat' ? <Button label="Send" block loading={busy} disabled={busy || conversationId === null} onPress={() => void sendToChat()} /> : null}
+            {target === 'drive' ? <Button label={`Save to ${folder?.name ?? 'Drive'}`} block loading={busy} disabled={busy || content.files.length === 0} onPress={() => void saveToDrive()} /> : null}
+            {target === 'task' ? <Button label="Create task" block loading={busy} disabled={busy || !project || !taskTitle.trim()} onPress={() => void createTask()} /> : null}
+          </ScrollView>
+        </KeyboardView>
       )}
     </SafeAreaView>
   )

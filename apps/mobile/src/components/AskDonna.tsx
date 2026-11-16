@@ -16,7 +16,7 @@ import { useChatWrite, useMessages } from '../hooks/chat'
 import { useAgentStatus } from '../hooks/agent'
 import { useIsGuest, useOrbit } from '../orbit-context'
 import { useTheme } from '../theme'
-import { ErrorView, Icon, IconButton, LoadingView, SafeAreaView, SheetKeyboardView, Text } from '../ui'
+import { ErrorView, Icon, IconButton, KeyboardSheetRoot, KeyboardView, LoadingView, SafeAreaView, Text } from '../ui'
 import { ChatColorScope } from './chat/ChatColorScope'
 import { Composer, useComposer } from './chat/Composer'
 import { type ListRow, MessageList, useMessageSheet } from './chat/MessageList'
@@ -87,9 +87,11 @@ export function AskDonnaBar() {
       </View>
       {conversationId ? (
         <Modal visible={open} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setOpen(false)}>
-          <ChatColorScope surface="page">
-            <AskDonnaSheet agent={agent} conversationId={conversationId} pathname={pathname} onClose={() => setOpen(false)} />
-          </ChatColorScope>
+          <KeyboardSheetRoot>
+            <ChatColorScope surface="page">
+              <AskDonnaSheet agent={agent} conversationId={conversationId} pathname={pathname} onClose={() => setOpen(false)} />
+            </ChatColorScope>
+          </KeyboardSheetRoot>
         </Modal>
       ) : null}
     </>
@@ -153,7 +155,7 @@ function AskDonnaSheet({ agent, conversationId, pathname, onClose }: { agent: As
           </Text>
         </View>
       ) : null}
-      <SheetKeyboardView className="flex-1">
+      <KeyboardView className="flex-1">
         {!messages.data ? (
           messages.isError ? <ErrorView error={messages.error} onRetry={() => void messages.refetch()} /> : <LoadingView />
         ) : (
@@ -167,7 +169,7 @@ function AskDonnaSheet({ agent, conversationId, pathname, onClose }: { agent: As
           />
         )}
         <Composer state={composer} placeholder={`Ask ${agent.name}`} nameOf={handlers.nameOf} />
-      </SheetKeyboardView>
+      </KeyboardView>
       {sheet}
     </SafeAreaView>
   )

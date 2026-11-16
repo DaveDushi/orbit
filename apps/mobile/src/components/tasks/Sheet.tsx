@@ -1,10 +1,10 @@
 import { type ReactNode, useState } from 'react'
-import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, View } from 'react-native'
+import { Modal, Pressable, ScrollView, View } from 'react-native'
 import { TextInput } from '../../ui/scaled'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { useTheme } from '../../theme'
-import { Icon, type IconName, ListRow, Text } from '../../ui'
+import { Icon, type IconName, KeyboardView, ListRow, Text } from '../../ui'
 
 /**
  * Which sheet a screen shows. A screen has one sheet whose content changes (a menu row that opens a picker swaps the
@@ -30,7 +30,7 @@ export function Sheet({ visible, title, onClose, children }: { visible: boolean;
   const insets = useSafeAreaInsets()
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardView className="flex-1">
         <Pressable accessibilityLabel="Close" onPress={onClose} className="flex-1 bg-foreground dark:bg-background opacity-40" />
         <View
           accessibilityViewIsModal
@@ -41,7 +41,7 @@ export function Sheet({ visible, title, onClose, children }: { visible: boolean;
           </Text>
           {children}
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardView>
     </Modal>
   )
 }
