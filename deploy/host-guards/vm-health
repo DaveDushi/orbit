@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+# vm-health: fast, read-only health check for the Orbit VM.
+# Prints one line per check: OK|WARN|FAIL <check> <detail>. Exit 0 = all OK, 1 = WARN, 2 = FAIL.
+# Owner: Ops agent. Copy and README in /root/ops/. Overrides in /root/ops/vm-health.conf.
+set -u
+export LC_ALL=C
+
+PROD_TAG=025fffe          # orbit:<tag> image in production
+ROLLBACK_TAG=35780dc      # rollback image, keep (memory #36)
+SITE=orbit.easytomanage.com
+NGINX=http://127.0.0.1:8000
+AGENT=http://127.0.0.1:8790
+BACKUPS=/var/backups/orbit/snapshots
+ORBIT_GIT=/home/exedev/orbit/.git
+BACKUP_WARN_H=48 BACKUP_FAIL_H=168 BACKUP_SCHED_WARN_H=26
+ORBIT_DB=/var/lib/orbit/orbit.sqlite
+R2_ENV=/root/ops/r2-backup.env   # read-only R2 token: R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY (chmod 600)
+R2_WARN_H=26 R2_FAIL_H=50
+[ -r /root/ops/vm-health.conf ] && . /root/ops/vm-health.conf
+
+rc=0
+say() { # level check detail
+  printf '%-4s %-14s %s\n' "$1" "$2" "$3"
+  case $1 in WARN) [ $rc -lt 1 ] && rc=1 ;; FAIL) rc=2 ;; esac
+}
+lvl() { # value warn fail -> level (higher is worse)
+  if [ "$1" -ge "$3" ]; then echo FAIL; elif [ "$1" -ge "$2" ]; then echo WARN; else echo OK; fi
+}
+
+# Disk (alert 80 %, act 85 %)
+read -r pct avail < <(df -P / | awk 'NR==2{gsub("%","",$5); printf "%s %.1f\n", $5, $4/1048576}')
+say "$(lvl "$pct" 80 85)" disk "/ ${pct}% used, ${avail} GiB free"
+
+# Memory and swap
+read -r tot av sw swu < <(free -m | awk '/^Mem:/{t=$2;a=$7} /^Swap:/{s=$2;u=$3} END{print t,a,s,u}')
+used=$(( (tot - av) * 100 / tot ))
+say "$(lvl "$used" 85 95)" memory "${used}% used, $((av / 1024)) GiB available of $((tot / 1024)) GiB, swap ${swu}/${sw} MiB"
+
+# Load (5 min average per CPU)
+cpus=$(nproc); read -r l1 l5 l15 _ < /proc/loadavg
+l5x100=$(awk -v l="$l5" -v c="$cpus" 'BEGIN{printf "%d", l*100/c}')
+say "$(lvl "$l5x100" 200 400)" load "$l1 $l5 $l15 on $cpus CPUs"
+
+# OOM kills in the last 24 h
+oom=$(journalctl -k --since -24h -q --no-pager 2>/dev/null | grep -ci 'Killed process' || true)
+say "$(lvl "$oom" 1 1000)" oom "$oom OOM kills in kernel log (24 h)"
+
+# Failed systemd units
+failed=$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' | paste -sd, -)
+[ -z "$failed" ] && say OK units "no failed units" || say WARN units "failed: $failed"
+
+# Production services and restarts
+for s in orbit orbit-agent nginx docker; do
+  st=$(systemctl is-active "$s" 2>/dev/null)
+  if [ "$st" != active ]; then say FAIL "svc:$s" "$st"; continue; fi
+  n=$(systemctl show "$s" -p NRestarts --value)
+  since=$(systemctl show "$s" -p ActiveEnterTimestamp --value)
+  [ "${n:-0}" -gt 0 ] && say WARN "svc:$s" "active, $n restarts, since $since" || say OK "svc:$s" "active since $since"
+done
+
+# HTTP through nginx (needs Host and X-Forwarded-Proto like the exe.dev proxy)
+hcurl() { curl -s -o "${2:-/dev/null}" -w '%{http_code} %{time_total}' --max-time 5 \
+  -H "Host: $SITE" -H 'X-Forwarded-Proto: https' "$NGINX$1" 2>/dev/null; }
+tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT
+read -r code t < <(hcurl /health/ready "$tmp")
+if [ "$code" = 200 ] && grep -q '"ready":true' "$tmp" && ! grep -q '"ready":false' "$tmp"; then
+  ms=$(awk -v t="$t" 'BEGIN{printf "%d", t*1000}'); say "$(lvl "$ms" 1000 5000)" ready "/health/ready 200 in ${ms} ms"
+else say FAIL ready "/health/ready code=$code $(head -c 200 "$tmp")"; fi
+read -r code t < <(hcurl /)
+ms=$(awk -v t="$t" 'BEGIN{printf "%d", t*1000}')
+[ "$code" = 200 ] && say "$(lvl "$ms" 1000 5000)" home "/ 200 in ${ms} ms" || say FAIL home "/ code=$code"
+if curl -s --max-time 5 "$AGENT/health" | grep -q '"ok":true'; then say OK agent "orbit-agent /health ok"
+else say FAIL agent "orbit-agent /health not ok"; fi
+
+# Public gateways via Cloudflare tunnel (OIDC on :8400, GitHub + chat webhooks on :8401, iPhone app host on :8402)
+gw=""; for s in orbit-oidc-gateway orbit-oidc-tunnel orbit-hooks-gateway orbit-app-gateway; do
+  [ "$(systemctl is-active "$s" 2>/dev/null)" = active ] || gw="$gw $s"; done
+hk=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST -H 'X-GitHub-Event: ping' -d '{}' \
+  http://127.0.0.1:8401/api/v1/integrations/github/webhook 2>/dev/null)
+bl=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8401/health 2>/dev/null)
+ch=$(curl -s --max-time 5 -X POST -H 'Content-Type: application/json' -d '{}' \
+  http://127.0.0.1:8401/api/v1/hooks/chat/01900000-0000-7000-8000-000000000000/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 2>/dev/null \
+  | grep -q webhook_not_found && echo ok || echo bad)
+ap=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8402/health/ready 2>/dev/null)
+if [ -n "$gw" ]; then say WARN gateways "not active:$gw"
+elif [ "$hk" != 200 ] || [ "$bl" != 404 ] || [ "$ch" != ok ] || [ "$ap" != 200 ]; then say WARN gateways "hooks ping=$hk (want 200), other path=$bl (want 404), chat hook=$ch (want ok), app ready=$ap (want 200)"
+else say OK gateways "oidc+tunnel+hooks+app active, hooks ping 200, chat hook reaches Orbit, other paths 404, app ready 200"; fi
+
+# nginx: error log lines and 5xx in access log (last hour). Orbit vhost has access_log off.
+cut=$(date -d '-1 hour' '+%Y/%m/%d %H:%M:%S')
+nerr=$(awk -v c="$cut" '($1" "$2) >= c' /var/log/nginx/error.log 2>/dev/null | grep -c -E '\[(error|crit|alert|emerg)\]' || true)
+n5=$(awk -v c="$(date -d '-1 hour' '+%s')" '
+  BEGIN{split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec",m," "); for(i=1;i<=12;i++) M[m[i]]=i}
+  { split(substr($4,2),a,"[/:]"); ts=mktime(a[3]" "M[a[2]]" "a[1]" "a[4]" "a[5]" "a[6]);
+    if (ts>=c && $9 ~ /^5/) n++ } END{print n+0}' /var/log/nginx/access.log 2>/dev/null)
+say "$(lvl $((nerr + n5)) 1 50)" nginx "1 h: $nerr error-log lines, $n5 5xx responses"
+
+# Journal errors (last hour)
+jerr=$(journalctl -p err --since -1h -q --no-pager 2>/dev/null | wc -l)
+say "$(lvl "$jerr" 20 200)" journal "$jerr error lines (1 h), size $(du -sh /var/log/journal 2>/dev/null | cut -f1)"
+
+# TLS certificate (public)
+end=$(echo | timeout 5 openssl s_client -connect "$SITE:443" -servername "$SITE" 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
+if [ -n "$end" ]; then
+  days=$(( ($(date -d "$end" +%s) - $(date +%s)) / 86400 ))
+  [ "$days" -lt 7 ] && l=FAIL || { [ "$days" -lt 21 ] && l=WARN || l=OK; }
+  say $l tls "$SITE expires in $days days ($end)"
+else say WARN tls "could not read certificate of $SITE"; fi
+
+# Backups in R2 (Admin → Storage, backups_in_s3=1): newest backups/snapshots/*/manifest.json
+IFS='|' read -r s3_on s3_ep s3_bucket s3_prefix sched < <(timeout 5 sqlite3 -readonly "$ORBIT_DB" \
+  'select backups_in_s3, s3_endpoint, s3_bucket, s3_prefix, backup_schedule from instance_settings where id=1' 2>/dev/null)
+r2_ok=0
+if [ "${s3_on:-0}" = 1 ]; then
+  if [ -r "$R2_ENV" ] && . "$R2_ENV" && [ -n "${R2_ACCESS_KEY_ID:-}" ]; then
+    url="${s3_ep%/}/$s3_bucket?list-type=2&prefix=${s3_prefix}backups/snapshots/"
+    newest="" tok="" n=0 err=""
+    for _ in 1 2 3 4 5; do
+      x=$(curl -sS -m 6 --aws-sigv4 "aws:amz:auto:s3" --user "$R2_ACCESS_KEY_ID:$R2_SECRET_ACCESS_KEY" \
+        "$url${tok:+&continuation-token=$(jq -rn --arg t "$tok" '$t|@uri')}" 2>&1) || { err="curl: $x"; break; }
+      case $x in *"<ListBucketResult"*) ;; *) err=$(echo "$x" | grep -o '<Code>[^<]*' | head -1); err="list failed ${err#<Code>}"; break ;; esac
+      m=$(echo "$x" | grep -o '<Key>[^<]*manifest.json</Key><LastModified>[^<]*' | sed 's/.*<LastModified>//' | sort | tail -1)
+      n=$(( n + $(echo "$x" | grep -o 'manifest.json</Key>' | wc -l) ))
+      [[ $m > $newest ]] && newest=$m
+      tok=$(echo "$x" | grep -o '<NextContinuationToken>[^<]*' | sed 's/.*>//')
+      [ -z "$tok" ] && break
+    done
+    if [ -n "$err" ]; then say FAIL r2-backup "$s3_bucket: $err"
+    elif [ -z "$newest" ]; then say FAIL r2-backup "$s3_bucket: no snapshot manifest"
+    else
+      age=$(( ($(date +%s) - $(date -d "$newest" +%s)) / 3600 ))
+      say "$(lvl "$age" "$R2_WARN_H" "$R2_FAIL_H")" r2-backup "$s3_bucket newest ${age} h old ($newest), $n snapshots, schedule $sched"
+      r2_ok=1
+    fi
+  else # no R2 token yet: trust Orbit's hourly backup.scheduled job (creates a backup when newest >24 h)
+    IFS='|' read -r jst jerr jat < <(timeout 5 sqlite3 -readonly "$ORBIT_DB" "select state, coalesce(last_error,''), \
+      updated_at/1000 from jobs where kind='backup.scheduled' and state in ('succeeded','failed','dead') \
+      order by updated_at desc limit 1" 2>/dev/null)
+    jage=$(( ($(date +%s) - ${jat:-0}) / 60 ))
+    if [ -z "${jst:-}" ]; then say WARN backup-job "no backup.scheduled job found (no R2 token in $R2_ENV)"
+    elif [ "$jst" != succeeded ] || [ -n "$jerr" ]; then say WARN backup-job "newest backup.scheduled $jst ${jage} min ago: ${jerr:0:120}"
+    elif [ "$jage" -gt 120 ]; then say WARN backup-job "newest succeeded backup.scheduled ${jage} min ago (>2 h)"
+    else say OK backup-job "backup.scheduled succeeded ${jage} min ago, schedule $sched, R2 not listed (no token)"; fi
+  fi
+fi
+
+# Local snapshots: integrity always; age only when R2 is off or not checked (fallback)
+last=$(ls -1td "$BACKUPS"/*/ 2>/dev/null | head -1)
+if [ -z "$last" ]; then { [ $r2_ok = 1 ] || [ "${s3_on:-0}" = 1 ]; } && say OK backup "no local snapshot (backups in R2)" || say FAIL backup "no snapshot in $BACKUPS"; else
+  age=$(( ($(date +%s) - $(stat -c %Y "$last")) / 3600 ))
+  chk=$(timeout 8 sqlite3 -readonly "$last/database.sqlite" 'pragma quick_check' 2>&1 | head -1)
+  schema=$(jq -r .schema_version "$last/manifest.json" 2>/dev/null)
+  if [ "$chk" != ok ] || [ -z "$schema" ] || [ "$schema" = null ]; then
+    say FAIL backup "$(basename "$last") ${age} h old, quick_check=$chk schema=$schema"
+  else
+    live=$(timeout 5 sqlite3 -readonly "$ORBIT_DB" 'select max(version) from schema_migrations' 2>/dev/null)
+    n=$(ls -1d "$BACKUPS"/*/ 2>/dev/null | wc -l)
+    if [ $r2_ok = 1 ] || [ "${s3_on:-0}" = 1 ]; then l=OK; else  # scheduled backups go to R2, local age does not matter
+      warn_h=$BACKUP_WARN_H; [ -n "$sched" ] && [ "$sched" != off ] && warn_h=$BACKUP_SCHED_WARN_H
+      l=$(lvl "$age" "$warn_h" "$BACKUP_FAIL_H"); [ "$schema" != "$live" ] && [ $l = OK ] && l=WARN
+    fi
+    say $l backup "local $(basename "$last") ${age} h old, quick_check ok, schema $schema (live $live), $n snapshots"
+  fi
+fi
+
+# Docker: only orbit-buildkit runs; production and rollback images exist
+if run=$(timeout 5 docker ps --format '{{.Names}}' 2>/dev/null); then
+  extra=$(echo "$run" | grep -v -x -e orbit-buildkit -e orbit-dev-pg -e '' | paste -sd, -)
+  echo "$run" | grep -qx orbit-buildkit && bk=up || bk=down
+  if [ -n "$extra" ] || [ $bk = down ]; then say WARN docker "buildkit $bk, extra running: ${extra:-none}"
+  else say OK docker "only orbit-buildkit running$(echo "$run" | grep -qx orbit-dev-pg && echo " (+ dev helper orbit-dev-pg)")"; fi
+  imgs=$(timeout 5 docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null)
+  miss=""; for t in "$PROD_TAG" "$ROLLBACK_TAG"; do echo "$imgs" | grep -qx "orbit:$t" || miss="$miss orbit:$t"; done
+  [ -z "$miss" ] && say OK images "orbit:$PROD_TAG and orbit:$ROLLBACK_TAG present" || say FAIL images "missing:$miss"
+else say FAIL docker "docker not responding"; fi
+
+# Build slice limits (MemoryHigh=8G MemoryMax=10G)
+hi=$(systemctl show orbit-builds.slice -p MemoryHigh --value); mx=$(systemctl show orbit-builds.slice -p MemoryMax --value)
+[ "$hi" = 8589934592 ] && [ "$mx" = 10737418240 ] && say OK slice "orbit-builds.slice High=8G Max=10G" \
+  || say WARN slice "orbit-builds.slice MemoryHigh=$hi MemoryMax=$mx (want 8G/10G)"
+
+# Orbit host guards (agent sandbox phase 2): orbit.slice cap, orbit-agents.slice, orbit.service OOM protection
+want="orbit.slice:MemoryHigh=11811160064,MemoryMax=12884901888 orbit-agents.slice:MemoryHigh=2147483648,MemoryMax=2684354560,MemorySwapMax=0,TasksMax=1536,CPUQuotaPerSecUSec=1.500000s orbit.service:OOMScoreAdjust=-800,MemoryMin=536870912 orbit-agent.service:MemoryMin=268435456"
+bad=""; for uw in $want; do u=${uw%%:*}; for kv in $(echo "${uw#*:}" | tr , ' '); do
+  v=$(systemctl show "$u" -p "${kv%%=*}" --value); [ "$v" = "${kv#*=}" ] || bad="$bad $u ${kv%%=*}=$v"; done; done
+op=$(systemctl show -p MainPID --value orbit); oa=$(cat "/proc/$op/oom_score_adj" 2>/dev/null)
+[ "$oa" = -800 ] || bad="$bad orbit pid $op oom_score_adj=$oa"
+[ -z "$bad" ] && say OK guards "orbit.slice 11G/12G, orbit-agents.slice 2G/2560M, orbit oom -800" || say WARN guards "want design values:$bad"
+
+# Slice memory events: oom_kill since last run is WARN (counters kept in /var/tmp/vm-health.memevents)
+ST=/var/tmp/vm-health.memevents; new=""; ev=""
+for sl in orbit.slice orbit.slice/orbit-agents.slice; do f=/sys/fs/cgroup/$sl/memory.events; [ -r "$f" ] || continue
+  read -r hi mx ok < <(awk '$1=="high"{h=$2} $1=="max"{m=$2} $1=="oom_kill"{k=$2} END{print h+0,m+0,k+0}' "$f")
+  prev=$(awk -v s="$sl" '$1==s{print $2}' "$ST" 2>/dev/null); [ -n "$prev" ] && [ "$ok" -gt "$prev" ] && ev="$ev ${sl##*/}+$((ok - prev))"
+  new="$new$sl $ok"$'\n'; say OK "mem:${sl##*/}" "high=$hi max=$mx oom_kill=$ok (since boot)"; done
+printf %s "$new" > "$ST" 2>/dev/null
+[ -n "$ev" ] && say WARN slice-oom "new OOM kills since last run:$ev"
+
+# Pressure (host, avg 60 s): memory full = all tasks stalled; cpu some = tasks wait for CPU
+mp=$(awk '/^full/{split($3,a,"=");printf "%d",a[2]}' /proc/pressure/memory); cp=$(awk '/^some/{split($3,a,"=");printf "%d",a[2]}' /proc/pressure/cpu)
+say "$(lvl "$mp" 10 40)" mem-pressure "full avg60=${mp}% (orbit.slice: $(awk '/^full/{print $3}' /sys/fs/cgroup/orbit.slice/memory.pressure 2>/dev/null))"
+say "$(lvl "$cp" 60 90)" cpu-pressure "some avg60=${cp}% (system.slice: $(awk '/^some/{print $3}' /sys/fs/cgroup/system.slice/cpu.pressure 2>/dev/null))"
+
+# Main checkout .git must be owned by exedev (root worktree admin dirs are allowed)
+if [ -d "$ORBIT_GIT" ]; then
+  bad=$(find "$ORBIT_GIT" ! -user exedev ! -path "$ORBIT_GIT/worktrees/*" 2>/dev/null | wc -l)
+  [ "$bad" -eq 0 ] && say OK git-owner "$ORBIT_GIT owned by exedev" || say WARN git-owner "$bad files in $ORBIT_GIT not owned by exedev"
+fi
+
+# Old /tmp files (info, cleanup is safe)
+old=$(find /tmp -xdev -mindepth 1 -mtime +3 2>/dev/null | wc -l)
+say OK tmp "$old entries in /tmp older than 3 days"
+
+exit $rc
