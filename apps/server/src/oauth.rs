@@ -64,6 +64,9 @@ pub struct OAuthState {
     cookie_mode: CookieMode,
     origin: String,
     resource: String,
+    /// The MCP public origin (`ORBIT_PUBLIC_MCP_URL`): a second face of this server for agents
+    /// outside the login gateway. Consent stays on `origin`.
+    mcp: Option<McpFace>,
     /// The sign-in clients of workspace apps, which share `/oauth/authorize` and `/oauth/token`.
     apps: Option<crate::apps::AppsState>,
 }
@@ -77,8 +80,63 @@ impl OAuthState {
             cookie_mode,
             resource: format!("{origin}/mcp"),
             origin,
+            mcp: None,
             apps: None,
         }
+    }
+
+    /// Serves `/mcp` and its OAuth endpoints also on `origin` (its own issuer and resource), for
+    /// requests whose `Host` is that origin's authority. `None` changes nothing.
+    #[must_use]
+    pub fn with_mcp_origin(mut self, origin: Option<&str>) -> Self {
+        self.mcp = origin.map(|origin| {
+            let origin = origin.trim_end_matches('/').to_owned();
+            McpFace {
+                authority: origin
+                    .split_once("://")
+                    .map_or(origin.as_str(), |(_, rest)| rest)
+                    .to_ascii_lowercase(),
+                resource: format!("{origin}/mcp"),
+                origin,
+            }
+        });
+        self
+    }
+
+    /// The origins that `/mcp` answers on: the public origin, then the MCP public origin.
+    pub fn mcp_origins(&self) -> Vec<&str> {
+        std::iter::once(self.origin.as_str())
+            .chain(self.mcp.as_ref().map(|mcp| mcp.origin.as_str()))
+            .collect()
+    }
+
+    /// Whether this request came in on the MCP public origin.
+    pub fn on_mcp_origin(&self, headers: &HeaderMap) -> bool {
+        self.mcp.as_ref().is_some_and(|mcp| {
+            headers
+                .get(header::HOST)
+                .and_then(|host| host.to_str().ok())
+                .is_some_and(|host| host.eq_ignore_ascii_case(&mcp.authority))
+        })
+    }
+
+    /// The issuer and resource of the origin this request came in on.
+    fn face(&self, headers: &HeaderMap) -> (&str, &str) {
+        match &self.mcp {
+            Some(mcp) if self.on_mcp_origin(headers) => (&mcp.origin, &mcp.resource),
+            _ => (&self.origin, &self.resource),
+        }
+    }
+
+    /// The issuer of a resource this server serves, `None` for any other resource.
+    fn issuer_of(&self, resource: &str) -> Option<&str> {
+        if resource == self.resource {
+            return Some(&self.origin);
+        }
+        self.mcp
+            .as_ref()
+            .filter(|mcp| mcp.resource == resource)
+            .map(|mcp| mcp.origin.as_str())
     }
 
     #[must_use]
@@ -87,11 +145,21 @@ impl OAuthState {
         self
     }
 
-    pub fn challenge(&self) -> String {
+    pub fn challenge(&self, headers: &HeaderMap) -> String {
         format!(
             "Bearer resource_metadata=\"{}/.well-known/oauth-protected-resource/mcp\", scope=\"{SCOPE}\"",
-            self.origin
+            self.face(headers).0
         )
+    }
+
+    /// [`Self::authenticate`] for the origin this request came in on: a token works only on the
+    /// origin (resource) it was issued for.
+    pub async fn authenticate_request(
+        &self,
+        token: &str,
+        headers: &HeaderMap,
+    ) -> Result<Option<Vec<ApiTokenPrincipal>>, OAuthError> {
+        self.authenticate_for(token, self.face(headers).1).await
     }
 
     /// Opaque tokens are audience-bound in SQLite, not taken from an external issuer. One token covers
@@ -101,9 +169,17 @@ impl OAuthState {
         &self,
         token: &str,
     ) -> Result<Option<Vec<ApiTokenPrincipal>>, OAuthError> {
+        self.authenticate_for(token, &self.resource).await
+    }
+
+    async fn authenticate_for(
+        &self,
+        token: &str,
+        resource: &str,
+    ) -> Result<Option<Vec<ApiTokenPrincipal>>, OAuthError> {
         let now = TimestampMillis::now().as_millis();
         let rows = sqlx::query("SELECT g.id, g.user_id, g.workspace_id, g.project_ids, g.all_projects, g.mcp_scopes FROM oauth_tokens t JOIN oauth_grants f ON f.id = t.grant_id JOIN oauth_grants g ON g.group_id = f.group_id JOIN users u ON u.id = g.user_id JOIN memberships m ON m.user_id = g.user_id AND m.workspace_id = g.workspace_id AND m.role <> 'guest' JOIN workspaces w ON w.id = g.workspace_id WHERE t.access_hash = $1 AND t.access_expires_at > $2 AND g.revoked_at IS NULL AND g.resource = $3 AND g.scope = 'tasks:read' AND u.suspended_at IS NULL AND w.deleted_at IS NULL ORDER BY g.created_at, g.id")
-            .bind(hash(token)).bind(now).bind(&self.resource).fetch_all(self.database.pool()).await?;
+            .bind(hash(token)).bind(now).bind(resource).fetch_all(self.database.pool()).await?;
         let mut principals = Vec::new();
         for row in rows {
             let workspace_id: Id = row
@@ -148,6 +224,14 @@ impl OAuthState {
         }
         Ok((!principals.is_empty()).then_some(principals))
     }
+}
+
+#[derive(Clone)]
+struct McpFace {
+    origin: String,
+    /// `host[:port]` in lower case, as the gateway sends it in `Host`.
+    authority: String,
+    resource: String,
 }
 
 fn principal(
@@ -299,19 +383,23 @@ impl IntoResponse for OAuthError {
     }
 }
 
-async fn server_metadata(State(state): State<OAuthState>) -> Json<Value> {
+// On the MCP public origin, only the browser step (authorize, then consent) stays on the public
+// origin, where the user is signed in.
+async fn server_metadata(State(state): State<OAuthState>, headers: HeaderMap) -> Json<Value> {
+    let (issuer, _) = state.face(&headers);
     Json(
-        json!({ "issuer": state.origin, "authorization_endpoint": format!("{}/oauth/authorize", state.origin),
-        "token_endpoint": format!("{}/oauth/token", state.origin), "registration_endpoint": format!("{}/oauth/register", state.origin),
-        "revocation_endpoint": format!("{}/oauth/revoke", state.origin), "scopes_supported": SCOPES,
+        json!({ "issuer": issuer, "authorization_endpoint": format!("{}/oauth/authorize", state.origin),
+        "token_endpoint": format!("{issuer}/oauth/token"), "registration_endpoint": format!("{issuer}/oauth/register"),
+        "revocation_endpoint": format!("{issuer}/oauth/revoke"), "scopes_supported": SCOPES,
         "response_types_supported": ["code"], "grant_types_supported": ["authorization_code", "refresh_token"],
         "token_endpoint_auth_methods_supported": ["none"], "code_challenge_methods_supported": ["S256"],
         "authorization_response_iss_parameter_supported": true }),
     )
 }
-async fn resource_metadata(State(state): State<OAuthState>) -> Json<Value> {
+async fn resource_metadata(State(state): State<OAuthState>, headers: HeaderMap) -> Json<Value> {
+    let (issuer, resource) = state.face(&headers);
     Json(
-        json!({"resource": state.resource, "authorization_servers": [state.origin],
+        json!({"resource": resource, "authorization_servers": [issuer],
         "scopes_supported": SCOPES, "bearer_methods_supported": ["header"], "resource_name": "Orbit tasks, docs, chat and Drive"}),
     )
 }
@@ -506,11 +594,9 @@ async fn authorize(
     {
         return Err(OAuthError::invalid("invalid_scope"));
     }
-    if input
-        .resource
-        .as_ref()
-        .is_some_and(|resource| resource != &state.resource)
-    {
+    // Authorization always runs on the public origin; the resource picks the face the code is for.
+    let resource = input.resource.as_deref().unwrap_or(&state.resource);
+    if state.issuer_of(resource).is_none() {
         return Err(OAuthError::invalid("invalid_target"));
     }
     let redirects: Option<String> =
@@ -541,7 +627,7 @@ async fn authorize(
         .await?;
     sqlx::query("INSERT INTO oauth_requests (id, client_id, redirect_uri, state, pkce, resource, expires_at, mcp_scopes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)")
         .bind(&id).bind(&input.client_id).bind(&input.redirect_uri).bind(&input.state).bind(pkce)
-        .bind(&state.resource).bind(now + REQUEST_MILLIS).bind(input.scope.as_deref().unwrap_or(SCOPE)).execute(&mut *tx).await?;
+        .bind(resource).bind(now + REQUEST_MILLIS).bind(input.scope.as_deref().unwrap_or(SCOPE)).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(Redirect::to(&format!("{}/oauth/consent?request={id}", state.origin)).into_response())
 }
@@ -753,7 +839,10 @@ async fn approve(
             .query_pairs_mut()
             .append_pair("state", &client_state);
     }
-    callback.query_pairs_mut().append_pair("iss", &state.origin);
+    let issuer = state
+        .issuer_of(row.get("resource"))
+        .unwrap_or(&state.origin);
+    callback.query_pairs_mut().append_pair("iss", issuer);
     tx.commit().await?;
     Ok(Json(json!({"redirect_uri": callback.as_str()})))
 }
@@ -782,10 +871,12 @@ async fn token(
     }
     let input: TokenRequest =
         serde_urlencoded::from_bytes(&body).map_err(|_| OAuthError::invalid("invalid_request"))?;
+    // Each origin's token endpoint issues tokens for its own resource only.
+    let (_, resource) = state.face(&headers);
     if input
         .resource
         .as_ref()
-        .is_some_and(|resource| resource != &state.resource)
+        .is_some_and(|requested| requested != resource)
     {
         return Err(OAuthError::invalid("invalid_target"));
     }
@@ -815,7 +906,7 @@ async fn token(
             }
             let row = sqlx::query("SELECT grant_id, pkce, used_at FROM oauth_requests WHERE code_hash = $1 AND client_id = $2 AND redirect_uri = $3 AND expires_at > $4 AND resource = $5")
                 .bind(hash(&code)).bind(&input.client_id).bind(input.redirect_uri.ok_or_else(|| OAuthError::invalid("invalid_request"))?)
-                .bind(now).bind(&state.resource).fetch_optional(&mut *tx).await?.ok_or_else(|| OAuthError::invalid("invalid_grant"))?;
+                .bind(now).bind(resource).fetch_optional(&mut *tx).await?.ok_or_else(|| OAuthError::invalid("invalid_grant"))?;
             Pkce::required()
                 .verify(
                     Some(PkceValue::private(Some(row.get("pkce")))),
@@ -840,7 +931,7 @@ async fn token(
                 .refresh_token
                 .ok_or_else(|| OAuthError::invalid("invalid_request"))?;
             let row = sqlx::query("SELECT t.grant_id, t.refresh_used_at FROM oauth_tokens t JOIN oauth_grants g ON g.id = t.grant_id WHERE t.refresh_hash = $1 AND t.refresh_expires_at > $2 AND g.client_id = $3 AND g.resource = $4")
-                .bind(hash(&refresh)).bind(now).bind(&input.client_id).bind(&state.resource).fetch_optional(&mut *tx).await?.ok_or_else(|| OAuthError::invalid("invalid_grant"))?;
+                .bind(hash(&refresh)).bind(now).bind(&input.client_id).bind(resource).fetch_optional(&mut *tx).await?.ok_or_else(|| OAuthError::invalid("invalid_grant"))?;
             let grant: String = row.get("grant_id");
             if row.get::<Option<i64>, _>("refresh_used_at").is_some() {
                 revoke_grant(&mut tx, &grant, now).await?;

@@ -6,6 +6,10 @@ build: "## YYYY-MM-DD" (the deploy date), then 1-4 short "- " lines about what p
 members, not developers. Keep the 8 newest entries; the prompt shows the 5 newest.
 -->
 
+<!-- Set the deploy date (after build 16) in the heading below; Donna skips an entry without a date. -->
+## TBD
+- Connect your own agent to Orbit: members can use Codex CLI, Claude Code or another MCP client on their own computer with Orbit's public MCP address. Approve the workspaces and projects once in the browser; Settings → Agentic → Connected apps stops it.
+
 ## 2026-11-15
 - Donna sees images you send in Chat or in the Ask Donna panel (screenshots, photos): she looks at them herself, with no need to put them in Drive. She sees only images that you can open.
 - Label rules now apply to tasks that already have the label: when an owner or admin adds a rule, turns one on, maps an owner: name to a member, or turns on the owner:<name> switch, the open tasks with that label get the person at once. Done and cancelled tasks stay as they are.

@@ -16,6 +16,8 @@ use std::sync::Arc;
 use tower::ServiceExt;
 
 const ORIGIN: &str = "https://orbit.test";
+/// The MCP public origin (`ORBIT_PUBLIC_MCP_URL`) in the tests that set it.
+const MCP_ORIGIN: &str = "https://mcp.orbit.test";
 const CALLBACK: &str = "http://127.0.0.1:6274/callback";
 const VERIFIER: &str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
 struct Fixture {
@@ -29,6 +31,9 @@ struct Fixture {
 }
 impl Fixture {
     async fn new() -> Self {
+        Self::with_mcp_origin(None).await
+    }
+    async fn with_mcp_origin(mcp_origin: Option<&str>) -> Self {
         let db = TestDatabase::new().await.unwrap();
         let identity = Arc::new(IdentityRepository::new((*db).clone()));
         let now = TimestampMillis::now();
@@ -55,7 +60,8 @@ impl Fixture {
             )
             .await
             .unwrap();
-        let oauth = OAuthState::new(identity, CookieMode::secure(), ORIGIN);
+        let oauth =
+            OAuthState::new(identity, CookieMode::secure(), ORIGIN).with_mcp_origin(mcp_origin);
         let mcp = mcp_router(
             McpState::new(
                 Arc::new(ApiTokenRepository::new((*db).clone())),
@@ -108,6 +114,9 @@ impl Fixture {
         body["client_id"].as_str().unwrap().into()
     }
     async fn pending(&self, client: &str) -> String {
+        self.pending_for(client, "https://orbit.test/mcp").await
+    }
+    async fn pending_for(&self, client: &str, resource: &str) -> String {
         let challenge =
             base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(VERIFIER));
         let query = url::form_urlencoded::Serializer::new(String::new())
@@ -118,7 +127,7 @@ impl Fixture {
                 ("code_challenge", challenge.as_str()),
                 ("code_challenge_method", "S256"),
                 ("state", "state-value"),
-                ("resource", "https://orbit.test/mcp"),
+                ("resource", resource),
                 ("scope", "tasks:read"),
             ])
             .finish();
@@ -1153,4 +1162,319 @@ async fn an_approval_names_each_workspace_once_and_only_member_workspaces() {
         .await
         .unwrap();
     assert_eq!(granted, 0, "a refused approval stores nothing");
+}
+
+/// Sends a request as it arrives through the gateway of `host`, without an Origin header (an agent).
+async fn on_host(
+    f: &Fixture,
+    host: &str,
+    request: axum::http::request::Builder,
+    body: Body,
+) -> (StatusCode, Value, axum::http::HeaderMap) {
+    let response = f
+        .app
+        .clone()
+        .oneshot(request.header(header::HOST, host).body(body).unwrap())
+        .await
+        .unwrap();
+    let headers = response.headers().clone();
+    let (status, body) = decode(response).await;
+    (status, body, headers)
+}
+async fn metadata_on(f: &Fixture, host: &str, path: &str) -> Value {
+    let (status, body, _) = on_host(f, host, Request::get(path), Body::empty()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body
+}
+async fn token_on(f: &Fixture, host: &str, fields: &[(&str, &str)]) -> (StatusCode, Value) {
+    let body = url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(fields.iter().copied())
+        .finish();
+    let request = Request::post("/oauth/token")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
+    let (status, body, _) = on_host(f, host, request, Body::from(body)).await;
+    (status, body)
+}
+/// `tools/call list_projects` on `host`: the status and the WWW-Authenticate challenge.
+async fn mcp_on(f: &Fixture, host: &str, token: &str) -> (StatusCode, String) {
+    let request = Request::post("/mcp")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .header("mcp-protocol-version", "2025-11-25");
+    let body = json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_projects","arguments":{}}});
+    let (status, _, headers) = on_host(f, host, request, Body::from(body.to_string())).await;
+    let challenge = headers
+        .get(header::WWW_AUTHENTICATE)
+        .map(|value| value.to_str().unwrap().to_owned())
+        .unwrap_or_default();
+    (status, challenge)
+}
+/// Runs authorize + consent for `resource` and returns the `iss` and `code` of the callback.
+async fn approved_code(f: &Fixture, client: &str, resource: &str) -> (String, String) {
+    let id = f.pending_for(client, resource).await;
+    let (status, result) = f
+        .approve(
+            &id,
+            json!({"workspaces":[{"workspace_id":f.workspace,"project_ids":[f.project]}]}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    let callback = url::Url::parse(result["redirect_uri"].as_str().unwrap()).unwrap();
+    let pair = |name: &str| {
+        callback
+            .query_pairs()
+            .find(|(key, _)| key == name)
+            .unwrap()
+            .1
+            .to_string()
+    };
+    (pair("iss"), pair("code"))
+}
+
+#[tokio::test]
+async fn without_an_mcp_origin_its_host_is_unknown() {
+    let f = Fixture::new().await;
+    // The main host is unchanged; another host gets the main metadata and no /mcp.
+    let metadata = metadata_on(
+        &f,
+        "mcp.orbit.test",
+        "/.well-known/oauth-authorization-server",
+    )
+    .await;
+    assert_eq!(metadata["issuer"], ORIGIN);
+    assert_eq!(metadata["token_endpoint"], "https://orbit.test/oauth/token");
+    let resource = metadata_on(
+        &f,
+        "mcp.orbit.test",
+        "/.well-known/oauth-protected-resource/mcp",
+    )
+    .await;
+    assert_eq!(resource["resource"], "https://orbit.test/mcp");
+    let client = f.register().await;
+    let id = f.pending(&client).await;
+    let (status, _) = f
+        .approve(
+            &id,
+            json!({"workspaces":[{"workspace_id":f.workspace,"project_ids":[f.project]}]}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let challenge =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(VERIFIER));
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs([
+            ("client_id", client.as_str()),
+            ("response_type", "code"),
+            ("redirect_uri", CALLBACK),
+            ("code_challenge", &challenge),
+            ("code_challenge_method", "S256"),
+            ("resource", "https://mcp.orbit.test/mcp"),
+        ])
+        .finish();
+    let (status, body, _) = on_host(
+        &f,
+        "orbit.test",
+        Request::get(format!("/oauth/authorize?{query}")),
+        Body::empty(),
+    )
+    .await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("invalid_target"))
+    );
+    let code = f.code(&client).await;
+    let tokens = f.issue(&client, &code).await;
+    let access = tokens["access_token"].as_str().unwrap();
+    assert_eq!(mcp_on(&f, "orbit.test", access).await.0, StatusCode::OK);
+    assert_eq!(
+        mcp_on(&f, "mcp.orbit.test", access).await.0,
+        StatusCode::FORBIDDEN
+    );
+}
+
+#[tokio::test]
+async fn the_mcp_origin_has_its_own_issuer_and_resource_and_binds_its_tokens() {
+    let f = Fixture::with_mcp_origin(Some("https://mcp.orbit.test/")).await;
+    // Metadata: the main host is as before; the MCP host names itself, but consent stays on the main origin.
+    let main = metadata_on(&f, "orbit.test", "/.well-known/oauth-authorization-server").await;
+    assert_eq!(main["issuer"], ORIGIN);
+    assert_eq!(
+        main["registration_endpoint"],
+        "https://orbit.test/oauth/register"
+    );
+    let server = metadata_on(
+        &f,
+        "mcp.orbit.test",
+        "/.well-known/oauth-authorization-server",
+    )
+    .await;
+    assert_eq!(server["issuer"], MCP_ORIGIN);
+    assert_eq!(
+        server["authorization_endpoint"],
+        "https://orbit.test/oauth/authorize"
+    );
+    for (key, path) in [
+        ("registration_endpoint", "register"),
+        ("token_endpoint", "token"),
+        ("revocation_endpoint", "revoke"),
+    ] {
+        assert_eq!(server[key], format!("{MCP_ORIGIN}/oauth/{path}"));
+    }
+    let resource = metadata_on(
+        &f,
+        "MCP.orbit.test",
+        "/.well-known/oauth-protected-resource/mcp",
+    )
+    .await;
+    assert_eq!(resource["resource"], "https://mcp.orbit.test/mcp");
+    assert_eq!(resource["authorization_servers"], json!([MCP_ORIGIN]));
+    // The challenge points an agent at the metadata of the origin it used.
+    let (status, challenge) = mcp_on(&f, "mcp.orbit.test", "orbit-mcp-a-unknown").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(
+        challenge.contains(
+            "resource_metadata=\"https://mcp.orbit.test/.well-known/oauth-protected-resource/mcp\""
+        ),
+        "{challenge}"
+    );
+    assert!(
+        mcp_on(&f, "orbit.test", "x")
+            .await
+            .1
+            .contains("\"https://orbit.test/.well-known")
+    );
+
+    // A connection made for the MCP resource: iss is the MCP issuer, and only its token endpoint redeems the code.
+    let client = f.register().await;
+    let (iss, code) = approved_code(&f, &client, "https://mcp.orbit.test/mcp").await;
+    assert_eq!(iss, MCP_ORIGIN);
+    let redeem = |host, resource| {
+        let fields = [
+            ("grant_type", "authorization_code"),
+            ("client_id", client.as_str()),
+            ("code", code.as_str()),
+            ("redirect_uri", CALLBACK),
+            ("code_verifier", VERIFIER),
+            ("resource", resource),
+        ];
+        let f = &f;
+        async move { token_on(f, host, &fields).await }
+    };
+    let (status, body) = redeem("orbit.test", "https://mcp.orbit.test/mcp").await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("invalid_target"))
+    );
+    let (status, body) = redeem("orbit.test", "https://orbit.test/mcp").await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("invalid_grant"))
+    );
+    let (status, tokens) = redeem("mcp.orbit.test", "https://mcp.orbit.test/mcp").await;
+    assert_eq!(status, StatusCode::OK, "{tokens}");
+    let access = tokens["access_token"].as_str().unwrap();
+    assert_eq!(mcp_on(&f, "mcp.orbit.test", access).await.0, StatusCode::OK);
+    assert_eq!(
+        mcp_on(&f, "orbit.test", access).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    // Any other host is the main origin's face: this token does not work there either.
+    assert_eq!(
+        mcp_on(&f, "evil.test", access).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    // Refresh: only on the MCP origin.
+    let refresh = tokens["refresh_token"].as_str().unwrap();
+    let (status, _) = token_on(
+        &f,
+        "orbit.test",
+        &[
+            ("grant_type", "refresh_token"),
+            ("client_id", &client),
+            ("refresh_token", refresh),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, refreshed) = token_on(
+        &f,
+        "mcp.orbit.test",
+        &[
+            ("grant_type", "refresh_token"),
+            ("client_id", &client),
+            ("refresh_token", refresh),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{refreshed}");
+
+    // A connection on the main resource (made before the setting) keeps working there, and only there.
+    let (iss, code) = approved_code(&f, &client, "https://orbit.test/mcp").await;
+    assert_eq!(iss, ORIGIN);
+    let old = f.issue(&client, &code).await;
+    let old = old["access_token"].as_str().unwrap();
+    assert_eq!(mcp_on(&f, "orbit.test", old).await.0, StatusCode::OK);
+    assert_eq!(
+        mcp_on(&f, "mcp.orbit.test", old).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    // And /mcp refuses an unknown host even with a good token (DNS rebinding guard).
+    assert_eq!(mcp_on(&f, "evil.test", old).await.0, StatusCode::FORBIDDEN);
+
+    // API tokens stay behind the login gateway.
+    let api = ApiTokenRepository::new((*f.db).clone())
+        .create(
+            f.workspace,
+            f.user,
+            "Script".into(),
+            vec![f.project],
+            &[orbit_server::repositories::api_tokens::ApiTokenScope::TasksRead],
+            false,
+            None,
+            "test",
+            TimestampMillis::now(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(mcp_on(&f, "orbit.test", &api.token).await.0, StatusCode::OK);
+    assert_eq!(
+        mcp_on(&f, "mcp.orbit.test", &api.token).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+
+    // A guest cannot connect: the consent page offers no workspace, and an approval is refused.
+    let guest = Id::new_v7().to_string();
+    let now = TimestampMillis::now().as_millis();
+    sqlx::query("INSERT INTO users (id, email, normalized_email, display_name, password_hash, created_at, updated_at) VALUES ($1, 'guest@example.com', 'guest@example.com', 'Guest', 'unused', $2, $3)")
+        .bind(&guest).bind(now).bind(now).execute(f.db.pool()).await.unwrap();
+    sqlx::query("INSERT INTO memberships (id, workspace_id, user_id, role, version, created_at, updated_at) VALUES ($1, $2, $3, 'guest', 0, $4, $5)")
+        .bind(Id::new_v7().to_string()).bind(f.workspace.to_string()).bind(&guest).bind(now).bind(now).execute(f.db.pool()).await.unwrap();
+    let session = "guest-session-token";
+    sqlx::query("INSERT INTO sessions (id, token_hash, user_id, created_at, last_activity_at, idle_expires_at, absolute_expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7)")
+        .bind(Id::new_v7().to_string()).bind(Sha256::digest(session).to_vec()).bind(&guest).bind(now).bind(now).bind(now + 60_000).bind(now + 60_000)
+        .execute(f.db.pool()).await.unwrap();
+    let as_guest = |method: &str, path: &str| {
+        Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::ORIGIN, ORIGIN)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::COOKIE, format!("__Host-orbit_session={session}"))
+    };
+    let id = f.pending_for(&client, "https://mcp.orbit.test/mcp").await;
+    let path = format!("/api/v1/oauth/consent/{id}");
+    let (status, consent, _) =
+        on_host(&f, "orbit.test", as_guest("GET", &path), Body::empty()).await;
+    assert_eq!(status, StatusCode::OK, "{consent}");
+    assert_eq!(consent["workspaces"], json!([]));
+    let approval = json!({"approved": true, "csrf_token": consent["csrf_token"], "workspaces": [{"workspace_id": f.workspace, "all_projects": true}]});
+    let (status, _, _) = on_host(
+        &f,
+        "orbit.test",
+        as_guest("POST", &path),
+        Body::from(approval.to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }

@@ -89,15 +89,23 @@ impl McpState {
 
 pub fn router(state: McpState, public_origin: &str) -> Router {
     // Stateless requests prevent session reuse from carrying another user's identity.
-    let authority = public_origin
-        .split_once("://")
-        .map_or(public_origin, |(_, rest)| rest)
-        .trim_end_matches('/');
+    // With an MCP public origin (`ORBIT_PUBLIC_MCP_URL`), its host is allowed too.
+    let origins = state.oauth.as_ref().map_or_else(
+        || vec![public_origin],
+        crate::oauth::OAuthState::mcp_origins,
+    );
+    let authority = |origin: &str| {
+        origin
+            .split_once("://")
+            .map_or(origin, |(_, rest)| rest)
+            .trim_end_matches('/')
+            .to_owned()
+    };
     let config = StreamableHttpServerConfig::default()
         .with_legacy_session_mode(false)
         .with_json_response(true)
-        .with_allowed_hosts([authority])
-        .with_allowed_origins([public_origin])
+        .with_allowed_hosts(origins.iter().map(|origin| authority(origin)))
+        .with_allowed_origins(origins.iter().map(|origin| (*origin).to_owned()))
         .enforce_origin_validation()
         .with_max_request_body_bytes(64 * 1024);
     let api = state.api.clone().with_web_origin(public_origin);
@@ -126,23 +134,31 @@ async fn authenticate(State(state): State<McpState>, mut request: Request, next:
         .filter(|(scheme, token)| scheme.eq_ignore_ascii_case("bearer") && !token.is_empty())
         .map(|(_, token)| token);
     if headers.next().is_some() {
-        return unauthorized(&state);
+        return unauthorized(&state, request.headers());
     }
     let Some(token) = token else {
-        return unauthorized(&state);
+        return unauthorized(&state, request.headers());
     };
     if token.starts_with("orbit-mcp-a-") {
         let Some(oauth) = &state.oauth else {
-            return unauthorized(&state);
+            return unauthorized(&state, request.headers());
         };
-        return match oauth.authenticate(token).await {
+        return match oauth.authenticate_request(token, request.headers()).await {
             Ok(Some(principals)) => {
                 request.extensions_mut().insert(Workspaces(principals));
                 next.run(request).await
             }
-            Ok(None) => unauthorized(&state),
+            Ok(None) => unauthorized(&state, request.headers()),
             Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
         };
+    }
+    // The MCP public origin is for OAuth connections only: API tokens stay behind the login gateway.
+    if state
+        .oauth
+        .as_ref()
+        .is_some_and(|oauth| oauth.on_mcp_origin(request.headers()))
+    {
+        return unauthorized(&state, request.headers());
     }
     match state
         .tokens
@@ -154,19 +170,19 @@ async fn authenticate(State(state): State<McpState>, mut request: Request, next:
             next.run(request).await
         }
         Err(ApiTokenError::Forbidden) => StatusCode::FORBIDDEN.into_response(),
-        Err(ApiTokenError::NotFound) => unauthorized(&state),
+        Err(ApiTokenError::NotFound) => unauthorized(&state, request.headers()),
         Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
 }
 
-fn unauthorized(state: &McpState) -> Response {
+fn unauthorized(state: &McpState, headers: &axum::http::HeaderMap) -> Response {
     (
         StatusCode::UNAUTHORIZED,
         [(
             header::WWW_AUTHENTICATE,
             state.oauth.as_ref().map_or_else(
                 || "Bearer realm=\"orbit-mcp\"".to_owned(),
-                crate::oauth::OAuthState::challenge,
+                |oauth| oauth.challenge(headers),
             ),
         )],
     )

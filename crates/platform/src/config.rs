@@ -15,6 +15,7 @@ const HTTP_PORT_ENV: &str = "ORBIT_PORT";
 const HTTP_BIND_ENV: &str = "ORBIT_BIND";
 const HTTP_PUBLIC_ORIGIN_ENV: &str = "ORBIT_PUBLIC_ORIGIN";
 const HTTP_PUBLIC_HOOKS_URL_ENV: &str = "ORBIT_PUBLIC_HOOKS_URL";
+const HTTP_PUBLIC_MCP_URL_ENV: &str = "ORBIT_PUBLIC_MCP_URL";
 const HTTP_TRUSTED_PROXIES_ENV: &str = "ORBIT_TRUSTED_PROXIES";
 const HTTP_SHUTDOWN_DELAY_ENV: &str = "ORBIT_SHUTDOWN_DELAY_SECONDS";
 const ENVIRONMENT_ENV: &str = "ORBIT_ENV";
@@ -107,6 +108,9 @@ pub struct HttpConfig {
     /// The origin of the chat webhook URLs (incoming webhooks and `response_url`), for a gateway
     /// that lets only `/api/v1/hooks/` through. `None`: `public_origin`.
     pub public_hooks_url: Option<String>,
+    /// A second origin for `/mcp` and its OAuth endpoints, for a gateway that lets only those
+    /// through (agents outside a login gateway). Consent stays on `public_origin`. `None`: off.
+    pub public_mcp_url: Option<String>,
     pub trusted_proxies: Vec<IpNet>,
     /// How long the server still serves after a stop signal while `/health/ready` reports 503,
     /// so a load balancer takes it out first.
@@ -120,6 +124,7 @@ impl Default for HttpConfig {
             port: 8080,
             public_origin: "http://127.0.0.1:8080".to_owned(),
             public_hooks_url: None,
+            public_mcp_url: None,
             trusted_proxies: Vec::new(),
             shutdown_delay_seconds: 0,
         }
@@ -134,6 +139,14 @@ impl HttpConfig {
             .as_deref()
             .unwrap_or(&self.public_origin)
             .trim_end_matches('/')
+    }
+
+    /// The MCP public origin without a trailing slash, when it is set.
+    #[must_use]
+    pub fn mcp_origin(&self) -> Option<&str> {
+        self.public_mcp_url
+            .as_deref()
+            .map(|origin| origin.trim_end_matches('/'))
     }
 
     #[must_use]
@@ -719,6 +732,7 @@ impl Config {
                 HTTP_PUBLIC_HOOKS_URL_ENV,
                 self.http.public_hooks_url.as_ref(),
             ),
+            (HTTP_PUBLIC_MCP_URL_ENV, self.http.public_mcp_url.as_ref()),
         ] {
             if value.is_some_and(|value| !valid_origin(value)) {
                 return Err(ConfigError::InvalidSetting {
@@ -846,6 +860,9 @@ fn apply_environment(
             config.http.public_origin = value.clone();
         } else if key == HTTP_PUBLIC_HOOKS_URL_ENV {
             config.http.public_hooks_url =
+                Some(value.trim().to_owned()).filter(|value| !value.is_empty());
+        } else if key == HTTP_PUBLIC_MCP_URL_ENV {
+            config.http.public_mcp_url =
                 Some(value.trim().to_owned()).filter(|value| !value.is_empty());
         } else if key == HTTP_TRUSTED_PROXIES_ENV {
             config.http.trusted_proxies = value
@@ -1032,6 +1049,33 @@ mod tests {
         assert_eq!(config.http.hooks_origin(), "https://orbit.example");
         let config = production(&[("ORBIT_PUBLIC_HOOKS_URL", "https://hooks.example/")]);
         assert_eq!(config.http.hooks_origin(), "https://hooks.example");
+    }
+
+    #[test]
+    fn mcp_url_is_optional_and_must_be_an_origin() {
+        assert_eq!(production(&[]).http.mcp_origin(), None);
+        assert_eq!(
+            production(&[("ORBIT_PUBLIC_MCP_URL", "")])
+                .http
+                .mcp_origin(),
+            None
+        );
+        let config = production(&[("ORBIT_PUBLIC_MCP_URL", "https://mcp.example/")]);
+        assert_eq!(config.http.mcp_origin(), Some("https://mcp.example"));
+        let env = [
+            ("ORBIT_ENV", "development"),
+            ("ORBIT_PUBLIC_MCP_URL", "https://mcp.example/mcp"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+        .collect::<BTreeMap<_, _>>();
+        assert!(matches!(
+            Config::from_environment(env),
+            Err(ConfigError::InvalidSetting {
+                key: "ORBIT_PUBLIC_MCP_URL",
+                ..
+            })
+        ));
     }
 
     #[test]

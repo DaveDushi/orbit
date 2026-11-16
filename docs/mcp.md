@@ -6,6 +6,9 @@ Streamable HTTP in the existing server. No separate process is needed.
 In Orbit, open **Account settings → Agentic** to copy the endpoint and the setup
 command for each client below.
 
+To connect an agent from your own computer to an Orbit that is behind a login gateway, see
+[Connect your agent to Orbit](connect-your-agent.md) (`ORBIT_PUBLIC_MCP_URL`).
+
 ## Client setup
 
 ### Claude
