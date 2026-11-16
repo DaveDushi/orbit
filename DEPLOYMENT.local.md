@@ -7,15 +7,16 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 8cd111fd9bc0e811e277a31e71df3298f75ccab6
-  (iPhone badge hotfix: badge-only APNs pushes; schema 20261114000500, 118 rows; November 15, 2026).
+- Source: DaveDushi/orbit, `main` at f9741078fb7e779658d58c1956d5ef8cea5267a9
+  (build 16 server part: voice input, Donna trash, GFM tables, webhook read, iPhone push; schema 20261115105242, 119 rows;
+  November 16, 2026).
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
   f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:8cd111f`); fork commits have no published upstream image.
-- Image ID: sha256:5ab2969fcc8ce004e038edbe45f407f3ea8fcf3a9c3cb568207724a617618ab6
-- Team agent sidecar code (`/opt/orbit-agent`): commit 28c5f2d (the same `apps/agent` as 8cd111f).
+  (`orbit:f974107`); fork commits have no published upstream image.
+- Image ID: sha256:6f01932eb0a31fb1e9e950e719af31f143c609a3b00f6c7b8fe207731cb4a635
+- Team agent sidecar code (`/opt/orbit-agent`): commit f974107.
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): on since November 15, 2026, 12:07 UTC (set by Ops, outside a
   deploy): `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID`, `ORBIT_APNS_TOPIC` and `ORBIT_APNS_SANDBOX`
   are in `/etc/orbit/orbit.env`; the journal shows `iPhone push (APNs) is on` (topic `com.easytomanage.orbit`, sandbox
@@ -262,6 +263,101 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 16, 2026 upgrade: build 16 server part (schema 20261115105242, 119 rows; 1 migration; 8 pages repaired)
+
+`main` from `c62e383c` to `f9741078` (local, not pushed): seven `--no-ff` merges, in this order (worktrees under
+`/root/jean/orbit/<name>`): `iphone-audit` (`d46302e3`, 9 commits: iPhones get the push also while the user is active
+in Orbit and a tap opens it in its workspace, unregister with the token in the body (`DELETE /api/v1/push/devices`),
+push log lines, integration messages and emoji avatars, percent-sign share fix, token only to the Orbit server);
+`iphone-b15-fixes` (`f0334c97`; its `490290fa` badge fix is already on main as `8cd111fd`: main's version kept in the 4
+conflicted files (`push/apns.rs`, `push/mod.rs`, `tests/push_devices_api.rs`, `docs/operations.md`, which only
+`490290fa` changed), so only the `KeyboardView` commits came in); `iphone-voice-input` (`e6552932`, ships with the next
+iPhone build); `voice-input-desktop` (`442c568d`, the web mic ships now; the Mac app later); `docs-tables` (`ddd3bf79`,
+GFM tables and links on Docs pages, `orbit pages repair-markdown`); `donna-delete` (`a6afeea9`, `0caa95a2`:
+`move_to_trash` for pages and tasks, `drive_trash` takes a list; `POST …/agent-tools/trash`; no migration);
+`webhook-read` (`70276a1f`: "Can read this channel", `PUT …/webhooks/{id}/read`). Conflicts: `prompt.ts` `aboutOrbit()`
+twice (donna-delete's trash text + docs-tables' "GFM tables and links"; webhook-read's two-way bots line + the iPhone voice
+line), `sdk.gen.ts` imports (union; `just api` regenerated equal). `f9741078`: `openapi_contract` 393 operations (each
+side counted 392). What's new `2026-11-16` (4 lines: voice input, Donna trash + tables, webhook read, iPhone push); the
+webhook line moved there from `2026-11-15`; the oldest entry (`2026-11-07`) dropped to keep 8.
+
+Checks on the merge (main checkout, after `bun install` and agent `npm ci`): web `bun --bun run build` (`tsc -b` + vite),
+mobile `tsc`, `packages/api` `tsc`, agent `tsc` and 101 tests (11 skipped). SQLite and Postgres: `agent_drive` 7,
+`agent_profiles` 9, `agent_trash` 3, `chat_api` 40, `chat_apps` 6, `doc_markdown_writes` 9, `openapi_contract` 19,
+`push_api` 6, `push_devices_api` 6; lib `push` 10, `agent::` 56: all pass. Scripts and logs: `/root/ops/build16/`.
+
+Deploy id `20261116T112128Z-2200587`. `orbit:f974107` (image
+`sha256:6f01932eb0a31fb1e9e950e719af31f143c609a3b00f6c7b8fe207731cb4a635`, label `f9741078…`, about 31 min);
+`deploy/smoke.sh` and `orbit config check` (production env) passed. Before the switch, the release binary's embedded app
+on a seeded instance in `unshare -n` (agent on, no sidecar, signed in as owner): `/`, `/tasks`, `/docs`, `/drive`,
+`/chat`, `/activity`, `/admin`, `/settings/agentic/agents`, `/settings/agentic/skills` render; the composer has the mic
+button; a webhook made there reads 404 → "Can read" on → 200 (listed `can_read` true, `messages_url` set) → off → 404,
+then deleted; 0 page or console errors (`pre/bundle.log`, `pre-chat-mic.png`). Migration dry run (release binary on a
+hot copy, and in the switch on a copy of the stopped database): 1 applied, a second run 0, 119 rows, the 118 old
+checksums, counts and user names unchanged (9 users, 124 tasks, 6 projects, 1192 chat messages, 62 pages),
+`chat_webhooks.can_read` added (3 webhooks, all off), quick-check ok, 0 foreign-key rows; on the same copy
+`pages repair-markdown`: dry run 8, run 8 (8 new page versions), a second run 0. Rollback test: the old binary refuses
+("schema version 20261115105242 is newer"), `rollback-schema.sql` (drop the column, delete the version row) brings
+`sqlite_master` back equal to the source, counts and checksums equal, the old binary applies 0, the new one 1 again.
+
+Switch: stopped both services at 12:28:07 UTC; snapshot `01a1e454-395d-72d4-8158-085a4cb865d6` with
+`/usr/local/bin/orbit-8cd111f`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-f974107.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-f974107.tgz`; old sidecar code `/opt/orbit-agent.before-f974107`; new
+sidecar `src` (`package*.json` unchanged); env unchanged. Binary installed (`/usr/local/bin/orbit-f974107` too), then,
+Orbit still stopped, `orbit pages repair-markdown` (it migrates first): dry run 8, run **8 pages repaired** (Product
+Pricing Template, Studio Product & Follow-up Tracker, Notion Import Cleanup — November 10, 2026, Wellrox Articles, Draft —
+How to Make Room for Movement on a Busy Day, Resistance Bands, Logistics & Inventory, Sales, Pricing & Listings), 0
+skipped, a second run 0. `orbit` ready 12:28:30, then `orbit-agent` (23 s down). `vm-health.conf` (old copy
+`.before-f974107`): `PROD_TAG=f974107`, `ROLLBACK_TAG=8cd111f`, `ROLLBACK_BACKUP=01a1e454-395d-72d4-8158-085a4cb865d6`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) and `/health/live` 200;
+`/orbit-build.json` revision `f9741078…`; schema 20261115105242 (119 rows), live quick-check ok, 0 foreign-key rows;
+`iPhone push (APNs) is on` in the journal; 0 error lines after the start (only the known "allowed origin without a port"
+WARN and Node's ExperimentalWarning). New routes without a session (before → after): `PUT …/webhooks/{id}/read` 404 →
+401, `DELETE /api/v1/push/devices` 405 → 401, `POST …/agent-tools/trash` 404 → 422 (an unknown agent-tools path stays
+404). Sidecar `/health` ok (`mock: false`, `sandbox: true`), `src` equal to `main`, the deployed `prompt.ts` names
+`move_to_trash`, GFM tables and "Can read this channel". Built bundle on production as David Dusi (temporary v7 session,
+`ui-check.ts`, all API writes blocked; only the page-visit POST was tried and blocked): `/`, `/chat`, `/tasks`, `/docs`,
+`/drive` render signed in, the chat composer has the mic button, the repaired "Product Pricing Template" shows its 2
+tables, `GET …/webhooks` of #orbit-updates 200 with `can_read` false, `auth/me` 200, 0 console or page errors.
+Screenshots `/root/.local/share/com.jean.desktop/pasted-images/build16/prod-{home,chat,repaired-page}.png` (pre-switch:
+`pre-chat-mic.png`). `ORBIT_VERIFY_SPA=1 verify-production.sh` passed (session logged out, the row deleted after; token
+file, TLS hop and its pem removed). `vm-health` OK except nginx (connection-refused lines of the switch window and of
+the two crashes below; 0 5xx), docker (another worktree's `donna-delete-s3` container) and oom (2 gvisor kills of other
+work this morning). **Not** verified on production: real voice input (needs a person's microphone), Donna moving items to
+the trash in a real model run (a write), a webhook read with a real secret, an iPhone push while active (needs a look at
+the phone).
+
+**Open (found during this deploy, not caused by it):** Orbit stopped and restarted at 10:25, 12:10 and 12:21 UTC
+(8cd111f) with `background service failed: … decoding column "actor_user_id": expected TEXT, got Null` in
+`PushService::push_inbox` (`apps/server/src/push/mod.rs`, `row.get::<String, _>("actor_user_id")`): a `task_commented`
+notification with no actor, made by the GitHub comment sync (comment author service account, `github_author_login`
+DaveDushi). The rows are marked pushed first, so there is no loop, but each such comment costs a restart (about 6 s
+down). f974107 has the same code. Fix: read it as `Option<String>` (as the `icon` line below it does).
+
+Rollback to `8cd111f`. Way 1 keeps the work done after the switch, but loses the "Can read this channel" switches;
+the 8 repaired pages stay repaired (the old binary reads them; their old versions are in the page history).
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit sqlite3 /var/lib/orbit/orbit.sqlite < /root/ops/build16/rollback-schema.sql
+sudo install -m 755 /usr/local/bin/orbit-8cd111f /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-f974107 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/build16/rollback.sh, which also keeps a copy of the database first)
+# rollback-schema.sql: ALTER TABLE chat_webhooks DROP COLUMN can_read, delete the version row
+# Way 2, only for a data problem (work after 12:28 UTC is lost), Orbit stopped: /usr/local/bin/orbit-8cd111f backup verify +
+#   backup restore 01a1e454-395d-72d4-8158-085a4cb865d6 (as user orbit, with /etc/orbit/orbit.env), then the binary and sidecar lines above
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-f974107.tgz
+# Plain copy of the database before the switch: /var/backups/orbit/pre-migration/orbit-before-f974107.sqlite
+```
+
+After this rollback, set `PROD_TAG=8cd111f`, `ROLLBACK_TAG=28c5f2d`,
+`ROLLBACK_BACKUP=01a1e010-342a-70a0-b5ba-f7f912a244cd` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-f974107`).
 
 ### November 15, 2026 hotfix: iPhone icon badge with badge-only APNs pushes (no migration)
 
