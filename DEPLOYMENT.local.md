@@ -7,8 +7,8 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at d8d3eb4135f4b3146f38909fa38f9195ad1f25c0
-  (Donna prompt dedup, rmcp 3.6.0, MCP public origin; schema 20261115105242, 119 rows; November 16, 2026).
+- Source: DaveDushi/orbit, `main` at 4ba4e2efa6e098ec534f813f99a5bbd730548d47
+  (iPhone push with the agent's answer, APNs id logged; schema 20261115105242, 119 rows; November 16, 2026).
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
   f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
@@ -18,9 +18,9 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   MCP routes through the hooks gateway (`/etc/orbit-hooks-gateway/nginx.conf`, proposal `/tmp/mcpo/gateway/proposal.diff`).
   Binaries before d8d3eb4 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-d8d3eb4`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:d8d3eb4`); fork commits have no published upstream image.
-- Image ID: sha256:1e986ef24d2d59adfd0972c0df4b47f91110934e3c9fe0d99826a2749c335d9a
-- Team agent sidecar code (`/opt/orbit-agent`): commit d8d3eb4.
+  (`orbit:4ba4e2e`); fork commits have no published upstream image.
+- Image ID: sha256:35117e47e985986bbadbfb49f7e199074fefde461d12d7ab57c450a5e4f541d9
+- Team agent sidecar code (`/opt/orbit-agent`): commit 4ba4e2e.
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): on since November 15, 2026, 12:07 UTC (set by Ops, outside a
   deploy): `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID`, `ORBIT_APNS_TOPIC` and `ORBIT_APNS_SANDBOX`
   are in `/etc/orbit/orbit.env`; the journal shows `iPhone push (APNs) is on` (topic `com.easytomanage.orbit`, sandbox
@@ -267,6 +267,58 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 16, 2026 upgrade: iPhone push with the agent's answer (no migration)
+
+`main` from `298840ef` to `4ba4e2ef` (local, not pushed): `--no-ff` merge `c674f683` of `iphone-push-latency`
+(`201e9669` on `05348027`): the agent's "⏳ Working on it…" post is `silent` (no push), and the answer edit (and a task
+run's done line) sends `notify`, so the push comes with the answer. APNs logs `APNs took the iPhone push` / `APNs refused
+the iPhone push` with the `apns_id` and `alert`. No conflicts (`agent.ts`, `prompt.ts` auto-merged; `aboutOrbit()` keeps
+main's iPhone line plus the new sentence). Then `4ba4e2ef`: what's new 2026-11-16 (the iPhone line of today's entry, as
+the entry has 4 lines). A new sidecar on an older server gets 422 on `silent`/`notify`: server and sidecar switch together.
+
+Checks: `agent_api` 22 and `push_devices_api` 7 on SQLite and on Postgres (0 warnings); agent `tsc --noEmit` and
+`npm test` on Node 24 (103 pass, 11 skipped), `prompt.test.ts` again after the what's-new line (5 pass). Logs:
+`/root/ops/iphone-push/`.
+
+Deploy id `20261116T175933Z-2323610`. `orbit:4ba4e2e` (image
+`sha256:35117e47e985986bbadbfb49f7e199074fefde461d12d7ab57c450a5e4f541d9`, release compile 34.5 min);
+`deploy/smoke.sh` and `orbit config check` passed. No-migration check (hot copy, and in the switch on a copy of the
+stopped database): 0 applied, schema 20261115105242 (119 rows), counts, names and checksums unchanged, quick-check ok, 0
+foreign-key rows.
+
+Switch: stopped both services at 18:56:15 UTC; snapshot `01a1e5b7-933d-76bd-958f-622b84d25183` with
+`/usr/local/bin/orbit-d8d3eb4`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-4ba4e2e.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-4ba4e2e.tgz`; sidecar code copied (old `/opt/orbit-agent.before-4ba4e2e`);
+no env change. `orbit` ready 18:56:31, then `orbit-agent` (16 s down). `vm-health.conf` (old copy `.before-4ba4e2e`):
+`PROD_TAG=4ba4e2e`, `ROLLBACK_TAG=d8d3eb4`, `ROLLBACK_BACKUP=01a1e5b7-933d-76bd-958f-622b84d25183`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) local and on
+`https://orbit-app.easytomanage.com/health/ready`, `/health/live` 200; `/orbit-build.json` revision `4ba4e2ef…`. Donna
+test (temporary session for David Dusi, logged out after, 204, session revoked): one question in his DM with Donna
+(Wellrox) at 18:57:17; the answer "2 + 2 = 4." came as the edit at 18:57:21. Journal: at 18:57:17 only a badge push
+(`alert: false`, David's own send), at 18:57:21 `APNs took the iPhone push` (`alert: true`, apns-id
+`A6A7F40B-C73C-171D-EDED-6A208A746B8A`) and `push sent` (1 browser, 1 iPhone). Sidecar journal empty (no 422).
+`vm-health` OK except nginx (54 connection-refused lines of the switch at 18:56; 0 5xx) and the OOM WARN (2 kills of the
+`sandboxspike.slice` test at 10:47 and 11:01, before this deploy).
+
+Rollback to `d8d3eb4` (no schema change, no env change, so no data is lost):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo rm -rf /opt/orbit-agent/src && sudo cp -a /opt/orbit-agent.before-4ba4e2e/src /opt/orbit-agent/src
+sudo install -m 755 /usr/local/bin/orbit-d8d3eb4 /usr/local/bin/orbit
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/iphone-push/rollback.sh)
+# Way 2, only for a data problem (work after 18:56 UTC is lost), Orbit stopped: /usr/local/bin/orbit-d8d3eb4 backup verify +
+#   backup restore 01a1e5b7-933d-76bd-958f-622b84d25183 (as user orbit), then the lines above
+```
+
+After this rollback, set `PROD_TAG=d8d3eb4`, `ROLLBACK_TAG=3acc586`,
+`ROLLBACK_BACKUP=01a1e57a-7e8d-74d2-98b2-9e3de6c53164` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-4ba4e2e`).
 
 ### November 16, 2026 upgrade: Donna prompt dedup, rmcp 3.6.0 and the MCP public origin (no migration)
 
