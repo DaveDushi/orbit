@@ -7,16 +7,15 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at f9741078fb7e779658d58c1956d5ef8cea5267a9
-  (build 16 server part: voice input, Donna trash, GFM tables, webhook read, iPhone push; schema 20261115105242, 119 rows;
-  November 16, 2026).
+- Source: DaveDushi/orbit, `main` at dc59487c01526ef7ad653f58865719d7b76f2245
+  (push inbox NULL actor hotfix on build 16; schema 20261115105242, 119 rows; November 16, 2026).
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
   f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:f974107`); fork commits have no published upstream image.
-- Image ID: sha256:6f01932eb0a31fb1e9e950e719af31f143c609a3b00f6c7b8fe207731cb4a635
-- Team agent sidecar code (`/opt/orbit-agent`): commit f974107.
+  (`orbit:dc59487`); fork commits have no published upstream image.
+- Image ID: sha256:9f4eeffa525dd4584d447ca8c1e9cf97c11e660e2e64b7f1e798501c5a4e9aa4
+- Team agent sidecar code (`/opt/orbit-agent`): commit f974107 (the same `apps/agent` as dc59487).
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): on since November 15, 2026, 12:07 UTC (set by Ops, outside a
   deploy): `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID`, `ORBIT_APNS_TOPIC` and `ORBIT_APNS_SANDBOX`
   are in `/etc/orbit/orbit.env`; the journal shows `iPhone push (APNs) is on` (topic `com.easytomanage.orbit`, sandbox
@@ -263,6 +262,58 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 16, 2026 hotfix: push inbox NULL actor panic (no migration)
+
+`main` from `93ea7006` to `dc59487c` (local, not pushed): `--no-ff` merge of `fix-null-actor-panic` (`7f08b421`,
+worktree `/root/jean/orbit/fix-null-actor-panic`, based on `c62e383c`), no conflicts with build 16. `push_inbox`
+reads `actor_user_id` as `Option` (a GitHub-synced comment has no member actor); new `app::unless_panic` logs a
+panicking round and keeps the push inbox, scheduler and routines loops alive (before, a panic stopped the whole
+server). No migration, no new env key, `apps/agent` unchanged, no what's-new line (a bug fix).
+
+Checks on the merge (main checkout): `push_api` 6, `push_devices_api` 7 (with the new GitHub-author test), lib `push`
+10, lib `app::tests` 5, on SQLite and Postgres: all pass. Scripts and logs: `/root/ops/null-actor-hotfix/`.
+
+Deploy id `20261116T123445Z-2223546`. `orbit:dc59487` (image
+`sha256:9f4eeffa525dd4584d447ca8c1e9cf97c11e660e2e64b7f1e798501c5a4e9aa4`, label `dc59487c…`, about 45 min with the
+lock wait); `deploy/smoke.sh` and `orbit config check` (production env) passed. No-migration check (release binary on
+a hot copy, and in the switch on a copy of the stopped database): 0 applied, schema 20261115105242 (119 rows), counts,
+names and checksums unchanged, quick-check ok, 0 foreign-key rows.
+
+Switch: stopped both services at 13:29:02 UTC; snapshot `01a1e48b-ff0e-7656-9d3a-514114f7cf9e` with
+`/usr/local/bin/orbit-f974107`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-dc59487.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-dc59487.tgz`; sidecar code unchanged; env unchanged. Binary installed
+(`/usr/local/bin/orbit-dc59487` too), `orbit` ready 13:29:13, then `orbit-agent` (11 s down). `vm-health.conf` (old
+copy `.before-dc59487`): `PROD_TAG=dc59487`, `ROLLBACK_TAG=f974107`,
+`ROLLBACK_BACKUP=01a1e48b-ff0e-7656-9d3a-514114f7cf9e`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) and `/health/live` 200;
+`/orbit-build.json` revision `dc59487c…`; `iPhone push (APNs) is on` in the journal; only the known "allowed origin
+without a port" WARN; 0 unpushed notifications (the push inbox pass runs). f974107 crashed a 5th time at 12:54:03
+(GitHub comment notification `01a1e46b…`, before the switch). `vm-health` OK except nginx (connection-refused lines of
+the 12:31 and 12:54 crashes and the switch; 0 5xx), oom (2 older kills of other work) and git-owner (given back to
+exedev). **Not** verified on production: a real GitHub-author notification passing the push without a panic (none came
+in the 20 min after the switch, up to 13:49 UTC, 0 restarts); the tests cover it on SQLite and Postgres.
+
+Rollback to `f974107` (no schema change, so no data is lost; the sidecar code did not change). It brings the crash
+back.
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-f974107 /usr/local/bin/orbit
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/null-actor-hotfix/rollback.sh)
+# Way 2, only for a data problem (work after 13:29 UTC is lost), Orbit stopped: /usr/local/bin/orbit-f974107 backup verify +
+#   backup restore 01a1e48b-ff0e-7656-9d3a-514114f7cf9e (as user orbit, with /etc/orbit/orbit.env), then the lines above
+# Sidecar data, only if needed: sudo rm -rf /var/lib/orbit-agent && sudo tar -C /var/lib -xzf /var/backups/orbit-agent/orbit-agent-before-dc59487.tgz
+# Plain copy of the database before the switch: /var/backups/orbit/pre-migration/orbit-before-dc59487.sqlite
+```
+
+After this rollback, set `PROD_TAG=f974107`, `ROLLBACK_TAG=8cd111f`,
+`ROLLBACK_BACKUP=01a1e454-395d-72d4-8158-085a4cb865d6` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-dc59487`).
 
 ### November 16, 2026 upgrade: build 16 server part (schema 20261115105242, 119 rows; 1 migration; 8 pages repaired)
 
