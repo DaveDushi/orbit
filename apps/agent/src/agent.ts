@@ -647,6 +647,8 @@ export class Agent {
 			body: "⏳ Working on it…",
 			nonce: `agent:${input.message_id}`,
 			agentUserId: state.agentUserId ?? null,
+			// The push goes with the answer (`#finishRun`), not when the run starts.
+			silent: true,
 		});
 		await this.#rememberPayer(conversation.id, driverId);
 		await conversation.commit(async (tx) => {
@@ -764,8 +766,8 @@ export class Agent {
 		const onTask = task?.runId === run.inputId;
 		// Task comments show names: `<@id>` mentions are chat's.
 		const comment = async (body: string) => (task ? this.#taskComment(task.runId, tokensToNames(body, await this.peopleOf(state.workspaceId))) : undefined);
-		const edit = (body: string, blocks?: unknown[]) =>
-			onTask ? comment(body) : run.progressMessageId ? this.#orbit.editMessage(run.progressMessageId, state.workspaceId, run.title ? `${run.title}\n\n${body}` : body, blocks, agentUserId) : Promise.resolve();
+		const edit = (body: string, blocks?: unknown[], notify = false) =>
+			onTask ? comment(body) : run.progressMessageId ? this.#orbit.editMessage(run.progressMessageId, state.workspaceId, run.title ? `${run.title}\n\n${body}` : body, blocks, agentUserId, notify) : Promise.resolve();
 		const progress = new Progress(edit);
 		const events = await watchEvents(this.#harness, conversationId, context);
 		events.start(async (batch) => progress.apply(batch));
@@ -785,24 +787,27 @@ export class Agent {
 		const card = answer.card;
 		const [first, ...rest] = splitBody(body);
 		const stopped = after.taskRun?.stopped;
+		// The answer notifies (its "Working on it" message did not). A run that waits for an answer notified with its
+		// question already.
+		const notify = !after.waitingFor;
 		if (onTask && task) {
 			await comment(stopped ? `⏹ Stopped: ${stopped}.` : body);
 			// The DM header says where the result is; while the run waits for an answer, it stays as it is.
 			if (run.progressMessageId && !after.waitingFor) {
-				await this.#orbit.editMessage(run.progressMessageId, state.workspaceId, taskDoneLine({ ...task, stopped }, this.#config.publicUrl), undefined, agentUserId).catch((error: unknown) => console.warn("agent: editing the task run's message failed", String(error)));
+				await this.#orbit.editMessage(run.progressMessageId, state.workspaceId, taskDoneLine({ ...task, stopped }, this.#config.publicUrl), undefined, agentUserId, true).catch((error: unknown) => console.warn("agent: editing the task run's message failed", String(error)));
 			}
 		} else if (card === "invalid") {
-			await edit(`${first}\n\n${CARD_FAILED}`);
+			await edit(`${first}\n\n${CARD_FAILED}`, undefined, notify);
 		} else if (card) {
 			// Orbit checks the card again; one it refuses must not keep the answer from being posted.
-			await edit(first, [uiBlock(card)]).catch(async (error: unknown) => {
+			await edit(first, [uiBlock(card)], notify).catch(async (error: unknown) => {
 				if (!(error instanceof OrbitError) || error.status !== 422) throw error;
 				console.warn("agent: Orbit refused the card", error.problem?.detail ?? error.message);
-				await edit(`${first}\n\n${CARD_FAILED}`);
+				await edit(`${first}\n\n${CARD_FAILED}`, undefined, notify);
 			});
 		} else {
 			// Without blocks: a card left from the progress edits goes away.
-			await edit(first);
+			await edit(first, undefined, notify);
 		}
 		// A later run in a task run's thread (after an answer or a yes): its result goes to the task too.
 		if (task && !onTask && !stopped) await comment(body);

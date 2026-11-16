@@ -239,7 +239,8 @@ impl DeviceSender for ApnsSender {
         let body = payload(notice.as_ref(), badge);
         // Apple: the `alert` type is for an alert, a sound or a badge. A badge-only push goes at
         // the priority that saves the phone's power.
-        let priority = if notice.is_some() { "10" } else { "5" };
+        let alert = notice.is_some();
+        let priority = if alert { "10" } else { "5" };
         let collapse_id = notice.map_or_else(|| BADGE_COLLAPSE_ID.to_owned(), |notice| notice.tag);
         let mut request = self
             .client
@@ -268,7 +269,15 @@ impl DeviceSender for ApnsSender {
                 .await
                 .map_err(|_| SendError::Busy("APNs did not answer".to_owned()))?;
             let status = response.status().as_u16();
+            // APNs' id of the push: what Apple's Push Notifications Console finds it by.
+            let apns_id = response
+                .headers()
+                .get("apns-id")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_owned();
             let reason = if status == 200 {
+                tracing::info!(apns_id, alert, "APNs took the iPhone push");
                 String::new()
             } else {
                 response
@@ -278,6 +287,15 @@ impl DeviceSender for ApnsSender {
                     .and_then(|body| body["reason"].as_str().map(str::to_owned))
                     .unwrap_or_default()
             };
+            if status != 200 {
+                tracing::info!(
+                    apns_id,
+                    alert,
+                    status,
+                    reason,
+                    "APNs refused the iPhone push"
+                );
+            }
             if reason == "ExpiredProviderToken" {
                 // The next send makes a new token.
                 *cached.lock().expect("APNs token lock") = None;

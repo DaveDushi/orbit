@@ -2,11 +2,13 @@
 //! sessions and their scope, and sealed ChatGPT credentials. Runs on SQLite, and on Postgres with
 //! `ORBIT_TEST_POSTGRES_URL`.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
+use futures_util::future::BoxFuture;
 use orbit_platform::{
     AttachmentMutationCoordinator, AuthenticatedUser, Id, LocalBlobStore, PasswordService,
     TestDatabase, TimestampMillis, UploadLimits, UploadService,
@@ -14,6 +16,8 @@ use orbit_platform::{
 use orbit_server::agent::{AgentConfig, AgentState};
 use orbit_server::auth_routes::CookieMode;
 use orbit_server::chat_routes::{ChatState, chat_router};
+use orbit_server::push::apns::DeviceSender;
+use orbit_server::push::{Notice, PushSender, PushService, SendError, Subscription, Vapid};
 use orbit_server::repositories::identity::{IdentityRepository, SetupRequest};
 use orbit_server::task_routes::{TaskState, task_router};
 use serde_json::{Value, json};
@@ -453,6 +457,142 @@ async fn a_mention_brings_the_agent_into_a_private_channel_and_it_replies_in_the
     // The agent's own messages are never inputs.
     let (_, inputs) = fixture.pending().await;
     assert_eq!(inputs.len(), 1);
+}
+
+/// The iPhone pushes: the body of each alert (a badge-only push is left out).
+#[derive(Default)]
+struct Alerts(Mutex<Vec<String>>);
+
+impl DeviceSender for Alerts {
+    fn send(
+        &self,
+        _: String,
+        notice: Option<Notice>,
+        _: i64,
+    ) -> BoxFuture<'static, Result<(), SendError>> {
+        if let Some(notice) = notice {
+            self.0.lock().unwrap().push(notice.body);
+        }
+        Box::pin(async { Ok(()) })
+    }
+}
+
+struct NoWebPush;
+
+impl PushSender for NoWebPush {
+    fn send(
+        &self,
+        _: Vapid,
+        _: Subscription,
+        _: Vec<u8>,
+    ) -> BoxFuture<'static, Result<(), SendError>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// Regression: the phone got its push when the agent started ("Working on it"), and none when
+/// the answer came, an edit of that message, seconds or minutes later.
+#[tokio::test]
+async fn the_agents_answer_pushes_and_its_working_on_it_message_does_not() {
+    let fixture = Fixture::new().await;
+    let alerts = Arc::new(Alerts::default());
+    let push = PushService::with_senders(&fixture.database, Arc::new(NoWebPush), alerts.clone());
+    let session_id: String = sqlx::query_scalar("SELECT id FROM sessions WHERE user_id = $1")
+        .bind(fixture.owner.id.to_string())
+        .fetch_one(fixture.database.pool())
+        .await
+        .unwrap();
+    push.register_device(
+        fixture.owner.id,
+        session_id.parse().unwrap(),
+        &"a".repeat(64),
+        "iPhone",
+        TimestampMillis::now(),
+    )
+    .await
+    .unwrap();
+    let (bot, _) = fixture.pending().await;
+    let dm = fixture
+        .chat(
+            &fixture.owner,
+            "POST",
+            "/dms",
+            Some(json!({ "user_ids": [bot] })),
+        )
+        .await["result"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let question = fixture.send(&fixture.owner, &dm, "hi", None).await;
+    let pushed = || alerts.0.lock().unwrap().clone();
+    // The pushes go out after the response: a moment for the ones that would.
+    let settle = || tokio::time::sleep(Duration::from_millis(300));
+
+    let (status, posted) = fixture
+        .internal(
+            "POST",
+            "/messages",
+            Some(json!({
+                "workspace_id": fixture.workspace_id,
+                "conversation_id": dm,
+                "root_message_id": null,
+                "body": "Working on it",
+                "nonce": format!("agent:{question}"),
+                "silent": true,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{posted}");
+    let path = format!("/messages/{}", posted["id"].as_str().unwrap());
+    let edit = |body: &str, notify: Option<bool>| {
+        let mut edit = json!({ "workspace_id": fixture.workspace_id, "body": body });
+        if let Some(notify) = notify {
+            edit["notify"] = json!(notify);
+        }
+        fixture.internal("PATCH", &path, Some(edit))
+    };
+    // A progress edit notifies nobody, as before.
+    assert_eq!(
+        edit("Working on it: 1 step", None).await.0,
+        StatusCode::NO_CONTENT
+    );
+    settle().await;
+    assert_eq!(pushed(), Vec::<String>::new());
+
+    assert_eq!(
+        edit("Here is the answer", Some(true)).await.0,
+        StatusCode::NO_CONTENT
+    );
+    for _ in 0..50 {
+        if !pushed().is_empty() {
+            break;
+        }
+        settle().await;
+    }
+    assert_eq!(pushed(), vec!["Here is the answer".to_owned()]);
+
+    // A message posted without `silent` (an older sidecar) still notifies.
+    let (status, _) = fixture
+        .internal(
+            "POST",
+            "/messages",
+            Some(json!({
+                "workspace_id": fixture.workspace_id,
+                "conversation_id": dm,
+                "root_message_id": null,
+                "body": "One more thing",
+                "nonce": format!("agent:{question}:1"),
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    for _ in 0..50 {
+        if pushed().len() > 1 {
+            break;
+        }
+        settle().await;
+    }
+    assert_eq!(pushed().last().map(String::as_str), Some("One more thing"));
 }
 
 #[tokio::test]
