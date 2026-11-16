@@ -1,7 +1,9 @@
 # Agent sandboxes: design
 
-Status: **design only** (2026-11-16, branch `agent-sandbox-design`, from `main` c62e383c). Nothing here is built.
-Building it needs a separate "yes" from the owner.
+Status: **approved design, phase 1 spike done** (2026-11-16, branch `agent-sandbox-design`, from `main` c62e383c).
+The owner approved the design and the recommended answers to all open questions, with one change: **one sandbox per
+chat thread** (question 1, section 5). The spike results are in section 13. Nothing runs in production. Each later
+phase needs its own "yes" before production.
 
 ## Goal and fixed decisions
 
@@ -21,9 +23,12 @@ Decisions of the owner (not open in this doc):
 ## Summary (the recommendation)
 
 - **Runtime: gVisor (`runsc`)**, started by a small root **broker** that is socket-activated by systemd, as the media
-  sandbox broker is today (`deploy/donna-sandbox/broker.py`). Each sandbox call is one transient systemd unit in the
-  agent's slice. gVisor puts a user-space kernel between the code and the host kernel. It needs no KVM, so it works
-  the same on this VM and on any later host. Docker is **not** in the path: the sidecar never gets the Docker socket.
+  sandbox broker is today (`deploy/donna-sandbox/broker.py`). **One sandbox per chat thread** (per agent, thread and
+  driver): it starts at the thread's first call, stays alive between calls, and is deleted after 30 minutes without
+  calls or after 4 hours of life. Each call is one `runsc exec` into it, with a new call token. At most 3 thread
+  sandboxes are alive at the same time; a 4th evicts the one quiet the longest. The thread's `/work` stays after a
+  delete. gVisor puts a user-space kernel between the code and the host kernel. It needs no KVM, so it works the same
+  on this VM and on any later host. Docker is **not** in the path: the sidecar never gets the Docker socket.
 - **The sidecar keeps the brain**: Pi Durable, transcripts, ChatGPT tokens, all Orbit tools. The sandbox only
   **runs code on files**. It holds no admin key, no ChatGPT token and no integration credential.
 - **Orbit stays the judge**: it issues a short **call token** with only the driver's permissions (an agent session
@@ -33,8 +38,8 @@ Decisions of the owner (not open in this doc):
   route except to the proxy. A new host is first resolved and dialed **after** Orbit says allow. Unknown hosts get an
   **Allow once / Allow always / Deny** card in the chat. Only workspace owners and admins can "Allow always".
 - **Limits**: a parent cap on `orbit.slice` (all builds, media runs and agent sandboxes together), a new
-  `orbit-agents.slice` (all agent sandboxes: 1.5 CPU, 2.5 GiB), and per call 1 CPU, 1 GiB, 256 tasks, 15 minutes,
-  a 4 GiB disk image per thread.
+  `orbit-agents.slice` (all agent sandboxes: 1.5 CPU, 2.5 GiB, max 3 live thread sandboxes), and per thread sandbox
+  1 CPU, 1 GiB, 128 processes, 15 minutes per call, a 4 GiB disk image per thread.
 - **Firecracker or Kata** is possible on this VM (`/dev/kvm` exists, nested virtualization is on), but it is nested
   virtualization on a shared production VM, with more parts to run. Keep it as the upgrade path for a dedicated host.
   The broker protocol hides the runtime, so a later switch changes the broker only.
@@ -75,14 +80,18 @@ Arthur today has only the tools an admin ticked. Donna has all tools, including 
 | Works on this VM | Yes | Yes. Default platform **systrap** needs no `/dev/kvm` ([install](https://gvisor.dev/docs/user_guide/install), [Arm guide on systrap](https://learn.arm.com/install-guides/gvisor/)). | Yes, but **nested** (`/dev/kvm` present, `nested=1`). Kata needs nested virt or bare metal ([Kata 3 install](https://github.com/kata-containers/kata-containers/blob/3.2.0/docs/install/kata-containers-3.0-rust-runtime-installation-guide.md)). |
 | Rootless | Docker rootless or Podman: possible, more setup | `runsc --rootless` exists with limits; Docker/Podman rootless needs extra setup ([rootless](https://gvisor.dev/docs/user_guide/rootless/)). We do not need it: a root broker with a narrow protocol is the pattern we already trust. | Firecracker's **jailer** drops privileges after setup (chroot, cgroup) ([design](https://github.com/firecracker-microvm/firecracker/blob/4a3e9bd76d9fc57a3538c1aeb7e5687de43a0efa/docs/design.md), [prod host setup](https://github.com/roypat/firecracker/blob/main/docs/prod-host-setup.md)). |
 | Networking | Docker networks, iptables | `none`, sandbox netstack in a given netns, or host passthrough ([networking](https://gvisor.dev/docs/user_guide/networking)) | TAP device per VM only; built-in rate limiter on TAP ([design](https://github.com/firecracker-microvm/firecracker/blob/4a3e9bd76d9fc57a3538c1aeb7e5687de43a0efa/docs/design.md)) |
-| Resource limits | cgroups | cgroups: Sentry and app memory are counted in the container cgroup (app memory shows as shmem) ([resource model](https://gvisor.dev/docs/architecture_guide/resources/), [systemd cgroup](https://gvisor.dev/docs/user_guide/systemd/)). One open issue reports limits not acting as expected ([#10264](https://www.github.com/google/gvisor/issues/10264)): **we test it** (phase 1). | VM memory and vCPUs fixed at boot, plus jailer cgroups. Memory is reserved per VM. |
-| Start time / overhead | Fast, near zero | Sub-second start, tens of MB per sandbox, slower on syscall-heavy work (to be measured in phase 1) | ~100–200 ms boot for Firecracker; guest kernel + rootfs per VM; nested virt costs more |
+| Resource limits | cgroups | cgroups: Sentry and app memory are counted in the container cgroup (app memory shows as shmem) ([resource model](https://gvisor.dev/docs/architecture_guide/resources/), [systemd cgroup](https://gvisor.dev/docs/user_guide/systemd/)). Issue [#10264](https://www.github.com/google/gvisor/issues/10264) (limits not acting) was a wrong cgroup setup. Phase 1 reproduced that trap and found the setup that works (section 13). | VM memory and vCPUs fixed at boot, plus jailer cgroups. Memory is reserved per VM. |
+| Start time / overhead | Fast, near zero | Measured (section 13): 73 ms start, 9 ms per `exec`, 11–20 MiB idle per sandbox; slower on syscall-heavy work | ~100–200 ms boot for Firecracker; guest kernel + rootfs per VM; nested virt costs more |
 | New parts to run | Docker daemon (shared with builds; Docker socket = root) | One static binary (`runsc`), pinned | Kernel image, rootfs images, TAP and nft setup, jailer, (Kata: containerd shim, hypervisor) |
 | Fit | Not enough: same kernel as production Orbit | **Best now** | Best later, on a dedicated host with real KVM |
 
-Version note: I could not confirm the newest release numbers from primary sources in this session (third-party
-pages name Firecracker v1.16.0, June 2026 ([overview](https://rywalker.com/research/firecracker))). Phase 1 pins the
-exact `runsc` release from the [gVisor release page](https://gvisor.dev/docs/user_guide/install) and records it here.
+Version note: phase 1 pins **gVisor `release-20261109.0`** (OCI spec 1.2.1), the newest point release on
+2026-11-16, from `https://storage.googleapis.com/gvisor/releases/release/20261109.0/x86_64/gvisor.tar.zstd`
+(SHA-512 `0a0041fd…275393c`, checked with the `.sha512` file, as in the
+[install guide](https://gvisor.dev/docs/user_guide/install)). Since 2026-07 a release is a tarball with `runsc` plus a
+`gvisor-bin/` folder (`gvisor_sentry`, `runsc-fd-parking`, …); install the whole tarball, `runsc` alone no longer
+works. Third-party pages name Firecracker v1.16.0, June 2026
+([overview](https://rywalker.com/research/firecracker)), not checked.
 
 **Recommendation: gVisor (`runsc`, systrap) under the broker, no Docker.** Reasons:
 
@@ -102,11 +111,11 @@ exact `runsc` release from the [gVisor release page](https://gvisor.dev/docs/use
 
 | Media sandbox today | Agent sandbox |
 |---|---|
-| `orbit-donna.socket` + `orbit-donna@.service`, `Accept=yes`, one root broker per connection | Same: `orbit-sandbox.socket` + `orbit-sandbox@.service`. The broker starts each call as a transient unit (`systemd-run --scope`/`--unit`) in the agent's slice, so per-agent limits apply. |
-| bubblewrap, no network | `runsc run` with an OCI bundle: read-only rootfs from the agent's image, `/work` from the thread's disk image, `/tmp` tmpfs, one veth to the egress proxy. |
+| `orbit-donna.socket` + `orbit-donna@.service`, `Accept=yes`, one root broker per connection | Same: `orbit-sandbox.socket` + `orbit-sandbox@.service`. The broker keeps a small state file (live thread sandboxes, start time, last call) under a lock. It starts a thread sandbox with `runsc --systemd-cgroup run --detach`; runsc puts it in a scope in the agent's slice, so per-agent limits apply. Each call is a `runsc exec` into it. |
+| bubblewrap, no network | `runsc` with an OCI bundle: read-only rootfs from the agent's image, `/work` from the thread's disk image, `/tmp` tmpfs, one veth to the egress proxy, a reaping init (`tini`) as PID 1. |
 | Sparse ext4 image per conversation = hard disk quota (2 GiB) | Same code, 4 GiB per thread for agents. `MIN_FREE_MB` refusal stays, raised to 8 GiB. |
 | Request: one JSON line + stdin; frames `o`/`e`/`x` | Same protocol plus a `ticket` field (signed by Orbit, see section 3). The sidecar client `apps/agent/src/sandbox.ts` stays. |
-| `drop` and `gc` ops | Same, plus `stop_agent` (kill all calls of one agent: the off switch). |
+| `drop` and `gc` ops | Same, plus `stop_agent` and `stop_all` (kill the live thread sandboxes of one agent or of all agents: the off switch). `gc` also deletes idle and too-old thread sandboxes. |
 | Escape tests (`apps/agent/test/sandbox.test.ts`) | Same tests, plus network and token tests (section 9). |
 
 **What stays in the sidecar:** the Pi Durable loop and transcripts, the ChatGPT credential flow, every Orbit tool
@@ -115,7 +124,7 @@ bytes as the driver and never give URLs to the model), card posting, the run lim
 
 **What moves into the sandbox:** only execution: shell commands, scripts (also skill scripts), package installs from
 allowed registries, files in `/work`, outgoing HTTPS through the proxy. A new tool `sandbox_shell` (catalog row in
-`TOOL_CATALOG`, off until ticked) does this. `media_shell` stays for Donna until phase 9 merges the two.
+`TOOL_CATALOG`, off until ticked) does this. `media_shell` stays for Donna until phase 11 merges the two.
 
 Why not move the whole agent (Pi loop) into the sandbox: the loop needs the ChatGPT tokens and the internal secret,
 and it must survive any sandbox kill. Keeping it outside means a fully compromised sandbox holds nothing but one
@@ -128,9 +137,20 @@ sidecar ──(agent secret)──► Orbit POST /api/internal/agent/sandbox/cal
                              checks: agent has sandbox_shell, sandbox on, budget left, thread running, driver active
                              ◄── { ticket (HMAC, broker key), call_id, limits }   (call token sealed inside ticket)
 sidecar ──(unix socket)──► broker: { op: run, ticket, script, stdin… }
-broker: verifies ticket ─► unit in orbit-agents-<agent>.slice ─► runsc ─► /run/orbit/token (read-only, 0400)
+broker: verifies ticket ─► thread sandbox live? else start it (evict if 3 live) in orbit-agents-<agent>.slice
+        ─► runsc exec <sandbox> --env ORBIT_TOKEN=<call token> --env HTTPS_PROXY=<call proxy password> sh -c <script>
 broker ──► Orbit POST /api/internal/agent/sandbox/calls/{id}/end  (exit, CPU s, max RAM, egress bytes) → token deleted
 ```
+
+**Per-call token in a long-lived sandbox.** The sandbox lives for the thread, but every call still gets its own
+ticket and its own token, so Orbit checks the driver's permissions at each call (a driver who lost access, a switched
+off agent or a spent budget stops the next call, also in a live sandbox). The broker gives the token only to the
+process of that call, as an environment value of its `runsc exec`. Nothing writes it to `/work` or to a shared file.
+Orbit deletes the token at call end. A background process that a call left running keeps the old value, but the
+token and the proxy password are dead after the call: between calls, background processes can only use their own
+CPU, memory and `/work`. They cannot call Orbit and cannot reach the internet. Background processes of the same
+sandbox can read the environment of the current call (same uid); this is accepted, because one sandbox belongs to
+one agent, one thread and one driver.
 
 | Rule | How |
 |---|---|
@@ -138,15 +158,18 @@ broker ──► Orbit POST /api/internal/agent/sandbox/calls/{id}/end  (exit, C
 | **No admin keys in the sandbox** | The sandbox never gets `ORBIT_AGENT_SECRET`, `ORBIT_APP_KEY`, ChatGPT tokens, integration credentials, the broker key or the proxy's own credentials. Environment is empty except `HOME`, `PATH`, `LANG`, `HTTPS_PROXY` (with a per-call proxy password), `ORBIT_URL=http://orbit.internal`. Tests check this (section 9). |
 | **Orbit enforces permissions** | Calls from the sandbox to Orbit go through the proxy to a fixed name `orbit.internal`, which the proxy maps to Orbit's loopback URL. Every request is a normal `request_session` + `agent::scope` check. Writes that need a "yes" (integrations, Drive trash, routines) still answer `approval_required`: the yes is the driver's chat message, read by Orbit from `chat_messages` (I4). The sandbox cannot make a yes. |
 | **Broker refuses unsigned calls** | The ticket is an HMAC (key only in Orbit and the broker, `/etc/orbit/sandbox-broker.key`) over call id, agent, work id, limits, expiry (5 min to start). So a compromised sidecar cannot run calls for a switched-off agent, past the budget, or with bigger limits. |
-| **Durable runs** | Pi stores every tool call. `sandbox_shell` is **not** `replay: "safe"`: a call cut by a restart is reported to the model as interrupted, and the model checks `/work` before it runs again. `/work` survives restarts (disk image). Orbit's `calls/{id}/end` is idempotent; a call without an end after timeout + 5 min is closed by Orbit's scheduler as `lost`, and its token is deleted. Egress approvals and the "waiting" state live in Orbit, not in the sandbox, so a run that waits for an Allow survives restarts of all three parts. |
-| **One run per thread** | Unchanged (Pi conversation). The broker's `flock` on the disk image keeps calls of one thread in order. |
+| **Durable runs** | Pi stores every tool call. `sandbox_shell` is **not** `replay: "safe"`: a call cut by a restart, an eviction, the 4 h limit or the off switch is reported to the model as interrupted (with the reason), and the model checks `/work` before it runs again. `/work` survives restarts and sandbox deletes (disk image). Orbit's `calls/{id}/end` is idempotent; a call without an end after timeout + 5 min is closed by Orbit's scheduler as `lost`, and its token is deleted. Egress approvals and the "waiting" state live in Orbit, not in the sandbox, so a run that waits for an Allow survives restarts of all three parts. A broker restart kills all thread sandboxes (it cannot trust old state); only `/work` stays. |
+| **One run per thread** | Unchanged (Pi conversation). The broker's `flock` per thread sandbox keeps calls of one thread in order, so only one call runs in a sandbox at a time. |
+| **Sandbox key** | `agent + thread + driver`. When a second person drives the same thread, they get a second sandbox and a second `/work`. Nothing is shared between threads, drivers or agents. |
 
 ## 4. Egress allowlist
 
-**Network shape (per call):** the broker makes a network namespace with one veth pair (a /30 per call), no IPv6,
-no default route except to the proxy address. nftables on the host: from the sandbox veth, only TCP to the proxy
-port; everything else (DNS, ICMP, UDP, other hosts, `169.254.169.254`, Orbit's ports) is dropped. The sandbox has
-**no DNS resolver**: names go to the proxy inside `CONNECT`.
+**Network shape (per thread sandbox):** the broker makes a network namespace with one veth pair (a /30 per thread
+sandbox), IPv6 off on the veth (`disable_ipv6` before the link is up; else gVisor copies a link-local address), and
+only the /30 route (no default route). The proxy password is **per call** and dies at call end. nftables on the host:
+from the sandbox veth, only TCP to the proxy port; everything else (DNS, ICMP, UDP, other hosts, `169.254.169.254`,
+Orbit's ports) is dropped. The sandbox has **no DNS resolver**: names go to the proxy inside `CONNECT`. The spike
+proved this shape (section 13).
 
 **Proxy:** `orbit egress-proxy` (a subcommand of the orbit binary, own unit `orbit-egress.service`, own user). Own
 code, not [Smokescreen](https://github.com/stripe/smokescreen): Smokescreen uses a static ACL file and has had
@@ -156,7 +179,7 @@ checking resolver in `agent::outbound`).
 
 | Step | What happens |
 |---|---|
-| 1 | Code in the sandbox sends `CONNECT host:443` with `Proxy-Authorization` (per-call password). Proxy checks the source /30 matches the password's call. |
+| 1 | Code in the sandbox sends `CONNECT host:443` with `Proxy-Authorization` (per-call password). Proxy checks the source /30 matches the password's thread sandbox and the call is still running. |
 | 2 | Proxy normalizes the host (lower case, punycode, no trailing dot). IP literals are **refused** (no rule can allow them). Port must be 443 unless a rule names another port. Plain HTTP (non-CONNECT) is refused. |
 | 3 | Proxy asks Orbit `POST /api/internal/agent/egress/check {call, host, port}` (decision cached for the call, 60 s). |
 | 4 | Orbit answers `allow`, `deny` or `ask` (order below). |
@@ -236,30 +259,38 @@ usage caps. When an API-key provider comes, the same counter gets a price table.
 
 | Level | Who | Effect |
 |---|---|---|
-| Agent | Owners/admins: "Sandbox" toggle on the agent card | No new tickets, proxy denies, broker `stop_agent` kills running calls within seconds. Files stay. |
-| Installation | Installation admins: Admin → AI agent; or `ORBIT_AGENT_SANDBOX=off` | Same for all agents. |
-| Emergency (operator) | `systemctl stop orbit-sandbox.socket orbit-egress.service`; `systemctl kill orbit-agents.slice` | Nothing runs, nothing leaves. Orbit and chat keep working. |
+| Agent | Owners/admins: "Sandbox" toggle on the agent card | No new tickets, proxy denies, broker `stop_agent` kills **all live thread sandboxes** of the agent (running calls and background processes) at once. Files stay. |
+| Installation | Installation admins: Admin → AI agent; or `ORBIT_AGENT_SANDBOX=off` | Same for all agents (`stop_all`). The spike killed 3 live sandboxes, one busy, in 0.26 s. |
+| Emergency (operator) | `systemctl stop orbit-sandbox.socket orbit-egress.service`; `systemctl kill orbit-agents.slice` | Nothing runs, nothing leaves. Orbit and chat keep working. The next broker start removes the leftover runsc state, scopes and netns. |
 
 **Lifecycle.**
 
+One **thread sandbox** per agent, thread and driver (decision of the owner, question 1).
+
 | Event | What happens |
 |---|---|
-| Create | An admin ticks `sandbox_shell` for the agent. Orbit records the agent's sandbox settings (limits, image digest). Nothing runs yet. |
-| First call in a thread | The broker makes the thread's disk image (sparse ext4, 4 GiB) under `/var/lib/orbit-sandbox/<agent>/work/<work-id>.img`. |
-| Each call | New transient unit + `runsc` sandbox, ends with the call (max 15 min). No process lives between calls. |
-| Idle | A thread's image is deleted after 72 h without a call (`AGENT_SANDBOX_IDLE_HOURS` per agent; media stays 24 h). |
-| Delete agent | Orbit deletes the agent's tokens and rules; the broker `drop`s all its images. |
+| Create | An admin ticks `sandbox_shell` for the agent. Orbit records the agent's sandbox settings (limits, image digest, idle time). Nothing runs yet. |
+| First call in a thread | The broker makes the thread's disk image (sparse ext4, 4 GiB) under `/var/lib/orbit-sandbox/<agent>/work/<work-id>.img`, its netns and veth, and starts the thread sandbox (`runsc run --detach`, init as PID 1). Then it runs the call. |
+| Each call | New ticket and call token, then `runsc exec` into the live sandbox (~9 ms). The call is its own process group; at 15 min the broker kills that group, not the sandbox. Processes that the call started in the background (`setsid`, `nohup`, a dev server) stay alive for later calls of the thread. |
+| 4th sandbox needed | Max **3 live thread sandboxes** in `orbit-agents.slice`. The broker deletes the one **quiet the longest** (no call running, oldest last call end). When all 3 have a running call, the new call waits up to 30 s for a free place, then fails with "all sandboxes busy, try again". |
+| Idle delete | **30 min** without a call: the broker deletes the sandbox (all processes). Admins may set 5–120 min per agent (`idle_minutes`). |
+| Max life | **4 h** after start the sandbox is deleted, also when a call runs (the call is reported as interrupted: "sandbox reached its 4 h limit"). Fixed in the pilot. The next call starts a fresh sandbox on the same `/work`. |
+| After a delete | **Kept:** `/work` (disk image). **Lost:** running processes, `/tmp`, and tools installed outside `/work` (the rootfs is read-only; installs go to `/work`, e.g. `pip install --target`, `npm --prefix`). |
+| Image idle | A thread's disk image is deleted after 72 h without a call (`AGENT_SANDBOX_IDLE_HOURS` per agent; media stays 24 h). |
+| Off switch | Kills all live thread sandboxes of the agent (or all agents) at once; images stay. |
+| Delete agent | Orbit deletes the agent's tokens and rules; the broker kills its sandboxes and `drop`s all its images. |
 | What persists | Thread `/work` images (scratch, **not backed up**; results go to Drive with `work_to_drive`); the image rootfs (read-only, by digest); settings, rules, logs, budgets in the Orbit DB (in Orbit backups); transcripts in `pi.sqlite` (sidecar backup). |
 
-No writable folder is shared between threads or drivers of one agent: one driver's files must not reach another
-driver's run (the shared-transcript lesson in `.ai/lessons.md`).
+No sandbox and no writable folder is shared between threads, drivers or agents: one driver's files and processes
+must not reach another driver's run (the shared-transcript lesson in `.ai/lessons.md`). The spike checked that a
+second sandbox sees none of the first one's processes or files (section 13).
 
 **Ops tasks.**
 
 | Task | How |
 |---|---|
-| Monitoring | `vm-health` gets: slice `memory.events` (high, max, oom_kill) for `orbit.slice` and `orbit-agents.slice`, `memory.pressure` and `cpu.pressure`, disk use of `/var/lib/orbit-sandbox`, proxy and socket active, calls per hour, denies per hour, lost calls. |
-| Cleanup | Hourly `gc` (images), broker start removes stale netns/veth/nft rules and units, old image digests pruned after 7 days unused. |
+| Monitoring | `vm-health` gets: slice `memory.events` (high, max, oom_kill) for `orbit.slice` and `orbit-agents.slice`, `memory.pressure` and `cpu.pressure`, disk use of `/var/lib/orbit-sandbox`, proxy and socket active, live thread sandboxes, evictions per hour, calls per hour, denies per hour, lost calls. |
+| Cleanup | `gc` every minute (idle and max-life sandboxes; a systemd timer, so it also runs when no call comes) and hourly (images). Broker start kills all thread sandboxes and removes stale runsc state (`runsc delete --force`), scopes, netns/veth and nft rules. Old image digests pruned after 7 days unused. |
 | Backups | Orbit DB as today (rules, logs, budgets). Sandbox disks: none, by design. Broker key and proxy config: in `/etc/orbit` backup. |
 | Updates | Pinned `runsc` and image digest; update in a test copy first, run escape tests, then production. |
 
@@ -271,9 +302,15 @@ Budget of the host (15 GiB RAM, no swap, 4 vCPU): Orbit + sidecar + nginx + syst
 | Unit | CPU | Memory | Tasks | Other | Reason |
 |---|---|---|---|---|---|
 | `orbit.slice` (parent of builds, media, agents) | — | **MemoryHigh 11G, MemoryMax 12G** | — | — | The one guard for "all heavy work together". Leaves ≥3 GiB for Orbit, sidecar, nginx and page cache. An OOM then kills inside `orbit.slice`, never `orbit.service`. |
-| `orbit-agents.slice` (all agent sandboxes) | CPUQuota 150 %, CPUWeight 20 | MemoryHigh 2G, MemoryMax 2560M, MemorySwapMax 0 | TasksMax 1024 | IOWeight 20 | Room for 2 calls at full size. With the parent cap, builds + media + agents cannot pass 12 GiB. |
-| `orbit-agents-<agent>.slice` (one agent) | CPUQuota 100 % | MemoryMax 1536M | TasksMax 512 | max 2 calls at a time (broker) | One agent cannot take the whole agents budget. |
-| One call (transient unit) | CPUQuota 100 % | MemoryMax 1G (Sentry included) | TasksMax 256 | RuntimeMaxSec 900; disk image 4 GiB; RLIMIT_FSIZE = image; stdout to model 64 KiB | Same order as media runs; enough for Python, Node, small builds. |
+| `orbit-agents.slice` (all agent sandboxes) | CPUQuota 150 %, CPUWeight 20 | MemoryHigh 2G, MemoryMax 2560M, MemorySwapMax 0 | TasksMax 1536 (3 × ~300 host tasks at the process limit, plus margin) | IOWeight 20; **max 3 live thread sandboxes** (broker) | Room for 2 busy sandboxes at full size plus idle ones (11–20 MiB each). With the parent cap, builds + media + agents cannot pass 12 GiB. |
+| `orbit-agents-<agent>.slice` (one agent) | CPUQuota 100 % | MemoryMax 1536M | TasksMax 1536 | — | One agent cannot take the whole agents budget (matters when Donna joins). |
+| One thread sandbox (scope made by `runsc --systemd-cgroup`) | spec `cpu.quota` = 1 CPU | spec `memory.limit` = 1G, swap 0 (Sentry included) | **no** spec pids limit; host tasks come from the agent slice; **RLIMIT_NPROC 128** in the spec | 15 min per call (broker kills the call's process group); 4 h life; disk image 4 GiB; RLIMIT_FSIZE = image; stdout to model 64 KiB | These are the **per-call limits**: calls of one thread run one at a time, so the call gets the sandbox's 1 CPU and 1 GiB, shared only with background processes it or earlier calls left. Enough for Python, Node, small builds. |
+
+What the spike showed about these limits (details in section 13): memory and CPU limits hold; a memory bomb kills
+only the call's process, not the sandbox. A host task limit must **never** be the first limit hit: when the host
+`pids.max` is reached, the gVisor Sentry cannot make a thread and the **whole sandbox crashes**. So the process
+limit is `RLIMIT_NPROC` inside the sandbox (each guest process costs about 2 host tasks with systrap; 128 processes ≈
+290 host tasks), and the slice `TasksMax` is only a backstop well above that.
 | Disk, all agents | — | — | — | refuse a new image when free < 8 GiB or `/var/lib/orbit-sandbox` allocated > 16 GiB | Disk has 25 GB free and builds can fill it. |
 | Egress per call | — | — | — | 100 MiB per call, 20 open connections | Stops bulk exfil and abuse. |
 
@@ -290,7 +327,7 @@ On a separate host: drop the `orbit.slice` cap; give `orbit-agents.slice` the ho
 |---|---|
 | Model tokens | Each `sandbox_shell` result adds up to 64 KiB (~16k tokens), typical 0.3–2k. A run with 10 calls adds ~10–30k tokens of new input; every later turn resends them (mostly prompt-cached). Expect 1.5–3× the tokens of a run without the sandbox. Paid by the driver's ChatGPT plan; capped by the monthly agent limit. |
 | Host CPU | Pilot (Arthur, few users): < 5 CPU-hours per month. Hard cap 1.5 CPU for all agents at any time. |
-| Host RAM | 0 at idle (no process between calls); ≤ 2.5 GiB at peak. gVisor overhead tens of MB per call. |
+| Host RAM | **Idle: 11 MiB per new thread sandbox, ~20 MiB after use** (cgroup `memory.current`, Alpine rootfs, measured in phase 1; PSS 22–31 MiB, part of it the shared `runsc` binary). With 3 live sandboxes: ≤ ~60 MiB idle, plus what background processes keep. Recheck with the Ubuntu image in phase 3. ≤ 2.5 GiB at peak (slice cap). |
 | Host disk | ≤ 16 GiB cap; typical < 2 GiB (sparse images). |
 | Egress | Small (API calls, package downloads); capped per call and per month. |
 | Separate host later | One small VM (e.g. 4 vCPU / 8 GB, ideally with real KVM); check the provider's price at that time. Removes the build/agent contention. |
@@ -310,6 +347,8 @@ On a separate host: drop the `orbit.slice` cap; give `orbit-agents.slice` the ho
 2. Stop `orbit-sandbox.socket` and `orbit-egress.service`. Media sandbox is untouched until the merge step.
 3. Code rollback: previous orbit binary and sidecar `src`, as in each deploy note. The new tables stay unused.
 4. Data: thread images stay until `gc` (72 h), so a re-enable within that time keeps work files.
+5. Host: stop the broker; it kills all thread sandboxes. Remove the pinned `runsc` folder (section 13 lists the
+   paths).
 
 ## 9. Test plan
 
@@ -320,15 +359,22 @@ On a separate host: drop the `orbit.slice` cap; give `orbit-agents.slice` the ho
 | Rule matching (Rust unit) | exact vs `*.` (apex not matched), deep subdomains, punycode/IDN, trailing dot, case, public-suffix wildcards refused, IP literals refused, port rules, risky list beats Allow always. |
 | Orbit routes (SQLite **and** Postgres) | ticket issue refused when: tool not ticked, sandbox off, budget spent, thread not running, driver suspended/guest, agent deleted. Call token: works only for the thread, dies at call end, dry flag copied, `route_need` applies. Egress check order. Card buttons: Allow always refused for members (403), Allow once refused for non-drivers, clicker never becomes driver, continuation input goes to the driver. Audit rows written. |
 | Proxy | no DNS before allow (count resolver calls), non-public address after resolve refused, DNS rebind, SNI mismatch / missing refused, plain HTTP refused, wrong proxy password, password from another call's /30 refused, per-call byte cap. |
-| Sidecar | catalog test (`profiles.test.ts`) with the new tool; interrupted call reported as interrupted; card posted once (nonce). |
+| Sidecar | catalog test (`profiles.test.ts`) with the new tool; interrupted call reported as interrupted (with the reason: timeout, eviction, max life, off switch); card posted once (nonce). |
+| Broker (thread sandboxes) | **Eviction**: with 3 live, a 4th call deletes the one quiet the longest, never one with a running call; all 3 busy → wait, then "busy" error. **Idle delete** after the agent's idle time (and the 5–120 min bounds). **Max life**: deleted at 4 h also while a call runs; that call ends as interrupted. `/work` kept after each delete; next call starts a fresh sandbox on it. **Per call**: a new token per call in a live sandbox; the old token and proxy password refused after the call; the 15 min timeout kills the call's process group but keeps the sandbox and its background processes. Zombies reaped (init). Broker restart kills all sandboxes and cleans state. |
+| Approvals per thread (SQLite **and** Postgres) | An Allow once (egress) or a write "yes" in thread A does **not** apply to a call in thread B of the same agent and driver, nor to another driver in thread A. |
 
 **Sandbox-escape tests** (extend `apps/agent/test/sandbox.test.ts`, against a **test copy** with test names, never
 production): no secrets in env, `/proc/1/environ`, files (`/etc/orbit`, `/var/lib/orbit*`, `/root`, `/home`,
 `/run/docker.sock`, broker key); read-only rootfs; other thread's `/work` invisible; direct TCP/UDP/ICMP to any IP
 (also `127.0.0.1:8000`, `169.254.169.254`, the other agents' /30s) fails; DNS fails; IPv6 off; `mount`, `ptrace`,
 `unshare`, raw sockets, setuid, kernel modules fail; fork bomb, memory bomb (call killed, Orbit fine, next call
-works), disk fill stops at the image size, timeout kills all processes; token unusable after the call; cgroup limits
-really hold under gVisor (memory measured from the unit, issue [#10264](https://www.github.com/google/gvisor/issues/10264)).
+works), disk fill stops at the image size, timeout kills all processes of the call; token unusable after the call;
+cgroup limits really hold under gVisor (memory measured from the scope, issue
+[#10264](https://www.github.com/google/gvisor/issues/10264)); every gVisor process is inside the agent slice (no
+cgroup at the root, the #10264 trap). **Between thread sandboxes:** a second driver's sandbox in another thread (and
+in the same thread) cannot see the first sandbox's processes (`ps`, `/proc`), files (`/work`, `/tmp`), network /30
+or proxy password. **Off switch:** `stop_agent` and `stop_all` kill all live thread sandboxes (busy and idle) within
+seconds, leave no processes, scopes, netns or runsc state, and keep `/work`.
 
 **Quality & Security prompt-injection tests** (scripted, mock model and a real model on a test instance):
 
@@ -341,6 +387,8 @@ really hold under gVisor (memory measured from the unit, issue [#10264](https://
 | Sandbox code calls Orbit admin routes, other workspaces, `agent-integrations`, `agent-skills` with the call token | 401/403/404 (scope layer). |
 | Sandbox code tries an approval-gated write | `approval_required`; the yes must come from the driver in chat. |
 | A teammate (not driver) answers the card | Allow once refused; Deny allowed for admins only. |
+| A background process from an earlier call (left by a script) tries to reach the internet or Orbit between calls | Proxy and Orbit refuse: its password and token died with that call. |
+| Code in thread B reuses an Allow once that the driver gave in thread A | Asks again: Allow once is per thread and driver. |
 | Budget run-out mid-run | Clear refusal; no partial egress after the cap. |
 
 ## 10. Relation to the MCP public origin work
@@ -356,11 +404,13 @@ API tokens are refused there ("API tokens stay behind the login gateway"); conse
 | Separate host later | Do **not** use the MCP public origin as the agent host's path to Orbit. Use a private link (WireGuard/SSH) to Orbit's internal URL; run tokens are agent sessions, which the MCP origin would refuse anyway. |
 | Files | That branch touches `mcp.rs`, `oauth.rs`, `app.rs`, `cli.rs`, `config.rs`. This design adds new `ORBIT_AGENT_SANDBOX*` keys (the `ORBIT_AGENT_` prefix is already ignored by `config.rs`) and new modules; only `config.rs` may need a merge look. |
 
-## 11. Open questions (with recommended answers)
+## 11. Questions and decisions
 
-| # | Question | Recommended answer |
+Approved by the owner on 2026-11-16: the recommended answers to questions 2–13, and a **changed answer to question 1**.
+
+| # | Question | Decision |
 |---|---|---|
-| 1 | Long-lived sandbox (background processes, dev servers) or one process tree per call? | **Per call** in the pilot (nothing runs between calls, simpler limits and kill). Revisit with `runsc exec` into a per-thread sandbox if a real need shows. |
+| 1 | Long-lived sandbox (background processes, dev servers) or one process tree per call? | **Changed by the owner: one sandbox per chat thread** (per agent, thread and driver). Alive between calls; deleted after 30 min without calls (admins: 5–120 min per agent) or after 4 h of life, even when busy. Max 3 live in `orbit-agents.slice`; a 4th evicts the one quiet the longest. `/work` kept after a delete. Per-call token, per-call limits and egress rules unchanged (sections 3–6). |
 | 2 | Any writable folder shared by all threads of one agent (caches, notes)? | **No.** It leaks between drivers. Agent knowledge stays in Orbit memory. A read-only agent folder set by admins can come later. |
 | 3 | Hold the `CONNECT` open while the card waits, or fail fast? | **Fail fast** (403) and end the run waiting, as integration approvals do: no state in the proxy, survives restarts. |
 | 4 | Who may click Allow always? | **Workspace owners and admins** of the agent's workspace (not only installation admins). Allow once: **driver only**. |
@@ -378,18 +428,19 @@ API tokens are refused there ("API tokens stay behind the login gateway"); conse
 
 | Phase | Step | Done when |
 |---|---|---|
-| 0 | Owner approves this design and the open-question answers. | Answers recorded here. |
-| 1 | **Spike on a test copy**: install pinned `runsc`; broker v2 with a `runsc` backend and test names (`--name sandbox-test`); measure start time, overhead, cgroup accounting. | Escape tests pass; limits hold; numbers recorded here. |
+| 0 | Owner approves this design and the open-question answers. | **Done** 2026-11-16 (section 11). |
+| 1 | **Spike on a test copy**: pinned `runsc`; thread sandbox with systrap; cgroup limits; start time, idle RAM, syscall cost; `runsc exec` per call; idle delete and eviction with a prototype broker; stub proxy; basic escape checks. | **Done** 2026-11-16 (section 13). |
 | 2 | **Host guards**: `orbit.slice` cap, `orbit-agents.slice`, `orbit.service` OOM protection; `vm-health` checks. | Production unchanged in behavior; `systemctl show` values match. |
-| 3 | **Orbit data + routes**: migration (sandbox settings, rules, egress requests, egress log, calls, usage) for SQLite and Postgres; ticket and call-token issue; `calls/{id}/end`; `egress/check`. | Route tests on both databases. |
-| 4 | **Egress proxy**: `orbit egress-proxy`, per-call netns/veth/nft in the broker. | Proxy tests and network escape tests pass. |
-| 5 | **Sidecar tool**: `sandbox_shell`, catalog row and `route_need`, interrupted-call handling, card posting and waiting. | `profiles.test.ts`, mock-model run end to end on a test instance. |
-| 6 | **UI**: agent card toggle and limits; Internet access page (rules, pending, log); egress card buttons on **web and mobile**. | Browser check on web; iOS bundle builds; `tsc` and tests in both apps. |
-| 7 | **Budgets and off switch**: counters, notices, kill path. | Tests for each level. |
-| 8 | **Quality & Security**: injection and escape suites on a test instance; review. | All pass; findings fixed. |
-| 9 | **Pilot Arthur** on production (with the yes); watch for 2–4 weeks. | Exit criteria in section 8. |
-| 10 | **Donna**, then merge `media_shell` onto the new broker. | Old bwrap path removed. |
-| 11 | (Optional) **Separate host**: broker and proxy move; private link to Orbit; larger limits; maybe Firecracker. | Same tests pass across hosts. |
+| 3 | **Broker v2 on a test copy** (new, from the spike): `deploy/agent-sandbox/broker.py` with thread sandboxes (state file, per-thread lock, eviction, idle and max-life `gc` timer, `stop_agent`/`stop_all`, start-up cleanup), `--systemd-cgroup` scopes, `tini` init, `RLIMIT_NPROC`, per-thread netns/veth/nft, ext4 disk image per thread; the agent image (Ubuntu 24.04 rootfs by digest). Escape and limit tests in `apps/agent/test/`. | Broker and escape tests pass on a test copy; idle RAM rechecked with the Ubuntu image. |
+| 4 | **Orbit data + routes**: migration (sandbox settings incl. idle minutes, rules, egress requests, egress log, calls, usage) for SQLite and Postgres; ticket and call-token issue; `calls/{id}/end`; `egress/check`. | Route tests on both databases. |
+| 5 | **Egress proxy**: `orbit egress-proxy` with per-call passwords; broker passes them per call. | Proxy tests and network escape tests pass. |
+| 6 | **Sidecar tool**: `sandbox_shell`, catalog row and `route_need`, interrupted-call handling, card posting and waiting. | `profiles.test.ts`, mock-model run end to end on a test instance. |
+| 7 | **UI**: agent card toggle and limits; Internet access page (rules, pending, log); egress card buttons on **web and mobile**. | Browser check on web; iOS bundle builds; `tsc` and tests in both apps. |
+| 8 | **Budgets and off switch**: counters, notices, kill path. | Tests for each level. |
+| 9 | **Quality & Security**: injection and escape suites on a test instance; review. | All pass; findings fixed. |
+| 10 | **Pilot Arthur** on production (with the yes); watch for 2–4 weeks. | Exit criteria in section 8. |
+| 11 | **Donna**, then merge `media_shell` onto the new broker. | Old bwrap path removed. |
+| 12 | (Optional) **Separate host**: broker and proxy move; private link to Orbit; larger limits; maybe Firecracker. | Same tests pass across hosts. |
 
 ### What changes on a separate host
 
