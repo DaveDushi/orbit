@@ -212,6 +212,8 @@ export class OrbitClient {
 		body: string;
 		nonce: string;
 		agentUserId?: string | null;
+		/** No push: a run's "Working on it" message, which its answer replaces (an edit with `notify`). */
+		silent?: boolean;
 	}): Promise<string> {
 		const result = (await this.internal("POST", "/messages", {
 			workspace_id: message.workspaceId,
@@ -220,13 +222,17 @@ export class OrbitClient {
 			body: message.body,
 			nonce: message.nonce,
 			...(message.agentUserId ? { agent_user_id: message.agentUserId } : {}),
+			...(message.silent ? { silent: true } : {}),
 		})) as { id: string };
 		return result.id;
 	}
 
-	/** `blocks`: the answer's card (one `ui` block), which Orbit checks again. `agentUserId`: a custom agent's message. */
-	async editMessage(messageId: string, workspaceId: string, body: string, blocks?: readonly unknown[], agentUserId?: string | null): Promise<void> {
-		await this.internal("PATCH", `/messages/${messageId}`, { workspace_id: workspaceId, body, ...(blocks ? { blocks } : {}), ...(agentUserId ? { agent_user_id: agentUserId } : {}) });
+	/**
+	 * `blocks`: the answer's card (one `ui` block), which Orbit checks again. `agentUserId`: a custom agent's message.
+	 * `notify`: the edit is the run's answer, and the members get a push of it (progress edits notify nobody).
+	 */
+	async editMessage(messageId: string, workspaceId: string, body: string, blocks?: readonly unknown[], agentUserId?: string | null, notify = false): Promise<void> {
+		await this.internal("PATCH", `/messages/${messageId}`, { workspace_id: workspaceId, body, ...(blocks ? { blocks } : {}), ...(agentUserId ? { agent_user_id: agentUserId } : {}), ...(notify ? { notify: true } : {}) });
 	}
 
 	async readCredential(userId: string): Promise<Record<string, unknown> | undefined> {

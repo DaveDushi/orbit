@@ -30,10 +30,10 @@ const id = () => `0199c3a0-0000-7000-8000-${String(++next).padStart(12, "0")}`;
 /** Just enough of Orbit for the agent: the internal API and a few public routes. */
 class FakeOrbit {
 	readonly queue: (PendingInput & { acked?: boolean })[] = [];
-	readonly messages = new Map<string, { id: string; body: string; root: string | null; blocks?: any[] }>();
+	readonly messages = new Map<string, { id: string; body: string; root: string | null; blocks?: any[]; silent?: boolean }>();
 	readonly threads = new Map<string, { status: string; driver_user_id: string | null; waiting_for_user_id: string | null }>();
 	/** Every edit of a message, in order. */
-	readonly edits: { id: string; body: string; blocks?: any[] }[] = [];
+	readonly edits: { id: string; body: string; blocks?: any[]; notify?: boolean }[] = [];
 	/** Public API calls: method, path, and the person whose session made them. */
 	readonly calls: { method: string; path: string; as: string }[] = [];
 	readonly connected = new Set<string>([ANN, BOB]);
@@ -110,7 +110,7 @@ class FakeOrbit {
 			if (rest === "/messages" && method === "POST") {
 				const existing = this.messages.get(body.nonce);
 				if (existing) return [200, { id: existing.id }];
-				const message = { id: id(), body: body.body, root: body.root_message_id };
+				const message = { id: id(), body: body.body, root: body.root_message_id, silent: body.silent };
 				this.messages.set(body.nonce, message);
 				return [200, { id: message.id }];
 			}
@@ -119,7 +119,7 @@ class FakeOrbit {
 				if (this.refuseCards && body.blocks) return [422, { code: "agent_card_invalid" }];
 				const message = [...this.messages.values()].find((candidate) => candidate.id === match![1]);
 				if (message) Object.assign(message, { body: body.body, blocks: body.blocks });
-				this.edits.push({ id: match[1], body: body.body, blocks: body.blocks });
+				this.edits.push({ id: match[1], body: body.body, blocks: body.blocks, notify: body.notify });
 				return [204, undefined];
 			}
 			if (rest === "/sessions") {
@@ -287,6 +287,36 @@ test("each run acts as its driver; an answer does not lend the answerer's permis
 		const unconnected = orbit.add({ thread_key: id(), author_id: BOB, author_name: "Bob", kind: "instruction", body: `<@${BOT}> list projects` });
 		await until("the connect message", () => progressOf(orbit, unconnected).includes("connect your ChatGPT account"));
 		assert.equal(orbit.calls.length, 0);
+	} finally {
+		await agent.stop();
+		orbit.server.close();
+	}
+});
+
+test("the push goes with the answer: the 'Working on it' message and progress edits notify nobody, a waiting run's edit neither", async () => {
+	const orbit = new FakeOrbit();
+	current = orbit;
+	await orbit.listen();
+	const agent = new Agent(config(orbit, mkdtempSync(join(tmpdir(), "agent-"))), new OrbitClient(config(orbit, "")));
+	await agent.open();
+	await agent.start();
+	try {
+		const thread = id();
+		const first = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> create task "Write docs"` });
+		await until("Ann's answer", () => progressOf(orbit, first).startsWith("Done (create_task)"));
+		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
+		const progress = orbit.messages.get(`agent:${first}`)!;
+		assert.equal(progress.silent, true);
+		const edits = orbit.edits.filter((edit) => edit.id === progress.id);
+		assert.deepEqual(edits.map((edit) => edit.notify === true), [...edits.slice(1).map(() => false), true], JSON.stringify(edits));
+
+		// The question notifies (a message of its own); the "Waiting for an answer" edit does not.
+		const asking = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> ask @Bob "Which title?"` });
+		await until("waiting", () => orbit.threads.get(thread)?.status === "waiting");
+		const question = [...orbit.messages.values()].find((message) => message.body.startsWith(`<@${BOB}> Which title?`));
+		assert.ok(question && !question.silent);
+		const waiting = orbit.messages.get(`agent:${asking}`)!;
+		assert.ok(orbit.edits.filter((edit) => edit.id === waiting.id).every((edit) => !edit.notify), JSON.stringify(orbit.edits));
 	} finally {
 		await agent.stop();
 		orbit.server.close();

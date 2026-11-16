@@ -103,7 +103,9 @@ flow in pi-ai binds port 1455 and allows one login at a time, so we do not use i
 - `agent_inputs` is the durable queue between Orbit and the sidecar. The sidecar submits each input with
   `requestId = message id` (exactly-once in Pi), then acknowledges it. A crash between the two submits nothing twice.
 - The progress message is sent with a fixed nonce (`agent:<input message id>`), so sending it again returns the
-  same message, and the final answer is an edit of it, so posting is idempotent.
+  same message, and the final answer is an edit of it, so posting is idempotent. The progress message is posted
+  `silent` (no push) and the answer's edit has `notify` (pushed as a new message), so the phone's notification comes
+  with the answer; progress edits and a "Waiting for an answer" edit push nothing (the question is its own message).
 - "Waiting for an answer" is not a sleeping task: the run ends after `ask_teammate`, and `agent_threads.status =
   waiting` is stored in Orbit. The answer is a new input. Nothing is in memory while the run waits, so a wait can
   last days and survive any restart of either process.

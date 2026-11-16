@@ -573,6 +573,10 @@ struct PostMessageBody {
     /// A custom agent posts; absent: the default agent.
     #[serde(default)]
     agent_user_id: Option<Id>,
+    /// No push: the run's "Working on it" message, which the answer replaces later (an edit with
+    /// `notify`). Absent: the members are notified, as of any message.
+    #[serde(default)]
+    silent: bool,
 }
 
 /// Sends a message as the bot. Runs in a task of its own so a dropped request cannot stop it
@@ -609,7 +613,9 @@ async fn post_message(
             )
             .await
             .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
-        PushService::of(&database).chat_message(&written.value);
+        if !body.silent {
+            PushService::of(&database).chat_message(&written.value);
+        }
         Ok::<_, sqlx::Error>(written.value)
     })
     .await;
@@ -640,6 +646,10 @@ struct EditMessageBody {
     /// The message's custom agent; absent: the default agent.
     #[serde(default)]
     agent_user_id: Option<Id>,
+    /// The edit is the run's answer: the members are notified of it as of a new message. Absent:
+    /// a progress edit, which notifies nobody.
+    #[serde(default)]
+    notify: bool,
 }
 
 async fn edit_message(
@@ -669,19 +679,23 @@ async fn edit_message(
     let database = state.database().clone();
     let edited = tokio::spawn(async move {
         let bot = poster(&database, body.workspace_id, body.agent_user_id).await?;
-        chat.publish(
-            body.workspace_id,
-            bot,
-            chat.chat.edit_message(
+        let (written, _) = chat
+            .publish(
                 body.workspace_id,
                 bot,
-                message_id,
-                &body.body,
-                blocks.as_deref(),
-            ),
-        )
-        .await
-        .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+                chat.chat.edit_message(
+                    body.workspace_id,
+                    bot,
+                    message_id,
+                    &body.body,
+                    blocks.as_deref(),
+                ),
+            )
+            .await
+            .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+        if body.notify {
+            PushService::of(&database).chat_message(&written.value);
+        }
         Ok::<_, sqlx::Error>(())
     })
     .await;
