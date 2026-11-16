@@ -7,15 +7,20 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 3acc58682811a9bc27836b8532024662a12d1440
-  (desktop 0.1.4 merge: mic toast text; schema 20261115105242, 119 rows; November 16, 2026).
+- Source: DaveDushi/orbit, `main` at d8d3eb4135f4b3146f38909fa38f9195ad1f25c0
+  (Donna prompt dedup, rmcp 3.6.0, MCP public origin; schema 20261115105242, 119 rows; November 16, 2026).
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
   f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
+- MCP public origin: `ORBIT_PUBLIC_MCP_URL=https://orbit-hooks.easytomanage.com` (in `/etc/orbit/orbit.env` since d8d3eb4,
+  `docs/connect-your-agent.md`): a request with `Host: orbit-hooks.easytomanage.com` gets its own OAuth issuer and the
+  resource `…/mcp`; authorize and consent stay on `orbit.easytomanage.com`. It works from outside only after Ops lets the
+  MCP routes through the hooks gateway (`/etc/orbit-hooks-gateway/nginx.conf`, proposal `/tmp/mcpo/gateway/proposal.diff`).
+  Binaries before d8d3eb4 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-d8d3eb4`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:3acc586`); fork commits have no published upstream image.
-- Image ID: sha256:7a6ae57d47b354ece3c99d6bf82c030999acab8340b7e929d72937c38a19243c
-- Team agent sidecar code (`/opt/orbit-agent`): commit 3acc586.
+  (`orbit:d8d3eb4`); fork commits have no published upstream image.
+- Image ID: sha256:1e986ef24d2d59adfd0972c0df4b47f91110934e3c9fe0d99826a2749c335d9a
+- Team agent sidecar code (`/opt/orbit-agent`): commit d8d3eb4.
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): on since November 15, 2026, 12:07 UTC (set by Ops, outside a
   deploy): `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID`, `ORBIT_APNS_TOPIC` and `ORBIT_APNS_SANDBOX`
   are in `/etc/orbit/orbit.env`; the journal shows `iPhone push (APNs) is on` (topic `com.easytomanage.orbit`, sandbox
@@ -262,6 +267,65 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 16, 2026 upgrade: Donna prompt dedup, rmcp 3.6.0 and the MCP public origin (no migration)
+
+`main` from `05348027` to `d8d3eb41` (local, not pushed): `--no-ff` merges `1604032a` of `donna-prompt-dedup`
+(`76ef1767`: the `codemode` prompt section no longer repeats the tools Donna is offered directly, ~2.7k fewer tokens
+per request), `e8854ff0` of `rmcp-3-6-evals` (`6e67ded2`: rmcp 3.5.0 → 3.6.0 for RUSTSEC-2026-0461, eval fixes) and
+`9b0e93e4` of `mcp-public-origin` (`c66bb238`: optional `ORBIT_PUBLIC_MCP_URL`). Only conflict: `whats-new.md` (the
+branch's `## TBD` entry joined today's entry; the webhook and iPhone lines are now one line, so it keeps 4 lines).
+rmcp stays 3.6.0 (the MCP branch did not touch `Cargo.toml`/`Cargo.lock`). Then `d8d3eb41`: the donna-prompt eval case
+c32 sends `drive_trash` `node_ids` (the list form on `main` since `0caa95a2`; with the old `node_id` it failed 34/35).
+`aboutOrbit()` (API tokens line) and what's new (2026-11-16, "Connect your own agent to Orbit") describe the MCP
+public origin.
+
+Checks: `cargo check --workspace --all-targets` (0 warnings); `oauth_api` 17, `mcp_api` 19, `agent_api` 21 on SQLite
+and on Postgres; `orbit-platform` config tests 6; agent `tsc` and `npm test` (102 pass, 11 skipped); Donna eval
+`evals/donna-prompt` 35/35 (28,093 fixed tokens per request, `codemode` section 237). Not run: the Codex CLI OAuth
+e2e (done on the branch, 2026-11-16). Logs: `/root/ops/combined-1116/`.
+
+Deploy id `20261116T163334Z-2275347`. `orbit:d8d3eb4` (image
+`sha256:1e986ef24d2d59adfd0972c0df4b47f91110934e3c9fe0d99826a2749c335d9a`, ~40 min); `deploy/smoke.sh` and
+`orbit config check` passed. No-migration check (hot copy, and in the switch on a copy of the stopped database): 0
+applied, schema 20261115105242 (119 rows), counts, names and checksums unchanged, quick-check ok, 0 foreign-key rows.
+
+Switch: stopped both services at 17:49:32 UTC; snapshot `01a1e57a-7e8d-74d2-98b2-9e3de6c53164` with
+`/usr/local/bin/orbit-3acc586`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-d8d3eb4.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-d8d3eb4.tgz`; sidecar code copied (old `/opt/orbit-agent.before-d8d3eb4`);
+env: `ORBIT_PUBLIC_MCP_URL=https://orbit-hooks.easytomanage.com` added (old file `/etc/orbit/orbit.env.before-d8d3eb4`).
+`orbit` ready 17:49:47, then `orbit-agent` (15 s down). `vm-health.conf` (old copy `.before-d8d3eb4`):
+`PROD_TAG=d8d3eb4`, `ROLLBACK_TAG=3acc586`, `ROLLBACK_BACKUP=01a1e57a-7e8d-74d2-98b2-9e3de6c53164`.
+
+Verified: `orbit`, `orbit-agent`, nginx, hooks gateway active, 0 restarts; readiness (all 6 checks) local and on
+`https://orbit-app.easytomanage.com/health/ready`, `/health/live` 200; `/orbit-build.json` revision `d8d3eb41…`;
+`orbit config show` lists `ORBIT_PUBLIC_MCP_URL`. Main origin: OAuth metadata issuer `https://orbit.easytomanage.com`,
+`POST /mcp` without a token 401 with its `resource_metadata`. MCP origin (to `127.0.0.1:8080` with
+`Host: orbit-hooks.easytomanage.com`, as the gateway proposal sends it): issuer and register/token/revoke on
+`https://orbit-hooks.easytomanage.com`, authorize on `orbit.easytomanage.com`, protected resource
+`https://orbit-hooks.easytomanage.com/mcp`, `POST /mcp` 401 without a token and 401 with a non-OAuth bearer. Through
+the hooks gateway today these paths are 404 (Ops has not changed it yet). Journal: only rmcp's "allowed origin
+without a port matches any port" WARN at start (once per origin; the old binary wrote it too). `vm-health` OK except
+nginx (61 connection-refused lines of the switch at 17:49; 0 5xx).
+
+Rollback to `3acc586` (no schema change, so no data is lost):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo cp -p /etc/orbit/orbit.env.before-d8d3eb4 /etc/orbit/orbit.env
+sudo rm -rf /opt/orbit-agent/src && sudo cp -a /opt/orbit-agent.before-d8d3eb4/src /opt/orbit-agent/src
+sudo install -m 755 /usr/local/bin/orbit-3acc586 /usr/local/bin/orbit
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/combined-1116/rollback.sh)
+# Way 2, only for a data problem (work after 17:49 UTC is lost), Orbit stopped: /usr/local/bin/orbit-3acc586 backup verify +
+#   backup restore 01a1e57a-7e8d-74d2-98b2-9e3de6c53164 (as user orbit, with the old /etc/orbit/orbit.env), then the lines above
+```
+
+After this rollback, set `PROD_TAG=3acc586`, `ROLLBACK_TAG=dc59487`,
+`ROLLBACK_BACKUP=01a1e531-d917-75f7-92d7-cf225067a4de` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-d8d3eb4`).
 
 ### November 16, 2026 upgrade: desktop 0.1.4 merge, web/server part (no migration)
 
