@@ -1,10 +1,17 @@
 import { useId, useState } from 'react'
-import { Add, Copy, Danger, Edit, Flash, Key, MoreH, Trash } from 'reicon-react'
+import { Add, Copy, Danger, Edit, Eye, Flash, Key, MoreH, Trash } from 'reicon-react'
 import { toast } from 'sonner'
 import { confirmAction } from '@/components/common/confirmAction'
 import { InfoTip } from '@/components/common/InfoTip'
 import { Button } from '@/components/ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group'
@@ -15,6 +22,7 @@ import {
   useDeleteWebhook,
   useRotateWebhook,
   useSetWebhookInteractivity,
+  useSetWebhookRead,
   useUpdateWebhook,
   useWebhookSigningSecret,
 } from '@/features/chat/api/mutations'
@@ -155,9 +163,35 @@ function WebhookRow({
   onDelete: () => void
 }) {
   const [interactivityOpen, setInteractivityOpen] = useState(false)
+  const read = useSetWebhookRead()
+  const readId = useId()
   const people = useChatPeople()
   const creator = authorName(people, webhook.createdBy, null, 'a former member')
   const used = webhook.lastUsedAt === null ? 'never used' : `last used ${relativeAgo(webhook.lastUsedAt)}`
+
+  const setCanRead = async (canRead: boolean) => {
+    if (canRead) {
+      const confirmed = await confirmAction({
+        title: `Let ${webhook.name} read this channel?`,
+        description: 'Anyone who has its webhook URL can then read the messages and threads of this channel.',
+        confirmLabel: 'Allow reading',
+      })
+      if (!confirmed) return
+    }
+    read.mutate(
+      { conversationId, webhookId: webhook.id, canRead },
+      {
+        onSuccess: (next) => toast.success(next.canRead ? `${next.name} can read this channel.` : `${next.name} can no longer read this channel.`),
+        onError: (error) =>
+          toast.error(
+            chatErrorMessage(error, 'Could not change reading. Try again.', {
+              forbidden: 'Only the channel creator and workspace owners and admins can change this.',
+            }),
+          ),
+      },
+    )
+  }
+
   return (
     <li data-slot="channel-webhook" className="grid gap-2">
       <div className="flex items-center gap-3 rounded-md px-2 py-1.5 hover:bg-muted/50">
@@ -168,6 +202,7 @@ function WebhookRow({
             Made by {creator} · {used}
             {webhook.requestUrl ? ' · buttons on' : ''}
             {webhook.events ? ' · events on' : ''}
+            {webhook.canRead ? ' · can read' : ''}
           </p>
         </div>
         <DropdownMenu>
@@ -178,7 +213,7 @@ function WebhookRow({
           >
             <MoreH />
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
+          <DropdownMenuContent align="end" className="w-auto min-w-44">
             <DropdownMenuItem onClick={onRename}>
               <Edit />
               Edit
@@ -191,6 +226,14 @@ function WebhookRow({
               <Flash />
               Interactivity
             </DropdownMenuItem>
+            <DropdownMenuCheckboxItem
+              checked={webhook.canRead}
+              closeOnClick
+              disabled={read.isPending}
+              onCheckedChange={(checked) => void setCanRead(checked)}>
+              <Eye />
+              Can read this channel
+            </DropdownMenuCheckboxItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onClick={onDelete}>
               <Trash />
@@ -199,6 +242,22 @@ function WebhookRow({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      {webhook.messagesUrl ? (
+        <Field className="px-2">
+          <FieldLabel htmlFor={readId}>
+            Read URL
+            <InfoTip text="GET it with the webhook URL's secret as Authorization: Bearer <secret>. Add thread_ts=<message id> to read a thread." />
+          </FieldLabel>
+          <InputGroup>
+            <InputGroupInput id={readId} readOnly value={webhook.messagesUrl} className="font-mono text-xs" />
+            <InputGroupAddon align="inline-end">
+              <InputGroupButton aria-label="Copy read URL" size="icon-xs" onClick={() => copy(webhook.messagesUrl ?? '', 'Read URL copied')}>
+                <Copy />
+              </InputGroupButton>
+            </InputGroupAddon>
+          </InputGroup>
+        </Field>
+      ) : null}
       {interactivityOpen ? (
         <WebhookInteractivity webhook={webhook} conversationId={conversationId} onClose={() => setInteractivityOpen(false)} />
       ) : null}
@@ -220,7 +279,6 @@ function WebhookInteractivity({ webhook, conversationId, onClose }: { webhook: C
   const urlId = useId()
   const secretId = useId()
   const eventsId = useId()
-  const readId = useId()
   const changed = requestUrl.trim() !== (webhook.requestUrl ?? '')
 
   const submit = (url: string | null, events: boolean) =>
@@ -296,7 +354,7 @@ function WebhookInteractivity({ webhook, conversationId, onClose }: { webhook: C
                 Send messages as events
               </label>
               <InfoTip
-                text={`Each member's message in this channel goes to the request URL as a signed event_callback (app_mention when it names @${webhook.name}). The webhook URL's secret can then also read the channel and its threads.`}
+                text={`Each member's message in this channel goes to the request URL as a signed event_callback (app_mention when it names @${webhook.name}). The webhook URL's secret can then also read the channel and its threads at the Read URL.`}
               />
             </div>
             <Switch
@@ -306,23 +364,6 @@ function WebhookInteractivity({ webhook, conversationId, onClose }: { webhook: C
               onCheckedChange={(checked: boolean) => submit(webhook.requestUrl, checked)}
             />
           </div>
-
-          {webhook.messagesUrl ? (
-            <Field>
-              <FieldLabel htmlFor={readId}>
-                Read URL
-                <InfoTip text="GET it with the webhook URL's secret as Authorization: Bearer <secret>. Add thread_ts=<message id> to read a thread." />
-              </FieldLabel>
-              <InputGroup>
-                <InputGroupInput id={readId} readOnly value={webhook.messagesUrl} className="font-mono text-xs" />
-                <InputGroupAddon align="inline-end">
-                  <InputGroupButton aria-label="Copy read URL" size="icon-xs" onClick={() => copy(webhook.messagesUrl ?? '', 'Read URL copied')}>
-                    <Copy />
-                  </InputGroupButton>
-                </InputGroupAddon>
-              </InputGroup>
-            </Field>
-          ) : null}
 
           <Field>
             <FieldLabel htmlFor={secretId}>Signing secret</FieldLabel>

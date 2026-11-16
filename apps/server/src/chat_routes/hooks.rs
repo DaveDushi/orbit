@@ -55,6 +55,13 @@ pub(crate) struct ChatWebhookWithUrl {
     url: String,
 }
 
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ChatWebhookReadBody {
+    /// The webhook URL's secret can read the channel and its threads, also without events.
+    can_read: bool,
+}
+
 /// What a tool posts: the payload of a Slack incoming webhook. Fields that Orbit does not use
 /// (`channel`, `unfurl_links`) are ignored, so a Slack payload posts as it is.
 #[derive(Deserialize, ToSchema)]
@@ -100,9 +107,9 @@ fn with_url(state: &ChatState, created: WebhookWithSecret) -> ChatWebhookWithUrl
     }
 }
 
-/// The webhook with its read URL on the hooks origin, when its events are on.
+/// The webhook with its read URL on the hooks origin, when its secret can read the channel.
 pub(super) fn located(state: &ChatState, mut webhook: WebhookRecord) -> WebhookRecord {
-    webhook.messages_url = webhook.events.then(|| {
+    webhook.messages_url = (webhook.events || webhook.can_read).then(|| {
         format!(
             "{}/api/v1/hooks/chat/{}/messages",
             state.public_origin.trim_end_matches('/'),
@@ -213,6 +220,36 @@ pub(crate) async fn rotate_chat_webhook(
         .await
         .map_err(|error| call.problem(error))?;
     Ok(Json(with_url(&state, rotated)))
+}
+
+/// Lets the webhook's secret read the channel at its read URL, without events, or stops it. Only
+/// the channel's creator and workspace owners and admins; each change is in the audit log.
+#[utoipa::path(put, path = "/api/v1/workspaces/{workspace_id}/chat/conversations/{conversation_id}/webhooks/{webhook_id}/read", params(("workspace_id" = String, Path), ("conversation_id" = String, Path), ("webhook_id" = String, Path)), request_body = ChatWebhookReadBody, responses((status = 200, body = WebhookRecord)))]
+pub(crate) async fn set_chat_webhook_read(
+    State(state): State<ChatState>,
+    Path((workspace, conversation, webhook)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+    ApiJson(body): ApiJson<ChatWebhookReadBody>,
+) -> Result<Json<WebhookRecord>, ApiError> {
+    let call = Call::enter(&state, &headers, &uri, &workspace, &request_id).await?;
+    let conversation_id = call.id(&conversation)?;
+    let webhook_id = call.id(&webhook)?;
+    call.read(
+        state
+            .chat
+            .set_webhook_read(
+                call.workspace_id,
+                call.actor_id,
+                conversation_id,
+                webhook_id,
+                body.can_read,
+                crate::task_routes::request_id_value(call.request_id),
+            )
+            .await
+            .map(|webhook| located(&state, webhook)),
+    )
 }
 
 /// Deletes a webhook. Its URL stops working; the messages it posted stay.

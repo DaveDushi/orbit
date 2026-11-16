@@ -1,6 +1,7 @@
 //! Two-way integrations. With events on, a webhook gets each member's message in its channel as a
-//! Slack `event_callback`, signed as its clicks are (`interactions.rs`), and its secret reads the
-//! channel and its threads with `GET /api/v1/hooks/chat/{webhook_id}/messages`. The integration
+//! Slack `event_callback`, signed as its clicks are (`interactions.rs`). With events or "Can read
+//! this channel" (`can_read`) on, its secret reads the channel and its threads with
+//! `GET /api/v1/hooks/chat/{webhook_id}/messages`. The integration
 //! answers by posting to the webhook URL, with `thread_ts` for a reply in a thread (`hooks.rs`).
 
 use std::collections::HashMap;
@@ -180,7 +181,8 @@ pub(crate) struct HookMessages {
     next_before: Option<String>,
 }
 
-/// Reads the webhook's channel, or one thread of it, for an integration with events on. The
+/// Reads the webhook's channel, or one thread of it, for an integration with events or "Can read
+/// this channel" on. The
 /// credential is the webhook URL's secret in `Authorization: Bearer <secret>`.
 #[utoipa::path(get, path = "/api/v1/hooks/chat/{webhook_id}/messages", params(("webhook_id" = String, Path), HookMessagesQuery), responses((status = 200, body = HookMessages)))]
 pub(crate) async fn read_hook_messages(
@@ -202,14 +204,15 @@ pub(crate) async fn read_hook_messages(
         .and_then(|value| value.strip_prefix("Bearer "))
         .unwrap_or_default();
     let webhook_id: Id = webhook.parse().map_err(|_| fail(ChatError::NotFound))?;
-    // A webhook without events can only post: its URL may sit in a CI config, so it must not
-    // also read the channel.
+    // A webhook can only post unless events or "Can read this channel" are on: its URL may sit
+    // in a CI config, so it must not also read the channel. An unknown webhook, a wrong or
+    // rotated secret and a webhook that may not read all get the same 404.
     let target = state
         .chat
         .find_webhook(webhook_id, secret.trim())
         .await
         .map_err(&fail)?
-        .filter(|target| target.events)
+        .filter(|target| target.events || target.can_read)
         .ok_or_else(|| fail(ChatError::NotFound))?;
     let id = |value: &str, field: &'static str| {
         value

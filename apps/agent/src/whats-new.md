@@ -6,6 +6,12 @@ build: "## YYYY-MM-DD" (the deploy date), then 1-4 short "- " lines about what p
 members, not developers. Keep the 8 newest entries; the prompt shows the 5 newest.
 -->
 
+## 2026-11-16
+- Voice input: tap the mic beside Send (chat, threads, Ask Donna) and speak. Your words show as you talk; you can edit them, and nothing is sent until you press Send. It works in the browser now (not in Firefox), in the iPhone app from its next update, and in the Mac app later.
+- Donna can move Docs pages, tasks, and Drive files and folders to the trash, many at once after one yes from you. You can restore them from the trash. Donna also writes tables and links on Docs pages correctly now, and older pages with broken tables are repaired.
+- Chat webhooks can read their channel: in Edit channel → Integrations, open the webhook's ⋯ menu and turn on "Can read this channel". It is off by default; only the channel's creator and workspace owners and admins can change it.
+- iPhone notifications now come also while you use Orbit on another device, and a tap opens the message in its own workspace.
+
 ## 2026-11-15
 - Donna sees images you send in Chat or in the Ask Donna panel (screenshots, photos): she looks at them herself, with no need to put them in Drive. She sees only images that you can open.
 - Label rules now apply to tasks that already have the label: when an owner or admin adds a rule, turns one on, maps an owner: name to a member, or turns on the owner:<name> switch, the open tasks with that label get the person at once. Done and cancelled tasks stay as they are.
@@ -64,7 +70,3 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 - Donna knows the current time and date of the person who writes to her, so "tomorrow" and "next week" are right, and she knows which Orbit version runs and what is new.
 - Donna can answer with cards: tables, charts, task lists, short forms and buttons. They build live while she writes, also in the phone app.
 - The Orbit logo is now a pink pixel "W", and the Orbit desktop app for Windows is ready: Download desktop app in the account menu, or https://orbit.wellrox.com/downloads/desktop/. The app icon picker (Settings → Apps) has new ecommerce icons; on a phone, the top bar stays visible on the chat list.
-
-## 2026-11-07
-- Donna can work in Drive: find, read, move and rename files, create folders and save text files. She moves items to the trash or makes a public link only after you say yes.
-- The wellrox-cloud files are now in Drive.

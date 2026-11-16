@@ -276,6 +276,10 @@ fn json_router(state: ChatState) -> Router {
             post(hooks::rotate_chat_webhook),
         )
         .route(
+            "/api/v1/workspaces/{workspace_id}/chat/conversations/{conversation_id}/webhooks/{webhook_id}/read",
+            put(hooks::set_chat_webhook_read),
+        )
+        .route(
             "/api/v1/hooks/chat/{webhook_id}/{secret}",
             post(hooks::post_incoming_webhook),
         )

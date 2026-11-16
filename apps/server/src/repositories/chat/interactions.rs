@@ -429,6 +429,7 @@ impl ChatRepository {
                 },
                 // A response URL only posts; it never reads the channel.
                 events: false,
+                can_read: false,
             },
         }))
     }

@@ -156,7 +156,9 @@ export interface ChannelWebhook {
   requestUrl: string | null
   /** Members' messages are sent to `requestUrl` too, and the webhook's secret can read the channel. */
   events: boolean
-  /** With events on: where the integration reads the channel (the webhook URL's secret as a bearer token). */
+  /** "Can read this channel": the webhook's secret can read the channel without events. */
+  canRead: boolean
+  /** With events or `canRead` on: where the integration reads the channel (the webhook URL's secret as a bearer token). */
   messagesUrl: string | null
 }
 

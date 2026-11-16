@@ -953,6 +953,13 @@ export type ChatWebhookBody = {
     name: string;
 };
 
+export type ChatWebhookReadBody = {
+    /**
+     * The webhook URL's secret can read the channel and its threads, also without events.
+     */
+    can_read: boolean;
+};
+
 /**
  * A webhook with its URL. The URL holds the secret and is returned only here.
  */
@@ -6200,6 +6207,11 @@ export type ViewUpdateBody = {
 export type Visibility = 'personal' | 'workspace';
 
 export type WebhookRecord = {
+    /**
+     * The webhook's secret can read the channel and its threads, also without events. Off by
+     * default; only the channel's managers turn it on.
+     */
+    can_read: boolean;
     conversation_id: string;
     created_at: string;
     created_by: string;
@@ -6215,8 +6227,9 @@ export type WebhookRecord = {
     id: string;
     last_used_at: string | null;
     /**
-     * With events on: where the integration reads the channel (`GET`, the webhook URL's secret
-     * as a bearer token), on the hooks origin (`ORBIT_PUBLIC_HOOKS_URL`). Null otherwise.
+     * With events or `can_read` on: where the integration reads the channel (`GET`, the webhook
+     * URL's secret as a bearer token), on the hooks origin (`ORBIT_PUBLIC_HOOKS_URL`). Null
+     * otherwise.
      */
     messages_url: string | null;
     /**
@@ -15436,6 +15449,66 @@ export type SetChatWebhookInteractivityResponses = {
 };
 
 export type SetChatWebhookInteractivityResponse = SetChatWebhookInteractivityResponses[keyof SetChatWebhookInteractivityResponses];
+
+export type SetChatWebhookReadData = {
+    body: ChatWebhookReadBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        conversation_id: string;
+        webhook_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/chat/conversations/{conversation_id}/webhooks/{webhook_id}/read';
+};
+
+export type SetChatWebhookReadErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden, chat_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * chat_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type SetChatWebhookReadError = SetChatWebhookReadErrors[keyof SetChatWebhookReadErrors];
+
+export type SetChatWebhookReadResponses = {
+    200: WebhookRecord;
+};
+
+export type SetChatWebhookReadResponse = SetChatWebhookReadResponses[keyof SetChatWebhookReadResponses];
 
 export type RotateChatWebhookData = {
     body?: never;

@@ -406,6 +406,7 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::chat_routes::hooks::create_chat_webhook,
         crate::chat_routes::hooks::update_chat_webhook,
         crate::chat_routes::hooks::rotate_chat_webhook,
+        crate::chat_routes::hooks::set_chat_webhook_read,
         crate::chat_routes::hooks::delete_chat_webhook,
         crate::chat_routes::hooks::post_incoming_webhook,
         crate::chat_routes::hooks::post_action_response,
@@ -1777,6 +1778,10 @@ fn chat_errors(operation_id: &str, responses: &mut BTreeMap<&'static str, Vec<&'
         add_code(responses, "409", "chat_conflict");
         add_code(responses, "422", "validation_failed");
         add_code(responses, "503", "app_key_missing");
+        return;
+    }
+    if operation_id == "set_chat_webhook_read" {
+        add_code(responses, "403", "chat_forbidden");
         return;
     }
     if operation_id.ends_with("_chat_webhook") || operation_id == "list_chat_webhooks" {
