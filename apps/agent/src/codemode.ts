@@ -19,7 +19,7 @@ import type { Context } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { defineTool } from "@earendil-works/pi-durable";
-import type { ToolExecutionApi } from "@earendil-works/pi-durable";
+import type { PromptSection, ToolExecutionApi } from "@earendil-works/pi-durable";
 import { createCodemodeExtension, createCodemodeTool, type CodemodeToolOptions } from "@earendil-works/pi-durable/codemode";
 
 import { ThreadDoc, type RoutineRunState } from "./docs.ts";
@@ -80,8 +80,24 @@ export const RUN_SCRIPT = runSavedScript;
 /** The code mode tools: `codemode` for the model, `run_saved_script` for a routine's script runs. */
 export const CODE_TOOLS = [codemode, runSavedScript];
 
-/** The `codemode` prompt section: the tools scripts can call, as TypeScript declarations. */
-export const CODEMODE_SECTIONS = createCodemodeExtension(lazyOptions).sections ?? [];
+/**
+ * The `codemode` prompt section: the tools scripts can call. Pi's section declares every callable tool (TypeScript, up
+ * to ~3k tokens), but the model already has the definitions of those it is offered: so it declares only the callable
+ * tools this request does not offer (all of them in a script run, which offers only `run_saved_script`) or whose call
+ * resolves to an object, and names the offered tools that scripts cannot call. Which tools a script can call does not change.
+ */
+export const CODEMODE_SECTIONS: PromptSection[] = (createCodemodeExtension(lazyOptions).sections ?? []).map((pi) => ({
+	...pi,
+	render: async (input, context) => {
+		const { tools, callable } = input.agent;
+		const scriptable = new Set(callable.map((tool) => tool.name));
+		const offered = new Set(tools.map((tool) => tool.name));
+		const modelOnly = tools.filter((tool) => !scriptable.has(tool.name)).map((tool) => tool.name);
+		const rest = await pi.render({ ...input, agent: { ...input.agent, callable: callable.filter((tool) => !offered.has(tool.name) || tool.structuredOutputSchema) } }, context);
+		const direct = `Scripts can call each tool offered to you, as \`await tools.<name>(args)\` with the same arguments; it resolves to the tool's text output${modelOnly.length ? `. Not from a script: ${modelOnly.join(", ")}` : ""}.`;
+		return rest ? `${direct}\n\n${rest}` : direct;
+	},
+}));
 
 /** Closes the sandbox's worker, when one was made. */
 export async function closeCodemode(): Promise<void> {
