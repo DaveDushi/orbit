@@ -852,6 +852,40 @@ impl DriveRepository {
         entry_page(&rows, paging)
     }
 
+    /// How many files [`Self::files_below`] lists for this folder: what goes to the trash with it.
+    pub async fn files_below_count(
+        &self,
+        workspace_id: Id,
+        user_id: Id,
+        folder_id: Id,
+    ) -> Result<i64, DriveError> {
+        let mut connection = self.database.pool().acquire().await?;
+        require_actor(&mut connection, workspace_id, user_id).await?;
+        live_folder(
+            &mut connection,
+            workspace_id,
+            Some(folder_id),
+            Some(user_id),
+        )
+        .await?;
+        let mut query = SqlBuilder::new(
+            "WITH RECURSIVE live(id, folder_path, depth) AS (SELECT id, CAST('' AS TEXT), 0 FROM drive_nodes \
+             WHERE trashed_at IS NULL AND parent_id = ",
+        );
+        query.push_bind(folder_id.to_string());
+        push_live_walk(&mut query);
+        query.push(
+            " SELECT COUNT(*) AS files FROM drive_nodes JOIN live ON live.id = drive_nodes.id \
+             WHERE drive_nodes.kind = 'file'",
+        );
+        push_visible(&mut query, "drive_nodes", user_id);
+        Ok(query
+            .build()
+            .fetch_one(&mut *connection)
+            .await?
+            .try_get::<i64, _>("files")?)
+    }
+
     /// Where the bytes of live files are, for download URLs. Ids that are not live files are left out.
     pub async fn objects(
         &self,

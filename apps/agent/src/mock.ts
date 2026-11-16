@@ -20,7 +20,7 @@
  *   look at the images (one view_image call with the chat_file_ids of the images sent with the message, then reports
  *     what reached the model: the image inputs and the originals' sizes)
  *   find drive file "words"        read drive file <id|it>              create folder "Name"
- *   trash drive file <id|it>       share drive file <id|it>
+ *   trash drive file <id|it> [and folder <id> …] (drive_trash, one call)       share drive file <id|it>
  *   move to trash page <id|it> [and task <id|it>]     move to trash task <id|it>     (move_to_trash, one call)
  *   insert drive file <id|it> into page <id|it|this> [at <n>]     list drive files of page <id|it|this>
  *   which pages show drive file <id|it>     replace drive file block <block> on page <id|it> with <id|it>
@@ -295,7 +295,11 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 	if ((match = /create (?:a )?(?:drive )?folder "([^"]+)"/i.exec(instruction))) return { name: "drive_create_folder", args: { name: match[1] } };
 	if ((match = /move to (?:the )?trash(?: (?:page|doc) ([\w-]+))?(?:,? and)?(?: task ([\w-]+))?/i.exec(instruction)) && (match[1] || match[2]))
 		return { name: "move_to_trash", args: { ...(match[1] ? { page_ids: [target(match[1], "page")] } : {}), ...(match[2] ? { task_ids: [target(match[2], "task")] } : {}) } };
-	if ((match = /trash drive (?:file|folder) (\S+)/i.exec(instruction))) return { name: "drive_trash", args: { node_id: target(match[1], "drive") } };
+	if ((match = /trash drive (?:file|folder|item)s? (\S+(?:(?:,? and |, )(?:(?:file|folder) )?\S+)*)/i.exec(instruction)))
+		return {
+			name: "drive_trash",
+			args: { node_ids: match[1].split(/,? and |, /).map((part) => target(part.replace(/^(?:file|folder) /i, "").replace(/[.,]$/, ""), "drive")) },
+		};
 	if ((match = /share drive (?:file|folder) (\S+)/i.exec(instruction))) return { name: "drive_share", args: { node_id: target(match[1], "drive") } };
 	if ((match = /\bunlink (?:page|doc) (\S+) from task (\S+?)\.?$/i.exec(instruction)))
 		return { name: "unlink_doc_from_task", args: { page_id: target(match[1], "page"), task_id: target(match[2], "task") } };

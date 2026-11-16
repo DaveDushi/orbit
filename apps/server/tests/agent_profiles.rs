@@ -596,7 +596,7 @@ async fn orbit_enforces_the_agents_tools_and_the_drivers_own_permissions() {
             &reader_token,
             "POST",
             "/agent-tools/drive",
-            Some(json!({ "tool": "drive_trash", "arguments": { "node_id": "x" }, "conversation_id": general, "root_message_id": null })),
+            Some(json!({ "tool": "drive_trash", "arguments": { "node_ids": ["x"] }, "conversation_id": general, "root_message_id": null })),
         )
         .await;
     assert_eq!(status, StatusCode::OK);

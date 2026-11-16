@@ -32,8 +32,13 @@ reasons: `.ai/agent-design.md`.
   wrapping as `read_file`), and, when the driver asks, `drive_create_folder`, `drive_save_text` (never replaces a
   file), `drive_move` and `drive_rename`. `drive_trash` (restorable for 30 days) and `drive_share` (a public link) run
   only after the driver's **yes** in the thread, checked by Orbit as for integration writes (table
-  `agent_drive_approvals`: one approval is one run of exactly those arguments, and expires). The audit log has
-  `agent_drive.approved_action` with who approved. It cannot delete forever, empty the trash, restore, or turn off links.
+  `agent_drive_approvals`: one approval is one run of exactly those arguments, and expires). `drive_trash` takes
+  `node_ids` (files and folders, at most 50): Orbit loads each one as the driver first (an item of another workspace,
+  of a private chat the driver is not in, or already in the trash fails the whole call before anyone is asked), then
+  asks one approval for the whole list (paths, and for a folder how many files it holds at any depth, the count of the
+  web's folder file list), then runs the web's own move to the trash (`DriveRepository::trash`, a folder with
+  everything in it) for each item. The audit log has one `agent_drive.approved_action` per item with who approved.
+  It cannot delete forever, empty the trash, restore, or turn off links.
 - It moves **Docs pages and tasks to the Trash** only through `POST …/agent-tools/trash` (`move_to_trash`, with
   `page_ids` and `task_ids`, at most 50): agent sessions cannot reach `DELETE …/pages/{id}`, `…/tasks/{id}`,
   `…/projects/{id}`, any `…/permanent` route or `…/trash/empty`. Orbit loads each item as the driver first (an item the

@@ -125,8 +125,8 @@ export function driveTools(asDriver: Driver, orbit: () => OrbitClient) {
 		defineTool({
 			name: "drive_trash",
 			description:
-				"Move a Drive file or folder (with everything in it) to the trash, where members can restore it for 30 days. Only when the driver asked for it. It needs the driver's approval each time: then stop, and after their yes call it again with exactly the same arguments.",
-			parameters: Type.Object({ node_id: nodeId }),
+				"Move Drive files and folders (a folder with everything in it, as in the web app) to the Drive trash, where members can restore them for 30 days. Give all of them in one call (at most 50): the driver approves the whole list at once, and the question says how many files each folder holds. Only when the driver asked for it. It needs the driver's approval each time: then stop, and after their yes call it again with exactly the same arguments. It never deletes forever.",
+			parameters: Type.Object({ node_ids: Type.Array(nodeId, { minItems: 1, maxItems: 50 }) }),
 			execute: (args, api, context) => run("drive_trash", "drive_trash", args)(api, context),
 		}),
 		defineTool({
