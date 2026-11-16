@@ -159,7 +159,7 @@ pub(super) fn descendants_sql(predicate: &str) -> String {
 }
 
 /// Live descendants of `root` at every depth (not `root` itself).
-pub(super) async fn live_descendants<'e, E>(executor: E, root: Id) -> Result<Vec<Id>, TaskError>
+pub async fn live_descendants<'e, E>(executor: E, root: Id) -> Result<Vec<Id>, TaskError>
 where
     E: sqlx::Executor<'e, Database = Any>,
 {

@@ -22,18 +22,20 @@ pub mod settings;
 mod shopify;
 pub(crate) mod skill_package;
 mod skills;
+pub(crate) mod trash;
 pub(crate) mod task_runs;
 
 use std::sync::Arc;
 
 /// The agent's routes: the sidecar's, the ChatGPT connection, the memory, the integrations (and a
-/// Drive image to Shopify), Drive, and routines, reminders and scheduled messages.
+/// Drive image to Shopify), Drive, pages and tasks to the Trash, and routines, reminders and scheduled messages.
 pub fn router(state: AgentState) -> axum::Router {
     routes::router(state.clone())
         .merge(memory_routes::router(state.clone()))
         .merge(integrations::router(state.clone()))
         .merge(shopify::router(state.clone()))
         .merge(drive::router(state.clone()))
+        .merge(trash::router(state.clone()))
         .merge(profiles::router(state.clone()))
         .merge(skills::router(state.clone()))
         .merge(crate::scheduled::router(state))

@@ -21,6 +21,7 @@
  *     what reached the model: the image inputs and the originals' sizes)
  *   find drive file "words"        read drive file <id|it>              create folder "Name"
  *   trash drive file <id|it>       share drive file <id|it>
+ *   move to trash page <id|it> [and task <id|it>]     move to trash task <id|it>     (move_to_trash, one call)
  *   insert drive file <id|it> into page <id|it|this> [at <n>]     list drive files of page <id|it|this>
  *   which pages show drive file <id|it>     replace drive file block <block> on page <id|it> with <id|it>
  *   remove drive file block <block> from page <id|it>
@@ -44,7 +45,7 @@
  * AGENT_MOCK_TOKENS_PER_SECOND slows the streamed text (default 400), to watch a card build.
  *
  * A "yes" to an approval question (an answer, or the driver's next message in a DM) calls the last integration,
- * drive_image_to_shopify, drive_trash, drive_share, schedule_routine or send_later tool again with the same arguments.
+ * drive_image_to_shopify, drive_trash, drive_share, move_to_trash, schedule_routine or send_later tool again with the same arguments.
  * When a memory tool result asks for a summary, the mock writes one from the halves it was shown. A compaction gets a
  * short placeholder summary.
  */
@@ -292,6 +293,8 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 	if ((match = /find drive (?:file|folder)s? "([^"]+)"/i.exec(instruction))) return { name: "drive_search", args: { query: match[1] } };
 	if ((match = /read drive file (\S+)/i.exec(instruction))) return { name: "drive_read", args: { node_id: target(match[1], "drive") } };
 	if ((match = /create (?:a )?(?:drive )?folder "([^"]+)"/i.exec(instruction))) return { name: "drive_create_folder", args: { name: match[1] } };
+	if ((match = /move to (?:the )?trash(?: (?:page|doc) ([\w-]+))?(?:,? and)?(?: task ([\w-]+))?/i.exec(instruction)) && (match[1] || match[2]))
+		return { name: "move_to_trash", args: { ...(match[1] ? { page_ids: [target(match[1], "page")] } : {}), ...(match[2] ? { task_ids: [target(match[2], "task")] } : {}) } };
 	if ((match = /trash drive (?:file|folder) (\S+)/i.exec(instruction))) return { name: "drive_trash", args: { node_id: target(match[1], "drive") } };
 	if ((match = /share drive (?:file|folder) (\S+)/i.exec(instruction))) return { name: "drive_share", args: { node_id: target(match[1], "drive") } };
 	if ((match = /\bunlink (?:page|doc) (\S+) from task (\S+?)\.?$/i.exec(instruction)))
@@ -339,7 +342,7 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 		return { name: "use_integration", args: { tool: match[1], arguments: parsed } };
 	}
 	if (/^(?:Answer|Instruction) from [^\n]*\n\s*(yes|approved?)\b/i.test(instruction)) {
-		const again = lastCall(messages, ["use_integration", "drive_image_to_shopify", "drive_trash", "drive_share", "schedule_routine", "send_later", "approve_routine_script"]);
+		const again = lastCall(messages, ["use_integration", "drive_image_to_shopify", "drive_trash", "drive_share", "move_to_trash", "schedule_routine", "send_later", "approve_routine_script"]);
 		if (again) return again;
 	}
 	return undefined;

@@ -50,7 +50,7 @@ pub const MAX_CHANNELS: usize = 100;
 /// The default agent's tools, by group, as the sidecar names them (`apps/agent/src/tools.ts`,
 /// `media.ts`; `apps/agent/test/profiles.test.ts` keeps both lists the same). `true`: the tool
 /// writes or posts.
-pub const TOOL_CATALOG: [(&str, &str, bool); 59] = [
+pub const TOOL_CATALOG: [(&str, &str, bool); 60] = [
     ("list_projects", "Tasks", false),
     ("search_tasks", "Tasks", false),
     ("get_task", "Tasks", false),
@@ -77,6 +77,7 @@ pub const TOOL_CATALOG: [(&str, &str, bool); 59] = [
     ("insert_drive_file", "Docs", true),
     ("replace_drive_file", "Docs", true),
     ("remove_drive_file", "Docs", true),
+    ("move_to_trash", "Trash", true),
     ("read_messages", "Chat", false),
     ("search_messages", "Chat", false),
     ("read_chat_file", "Chat", false),
@@ -248,6 +249,7 @@ pub fn route_need(method: &Method, rest: &str) -> RouteNeed {
         ["agent-tools"] if get => RouteNeed::Any(&["use_integration"]),
         ["agent-tools", "call"] if method == Method::POST => RouteNeed::Any(&["use_integration"]),
         ["agent-tools", "drive"] if method == Method::POST => RouteNeed::Any(DRIVE_ROUTE_TOOLS),
+        ["agent-tools", "trash"] if method == Method::POST => RouteNeed::Any(&["move_to_trash"]),
         ["agent-tools", "shopify-image"] if method == Method::POST => {
             RouteNeed::Any(&["drive_image_to_shopify"])
         }
@@ -1928,7 +1930,7 @@ mod tests {
         assert!(checked_tools(&tools(&["delete_everything"])).is_err());
         assert!(checked_tools(&tools(&[""])).is_err());
         assert_eq!(checked_tools(&[]), Ok(Vec::new()));
-        assert_eq!(tool_catalog().count(), 59);
+        assert_eq!(tool_catalog().count(), 60);
     }
 
     #[test]

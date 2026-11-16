@@ -74,6 +74,14 @@ pub fn allows(workspace_id: &str, method: &Method, path: &str) -> bool {
     if segment == "routines" || segment == "scheduled-messages" || segment == "scripts" {
         return method == Method::GET;
     }
+    // Pages, tasks and projects go to the Trash only through `/agent-tools/trash`, after the
+    // driver's yes (`super::trash`); the agent never deletes anything forever or empties a trash.
+    let parts: Vec<&str> = rest.split('/').collect();
+    match (method, parts.as_slice()) {
+        (&Method::DELETE, ["pages" | "tasks" | "projects", _] | [_, _, "permanent"])
+        | (&Method::POST, [_, "trash", "empty"]) => return false,
+        _ => {}
+    }
     // The agent notes and reads memory; only people delete it.
     if segment == "agent-memory" {
         return method != Method::DELETE;
@@ -114,6 +122,7 @@ pub fn dry_allows(method: &Method, path: &str) -> bool {
             "/agent-tools/drive",
             "/agent-tools/scheduled",
             "/agent-tools/shopify-image",
+            "/agent-tools/trash",
         ]
         .iter()
         .any(|tool| path.ends_with(tool))
@@ -283,6 +292,11 @@ mod tests {
             (Method::POST, "/agent-tools/call"),
             (Method::POST, "/agent-tools/drive"),
             (Method::POST, "/agent-tools/scheduled"),
+            (Method::POST, "/agent-tools/trash"),
+            (Method::DELETE, "/tasks/abc/followers/me"),
+            (Method::DELETE, "/tasks/abc/linked-docs/def"),
+            (Method::DELETE, "/pages/abc/drive-files/x"),
+            (Method::POST, "/pages/abc/restore"),
             (
                 Method::GET,
                 "/agent-tools/skills/pdf-forms/files/scripts/fill.sh",
@@ -348,6 +362,14 @@ mod tests {
             (Method::POST, "/routines/abc"),
             (Method::PATCH, "/scheduled-messages/abc"),
             (Method::DELETE, "/scheduled-messages/abc"),
+            (Method::DELETE, "/pages/abc"),
+            (Method::DELETE, "/pages/abc/permanent"),
+            (Method::POST, "/pages/trash/empty"),
+            (Method::DELETE, "/tasks/abc"),
+            (Method::DELETE, "/tasks/abc/permanent"),
+            (Method::POST, "/tasks/trash/empty"),
+            (Method::DELETE, "/projects/abc"),
+            (Method::DELETE, "/projects/abc/permanent"),
         ] {
             assert!(!allows(WORKSPACE, &method, &path(rest)), "{method} {rest}");
         }
@@ -376,6 +398,7 @@ mod tests {
             (Method::POST, "/agent-tools/drive"),
             (Method::POST, "/agent-tools/scheduled"),
             (Method::POST, "/agent-tools/shopify-image"),
+            (Method::POST, "/agent-tools/trash"),
         ] {
             assert!(dry_allows(&method, &path(rest)), "{method} {rest}");
         }
