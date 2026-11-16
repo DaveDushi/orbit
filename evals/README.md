@@ -74,14 +74,14 @@ The method comes from Ember's `perf/src/compare.ts` and its README section "Did 
 
 | Step | Script | What |
 | --- | --- | --- |
-| Build | `lib/build.sh` | `--build` only: web build and clean `cargo build --release`, wall time and peak RSS (`/usr/bin/time -v`) |
+| Build | `lib/build.sh` | `--build` only: web build (`bun --bun`, as the VM's Node 18 cannot run Vite) and clean `cargo build --release`, wall time and peak RSS (`/usr/bin/time -v`) |
 | Bundle | `src/bundle.ts` | gzip-9 and brotli-11 of the entry JS/CSS (index.html plus static imports) and of every lazy chunk; lazy chunks over 100 kB gzip |
 | Server | `run.sh` | Start to first healthy `/health/ready` (fresh database and seeded database), RSS idle, after the latency run and after the page loads |
 | API latency | `src/latency.ts` | `oha`, 10 connections, 500 requests per endpoint (100 with `--quick`), signed in: session, workspaces, docs list/read/search, app list, tasks list/read, file read |
 | Page load | `src/pageload.ts` | Playwright Chromium, cold cache, median of 3: FCP, LCP, TBT, CLS, transfer, JS/CSS per page for login, home, tasks (app page) and a doc. Desktop: 40 ms RTT, 10 Mbit/s. Phone: 412×823, 150 ms RTT, 1.6 Mbit/s, CPU 4× slower. Also checks asset compression and CSP console errors |
 | Supply chain | `src/supply-chain.ts` | `cargo audit`, `cargo deny` (config `deny.toml`), `bun audit` (root workspace), `npm audit` (apps/agent), gitleaks on the tree and the git history (config `gitleaks.toml`) |
 | Production | `src/security-prod.ts` | HSTS, http→https, TLS 1.3 and no TLS 1.0/1.1; security headers, CSP quality, cookie flags and console errors when the pages are public |
-| Active checks | `src/security-local.ts` | On the production-mode test instance: headers and CSP, cookie flags, unauthenticated access to every route (from the Rust router, `src/routes.ts`), IDOR between workspaces A and B, API token / MCP / OAuth scope, CSRF and cross-site WebSocket, upload size and active content, path traversal, SSRF (link previews and agent integrations, with a loopback canary), login and reset enumeration, logout, rate limits |
+| Active checks | `src/security-local.ts` | On the production-mode test instance: headers and CSP, cookie flags, unauthenticated access to every route (from the Rust router with its `.nest` prefixes, `src/routes.ts`), IDOR between workspaces A and B, API token / MCP / OAuth scope, CSRF and cross-site WebSocket, upload size and active content, path traversal, SSRF (link previews and agent integrations, with a loopback canary), login and reset enumeration, logout, rate limits |
 
 Lighthouse is not used (not installed on the VM, large download); the page metrics come from the browser's own
 performance entries. TBT is summed from FCP to the end of the observation window, so it can be a little higher than

@@ -7,7 +7,7 @@ import { readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { call, instance, login, quick, readJson, sessionFrom, writePart, type Reply, type Seed } from './common'
 import { check, cookieChecks, documentHeaderChecks, type Check } from './headers'
-import { routes } from './routes'
+import { routes, sweepVerdict } from './routes'
 
 const server = instance()
 if (server.mode !== 'production') throw new Error('security-local needs the production-mode test instance')
@@ -53,21 +53,6 @@ const ws = (id: string) => `/api/v1/workspaces/${id}`
 
 // --- Unauthenticated access to every route --------------------------------------------------------------------
 {
-  // Routes that must answer without a session (they check a token, a signature or a password themselves).
-  const publicRoutes = [
-    /^GET \/$/,
-    /^GET \/\.well-known\//,
-    /^GET \/health\//,
-    /^(GET|POST) \/oauth\/(authorize|jwks|register|token|revoke)$/,
-    /^GET \/api\/v1\/setup\/status$/,
-    /^POST \/api\/v1\/setup\/complete$/,
-    /^GET \/api\/v1\/auth\/options$/,
-    /^POST \/api\/v1\/auth\/(login|login\/two-factor|passkey\/login\/(start|finish)|recovery\/(request|complete)|register\/(request|complete)|email-change\/confirm)$/,
-    /^POST \/api\/v1\/workspaces\/invitations\/(preview|accept)$/,
-    /^POST \/api\/v1\/(integrations\/(discord\/events|github\/webhook)|billing\/stripe\/webhook)$/,
-    /^GET \/api\/v1\/integrations\/github\/manifest\/callback$/,
-    /^GET \/api\/v1\/push\/key$/,
-  ]
   const ids: Record<string, string> = {
     workspace_id: a.workspaceId,
     page_id: a.pageId,
@@ -85,7 +70,6 @@ const ws = (id: string) => `/api/v1/workspaces/${id}`
   // /metrics is served on its own loopback listener (ORBIT_METRICS_LISTEN), not on the app port.
   for (const route of routes().filter((route) => !route.file.endsWith('metrics.rs'))) {
     const path = route.path.replace(/\{([a-z_]+)\}/g, (_, name: string) => ids[name] ?? '0000000000000000000000000')
-    const isPublic = publicRoutes.some((pattern) => pattern.test(`${route.method} ${route.path}`))
     let status: number
     try {
       // A streaming endpoint must not hang the sweep: read the status, then drop the body.
@@ -109,11 +93,11 @@ const ws = (id: string) => `/api/v1/workspaces/${id}`
     }
     tested++
     const entry = `${route.method} ${route.path} -> ${status}`
-    if (status === 429) rateLimited++
-    else if (status >= 500) errors.push(entry)
-    else if (isPublic) continue
-    else if (status < 400) failures.push(entry)
-    else if (status !== 401 && status !== 403) warnings.push(entry)
+    const verdict = sweepVerdict(route, status)
+    if (verdict === 'rate-limited') rateLimited++
+    else if (verdict === 'error') errors.push(entry)
+    else if (verdict === 'open') failures.push(entry)
+    else if (verdict === 'other-4xx') warnings.push(entry)
   }
   add(check('authz.unauthenticated', 'authz', `No protected route answers without a session (${tested} routes)`, failures.length === 0, 'high', failures.length ? failures : [`${tested} routes tested, all protected routes refused`], 'Require a session or token before the handler runs.'))
   add(check('authz.unauthenticated-other-4xx', 'authz', 'Protected routes refuse with 401/403 (not 400/404/405 first)', warnings.length === 0 ? true : 'warn', 'info', warnings.length ? warnings.slice(0, 25).concat(warnings.length > 25 ? [`… ${warnings.length - 25} more`] : []) : ['all 401/403'], 'Run the auth extractor before body and path validation.'))

@@ -21,7 +21,8 @@ measure() {
     echo "$wall $rss"
 }
 
-(cd "$root/apps/web" && ORBIT_BUILD_REVISION="$revision" "${guard[@]}" /usr/bin/time -v -o "$log_dir/web" bun run build >"$log_dir/web.out" 2>&1) ||
+# `bun --bun`: Vite's rolldown needs Node 20+, and the build VM's system Node is 18.
+(cd "$root/apps/web" && ORBIT_BUILD_REVISION="$revision" "${guard[@]}" /usr/bin/time -v -o "$log_dir/web" bun --bun run build >"$log_dir/web.out" 2>&1) ||
     { tail -40 "$log_dir/web.out" >&2; exit 1; }
 read -r web_wall web_rss < <(measure "$log_dir/web")
 
