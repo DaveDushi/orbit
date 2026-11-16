@@ -452,6 +452,29 @@ async fn nobody_gets_a_push_for_what_they_did_themselves() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
+/// A note from GitHub has no member as its actor (`actor_user_id` is NULL): the inbox pass names
+/// the GitHub author and goes on (it panicked on the NULL and stopped the server, 2026-11-16).
+#[tokio::test]
+async fn a_notification_from_a_github_author_is_pushed_without_a_member_actor() {
+    let fixture = Fixture::new().await;
+    let (ada, ada_cookie) = fixture.member("ada").await;
+    fixture.register(&ada_cookie, &token("a4")).await;
+    let id = fixture.assigned(ada, fixture.owner_id, "github").await;
+    sqlx::query(
+        "UPDATE notifications SET actor_user_id = NULL, actor_github_login = 'octocat' WHERE id = $1",
+    )
+    .bind(&id)
+    .execute(fixture.database.pool())
+    .await
+    .unwrap();
+    assert_eq!(fixture.push.push_inbox().await.unwrap(), 1);
+    let sent = fixture.sent();
+    assert_eq!(sent.len(), 1);
+    let notice = sent[0].1.as_ref().unwrap();
+    assert_eq!(notice.title, "octocat (GitHub) assigned you a task");
+    assert_eq!(notice.icon, None);
+}
+
 /// The app icon's badge follows the unread count without an alert: a notice that is not shown
 /// ("do not disturb") still counts, and a read sends the new number, once.
 #[tokio::test]

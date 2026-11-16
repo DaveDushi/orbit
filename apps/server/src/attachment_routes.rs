@@ -73,9 +73,10 @@ impl AttachmentState {
             tokio::select! {
                 () = shutdown.cancelled() => return Ok(()),
                 _ = interval.tick() => {
-                    match self.uploads.reconcile(TimestampMillis::now().as_millis()).await {
-                        Ok(_) => {}
-                        Err(UploadError::Database(error))
+                    let round = self.uploads.reconcile(TimestampMillis::now().as_millis());
+                    match crate::app::unless_panic("attachment reconciliation", round).await {
+                        None | Some(Ok(_)) => {}
+                        Some(Err(UploadError::Database(error)))
                             if orbit_platform::is_transient_lock_error(&error) =>
                         {
                             tracing::warn!(
@@ -83,7 +84,7 @@ impl AttachmentState {
                                 "attachment reconciliation: the database is busy; retrying on the next round"
                             );
                         }
-                        Err(error) => return Err(error),
+                        Some(Err(error)) => return Err(error),
                     }
                 }
             }

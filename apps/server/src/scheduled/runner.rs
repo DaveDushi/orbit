@@ -49,7 +49,10 @@ pub async fn run_service(state: AgentState, token: CancellationToken) -> Result<
             _ = tick.tick() => {}
         }
         // Never fatal: a locked or busy database is tried again on the next round.
-        if let Err(error) = run_due(&state, TimestampMillis::now()).await {
+        let round = run_due(&state, TimestampMillis::now());
+        if let Some(Err(error)) =
+            crate::app::unless_panic("routines and scheduled messages", round).await
+        {
             tracing::warn!(%error, "scheduled routines and messages");
         }
     }
