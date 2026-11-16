@@ -131,10 +131,31 @@ impl OriginPolicy {
                 if self.allow_any_http_origin {
                     is_valid_http_origin(origin)
                 } else {
-                    is_valid_http_origin(origin) && self.allowed_origins.contains(origin)
+                    is_valid_http_origin(origin)
+                        && (self.allowed_origins.contains(origin)
+                            || is_native_own_origin(origin, uri, headers))
                 }
             })
     }
+}
+
+/// A native app's socket with a bearer secret and no cookie, from the origin of the host it
+/// called. React Native's WebSocket (iOS and Android) always sends an Origin made from the
+/// socket URL, so an app signed in on another hostname of this server (the iPhone app's
+/// `orbit-app.` host) is not on the allowed list. Without a cookie the request carries no ambient
+/// authority, and a browser page cannot send a bearer header on a WebSocket or forge the Origin
+/// of the host it calls.
+fn is_native_own_origin(origin: &str, uri: &Uri, headers: &HeaderMap) -> bool {
+    if headers.contains_key(axum::http::header::COOKIE) || bearer_token(headers).is_none() {
+        return false;
+    }
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|host| host.to_str().ok())
+        .or_else(|| uri.authority().map(|authority| authority.as_str()));
+    let origin_host = origin.split_once("://").map(|(_, host)| host);
+    host.zip(origin_host)
+        .is_some_and(|(host, origin_host)| host.eq_ignore_ascii_case(origin_host))
 }
 
 /// A co-editing socket opened with a socket ticket and no cookie, from any or no Origin: a
@@ -388,7 +409,7 @@ fn is_valid_http_origin(origin: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use axum::http::header::{AUTHORIZATION, COOKIE, ORIGIN, UPGRADE};
+    use axum::http::header::{AUTHORIZATION, COOKIE, HOST, ORIGIN, UPGRADE};
     use axum::http::header::{CONTENT_SECURITY_POLICY, REFERRER_POLICY, X_FRAME_OPTIONS};
     use axum::http::{HeaderMap, HeaderValue, Method, Uri};
 
@@ -530,6 +551,41 @@ mod tests {
             &[
                 (AUTHORIZATION, "Bearer secret"),
                 (ORIGIN, "https://evil.example")
+            ]
+        ));
+    }
+
+    /// The iPhone app's live socket on the server's second hostname (2026-11-16: it got 403 and
+    /// an open chat never updated).
+    #[test]
+    fn native_socket_from_the_origin_of_its_own_host_is_allowed() {
+        const LIVE: &str = "/api/v1/workspaces/w/live";
+        let socket = [
+            (HOST, "orbit-app.example"),
+            (UPGRADE, "websocket"),
+            (AUTHORIZATION, "Bearer secret"),
+        ];
+        let with = |extra: &[(axum::http::HeaderName, &'static str)]| {
+            let mut headers = socket.to_vec();
+            headers.extend_from_slice(extra);
+            permits(Method::GET, LIVE, &headers)
+        };
+        assert!(with(&[(ORIGIN, "https://orbit-app.example")]));
+        assert!(with(&[(ORIGIN, "https://ORBIT-APP.example")]));
+        assert!(!with(&[(ORIGIN, "https://evil.example")]));
+        assert!(!with(&[(ORIGIN, "https://orbit-app.example:444")]));
+        assert!(!with(&[
+            (ORIGIN, "https://orbit-app.example"),
+            (COOKIE, "__Host-orbit_session=s")
+        ]));
+        assert!(!permits(
+            Method::GET,
+            LIVE,
+            &[
+                (HOST, "orbit-app.example"),
+                (UPGRADE, "websocket"),
+                (ORIGIN, "https://orbit-app.example"),
+                (COOKIE, "__Host-orbit_session=s")
             ]
         ));
     }
