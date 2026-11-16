@@ -32,8 +32,21 @@ reasons: `.ai/agent-design.md`.
   wrapping as `read_file`), and, when the driver asks, `drive_create_folder`, `drive_save_text` (never replaces a
   file), `drive_move` and `drive_rename`. `drive_trash` (restorable for 30 days) and `drive_share` (a public link) run
   only after the driver's **yes** in the thread, checked by Orbit as for integration writes (table
-  `agent_drive_approvals`: one approval is one run of exactly those arguments, and expires). The audit log has
-  `agent_drive.approved_action` with who approved. It cannot delete forever, empty the trash, restore, or turn off links.
+  `agent_drive_approvals`: one approval is one run of exactly those arguments, and expires). `drive_trash` takes
+  `node_ids` (files and folders, at most 50): Orbit loads each one as the driver first (an item of another workspace,
+  of a private chat the driver is not in, or already in the trash fails the whole call before anyone is asked), then
+  asks one approval for the whole list (paths, and for a folder how many files it holds at any depth, the count of the
+  web's folder file list), then runs the web's own move to the trash (`DriveRepository::trash`, a folder with
+  everything in it) for each item. The audit log has one `agent_drive.approved_action` per item with who approved.
+  It cannot delete forever, empty the trash, restore, or turn off links.
+- It moves **Docs pages and tasks to the Trash** only through `POST …/agent-tools/trash` (`move_to_trash`, with
+  `page_ids` and `task_ids`, at most 50): agent sessions cannot reach `DELETE …/pages/{id}`, `…/tasks/{id}`,
+  `…/projects/{id}`, any `…/permanent` route or `…/trash/empty`. Orbit loads each item as the driver first (an item the
+  driver cannot see fails the whole call before anyone is asked), then asks one approval for the whole list (titles, and
+  how many sub-pages or sub-issues go along), in `agent_drive_approvals` like Drive. After the driver's **yes** it runs
+  the web's own soft delete for each item (a page with its live sub-pages, a task with its live sub-issues; restorable
+  for 30 days) and writes `agent_trash.approved_action` to the audit log per item. Guests never get an agent session;
+  a call outside a run that the caller drives is refused.
 - **Drive files on Docs pages** (`driveFile` blocks, a reference to the file, never a copy): `list_page_drive_files`
   and `find_drive_file_pages` read; `insert_drive_file` (at a top-level `position` or `after_text`), `replace_drive_file`
   and `remove_drive_file` write through `…/pages/{id}/drive-files` as the driver, **without an approval** (user rule

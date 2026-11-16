@@ -5,8 +5,10 @@
 //! the agent's only way into Drive.
 //!
 //! Two actions run only after the driver answered "yes" in the thread (`super::integrations::approve`,
-//! one approval for one run of exactly these arguments): `drive_trash` (restorable for 30 days)
-//! and `drive_share` (a public link without a password). The audit log keeps who approved them.
+//! one approval for one run of exactly these arguments): `drive_trash` (a list of files and folders, one
+//! approval for the whole list, restorable for 30 days) and `drive_share` (a public link without a password).
+//! The audit log keeps who approved them. `drive_trash` runs the web's own move to the trash
+//! (`DriveRepository::trash`, a folder with everything in it) for each item, as the driver.
 //! There is no tool to delete forever, empty the trash, restore, or turn off a link.
 //!
 //! Four tools are for the agent's media sandbox only (`apps/agent/src/media.ts`), and the model never sees their URLs:
@@ -17,13 +19,13 @@ use axum::extract::{Extension, Path, State};
 use axum::http::{HeaderMap, Uri};
 use axum::routing::post;
 use axum::{Json, Router};
-use orbit_platform::{Id, RequestId, TimestampMillis};
+use orbit_platform::{Database, Id, RequestId, TimestampMillis};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use super::AgentState;
 use super::integrations::{
-    Approval, Approves, approve, canonical, driver, hash, invalid, require_running, unavailable,
+    Approval, Approves, approve, canonical, driver, hash, require_running, unavailable,
 };
 use crate::audit::{self, AuditOutcome};
 use crate::drive::{DOWNLOAD_URL_LIFETIME, DriveService, StartUpload};
@@ -123,8 +125,11 @@ struct UploadIdArgs {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TrashArgs {
-    node_id: String,
+    node_ids: Vec<String>,
 }
+
+/// The most files and folders one `drive_trash` call (one approval) moves.
+const MAX_TRASH: usize = 50;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -160,20 +165,14 @@ fn about(detail: &DriveNodeDetail) -> (&'static str, String) {
     }
 }
 
-/// The exact action, as the driver approves it.
-fn describe(tool: &str, detail: &DriveNodeDetail, expires_in_days: Option<i64>) -> String {
+/// The exact public link, as the driver approves it.
+fn describe_share(detail: &DriveNodeDetail, expires_in_days: Option<i64>) -> String {
     let (kind, path) = about(detail);
     let everything = if kind == "folder" {
         ", with everything in it,"
     } else {
         ""
     };
-    if tool == "drive_trash" {
-        return format!(
-            "Orbit Drive: move the {kind} \"{path}\"{everything} to the trash (id {}). Members can restore it for 30 days.",
-            detail.node.id
-        );
-    }
     let until = expires_in_days.map_or_else(
         || "until someone turns the link off".to_owned(),
         |days| format!("for {days} days"),
@@ -248,29 +247,33 @@ async fn call(
             },
         );
     }
-    if !matches!(tool, "drive_trash" | "drive_share") {
+    if tool == "drive_trash" {
+        return trash(
+            drive,
+            database,
+            (workspace_id, user),
+            &body,
+            &uri,
+            &request_id,
+        )
+        .await;
+    }
+    if tool != "drive_share" {
         return Ok(refused("Unknown Drive tool."));
     }
     let raw = Value::Object(body.arguments.clone());
-    let (node, expires_in_days) = if tool == "drive_trash" {
-        match serde_json::from_value::<TrashArgs>(raw.clone()) {
-            Ok(args) => (args.node_id, None),
-            Err(_) => return Ok(refused("Give only node_id.")),
+    let (node, expires_in_days) = match serde_json::from_value::<ShareArgs>(raw.clone()) {
+        Ok(args)
+            if args
+                .expires_in_days
+                .is_none_or(|days| (1..=365).contains(&days)) =>
+        {
+            (args.node_id, args.expires_in_days)
         }
-    } else {
-        match serde_json::from_value::<ShareArgs>(raw.clone()) {
-            Ok(args)
-                if args
-                    .expires_in_days
-                    .is_none_or(|days| (1..=365).contains(&days)) =>
-            {
-                (args.node_id, args.expires_in_days)
-            }
-            _ => {
-                return Ok(refused(
-                    "Give node_id, and expires_in_days from 1 to 365 or none.",
-                ));
-            }
+        _ => {
+            return Ok(refused(
+                "Give node_id, and expires_in_days from 1 to 365 or none.",
+            ));
         }
     };
     let Ok(node_id) = node.parse::<Id>() else {
@@ -286,7 +289,7 @@ async fn call(
         Ok(detail) => detail,
         Err(error) => return Ok(answer(error.into())),
     };
-    if tool == "drive_share" && state.app_key.is_none() {
+    if state.app_key.is_none() {
         return Ok(refused(
             "Public links are off on this server (it has no app key).",
         ));
@@ -307,7 +310,7 @@ async fn call(
             return Ok(Json(json!({
                 "status": "approval_required",
                 "approval_id": id,
-                "action": describe(tool, &detail, expires_in_days),
+                "action": describe_share(&detail, expires_in_days),
                 "expires_at": expires_at,
             })));
         }
@@ -317,44 +320,31 @@ async fn call(
         .as_ref()
         .map_or("agent-drive", |Extension(id)| id.as_str());
     let now = TimestampMillis::now();
-    let outcome = if tool == "drive_trash" {
-        mcp_drive::run(
-            &drive.service,
-            &drive.reader,
-            (workspace_id, user),
-            tool,
-            &body.arguments,
+    let (token, token_hash) = crate::drive_share_routes::new_token();
+    let expires_at = expires_in_days
+        .map(|days| TimestampMillis::from_millis(now.as_millis() + days * 24 * 60 * 60 * 1_000));
+    let outcome = match DriveShareRepository::new(database.clone())
+        .create(
+            workspace_id,
+            user,
+            node_id,
+            &token_hash,
+            expires_at,
+            None,
+            request,
+            now,
         )
         .await
-        .map_err(|_| invalid("Invalid tool arguments.", &uri, &request_id))?
-    } else {
-        let (token, token_hash) = crate::drive_share_routes::new_token();
-        let expires_at = expires_in_days.map(|days| {
-            TimestampMillis::from_millis(now.as_millis() + days * 24 * 60 * 60 * 1_000)
-        });
-        match DriveShareRepository::new(database.clone())
-            .create(
-                workspace_id,
-                user,
-                node_id,
-                &token_hash,
-                expires_at,
-                None,
-                request,
-                now,
-            )
-            .await
-        {
-            Ok(share) => Outcome::Data(
-                "drive:share".to_owned(),
-                json!({
-                    "url": format!("{}/s/{token}", drive.public_origin.trim_end_matches('/')),
-                    "share_id": share.id,
-                    "expires_at": share.expires_at,
-                }),
-            ),
-            Err(error) => error.into(),
-        }
+    {
+        Ok(share) => Outcome::Data(
+            "drive:share".to_owned(),
+            json!({
+                "url": format!("{}/s/{token}", drive.public_origin.trim_end_matches('/')),
+                "share_id": share.id,
+                "expires_at": share.expires_at,
+            }),
+        ),
+        Err(error) => error.into(),
     };
     record(
         database,
@@ -371,6 +361,204 @@ async fn call(
     )
     .await;
     Ok(answer(outcome))
+}
+
+/// One item of a `drive_trash` call as the driver sees it now.
+struct TrashItem {
+    detail: DriveNodeDetail,
+    /// Live files inside a folder at any depth (the web's count of the folder's files); 0 for a file.
+    files: i64,
+    /// Inside a folder of the same list: it goes to the trash with that folder.
+    inside: bool,
+}
+
+impl TrashItem {
+    fn line(&self) -> String {
+        let (kind, path) = about(&self.detail);
+        let along = match (self.detail.node.kind, self.files) {
+            (DriveNodeKind::File, _) => String::new(),
+            (DriveNodeKind::Folder, 0) => ", no files in it".to_owned(),
+            (DriveNodeKind::Folder, 1) => ", with the 1 file in it".to_owned(),
+            (DriveNodeKind::Folder, n) => format!(", with the {n} files in it"),
+        };
+        let inside = if self.inside {
+            " (inside a folder above)"
+        } else {
+            ""
+        };
+        format!(
+            "- {kind} \"{path}\"{along}{inside} (id {})",
+            self.detail.node.id
+        )
+    }
+
+    fn view(&self) -> Value {
+        let (kind, path) = about(&self.detail);
+        json!({ "kind": kind, "id": self.detail.node.id, "path": path, "files": self.files })
+    }
+}
+
+/// `drive_trash`: the listed files and folders to the trash after one yes for the whole list. Every id must be an
+/// item the driver can see now, or nothing is asked and nothing moves.
+async fn trash(
+    drive: &AgentDrive,
+    database: &Database,
+    (workspace_id, user): (Id, Id),
+    body: &CallBody,
+    uri: &Uri,
+    request_id: &RequestIdExtension,
+) -> Result<Json<Value>, ApiError> {
+    let raw = Value::Object(body.arguments.clone());
+    let Ok(args) = serde_json::from_value::<TrashArgs>(raw.clone()) else {
+        return Ok(refused(
+            "Give only node_ids (a list of Drive file and folder ids).",
+        ));
+    };
+    let mut ids = Vec::with_capacity(args.node_ids.len());
+    for text in &args.node_ids {
+        match text.trim().parse::<Id>() {
+            Ok(id) if !ids.contains(&id) => ids.push(id),
+            _ => return Ok(refused("Give valid Drive ids, each one once.")),
+        }
+    }
+    if ids.is_empty() || ids.len() > MAX_TRASH {
+        return Ok(refused(
+            "Give from 1 to 50 Drive files and folders in one call.",
+        ));
+    }
+    let repository = drive.service.repository();
+    // Only what the driver can see is described, so nobody is asked about an item they cannot reach.
+    let mut items = Vec::with_capacity(ids.len());
+    let mut missing = Vec::new();
+    for &id in &ids {
+        let found = match repository.node(workspace_id, user, id).await {
+            Ok(detail) if detail.node.kind == DriveNodeKind::Folder => repository
+                .files_below_count(workspace_id, user, id)
+                .await
+                .map(|files| (detail, files)),
+            Ok(detail) => Ok((detail, 0)),
+            Err(error) => Err(error),
+        };
+        match found {
+            Ok((detail, files)) => items.push(TrashItem {
+                inside: detail.path.iter().any(|crumb| ids.contains(&crumb.id)),
+                detail,
+                files,
+            }),
+            Err(DriveError::Database(error)) => return Err(unavailable(uri, request_id)(error)),
+            Err(_) => missing.push(id.to_string()),
+        }
+    }
+    if !missing.is_empty() {
+        return Ok(Json(json!({
+            "status": "failed",
+            "detail": format!(
+                "Not found, or the driver cannot see it: {}. Nothing was moved and nobody was asked.",
+                missing.join(", ")
+            ),
+        })));
+    }
+    let workspace = workspace_id.to_string();
+    let thread = (
+        body.conversation_id.as_str(),
+        body.root_message_id.as_deref(),
+    );
+    let approval = approve(
+        database,
+        Approves::Drive(&workspace),
+        user,
+        thread,
+        "drive_trash",
+        &hash(&canonical(&raw)),
+    )
+    .await
+    .map_err(unavailable(uri, request_id))?;
+    let approval_id = match approval {
+        Approval::Needed { id, expires_at } => {
+            let lines = items
+                .iter()
+                .map(TrashItem::line)
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Ok(Json(json!({
+                "status": "approval_required",
+                "approval_id": id,
+                "action": format!(
+                    "Orbit Drive: move {} to the trash:\n{lines}\nMembers can restore them from the Drive trash for 30 days.",
+                    if items.len() == 1 { "this item".to_owned() } else { format!("these {} items", items.len()) },
+                ),
+                "expires_at": expires_at,
+            })));
+        }
+        Approval::Granted { id } => id,
+    };
+    let request = request_id
+        .as_ref()
+        .map_or("agent-drive", |Extension(id)| id.as_str());
+    let metadata = json!({
+        "tool": "drive_trash",
+        "approval_id": approval_id,
+        "approved_by": user.to_string(),
+        "conversation_id": body.conversation_id,
+        "root_message_id": body.root_message_id,
+    });
+    let mut trashed = Vec::new();
+    let mut failed = Vec::new();
+    // Folders first: an item inside a listed folder goes to the trash with it.
+    items.sort_by_key(|item| item.inside);
+    for item in &mut items {
+        let id = item.detail.node.id;
+        let outcome = if item.inside {
+            match repository.node(workspace_id, user, id).await {
+                Ok(_) => {
+                    repository
+                        .trash(workspace_id, user, id, TimestampMillis::now())
+                        .await
+                }
+                Err(DriveError::NotFound) => Ok(()),
+                Err(error) => Err(error),
+            }
+        } else {
+            if item.detail.node.kind == DriveNodeKind::Folder
+                && let Ok(files) = repository.files_below_count(workspace_id, user, id).await
+            {
+                item.files = files;
+            }
+            // The same move to the trash as the web's Delete.
+            repository
+                .trash(workspace_id, user, id, TimestampMillis::now())
+                .await
+        };
+        let outcome = match outcome {
+            Ok(()) => {
+                trashed.push(item.view());
+                Outcome::Data("drive:trash".to_owned(), Value::Null)
+            }
+            Err(error) => {
+                let mut view = item.view();
+                view["error"] = json!(mcp_drive::drive_failure(&error));
+                failed.push(view);
+                error.into()
+            }
+        };
+        record(
+            database,
+            (workspace_id, user, id),
+            &outcome,
+            request,
+            metadata.clone(),
+        )
+        .await;
+    }
+    Ok(Json(json!({
+        "status": "ok",
+        "label": "drive:trash",
+        "result": {
+            "trashed": trashed,
+            "failed": failed,
+            "restore": "Members restore them from the Drive trash for 30 days.",
+        },
+    })))
 }
 
 /// What the sandbox needs of a file: never member ids.
@@ -521,7 +709,7 @@ async fn media(
 
 /// The audit line of an approved action: what ran, and the approval of whom.
 async fn record(
-    database: &orbit_platform::Database,
+    database: &Database,
     (workspace_id, user, node_id): (Id, Id, Id),
     outcome: &Outcome,
     request: &str,

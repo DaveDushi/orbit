@@ -331,6 +331,61 @@ impl Fixture {
             .to_string()
     }
 
+    async fn folder(&self, parent: Option<&str>, name: &str) -> String {
+        self.drive
+            .repository()
+            .create_folder(
+                self.workspace_id,
+                self.owner.id,
+                parent.map(|id| id.parse().unwrap()),
+                name,
+                OnConflict::Fail,
+                TimestampMillis::now(),
+            )
+            .await
+            .unwrap()
+            .id
+            .to_string()
+    }
+
+    async fn file_in(&self, parent: &str, name: &str) -> String {
+        self.drive
+            .put_text(
+                self.workspace_id,
+                self.owner.id,
+                Some(parent.parse().unwrap()),
+                name.to_owned(),
+                "text/plain".to_owned(),
+                "Notes".to_owned(),
+                OnConflict::Fail,
+                TimestampMillis::now(),
+            )
+            .await
+            .unwrap()
+            .id
+            .to_string()
+    }
+
+    /// Whether `driver` finds the item by name in the live Drive (what is in the trash is not found).
+    async fn live(&self, run: &Run, name: &str) -> bool {
+        let found = self
+            .drive(run, "drive_search", json!({ "query": name }))
+            .await;
+        assert_eq!(found["status"], "ok", "{found}");
+        found["result"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["name"] == name)
+    }
+
+    async fn approvals(&self) -> i64 {
+        self.database
+            .scalar("SELECT COUNT(*) FROM agent_drive_approvals")
+            .await
+            .unwrap()
+    }
+
     async fn trashed(&self, node: &str) -> bool {
         self.database
             .scalar::<i64>(&format!(
@@ -358,7 +413,7 @@ async fn trash_runs_once_per_yes_of_the_driver_for_exactly_the_approved_argument
     assert_eq!(listed["result"]["items"][0]["id"], report.as_str());
 
     let asked = fixture
-        .drive(&run, "drive_trash", json!({ "node_id": report }))
+        .drive(&run, "drive_trash", json!({ "node_ids": [report] }))
         .await;
     assert_eq!(asked["status"], "approval_required", "{asked}");
     assert!(
@@ -370,7 +425,7 @@ async fn trash_runs_once_per_yes_of_the_driver_for_exactly_the_approved_argument
 
     // No answer, a "no", and a "yes" of someone else do not approve.
     let again = fixture
-        .drive(&run, "drive_trash", json!({ "node_id": report }))
+        .drive(&run, "drive_trash", json!({ "node_ids": [report] }))
         .await;
     assert_eq!(
         again["approval_id"], approval,
@@ -383,7 +438,7 @@ async fn trash_runs_once_per_yes_of_the_driver_for_exactly_the_approved_argument
         .send(&fixture.owner, &run.conversation, "yes", Some(&run.root))
         .await;
     let refused = fixture
-        .drive(&run, "drive_trash", json!({ "node_id": report }))
+        .drive(&run, "drive_trash", json!({ "node_ids": [report] }))
         .await;
     assert_eq!(refused["status"], "approval_required", "{refused}");
     assert!(!fixture.trashed(&report).await);
@@ -393,12 +448,12 @@ async fn trash_runs_once_per_yes_of_the_driver_for_exactly_the_approved_argument
         .send(&bea, &run.conversation, "Yes", Some(&run.root))
         .await;
     let swapped = fixture
-        .drive(&run, "drive_trash", json!({ "node_id": other }))
+        .drive(&run, "drive_trash", json!({ "node_ids": [other] }))
         .await;
     assert_eq!(swapped["status"], "approval_required", "{swapped}");
     assert!(!fixture.trashed(&other).await);
     let done = fixture
-        .drive(&run, "drive_trash", json!({ "node_id": report }))
+        .drive(&run, "drive_trash", json!({ "node_ids": [report] }))
         .await;
     assert_eq!(done["status"], "ok", "{done}");
     assert!(fixture.trashed(&report).await);
@@ -521,7 +576,7 @@ async fn the_agent_cannot_skip_the_approval_or_reach_another_workspace() {
         .to_string();
     for (tool, arguments) in [
         ("drive_read", json!({ "node_id": foreign, "limit": 100 })),
-        ("drive_trash", json!({ "node_id": foreign })),
+        ("drive_trash", json!({ "node_ids": [foreign] })),
         ("drive_share", json!({ "node_id": foreign })),
     ] {
         let answer = fixture.drive(&run, tool, arguments).await;
@@ -551,6 +606,215 @@ async fn the_agent_cannot_skip_the_approval_or_reach_another_workspace() {
         )
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn one_yes_moves_a_list_of_files_and_folders_to_the_trash_and_restore_brings_them_back() {
+    let fixture = Fixture::new().await;
+    let bea = fixture.add_member("bea").await;
+    let memo = fixture.file("memo.txt").await;
+    let archive = fixture.folder(None, "Archive").await;
+    fixture.file_in(&archive, "a.txt").await;
+    fixture.file_in(&archive, "b.txt").await;
+    let old = fixture.folder(Some(&archive), "Old").await;
+    fixture.file_in(&old, "c.txt").await;
+    let run = fixture.run(&bea).await;
+    // The folder inside Archive is listed too: it goes with Archive.
+    let arguments = json!({ "node_ids": [memo, archive, old] });
+
+    // One question for the whole list, with the files in each folder at any depth (as the web lists them).
+    let asked = fixture.drive(&run, "drive_trash", arguments.clone()).await;
+    assert_eq!(asked["status"], "approval_required", "{asked}");
+    let action = asked["action"].as_str().unwrap();
+    assert!(action.contains("these 3 items"), "{action}");
+    assert!(action.contains("file \"memo.txt\""), "{action}");
+    assert!(
+        action.contains("folder \"Archive\", with the 3 files in it"),
+        "{action}"
+    );
+    assert!(
+        action.contains("folder \"Archive/Old\", with the 1 file in it (inside a folder above)"),
+        "{action}"
+    );
+    assert_eq!(fixture.approvals().await, 1);
+    assert!(!fixture.trashed(&memo).await);
+
+    fixture
+        .send(&bea, &run.conversation, "yes", Some(&run.root))
+        .await;
+    let done = fixture.drive(&run, "drive_trash", arguments).await;
+    assert_eq!(done["status"], "ok", "{done}");
+    assert_eq!(
+        done["result"]["trashed"].as_array().unwrap().len(),
+        3,
+        "{done}"
+    );
+    assert_eq!(done["result"]["failed"], json!([]), "{done}");
+    assert_eq!(
+        fixture.approvals().await,
+        1,
+        "one approval for the whole list"
+    );
+    // The same move as the web's Delete: the folder is in the trash, and what is in it goes along.
+    assert!(fixture.trashed(&memo).await);
+    assert!(fixture.trashed(&archive).await);
+    for name in ["memo.txt", "Archive", "a.txt", "c.txt"] {
+        assert!(!fixture.live(&run, name).await, "{name}");
+    }
+    let (status, trash) = fixture
+        .request(
+            "GET",
+            &format!("/api/v1/workspaces/{}/drive/trash", fixture.workspace_id),
+            ("cookie", &bea.cookie),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{trash}");
+    let names: Vec<&str> = trash["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|item| item["name"].as_str())
+        .collect();
+    assert!(
+        names.contains(&"memo.txt") && names.contains(&"Archive"),
+        "{trash}"
+    );
+    let audits: i64 = fixture
+        .database
+        .scalar("SELECT COUNT(*) FROM audit_events WHERE action = 'agent_drive.approved_action'")
+        .await
+        .unwrap();
+    assert_eq!(audits, 3);
+
+    // A member restores them from the Drive trash, with everything in the folder.
+    for node in [&memo, &archive] {
+        let (status, value) = fixture
+            .request(
+                "POST",
+                &format!(
+                    "/api/v1/workspaces/{}/drive/nodes/{node}/restore",
+                    fixture.workspace_id
+                ),
+                ("cookie", &bea.cookie),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{value}");
+    }
+    for name in ["memo.txt", "Archive", "a.txt", "b.txt", "Old", "c.txt"] {
+        assert!(fixture.live(&run, name).await, "{name}");
+    }
+}
+
+#[tokio::test]
+async fn an_item_the_driver_cannot_see_fails_the_whole_list_before_anyone_is_asked() {
+    let fixture = Fixture::new().await;
+    let bea = fixture.add_member("bea").await;
+    let visible = fixture.file("visible.txt").await;
+    let hidden = fixture.file("hidden.txt").await;
+    // A file of a private channel that Bea is not in.
+    let channel = Id::new_v7().to_string();
+    let now = TimestampMillis::now().as_millis();
+    sqlx::query(
+        "INSERT INTO chat_conversations (id, workspace_id, kind, name, created_by, created_at, updated_at) \
+         VALUES ($1, $2, 'private', 'secret', $3, $4, $4)",
+    )
+    .bind(&channel)
+    .bind(fixture.workspace_id.to_string())
+    .bind(fixture.owner.id.to_string())
+    .bind(now)
+    .execute(fixture.database.pool())
+    .await
+    .unwrap();
+    sqlx::query("UPDATE drive_nodes SET chat_conversation_id = $1 WHERE id = $2")
+        .bind(&channel)
+        .bind(&hidden)
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    let run = fixture.run(&bea).await;
+
+    for arguments in [
+        json!({ "node_ids": [visible, hidden] }),
+        json!({ "node_ids": [visible, Id::new_v7().to_string()] }),
+    ] {
+        let answer = fixture.drive(&run, "drive_trash", arguments).await;
+        assert_eq!(answer["status"], "failed", "{answer}");
+        assert!(
+            answer["detail"]
+                .as_str()
+                .unwrap()
+                .contains("nobody was asked"),
+            "{answer}"
+        );
+    }
+    // Bad lists are refused too.
+    for arguments in [
+        json!({ "node_ids": [] }),
+        json!({ "node_ids": [visible, visible] }),
+        json!({ "node_id": visible }),
+    ] {
+        let answer = fixture.drive(&run, "drive_trash", arguments).await;
+        assert_eq!(answer["status"], "refused", "{answer}");
+    }
+    assert_eq!(fixture.approvals().await, 0);
+    assert!(!fixture.trashed(&visible).await);
+    assert!(!fixture.trashed(&hidden).await);
+}
+
+#[tokio::test]
+async fn guests_people_and_runs_the_caller_does_not_drive_cannot_trash() {
+    let fixture = Fixture::new().await;
+    let bea = fixture.add_member("bea").await;
+    let report = fixture.file("report.txt").await;
+    let run = fixture.run(&bea).await;
+    let path = format!(
+        "/api/v1/workspaces/{}/agent-tools/drive",
+        fixture.workspace_id
+    );
+    let call = |root: String| json!({ "tool": "drive_trash", "arguments": { "node_ids": [report] }, "conversation_id": run.conversation, "root_message_id": root });
+
+    // A person's own session is no agent session.
+    let (status, _) = fixture
+        .request(
+            "POST",
+            &path,
+            ("cookie", &bea.cookie),
+            Some(call(run.root.clone())),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    // A thread that the caller does not drive now (no run there): refused.
+    let (status, _) = fixture
+        .request(
+            "POST",
+            &path,
+            ("authorization", &run.bearer),
+            Some(call(Id::new_v7().to_string())),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    // A driver who became a guest: no membership actor, so nothing (not even a question).
+    sqlx::query("UPDATE memberships SET role = 'guest' WHERE user_id = $1")
+        .bind(bea.id.to_string())
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    let (status, value) = fixture
+        .request(
+            "POST",
+            &path,
+            ("authorization", &run.bearer),
+            Some(call(run.root.clone())),
+        )
+        .await;
+    assert!(
+        matches!(status, StatusCode::NOT_FOUND | StatusCode::FORBIDDEN),
+        "{status} {value}"
+    );
+    assert_eq!(fixture.approvals().await, 0);
+    assert!(!fixture.trashed(&report).await);
 }
 
 /// The bytes behind a signed URL, as the sidecar reads them.
