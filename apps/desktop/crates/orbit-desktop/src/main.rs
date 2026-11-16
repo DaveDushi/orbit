@@ -19,6 +19,8 @@ mod autostart;
 mod bridge;
 mod check;
 mod instance;
+#[cfg(windows)]
+mod microphone;
 // The taskbar overlay is a Windows thing; its tests run everywhere.
 #[cfg_attr(not(windows), allow(dead_code))]
 mod overlay;

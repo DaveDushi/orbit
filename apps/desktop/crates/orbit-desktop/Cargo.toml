@@ -30,6 +30,9 @@ tempfile.workspace = true
 [target.'cfg(windows)'.dependencies]
 # The console of command-line uses, the "Start with Windows" entry in the registry, the
 # AppUserModelID (toast sender, taskbar group) and the foreground hand-off of a second start.
+# The microphone permission of the server's pages in WebView2 (voice input), the same versions as wry's.
+webview2-com = "0.39"
+windows = "0.62"
 windows-sys = { version = "0.61", features = ["Win32_System_Console", "Win32_System_Registry", "Win32_Foundation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [build-dependencies]
