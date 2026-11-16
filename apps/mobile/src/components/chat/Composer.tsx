@@ -19,6 +19,7 @@ import { useTheme } from '../../theme'
 import { Icon, IconButton, Spinner, Text } from '../../ui'
 import { uploadPart } from '../../upload-part'
 import { EmojiPicker } from './EmojiPicker'
+import { MicButton } from './MicButton'
 import { ActionSheet } from './Sheet'
 
 /** A picked file: it uploads at once, and the message names it once it is there. */
@@ -253,6 +254,7 @@ export function Composer({ state, placeholder, nameOf, alsoSendTo }: { state: Co
           <IconButton icon="at" label="Mention" size={32} iconSize={20} onPress={() => append('@')} />
           <IconButton icon="hashtag" label="Mention a channel or task" size={32} iconSize={20} onPress={() => append('#')} />
           <View className="flex-1" />
+          <MicButton text={draft} setText={setDraft} />
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={mode.kind === 'edit' ? 'Save' : 'Send'}

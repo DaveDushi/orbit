@@ -53,6 +53,8 @@ const ICONS = {
   tag: 'Tag',
   attach: 'Paperclip2',
   smile: 'SmileCircle',
+  mic: 'Microphone2',
+  micOff: 'MicrophoneSlash',
   at: 'At',
   star: 'Star',
   comment: 'Comment',

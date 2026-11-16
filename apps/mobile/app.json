@@ -49,7 +49,7 @@
         {
           "photosPermission": "Orbit attaches the photos and videos you pick to messages, tasks and pages.",
           "cameraPermission": "Orbit attaches the photos you take to messages, tasks and pages.",
-          "microphonePermission": "Orbit records sound with the videos you take for messages, tasks and pages."
+          "microphonePermission": "Orbit uses the microphone to turn your speech into text, and to record sound with the videos you take for messages, tasks and pages."
         }
       ],
       "expo-status-bar",
@@ -68,7 +68,14 @@
           }
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Orbit uses the microphone to turn your speech into text, and to record sound with the videos you take for messages, tasks and pages.",
+          "speechRecognitionPermission": "Orbit turns what you say into text in the message field. On iPhones that support it, this happens on the device."
+        }
+      ]
     ],
     "backgroundColor": "#0a0a0a",
     "owner": "davedushi",
