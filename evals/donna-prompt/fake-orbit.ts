@@ -272,7 +272,7 @@ export class FakeOrbit {
 			case "drive_create_folder":
 				return { status: "ok", label: "Drive folder", result: { id: id(), name: args.name, kind: "folder" } };
 			case "drive_trash":
-				return this.#approval(tool, args, `Drive: move "${named(args.node_id)?.name}" to the trash`, "Drive trash", { trashed: true, node_id: args.node_id });
+				return this.#approval(tool, args, `Drive: move "${named((args.node_ids as unknown[])?.[0])?.name}" to the trash`, "Drive trash", { trashed: true, node_ids: args.node_ids });
 			case "drive_share":
 				return this.#approval(tool, args, `Drive: make a public link to "${named(args.node_id)?.name}"`, "Drive link", { url: "https://orbit.test/s/abc" });
 			default:

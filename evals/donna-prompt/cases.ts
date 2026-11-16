@@ -177,7 +177,7 @@ export const CASES: readonly Case[] = [
 		id: "c32",
 		category: "approval",
 		text: "Move draft-v1.docx in Drive to the trash.",
-		steps: [[{ tool: "drive_search", args: { query: "draft" } }], [{ tool: "drive_trash", args: { node_id: `$0:${NODE_ID}` } }]],
+		steps: [[{ tool: "drive_search", args: { query: "draft" } }], [{ tool: "drive_trash", args: { node_ids: [`$0:${NODE_ID}`] } }]],
 		ends: "approval",
 		expect: [["POST", /^\/agent-tools\/drive$/]],
 	},
