@@ -8,6 +8,7 @@ Applied on the Orbit VM on 2026-11-16 without an Orbit restart. See docs/agent-s
 | orbit-agents.slice | /etc/systemd/system/orbit-agents.slice (2G/2560M, swap 0, 1536 tasks, CPU 150%) |
 | orbit.service-oom.conf | /etc/systemd/system/orbit.service.d/oom.conf (OOMScoreAdjust -800, MemoryMin 512M) |
 | orbit-agent.service-oom.conf | /etc/systemd/system/orbit-agent.service.d/oom.conf (MemoryMin 256M) |
+| system.slice-memorymin.conf | /etc/systemd/system/system.slice.d/memorymin.conf (MemoryMin 768M, so the service MemoryMin values take effect) |
 | vm-health | /usr/local/bin/vm-health (Ops copy; adds guards, slice OOM and pressure checks) |
 
 Then: `systemctl daemon-reload` and `choom -p "$(systemctl show -p MainPID --value orbit)" -n -800`.
