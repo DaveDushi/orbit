@@ -784,6 +784,38 @@ test("code mode: a script calls only the agent's own tools, as the driver", asyn
 	}
 });
 
+test("code mode: the codemode section does not repeat the offered tools, and a script still calls them", async () => {
+	const orbit = new RoutineOrbit();
+	current = orbit;
+	await orbit.listen();
+	// The whole system prompt is streamed back: at the default 400 tokens/s it takes longer than `until` waits.
+	process.env.AGENT_MOCK_TOKENS_PER_SECOND = "4000";
+	const agent = new Agent(config(orbit, mkdtempSync(join(tmpdir(), "agent-"))), new OrbitClient(config(orbit, "")));
+	await agent.open();
+	delete process.env.AGENT_MOCK_TOKENS_PER_SECOND;
+	await agent.start();
+	try {
+		const thread = id();
+		const shown = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> show prompt` });
+		await until("the prompt", () => orbit.messages.has(`agent:${shown}:1`));
+		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
+		const section = answerOf(orbit, shown).split("<codemode>")[1]?.split("</codemode>")[0] ?? "";
+		assert.match(section, /Scripts can call each tool offered to you/);
+		assert.match(section, /Not from a script: [^.]*\bask_teammate\b/);
+		// No declaration of a tool the model already has: before, ~2.9k tokens of them.
+		assert.doesNotMatch(section, /### `(search_tasks|create_task|read_page)`/);
+		assert.ok(section.length < 2_000, `codemode section: ${section.length} characters`);
+
+		const run = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> run code:\nconst found = await tools.search_tasks({});\ntext("read " + found.length);` });
+		await until("the script's answer", () => progressOf(orbit, run).startsWith("Done (codemode)"));
+		assert.match(progressOf(orbit, run), /read \d+/);
+		assert.ok(orbit.calls.some((call) => call.method === "GET" && call.path === "/tasks" && call.as === ANN));
+	} finally {
+		await agent.stop();
+		orbit.server.close();
+	}
+});
+
 test("a test run of a saved script writes nothing, lists what it would do, and reports its calls", async () => {
 	const orbit = new RoutineOrbit();
 	current = orbit;

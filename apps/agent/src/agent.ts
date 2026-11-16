@@ -342,7 +342,11 @@ export class Agent {
 	/** The clock for the time in each message; tests fix it. */
 	readonly #now: () => Date;
 
-	constructor(config: Config, orbit: OrbitClient, now: () => Date = () => new Date()) {
+	/** Evals only (evals/donna-prompt): a scripted model instead of the mock or ChatGPT. */
+	readonly #models: Models | undefined;
+
+	constructor(config: Config, orbit: OrbitClient, now: () => Date = () => new Date(), models?: Models) {
+		this.#models = models;
 		this.#config = config;
 		this.#orbit = orbit;
 		this.#now = now;
@@ -369,7 +373,9 @@ export class Agent {
 			}),
 		);
 		let models: Models;
-		if (this.#config.mock) {
+		if (this.#models) {
+			models = this.#models;
+		} else if (this.#config.mock) {
 			models = mockModels(this.#config.model, this.#config.compactModel);
 		} else {
 			const base = createModels();

@@ -1,0 +1,564 @@
+{
+	"generatedAt": "2026-11-16T08:56:25.732Z",
+	"label": "after",
+	"model": "scripted (./scripted-model.ts); tokens = characters / 4",
+	"summary": {
+		"cases": 35,
+		"success": 35,
+		"modelRequests": 92,
+		"fixedTokensPerRequest": 26941,
+		"codemodeSectionTokens": 237,
+		"inputTokensPerRequest": 27166,
+		"inputTokensTotal": 2499307,
+		"totalTokens": 2500650
+	},
+	"cases": [
+		{
+			"id": "c01",
+			"category": "one-step",
+			"success": true,
+			"requests": 2,
+			"inputTokens": 54301,
+			"outputTokens": 19,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Find the tasks about the login bug.\n\n_Searching tasks for “login”_"
+		},
+		{
+			"id": "c02",
+			"category": "one-step",
+			"success": true,
+			"requests": 2,
+			"inputTokens": 54225,
+			"outputTokens": 20,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Create a task \"Fix footer links\".\n\n_Creating task “Fix footer links”_"
+		},
+		{
+			"id": "c03",
+			"category": "one-step",
+			"success": true,
+			"requests": 2,
+			"inputTokens": 54180,
+			"outputTokens": 18,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Which projects do we have, and their statuses?.\n\n_Reading projects_"
+		},
+		{
+			"id": "c04",
+			"category": "one-step",
+			"success": true,
+			"requests": 2,
+			"inputTokens": 54171,
+			"outputTokens": 12,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Who is in this workspace?.\n\n_Reading members_"
+		},
+		{
+			"id": "c05",
+			"category": "one-step",
+			"success": true,
+			"requests": 2,
+			"inputTokens": 54207,
+			"outputTokens": 19,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Search the docs for onboarding.\n\n_Searching pages for “onboarding”_"
+		},
+		{
+			"id": "c06",
+			"category": "one-step",
+			"success": true,
+			"requests": 2,
+			"inputTokens": 54142,
+			"outputTokens": 15,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"answer"
+			],
+			"answer": "Done: What was said in this thread so far?.\n\n_Reading messages_"
+		},
+		{
+			"id": "c07",
+			"category": "one-step",
+			"success": true,
+			"requests": 2,
+			"inputTokens": 54157,
+			"outputTokens": 32,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Remember that Acme renews its contract in March.\n\n_Remembering (team)_"
+		},
+		{
+			"id": "c08",
+			"category": "one-step",
+			"success": true,
+			"requests": 2,
+			"inputTokens": 54161,
+			"outputTokens": 21,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"answer"
+			],
+			"answer": "Done: What do you remember about Acme?.\n\n_Searching memory for “Acme”_"
+		},
+		{
+			"id": "c09",
+			"category": "one-step",
+			"success": true,
+			"requests": 2,
+			"inputTokens": 54268,
+			"outputTokens": 25,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Which milestones and cycles does Website have?.\n\n_Reading milestones and cycles_"
+		},
+		{
+			"id": "c10",
+			"category": "one-step",
+			"success": true,
+			"requests": 2,
+			"inputTokens": 54147,
+			"outputTokens": 20,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Find chat messages about the invoice.\n\n_Searching messages for “invoice”_"
+		},
+		{
+			"id": "c11",
+			"category": "one-step",
+			"success": true,
+			"requests": 2,
+			"inputTokens": 54165,
+			"outputTokens": 29,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Remind me today at 17:00 to check the deploy.\n\n_Setting a reminder_"
+		},
+		{
+			"id": "c12",
+			"category": "one-step",
+			"success": true,
+			"requests": 1,
+			"inputTokens": 27059,
+			"outputTokens": 18,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct"
+			],
+			"answer": "⏸ Waiting for an answer from <@0199c3a0-0000-7000-8000-00000000000b>.\n\n_Asking Bob_"
+		},
+		{
+			"id": "c13",
+			"category": "multi-step",
+			"success": true,
+			"requests": 3,
+			"inputTokens": 81529,
+			"outputTokens": 45,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Find the Safari login bug and move it to In progress.\n\n_Searching tasks for “login safari” · Updating a task_"
+		},
+		{
+			"id": "c14",
+			"category": "multi-step",
+			"success": true,
+			"requests": 4,
+			"inputTokens": 109163,
+			"outputTokens": 61,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"direct",
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Read the footer layout task and comment that I am on it.\n\n_Searching tasks for “footer” · Reading a task · Commenting on a task_"
+		},
+		{
+			"id": "c15",
+			"category": "multi-step",
+			"success": true,
+			"requests": 4,
+			"inputTokens": 108976,
+			"outputTokens": 59,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"direct",
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Make a task for each bug on the Bugs page.\n\n_Searching pages for “bugs” · Reading a page · Creating task “Checkout button misaligned” · Creating task “Search returns stale results”_"
+		},
+		{
+			"id": "c16",
+			"category": "multi-step",
+			"success": true,
+			"requests": 3,
+			"inputTokens": 81420,
+			"outputTokens": 47,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Show the label rules of Website, then add one: label \"design\" goes to Bob.\n\n_Reading label rules · Adding the label rule “design” → Bob_"
+		},
+		{
+			"id": "c17",
+			"category": "multi-step",
+			"success": true,
+			"requests": 3,
+			"inputTokens": 81659,
+			"outputTokens": 56,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Follow every login task for me.\n\n_Searching tasks for “login” · Following a task ×2_"
+		},
+		{
+			"id": "c18",
+			"category": "multi-step",
+			"success": true,
+			"requests": 3,
+			"inputTokens": 81658,
+			"outputTokens": 58,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Link the Project plan page to the Release v2 task.\n\n_Searching pages for “plan” · Searching tasks for “release” · link doc to task_"
+		},
+		{
+			"id": "c19",
+			"category": "multi-step",
+			"success": true,
+			"requests": 3,
+			"inputTokens": 81650,
+			"outputTokens": 48,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Write a page that lists the open login tasks.\n\n_Searching tasks for “login” · Creating page “Open login tasks”_"
+		},
+		{
+			"id": "c20",
+			"category": "multi-step",
+			"success": true,
+			"requests": 2,
+			"inputTokens": 54201,
+			"outputTokens": 68,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"script",
+				"answer"
+			],
+			"answer": "Done: Count our tasks by status.\n\n_Running a script_"
+		},
+		{
+			"id": "c21",
+			"category": "drive-docs",
+			"success": true,
+			"requests": 3,
+			"inputTokens": 81434,
+			"outputTokens": 37,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Find the Q3 budget in Drive and tell me the total.\n\n_drive search · drive read_"
+		},
+		{
+			"id": "c22",
+			"category": "drive-docs",
+			"success": true,
+			"requests": 2,
+			"inputTokens": 54173,
+			"outputTokens": 22,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Make a Drive folder \"Invoices 2026\".\n\n_drive create folder_"
+		},
+		{
+			"id": "c23",
+			"category": "drive-docs",
+			"success": true,
+			"requests": 2,
+			"inputTokens": 54276,
+			"outputTokens": 29,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Read the CSV I sent and tell me the cities.\n\n_Reading a chat file_"
+		},
+		{
+			"id": "c24",
+			"category": "drive-docs",
+			"success": true,
+			"requests": 3,
+			"inputTokens": 81588,
+			"outputTokens": 57,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Put the Drive file logo.png on the Brand page.\n\n_drive search · Searching pages for “brand” · insert drive file_"
+		},
+		{
+			"id": "c25",
+			"category": "drive-docs",
+			"success": true,
+			"requests": 3,
+			"inputTokens": 81454,
+			"outputTokens": 47,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Add \"v2 shipped\" to the release notes page.\n\n_Searching pages for “release” · Updating a page_"
+		},
+		{
+			"id": "c26",
+			"category": "drive-docs",
+			"success": true,
+			"requests": 3,
+			"inputTokens": 81432,
+			"outputTokens": 38,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Which Drive files are on the Brand page?.\n\n_Searching pages for “brand” · list page drive files_"
+		},
+		{
+			"id": "c27",
+			"category": "drive-docs",
+			"success": true,
+			"requests": 4,
+			"inputTokens": 108820,
+			"outputTokens": 56,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"direct",
+				"direct",
+				"answer"
+			],
+			"answer": "Done: What does the spreadsheet on the Budget page say?.\n\n_Searching pages for “budget” · Reading a page · read file_"
+		},
+		{
+			"id": "c28",
+			"category": "image",
+			"success": true,
+			"requests": 2,
+			"inputTokens": 54306,
+			"outputTokens": 26,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"answer"
+			],
+			"answer": "Done: What is in this screenshot?.\n\n_Looking at 1 image(s)_"
+		},
+		{
+			"id": "c29",
+			"category": "image",
+			"success": true,
+			"requests": 2,
+			"inputTokens": 54386,
+			"outputTokens": 35,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Compare these two photos.\n\n_Looking at 2 image(s)_"
+		},
+		{
+			"id": "c30",
+			"category": "image",
+			"success": true,
+			"requests": 3,
+			"inputTokens": 81634,
+			"outputTokens": 54,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Make a task from the bug in this screenshot.\n\n_Looking at 1 image(s) · Creating task “Checkout button overlaps the cart”_"
+		},
+		{
+			"id": "c31",
+			"category": "image",
+			"success": true,
+			"requests": 3,
+			"inputTokens": 81375,
+			"outputTokens": 38,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"direct",
+				"answer"
+			],
+			"answer": "Done: Look at hero.jpg in Drive: is it a landscape photo?.\n\n_drive search · Looking at 1 image(s)_"
+		},
+		{
+			"id": "c32",
+			"category": "approval",
+			"success": true,
+			"requests": 4,
+			"inputTokens": 108892,
+			"outputTokens": 52,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"direct",
+				"direct",
+				"answer"
+			],
+			"answer": "⏸ Waiting for an answer from <@0199c3a0-0000-7000-8000-00000000000a>.\n\n_drive search · drive trash_\n---\nDone: Move draft-v1.docx in Drive to the trash.\n\n_drive trash_"
+		},
+		{
+			"id": "c33",
+			"category": "approval",
+			"success": true,
+			"requests": 4,
+			"inputTokens": 108837,
+			"outputTokens": 51,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"direct",
+				"direct",
+				"answer"
+			],
+			"answer": "⏸ Waiting for an answer from <@0199c3a0-0000-7000-8000-00000000000a>.\n\n_drive search · drive share_\n---\nDone: Make a public link to brochure.pdf.\n\n_drive share_"
+		},
+		{
+			"id": "c34",
+			"category": "approval",
+			"success": true,
+			"requests": 3,
+			"inputTokens": 81668,
+			"outputTokens": 63,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"direct",
+				"answer"
+			],
+			"answer": "⏸ Waiting for an answer from <@0199c3a0-0000-7000-8000-00000000000a>.\n\n_Scheduling the routine “Open tasks”_\n---\nDone: Every weekday at 9, post my open tasks here.\n\n_Scheduling the routine “Open tasks”_"
+		},
+		{
+			"id": "c35",
+			"category": "approval",
+			"success": true,
+			"requests": 3,
+			"inputTokens": 81593,
+			"outputTokens": 48,
+			"fixedTokens": 26941,
+			"codemodeTokens": 237,
+			"turns": [
+				"direct",
+				"direct",
+				"answer"
+			],
+			"answer": "⏸ Waiting for an answer from <@0199c3a0-0000-7000-8000-00000000000a>.\n\n_Scheduling a message_\n---\nDone: Tomorrow at 8, post \"Standup moved to 10\" for me.\n\n_Scheduling a message_"
+		}
+	]
+}
