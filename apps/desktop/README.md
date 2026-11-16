@@ -52,6 +52,9 @@ Orbit pins 1.97.1), `Cargo.lock` and `target/`.
     and the web app said the sign-in window was blocked).
   - Update check: the page reads `/downloads/desktop/latest.json` with its own gateway cookies; when that
     version is newer, a notification says so and the tray gets "Download Orbit x.y.z" (opens the browser).
+    It installs nothing itself: the person runs the new installer. It works only on the saved server's own
+    pages: `orbit.wellrox.com` redirects to `orbit.easytomanage.com` since 2026-11-12, so 0.1.4 loads that saved
+    server as the new one (`settings.rs` `MOVED`); before, those apps saw no update, notification or badge.
 - **Voice input** (the mic in the chat composer) is the web app's own: the web view's `webkitSpeechRecognition`, no
   native code. Windows: WebView2 has it (Microsoft's online speech service, like Edge). The app allows the
   microphone for the server's origin (`src/microphone.rs`): it saves "allow" in the WebView2 profile at each start,

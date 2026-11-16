@@ -10,7 +10,7 @@ on:
     inputs:
       server:
         description: Server that hosts the downloads (latest.json links to <server>/downloads/desktop/)
-        default: https://orbit.wellrox.com
+        default: https://orbit.easytomanage.com
       macos:
         description: Also build the macOS .dmg (parked; Windows is the target)
         type: boolean
@@ -159,7 +159,7 @@ jobs:
           path: apps/desktop/artifacts
       - name: latest.json
         env:
-          SERVER: ${{ inputs.server || 'https://orbit.wellrox.com' }}
+          SERVER: ${{ inputs.server || 'https://orbit.easytomanage.com' }}
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           setup=$(basename artifacts/desktop-windows/*-setup.exe)

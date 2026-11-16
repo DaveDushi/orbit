@@ -15,7 +15,7 @@ Windows names "Windows PowerShell" as the sender of Orbit's notifications.
 The app is not signed yet: on the first start Windows SmartScreen says "Windows protected
 your PC". Click "More info", then "Run anyway".
 
-The first time, enter your Orbit server's address (for example orbit.wellrox.com), then sign in
+The first time, enter your Orbit server's address (for example orbit.easytomanage.com), then sign in
 as in the browser. Closing the window keeps Orbit in the tray (next to the clock); right-click
 the tray icon for "Start with Windows" (off until you turn it on), "Change server..." and
 "Quit Orbit". Downloads go to your Downloads folder. Orbit runs once: starting it again brings its window
@@ -26,4 +26,4 @@ Needs the Microsoft Edge WebView2 runtime (Windows 10 and 11 have it).
 Risk-4b check (a person signs in to the gateway and to Orbit; prints no secret and signs out
 at the end). In a Command Prompt in this folder:
 
-    start /wait Orbit.exe --check-gateway https://orbit.wellrox.com
+    start /wait Orbit.exe --check-gateway https://orbit.easytomanage.com

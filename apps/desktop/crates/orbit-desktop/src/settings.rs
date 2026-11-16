@@ -35,6 +35,10 @@ pub struct Area {
     pub height: u32,
 }
 
+/// Servers that moved to another address. The old one answers every page with a redirect, so the app's
+/// pages were never "the server's" (no bridge, update check or microphone grant there): use the new one.
+const MOVED: &[(&str, &str)] = &[("https://orbit.wellrox.com", "https://orbit.easytomanage.com")];
+
 pub const MIN_WIDTH: u32 = 480;
 pub const MIN_HEIGHT: u32 = 360;
 /// How much of the title bar must be on a monitor for the person to grab it.
@@ -66,7 +70,14 @@ impl Settings {
     /// The settings in `path`; a missing or unreadable file gives the defaults (a broken file
     /// must not stop the app).
     pub fn load_from(path: &Path) -> Settings {
-        std::fs::read_to_string(path).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default()
+        let mut settings: Settings =
+            std::fs::read_to_string(path).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
+        if let Some(server) = settings.server.as_deref()
+            && let Some((_, to)) = MOVED.iter().find(|(from, _)| *from == server)
+        {
+            settings.server = Some((*to).to_owned());
+        }
+        settings
     }
 
     pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
@@ -145,6 +156,12 @@ mod tests {
         // An older file without the newer keys, and a broken file, both read as defaults where they lack a value.
         std::fs::write(&path, r#"{"server":"https://orbit.example.com"}"#).unwrap();
         assert_eq!(Settings::load_from(&path), Settings { server: Some("https://orbit.example.com".into()), ..Settings::default() });
+        std::fs::write(&path, r#"{"server":"https://orbit.wellrox.com","start_with_os":true}"#).unwrap();
+        assert_eq!(
+            Settings::load_from(&path),
+            Settings { server: Some("https://orbit.easytomanage.com".into()), start_with_os: true, ..Settings::default() },
+            "a moved server loads as its new address"
+        );
         std::fs::write(&path, "{not json").unwrap();
         assert_eq!(Settings::load_from(&path), Settings::default());
     }
