@@ -53,8 +53,12 @@ Orbit pins 1.97.1), `Cargo.lock` and `target/`.
   - Update check: the page reads `/downloads/desktop/latest.json` with its own gateway cookies; when that
     version is newer, a notification says so and the tray gets "Download Orbit x.y.z" (opens the browser).
 - **Voice input** (the mic in the chat composer) is the web app's own: the web view's `webkitSpeechRecognition`, no
-  native code. Windows: WebView2 has it (Microsoft's online speech service, like Edge) and shows its own microphone
-  prompt (wry has no permission handler here). WebView2 runtimes 153+ can fail with a `network` error in some
+  native code. Windows: WebView2 has it (Microsoft's online speech service, like Edge). The app allows the
+  microphone for the server's origin (`src/microphone.rs`): it saves "allow" in the WebView2 profile at each start,
+  which also clears a saved "Block" (up to 0.1.3 the app did not answer, a refused or missed WebView2 prompt stayed
+  saved, and the page got `not-allowed`), and it allows the requests of the server's own pages; other origins keep
+  WebView2's prompt. Windows' own switch (Settings → Privacy & security → Microphone → "Let desktop apps access your
+  microphone") still decides above it. WebView2 runtimes 153+ can fail with a `network` error in some
   regions ([WebView2Feedback#5724](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5724)); the web app
   then says the speech service could not be reached. macOS: WKWebView uses Apple's speech recognition and needs
   `NSMicrophoneUsageDescription` and `NSSpeechRecognitionUsageDescription` in `packaging/macos/Info.plist` (an

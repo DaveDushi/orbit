@@ -301,7 +301,15 @@ fn build_webview(window: &Window, context: &mut WebContext, server: Option<&Serv
             .with_url(server.origin()),
         None => builder.with_html(pick_page(None)),
     };
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        let webview = builder.build(window)?;
+        if let Some(server) = server {
+            crate::microphone::allow(&webview, server);
+        }
+        Ok(webview)
+    }
+    #[cfg(target_os = "macos")]
     return builder.build(window);
     #[cfg(target_os = "linux")]
     {
