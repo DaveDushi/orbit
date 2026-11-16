@@ -77,4 +77,9 @@ test('a new private channel sends its people and category', async () => {
 test('server paths become absolute; absolute addresses stay', () => {
   expect(chat.serverUrl('https://orbit.test/', '/api/v1/x')).toBe('https://orbit.test/api/v1/x')
   expect(chat.serverUrl('https://orbit.test', 'https://cdn.test/a.png')).toBe('https://cdn.test/a.png')
+  // The session's token goes to the Orbit server only.
+  expect(chat.serverHeaders('https://orbit.test/', 'https://orbit.test/api/v1/x', 't')).toEqual({ Authorization: 'Bearer t' })
+  expect(chat.serverHeaders('https://orbit.test', 'https://cdn.test/a.png', 't')).toEqual({})
+  expect(chat.serverHeaders('https://orbit.test', 'https://orbit.test.evil.example/a.png', 't')).toEqual({})
+  expect(chat.serverHeaders('https://orbit.test', 'not a url', 't')).toEqual({})
 })

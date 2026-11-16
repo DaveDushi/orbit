@@ -7,6 +7,7 @@ import { shortDate, timeOfDay } from '../../data/format'
 import type { ConversationRecord, MessageRecord } from '../../data/orbit'
 import { useTheme } from '../../theme'
 import { Avatar, Icon, IconButton, SafeAreaView, Text } from '../../ui'
+import { BotAvatar } from './BotAvatar'
 
 /** A chat screen with the web's 48px pane header: Back, the title, and actions at the end. */
 export function ChatPane({ title, subtitle, actions, children }: { title: string; subtitle?: string; actions?: ReactNode; children: ReactNode }) {
@@ -69,7 +70,7 @@ export function MessagePreview({
       onPress={onPress}
       className="flex-row gap-2 p-2 rounded-md active:bg-muted/60"
     >
-      <Avatar id={message.author_id} name={author} size={24} />
+      {message.bot ? <BotAvatar bot={message.bot} size={24} /> : <Avatar id={message.author_id} name={author} size={24} />}
       <View className="flex-1 min-w-0 gap-0.5">
         <View className="flex-row items-baseline gap-1.5">
           <Text numberOfLines={1} className="font-noto-medium text-[13px] shrink">

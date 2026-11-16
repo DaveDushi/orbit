@@ -89,3 +89,12 @@ test('a new task is made first, then every file goes to its id; a failed file do
   await expect(shareToNewTask({ createTask: async () => Promise.reject(new Error('refused')), attach: async () => none.push('x') }, files)).rejects.toThrow('refused')
   expect(none).toEqual([])
 })
+
+test('a shared file name with a percent sign stays as it is, and a name from the URI is decoded', () => {
+  const { files } = sharedContent([
+    { contentType: 'file', contentUri: 'file:///tmp/a', originalName: '100% done.pdf' },
+    { contentType: 'file', contentUri: 'file:///tmp/My%20Notes.txt' },
+    { contentType: 'file', contentUri: 'file:///tmp/50%.txt' },
+  ])
+  expect(files.map((file) => file.name)).toEqual(['100% done.pdf', 'My Notes.txt', '50%.txt'])
+})

@@ -1,7 +1,9 @@
 import { expect, test } from 'bun:test'
 
 import {
+  authorName,
   buildMessageRows,
+  emojiNamed,
   channelNameFinal,
   channelNameInput,
   chatSections,
@@ -193,6 +195,21 @@ test('#general: an admin edits it but cannot archive it or add people; a plain m
   expect(conversationPermissions(general, 'me', true)).toEqual({ canManage: true, canArchive: false, canLeave: false, canAddPeople: false, canRemovePeople: false })
   expect(conversationActions('row', state('general', {}), conversationPermissions(general, 'me', false))).toEqual(['favorite', 'notify'])
   expect(conversationPermissions(conversation('dm', { kind: 'dm', member_ids: ['me', 'ada'] }), 'me', true).canAddPeople).toBe(false)
+})
+
+test('an integration message shows the integration, is nobody\'s own, and groups apart from its creator', () => {
+  const bot = { webhook_id: 'w1', name: 'Muse', icon_url: null, icon_emoji: null, interactive: false }
+  const posted = message('m2', { author_id: 'me', bot, created_at: '2026-10-23T10:01:00Z', pinned: false, sticker_id: null, body: 'hi' })
+  const nameOf = (id: string) => (id === 'me' ? 'David' : 'Ada')
+  expect(authorName(posted, nameOf)).toBe('Muse')
+  expect(authorName({ author_id: 'me', bot_name: 'Muse' }, nameOf)).toBe('Muse')
+  expect(authorName({ author_id: 'me', bot_name: null }, nameOf)).toBe('David')
+  const rows = buildMessageRows([message('m1', { author_id: 'me' }), posted, message('m3', { author_id: 'me', created_at: '2026-10-23T10:02:00Z' })])
+  expect(rows.flatMap((row) => (row.type === 'message' ? [row.groupStart] : []))).toEqual([true, true, true])
+  // Its creator cannot edit it, and deletes it only as a moderator or the channel's creator, as the server allows.
+  expect(messageActions(posted, 'me', false, { inThread: false, canWrite: true })).toEqual(['reply', 'thread', 'copy', 'pin', 'unread'])
+  expect(messageActions(posted, 'me', false, { inThread: false, canWrite: true, channelCreator: true })).toContain('delete')
+  expect(unreadMessages([posted], null, 'me').map((item) => item.id)).toEqual(['m2'])
 })
 
 test('message sheet: own text gets edit and delete, another author only for a moderator, a deleted one keeps the thread', () => {
@@ -413,4 +430,11 @@ test('a chat file opens from Drive, its playable copy or itself, and says where 
   const big = { ...file, drive_node_id: 'n1', preview: null } satisfies ChatFileRecord
   expect(fileNote(big)).toBe('2.4 MB · in Drive')
   expect(fileToOpen(big)).toEqual({ kind: 'drive', nodeId: 'n1' })
+})
+
+test('a bot\'s icon emoji is found by its shortcode, in any case', () => {
+  const groups = [{ key: 'people', title: 'People', emojis: [{ emoji: '👻', names: ['ghost'] }, { emoji: '🚀', names: ['rocket'] }] }]
+  expect(emojiNamed(groups, 'rocket')).toBe('🚀')
+  expect(emojiNamed(groups, 'Ghost')).toBe('👻')
+  expect(emojiNamed(groups, 'nope')).toBeNull()
 })

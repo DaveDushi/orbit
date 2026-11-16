@@ -2833,7 +2833,10 @@ async fn a_message_is_pushed_to_the_members_it_is_for() {
     assert_eq!(sent[0].0, endpoint(&ada));
     assert_eq!(sent[0].1["title"], "Owner in #general");
     assert_eq!(sent[0].1["body"], "@ada can you check the #general import?");
-    assert_eq!(sent[0].1["url"], format!("/chat/{general}"));
+    assert_eq!(
+        sent[0].1["url"],
+        format!("/chat/{general}?workspace={}", fixture.workspace_id)
+    );
     assert_eq!(sent[0].1["sound"], "mention");
     assert_eq!(
         sent[0].1["icon"],
@@ -2906,7 +2909,13 @@ async fn a_message_is_pushed_to_the_members_it_is_for() {
     let sent = pushed(1).await;
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].0, endpoint(&ada));
-    assert_eq!(sent[0].1["url"], format!("/chat/{general}?thread={root}"));
+    assert_eq!(
+        sent[0].1["url"],
+        format!(
+            "/chat/{general}?thread={root}&workspace={}",
+            fixture.workspace_id
+        )
+    );
 }
 
 /// A local site, FxTwitter API and YouTube oEmbed service. Answers its base URL.
@@ -4659,7 +4668,10 @@ async fn a_message_reaches_the_iphones_it_is_for_never_the_authors_and_a_guest_s
     );
     for (token, notice, _) in &sent {
         assert_eq!(notice.title, "Owner in #room");
-        assert_eq!(notice.url, format!("/chat/{room}"));
+        assert_eq!(
+            notice.url,
+            format!("/chat/{room}?workspace={}", fixture.workspace_id)
+        );
         let channel = if *token == phone(&guest) {
             "#channel"
         } else {

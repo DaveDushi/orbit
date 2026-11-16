@@ -40,6 +40,15 @@ export interface SharedContent {
   texts: string[]
 }
 
+/** A percent-encoded file name as text; a name that is not valid encoding stays as it is. */
+function decodedName(name: string): string {
+  try {
+    return decodeURIComponent(name)
+  } catch {
+    return name
+  }
+}
+
 /** Splits a share into files and text: a web page or link is text (its URL), everything with a file is a file. */
 export function sharedContent(payloads: readonly SharedPayload[]): SharedContent {
   const files: SharedFile[] = []
@@ -50,8 +59,9 @@ export function sharedContent(payloads: readonly SharedPayload[]): SharedContent
       if (text) texts.push(text)
       continue
     }
-    const name = payload.originalName?.trim() || payload.contentUri.split('/').pop() || 'file'
-    files.push({ uri: payload.contentUri, name: decodeURIComponent(name), mimeType: payload.contentMimeType || 'application/octet-stream', size: payload.contentSize ?? null })
+    // The original name is plain text ("100% done.pdf"); only a name from the URI is percent-encoded.
+    const name = payload.originalName?.trim() || decodedName(payload.contentUri.split('/').pop() ?? '') || 'file'
+    files.push({ uri: payload.contentUri, name, mimeType: payload.contentMimeType || 'application/octet-stream', size: payload.contentSize ?? null })
   }
   return { files: files.slice(0, MAX_SHARED_FILES), texts }
 }

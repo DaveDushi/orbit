@@ -7,9 +7,12 @@ use axum::http::{Request, StatusCode, header};
 use futures_util::future::BoxFuture;
 use orbit_platform::{AuthenticatedUser, Id, PasswordService, TestDatabase, TimestampMillis};
 use orbit_server::auth_routes::{AuthState, CookieMode, auth_router};
+use orbit_server::live::LiveHub;
 use orbit_server::push::apns::DeviceSender;
-use orbit_server::push::{Notice, PushSender, PushService, SendError, Subscription, Vapid};
-use orbit_server::repositories::identity::{IdentityRepository, SetupRequest};
+use orbit_server::push::{
+    Notice, PushKind, PushSender, PushService, SendError, Subscription, Vapid,
+};
+use orbit_server::repositories::identity::{IdentityRepository, SetupRequest, UserStatus};
 use orbit_server::task_routes::{TaskState, task_router};
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -249,6 +252,30 @@ impl Fixture {
     }
 }
 
+/// An iPhone gets the push also while its user is at an open tab (a browser does not): the app
+/// hides the banner itself when the conversation is open on it.
+#[tokio::test]
+async fn an_iphone_gets_the_push_also_while_its_user_is_at_an_open_tab() {
+    let fixture = Fixture::new().await;
+    let (ada, ada_cookie) = fixture.member("ada").await;
+    let phone = token("a4");
+    fixture.register(&ada_cookie, &phone).await;
+    let hub = LiveHub::of(&fixture.database);
+    let mut tab = hub.connect(fixture.workspace_id, ada, false, UserStatus::default());
+    fixture
+        .push
+        .notify(ada, PushKind::DirectMessages, &notice())
+        .await
+        .unwrap();
+    let sent = fixture.sent();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].0, phone);
+    assert_eq!(sent[0].1.as_ref().unwrap().title, "Ada");
+    // The tab shows it itself.
+    assert!(tab.frames.try_recv().is_ok());
+    hub.disconnect(fixture.workspace_id, tab.id, ada);
+}
+
 fn notice() -> Notice {
     Notice {
         title: "Ada".to_owned(),
@@ -306,7 +333,32 @@ async fn a_device_is_registered_for_its_user_and_only_its_user_removes_it() {
     assert_eq!(fixture.push.push(ada, &notice()).await.unwrap(), 1);
     assert_eq!(fixture.sent()[0].0, phone);
 
-    // Its user removes it.
+    // Its user removes it, with the token in the body (the old path route stays for build 15).
+    let by_body = |token: &str| Some(json!({ "token": token }));
+    let (status, _) = fixture
+        .send("DELETE", "/api/v1/push/devices", owner, by_body(&phone))
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(fixture.devices(ada).await, std::slice::from_ref(&phone));
+    let (status, _) = fixture
+        .send(
+            "DELETE",
+            "/api/v1/push/devices",
+            &ada_cookie,
+            by_body(&phone),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(fixture.devices(ada).await.is_empty());
+    let (status, _) = fixture
+        .send("DELETE", "/api/v1/push/devices", &ada_cookie, by_body("zz"))
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, _) = fixture
+        .send("DELETE", "/api/v1/push/devices", "", by_body(&phone))
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    fixture.register(&ada_cookie, &phone).await;
     let (status, _) = fixture.send("DELETE", &uri, &ada_cookie, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     assert!(fixture.devices(ada).await.is_empty());
@@ -385,7 +437,10 @@ async fn nobody_gets_a_push_for_what_they_did_themselves() {
     assert_eq!(sent.len(), 1);
     let notice = sent[0].1.as_ref().unwrap();
     assert_eq!(notice.title, "Owner assigned you a task");
-    assert_eq!(notice.url, "/activity");
+    assert_eq!(
+        notice.url,
+        format!("/activity?workspace={}", fixture.workspace_id)
+    );
     // The icon's badge: both unread inbox rows (the app shows the same number).
     assert_eq!(sent[0].2, 2);
     let (status, badge) = fixture

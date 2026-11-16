@@ -136,16 +136,19 @@ Older versions created an `app.key` file beside the SQLite database. If that fil
 ## iPhone push (APNs)
 
 The iPhone app (`apps/mobile`, bundle `com.easytomanage.orbit`) registers its APNs device token after sign-in
-(`POST /api/v1/push/devices`) and removes it before sign-out (`DELETE /api/v1/push/devices/{token}`). Orbit sends the
-pushes itself, straight to Apple with the token-based key (no Expo or other relay): the same events and rules as Web
-Push (the user's notification settings, "do not disturb", nobody for their own actions, nothing while they are active
-in an open tab). A device row belongs to the session that registered it, like a browser's subscription: signing out,
+(`POST /api/v1/push/devices`) and removes it before sign-out (`DELETE /api/v1/push/devices` with `{"token": …}`;
+builds up to 15 use `DELETE /api/v1/push/devices/{token}`, which stays). Orbit sends the pushes itself, straight to
+Apple with the token-based key (no Expo or other relay): the same events and rules as Web Push (the user's
+notification settings, "do not disturb", nobody for their own actions), with one difference: an open tab the user is
+active at stops the browsers' pushes, not the iPhone's (the app hides the banner of the conversation open on it). Each
+push URL names its workspace (`?workspace=`): a tap in the app or the browser opens it there. Every push sent or held
+back logs one info line (`push sent` / `push skipped` with the reason). A device row belongs to the session that registered it, like a browser's subscription: signing out,
 revoking the session in **Account → Sessions** or deleting the account stops its pushes. A device that Apple reports
 as gone (`410`, `BadDeviceToken`) is removed at once; one that fails 5 times in a row too.
 
 Each push carries the app icon's badge: the user's unread chat (as the Chat tab counts it) plus unread inbox, in every
 workspace (`GET /api/v1/push/badge` gives the same number to the app). When the number changes without a shown push (a
-read on any device, or a notification that "do not disturb", a turned-off setting or an open tab held back), the
+read on any device, or a notification that "do not disturb" or a turned-off setting held back), the
 iPhones get the new number alone: a silent badge-only push (`{"aps":{"badge":N}}`, priority 5), only when it differs
 from the last one sent.
 

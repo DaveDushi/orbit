@@ -4,7 +4,7 @@ import { router } from 'expo-router'
 import { type ReactElement, useMemo, useRef, useState } from 'react'
 import { FlatList, Platform, Pressable, Share, View } from 'react-native'
 
-import { decodeMentions, hasReaction, type MessageAction, messageActions, type MessageRow, type Person, quickReactions, type ThreadPages, toggleReaction, upsertThreadMessage } from '../../data/chat'
+import { authorName, decodeMentions, hasReaction, type MessageAction, messageActions, type MessageRow, type Person, quickReactions, type ThreadPages, toggleReaction, upsertThreadMessage } from '../../data/chat'
 import * as chat from '../../data/chat-api'
 import { dayLabel } from '../../data/format'
 import { markdownToText } from '../../data/markdown'
@@ -27,8 +27,11 @@ export function useMessageText() {
   const members = useMembers().data
   const conversations = useConversations()
   const channels: Person[] = useMemo(() => (conversations.data ?? []).map((item) => ({ id: item.id, name: item.name })), [conversations.data])
+  const nameOf = (userId: string) => people.find((person) => person.id === userId)?.name ?? 'Unknown'
   return {
-    nameOf: (userId: string) => people.find((person) => person.id === userId)?.name ?? 'Unknown',
+    nameOf,
+    /** The name a message shows: an integration's message names the integration, not the member who set it up. */
+    authorOf: (message: Parameters<typeof authorName>[0]) => authorName(message, nameOf),
     pictureOf: (userId: string) => members?.find((member) => member.user_id === userId)?.avatar_url ?? null,
     text: (body: string) => markdownToText(decodeMentions(body, people, channels)),
   }
@@ -56,6 +59,11 @@ export function useMessageSheet({ inThread, composer, loaded, onMarkedUnread }: 
   const run = useChatWrite()
   const words = useMessageText()
   const [selected, setSelected] = useState<MessageRecord | null>(null)
+  const conversations = useConversations().data
+  const channelCreator = (message: MessageRecord) => {
+    const conversation = conversations?.find((item) => item.id === message.conversation_id)
+    return conversation !== undefined && conversation.kind !== 'dm' && conversation.created_by === user.id
+  }
   const [picking, setPicking] = useState<MessageRecord | null>(null)
 
   const put = (message: MessageRecord) => {
@@ -112,7 +120,7 @@ export function useMessageSheet({ inThread, composer, loaded, onMarkedUnread }: 
   }
 
   const items: SheetItem[] = selected
-    ? messageActions(selected, user.id, moderator, { inThread, canWrite: composer !== null }).map((action) => ({ key: action, ...ACTION_LOOK[action], onPress: () => runAction(action, selected) }))
+    ? messageActions(selected, user.id, moderator, { inThread, canWrite: composer !== null, channelCreator: channelCreator(selected) }).map((action) => ({ key: action, ...ACTION_LOOK[action], onPress: () => runAction(action, selected) }))
     : []
   const quick = quickReactions(loaded, user.id, 5)
 

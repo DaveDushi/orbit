@@ -4750,6 +4750,13 @@ export type PushDeviceRecord = {
     label: string;
 };
 
+export type PushDeviceTokenBody = {
+    /**
+     * The iPhone app's APNs device token, hex.
+     */
+    token: string;
+};
+
 export type PushKey = {
     /**
      * The `applicationServerKey` a browser subscribes with.
@@ -12317,6 +12324,62 @@ export type GetPushBadgeResponses = {
 };
 
 export type GetPushBadgeResponse = GetPushBadgeResponses[keyof GetPushBadgeResponses];
+
+export type UnregisterPushDeviceByBodyData = {
+    body: PushDeviceTokenBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/push/devices';
+};
+
+export type UnregisterPushDeviceByBodyErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * invalid_device
+     */
+    422: AuthProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type UnregisterPushDeviceByBodyError = UnregisterPushDeviceByBodyErrors[keyof UnregisterPushDeviceByBodyErrors];
+
+export type UnregisterPushDeviceByBodyResponses = {
+    204: void;
+};
+
+export type UnregisterPushDeviceByBodyResponse = UnregisterPushDeviceByBodyResponses[keyof UnregisterPushDeviceByBodyResponses];
 
 export type RegisterPushDeviceData = {
     body: PushDeviceBody;

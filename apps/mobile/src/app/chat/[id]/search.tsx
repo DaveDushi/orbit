@@ -123,7 +123,7 @@ function SearchScreenContent() {
             return (
               <MessagePreview
                 message={hit.message}
-                author={words.nameOf(hit.message.author_id)}
+                author={words.authorOf(hit.message)}
                 text=""
                 segments={hit.message.body ? segments : undefined}
                 context={!thisConversation && where ? `in ${where.kind === 'dm' ? '' : '#'}${conversationTitle(where, people, user.id)}` : undefined}

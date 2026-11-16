@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Image } from 'react-native'
 
 import { absoluteUrl } from '../../data/docs'
+import { serverHeaders } from '../../data/chat-api'
 import { useOrbit } from '../../orbit-context'
 import { Avatar } from '../../ui'
 
@@ -13,7 +14,7 @@ export function ProfilePicture({ id, name, url, size }: { id: string; name: stri
   return (
     <Image
       accessibilityLabel={name}
-      source={{ uri: absoluteUrl(session.server, url), headers: { Authorization: `Bearer ${session.token}` } }}
+      source={{ uri: absoluteUrl(session.server, url), headers: serverHeaders(session.server, absoluteUrl(session.server, url), session.token) }}
       onError={() => setFailed(url)}
       className="rounded-full"
       style={{ width: size, height: size }}

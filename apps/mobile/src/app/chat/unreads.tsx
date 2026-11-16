@@ -89,7 +89,7 @@ function UnreadGroup({ conversation, state }: UnreadConversation) {
       {messages.isError ? (
         <Text className="text-[13px] px-1 text-muted-foreground">Could not load these messages.</Text>
       ) : (
-        shown.map((message) => <MessagePreview key={message.id} message={message} author={words.nameOf(message.author_id)} text={words.text(message.body)} onPress={open} />)
+        shown.map((message) => <MessagePreview key={message.id} message={message} author={words.authorOf(message)} text={words.text(message.body)} onPress={open} />)
       )}
       {more > 0 && !messages.isPending ? (
         <Pressable accessibilityRole="link" onPress={open} className="px-1">
@@ -136,13 +136,13 @@ function ThreadGroup({ conversation, thread, channel }: { conversation: Conversa
         <View className="flex-1" />
         <Button label="Mark as read" variant="ghost" size="sm" onPress={() => void run('Could not mark as read', (client, workspaceId) => chat.markThreadRead(client, workspaceId, thread.root.id))} />
       </View>
-      <MessagePreview message={thread.root} author={words.nameOf(thread.root.author_id)} text={words.text(thread.root.body)} onPress={open} clamp={2} />
+      <MessagePreview message={thread.root} author={words.authorOf(thread.root)} text={words.text(thread.root.body)} onPress={open} clamp={2} />
       {replies.isError ? (
         <Text className="text-[13px] px-1 text-muted-foreground">Could not load these replies.</Text>
       ) : (
         <View className="gap-1 ml-1 pl-2 border-l-2 border-border">
           {shown.map((message) => (
-            <MessagePreview key={message.id} message={message} author={words.nameOf(message.author_id)} text={words.text(message.body)} onPress={open} />
+            <MessagePreview key={message.id} message={message} author={words.authorOf(message)} text={words.text(message.body)} onPress={open} />
           ))}
         </View>
       )}

@@ -2,7 +2,7 @@
  * The iPhone's push notifications: the device registration calls and where a tapped notification goes. No React, so
  * a Bun test checks the same functions. The server sends through APNs (`apps/server/src/push/apns.rs`).
  */
-import { getPushBadge, registerPushDevice, unregisterPushDevice } from '@orbit/api/generated/sdk.gen'
+import { getPushBadge, registerPushDevice, unregisterPushDeviceByBody } from '@orbit/api/generated/sdk.gen'
 
 import type { OrbitClient } from './orbit'
 
@@ -11,8 +11,9 @@ export async function registerDevice(client: OrbitClient, token: string, label: 
   await registerPushDevice({ client, body: { token, label }, throwOnError: true })
 }
 
+/** The token goes in the body, so no access log of the server or a proxy keeps it. */
 export async function unregisterDevice(client: OrbitClient, token: string): Promise<void> {
-  await unregisterPushDevice({ client, path: { token }, throwOnError: true })
+  await unregisterPushDeviceByBody({ client, body: { token }, throwOnError: true })
 }
 
 /** The number on the app icon: unread chat (as the Chat tab counts it) and unread inbox, in every workspace. */
@@ -35,6 +36,34 @@ export function appPathOf(url: unknown): string {
   if (path === '/activity') return '/activity'
   if (path === '/profile/notifications') return '/settings/notifications'
   return '/'
+}
+
+/** The workspace a notification's `url` names (`?workspace=`): a tap switches to it first. */
+export function workspaceOf(url: unknown): string | null {
+  if (typeof url !== 'string' || !url.startsWith('/')) return null
+  const id = new URLSearchParams(url.split('?')[1] ?? '').get('workspace')
+  return id && /^[\w-]+$/.test(id) ? id : null
+}
+
+/**
+ * Whether a push that arrives while the app is open is about the conversation or thread on screen (`pathname`): its
+ * banner is not shown then, as the message shows in the list.
+ */
+export function isOpenOnScreen(url: unknown, pathname: string | null): boolean {
+  const path = appPathOf(url)
+  return pathname !== null && path.startsWith('/chat/') && path === pathname
+}
+
+/**
+ * The `url` of a tapped notification. `expo-notifications` gives a remote push's data from its `body` object only;
+ * a server that sends `url` at the top level of the APNs payload (Orbit before it sent `body` too) is read from the
+ * push trigger's `payload`.
+ */
+export function notificationUrl(data: unknown, trigger: unknown): unknown {
+  const url = (data as { url?: unknown } | null | undefined)?.url
+  if (url !== undefined) return url
+  const push = trigger as { type?: unknown; payload?: { url?: unknown } } | null | undefined
+  return push?.type === 'push' ? push.payload?.url : undefined
 }
 
 /** The person turned notifications off on this phone (Settings → Notifications); the app then does not register it. */
