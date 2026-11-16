@@ -99,7 +99,7 @@ works. Third-party pages name Firecracker v1.16.0, June 2026
    and bubblewrap share the host kernel.
 2. No nested virtualization on a production VM. Nested KVM works here, but it is an extra hypervisor layer with
    fixed memory reservations and less-tested paths, next to production.
-3. It fits the pattern we already run and test: socket-activated root broker, one transient unit per call, slice
+3. It fits the pattern we already run and test: socket-activated root broker, one systemd scope per thread sandbox, slice
    limits, sparse ext4 image per thread as the disk quota.
 4. The sidecar never gets the Docker socket (Docker group = root on the host).
 5. On a separate host the same broker runs unchanged. If that host has real KVM, the broker can switch to
@@ -154,7 +154,7 @@ one agent, one thread and one driver.
 
 | Rule | How |
 |---|---|
-| **Per-call token, driver's permissions only** | An agent session (`orbit-agent.` prefix, so `agent::scope` and `route_need` apply) with `thread_key`, a new `sandbox_call_id` and life = call timeout + 60 s. It is the driver's session in one workspace, for one agent's tools, one thread. Dry runs stay dry (`dry_run` flag copied). It is deleted when the call ends. |
+| **Per-call token, driver's permissions only** | An agent session (`orbit-agent.` prefix, so `agent::scope` and `route_need` apply) with `thread_key`, a new `sandbox_call_id` and life = call timeout + 60 s (one token per call, also in a live thread sandbox). It is the driver's session in one workspace, for one agent's tools, one thread. Dry runs stay dry (`dry_run` flag copied). It is deleted when the call ends. |
 | **No admin keys in the sandbox** | The sandbox never gets `ORBIT_AGENT_SECRET`, `ORBIT_APP_KEY`, ChatGPT tokens, integration credentials, the broker key or the proxy's own credentials. Environment is empty except `HOME`, `PATH`, `LANG`, `HTTPS_PROXY` (with a per-call proxy password), `ORBIT_URL=http://orbit.internal`. Tests check this (section 9). |
 | **Orbit enforces permissions** | Calls from the sandbox to Orbit go through the proxy to a fixed name `orbit.internal`, which the proxy maps to Orbit's loopback URL. Every request is a normal `request_session` + `agent::scope` check. Writes that need a "yes" (integrations, Drive trash, routines) still answer `approval_required`: the yes is the driver's chat message, read by Orbit from `chat_messages` (I4). The sandbox cannot make a yes. |
 | **Broker refuses unsigned calls** | The ticket is an HMAC (key only in Orbit and the broker, `/etc/orbit/sandbox-broker.key`) over call id, agent, work id, limits, expiry (5 min to start). So a compromised sidecar cannot run calls for a switched-off agent, past the budget, or with bigger limits. |
@@ -343,7 +343,7 @@ On a separate host: drop the `orbit.slice` cap; give `orbit-agents.slice` the ho
 
 **Rollback** (no destructive migration; new tables only):
 
-1. Untick `sandbox_shell` (or the installation off switch): the next run has no sandbox tool; running calls are killed.
+1. Untick `sandbox_shell` (or the installation off switch): the next run has no sandbox tool; all live thread sandboxes are killed.
 2. Stop `orbit-sandbox.socket` and `orbit-egress.service`. Media sandbox is untouched until the merge step.
 3. Code rollback: previous orbit binary and sidecar `src`, as in each deploy note. The new tables stay unused.
 4. Data: thread images stay until `gc` (72 h), so a re-enable within that time keeps work files.
@@ -452,3 +452,104 @@ Approved by the owner on 2026-11-16: the recommended answers to questions 2–13
 | Limits | parent cap on `orbit.slice`, small agent slice | whole host for agents; bigger per-call limits |
 | Runtime | gVisor (no KVM needed) | gVisor, or Firecracker if the host has real KVM |
 | Disk | shared 25 GB free; 16 GiB cap | own disk; cap by host size |
+
+## 13. Phase 1 spike results (2026-11-16)
+
+Done on the Orbit VM, as root, on test names only (`sandboxspike.slice`, `sbxspike-*` units, `/opt/orbit-spike`,
+`/run/orbit-spike`, nft table `orbitspike`, netns `sbxs-*`, veth `sbxh*`/`sbxp*`, 10.200.0.0/16). Docker,
+`orbit.service`, `orbit-agent.service`, the media sandbox, production data and other test instances were not
+touched; no `orbit.slice` cap was set. Rootfs: `alpine:latest` (3.24.3) exported from the local Docker image (no
+build). Platform: systrap (default). Prototype scripts: `deploy/agent-sandbox-spike/` (`sbx.py` broker,
+`mkbundle.py`, `stubproxy.py`, `nft.conf`, `escape.sh`, `net.sh`, `bench.sh`).
+
+### Numbers
+
+| Measure | Result |
+|---|---|
+| gVisor version | `release-20261109.0`, systrap, OCI spec 1.2.1 |
+| Cold start (unit start → first `exec` works) | median **73 ms**, min 64, max 105 (n = 10) |
+| One call (`runsc exec … /bin/true` into a live sandbox) | median **9 ms**, min 7, max 15 (n = 20) |
+| Idle RAM per thread sandbox (cgroup `memory.current`) | **11 MiB** new, **~20 MiB** after use; PSS 22–31 MiB |
+| Idle host tasks per sandbox | 30–37 (+ ~2 per live guest process) |
+| Off switch (`stop-all`, 3 live, 1 busy) | **0.26 s**, nothing left |
+| Max-life delete of a busy sandbox | running call ends in 0.1 s (exit 128) |
+
+Syscall cost, same Alpine busybox binaries, native (chroot) vs gVisor, both at 1 CPU (`CPUQuota=100%`), 3 runs
+each, no build running, milliseconds (median):
+
+| Work | Native | gVisor | Factor |
+|---|---|---|---|
+| 1 M tiny syscalls (`dd bs=1 count=500000`) | 440 | 12 270 | **~28×** |
+| 300 process starts (`/bin/true`) | 140 | 1 930 | **~14×** |
+| 2000 small files in `/work` (write, read, delete) | 150 | 1 030 | **~7×** |
+| CPU only (`awk` loop) | 2 220 | 2 120 | **1.0×** |
+
+Meaning: pure compute runs at full speed. Work with many syscalls, process starts or small files (package installs,
+`git`, builds) is 7–28× slower on systrap on this nested VM. For the pilot's typical work (Python or Node scripts,
+`curl`, `jq`) this is seconds, not minutes. If it hurts, the options are the KVM platform on a dedicated host
+(section 12, phase 12) or more CPU per call.
+
+### gVisor limits: what works and what does not
+
+| Limit | Result | Design rule |
+|---|---|---|
+| **cgroup placement** (#10264) | **Trap reproduced.** With a spec that has `linux.resources` and no `cgroupsPath`, runsc made a new cgroup `/<id>` at the cgroup **root** and moved the Sentry, gofer and app there: outside the unit and the slice, so no unit limit acted. | Use `--systemd-cgroup` with `cgroupsPath = <agent slice>:sbx:<id>` (runsc makes a scope in the slice), or `--ignore-cgroups` inside a unit. Test: every gVisor process is in the agent slice. |
+| **Memory** | **Works** in both modes. A memory bomb stopped at exactly 1 GiB (`memory.peak` 1073741824, `oom_kill 1`). The kernel killed only the systrap stub of that process (exit 137); the sandbox and its other processes lived; memory went back to 11 MiB. | Memory limit on the thread sandbox (= the per-call limit). |
+| **CPU** | **Works.** 4 busy loops used 1.02 CPU in 10 s with `CPUQuota=100%`. | CPU quota on the thread sandbox. |
+| **Visible limits** | `--ignore-cgroups`: the sandbox shows the host (MemTotal 16 GiB, 4 CPUs). `--systemd-cgroup` with memory and CPU in the spec: it shows MemTotal 1 GiB and 2 CPUs (minimum 2). | Use `--systemd-cgroup`: tools size heaps and `-j` from what they see. |
+| **pids in the spec** | **Does not work as wanted.** `--ignore-cgroups`: not enforced in the sandbox (205 processes with limit 64). `--systemd-cgroup`: it becomes the host `pids.max`. | Never put `pids` in the spec. |
+| **Host task limit hit** | **Crashes the whole sandbox** (Sentry exit 2, `urpc … EOF`), with `TasksMax` on the unit and with spec `pids.max`. Each guest process costs ~2 host tasks (systrap stub). | Host `TasksMax` only as a backstop far above the guest limit (slices 1536). |
+| **`RLIMIT_NPROC`** in the spec | **Works.** `ulimit -u` = 128; 300 sleeps and a fork bomb stopped at ~128 guest processes (~290 host tasks); the sandbox lived. | Guest process limit = `RLIMIT_NPROC` 128. |
+| **PID 1** | `sleep` as PID 1 left 126 zombies, which filled `RLIMIT_NPROC`. A reaping init (busybox `init`) left 0. | `tini` as PID 1 in the agent image. |
+
+### Thread sandbox behavior
+
+| Check | Result |
+|---|---|
+| Second call into a live sandbox (`runsc exec`) | Works: sees the first call's `/work` files and its background process; gets a **new** `ORBIT_TOKEN`. |
+| Per-call timeout | Each `runsc exec` process is already a session and group leader. At the timeout the broker runs `kill -s KILL -<pid>` **as the sandbox uid** (root in the sandbox has no `CAP_KILL`; busybox `kill` refuses `--`). The call ended in 3.18 s with a 3 s limit; a `setsid` background process stayed. Killing the `runsc exec` client alone does **not** stop the process inside. |
+| Eviction (max 3) | A 4th sandbox deleted the one quiet the longest; its `/work` stayed. |
+| Idle delete / max life | Both work in `gc`; max life also deletes a busy sandbox. |
+| Cleanup | `systemctl stop` alone leaves runsc state; the broker also needs `runsc delete --force`. With `--network=none`, runsc leaves an `nsfs` mount `<root>/null-netns`: unmount it before removing the state folder. |
+
+### Isolation and network
+
+| Check | Result |
+|---|---|
+| Second sandbox (other driver/thread) | Sees only its own processes (init, its shell); its own empty `/work`; cannot find the first sandbox's files. |
+| Host files | `/etc/orbit`, `/var/lib/orbit`, `/root/.claude`, `/home/exedev`, `/run/docker.sock`, `/opt/orbit-spike`: all missing. Kernel shows `4.19.0-gvisor`. |
+| Privileged actions | `mount` refused, rootfs read-only, no `/proc/sys` writes, `su` without setuid. `unshare -U` works, but only inside the Sentry. |
+| Environment | Only `HOME`, `LANG`, `PATH`, `PWD`, `SHLVL`, the call token (and `HTTPS_PROXY` with network). |
+| No network (`--network=none`) | Only `lo`; `169.254.169.254` and `1.1.1.1` unreachable; no DNS. |
+| Network through the stub proxy (netns + veth /30 + nft) | Only the /30 route. `CONNECT allowed.test:443` → 200; unknown host → 403 JSON; plain `GET` → 405. Host ports 22, 8000, 53 on the proxy address: dropped by nft (counter 6 packets). `1.1.1.1`, `169.254.169.254`: unreachable. Another sandbox's /30 and the Docker bridge `172.17.0.1`: unreachable. No DNS. Gap: gVisor copied an IPv6 link-local address from the veth; the broker must turn IPv6 off first (nft dropped it anyway). |
+
+### Changes this made in the design
+
+1. `runsc --systemd-cgroup` with `cgroupsPath` in the agent slice, memory and CPU in the spec, **no pids** (sections
+   2, 6).
+2. Process limit = `RLIMIT_NPROC` 128; slice `TasksMax` only a backstop (1536) (section 6).
+3. `tini` (reaping init) as PID 1 in the agent image (section 2).
+4. Call timeout = kill the call's process group as the sandbox uid, never only the client (section 5).
+5. IPv6 off on the veth before start; broker start-up cleans `runsc delete --force` state and the `null-netns` mount
+   (sections 4, 5).
+6. New phase 3 "broker v2 on a test copy" before the Orbit routes (section 12).
+
+### What stays installed, and how to remove it
+
+| Path | What | Size |
+|---|---|---|
+| `/opt/orbit-spike/gvisor/` | the verified `release-20261109.0` tarball contents (`runsc`, `gvisor-bin/`; the containerd shim removed) | 157 MB |
+| `/opt/orbit-spike/runsc` | symlink to `gvisor/runsc` | — |
+| `/opt/orbit-spike/rootfs/` | Alpine rootfs for reruns | 8.7 MB |
+| `/opt/orbit-spike/bin/`, `tests/`, `init/` | the spike scripts (copies are in `deploy/agent-sandbox-spike/`) and a one-line inittab | < 50 KB |
+
+Nothing else stays: no units, slices, cgroups, netns, veth, nft table, mounts, runsc state or processes. Docker,
+systemd config and production are unchanged. To remove all: `rm -rf /opt/orbit-spike`.
+
+### Proposed next phase
+
+Phase 2 (host guards: `orbit.slice` cap, `orbit-agents.slice`, OOM protection of `orbit.service`) needs the owner's
+separate yes, as before. Without it, phase 3 can start on a test copy: broker v2 (`deploy/agent-sandbox/`) with the
+rules above, the ext4 image per thread, a real netns/nft setup per thread sandbox, the Ubuntu 24.04 agent image with
+`tini`, and the escape, limit, eviction and off-switch tests as code in `apps/agent/test/`. It runs in a test slice,
+so it does not need phase 2.
