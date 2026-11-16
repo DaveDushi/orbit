@@ -569,6 +569,10 @@ const listMembers = defineTool({
 		asDriver(api, context, async (as, state) => ok("members", (await people(as)).filter((person) => person.id !== deps().botUserId() && person.id !== state.agentUserId))),
 });
 
+/** What page Markdown can hold (`blocks.ts`). */
+const PAGE_MARKDOWN =
+	"headings, bullet, numbered and check lists, quotes, code blocks, dividers, GFM tables with column alignment, and links: [text](url), bare http(s) URLs, mailto; bold, italic and other inline styles stay plain text";
+
 function pageView(page: Json): Json {
 	return { id: page.id, title: page.title || "Untitled", parent_id: page.parent_id ?? null, private: page.private, url: `${deps().publicUrl}/docs/${page.id}`, version: page.version };
 }
@@ -683,7 +687,7 @@ const writeFile = defineTool({
 
 const createPage = defineTool({
 	name: "create_page",
-	description: "Create a Docs page with Markdown content. `private: true` puts it in the person's private space.",
+	description: `Create a Docs page with Markdown content (${PAGE_MARKDOWN}). \`private: true\` puts it in the person's private space.`,
 	parameters: Type.Object({
 		title: Type.String({ minLength: 1 }),
 		markdown: Type.Optional(Type.String()),
@@ -704,7 +708,7 @@ const createPage = defineTool({
 
 const updatePage = defineTool({
 	name: "update_page",
-	description: "Change a Docs page: its title, and its content from Markdown (mode `append` adds at the end, `replace` replaces everything).",
+	description: `Change a Docs page: its title, and its content from Markdown (${PAGE_MARKDOWN}; mode \`append\` adds at the end, \`replace\` replaces everything).`,
 	parameters: Type.Object({
 		page_id: Type.String(),
 		title: Type.Optional(Type.String()),
