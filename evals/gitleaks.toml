@@ -20,3 +20,23 @@ regexes = ['''-u "\$[A-Z_]+''', '''-u 'client:secret-value'''']
 [[allowlists]]
 description = "Public development app key (base64 of 'orbit-development-key-not-secret', in the justfile and docs)"
 regexes = ['''^b3JiaXQtZGV2ZWxvcG1lbnQta2V5LW5vdC1zZWNyZXQ=?$''']
+
+[[allowlists]]
+description = "Cargo build output (untracked; apps/desktop/target held a muda accelerator 'shift+alt+KeyQ')"
+paths = ['''(^|/)target/''']
+
+# The entries below match one rule, one file and the exact value, so another value in the same file, or the same
+# value in another file, is still reported (triaged 2026-11-16).
+[[allowlists]]
+description = "RFC 6455 sample Sec-WebSocket-Key (base64 of 'the sample nonce') in the gateway probe"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^apps/desktop/scripts/gateway-probe\.sh$''']
+regexes = ['''^dGhlIHNhbXBsZSBub25jZQ==$''']
+
+[[allowlists]]
+description = "Synthetic bot secret of the Donna eval fake servers (removed from the tree, still in history)"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^evals/donna-(codemode|prompt)/fake-orbit\.ts$''']
+regexes = ['''^eval-secret-0123456789abcdef0123456789abcdef$''']
