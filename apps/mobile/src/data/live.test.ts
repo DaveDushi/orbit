@@ -31,11 +31,18 @@ test('a workspace event refreshes the workspace data; a resync also the workspac
     ['drive', 'w'],
     ['billing', 'w'],
     ['workspace', 'w'],
+    ['views', 'w'],
+    ['home-layout', 'w'],
+    ['apps', 'w'],
+    ['managed-apps', 'w'],
+    ['agent-memory', 'w'],
+    ['workspace-exports', 'w'],
+    ['agent'],
   ])
   const resync = parseWorkspaceEvent('{"version":1,"kind":"resync_required","sequence":"0"}')
   expect(workspaceEventKeys(resync!, 'w').at(-1)).toEqual(['workspaces'])
-  // the web's saved views: nothing the app shows, unless a resync says events were lost
-  expect(workspaceEventKeys({ ...changed!, views_only: true }, 'w')).toEqual([])
+  // only saved views changed: the views refresh (a regression: the app ignored them, so views did not update live)
+  expect(workspaceEventKeys({ ...changed!, views_only: true }, 'w')).toEqual([['views', 'w']])
   expect(workspaceEventKeys({ ...resync!, views_only: true }, 'w').length).toBeGreaterThan(0)
   expect([changed!, { ...changed!, profile_changed: true }, resync!].map(workspaceEventChangesProfile)).toEqual([false, true, true])
   expect(parseWorkspaceEvent('{"version":2,"kind":"workspace.changed","sequence":"1"}')).toBe(null)
@@ -53,6 +60,8 @@ test('chat events patch messages and states, and refetch conversations', () => {
   ])
   expect(chatActions({ type: 'categories.changed', categories: [] }, 'w')).toEqual([{ kind: 'invalidate', keys: [['chat-categories', 'w']] }])
   expect(chatActions({ type: 'emoji.changed' }, 'w')).toEqual([{ kind: 'invalidate', keys: [['chat-emoji', 'w']] }])
+  // a regression: new or removed stickers did not reach an open sticker picker
+  expect(chatActions({ type: 'stickers.changed' }, 'w')).toEqual([{ kind: 'invalidate', keys: [['chat-stickers', 'w'], ['custom-stickers', 'w']] }])
   expect(chatActions({ type: 'conversation.removed', conversation_id: 'c1' }, 'w')).toEqual([
     { kind: 'invalidate', keys: [['conversations', 'w'], ['chat-states', 'w'], ['messages', 'w']] },
   ])
