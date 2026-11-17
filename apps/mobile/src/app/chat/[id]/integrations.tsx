@@ -150,11 +150,11 @@ function CopyField({ label, value }: { label: string; value: string }) {
   return (
     <View className="gap-1">
       <Text className="font-noto-medium text-[12px] text-muted-foreground">{label}</Text>
-      <View className="flex-row items-center gap-2">
-        <Text selectable numberOfLines={2} className="flex-1 font-mono text-[12px] rounded-md bg-muted px-2.5 py-2">
-          {value}
-        </Text>
-        <Button label={copied ? 'Copied' : 'Copy'} size="sm" variant="outline" onPress={() => void Clipboard.setStringAsync(value).then(() => setCopied(true))} />
+      <Text selectable className="font-mono text-[12px] leading-[17px] rounded-md bg-muted px-2.5 py-2">
+        {value}
+      </Text>
+      <View className="items-end">
+        <Button label={copied ? 'Copied' : 'Copy'} size="sm" variant="outline" icon="copy" onPress={() => void Clipboard.setStringAsync(value).then(() => setCopied(true))} />
       </View>
     </View>
   )
