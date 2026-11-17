@@ -61,8 +61,8 @@ No connected services (35 cases):
 | Uncached input tokens, total | 1,017,015 | 820,060 | −19.4% |
 | Output tokens, total | 1,343 | 3,848 | +187% (scripts are longer than calls) |
 | Total tokens | 2,668,538 | 2,228,414 | −16.5% |
-| Sidecar latency, median per case | 99 ms | 211 ms | +112 ms (QuickJS) |
-| Modeled latency per case | 5.76 s | 6.64 s | +15% |
+| Sidecar latency, median per case | 121 ms | 262 ms | +141 ms (QuickJS) |
+| Modeled latency per case | 5.79 s | 6.72 s | +16% |
 
 105 service tools (43 cases):
 
@@ -74,8 +74,9 @@ No connected services (35 cases):
 | Input tokens, total | 3,663,379 | 2,866,476 | −21.8% |
 | Uncached input tokens, total | 1,421,838 | 1,014,099 | −28.7% |
 | Total tokens | 3,665,145 | 2,871,691 | −21.6% |
-| Modeled latency per case | 6.17 s | 6.88 s | +11.5% |
-| Service cases only (8) | 6/8, 2.38 requests, 6.19 s | 8/8, 3.38 requests, 8.20 s | one `find_tools` turn each |
+| Sidecar latency, median per case | 141 ms | 311 ms | +170 ms |
+| Modeled latency per case | 6.24 s | 7.01 s | +12% |
+| Service cases only (8) | 6/8, 2.38 requests, 6.20 s | 8/8, 3.38 requests, 8.28 s | one `find_tools` turn each |
 
 With 105 service tools, code mode's input per request stays the same (23.2k → 23.3k tokens). The old mode's input
 grows by 4k tokens for every request, and the section would be cut further with more tools.
@@ -86,10 +87,12 @@ grows by 4k tokens for every request, and the section would be cut further with 
 Where the turns come from: one `find_tools` turn when the `codemode` section does not declare a tool (list_projects,
 list_members, remind_me, drive_search, schedule_routine, every service tool). Saved: two script steps share one turn
 (multi-step 3.13 → 2.50 requests per case). Approval cases keep their turns, but a script is ~3× the output tokens of
-a direct call, which costs modeled time (approval cases 6.75 → 9.33 s).
+a direct call, which costs modeled time (approval cases 6.82 → 9.31 s).
 
-What people see: the same approval questions in every case that both modes finish; the same progress lines except the
-bulk case (c20 shows "Searching tasks" instead of "Running a script") and the two cases the old mode fails.
+What people see: the same approval questions in every case that both modes finish, and the same steps. The words of
+some steps changed: tools without a label showed their raw name ("drive trash"), and code mode now has a label for
+every tool ("Moving to the Drive trash"; a test checks it). The bulk case (c20) shows "Searching tasks" instead of
+"Running a script".
 
 ## 4. Security tests (`security.test.ts`, 9/9 pass)
 

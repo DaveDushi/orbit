@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { ANSWER_LEVELS, frame, runModel } from "../src/agent.ts";
+import { ANSWER_LEVELS, frame, runModel, TOOL_LABELS } from "../src/agent.ts";
 import { codexModels } from "../src/models.ts";
 import { agentInstructionsBlock } from "../src/prompt.ts";
 import { offeredTools } from "../src/find-tools.ts";
@@ -39,6 +39,11 @@ test("the model is offered only find_tools, codemode and the tools a script cann
 	assert.deepEqual(offeredTools(allRegistrations(true)).map((tool) => tool.name), ["ask_teammate", "view_image", "load_skill", "read_skill_file", "codemode", "find_tools"]);
 	// A custom agent: only what it has.
 	assert.deepEqual(offeredTools(toolRegistrations(["search_tasks", "use_integration"], true)).map((tool) => tool.name), ["load_skill", "read_skill_file", "codemode", "find_tools"]);
+});
+
+test("every tool has a progress label: code mode shows each call of a script as a step", () => {
+	const missing = [...ORBIT_TOOLS, ...MEDIA_TOOLS].map((tool) => tool.name).filter((name) => !TOOL_LABELS[name]);
+	assert.deepEqual(missing, []);
 });
 
 test("scripts call only the agent's own tools; a script run offers the model only the saved script", () => {

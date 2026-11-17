@@ -1,5 +1,5 @@
 {
-	"generatedAt": "2026-11-17T13:41:39.177Z",
+	"generatedAt": "2026-11-17T14:00:30.788Z",
 	"model": "scripted (evals/donna-codemode/scripted-model.ts); tokens = characters / 4",
 	"baseline": "25e535d7",
 	"modeledLatency": {
@@ -65,9 +65,9 @@
 				"uncachedInputTokensTotal": 1017015,
 				"outputTokensTotal": 1343,
 				"totalTokens": 2668538,
-				"latencyMsMedian": 99,
-				"modeledLatencySecPerCase": 5.761795238095239,
-				"latencyMsTotal": 3978,
+				"latencyMsMedian": 121,
+				"modeledLatencySecPerCase": 5.790509523809523,
+				"latencyMsTotal": 4983,
 				"approvalPrompts": 4
 			},
 			"codemode": {
@@ -82,9 +82,9 @@
 				"uncachedInputTokensTotal": 820060,
 				"outputTokensTotal": 3848,
 				"totalTokens": 2228414,
-				"latencyMsMedian": 211,
-				"modeledLatencySecPerCase": 6.64372380952381,
-				"latencyMsTotal": 9591,
+				"latencyMsMedian": 262,
+				"modeledLatencySecPerCase": 6.716780952380954,
+				"latencyMsTotal": 12148,
 				"approvalPrompts": 4
 			}
 		},
@@ -101,9 +101,9 @@
 				"uncachedInputTokensTotal": 1421838,
 				"outputTokensTotal": 1766,
 				"totalTokens": 3665145,
-				"latencyMsMedian": 103,
-				"modeledLatencySecPerCase": 6.173049612403103,
-				"latencyMsTotal": 5024,
+				"latencyMsMedian": 141,
+				"modeledLatencySecPerCase": 6.235677519379847,
+				"latencyMsTotal": 7717,
 				"approvalPrompts": 6
 			},
 			"codemode": {
@@ -118,9 +118,9 @@
 				"uncachedInputTokensTotal": 1014099,
 				"outputTokensTotal": 5215,
 				"totalTokens": 2871691,
-				"latencyMsMedian": 205,
-				"modeledLatencySecPerCase": 6.88252480620155,
-				"latencyMsTotal": 9222,
+				"latencyMsMedian": 311,
+				"modeledLatencySecPerCase": 7.011803875968994,
+				"latencyMsTotal": 14781,
 				"approvalPrompts": 7
 			}
 		}
@@ -140,9 +140,9 @@
 					"uncachedInputTokensTotal": 347429,
 					"outputTokensTotal": 248,
 					"totalTokens": 665406,
-					"latencyMsMedian": 84,
-					"modeledLatencySecPerCase": 4.865769444444445,
-					"latencyMsTotal": 1113,
+					"latencyMsMedian": 90,
+					"modeledLatencySecPerCase": 4.87993611111111,
+					"latencyMsTotal": 1283,
 					"approvalPrompts": 0
 				},
 				"multi-step": {
@@ -157,9 +157,9 @@
 					"uncachedInputTokensTotal": 233262,
 					"outputTokensTotal": 442,
 					"totalTokens": 726323,
-					"latencyMsMedian": 141,
-					"modeledLatencySecPerCase": 6.484983333333334,
-					"latencyMsTotal": 1187,
+					"latencyMsMedian": 163,
+					"modeledLatencySecPerCase": 6.547733333333333,
+					"latencyMsTotal": 1689,
 					"approvalPrompts": 0
 				},
 				"drive-docs": {
@@ -174,9 +174,9 @@
 					"uncachedInputTokensTotal": 203427,
 					"outputTokensTotal": 286,
 					"totalTokens": 579963,
-					"latencyMsMedian": 99,
-					"modeledLatencySecPerCase": 5.98162380952381,
-					"latencyMsTotal": 762,
+					"latencyMsMedian": 106,
+					"modeledLatencySecPerCase": 5.976623809523809,
+					"latencyMsTotal": 727,
 					"approvalPrompts": 0
 				},
 				"image": {
@@ -191,9 +191,9 @@
 					"uncachedInputTokensTotal": 116236,
 					"outputTokensTotal": 153,
 					"totalTokens": 290104,
-					"latencyMsMedian": 81,
-					"modeledLatencySecPerCase": 5.6309000000000005,
-					"latencyMsTotal": 350,
+					"latencyMsMedian": 126,
+					"modeledLatencySecPerCase": 5.65715,
+					"latencyMsTotal": 455,
 					"approvalPrompts": 0
 				},
 				"approval": {
@@ -208,9 +208,9 @@
 					"uncachedInputTokensTotal": 116661,
 					"outputTokensTotal": 214,
 					"totalTokens": 406742,
-					"latencyMsMedian": 147,
-					"modeledLatencySecPerCase": 6.749691666666667,
-					"latencyMsTotal": 566,
+					"latencyMsMedian": 228,
+					"modeledLatencySecPerCase": 6.815441666666667,
+					"latencyMsTotal": 829,
 					"approvalPrompts": 4
 				}
 			},
@@ -227,9 +227,9 @@
 					"uncachedInputTokensTotal": 274864,
 					"outputTokensTotal": 893,
 					"totalTokens": 638967,
-					"latencyMsMedian": 170,
-					"modeledLatencySecPerCase": 5.563811111111111,
-					"latencyMsTotal": 1996,
+					"latencyMsMedian": 241,
+					"modeledLatencySecPerCase": 5.640227777777778,
+					"latencyMsTotal": 2913,
 					"approvalPrompts": 0
 				},
 				"multi-step": {
@@ -244,9 +244,9 @@
 					"uncachedInputTokensTotal": 188102,
 					"outputTokensTotal": 1046,
 					"totalTokens": 464342,
-					"latencyMsMedian": 356,
-					"modeledLatencySecPerCase": 6.838066666666666,
-					"latencyMsTotal": 2461,
+					"latencyMsMedian": 364,
+					"modeledLatencySecPerCase": 6.900441666666667,
+					"latencyMsTotal": 2960,
 					"approvalPrompts": 0
 				},
 				"drive-docs": {
@@ -261,9 +261,9 @@
 					"uncachedInputTokensTotal": 167628,
 					"outputTokensTotal": 887,
 					"totalTokens": 491714,
-					"latencyMsMedian": 253,
-					"modeledLatencySecPerCase": 7.251019047619047,
-					"latencyMsTotal": 2411,
+					"latencyMsMedian": 343,
+					"modeledLatencySecPerCase": 7.358019047619048,
+					"latencyMsTotal": 3160,
 					"approvalPrompts": 0
 				},
 				"image": {
@@ -278,9 +278,9 @@
 					"uncachedInputTokensTotal": 91490,
 					"outputTokensTotal": 273,
 					"totalTokens": 251077,
-					"latencyMsMedian": 160,
-					"modeledLatencySecPerCase": 5.74725,
-					"latencyMsTotal": 490,
+					"latencyMsMedian": 243,
+					"modeledLatencySecPerCase": 5.867500000000001,
+					"latencyMsTotal": 971,
 					"approvalPrompts": 0
 				},
 				"approval": {
@@ -295,9 +295,9 @@
 					"uncachedInputTokensTotal": 97976,
 					"outputTokensTotal": 749,
 					"totalTokens": 382314,
-					"latencyMsMedian": 698,
-					"modeledLatencySecPerCase": 9.328483333333333,
-					"latencyMsTotal": 2233,
+					"latencyMsMedian": 522,
+					"modeledLatencySecPerCase": 9.306233333333333,
+					"latencyMsTotal": 2144,
 					"approvalPrompts": 4
 				}
 			}
@@ -316,9 +316,9 @@
 					"uncachedInputTokensTotal": 395525,
 					"outputTokensTotal": 248,
 					"totalTokens": 757594,
-					"latencyMsMedian": 74,
-					"modeledLatencySecPerCase": 5.263152777777779,
-					"latencyMsTotal": 1072,
+					"latencyMsMedian": 139,
+					"modeledLatencySecPerCase": 5.318319444444445,
+					"latencyMsTotal": 1734,
 					"approvalPrompts": 0
 				},
 				"multi-step": {
@@ -333,9 +333,9 @@
 					"uncachedInputTokensTotal": 265328,
 					"outputTokensTotal": 442,
 					"totalTokens": 826530,
-					"latencyMsMedian": 185,
-					"modeledLatencySecPerCase": 6.924183333333333,
-					"latencyMsTotal": 1494,
+					"latencyMsMedian": 364,
+					"modeledLatencySecPerCase": 7.0694333333333335,
+					"latencyMsTotal": 2656,
 					"approvalPrompts": 0
 				},
 				"drive-docs": {
@@ -350,9 +350,9 @@
 					"uncachedInputTokensTotal": 231486,
 					"outputTokensTotal": 286,
 					"totalTokens": 660128,
-					"latencyMsMedian": 103,
-					"modeledLatencySecPerCase": 6.3714666666666675,
-					"latencyMsTotal": 685,
+					"latencyMsMedian": 138,
+					"modeledLatencySecPerCase": 6.4534666666666665,
+					"latencyMsTotal": 1259,
 					"approvalPrompts": 0
 				},
 				"image": {
@@ -367,9 +367,9 @@
 					"uncachedInputTokensTotal": 132273,
 					"outputTokensTotal": 153,
 					"totalTokens": 330189,
-					"latencyMsMedian": 92,
-					"modeledLatencySecPerCase": 6.034325,
-					"latencyMsTotal": 360,
+					"latencyMsMedian": 98,
+					"modeledLatencySecPerCase": 6.035825,
+					"latencyMsTotal": 366,
 					"approvalPrompts": 0
 				},
 				"approval": {
@@ -384,9 +384,9 @@
 					"uncachedInputTokensTotal": 132692,
 					"outputTokensTotal": 214,
 					"totalTokens": 462856,
-					"latencyMsMedian": 155,
-					"modeledLatencySecPerCase": 7.152716666666668,
-					"latencyMsTotal": 575,
+					"latencyMsMedian": 245,
+					"modeledLatencySecPerCase": 7.2114666666666665,
+					"latencyMsTotal": 810,
 					"approvalPrompts": 4
 				},
 				"mcp": {
@@ -401,9 +401,9 @@
 					"uncachedInputTokensTotal": 264534,
 					"outputTokensTotal": 423,
 					"totalTokens": 627848,
-					"latencyMsMedian": 87,
-					"modeledLatencySecPerCase": 6.192675,
-					"latencyMsTotal": 838,
+					"latencyMsMedian": 93,
+					"modeledLatencySecPerCase": 6.199425000000001,
+					"latencyMsTotal": 892,
 					"approvalPrompts": 2
 				}
 			},
@@ -420,9 +420,9 @@
 					"uncachedInputTokensTotal": 275675,
 					"outputTokensTotal": 893,
 					"totalTokens": 640946,
-					"latencyMsMedian": 173,
-					"modeledLatencySecPerCase": 5.579486111111112,
-					"latencyMsTotal": 2103,
+					"latencyMsMedian": 311,
+					"modeledLatencySecPerCase": 5.676736111111111,
+					"latencyMsTotal": 3270,
 					"approvalPrompts": 0
 				},
 				"multi-step": {
@@ -437,9 +437,9 @@
 					"uncachedInputTokensTotal": 188071,
 					"outputTokensTotal": 1046,
 					"totalTokens": 464637,
-					"latencyMsMedian": 215,
-					"modeledLatencySecPerCase": 6.738804166666666,
-					"latencyMsTotal": 1670,
+					"latencyMsMedian": 362,
+					"modeledLatencySecPerCase": 6.899679166666667,
+					"latencyMsTotal": 2957,
 					"approvalPrompts": 0
 				},
 				"drive-docs": {
@@ -454,9 +454,9 @@
 					"uncachedInputTokensTotal": 167672,
 					"outputTokensTotal": 887,
 					"totalTokens": 492423,
-					"latencyMsMedian": 199,
-					"modeledLatencySecPerCase": 7.118361904761904,
-					"latencyMsTotal": 1478,
+					"latencyMsMedian": 317,
+					"modeledLatencySecPerCase": 7.276933333333334,
+					"latencyMsTotal": 2588,
 					"approvalPrompts": 0
 				},
 				"image": {
@@ -471,9 +471,9 @@
 					"uncachedInputTokensTotal": 91848,
 					"outputTokensTotal": 273,
 					"totalTokens": 252056,
-					"latencyMsMedian": 187,
-					"modeledLatencySecPerCase": 5.78395,
-					"latencyMsTotal": 601,
+					"latencyMsMedian": 289,
+					"modeledLatencySecPerCase": 5.8512,
+					"latencyMsTotal": 870,
 					"approvalPrompts": 0
 				},
 				"approval": {
@@ -488,9 +488,9 @@
 					"uncachedInputTokensTotal": 98203,
 					"outputTokensTotal": 749,
 					"totalTokens": 383351,
-					"latencyMsMedian": 383,
-					"modeledLatencySecPerCase": 9.130408333333333,
-					"latencyMsTotal": 1418,
+					"latencyMsMedian": 577,
+					"modeledLatencySecPerCase": 9.395408333333332,
+					"latencyMsTotal": 2478,
 					"approvalPrompts": 4
 				},
 				"mcp": {
@@ -505,9 +505,9 @@
 					"uncachedInputTokensTotal": 192630,
 					"outputTokensTotal": 1367,
 					"totalTokens": 638278,
-					"latencyMsMedian": 205,
-					"modeledLatencySecPerCase": 8.199791666666666,
-					"latencyMsTotal": 1952,
+					"latencyMsMedian": 304,
+					"modeledLatencySecPerCase": 8.283041666666666,
+					"latencyMsTotal": 2618,
 					"approvalPrompts": 3
 				}
 			}
@@ -516,29 +516,155 @@
 	"userVisible": {
 		"no-services": {
 			"approvalPromptsSame": 35,
-			"progressSame": 34,
+			"progressSame": 25,
 			"of": 35,
 			"differences": [
+				{
+					"id": "c18",
+					"approvalPromptsSame": true,
+					"progressSame": false,
+					"progressDirect": "_Searching pages for “plan” · Searching tasks for “release” · link doc to task_",
+					"progressCodemode": "_Searching pages for “plan” · Searching tasks for “release” · Linking a page to a task_"
+				},
 				{
 					"id": "c20",
 					"approvalPromptsSame": true,
 					"progressSame": false,
 					"progressDirect": "_Running a script_",
 					"progressCodemode": "_Searching tasks_"
+				},
+				{
+					"id": "c21",
+					"approvalPromptsSame": true,
+					"progressSame": false,
+					"progressDirect": "_drive search · drive read_",
+					"progressCodemode": "_Searching Drive for “budget” · Reading a Drive file_"
+				},
+				{
+					"id": "c22",
+					"approvalPromptsSame": true,
+					"progressSame": false,
+					"progressDirect": "_drive create folder_",
+					"progressCodemode": "_Creating the Drive folder “Invoices 2026”_"
+				},
+				{
+					"id": "c24",
+					"approvalPromptsSame": true,
+					"progressSame": false,
+					"progressDirect": "_drive search · Searching pages for “brand” · insert drive file_",
+					"progressCodemode": "_Searching Drive for “logo” · Searching pages for “brand” · Adding a Drive file to a page_"
+				},
+				{
+					"id": "c26",
+					"approvalPromptsSame": true,
+					"progressSame": false,
+					"progressDirect": "_Searching pages for “brand” · list page drive files_",
+					"progressCodemode": "_Searching pages for “brand” · Reading the Drive files of a page_"
+				},
+				{
+					"id": "c27",
+					"approvalPromptsSame": true,
+					"progressSame": false,
+					"progressDirect": "_Searching pages for “budget” · Reading a page · read file_",
+					"progressCodemode": "_Searching pages for “budget” · Reading a page · Reading a file on a page_"
+				},
+				{
+					"id": "c31",
+					"approvalPromptsSame": true,
+					"progressSame": false,
+					"progressDirect": "_drive search · Looking at 1 image(s)_",
+					"progressCodemode": "_Searching Drive for “hero” · Looking at 1 image(s)_"
+				},
+				{
+					"id": "c32",
+					"approvalPromptsSame": true,
+					"progressSame": false,
+					"progressDirect": "_drive search · drive trash_ | _drive trash_",
+					"progressCodemode": "_Searching Drive for “draft” · Moving to the Drive trash_ | _Moving to the Drive trash_"
+				},
+				{
+					"id": "c33",
+					"approvalPromptsSame": true,
+					"progressSame": false,
+					"progressDirect": "_drive search · drive share_ | _drive share_",
+					"progressCodemode": "_Searching Drive for “brochure” · Making a public link_ | _Making a public link_"
 				}
 			]
 		},
 		"105-service-tools": {
 			"approvalPromptsSame": 42,
-			"progressSame": 40,
+			"progressSame": 31,
 			"of": 43,
 			"differences": [
+				{
+					"id": "c18",
+					"approvalPromptsSame": true,
+					"progressSame": false,
+					"progressDirect": "_Searching pages for “plan” · Searching tasks for “release” · link doc to task_",
+					"progressCodemode": "_Searching pages for “plan” · Searching tasks for “release” · Linking a page to a task_"
+				},
 				{
 					"id": "c20",
 					"approvalPromptsSame": true,
 					"progressSame": false,
 					"progressDirect": "_Running a script_",
 					"progressCodemode": "_Searching tasks_"
+				},
+				{
+					"id": "c21",
+					"approvalPromptsSame": true,
+					"progressSame": false,
+					"progressDirect": "_drive search · drive read_",
+					"progressCodemode": "_Searching Drive for “budget” · Reading a Drive file_"
+				},
+				{
+					"id": "c22",
+					"approvalPromptsSame": true,
+					"progressSame": false,
+					"progressDirect": "_drive create folder_",
+					"progressCodemode": "_Creating the Drive folder “Invoices 2026”_"
+				},
+				{
+					"id": "c24",
+					"approvalPromptsSame": true,
+					"progressSame": false,
+					"progressDirect": "_drive search · Searching pages for “brand” · insert drive file_",
+					"progressCodemode": "_Searching Drive for “logo” · Searching pages for “brand” · Adding a Drive file to a page_"
+				},
+				{
+					"id": "c26",
+					"approvalPromptsSame": true,
+					"progressSame": false,
+					"progressDirect": "_Searching pages for “brand” · list page drive files_",
+					"progressCodemode": "_Searching pages for “brand” · Reading the Drive files of a page_"
+				},
+				{
+					"id": "c27",
+					"approvalPromptsSame": true,
+					"progressSame": false,
+					"progressDirect": "_Searching pages for “budget” · Reading a page · read file_",
+					"progressCodemode": "_Searching pages for “budget” · Reading a page · Reading a file on a page_"
+				},
+				{
+					"id": "c31",
+					"approvalPromptsSame": true,
+					"progressSame": false,
+					"progressDirect": "_drive search · Looking at 1 image(s)_",
+					"progressCodemode": "_Searching Drive for “hero” · Looking at 1 image(s)_"
+				},
+				{
+					"id": "c32",
+					"approvalPromptsSame": true,
+					"progressSame": false,
+					"progressDirect": "_drive search · drive trash_ | _drive trash_",
+					"progressCodemode": "_Searching Drive for “draft” · Moving to the Drive trash_ | _Moving to the Drive trash_"
+				},
+				{
+					"id": "c33",
+					"approvalPromptsSame": true,
+					"progressSame": false,
+					"progressDirect": "_drive search · drive share_ | _drive share_",
+					"progressCodemode": "_Searching Drive for “brochure” · Making a public link_ | _Making a public link_"
 				},
 				{
 					"id": "c39",
@@ -577,7 +703,7 @@
 						"answer"
 					],
 					"orbitCalls": 7,
-					"latencyMs": 219,
+					"latencyMs": 240,
 					"approvalPrompts": [],
 					"progress": "_Searching tasks for “login”_",
 					"answer": "Done: Find the tasks about the login bug.\n\n_Searching tasks for “login”_"
@@ -599,7 +725,7 @@
 						"answer"
 					],
 					"orbitCalls": 7,
-					"latencyMs": 97,
+					"latencyMs": 116,
 					"approvalPrompts": [],
 					"progress": "_Creating task “Fix footer links”_",
 					"answer": "Done: Create a task \"Fix footer links\".\n\n_Creating task “Fix footer links”_"
@@ -621,7 +747,7 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 108,
+					"latencyMs": 81,
 					"approvalPrompts": [],
 					"progress": "_Reading projects_",
 					"answer": "Done: Which projects do we have, and their statuses?.\n\n_Reading projects_"
@@ -643,7 +769,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 90,
+					"latencyMs": 78,
 					"approvalPrompts": [],
 					"progress": "_Reading members_",
 					"answer": "Done: Who is in this workspace?.\n\n_Reading members_"
@@ -665,7 +791,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 108,
+					"latencyMs": 121,
 					"approvalPrompts": [],
 					"progress": "_Searching pages for “onboarding”_",
 					"answer": "Done: Search the docs for onboarding.\n\n_Searching pages for “onboarding”_"
@@ -687,7 +813,7 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 76,
+					"latencyMs": 134,
 					"approvalPrompts": [],
 					"progress": "_Reading messages_",
 					"answer": "Done: What was said in this thread so far?.\n\n_Reading messages_"
@@ -709,7 +835,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 65,
+					"latencyMs": 99,
 					"approvalPrompts": [],
 					"progress": "_Remembering (team)_",
 					"answer": "Done: Remember that Acme renews its contract in March.\n\n_Remembering (team)_"
@@ -731,7 +857,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 67,
+					"latencyMs": 81,
 					"approvalPrompts": [],
 					"progress": "_Searching memory for “Acme”_",
 					"answer": "Done: What do you remember about Acme?.\n\n_Searching memory for “Acme”_"
@@ -753,7 +879,7 @@
 						"answer"
 					],
 					"orbitCalls": 6,
-					"latencyMs": 84,
+					"latencyMs": 89,
 					"approvalPrompts": [],
 					"progress": "_Reading milestones and cycles_",
 					"answer": "Done: Which milestones and cycles does Website have?.\n\n_Reading milestones and cycles_"
@@ -775,7 +901,7 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 78,
+					"latencyMs": 90,
 					"approvalPrompts": [],
 					"progress": "_Searching messages for “invoice”_",
 					"answer": "Done: Find chat messages about the invoice.\n\n_Searching messages for “invoice”_"
@@ -797,7 +923,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 70,
+					"latencyMs": 89,
 					"approvalPrompts": [],
 					"progress": "_Setting a reminder_",
 					"answer": "Done: Remind me today at 17:00 to check the deploy.\n\n_Setting a reminder_"
@@ -818,7 +944,7 @@
 						"direct"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 51,
+					"latencyMs": 65,
 					"approvalPrompts": [],
 					"progress": "_Asking Bob_",
 					"answer": "⏸ Waiting for an answer from <@0199c3a0-0000-7000-8000-00000000000b>.\n\n_Asking Bob_"
@@ -841,7 +967,7 @@
 						"answer"
 					],
 					"orbitCalls": 12,
-					"latencyMs": 87,
+					"latencyMs": 131,
 					"approvalPrompts": [],
 					"progress": "_Searching tasks for “login safari” · Updating a task_",
 					"answer": "Done: Find the Safari login bug and move it to In progress.\n\n_Searching tasks for “login safari” · Updating a task_"
@@ -865,7 +991,7 @@
 						"answer"
 					],
 					"orbitCalls": 14,
-					"latencyMs": 141,
+					"latencyMs": 163,
 					"approvalPrompts": [],
 					"progress": "_Searching tasks for “footer” · Reading a task · Commenting on a task_",
 					"answer": "Done: Read the footer layout task and comment that I am on it.\n\n_Searching tasks for “footer” · Reading a task · Commenting on a task_"
@@ -889,7 +1015,7 @@
 						"answer"
 					],
 					"orbitCalls": 15,
-					"latencyMs": 109,
+					"latencyMs": 163,
 					"approvalPrompts": [],
 					"progress": "_Searching pages for “bugs” · Reading a page · Creating task “Checkout button misaligned” · Creating task “Search returns stale results”_",
 					"answer": "Done: Make a task for each bug on the Bugs page.\n\n_Searching pages for “bugs” · Reading a page · Creating task “Checkout button misaligned” · Creating task “Search returns stale results”_"
@@ -912,7 +1038,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 76,
+					"latencyMs": 131,
 					"approvalPrompts": [],
 					"progress": "_Reading label rules · Adding the label rule “design” → Bob_",
 					"answer": "Done: Show the label rules of Website, then add one: label \"design\" goes to Bob.\n\n_Reading label rules · Adding the label rule “design” → Bob_"
@@ -935,7 +1061,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 116,
+					"latencyMs": 159,
 					"approvalPrompts": [],
 					"progress": "_Searching tasks for “login” · Following a task ×2_",
 					"answer": "Done: Follow every login task for me.\n\n_Searching tasks for “login” · Following a task ×2_"
@@ -958,7 +1084,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 170,
+					"latencyMs": 253,
 					"approvalPrompts": [],
 					"progress": "_Searching pages for “plan” · Searching tasks for “release” · link doc to task_",
 					"answer": "Done: Link the Project plan page to the Release v2 task.\n\n_Searching pages for “plan” · Searching tasks for “release” · link doc to task_"
@@ -981,7 +1107,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 162,
+					"latencyMs": 206,
 					"approvalPrompts": [],
 					"progress": "_Searching tasks for “login” · Creating page “Open login tasks”_",
 					"answer": "Done: Write a page that lists the open login tasks.\n\n_Searching tasks for “login” · Creating page “Open login tasks”_"
@@ -1003,7 +1129,7 @@
 						"answer"
 					],
 					"orbitCalls": 7,
-					"latencyMs": 326,
+					"latencyMs": 483,
 					"approvalPrompts": [],
 					"progress": "_Running a script_",
 					"answer": "Done: Count our tasks by status.\n\n_Running a script_"
@@ -1026,7 +1152,7 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 96,
+					"latencyMs": 109,
 					"approvalPrompts": [],
 					"progress": "_drive search · drive read_",
 					"answer": "Done: Find the Q3 budget in Drive and tell me the total.\n\n_drive search · drive read_"
@@ -1048,7 +1174,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 122,
+					"latencyMs": 87,
 					"approvalPrompts": [],
 					"progress": "_drive create folder_",
 					"answer": "Done: Make a Drive folder \"Invoices 2026\".\n\n_drive create folder_"
@@ -1070,7 +1196,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 142,
+					"latencyMs": 79,
 					"approvalPrompts": [],
 					"progress": "_Reading a chat file_",
 					"answer": "Done: Read the CSV I sent and tell me the cities.\n\n_Reading a chat file_"
@@ -1093,7 +1219,7 @@
 						"answer"
 					],
 					"orbitCalls": 6,
-					"latencyMs": 99,
+					"latencyMs": 106,
 					"approvalPrompts": [],
 					"progress": "_drive search · Searching pages for “brand” · insert drive file_",
 					"answer": "Done: Put the Drive file logo.png on the Brand page.\n\n_drive search · Searching pages for “brand” · insert drive file_"
@@ -1116,7 +1242,7 @@
 						"answer"
 					],
 					"orbitCalls": 6,
-					"latencyMs": 88,
+					"latencyMs": 134,
 					"approvalPrompts": [],
 					"progress": "_Searching pages for “release” · Updating a page_",
 					"answer": "Done: Add \"v2 shipped\" to the release notes page.\n\n_Searching pages for “release” · Updating a page_"
@@ -1139,7 +1265,7 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 125,
+					"latencyMs": 97,
 					"approvalPrompts": [],
 					"progress": "_Searching pages for “brand” · list page drive files_",
 					"answer": "Done: Which Drive files are on the Brand page?.\n\n_Searching pages for “brand” · list page drive files_"
@@ -1163,7 +1289,7 @@
 						"answer"
 					],
 					"orbitCalls": 8,
-					"latencyMs": 90,
+					"latencyMs": 115,
 					"approvalPrompts": [],
 					"progress": "_Searching pages for “budget” · Reading a page · read file_",
 					"answer": "Done: What does the spreadsheet on the Budget page say?.\n\n_Searching pages for “budget” · Reading a page · read file_"
@@ -1185,7 +1311,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 70,
+					"latencyMs": 86,
 					"approvalPrompts": [],
 					"progress": "_Looking at 1 image(s)_",
 					"answer": "Done: What is in this screenshot?.\n\n_Looking at 1 image(s)_"
@@ -1207,7 +1333,7 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 81,
+					"latencyMs": 84,
 					"approvalPrompts": [],
 					"progress": "_Looking at 2 image(s)_",
 					"answer": "Done: Compare these two photos.\n\n_Looking at 2 image(s)_"
@@ -1230,7 +1356,7 @@
 						"answer"
 					],
 					"orbitCalls": 8,
-					"latencyMs": 124,
+					"latencyMs": 159,
 					"approvalPrompts": [],
 					"progress": "_Looking at 1 image(s) · Creating task “Checkout button overlaps the cart”_",
 					"answer": "Done: Make a task from the bug in this screenshot.\n\n_Looking at 1 image(s) · Creating task “Checkout button overlaps the cart”_"
@@ -1253,7 +1379,7 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 75,
+					"latencyMs": 126,
 					"approvalPrompts": [],
 					"progress": "_drive search · Looking at 1 image(s)_",
 					"answer": "Done: Look at hero.jpg in Drive: is it a landscape photo?.\n\n_drive search · Looking at 1 image(s)_"
@@ -1277,7 +1403,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 114,
+					"latencyMs": 240,
 					"approvalPrompts": [
 						"<@0199c3a0-0000-7000-8000-00000000000a> I need your approval for this in Orbit Drive:\n```\nDrive: move \"draft-v1.docx\" to the trash\n```\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it."
 					],
@@ -1303,7 +1429,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 147,
+					"latencyMs": 228,
 					"approvalPrompts": [
 						"<@0199c3a0-0000-7000-8000-00000000000a> I need your approval for this in Orbit Drive:\n```\nDrive: make a public link to \"brochure.pdf\"\n```\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it."
 					],
@@ -1328,7 +1454,7 @@
 						"answer"
 					],
 					"orbitCalls": 8,
-					"latencyMs": 137,
+					"latencyMs": 171,
 					"approvalPrompts": [
 						"<@0199c3a0-0000-7000-8000-00000000000a> I need your approval to schedule this:\n```\nRoutine \"Open tasks\": 0 9 * * 1-5\n```\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it."
 					],
@@ -1353,7 +1479,7 @@
 						"answer"
 					],
 					"orbitCalls": 8,
-					"latencyMs": 168,
+					"latencyMs": 190,
 					"approvalPrompts": [
 						"<@0199c3a0-0000-7000-8000-00000000000a> I need your approval to schedule this:\n```\nSend later: Standup moved to 10\n```\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it."
 					],
@@ -1379,7 +1505,7 @@
 						"answer"
 					],
 					"orbitCalls": 7,
-					"latencyMs": 193,
+					"latencyMs": 270,
 					"approvalPrompts": [],
 					"progress": "_Searching tasks for “login”_",
 					"answer": "Done: Find the tasks about the login bug.\n\n_Searching tasks for “login”_"
@@ -1401,7 +1527,7 @@
 						"answer"
 					],
 					"orbitCalls": 7,
-					"latencyMs": 160,
+					"latencyMs": 248,
 					"approvalPrompts": [],
 					"progress": "_Creating task “Fix footer links”_",
 					"answer": "Done: Create a task \"Fix footer links\".\n\n_Creating task “Fix footer links”_"
@@ -1424,7 +1550,7 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 205,
+					"latencyMs": 247,
 					"approvalPrompts": [],
 					"progress": "_Reading projects_",
 					"answer": "Done: Which projects do we have, and their statuses?.\n\n_Reading projects_"
@@ -1447,7 +1573,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 211,
+					"latencyMs": 192,
 					"approvalPrompts": [],
 					"progress": "_Reading members_",
 					"answer": "Done: Who is in this workspace?.\n\n_Reading members_"
@@ -1469,7 +1595,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 170,
+					"latencyMs": 484,
 					"approvalPrompts": [],
 					"progress": "_Searching pages for “onboarding”_",
 					"answer": "Done: Search the docs for onboarding.\n\n_Searching pages for “onboarding”_"
@@ -1491,7 +1617,7 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 139,
+					"latencyMs": 240,
 					"approvalPrompts": [],
 					"progress": "_Reading messages_",
 					"answer": "Done: What was said in this thread so far?.\n\n_Reading messages_"
@@ -1513,7 +1639,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 134,
+					"latencyMs": 199,
 					"approvalPrompts": [],
 					"progress": "_Remembering (team)_",
 					"answer": "Done: Remember that Acme renews its contract in March.\n\n_Remembering (team)_"
@@ -1535,7 +1661,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 122,
+					"latencyMs": 262,
 					"approvalPrompts": [],
 					"progress": "_Searching memory for “Acme”_",
 					"answer": "Done: What do you remember about Acme?.\n\n_Searching memory for “Acme”_"
@@ -1558,7 +1684,7 @@
 						"answer"
 					],
 					"orbitCalls": 6,
-					"latencyMs": 170,
+					"latencyMs": 240,
 					"approvalPrompts": [],
 					"progress": "_Reading milestones and cycles_",
 					"answer": "Done: Which milestones and cycles does Website have?.\n\n_Reading milestones and cycles_"
@@ -1581,7 +1707,7 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 260,
+					"latencyMs": 219,
 					"approvalPrompts": [],
 					"progress": "_Searching messages for “invoice”_",
 					"answer": "Done: Find chat messages about the invoice.\n\n_Searching messages for “invoice”_"
@@ -1604,7 +1730,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 178,
+					"latencyMs": 241,
 					"approvalPrompts": [],
 					"progress": "_Setting a reminder_",
 					"answer": "Done: Remind me today at 17:00 to check the deploy.\n\n_Setting a reminder_"
@@ -1625,7 +1751,7 @@
 						"direct"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 54,
+					"latencyMs": 71,
 					"approvalPrompts": [],
 					"progress": "_Asking Bob_",
 					"answer": "⏸ Waiting for an answer from <@0199c3a0-0000-7000-8000-00000000000b>.\n\n_Asking Bob_"
@@ -1647,7 +1773,7 @@
 						"answer"
 					],
 					"orbitCalls": 12,
-					"latencyMs": 199,
+					"latencyMs": 156,
 					"approvalPrompts": [],
 					"progress": "_Searching tasks for “login safari” · Updating a task_",
 					"answer": "Done: Find the Safari login bug and move it to In progress.\n\n_Searching tasks for “login safari” · Updating a task_"
@@ -1669,7 +1795,7 @@
 						"answer"
 					],
 					"orbitCalls": 14,
-					"latencyMs": 211,
+					"latencyMs": 214,
 					"approvalPrompts": [],
 					"progress": "_Searching tasks for “footer” · Reading a task · Commenting on a task_",
 					"answer": "Done: Read the footer layout task and comment that I am on it.\n\n_Searching tasks for “footer” · Reading a task · Commenting on a task_"
@@ -1691,7 +1817,7 @@
 						"answer"
 					],
 					"orbitCalls": 15,
-					"latencyMs": 398,
+					"latencyMs": 352,
 					"approvalPrompts": [],
 					"progress": "_Searching pages for “bugs” · Reading a page · Creating task “Checkout button misaligned” · Creating task “Search returns stale results”_",
 					"answer": "Done: Make a task for each bug on the Bugs page.\n\n_Searching pages for “bugs” · Reading a page · Creating task “Checkout button misaligned” · Creating task “Search returns stale results”_"
@@ -1714,7 +1840,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 286,
+					"latencyMs": 246,
 					"approvalPrompts": [],
 					"progress": "_Reading label rules · Adding the label rule “design” → Bob_",
 					"answer": "Done: Show the label rules of Website, then add one: label \"design\" goes to Bob.\n\n_Reading label rules · Adding the label rule “design” → Bob_"
@@ -1737,7 +1863,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 393,
+					"latencyMs": 452,
 					"approvalPrompts": [],
 					"progress": "_Searching tasks for “login” · Following a task ×2_",
 					"answer": "Done: Follow every login task for me.\n\n_Searching tasks for “login” · Following a task ×2_"
@@ -1760,10 +1886,10 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 363,
+					"latencyMs": 364,
 					"approvalPrompts": [],
-					"progress": "_Searching pages for “plan” · Searching tasks for “release” · link doc to task_",
-					"answer": "Done: Link the Project plan page to the Release v2 task.\n\n_Searching pages for “plan” · Searching tasks for “release” · link doc to task_"
+					"progress": "_Searching pages for “plan” · Searching tasks for “release” · Linking a page to a task_",
+					"answer": "Done: Link the Project plan page to the Release v2 task.\n\n_Searching pages for “plan” · Searching tasks for “release” · Linking a page to a task_"
 				},
 				{
 					"id": "c19",
@@ -1783,7 +1909,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 356,
+					"latencyMs": 533,
 					"approvalPrompts": [],
 					"progress": "_Searching tasks for “login” · Creating page “Open login tasks”_",
 					"answer": "Done: Write a page that lists the open login tasks.\n\n_Searching tasks for “login” · Creating page “Open login tasks”_"
@@ -1805,7 +1931,7 @@
 						"answer"
 					],
 					"orbitCalls": 7,
-					"latencyMs": 255,
+					"latencyMs": 643,
 					"approvalPrompts": [],
 					"progress": "_Searching tasks_",
 					"answer": "Done: Count our tasks by status.\n\n_Searching tasks_"
@@ -1828,10 +1954,10 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 239,
+					"latencyMs": 306,
 					"approvalPrompts": [],
-					"progress": "_drive search · drive read_",
-					"answer": "Done: Find the Q3 budget in Drive and tell me the total.\n\n_drive search · drive read_"
+					"progress": "_Searching Drive for “budget” · Reading a Drive file_",
+					"answer": "Done: Find the Q3 budget in Drive and tell me the total.\n\n_Searching Drive for “budget” · Reading a Drive file_"
 				},
 				{
 					"id": "c22",
@@ -1851,10 +1977,10 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 535,
+					"latencyMs": 193,
 					"approvalPrompts": [],
-					"progress": "_drive create folder_",
-					"answer": "Done: Make a Drive folder \"Invoices 2026\".\n\n_drive create folder_"
+					"progress": "_Creating the Drive folder “Invoices 2026”_",
+					"answer": "Done: Make a Drive folder \"Invoices 2026\".\n\n_Creating the Drive folder “Invoices 2026”_"
 				},
 				{
 					"id": "c23",
@@ -1874,7 +2000,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 441,
+					"latencyMs": 241,
 					"approvalPrompts": [],
 					"progress": "_Reading a chat file_",
 					"answer": "Done: Read the CSV I sent and tell me the cities.\n\n_Reading a chat file_"
@@ -1897,10 +2023,10 @@
 						"answer"
 					],
 					"orbitCalls": 6,
-					"latencyMs": 523,
+					"latencyMs": 790,
 					"approvalPrompts": [],
-					"progress": "_drive search · Searching pages for “brand” · insert drive file_",
-					"answer": "Done: Put the Drive file logo.png on the Brand page.\n\n_drive search · Searching pages for “brand” · insert drive file_"
+					"progress": "_Searching Drive for “logo” · Searching pages for “brand” · Adding a Drive file to a page_",
+					"answer": "Done: Put the Drive file logo.png on the Brand page.\n\n_Searching Drive for “logo” · Searching pages for “brand” · Adding a Drive file to a page_"
 				},
 				{
 					"id": "c25",
@@ -1920,7 +2046,7 @@
 						"answer"
 					],
 					"orbitCalls": 6,
-					"latencyMs": 253,
+					"latencyMs": 599,
 					"approvalPrompts": [],
 					"progress": "_Searching pages for “release” · Updating a page_",
 					"answer": "Done: Add \"v2 shipped\" to the release notes page.\n\n_Searching pages for “release” · Updating a page_"
@@ -1943,10 +2069,10 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 193,
+					"latencyMs": 343,
 					"approvalPrompts": [],
-					"progress": "_Searching pages for “brand” · list page drive files_",
-					"answer": "Done: Which Drive files are on the Brand page?.\n\n_Searching pages for “brand” · list page drive files_"
+					"progress": "_Searching pages for “brand” · Reading the Drive files of a page_",
+					"answer": "Done: Which Drive files are on the Brand page?.\n\n_Searching pages for “brand” · Reading the Drive files of a page_"
 				},
 				{
 					"id": "c27",
@@ -1966,10 +2092,10 @@
 						"answer"
 					],
 					"orbitCalls": 8,
-					"latencyMs": 227,
+					"latencyMs": 688,
 					"approvalPrompts": [],
-					"progress": "_Searching pages for “budget” · Reading a page · read file_",
-					"answer": "Done: What does the spreadsheet on the Budget page say?.\n\n_Searching pages for “budget” · Reading a page · read file_"
+					"progress": "_Searching pages for “budget” · Reading a page · Reading a file on a page_",
+					"answer": "Done: What does the spreadsheet on the Budget page say?.\n\n_Searching pages for “budget” · Reading a page · Reading a file on a page_"
 				},
 				{
 					"id": "c28",
@@ -1988,7 +2114,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 72,
+					"latencyMs": 87,
 					"approvalPrompts": [],
 					"progress": "_Looking at 1 image(s)_",
 					"answer": "Done: What is in this screenshot?.\n\n_Looking at 1 image(s)_"
@@ -2010,7 +2136,7 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 60,
+					"latencyMs": 73,
 					"approvalPrompts": [],
 					"progress": "_Looking at 2 image(s)_",
 					"answer": "Done: Compare these two photos.\n\n_Looking at 2 image(s)_"
@@ -2033,7 +2159,7 @@
 						"answer"
 					],
 					"orbitCalls": 8,
-					"latencyMs": 160,
+					"latencyMs": 568,
 					"approvalPrompts": [],
 					"progress": "_Looking at 1 image(s) · Creating task “Checkout button overlaps the cart”_",
 					"answer": "Done: Make a task from the bug in this screenshot.\n\n_Looking at 1 image(s) · Creating task “Checkout button overlaps the cart”_"
@@ -2057,10 +2183,10 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 198,
+					"latencyMs": 243,
 					"approvalPrompts": [],
-					"progress": "_drive search · Looking at 1 image(s)_",
-					"answer": "Done: Look at hero.jpg in Drive: is it a landscape photo?.\n\n_drive search · Looking at 1 image(s)_"
+					"progress": "_Searching Drive for “hero” · Looking at 1 image(s)_",
+					"answer": "Done: Look at hero.jpg in Drive: is it a landscape photo?.\n\n_Searching Drive for “hero” · Looking at 1 image(s)_"
 				},
 				{
 					"id": "c32",
@@ -2081,12 +2207,12 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 716,
+					"latencyMs": 472,
 					"approvalPrompts": [
 						"<@0199c3a0-0000-7000-8000-00000000000a> I need your approval for this in Orbit Drive:\n```\nDrive: move \"draft-v1.docx\" to the trash\n```\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it."
 					],
-					"progress": "_drive search · drive trash_ | _drive trash_",
-					"answer": "⏸ Waiting for an answer from <@0199c3a0-0000-7000-8000-00000000000a>.\n\n_drive search · drive trash_\n---\nDone: Move draft-v1.docx in Drive to the trash.\n\n_drive trash_"
+					"progress": "_Searching Drive for “draft” · Moving to the Drive trash_ | _Moving to the Drive trash_",
+					"answer": "⏸ Waiting for an answer from <@0199c3a0-0000-7000-8000-00000000000a>.\n\n_Searching Drive for “draft” · Moving to the Drive trash_\n---\nDone: Move draft-v1.docx in Drive to the trash.\n\n_Moving to the Drive trash_"
 				},
 				{
 					"id": "c33",
@@ -2107,12 +2233,12 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 493,
+					"latencyMs": 422,
 					"approvalPrompts": [
 						"<@0199c3a0-0000-7000-8000-00000000000a> I need your approval for this in Orbit Drive:\n```\nDrive: make a public link to \"brochure.pdf\"\n```\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it."
 					],
-					"progress": "_drive search · drive share_ | _drive share_",
-					"answer": "⏸ Waiting for an answer from <@0199c3a0-0000-7000-8000-00000000000a>.\n\n_drive search · drive share_\n---\nDone: Make a public link to brochure.pdf.\n\n_drive share_"
+					"progress": "_Searching Drive for “brochure” · Making a public link_ | _Making a public link_",
+					"answer": "⏸ Waiting for an answer from <@0199c3a0-0000-7000-8000-00000000000a>.\n\n_Searching Drive for “brochure” · Making a public link_\n---\nDone: Make a public link to brochure.pdf.\n\n_Making a public link_"
 				},
 				{
 					"id": "c34",
@@ -2133,7 +2259,7 @@
 						"answer"
 					],
 					"orbitCalls": 8,
-					"latencyMs": 326,
+					"latencyMs": 728,
 					"approvalPrompts": [
 						"<@0199c3a0-0000-7000-8000-00000000000a> I need your approval to schedule this:\n```\nRoutine \"Open tasks\": 0 9 * * 1-5\n```\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it."
 					],
@@ -2159,7 +2285,7 @@
 						"answer"
 					],
 					"orbitCalls": 8,
-					"latencyMs": 698,
+					"latencyMs": 522,
 					"approvalPrompts": [
 						"<@0199c3a0-0000-7000-8000-00000000000a> I need your approval to schedule this:\n```\nSend later: Standup moved to 10\n```\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it."
 					],
@@ -2187,7 +2313,7 @@
 						"answer"
 					],
 					"orbitCalls": 7,
-					"latencyMs": 54,
+					"latencyMs": 91,
 					"approvalPrompts": [],
 					"progress": "_Searching tasks for “login”_",
 					"answer": "Done: Find the tasks about the login bug.\n\n_Searching tasks for “login”_"
@@ -2209,7 +2335,7 @@
 						"answer"
 					],
 					"orbitCalls": 7,
-					"latencyMs": 87,
+					"latencyMs": 56,
 					"approvalPrompts": [],
 					"progress": "_Creating task “Fix footer links”_",
 					"answer": "Done: Create a task \"Fix footer links\".\n\n_Creating task “Fix footer links”_"
@@ -2231,7 +2357,7 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 175,
+					"latencyMs": 73,
 					"approvalPrompts": [],
 					"progress": "_Reading projects_",
 					"answer": "Done: Which projects do we have, and their statuses?.\n\n_Reading projects_"
@@ -2253,7 +2379,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 99,
+					"latencyMs": 114,
 					"approvalPrompts": [],
 					"progress": "_Reading members_",
 					"answer": "Done: Who is in this workspace?.\n\n_Reading members_"
@@ -2275,7 +2401,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 74,
+					"latencyMs": 141,
 					"approvalPrompts": [],
 					"progress": "_Searching pages for “onboarding”_",
 					"answer": "Done: Search the docs for onboarding.\n\n_Searching pages for “onboarding”_"
@@ -2297,7 +2423,7 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 97,
+					"latencyMs": 139,
 					"approvalPrompts": [],
 					"progress": "_Reading messages_",
 					"answer": "Done: What was said in this thread so far?.\n\n_Reading messages_"
@@ -2319,7 +2445,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 69,
+					"latencyMs": 146,
 					"approvalPrompts": [],
 					"progress": "_Remembering (team)_",
 					"answer": "Done: Remember that Acme renews its contract in March.\n\n_Remembering (team)_"
@@ -2341,7 +2467,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 63,
+					"latencyMs": 78,
 					"approvalPrompts": [],
 					"progress": "_Searching memory for “Acme”_",
 					"answer": "Done: What do you remember about Acme?.\n\n_Searching memory for “Acme”_"
@@ -2363,7 +2489,7 @@
 						"answer"
 					],
 					"orbitCalls": 6,
-					"latencyMs": 166,
+					"latencyMs": 214,
 					"approvalPrompts": [],
 					"progress": "_Reading milestones and cycles_",
 					"answer": "Done: Which milestones and cycles does Website have?.\n\n_Reading milestones and cycles_"
@@ -2385,7 +2511,7 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 55,
+					"latencyMs": 364,
 					"approvalPrompts": [],
 					"progress": "_Searching messages for “invoice”_",
 					"answer": "Done: Find chat messages about the invoice.\n\n_Searching messages for “invoice”_"
@@ -2407,7 +2533,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 69,
+					"latencyMs": 254,
 					"approvalPrompts": [],
 					"progress": "_Setting a reminder_",
 					"answer": "Done: Remind me today at 17:00 to check the deploy.\n\n_Setting a reminder_"
@@ -2451,7 +2577,7 @@
 						"answer"
 					],
 					"orbitCalls": 12,
-					"latencyMs": 194,
+					"latencyMs": 364,
 					"approvalPrompts": [],
 					"progress": "_Searching tasks for “login safari” · Updating a task_",
 					"answer": "Done: Find the Safari login bug and move it to In progress.\n\n_Searching tasks for “login safari” · Updating a task_"
@@ -2475,7 +2601,7 @@
 						"answer"
 					],
 					"orbitCalls": 14,
-					"latencyMs": 168,
+					"latencyMs": 254,
 					"approvalPrompts": [],
 					"progress": "_Searching tasks for “footer” · Reading a task · Commenting on a task_",
 					"answer": "Done: Read the footer layout task and comment that I am on it.\n\n_Searching tasks for “footer” · Reading a task · Commenting on a task_"
@@ -2499,7 +2625,7 @@
 						"answer"
 					],
 					"orbitCalls": 15,
-					"latencyMs": 291,
+					"latencyMs": 139,
 					"approvalPrompts": [],
 					"progress": "_Searching pages for “bugs” · Reading a page · Creating task “Checkout button misaligned” · Creating task “Search returns stale results”_",
 					"answer": "Done: Make a task for each bug on the Bugs page.\n\n_Searching pages for “bugs” · Reading a page · Creating task “Checkout button misaligned” · Creating task “Search returns stale results”_"
@@ -2522,7 +2648,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 185,
+					"latencyMs": 195,
 					"approvalPrompts": [],
 					"progress": "_Reading label rules · Adding the label rule “design” → Bob_",
 					"answer": "Done: Show the label rules of Website, then add one: label \"design\" goes to Bob.\n\n_Reading label rules · Adding the label rule “design” → Bob_"
@@ -2545,7 +2671,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 140,
+					"latencyMs": 169,
 					"approvalPrompts": [],
 					"progress": "_Searching tasks for “login” · Following a task ×2_",
 					"answer": "Done: Follow every login task for me.\n\n_Searching tasks for “login” · Following a task ×2_"
@@ -2568,7 +2694,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 162,
+					"latencyMs": 471,
 					"approvalPrompts": [],
 					"progress": "_Searching pages for “plan” · Searching tasks for “release” · link doc to task_",
 					"answer": "Done: Link the Project plan page to the Release v2 task.\n\n_Searching pages for “plan” · Searching tasks for “release” · link doc to task_"
@@ -2591,7 +2717,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 131,
+					"latencyMs": 378,
 					"approvalPrompts": [],
 					"progress": "_Searching tasks for “login” · Creating page “Open login tasks”_",
 					"answer": "Done: Write a page that lists the open login tasks.\n\n_Searching tasks for “login” · Creating page “Open login tasks”_"
@@ -2613,7 +2739,7 @@
 						"answer"
 					],
 					"orbitCalls": 7,
-					"latencyMs": 223,
+					"latencyMs": 686,
 					"approvalPrompts": [],
 					"progress": "_Running a script_",
 					"answer": "Done: Count our tasks by status.\n\n_Running a script_"
@@ -2636,7 +2762,7 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 118,
+					"latencyMs": 215,
 					"approvalPrompts": [],
 					"progress": "_drive search · drive read_",
 					"answer": "Done: Find the Q3 budget in Drive and tell me the total.\n\n_drive search · drive read_"
@@ -2658,7 +2784,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 83,
+					"latencyMs": 55,
 					"approvalPrompts": [],
 					"progress": "_drive create folder_",
 					"answer": "Done: Make a Drive folder \"Invoices 2026\".\n\n_drive create folder_"
@@ -2680,7 +2806,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 70,
+					"latencyMs": 138,
 					"approvalPrompts": [],
 					"progress": "_Reading a chat file_",
 					"answer": "Done: Read the CSV I sent and tell me the cities.\n\n_Reading a chat file_"
@@ -2703,7 +2829,7 @@
 						"answer"
 					],
 					"orbitCalls": 6,
-					"latencyMs": 123,
+					"latencyMs": 442,
 					"approvalPrompts": [],
 					"progress": "_drive search · Searching pages for “brand” · insert drive file_",
 					"answer": "Done: Put the Drive file logo.png on the Brand page.\n\n_drive search · Searching pages for “brand” · insert drive file_"
@@ -2726,7 +2852,7 @@
 						"answer"
 					],
 					"orbitCalls": 6,
-					"latencyMs": 103,
+					"latencyMs": 129,
 					"approvalPrompts": [],
 					"progress": "_Searching pages for “release” · Updating a page_",
 					"answer": "Done: Add \"v2 shipped\" to the release notes page.\n\n_Searching pages for “release” · Updating a page_"
@@ -2749,7 +2875,7 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 64,
+					"latencyMs": 154,
 					"approvalPrompts": [],
 					"progress": "_Searching pages for “brand” · list page drive files_",
 					"answer": "Done: Which Drive files are on the Brand page?.\n\n_Searching pages for “brand” · list page drive files_"
@@ -2773,7 +2899,7 @@
 						"answer"
 					],
 					"orbitCalls": 8,
-					"latencyMs": 124,
+					"latencyMs": 126,
 					"approvalPrompts": [],
 					"progress": "_Searching pages for “budget” · Reading a page · read file_",
 					"answer": "Done: What does the spreadsheet on the Budget page say?.\n\n_Searching pages for “budget” · Reading a page · read file_"
@@ -2795,7 +2921,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 92,
+					"latencyMs": 57,
 					"approvalPrompts": [],
 					"progress": "_Looking at 1 image(s)_",
 					"answer": "Done: What is in this screenshot?.\n\n_Looking at 1 image(s)_"
@@ -2817,7 +2943,7 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 84,
+					"latencyMs": 55,
 					"approvalPrompts": [],
 					"progress": "_Looking at 2 image(s)_",
 					"answer": "Done: Compare these two photos.\n\n_Looking at 2 image(s)_"
@@ -2840,7 +2966,7 @@
 						"answer"
 					],
 					"orbitCalls": 8,
-					"latencyMs": 108,
+					"latencyMs": 156,
 					"approvalPrompts": [],
 					"progress": "_Looking at 1 image(s) · Creating task “Checkout button overlaps the cart”_",
 					"answer": "Done: Make a task from the bug in this screenshot.\n\n_Looking at 1 image(s) · Creating task “Checkout button overlaps the cart”_"
@@ -2863,7 +2989,7 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 76,
+					"latencyMs": 98,
 					"approvalPrompts": [],
 					"progress": "_drive search · Looking at 1 image(s)_",
 					"answer": "Done: Look at hero.jpg in Drive: is it a landscape photo?.\n\n_drive search · Looking at 1 image(s)_"
@@ -2887,7 +3013,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 113,
+					"latencyMs": 245,
 					"approvalPrompts": [
 						"<@0199c3a0-0000-7000-8000-00000000000a> I need your approval for this in Orbit Drive:\n```\nDrive: move \"draft-v1.docx\" to the trash\n```\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it."
 					],
@@ -2913,7 +3039,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 146,
+					"latencyMs": 137,
 					"approvalPrompts": [
 						"<@0199c3a0-0000-7000-8000-00000000000a> I need your approval for this in Orbit Drive:\n```\nDrive: make a public link to \"brochure.pdf\"\n```\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it."
 					],
@@ -2938,7 +3064,7 @@
 						"answer"
 					],
 					"orbitCalls": 8,
-					"latencyMs": 161,
+					"latencyMs": 177,
 					"approvalPrompts": [
 						"<@0199c3a0-0000-7000-8000-00000000000a> I need your approval to schedule this:\n```\nRoutine \"Open tasks\": 0 9 * * 1-5\n```\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it."
 					],
@@ -2963,7 +3089,7 @@
 						"answer"
 					],
 					"orbitCalls": 8,
-					"latencyMs": 155,
+					"latencyMs": 251,
 					"approvalPrompts": [
 						"<@0199c3a0-0000-7000-8000-00000000000a> I need your approval to schedule this:\n```\nSend later: Standup moved to 10\n```\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it."
 					],
@@ -2987,7 +3113,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 87,
+					"latencyMs": 168,
 					"approvalPrompts": [],
 					"progress": "_Using tt ads → get report_",
 					"answer": "Done: How much did we spend on TikTok ads yesterday?.\n\n_Using tt ads → get report_"
@@ -3009,7 +3135,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 57,
+					"latencyMs": 68,
 					"approvalPrompts": [],
 					"progress": "_Using tt ads → get campaigns_",
 					"answer": "Done: List our active TikTok ad campaigns.\n\n_Using tt ads → get campaigns_"
@@ -3031,7 +3157,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 82,
+					"latencyMs": 93,
 					"approvalPrompts": [],
 					"progress": "_Using tiktok → list videos_",
 					"answer": "Done: Which of our TikTok videos got the most views?.\n\n_Using tiktok → list videos_"
@@ -3053,7 +3179,7 @@
 						"answer"
 					],
 					"orbitCalls": 3,
-					"latencyMs": 50,
+					"latencyMs": 43,
 					"approvalPrompts": [],
 					"progress": "",
 					"answer": "I could not find the tool: a tool failed: the integrations section does not list it."
@@ -3076,7 +3202,7 @@
 						"answer"
 					],
 					"orbitCalls": 8,
-					"latencyMs": 128,
+					"latencyMs": 76,
 					"approvalPrompts": [],
 					"progress": "_Using tt ads → get campaigns · Creating task “Black Friday campaign is over budget”_",
 					"answer": "Done: Make a task for the TikTok campaign that is over its budget today.\n\n_Using tt ads → get campaigns · Creating task “Black Friday campaign is over budget”_"
@@ -3100,7 +3226,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 267,
+					"latencyMs": 185,
 					"approvalPrompts": [
 						"<@0199c3a0-0000-7000-8000-00000000000a> I need your approval to run this outside Orbit:\n```\nTikTok Ads: update_campaign_budget {\"advertiser_id\":\"7001\",\"campaign_id\":\"cmp_1002\",\"budget\":500}\n```\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it."
 					],
@@ -3126,7 +3252,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 118,
+					"latencyMs": 212,
 					"approvalPrompts": [
 						"<@0199c3a0-0000-7000-8000-00000000000a> I need your approval to run this outside Orbit:\n```\nTikTok Ads: update_ad_group_status {\"advertiser_id\":\"7001\",\"adgroup_ids\":[\"ag_2001\"],\"status\":\"DISABLE\"}\n```\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it."
 					],
@@ -3150,7 +3276,7 @@
 						"answer"
 					],
 					"orbitCalls": 3,
-					"latencyMs": 49,
+					"latencyMs": 47,
 					"approvalPrompts": [],
 					"progress": "",
 					"answer": "I could not find the tool: a tool failed: the integrations section does not list it."
@@ -3174,7 +3300,7 @@
 						"answer"
 					],
 					"orbitCalls": 7,
-					"latencyMs": 168,
+					"latencyMs": 183,
 					"approvalPrompts": [],
 					"progress": "_Searching tasks for “login”_",
 					"answer": "Done: Find the tasks about the login bug.\n\n_Searching tasks for “login”_"
@@ -3196,7 +3322,7 @@
 						"answer"
 					],
 					"orbitCalls": 7,
-					"latencyMs": 215,
+					"latencyMs": 188,
 					"approvalPrompts": [],
 					"progress": "_Creating task “Fix footer links”_",
 					"answer": "Done: Create a task \"Fix footer links\".\n\n_Creating task “Fix footer links”_"
@@ -3219,7 +3345,7 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 251,
+					"latencyMs": 400,
 					"approvalPrompts": [],
 					"progress": "_Reading projects_",
 					"answer": "Done: Which projects do we have, and their statuses?.\n\n_Reading projects_"
@@ -3242,7 +3368,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 189,
+					"latencyMs": 391,
 					"approvalPrompts": [],
 					"progress": "_Reading members_",
 					"answer": "Done: Who is in this workspace?.\n\n_Reading members_"
@@ -3264,7 +3390,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 215,
+					"latencyMs": 340,
 					"approvalPrompts": [],
 					"progress": "_Searching pages for “onboarding”_",
 					"answer": "Done: Search the docs for onboarding.\n\n_Searching pages for “onboarding”_"
@@ -3286,7 +3412,7 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 160,
+					"latencyMs": 387,
 					"approvalPrompts": [],
 					"progress": "_Reading messages_",
 					"answer": "Done: What was said in this thread so far?.\n\n_Reading messages_"
@@ -3308,7 +3434,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 173,
+					"latencyMs": 203,
 					"approvalPrompts": [],
 					"progress": "_Remembering (team)_",
 					"answer": "Done: Remember that Acme renews its contract in March.\n\n_Remembering (team)_"
@@ -3330,7 +3456,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 143,
+					"latencyMs": 158,
 					"approvalPrompts": [],
 					"progress": "_Searching memory for “Acme”_",
 					"answer": "Done: What do you remember about Acme?.\n\n_Searching memory for “Acme”_"
@@ -3353,7 +3479,7 @@
 						"answer"
 					],
 					"orbitCalls": 6,
-					"latencyMs": 210,
+					"latencyMs": 259,
 					"approvalPrompts": [],
 					"progress": "_Reading milestones and cycles_",
 					"answer": "Done: Which milestones and cycles does Website have?.\n\n_Reading milestones and cycles_"
@@ -3376,7 +3502,7 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 151,
+					"latencyMs": 311,
 					"approvalPrompts": [],
 					"progress": "_Searching messages for “invoice”_",
 					"answer": "Done: Find chat messages about the invoice.\n\n_Searching messages for “invoice”_"
@@ -3399,7 +3525,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 158,
+					"latencyMs": 388,
 					"approvalPrompts": [],
 					"progress": "_Setting a reminder_",
 					"answer": "Done: Remind me today at 17:00 to check the deploy.\n\n_Setting a reminder_"
@@ -3420,7 +3546,7 @@
 						"direct"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 70,
+					"latencyMs": 62,
 					"approvalPrompts": [],
 					"progress": "_Asking Bob_",
 					"answer": "⏸ Waiting for an answer from <@0199c3a0-0000-7000-8000-00000000000b>.\n\n_Asking Bob_"
@@ -3442,7 +3568,7 @@
 						"answer"
 					],
 					"orbitCalls": 12,
-					"latencyMs": 219,
+					"latencyMs": 220,
 					"approvalPrompts": [],
 					"progress": "_Searching tasks for “login safari” · Updating a task_",
 					"answer": "Done: Find the Safari login bug and move it to In progress.\n\n_Searching tasks for “login safari” · Updating a task_"
@@ -3464,7 +3590,7 @@
 						"answer"
 					],
 					"orbitCalls": 14,
-					"latencyMs": 209,
+					"latencyMs": 436,
 					"approvalPrompts": [],
 					"progress": "_Searching tasks for “footer” · Reading a task · Commenting on a task_",
 					"answer": "Done: Read the footer layout task and comment that I am on it.\n\n_Searching tasks for “footer” · Reading a task · Commenting on a task_"
@@ -3486,7 +3612,7 @@
 						"answer"
 					],
 					"orbitCalls": 15,
-					"latencyMs": 206,
+					"latencyMs": 502,
 					"approvalPrompts": [],
 					"progress": "_Searching pages for “bugs” · Reading a page · Creating task “Checkout button misaligned” · Creating task “Search returns stale results”_",
 					"answer": "Done: Make a task for each bug on the Bugs page.\n\n_Searching pages for “bugs” · Reading a page · Creating task “Checkout button misaligned” · Creating task “Search returns stale results”_"
@@ -3509,7 +3635,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 251,
+					"latencyMs": 362,
 					"approvalPrompts": [],
 					"progress": "_Reading label rules · Adding the label rule “design” → Bob_",
 					"answer": "Done: Show the label rules of Website, then add one: label \"design\" goes to Bob.\n\n_Reading label rules · Adding the label rule “design” → Bob_"
@@ -3532,7 +3658,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 215,
+					"latencyMs": 659,
 					"approvalPrompts": [],
 					"progress": "_Searching tasks for “login” · Following a task ×2_",
 					"answer": "Done: Follow every login task for me.\n\n_Searching tasks for “login” · Following a task ×2_"
@@ -3555,10 +3681,10 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 215,
+					"latencyMs": 292,
 					"approvalPrompts": [],
-					"progress": "_Searching pages for “plan” · Searching tasks for “release” · link doc to task_",
-					"answer": "Done: Link the Project plan page to the Release v2 task.\n\n_Searching pages for “plan” · Searching tasks for “release” · link doc to task_"
+					"progress": "_Searching pages for “plan” · Searching tasks for “release” · Linking a page to a task_",
+					"answer": "Done: Link the Project plan page to the Release v2 task.\n\n_Searching pages for “plan” · Searching tasks for “release” · Linking a page to a task_"
 				},
 				{
 					"id": "c19",
@@ -3578,7 +3704,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 201,
+					"latencyMs": 239,
 					"approvalPrompts": [],
 					"progress": "_Searching tasks for “login” · Creating page “Open login tasks”_",
 					"answer": "Done: Write a page that lists the open login tasks.\n\n_Searching tasks for “login” · Creating page “Open login tasks”_"
@@ -3600,7 +3726,7 @@
 						"answer"
 					],
 					"orbitCalls": 7,
-					"latencyMs": 154,
+					"latencyMs": 247,
 					"approvalPrompts": [],
 					"progress": "_Searching tasks_",
 					"answer": "Done: Count our tasks by status.\n\n_Searching tasks_"
@@ -3623,10 +3749,10 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 193,
+					"latencyMs": 287,
 					"approvalPrompts": [],
-					"progress": "_drive search · drive read_",
-					"answer": "Done: Find the Q3 budget in Drive and tell me the total.\n\n_drive search · drive read_"
+					"progress": "_Searching Drive for “budget” · Reading a Drive file_",
+					"answer": "Done: Find the Q3 budget in Drive and tell me the total.\n\n_Searching Drive for “budget” · Reading a Drive file_"
 				},
 				{
 					"id": "c22",
@@ -3646,10 +3772,10 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 206,
+					"latencyMs": 199,
 					"approvalPrompts": [],
-					"progress": "_drive create folder_",
-					"answer": "Done: Make a Drive folder \"Invoices 2026\".\n\n_drive create folder_"
+					"progress": "_Creating the Drive folder “Invoices 2026”_",
+					"answer": "Done: Make a Drive folder \"Invoices 2026\".\n\n_Creating the Drive folder “Invoices 2026”_"
 				},
 				{
 					"id": "c23",
@@ -3669,7 +3795,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 195,
+					"latencyMs": 220,
 					"approvalPrompts": [],
 					"progress": "_Reading a chat file_",
 					"answer": "Done: Read the CSV I sent and tell me the cities.\n\n_Reading a chat file_"
@@ -3692,10 +3818,10 @@
 						"answer"
 					],
 					"orbitCalls": 6,
-					"latencyMs": 251,
+					"latencyMs": 317,
 					"approvalPrompts": [],
-					"progress": "_drive search · Searching pages for “brand” · insert drive file_",
-					"answer": "Done: Put the Drive file logo.png on the Brand page.\n\n_drive search · Searching pages for “brand” · insert drive file_"
+					"progress": "_Searching Drive for “logo” · Searching pages for “brand” · Adding a Drive file to a page_",
+					"answer": "Done: Put the Drive file logo.png on the Brand page.\n\n_Searching Drive for “logo” · Searching pages for “brand” · Adding a Drive file to a page_"
 				},
 				{
 					"id": "c25",
@@ -3715,7 +3841,7 @@
 						"answer"
 					],
 					"orbitCalls": 6,
-					"latencyMs": 197,
+					"latencyMs": 619,
 					"approvalPrompts": [],
 					"progress": "_Searching pages for “release” · Updating a page_",
 					"answer": "Done: Add \"v2 shipped\" to the release notes page.\n\n_Searching pages for “release” · Updating a page_"
@@ -3738,10 +3864,10 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 199,
+					"latencyMs": 425,
 					"approvalPrompts": [],
-					"progress": "_Searching pages for “brand” · list page drive files_",
-					"answer": "Done: Which Drive files are on the Brand page?.\n\n_Searching pages for “brand” · list page drive files_"
+					"progress": "_Searching pages for “brand” · Reading the Drive files of a page_",
+					"answer": "Done: Which Drive files are on the Brand page?.\n\n_Searching pages for “brand” · Reading the Drive files of a page_"
 				},
 				{
 					"id": "c27",
@@ -3761,10 +3887,10 @@
 						"answer"
 					],
 					"orbitCalls": 8,
-					"latencyMs": 237,
+					"latencyMs": 521,
 					"approvalPrompts": [],
-					"progress": "_Searching pages for “budget” · Reading a page · read file_",
-					"answer": "Done: What does the spreadsheet on the Budget page say?.\n\n_Searching pages for “budget” · Reading a page · read file_"
+					"progress": "_Searching pages for “budget” · Reading a page · Reading a file on a page_",
+					"answer": "Done: What does the spreadsheet on the Budget page say?.\n\n_Searching pages for “budget” · Reading a page · Reading a file on a page_"
 				},
 				{
 					"id": "c28",
@@ -3783,7 +3909,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 81,
+					"latencyMs": 70,
 					"approvalPrompts": [],
 					"progress": "_Looking at 1 image(s)_",
 					"answer": "Done: What is in this screenshot?.\n\n_Looking at 1 image(s)_"
@@ -3805,7 +3931,7 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 81,
+					"latencyMs": 96,
 					"approvalPrompts": [],
 					"progress": "_Looking at 2 image(s)_",
 					"answer": "Done: Compare these two photos.\n\n_Looking at 2 image(s)_"
@@ -3828,7 +3954,7 @@
 						"answer"
 					],
 					"orbitCalls": 8,
-					"latencyMs": 187,
+					"latencyMs": 289,
 					"approvalPrompts": [],
 					"progress": "_Looking at 1 image(s) · Creating task “Checkout button overlaps the cart”_",
 					"answer": "Done: Make a task from the bug in this screenshot.\n\n_Looking at 1 image(s) · Creating task “Checkout button overlaps the cart”_"
@@ -3852,10 +3978,10 @@
 						"answer"
 					],
 					"orbitCalls": 5,
-					"latencyMs": 252,
+					"latencyMs": 415,
 					"approvalPrompts": [],
-					"progress": "_drive search · Looking at 1 image(s)_",
-					"answer": "Done: Look at hero.jpg in Drive: is it a landscape photo?.\n\n_drive search · Looking at 1 image(s)_"
+					"progress": "_Searching Drive for “hero” · Looking at 1 image(s)_",
+					"answer": "Done: Look at hero.jpg in Drive: is it a landscape photo?.\n\n_Searching Drive for “hero” · Looking at 1 image(s)_"
 				},
 				{
 					"id": "c32",
@@ -3876,12 +4002,12 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 355,
+					"latencyMs": 818,
 					"approvalPrompts": [
 						"<@0199c3a0-0000-7000-8000-00000000000a> I need your approval for this in Orbit Drive:\n```\nDrive: move \"draft-v1.docx\" to the trash\n```\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it."
 					],
-					"progress": "_drive search · drive trash_ | _drive trash_",
-					"answer": "⏸ Waiting for an answer from <@0199c3a0-0000-7000-8000-00000000000a>.\n\n_drive search · drive trash_\n---\nDone: Move draft-v1.docx in Drive to the trash.\n\n_drive trash_"
+					"progress": "_Searching Drive for “draft” · Moving to the Drive trash_ | _Moving to the Drive trash_",
+					"answer": "⏸ Waiting for an answer from <@0199c3a0-0000-7000-8000-00000000000a>.\n\n_Searching Drive for “draft” · Moving to the Drive trash_\n---\nDone: Move draft-v1.docx in Drive to the trash.\n\n_Moving to the Drive trash_"
 				},
 				{
 					"id": "c33",
@@ -3902,12 +4028,12 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 407,
+					"latencyMs": 577,
 					"approvalPrompts": [
 						"<@0199c3a0-0000-7000-8000-00000000000a> I need your approval for this in Orbit Drive:\n```\nDrive: make a public link to \"brochure.pdf\"\n```\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it."
 					],
-					"progress": "_drive search · drive share_ | _drive share_",
-					"answer": "⏸ Waiting for an answer from <@0199c3a0-0000-7000-8000-00000000000a>.\n\n_drive search · drive share_\n---\nDone: Make a public link to brochure.pdf.\n\n_drive share_"
+					"progress": "_Searching Drive for “brochure” · Making a public link_ | _Making a public link_",
+					"answer": "⏸ Waiting for an answer from <@0199c3a0-0000-7000-8000-00000000000a>.\n\n_Searching Drive for “brochure” · Making a public link_\n---\nDone: Make a public link to brochure.pdf.\n\n_Making a public link_"
 				},
 				{
 					"id": "c34",
@@ -3928,7 +4054,7 @@
 						"answer"
 					],
 					"orbitCalls": 8,
-					"latencyMs": 273,
+					"latencyMs": 509,
 					"approvalPrompts": [
 						"<@0199c3a0-0000-7000-8000-00000000000a> I need your approval to schedule this:\n```\nRoutine \"Open tasks\": 0 9 * * 1-5\n```\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it."
 					],
@@ -3954,7 +4080,7 @@
 						"answer"
 					],
 					"orbitCalls": 8,
-					"latencyMs": 383,
+					"latencyMs": 574,
 					"approvalPrompts": [
 						"<@0199c3a0-0000-7000-8000-00000000000a> I need your approval to schedule this:\n```\nSend later: Standup moved to 10\n```\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it."
 					],
@@ -3979,7 +4105,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 166,
+					"latencyMs": 304,
 					"approvalPrompts": [],
 					"progress": "_Using tt ads → get report_",
 					"answer": "Done: How much did we spend on TikTok ads yesterday?.\n\n_Using tt ads → get report_"
@@ -4002,7 +4128,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 205,
+					"latencyMs": 269,
 					"approvalPrompts": [],
 					"progress": "_Using tt ads → get campaigns_",
 					"answer": "Done: List our active TikTok ad campaigns.\n\n_Using tt ads → get campaigns_"
@@ -4025,7 +4151,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 194,
+					"latencyMs": 221,
 					"approvalPrompts": [],
 					"progress": "_Using tiktok → list videos_",
 					"answer": "Done: Which of our TikTok videos got the most views?.\n\n_Using tiktok → list videos_"
@@ -4048,7 +4174,7 @@
 						"answer"
 					],
 					"orbitCalls": 4,
-					"latencyMs": 175,
+					"latencyMs": 269,
 					"approvalPrompts": [],
 					"progress": "_Using shopify → get order_",
 					"answer": "Done: What is the status of Shopify order 1042?.\n\n_Using shopify → get order_"
@@ -4071,7 +4197,7 @@
 						"answer"
 					],
 					"orbitCalls": 8,
-					"latencyMs": 176,
+					"latencyMs": 216,
 					"approvalPrompts": [],
 					"progress": "_Using tt ads → get campaigns · Creating task “Black Friday campaign is over budget”_",
 					"answer": "Done: Make a task for the TikTok campaign that is over its budget today.\n\n_Using tt ads → get campaigns · Creating task “Black Friday campaign is over budget”_"
@@ -4095,7 +4221,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 370,
+					"latencyMs": 396,
 					"approvalPrompts": [
 						"<@0199c3a0-0000-7000-8000-00000000000a> I need your approval to run this outside Orbit:\n```\nTikTok Ads: update_campaign_budget {\"advertiser_id\":\"7001\",\"campaign_id\":\"cmp_1002\",\"budget\":500}\n```\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it."
 					],
@@ -4121,7 +4247,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 341,
+					"latencyMs": 405,
 					"approvalPrompts": [
 						"<@0199c3a0-0000-7000-8000-00000000000a> I need your approval to run this outside Orbit:\n```\nTikTok Ads: update_ad_group_status {\"advertiser_id\":\"7001\",\"adgroup_ids\":[\"ag_2001\"],\"status\":\"DISABLE\"}\n```\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it."
 					],
@@ -4147,7 +4273,7 @@
 						"answer"
 					],
 					"orbitCalls": 9,
-					"latencyMs": 325,
+					"latencyMs": 538,
 					"approvalPrompts": [
 						"<@0199c3a0-0000-7000-8000-00000000000a> I need your approval to run this outside Orbit:\n```\nCloudflare: purge_cache {\"zone_id\":\"zone_9f1\",\"files\":[]}\n```\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it."
 					],

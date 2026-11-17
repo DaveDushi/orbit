@@ -176,7 +176,7 @@ export function frame(kind: "instruction" | "answer" | "steer" | "action" | "rou
 	}
 }
 
-const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
+export const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
 	list_projects: () => "Reading projects",
 	search_tasks: (args) => `Searching tasks${args.query ? ` for “${args.query}”` : ""}`,
 	get_task: () => "Reading a task",
@@ -223,6 +223,27 @@ const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
 	// The steps are shown in italics, where `_` would start or end the emphasis.
 	use_integration: (args) => `Using ${String(args.tool).replace("__", " → ").replaceAll("_", " ")}`,
 	drive_image_to_shopify: () => "Sending a Drive image to Shopify",
+	// Code mode shows each call of a script, so every tool has a label.
+	link_doc_to_task: () => "Linking a page to a task",
+	unlink_doc_from_task: () => "Unlinking a page from a task",
+	read_file: () => "Reading a file on a page",
+	write_file: () => "Changing a file on a page",
+	list_page_drive_files: () => "Reading the Drive files of a page",
+	find_drive_file_pages: () => "Finding the pages that show a Drive file",
+	insert_drive_file: () => "Adding a Drive file to a page",
+	replace_drive_file: () => "Replacing a Drive file on a page",
+	remove_drive_file: () => "Removing a Drive file from a page",
+	move_to_trash: () => "Moving to the Trash",
+	drive_list: () => "Reading a Drive folder",
+	drive_search: (args) => (args.query ? `Searching Drive for “${String(args.query).replaceAll("_", " ")}”` : "Searching Drive"),
+	drive_info: () => "Reading a Drive item",
+	drive_read: () => "Reading a Drive file",
+	drive_create_folder: (args) => `Creating the Drive folder “${String(args.name).replaceAll("_", " ")}”`,
+	drive_save_text: (args) => `Saving “${String(args.name).replaceAll("_", " ")}” to Drive`,
+	drive_move: () => "Moving a Drive item",
+	drive_rename: () => "Renaming a Drive item",
+	drive_trash: () => "Moving to the Drive trash",
+	drive_share: () => "Making a public link",
 };
 
 /**
