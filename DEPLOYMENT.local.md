@@ -269,6 +269,25 @@ It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-ag
 
 ## Verification performed
 
+### November 17, 2026 iPhone build 18: one Settings page, one Search screen (TestFlight internal; no server change)
+
+`main` from `c56fe1a3` to `a27c6a88`: `--no-ff` merges of `iphone-settings-b18` at `776dbdcf` (`1faa6adf`: one
+Settings page with Workspace, Account and Admin; one Agentic page with a copyable MCP address via `expo-clipboard`) and
+`iphone-ux` at `409b873c` (`a27c6a88`: one Search screen, a Tasks view menu, one project settings page; Docs and Drive
+tidy-up), no conflicts; not pushed by the build session. Only `apps/mobile`, `bun.lock` and `.ai/UI_CONVENTIONS.md`
+change. No server code, no migration, no env key, no server deploy.
+
+Checks on the merge (main checkout): `bun install` (adds `expo-clipboard@58.0.4`), mobile `tsc --noEmit` clean,
+`bun test src` 336 pass (54 files). `expo-clipboard` is a new native module (no capability), so a full native build:
+`eas build --non-interactive --no-wait` (no pty driver), no OTA update.
+
+EAS build `bdb72cf7-5afc-4a1d-986c-8dc57831aba2`, build number 18 (version 1.0.0, commit `a27c6a88`, ~6 min). The
+remote build counter gave 18: the branches "build 18" and "build 19" ship together in this one build. Submission
+`6979a699-3e0c-413e-a415-23ad8ad338e1` with the App Manager ASC key (~16 min in the submission queue; eas.json changed
+only for the run and restored; the temporary `AuthKey.p8` deleted). ASC build `1c22dda6-be01-4684-912a-2b323f722640`:
+`VALID` ~2 min after the upload, internal state `IN_BETA_TESTING` (group "Team (Expo)", internal, all builds),
+external `READY_FOR_BETA_SUBMISSION` (not submitted). Scripts and logs: `/root/ops/iphone-b19/`.
+
 ### November 17, 2026 upgrade: Settings → Agentic MCP address and the web mic fix (no migration)
 
 `main` from `22ff461e` to `c21ec383` (deployed): `12a64e09` (merge of `origin/main` `fc4a2428`: desktop 0.1.6 and the web
