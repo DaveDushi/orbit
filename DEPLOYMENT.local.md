@@ -268,6 +268,31 @@ It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-ag
 
 ## Verification performed
 
+### November 17, 2026 iPhone build 17: iPhone parity (TestFlight internal; no server change)
+
+`main` from `40d14b9c` to `e8c0e2e4` (`--no-ff` merge of `iphone-parity-all` at `99ffac06`, no conflicts; not pushed).
+The branch joins 4 iPhone branches: live data (chat, threads, unread counts, app icon number, Tasks, Activity, Docs,
+Drive update by the `/live` and `/events` sockets; offline banner, optimistic send and task status with rollback) and a
+disk cache of queries (`@tanstack/query-async-storage-persister`, `react-query-persist-client`, `expo-network`); chat
+parity (@ and # pickers, mentions notify, Forward, share link, task from message, Send later and scheduled messages,
+stickers, search with all web filters); tasks/docs/Drive parity (saved views, full filters, List or Board, swipe for
+done or trash, task trash; Drive trash, Move to, share links, search and sort; Docs Version history, Lock, Move to,
+Duplicate, Export, Notion import); settings parity (every web settings page, create or join a workspace, workspace apps
+in the ☰ menu, Suggest a change and Admin → Feedback & fixes). Also `apps/agent/src/prompt.ts` and `whats-new.md`
+(the `2026-11-17` entry gets the iPhone app line; it shows to Donna from the next sidecar deploy). No server code, no
+migration, no env key; live updates need the socket fix that is live since `1bfcece`.
+
+Checks on the merge (main checkout): `bun install --frozen-lockfile`, mobile `tsc --noEmit` clean, `bun test src` 326
+pass (53 files). Native change since build 16 (`a900002e`): only `expo-network` (no capability), so
+`eas build --non-interactive --no-wait` (no pty driver).
+
+EAS build `dccbaf17-4b25-4d3c-9da0-fa63d6c5b782`, build number 17 (version 1.0.0, commit `e8c0e2e4`, ~5 min). Submission
+`783f4e6c-225d-45e8-84c7-27fa10825ad4` with the App Manager ASC key (eas.json changed only for the run and restored;
+the temporary `AuthKey.p8` deleted). ASC build `9a0a45c5-95a2-4e70-9a0b-8519c7ddf1e3`: `VALID` ~2 min after the
+upload, internal state `IN_BETA_TESTING` (group "Team (Expo)", internal, all builds), external
+`READY_FOR_BETA_SUBMISSION` (not submitted; no beta review, no external testers). Scripts and logs:
+`/root/ops/iphone-b17/`.
+
 ### November 17, 2026 upgrade: iPhone live sockets from their own host (no migration)
 
 `main` from `f67b0f4c` to `1bfcecec` (fast-forward, pushed): `f00ff330` (`is_native_own_origin` in
