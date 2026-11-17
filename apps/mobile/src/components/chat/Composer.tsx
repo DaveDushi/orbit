@@ -5,7 +5,7 @@ import * as DocumentPicker from 'expo-document-picker'
 import { requireOptionalNativeModule } from 'expo'
 import type { PasteEventPayload, TextInputWrapperViewProps } from 'expo-paste-input'
 import * as ImagePicker from 'expo-image-picker'
-import { type ComponentType, type ReactNode, useMemo, useState } from 'react'
+import { type ComponentType, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { Image, Platform, Pressable, ScrollView, View } from 'react-native'
 import { TextInput } from '../../ui/scaled'
 
@@ -260,6 +260,8 @@ export function Composer({ state, placeholder, nameOf, alsoSendTo }: { state: Co
   const [laterOpen, setLaterOpen] = useState(false)
   const [emojiOpen, setEmojiOpen] = useState(false)
   const [cursor, setCursor] = useState<number | null>(null)
+  const blurTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  useEffect(() => () => clearTimeout(blurTimer.current), [])
   const { draft, setDraft, mode } = state
   // a mention being typed at the cursor (the end while the field has not said where the cursor is)
   const mention: MentionQuery | null = focused ? mentionQueryAt(draft, cursor ?? draft.length) : null
@@ -368,8 +370,14 @@ export function Composer({ state, placeholder, nameOf, alsoSendTo }: { state: Co
               if (cursor === null || cursor >= draft.length) setCursor(text.length)
             }}
             onSelectionChange={(event) => setCursor(event.nativeEvent.selection.end)}
-            onFocus={() => setFocused(true)}
-            onBlur={() => setFocused(false)}
+            onFocus={() => {
+              clearTimeout(blurTimer.current)
+              setFocused(true)
+            }}
+            // a tap on a suggestion can blur the field before the press lands (the web does): the list stays a moment
+            onBlur={() => {
+              blurTimer.current = setTimeout(() => setFocused(false), 250)
+            }}
             placeholder={placeholder}
             placeholderTextColor={colors.mutedForeground}
             selectionColor={colors.primary}

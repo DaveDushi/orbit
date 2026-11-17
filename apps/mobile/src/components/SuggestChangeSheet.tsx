@@ -3,6 +3,7 @@ import { usePathname } from 'expo-router'
 import { useState } from 'react'
 import { useWindowDimensions, View } from 'react-native'
 
+import { improvementContext } from '../data/improvements'
 import { useSendImprovement } from '../hooks/improvements'
 import { errorMessage } from '../session-context'
 import { Input, Text } from '../ui'
@@ -20,7 +21,7 @@ export function SuggestChangeSheet({ onClose, onSent }: { onClose: () => void; o
   const submit = () => {
     if (text.trim() === '' || send.isPending) return
     // the page and the window as the web sends them; the revision names the iPhone app's version
-    const context = { path: pathname, viewport: `${Math.round(width)}x${Math.round(height)}`, revision: `ios-app ${Constants.expoConfig?.version ?? 'development'}` }
+    const context = improvementContext(pathname, width, height, Constants.expoConfig?.version)
     send.mutate({ text, context }, { onSuccess: onSent })
   }
   return (
