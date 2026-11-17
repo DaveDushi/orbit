@@ -32,6 +32,27 @@ pub enum Message {
     Log(String),
     /// Voice input on Windows' own recognizer.
     Speech(speech::Command),
+    /// The bridge started on a page: it wants the app's state (`__orbitDesktop.setState`).
+    Ready,
+    /// A button of the page (account menu, update banner) or of the app's own pages.
+    Action(Action),
+}
+
+/// What the app's menus do, also from the page: the web app's account menu has the tray's items, because
+/// Windows 11 hides new tray icons behind the ^ on the taskbar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Action {
+    Autostart(bool),
+    /// Install the update (Windows) or open its download.
+    Update,
+    /// Check for an update now, and say so when there is none.
+    Check,
+    /// Show the start page to pick another server.
+    ChangeServer,
+    /// Back to the saved server (the start page's Cancel, the offline page).
+    Home,
+    Diagnostics,
+    Quit,
 }
 
 /// What the web app put on its badge (`navigator.setAppBadge`).
@@ -74,6 +95,12 @@ enum Wire {
         #[serde(default)]
         lang: String,
     },
+    Ready {},
+    Action {
+        name: String,
+        #[serde(default)]
+        on: bool,
+    },
 }
 
 const MAX_TITLE: usize = 200;
@@ -104,6 +131,17 @@ pub fn parse(text: &str) -> Option<Message> {
             "start" => speech::Command::Start { id, lang: if lang.len() <= 35 && lang.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') { lang } else { String::new() } },
             "stop" => speech::Command::Stop { id },
             "abort" => speech::Command::Abort { id },
+            _ => return None,
+        }),
+        Wire::Ready {} => Message::Ready,
+        Wire::Action { name, on } => Message::Action(match name.as_str() {
+            "autostart" => Action::Autostart(on),
+            "update" => Action::Update,
+            "check" => Action::Check,
+            "server" => Action::ChangeServer,
+            "home" => Action::Home,
+            "diagnostics" => Action::Diagnostics,
+            "quit" => Action::Quit,
             _ => return None,
         }),
         Wire::Open { .. } | Wire::Latest { .. } | Wire::Server { .. } => return None,
@@ -200,6 +238,12 @@ mod tests {
         assert_eq!(parse(r#"{"kind":"speech","action":"start","id":2,"lang":"x; del *"}"#), Some(Message::Speech(speech::Command::Start { id: 2, lang: String::new() })));
         assert_eq!(parse(r#"{"kind":"speech","action":"stop","id":2}"#), Some(Message::Speech(speech::Command::Stop { id: 2 })));
         assert_eq!(parse(r#"{"kind":"speech","action":"eval","id":2}"#), None);
+        assert_eq!(parse(r#"{"kind":"ready"}"#), Some(Message::Ready));
+        assert_eq!(parse(r#"{"kind":"action","name":"autostart","on":true}"#), Some(Message::Action(Action::Autostart(true))));
+        assert_eq!(parse(r#"{"kind":"action","name":"autostart"}"#), Some(Message::Action(Action::Autostart(false))), "no `on` turns it off");
+        assert_eq!(parse(r#"{"kind":"action","name":"update"}"#), Some(Message::Action(Action::Update)));
+        assert_eq!(parse(r#"{"kind":"action","name":"home"}"#), Some(Message::Action(Action::Home)));
+        assert_eq!(parse(r#"{"kind":"action","name":"format-disk"}"#), None);
         assert_eq!(parse(&format!(r#"{{"kind":"open","url":"https://x/{}"}}"#, "a".repeat(MAX_URL))), None);
         for junk in ["", "null", "[]", r#"{"kind":"eval","code":"rm -rf"}"#, r#"{"title":"no kind"}"#, "{broken"] {
             assert_eq!(parse(junk), None, "{junk}");

@@ -9,6 +9,8 @@
 //   every 6 hours (the app often runs for days).
 // - `__orbitDesktop.app` (the app's version) and `.log(text)` (a line in the diagnostics log), for voice input reports.
 // - Windows: `SpeechRecognition` runs on Windows' own recognizer in the app (src/speech.rs); WebView2's refuses.
+// - The app's state and menu (`getState`, `action`, the `orbit-desktop` event): the web app's account menu shows the
+//   tray's items, because Windows 11 hides new tray icons. A banner says when an update is ready (no web deploy needed).
 (() => {
   const ORIGIN = __ORBIT_ORIGIN__
   const APP = __ORBIT_APP_VERSION__
@@ -121,8 +123,74 @@
     window.webkitSpeechRecognition = DesktopSpeechRecognition
   }
 
+  // The app's state: { app, os, autostart, autostartLabel, update (a version or null), updating, install }.
+  let state = null
+  // "Later" holds until the app quits (sessionStorage survives a reload of the page, not a restart).
+  const DISMISSED = 'orbit-desktop:update-later'
+  const dismissed = () => {
+    try {
+      return sessionStorage.getItem(DISMISSED)
+    } catch {
+      return null
+    }
+  }
+  const setState = (next) => {
+    state = next
+    window.dispatchEvent(new CustomEvent('orbit-desktop', { detail: state }))
+    banner()
+  }
+  const action = (name, on) => post({ kind: 'action', name: String(name), on: Boolean(on) })
+
+  // The update banner, in a shadow root so the page's styles do not reach it. "×" (Later) hides it for this version.
+  let host = null
+  const banner = () => {
+    const show = state && state.update && dismissed() !== state.update
+    if (!show) {
+      if (host) host.remove()
+      host = null
+      return
+    }
+    if (!document.body) return document.addEventListener('DOMContentLoaded', banner, { once: true })
+    if (!host) {
+      host = document.createElement('orbit-desktop-update')
+      const root = host.attachShadow({ mode: 'open' })
+      root.innerHTML = `<style>
+        :host { all: initial; position: fixed; right: 16px; bottom: 16px; z-index: 2147483647; }
+        div { display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 14px; border-radius: 10px;
+          font: 13px/1.3 system-ui, "Segoe UI", sans-serif; background: #18181b; color: #fafafa; box-shadow: 0 8px 24px #0004; }
+        button { font: inherit; border: 0; border-radius: 7px; padding: 6px 10px; cursor: pointer; }
+        .go { background: #e11d74; color: #fff; font-weight: 600; }
+        .x { background: transparent; color: #a1a1aa; padding: 6px 8px; }
+        .go:disabled { opacity: .6; cursor: default; }
+      </style><div role="status"><span></span><button class="go"></button><button class="x" aria-label="Later" title="Later">✕</button></div>`
+      root.querySelector('.go').addEventListener('click', () => action('update'))
+      root.querySelector('.x').addEventListener('click', () => {
+        try {
+          sessionStorage.setItem(DISMISSED, state.update)
+        } catch {}
+        banner()
+      })
+      document.body.append(host)
+    }
+    const root = host.shadowRoot
+    root.querySelector('span').textContent = state.updating ? `Downloading Orbit ${state.update}…` : `Orbit ${state.update} is available.`
+    const go = root.querySelector('.go')
+    go.textContent = state.install ? 'Restart to update' : 'Download'
+    go.disabled = Boolean(state.updating)
+  }
+
   Object.defineProperty(window, '__orbitDesktop', {
-    value: Object.freeze({ version: 1, app: APP, clicked, speech, log: (text) => post({ kind: 'log', text: String(text) }) }),
+    value: Object.freeze({
+      version: 2,
+      app: APP,
+      clicked,
+      speech,
+      log: (text) => post({ kind: 'log', text: String(text) }),
+      getState: () => state,
+      setState,
+      action,
+      checkUpdate: () => checkUpdate(),
+    }),
   })
 
   navigator.setAppBadge = (count) => {
@@ -148,11 +216,13 @@
     true,
   )
 
+  // An empty `json` says the check failed (the app tells the person after a check from its menu).
   const checkUpdate = () =>
     fetch('/downloads/desktop/latest.json', { credentials: 'same-origin', cache: 'no-store' })
-      .then((response) => (response.ok ? response.text() : null))
-      .then((json) => json && post({ kind: 'latest', json }))
-      .catch(() => {})
+      .then((response) => (response.ok ? response.text() : ''))
+      .catch(() => '')
+      .then((json) => post({ kind: 'latest', json }))
   checkUpdate()
   setInterval(checkUpdate, 6 * 60 * 60 * 1000)
+  post({ kind: 'ready' })
 })()
