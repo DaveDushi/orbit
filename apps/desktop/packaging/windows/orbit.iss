@@ -59,3 +59,12 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [Run]
 Filename: "{app}\Orbit.exe"; Description: "Start Orbit"; Flags: nowait postinstall skipifsilent
+; An update from the app (0.1.8+: "Restart to update") runs this installer with /SILENT /relaunch=1 and quits:
+; start Orbit again at the end. The workflow's /VERYSILENT test passes no /relaunch, so nothing starts there.
+Filename: "{app}\Orbit.exe"; Flags: nowait; Check: Relaunch
+
+[Code]
+function Relaunch: Boolean;
+begin
+  Result := ExpandConstant('{param:relaunch|0}') = '1';
+end;

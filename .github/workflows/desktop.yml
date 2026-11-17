@@ -28,6 +28,8 @@ defaults:
 
 env:
   CARGO_TERM_COLOR: always
+  # The address the app's start page offers on the first start (`option_env!` in shell.rs `pick_page`).
+  ORBIT_DEFAULT_SERVER: ${{ inputs.server || 'https://orbit.easytomanage.com' }}
   # The toolchain of apps/desktop/rust-toolchain.toml.
   RUST_TOOLCHAIN: 1.99.1
 

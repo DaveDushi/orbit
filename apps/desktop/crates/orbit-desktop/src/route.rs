@@ -52,6 +52,12 @@ pub fn orbit_page(server: &ServerUrl, url: &str) -> bool {
     same_origin(server, url) && !url[server.origin().len()..].starts_with("/__exe.dev")
 }
 
+/// A navigation of the main window. A file dropped outside a drop zone navigates the web view to the file
+/// (`file:///…`), and the Orbit page is gone without a back button: the app refuses `file:` pages.
+pub fn navigation_allowed(url: &str) -> bool {
+    !url.get(..5).is_some_and(|scheme| scheme.eq_ignore_ascii_case("file:"))
+}
+
 /// Where a download goes: `dir` and the file's own name, with " (2)", " (3)" … before the
 /// extension when that name is taken. A name with a path in it keeps only its last part.
 pub fn download_path(dir: &Path, suggested: &str, taken: impl Fn(&Path) -> bool) -> PathBuf {
@@ -113,6 +119,17 @@ mod tests {
         assert!(!orbit_page(&server, "http://127.0.0.1:8080/__exe.dev/login?redirect=%2F"));
         assert!(!orbit_page(&server, "http://127.0.0.1:80800/chat"));
         assert!(!orbit_page(&server, "about:blank"));
+    }
+
+    #[test]
+    fn a_dropped_file_does_not_replace_the_page() {
+        assert!(!navigation_allowed("file:///C:/Users/ada/Desktop/report.pdf"));
+        assert!(!navigation_allowed("FILE:///home/ada/a.png"));
+        assert!(navigation_allowed("https://orbit.example.com/chat"));
+        assert!(navigation_allowed("https://orbit.example.com/__exe.dev/login"));
+        assert!(navigation_allowed("about:blank"), "the app's own pages");
+        assert!(navigation_allowed("data:text/html,x"));
+        assert!(navigation_allowed(""));
     }
 
     #[test]

@@ -5,9 +5,13 @@ import { cn } from 'cn'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useCurrentUser, useLogout } from '@/features/auth/api'
@@ -20,10 +24,11 @@ import { StatusMenuItems } from '@/features/realtime/components/StatusMenuItems'
 import { useOwnStatus } from '@/features/realtime/useOwnStatus'
 import { useImprovementsEnabled } from '@/features/improvements/api'
 import { SuggestChangeDialog } from '@/features/improvements/SuggestChangeDialog'
+import { desktopAction, inDesktopApp, useDesktopApp } from '@/lib/desktopApp'
 
 /** The desktop app's download page (deploy/desktop-downloads.sh): Windows only for now, and not inside the app itself. */
 const DESKTOP_DOWNLOADS = '/downloads/desktop/'
-const offerDesktopApp = typeof window !== 'undefined' && /Windows/.test(navigator.userAgent) && !('__orbitDesktop' in window)
+const offerDesktopApp = typeof window !== 'undefined' && /Windows/.test(navigator.userAgent) && !inDesktopApp
 
 /** Signed-in profile and account actions shared by both sidebars. */
 export function UserMenu({ collapsed = false, topbar = false }: { collapsed?: boolean; /** The phone top bar's look: avatar and chevron, the menu opens below. */ topbar?: boolean }) {
@@ -38,6 +43,8 @@ export function UserMenu({ collapsed = false, topbar = false }: { collapsed?: bo
   // installation admins only, while the switch in Admin → General is on
   const canSuggest = useImprovementsEnabled()
   const [suggesting, setSuggesting] = useState(false)
+  // the desktop app's tray items, here too: Windows 11 hides new tray icons behind the ^
+  const desktop = useDesktopApp()
 
   const userName = me?.display_name ?? 'Account'
 
@@ -101,6 +108,32 @@ export function UserMenu({ collapsed = false, topbar = false }: { collapsed?: bo
               <Monitor />
               Download desktop app
             </DropdownMenuItem>
+          ) : null}
+          {desktop ? (
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <Monitor />
+                Desktop app
+                {desktop.update ? <span className="ml-auto size-1.5 rounded-full bg-primary" aria-label="Update available" /> : null}
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="min-w-52">
+                {desktop.update ? (
+                  <DropdownMenuItem disabled={desktop.updating} onClick={() => desktopAction('update')}>
+                    {desktop.updating ? `Downloading Orbit ${desktop.update}…` : desktop.install ? `Restart to update to ${desktop.update}` : `Download Orbit ${desktop.update}`}
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuItem onClick={() => desktopAction('check')}>Check for updates</DropdownMenuItem>
+                )}
+                <DropdownMenuCheckboxItem checked={desktop.autostart} onCheckedChange={(on) => desktopAction('autostart', on)}>
+                  {desktop.autostartLabel}
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuItem onClick={() => desktopAction('server')}>Change server…</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => desktopAction('diagnostics')}>Open diagnostics log</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => desktopAction('quit')}>Quit Orbit</DropdownMenuItem>
+                <div className="px-2 py-1 text-[11px] text-muted-foreground">Version {desktop.app}</div>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
           ) : null}
           {canSuggest ? (
             <DropdownMenuItem onClick={() => setSuggesting(true)}>

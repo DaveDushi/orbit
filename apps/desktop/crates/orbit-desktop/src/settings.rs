@@ -13,6 +13,8 @@ pub struct Settings {
     pub server: Option<String>,
     pub start_with_os: bool,
     pub window: Option<WindowState>,
+    /// The first close said once that Orbit keeps running in the background.
+    pub close_hint_shown: bool,
 }
 
 /// The main window in physical pixels: the outer position and the inner size.
@@ -45,6 +47,14 @@ pub const MIN_HEIGHT: u32 = 360;
 const GRAB: i64 = 48;
 
 impl WindowState {
+    /// The place to save on close or quit. `current`: the window's place now, `None` while it is minimized
+    /// (Windows then reports -32000, -32000). `normal`: the last place it had while it was neither
+    /// maximized nor minimized, so a maximized or minimized window comes back where it was before.
+    pub fn to_save(maximized: bool, current: Option<WindowState>, normal: Option<WindowState>) -> Option<WindowState> {
+        let state = if maximized { normal.or(current) } else { current.or(normal) }?;
+        Some(WindowState { maximized, ..state })
+    }
+
     /// The saved window, if it still fits: at least the minimum size, no larger than the largest
     /// monitor, and its top edge reachable on one of `monitors` (a monitor that was unplugged must
     /// not leave the window off screen). `None`: let the OS place a default window.
@@ -136,6 +146,17 @@ mod tests {
     }
 
     #[test]
+    fn a_minimized_or_maximized_window_saves_its_last_normal_place() {
+        let normal = window(100, 80, 1200, 800);
+        let moved = window(300, 200, 1000, 700);
+        assert_eq!(WindowState::to_save(false, Some(moved), Some(normal)), Some(moved));
+        assert_eq!(WindowState::to_save(false, None, Some(normal)), Some(normal), "minimized: the place before");
+        assert_eq!(WindowState::to_save(true, Some(window(0, 0, 1920, 1040)), Some(normal)), Some(WindowState { maximized: true, ..normal }));
+        assert_eq!(WindowState::to_save(true, Some(moved), None), Some(WindowState { maximized: true, ..moved }), "maximized from the start");
+        assert_eq!(WindowState::to_save(false, None, None), None, "nothing known: keep the saved place");
+    }
+
+    #[test]
     fn sizes_are_kept_between_the_minimum_and_the_largest_monitor() {
         assert_eq!(window(0, 0, 100, 50).fit(&[LAPTOP]), Some(window(0, 0, MIN_WIDTH, MIN_HEIGHT)));
         assert_eq!(window(0, 0, 9000, 9000).fit(&[LAPTOP]), Some(window(0, 0, 1920, 1080)));
@@ -149,7 +170,7 @@ mod tests {
         assert!(!fresh.start_with_os, "off by default");
         assert_eq!(fresh, Settings::default());
 
-        let settings = Settings { server: Some("https://orbit.example.com".into()), start_with_os: true, window: Some(window(10, 20, 900, 700)) };
+        let settings = Settings { server: Some("https://orbit.example.com".into()), start_with_os: true, window: Some(window(10, 20, 900, 700)), close_hint_shown: true };
         settings.save_to(&path).unwrap();
         assert_eq!(Settings::load_from(&path), settings);
 

@@ -9,8 +9,9 @@
 //!
 //! Closing the window hides it to the tray; Quit in the tray menu ends the app.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Arc, Mutex};
 
 use orbit_client::ServerUrl;
 use orbit_client::update::{Latest, newer};
@@ -22,7 +23,7 @@ use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuIt
 use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use wry::{NewWindowResponse, WebContext, WebView, WebViewBuilder};
 
-use crate::bridge::{self, Message, Unread};
+use crate::bridge::{self, Action, Message, Unread};
 use crate::instance::Instance;
 use crate::route::{self, Route};
 use crate::settings::{Area, MIN_HEIGHT, MIN_WIDTH, Settings, WindowState};
@@ -30,6 +31,11 @@ use crate::{autostart, diagnostics, signin};
 
 const ICON_PNG: &[u8] = include_bytes!("../assets/orbit-64.png");
 const PICK_HTML: &str = include_str!("../assets/pick.html");
+const CONNECT_HTML: &str = include_str!("../assets/connect.html");
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Windows installs an update itself (the Inno Setup installer, silent, then Orbit starts again); macOS and
+/// Linux open the download in the browser.
+const INSTALLS_UPDATES: bool = cfg!(windows);
 
 enum UserEvent {
     Tray(TrayIconEvent),
@@ -39,13 +45,29 @@ enum UserEvent {
     /// A link the page wants in a new window.
     NewWindow(String),
     Title(String),
-    NotificationClicked(u64),
+    NotificationClicked(Click),
     /// A second start of the app (see `instance.rs`).
     Show,
-    Downloaded { path: Option<PathBuf>, ok: bool },
+    Downloaded { url: String, path: Option<PathBuf>, ok: bool },
     /// Words, an error or the end of a dictation on Windows' recognizer (`speech.rs`), as JSON for the page.
     #[cfg_attr(not(windows), allow(dead_code))]
     Speech(String),
+}
+
+/// What a click on an OS notification does.
+enum Click {
+    Show,
+    /// The page's own notice: the bridge runs its click handler.
+    Page(u64),
+    /// A finished download: show the file in its folder.
+    Reveal(PathBuf),
+    Update,
+}
+
+/// A newer version from `latest.json`.
+struct Update {
+    version: String,
+    url: String,
 }
 
 struct TrayMenu {
@@ -114,21 +136,27 @@ pub fn run(hidden: bool, mut instance: Option<Instance>) -> ! {
     let mut normal = saved;
 
     let mut context = WebContext::new(server.as_ref().map_or_else(start_page_dir, signin::data_dir));
-    let webview = build_webview(&window, &mut context, server.as_ref(), &proxy).unwrap_or_else(|e| fail(&format!("cannot open the web view: {e}")));
+    // The update installer's URL while it downloads: it goes to the temp folder, not to Downloads.
+    let pending: Arc<Mutex<Option<String>>> = Arc::default();
+    let webview = build_webview(&window, &mut context, server.as_ref(), &proxy, &pending).unwrap_or_else(|e| fail(&format!("cannot open the web view: {e}")));
 
     #[cfg(target_os = "macos")]
     let _app_menu = mac_app_menu();
     let menu = TrayMenu {
         open: MenuItem::new("Open Orbit", true, None),
         autostart: CheckMenuItem::new(autostart::label(), true, settings.start_with_os, None),
-        update: MenuItem::new("Update available", false, None),
+        update: MenuItem::new("Check for updates", true, None),
         server: MenuItem::new("Change server…", true, None),
         diagnostics: MenuItem::new("Open diagnostics log", true, None),
         quit: MenuItem::new("Quit Orbit", true, None),
     };
     let mut tray: Option<TrayIcon> = None;
     let mut unread = Unread::default();
-    let mut update_url: Option<String> = None;
+    let mut update: Option<Update> = None;
+    // The installer is downloading (Windows).
+    let mut updating = false;
+    // The person asked for a check: say the result also when there is no update.
+    let mut manual_check = false;
     #[cfg(windows)]
     let mut dictation = crate::speech::Dictation::default();
     // The start page is showing: only it may pick a server (it has no URL of its own).
@@ -141,6 +169,8 @@ pub fn run(hidden: bool, mut instance: Option<Instance>) -> ! {
         // The Windows overlay is lost while the window is hidden (its taskbar button is gone):
         // set it again when the window is back in front.
         let mut redraw_badge = false;
+        // A menu item of the tray, the page or a notification: one place handles them all (below).
+        let mut action: Option<Action> = None;
         match event {
             Event::NewEvents(StartCause::Init) => {
                 // The tray exists once the loop runs (macOS needs that; it is fine elsewhere).
@@ -151,10 +181,17 @@ pub fn run(hidden: bool, mut instance: Option<Instance>) -> ! {
             }
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::CloseRequested => {
-                    save_window(&mut settings, &window, normal);
                     if tray.is_some() {
+                        // Once: a hidden window looks like a quit, and Windows 11 hides the tray icon behind ^.
+                        if !settings.close_hint_shown {
+                            settings.close_hint_shown = true;
+                            diagnostics::log("close: hidden to the tray, first time (notice shown)");
+                            notify("Orbit is still running".into(), CLOSE_HINT.into(), Click::Show, &proxy);
+                        }
+                        save_window(&mut settings, &window, normal);
                         window.set_visible(false);
                     } else {
+                        save_window(&mut settings, &window, normal);
                         *control_flow = ControlFlow::Exit;
                     }
                 }
@@ -181,44 +218,26 @@ pub fn run(hidden: bool, mut instance: Option<Instance>) -> ! {
                 if id == menu.open.id() {
                     show(&window);
                 } else if id == menu.quit.id() {
-                    save_window(&mut settings, &window, normal);
-                    *control_flow = ControlFlow::Exit;
+                    action = Some(Action::Quit);
                 } else if id == menu.autostart.id() {
-                    let on = menu.autostart.is_checked();
-                    match autostart::set(on) {
-                        Ok(()) => {
-                            settings.start_with_os = on;
-                            settings.save();
-                        }
-                        Err(e) => {
-                            eprintln!("orbit-desktop: autostart: {e}");
-                            menu.autostart.set_checked(!on);
-                        }
-                    }
+                    action = Some(Action::Autostart(menu.autostart.is_checked()));
                 } else if id == menu.update.id() {
-                    if let Some(url) = &update_url {
-                        open_outside(url);
-                    }
+                    action = Some(if update.is_some() { Action::Update } else { Action::Check });
                 } else if id == menu.diagnostics.id() {
-                    if let Some(path) = diagnostics::path() {
-                        diagnostics::log("diagnostics log opened");
-                        if let Err(e) = open::that_detached(&path) {
-                            eprintln!("orbit-desktop: cannot open {}: {e}", path.display());
-                        }
-                    }
+                    action = Some(Action::Diagnostics);
                 } else if id == menu.server.id() {
-                    let _ = webview.load_html(&pick_page(server.as_ref()));
-                    picking = true;
-                    unread.reset();
-                    show(&window);
+                    action = Some(Action::ChangeServer);
                 }
             }
             Event::UserEvent(UserEvent::Ipc { from, body }) => {
                 let Some(message) = bridge::parse(&body) else { return };
                 let from_orbit = server.as_ref().is_some_and(|s| route::orbit_page(s, &from));
+                // The app's own pages (start page, connect page) have no http URL.
+                let own_page = !from.starts_with("http");
                 match message {
-                    Message::Server(input) if picking && !from.starts_with("http") => match ServerUrl::parse(&input) {
+                    Message::Server(input) if picking && own_page => match ServerUrl::parse(&input) {
                         Ok(picked) => {
+                            diagnostics::log(&format!("server picked: {}", picked.origin()));
                             settings.server = Some(picked.origin().to_owned());
                             save_window(&mut settings, &window, normal);
                             // Free the lock first, or the new start hands itself back to this one.
@@ -230,24 +249,47 @@ pub fn run(hidden: bool, mut instance: Option<Instance>) -> ! {
                             let _ = webview.evaluate_script(&format!("showError({})", serde_json::to_string(&e.to_string()).expect("a string")));
                         }
                     },
+                    Message::Action(a @ (Action::ChangeServer | Action::Home)) if own_page => action = Some(a),
+                    Message::Log(text) if own_page => diagnostics::log(&text),
                     _ if !from_orbit => {}
+                    Message::Action(a) => action = Some(a),
+                    Message::Ready => {
+                        // A download keeps the page; a new page means the installer link showed a page instead
+                        // (the gateway's sign-in after its cookie expired): the button works again.
+                        updating = false;
+                        push_state(&webview, &settings, update.as_ref(), updating);
+                    }
                     Message::Notify { id, title, body, .. } => {
                         unread.notified(window.is_visible() && window.is_focused());
-                        notify(title, body, Some(id), &proxy);
+                        notify(title, body, Click::Page(id), &proxy);
                     }
                     Message::Badge(badge) => unread.set_web(badge),
                     Message::Open(url) => follow(server.as_ref(), &webview, &url),
                     Message::Latest(json) => {
                         let latest = serde_json::from_str::<Latest>(&json).ok();
-                        // The check runs every 6 hours: tell once per new version.
-                        if let Some(latest) = latest.as_ref().and_then(|l| newer(env!("CARGO_PKG_VERSION"), l))
-                            && let Some(url) = latest.download()
-                            && update_url.as_deref() != Some(url)
-                        {
-                            update_url = Some(url.to_owned());
-                            menu.update.set_text(format!("Download Orbit {}", latest.version));
-                            menu.update.set_enabled(true);
-                            notify("Orbit update available".into(), format!("Version {} is ready. Use the tray menu to download it.", latest.version), None, &proxy);
+                        let manual = std::mem::take(&mut manual_check);
+                        let found = latest.as_ref().and_then(|l| newer(VERSION, l)).and_then(|l| Some((l.version.clone(), l.download()?.to_owned())));
+                        match found {
+                            // The check runs every 6 hours: tell once per new version (and after a check from the menu).
+                            Some((version, url)) => {
+                                if manual || update.as_ref().is_none_or(|u| u.url != url) {
+                                    diagnostics::log(&format!("update: {version} is available"));
+                                    menu.update.set_text(if INSTALLS_UPDATES { format!("Restart to update to Orbit {version}") } else { format!("Download Orbit {version}") });
+                                    let body = if INSTALLS_UPDATES { format!("Orbit {version} is ready. Click here to restart and update.") } else { format!("Orbit {version} is ready. Click here to download it.") };
+                                    notify("Orbit update available".into(), body, Click::Update, &proxy);
+                                    update = Some(Update { version, url });
+                                    push_state(&webview, &settings, update.as_ref(), updating);
+                                }
+                            }
+                            None if manual => {
+                                diagnostics::log(&format!("update check from the menu: {}", if latest.is_some() { "up to date" } else { "failed" }));
+                                let (title, body) = match latest {
+                                    Some(_) => ("Orbit is up to date".to_owned(), format!("You have the newest version, {VERSION}.")),
+                                    None => ("Cannot check for updates".to_owned(), "Orbit could not read the update information. Try again later.".to_owned()),
+                                };
+                                notify(title, body, Click::Show, &proxy);
+                            }
+                            None => {}
                         }
                     }
                     Message::Log(text) => diagnostics::log(&format!("page: {text}")),
@@ -271,20 +313,105 @@ pub fn run(hidden: bool, mut instance: Option<Instance>) -> ! {
                 let title = title.trim();
                 window.set_title(if title.is_empty() { "Orbit" } else { title });
             }
-            Event::UserEvent(UserEvent::NotificationClicked(id)) => {
-                show(&window);
-                let _ = webview.evaluate_script(&format!("window.__orbitDesktop && window.__orbitDesktop.clicked({id})"));
-            }
-            Event::UserEvent(UserEvent::Downloaded { path, ok }) => {
-                let name = path.as_deref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                let folder = path.as_deref().and_then(|p| p.parent()).map(|d| d.display().to_string()).unwrap_or_default();
-                if ok {
-                    notify("Download finished".into(), format!("{name} is saved in {folder}."), None, &proxy);
+            Event::UserEvent(UserEvent::NotificationClicked(click)) => match click {
+                Click::Show => show(&window),
+                Click::Page(id) => {
+                    show(&window);
+                    let _ = webview.evaluate_script(&format!("window.__orbitDesktop && window.__orbitDesktop.clicked({id})"));
+                }
+                Click::Reveal(path) => reveal(&path),
+                Click::Update => action = Some(Action::Update),
+            },
+            Event::UserEvent(UserEvent::Downloaded { url, path, ok }) => {
+                let is_update = pending.lock().map(|mut p| if p.as_deref() == Some(url.as_str()) { p.take() } else { None }).ok().flatten().is_some();
+                if is_update {
+                    updating = false;
+                    match path.filter(|_| ok).map(|p| run_installer(&p)) {
+                        Some(Ok(())) => {
+                            diagnostics::log("update: installer started, Orbit quits");
+                            save_window(&mut settings, &window, normal);
+                            drop(instance.take());
+                            *control_flow = ControlFlow::Exit;
+                            return;
+                        }
+                        failed => {
+                            let reason = match failed {
+                                Some(Err(e)) => format!("the installer did not start: {e}"),
+                                _ => "the download failed".to_owned(),
+                            };
+                            diagnostics::log(&format!("update: {reason}"));
+                            notify("Update failed".into(), format!("Orbit could not update: {reason}. Try again from the account menu or the tray icon."), Click::Show, &proxy);
+                            push_state(&webview, &settings, update.as_ref(), updating);
+                        }
+                    }
                 } else {
-                    notify("Download failed".into(), name, None, &proxy);
+                    let name = path.as_deref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    let folder = path.as_deref().and_then(|p| p.parent()).map(|d| d.display().to_string()).unwrap_or_default();
+                    match path {
+                        Some(path) if ok => notify("Download finished".into(), format!("{name} is saved in {folder}. Click to show it."), Click::Reveal(path), &proxy),
+                        _ => notify("Download failed".into(), name, Click::Show, &proxy),
+                    }
                 }
             }
             _ => {}
+        }
+        if let Some(action) = action {
+            diagnostics::log(&format!("action: {action:?}"));
+            match action {
+                Action::Quit => {
+                    save_window(&mut settings, &window, normal);
+                    *control_flow = ControlFlow::Exit;
+                }
+                Action::Autostart(on) => {
+                    match autostart::set(on) {
+                        Ok(()) => {
+                            settings.start_with_os = on;
+                            settings.save();
+                        }
+                        Err(e) => diagnostics::log(&format!("autostart: {e}")),
+                    }
+                    menu.autostart.set_checked(settings.start_with_os);
+                    push_state(&webview, &settings, update.as_ref(), updating);
+                }
+                Action::Update => match &update {
+                    // Only the server's own file loads in the web view (with its gateway cookies); anything else
+                    // opens in the browser.
+                    Some(u) if INSTALLS_UPDATES && server.as_ref().is_some_and(|s| route::same_origin(s, &u.url)) => {
+                        if !updating {
+                            updating = true;
+                            *pending.lock().unwrap_or_else(|e| e.into_inner()) = Some(u.url.clone());
+                            diagnostics::log(&format!("update: downloading {}", u.version));
+                            let _ = webview.load_url(&u.url);
+                            push_state(&webview, &settings, update.as_ref(), updating);
+                        }
+                    }
+                    Some(u) => open_outside(&u.url),
+                    None => {}
+                },
+                Action::Check => {
+                    manual_check = true;
+                    let _ = webview.evaluate_script("window.__orbitDesktop && window.__orbitDesktop.checkUpdate()");
+                }
+                Action::ChangeServer => {
+                    let _ = webview.load_html(&pick_page(server.as_ref()));
+                    picking = true;
+                    unread.reset();
+                    show(&window);
+                }
+                Action::Home => {
+                    if let Some(server) = &server {
+                        picking = false;
+                        go_home(&webview, server);
+                    }
+                }
+                Action::Diagnostics => {
+                    if let Some(path) = diagnostics::path()
+                        && let Err(e) = open::that_detached(&path)
+                    {
+                        eprintln!("orbit-desktop: cannot open {}: {e}", path.display());
+                    }
+                }
+            }
         }
         if unread != before || redraw_badge {
             show_badge(&window, tray.as_ref(), &unread, &icon_rgba, icon_size);
@@ -292,12 +419,70 @@ pub fn run(hidden: bool, mut instance: Option<Instance>) -> ! {
     })
 }
 
-fn build_webview(window: &Window, context: &mut WebContext, server: Option<&ServerUrl>, proxy: &EventLoopProxy<UserEvent>) -> wry::Result<WebView> {
+const CLOSE_HINT: &str = if cfg!(windows) {
+    "Orbit keeps running in the background, so notifications still come. Open it again from the Start menu. To quit, use Quit Orbit in the account menu."
+} else {
+    "Orbit keeps running in the background, so notifications still come. To quit, use Quit Orbit in the account menu."
+};
+
+/// Sends the app's state to the page (the account menu's "Desktop app" items and the update banner).
+fn push_state(webview: &WebView, settings: &Settings, update: Option<&Update>, updating: bool) {
+    let state = serde_json::json!({
+        "app": VERSION,
+        "os": std::env::consts::OS,
+        "autostart": settings.start_with_os,
+        "autostartLabel": autostart::label(),
+        "update": update.map(|u| &u.version),
+        "updating": updating,
+        "install": INSTALLS_UPDATES,
+    });
+    let _ = webview.evaluate_script(&format!("window.__orbitDesktop && window.__orbitDesktop.setState && window.__orbitDesktop.setState({state})"));
+}
+
+/// The update installer, silent (a progress window, no questions); `/relaunch=1` starts Orbit again at its end
+/// (`packaging/windows/orbit.iss`).
+fn run_installer(path: &Path) -> std::io::Result<()> {
+    Command::new(path).args(["/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/relaunch=1"]).spawn().map(drop)
+}
+
+/// Shows a downloaded file in Explorer (selected), Finder, or its folder.
+fn reveal(path: &Path) {
+    diagnostics::log("download: shown in its folder");
+    #[cfg(windows)]
+    let shown = {
+        use std::os::windows::process::CommandExt;
+        // explorer reads `/select,"<path>"` as one raw argument (a Windows path has no quotes in it).
+        Command::new("explorer").raw_arg(format!("/select,\"{}\"", path.display())).spawn().map(drop)
+    };
+    #[cfg(target_os = "macos")]
+    let shown = Command::new("open").arg("-R").arg(path).spawn().map(drop);
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let shown = open::that_detached(path.parent().unwrap_or(path));
+    if let Err(e) = shown {
+        eprintln!("orbit-desktop: cannot show {}: {e}", path.display());
+    }
+}
+
+/// The page that checks the server and then loads it (`assets/connect.html`). `http://` servers (this computer
+/// only) load at once: a page without an origin may not reach a loopback address.
+fn connect_page(server: &ServerUrl) -> Option<String> {
+    server.origin().starts_with("https://").then(|| CONNECT_HTML.replace("__ORBIT_SERVER__", &serde_json::to_string(server.origin()).expect("a string")))
+}
+
+fn go_home(webview: &WebView, server: &ServerUrl) {
+    let _ = match connect_page(server) {
+        Some(html) => webview.load_html(&html),
+        None => webview.load_url(server.origin()),
+    };
+}
+
+fn build_webview(window: &Window, context: &mut WebContext, server: Option<&ServerUrl>, proxy: &EventLoopProxy<UserEvent>, pending: &Arc<Mutex<Option<String>>>) -> wry::Result<WebView> {
     let popups = server.cloned();
     let ipc = proxy.clone();
     let new_window = proxy.clone();
     let title = proxy.clone();
     let downloaded = proxy.clone();
+    let update = pending.clone();
     let mut builder = WebViewBuilder::new_with_web_context(context)
         .with_ipc_handler(move |request| {
             let from = request.uri().to_string();
@@ -315,14 +500,25 @@ fn build_webview(window: &Window, context: &mut WebContext, server: Option<&Serv
         .with_document_title_changed_handler(move |text| {
             let _ = title.send_event(UserEvent::Title(text));
         })
-        .with_download_started_handler(|_url, path| {
-            let dir = dirs::download_dir().or_else(dirs::home_dir).unwrap_or_default();
+        .with_navigation_handler(|url| {
+            let allowed = route::navigation_allowed(&url);
+            if !allowed {
+                diagnostics::log("navigation to a file refused (a file dropped outside a drop zone)");
+            }
+            allowed
+        })
+        // Ctrl + / Ctrl − / Ctrl 0 and Ctrl + wheel, as in a browser (Windows; WebKit has no switch for it).
+        .with_hotkeys_zoom(true)
+        .with_download_started_handler(move |url, path| {
+            // The update installer goes to the temp folder; the person's downloads go to Downloads.
+            let is_update = update.lock().is_ok_and(|p| p.as_deref() == Some(url.as_str()));
+            let dir = if is_update { std::env::temp_dir() } else { dirs::download_dir().or_else(dirs::home_dir).unwrap_or_default() };
             let suggested = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             *path = route::download_path(&dir, &suggested, |p| p.exists());
             true
         })
-        .with_download_completed_handler(move |_url, path, ok| {
-            let _ = downloaded.send_event(UserEvent::Downloaded { path, ok });
+        .with_download_completed_handler(move |url, path, ok| {
+            let _ = downloaded.send_event(UserEvent::Downloaded { url, path, ok });
         });
     #[cfg(windows)]
     {
@@ -330,9 +526,13 @@ fn build_webview(window: &Window, context: &mut WebContext, server: Option<&Serv
         builder = builder.with_additional_browser_args(signin::WEBVIEW2_ARGS);
     }
     builder = match server {
-        Some(server) => builder
-            .with_initialization_script_for_main_only(bridge::script(server.origin()), true)
-            .with_url(server.origin()),
+        Some(server) => {
+            let builder = builder.with_initialization_script_for_main_only(bridge::script(server.origin()), true);
+            match connect_page(server) {
+                Some(html) => builder.with_html(html),
+                None => builder.with_url(server.origin()),
+            }
+        }
         None => builder.with_html(pick_page(None)),
     };
     #[cfg(windows)]
@@ -391,10 +591,11 @@ fn open_outside(url: &str) {
 
 /// An OS notification. A click brings the window to the front and, for a page's notice (`id`),
 /// does what the web app does on a click: the bridge opens that conversation.
-fn notify(title: String, body: String, id: Option<u64>, proxy: &EventLoopProxy<UserEvent>) {
+fn notify(title: String, body: String, click: Click, proxy: &EventLoopProxy<UserEvent>) {
     let proxy = proxy.clone();
     // The thread waits for the click (or the close) of its notification.
     std::thread::spawn(move || {
+        let mut click = click;
         let mut notification = notify_rust::Notification::new();
         notification.summary(&title).body(&body).appname("Orbit");
         // D-Bus servers report a body click only for a "default" action (Windows and macOS always
@@ -409,7 +610,7 @@ fn notify(title: String, body: String, id: Option<u64>, proxy: &EventLoopProxy<U
             handle
                 .wait_for_response(|response: &notify_rust::NotificationResponse| {
                     if clicked(response) {
-                        let _ = proxy.send_event(UserEvent::NotificationClicked(id.unwrap_or(0)));
+                        let _ = proxy.send_event(UserEvent::NotificationClicked(std::mem::replace(&mut click, Click::Show)));
                     }
                 })
                 .map_err(|e| e.to_string())
@@ -476,15 +677,19 @@ fn window_state(window: &Window) -> Option<WindowState> {
 }
 
 fn save_window(settings: &mut Settings, window: &Window, normal: Option<WindowState>) {
-    let maximized = window.is_maximized();
-    let Some(state) = (if maximized { normal } else { window_state(window).or(normal) }) else { return };
-    settings.window = Some(WindowState { maximized, ..state });
+    let current = if window.is_minimized() { None } else { window_state(window) };
+    if let Some(state) = WindowState::to_save(window.is_maximized(), current, normal) {
+        settings.window = Some(state);
+    }
     settings.save();
 }
 
+/// The start page. `server`: the saved one (Change server: its address and a Cancel button). The first start
+/// shows the build's default server (`ORBIT_DEFAULT_SERVER`, set by the release workflow), if any.
 fn pick_page(server: Option<&ServerUrl>) -> String {
-    let value = server.map(|s| s.origin().replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;")).unwrap_or_default();
-    PICK_HTML.replace("__ORBIT_SERVER__", &value)
+    let value = server.map(ServerUrl::origin).or(option_env!("ORBIT_DEFAULT_SERVER")).unwrap_or_default();
+    let value = value.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
+    PICK_HTML.replace("__ORBIT_SERVER__", &value).replace("__ORBIT_CANCEL__", if server.is_some() { "" } else { "hidden" })
 }
 
 /// The start page's own web view profile: it never holds a server's cookies.
@@ -540,6 +745,8 @@ fn mac_app_menu() -> Menu {
     use tray_icon::menu::Submenu;
     let menu = Menu::new();
     let app = Submenu::with_items("Orbit", true, &[&PredefinedMenuItem::hide(None), &PredefinedMenuItem::separator(), &PredefinedMenuItem::quit(None)]);
+    // ⌘W closes the window to the tray, ⌘M minimizes it.
+    let window = Submenu::with_items("Window", true, &[&PredefinedMenuItem::minimize(None), &PredefinedMenuItem::close_window(None)]);
     let edit = Submenu::with_items("Edit", true, &[
         &PredefinedMenuItem::undo(None),
         &PredefinedMenuItem::redo(None),
@@ -549,8 +756,8 @@ fn mac_app_menu() -> Menu {
         &PredefinedMenuItem::paste(None),
         &PredefinedMenuItem::select_all(None),
     ]);
-    if let (Ok(app), Ok(edit)) = (app, edit) {
-        let _ = menu.append_items(&[&app, &edit]);
+    if let (Ok(app), Ok(edit), Ok(window)) = (app, edit, window) {
+        let _ = menu.append_items(&[&app, &edit, &window]);
     }
     menu.init_for_nsapp();
     menu

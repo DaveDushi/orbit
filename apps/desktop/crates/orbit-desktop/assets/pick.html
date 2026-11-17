@@ -10,7 +10,10 @@
   h1 { margin: 0 0 4px; font-size: 22px; }
   p { margin: 0; opacity: .7; font-size: 14px; }
   input { font: inherit; padding: 9px 10px; border-radius: 8px; border: 1px solid #8886; background: Field; color: FieldText; }
-  button { font: inherit; padding: 9px 10px; border-radius: 8px; border: 0; background: #4f46e5; color: white; cursor: pointer; }
+  .buttons { display: flex; gap: 8px; }
+  button { flex: 1; font: inherit; padding: 9px 10px; border-radius: 8px; border: 0; background: #4f46e5; color: white; cursor: pointer; }
+  button.cancel { border: 1px solid #8886; background: transparent; color: inherit; }
+  [hidden] { display: none !important; }
   #error { color: #dc2626; min-height: 1.2em; font-size: 14px; opacity: 1; }
 </style>
 </head>
@@ -20,9 +23,13 @@
   <p>Enter the address of your team's Orbit server.</p>
   <input id="url" placeholder="orbit.example.com" autofocus autocomplete="url" spellcheck="false" value="__ORBIT_SERVER__">
   <p id="error" role="alert"></p>
-  <button type="submit">Continue</button>
+  <div class="buttons">
+    <button class="cancel" id="cancel" type="button" __ORBIT_CANCEL__>Cancel</button>
+    <button type="submit">Continue</button>
+  </div>
 </form>
 <script>
+  document.getElementById('cancel').addEventListener('click', () => window.ipc.postMessage(JSON.stringify({ kind: 'action', name: 'home' })))
   window.showError = (text) => { document.getElementById('error').textContent = text }
   document.getElementById('form').addEventListener('submit', (event) => {
     event.preventDefault()

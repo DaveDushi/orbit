@@ -17,7 +17,14 @@ Orbit pins 1.97.1), `Cargo.lock` and `target/`.
 ## How it works
 
 - **Server.** The first start shows a small start page that asks for the server (`orbit.example.com`;
-  `http://` only for this computer). Tray → Change server… shows it again. The choice is in
+  `http://` only for this computer); the release build fills in the workflow's `server` input
+  (`ORBIT_DEFAULT_SERVER`). Change server… (tray or account menu) shows it again, with Cancel.
+- **Connect page** (`assets/connect.html`, 0.1.8). An `https://` server loads through a local page that first
+  checks that the server answers (`fetch`, `no-cors`: any answer counts, also the gateway's redirect), then
+  loads it. Without an answer (autostart at sign-in before the network is up, a wrong address) it says
+  "Cannot reach <host>", tries again after 2, 4 … 30 s and on the `online` event, and has Try again and Change
+  server. Before, the web view's error page stayed and never tried again. `http://` (loopback) servers load at
+  once: a page without an origin may not reach a loopback address. The choice is in
   `<config dir>/orbit-desktop/settings.json` (with the autostart flag and the window place; no secrets).
 - **Sign-in.** The window loads the server. With an exe.dev gateway in front, the gateway's sign-in shows in
   the window, then Orbit's own sign-in page, like in a browser. The web view keeps its cookies in one profile
@@ -50,9 +57,20 @@ Orbit pins 1.97.1), `Cargo.lock` and `target/`.
     same profile, because the web app loads an embedded app's sign-in in it ("Sign in to app"), and the app in
     the frame reads that sign-in's cookies from this web view, not from the browser (until 0.1.2 it was refused,
     and the web app said the sign-in window was blocked).
-  - Update check: the page reads `/downloads/desktop/latest.json` with its own gateway cookies; when that
-    version is newer, a notification says so and the tray gets "Download Orbit x.y.z" (opens the browser).
-    It installs nothing itself: the person runs the new installer. It works only on the saved server's own
+  - Update check: the page reads `/downloads/desktop/latest.json` with its own gateway cookies (at the start,
+    every 6 hours, and on Check for updates); when that version is newer, a notification, a banner at the
+    bottom right of the page (the bridge draws it in a shadow root, so it needs no web deploy; × hides it until
+    the app quits) and the menus say so. Windows (0.1.8): "Restart to update" loads the installer URL (only on
+    the server's own origin) in the web view, so its gateway cookies apply; the download goes to the temp
+    folder, then the app runs it with `/SILENT /SUPPRESSMSGBOXES /NORESTART /relaunch=1` and quits; the
+    installer's `[Run]` entry with `Check: Relaunch` starts Orbit again. macOS and Linux open the download in
+    the browser. A Check for updates without an update says "up to date" (or "cannot check").
+  - App state and menu (0.1.8): the bridge posts `ready`; the app answers with `__orbitDesktop.setState(…)`
+    (version, OS, autostart and its label, update, updating, install) and the `orbit-desktop` window event.
+    The web app's account menu → Desktop app (`apps/web/src/lib/desktopApp.ts`) shows the tray's items and
+    sends `{kind:"action", name}` (`autostart`, `update`, `check`, `server`, `diagnostics`, `quit`): Windows 11
+    hides new tray icons behind the ^, so the tray must not be the only place. The app's own pages may send
+    only `server` and `home`. It works only on the saved server's own
     pages: `orbit.wellrox.com` redirects to `orbit.easytomanage.com` since 2026-11-12, so 0.1.4 loads that saved
     server as the new one (`settings.rs` `MOVED`); before, those apps saw no update, notification or badge.
 - **Voice input** (the mic in the chat composer). Windows: WebView2's `webkitSpeechRecognition` does not work in the
@@ -72,19 +90,26 @@ Orbit pins 1.97.1), `Cargo.lock` and `target/`.
   recognition and needs `NSMicrophoneUsageDescription` and `NSSpeechRecognitionUsageDescription` in
   `packaging/macos/Info.plist`; wry grants the media capture, macOS asks. Linux (WebKitGTK) has no recognizer: the
   mic shows "not available".
-- **Diagnostics log** (tray → "Open diagnostics log", `<local app data>/orbit-desktop/diagnostics.log`, 64 KB max):
+- **Diagnostics log** (tray or account menu → "Open diagnostics log", `<local app data>/orbit-desktop/diagnostics.log`, 64 KB max):
   start lines (version, server), the WebView2 runtime version, the saved microphone permission, every WebView2
-  permission request (kind, page, answer) and the page's voice input errors (`__orbitDesktop.log`). No message text
+  permission request (kind, page, answer), the page's voice input errors (`__orbitDesktop.log`), every menu action,
+  the update steps, the connect page's failures, the first close to the tray and refused `file:` pages. No message text
   and no cookies. The update check runs at the start and every 6 hours (before 0.1.6: at the start only).
 - **Downloads.** Every download goes to the Downloads folder (the home folder when there is none), with
-  " (2)", " (3)" … when the name is taken; a notification says where. No save dialog.
+  " (2)", " (3)" … when the name is taken; a notification says where, and a click on it shows the file
+  (Explorer `/select`, Finder `open -R`, the folder on Linux). No save dialog.
+- **Navigation.** The web view refuses `file:` pages: a file dropped outside a drop zone used to replace the
+  Orbit page with the file. Ctrl + / Ctrl − / Ctrl 0 and Ctrl + wheel zoom (Windows; `with_hotkeys_zoom`).
 - **One instance.** The first start locks `<data dir>/orbit-desktop/instance.lock` and listens on a loopback
   port (in `instance.port`). A later start sends `show` there and ends: the running window comes to the
   front, with no second window or tray icon. A later `--hidden` start (autostart) just ends. Change server
   frees the lock before it starts the app again.
-- **Window and tray.** Closing the window hides it to the tray; tray → Quit Orbit ends the app. A left click on
+- **Window and tray.** Closing the window hides it to the tray (the first time, a notification says that Orbit
+  still runs; `close_hint_shown` in the settings); Quit Orbit (tray or account menu) ends the app. macOS: ⌘W
+  closes, ⌘M minimizes (Window menu). A left click on
   the tray icon (Windows) or Open Orbit shows the window. The window's place, size and maximized state are
-  saved on close and quit, and come back at the next start if they still fit on a monitor.
+  saved on close and quit (a minimized or maximized window saves its last normal place, not Windows'
+  -32000, -32000), and come back at the next start if they still fit on a monitor.
 - **Start with Windows** (macOS: Open at login; Linux: Start at login): a check item in the tray menu, off
   by default. On, it writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\Orbit` (macOS:
   `~/Library/LaunchAgents/com.wellrox.orbit.plist`; Linux: `~/.config/autostart/orbit-desktop.desktop`)

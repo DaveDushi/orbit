@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { AWAY_MINUTES, useAwayMinutes } from '@/features/realtime/idle'
 import { needsHomeScreen, pushSupported } from '@/features/realtime/push'
+import { inDesktopApp } from '@/lib/desktopApp'
 import {
   useDisablePush,
   useEnablePush,
@@ -47,6 +48,8 @@ function ThisDevice() {
   if (needsHomeScreen(navigator.userAgent, (navigator as { standalone?: boolean }).standalone, navigator.maxTouchPoints)) {
     return <p className="text-sm text-muted-foreground">Add Orbit to your Home Screen to get notifications: in Safari, tap Share, then "Add to Home Screen", and open Orbit from there.</p>
   }
+  // The desktop app shows the live socket's notifications itself (its web view has no push service).
+  if (inDesktopApp) return <p className="text-sm text-muted-foreground">The Orbit desktop app shows notifications itself while it runs, also when its window is closed to the tray.</p>
   if (!pushSupported()) return <p className="text-sm text-muted-foreground">This browser does not support notifications.</p>
   if (Notification.permission === 'denied') {
     return (
