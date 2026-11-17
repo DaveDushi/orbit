@@ -10,7 +10,12 @@ export function sheetTop(screenHeight: number, sheetHeight: number): number {
   return Math.max(0, screenHeight - sheetHeight)
 }
 
-/** How much of a view the keyboard covers: the view's bottom on the screen, below the keyboard's top. */
-export function keyboardCover({ rootTop, y, height, keyboardTop }: { rootTop: number; y: number; height: number; keyboardTop: number }): number {
-  return Math.max(0, Math.round(rootTop + y + height - keyboardTop))
+/**
+ * How much of a view the keyboard covers: the view's bottom on the screen, below the keyboard's top, and never more
+ * than the keyboard itself. A measure taken while the app comes back from a tapped notification can put the view lower
+ * than it is: without the cap the padding was about twice the keyboard, and the composer sat under the header with no
+ * messages (build 19).
+ */
+export function keyboardCover({ rootTop, y, height, keyboardTop, screenHeight }: { rootTop: number; y: number; height: number; keyboardTop: number; screenHeight: number }): number {
+  return Math.max(0, Math.min(screenHeight - keyboardTop, Math.round(rootTop + y + height - keyboardTop)))
 }

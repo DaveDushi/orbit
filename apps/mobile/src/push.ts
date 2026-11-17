@@ -9,7 +9,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as Notifications from 'expo-notifications'
 import { router, usePathname } from 'expo-router'
 import { useEffect, useState } from 'react'
-import { Linking, Platform } from 'react-native'
+import { Keyboard, Linking, Platform } from 'react-native'
 
 import { keys } from './data/keys'
 import type { OrbitClient } from './data/orbit'
@@ -88,7 +88,13 @@ export function usePushNotifications(client: OrbitClient) {
   useEffect(() => {
     if (!tapped) return
     if (tapped.workspaceId && tapped.workspaceId !== workspaceId) return selectWorkspace(tapped.workspaceId)
-    router.navigate(tapped.path as never)
+    // The keyboard of the screen that was open closes. A conversation or thread opens over the Chat tab, so Back
+    // goes to the chat list.
+    Keyboard.dismiss()
+    if (tapped.path.startsWith('/chat/')) {
+      router.navigate('/chat')
+      router.push(tapped.path as never)
+    } else router.navigate(tapped.path as never)
     setTapped(null)
     // `selectWorkspace` is a new function on each render that does the same: it does not run this again.
   }, [tapped, workspaceId])

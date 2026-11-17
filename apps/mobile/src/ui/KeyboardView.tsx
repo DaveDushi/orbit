@@ -20,18 +20,26 @@ export function KeyboardView({ className, style, pointerEvents, children }: { cl
   const [bottom, setBottom] = useState(0)
   useEffect(() => {
     if (Platform.OS !== 'ios') return
+    const animate = (event: KeyboardEvent) => {
+      if (event.duration > 0) {
+        const duration = Math.max(event.duration, 10)
+        LayoutAnimation.configureNext({ duration, update: { duration, type: LayoutAnimation.Types[event.easing] ?? LayoutAnimation.Types.keyboard } })
+      }
+    }
     const update = (event: KeyboardEvent) => {
       ref.current?.measureInWindow((_x, y, _width, height) => {
         // the padding is inside the measured height, so the view's bottom stays where its parent puts it
-        const covered = keyboardCover({ rootTop: rootTop.current, y, height, keyboardTop: event.endCoordinates.screenY })
-        if (event.duration > 0) {
-          const duration = Math.max(event.duration, 10)
-          LayoutAnimation.configureNext({ duration, update: { duration, type: LayoutAnimation.Types[event.easing] ?? LayoutAnimation.Types.keyboard } })
-        }
+        const covered = keyboardCover({ rootTop: rootTop.current, y, height, keyboardTop: event.endCoordinates.screenY, screenHeight: Dimensions.get('screen').height })
+        animate(event)
         setBottom(covered)
       })
     }
-    const subscriptions = [Keyboard.addListener('keyboardWillChangeFrame', update), Keyboard.addListener('keyboardWillHide', update)]
+    // a hidden keyboard covers nothing: no measure, so a wrong one cannot keep a padding
+    const hide = (event: KeyboardEvent) => {
+      animate(event)
+      setBottom(0)
+    }
+    const subscriptions = [Keyboard.addListener('keyboardWillChangeFrame', update), Keyboard.addListener('keyboardWillHide', hide)]
     return () => subscriptions.forEach((subscription) => subscription.remove())
   }, [])
   return (
