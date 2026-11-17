@@ -14,6 +14,7 @@ import { ColorScope } from '../theme/ColorScope'
 import { Avatar, CountBadge, Icon, type IconName, IconButton, PickerSheet } from '../ui'
 import { AccountMenu } from './AccountMenu'
 import { NewProjectSheet } from './NewProjectSheet'
+import { CreateWorkspaceDialog, JoinWorkspaceDialog } from './WorkspaceDialogs'
 import { WorkspaceLogo } from './WorkspaceLogo'
 import { DRAWER_AREA_TITLES, type DrawerArea, drawerAreaOf, drawerSections, TASK_PRESETS, tasksHref } from './drawerAreas'
 import { ACCOUNT_NAV, ADMIN_NAV, allowedNav, WORKSPACE_NAV } from './settings/Shell'
@@ -146,6 +147,14 @@ interface NavLink {
  * The settings areas of the new UI's contextual drawer: the links of Shell.tsx's sub-navigation. A function, because
  * Shell.tsx imports this file: its arrays may not exist yet while this module loads.
  */
+/** The switcher's rows below the workspaces, as on the web; Join takes an invitation link pasted from the email. */
+const CREATE = '__create'
+const JOIN = '__join'
+const WORKSPACE_ACTIONS: readonly { key: typeof CREATE | typeof JOIN; label: string; icon: IconName }[] = [
+  { key: CREATE, label: 'Create workspace', icon: 'plus' },
+  { key: JOIN, label: 'Join with an invitation link', icon: 'link2' },
+]
+
 const areaNavs = () => ({ workspace: WORKSPACE_NAV, account: ACCOUNT_NAV, admin: ADMIN_NAV })
 
 /** The web's `SideSheet`: the scrim and the sliding panel around `DrawerPanel`. */
@@ -206,6 +215,7 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
   const guest = isGuestRole(workspace.role)
   const inboxUnread = (useUnreadNotifications(!guest).data?.length ?? 0) > 0
   const [switching, setSwitching] = useState(false)
+  const [workspaceDialog, setWorkspaceDialog] = useState<typeof CREATE | typeof JOIN | null>(null)
   const [accountOpen, setAccountOpen] = useState(false)
   const newUi = useLayout() === 'new'
   const reduceMotion = useReduceMotion()
@@ -360,14 +370,23 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
         visible={switching}
         title="Workspaces"
         surface={newUi ? 'sidebarPopover' : 'popover'}
-        options={workspaces.map((item) => ({ key: item.id, label: item.name, subtitle: item.role, selected: item.id === workspace.id, leading: <WorkspaceLogo workspace={item} size={24} /> }))}
+        options={[
+          ...workspaces.map((item) => ({ key: item.id, label: item.name, subtitle: item.role, selected: item.id === workspace.id, leading: <WorkspaceLogo workspace={item} size={24} /> })),
+          ...WORKSPACE_ACTIONS.map((action) => ({ ...action, leading: <Icon name={action.icon} size={18} color={colors.mutedForeground} /> })),
+        ]}
         onSelect={(id) => {
           setSwitching(false)
+          if (id === CREATE || id === JOIN) {
+            setWorkspaceDialog(id)
+            return
+          }
           onClose()
           selectWorkspace(id)
         }}
         onClose={() => setSwitching(false)}
       />
+      <CreateWorkspaceDialog visible={workspaceDialog === CREATE} onClose={() => setWorkspaceDialog(null)} onCreated={(created) => { onClose(); selectWorkspace(created.id) }} />
+      <JoinWorkspaceDialog visible={workspaceDialog === JOIN} onClose={() => setWorkspaceDialog(null)} onJoined={(id) => { onClose(); selectWorkspace(id) }} />
     </View>
   )
 }
