@@ -49,7 +49,7 @@ enum UserEvent {
     /// A second start of the app (see `instance.rs`).
     Show,
     Downloaded { url: String, path: Option<PathBuf>, ok: bool },
-    /// Words, an error or the end of a dictation on Windows' recognizer (`speech.rs`), as JSON for the page.
+    /// The status, text, error or end of a local dictation (`speech.rs`), as JSON for the page.
     #[cfg_attr(not(windows), allow(dead_code))]
     Speech(String),
 }

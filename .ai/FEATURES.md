@@ -622,9 +622,12 @@ turns its routes, navigation and shortcuts off.
   each workspace). The sticker button of the composer sends one at once as its own message
   (`chat_messages.sticker_id`); a deleted sticker shows "Sticker was deleted".
 - Voice input: the mic beside Send (`composer/MicButton.tsx`, logic in `voiceInput.ts`) uses the Web Speech API
-  (`webkitSpeechRecognition`, also in the desktop app's WebView2/WKWebView; the Windows app 0.1.7+ swaps in Windows' own recognizer, see `apps/desktop/README.md`; after `not-allowed` a `getUserMedia` check names the cause and retries once). Tap to start, tap to stop; live words go
-  after the field's text and nothing sends by itself; typing, emoji or send end it. States: idle, listening (filled),
-  denied and not available (crossed-out mic; a tap explains). Firefox and Linux WebKitGTK have no recognizer.
+  (`webkitSpeechRecognition`, also in the desktop app's WebView2/WKWebView; the Windows app 0.1.9+ records and transcribes with a local Whisper model, in parts of about 5 s while it records since 0.1.10, see `apps/desktop/README.md`; after `not-allowed` a `getUserMedia` check names the cause and retries once). Tap to start, tap to stop; live words go
+  after the field's text and nothing sends by itself; typing, emoji or send end it. The same mic is in the Ask bar (`features/askDonna/AskDonnaBar.tsx`; its panel uses the
+  composer). States: idle; listening (red stop button that pulses, a timer, the field's placeholder "Listening… click
+  the mic to stop", and a level meter when the recognizer reports levels: the Windows app's `onlevel`); transcribing
+  (a tap stops at once; a spinner until the recognizer ends); the model's download percent; denied and not available
+  (crossed-out mic; a tap explains). A refusal or error also shows beside the mic for 6 s (`VoiceStatus`). Firefox and Linux WebKitGTK have no recognizer.
 - A lost connection keeps the app on screen (`lib/connection.ts`, `app/shell/ConnectionBanner.tsx`):
   a banner shows while the sockets and core queries reconnect; after a minute "Orbit is unavailable" covers
   the app (`app/ConnectionScreen.tsx`, the animated logo and Retry) until the connection is back. A page

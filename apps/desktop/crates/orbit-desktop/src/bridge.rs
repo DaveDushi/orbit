@@ -13,7 +13,7 @@ pub fn script(origin: &str) -> String {
     BRIDGE_JS
         .replace("__ORBIT_ORIGIN__", &serde_json::to_string(origin).expect("a string serializes"))
         .replace("__ORBIT_APP_VERSION__", &serde_json::to_string(env!("CARGO_PKG_VERSION")).expect("a string serializes"))
-        // Windows: the page's `SpeechRecognition` runs on Windows' own recognizer (`speech.rs`).
+        // Windows: the page's `SpeechRecognition` records and transcribes in the app with a local Whisper model (`speech.rs`).
         .replace("__ORBIT_NATIVE_SPEECH__", if cfg!(windows) { "true" } else { "false" })
 }
 

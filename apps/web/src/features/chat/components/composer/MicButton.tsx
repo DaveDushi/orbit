@@ -1,81 +1,95 @@
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { Mic, MicOff } from 'reicon-react'
-import { toast } from 'sonner'
 import { Tip } from '@/components/common/Tip'
 import { Button } from '@/components/ui/button'
-import { useVoiceInput } from './useVoiceInput'
-import type { VoiceNotice } from './voiceInput'
+import { LoadingText } from '@/components/ui/spinner'
+import { formatElapsed, type LevelStore, type VoiceInput } from './useVoiceInput'
+import { noticeTitle } from './voiceNotice'
 
-/** The desktop bridge (`apps/desktop/.../bridge.js`): `app` and `log` since Orbit desktop 0.1.6. */
-type DesktopBridge = { app?: string; log?: (text: string) => void }
-
-function desktop(): DesktopBridge | null {
-  return '__orbitDesktop' in window ? ((window as { __orbitDesktop?: DesktopBridge }).__orbitDesktop ?? {}) : null
+function Elapsed({ since }: { since: number }) {
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 250)
+    return () => clearInterval(timer)
+  }, [])
+  return <span className="tabular-nums">{formatElapsed(now - since)}</span>
 }
 
-function platform(): string {
-  return (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform || navigator.platform
-}
-
-/** The app's version for a report; an app before 0.1.6 does not say it, and checks for updates only at its start. */
-function appLine(app: DesktopBridge): string {
-  return app.app ? `Orbit app ${app.app}.` : 'Orbit app 0.1.5 or older: quit Orbit in the tray menu and open it again, then install the update it offers.'
-}
-
-/** Where to turn the microphone on: the desktop app asks the OS, a browser its site settings. */
-function deniedHelp(notice: VoiceNotice): string {
-  const app = desktop()
-  if (notice === 'speech-refused') return 'The microphone works, but speech recognition was refused.'
-  if (!app) return notice === 'denied-system' ? 'Your system blocks the microphone for this browser: allow it in the system’s privacy settings, then try again.' : 'Allow the microphone for Orbit in the browser’s site settings, then try again.'
-  if (/^win/i.test(platform())) return 'Open Windows Settings → Privacy & security → Microphone, and turn on “Microphone access” and “Let apps access your microphone”. Then try again.'
-  if (/^mac/i.test(platform())) return 'Allow Orbit in System Settings → Privacy & Security → Microphone and Speech Recognition, then try again.'
-  return 'Allow the microphone for Orbit in the system settings, then try again.'
-}
-
-/** The toast text, with the details we need when the person sends a screenshot. */
-function withDetails(text: string, detail?: string): string {
-  const app = desktop()
-  return [text, detail && `Details: ${detail}.`, app && appLine(app)].filter(Boolean).join(' ')
-}
-
-function explain(notice: VoiceNotice, detail?: string) {
-  desktop()?.log?.(`voice: ${notice}${detail ? ` (${detail})` : ''}`)
-  if (notice === 'denied' || notice === 'denied-system' || notice === 'speech-refused') {
-    toast.error(notice === 'speech-refused' ? 'Voice input was refused' : 'Microphone access is off', { description: withDetails(deniedHelp(notice), detail), duration: 15_000 })
-  } else if (notice === 'unavailable') {
-    toast.error('Voice input is not available', {
-      description: detail ? withDetails(detail) : 'This browser has no speech recognition. Use Chrome, Edge or Safari, or the Orbit app on Windows or a Mac.',
-      duration: detail ? 15_000 : undefined,
-    })
-  } else if (notice === 'no-microphone') {
-    toast.error('No microphone found', { description: withDetails('Connect a microphone and try again.', detail) })
-  } else if (notice === 'network') {
-    toast.error('Voice input stopped', { description: withDetails(detail ?? 'The speech service could not be reached. Try again later.') })
-  } else {
-    toast.error('Voice input stopped', { description: withDetails('', detail) || undefined })
-  }
+/** Five bars of the microphone's level; only a recognizer that reports it (the Orbit app) shows them. */
+function LevelMeter({ level }: { level: LevelStore }) {
+  const value = useSyncExternalStore(level.subscribe, level.get)
+  if (value < 0) return null
+  // Speech peaks are often below 0.3: the square root spreads them over the bars.
+  const lit = Math.round(Math.sqrt(value) * 5)
+  return (
+    <span aria-hidden className="flex h-3 items-end gap-px">
+      {[0.4, 0.6, 0.8, 1, 0.7].map((height, i) => (
+        <span key={i} data-lit={i < lit || undefined} className="w-[3px] rounded-full bg-destructive/25 data-lit:bg-destructive" style={{ height: `${height * 100}%` }} />
+      ))}
+    </span>
+  )
 }
 
 /**
- * The composer's voice input: tap to start, tap to stop. It fills while it listens, and shows a crossed-out mic when
- * the microphone is blocked or the browser has no speech recognition (a tap explains why).
+ * What voice input is doing, beside the mic: a red dot, the time and the level while it listens (and the model's
+ * one-time download), a spinner while the last words are transcribed, and a refusal or an error for a few seconds.
  */
-export function MicButton({ text, setText }: { text: string; setText: (text: string) => void }) {
-  const voice = useVoiceInput(text, setText, explain)
-  const listening = voice.status === 'listening'
-  const off = voice.status === 'denied' || voice.status === 'unavailable'
-  const label = listening ? 'Stop voice input' : voice.status === 'denied' ? 'Microphone access is off' : voice.status === 'unavailable' ? 'Voice input is not available' : 'Voice input'
+export function VoiceStatus({ voice }: { voice: VoiceInput }) {
+  if (voice.status === 'listening') {
+    return (
+      <span data-slot="voice-status" role="status" className="flex shrink-0 items-center gap-1.5 rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive">
+        <span aria-hidden className="size-2 rounded-full bg-destructive motion-safe:animate-pulse" />
+        <span className="sr-only">Listening</span>
+        <Elapsed since={voice.since} />
+        <LevelMeter level={voice.level} />
+        {voice.download !== null ? <span className="font-normal text-muted-foreground">Getting voice input ready… {voice.download}%</span> : null}
+      </span>
+    )
+  }
+  if (voice.status === 'transcribing') return <LoadingText className="shrink-0 px-1 text-xs">Transcribing…</LoadingText>
+  if (voice.notice) {
+    return (
+      <span data-slot="voice-status" role="status" className="min-w-0 truncate px-1 text-xs font-medium text-destructive">
+        {noticeTitle(voice.notice)}
+      </span>
+    )
+  }
+  return null
+}
+
+/**
+ * The mic of a text field: tap to start, tap to stop. While it listens it is red and pulses, with a stop square; after
+ * stop it dims, and `VoiceStatus` shows a spinner until the last words are in. A crossed-out mic shows when the microphone is blocked or the
+ * browser has no speech recognition (a tap explains why). Put `VoiceStatus` beside it, and `voicePlaceholder` in the field.
+ */
+export function MicButton({ voice, className = '' }: { voice: VoiceInput; className?: string }) {
+  const { status } = voice
+  const listening = status === 'listening'
+  const off = status === 'denied' || status === 'unavailable'
+  const label =
+    listening ? 'Stop voice input' : status === 'transcribing' ? 'Transcribing…' : status === 'denied' ? 'Microphone access is off' : status === 'unavailable' ? 'Voice input is not available' : 'Voice input'
   return (
     <Tip label={label}>
       <Button
-        variant={listening ? 'default' : 'ghost'}
+        type="button"
+        variant="ghost"
         size="icon"
         aria-label={label}
         aria-pressed={listening}
-        data-status={voice.status}
-        className="data-[status=denied]:text-muted-foreground data-[status=unavailable]:text-muted-foreground"
+        data-status={status}
+        className={`relative data-[status=denied]:text-muted-foreground data-[status=listening]:bg-destructive data-[status=listening]:text-white data-[status=listening]:hover:bg-destructive/90 data-[status=transcribing]:opacity-50 data-[status=unavailable]:text-muted-foreground ${className}`}
         onClick={voice.toggle}
       >
-        {off ? <MicOff className="size-5" /> : <Mic className="size-5" />}
+        {listening ? (
+          <>
+            <span aria-hidden className="absolute inset-0 rounded-[inherit] ring-2 ring-destructive/60 motion-safe:animate-ping" />
+            <span aria-hidden className="size-3 rounded-[3px] bg-current" />
+          </>
+        ) : off ? (
+          <MicOff className="size-5" />
+        ) : (
+          <Mic className="size-5" />
+        )}
       </Button>
     </Tip>
   )

@@ -12,6 +12,10 @@ export interface Recognition {
   onresult: ((event: { results: ArrayLike<{ isFinal: boolean; 0?: { transcript: string } }> }) => void) | null
   onerror: ((event: { error: string; message?: string }) => void) | null
   onend: (() => void) | null
+  /** The Orbit app's recognizer (desktop 0.1.10+): the microphone's peak level (0–1), about 10 times a second. */
+  onlevel?: ((level: number) => void) | null
+  /** The Orbit app's recognizer: the speech model's one-time download (`percent`), then the transcription after stop. */
+  onprogress?: ((progress: { phase: string; percent?: number }) => void) | null
   start(): void
   stop(): void
   abort(): void
@@ -19,7 +23,8 @@ export interface Recognition {
 
 export type RecognitionConstructor = new () => Recognition
 
-export type VoiceStatus = 'unavailable' | 'denied' | 'idle' | 'listening'
+/** `transcribing`: stopped, the last words are still coming (at once in a browser, up to a second in the Windows app). */
+export type VoiceStatus = 'unavailable' | 'denied' | 'idle' | 'listening' | 'transcribing'
 
 /**
  * What a tap or an error must explain to the person. After a refusal (`not-allowed`) the microphone itself is
@@ -71,6 +76,10 @@ interface DictationIo {
   setText: (text: string) => void
   status: (status: VoiceStatus) => void
   notice: (notice: VoiceNotice, detail?: string) => void
+  /** The microphone's level (0–1), only from a recognizer that reports it. */
+  level: (level: number) => void
+  /** The speech model's download in percent while it records, `null` when there is none (any more). */
+  download: (percent: number | null) => void
   /** Asks for the microphone itself (`getUserMedia`, the stream stops at once). */
   probe: () => Promise<MicProbe>
   lang: string
@@ -97,7 +106,8 @@ export function createDictation(Recognition: RecognitionConstructor | null, io: 
     const current = session
     session = null
     current?.recognition.abort()
-    if (status === 'listening') set('idle')
+    io.download(null)
+    if (status === 'listening' || status === 'transcribing') set('idle')
   }
 
   /**
@@ -154,11 +164,23 @@ export function createDictation(Recognition: RecognitionConstructor | null, io: 
       else if (event.error === 'network') io.notice('network', event.message || undefined)
       else if (event.error !== 'aborted' && event.error !== 'no-speech') io.notice('failed', event.message || event.error)
     }
+    recognition.onlevel = (level) => {
+      if (session === current) io.level(level)
+    }
+    recognition.onprogress = ({ phase, percent }) => {
+      if (session !== current) return
+      if (phase === 'download') io.download(percent ?? 0)
+      else if (phase === 'transcribing') {
+        io.download(null)
+        set('transcribing')
+      }
+    }
     // Every dictation ends here: a stop, an error, or the recognizer's own end after a silence.
     recognition.onend = () => {
       if (session !== current) return
       session = null
-      if (status === 'listening') set('idle')
+      io.download(null)
+      if (status === 'listening' || status === 'transcribing') set('idle')
     }
     session = current
     set('listening')
@@ -172,9 +194,16 @@ export function createDictation(Recognition: RecognitionConstructor | null, io: 
   }
 
   return {
-    /** A tap: stop while it listens (the last words still come), else start (also after "denied": it asks again). */
+    /**
+     * A tap: stop while it listens (the button shows "transcribing" at once, the last words still come; a tap then
+     * does nothing), else start (also after "denied": it asks again).
+     */
     toggle() {
-      if (session) return session.recognition.stop()
+      if (session && status === 'transcribing') return
+      if (session) {
+        set('transcribing')
+        return session.recognition.stop()
+      }
       if (!Recognition) return io.notice('unavailable')
       start(Recognition)
     },

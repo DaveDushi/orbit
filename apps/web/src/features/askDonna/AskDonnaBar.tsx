@@ -2,6 +2,8 @@ import { useRef, useState } from 'react'
 import { Add, ArrowUp } from 'reicon-react'
 import { Tip } from '@/components/common/Tip'
 import { Button } from '@/components/ui/button'
+import { MicButton, VoiceStatus } from '@/features/chat/components/composer/MicButton'
+import { useFieldVoice, voicePlaceholder } from '@/features/chat/components/composer/useVoiceInput'
 import type { AskDonna } from './useAskDonna'
 
 /** Chat's limit for one message. */
@@ -10,10 +12,12 @@ const MAX_LENGTH = 4000
 /**
  * The small "Ask Donna…" box at the bottom center of every page but Chat. Enter sends the text to the person's DM with
  * the agent and opens the panel; Enter on an empty box opens the panel again. `+` takes files to the panel's composer.
+ * The mic is the chat composer's voice input: the words go into the box, and nothing sends by itself.
  */
 export function AskDonnaBar({ ask }: { ask: AskDonna }) {
   const [text, setText] = useState('')
   const picker = useRef<HTMLInputElement>(null)
+  const voice = useFieldVoice(text, setText)
 
   async function submit(files: File[] = []) {
     if (ask.busy) return
@@ -48,7 +52,7 @@ export function AskDonnaBar({ ask }: { ask: AskDonna }) {
       />
       <input
         aria-label={`Ask ${ask.name}`}
-        placeholder={`Ask ${ask.name}…`}
+        placeholder={voicePlaceholder(voice) ?? `Ask ${ask.name}…`}
         value={text}
         maxLength={MAX_LENGTH}
         autoComplete="off"
@@ -63,6 +67,8 @@ export function AskDonnaBar({ ask }: { ask: AskDonna }) {
           }
         }}
       />
+      <VoiceStatus voice={voice} />
+      <MicButton voice={voice} className="rounded-full" />
       <Tip label="Send">
         <Button type="submit" size="icon" className="rounded-full" aria-label="Send" disabled={ask.busy || !text.trim()}>
           <ArrowUp className="size-4" />
