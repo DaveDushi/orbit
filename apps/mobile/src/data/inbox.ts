@@ -1,8 +1,11 @@
 import type { NotificationRecord } from './orbit'
 
-/** Where a notification leads in the app: its conversation, page or task, as on the web. */
+/** Where a notification leads in the app: the chat message in its conversation, the page or the task, as on the web. */
 export function notificationTarget(notification: NotificationRecord): string | null {
-  if (notification.kind === 'chat_mentioned' && notification.chat_conversation_id) return `/chat/${notification.chat_conversation_id}`
+  if (notification.kind === 'chat_mentioned' && notification.chat_conversation_id) {
+    const message = notification.chat_message_id ? `?message=${encodeURIComponent(notification.chat_message_id)}` : ''
+    return `/chat/${notification.chat_conversation_id}${message}`
+  }
   if (notification.page_id) return `/docs/${notification.page_id}`
   return notification.task_id ? `/tasks/${notification.task_id}` : null
 }
