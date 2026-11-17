@@ -23,6 +23,8 @@ import {
   MilestoneChoices,
   PeopleChoices,
   PriorityChoices,
+  ProjectChoices,
+  RecurrenceForm,
   SourceForm,
   StatusChoices,
   DocChoices,
@@ -35,6 +37,7 @@ import { relativeAgo } from '../../../data/format'
 import { keys } from '../../../data/keys'
 import * as api from '../../../data/orbit'
 import type { GithubLink } from '@orbit/api/generated/types.gen'
+import { recurrenceLabel } from '@orbit/api/recurrence'
 import { markdownToText } from '../../../data/markdown'
 import { BLOCK_KINDS, type BlockKind, type EditorCommand, type FormatState, IDLE_FORMAT, problemResponses, type ProblemResponse } from '../../../data/page-editor'
 import * as taskApi from '../../../data/task-api'
@@ -69,7 +72,7 @@ import { Avatar, Button, ErrorView, Icon, type IconName, IconButton, KeyboardVie
 
 /** The one sheet of the page and what it shows. */
 type TaskSheet =
-  | { kind: 'status' | 'priority' | 'assignees' | 'labels' | 'due' | 'milestone' | 'cycle' | 'estimate' | 'source' | 'parent-menu' | 'relation-menu' | 'attach' | 'pick-doc' }
+  | { kind: 'status' | 'priority' | 'assignees' | 'labels' | 'due' | 'milestone' | 'cycle' | 'estimate' | 'source' | 'parent-menu' | 'relation-menu' | 'attach' | 'pick-doc' | 'project' | 'repeat' }
   | { kind: 'pick-task'; purpose: 'parent' | 'sub-issue' | RelationKind }
 
 function sheetTitle(sheet: TaskSheet | null, subject: string): string {
@@ -101,6 +104,10 @@ function sheetTitle(sheet: TaskSheet | null, subject: string): string {
       return 'Attach'
     case 'pick-doc':
       return `Add a doc to ${subject}…`
+    case 'project':
+      return 'Move to project'
+    case 'repeat':
+      return 'Repeat'
     case 'pick-task':
       if (sheet.purpose === 'parent') return `Set parent of ${subject}…`
       if (sheet.purpose === 'sub-issue') return `Add a sub-issue to ${subject}…`
@@ -177,6 +184,12 @@ export default function TaskScreen() {
       void queryClient.invalidateQueries({ queryKey: taskKeys.followers(workspaceId, id) })
     },
     onError: (error) => Alert.alert(composing?.kind === 'edit' ? 'Could not save the comment' : 'Could not add the comment', errorMessage(error)),
+  })
+  const move = useMutation({
+    mutationFn: (target: api.ProjectRecord) => taskApi.moveToProject(client, workspaceId, task.data!, target.id),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: keys.tasks(workspaceId) }),
+    onSuccess: () => void task.refetch(),
+    onError: (error) => Alert.alert('Could not move the task', errorMessage(error)),
   })
   const deleteComment = useMutation({
     mutationFn: (comment: api.CommentRecord) => api.removeComment(client, workspaceId, comment),
@@ -539,7 +552,17 @@ export default function TaskScreen() {
                 </Pressable>
               )}
             </PropertyGroup>
-            <PropertyGroup title="Project">{project ? <Pill color={project.color} name={project.name} /> : <ChipText muted>—</ChipText>}</PropertyGroup>
+            <PropertyGroup title="Project">
+              {lockedByGithub ? (
+                project ? <Pill color={project.color} name={project.name} /> : <ChipText muted>—</ChipText>
+              ) : (
+                <View className="-ml-2 flex-row">
+                  <Chip label={`Project: ${project?.name ?? 'none'}, move to another project`} onPress={() => sheets.open({ kind: 'project' })}>
+                    {project ? <Pill color={project.color} name={move.isPending ? 'Moving…' : project.name} /> : <ChipText muted>—</ChipText>}
+                  </Chip>
+                </View>
+              )}
+            </PropertyGroup>
             <PropertyGroup title="Source">
               {current.source_url ? (
                 <Pressable accessibilityRole="link" accessibilityLabel={`Open source ${current.source_url}`} onPress={() => void openURL(current.source_url!)} className="max-w-full flex-row items-center gap-1 h-7">
@@ -585,6 +608,14 @@ export default function TaskScreen() {
                 <Chip label={cycle ? `Cycle: ${cycleText}` : 'Add to cycle'} onPress={() => sheets.open({ kind: 'cycle' })}>
                   <Icon name="refresh" size={14} color={cycle ? colors.foreground : colors.mutedForeground} />
                   <ChipText muted={!current.cycle_id}>{cycleText}</ChipText>
+                </Chip>
+              </View>
+            </PropertyGroup>
+            <PropertyGroup title="Repeat">
+              <View className="-ml-2 flex-row">
+                <Chip label={`Repeat: ${recurrenceLabel(current.recurrence)}`} onPress={() => sheets.open({ kind: 'repeat' })}>
+                  <Icon name="repeat" size={14} color={current.recurrence ? colors.foreground : colors.mutedForeground} />
+                  <ChipText muted={!current.recurrence}>{recurrenceLabel(current.recurrence)}</ChipText>
                 </Chip>
               </View>
             </PropertyGroup>
@@ -759,6 +790,24 @@ export default function TaskScreen() {
             onSelect={(pageId) => {
               sheets.close()
               docLinks.link.mutate(pageId)
+            }}
+          />
+        ) : null}
+        {sheet?.kind === 'project' ? (
+          <ProjectChoices
+            value={current.project_id}
+            onSelect={(target) => {
+              sheets.close()
+              if (target.id !== current.project_id) move.mutate(target)
+            }}
+          />
+        ) : null}
+        {sheet?.kind === 'repeat' ? (
+          <RecurrenceForm
+            value={current.recurrence}
+            onSave={(recurrence) => {
+              sheets.close()
+              write.mutate({ recurrence })
             }}
           />
         ) : null}
