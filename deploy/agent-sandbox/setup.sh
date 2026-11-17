@@ -75,7 +75,7 @@ if [ "$UNINSTALL" = 1 ]; then
 	nft delete table inet "${NAME//-/_}" 2>/dev/null || true
 	for m in /run/$NAME/mnt/* /run/$NAME/runsc/null-netns; do mountpoint -q "$m" 2>/dev/null && umount -l "$m"; done
 	rm -rf "$LIB" "$STATE" "$CONF" "/run/$NAME"
-	case "$KEY" in "$CONF"/*) ;; *) echo "kept the key $KEY" ;; esac
+	case "$KEY" in "$CONF"/*) ;; *) [ ! -e "$KEY" ] || echo "kept the key $KEY" ;; esac
 	systemctl daemon-reload
 	echo "removed $NAME"
 	exit 0
