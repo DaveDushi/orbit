@@ -55,30 +55,27 @@ Orbit pins 1.97.1), `Cargo.lock` and `target/`.
     It installs nothing itself: the person runs the new installer. It works only on the saved server's own
     pages: `orbit.wellrox.com` redirects to `orbit.easytomanage.com` since 2026-11-12, so 0.1.4 loads that saved
     server as the new one (`settings.rs` `MOVED`); before, those apps saw no update, notification or badge.
-- **Voice input** (the mic in the chat composer) is the web app's own: the web view's `webkitSpeechRecognition`, no
-  native code. Windows: WebView2 has it (Microsoft's online speech service, like Edge). The app allows the
-  microphone for the server's origin (`src/microphone.rs`): it saves "allow" in the WebView2 profile at each start,
-  which also clears a saved "Block" (up to 0.1.3 the app did not answer, a refused or missed WebView2 prompt stayed
-  saved, and the page got `not-allowed`), and it allows the requests of the server's own pages; other origins keep
-  WebView2's prompt. Windows' own switch (Settings → Privacy & security → Microphone → "Let desktop apps access your
-  microphone") still decides above it. WebView2 runtimes 153+ send speech to a new service that refuses it
-  (HTTP 403, the page gets `network`;
-  [WebView2Feedback#5724](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5724)): up to 0.1.4 voice input
-  never worked on Windows. Since 0.1.5 every web view starts with
-  `--disable-features=…,msSpeechRecognitionServiceUseCetoService` (`signin::WEBVIEW2_ARGS`, with wry's default
-  flags), so WebView2 uses the older Edge speech service. If Microsoft retires that one too, the web app says the
-  speech service could not be reached.
-  When the recognizer says `not-allowed`, the web app asks for the microphone itself (`getUserMedia`). This raises
-  WebView2's normal microphone request, which the app allows and saves. If the microphone works, it tries once more.
-  If not, the toast names the cause (system block, app/browser block, no microphone, or a speech refusal), the error
-  text and the app version (`__orbitDesktop.app`; an app before 0.1.6 gives none).
+- **Voice input** (the mic in the chat composer). Windows: WebView2's `webkitSpeechRecognition` does not work in the
+  app. Up to 0.1.4 it failed with `network` (runtime 153+ sends speech to a service that answers 403,
+  [WebView2Feedback#5724](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5724); 0.1.5 turned that off with
+  `signin::WEBVIEW2_ARGS`). On a Windows 11 PC with 0.1.6 it still gave `not-allowed` without any WebView2
+  permission request and without opening the microphone. So since 0.1.7 the bridge script replaces the page's
+  `SpeechRecognition`/`webkitSpeechRecognition` with a class that runs on Windows' own recognizer
+  (`src/speech.rs`, `Windows.Media.SpeechRecognition`: dictation, continuous, live partial results, the page's
+  language or the nearest one Windows has). The web app's code stays the same. Windows' dictation needs Settings →
+  Privacy & security → Speech → "Online speech recognition". Without it, Windows refuses with `0x80045509`, and the
+  page says where to turn it on (the `message` of a `service-not-allowed` error). Every step (language, compile and
+  end status, Windows errors, never the words) goes to the diagnostics log. The app still saves "allow" for the
+  microphone of the server's origin in WebView2 (`src/microphone.rs`), for `getUserMedia`. When the recognizer says
+  `not-allowed`, the web app checks the microphone itself (`getUserMedia`) and tries once more, and the toast names
+  the cause, the error text and the app version (`__orbitDesktop.app`). macOS: WKWebView uses Apple's speech
+  recognition and needs `NSMicrophoneUsageDescription` and `NSSpeechRecognitionUsageDescription` in
+  `packaging/macos/Info.plist`; wry grants the media capture, macOS asks. Linux (WebKitGTK) has no recognizer: the
+  mic shows "not available".
 - **Diagnostics log** (tray → "Open diagnostics log", `<local app data>/orbit-desktop/diagnostics.log`, 64 KB max):
   start lines (version, server), the WebView2 runtime version, the saved microphone permission, every WebView2
   permission request (kind, page, answer) and the page's voice input errors (`__orbitDesktop.log`). No message text
-  and no cookies. The update check runs at the start and every 6 hours (before 0.1.6: at the start only). macOS: WKWebView uses Apple's speech recognition and needs
-  `NSMicrophoneUsageDescription` and `NSSpeechRecognitionUsageDescription` in `packaging/macos/Info.plist` (an
-  older build without them gets `not-allowed`: the crossed-out mic); wry grants the media capture, macOS asks.
-  Linux (WebKitGTK) has no recognizer: the mic shows "not available".
+  and no cookies. The update check runs at the start and every 6 hours (before 0.1.6: at the start only).
 - **Downloads.** Every download goes to the Downloads folder (the home folder when there is none), with
   " (2)", " (3)" … when the name is taken; a notification says where. No save dialog.
 - **One instance.** The first start locks `<data dir>/orbit-desktop/instance.lock` and listens on a loopback

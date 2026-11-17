@@ -147,10 +147,11 @@ export function createDictation(Recognition: RecognitionConstructor | null, io: 
         recognition.abort()
         recheck(Speech, event.message ?? '', retried)
       } else if (event.error === 'service-not-allowed' || event.error === 'language-not-supported') {
+        // The Windows app's recognizer says what to turn on in `message`.
         set('unavailable')
-        io.notice('unavailable')
-      } else if (event.error === 'audio-capture') io.notice('no-microphone')
-      else if (event.error === 'network') io.notice('network')
+        io.notice('unavailable', event.message || undefined)
+      } else if (event.error === 'audio-capture') io.notice('no-microphone', event.message || undefined)
+      else if (event.error === 'network') io.notice('network', event.message || undefined)
       else if (event.error !== 'aborted' && event.error !== 'no-speech') io.notice('failed', event.message || event.error)
     }
     // Every dictation ends here: a stop, an error, or the recognizer's own end after a silence.

@@ -212,6 +212,16 @@ describe('createDictation', () => {
     expect(field.notices).toEqual(['unavailable', 'network'])
   })
 
+  // The Windows app's recognizer explains what to turn on ("Online speech recognition").
+  test('an error with a text passes the text on', () => {
+    const { field, dictation, recognition } = setup()
+    dictation.toggle()
+    recognition().onerror?.({ error: 'service-not-allowed', message: 'Turn on Online speech recognition.' })
+    recognition().end()
+    expect(field.notices).toEqual(['unavailable'])
+    expect(field.details).toEqual(['Turn on Online speech recognition.'])
+  })
+
   test('without a recognizer a tap only explains', () => {
     FakeRecognition.last = null
     const { field, dictation } = setup('typed', null)

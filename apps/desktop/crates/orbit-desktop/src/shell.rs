@@ -43,6 +43,9 @@ enum UserEvent {
     /// A second start of the app (see `instance.rs`).
     Show,
     Downloaded { path: Option<PathBuf>, ok: bool },
+    /// Words, an error or the end of a dictation on Windows' recognizer (`speech.rs`), as JSON for the page.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Speech(String),
 }
 
 struct TrayMenu {
@@ -126,6 +129,8 @@ pub fn run(hidden: bool, mut instance: Option<Instance>) -> ! {
     let mut tray: Option<TrayIcon> = None;
     let mut unread = Unread::default();
     let mut update_url: Option<String> = None;
+    #[cfg(windows)]
+    let mut dictation = crate::speech::Dictation::default();
     // The start page is showing: only it may pick a server (it has no URL of its own).
     let mut picking = server.is_none();
 
@@ -246,8 +251,20 @@ pub fn run(hidden: bool, mut instance: Option<Instance>) -> ! {
                         }
                     }
                     Message::Log(text) => diagnostics::log(&format!("page: {text}")),
+                    #[cfg(windows)]
+                    Message::Speech(command) => {
+                        let proxy = std::sync::Mutex::new(proxy.clone());
+                        dictation.handle(command, move |event| {
+                            let _ = proxy.lock().map(|p| p.send_event(UserEvent::Speech(event.to_string())));
+                        });
+                    }
+                    #[cfg(not(windows))]
+                    Message::Speech(_) => {}
                     Message::Server(_) => {}
                 }
+            }
+            Event::UserEvent(UserEvent::Speech(json)) => {
+                let _ = webview.evaluate_script(&format!("window.__orbitDesktop && window.__orbitDesktop.speech({json})"));
             }
             Event::UserEvent(UserEvent::NewWindow(url)) => follow(server.as_ref(), &webview, &url),
             Event::UserEvent(UserEvent::Title(title)) => {

@@ -8,9 +8,11 @@
 // - The update check: `/downloads/desktop/latest.json`, read with the page's own gateway cookies, at the start and
 //   every 6 hours (the app often runs for days).
 // - `__orbitDesktop.app` (the app's version) and `.log(text)` (a line in the diagnostics log), for voice input reports.
+// - Windows: `SpeechRecognition` runs on Windows' own recognizer in the app (src/speech.rs); WebView2's refuses.
 (() => {
   const ORIGIN = __ORBIT_ORIGIN__
   const APP = __ORBIT_APP_VERSION__
+  const NATIVE_SPEECH = __ORBIT_NATIVE_SPEECH__
   if (location.origin !== ORIGIN || location.pathname.startsWith('/__exe.dev') || window.__orbitDesktop) return
   const post = (message) => {
     try {
@@ -67,7 +69,61 @@
       location.assign(url)
     }
   }
-  Object.defineProperty(window, '__orbitDesktop', { value: Object.freeze({ version: 1, app: APP, clicked, log: (text) => post({ kind: 'log', text: String(text) }) }) })
+  // The part of the Web Speech API that the web app's voice input uses (`continuous`, `interimResults`): the app
+  // sends `partial` and `final` words, `error` (a Web Speech error code and a text) and `end` for each `id`.
+  const dictations = new Map()
+  let nextDictation = 1
+  class DesktopSpeechRecognition {
+    constructor() {
+      Object.assign(this, { lang: '', continuous: false, interimResults: false, onresult: null, onerror: null, onend: null })
+      this._id = 0
+      this._finals = []
+    }
+    start() {
+      if (this._id) throw new DOMException('Voice input is already running.', 'InvalidStateError')
+      this._id = nextDictation++
+      this._finals = []
+      dictations.set(this._id, this)
+      post({ kind: 'speech', action: 'start', id: this._id, lang: this.lang || navigator.language })
+    }
+    stop() {
+      if (this._id) post({ kind: 'speech', action: 'stop', id: this._id })
+    }
+    abort() {
+      if (!this._id) return
+      post({ kind: 'speech', action: 'abort', id: this._id })
+      this._end()
+    }
+    _end() {
+      dictations.delete(this._id)
+      this._id = 0
+      if (typeof this.onend === 'function') this.onend()
+    }
+    _event(event) {
+      if (event.type === 'final' || event.type === 'partial') {
+        if (event.type === 'final') this._finals.push(event.text)
+        const results = this._finals.map((transcript) => ({ isFinal: true, length: 1, 0: { transcript } }))
+        if (event.type === 'partial' && this.interimResults) results.push({ isFinal: false, length: 1, 0: { transcript: event.text } })
+        if (typeof this.onresult === 'function') this.onresult({ resultIndex: 0, results })
+      } else if (event.type === 'error') {
+        if (typeof this.onerror === 'function') this.onerror({ error: event.error, message: event.message || '' })
+      } else if (event.type === 'end') {
+        this._end()
+      }
+    }
+  }
+  const speech = (event) => {
+    const dictation = event && dictations.get(event.id)
+    if (dictation) dictation._event(event)
+  }
+  if (NATIVE_SPEECH) {
+    window.SpeechRecognition = DesktopSpeechRecognition
+    window.webkitSpeechRecognition = DesktopSpeechRecognition
+  }
+
+  Object.defineProperty(window, '__orbitDesktop', {
+    value: Object.freeze({ version: 1, app: APP, clicked, speech, log: (text) => post({ kind: 'log', text: String(text) }) }),
+  })
 
   navigator.setAppBadge = (count) => {
     post({ kind: 'badge', count: count === undefined ? null : Number(count) })

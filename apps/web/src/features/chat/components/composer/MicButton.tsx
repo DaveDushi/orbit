@@ -42,11 +42,14 @@ function explain(notice: VoiceNotice, detail?: string) {
   if (notice === 'denied' || notice === 'denied-system' || notice === 'speech-refused') {
     toast.error(notice === 'speech-refused' ? 'Voice input was refused' : 'Microphone access is off', { description: withDetails(deniedHelp(notice), detail), duration: 15_000 })
   } else if (notice === 'unavailable') {
-    toast.error('Voice input is not available', { description: 'This browser has no speech recognition. Use Chrome, Edge or Safari, or the Orbit app on Windows or a Mac.' })
+    toast.error('Voice input is not available', {
+      description: detail ? withDetails(detail) : 'This browser has no speech recognition. Use Chrome, Edge or Safari, or the Orbit app on Windows or a Mac.',
+      duration: detail ? 15_000 : undefined,
+    })
   } else if (notice === 'no-microphone') {
     toast.error('No microphone found', { description: withDetails('Connect a microphone and try again.', detail) })
   } else if (notice === 'network') {
-    toast.error('Voice input stopped', { description: withDetails('The speech service could not be reached. Try again later.') })
+    toast.error('Voice input stopped', { description: withDetails(detail ?? 'The speech service could not be reached. Try again later.') })
   } else {
     toast.error('Voice input stopped', { description: withDetails('', detail) || undefined })
   }
