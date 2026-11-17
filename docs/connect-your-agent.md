@@ -9,8 +9,8 @@ approve.
 - A member account (owner, admin or member). Guests cannot connect agents.
 - The **MCP address** of your Orbit. When Orbit is behind a login gateway, the administrator sets a separate public
   address for agents (`ORBIT_PUBLIC_MCP_URL`, see [Operations](operations.md#configuration)), for example
-  `https://orbit-hooks.example.com/mcp`. Without that setting, use `<your Orbit address>/mcp`. Note: the commands
-  in **Settings → Agentic** show the main Orbit address. Replace it with the MCP address.
+  `https://orbit-hooks.example.com/mcp`. Without that setting, use `<your Orbit address>/mcp`. **Settings → Agentic
+  → MCP server** shows this address and the Codex and Claude Code commands below with it, ready to copy.
 - A browser on the same computer, signed in to Orbit. The agent opens Orbit's consent page there.
 
 The agent does not use a password or an API token. It signs in with OAuth: you approve it once in the browser, and

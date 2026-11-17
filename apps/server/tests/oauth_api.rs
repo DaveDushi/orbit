@@ -494,6 +494,7 @@ async fn access_expiry_refresh_and_user_disconnect_work_after_state_recreation()
             .is_some()
     );
     let (_, grants) = f.send("GET", "/api/v1/oauth/grants", json!({}), true).await;
+    assert_eq!(grants["mcp_url"], Value::Null);
     let id = grants["items"][0]["id"].as_str().unwrap();
     assert_eq!(
         f.send(
@@ -1329,6 +1330,9 @@ async fn the_mcp_origin_has_its_own_issuer_and_resource_and_binds_its_tokens() {
     .await;
     assert_eq!(resource["resource"], "https://mcp.orbit.test/mcp");
     assert_eq!(resource["authorization_servers"], json!([MCP_ORIGIN]));
+    // Settings → Agentic shows this address, which reaches Orbit past the login gateway.
+    let (_, grants) = f.send("GET", "/api/v1/oauth/grants", json!({}), true).await;
+    assert_eq!(grants["mcp_url"], "https://mcp.orbit.test/mcp");
     // The challenge points an agent at the metadata of the origin it used.
     let (status, challenge) = mcp_on(&f, "mcp.orbit.test", "orbit-mcp-a-unknown").await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);

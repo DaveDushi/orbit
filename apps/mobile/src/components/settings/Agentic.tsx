@@ -1,5 +1,6 @@
 import { router, useLocalSearchParams } from 'expo-router'
-import { mcpClientCommands, mcpUrl } from '@orbit/api/mcp'
+import { mcpSetup } from '@orbit/api/mcp'
+import * as WebBrowser from 'expo-web-browser'
 import { View } from 'react-native'
 
 import { AgentConnection } from '../agentic/AgentConnection'
@@ -64,8 +65,8 @@ function McpSetup() {
   const { session } = useOrbit()
   const connections = useOAuthConnections()
   const disconnect = useDisconnectOAuth()
-  const url = mcpUrl(session.server)
-  const list = connections.data ?? []
+  const { url, commands, guide } = mcpSetup(session.server, connections.data?.mcp_url)
+  const list = connections.data?.items ?? []
   return (
     <>
       <SettingsCard title="MCP server" description="AI clients such as Claude, Codex and Grok can use tasks and read docs and chat through this address. Sign in with your Orbit account and select the workspace, the projects and the permissions.">
@@ -74,13 +75,14 @@ function McpSetup() {
 
       <SettingsCard title="Connect a client" description="Run the command for your client in a terminal. Then sign in to Orbit in the browser, select the projects and permissions, then allow access.">
         <View className="gap-4">
-          {mcpClientCommands(url).map((entry) => (
+          {commands.map((entry) => (
             <View key={entry.client} className="gap-1.5">
               <Text className="text-[13px] font-medium">{entry.client}</Text>
               <Code text={entry.command} />
               <Text className="text-xs text-muted-foreground">{entry.signIn}</Text>
             </View>
           ))}
+          {guide ? <Text className="text-xs text-muted-foreground">Step by step: <Text className="text-xs text-foreground underline" onPress={() => void WebBrowser.openBrowserAsync(guide)}>Connect your agent</Text>.</Text> : null}
           <Text className="text-xs text-muted-foreground">For a remote server, run claude mcp login orbit --no-browser or codex mcp login orbit --no-browser. Open the printed link in your browser, select “Client runs on a remote server”, then copy the callback URL into your terminal.</Text>
           <Text className="text-xs text-muted-foreground">A client that cannot sign in with OAuth can send an API token with selected permissions instead. A workspace admin creates it in Settings → API tokens.</Text>
         </View>

@@ -1,5 +1,5 @@
 import { Link, Navigate, Outlet, useLocation, useNavigate } from 'react-router'
-import { mcpClientCommands, mcpUrl } from '@orbit/api/mcp'
+import { mcpSetup } from '@orbit/api/mcp'
 import { SettingsCard } from '@/components/common/SettingsCard'
 import { CopyCodeButton } from '@/components/common/CopyCodeButton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -13,6 +13,7 @@ import { TeamInstructionsPage } from '@/features/agent/TeamInstructionsPage'
 import { useAgentStatus } from '@/features/agent/api'
 import { AgentToolsPage } from '@/features/agentIntegrations/AgentToolsPage'
 import { OAuthConnections } from '@/features/auth/components/OAuthConnections'
+import { useOAuthGrants } from '@/features/auth/oauth'
 import { AGENTIC_TABS, agenticTabsView } from '../settingsNav'
 
 /** The page's sections, as tabs. One tab needs no bar. Each section keeps the access check it always had. */
@@ -83,7 +84,7 @@ export function AgenticSkills() {
 }
 
 function McpSetup() {
-  const url = mcpUrl(window.location.origin)
+  const { url, commands, guide } = mcpSetup(window.location.origin, useOAuthGrants().data?.mcp_url)
   return (
     <>
       <SettingsCard title="MCP server" description="AI clients such as Claude, Codex and Grok can use tasks and read docs and chat through this address. Sign in with your Orbit account and select the workspace, the projects and the permissions.">
@@ -91,13 +92,14 @@ function McpSetup() {
       </SettingsCard>
       <SettingsCard title="Connect a client" description="Run the command for your client in a terminal. Then sign in to Orbit in the browser, select the projects and permissions, then allow access.">
         <div className="flex flex-col gap-4">
-          {mcpClientCommands(url).map((entry) => (
+          {commands.map((entry) => (
             <div key={entry.client} className="flex flex-col gap-1.5">
               <p className="text-[13px] font-medium text-foreground">{entry.client}</p>
               <CodeBlock text={entry.command} />
               <p className="text-xs text-muted-foreground">{entry.signIn}</p>
             </div>
           ))}
+          {guide ? <p className="text-xs text-muted-foreground">Step by step: <a href={guide} target="_blank" rel="noreferrer" className="text-foreground underline underline-offset-2">Connect your agent</a>.</p> : null}
           <p className="text-xs text-muted-foreground">For a remote server, run claude mcp login orbit --no-browser or codex mcp login orbit --no-browser. Open the printed link in your browser, select “Client runs on a remote server”, then copy the callback URL into your terminal.</p>
           <p className="text-xs text-muted-foreground">
             A client that cannot sign in with OAuth can send an API token with selected permissions instead. A workspace admin creates it in{' '}
