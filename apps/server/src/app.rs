@@ -349,7 +349,8 @@ impl App {
             app_key,
         )
         .with_drive(drive.clone(), &config.http.public_origin)
-        .with_public_origin(&config.http.public_origin);
+        .with_public_origin(&config.http.public_origin)
+        .with_sandbox(crate::agent::sandbox::SandboxKeys::from_env().map_err(AppError::Config)?);
         let scheduled = agent.clone();
         let chat = ChatState::new(
             Arc::clone(&identity),
