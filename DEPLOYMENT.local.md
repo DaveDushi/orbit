@@ -7,8 +7,9 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, `main` at 1bfcececcd628467eb9bab004623627a387f9056
-  (iPhone live sockets allowed from their own host, desktop 0.1.5; schema 20261115105242, 119 rows; November 17, 2026).
+- Source: DaveDushi/orbit, commit c21ec383437d6690bcc5a0fe05ea8f7d3ca6544c on `main`
+  (Settings → Agentic MCP server card shows `ORBIT_PUBLIC_MCP_URL`, web mic fix of desktop 0.1.6; schema 20261115105242,
+  119 rows; November 17, 2026). `main` after it also has `03d57172` (desktop 0.1.7, small web toast change): not deployed.
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
   f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
@@ -18,9 +19,9 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   MCP routes through the hooks gateway (`/etc/orbit-hooks-gateway/nginx.conf`, proposal `/tmp/mcpo/gateway/proposal.diff`).
   Binaries before d8d3eb4 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-d8d3eb4`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:1bfcece`); fork commits have no published upstream image.
-- Image ID: sha256:854480cc702b1a25ab5c9d4fc0c03f9f35a30b3c2b66b95d4436600819841a23
-- Team agent sidecar code (`/opt/orbit-agent`): commit 1bfcece.
+  (`orbit:c21ec38`); fork commits have no published upstream image.
+- Image ID: sha256:ce8197d59b52b44e51d93e2fcbe1621f04de8426143c4bf65d79871340c37e35
+- Team agent sidecar code (`/opt/orbit-agent`): commit c21ec38.
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): on since November 15, 2026, 12:07 UTC (set by Ops, outside a
   deploy): `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID`, `ORBIT_APNS_TOPIC` and `ORBIT_APNS_SANDBOX`
   are in `/etc/orbit/orbit.env`; the journal shows `iPhone push (APNs) is on` (topic `com.easytomanage.orbit`, sandbox
@@ -267,6 +268,66 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 17, 2026 upgrade: Settings → Agentic MCP address and the web mic fix (no migration)
+
+`main` from `22ff461e` to `c21ec383` (deployed): `12a64e09` (merge of `origin/main` `fc4a2428`: desktop 0.1.6 and the web
+mic fix: after `not-allowed` the dictation checks the microphone with `getUserMedia`, retries once, and the toast names
+the cause, the error text and the app version), `5e5241dc` (`--no-ff` merge of `agentic-mcp-address` at `2fdcc97d`; no
+conflicts: `GET /api/v1/oauth/grants` returns `mcp_url` (`<ORBIT_PUBLIC_MCP_URL>/mcp` or null), and Settings → Agentic
+(web and iPhone) shows that address, the Codex and Claude Code commands and a link to `docs/connect-your-agent.md`),
+`c21ec383` (what's new 2026-11-17: the MCP server card line, moved from the 2026-11-16 entry, and a voice input line).
+`aboutOrbit()` already had both changes. After the switch, `origin/main` got `03d57172` (desktop 0.1.7; web: the
+recognizer's `message` in the toast; `aboutOrbit()` text): merged into `main` as `3e595aff` before the push, **not
+deployed** (production and the sidecar run `c21ec38`).
+
+Checks on `c21ec383`: `packages/api` tsc and `mcp.test.ts` (4 pass), web `tsc` and `voiceInput.test.ts` (16 pass), mobile
+`tsc --noEmit` clean, agent `tsc` and `prompt.test.ts` on Node 24 (5 pass), `cargo test -p orbit-server --test oauth_api`
+(17 pass; lean target dir removed after). After the `03d57172` merge: web `tsc -b`, `voiceInput.test.ts` (17 pass),
+`prompt.test.ts` (5 pass). Logs: `/root/ops/agentic-mcp/`.
+
+Deploy id `20261117T105105Z-2460901`. `orbit:c21ec38` (image
+`sha256:ce8197d59b52b44e51d93e2fcbe1621f04de8426143c4bf65d79871340c37e35`, ~40 min); `deploy/smoke.sh` and
+`orbit config check` passed. No-migration check (hot copy, and in the switch on a copy of the stopped database): 0
+applied, schema 20261115105242 (119 rows), counts, names and checksums unchanged, quick-check ok, 0 foreign-key rows.
+Built-bundle check before the switch (`pre/run.sh`: seeded dev instance in a network namespace with
+`ORBIT_PUBLIC_MCP_URL=https://orbit-hooks.easytomanage.com`): `mcp_url` and the card show
+`https://orbit-hooks.easytomanage.com/mcp`, the Codex command and the guide link; the chat mic button renders (crossed
+out: headless Chromium has no microphone); no page or console errors.
+
+Switch: stopped both services at 11:52:53 UTC; snapshot `01a1e95a-531b-70bf-9d43-5b9e46902c26` with
+`/usr/local/bin/orbit-1bfcece`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-c21ec38.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-c21ec38.tgz`; sidecar code copied (old `/opt/orbit-agent.before-c21ec38`);
+no env change. `orbit` and `orbit-agent` ready 11:53:06 (13 s down). `vm-health.conf` (old copy `.before-c21ec38`):
+`PROD_TAG=c21ec38`, `ROLLBACK_TAG=1bfcece`, `ROLLBACK_BACKUP=01a1e95a-531b-70bf-9d43-5b9e46902c26`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) local and on
+`https://orbit-app.easytomanage.com/health/ready`; `/orbit-build.json` revision `c21ec383…`; sidecar `/health` ok; APNs on.
+Signed-in browser check on production (`ui-check.ts`, temporary session for David Dusi, writes blocked, logged out after:
+204, row revoked): Home, Chat, Tasks, Docs and Settings → Agentic render with no page or console errors; the MCP server
+card shows `https://orbit-hooks.easytomanage.com/mcp` with the Codex and Claude Code commands and the guide link; the chat
+mic button renders. Screenshot
+`/root/.local/share/com.jean.desktop/pasted-images/connect-your-agent/agentic-mcp-card-prod.png`. `vm-health` OK except
+nginx (connection-refused lines of the switch at 11:53; 0 5xx) and git-owner (fixed after). Desktop 0.1.6 downloads not
+touched.
+
+Rollback to `1bfcece` (no schema change, no env change, so no data is lost):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo rm -rf /opt/orbit-agent/src && sudo cp -a /opt/orbit-agent.before-c21ec38/src /opt/orbit-agent/src
+sudo install -m 755 /usr/local/bin/orbit-1bfcece /usr/local/bin/orbit
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/agentic-mcp/rollback.sh)
+# Way 2, only for a data problem (work after 11:52 UTC is lost), Orbit stopped: /usr/local/bin/orbit-1bfcece backup verify +
+#   backup restore 01a1e95a-531b-70bf-9d43-5b9e46902c26 (as user orbit), then the lines above
+```
+
+After this rollback, set `PROD_TAG=1bfcece`, `ROLLBACK_TAG=4ba4e2e`,
+`ROLLBACK_BACKUP=01a1e8cf-d020-74cb-91b0-bf8e8443df3c` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-c21ec38`).
 
 ### November 17, 2026 iPhone build 17: iPhone parity (TestFlight internal; no server change)
 
