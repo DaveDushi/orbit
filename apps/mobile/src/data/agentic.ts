@@ -6,7 +6,7 @@ import { AGENT_DEFAULT_CHOICE as DEFAULT, ANSWER_LEVELS, type AgentProfile, type
 import type { AgentSkill } from '@orbit/api/agentSkills'
 import { ApiProblem } from '@orbit/api/problem'
 import type { Routine, RoutineChange, Script } from '@orbit/api/scheduled'
-import type { ConversationRecord, Permission } from '@orbit/api/generated/types.gen'
+import type { ConversationRecord } from '@orbit/api/generated/types.gen'
 
 import { multipart, type UploadFile } from './account-api'
 import type { OrbitClient } from './orbit'
@@ -31,25 +31,6 @@ export function agenticTabs(agent: boolean, personal: boolean): { value: Agentic
 /** The tab a link asks for (`?tab=routines`), when this person has it; else You. */
 export function pickedTab(tabs: readonly { value: AgenticTab }[], wanted: string | undefined): AgenticTab {
   return tabs.find((tab) => tab.value === wanted)?.value ?? 'you'
-}
-
-/** A setup page that stays on the web: the app opens it in an in-app browser. */
-export interface WebSetupLink {
-  path: string
-  label: string
-  description: string
-}
-
-/**
- * The rare admin pages the app does not rebuild, with the web's own access rules: agent tools for
- * `integrations.manage`. API tokens have their own screen.
- */
-export function webSetupLinks(permissions: readonly Permission[], agent: boolean): WebSetupLink[] {
-  return [
-    ...(agent && permissions.includes('integrations.manage')
-      ? [{ path: '/settings/agentic/workspace', label: 'Agent tools', description: 'Connect MCP servers and HTTP APIs that agents may use.' }]
-      : []),
-  ]
 }
 
 /** The tool that calls connected services: on exactly when a service is ticked, so it is not in the tool list. */

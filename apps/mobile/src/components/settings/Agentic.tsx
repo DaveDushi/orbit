@@ -3,6 +3,7 @@ import { mcpClientCommands, mcpUrl } from '@orbit/api/mcp'
 import { View } from 'react-native'
 
 import { AgentConnection } from '../agentic/AgentConnection'
+import { AgentToolsCard } from '../agentic/AgentTools'
 import { AgentMemory } from '../agentic/AgentMemory'
 import { AgentsCard } from '../agentic/Agents'
 import { DefaultModelCard } from '../agentic/DefaultModel'
@@ -40,7 +41,12 @@ export function AgenticScreen({ title, nav, personal = false }: { title: string;
           {agent ? <AgentMemory /> : null}
         </>
       ) : null}
-      {section === 'workspace' ? <TeamInstructions /> : null}
+      {section === 'workspace' ? (
+        <>
+          <TeamInstructions />
+          <AgentToolsCard />
+        </>
+      ) : null}
       {section === 'agents' ? (
         <>
           <AgentsCard />

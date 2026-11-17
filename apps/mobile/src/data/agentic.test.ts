@@ -20,7 +20,6 @@ import {
   skillAgents,
   skillDraftReady,
   timeZoneChoices,
-  webSetupLinks,
 } from './agentic'
 
 describe('agenticTabs', () => {
@@ -41,17 +40,6 @@ describe('agenticTabs', () => {
     expect(pickedTab(agenticTabs(true, false), 'routines')).toBe('routines')
     expect(pickedTab(agenticTabs(true, false), 'admin')).toBe('you')
     expect(pickedTab(agenticTabs(true, false), 'bots')).toBe('you')
-  })
-})
-
-describe('webSetupLinks', () => {
-  test('a member sees no admin setup pages', () => {
-    expect(webSetupLinks([], true)).toEqual([])
-  })
-
-  test('agent tools need their permission and the agent', () => {
-    expect(webSetupLinks(['integrations.manage', 'api_tokens.manage'], true).map((link) => link.label)).toEqual(['Agent tools'])
-    expect(webSetupLinks(['integrations.manage'], false)).toEqual([])
   })
 })
 
