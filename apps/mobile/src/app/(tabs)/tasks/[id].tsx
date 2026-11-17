@@ -10,7 +10,7 @@ import { useWorkspaceReadOnly } from '../../../components/BillingBanner'
 import { EditorToolbar } from '../../../components/docs/EditorToolbar'
 import { EditorView, useCaretFollow } from '../../../components/docs/EditorView'
 import type { PageEditorRef } from '../../../components/docs/PageEditor.dom'
-import { ActionSheet } from '../../../components/settings/Dialog'
+import { ActionSheet, type SheetAction } from '../../../components/settings/Dialog'
 import { Attachments, type ShownFile } from '../../../components/tasks/Attachments'
 import { type FileSource, pickFiles } from '../../../components/tasks/files'
 import {
@@ -127,6 +127,9 @@ export default function TaskScreen() {
   const [draftFiles, setDraftFiles] = useState<readonly DraftFile[]>([])
   const [unfolded, setUnfolded] = useState<readonly string[]>([])
   const [composingSubIssue, setComposingSubIssue] = useState(false)
+  /** The composer answers in a thread, or edits a comment, instead of starting a thread. */
+  const [composing, setComposing] = useState<{ kind: 'reply' | 'edit'; comment: api.CommentRecord } | null>(null)
+  const [menu, setMenu] = useState<SheetAction[] | null>(null)
 
   const task = useQuery({
     queryKey: keys.task(workspaceId, id),
@@ -161,16 +164,43 @@ export default function TaskScreen() {
   const caret = useCaretFollow(format)
 
   const sendComment = useMutation({
-    mutationFn: (body: string) => api.addComment(client, workspaceId, id, body),
+    mutationFn: (body: string) =>
+      composing?.kind === 'edit' ? api.editComment(client, workspaceId, composing.comment, body) : api.addComment(client, workspaceId, id, body, composing?.comment.id ?? null),
     onSuccess: (comment) => {
       setDraft('')
       setDraftFiles([])
-      queryClient.setQueryData<api.CommentRecord[]>(keys.comments(workspaceId, id), (list) => (list ? [...list, comment] : [comment]))
+      setComposing(null)
+      queryClient.setQueryData<api.CommentRecord[]>(keys.comments(workspaceId, id), (list) =>
+        !list ? [comment] : list.some((item) => item.id === comment.id) ? list.map((item) => (item.id === comment.id ? comment : item)) : [...list, comment],
+      )
       // the author and the members it mentions follow the task now
       void queryClient.invalidateQueries({ queryKey: taskKeys.followers(workspaceId, id) })
     },
-    onError: (error) => Alert.alert('Could not add the comment', errorMessage(error)),
+    onError: (error) => Alert.alert(composing?.kind === 'edit' ? 'Could not save the comment' : 'Could not add the comment', errorMessage(error)),
   })
+  const deleteComment = useMutation({
+    mutationFn: (comment: api.CommentRecord) => api.removeComment(client, workspaceId, comment),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: keys.comments(workspaceId, id) }),
+    onError: (error) => Alert.alert('Could not delete the comment', errorMessage(error)),
+  })
+  /** The web's comment buttons: reply in the thread, and edit or delete where the server allows it. */
+  const commentMenu = (comment: api.CommentRecord, root: api.CommentRecord): SheetAction[] => [
+    { label: 'Reply', icon: 'comment', onPress: () => setComposing({ kind: 'reply', comment: root }) },
+    ...(comment.can_edit
+      ? [{ label: 'Edit', icon: 'edit' as const, onPress: () => {
+          setComposing({ kind: 'edit', comment })
+          setDraft(comment.body)
+          setDraftFiles([])
+        } }]
+      : []),
+    ...(comment.can_delete
+      ? [{ label: 'Delete', icon: 'trash' as const, destructive: true, onPress: () =>
+          Alert.alert('Delete comment?', 'This cannot be undone.', [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Delete', style: 'destructive', onPress: () => deleteComment.mutate(comment) },
+          ]) }]
+      : []),
+  ]
 
   const trash = useMutation({
     mutationFn: (current: api.TaskRecord) => api.trashTask(client, workspaceId, current),
@@ -577,7 +607,7 @@ export default function TaskScreen() {
             ) : (
               feed.map((entry) =>
                 entry.kind === 'thread' ? (
-                  <Thread key={entry.thread.root.id} thread={entry.thread} nameOf={nameOf} filesOf={filesOf} />
+                  <Thread key={entry.thread.root.id} thread={entry.thread} nameOf={nameOf} filesOf={filesOf} onMenu={(comment) => setMenu(commentMenu(comment, entry.thread.root))} />
                 ) : (
                   <Timeline
                     key={entry.items[0]!.id}
@@ -593,6 +623,22 @@ export default function TaskScreen() {
                 ),
               )
             )}
+            {composing ? (
+              <View className="flex-row items-center gap-2 mt-2 -mb-1">
+                <Text numberOfLines={1} className="flex-1 text-[12px] text-muted-foreground">
+                  {composing.kind === 'edit' ? 'Editing your comment' : `Replying to ${nameOf(composing.comment.author_id)}`}
+                </Text>
+                <Button
+                  label="Cancel"
+                  size="xs"
+                  variant="ghost"
+                  onPress={() => {
+                    if (composing.kind === 'edit') setDraft('')
+                    setComposing(null)
+                  }}
+                />
+              </View>
+            ) : null}
             <CommentComposer
               value={draft}
               onChangeText={setDraft}
@@ -607,6 +653,7 @@ export default function TaskScreen() {
         </ScrollView>
         {format.focused && editable ? <EditorToolbar format={format} onCommand={run} onBlockMenu={() => setChoosingBlock(true)} onImage={() => void addImage()} /> : null}
       </KeyboardView>
+      <ActionSheet visible={menu !== null} actions={menu ?? []} onClose={() => setMenu(null)} />
       <ActionSheet
         visible={choosingBlock}
         title="Turn into"
@@ -877,7 +924,18 @@ function TimelineRow({ first, last, glyph, children }: { first: boolean; last: b
 }
 
 /** A comment and its replies in one card. */
-function Thread({ thread, nameOf, filesOf }: { thread: CommentThread; nameOf: (userId: string) => string; filesOf: (comment: api.CommentRecord) => ShownFile[] }) {
+function Thread({
+  thread,
+  nameOf,
+  filesOf,
+  onMenu,
+}: {
+  thread: CommentThread
+  nameOf: (userId: string) => string
+  filesOf: (comment: api.CommentRecord) => ShownFile[]
+  onMenu: (comment: api.CommentRecord) => void
+}) {
+  const { colors } = useTheme()
   /** A comment from GitHub shows its GitHub login; one from a service account its name. */
   const authorOf = (comment: api.CommentRecord) => comment.github_author_login ?? comment.author_service_account_name ?? nameOf(comment.author_id)
   return (
@@ -900,6 +958,8 @@ function Thread({ thread, nameOf, filesOf }: { thread: CommentThread; nameOf: (u
                 {relativeAgo(comment.created_at)}
                 {comment.updated_at !== comment.created_at ? ' (edited)' : ''}
               </Text>
+              <View className="flex-1" />
+              <IconButton icon="more" label={`Comment by ${authorOf(comment)}, options`} size={22} iconSize={13} color={alpha(colors.mutedForeground, 0.7)} onPress={() => onMenu(comment)} />
             </View>
             <CommentBody comment={comment} files={filesOf(comment)} />
           </View>

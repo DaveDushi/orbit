@@ -9,6 +9,7 @@ import {
   createTask,
   deleteChatMessage,
   deleteComment,
+  updateComment,
   deleteTask,
   getPage,
   getTask,
@@ -251,8 +252,14 @@ export function comments(client: OrbitClient, workspaceId: string, taskId: strin
   return allPages(async (cursor) => (await listComments({ client, path: { workspace_id: workspaceId, task_id: taskId }, query: { cursor, limit: 100 }, throwOnError: true })).data)
 }
 
-export async function addComment(client: OrbitClient, workspaceId: string, taskId: string, body: string): Promise<CommentRecord> {
-  return (await createComment({ client, path: { workspace_id: workspaceId, task_id: taskId }, body: { body }, throwOnError: true })).data
+/** A new comment, or a reply in the thread of `parentId` (a thread's first comment). */
+export async function addComment(client: OrbitClient, workspaceId: string, taskId: string, body: string, parentId: string | null = null): Promise<CommentRecord> {
+  return (await createComment({ client, path: { workspace_id: workspaceId, task_id: taskId }, body: { body, parent_id: parentId }, throwOnError: true })).data
+}
+
+/** Replaces a comment's text (markdown; the server rebuilds its blocks and notifies only newly mentioned members). */
+export async function editComment(client: OrbitClient, workspaceId: string, comment: CommentRecord, body: string): Promise<CommentRecord> {
+  return (await updateComment({ client, path: { workspace_id: workspaceId, task_id: comment.task_id, comment_id: comment.id }, body: { body, expected_version: comment.version }, throwOnError: true })).data
 }
 
 export async function removeComment(client: OrbitClient, workspaceId: string, comment: CommentRecord): Promise<void> {
