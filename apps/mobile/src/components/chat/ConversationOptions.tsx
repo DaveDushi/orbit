@@ -64,6 +64,8 @@ export function ConversationOptions({ conversation, title, placement, visible, o
         return entry('Members', 'people', () => router.push(`/chat/${id}/members`))
       case 'edit':
         return entry('Edit channel', 'edit', () => setNext('edit'))
+      case 'integrations':
+        return entry('Integrations', 'flash', () => router.push(`/chat/${id}/integrations`))
       case 'leave':
         return entry('Leave channel', 'logout', () => void leave())
       case 'archive':

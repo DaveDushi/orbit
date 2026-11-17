@@ -238,7 +238,7 @@ export function conversationPermissions(conversation: ConversationRecord, userId
 }
 
 /** What a conversation's `…` sheet offers, in order. The UI holds one label, icon and handler for each. */
-export type ConversationAction = 'mark-read' | 'favorite' | 'notify' | 'threads' | 'pins' | 'files' | 'members' | 'edit' | 'leave' | 'archive'
+export type ConversationAction = 'mark-read' | 'favorite' | 'notify' | 'threads' | 'pins' | 'files' | 'members' | 'edit' | 'integrations' | 'leave' | 'archive'
 
 /**
  * The web's `ConversationMenuItems`. The sidebar row has "Mark as read"; the conversation header has Threads, Pinned
@@ -256,7 +256,8 @@ export function conversationActions(
     if (placement === 'row' && (state.unread_count > 0 || state.mention_count > 0)) actions.push('mark-read')
     actions.push('favorite', 'notify')
   }
-  if (permissions.canManage) actions.push('edit')
+  // the web's Edit channel dialog has Settings and Integrations (incoming webhooks) tabs
+  if (permissions.canManage) actions.push('edit', 'integrations')
   if (permissions.canLeave) actions.push('leave')
   if (permissions.canArchive) actions.push('archive')
   return actions

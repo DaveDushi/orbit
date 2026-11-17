@@ -186,8 +186,8 @@ test('row and header sheets follow the web menu: a member of a private channel t
   const channel = conversation('secret', { kind: 'private', member_ids: ['me', 'ada'] })
   const permissions = conversationPermissions(channel, 'me', false)
   expect(permissions).toEqual({ canManage: true, canArchive: true, canLeave: true, canAddPeople: true, canRemovePeople: true })
-  expect(conversationActions('row', state('secret', { unread_count: 2 }), permissions)).toEqual(['mark-read', 'favorite', 'notify', 'edit', 'leave', 'archive'])
-  expect(conversationActions('header', state('secret', {}), permissions)).toEqual(['threads', 'pins', 'files', 'members', 'favorite', 'notify', 'edit', 'leave', 'archive'])
+  expect(conversationActions('row', state('secret', { unread_count: 2 }), permissions)).toEqual(['mark-read', 'favorite', 'notify', 'edit', 'integrations', 'leave', 'archive'])
+  expect(conversationActions('header', state('secret', {}), permissions)).toEqual(['threads', 'pins', 'files', 'members', 'favorite', 'notify', 'edit', 'integrations', 'leave', 'archive'])
 })
 
 test('#general: an admin edits it but cannot archive it or add people; a plain member only stars and mutes', () => {
