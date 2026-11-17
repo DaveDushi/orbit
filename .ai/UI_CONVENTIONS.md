@@ -58,7 +58,9 @@
 
 - The bottom dock is the primary global navigation; feature-owned headers replace the global topbar on Tasks, Docs, Mail, Chat, DMs, and Inbox.
 - Home keeps only Home, search, theme, and settings in its header. It intentionally has no New menu.
-- Dense list headers should use compact icon controls; the Tasks title doubles as the project picker.
+- Dense list headers should use compact icon controls. On the phone the Tasks title opens the view menu (All tasks, the presets, Saved views, Trash); the project picker sits beside the task search.
+- The phone has one Search screen (`/search`, from Home, Settings and the drawer): tasks, docs, chats and Drive by name, and a link to the message search. Chat and Drive keep their own in-place search; the Tasks field filters the list.
+- No area or page is reachable only from the drawer: each of its links also has a visible place on a screen (a header button, the title menu, or a bottom row like Trash in Docs and Drive).
 
 ## Attachments
 

@@ -19,12 +19,13 @@ import { ChatPane, MessagePreview } from './Pane'
 
 /**
  * Chat search with the web's filters: in one conversation (`conversationId`, from its header) or in all of them (the
- * chat list). A result opens the message where it is; the last searches wait under the field.
+ * chat list). A result opens the message where it is; the last searches wait under the field. `initialQuery` (from the
+ * app's Search) runs at once.
  */
-export function SearchScreen({ conversationId }: { conversationId?: string }) {
+export function SearchScreen({ conversationId, initialQuery = '' }: { conversationId?: string; initialQuery?: string }) {
   return (
     <ChatColorScope surface="page">
-      <SearchScreenContent id={conversationId} />
+      <SearchScreenContent id={conversationId} initialQuery={initialQuery.trim()} />
     </ChatColorScope>
   )
 }
@@ -48,14 +49,14 @@ function useRecentSearches() {
   return { list, add: (query: string) => save(withRecentSearch(list, query)), clear: () => save([]) }
 }
 
-function SearchScreenContent({ id }: { id: string | undefined }) {
+function SearchScreenContent({ id, initialQuery }: { id: string | undefined; initialQuery: string }) {
   const { user } = useOrbit()
   const { colors, scheme } = useTheme()
   const people = usePeople()
   const conversations = useConversations().data ?? []
   const words = useMessageText()
-  const [input, setInput] = useState('')
-  const [query, setQuery] = useState('')
+  const [input, setInput] = useState(initialQuery)
+  const [query, setQuery] = useState(initialQuery)
   const [thisConversation, setThisConversation] = useState(id !== undefined)
   const [authorId, setAuthorId] = useState<string | null>(null)
   const [hasFile, setHasFile] = useState(false)

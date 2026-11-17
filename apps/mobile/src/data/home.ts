@@ -13,7 +13,7 @@ export const HOME_CARDS: Record<string, { title: string; href?: string }> = {
   my_tasks: { title: 'My tasks', href: '/tasks?view=mine' },
   due_soon: { title: 'Due soon', href: '/tasks?view=due_soon' },
   overdue: { title: 'Overdue', href: '/tasks?view=overdue' },
-  inbox: { title: 'Unread in Inbox', href: '/activity' },
+  inbox: { title: 'Unread activity', href: '/activity' },
   activity: { title: 'Activity', href: '/activity' },
   unread_chat: { title: 'Unread chat', href: '/chat/unreads' },
   recent_docs: { title: 'Recently updated docs', href: '/docs' },

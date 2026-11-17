@@ -5,7 +5,6 @@ import { Alert, Pressable, RefreshControl, ScrollView, View } from 'react-native
 import { ActionSheet, ConfirmDialog, type ConfirmRequest, Dialog, type SheetAction } from '../../../../components/settings/Dialog'
 import { Badge, Note, RowText, SettingsCard, SettingsRow } from '../../../../components/settings/Shell'
 import { DayPicker } from '../../../../components/tasks/DayPicker'
-import { ProjectDocsCard } from '../../../../components/tasks/ProjectDocsCard'
 import type { TaskCycle, TaskMilestone } from '../../../../data/task-api'
 import {
   cycleDates,
@@ -37,11 +36,10 @@ type Menu = { kind: 'milestone'; milestone: TaskMilestone } | { kind: 'cycle'; c
 type Form = { kind: 'milestone'; milestone: TaskMilestone | null } | { kind: 'cycle'; cycle: TaskCycle | null }
 
 /**
- * A project's settings on the phone: its milestones (progress, target date, order) and its cycles (dates, the current
- * one, moving unfinished tasks on) and its docs teamspace. Opened from the project's task list. Statuses and labels stay
- * on the web.
+ * A project's milestones (progress, target date, order) and cycles (dates, the current one, moving unfinished tasks on).
+ * Opened from the project's settings (Planning) and from an empty milestone or cycle picker.
  */
-export default function ProjectSettingsScreen() {
+export default function MilestonesAndCyclesScreen() {
   const { projectId } = useLocalSearchParams<{ projectId: string }>()
   const { colors } = useTheme()
   const projects = useProjects()
@@ -135,7 +133,7 @@ export default function ProjectSettingsScreen() {
   return (
     <SafeAreaView edges={['left', 'right']} className="flex-1 bg-background">
       <PaneHeader className="min-h-12 px-3">
-        <IconButton icon="back" label="Back to tasks" color={alpha(colors.mutedForeground, 0.7)} onPress={back} />
+        <IconButton icon="back" label="Back" color={alpha(colors.mutedForeground, 0.7)} onPress={back} />
         <View className="flex-1 flex-row items-center gap-1.5 min-w-0">
           {project ? <View className="size-1.5 rounded-full" style={{ backgroundColor: project.color }} /> : null}
           <Text numberOfLines={1} className="font-noto-medium text-[13px] shrink text-muted-foreground">
@@ -143,7 +141,7 @@ export default function ProjectSettingsScreen() {
           </Text>
           <Text className="text-[13px] text-muted-foreground">/</Text>
           <Text accessibilityRole="header" className="font-noto-semibold text-[13px]">
-            Settings
+            Milestones and cycles
           </Text>
         </View>
       </PaneHeader>
@@ -199,8 +197,6 @@ export default function ProjectSettingsScreen() {
               )
             })}
           </SettingsCard>
-
-          {project ? <ProjectDocsCard project={project} /> : null}
         </ScrollView>
       </KeyboardView>
 

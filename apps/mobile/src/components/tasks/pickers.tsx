@@ -62,11 +62,11 @@ export function StatusChoices({ statuses, value, onSelect }: { statuses: readonl
   )
 }
 
-/** Opens the project's settings from an empty milestone or cycle picker. */
+/** Opens the project's milestones and cycles from an empty milestone or cycle picker. */
 function SettingsLink({ projectId, onOpen }: { projectId: string; onOpen: () => void }) {
   return (
     <SheetRow
-      label="Open project settings"
+      label="Manage milestones and cycles"
       icon="settings"
       onPress={() => {
         onOpen()
