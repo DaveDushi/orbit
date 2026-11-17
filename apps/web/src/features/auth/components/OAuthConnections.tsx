@@ -1,13 +1,12 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { SettingsCard } from '@/components/common/SettingsCard'
-import type { OAuthConnection } from '@orbit/api/mcp'
-import { oauthRequest } from '@/features/auth/oauth'
+import { oauthRequest, useOAuthGrants } from '@/features/auth/oauth'
 import { LoadingText } from '@/components/ui/spinner'
 
 export function OAuthConnections() {
   const queryClient = useQueryClient()
-  const connections = useQuery({ queryKey: ['oauth-grants'], queryFn: () => oauthRequest<{ items: OAuthConnection[] }>('/api/v1/oauth/grants') })
+  const connections = useOAuthGrants()
   const disconnect = useMutation({
     mutationFn: (id: string) => oauthRequest<void>(`/api/v1/oauth/grants/${id}`, { method: 'DELETE' }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['oauth-grants'] }),

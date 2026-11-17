@@ -1036,7 +1036,9 @@ async fn grants(
         .fetch_all(state.database.pool())
         .await?;
     let items: Vec<_> = rows.into_iter().map(|row| json!({"id": row.get::<String, _>("id"), "client_name": row.get::<String, _>("client_name"), "workspace_name": row.get::<String, _>("workspace_name"), "scope": granted_scopes(row.get("mcp_scopes")), "project_names": serde_json::from_str::<Value>(row.get("project_names")).unwrap_or_else(|_| json!([])), "all_projects": row.get::<bool, _>("all_projects"), "created_at": row.get::<i64, _>("created_at")})).collect();
-    Ok(Json(json!({"items": items})))
+    // The address agents use when the public origin is behind a login gateway (`ORBIT_PUBLIC_MCP_URL`).
+    let mcp_url = state.mcp.as_ref().map(|mcp| mcp.resource.as_str());
+    Ok(Json(json!({"items": items, "mcp_url": mcp_url})))
 }
 
 async fn disconnect(

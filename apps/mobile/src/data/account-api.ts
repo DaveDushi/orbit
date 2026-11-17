@@ -54,7 +54,7 @@ import type {
 import { ApiProblem } from '@orbit/api/problem'
 
 import type { MemberRecord, OrbitClient, User, WorkspaceRecord } from './orbit'
-import type { OAuthConnection } from '@orbit/api/mcp'
+import type { OAuthConnections } from '@orbit/api/mcp'
 import { STORAGE_FILES_PAGE } from '@orbit/api/storage'
 
 export type { InvitationRecord, NotificationPrefs, OwnedWorkspace, SessionRecord, TotpSetup, TwoFactorStatus, WorkspaceBucketView, WorkspaceStorage }
@@ -182,9 +182,9 @@ export async function revokeSession(client: OrbitClient, id: string): Promise<vo
   await revokeSessionRequest({ client, path: { id }, throwOnError: true })
 }
 
-/** The MCP clients this person approved. The OAuth routes are not in the OpenAPI contract, so they have no SDK function. */
-export async function oauthConnections(client: OrbitClient): Promise<OAuthConnection[]> {
-  return (await client.get<{ 200: { items: OAuthConnection[] } }, unknown, true>({ url: '/api/v1/oauth/grants', throwOnError: true })).data.items
+/** The MCP clients this person approved, and the separate MCP address. The OAuth routes are not in the OpenAPI contract, so they have no SDK function. */
+export async function oauthConnections(client: OrbitClient): Promise<OAuthConnections> {
+  return (await client.get<{ 200: OAuthConnections }, unknown, true>({ url: '/api/v1/oauth/grants', throwOnError: true })).data
 }
 
 /** Stops the client's access and refresh tokens. */
