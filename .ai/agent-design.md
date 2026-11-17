@@ -608,8 +608,7 @@ to the outside. Answers:
 
 Production, 2026-11-17: an import of 2,262 customers into Shopify asked for a "yes" for each GraphQL request of 100
 customers (12 questions in 11 minutes, each with the raw body), the 40-call run limit split it into runs, and the
-person gave up with 1,354 left. The model also left the marketing consent column out, so 516 customers who opted in
-were imported as not subscribed. Design (`apps/server/src/agent/jobs.rs`, `apps/agent/src/jobs.ts`):
+person gave up with 1,354 left. The question showed the raw request, not which columns went where. Design (`apps/server/src/agent/jobs.rs`, `apps/agent/src/jobs.ts`):
 
 - **One approval per job.** `plan_job` stores the plan (title, summary, records, mapping, left out, samples, source
   file), the scope (integration or Drive, tool, method, path, GraphQL mutations, most calls) and the script. Orbit
@@ -624,8 +623,9 @@ were imported as not subscribed. Design (`apps/server/src/agent/jobs.rs`, `apps/
 - **Long jobs.** A job's nested calls do not count against the run's tool-call limit (`blockedCall`, `asDriver`); the
   job's most calls and its deadline bound it. The first error (an HTTP error, a GraphQL `userErrors` the script throws
   on, a refusal) ends the script; the report says done / failed / left, and Orbit ends the job (`finish`).
-- **Prompt (`JOB_RULES`).** Plan a job when a write with approval would run more than about 3 times; map every column
-  or name it in `left_out`; consent and opt-in columns always carry over.
+- **Prompt (`JOB_RULES`).** Plan one job when a write with approval would run more than about 3 times. How to map
+  columns (for example consent) is not a rule in code: the team tells the agent, and it keeps that in its memory. The
+  plan's mapping and left-out columns still show the driver what is sent.
 
 ## Skills
 
