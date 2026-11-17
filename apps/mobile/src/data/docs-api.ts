@@ -9,6 +9,8 @@ import {
   createPageThread,
   createTeamspace,
   deletePage,
+  deletePageComment,
+  deletePageThread,
   deleteTeamspace,
   duplicatePage,
   emptyPageTrash,
@@ -20,12 +22,15 @@ import {
   listPageTrash,
   moveTeamspace,
   purgePage,
+  reopenPageThread,
+  resolvePageThread,
   removePageFavorite,
   restorePage,
   restorePageVersion,
   setPageLock,
   socketTicket,
   updatePage,
+  updatePageComment,
   updateTeamspace,
   uploadPageFile,
 } from '@orbit/api/generated/sdk.gen'
@@ -177,6 +182,32 @@ export async function commentOnPage(client: OrbitClient, workspaceId: string, pa
 /** A plain-text reply: one comment paragraph per line, as the web's comment editor writes them. */
 export async function replyToThread(client: OrbitClient, workspaceId: string, pageId: string, threadId: string, body: Record<string, unknown>[]): Promise<void> {
   await createPageComment({ client, path: { ...pagePath(workspaceId, pageId), thread_id: threadId }, body: { body }, throwOnError: true })
+}
+
+/** What a reader does to a comment thread (the web's thread buttons; `docs.ts` has who may). */
+export type ThreadAction =
+  | { kind: 'resolve' | 'reopen' | 'delete-thread'; threadId: string }
+  | { kind: 'edit'; threadId: string; commentId: string; body: Record<string, unknown>[] }
+  | { kind: 'delete-comment'; threadId: string; commentId: string }
+
+export async function threadAction(client: OrbitClient, workspaceId: string, pageId: string, action: ThreadAction): Promise<void> {
+  const thread = { ...pagePath(workspaceId, pageId), thread_id: action.threadId }
+  switch (action.kind) {
+    case 'resolve':
+      await resolvePageThread({ client, path: thread, throwOnError: true })
+      return
+    case 'reopen':
+      await reopenPageThread({ client, path: thread, throwOnError: true })
+      return
+    case 'delete-thread':
+      await deletePageThread({ client, path: thread, throwOnError: true })
+      return
+    case 'edit':
+      await updatePageComment({ client, path: { ...thread, comment_id: action.commentId }, body: { body: action.body }, throwOnError: true })
+      return
+    case 'delete-comment':
+      await deletePageComment({ client, path: { ...thread, comment_id: action.commentId }, throwOnError: true })
+  }
 }
 
 export type { PageVersion, PageVersionSummary }

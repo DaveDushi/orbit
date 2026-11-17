@@ -146,6 +146,16 @@ export function usePageThreads(pageId: string) {
   return useQuery({ queryKey: docs.docsKeys.threads(workspaceId, pageId), queryFn: () => docs.threads(client, workspaceId, pageId) })
 }
 
+/** Resolves, reopens or deletes a thread, or edits or deletes a comment; the threads load again after. */
+export function useThreadAction(pageId: string) {
+  const { client, workspaceId } = useOrbit()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (action: docs.ThreadAction) => docs.threadAction(client, workspaceId, pageId, action),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: docs.docsKeys.threads(workspaceId, pageId) }),
+  })
+}
+
 /** A new comment on the page (`threadId` unset) or a reply in a thread, as plain paragraphs. */
 export function useAddComment(pageId: string) {
   const { client, workspaceId } = useOrbit()
