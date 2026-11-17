@@ -1,23 +1,32 @@
 import { driveFileKind } from '@orbit/api/drive'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { router } from 'expo-router'
-import { useState } from 'react'
+import { useDeferredValue, useState } from 'react'
 import { FlatList, Image, Pressable, RefreshControl, View } from 'react-native'
+import { TextInput } from '../../ui/scaled'
 
 import { keys } from '../../data/keys'
-import { createFolder, driveChildren, driveNode, type DriveNode, downloadUrl, renameNode, trashNode, uploadToDrive } from '../../data/drive'
+import { createFolder, driveChildren, driveNode, type DriveNode, type DriveSort, downloadUrl, renameNode, restoreNode, searchNodes, type SortOrder, trashNode, uploadToDrive } from '../../data/drive'
 import { fileSize } from '../../data/tasks'
 import { pickDriveFiles, type DriveSource } from '../../drive-file'
 import { useOrbit } from '../../orbit-context'
 import { errorMessage } from '../../session-context'
 import { alpha, useTheme } from '../../theme'
-import { EmptyState, ErrorView, HeaderTitle, Icon, type IconName, IconButton, LoadingView, PaneHeader, SafeAreaView, Spinner, Text } from '../../ui'
+import { EmptyState, ErrorView, HeaderTitle, Icon, type IconName, IconButton, LoadingView, PaneHeader, PickerSheet, SafeAreaView, Spinner, SwipeRow, Text } from '../../ui'
 import { usePublishPageItem } from '../AskDonna'
 import { MenuButton } from '../Drawer'
 import { ActionSheet, ConfirmDialog, type ConfirmRequest, PromptDialog, type PromptRequest, type SheetAction } from '../settings/Dialog'
 import { openFile } from '../tasks/files'
+import { MoveSheet, ShareSheet } from './DriveSheets'
 
 type Menu = { title: string; actions: SheetAction[] }
+
+const SORTS: { key: string; label: string; sort: DriveSort; order: SortOrder }[] = [
+  { key: 'name', label: 'Name (A–Z)', sort: 'name', order: 'asc' },
+  { key: 'name-desc', label: 'Name (Z–A)', sort: 'name', order: 'desc' },
+  { key: 'updated', label: 'Last modified', sort: 'updated_at', order: 'desc' },
+  { key: 'size', label: 'Largest first', sort: 'size', order: 'desc' },
+]
 
 const KIND_ICONS: Record<ReturnType<typeof driveFileKind>, IconName> = {
   folder: 'folder',
@@ -32,13 +41,27 @@ const KIND_ICONS: Record<ReturnType<typeof driveFileKind>, IconName> = {
 
 /**
  * The web's Drive at phone size: one folder (`null`: the top level) as a list, folders first. A file opens in the
- * system preview; the row menu renames or moves to the trash; + makes a folder or uploads photos, videos and files.
+ * system preview; the row menu shares a link, moves, renames or trashes (swipe left trashes too, with Undo); + makes a
+ * folder or uploads photos, videos and files. Search looks through all of Drive; the trash is one tap from the top.
  */
 export function DriveFolder({ folderId }: { folderId: string | null }) {
   const { colors } = useTheme()
   const { client, workspaceId } = useOrbit()
   const queryClient = useQueryClient()
-  const children = useQuery({ queryKey: keys.driveChildren(workspaceId, folderId), queryFn: () => driveChildren(client, workspaceId, folderId) })
+  const [sortKey, setSortKey] = useState('name')
+  const sorting = SORTS.find((item) => item.key === sortKey) ?? SORTS[0]
+  const children = useQuery({
+    queryKey: [...keys.driveChildren(workspaceId, folderId), sorting.sort, sorting.order],
+    queryFn: () => driveChildren(client, workspaceId, folderId, sorting.sort, sorting.order),
+  })
+  const [searching, setSearching] = useState(false)
+  const [search, setSearch] = useState('')
+  const query = useDeferredValue(search.trim())
+  const found = useQuery({ queryKey: [...keys.drive(workspaceId), 'search', query], queryFn: () => searchNodes(client, workspaceId, query), enabled: searching && query.length > 0, placeholderData: (previous) => previous })
+  const [sortOpen, setSortOpen] = useState(false)
+  const [moving, setMoving] = useState<DriveNode | null>(null)
+  const [sharing, setSharing] = useState<DriveNode | null>(null)
+  const [undo, setUndo] = useState<DriveNode | null>(null)
   const folder = useQuery({ queryKey: keys.driveNode(workspaceId, folderId ?? ''), queryFn: () => driveNode(client, workspaceId, folderId ?? ''), enabled: folderId !== null })
   const [menu, setMenu] = useState<Menu | null>(null)
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
@@ -110,11 +133,31 @@ export function DriveFolder({ folderId }: { folderId: string | null }) {
       ],
     })
 
+  /** Trash at once; the notice offers Undo, and the trash keeps it 30 days. */
+  const trashNow = (node: DriveNode) => {
+    setNotice(null)
+    setUndo(node)
+    void trashNode(client, workspaceId, node.id)
+      .then(refresh)
+      .catch((error: unknown) => {
+        setUndo(null)
+        failed('Could not move it to the trash.')(error)
+      })
+  }
+  const undoTrash = (node: DriveNode) => {
+    setUndo(null)
+    void restoreNode(client, workspaceId, node.id)
+      .then(refresh)
+      .catch(failed('Could not restore it.'))
+  }
+
   const nodeMenu = (node: DriveNode) =>
     setMenu({
       title: node.name,
       actions: [
         ...(node.kind === 'file' ? [{ label: 'Open', icon: 'arrowUpRightSquare' as const, onPress: () => void open(node) }] : []),
+        { label: 'Share link…', icon: 'link2', onPress: () => setSharing(node) },
+        { label: 'Move to…', icon: 'folder', onPress: () => setMoving(node) },
         {
           label: 'Rename',
           icon: 'edit',
@@ -137,13 +180,10 @@ export function DriveFolder({ folderId }: { folderId: string | null }) {
           onPress: () =>
             setConfirm({
               title: `Move “${node.name}” to the trash?`,
-              description: node.kind === 'folder' ? 'Everything in the folder goes with it. You can restore it from the trash on the web.' : 'You can restore it from the trash on the web.',
+              description: node.kind === 'folder' ? 'Everything in the folder goes with it. You can restore it from the Drive trash for 30 days.' : 'You can restore it from the Drive trash for 30 days.',
               confirmLabel: 'Move to trash',
               danger: true,
-              onConfirm: () =>
-                void trashNode(client, workspaceId, node.id)
-                  .then(refresh)
-                  .catch(failed('Could not move it to the trash.')),
+              onConfirm: () => trashNow(node),
             }),
         },
       ],
@@ -158,8 +198,45 @@ export function DriveFolder({ folderId }: { folderId: string | null }) {
         <View className="flex-1">
           <HeaderTitle>{title}</HeaderTitle>
         </View>
+        <IconButton icon="search" label="Search Drive" size={32} color={searching ? colors.primary : undefined} onPress={() => {
+            setSearching(!searching)
+            setSearch('')
+          }}
+        />
+        <IconButton icon="filter" label={`Sort: ${sorting.label}`} size={32} onPress={() => setSortOpen(true)} />
+        {folderId === null ? <IconButton icon="trash" label="Drive trash" size={32} onPress={() => router.push('/drive/trash')} /> : null}
         <IconButton icon="plus" label="Add to Drive" size={32} variant="primary" disabled={uploading !== null} onPress={newMenu} />
       </PaneHeader>
+      {searching ? (
+        <View className="h-8.5 mx-3 mb-1 flex-row items-center border border-input rounded-lg bg-input/30">
+          <View className="w-5.5 items-end">
+            <Icon name="search" size={14} color={colors.mutedForeground} />
+          </View>
+          <TextInput
+            accessibilityLabel="Search Drive"
+            placeholder="Search all of Drive"
+            placeholderTextColor={colors.mutedForeground}
+            selectionColor={colors.primary}
+            autoFocus
+            value={search}
+            onChangeText={setSearch}
+            returnKeyType="search"
+            autoCorrect={false}
+            className="flex-1 h-8 pl-2 pr-2.5 font-noto text-[16px] text-foreground"
+          />
+        </View>
+      ) : null}
+      {undo ? (
+        <View accessibilityRole="alert" className="mx-3 mb-1 p-2.5 rounded-md bg-muted flex-row items-center gap-2">
+          <Text numberOfLines={1} className="text-[13px] flex-1">
+            Moved “{undo.name}” to the trash.
+          </Text>
+          <Pressable accessibilityRole="button" onPress={() => undoTrash(undo)} hitSlop={8}>
+            <Text className="font-noto-semibold text-[13px] text-primary">Undo</Text>
+          </Pressable>
+          <IconButton icon="close" label="Dismiss" size={24} iconSize={12} color={muted} onPress={() => setUndo(null)} />
+        </View>
+      ) : null}
       {uploading ? (
         <View accessibilityRole="progressbar" accessibilityLabel={`Uploading ${uploading.name}, ${uploading.percent}%`} className="mx-3 mb-1 p-2.5 rounded-md bg-muted flex-row items-center gap-2">
           <Spinner />
@@ -174,7 +251,21 @@ export function DriveFolder({ folderId }: { folderId: string | null }) {
           <Text className="text-[13px] text-destructive">{notice}</Text>
         </Pressable>
       ) : null}
-      {!children.data ? (
+      {searching && query ? (
+        !found.data ? (
+          found.error ? <ErrorView error={found.error} onRetry={() => void found.refetch()} /> : <LoadingView />
+        ) : found.data.length === 0 ? (
+          <EmptyState icon="search" title="No results" description={`Nothing in Drive is called “${query}”.`} />
+        ) : (
+          <FlatList
+            data={found.data}
+            keyExtractor={(entry) => entry.node.id}
+            keyboardShouldPersistTaps="handled"
+            contentContainerClassName="px-2 pt-1 pb-4"
+            renderItem={({ item }) => <DriveRow node={item.node} detail={item.folder_path || 'Drive'} opening={opening === item.node.id} onPress={() => void open(item.node)} onMenu={() => nodeMenu(item.node)} />}
+          />
+        )
+      ) : !children.data ? (
         error ? (
           <ErrorView error={error} onRetry={() => void refresh()} />
         ) : (
@@ -188,22 +279,38 @@ export function DriveFolder({ folderId }: { folderId: string | null }) {
           keyExtractor={(node) => node.id}
           contentContainerClassName="px-2 pt-1 pb-4"
           refreshControl={<RefreshControl refreshing={children.isRefetching} onRefresh={() => void refresh()} tintColor={colors.mutedForeground} />}
-          renderItem={({ item }) => <DriveRow node={item} opening={opening === item.id} onPress={() => void open(item)} onMenu={() => nodeMenu(item)} />}
+          renderItem={({ item }) => (
+            <SwipeRow right={{ label: 'Trash', icon: 'trash', tone: 'destructive', onSwipe: () => trashNow(item) }}>
+              <DriveRow node={item} opening={opening === item.id} onPress={() => void open(item)} onMenu={() => nodeMenu(item)} />
+            </SwipeRow>
+          )}
         />
       )}
 
       <ActionSheet visible={menu !== null} title={menu?.title} actions={menu?.actions ?? []} onClose={() => setMenu(null)} />
       <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />
       <PromptDialog request={prompt} onClose={() => setPrompt(null)} />
+      <PickerSheet
+        visible={sortOpen}
+        title="Sort by"
+        options={SORTS.map((item) => ({ key: item.key, label: item.label, selected: item.key === sorting.key }))}
+        onSelect={(key) => {
+          setSortOpen(false)
+          setSortKey(key)
+        }}
+        onClose={() => setSortOpen(false)}
+      />
+      <MoveSheet node={moving} onClose={() => setMoving(null)} onMoved={() => setUndo(null)} />
+      <ShareSheet node={sharing} onClose={() => setSharing(null)} />
     </SafeAreaView>
   )
 }
 
-function DriveRow({ node, opening, onPress, onMenu }: { node: DriveNode; opening: boolean; onPress: () => void; onMenu: () => void }) {
+function DriveRow({ node, detail: where, opening, onPress, onMenu }: { node: DriveNode; detail?: string; opening: boolean; onPress: () => void; onMenu: () => void }) {
   const { colors } = useTheme()
   const muted = alpha(colors.mutedForeground, 0.7)
   const kind = driveFileKind(node)
-  const detail = node.kind === 'folder' ? 'Folder' : fileSize(node.size ?? 0)
+  const detail = [where, node.kind === 'folder' ? 'Folder' : fileSize(node.size ?? 0)].filter(Boolean).join(' · ')
   return (
     <View className="h-12 flex-row items-center">
       <Pressable accessibilityRole="button" accessibilityLabel={`${node.name}, ${detail}`} onPress={onPress} onLongPress={onMenu} className="flex-1 h-12 flex-row items-center gap-3 px-2 rounded-md active:bg-muted">
