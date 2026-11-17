@@ -269,6 +269,26 @@ It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-ag
 
 ## Verification performed
 
+### November 17, 2026 iPhone build 20: iPhone full audit and the Agentic tabs (TestFlight internal; no server change)
+
+`main` from `fbc88d7a` to `cc4080c5`: `--no-ff` merges of `iphone-agentic-tabs` at `6d13977a` (`fbf0d9ff`: the
+build 19 fix, Agentic tabs hide only on a known "off") and `iphone-full-audit` at `4ccf55e6` (`cc4080c5`). No merge
+conflict. The audit (`.ai/iphone-audit.md`) adds: task title and description editing, Project and Repeat on a task,
+comment Reply/Edit/Delete; Docs comment Resolve/Reopen/Delete thread and Edit/Delete comment, Drive file blocks in
+pages; Switch workspace in Settings, New project in the project menu, project label rules; Account → Security lists and
+removes passkeys; chat profile cards, channel Integrations (incoming webhooks) and link preview cards; saved views,
+Home layout, apps, agent pages and stickers update live. `aboutOrbit()` already has all of it (`51751b5a`); the
+Agentic fix matches its "same pages and roles as on the web".
+
+Checks on the merged `main`: mobile `tsc --noEmit` clean, `bun test src` 343 pass (55 files), agent `tsc --noEmit`
+clean. No new native module; `eas build --non-interactive --no-wait` from the main checkout.
+
+EAS build `f92fb858-74a2-4a73-8e08-f7b0c4366535`, build number 20 (version 1.0.0, commit `cc4080c5`, ~7 min).
+Submission `96941aab-c7bb-4889-a43c-7973bd05501e` with the App Manager ASC key (~35 min in the submission queue;
+eas.json changed only for the run and restored; the temporary `AuthKey.p8` deleted). ASC build
+`4d4bc895-2d2c-4d99-8492-38ba51744740`: `VALID`, internal state `IN_BETA_TESTING`, external
+`READY_FOR_BETA_SUBMISSION` (not submitted). Scripts and logs: `/root/ops/iphone-build20/`.
+
 ### November 17, 2026 iPhone build 19: Settings → Agentic shows the web's tabs (TestFlight internal; no server change)
 
 Branch `iphone-agentic-tabs` at `abef777e` (on `main` `fbc88d7a`; not merged, not pushed by the build session). Only
