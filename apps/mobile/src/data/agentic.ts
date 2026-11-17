@@ -3,6 +3,7 @@
  * the agent and routine forms become the API's bodies (the web's `AgentsPage` and `RoutinesPage`).
  */
 import { AGENT_DEFAULT_CHOICE as DEFAULT, ANSWER_LEVELS, type AgentProfile, type AgentProfileInput, type AgentProfiles, type AnswerLevel, type DefaultAgentInput } from '@orbit/api/agent'
+import type { AgentSkill } from '@orbit/api/agentSkills'
 import { ApiProblem } from '@orbit/api/problem'
 import type { Routine, RoutineChange, Script } from '@orbit/api/scheduled'
 import type { ConversationRecord, Permission } from '@orbit/api/generated/types.gen'
@@ -10,21 +11,20 @@ import type { ConversationRecord, Permission } from '@orbit/api/generated/types.
 import { multipart, type UploadFile } from './account-api'
 import type { OrbitClient } from './orbit'
 
-export type AgenticTab = 'you' | 'workspace' | 'agents' | 'routines' | 'bots'
+export type AgenticTab = 'you' | 'workspace' | 'agents' | 'routines' | 'skills'
 
-/** The web's `AGENTIC_TABS`: Workspace, Agents and Routines need the team agent. The account settings show only You. */
+/**
+ * The web's `AGENTIC_TABS`: Workspace, Agents, Routines and Skills need the team agent. The account settings show only
+ * You. (The web's webhook bots became chat's two-way webhooks, so there is no Bots tab.)
+ */
 export function agenticTabs(agent: boolean, personal: boolean): { value: AgenticTab; label: string }[] {
-  if (personal) return [{ value: 'you', label: 'You' }]
+  if (personal || !agent) return [{ value: 'you', label: 'You' }]
   return [
     { value: 'you', label: 'You' },
-    ...(agent
-      ? [
-          { value: 'workspace' as const, label: 'Workspace' },
-          { value: 'agents' as const, label: 'Agents' },
-          { value: 'routines' as const, label: 'Routines' },
-        ]
-      : []),
-    { value: 'bots', label: 'Bots' },
+    { value: 'workspace', label: 'Workspace' },
+    { value: 'agents', label: 'Agents' },
+    { value: 'routines', label: 'Routines' },
+    { value: 'skills', label: 'Skills' },
   ]
 }
 
@@ -42,7 +42,7 @@ export interface WebSetupLink {
 
 /**
  * The rare admin pages the app does not rebuild, with the web's own access rules: agent tools for
- * `integrations.manage`. API tokens have their own screen. Bots are on their own tab.
+ * `integrations.manage`. API tokens have their own screen.
  */
 export function webSetupLinks(permissions: readonly Permission[], agent: boolean): WebSetupLink[] {
   return [
@@ -244,4 +244,32 @@ export function timeZoneChoices(saved: string): string[] {
     zones = []
   }
   return zones.includes(saved) ? zones : [saved, ...zones]
+}
+
+// ---- skills
+
+export type SkillMode = 'install' | 'upload' | 'write'
+
+export interface SkillDraft {
+  source: string
+  file: UploadFile | null
+  name: string
+  description: string
+  body: string
+}
+
+/** The web's Add skill: an address to install from, a .zip, or a written SKILL.md with all three fields. */
+export function skillDraftReady(mode: SkillMode, draft: SkillDraft): boolean {
+  if (mode === 'install') return draft.source.trim() !== ''
+  if (mode === 'upload') return draft.file !== null
+  return draft.name.trim() !== '' && draft.description.trim() !== '' && draft.body.trim() !== ''
+}
+
+/** The agents a skill is on for after one box changes (`default` is the default agent). */
+export const skillAgents = (agents: readonly string[], key: string, on: boolean) => (on ? [...agents.filter((item) => item !== key), key] : agents.filter((item) => item !== key))
+
+/** A .zip with SKILL.md, sent with the app's multipart part (the shared `uploadAgentSkill` needs a real Blob). */
+export async function uploadSkillZip(client: OrbitClient, workspaceId: string, file: UploadFile): Promise<AgentSkill> {
+  const { data } = await client.post({ url: `/api/v1/workspaces/${workspaceId}/agent-skills/upload`, body: { file }, bodySerializer: multipart(file), headers: { 'Content-Type': null }, throwOnError: true })
+  return data as AgentSkill
 }
