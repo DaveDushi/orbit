@@ -72,13 +72,15 @@
       location.assign(url)
     }
   }
-  // The part of the Web Speech API that the web app's voice input uses: the app sends `progress` (the model's
-  // download, the transcription), the `final` text, `error` (a Web Speech error code and a text) and `end` per `id`.
+  // The part of the Web Speech API that the web app's voice input uses: the app sends `level` (the microphone's peak,
+  // 0-1, 10 times a second), `progress` (the model's download, the transcription), each part's `final` text, `error`
+  // (a Web Speech error code and a text) and `end` per `id`. Two Orbit additions give the page `onlevel(level)` and
+  // `onprogress({ phase, percent })`; a page without `onprogress` (a web app before desktop 0.1.10) gets the small status.
   const dictations = new Map()
   let nextDictation = 1
   class DesktopSpeechRecognition {
     constructor() {
-      Object.assign(this, { lang: '', continuous: false, interimResults: false, onresult: null, onerror: null, onend: null })
+      Object.assign(this, { lang: '', continuous: false, interimResults: false, onresult: null, onerror: null, onend: null, onlevel: null, onprogress: null })
       this._id = 0
       this._finals = []
     }
@@ -104,8 +106,11 @@
       if (typeof this.onend === 'function') this.onend()
     }
     _event(event) {
-      if (event.type === 'progress') {
-        voiceStatus(event.phase === 'download' ? `Downloading the speech model (60 MB, only once)… ${event.percent}%` : 'Transcribing…')
+      if (event.type === 'level') {
+        if (typeof this.onlevel === 'function') this.onlevel(event.level)
+      } else if (event.type === 'progress') {
+        if (typeof this.onprogress === 'function') this.onprogress({ phase: event.phase, percent: event.percent })
+        else voiceStatus(event.phase === 'download' ? `Downloading the speech model (60 MB, only once)… ${event.percent}%` : 'Transcribing…')
       } else if (event.type === 'final') {
         this._finals.push(event.text)
         const results = this._finals.map((transcript) => ({ isFinal: true, length: 1, 0: { transcript } }))

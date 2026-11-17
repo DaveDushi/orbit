@@ -41,7 +41,8 @@ import { ComposerReferencePreview } from './ComposerReferencePreview'
 import { completeCodeFence, inOpenCodeBlock } from './composerSegments'
 import { ComposerUploads } from './ComposerUploads'
 import { EmojiSuggestions } from './EmojiSuggestions'
-import { MicButton } from './MicButton'
+import { MicButton, VoiceStatus } from './MicButton'
+import { useFieldVoice, voicePlaceholder } from './useVoiceInput'
 import { ScheduledBar, ScheduledMessagesDialog, SendLaterDialog, SendLaterMenu } from './SendLater'
 import { StickerPicker } from './StickerPicker'
 import { useAutosize } from './useAutosize'
@@ -132,6 +133,7 @@ export function Composer({ ref, conversation, threadRootId = null, replyTo = nul
   // "#" lists the caller's own channels; a guest cannot read tasks, so their "#" lists channels only
   const mention = useMentionAutocomplete([...candidates, ...everyone], text, setText, input, undefined, undefined, people.channels, guest ? undefined : workspaceId)
   const emoji = useEmojiAutocomplete(text, setText, input)
+  const voice = useFieldVoice(text, setText)
   const emojiListId = useId()
 
   useEffect(() => {
@@ -348,7 +350,7 @@ export function Composer({ ref, conversation, threadRootId = null, replyTo = nul
             aria-label={inThread ? 'Reply in Thread' : `Message ${title}`}
             aria-controls={emoji.open ? emojiListId : undefined}
             aria-activedescendant={emoji.open ? `${emojiListId}-${emoji.activeIndex}` : undefined}
-            placeholder={inThread ? 'Reply…' : `Message ${title}`}
+            placeholder={voicePlaceholder(voice) ?? (inThread ? 'Reply…' : `Message ${title}`)}
             className="min-h-10 shrink resize-none rounded-none border-0 bg-transparent px-3 pt-2.5 pb-1 text-[15px] leading-[1.5] focus-visible:ring-0 md:text-[15px] dark:bg-transparent"
             onChange={onChange}
             onKeyDown={onKeyDown}
@@ -431,7 +433,8 @@ export function Composer({ ref, conversation, threadRootId = null, replyTo = nul
                 {remaining}
               </span>
             ) : null}
-            <MicButton text={text} setText={setText} />
+            <VoiceStatus voice={voice} />
+            <MicButton voice={voice} />
             <Tip label="Send message">
               <Button
                 variant={canSend ? 'default' : 'ghost'}

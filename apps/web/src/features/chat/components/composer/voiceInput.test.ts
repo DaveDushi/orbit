@@ -10,6 +10,8 @@ class FakeRecognition implements Recognition {
   onresult: Recognition['onresult'] = null
   onerror: Recognition['onerror'] = null
   onend: Recognition['onend'] = null
+  onlevel: Recognition['onlevel'] = null
+  onprogress: Recognition['onprogress'] = null
   started = false
   stopped = false
   aborted = false
@@ -38,7 +40,15 @@ class FakeRecognition implements Recognition {
 }
 
 function setup(text = '', Recognition: typeof FakeRecognition | null = FakeRecognition, probes: MicProbe[] = []) {
-  const field = { text, statuses: [] as VoiceStatus[], notices: [] as VoiceNotice[], details: [] as (string | undefined)[], probed: 0 }
+  const field = {
+    text,
+    statuses: [] as VoiceStatus[],
+    notices: [] as VoiceNotice[],
+    details: [] as (string | undefined)[],
+    probed: 0,
+    levels: [] as number[],
+    downloads: [] as (number | null)[],
+  }
   const dictation = createDictation(Recognition, {
     text: () => field.text,
     setText: (next) => {
@@ -50,6 +60,8 @@ function setup(text = '', Recognition: typeof FakeRecognition | null = FakeRecog
       field.notices.push(notice)
       field.details.push(detail)
     },
+    level: (level) => field.levels.push(level),
+    download: (percent) => field.downloads.push(percent),
     probe: () => {
       field.probed++
       return Promise.resolve(probes.shift() ?? { state: 'blocked', detail: 'NotAllowedError: Permission denied' })
@@ -111,15 +123,50 @@ describe('createDictation', () => {
     expect(field.text).toBe('Note: first part. second')
   })
 
-  test('a second tap stops (the last words still come), and the end makes it idle; nothing else happens', () => {
+  test('a second tap stops at once (transcribing while the last words come), and the end makes it idle', () => {
     const { field, dictation, recognition } = setup()
     dictation.toggle()
     dictation.toggle()
     expect(recognition().stopped).toBe(true)
+    expect(field.statuses).toEqual(['listening', 'transcribing'])
+    // a tap while it transcribes neither stops again nor starts a new dictation
+    const first = recognition()
+    first.stopped = false
+    dictation.toggle()
+    expect(recognition()).toBe(first)
+    expect(first.stopped).toBe(false)
     recognition().say(['hello', true])
     recognition().end()
     expect(field.text).toBe('hello')
-    expect(field.statuses).toEqual(['listening', 'idle'])
+    expect(field.statuses).toEqual(['listening', 'transcribing', 'idle'])
+  })
+
+  test("the Orbit app's level and download progress reach the field; its transcription shows as transcribing", () => {
+    const { field, dictation, recognition } = setup()
+    dictation.toggle()
+    recognition().onlevel?.(0.4)
+    recognition().onprogress?.({ phase: 'download', percent: 42 })
+    recognition().say(['first part.', true])
+    recognition().onprogress?.({ phase: 'transcribing' })
+    recognition().say(['first part.', true], ['second.', true])
+    recognition().end()
+    expect(field.levels).toEqual([0.4])
+    expect(field.downloads).toEqual([42, null, null])
+    expect(field.text).toBe('first part. second.')
+    expect(field.statuses).toEqual(['listening', 'transcribing', 'idle'])
+    // a finished dictation's late events are dropped
+    recognition().onlevel?.(0.9)
+    expect(field.levels).toEqual([0.4])
+  })
+
+  test('typing while it transcribes cancels it and keeps the typed text', () => {
+    const { field, dictation, recognition } = setup()
+    dictation.toggle()
+    dictation.toggle()
+    field.text = 'typed'
+    dictation.edited('typed')
+    expect(recognition().aborted).toBe(true)
+    expect(field.statuses).toEqual(['listening', 'transcribing', 'idle'])
   })
 
   test('a change it did not write (typing, send) ends it and keeps the text', () => {
