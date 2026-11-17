@@ -27,11 +27,13 @@ export interface SettingsNavItem {
  */
 export const WORKSPACE_NAV: readonly SettingsNavItem[] = [
   { href: '/settings', label: 'General', icon: 'settings' },
-  { href: '/settings/file-storage', label: 'File storage', icon: 'cloudConnection' },
-  { href: '/settings/workspace-agentic', label: 'Agentic', icon: 'magicStar' },
   { href: '/settings/members', label: 'Members', icon: 'people' },
   { href: '/settings/emoji', label: 'Emoji', icon: 'emojiHappy', permission: 'chat.manage' },
+  { href: '/settings/file-storage', label: 'File storage', icon: 'cloudConnection' },
+  { href: '/settings/workspace-agentic', label: 'Agentic', icon: 'magicStar' },
   { href: '/settings/api-tokens', label: 'API tokens', icon: 'key', permission: 'api_tokens.manage' },
+  { href: '/settings/export', label: 'Export', icon: 'documentDownload', permission: 'workspace.export' },
+  { href: '/settings/danger-zone', label: 'Danger zone', icon: 'danger', permission: 'workspace.delete' },
 ]
 
 /**
