@@ -21,8 +21,30 @@ export type RecognitionConstructor = new () => Recognition
 
 export type VoiceStatus = 'unavailable' | 'denied' | 'idle' | 'listening'
 
-/** What a tap or an error must explain to the person. */
-export type VoiceNotice = 'unavailable' | 'denied' | 'no-microphone' | 'network' | 'failed'
+/**
+ * What a tap or an error must explain to the person. After a refusal (`not-allowed`) the microphone itself is
+ * checked: `denied` (the site or app blocks it), `denied-system` (the OS blocks it), `speech-refused` (the microphone
+ * works, but the speech recognizer still refuses).
+ */
+export type VoiceNotice = 'unavailable' | 'denied' | 'denied-system' | 'speech-refused' | 'no-microphone' | 'network' | 'failed'
+
+/** What `getUserMedia` says about the microphone, with the error's name and text for the person to send us. */
+export interface MicProbe {
+  state: 'works' | 'system' | 'blocked' | 'none' | 'busy' | 'unknown'
+  detail: string
+}
+
+/** Reads the result of `getUserMedia({ audio: true })`: `null` when it gave a stream. */
+export function probeOutcome(error: unknown): MicProbe {
+  if (error === null) return { state: 'works', detail: 'works' }
+  const { name = 'Error', message = String(error) } = (error ?? {}) as { name?: string; message?: string }
+  const detail = message ? `${name}: ${message}` : name
+  // Chromium says "Permission denied by system" when the OS blocks it, "Permission denied" for the site.
+  if (name === 'NotAllowedError' || name === 'SecurityError') return { state: /system/i.test(message) ? 'system' : 'blocked', detail }
+  if (name === 'NotFoundError' || name === 'OverconstrainedError') return { state: 'none', detail }
+  if (name === 'NotReadableError' || name === 'AbortError') return { state: 'busy', detail }
+  return { state: 'unknown', detail }
+}
 
 /** The browser's recognizer, or null (Firefox, WebKitGTK). */
 export function speechRecognition(scope: object = globalThis): RecognitionConstructor | null {
@@ -49,6 +71,8 @@ interface DictationIo {
   setText: (text: string) => void
   status: (status: VoiceStatus) => void
   notice: (notice: VoiceNotice, detail?: string) => void
+  /** Asks for the microphone itself (`getUserMedia`, the stream stops at once). */
+  probe: () => Promise<MicProbe>
   lang: string
 }
 
@@ -59,6 +83,8 @@ interface DictationIo {
 export function createDictation(Recognition: RecognitionConstructor | null, io: DictationIo) {
   let session: { recognition: Recognition; base: string; written: Set<string> } | null = null
   let status: VoiceStatus = Recognition ? 'idle' : 'unavailable'
+  // Each start and each cancel counts: a microphone check that comes back later belongs to its turn only.
+  let turn = 0
 
   const set = (next: VoiceStatus) => {
     status = next
@@ -67,13 +93,32 @@ export function createDictation(Recognition: RecognitionConstructor | null, io: 
 
   /** Ends the dictation without its last words (they are not final yet). */
   const cancel = () => {
+    turn++
     const current = session
     session = null
     current?.recognition.abort()
     if (status === 'listening') set('idle')
   }
 
-  function start(Speech: RecognitionConstructor) {
+  /**
+   * The recognizer refused (`not-allowed`). Asking for the microphone itself shows why, and in WebView2 it also
+   * raises the app's permission request, which allows and saves the microphone: then one more try can work.
+   */
+  function recheck(Speech: RecognitionConstructor, message: string, retried: boolean) {
+    const mine = turn
+    void io.probe().then((probe) => {
+      if (session || turn !== mine) return
+      if (probe.state === 'works' && !retried) return start(Speech, true)
+      const detail = `speech: not-allowed${message ? ` (${message})` : ''}; microphone: ${probe.detail}`
+      const notice: VoiceNotice =
+        probe.state === 'works' ? 'speech-refused' : probe.state === 'system' ? 'denied-system' : probe.state === 'none' ? 'no-microphone' : probe.state === 'busy' ? 'failed' : 'denied'
+      set(notice === 'no-microphone' || notice === 'failed' ? 'idle' : 'denied')
+      io.notice(notice, detail)
+    })
+  }
+
+  function start(Speech: RecognitionConstructor, retried = false) {
+    turn++
     const recognition = new Speech()
     recognition.lang = io.lang
     recognition.continuous = true
@@ -97,8 +142,10 @@ export function createDictation(Recognition: RecognitionConstructor | null, io: 
     recognition.onerror = (event) => {
       if (session !== current) return
       if (event.error === 'not-allowed') {
-        set('denied')
-        io.notice('denied')
+        // It stays "listening" until the microphone check answers.
+        session = null
+        recognition.abort()
+        recheck(Speech, event.message ?? '', retried)
       } else if (event.error === 'service-not-allowed' || event.error === 'language-not-supported') {
         set('unavailable')
         io.notice('unavailable')

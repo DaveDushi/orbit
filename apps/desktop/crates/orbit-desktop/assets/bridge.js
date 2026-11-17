@@ -5,9 +5,12 @@
 //   notifications. The permission is "granted": the app is the person's own install.
 // - The unread badge: `navigator.setAppBadge` / `clearAppBadge` (the Badging API).
 // - Links: a click on a link to another site goes to the app, which opens the default browser.
-// - The update check: `/downloads/desktop/latest.json`, read with the page's own gateway cookies.
+// - The update check: `/downloads/desktop/latest.json`, read with the page's own gateway cookies, at the start and
+//   every 6 hours (the app often runs for days).
+// - `__orbitDesktop.app` (the app's version) and `.log(text)` (a line in the diagnostics log), for voice input reports.
 (() => {
   const ORIGIN = __ORBIT_ORIGIN__
+  const APP = __ORBIT_APP_VERSION__
   if (location.origin !== ORIGIN || location.pathname.startsWith('/__exe.dev') || window.__orbitDesktop) return
   const post = (message) => {
     try {
@@ -64,7 +67,7 @@
       location.assign(url)
     }
   }
-  Object.defineProperty(window, '__orbitDesktop', { value: Object.freeze({ version: 1, clicked }) })
+  Object.defineProperty(window, '__orbitDesktop', { value: Object.freeze({ version: 1, app: APP, clicked, log: (text) => post({ kind: 'log', text: String(text) }) }) })
 
   navigator.setAppBadge = (count) => {
     post({ kind: 'badge', count: count === undefined ? null : Number(count) })
@@ -89,8 +92,11 @@
     true,
   )
 
-  fetch('/downloads/desktop/latest.json', { credentials: 'same-origin', cache: 'no-store' })
-    .then((response) => (response.ok ? response.text() : null))
-    .then((json) => json && post({ kind: 'latest', json }))
-    .catch(() => {})
+  const checkUpdate = () =>
+    fetch('/downloads/desktop/latest.json', { credentials: 'same-origin', cache: 'no-store' })
+      .then((response) => (response.ok ? response.text() : null))
+      .then((json) => json && post({ kind: 'latest', json }))
+      .catch(() => {})
+  checkUpdate()
+  setInterval(checkUpdate, 6 * 60 * 60 * 1000)
 })()

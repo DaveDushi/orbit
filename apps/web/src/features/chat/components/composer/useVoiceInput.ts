@@ -1,10 +1,22 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
-import { createDictation, speechRecognition, type VoiceNotice, type VoiceStatus } from './voiceInput'
+import { createDictation, probeOutcome, speechRecognition, type MicProbe, type VoiceNotice, type VoiceStatus } from './voiceInput'
 
 interface Latest {
   text: string
   setText: (text: string) => void
   onNotice: (notice: VoiceNotice, detail?: string) => void
+}
+
+/** Asks for the microphone and lets it go at once: the answer says why the recognizer refused. */
+async function probeMicrophone(): Promise<MicProbe> {
+  if (!navigator.mediaDevices?.getUserMedia) return { state: 'unknown', detail: 'no getUserMedia' }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    for (const track of stream.getTracks()) track.stop()
+    return probeOutcome(null)
+  } catch (error) {
+    return probeOutcome(error)
+  }
 }
 
 /** The dictation reads the field of the last render. */
@@ -14,6 +26,7 @@ function fieldOf(latest: RefObject<Latest>, status: (status: VoiceStatus) => voi
     setText: (next: string) => latest.current.setText(next),
     status,
     notice: (notice: VoiceNotice, detail?: string) => latest.current.onNotice(notice, detail),
+    probe: probeMicrophone,
     lang: navigator.language,
   }
 }
