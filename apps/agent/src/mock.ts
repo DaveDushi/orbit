@@ -14,6 +14,7 @@
  *   remember "Fact"                 remember privately "Fact"             recall "words"
  *   recall privately "words"        what do you remember about "word"
  *   use <integration>__<tool> with {"json": "arguments"}
+ *   plan job {"json": "arguments of plan_job"} (a yes to its question calls run_job with the job's id)
  *   send drive image <id|it> to shopify <integration> [as image|body of article <id>] [alt "Text"]
  *   read the files (reads every file sent with the message, one read_chat_file call each, then reports them all)
  *   add label rule "Label" for @Name in project "Project" (create_label_rule)
@@ -264,6 +265,13 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 	let code: RegExpExecArray | null;
 	if ((code = /\bsave script "([^"]+)" with code:\s*([\s\S]+)$/i.exec(instruction))) return { name: "save_script", args: { name: code[1], code: code[2].trim() } };
 	if ((code = /\brun code:\s*([\s\S]+)$/i.exec(instruction))) return { name: "codemode", args: { code: code[1].trim() } };
+	if ((code = /\bplan job:?\s*(\{[\s\S]*\})\s*$/i.exec(instruction))) {
+		try {
+			return { name: "plan_job", args: JSON.parse(code[1]) as Record<string, unknown> };
+		} catch {
+			return undefined;
+		}
+	}
 	const target = (value: string, kind: "task" | "page" | "drive"): string => (/^(it|that|this)$/i.test(value) ? (lastId(messages, kind) ?? fromPage(kind)) : value) ?? value;
 	let match: RegExpExecArray | null;
 	if (/what is (?:this|open|here)/i.test(instruction) && open) {
@@ -346,6 +354,10 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 		return { name: "use_integration", args: { tool: match[1], arguments: parsed } };
 	}
 	if (/^(?:Answer|Instruction) from [^\n]*\n\s*(yes|approved?)\b/i.test(instruction)) {
+		// The newest question was a job's: the yes runs it.
+		const asked = messages.findLast((message) => message.role === "toolResult" && textOf(message.content).startsWith("I asked the driver to approve this."));
+		const job = /call run_job with job_id ([\w-]+)/.exec(textOf(asked?.content))?.[1];
+		if (job) return { name: "run_job", args: { job_id: job } };
 		const again = lastCall(messages, ["use_integration", "drive_image_to_shopify", "drive_trash", "drive_share", "move_to_trash", "schedule_routine", "send_later", "approve_routine_script"]);
 		if (again) return again;
 	}

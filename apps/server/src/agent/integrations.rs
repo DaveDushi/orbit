@@ -272,6 +272,53 @@ impl Integration {
     }
 }
 
+impl Integration {
+    /// Why a job (`super::jobs`) may not write with `tool` of this integration, if it may not: the
+    /// checks of a call ([`action_of`]), for a write. An HTTP API job names its method and path,
+    /// and a job on the GraphQL path names the mutations it runs.
+    pub(super) fn job_scope(
+        &self,
+        tool: &str,
+        method: Option<&str>,
+        path: Option<&str>,
+        mutations: &[String],
+    ) -> Result<(), &'static str> {
+        if self.kind == "mcp" {
+            let found = self
+                .mcp_tool(tool)
+                .filter(|_| self.enabled_tools.iter().any(|name| name == tool))
+                .ok_or("This tool is not turned on for the agent.")?;
+            if read_only(found) {
+                return Err("This tool only reads: it needs no job.");
+            }
+            if method.is_some() || path.is_some() || !mutations.is_empty() {
+                return Err("A job of an MCP tool has no method, path or mutations.");
+            }
+            return Ok(());
+        }
+        if tool != API_TOOL {
+            return Err("This API has one tool: api_request.");
+        }
+        let method = method
+            .map(str::to_ascii_uppercase)
+            .ok_or("Give the job's method.")?;
+        if !self.allowed_methods.contains(&method) {
+            return Err("This method is not allowed for this API.");
+        }
+        if matches!(method.as_str(), "GET" | "HEAD") {
+            return Err("Reads need no approval, so they need no job.");
+        }
+        let path = path.ok_or("Give the job's path, starting with /.")?;
+        let base = Url::parse(&self.url).map_err(|_| "The API's base URL is not valid.")?;
+        join_api_url(&base, path, &[])
+            .map_err(|_| "The path must stay below the API's base URL.")?;
+        if self.graphql_read_path.as_deref() == Some(path) && mutations.is_empty() {
+            return Err("Name the GraphQL mutations the job runs (mutations).");
+        }
+        Ok(())
+    }
+}
+
 fn read_only(tool: &Value) -> bool {
     tool.pointer("/annotations/readOnlyHint")
         .and_then(Value::as_bool)
@@ -1874,6 +1921,9 @@ struct CallBody {
     /// The thread of the run: approvals belong to it.
     conversation_id: String,
     root_message_id: Option<String>,
+    /// A write of a job's script: it runs without a new "yes" inside that job (`super::jobs`).
+    #[serde(default)]
+    job: Option<super::jobs::JobRef>,
 }
 
 /// What one call will do, checked against the integration's settings.
@@ -2038,10 +2088,35 @@ impl Action {
             Self::Api {
                 method, url, body, ..
             } => {
+                // The first line is the question's summary: a GraphQL mutation says which fields run.
+                let mutations = body
+                    .as_ref()
+                    .and_then(graphql::mutation_fields)
+                    .map_or_else(String::new, |fields| {
+                        let mut counted: Vec<(String, usize)> = Vec::new();
+                        for field in fields {
+                            match counted.iter_mut().find(|(name, _)| *name == field) {
+                                Some((_, count)) => *count += 1,
+                                None => counted.push((field, 1)),
+                            }
+                        }
+                        let named = counted
+                            .iter()
+                            .map(|(name, count)| {
+                                if *count > 1 {
+                                    format!("{name} ×{count}")
+                                } else {
+                                    name.clone()
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        format!(" (GraphQL mutation: {named})")
+                    });
                 let body = body.as_ref().map_or_else(String::new, |body| {
                     format!(" with body\n{}", readable(body))
                 });
-                format!("{}: {method} {url}{body}", integration.name)
+                format!("{}: {method} {url}{mutations}{body}", integration.name)
             }
         };
         if text.chars().count() > 3_000 {
@@ -2363,25 +2438,54 @@ async fn call(
     if needs_approval && dry.is_some() {
         return Ok(Json(json!({ "status": "dry_run", "action": describe })));
     }
+    let mut job_id = None;
     if needs_approval {
         let arguments_hash = hash(&canonical(&body.arguments));
-        let approval = approve(
+        let call = match &action {
+            Action::Mcp { tool, .. } => super::jobs::JobCall {
+                tool,
+                method: None,
+                path: None,
+                query: false,
+                body: None,
+            },
+            Action::Api {
+                method,
+                url,
+                path,
+                body,
+            } => super::jobs::JobCall {
+                tool,
+                method: Some(method.as_str()),
+                path: Some(path),
+                query: url.query().is_some(),
+                body: body.as_ref(),
+            },
+        };
+        let approval = super::jobs::approve_in_job(
             database,
+            body.job.as_ref(),
             Approves::Integration(&integration.id),
             user,
             (&body.conversation_id, body.root_message_id.as_deref()),
-            tool,
+            call,
             &arguments_hash,
         )
         .await
         .map_err(unavailable(&uri, &request_id))?;
-        if let Approval::Needed { id, expires_at } = approval {
-            return Ok(Json(json!({
-                "status": "approval_required",
-                "approval_id": id,
-                "action": describe,
-                "expires_at": expires_at,
-            })));
+        match approval {
+            Err(detail) => return Ok(Json(json!({ "status": "refused", "detail": detail }))),
+            Ok(Approval::Needed { id, expires_at }) => {
+                return Ok(Json(json!({
+                    "status": "approval_required",
+                    "approval_id": id,
+                    "action": describe,
+                    "expires_at": expires_at,
+                })));
+            }
+            Ok(Approval::Granted { id }) => {
+                job_id = id.strip_prefix("job:").map(str::to_owned);
+            }
         }
     }
     let credential_problem = |detail| {
@@ -2448,6 +2552,9 @@ async fn call(
     };
     metadata["integration"] = json!(integration.slug);
     metadata["approved"] = json!(needs_approval);
+    if let Some(job_id) = job_id {
+        metadata["job_id"] = json!(job_id);
+    }
     if graphql_read {
         metadata["graphql_read_without_approval"] = json!(true);
     }

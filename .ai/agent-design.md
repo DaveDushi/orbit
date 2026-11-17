@@ -604,6 +604,29 @@ to the outside. Answers:
 - A role change of a member applies at the next call. A changed app key makes the credential unreadable: the test
   and the calls say so, and an admin enters it again.
 
+## Jobs
+
+Production, 2026-11-17: an import of 2,262 customers into Shopify asked for a "yes" for each GraphQL request of 100
+customers (12 questions in 11 minutes, each with the raw body), the 40-call run limit split it into runs, and the
+person gave up with 1,354 left. The model also left the marketing consent column out, so 516 customers who opted in
+were imported as not subscribed. Design (`apps/server/src/agent/jobs.rs`, `apps/agent/src/jobs.ts`):
+
+- **One approval per job.** `plan_job` stores the plan (title, summary, records, mapping, left out, samples, source
+  file), the scope (integration or Drive, tool, method, path, GraphQL mutations, most calls) and the script. Orbit
+  builds the question from it (model text cannot mention anyone: `<`, `>` and backticks are replaced). The approval
+  (`approve`, tool `job`) is bound to the hash of all of it.
+- **The model cannot change the job.** `run_job` takes only the job's id; Orbit returns the stored script, which runs in
+  code mode with `records()` (the whole source file, read as the driver) and `progress()`. Each write sends
+  `job: {id, script_hash}`; `jobs::use_job` checks driver, thread, subject, tool, method, path, no query string,
+  mutation field names (`graphql::mutation_fields`, fail closed), the hash, the deadline (60 minutes after the yes),
+  "stop" from the driver in the thread, and the call count (one atomic `UPDATE … calls < max_calls`). Outside the
+  scope: the usual per-request question. A job that may not go on: refused.
+- **Long jobs.** A job's nested calls do not count against the run's tool-call limit (`blockedCall`, `asDriver`); the
+  job's most calls and its deadline bound it. The first error (an HTTP error, a GraphQL `userErrors` the script throws
+  on, a refusal) ends the script; the report says done / failed / left, and Orbit ends the job (`finish`).
+- **Prompt (`JOB_RULES`).** Plan a job when a write with approval would run more than about 3 times; map every column
+  or name it in `left_out`; consent and opt-in columns always carry over.
+
 ## Skills
 
 Status: built on branch `agent-skills` (2026-11-14). Format: [Agent Skills](https://agentskills.io/specification);

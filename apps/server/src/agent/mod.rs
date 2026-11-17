@@ -9,6 +9,7 @@ mod drive;
 mod graphql;
 pub mod inputs;
 pub(crate) mod integrations;
+mod jobs;
 mod mcp_oauth;
 pub mod memory;
 mod memory_routes;
@@ -28,11 +29,12 @@ pub(crate) mod task_runs;
 use std::sync::Arc;
 
 /// The agent's routes: the sidecar's, the ChatGPT connection, the memory, the integrations (and a
-/// Drive image to Shopify), Drive, pages and tasks to the Trash, and routines, reminders and scheduled messages.
+/// Drive image to Shopify, and jobs: one approval for many writes), Drive, pages and tasks to the Trash, and routines, reminders and scheduled messages.
 pub fn router(state: AgentState) -> axum::Router {
     routes::router(state.clone())
         .merge(memory_routes::router(state.clone()))
         .merge(integrations::router(state.clone()))
+        .merge(jobs::router(state.clone()))
         .merge(shopify::router(state.clone()))
         .merge(drive::router(state.clone()))
         .merge(trash::router(state.clone()))

@@ -510,6 +510,22 @@ or HEAD (except a GraphQL read with the setting above), runs only after the agen
 driver answered **yes**. Orbit checks this itself: the approval is bound to the driver, the thread, the tool and the
 arguments, works once, and ends after 30 minutes. A teammate's "yes" does not count.
 
+**Jobs: one approval for many writes.** For many writes of one kind (an import of a CSV of customers, a bulk
+update, many Drive items to the trash), the agent does not ask once per request. It plans a job (`plan_job`) and asks
+once. Orbit builds the question from the plan: the title and summary, the service and the one tool, method and path
+(for GraphQL, the mutations it may run), the number of records, the most calls, the field mapping (each source column
+→ its target field), the columns left out, and 2–3 samples. The exact scope and the script are under **Details**,
+closed. After your **yes**, the job (`run_job`) runs the stored script (never new code from the model) in code mode, in
+batches, and posts its progress in the thread ("870/2,000"). It stops at the first error and reports what was done,
+what failed and what is left. Orbit lets a write of the job run without a new yes only when it is the same driver
+and thread, the same integration (or Orbit Drive) and tool, the same method and path with no query string, only
+the approved GraphQL mutations (by field name, also behind aliases), the approved script (its hash), below the most
+calls (at most 1,000), and within 60 minutes after the yes. Any other write asks again. A job that ended, ran out of
+calls or time, or was stopped is refused: write **stop** (or cancel) in the thread to stop a job. Data in the file
+cannot change the scope: Orbit checks every call itself. The audit log keeps the approval (`agent_job.approved`), each
+call (`agent_integration.call` with `job_id`, Drive's approved actions with `job:<id>`) and the end
+(`agent_job.finished`). MCP write tools and Drive's `drive_trash` and `drive_share` work the same way.
+
 Limits: HTTPS only; Orbit refuses hosts that resolve to loopback, private, link-local or metadata addresses, follows
 no redirects, waits at most 30 seconds and reads at most 1 MiB of an answer. Every external call is in the audit log
 (`agent_integration.call`: tool, method, path, status; no bodies, no secrets).

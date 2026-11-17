@@ -11,6 +11,7 @@ import type { ToolExecutionApi, ToolExecutionResult } from "@earendil-works/pi-d
 
 import { fileReadText, READ_CHARS, untrusted, type FileContent } from "./files.ts";
 import { askForApproval, type Driver } from "./integrations.ts";
+import { jobRef } from "./jobs.ts";
 import type { OrbitClient } from "./orbit.ts";
 
 /** What `/agent-tools/drive` answers. */
@@ -44,11 +45,14 @@ export function driveTools(asDriver: Driver, orbit: () => OrbitClient) {
 		(tool: string, again: string, args: Record<string, unknown>, format?: (result: Record<string, any>) => string) =>
 		(api: ToolExecutionApi, context: Context): Promise<ToolExecutionResult> =>
 			asDriver(api, context, async (as, state) => {
+				const job = jobRef(api.conversationId);
 				const answer = (await as("POST", "/agent-tools/drive", {
 					tool,
 					arguments: Object.fromEntries(Object.entries(args).filter(([, value]) => value !== undefined)),
 					conversation_id: state.conversationId,
 					root_message_id: state.rootMessageId,
+					// A write of a job's script: Orbit runs it without a new yes inside the job (./jobs.ts).
+					...(job ? { job } : {}),
 				})) as DriveAnswer;
 				switch (answer.status) {
 					case "ok":

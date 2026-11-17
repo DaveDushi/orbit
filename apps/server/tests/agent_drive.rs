@@ -1004,3 +1004,99 @@ async fn the_media_sandbox_gets_only_files_the_driver_sees_and_saves_only_new_fi
         .await;
     assert_eq!(listed["result"]["items"], json!([]), "{listed}");
 }
+
+/// A Drive job (`agent::jobs`): one yes for many trash calls of one thread; drive_share stays outside it.
+#[tokio::test]
+async fn one_yes_to_a_drive_job_covers_its_trash_calls_only() {
+    let fixture = Fixture::new().await;
+    let files = [
+        fixture.file("a.txt").await,
+        fixture.file("b.txt").await,
+        fixture.file("c.txt").await,
+    ];
+    let owner = fixture.owner.clone();
+    let run = fixture.run(&owner).await;
+    let jobs = format!(
+        "/api/v1/workspaces/{}/agent-tools/jobs",
+        fixture.workspace_id
+    );
+    let (status, asked) = fixture
+        .request(
+            "POST",
+            &jobs,
+            ("authorization", &run.bearer),
+            Some(json!({
+                "conversation_id": run.conversation,
+                "root_message_id": run.root,
+                "title": "Clean up old exports",
+                "summary": "Move the three old exports to the Drive trash.",
+                "tool": "drive_trash",
+                "max_calls": 3,
+                "code": "for (const id of ids) await tools.drive_trash({ node_ids: [id] });",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{asked}");
+    assert_eq!(asked["status"], "approval_required", "{asked}");
+    let job_id = asked["job_id"].as_str().unwrap().to_owned();
+    fixture
+        .send(&owner, &run.conversation, "yes", Some(&run.root))
+        .await;
+    let (_, started) = fixture
+        .request(
+            "POST",
+            &format!("{jobs}/{job_id}/start"),
+            ("authorization", &run.bearer),
+            Some(json!({ "conversation_id": run.conversation, "root_message_id": run.root })),
+        )
+        .await;
+    assert_eq!(started["status"], "ok", "{started}");
+    let job = json!({ "id": job_id, "script_hash": started["job"]["script_hash"] });
+    let call = |tool: &str, arguments: Value| {
+        json!({
+            "tool": tool,
+            "arguments": arguments,
+            "conversation_id": run.conversation,
+            "root_message_id": run.root,
+            "job": job,
+        })
+    };
+    let uri = format!(
+        "/api/v1/workspaces/{}/agent-tools/drive",
+        fixture.workspace_id
+    );
+    for file in &files {
+        let (_, done) = fixture
+            .request(
+                "POST",
+                &uri,
+                ("authorization", &run.bearer),
+                Some(call("drive_trash", json!({ "node_ids": [file] }))),
+            )
+            .await;
+        assert_eq!(done["status"], "ok", "{done}");
+        assert!(fixture.trashed(file).await);
+    }
+    assert_eq!(fixture.approvals().await, 1, "one yes for the whole job");
+    // Another tool asks again; the job's calls are used up.
+    let other = fixture.file("d.txt").await;
+    let (_, share) = fixture
+        .request(
+            "POST",
+            &uri,
+            ("authorization", &run.bearer),
+            Some(call("drive_share", json!({ "node_id": other }))),
+        )
+        .await;
+    assert_eq!(share["status"], "approval_required", "{share}");
+    let (_, over) = fixture
+        .request(
+            "POST",
+            &uri,
+            ("authorization", &run.bearer),
+            Some(call("drive_trash", json!({ "node_ids": [other] }))),
+        )
+        .await;
+    assert_eq!(over["status"], "refused", "{over}");
+    assert!(!fixture.trashed(&other).await);
+}

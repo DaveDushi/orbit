@@ -12,16 +12,12 @@ const TOKEN_LIMIT: usize = 32_768;
 /// The root types of writes. A fragment on one of them is never part of a plain read.
 const WRITE_ROOT_TYPES: [&str; 2] = ["Mutation", "Subscription"];
 
-/// `true` only for a JSON object with a `query` string that holds exactly one query operation (and
-/// fragments), and only the keys `variables` and `operationName` beside it. Other keys, such as a
-/// persisted query id, could change what runs.
-pub(crate) fn is_read_only_request(body: &Value) -> bool {
-    let Some(request) = body.as_object() else {
-        return false;
-    };
-    let Some(query) = request.get("query").and_then(Value::as_str) else {
-        return false;
-    };
+/// The parsed document and the `operationName` of a JSON object with a `query` string, and only the
+/// keys `variables` and `operationName` beside it. Other keys, such as a persisted query id, could
+/// change what runs. `None` for anything else, or a document that does not parse.
+fn parsed(body: &Value) -> Option<(cst::Document, Option<&str>)> {
+    let request = body.as_object()?;
+    let query = request.get("query").and_then(Value::as_str)?;
     if request
         .keys()
         .any(|key| !matches!(key.as_str(), "query" | "variables" | "operationName"))
@@ -29,21 +25,29 @@ pub(crate) fn is_read_only_request(body: &Value) -> bool {
             .get("variables")
             .is_none_or(|variables| variables.is_null() || variables.is_object())
     {
-        return false;
+        return None;
     }
     let operation_name = match request.get("operationName") {
         None | Some(Value::Null) => None,
         Some(Value::String(name)) => Some(name.as_str()),
-        Some(_) => return false,
+        Some(_) => return None,
     };
     let tree = Parser::new(query)
         .recursion_limit(RECURSION_LIMIT)
         .token_limit(TOKEN_LIMIT)
         .parse();
     if tree.errors().len() > 0 {
-        return false;
+        return None;
     }
-    let document = tree.document();
+    Some((tree.document(), operation_name))
+}
+
+/// `true` only for a JSON object with a `query` string that holds exactly one query operation (and
+/// fragments), and only the keys `variables` and `operationName` beside it (see [`parsed`]).
+pub(crate) fn is_read_only_request(body: &Value) -> bool {
+    let Some((document, operation_name)) = parsed(body) else {
+        return false;
+    };
     let mut operations = 0;
     for definition in document.definitions() {
         match definition {
@@ -74,11 +78,48 @@ pub(crate) fn is_read_only_request(body: &Value) -> bool {
     operations == 1 && !write_fragment
 }
 
+/// The root fields of a request that is exactly one mutation, by their names (not their aliases),
+/// for a job that may run only some mutations (`super::jobs`). `None` (fail closed) for anything
+/// else: another operation beside it, a fragment, a directive, or a request [`parsed`] refuses.
+pub(crate) fn mutation_fields(body: &Value) -> Option<Vec<String>> {
+    let (document, operation_name) = parsed(body)?;
+    let mut definitions = document.definitions();
+    let Some(cst::Definition::OperationDefinition(operation)) = definitions.next() else {
+        return None;
+    };
+    if definitions.next().is_some()
+        || operation.directives().is_some()
+        || operation
+            .operation_type()
+            .is_none_or(|kind| kind.mutation_token().is_none())
+        || operation_name.is_some_and(|wanted| {
+            operation
+                .name()
+                .map(|name| name.text().to_string())
+                .as_deref()
+                != Some(wanted)
+        })
+    {
+        return None;
+    }
+    let mut fields = Vec::new();
+    for selection in operation.selection_set()?.selections() {
+        let cst::Selection::Field(field) = selection else {
+            return None;
+        };
+        if field.directives().is_some() {
+            return None;
+        }
+        fields.push(field.name()?.text().to_string());
+    }
+    (!fields.is_empty()).then_some(fields)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
 
-    use super::is_read_only_request;
+    use super::{is_read_only_request, mutation_fields};
 
     fn query(text: &str) -> Value {
         json!({ "query": text })
@@ -167,6 +208,54 @@ mod tests {
         ] {
             assert!(!is_read_only_request(&body), "{body}");
         }
+    }
+
+    #[test]
+    fn mutation_fields_are_the_root_fields_of_one_mutation() {
+        let fields = |text: &str| mutation_fields(&query(text));
+        assert_eq!(
+            fields("mutation { customerCreate(input: {}) { customer { id } } }"),
+            Some(vec!["customerCreate".to_owned()])
+        );
+        // Aliases do not hide the field.
+        assert_eq!(
+            fields(
+                "mutation M($a: CustomerInput!, $b: CustomerInput!) { a: customerCreate(input: $a) { userErrors { message } } b: customerDelete(input: $b) { deletedCustomerId } }"
+            ),
+            Some(vec![
+                "customerCreate".to_owned(),
+                "customerDelete".to_owned()
+            ])
+        );
+        assert_eq!(
+            mutation_fields(
+                &json!({ "query": "mutation Add { customerCreate { customer { id } } }", "operationName": "Add", "variables": { "a": 1 } })
+            ),
+            Some(vec!["customerCreate".to_owned()])
+        );
+        for text in [
+            "query { shop { name } }",
+            "{ shop { name } }",
+            "mutation { a } mutation { b }",
+            "mutation { a } query { b }",
+            "mutation { ...F } fragment F on Mutation { customerDelete }",
+            "mutation { ... on Mutation { customerDelete } }",
+            "mutation @custom { a }",
+            "mutation { a @include(if: true) }",
+            "mutation { a } fragment F on Customer { id }",
+            "mutation {",
+            "",
+        ] {
+            assert_eq!(fields(text), None, "{text}");
+        }
+        assert_eq!(
+            mutation_fields(&json!({ "query": "mutation { a }", "id": "persisted" })),
+            None
+        );
+        assert_eq!(
+            mutation_fields(&json!({ "query": "mutation A { a }", "operationName": "B" })),
+            None
+        );
     }
 
     #[test]

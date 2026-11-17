@@ -151,6 +151,7 @@ impl IdentityRepository {
             "DELETE FROM agent_sessions WHERE user_id = $1",
             "DELETE FROM agent_integration_approvals WHERE user_id = $1",
             "DELETE FROM agent_drive_approvals WHERE user_id = $1",
+            "DELETE FROM agent_jobs WHERE user_id = $1",
             "DELETE FROM agent_memory_scopes WHERE owner_user_id = $1",
             "DELETE FROM app_oidc_codes WHERE user_id = $1",
             "DELETE FROM app_oidc_tokens WHERE user_id = $1",

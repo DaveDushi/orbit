@@ -20,7 +20,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { defineTool } from "@earendil-works/pi-durable";
 import type { PromptSection, ToolExecutionApi } from "@earendil-works/pi-durable";
-import { createCodemodeExtension, createCodemodeTool, type CodemodeToolOptions } from "@earendil-works/pi-durable/codemode";
+import { createCodemodeExtension, createCodemodeTool, type CodemodeGlobal, type CodemodeToolOptions } from "@earendil-works/pi-durable/codemode";
 
 import { ThreadDoc, type RoutineRunState } from "./docs.ts";
 
@@ -98,6 +98,11 @@ export const CODEMODE_SECTIONS: PromptSection[] = (createCodemodeExtension(lazyO
 		return rest ? `${direct}\n\n${rest}` : direct;
 	},
 }));
+
+/** A code mode tool whose scripts also get `globals` (a job's `records()` and `progress()`, ./jobs.ts). */
+export function codemodeWith(globals: readonly CodemodeGlobal[]) {
+	return createCodemodeTool(new Proxy({} as CodemodeToolOptions, { get: (_target, key) => (key === "globals" ? globals : lazyOptions[key as keyof CodemodeToolOptions]) }));
+}
 
 /** Closes the sandbox's worker, when one was made. */
 export async function closeCodemode(): Promise<void> {

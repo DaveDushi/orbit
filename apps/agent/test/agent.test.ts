@@ -583,6 +583,104 @@ test("each new run takes the chosen model and thinking level, and an unknown mod
 	}
 });
 
+/**
+ * Orbit's job routes, as far as the agent sees them: a plan that needs one yes, its stored script, a 2,000-row chat file
+ * as the source, and the writes of the script, which must name the job.
+ */
+class JobOrbit extends FakeOrbit {
+	readonly external: { arguments: any; job: unknown }[] = [];
+	readonly finished: unknown[] = [];
+	approved = false;
+	planned = 0;
+	readonly file = id();
+	readonly rows = [["Email", "First Name", "Accepts Marketing"], ...Array.from({ length: 2_000 }, (_, index) => [`c${index}@example.com`, `C${index}`, index % 3 === 0 ? "yes" : "no"])];
+	readonly code = [
+		"const rows = await records();",
+		"let done = 0;",
+		"for (let at = 0; at < rows.length; at += 40) {",
+		"  const batch = rows.slice(at, at + 40).map((row) => ({ email: row.Email, subscribed: row['Accepts Marketing'] === 'yes' }));",
+		"  const answer = JSON.parse(await tools.use_integration({ tool: 'shop__api_request', arguments: { method: 'POST', path: '/graphql', body: { query: 'mutation { customerCreate }', variables: { batch } } } }));",
+		"  if (answer.status !== 200) throw new Error('batch failed');",
+		"  done += batch.length;",
+		"  await progress(done, rows.length);",
+		"}",
+		"text(`imported ${done}`);",
+	].join("\n");
+
+	async route(method: string, url: string, headers: Record<string, unknown>, body: any): Promise<[number, unknown]> {
+		const path = url.split("?")[0];
+		const jobs = `/api/v1/workspaces/${WS}/agent-tools/jobs`;
+		const question = { status: "approval_required", approval_id: "job-approval", job_id: "job-1", max_calls: 50, action: "**Import 2,000 customers**\n- **Field mapping:**\n  - Accepts Marketing → subscribed", details: "Scope: {}\nScript:\n...", expires_at: Date.now() + 1e6 };
+		if (path === `/api/v1/workspaces/${WS}/agent-tools`) return [200, { tools: [{ name: "shop__api_request", integration: "Shop", description: "Shop API", input_schema: { type: "object" }, approval: "writes" }] }];
+		if (path === jobs && method === "POST") {
+			this.planned += 1;
+			return [200, question];
+		}
+		if (path === `${jobs}/job-1/start`) {
+			if (!this.approved) return [200, question];
+			return [200, { status: "ok", job: { id: "job-1", title: "Import 2,000 customers", code: this.code, script_hash: "hash-1", source: { kind: "chat", file_id: this.file }, records: 2_000, max_calls: 50, calls: 0, expires_at: Date.now() + 3_600_000 } }];
+		}
+		if (path === `${jobs}/job-1/finish`) {
+			this.finished.push(body);
+			return [200, { status: "ok", end_reason: body.status, calls: this.external.length }];
+		}
+		if (path === `/api/v1/workspaces/${WS}/chat/files/${this.file}/content`) {
+			const query = new URL(url, "http://x").searchParams;
+			const offset = Number(query.get("offset"));
+			const limit = Number(query.get("limit"));
+			const end = Math.min(this.rows.length, offset + limit);
+			return [200, { file: { id: this.file, file_name: "customers.csv", kind: "csv", size_bytes: 1 }, sheets: [], sheet: null, rows: this.rows.slice(offset, end), row_numbers: null, text: null, next_offset: end < this.rows.length ? end : null, no_text: false }];
+		}
+		if (path === `/api/v1/workspaces/${WS}/agent-tools/call`) {
+			// Orbit runs a job's write only when it names the job (and checks the rest itself).
+			if (!body.job) return [200, { status: "approval_required", approval_id: `one-${this.external.length}`, action: "Shop: POST /graphql", expires_at: Date.now() + 1e6 }];
+			this.external.push({ arguments: body.arguments, job: body.job });
+			return [200, { status: "ok", response: { status: 200, body: { data: { ok: true } }, truncated: false } }];
+		}
+		return super.route(method, url, headers, body);
+	}
+}
+
+test("jobs: a 2,000-row import asks once, runs past the run's tool-call limit, names the job on each write, and reports its progress", async () => {
+	const orbit = new JobOrbit();
+	current = orbit;
+	await orbit.listen();
+	const agent = new Agent(config(orbit, mkdtempSync(join(tmpdir(), "agent-"))), new OrbitClient(config(orbit, "")));
+	await agent.open();
+	await agent.start();
+	try {
+		const thread = id();
+		const plan = { title: "Import 2,000 customers", summary: "Create the customers of customers.csv in the shop.", tool: "shop__api_request", method: "POST", path: "/graphql", mutations: ["customerCreate"], max_calls: 50, records: 2_000, source: { kind: "chat", file_id: orbit.file }, code: orbit.code };
+		orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> plan job ${JSON.stringify(plan)}` });
+		await until("the job's question", () => orbit.messages.get("approve:job-approval")?.body.startsWith(`<@${ANN}> I need your approval for one job. Reply **yes**`) === true);
+		const asked = orbit.messages.get("approve:job-approval")!;
+		assert.match(asked.body, /Accepts Marketing → subscribed/);
+		assert.match(asked.body, /at most 50 calls/);
+		// The raw request is only in the card, under Details.
+		await until("the details card", () => asked.blocks?.[0]?.spec?.elements?.details?.type === "Details");
+		assert.doesNotMatch(asked.body, /Scope:/);
+		await until("waiting for Ann", () => orbit.threads.get(thread)?.status === "waiting");
+
+		orbit.approved = true;
+		const yes = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "answer", body: "yes" });
+		await until("the job's end", () => progressOf(orbit, yes).startsWith("Done (run_job)"), 60_000);
+		assert.equal(orbit.planned, 1);
+		// One question for the whole job: no write asked again.
+		assert.deepEqual([...orbit.messages.keys()].filter((nonce) => nonce.startsWith("approve:")), ["approve:job-approval"]);
+		assert.equal(orbit.external.length, 50);
+		assert.ok(orbit.external.every((call) => JSON.stringify(call.job) === JSON.stringify({ id: "job-1", script_hash: "hash-1" })));
+		const sent = orbit.external.flatMap((call) => call.arguments.body.variables.batch);
+		assert.equal(sent.length, 2_000);
+		assert.equal(sent.filter((customer: { subscribed: boolean }) => customer.subscribed).length, 667);
+		assert.deepEqual(orbit.finished, [{ status: "done", done: 2_000, total: 2_000 }]);
+		assert.match(orbit.messages.get("job:job-1")!.body, /✅ \*\*Import 2,000 customers\*\*: done, 2,000\/2,000/);
+		assert.match(progressOf(orbit, yes), /imported 2000/);
+	} finally {
+		await agent.stop();
+		orbit.server.close();
+	}
+});
+
 /** Orbit's integration routes, as far as the agent sees them: one read tool, one write tool that needs a yes. */
 class IntegrationOrbit extends FakeOrbit {
 	/** Calls that reached the outside, with their arguments. */
