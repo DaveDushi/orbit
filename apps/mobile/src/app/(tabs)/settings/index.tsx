@@ -4,6 +4,7 @@ import { View } from 'react-native'
 
 import { ConfirmDialog, type ConfirmRequest } from '../../../components/settings/Dialog'
 import { Note, RowIcon, RowText, SettingsCard, SettingsRow, SettingsShell, useNavFlags } from '../../../components/settings/Shell'
+import { WorkspaceSwitcher } from '../../../components/WorkspaceDialogs'
 import { WorkspaceLogo } from '../../../components/WorkspaceLogo'
 import { settingsSections, type SettingsNavItem } from '../../../data/settings-nav'
 import { useOpenWorkspaceApp, useWorkspaceApps } from '../../../hooks/apps'
@@ -37,6 +38,7 @@ export default function SettingsScreen() {
 
   return (
     <SettingsShell title="Settings" nav={[]}>
+      <SwitchWorkspace />
       {sections.map((section) => (
         <Section key={section.title} title={section.title} subtitle={subtitles[section.title]}>
           {section.title === 'Workspace' && workspace.permissions.includes('workspace.update') ? <WorkspaceName key={workspace.id} /> : null}
@@ -67,6 +69,23 @@ export default function SettingsScreen() {
 
       <LeaveWorkspace key={`leave-${workspace.id}`} />
     </SettingsShell>
+  )
+}
+
+/** The workspace switcher (also in the drawer): switch, create a workspace or join one with an invitation link. */
+function SwitchWorkspace() {
+  const { colors } = useTheme()
+  const { workspace, workspaces } = useOrbit()
+  const [open, setOpen] = useState(false)
+  return (
+    <View className="rounded-lg overflow-hidden bg-card shadow-[0_0_0_1px_var(--color-border)]">
+      <SettingsRow first label="Switch workspace" onPress={() => setOpen(true)}>
+        <WorkspaceLogo workspace={workspace} size={24} />
+        <RowText title={workspace.name} subtitle={workspaces.length > 1 ? `Switch between your ${workspaces.length} workspaces, create or join one` : 'Create a workspace or join one'} />
+        <Icon name="chevronRight" size={14} color={colors.mutedForeground} />
+      </SettingsRow>
+      <WorkspaceSwitcher visible={open} onClose={() => setOpen(false)} />
+    </View>
   )
 }
 

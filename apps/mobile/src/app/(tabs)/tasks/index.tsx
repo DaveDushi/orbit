@@ -4,6 +4,7 @@ import { Pressable, View } from 'react-native'
 import { TextInput } from '../../../ui/scaled'
 
 import { MenuButton } from '../../../components/Drawer'
+import { NewProjectSheet } from '../../../components/NewProjectSheet'
 import { NewTaskDialog, type NewTaskDefaults } from '../../../components/NewTaskDialog'
 import { TaskList } from '../../../components/tasks/TaskList'
 import { DisplaySheet, FilterSheet, ViewDialog, type ViewDialogRequest } from '../../../components/tasks/ViewControls'
@@ -25,10 +26,12 @@ const PRESET_TITLE: Record<string, string> = {
   my_week: 'My week',
 }
 
-type Sheet = 'view' | 'project' | 'filter' | 'display'
+type Sheet = 'view' | 'project' | 'new-project' | 'filter' | 'display'
 
 /** The view menu's rows after the presets: the saved views and the trash, so the drawer is not the only way there. */
 const SAVED_VIEWS = 'saved-views'
+/** The project menu's last row: a new project (also in the drawer). */
+const NEW_PROJECT = 'new-project'
 const TRASH = 'trash'
 
 const isDefaultDisplay = (display: ViewState['display']) =>
@@ -166,7 +169,11 @@ export default function TasksScreen() {
     { key: SAVED_VIEWS, label: 'Saved views', leading: <Icon name="layer" size={16} color={colors.mutedForeground} /> },
     { key: TRASH, label: 'Trash', leading: <Icon name="trash" size={16} color={colors.mutedForeground} /> },
   ]
-  const projectOptions = [{ key: 'all', label: 'All projects', selected: projectId === null }, ...(projects.data ?? []).map((item) => ({ key: item.id, label: item.name, selected: item.id === projectId, leading: <View className="size-2 rounded-full" style={{ backgroundColor: item.color }} /> }))]
+  const projectOptions = [
+    { key: 'all', label: 'All projects', selected: projectId === null },
+    ...(projects.data ?? []).map((item) => ({ key: item.id, label: item.name, selected: item.id === projectId, leading: <View className="size-2 rounded-full" style={{ backgroundColor: item.color }} /> })),
+    { key: NEW_PROJECT, label: 'New project', leading: <Icon name="plus" size={16} color={colors.mutedForeground} /> },
+  ]
 
   return (
     <SafeAreaView edges={['top', 'left', 'right']} className="flex-1 bg-background">
@@ -206,10 +213,19 @@ export default function TasksScreen() {
         title="Project"
         options={projectOptions}
         onSelect={(key) => {
+          if (key === NEW_PROJECT) return setSheet('new-project')
           setSheet(null)
           setProjectId(key === 'all' ? null : key)
         }}
         onClose={() => setSheet(null)}
+      />
+      <NewProjectSheet
+        visible={sheet === 'new-project'}
+        onClose={() => setSheet(null)}
+        onCreated={(created) => {
+          setSheet(null)
+          setProjectId(created.id)
+        }}
       />
       <FilterSheet visible={sheet === 'filter'} quick={quick} kept={0} withProject={false} onChange={setQuick} onClose={() => setSheet(null)} />
       <DisplaySheet visible={sheet === 'display'} state={state} onChange={(next) => setDisplay(next.display)} onClose={() => setSheet(null)} />

@@ -4,10 +4,56 @@ import { Image, View } from 'react-native'
 import { invitationForOther, invitationToken, type InvitationPreview } from '../data/workspaces'
 import { useCreateWorkspace, useJoinWorkspace } from '../hooks/workspaces'
 import { errorMessage, useSession, useSignedIn } from '../session-context'
-import { Button, Input, Text } from '../ui'
+import { useOrbit } from '../orbit-context'
+import { useTheme } from '../theme'
+import { Button, Icon, type IconName, Input, PickerSheet, Text } from '../ui'
 import { Dialog } from './settings/Dialog'
 import { Note } from './settings/Shell'
 import type { WorkspaceRecord } from '../data/orbit'
+import { WorkspaceLogo } from './WorkspaceLogo'
+
+/** The switcher's rows below the workspaces, as on the web; Join takes an invitation link pasted from the email. */
+const CREATE = '__create'
+const JOIN = '__join'
+const WORKSPACE_ACTIONS: readonly { key: typeof CREATE | typeof JOIN; label: string; icon: IconName }[] = [
+  { key: CREATE, label: 'Create workspace', icon: 'plus' },
+  { key: JOIN, label: 'Join with an invitation link', icon: 'link2' },
+]
+
+/**
+ * The web's workspace switcher: the person's workspaces, then Create workspace and Join with an invitation link. Opened
+ * from the drawer and from Settings. `onSwitched` runs before another workspace opens (the drawer closes itself).
+ */
+export function WorkspaceSwitcher({ visible, onClose, onSwitched, surface = 'popover' }: { visible: boolean; onClose: () => void; onSwitched?: () => void; surface?: 'popover' | 'sidebarPopover' }) {
+  const { colors } = useTheme()
+  const { workspace, workspaces, selectWorkspace } = useOrbit()
+  const [dialog, setDialog] = useState<typeof CREATE | typeof JOIN | null>(null)
+  const open = (id: string) => {
+    onSwitched?.()
+    selectWorkspace(id)
+  }
+  return (
+    <>
+      <PickerSheet
+        visible={visible}
+        title="Workspaces"
+        surface={surface}
+        options={[
+          ...workspaces.map((item) => ({ key: item.id, label: item.name, subtitle: item.role, selected: item.id === workspace.id, leading: <WorkspaceLogo workspace={item} size={24} /> })),
+          ...WORKSPACE_ACTIONS.map((action) => ({ ...action, leading: <Icon name={action.icon} size={18} color={colors.mutedForeground} /> })),
+        ]}
+        onSelect={(id) => {
+          onClose()
+          if (id === CREATE || id === JOIN) setDialog(id)
+          else open(id)
+        }}
+        onClose={onClose}
+      />
+      <CreateWorkspaceDialog visible={dialog === CREATE} onClose={() => setDialog(null)} onCreated={(created) => open(created.id)} />
+      <JoinWorkspaceDialog visible={dialog === JOIN} onClose={() => setDialog(null)} onJoined={open} />
+    </>
+  )
+}
 
 /** The web switcher's "Create workspace" form. `onCreated` selects the new workspace. */
 export function CreateWorkspaceDialog({ visible, onClose, onCreated }: { visible: boolean; onClose: () => void; onCreated?: (workspace: WorkspaceRecord) => void }) {
