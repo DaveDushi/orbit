@@ -27,6 +27,7 @@ import { EmojiPicker } from './EmojiPicker'
 import { MicButton } from './MicButton'
 import { ScheduledBar, SendLaterSheet } from './SendLater'
 import { ActionSheet } from './Sheet'
+import { StickerPicker, useStickers } from './StickerPicker'
 
 /** A picked file: it uploads at once, and the message names it once it is there. */
 interface DraftFile {
@@ -175,7 +176,30 @@ export function useComposer(conversationId: string, threadRootId: string | null,
     )
   }
 
+  /**
+   * A sticker goes at once, as a message of its own: it answers the reply target if there is one, and leaves the text
+   * and the files as they are.
+   */
+  const sendSticker = (stickerId: string) => {
+    const item = { nonce: newNonce(), body: '', files: 0 }
+    const replyTo = mode.kind === 'new' ? mode.replyTo : null
+    if (replyTo) setMode({ kind: 'new', replyTo: null })
+    setPending((list) => [...list, item])
+    chat.send(client, workspaceId, conversationId, { body: '', nonce: item.nonce, threadRootId, replyToId: replyTo?.id ?? null, stickerId, pageContext: pageContext?.() }).then(
+      ({ result, events }) => {
+        applyChatEvents(queryClient, workspaceId, events)
+        received(result)
+        setPending((list) => list.filter((other) => other.nonce !== item.nonce))
+      },
+      (error) => {
+        setPending((list) => list.filter((other) => other.nonce !== item.nonce))
+        showError('Sticker not sent', error)
+      },
+    )
+  }
+
   return {
+    sendSticker,
     draft,
     setDraft,
     files,
@@ -231,6 +255,8 @@ export function Composer({ state, placeholder, nameOf, alsoSendTo }: { state: Co
   const [focused, setFocused] = useState(false)
   const [attachOpen, setAttachOpen] = useState(false)
   const [sendMenu, setSendMenu] = useState(false)
+  const [stickerOpen, setStickerOpen] = useState(false)
+  const stickers = useStickers().data ?? []
   const [laterOpen, setLaterOpen] = useState(false)
   const [emojiOpen, setEmojiOpen] = useState(false)
   const [cursor, setCursor] = useState<number | null>(null)
@@ -357,6 +383,7 @@ export function Composer({ state, placeholder, nameOf, alsoSendTo }: { state: Co
         <View className="flex-row items-center gap-1 p-1.5">
           <IconButton icon="attach" label="Attach files" size={32} iconSize={20} disabled={mode.kind === 'edit'} onPress={() => setAttachOpen(true)} />
           <IconButton icon="smile" label="Emoji" size={32} iconSize={20} onPress={() => setEmojiOpen(true)} />
+          {stickers.length > 0 ? <IconButton icon="sticker" label="Send a sticker" size={32} iconSize={20} disabled={mode.kind === 'edit'} onPress={() => setStickerOpen(true)} /> : null}
           <IconButton icon="at" label="Mention" size={32} iconSize={20} onPress={() => append('@')} />
           <IconButton icon="hashtag" label="Mention a channel or task" size={32} iconSize={20} onPress={() => append('#')} />
           <View className="flex-1" />
@@ -402,6 +429,16 @@ export function Composer({ state, placeholder, nameOf, alsoSendTo }: { state: Co
         ]}
         onClose={() => setSendMenu(false)}
       />
+      {stickerOpen ? (
+        <StickerPicker
+          stickers={stickers}
+          onPick={(sticker) => {
+            setStickerOpen(false)
+            state.sendSticker(sticker.id)
+          }}
+          onClose={() => setStickerOpen(false)}
+        />
+      ) : null}
       {laterOpen ? <SendLaterSheet pending={state.schedulePending} onPick={(at) => state.scheduleAt(at, () => setLaterOpen(false))} onClose={() => setLaterOpen(false)} /> : null}
       <ActionSheet
         visible={attachOpen}

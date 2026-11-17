@@ -163,6 +163,8 @@ export interface OutgoingMessage {
   alsoInChannel?: boolean
   /** Sent from Ask Donna: the page the person is on, for the agent (never shown in chat). */
   pageContext?: PageContext | null
+  /** A custom sticker of the workspace; the body may then be empty. */
+  stickerId?: string | null
 }
 
 export async function send(client: OrbitClient, workspaceId: string, conversationId: string, message: OutgoingMessage): Promise<ChatWrite<MessageRecord>> {
@@ -173,6 +175,7 @@ export async function send(client: OrbitClient, workspaceId: string, conversatio
     reply_to_id: message.replyToId ?? null,
     file_ids: message.fileIds ?? [],
     also_in_channel: message.alsoInChannel ?? false,
+    ...(message.stickerId ? { sticker_id: message.stickerId } : {}),
     ...(message.pageContext ? { page_context: message.pageContext } : {}),
   }
   return write((await sendChatMessage({ ...inConversation(client, workspaceId, conversationId), body })).data)
