@@ -12,19 +12,24 @@ import {
   deleteTeamspace,
   duplicatePage,
   emptyPageTrash,
+  getPageVersion,
   listPageFavorites,
+  listPageVersions,
+  movePage,
   listPageThreads,
   listPageTrash,
   moveTeamspace,
   purgePage,
   removePageFavorite,
   restorePage,
+  restorePageVersion,
+  setPageLock,
   socketTicket,
   updatePage,
   updateTeamspace,
   uploadPageFile,
 } from '@orbit/api/generated/sdk.gen'
-import type { CreatePageBody, PageThread, PageUpdateBody, TrashedPage } from '@orbit/api/generated/types.gen'
+import type { CreatePageBody, MovePageBody, PageThread, PageUpdateBody, PageVersion, PageVersionSummary, TrashedPage } from '@orbit/api/generated/types.gen'
 import type { TicketResult } from '@orbit/editor/collab/ticketSocket'
 
 import { multipart, type UploadFile } from './account-api'
@@ -173,3 +178,32 @@ export async function commentOnPage(client: OrbitClient, workspaceId: string, pa
 export async function replyToThread(client: OrbitClient, workspaceId: string, pageId: string, threadId: string, body: Record<string, unknown>[]): Promise<void> {
   await createPageComment({ client, path: { ...pagePath(workspaceId, pageId), thread_id: threadId }, body: { body }, throwOnError: true })
 }
+
+export type { PageVersion, PageVersionSummary }
+
+/** Locks or unlocks a page; the server then reconnects every open editor of it, read-only or editable. */
+export async function lockPage(client: OrbitClient, workspaceId: string, pageId: string, locked: boolean): Promise<Page> {
+  return (await setPageLock({ client, path: { workspace_id: workspaceId, page_id: pageId }, body: { locked }, throwOnError: true })).data
+}
+
+export async function moveDocPage(client: OrbitClient, workspaceId: string, page: Pick<PageSummary, 'id' | 'version'>, move: Omit<MovePageBody, 'expected_version'>): Promise<Page> {
+  return (await movePage({ client, path: { workspace_id: workspaceId, page_id: page.id }, body: { ...move, expected_version: page.version }, throwOnError: true })).data
+}
+
+/** The page's history, newest first (the latest 50). */
+export async function pageVersions(client: OrbitClient, workspaceId: string, pageId: string): Promise<PageVersionSummary[]> {
+  return (await listPageVersions({ client, path: { workspace_id: workspaceId, page_id: pageId }, query: { limit: 50 }, throwOnError: true })).data.items
+}
+
+export async function pageVersion(client: OrbitClient, workspaceId: string, pageId: string, versionId: string): Promise<PageVersion> {
+  return (await getPageVersion({ client, path: { workspace_id: workspaceId, page_id: pageId, version_id: versionId }, throwOnError: true })).data
+}
+
+/** Puts a version back on the page (the page as it was is kept as a version too). */
+export async function restoreVersion(client: OrbitClient, workspaceId: string, page: Pick<PageSummary, 'id' | 'version'>, versionId: string): Promise<Page> {
+  return (await restorePageVersion({ client, path: { workspace_id: workspaceId, page_id: page.id, version_id: versionId }, body: { expected_version: page.version }, throwOnError: true })).data
+}
+
+/** The address of a page's Markdown export (a zip); it needs the session token. */
+export const exportUrl = (server: string, workspaceId: string, pageId: string, withChildren: boolean) =>
+  `${server}/api/v1/workspaces/${encodeURIComponent(workspaceId)}/pages/${encodeURIComponent(pageId)}/export?format=markdown&children=${withChildren}`

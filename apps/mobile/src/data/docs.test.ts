@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { absoluteUrl, blockId, descendantsOf, docSpaces, favoritePages, iconOf, pageTitle, paragraphBlocks, spaceRequest, trashPrompt, validCoverUrl, visibleThreads } from './docs'
+import { absoluteUrl, blockId, blockLines, descendantsOf, docSpaces, favoritePages, iconOf, pageTitle, paragraphBlocks, spaceMove, spaceRequest, trashPrompt, validCoverUrl, visibleThreads } from './docs'
 import type { PageSummary, Teamspace } from './orbit'
 
 const page = (id: string, fields: Partial<PageSummary>): PageSummary => ({
@@ -99,4 +99,29 @@ describe('writing docs', () => {
     const list = [thread('old', false, '2026-10-01'), thread('done', true, '2026-10-09'), thread('new', false, '2026-10-05'), thread('empty', false, '2026-10-10', true)]
     expect(visibleThreads(list).map((item) => item.id)).toEqual(['new', 'old', 'done'])
   })
+})
+
+describe('moving a page to a space', () => {
+  const pages = [page('a', {}), page('b', { position: 1 }), page('child', { parent_id: 'a' }), page('mine', { private: true, teamspace_id: null })]
+  test('goes last among the top pages of another teamspace or Private', () => {
+    expect(spaceMove(pages, pages[0], 'private')).toEqual({ parent_id: null, position: 1, private: true })
+    expect(spaceMove(pages, pages[3], 'teamspace:ts-general')).toEqual({ parent_id: null, position: 2, teamspace_id: 'ts-general' })
+  })
+  test('a sub-page moves to the top of its own space without a space change', () => {
+    expect(spaceMove(pages, pages[2], 'teamspace:ts-general')).toEqual({ parent_id: null, position: 2 })
+  })
+  test('a top page of the space stays', () => {
+    expect(spaceMove(pages, pages[1], 'teamspace:ts-general')).toBeNull()
+  })
+})
+
+test('a version preview reads the text of nested blocks and tables', () => {
+  const blocks = [
+    { type: 'heading', content: [{ type: 'text', text: 'Plan' }], children: [] },
+    { type: 'paragraph', content: [{ type: 'text', text: 'Ship ' }, { type: 'link', content: [{ type: 'text', text: 'it' }] }], children: [{ type: 'paragraph', content: [{ type: 'text', text: 'nested' }] }] },
+    { type: 'image', content: undefined },
+    { type: 'table', content: { type: 'tableContent', rows: [{ cells: [[{ type: 'text', text: 'A' }], [{ type: 'text', text: 'B' }]] }] } },
+  ]
+  expect(blockLines(blocks)).toEqual(['Plan', 'Ship it', 'nested', 'A | B'])
+  expect(blockLines(blocks, 2)).toEqual(['Plan', 'Ship it'])
 })

@@ -18,6 +18,8 @@ import { WorkspaceLogo } from './WorkspaceLogo'
 import { DRAWER_AREA_TITLES, type DrawerArea, drawerAreaOf, drawerSections, TASK_PRESETS, tasksHref } from './drawerAreas'
 import { ACCOUNT_NAV, ADMIN_NAV, allowedNav, WORKSPACE_NAV } from './settings/Shell'
 import { useAgentEnabled } from '../hooks/agent'
+import { useViews } from '../hooks/views'
+import { favoriteViews } from '../data/views'
 import { isGuestRole } from '../data/guest'
 import { useOpenWorkspaceApp, useWorkspaceApps } from '../hooks/apps'
 import { appIconName } from '../data/apps'
@@ -294,7 +296,7 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
       <SlideIn key={content} from={reduceMotion ? null : enter}>
         <ScrollView className="-mx-1 flex-1" contentContainerClassName="grow gap-0.5 px-1 pb-2">
           {area === 'tasks' ? (
-            <TasksArea view={view} project={project} onTasks={pathname === '/tasks'} onBack={() => setMainMenuFor(area)} go={go} />
+            <TasksArea view={view} project={project} pathname={pathname} onBack={() => setMainMenuFor(area)} go={go} />
           ) : area ? (
             <>
               <BackRow label={DRAWER_AREA_TITLES[area]} onPress={() => setMainMenuFor(area)} />
@@ -325,7 +327,8 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
               {workspaceLinks.map((link) => (
                 <NavRow key={link.label} link={link} onPress={() => go(link.href)} />
               ))}
-              {newUi ? null : <SubRow label="Views" onPress={() => go('/tasks')} />}
+              {newUi ? null : <SubRow label="Views" a11yLabel="Task views" onPress={() => go('/tasks/views')} />}
+              {newUi ? null : <SubRow label="Trash" a11yLabel="Task trash" onPress={() => go('/tasks/trash')} />}
               <NavRow link={{ label: 'Docs', icon: 'docs', href: '/docs', active: pathname.startsWith('/docs') }} onPress={() => go('/docs')} />
               <NavRow link={{ label: 'Chat', icon: 'chat', href: '/chat', active: pathname.startsWith('/chat'), badge: chatBadge.count, dot: chatBadge.unread }} onPress={() => go('/chat')} />
               <NavRow link={{ label: 'Drive', icon: 'folder', href: '/drive', active: pathname.startsWith('/drive') }} onPress={() => go('/drive')} />
@@ -382,10 +385,12 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
 
 /**
  * The new UI's Tasks area (the web's `TasksAreaNav`): All tasks, Views, the task presets and the projects. A preset
- * keeps the project and a project keeps the preset. The web's Favorite views are left out: the app has no saved views.
+ * keeps the project and a project keeps the preset. Favorite views follow Views, and Trash comes last, as on the web.
  */
-function TasksArea({ view, project, onTasks, onBack, go }: { view?: string; project?: string; onTasks: boolean; onBack: () => void; go: (href: Href) => void }) {
+function TasksArea({ view, project, pathname, onBack, go }: { view?: string; project?: string; pathname: string; onBack: () => void; go: (href: Href) => void }) {
   const projects = useProjects().data ?? []
+  const favorites = favoriteViews(useViews().data ?? [])
+  const onTasks = pathname === '/tasks'
   const [creating, setCreating] = useState(false)
   const current = { view, project }
   const row = (link: NavLink) => <NavRow key={String(link.href)} link={link} onPress={() => go(link.href)} />
@@ -393,8 +398,9 @@ function TasksArea({ view, project, onTasks, onBack, go }: { view?: string; proj
     <>
       <BackRow label={DRAWER_AREA_TITLES.tasks} onPress={onBack} />
       {row({ label: 'All tasks', icon: 'tasks', href: tasksHref(current, { view: null }), active: onTasks && !view })}
-      {/* the app's task list is its views page, like the main menu's Views row */}
-      <NavRow link={{ label: 'Views', icon: 'layer', href: '/tasks', active: false }} onPress={() => go('/tasks')} />
+      {row({ label: 'Views', icon: 'layer', href: '/tasks/views', active: pathname === '/tasks/views' })}
+      {favorites.length > 0 ? <Section label="Favorites" /> : null}
+      {favorites.map((item) => row({ label: item.name, icon: 'star', href: `/tasks/views/${item.id}`, active: pathname === `/tasks/views/${item.id}` }))}
       <Section label="My work" />
       {TASK_PRESETS.map((preset) => row({ label: preset.label, icon: preset.icon, href: tasksHref(current, { view: preset.view }), active: onTasks && view === preset.view }))}
       {projects.length > 0 ? (
@@ -405,6 +411,7 @@ function TasksArea({ view, project, onTasks, onBack, go }: { view?: string; proj
         </>
       ) : <Section label="Projects" />}
       <NavRow link={{ label: 'New project', icon: 'plus', href: '/tasks', active: false }} onPress={() => setCreating(true)} />
+      {row({ label: 'Trash', icon: 'trash', href: '/tasks/trash', active: pathname.startsWith('/tasks/trash') })}
       <NewProjectSheet visible={creating} onClose={() => setCreating(false)} onCreated={(created) => {
         setCreating(false)
         go(tasksHref(current, { project: created.id }))
@@ -539,11 +546,11 @@ function Tile({ icon, active, pressed, tone }: { icon: IconName; active: boolean
   )
 }
 
-/** "Views" nested under Tasks behind a 1px guide line. */
-function SubRow({ label, onPress }: { label: string; onPress: () => void }) {
+/** "Views" and "Trash" nested under Tasks behind a 1px guide line. */
+function SubRow({ label, a11yLabel, onPress }: { label: string; a11yLabel: string; onPress: () => void }) {
   const dark = useTheme().scheme === 'dark'
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel="Task views" onPress={onPress} className={`ml-5 h-7 justify-center border-l pl-3 ${dark ? 'border-sidebar-tint/10' : 'border-black/8'}`}>
+    <Pressable accessibilityRole="button" accessibilityLabel={a11yLabel} onPress={onPress} className={`ml-5 h-7 justify-center border-l pl-3 ${dark ? 'border-sidebar-tint/10' : 'border-black/8'}`}>
       <RNText className="font-noto-medium text-[13px] text-sidebar-nav">{label}</RNText>
     </Pressable>
   )
