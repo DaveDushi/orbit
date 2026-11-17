@@ -1,8 +1,9 @@
 'use dom'
 
-// The page body editor: BlockNote with Orbit's schema (`@orbit/editor`), bound to the page's Y.Doc over the collab
-// socket, so it co-edits the same document as the web. It runs in a web view; the screen around it is native and
-// talks to it through props, native actions (async functions) and `run` (the toolbar's commands).
+// The page body editor (and a task's description): BlockNote with Orbit's schema (`@orbit/editor`), bound to the
+// document's Y.Doc over the collab socket, so it co-edits the same document as the web. It runs in a web view; the
+// screen around it is native and talks to it through props, native actions (async functions) and `run` (the
+// toolbar's commands).
 import '@blocknote/react/style.css'
 import './PageEditor.css'
 
@@ -11,7 +12,7 @@ import { BlockNoteViewRaw, useCreateBlockNote } from '@blocknote/react'
 import { setEditableInPlace } from '@orbit/editor/editable'
 import { commentMarks } from '@orbit/editor/commentMarks'
 import { CollabSession, type CollabProblem, type CollabState } from '@orbit/editor/collab/session'
-import { collabSocket, COLLAB_FRAGMENT } from '@orbit/editor/collab/target'
+import { type CollabKind, collabSocket, COLLAB_FRAGMENT } from '@orbit/editor/collab/target'
 import { ticketWebSocket, type TicketResult } from '@orbit/editor/collab/ticketSocket'
 import { watchDeletedFiles } from '@orbit/editor/deletedFiles'
 import { isSafeLinkHref } from '@orbit/editor/links'
@@ -51,8 +52,11 @@ export interface PageEditorProps {
   /** The Orbit server, `https://…` (the socket opens on the same host). */
   server: string
   workspaceId: string
-  pageId: string
-  /** `Page.collab_epoch`. */
+  /** A docs page, or a task's description (the task schema: no page cards, no Drive files). */
+  kind: CollabKind
+  /** The page or task id. */
+  docId: string
+  /** `Page.collab_epoch` / `Task.collab_epoch`. */
   epoch: string
   /** Bump to drop the document and connect again (after a reset). */
   generation: number
@@ -151,7 +155,7 @@ function Mention({ inlineContent }: { inlineContent: { props: { userId: string; 
 
 const COLORED_TOKENS = new Set(['keyword', 'string', 'comment', 'class', 'property', 'entity', 'jsxliterals'])
 
-const { pageEditorSchema } = createEditorSchemas({
+const { pageEditorSchema, taskEditorSchema } = createEditorSchemas({
   page: { render: PageCard },
   driveFile: { render: DriveFileCard },
   callout: { render: Callout },
@@ -168,7 +172,7 @@ interface Connection {
 const CONNECTING: CollabState = { status: 'connecting', problem: null, ready: false }
 
 export default function PageEditor(props: PageEditorProps) {
-  const { server, workspaceId, pageId, epoch, generation, editable, theme, colors, pages, members } = props
+  const { server, workspaceId, kind, docId, epoch, generation, editable, theme, colors, pages, members } = props
   // Native actions arrive as new functions with every prop update; the socket and the editor read the latest.
   const actions = useRef(props)
   useEffect(() => {
@@ -191,7 +195,7 @@ export default function PageEditor(props: PageEditorProps) {
 
   useEffect(() => {
     const doc = new Y.Doc()
-    const { serverUrl, room, params } = collabSocket(server, { workspaceId, kind: 'pages', id: pageId, epoch })
+    const { serverUrl, room, params } = collabSocket(server, { workspaceId, kind, id: docId, epoch })
     const provider = new WebsocketProvider(serverUrl, room, doc, {
       params,
       disableBc: true,
@@ -214,7 +218,7 @@ export default function PageEditor(props: PageEditorProps) {
       current.destroy()
       setSession(null)
     }
-  }, [server, workspaceId, pageId, epoch, generation])
+  }, [server, workspaceId, kind, docId, epoch, generation])
 
   useEffect(() => {
     const root = rootRef.current
@@ -245,7 +249,8 @@ export default function PageEditor(props: PageEditorProps) {
       {session && state.ready ? (
         <LookupsContext value={{ pages, members, openPage: (id) => void actions.current.openPage(id) }}>
           <Editor
-            key={`${pageId}:${epoch}:${generation}`}
+            key={`${kind}:${docId}:${epoch}:${generation}`}
+            kind={kind}
             connection={session.connection}
             editable={editable && state.problem !== 'read-only'}
             theme={theme}
@@ -255,7 +260,7 @@ export default function PageEditor(props: PageEditorProps) {
           />
         </LookupsContext>
       ) : (
-        <div className="orbit-page-editor-loading" aria-label="Loading the page">
+        <div className="orbit-page-editor-loading" aria-label={kind === 'tasks' ? 'Loading the description' : 'Loading the page'}>
           <span />
           <span />
           <span />
@@ -266,6 +271,7 @@ export default function PageEditor(props: PageEditorProps) {
 }
 
 interface EditorProps {
+  kind: CollabKind
   connection: Connection
   editable: boolean
   theme: 'light' | 'dark'
@@ -274,13 +280,14 @@ interface EditorProps {
   editorRef: { current: PageEditorInstance | null }
 }
 
-function Editor({ connection, editable, theme, server, actions, editorRef }: EditorProps) {
+function Editor({ kind, connection, editable, theme, server, actions, editorRef }: EditorProps) {
   const [files] = useState(() => new Map<string, Promise<string>>())
   const rootRef = useRef<HTMLDivElement>(null)
   const editor: PageEditorInstance = useCreateBlockNote(
     // The server initializes every document, so there is no initial content: the fragment is the page.
     withCollaboration({
-      schema: pageEditorSchema,
+      // a task's description has the task schema: the page schema would keep blocks the server's sanitizer drops
+      schema: (kind === 'tasks' ? taskEditorSchema : pageEditorSchema) as typeof pageEditorSchema,
       // Without the comment mark, y-prosemirror would drop the text of anchored comments for everyone.
       extensions: [commentMarks()],
       collaboration: {

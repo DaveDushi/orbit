@@ -69,12 +69,12 @@ export async function uploadPageImage(client: OrbitClient, workspaceId: string, 
 }
 
 /**
- * A one-time ticket for the page editor's socket (`…/collab?ticket=`), which cannot send the bearer token. It opens
- * only the socket of `pageId`.
+ * A one-time ticket for the editor's socket (`…/collab?ticket=`), which cannot send the bearer token. It opens only
+ * the socket of that page, or of that task's description.
  */
-export async function collabTicket(client: OrbitClient, pageId: string): Promise<TicketResult> {
+export async function collabTicket(client: OrbitClient, id: string, kind: 'page' | 'task' = 'page'): Promise<TicketResult> {
   try {
-    return { ok: true, ticket: (await socketTicket({ client, body: { kind: 'page', id: pageId }, throwOnError: true })).data.ticket }
+    return { ok: true, ticket: (await socketTicket({ client, body: { kind, id }, throwOnError: true })).data.ticket }
   } catch (error) {
     const status = (error as { status?: unknown }).status
     return { ok: false, status: typeof status === 'number' ? status : 0 }

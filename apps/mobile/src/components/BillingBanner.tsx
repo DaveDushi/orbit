@@ -9,15 +9,23 @@ import { useOrbit } from '../orbit-context'
 import { useTheme } from '../theme'
 import { Icon, Text } from '../ui'
 
+/** The workspace's plan in Orbit Cloud; no request without billing. */
+function useWorkspaceBilling() {
+  const { client, workspaceId } = useOrbit()
+  const enabled = useAuthOptions().data?.billing_enabled ?? false
+  return useQuery({ queryKey: billingKey(workspaceId), queryFn: () => workspaceBilling(client, workspaceId), enabled })
+}
+
+/** Orbit Cloud without a subscription: the server refuses writes, and the co-editing sockets drop edits. */
+export const useWorkspaceReadOnly = () => useWorkspaceBilling().data?.access === 'read_only'
+
 /**
  * The web's `ReadOnlyBanner` (Orbit Cloud): the trial's days left, or the read-only line, above the dock on every tab.
  * The action opens the app's Billing page; plans are chosen there in the web app.
  */
 export function BillingBanner() {
-  const { client, workspaceId } = useOrbit()
   const { colors } = useTheme()
-  const enabled = useAuthOptions().data?.billing_enabled ?? false
-  const billing = useQuery({ queryKey: billingKey(workspaceId), queryFn: () => workspaceBilling(client, workspaceId), enabled })
+  const billing = useWorkspaceBilling()
   const [openedAt] = useState(Date.now)
   const banner = billingBanner(billing.data, openedAt)
   if (!banner) return null

@@ -5,6 +5,7 @@
  */
 import {
   createCycle,
+  listGithubLinks,
   createLabel,
   createMilestone,
   createTask,
@@ -34,6 +35,7 @@ import {
   uploadTaskAttachments,
 } from '@orbit/api/generated/sdk.gen'
 import type {
+  GithubLink,
   AttachmentRecord,
   CreateTaskBody,
   LinkedDoc,
@@ -265,6 +267,17 @@ export async function uploadTaskFile(client: OrbitClient, workspaceId: string, t
 export async function removeAttachment(client: OrbitClient, workspaceId: string, taskId: string, attachmentId: string): Promise<void> {
   await deleteTaskAttachment({ client, path: { workspace_id: workspaceId, task_id: taskId, attachment_id: attachmentId }, throwOnError: true })
 }
+
+/** The GitHub issue or pull request the task syncs from (`source`), and the pull requests that mention it. */
+export async function githubLinks(client: OrbitClient, workspaceId: string, taskId: string): Promise<GithubLink[]> {
+  return (await listGithubLinks(task(client, workspaceId, taskId))).data
+}
+
+/**
+ * The web's rule: a task's title and description are read-only while it syncs from GitHub, and until its links are
+ * known.
+ */
+export const githubLocked = (links: readonly GithubLink[] | undefined) => !links || links.some((link) => link.source)
 
 /** Who follows the task (gets its new comments and status changes), and whether the caller does. */
 export async function followers(client: OrbitClient, workspaceId: string, taskId: string): Promise<TaskFollowers> {

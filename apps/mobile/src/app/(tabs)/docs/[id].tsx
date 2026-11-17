@@ -1,9 +1,8 @@
 import { collabStatusLabel, type CollabProblem, type CollabState } from '@orbit/editor/collab/session'
-import { isSafeLinkHref } from '@orbit/editor/links'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { router, useLocalSearchParams } from 'expo-router'
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { Image, Linking, RefreshControl, ScrollView, View } from 'react-native'
+import { useEffect, useRef, useState } from 'react'
+import { Image, RefreshControl, ScrollView, View } from 'react-native'
 import { TextInput } from '../../../ui/scaled'
 
 import { CommentsSheet } from '../../../components/docs/Comments'
@@ -12,25 +11,23 @@ import { openFile } from '../../../components/tasks/files'
 import { LinkedTasksSection } from '../../../components/tasks/sections'
 import { EditorToolbar } from '../../../components/docs/EditorToolbar'
 import { IconDialog } from '../../../components/docs/IconDialog'
-import PageEditor, { type PageCardInfo, type PageEditorProps, type PageEditorRef } from '../../../components/docs/PageEditor.dom'
+import { EditorView, useCaretFollow } from '../../../components/docs/EditorView'
+import type { PageEditorRef } from '../../../components/docs/PageEditor.dom'
 import { ActionSheet, ConfirmDialog, type ConfirmRequest, PromptDialog, type PromptRequest, type SheetAction } from '../../../components/settings/Dialog'
 import { absoluteUrl, descendantsOf, pageTitle, spaceKeyOf, spaceMove, trashPrompt, validCoverUrl, visibleThreads } from '../../../data/docs'
-import { collabTicket, exportUrl, fileDataUrl, fileDeleted, lockPage, moveDocPage, restoreVersion } from '../../../data/docs-api'
+import { exportUrl, lockPage, moveDocPage, restoreVersion } from '../../../data/docs-api'
 import { keys } from '../../../data/keys'
 import * as api from '../../../data/orbit'
-import { BLOCK_KINDS, type BlockKind, type EditorCommand, type FormatState, IDLE_FORMAT, PROBLEM_RESPONSES, type ProblemResponse, whileMounted } from '../../../data/page-editor'
+import { BLOCK_KINDS, type BlockKind, type EditorCommand, type FormatState, IDLE_FORMAT, PROBLEM_RESPONSES, type ProblemResponse } from '../../../data/page-editor'
 import { pickImage } from '../../../hooks/account'
 import { useLinkedTasks } from '../../../hooks/tasks'
-import { useDuplicatePage, useFavorites, usePageThreads, usePageTrash, useSavePage, useToggleFavorite, useTrashPage, useUploadPageImage } from '../../../hooks/docs'
+import { useDuplicatePage, useFavorites, usePageThreads, useSavePage, useToggleFavorite, useTrashPage, useUploadPageImage } from '../../../hooks/docs'
 import { useOrbit } from '../../../orbit-context'
-import { useMembers, usePages, useStatuses, useTeamspaces } from '../../../queries'
+import { usePages, useStatuses, useTeamspaces } from '../../../queries'
 import { usePublishPageItem } from '../../../components/AskDonna'
 import { errorMessage } from '../../../session-context'
 import { alpha, useTheme } from '../../../theme'
 import { Button, CountBadge, ErrorView, Icon, IconButton, KeyboardView, LoadingView, PaneHeader, SafeAreaView, Text } from '../../../ui'
-
-/** Room kept between the caret and the toolbar or the top of the screen while typing. */
-const CARET_MARGIN = 24
 
 /**
  * A page: its cover, icon and title (native), and its body in the page editor (BlockNote in a web view), which
@@ -75,22 +72,8 @@ export default function DocScreen() {
   const [sync, setSync] = useState<CollabState | null>(null)
   const [problem, setProblem] = useState<ProblemResponse | null>(null)
   const [generation, setGeneration] = useState(0)
-  const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
-  const scrollY = useRef(0)
-  const viewportHeight = useRef(0)
-  const editorTop = useRef(0)
+  const caret = useCaretFollow(format)
   const editable = !locked && !problem?.readOnly
-
-  // Keep the caret between the top of the screen and the toolbar while typing.
-  useEffect(() => {
-    if (!format.focused || !format.caret) return
-    const top = editorTop.current + format.caret.top
-    const bottom = editorTop.current + format.caret.bottom
-    const visibleTop = scrollY.current + CARET_MARGIN
-    const visibleBottom = scrollY.current + viewportHeight.current - CARET_MARGIN
-    if (bottom > visibleBottom) scroll.current?.scrollTo({ y: bottom - viewportHeight.current + CARET_MARGIN, animated: true })
-    else if (top < visibleTop) scroll.current?.scrollTo({ y: Math.max(0, top - CARET_MARGIN), animated: true })
-  }, [format])
 
   const run = (command: EditorCommand) => editor.current?.run(command)
   const addImage = () =>
@@ -272,12 +255,9 @@ export default function DocScreen() {
       ) : (
         <KeyboardView className="flex-1">
           <ScrollView
-            ref={scroll}
+            {...caret.scrollProps}
             contentContainerClassName="pb-8"
             keyboardShouldPersistTaps="handled"
-            scrollEventThrottle={16}
-            onScroll={(event) => (scrollY.current = event.nativeEvent.contentOffset.y)}
-            onLayout={(event) => (viewportHeight.current = event.nativeEvent.layout.height)}
             refreshControl={<RefreshControl refreshing={page.isRefetching} onRefresh={() => void Promise.all([page.refetch(), linkedTasks.refetch()])} tintColor={colors.mutedForeground} />}
           >
             {page.data.cover_url ? (
@@ -327,11 +307,12 @@ export default function DocScreen() {
               />
               <LinkedTasksSection tasks={linkedTasks.data ?? []} statuses={statuses.data ?? []} />
             </View>
-            <View onLayout={(event) => (editorTop.current = event.nativeEvent.layout.y)}>
+            <View onLayout={caret.onEditorLayout}>
               {problem?.stop ? null : (
                 <EditorView
                   ref={editor}
-                  pageId={id}
+                  kind="pages"
+                  docId={id}
                   epoch={page.data.collab_epoch}
                   generation={generation}
                   editable={editable}
@@ -366,88 +347,3 @@ export default function DocScreen() {
     </SafeAreaView>
   )
 }
-
-type EditorViewProps = Pick<PageEditorProps, 'pageId' | 'epoch' | 'generation' | 'editable'> & {
-  ref: React.Ref<PageEditorRef>
-  onStatus: (state: CollabState) => void
-  onProblem: (problem: CollabProblem) => void
-  onProbe: () => void
-  onFormat: (state: FormatState) => void
-}
-
-/**
- * The page editor with what it needs from the app: the session (tickets, files), the theme, page and member names.
- * Every render sends all props to the web view, so it renders only when they change: the screen re-renders on every
- * selection change (the toolbar), and the callbacks are read through a ref.
- */
-const EditorView = memo(function EditorView({ ref, pageId, epoch, generation, editable, ...callbacks }: EditorViewProps) {
-  const { client, workspaceId, session, user } = useOrbit()
-  const { scheme, colors } = useTheme()
-  const pages = usePages()
-  const trash = usePageTrash()
-  const members = useMembers()
-  const [height, setHeight] = useState(120)
-  const latest = useRef(callbacks)
-  useEffect(() => {
-    latest.current = callbacks
-  })
-  const mounted = useRef(true)
-  useEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-    }
-  }, [])
-
-  const cards = useMemo(() => {
-    const out: Record<string, PageCardInfo> = {}
-    for (const item of trash.data ?? []) out[item.id] = { title: item.title, icon: item.icon, trashed: true }
-    for (const item of pages.data ?? []) out[item.id] = { title: item.title, icon: item.icon, trashed: false }
-    return out
-  }, [pages.data, trash.data])
-  const names = useMemo(() => Object.fromEntries((members.data ?? []).map((member) => [member.user_id, member.display_name])), [members.data])
-  const editorColors = useMemo(
-    () => ({ background: colors.background, foreground: colors.foreground, mutedForeground: colors.mutedForeground, muted: colors.muted, border: colors.border, primary: colors.primary }),
-    [colors],
-  )
-  // the server shows everyone else this session's name and a color of its own
-  const me = useMemo(() => ({ name: user.display_name, color: colors.mutedForeground }), [user.display_name, colors.mutedForeground])
-  const actions = useMemo(
-    () => ({
-      getTicket: whileMounted(mounted, () => collabTicket(client, pageId)),
-      loadFile: whileMounted(mounted, (url: string) => fileDataUrl(session.server, session.token, url)),
-      fileDeleted: whileMounted(mounted, (url: string) => fileDeleted(session.server, session.token, url)),
-      openPage: whileMounted(mounted, async (target: string) => router.push(`/docs/${target}`)),
-      // the editor already filters links; the app checks again before it hands one to the OS
-      openUrl: whileMounted(mounted, async (url: string) => {
-        if (isSafeLinkHref(url)) void Linking.openURL(url).catch(() => {})
-      }),
-      onStatus: whileMounted(mounted, async (state: CollabState) => latest.current.onStatus(state)),
-      onProblem: whileMounted(mounted, async (problem: CollabProblem) => latest.current.onProblem(problem)),
-      onProbe: whileMounted(mounted, async () => latest.current.onProbe()),
-      onFormat: whileMounted(mounted, async (state: FormatState) => latest.current.onFormat(state)),
-      onHeight: whileMounted(mounted, async (next: number) => setHeight(next)),
-    }),
-    [client, pageId, session.server, session.token],
-  )
-  const dom = useMemo(() => ({ scrollEnabled: false, style: { height } }), [height])
-
-  return (
-    <PageEditor
-      ref={ref}
-      dom={dom}
-      server={session.server}
-      workspaceId={workspaceId}
-      pageId={pageId}
-      epoch={epoch}
-      generation={generation}
-      editable={editable}
-      theme={scheme}
-      colors={editorColors}
-      user={me}
-      pages={cards}
-      members={names}
-      {...actions}
-    />
-  )
-})

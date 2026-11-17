@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 
-import { newTaskBody } from './task-api'
+import { githubLocked, newTaskBody } from './task-api'
 
 test('newTaskBody trims the text, leaves an empty description out, and sends every property', () => {
   expect(
@@ -34,4 +34,12 @@ test('newTaskBody trims the text, leaves an empty description out, and sends eve
     estimate: 3,
   })
   expect(newTaskBody({ title: 'x', description: ' Notes ', projectId: 'p', statusId: 's', priority: 'none', assigneeIds: [], labelIds: [], dueAt: null, dueStartAt: null, parentId: null, milestoneId: null, cycleId: null, estimate: null }).description).toBe('Notes')
+})
+
+test('the title and description lock while the task syncs from GitHub, and until its links are known', () => {
+  const pull = { kind: 'pull_request', source: false, state: 'open', title: 'Fix', url: 'https://github.com/o/r/pull/1' }
+  expect(githubLocked(undefined)).toBe(true)
+  expect(githubLocked([])).toBe(false)
+  expect(githubLocked([pull])).toBe(false)
+  expect(githubLocked([pull, { ...pull, kind: 'issue', source: true }])).toBe(true)
 })

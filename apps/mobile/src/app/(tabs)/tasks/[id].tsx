@@ -1,10 +1,16 @@
+import type { CollabProblem, CollabState } from '@orbit/editor/collab/session'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { openURL } from 'expo-linking'
 import { router, useLocalSearchParams } from 'expo-router'
-import { type ReactNode, useMemo, useState } from 'react'
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Image, Pressable, RefreshControl, ScrollView, View } from 'react-native'
 import { TextInput } from '../../../ui/scaled'
 
+import { useWorkspaceReadOnly } from '../../../components/BillingBanner'
+import { EditorToolbar } from '../../../components/docs/EditorToolbar'
+import { EditorView, useCaretFollow } from '../../../components/docs/EditorView'
+import type { PageEditorRef } from '../../../components/docs/PageEditor.dom'
+import { ActionSheet } from '../../../components/settings/Dialog'
 import { Attachments, type ShownFile } from '../../../components/tasks/Attachments'
 import { type FileSource, pickFiles } from '../../../components/tasks/files'
 import {
@@ -27,8 +33,10 @@ import { Sheet, useSheet } from '../../../components/tasks/Sheet'
 import { activityRows, buildFeed, type ActivityRow, type CommentThread, foldRun } from '../../../data/activity'
 import { relativeAgo } from '../../../data/format'
 import { keys } from '../../../data/keys'
-import { markdownToText } from '../../../data/markdown'
 import * as api from '../../../data/orbit'
+import type { GithubLink } from '@orbit/api/generated/types.gen'
+import { markdownToText } from '../../../data/markdown'
+import { BLOCK_KINDS, type BlockKind, type EditorCommand, type FormatState, IDLE_FORMAT, problemResponses, type ProblemResponse } from '../../../data/page-editor'
 import * as taskApi from '../../../data/task-api'
 import {
   attachmentPath,
@@ -51,7 +59,7 @@ import {
   splitInlineFiles,
   subIssueBody,
 } from '../../../data/tasks'
-import { useAdoptSubIssue, useCommentAttachments, useCreateTask, useDocLinkWrites, useLinkedDocs, useRelationWrites, useSetFollowing, useSubIssues, useTaskAttachments, useTaskFollowers, useTaskRelations, useTaskWrite, taskKeys } from '../../../hooks/tasks'
+import { useAdoptSubIssue, useCommentAttachments, useCreateTask, useDocLinkWrites, useLinkedDocs, useRelationWrites, useSetFollowing, useSubIssues, useTaskAttachments, useTaskFollowers, useTaskGithubLinks, useTaskRelations, useTaskWrite, taskKeys } from '../../../hooks/tasks'
 import { useOrbit } from '../../../orbit-context'
 import { useCycles, useLabels, useMilestones, usePeople, useProjects, useStatuses } from '../../../queries'
 import { usePublishPageItem } from '../../../components/AskDonna'
@@ -142,6 +150,15 @@ export default function TaskScreen() {
   const relationWrites = useRelationWrites(id)
   const createSubIssue = useCreateTask()
   const adopt = useAdoptSubIssue(id)
+  const githubLinks = useTaskGithubLinks(id)
+  const workspaceReadOnly = useWorkspaceReadOnly()
+  const [title, setTitle] = useState<string | null>(null)
+  const editor = useRef<PageEditorRef>(null)
+  const [format, setFormat] = useState<FormatState>(IDLE_FORMAT)
+  const [choosingBlock, setChoosingBlock] = useState(false)
+  const [problem, setProblem] = useState<ProblemResponse | null>(null)
+  const [generation, setGeneration] = useState(0)
+  const caret = useCaretFollow(format)
 
   const sendComment = useMutation({
     mutationFn: (body: string) => api.addComment(client, workspaceId, id, body),
@@ -165,6 +182,42 @@ export default function TaskScreen() {
   })
 
   const close = () => (router.canGoBack() ? router.back() : router.navigate('/tasks'))
+
+  // a new title from another device or a save: show the server's unless one is being typed
+  useEffect(() => setTitle(null), [task.data?.title])
+  const saveTitle = () => {
+    if (title === null || !task.data || !title.trim() || title.trim() === task.data.title) return setTitle(null)
+    write.mutate({ title: title.trim() }, { onError: () => setTitle(null) })
+  }
+  const onProblem = (next: CollabProblem) => {
+    const response = TASK_PROBLEMS[next]
+    setProblem(response.notice || response.readOnly || response.stop ? response : null)
+    if (!response.refetch) return
+    void task.refetch().then(() => {
+      if (!response.reconnect) return
+      if (!response.readOnly) setProblem(null)
+      setGeneration((value) => value + 1)
+    })
+  }
+  // the socket handshake keeps failing: the task may be gone or out of reach
+  const onProbe = () =>
+    void task.refetch().then(({ error }) => {
+      const status = (error as { status?: unknown } | null)?.status
+      if (status === 404) onProblem('gone')
+      else if (status === 403) onProblem('forbidden')
+    })
+  const run = (command: EditorCommand) => editor.current?.run(command)
+  /** An image in the description: an inline attachment of the task, as the web's paste or /image. */
+  const addImage = async () => {
+    try {
+      const [file] = await pickFiles('photos')
+      if (!file) return
+      const record = await taskApi.uploadInline(client, workspaceId, id, file)
+      run({ type: 'image', url: attachmentPath(record), name: file.name })
+    } catch (error) {
+      Alert.alert('Could not add the image', errorMessage(error))
+    }
+  }
   const nameOf = (userId: string) => people.find((person) => person.id === userId)?.name ?? 'Unknown'
   const current = task.data
   const project = projects.data?.find((item) => item.id === current?.project_id)
@@ -258,13 +311,15 @@ export default function TaskScreen() {
     )
   }
 
+  const lockedByGithub = githubLinks.data?.some((link) => link.source) ?? false
+  // Orbit Cloud without a subscription: the description socket drops edits, so offer none (the web's rule)
+  const contentReadOnly = taskApi.githubLocked(githubLinks.data) || workspaceReadOnly
+  const editable = !contentReadOnly && !problem?.readOnly
   const subject = identifier(current, projects.data ?? [])
   const status = statuses.data?.find((item) => item.id === current.status_id)
   const ownStatuses = statuses.data ? projectStatuses(statuses.data, current.project_id) : []
-  const description = splitInlineFiles(current.description)
-  const descriptionText = markdownToText(description.text)
+  // the description editor shows the description's own files; the list shows the older attachments
   const taskFiles: ShownFile[] = [
-    ...description.files.map((file) => ({ key: file.path, ...file })),
     ...(attachments.data ?? []).map((record) => ({ key: record.id, name: record.display_name, path: attachmentPath(record), image: isImageType(record.media_type), size: record.byte_size, deleted: record.deleted })),
   ]
   const taskLabels = (labels.data ?? []).filter((label) => current.label_ids.includes(label.id))
@@ -300,6 +355,7 @@ export default function TaskScreen() {
       {header}
       <KeyboardView className="flex-1">
         <ScrollView
+          {...caret.scrollProps}
           contentContainerClassName="px-3.5 pt-4 pb-7 gap-3.5"
           keyboardShouldPersistTaps="handled"
           refreshControl={
@@ -312,20 +368,50 @@ export default function TaskScreen() {
         >
           <View>
             <DuplicateBanner task={current} status={status} pending={write.isPending} onUnmark={() => write.mutate({ duplicate_of_id: null })} />
-            <Text selectable className="font-noto-semibold text-[20px] leading-[26px]">
-              {current.title || 'Untitled'}
-            </Text>
-            {descriptionText ? (
-              <Text selectable className="text-[16px] leading-[24px] mt-[19px]">
-                {descriptionText}
+            <TextInput
+              accessibilityLabel="Task title"
+              value={title ?? current.title}
+              placeholder="Untitled"
+              placeholderTextColor={alpha(colors.mutedForeground, 0.7)}
+              editable={!contentReadOnly}
+              multiline
+              submitBehavior="blurAndSubmit"
+              returnKeyType="done"
+              onChangeText={setTitle}
+              onBlur={saveTitle}
+              className="font-noto-semibold text-[20px] leading-[26px] p-0 text-foreground"
+            />
+            {lockedByGithub ? <Text className="mt-2 text-[12px] text-muted-foreground">This task's title and description are read-only while it is linked to GitHub.</Text> : null}
+            {problem?.notice ? (
+              <Text accessibilityRole="alert" className="mt-2 text-[12px] text-muted-foreground">
+                {problem.notice}
               </Text>
             ) : null}
+          </View>
+          {problem?.stop ? null : (
+            <View onLayout={caret.onEditorLayout} className="-mx-3">
+              <EditorView
+                ref={editor}
+                kind="tasks"
+                docId={id}
+                epoch={current.collab_epoch}
+                generation={generation}
+                editable={editable}
+                onStatus={ignoreStatus}
+                onProblem={onProblem}
+                onProbe={onProbe}
+                onFormat={setFormat}
+              />
+            </View>
+          )}
+          <View>
             <Attachments files={taskFiles} />
-            <View className={`flex-row flex-wrap ${descriptionText || taskFiles.length > 0 ? 'mt-[43px]' : 'mt-3.5'}`}>
+            <View className="flex-row flex-wrap">
               <QuietAction icon="relation" label="Add relation" onPress={() => sheets.open({ kind: 'relation-menu' })} />
               {current.sub_issue_count === 0 && children.length === 0 && !composingSubIssue ? <QuietAction icon="subIssue" label="Add sub-issue" onPress={() => setComposingSubIssue(true)} /> : null}
               <QuietAction icon="docs" label="Add doc" onPress={() => sheets.open({ kind: 'pick-doc' })} />
             </View>
+            <GithubPullRequests links={githubLinks.data ?? []} />
           </View>
 
           <SubIssuesSection
@@ -519,7 +605,14 @@ export default function TaskScreen() {
             />
           </View>
         </ScrollView>
+        {format.focused && editable ? <EditorToolbar format={format} onCommand={run} onBlockMenu={() => setChoosingBlock(true)} onImage={() => void addImage()} /> : null}
       </KeyboardView>
+      <ActionSheet
+        visible={choosingBlock}
+        title="Turn into"
+        actions={(Object.keys(BLOCK_KINDS) as BlockKind[]).map((kind) => ({ label: BLOCK_KINDS[kind].label, onPress: () => run({ type: 'block', kind }) }))}
+        onClose={() => setChoosingBlock(false)}
+      />
 
       <Sheet visible={sheets.visible} title={sheetTitle(sheet, subject)} onClose={sheets.close}>
         {sheet?.kind === 'status' ? (
@@ -633,6 +726,31 @@ export default function TaskScreen() {
         ) : null}
       </Sheet>
     </SafeAreaView>
+  )
+}
+
+const TASK_PROBLEMS = problemResponses('task')
+/** The description editor's sync state: the task screen shows only its problems. */
+const ignoreStatus = (_state: CollabState) => {}
+
+/** The pull requests that mention the task (the web's "GitHub links"); the issue the task syncs from is not listed. */
+function GithubPullRequests({ links }: { links: readonly GithubLink[] }) {
+  const { colors } = useTheme()
+  const pulls = links.filter((link) => link.kind === 'pull_request' && !link.source)
+  if (pulls.length === 0) return null
+  return (
+    <View accessibilityLabel="GitHub links" className="mt-4 border-t border-border pt-3 gap-0.5">
+      <Text className="text-[12px] font-noto-medium text-muted-foreground mb-1">GitHub</Text>
+      {pulls.map((link) => (
+        <Pressable key={link.url} accessibilityRole="link" onPress={() => void openURL(link.url)} className="flex-row items-center gap-2 py-1.5 rounded-md active:bg-muted">
+          <Icon name="link2" size={14} color={colors.mutedForeground} />
+          <Text numberOfLines={1} className="flex-1 text-[13px]">
+            {link.title}
+          </Text>
+          <Text className="text-[12px] text-muted-foreground">{link.state}</Text>
+        </Pressable>
+      ))}
+    </View>
   )
 }
 
