@@ -9,18 +9,22 @@ export interface TaskRowProps {
   status: StatusRecord | undefined
   assignee: Person | undefined
   onPress: () => void
+  /** The row menu (status, priority, trash …). */
+  onLongPress?: () => void
 }
 
 /**
  * The web list row at phone width: the 28px select strip, priority, the tree gutter, status, title, assignee. The
  * identifier column is hidden below 480px on the web too.
  */
-export function TaskRow({ task, status, assignee, onPress }: TaskRowProps) {
+export function TaskRow({ task, status, assignee, onPress, onLongPress }: TaskRowProps) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={task.title}
       onPress={onPress}
+      onLongPress={onLongPress}
+      accessibilityHint={onLongPress ? 'Long press for actions' : undefined}
       className="min-h-10 flex-row items-center gap-1.5 pr-3 py-1.5 border-b border-border active:bg-foreground/2"
     >
       <View className="w-7" />

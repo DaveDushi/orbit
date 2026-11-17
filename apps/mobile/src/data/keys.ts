@@ -10,6 +10,12 @@ export const keys = {
   /** A server view (`mine`, `my_week` …) or a Home card query, under the `tasks` prefix so task changes reach it. */
   taskView: (workspaceId: string, view: string) => ['tasks', workspaceId, view] as const,
   taskActivity: (workspaceId: string, taskId: string) => ['task-activity', workspaceId, taskId] as const,
+  /** A filter's tasks (`POST /tasks/query`, the body as JSON) and the task trash, under `tasks` so task changes reach them. */
+  taskQuery: (workspaceId: string, body: string) => ['tasks', workspaceId, 'query', body] as const,
+  taskTrash: (workspaceId: string) => ['tasks', workspaceId, 'trash'] as const,
+  /** Saved task views; one view's detail is under the list's prefix. */
+  views: (workspaceId: string) => ['views', workspaceId] as const,
+  view: (workspaceId: string, viewId: string) => ['views', workspaceId, viewId] as const,
   task: (workspaceId: string, taskId: string) => ['task', workspaceId, taskId] as const,
   comments: (workspaceId: string, taskId: string) => ['comments', workspaceId, taskId] as const,
   projects: (workspaceId: string) => ['projects', workspaceId] as const,
