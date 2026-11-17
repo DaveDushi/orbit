@@ -61,6 +61,7 @@ export const ADMIN_NAV: readonly SettingsNavItem[] = [
   { href: '/settings/admin/backups', label: 'Backups', icon: 'archiveBox' },
   { href: '/settings/admin/audit', label: 'Audit log', icon: 'clipboardText' },
   { href: '/settings/admin/jobs', label: 'Background jobs', icon: 'cpu' },
+  { href: '/settings/admin/feedback', label: 'Feedback & fixes', icon: 'lampOn' },
 ]
 
 /**

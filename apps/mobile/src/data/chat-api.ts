@@ -14,6 +14,7 @@ import {
   deleteChatMessage,
   editChatMessage,
   followChatThread,
+  forwardChatMessage,
   getChatThread,
   joinChatChannel,
   leaveChatChannel,
@@ -162,6 +163,8 @@ export interface OutgoingMessage {
   alsoInChannel?: boolean
   /** Sent from Ask Donna: the page the person is on, for the agent (never shown in chat). */
   pageContext?: PageContext | null
+  /** A custom sticker of the workspace; the body may then be empty. */
+  stickerId?: string | null
 }
 
 export async function send(client: OrbitClient, workspaceId: string, conversationId: string, message: OutgoingMessage): Promise<ChatWrite<MessageRecord>> {
@@ -172,6 +175,7 @@ export async function send(client: OrbitClient, workspaceId: string, conversatio
     reply_to_id: message.replyToId ?? null,
     file_ids: message.fileIds ?? [],
     also_in_channel: message.alsoInChannel ?? false,
+    ...(message.stickerId ? { sticker_id: message.stickerId } : {}),
     ...(message.pageContext ? { page_context: message.pageContext } : {}),
   }
   return write((await sendChatMessage({ ...inConversation(client, workspaceId, conversationId), body })).data)
@@ -195,6 +199,11 @@ export async function deleteMessage(client: OrbitClient, workspaceId: string, me
 
 export async function setPinned(client: OrbitClient, workspaceId: string, messageId: string, pinned: boolean): Promise<ChatWrite<MessageRecord>> {
   return write((await pinChatMessage({ ...onMessage(client, workspaceId, messageId), body: { pinned } })).data)
+}
+
+/** A copy of the message in another conversation; the same `nonce` again returns the first copy. */
+export async function forward(client: OrbitClient, workspaceId: string, messageId: string, conversationId: string, nonce: string): Promise<ChatWrite<MessageRecord>> {
+  return write((await forwardChatMessage({ ...onMessage(client, workspaceId, messageId), body: { conversation_id: conversationId, nonce } })).data)
 }
 
 /** Moves the read cursor to just before the message. */
@@ -227,11 +236,32 @@ export interface SearchQuery {
   conversationId?: string
   authorId?: string
   hasFile?: boolean
+  /** Messages that mention the reader (also `@channel` and `@here` where they are a member). */
+  mentionsMe?: boolean
+  /** Messages with an `http(s)://` link. */
+  hasLink?: boolean
+  /** Thread replies only. */
+  threadsOnly?: boolean
+  /** Newest first unless `oldest`. */
+  sort?: 'newest' | 'oldest'
   cursor?: string
 }
 
+/** Search waits for a query or a filter, like the web. */
+export const isSearchable = (input: Omit<SearchQuery, 'cursor'>) => input.query.trim() !== '' || Boolean(input.authorId || input.hasFile || input.mentionsMe || input.hasLink || input.threadsOnly)
+
 export async function search(client: OrbitClient, workspaceId: string, input: SearchQuery): Promise<SearchPage> {
-  const query = { query: input.query || undefined, conversation_id: input.conversationId, author_id: input.authorId, has_file: input.hasFile, cursor: input.cursor }
+  const query = {
+    query: input.query || undefined,
+    conversation_id: input.conversationId,
+    author_id: input.authorId,
+    has_file: input.hasFile,
+    mentions_me: input.mentionsMe,
+    has_link: input.hasLink,
+    threads_only: input.threadsOnly,
+    sort: input.sort === 'oldest' ? input.sort : undefined,
+    cursor: input.cursor,
+  }
   return (await listChatSearch({ ...at(client, workspaceId), query })).data
 }
 

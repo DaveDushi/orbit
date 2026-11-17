@@ -263,10 +263,11 @@ export function conversationActions(
 }
 
 /** What the long-press sheet of a message offers, in the web's order. */
-export type MessageAction = 'reply' | 'thread' | 'copy' | 'pin' | 'unpin' | 'unread' | 'edit' | 'delete'
+export type MessageAction = 'reply' | 'thread' | 'forward' | 'link' | 'copy' | 'task' | 'pin' | 'unpin' | 'unread' | 'edit' | 'delete'
 
 /**
- * The web's `actionsFor`: system rows have none; a deleted message keeps "Reply in thread"; edit is for your own text
+ * The web's `actionsFor`: system rows have none; a deleted message keeps "Reply in thread" and "Copy link"; forward for
+ * any message that is not deleted; "Create task" where the reader may make tasks (`canCreateTask`); edit is for your own text
  * (not a forward, not a sticker alone, not an integration's); delete for your own message or a moderator, and an
  * integration's message for a moderator or the channel's creator (`channelCreator`). Reactions sit above the list.
  */
@@ -274,15 +275,19 @@ export function messageActions(
   message: MessageRecord,
   userId: string,
   moderator: boolean,
-  options: { inThread: boolean; canWrite: boolean; channelCreator?: boolean },
+  options: { inThread: boolean; canWrite: boolean; channelCreator?: boolean; canCreateTask?: boolean },
 ): MessageAction[] {
   if (message.kind !== 'message') return []
   const own = isOwnMessage(message, userId)
   const actions: MessageAction[] = []
   if (options.canWrite && !message.deleted) actions.push('reply')
   if (!options.inThread) actions.push('thread')
+  if (!message.deleted) actions.push('forward')
+  actions.push('link')
   if (message.deleted) return actions
-  actions.push('copy', message.pinned ? 'unpin' : 'pin', 'unread')
+  actions.push('copy')
+  if (options.canCreateTask) actions.push('task')
+  actions.push(message.pinned ? 'unpin' : 'pin', 'unread')
   const stickerOnly = Boolean(message.sticker_id) && message.body === ''
   if (own && !message.forwarded && !stickerOnly) actions.push('edit')
   if (own || moderator || (message.bot && options.channelCreator)) actions.push('delete')

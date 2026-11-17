@@ -94,7 +94,7 @@ export function useChatSearch(query: Omit<chat.SearchQuery, 'cursor'>) {
   const { client, workspaceId } = useOrbit()
   return useInfiniteQuery({
     queryKey: chatQueryKeys.search(workspaceId, query),
-    enabled: query.query.trim() !== '' || Boolean(query.authorId) || Boolean(query.hasFile),
+    enabled: chat.isSearchable(query),
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) => chat.search(client, workspaceId, { ...query, cursor: pageParam }),
     getNextPageParam: (last) => last.cursor ?? undefined,
