@@ -23,23 +23,29 @@ import {
 } from './agentic'
 
 describe('agenticTabs', () => {
+  const values = (agent: boolean | null) => agenticTabs(agent).map((tab) => tab.value)
+  const all = ['you', 'workspace', 'agents', 'routines', 'skills']
+
   test('the web tabs with the team agent, and no Admin or Bots tab', () => {
-    expect(agenticTabs(true, ['workspace.update']).map((tab) => tab.value)).toEqual(['you', 'workspace', 'agents', 'routines', 'skills'])
+    expect(values(true)).toEqual(all)
   })
 
   test('without the team agent only You', () => {
-    expect(agenticTabs(false, ['workspace.update']).map((tab) => tab.value)).toEqual(['you'])
+    expect(values(false)).toEqual(['you'])
   })
 
-  test('Skills only for owners and admins', () => {
-    expect(agenticTabs(true, []).map((tab) => tab.value)).toEqual(['you', 'workspace', 'agents', 'routines'])
+  // Regression: the tabs showed only after `/api/v1/agent` answered `enabled: true`, so a slow or failed answer hid
+  // them with no message.
+  test('while the agent status loads or after it failed, every tab shows', () => {
+    expect(values(null)).toEqual(all)
   })
 
   test('a link to a tab this person does not have opens You', () => {
-    expect(pickedTab(agenticTabs(false, []), 'routines')).toBe('you')
-    expect(pickedTab(agenticTabs(true, []), 'routines')).toBe('routines')
-    expect(pickedTab(agenticTabs(true, []), 'admin')).toBe('you')
-    expect(pickedTab(agenticTabs(true, []), 'bots')).toBe('you')
+    expect(pickedTab(agenticTabs(false), 'routines')).toBe('you')
+    expect(pickedTab(agenticTabs(true), 'routines')).toBe('routines')
+    expect(pickedTab(agenticTabs(null), 'routines')).toBe('routines')
+    expect(pickedTab(agenticTabs(true), 'admin')).toBe('you')
+    expect(pickedTab(agenticTabs(true), 'bots')).toBe('you')
   })
 })
 

@@ -6,7 +6,7 @@ import { AGENT_DEFAULT_CHOICE as DEFAULT, ANSWER_LEVELS, type AgentProfile, type
 import type { AgentSkill } from '@orbit/api/agentSkills'
 import { ApiProblem } from '@orbit/api/problem'
 import type { Routine, RoutineChange, Script } from '@orbit/api/scheduled'
-import type { ConversationRecord, Permission } from '@orbit/api/generated/types.gen'
+import type { ConversationRecord } from '@orbit/api/generated/types.gen'
 
 import { multipart, type UploadFile } from './account-api'
 import type { OrbitClient } from './orbit'
@@ -14,18 +14,19 @@ import type { OrbitClient } from './orbit'
 export type AgenticTab = 'you' | 'workspace' | 'agents' | 'routines' | 'skills'
 
 /**
- * The web's `AGENTIC_TABS`: Workspace, Agents, Routines and Skills need the team agent, and Skills, which only owners and
- * admins can see, also `workspace.update`. (The web's webhook bots became chat's two-way webhooks, so there is no Bots
- * tab.)
+ * The web's `AGENTIC_TABS`: Workspace, Agents, Routines and Skills need the team agent. `agent` is the server's
+ * `enabled`, `null` while it loads or after an error: only a known "off" hides the tabs, so a slow or failed answer
+ * never hides them silently. Each tab keeps its own access check (Skills shows members a note, as on the web). (The
+ * web's webhook bots became chat's two-way webhooks, so there is no Bots tab.)
  */
-export function agenticTabs(agent: boolean, permissions: readonly Permission[]): { value: AgenticTab; label: string }[] {
-  if (!agent) return [{ value: 'you', label: 'You' }]
+export function agenticTabs(agent: boolean | null): { value: AgenticTab; label: string }[] {
+  if (agent === false) return [{ value: 'you', label: 'You' }]
   return [
     { value: 'you', label: 'You' },
     { value: 'workspace', label: 'Workspace' },
     { value: 'agents', label: 'Agents' },
     { value: 'routines', label: 'Routines' },
-    ...(permissions.includes('workspace.update') ? [{ value: 'skills' as const, label: 'Skills' }] : []),
+    { value: 'skills', label: 'Skills' },
   ]
 }
 

@@ -17,7 +17,7 @@ import { LineTabs } from './Fields'
 import { Note, RowIcon, RowText, SettingsCard, SettingsRow, SettingsShell, WORKSPACE_NAV } from './Shell'
 import { agenticTabs, pickedTab } from '../../data/agentic'
 import { useDisconnectOAuth, useOAuthConnections } from '../../hooks/account'
-import { useAgentEnabled } from '../../hooks/agent'
+import { useAgentStatus } from '../../hooks/agent'
 import { useOrbit } from '../../orbit-context'
 import { errorMessage } from '../../session-context'
 import { Button, Text } from '../../ui'
@@ -25,14 +25,14 @@ import { Button, Text } from '../../ui'
 /**
  * The one Agentic page, the web's with its tabs: You, and with the team agent Workspace, Agents, Routines and Skills
  * (`agenticTabs`). Each tab keeps its own access check; the installation's default model is on Agents, as on the web
- * (there is no Admin tab). `?tab=routines` opens a tab.
+ * (there is no Admin tab). `?tab=routines` opens a tab. Until the server says the agent is off, its tabs and cards show
+ * (they load, or say they failed, with Retry).
  */
 export function AgenticScreen() {
-  const agent = useAgentEnabled()
-  const { workspace } = useOrbit()
+  const agent = useAgentStatus().data?.enabled ?? null
   const connections = useOAuthConnections()
   const { tab } = useLocalSearchParams<{ tab?: string }>()
-  const tabs = agenticTabs(agent, workspace.permissions)
+  const tabs = agenticTabs(agent)
   const section = pickedTab(tabs, tab)
 
   return (
@@ -40,9 +40,9 @@ export function AgenticScreen() {
       {tabs.length > 1 ? <LineTabs label="Agentic" value={section} tabs={tabs} onChange={(next) => router.setParams({ tab: next })} /> : null}
       {section === 'you' ? (
         <>
-          {agent ? <AgentConnection /> : null}
+          {agent !== false ? <AgentConnection /> : null}
           <McpSetup />
-          {agent ? <AgentMemory /> : null}
+          {agent !== false ? <AgentMemory /> : null}
         </>
       ) : null}
       {section === 'workspace' ? (
@@ -98,7 +98,7 @@ function McpSetup() {
         {list.map((connection, index) => (
           <SettingsRow key={connection.id} first={index === 0}>
             <RowIcon icon="magicStar" />
-            <RowText title={connection.client_name} subtitle={`${connection.workspace_name} · ${connection.scope} · ${connection.project_names.join(', ')} · Connected ${connectedAt(connection.created_at)}`} />
+            <RowText title={connection.client_name} subtitle={`${connection.workspace_name} · ${connection.scope} · ${connection.all_projects ? 'All projects' : connection.project_names.join(', ')} · Connected ${connectedAt(connection.created_at)}`} />
             <Button label="Disconnect" variant="ghost" size="sm" disabled={disconnect.isPending} onPress={() => disconnect.mutate(connection.id)} />
           </SettingsRow>
         ))}
