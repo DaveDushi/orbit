@@ -32,7 +32,10 @@ export default function ConversationScreen() {
 }
 
 function ConversationScreenContent() {
-  const { id, message: around } = useLocalSearchParams<{ id: string; message?: string }>()
+  // `?m=` is the web's form ("Copy link", a link that opens the app)
+  const params = useLocalSearchParams<{ id: string; message?: string; m?: string }>()
+  const { id } = params
+  const around = params.message ?? params.m
   const { client, workspaceId, user } = useOrbit()
   const queryClient = useQueryClient()
   const { colors } = useTheme()
@@ -129,7 +132,7 @@ function ConversationScreenContent() {
         )}
         {around ? (
           <View className="items-center pt-1.5">
-            <Button label="Jump to present" size="sm" variant="secondary" icon="arrowDown" onPress={() => router.setParams({ message: undefined })} />
+            <Button label="Jump to present" size="sm" variant="secondary" icon="arrowDown" onPress={() => router.setParams({ message: undefined, m: undefined })} />
           </View>
         ) : null}
         {!conversation ? null : conversation.archived ? (

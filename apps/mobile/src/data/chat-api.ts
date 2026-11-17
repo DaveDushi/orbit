@@ -14,6 +14,7 @@ import {
   deleteChatMessage,
   editChatMessage,
   followChatThread,
+  forwardChatMessage,
   getChatThread,
   joinChatChannel,
   leaveChatChannel,
@@ -195,6 +196,11 @@ export async function deleteMessage(client: OrbitClient, workspaceId: string, me
 
 export async function setPinned(client: OrbitClient, workspaceId: string, messageId: string, pinned: boolean): Promise<ChatWrite<MessageRecord>> {
   return write((await pinChatMessage({ ...onMessage(client, workspaceId, messageId), body: { pinned } })).data)
+}
+
+/** A copy of the message in another conversation; the same `nonce` again returns the first copy. */
+export async function forward(client: OrbitClient, workspaceId: string, messageId: string, conversationId: string, nonce: string): Promise<ChatWrite<MessageRecord>> {
+  return write((await forwardChatMessage({ ...onMessage(client, workspaceId, messageId), body: { conversation_id: conversationId, nonce } })).data)
 }
 
 /** Moves the read cursor to just before the message. */
