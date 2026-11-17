@@ -41,7 +41,7 @@ export const WORKSPACE_NAV: readonly SettingsNavItem[] = [
   { href: '/settings/stickers', label: 'Stickers', icon: 'sticker', permission: 'chat.manage' },
   { href: '/settings/file-storage', label: 'File storage', icon: 'cloudConnection' },
   { href: '/settings/github', label: 'GitHub', icon: 'link2' },
-  { href: '/settings/workspace-agentic', label: 'Agentic', icon: 'magicStar' },
+  { href: '/settings/agentic', label: 'Agentic', icon: 'magicStar' },
   { href: '/settings/api-tokens', label: 'API tokens', icon: 'key', permission: 'api_tokens.manage' },
   { href: '/settings/apps', label: 'Apps', icon: 'category', permission: 'apps.manage' },
   { href: '/settings/export', label: 'Export', icon: 'documentDownload', permission: 'workspace.export' },
@@ -70,7 +70,6 @@ export const ACCOUNT_NAV: readonly SettingsNavItem[] = [
   { href: '/settings/sessions', label: 'Sessions', icon: 'shield' },
   { href: '/settings/appearance', label: 'Appearance', icon: 'brush' },
   { href: '/settings/notifications', label: 'Notifications', icon: 'bell' },
-  { href: '/settings/agentic', label: 'Agentic', icon: 'magicStar' },
 ]
 
 /** The web's Admin pages in its order; General is the area's first page, as `/admin` is on the web. */
@@ -86,3 +85,22 @@ export const ADMIN_NAV: readonly SettingsNavItem[] = [
   { href: '/settings/admin/jobs', label: 'Background jobs', icon: 'cpu' },
 ]
 
+
+export interface SettingsSection {
+  title: 'Workspace' | 'Account' | 'Admin'
+  items: SettingsNavItem[]
+}
+
+/**
+ * The Settings tab's one page: a row for every settings page this person may open, in three sections. Workspace leaves
+ * out General (the page itself shows it); a guest has none of it. Admin is the installation's, so it follows
+ * `installationAdmin` only. An empty section is left out.
+ */
+export function settingsSections(permissions: readonly Permission[], flags: Partial<NavFlags>, guest: boolean, installationAdmin: boolean): SettingsSection[] {
+  const sections: SettingsSection[] = [
+    { title: 'Workspace', items: guest ? [] : allowedNav(WORKSPACE_NAV, permissions, flags).filter((item) => item.href !== '/settings') },
+    { title: 'Account', items: allowedNav(ACCOUNT_NAV, permissions, flags, guest) },
+    { title: 'Admin', items: installationAdmin ? allowedNav(ADMIN_NAV, permissions, flags) : [] },
+  ]
+  return sections.filter((section) => section.items.length > 0)
+}

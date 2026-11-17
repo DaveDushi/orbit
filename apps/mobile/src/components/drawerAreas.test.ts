@@ -4,8 +4,8 @@ import { drawerAreaOf, drawerSections, tasksHref } from './drawerAreas'
 
 // the shape of Shell.tsx's WORKSPACE_NAV, ACCOUNT_NAV and ADMIN_NAV (Shell.tsx itself loads react-native)
 const areas = {
-  workspace: [{ href: '/settings' }, { href: '/settings/file-storage' }, { href: '/settings/workspace-agentic' }, { href: '/settings/members' }],
-  account: [{ href: '/settings/profile' }, { href: '/settings/appearance' }, { href: '/settings/notifications' }, { href: '/settings/agentic' }],
+  workspace: [{ href: '/settings' }, { href: '/settings/file-storage' }, { href: '/settings/agentic' }, { href: '/settings/members' }],
+  account: [{ href: '/settings/profile' }, { href: '/settings/appearance' }, { href: '/settings/notifications' }],
   admin: [{ href: '/settings/admin' }, { href: '/settings/admin/users' }, { href: '/settings/admin/audit' }, { href: '/settings/admin/storage' }],
 }
 
@@ -15,8 +15,7 @@ describe('drawerAreaOf', () => {
     expect(drawerAreaOf('/settings/members', areas)).toBe('workspace')
     expect(drawerAreaOf('/settings/profile', areas)).toBe('account')
     expect(drawerAreaOf('/settings/appearance', areas)).toBe('account')
-    expect(drawerAreaOf('/settings/workspace-agentic', areas)).toBe('workspace')
-    expect(drawerAreaOf('/settings/agentic', areas)).toBe('account')
+    expect(drawerAreaOf('/settings/agentic', areas)).toBe('workspace')
     expect(drawerAreaOf('/settings/admin', areas)).toBe('admin')
     expect(drawerAreaOf('/settings/admin/jobs', areas)).toBe('admin')
     expect(drawerAreaOf('/settings/admin/users', areas)).toBe('admin')
@@ -44,7 +43,7 @@ describe('drawerSections', () => {
   test('groups links under the web section labels', () => {
     expect(drawerSections('workspace', areas.workspace)).toEqual([
       { label: 'Workspace', items: [{ href: '/settings' }, { href: '/settings/members' }] },
-      { label: 'Integrations', items: [{ href: '/settings/file-storage' }, { href: '/settings/workspace-agentic' }] },
+      { label: 'Integrations', items: [{ href: '/settings/file-storage' }, { href: '/settings/agentic' }] },
     ])
     expect(drawerSections('workspace', [{ href: '/settings' }, { href: '/settings/danger-zone' }, { href: '/settings/api-tokens' }, { href: '/settings/export' }])).toEqual([
       { label: 'Workspace', items: [{ href: '/settings' }] },
@@ -59,7 +58,6 @@ describe('drawerSections', () => {
     expect(drawerSections('account', areas.account)).toEqual([
       { label: 'Account', items: [{ href: '/settings/profile' }] },
       { label: 'Preferences', items: [{ href: '/settings/appearance' }, { href: '/settings/notifications' }] },
-      { label: 'Advanced', items: [{ href: '/settings/agentic' }] },
     ])
   })
 })

@@ -24,22 +24,22 @@ import {
 
 describe('agenticTabs', () => {
   test('the web tabs with the team agent, and no Admin or Bots tab', () => {
-    expect(agenticTabs(true, false).map((tab) => tab.value)).toEqual(['you', 'workspace', 'agents', 'routines', 'skills'])
+    expect(agenticTabs(true, ['workspace.update']).map((tab) => tab.value)).toEqual(['you', 'workspace', 'agents', 'routines', 'skills'])
   })
 
   test('without the team agent only You', () => {
-    expect(agenticTabs(false, false).map((tab) => tab.value)).toEqual(['you'])
+    expect(agenticTabs(false, ['workspace.update']).map((tab) => tab.value)).toEqual(['you'])
   })
 
-  test('the account settings show only You', () => {
-    expect(agenticTabs(true, true).map((tab) => tab.value)).toEqual(['you'])
+  test('Skills only for owners and admins', () => {
+    expect(agenticTabs(true, []).map((tab) => tab.value)).toEqual(['you', 'workspace', 'agents', 'routines'])
   })
 
   test('a link to a tab this person does not have opens You', () => {
-    expect(pickedTab(agenticTabs(false, false), 'routines')).toBe('you')
-    expect(pickedTab(agenticTabs(true, false), 'routines')).toBe('routines')
-    expect(pickedTab(agenticTabs(true, false), 'admin')).toBe('you')
-    expect(pickedTab(agenticTabs(true, false), 'bots')).toBe('you')
+    expect(pickedTab(agenticTabs(false, []), 'routines')).toBe('you')
+    expect(pickedTab(agenticTabs(true, []), 'routines')).toBe('routines')
+    expect(pickedTab(agenticTabs(true, []), 'admin')).toBe('you')
+    expect(pickedTab(agenticTabs(true, []), 'bots')).toBe('you')
   })
 })
 

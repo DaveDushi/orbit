@@ -1,6 +1,8 @@
 import { router, useLocalSearchParams } from 'expo-router'
 import { mcpSetup } from '@orbit/api/mcp'
+import * as Clipboard from 'expo-clipboard'
 import * as WebBrowser from 'expo-web-browser'
+import { useEffect, useState } from 'react'
 import { View } from 'react-native'
 
 import { AgentConnection } from '../agentic/AgentConnection'
@@ -12,7 +14,7 @@ import { RoutinesSection } from '../agentic/Routines'
 import { SkillsCard } from '../agentic/Skills'
 import { TeamInstructions } from '../agentic/TeamInstructions'
 import { LineTabs } from './Fields'
-import { Note, RowIcon, RowText, SettingsCard, SettingsRow, SettingsShell, type SettingsNavItem } from './Shell'
+import { Note, RowIcon, RowText, SettingsCard, SettingsRow, SettingsShell, WORKSPACE_NAV } from './Shell'
 import { agenticTabs, pickedTab } from '../../data/agentic'
 import { useDisconnectOAuth, useOAuthConnections } from '../../hooks/account'
 import { useAgentEnabled } from '../../hooks/agent'
@@ -21,19 +23,20 @@ import { errorMessage } from '../../session-context'
 import { Button, Text } from '../../ui'
 
 /**
- * The web's Agentic page with its tabs: You, and with the team agent Workspace, Agents, Routines and Skills. Each tab
- * keeps its own access check; the installation's default model is on Agents, as on the web (there is no Admin tab).
- * The account settings show only You. `?tab=routines` opens a tab.
+ * The one Agentic page, the web's with its tabs: You, and with the team agent Workspace, Agents, Routines and Skills
+ * (`agenticTabs`). Each tab keeps its own access check; the installation's default model is on Agents, as on the web
+ * (there is no Admin tab). `?tab=routines` opens a tab.
  */
-export function AgenticScreen({ title, nav, personal = false }: { title: string; nav: readonly SettingsNavItem[]; personal?: boolean }) {
+export function AgenticScreen() {
   const agent = useAgentEnabled()
+  const { workspace } = useOrbit()
   const connections = useOAuthConnections()
   const { tab } = useLocalSearchParams<{ tab?: string }>()
-  const tabs = agenticTabs(agent, personal)
+  const tabs = agenticTabs(agent, workspace.permissions)
   const section = pickedTab(tabs, tab)
 
   return (
-    <SettingsShell title={title} nav={nav} refreshing={connections.isRefetching} onRefresh={() => void connections.refetch()}>
+    <SettingsShell title="Agentic" nav={WORKSPACE_NAV} refreshing={connections.isRefetching} onRefresh={() => void connections.refetch()}>
       {tabs.length > 1 ? <LineTabs label="Agentic" value={section} tabs={tabs} onChange={(next) => router.setParams({ tab: next })} /> : null}
       {section === 'you' ? (
         <>
@@ -60,7 +63,7 @@ export function AgenticScreen({ title, nav, personal = false }: { title: string;
   )
 }
 
-/** The commands run on a computer, so a long press selects them; the app has no clipboard module. */
+/** The address and the commands run on a computer: each has a Copy button, and a long press selects it. */
 function McpSetup() {
   const { session } = useOrbit()
   const connections = useOAuthConnections()
@@ -108,9 +111,22 @@ function McpSetup() {
 const connectedAt = (millis: number) => new Date(millis).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 
 function Code({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    if (!copied) return
+    const timer = setTimeout(() => setCopied(false), 2000)
+    return () => clearTimeout(timer)
+  }, [copied])
   return (
-    <View className="rounded-md bg-muted px-3 py-2.5">
-      <Text selectable className="font-mono text-xs leading-5">{text}</Text>
+    <View className="flex-row items-start gap-2 rounded-md bg-muted py-1.5 pr-1.5 pl-3">
+      <Text selectable className="flex-1 min-w-0 py-1 font-mono text-xs leading-5">{text}</Text>
+      <Button
+        label={copied ? 'Copied' : 'Copy'}
+        icon={copied ? 'check' : 'copy'}
+        variant="ghost"
+        size="sm"
+        onPress={() => void Clipboard.setStringAsync(text).then(() => setCopied(true))}
+      />
     </View>
   )
 }

@@ -227,7 +227,7 @@ function RoutinesCard({ limit }: { limit: number }) {
   const rows = routinesByNextRun(routines.data ?? [], limit)
   if (rows.length === 0) return <CardEmpty>No routines yet. Ask the agent in Chat to make one.</CardEmpty>
   return rows.map((routine, index) => (
-    <CardRow key={routine.id} href="/settings/workspace-agentic?tab=routines" last={index === rows.length - 1}>
+    <CardRow key={routine.id} href="/settings/agentic?tab=routines" last={index === rows.length - 1}>
       <RowIcon name="repeat" />
       <RowTitle>{routine.name}</RowTitle>
       <Meta>
