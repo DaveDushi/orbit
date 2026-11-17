@@ -203,7 +203,7 @@ export function DriveFolder({ folderId }: { folderId: string | null }) {
             setSearch('')
           }}
         />
-        <IconButton icon="filter" label={`Sort: ${sorting.label}`} size={32} onPress={() => setSortOpen(true)} />
+        <IconButton icon="display" label={`Sort: ${sorting.label}`} size={32} onPress={() => setSortOpen(true)} />
         {folderId === null ? <IconButton icon="trash" label="Drive trash" size={32} onPress={() => router.push('/drive/trash')} /> : null}
         <IconButton icon="plus" label="Add to Drive" size={32} variant="primary" disabled={uploading !== null} onPress={newMenu} />
       </PaneHeader>
