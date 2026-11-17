@@ -1,8 +1,9 @@
-import { useQuery } from '@tanstack/react-query'
-import { createContext, type ReactNode, use, useEffect, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { createContext, type ReactNode, use, useEffect, useRef, useState } from 'react'
 
 import { isGuestRole } from './data/guest'
 import { keys } from './data/keys'
+import { isWorkspaceQuery } from './data/persist'
 import { type OrbitClient, type User, type WorkspaceRecord, workspaces as listWorkspaces } from './data/orbit'
 import { loadWorkspaceId, saveWorkspaceId, type StoredSession } from './session'
 import { useSession } from './session-context'
@@ -38,14 +39,24 @@ export function OrbitProvider({ children, noWorkspace }: { children: ReactNode; 
     void loadWorkspaceId().then(setChosen, () => setChosen(null))
   }, [])
 
+  // The workspace that was left: its data goes from memory and from the disk cache.
+  const queryClient = useQueryClient()
+  const shown = useRef<string | null>(null)
+  const live = list.data?.filter((workspace) => !workspace.deleted_at) ?? []
+  const workspaceId = chosen === undefined ? null : ((live.find((item) => item.id === chosen) ?? live[0])?.id ?? null)
+  useEffect(() => {
+    const left = shown.current
+    shown.current = workspaceId
+    if (left && workspaceId && left !== workspaceId) queryClient.removeQueries({ predicate: (query) => isWorkspaceQuery(query.queryKey, left) })
+  }, [queryClient, workspaceId])
+
   if (!list.data) {
     if (list.isError) return <ErrorView error={list.error} onRetry={() => void list.refetch()} />
     return <LoadingView />
   }
   if (chosen === undefined) return <LoadingView />
 
-  const live = list.data.filter((workspace) => !workspace.deleted_at)
-  const workspace = live.find((item) => item.id === chosen) ?? live[0]
+  const workspace = live.find((item) => item.id === workspaceId)
   if (!workspace) return noWorkspace
 
   const selectWorkspace = (id: string) => {

@@ -3,16 +3,19 @@ import { NotoSans_400Regular } from '@expo-google-fonts/noto-sans/400Regular'
 import { NotoSans_500Medium } from '@expo-google-fonts/noto-sans/500Medium'
 import { NotoSans_600SemiBold } from '@expo-google-fonts/noto-sans/600SemiBold'
 import { NotoSans_700Bold } from '@expo-google-fonts/noto-sans/700Bold'
-import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { focusManager, onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { DarkTheme, DefaultTheme, type ErrorBoundaryProps, SplashScreen, Stack, ThemeProvider } from 'expo-router'
 import { StatusBar } from 'expo-status-bar'
 import * as SystemUI from 'expo-system-ui'
 import { useFonts } from 'expo-font'
+import * as Network from 'expo-network'
 import { useEffect, useState } from 'react'
 import { AppState, View } from 'react-native'
 
 import { NoWorkspace } from '../components/NoWorkspace'
+import { CACHE_MAX_AGE } from '../data/persist'
 import { OrbitProvider } from '../orbit-context'
+import { PersistedCache } from '../query-cache'
 import { SessionProvider, useSession } from '../session-context'
 import { fonts, loadAppearance, palettes, type Theme, useTheme } from '../theme'
 import { AppColorScope, useAppPalette } from '../theme/ColorScope'
@@ -20,8 +23,15 @@ import { Button, EmptyState } from '../ui'
 
 void SplashScreen.preventAutoHideAsync()
 
-// Live sockets keep the data fresh; a refetch on every mount would only repeat it.
-const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000 } } })
+// Live sockets keep the data fresh; a refetch on every mount would only repeat it. A list stays in memory as long as
+// it stays on disk (`PersistedCache`), so going back to a screen shows it at once and refreshes it in place.
+const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, gcTime: CACHE_MAX_AGE } } })
+
+// Offline, queries wait instead of failing, and they refetch when the phone is online again.
+onlineManager.setEventListener((setOnline) => {
+  const subscription = Network.addNetworkStateListener((state) => setOnline(state.isConnected !== false))
+  return () => subscription.remove()
+})
 
 // React Native has no window focus: coming back to the foreground refetches stale queries.
 focusManager.setEventListener((setFocused) => {
@@ -132,7 +142,13 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
     <AppColorScope>
       <ThemeProvider value={navigationTheme(theme)}>
         <StatusBar style={theme.scheme === 'dark' ? 'light' : 'dark'} />
-        {state.status === 'offline' ? <SessionOffline server={state.session.server} /> : signedIn ? <OrbitProvider noWorkspace={<NoWorkspace />}>{stack}</OrbitProvider> : stack}
+        {state.status === 'offline' ? <SessionOffline server={state.session.server} /> : state.status === 'signed_in' ? (
+          <PersistedCache server={state.session.server} userId={state.user.id}>
+            <OrbitProvider noWorkspace={<NoWorkspace />}>{stack}</OrbitProvider>
+          </PersistedCache>
+        ) : (
+          stack
+        )}
       </ThemeProvider>
     </AppColorScope>
   )

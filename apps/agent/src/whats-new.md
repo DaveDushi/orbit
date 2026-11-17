@@ -6,6 +6,9 @@ build: "## YYYY-MM-DD" (the deploy date), then 1-4 short "- " lines about what p
 members, not developers. Keep the 8 newest entries; the prompt shows the 5 newest.
 -->
 
+## 2026-11-17
+- iPhone app, from its next update: chat, threads, unread counts, the app icon's number, Tasks, Activity, Docs and Drive update by themselves while the app is open, also after you switch between Wi-Fi and mobile data. No pull to refresh is needed. The app opens with your lists from the last time and refreshes them in place, and a small "Reconnecting…" note shows when the connection is down.
+
 ## 2026-11-16
 - Voice input: tap the mic beside Send (chat, threads, Ask Donna) and speak. Your words show as you talk; you can edit them, and nothing is sent until you press Send. It works in the browser (not in Firefox), in the Windows app from Orbit desktop 0.1.4 (install it once by hand from the download page; it also fixes "Microphone access is off"), in the iPhone app from its next update, and in the Mac app later.
 - Donna can move Docs pages, tasks, and Drive files and folders to the trash, many at once after one yes from you. You can restore them from the trash. Donna also writes tables and links on Docs pages correctly now, and older pages with broken tables are repaired.
@@ -64,9 +67,3 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 - Owners and admins can connect Donna to remote MCP servers that use OAuth, for example TikTok Social: Settings → Agentic → Workspace → Add tool, credential "Sign in with OAuth (Connect)", then sign in and click Authorize. The row shows who is connected and when to reconnect.
 - Phones: Settings, Account settings and Admin open as a menu of their pages. The bottom bar has Drive instead of Mail. Task boards stay fast with many tasks, and every card is there when you scroll. A change to many tasks at once shows in each task's activity. A closed GitHub issue or merged pull request moves its task to Done. Comments lose empty lines at the start and end, and sending a comment no longer blanks the page. Loading shows a small ring spinner. In Drive, a click opens a file or folder; tick the box (or Ctrl/Shift+click) to select.
 - Chat on phones: Donna's cards and wide tables fit the screen and scroll sideways, the day chip no longer covers text, and repeated steps show once with a count. Desktop app 0.1.3 for Windows: the taskbar shows unread messages, and "Sign in to app" opens its window.
-
-## 2026-11-09
-- Donna can look at images, videos and scanned PDFs in Drive, edit them (for example trim a video, or crop, resize or convert an image) and save the result as a new Drive file. She cannot hear sound.
-- Donna knows the current time and date of the person who writes to her, so "tomorrow" and "next week" are right, and she knows which Orbit version runs and what is new.
-- Donna can answer with cards: tables, charts, task lists, short forms and buttons. They build live while she writes, also in the phone app.
-- The Orbit logo is now a pink pixel "W", and the Orbit desktop app for Windows is ready: Download desktop app in the account menu, or https://orbit.wellrox.com/downloads/desktop/. The app icon picker (Settings → Apps) has new ecommerce icons; on a phone, the top bar stays visible on the chat list.

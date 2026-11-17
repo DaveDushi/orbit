@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 
-import { chatActions, LiveCursor, parseLiveFrame, parseWorkspaceEvent, socketUrl, workspaceEventKeys } from './live'
+import { chatActions, chatResyncKeys, createRefreshQueue, LiveCursor, networkReconnects, parseLiveFrame, parseWorkspaceEvent, socketUrl, workspaceEventChangesProfile, workspaceEventKeys } from './live'
 import type { MessageRecord } from './orbit'
 
 test('socket urls swap the scheme and encode the query', () => {
@@ -29,9 +29,15 @@ test('a workspace event refreshes the workspace data; a resync also the workspac
     ['page', 'w'],
     ['teamspaces', 'w'],
     ['drive', 'w'],
+    ['billing', 'w'],
+    ['workspace', 'w'],
   ])
   const resync = parseWorkspaceEvent('{"version":1,"kind":"resync_required","sequence":"0"}')
   expect(workspaceEventKeys(resync!, 'w').at(-1)).toEqual(['workspaces'])
+  // the web's saved views: nothing the app shows, unless a resync says events were lost
+  expect(workspaceEventKeys({ ...changed!, views_only: true }, 'w')).toEqual([])
+  expect(workspaceEventKeys({ ...resync!, views_only: true }, 'w').length).toBeGreaterThan(0)
+  expect([changed!, { ...changed!, profile_changed: true }, resync!].map(workspaceEventChangesProfile)).toEqual([false, true, true])
   expect(parseWorkspaceEvent('{"version":2,"kind":"workspace.changed","sequence":"1"}')).toBe(null)
   expect(parseWorkspaceEvent('{"version":1,"kind":"workspace.changed","sequence":"01"}')).toBe(null)
 })
@@ -46,6 +52,40 @@ test('chat events patch messages and states, and refetch conversations', () => {
     { kind: 'remove-message', conversationId: 'c1', messageId: 'm1' },
   ])
   expect(chatActions({ type: 'categories.changed', categories: [] }, 'w')).toEqual([{ kind: 'invalidate', keys: [['chat-categories', 'w']] }])
+  expect(chatActions({ type: 'emoji.changed' }, 'w')).toEqual([{ kind: 'invalidate', keys: [['chat-emoji', 'w']] }])
+  expect(chatActions({ type: 'conversation.removed', conversation_id: 'c1' }, 'w')).toEqual([
+    { kind: 'invalidate', keys: [['conversations', 'w'], ['chat-states', 'w'], ['messages', 'w']] },
+  ])
+  // a resync refetches the custom emoji too: their event may be among the missed ones
+  expect(chatResyncKeys('w')).toContainEqual(['chat-emoji', 'w'])
+})
+
+test('the sockets reconnect when the phone is online again or on another network', () => {
+  const wifi = { connected: true, type: 'WIFI' }
+  expect(networkReconnects(null, wifi)).toBe(false)
+  expect(networkReconnects(wifi, wifi)).toBe(false)
+  expect(networkReconnects(wifi, { connected: true, type: 'CELLULAR' })).toBe(true)
+  expect(networkReconnects({ connected: false, type: 'NONE' }, wifi)).toBe(true)
+  expect(networkReconnects(wifi, { connected: false, type: 'NONE' })).toBe(false)
+})
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+test('the refresh queue merges a burst of events and waits for writes on their way', async () => {
+  const done: string[] = []
+  let busy = true
+  const queue = createRefreshQueue({ invalidate: (key) => done.push(key.join('/')), busy: () => busy, delayMs: 5 })
+  queue.add([['tasks', 'w'], ['pages', 'w']])
+  queue.add([['tasks', 'w']])
+  await wait(30)
+  expect(done).toEqual([])
+  busy = false
+  await wait(30)
+  expect(done).toEqual(['tasks/w', 'pages/w'])
+  queue.add([['drive', 'w']])
+  queue.dispose()
+  await wait(20)
+  expect(done).toEqual(['tasks/w', 'pages/w'])
 })
 
 test('the live cursor resumes after the last event of the same epoch', () => {

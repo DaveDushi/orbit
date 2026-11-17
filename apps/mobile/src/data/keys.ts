@@ -21,6 +21,8 @@ export const keys = {
   conversations: (workspaceId: string) => ['conversations', workspaceId] as const,
   chatCategories: (workspaceId: string) => ['chat-categories', workspaceId] as const,
   chatStates: (workspaceId: string) => ['chat-states', workspaceId] as const,
+  /** The workspace's custom emoji, which chat events change. */
+  chatEmoji: (workspaceId: string) => ['chat-emoji', workspaceId] as const,
   messages: (workspaceId: string, conversationId: string) => ['messages', workspaceId, conversationId] as const,
   /** The reader's taps and form sends on one card of the agent. */
   sentActions: (workspaceId: string, messageId: string) => ['chat-sent-actions', workspaceId, messageId] as const,
@@ -39,15 +41,16 @@ export type QueryKey = readonly string[]
 
 /**
  * What the workspace events socket refreshes: everything but chat, which has its own live socket. Members and
- * notifications are in it, as on the web, where the event refreshes the whole workspace.
+ * notifications are in it, as on the web, where the event refreshes the whole workspace. `billing` is the trial or
+ * subscription banner, and `workspace` the agent's routines and scripts.
  */
 export function workspaceDataKeys(workspaceId: string): QueryKey[] {
-  return (['tasks', 'task', 'comments', 'task-activity', 'projects', 'statuses', 'labels', 'milestones', 'cycles', 'members', 'notifications', 'pages', 'page', 'teamspaces', 'drive'] as const).map(
+  return (['tasks', 'task', 'comments', 'task-activity', 'projects', 'statuses', 'labels', 'milestones', 'cycles', 'members', 'notifications', 'pages', 'page', 'teamspaces', 'drive', 'billing', 'workspace'] as const).map(
     (resource) => [resource, workspaceId],
   )
 }
 
 /** What a chat resync refetches. */
 export function chatKeys(workspaceId: string): QueryKey[] {
-  return [keys.conversations(workspaceId), keys.chatCategories(workspaceId), keys.chatStates(workspaceId), ['messages', workspaceId]]
+  return [keys.conversations(workspaceId), keys.chatCategories(workspaceId), keys.chatStates(workspaceId), keys.chatEmoji(workspaceId), ['messages', workspaceId]]
 }

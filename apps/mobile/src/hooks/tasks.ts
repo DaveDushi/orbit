@@ -6,8 +6,9 @@ import { Alert } from 'react-native'
 import { keys } from '../data/keys'
 import * as api from '../data/orbit'
 import * as taskApi from '../data/task-api'
-import { isVersionConflict, optimisticTask, parentErrorMessage, replaceTask, type TaskPatch } from '../data/tasks'
+import { isVersionConflict, optimisticTask, parentErrorMessage, type TaskPatch } from '../data/tasks'
 import { useOrbit } from '../orbit-context'
+import { putTask } from '../task-cache'
 import { errorMessage } from '../session-context'
 
 /**
@@ -94,10 +95,7 @@ export function useTaskWrite(taskId: string) {
   const taskKey = keys.task(workspaceId, taskId)
   const queue = useRef<Promise<unknown>>(Promise.resolve())
   const pending = useRef(0)
-  const setTask = (next: api.TaskRecord) => {
-    queryClient.setQueryData(taskKey, next)
-    queryClient.setQueryData<api.TaskRecord[]>(keys.tasks(workspaceId), (list) => list && replaceTask(list, next))
-  }
+  const setTask = (next: api.TaskRecord) => putTask(queryClient, workspaceId, next)
   return useMutation({
     mutationFn: (patch: TaskPatch) => {
       pending.current += 1
