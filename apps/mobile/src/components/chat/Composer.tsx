@@ -4,19 +4,21 @@ import * as DocumentPicker from 'expo-document-picker'
 import { requireOptionalNativeModule } from 'expo'
 import type { PasteEventPayload, TextInputWrapperViewProps } from 'expo-paste-input'
 import * as ImagePicker from 'expo-image-picker'
-import { type ComponentType, type ReactNode, useState } from 'react'
+import { type ComponentType, type ReactNode, useMemo, useState } from 'react'
 import { Image, Platform, Pressable, ScrollView, View } from 'react-native'
 import { TextInput } from '../../ui/scaled'
 
 import type { PageContext } from '../../data/ask-donna'
-import { authorName, newNonce, type ThreadPages, upsertThreadMessage } from '../../data/chat'
+import { authorName, decodeMentions, newNonce, type Person, type ThreadPages, upsertThreadMessage } from '../../data/chat'
 import * as chat from '../../data/chat-api'
+import { encodeMentions, insertMention, type MentionQuery, mentionQueryAt, mentionSuggestions, notifiesEveryone } from '../../data/mentions'
 import type { MessageRecord } from '../../data/orbit'
-import { showError } from '../../hooks/chat'
+import { confirmAction, showError } from '../../hooks/chat'
 
 import { useOrbit } from '../../orbit-context'
+import { useConversations, useMembers } from '../../queries'
 import { useTheme } from '../../theme'
-import { Icon, IconButton, Spinner, Text } from '../../ui'
+import { Avatar, Icon, IconButton, Spinner, Text } from '../../ui'
 import { uploadPart } from '../../upload-part'
 import { EmojiPicker } from './EmojiPicker'
 import { MicButton } from './MicButton'
@@ -31,6 +33,13 @@ interface DraftFile {
   status: 'uploading' | 'ready' | 'failed'
   file: chat.ChatFileRecord | null
 }
+
+/** The server's limit for a message body. */
+const MESSAGE_MAX_LENGTH = 4000
+/** `@channel` or `@here` asks first in a channel of this many members, as on the web. */
+const CONFIRM_FROM_MEMBERS = 6
+/** Unsent text per workspace, conversation and thread, while the app runs. */
+const drafts = new Map<string, string>()
 
 /** A message the server has not confirmed yet. */
 export interface PendingMessage {
@@ -47,9 +56,33 @@ type Mode = { kind: 'new'; replyTo: MessageRecord | null } | { kind: 'edit'; mes
  * the reply or edit target, and the messages on their way.
  */
 export function useComposer(conversationId: string, threadRootId: string | null, pageContext?: () => PageContext | null) {
-  const { client, workspaceId } = useOrbit()
+  const { client, workspaceId, user } = useOrbit()
   const queryClient = useQueryClient()
-  const [draft, setDraft] = useState('')
+  const draftKey = `${workspaceId}:${conversationId}:${threadRootId ?? ''}`
+  const [draft, setDraftState] = useState(() => drafts.get(draftKey) ?? '')
+  // the draft outlives the screen, as the web keeps it per conversation and thread (in memory here: not a secret, not worth the keychain)
+  const setDraft = (next: string | ((current: string) => string)) =>
+    setDraftState((current) => {
+      const value = typeof next === 'function' ? next(current) : next
+      if (value) drafts.set(draftKey, value)
+      else drafts.delete(draftKey)
+      return value
+    })
+  const members = useMembers().data
+  const conversations = useConversations().data
+  const conversation = conversations?.find((item) => item.id === conversationId)
+  // who `@` offers: everybody in a public channel, the members of a private channel or a DM (not suspended, not you)
+  const mentionable: Person[] = useMemo(
+    () =>
+      (members ?? [])
+        .filter((member) => !member.suspended_at && member.user_id !== user.id && (conversation?.kind === 'public' || (conversation?.member_ids.includes(member.user_id) ?? false)))
+        .map((member) => ({ id: member.user_id, name: member.display_name })),
+    [conversation, members, user.id],
+  )
+  // every member and channel encodes, also a name typed by hand
+  const everybody: Person[] = useMemo(() => (members ?? []).map((member) => ({ id: member.user_id, name: member.display_name })), [members])
+  const channels: Person[] = useMemo(() => (conversations ?? []).filter((item) => item.kind !== 'dm' && item.member_ids.includes(user.id)).map((item) => ({ id: item.id, name: item.name })), [conversations, user.id])
+  const allNames: Person[] = useMemo(() => (conversations ?? []).map((item) => ({ id: item.id, name: item.name })), [conversations])
   const [files, setFiles] = useState<DraftFile[]>([])
   const [mode, setMode] = useState<Mode>({ kind: 'new', replyTo: null })
   const [alsoInChannel, setAlsoInChannel] = useState(false)
@@ -85,9 +118,11 @@ export function useComposer(conversationId: string, threadRootId: string | null,
   const uploading = files.some((item) => item.status === 'uploading')
   const canSend = !uploading && (draft.trim() !== '' || (mode.kind === 'new' && ready.length > 0))
 
-  const send = () => {
-    const body = draft.trim()
+  const send = async () => {
+    const text = draft.trim()
+    const body = encodeMentions(text, everybody, channels)
     if (!canSend) return
+    if (body.length > MESSAGE_MAX_LENGTH) return showError('Message too long', new Error(`A message has at most ${MESSAGE_MAX_LENGTH} characters.`))
     if (mode.kind === 'edit') {
       const { message } = mode
       setDraft('')
@@ -99,12 +134,18 @@ export function useComposer(conversationId: string, threadRootId: string | null,
           received(result)
         },
         (error) => {
-          setDraft(body)
+          setDraft(text)
           setMode({ kind: 'edit', message })
           showError('The message was not edited', error)
         },
       )
       return
+    }
+    const memberCount = conversation?.member_ids.length ?? 0
+    if (!threadRootId && notifiesEveryone(body) && memberCount >= CONFIRM_FROM_MEMBERS) {
+      const all = body.includes('<!channel>')
+      const confirmed = await confirmAction(`Notify ${memberCount} people?`, `${all ? '@channel' : '@here'} sends a notification to everyone in this channel${all ? '' : ' who is online'}.`, 'Send')
+      if (!confirmed) return
     }
     const item = { nonce: newNonce(), body, files: ready.length }
     const replyTo = mode.replyTo
@@ -121,7 +162,7 @@ export function useComposer(conversationId: string, threadRootId: string | null,
       },
       (error) => {
         setPending((list) => list.filter((other) => other.nonce !== item.nonce))
-        setDraft((current) => current || body)
+        setDraft((current) => current || text)
         showError('Message not sent', error)
       },
     )
@@ -137,7 +178,8 @@ export function useComposer(conversationId: string, threadRootId: string | null,
     reply: (message: MessageRecord) => setMode({ kind: 'new', replyTo: message }),
     edit: (message: MessageRecord) => {
       setMode({ kind: 'edit', message })
-      setDraft(message.body)
+      // the field shows names; the save turns them back into tokens
+      setDraft(decodeMentions(message.body, everybody, allNames))
     },
     cancelMode: () => {
       if (mode.kind === 'edit') setDraft('')
@@ -147,7 +189,9 @@ export function useComposer(conversationId: string, threadRootId: string | null,
     setAlsoInChannel,
     pending,
     canSend,
-    send,
+    send: () => void send(),
+    /** Who `@` and `#` offer in this conversation; `@channel` and `@here` only outside a thread. */
+    mentions: { people: mentionable, channels, everyone: threadRootId === null },
   }
 }
 
@@ -162,7 +206,17 @@ export function Composer({ state, placeholder, nameOf, alsoSendTo }: { state: Co
   const [focused, setFocused] = useState(false)
   const [attachOpen, setAttachOpen] = useState(false)
   const [emojiOpen, setEmojiOpen] = useState(false)
+  const [cursor, setCursor] = useState<number | null>(null)
   const { draft, setDraft, mode } = state
+  // a mention being typed at the cursor (the end while the field has not said where the cursor is)
+  const mention: MentionQuery | null = focused ? mentionQueryAt(draft, cursor ?? draft.length) : null
+  const suggestions = mention ? mentionSuggestions(mention, mention.trigger === '#' ? [] : state.mentions.people, state.mentions.channels, { everyone: state.mentions.everyone }) : []
+  const pickMention = (name: string) => {
+    if (!mention) return
+    const next = insertMention(draft, mention, name)
+    setDraft(next.text)
+    setCursor(next.cursor)
+  }
   const append = (text: string) => setDraft(`${draft}${draft && !draft.endsWith(' ') ? ' ' : ''}${text}`)
   // A pasted photo (the edit menu's Paste, or the keyboard's "Paste from Screenshots") becomes an attachment.
   const onPaste = (payload: PasteEventPayload) => {
@@ -232,10 +286,34 @@ export function Composer({ state, placeholder, nameOf, alsoSendTo }: { state: Co
             ))}
           </ScrollView>
         ) : null}
+        {suggestions.length > 0 ? (
+          <View accessibilityRole="menu" accessibilityLabel={mention?.trigger === '#' ? 'Channels' : 'People'} className="p-1 border-b border-border">
+            {suggestions.map((item) => (
+              <Pressable
+                key={item.id}
+                accessibilityRole="menuitem"
+                accessibilityLabel={`${mention?.trigger}${item.name}`}
+                onPress={() => pickMention(item.name)}
+                className="h-9 flex-row items-center gap-2 px-2 rounded-md active:bg-muted"
+              >
+                {mention?.trigger === '#' ? <Icon name="hashtag" size={16} color={colors.mutedForeground} /> : item.note ? <Icon name="people" size={16} color={colors.mutedForeground} /> : <Avatar id={item.id} name={item.name} size={20} />}
+                <Text numberOfLines={1} className="font-noto-medium text-[14px] shrink">
+                  {item.name}
+                </Text>
+                {item.note ? <Text className="text-[12px] text-muted-foreground">{item.note}</Text> : null}
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
         <PasteField onPaste={onPaste}>
           <TextInput
             value={draft}
-            onChangeText={setDraft}
+            onChangeText={(text) => {
+              setDraft(text)
+              // typing at the end: the selection event can come after the change
+              if (cursor === null || cursor >= draft.length) setCursor(text.length)
+            }}
+            onSelectionChange={(event) => setCursor(event.nativeEvent.selection.end)}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
             placeholder={placeholder}
