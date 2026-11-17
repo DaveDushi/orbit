@@ -5,12 +5,12 @@
  */
 import { router } from 'expo-router'
 import { type ReactElement, useState } from 'react'
-import { Pressable, RefreshControl, SectionList, View } from 'react-native'
+import { Pressable, RefreshControl, ScrollView, SectionList, useWindowDimensions, View } from 'react-native'
 
 import { TaskRow } from '../TaskRow'
 import { defaultStatusOf, identifier, isClosed, projectStatuses, PRIORITY_LABEL, priorityOf } from '../../data/tasks'
-import type { TaskRecord } from '../../data/orbit'
-import type { TaskSection } from '../../data/views'
+import type { StatusRecord, TaskRecord } from '../../data/orbit'
+import type { Layout, TaskSection } from '../../data/views'
 import { useTaskRowWrites } from '../../hooks/views'
 import { useOrbit } from '../../orbit-context'
 import { usePeople, useProjects, useStatuses } from '../../queries'
@@ -24,6 +24,7 @@ type RowSheet = { kind: 'menu' | 'status' | 'priority'; task: TaskRecord }
 export function TaskList({
   sections,
   grouped,
+  layout = 'list',
   refreshing,
   onRefresh,
   onNew,
@@ -32,6 +33,8 @@ export function TaskList({
 }: {
   sections: readonly TaskSection[]
   grouped: boolean
+  /** `board`: the groups as columns side by side (the web's board); a timeline shows as a list. */
+  layout?: Layout
   refreshing: boolean
   onRefresh: () => void
   /** The + of a group header; `undefined` hides it. */
@@ -70,39 +73,68 @@ export function TaskList({
   const menuTitle = current ? `${identifier(current, projects)} ${current.title || 'Untitled'}` : ''
   const sheetTitle = sheet.sheet?.kind === 'status' ? 'Status' : sheet.sheet?.kind === 'priority' ? 'Priority' : menuTitle
   const done = current ? doneMove(current) : undefined
+  const { width } = useWindowDimensions()
+  const column = Math.min(300, width - 56)
 
   return (
     <>
-      <SectionList
-        sections={data}
-        keyExtractor={(task, index) => `${task.id}:${index}`}
-        stickySectionHeadersEnabled={false}
-        keyboardShouldPersistTaps="handled"
-        contentContainerClassName={sections.length === 0 ? 'grow' : 'pb-6'}
-        ListHeaderComponent={header}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.mutedForeground} />}
-        ListEmptyComponent={<EmptyState icon="tasks" title={empty.title} description={empty.description} />}
-        renderSectionHeader={({ section }) =>
-          grouped ? <GroupHeader section={section} collapsed={collapsed.has(section.key)} onToggle={() => toggle(section.key)} onAdd={onNew ? () => onNew(section) : undefined} /> : null
-        }
-        renderItem={({ item }) => {
-          const move = doneMove(item)
-          return (
-            <SwipeRow
-              left={move ? { label: move.closed ? 'Reopen' : 'Done', icon: move.closed ? 'refresh' : 'check', tone: 'primary', onSwipe: () => setStatus(item, move.statusId) } : undefined}
-              right={{ label: 'Delete', icon: 'trash', tone: 'destructive', onSwipe: () => writes.trash.mutate(item) }}
-            >
-              <TaskRow
-                task={item}
-                status={statusOf(item)}
-                assignee={people.find((person) => person.id === item.assignee_ids[0])}
-                onPress={() => router.push(`/tasks/${item.id}`)}
-                onLongPress={() => sheet.open({ kind: 'menu', task: item })}
-              />
-            </SwipeRow>
-          )
-        }}
-      />
+      {layout === 'board' && grouped ? (
+        sections.length === 0 ? (
+          <EmptyState icon="tasks" title={empty.title} description={empty.description} />
+        ) : (
+          <ScrollView horizontal snapToInterval={column + 8} decelerationRate="fast" contentContainerClassName="gap-2 p-2" showsHorizontalScrollIndicator={false}>
+            {sections.map((section) => (
+              <View key={section.key} className="rounded-lg bg-muted/50 border border-border overflow-hidden" style={{ width: column }}>
+                <GroupHeader section={section} collapsed={false} onAdd={onNew ? () => onNew(section) : undefined} />
+                <ScrollView contentContainerClassName="gap-1.5 p-1.5 pb-6" refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.mutedForeground} />}>
+                  {section.tasks.map((task) => (
+                    <BoardCard
+                      key={task.id}
+                      task={task}
+                      code={identifier(task, projects)}
+                      status={statusOf(task)}
+                      assignee={people.find((person) => person.id === task.assignee_ids[0])}
+                      onPress={() => router.push(`/tasks/${task.id}`)}
+                      onLongPress={() => sheet.open({ kind: 'menu', task })}
+                    />
+                  ))}
+                </ScrollView>
+              </View>
+            ))}
+          </ScrollView>
+        )
+      ) : (
+        <SectionList
+          sections={data}
+          keyExtractor={(task, index) => `${task.id}:${index}`}
+          stickySectionHeadersEnabled={false}
+          keyboardShouldPersistTaps="handled"
+          contentContainerClassName={sections.length === 0 ? 'grow' : 'pb-6'}
+          ListHeaderComponent={header}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.mutedForeground} />}
+          ListEmptyComponent={<EmptyState icon="tasks" title={empty.title} description={empty.description} />}
+          renderSectionHeader={({ section }) =>
+            grouped ? <GroupHeader section={section} collapsed={collapsed.has(section.key)} onToggle={() => toggle(section.key)} onAdd={onNew ? () => onNew(section) : undefined} /> : null
+          }
+          renderItem={({ item }) => {
+            const move = doneMove(item)
+            return (
+              <SwipeRow
+                left={move ? { label: move.closed ? 'Reopen' : 'Done', icon: move.closed ? 'refresh' : 'check', tone: 'primary', onSwipe: () => setStatus(item, move.statusId) } : undefined}
+                right={{ label: 'Delete', icon: 'trash', tone: 'destructive', onSwipe: () => writes.trash.mutate(item) }}
+              >
+                <TaskRow
+                  task={item}
+                  status={statusOf(item)}
+                  assignee={people.find((person) => person.id === item.assignee_ids[0])}
+                  onPress={() => router.push(`/tasks/${item.id}`)}
+                  onLongPress={() => sheet.open({ kind: 'menu', task: item })}
+                />
+              </SwipeRow>
+            )
+          }}
+        />
+      )}
       <Sheet visible={sheet.visible} title={sheetTitle} onClose={sheet.close}>
         {current && sheet.sheet?.kind === 'menu' ? (
           <SheetList>
@@ -172,8 +204,33 @@ export function TaskList({
   )
 }
 
+/** A board card: identifier, title, and the status, priority and assignee glyphs. A long press opens the row menu. */
+function BoardCard({ task, code, status, assignee, onPress, onLongPress }: { task: TaskRecord; code: string; status: StatusRecord | undefined; assignee?: { id: string; name: string }; onPress: () => void; onLongPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={task.title || 'Untitled'}
+      accessibilityHint="Long press for actions"
+      onPress={onPress}
+      onLongPress={onLongPress}
+      className="rounded-md border border-border bg-card p-2.5 gap-1.5 active:bg-muted"
+    >
+      <Text className="text-[11px] text-muted-foreground">{code}</Text>
+      <Text numberOfLines={3} className="font-noto-medium text-[13px]">
+        {task.title || 'Untitled'}
+      </Text>
+      <View className="flex-row items-center gap-1.5">
+        <StatusIcon status={status} size={14} />
+        <PriorityIcon priority={task.priority} size={14} />
+        <View className="flex-1" />
+        {assignee ? <Avatar id={assignee.id} name={assignee.name} size={18} /> : null}
+      </View>
+    </Pressable>
+  )
+}
+
 /** The web group row: chevron, the group's glyph, name, count, and + on the card surface. */
-function GroupHeader({ section, collapsed, onToggle, onAdd }: { section: TaskSection; collapsed: boolean; onToggle: () => void; onAdd?: () => void }) {
+function GroupHeader({ section, collapsed, onToggle, onAdd }: { section: TaskSection; collapsed: boolean; onToggle?: () => void; onAdd?: () => void }) {
   const { colors } = useTheme()
   const glyph = section.status ? (
     <StatusIcon status={section.status} size={14} />
@@ -186,19 +243,21 @@ function GroupHeader({ section, collapsed, onToggle, onAdd }: { section: TaskSec
   ) : null
   return (
     <View className="h-9 flex-row items-center pl-1.5 pr-2 bg-card border-b border-border">
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={collapsed ? `Expand ${section.label}` : `Collapse ${section.label}`}
-        onPress={onToggle}
-        hitSlop={8}
-        className="size-5 rounded-md items-center justify-center bg-muted"
-      >
-        <View className={collapsed ? '-rotate-90' : undefined}>
-          <Icon name="chevronDown" size={12} color={colors.foreground} />
-        </View>
-      </Pressable>
-      {glyph ? <View className="ml-2">{glyph}</View> : null}
-      <Text numberOfLines={1} className="font-noto-semibold text-[12px] leading-[16px] ml-2 shrink text-muted-foreground">
+      {onToggle ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={collapsed ? `Expand ${section.label}` : `Collapse ${section.label}`}
+          onPress={onToggle}
+          hitSlop={8}
+          className="size-5 rounded-md items-center justify-center bg-muted mr-2"
+        >
+          <View className={collapsed ? '-rotate-90' : undefined}>
+            <Icon name="chevronDown" size={12} color={colors.foreground} />
+          </View>
+        </Pressable>
+      ) : null}
+      {glyph ? <View className="mr-2">{glyph}</View> : null}
+      <Text numberOfLines={1} className="font-noto-semibold text-[12px] leading-[16px] shrink text-muted-foreground">
         {section.label}
       </Text>
       <Text className="text-[12px] leading-[16px] ml-2 flex-1 text-muted-foreground/70">{section.tasks.length}</Text>

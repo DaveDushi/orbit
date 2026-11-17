@@ -151,9 +151,13 @@ export function DisplaySheet({ visible, state, onChange, onClose }: { visible: b
   return (
     <Sheet visible={visible} title="Display" onClose={onClose}>
       <SheetList>
+        <Heading>Layout</Heading>
+        <SheetRow label="List" icon="list" checked={display.layout !== 'board'} onPress={() => set({ layout: 'list' })} />
+        {/* a board needs a grouping, as on the web */}
+        <SheetRow label="Board" icon="kanban" checked={display.layout === 'board'} onPress={() => set({ layout: 'board', ...(display.group_by === 'none' ? { group_by: 'status' as const } : {}) })} />
         <Heading>Grouping</Heading>
         {PHONE_GROUPS.map((group) => (
-          <SheetRow key={group} label={GROUP_LABEL[group]} checked={display.group_by === group} onPress={() => set({ group_by: group, sub_group_by: 'none' })} />
+          <SheetRow key={group} label={GROUP_LABEL[group]} checked={display.group_by === group} onPress={() => set({ group_by: group, sub_group_by: 'none', ...(group === 'none' ? { layout: 'list' as const } : {}) })} />
         ))}
         <Heading>Ordering</Heading>
         {(Object.keys(ORDER_LABEL) as OrderBy[]).map((order) => (

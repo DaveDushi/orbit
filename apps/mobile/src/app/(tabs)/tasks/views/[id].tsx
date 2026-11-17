@@ -163,6 +163,7 @@ export default function ViewScreen() {
         <TaskList
           sections={sections}
           grouped={state.display.group_by !== 'none'}
+          layout={state.display.layout}
           refreshing={tasks.isRefetching && !tasks.isPlaceholderData}
           onRefresh={() => void tasks.refetch()}
           onNew={(section) => setCreating({ projectId: section.status?.project_id ?? (quick.project.length === 1 ? quick.project[0] : undefined), statusId: section.status?.id })}

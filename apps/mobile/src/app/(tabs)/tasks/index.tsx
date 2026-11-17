@@ -30,7 +30,7 @@ type Sheet = 'project' | 'filter' | 'display'
 const PROJECT_SETTINGS = 'project-settings'
 
 const isDefaultDisplay = (display: ViewState['display']) =>
-  display.group_by === DEFAULT_DISPLAY.group_by && display.order_by === DEFAULT_DISPLAY.order_by && display.order_direction === DEFAULT_DISPLAY.order_direction && display.show_completed === DEFAULT_DISPLAY.show_completed
+  display.layout === DEFAULT_DISPLAY.layout && display.group_by === DEFAULT_DISPLAY.group_by && display.order_by === DEFAULT_DISPLAY.order_by && display.order_direction === DEFAULT_DISPLAY.order_direction && display.show_completed === DEFAULT_DISPLAY.show_completed
 
 export default function TasksScreen() {
   const { view: viewParam, search: searchParam, project: projectParam } = useLocalSearchParams<{ view?: string; search?: string; project?: string }>()
@@ -163,6 +163,7 @@ export default function TasksScreen() {
         <TaskList
           sections={sections}
           grouped={simple || display.group_by !== 'none'}
+          layout={display.layout}
           refreshing={tasks.isRefetching}
           onRefresh={() => void refresh()}
           onNew={(section) => newTask(section)}
