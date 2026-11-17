@@ -301,6 +301,13 @@ iPhone host 403 → 101; bearer + no Origin 101 → 101; bearer + foreign Origin
 403 → 403; cookie + foreign Origin on the web host 403 → 403; cookie + web Origin 101 → 101. `vm-health` OK except nginx
 (41 connection-refused lines of the switch at 09:21; 0 5xx), the OOM WARN (2 `gvisor_sentry` kills on November 16 at
 10:47 and 11:01, before this deploy) and git-owner (fixed after).
+Desktop downloads: Desktop run [44047671708](https://github.com/DaveDushi/orbit/actions/runs/44047671708) dispatched
+on `f67b0f4c` (test, windows and manifest passed, macos skipped); `deploy/desktop-downloads.sh 44047671708` (09:03 UTC,
+under this deploy's lock) put `Orbit-0.1.5-windows-x64-setup.exe` (sha256 `cc421040…`, 3,476,873 bytes),
+`Orbit-0.1.5-windows-x64.zip` (`eb885163…`) and `latest.json` (version 0.1.5, Windows only) in
+`/srv/orbit-downloads/desktop/` and removed the 0.1.4 files; the three files are byte-equal to the run's artifacts.
+Through the local nginx: `latest.json` 200 `application/json`, `no-cache`; installer 200 (PE32 GUI, sha256 of
+`latest.json`), zip 200, 0.1.4 installer 404. **Not** verified: the installer and voice input on a real Windows PC.
 
 Rollback to `4ba4e2e` (no schema change, no env change, so no data is lost):
 
