@@ -19,7 +19,7 @@ export const HOME_CARDS: Record<string, { title: string; href?: string }> = {
   recent_docs: { title: 'Recently updated docs', href: '/docs' },
   recent_files: { title: 'Recent Drive files', href: '/drive' },
   ask_donna: { title: 'Ask Donna' },
-  routines: { title: 'Routines', href: '/settings/workspace-agentic?tab=routines' },
+  routines: { title: 'Routines', href: '/settings/agentic?tab=routines' },
 }
 
 /** Rows a card shows when the layout does not say; the server keeps a limit in 3–20. */

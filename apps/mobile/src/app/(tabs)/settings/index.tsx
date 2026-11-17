@@ -1,68 +1,104 @@
 import { router } from 'expo-router'
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
 import { View } from 'react-native'
 
 import { ConfirmDialog, type ConfirmRequest } from '../../../components/settings/Dialog'
-import { ACCOUNT_NAV, allowedNav, Note, RowIcon, RowText, SettingsCard, SettingsRow, SettingsShell, WORKSPACE_NAV } from '../../../components/settings/Shell'
+import { Note, RowIcon, RowText, SettingsCard, SettingsRow, SettingsShell, useNavFlags } from '../../../components/settings/Shell'
 import { WorkspaceLogo } from '../../../components/WorkspaceLogo'
+import { settingsSections, type SettingsNavItem } from '../../../data/settings-nav'
 import { useOpenWorkspaceApp, useWorkspaceApps } from '../../../hooks/apps'
 import { pickImage, useAuthOptions, useMemberWrites, useRenameWorkspace, useSetWorkspaceLogo } from '../../../hooks/account'
 import { useIsGuest, useOrbit } from '../../../orbit-context'
 import { useMembers } from '../../../queries'
 import { errorMessage } from '../../../session-context'
 import { useTheme } from '../../../theme'
-import { Button, Icon, Input } from '../../../ui'
+import { Button, Icon, Input, Text } from '../../../ui'
 
 /**
- * The dock's Settings: the web's workspace General page (name, leave), and the account pages,
- * the server and Sign out, which the web keeps in the account menu. A guest has no workspace
- * settings: it gets its account pages, Sign out and Leave workspace.
+ * The dock's Settings: one page with a row for every settings page, in three sections (`settingsSections`). Workspace
+ * has the name and logo, the workspace's apps and its pages; Account has the account pages and Sign out; Admin, for the
+ * instance admins, the installation's pages. A guest gets Account, Sign out and Leave workspace.
  */
 /** The server refuses a bigger logo. */
 const MAX_LOGO_BYTES = 512 * 1024
 
-export default function GeneralScreen() {
+export default function SettingsScreen() {
   const { workspace, session, user, signOut } = useOrbit()
-  const { colors } = useTheme()
+  const flags = useNavFlags()
   const [signingOut, setSigningOut] = useState(false)
   const [signOutError, setSignOutError] = useState<string | null>(null)
   const guest = useIsGuest()
+  const sections = settingsSections(workspace.permissions, flags, guest, user.installation_admin)
+  const subtitles: Record<(typeof sections)[number]['title'], string> = {
+    Workspace: workspace.name,
+    Account: `${user.email} on ${session.server}`,
+    Admin: 'This Orbit server, for every workspace.',
+  }
 
   return (
-    <SettingsShell title={guest ? 'Account settings' : 'Settings'} nav={guest ? ACCOUNT_NAV : WORKSPACE_NAV}>
-      {workspace.permissions.includes('workspace.update') ? <WorkspaceName key={workspace.id} /> : null}
-
-      {guest ? null : <AppsCard />}
-
-      <SettingsCard title="Account" description={`${user.email} on ${session.server}`} flush>
-        {allowedNav(ACCOUNT_NAV, workspace.permissions, { agent: true }, guest).map((item, index) => (
-          <SettingsRow key={item.href} first={index === 0} label={item.label} onPress={() => router.push(item.href)}>
-            <RowIcon icon={item.icon} />
-            <RowText title={item.label} />
-            <Icon name="chevronRight" size={14} color={colors.mutedForeground} />
-          </SettingsRow>
-        ))}
-        <View className="p-4 border-t border-border gap-2 items-start">
-          <Button
-            label="Sign out"
-            variant="outline"
-            icon="logout"
-            loading={signingOut}
-            onPress={() => {
-              setSigningOut(true)
-              setSignOutError(null)
-              signOut().catch((error: unknown) => {
-                setSigningOut(false)
-                setSignOutError(errorMessage(error))
-              })
-            }}
-          />
-          {signOutError ? <Note error>{signOutError}</Note> : null}
-        </View>
-      </SettingsCard>
+    <SettingsShell title="Settings" nav={[]}>
+      {sections.map((section) => (
+        <Section key={section.title} title={section.title} subtitle={subtitles[section.title]}>
+          {section.title === 'Workspace' && workspace.permissions.includes('workspace.update') ? <WorkspaceName key={workspace.id} /> : null}
+          {section.title === 'Workspace' ? <AppsCard /> : null}
+          <NavCard items={section.items}>
+            {section.title === 'Account' ? (
+              <View className="p-4 border-t border-border gap-2 items-start">
+                <Button
+                  label="Sign out"
+                  variant="outline"
+                  icon="logout"
+                  loading={signingOut}
+                  onPress={() => {
+                    setSigningOut(true)
+                    setSignOutError(null)
+                    signOut().catch((error: unknown) => {
+                      setSigningOut(false)
+                      setSignOutError(errorMessage(error))
+                    })
+                  }}
+                />
+                {signOutError ? <Note error>{signOutError}</Note> : null}
+              </View>
+            ) : null}
+          </NavCard>
+        </Section>
+      ))}
 
       <LeaveWorkspace key={`leave-${workspace.id}`} />
     </SettingsShell>
+  )
+}
+
+/** An iOS grouped-list section: its title and quiet line, then its cards. */
+function Section({ title, subtitle, children }: { title: string; subtitle: string; children: ReactNode }) {
+  return (
+    <View className="gap-3">
+      <View className="px-1 gap-0.5">
+        <Text accessibilityRole="header" className="font-noto-medium text-[18px] leading-[24px] text-foreground">{title}</Text>
+        <Text numberOfLines={1} className="text-[12px] text-muted-foreground">
+          {subtitle}
+        </Text>
+      </View>
+      {children}
+    </View>
+  )
+}
+
+/** A section's pages, one row each, with what follows them (Sign out) in the same card. */
+function NavCard({ items, children }: { items: readonly SettingsNavItem[]; children?: ReactNode }) {
+  const { colors } = useTheme()
+  return (
+    <View className="rounded-lg overflow-hidden bg-card shadow-[0_0_0_1px_var(--color-border)]">
+      {items.map((item, index) => (
+        <SettingsRow key={item.href} first={index === 0} label={item.label} onPress={() => router.push(item.href)}>
+          <RowIcon icon={item.icon} />
+          <RowText title={item.label} />
+          <Icon name="chevronRight" size={14} color={colors.mutedForeground} />
+        </SettingsRow>
+      ))}
+      {children}
+    </View>
   )
 }
 
@@ -72,7 +108,7 @@ function WorkspaceName() {
   const [name, setName] = useState(workspace.name)
   const dirty = name.trim() !== workspace.name
   return (
-    <SettingsCard title="Workspace" description="The name and logo of this workspace.">
+    <SettingsCard title="Name and logo" description="Everyone in this workspace sees them.">
       <LogoField />
       <Input label="Name" required value={name} onChangeText={setName} maxLength={100} returnKeyType="done" onSubmitEditing={() => dirty && name.trim() && rename.mutate(name.trim())} />
       {rename.isError ? <View className="mt-3"><Note error>Workspace rename failed. {errorMessage(rename.error)}</Note></View> : null}
@@ -121,7 +157,7 @@ function AppsCard() {
   const openApp = useOpenWorkspaceApp()
   if (!apps.data?.length) return null
   return (
-    <SettingsCard title="Apps" description="Open in your browser." flush>
+    <SettingsCard title="Open an app" description="The workspace's apps open in your browser." flush>
       {apps.data.map((app, index) => (
         <SettingsRow key={app.slug} first={index === 0} label={`Open ${app.name}`} onPress={() => void openApp(app)}>
           <RowIcon icon="category" />
