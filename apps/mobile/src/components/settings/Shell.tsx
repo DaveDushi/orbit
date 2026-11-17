@@ -32,6 +32,7 @@ export const WORKSPACE_NAV: readonly SettingsNavItem[] = [
   { href: '/settings/file-storage', label: 'File storage', icon: 'cloudConnection' },
   { href: '/settings/workspace-agentic', label: 'Agentic', icon: 'magicStar' },
   { href: '/settings/api-tokens', label: 'API tokens', icon: 'key', permission: 'api_tokens.manage' },
+  { href: '/settings/apps', label: 'Apps', icon: 'category', permission: 'apps.manage' },
   { href: '/settings/export', label: 'Export', icon: 'documentDownload', permission: 'workspace.export' },
   { href: '/settings/danger-zone', label: 'Danger zone', icon: 'danger', permission: 'workspace.delete' },
 ]
