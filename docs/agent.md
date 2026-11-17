@@ -272,12 +272,19 @@ dropped `agent_preferences`.
 
 - **Code mode** (every agent, the default agent and custom ones). The `codemode` tool of Pi Durable
   (`@earendil-works/pi-durable/codemode` 1.4.0 with `@earendil-works/pi-codemode` 1.4.0, `apps/agent/src/codemode.ts`)
-  runs a short JavaScript the model writes, in a QuickJS sandbox: no network, no files, no timers, no modules, 64 MiB
+  runs a short JavaScript the model writes, in a QuickJS sandbox: no network, no files, no timers, no modules, 256 MiB
   heap, 5 minutes. The script's only power is `await tools.<name>(args)`: a nested call of one of **this agent's own
   tools**. Each nested call goes through the same hook as a call of the model (a custom agent's tool list, the run's
   `AGENT_MAX_TOOL_CALLS`) and the same Orbit checks (the driver's session and permissions, the agent's connected
   services, the driver's yes to a write; a write that needs a yes stops at the question). Scripts cannot call
   `codemode`, `run_saved_script` or `ask_teammate` (`callers: ["model"]`), and `models.*` is off.
+- **Large files in one call.** In a script, `read_chat_file`, `read_file` and `drive_read` take `all: true`: the tool
+  reads every part of the file through the same routes as a one-part read (the driver's permissions for that file; a
+  guest is never a driver) and gives the script the whole file as JSON (`rows` with the header row first, or `text`).
+  It counts as **one** tool call, the rows stay in the script, and only the script's output (cut to its token budget,
+  fenced as data) reaches the model. All whole-file reads of a run together parse at most 32 MiB; past that, the read
+  stops with a message the agent passes on. The model cannot use `all: true` directly. The prompt tells it to read
+  large files this way (a 20,000-row CSV: about 2 seconds).
 - **Saved scripts** (`agent_scripts`). The agent saves a script for the driver with `save_script` (name, code up to
   20,000 characters, description); saving under the same name (any case) replaces the code. No approval: saving runs
   nothing. At most 50 per person per workspace. Settings → Agentic → Routines has a **Scripts** card: the owner views,

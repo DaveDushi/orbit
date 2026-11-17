@@ -9,7 +9,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
 import type { ToolExecutionApi, ToolExecutionResult } from "@earendil-works/pi-durable";
 
-import { fileReadText, READ_CHARS, untrusted, type FileContent } from "./files.ts";
+import { fileReadText, READ_CHARS, untrusted, WHOLE_FILE, WHOLE_OUTPUT_LIMITS, wholeFileResult, type FileContent } from "./files.ts";
 import { askForApproval, type Driver } from "./integrations.ts";
 import { jobRef } from "./jobs.ts";
 import type { OrbitClient } from "./orbit.ts";
@@ -22,7 +22,12 @@ export type DriveAnswer =
 
 /** A drive_read result as the chat and page file readers show it. */
 export function driveReadText(result: Record<string, any>, offset: number): string {
-	const content: FileContent = {
+	return fileReadText(driveContent(result), offset);
+}
+
+/** A drive_read result as a file content route answers. */
+function driveContent(result: Record<string, any>): FileContent {
+	return {
 		file: { id: String(result.file?.id), file_name: String(result.file?.name), kind: "file", size_bytes: Number(result.file?.size ?? 0) },
 		sheets: result.sheets ?? [],
 		sheet: result.sheet ?? null,
@@ -32,7 +37,6 @@ export function driveReadText(result: Record<string, any>, offset: number): stri
 		next_offset: result.next_offset ?? null,
 		no_text: result.no_text === true,
 	};
-	return fileReadText(content, offset);
 }
 
 const nodeId = Type.String({ description: "The id of a Drive file or folder (from drive_list or drive_search)" });
@@ -89,11 +93,25 @@ export function driveTools(asDriver: Driver, orbit: () => OrbitClient) {
 		}),
 		defineTool({
 			name: "drive_read",
+			outputLimits: WHOLE_OUTPUT_LIMITS,
 			description:
 				"Read one part of a Drive file: text, csv, tsv, spreadsheets, Word and PDF (at most 16 MiB). Images and scans have no text you can read. A result with a next_offset has more: call again with that offset. Offsets count rows for spreadsheets, csv and tsv, and characters otherwise. For a workbook, name the sheet.",
-			parameters: Type.Object({ node_id: nodeId, sheet: Type.Optional(Type.String()), offset }),
-			execute: (args, api, context) =>
-				run("drive_read", "drive_read", { ...args, limit: READ_CHARS }, (result) => driveReadText(result, args.offset ?? 0))(api, context),
+			parameters: Type.Object({ node_id: nodeId, sheet: Type.Optional(Type.String()), offset, all: WHOLE_FILE }),
+			execute: (args, api, context) => {
+				if (!args.all) return run("drive_read", "drive_read", { ...args, limit: READ_CHARS }, (result) => driveReadText(result, args.offset ?? 0))(api, context);
+				return asDriver(api, context, async (as, state) =>
+					wholeFileResult(api, context, async (offset, limit) => {
+						const answer = (await as("POST", "/agent-tools/drive", {
+							tool: "drive_read",
+							arguments: { node_id: args.node_id, offset, limit, ...(args.sheet ? { sheet: args.sheet } : {}) },
+							conversation_id: state.conversationId,
+							root_message_id: state.rootMessageId,
+						})) as DriveAnswer;
+						if (answer.status !== "ok") throw new Error(`The Drive file cannot be read: ${"detail" in answer ? answer.detail : answer.status}`);
+						return driveContent(answer.result);
+					}),
+				);
+			},
 		}),
 		defineTool({
 			name: "drive_create_folder",

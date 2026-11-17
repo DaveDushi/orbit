@@ -7,6 +7,8 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 -->
 
 ## 2026-11-17
+- Imports with one yes: when you ask Donna to import a file (for example customers into Shopify) or to change many things at once, she shows one plan with the field mapping and samples, and runs all of it after one **yes**. The thread shows the progress; reply **stop** to end it.
+- Large files: Donna reads a whole spreadsheet or CSV of tens of thousands of rows, or a long PDF or Word file, in one go, and answers questions about it in one reply.
 - iPhone: open chats, tasks and lists update live again; no app update needed.
 - Settings → Agentic → MCP server shows Orbit's public MCP address for your own agent, with the Codex CLI and Claude Code commands to copy and a link to the step-by-step guide.
 - Voice input: when the microphone is refused, Orbit checks it once more and the message says why (the system, the browser or app, or the speech service). Windows app: Orbit desktop 0.1.6 offers its updates also while it runs, and its tray menu has "Open diagnostics log".

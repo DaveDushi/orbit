@@ -30,8 +30,11 @@ export const REPAIR_SCRIPT_TOOL = "repair_routine_script";
 /** Repairs of a routine's failed script in one run; then the run answers with the error. */
 export const MAX_SCRIPT_REPAIRS = 2;
 
-/** A script's heap; allocations beyond it fail inside the script. */
-const MEMORY_LIMIT_BYTES = 64 * 1024 * 1024;
+/**
+ * A script's heap; allocations beyond it fail inside the script. Whole-file reads (./files.ts) need it: a 50,000-row,
+ * 12-column CSV ran out of 64 MB, and 170,000 such rows (31 MB, near the run's 32 MB cap) parse in 256 MB.
+ */
+const MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
 /** A script's deadline, its tool calls included. */
 const TIMEOUT_MS = 5 * 60 * 1000;
 

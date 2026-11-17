@@ -627,6 +627,26 @@ person gave up with 1,354 left. The question showed the raw request, not which c
   columns (for example consent) is not a rule in code: the team tells the agent, and it keeps that in its memory. The
   plan's mapping and left-out columns still show the driver what is sent.
 
+## Large file reads
+
+Donna must read a 10,000–50,000-row CSV or XLSX, or a long PDF or Word file, in one turn; paging by tool calls
+(1,000 rows a call) ran into `AGENT_MAX_TOOL_CALLS` (40). Design (`apps/agent/src/files.ts`):
+
+- **Only in a script.** `all: true` on `read_chat_file`, `read_file` and `drive_read` works only for a nested call (the
+  tools hook marks it, `wholeReadCalls`); the model's own call is refused, so whole files never land in the transcript
+  as tool results the model reads.
+- **One tool call.** The tool loops over every part (`readWhole`, at most 1,000 rows or 200,000 characters a request)
+  inside one `asDriver` call: the same routes and permission checks as a one-part read, counted once.
+- **The cap.** `ThreadDoc.readBytes` counts the parsed content (cells and text) of a run's whole-file reads (reset with
+  `toolCalls`); past 32 MiB the read stops with a clear message. The tools' `outputLimits` let the JSON through
+  (Pi cuts at 50 KB by default, and cut JSON cannot be parsed); the sandbox heap is 256 MiB (64 MiB ran out at
+  50,000 rows × 12 columns; 170,000 × 12, 31 MiB, parses in about 3 s).
+- **Data stays data.** The output of a script that read a whole file is fenced in `<orbit-data>` (`afterTool`), as
+  the file would be.
+- Known costs: each whole-file result is stored once in the agent's Pi journal (as every nested result is); the server
+  parses the file again for each part (fine for CSV; an XLSX of 50,000 rows parses 50 times). A job's `records()` keeps
+  its own 20,000-row limit.
+
 ## Skills
 
 Status: built on branch `agent-skills` (2026-11-14). Format: [Agent Skills](https://agentskills.io/specification);

@@ -944,6 +944,55 @@ test("code mode: the codemode section does not repeat the offered tools, and a s
 	}
 });
 
+/** A 20,000-row chat file the driver can read, read in parts of 1,000 rows, and one they cannot. */
+class BigFileOrbit extends FakeOrbit {
+	readonly big = id();
+	readonly secret = id();
+	readonly rows = [["Email", "Tag"], ...Array.from({ length: 20_000 }, (_, index) => [`c${index}@example.com`, index % 4 === 0 ? "vip" : ""])];
+	parts = 0;
+
+	async route(method: string, url: string, headers: Record<string, unknown>, body: any): Promise<[number, unknown]> {
+		const path = url.split("?")[0];
+		if (path === `/api/v1/workspaces/${WS}/chat/files/${this.secret}/content`) return [403, { code: "chat_forbidden" }];
+		if (path === `/api/v1/workspaces/${WS}/chat/files/${this.big}/content`) {
+			this.parts += 1;
+			const query = new URL(url, "http://x").searchParams;
+			const offset = Number(query.get("offset"));
+			const end = Math.min(this.rows.length, offset + Math.min(1_000, Number(query.get("limit"))));
+			return [200, { file: { id: this.big, file_name: "customers.csv", kind: "csv", size_bytes: 1 }, sheets: [], sheet: null, rows: this.rows.slice(offset, end), row_numbers: null, text: null, next_offset: end < this.rows.length ? end : null, no_text: false }];
+		}
+		return super.route(method, url, headers, body);
+	}
+}
+
+test("code mode: a script reads a whole 20,000-row file in one tool call, as the driver, and only its short output reaches the model", async () => {
+	const orbit = new BigFileOrbit();
+	current = orbit;
+	await orbit.listen();
+	// Paging part by part would need 21 calls: the whole read must count as one.
+	const agent = new Agent({ ...config(orbit, mkdtempSync(join(tmpdir(), "agent-"))), maxToolCallsPerRun: 3 }, new OrbitClient(config(orbit, "")));
+	await agent.open();
+	await agent.start();
+	try {
+		const code = [
+			`const file = JSON.parse(await tools.read_chat_file({ file_id: "${orbit.big}", all: true }));`,
+			"const vip = file.rows.slice(1).filter((row) => row[1] === 'vip').length;",
+			"text(`rows ${file.rows.length - 1}, vip ${vip}`);",
+			`try { await tools.read_chat_file({ file_id: "${orbit.secret}", all: true }); text("secret read"); } catch (error) { text("refused: " + error.message); }`,
+		].join("\n");
+		const run = orbit.add({ thread_key: id(), author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> run code:\n${code}` });
+		await until("the script's answer", () => progressOf(orbit, run).startsWith("Done (codemode)"));
+		const answer = progressOf(orbit, run);
+		assert.match(answer, /rows 20000, vip 5000/);
+		assert.match(answer, /refused: Ann cannot do this or cannot see it \(Orbit answered 403/);
+		assert.doesNotMatch(answer, /secret read|c19999@example\.com/);
+		assert.equal(orbit.parts, 21);
+	} finally {
+		await agent.stop();
+		orbit.server.close();
+	}
+});
+
 test("a test run of a saved script writes nothing, lists what it would do, and reports its calls", async () => {
 	const orbit = new RoutineOrbit();
 	current = orbit;
