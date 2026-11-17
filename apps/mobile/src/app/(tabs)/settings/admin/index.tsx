@@ -1,11 +1,12 @@
 import { View } from 'react-native'
 
+import { ImprovementsCard } from '../../../../components/settings/Improvements'
 import { AdminShell, Note, OptionHint, OptionText, SettingsCard, SettingsRow, Toggle } from '../../../../components/settings/Shell'
 import { useInstanceSettings, useSetRegistration } from '../../../../hooks/admin'
 import { errorMessage } from '../../../../session-context'
 import { Button } from '../../../../ui'
 
-/** The web's Admin → General: who can create an account. */
+/** The web's Admin → General: who can create an account, and Suggest a change. */
 export default function AdminGeneralScreen() {
   const settings = useInstanceSettings()
   return (
@@ -22,6 +23,7 @@ export default function AdminGeneralScreen() {
       {settings.data ? (
         <RegistrationCard open={settings.data.registration_open} emailReady={settings.data.smtp != null} />
       ) : null}
+      <ImprovementsCard />
     </AdminShell>
   )
 }

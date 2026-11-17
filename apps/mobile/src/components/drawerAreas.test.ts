@@ -46,6 +46,11 @@ describe('drawerSections', () => {
       { label: 'Workspace', items: [{ href: '/settings' }, { href: '/settings/members' }] },
       { label: 'Integrations', items: [{ href: '/settings/file-storage' }, { href: '/settings/workspace-agentic' }] },
     ])
+    expect(drawerSections('workspace', [{ href: '/settings' }, { href: '/settings/danger-zone' }, { href: '/settings/api-tokens' }, { href: '/settings/export' }])).toEqual([
+      { label: 'Workspace', items: [{ href: '/settings' }] },
+      { label: 'Integrations', items: [{ href: '/settings/api-tokens' }] },
+      { label: 'Advanced', items: [{ href: '/settings/danger-zone' }, { href: '/settings/export' }] },
+    ])
     expect(drawerSections('admin', areas.admin)).toEqual([
       { label: 'Instance', items: [{ href: '/settings/admin' }, { href: '/settings/admin/users' }] },
       { label: 'Data', items: [{ href: '/settings/admin/storage' }] },

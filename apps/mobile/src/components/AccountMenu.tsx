@@ -5,14 +5,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { hasCustomStatus, PRESENCE_OPTIONS, withoutCustomStatus, withPresence } from '../data/status'
 import { useOwnStatus, useSetStatus } from '../hooks/account'
+import { useImprovementsEnabled } from '../hooks/improvements'
 import { useOrbit } from '../orbit-context'
 import { errorMessage } from '../session-context'
 import { useTheme } from '../theme'
 import { Icon, type IconName, type PickerSurface, StatusMark, Text } from '../ui'
 import { Emoji } from './chat/EmojiPicker'
 import { CustomStatusSheet } from './CustomStatusSheet'
-import { useImprovementsEnabled } from '../hooks/improvements'
-import { SuggestChangeSheet } from './SuggestChangeSheet'
+import { SuggestChangeDialog } from './settings/Improvements'
 
 const SURFACE: Record<PickerSurface, string> = { popover: 'bg-popover', sidebarPopover: 'bg-sidebar-popover' }
 
@@ -39,8 +39,8 @@ export function AccountMenu({
   const status = useOwnStatus()
   const setStatus = useSetStatus()
   const [editing, setEditing] = useState(false)
-  const canSuggest = useImprovementsEnabled()
   const [suggesting, setSuggesting] = useState(false)
+  const canSuggest = useImprovementsEnabled()
   const [signingOut, setSigningOut] = useState(false)
   const [signOutError, setSignOutError] = useState<string | null>(null)
   const custom = hasCustomStatus(status)
@@ -127,7 +127,7 @@ export function AccountMenu({
         </View>
       </Modal>
       {editing ? <CustomStatusSheet onClose={() => setEditing(false)} /> : null}
-      {suggesting ? <SuggestChangeSheet onClose={() => setSuggesting(false)} onSent={() => setSuggesting(false)} /> : null}
+      <SuggestChangeDialog visible={suggesting} onClose={() => setSuggesting(false)} />
     </>
   )
 }

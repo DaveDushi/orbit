@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import type { BillingView } from '@orbit/api/generated/types.gen'
 
-import { billingBanner } from './billing'
+import { billingBanner, billingRows } from './billing'
 
 const NOW = Date.parse('2026-10-27T12:00:00Z')
 const view = (fields: Partial<BillingView>): BillingView => ({
@@ -34,4 +34,23 @@ test('full access, a trial without data and no billing show nothing', () => {
   expect(billingBanner(view({}), NOW)).toBeNull()
   expect(billingBanner(view({ access: 'trial', trial: null }), NOW)).toBeNull()
   expect(billingBanner(undefined, NOW)).toBeNull()
+})
+
+test('billingRows: plan, status, access, then the trial or the renewal', () => {
+  const day = (iso: string) => iso.slice(0, 10)
+  expect(billingRows(view({ access: 'trial', trial: trial('2026-11-03T12:00:00Z') }), day)).toEqual([
+    { label: 'Plan', value: 'No plan' },
+    { label: 'Status', value: 'Not subscribed' },
+    { label: 'Access', value: 'Trial' },
+    { label: 'Trial ends', value: '2026-11-03' },
+    { label: 'Trial usage', value: '0 of 100 tasks, 0 of 50 pages, 1 of 3 members' },
+  ])
+  const plans = [{ key: 'team_year', name: 'Team', interval: 'year' as const, amount: 10000, currency: 'usd' }] as BillingView['plans']
+  expect(billingRows(view({ plan: 'team_year', plans, status: 'active', current_period_end: '2027-01-01T00:00:00Z', cancel_at_period_end: true }), day)).toEqual([
+    { label: 'Plan', value: 'Team · Annual' },
+    { label: 'Status', value: 'Active' },
+    { label: 'Access', value: 'Full access' },
+    { label: 'Ends', value: 'Ends on 2027-01-01' },
+  ])
+  expect(billingRows(view({ exempt: true }), day)[0]).toEqual({ label: 'Plan', value: 'Included' })
 })

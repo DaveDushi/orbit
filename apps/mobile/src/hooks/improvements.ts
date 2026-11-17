@@ -1,6 +1,6 @@
-/** "Suggest a change" and Admin → Feedback & fixes, for installation admins (others get 403, so they never ask). */
-import { listImprovements, readImprovementSettings, saveImprovementSettings, sendImprovement, withdrawImprovement, type ImprovementContext, type ImprovementRequest } from '@orbit/api/improvements'
+/** "Suggest a change" (`@orbit/api/improvements`): the Admin switch, the requests and sending one. Installation admins only. */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { type ImprovementContext, type ImprovementRequest, listImprovements, readImprovementSettings, saveImprovementSettings, sendImprovement, withdrawImprovement } from '@orbit/api/improvements'
 
 import { useOrbit } from '../orbit-context'
 
@@ -8,15 +8,16 @@ const improvementsKey = ['admin', 'improvements'] as const
 const settingsKey = [...improvementsKey, 'settings'] as const
 const listKey = [...improvementsKey, 'list'] as const
 
+/** Members get 403, so only installation admins ask. */
 export function useImprovementSettings() {
   const { client, user } = useOrbit()
   return useQuery({ queryKey: settingsKey, queryFn: () => readImprovementSettings(client), enabled: user.installation_admin, staleTime: 60_000 })
 }
 
-/** Whether this person sees "Suggest a change" and the requests: an installation admin, with the switch on. */
+/** An installation admin, with the switch on: they see Suggest a change and Feedback & fixes. */
 export function useImprovementsEnabled(): boolean {
-  const { user } = useOrbit()
-  return user.installation_admin && (useImprovementSettings().data?.enabled ?? false)
+  const admin = useOrbit().user.installation_admin
+  return admin && (useImprovementSettings().data?.enabled ?? false)
 }
 
 export function useSaveImprovementSettings() {
@@ -25,7 +26,7 @@ export function useSaveImprovementSettings() {
   return useMutation({ mutationFn: (enabled: boolean) => saveImprovementSettings(client, enabled), onSuccess: (settings) => queryClient.setQueryData(settingsKey, settings) })
 }
 
-export function useImprovements(enabled = true) {
+export function useImprovements(enabled: boolean) {
   const { client } = useOrbit()
   return useQuery({ queryKey: listKey, queryFn: () => listImprovements(client), enabled })
 }

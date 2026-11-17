@@ -17,17 +17,18 @@ import {
   routineFormOf,
   routineTargets,
   servicesLabel,
+  skillAgents,
+  skillDraftReady,
   timeZoneChoices,
-  webSetupLinks,
 } from './agentic'
 
 describe('agenticTabs', () => {
-  test('the web tabs with the team agent, and no Admin tab', () => {
-    expect(agenticTabs(true, false).map((tab) => tab.value)).toEqual(['you', 'workspace', 'agents', 'routines', 'bots'])
+  test('the web tabs with the team agent, and no Admin or Bots tab', () => {
+    expect(agenticTabs(true, false).map((tab) => tab.value)).toEqual(['you', 'workspace', 'agents', 'routines', 'skills'])
   })
 
-  test('without the team agent only You and Bots', () => {
-    expect(agenticTabs(false, false).map((tab) => tab.value)).toEqual(['you', 'bots'])
+  test('without the team agent only You', () => {
+    expect(agenticTabs(false, false).map((tab) => tab.value)).toEqual(['you'])
   })
 
   test('the account settings show only You', () => {
@@ -38,18 +39,7 @@ describe('agenticTabs', () => {
     expect(pickedTab(agenticTabs(false, false), 'routines')).toBe('you')
     expect(pickedTab(agenticTabs(true, false), 'routines')).toBe('routines')
     expect(pickedTab(agenticTabs(true, false), 'admin')).toBe('you')
-  })
-})
-
-describe('webSetupLinks', () => {
-  test('a member sees no admin setup pages', () => {
-    expect(webSetupLinks([], true)).toEqual([])
-  })
-
-  test('each page needs its own permission, agent tools also the agent', () => {
-    expect(webSetupLinks(['integrations.manage', 'api_tokens.manage'], true).map((link) => link.label)).toEqual(['Agent tools', 'API tokens'])
-    expect(webSetupLinks(['integrations.manage', 'api_tokens.manage'], false).map((link) => link.label)).toEqual(['API tokens'])
-    expect(webSetupLinks(['api_tokens.manage'], true).map((link) => link.label)).toEqual(['API tokens'])
+    expect(pickedTab(agenticTabs(true, false), 'bots')).toBe('you')
   })
 })
 
@@ -167,4 +157,22 @@ describe('routineActions', () => {
 
 test('timeZoneChoices keeps a saved zone the engine does not list', () => {
   expect(timeZoneChoices('Mars/Base')[0]).toBe('Mars/Base')
+})
+
+describe('skills', () => {
+  const draft = { source: '', file: null, name: '', description: '', body: '' }
+  test('each way to add a skill needs its own fields', () => {
+    expect(skillDraftReady('install', draft)).toBe(false)
+    expect(skillDraftReady('install', { ...draft, source: ' owner/repo@skill ' })).toBe(true)
+    expect(skillDraftReady('upload', draft)).toBe(false)
+    expect(skillDraftReady('upload', { ...draft, file: new Blob(['zip']) })).toBe(true)
+    expect(skillDraftReady('write', { ...draft, name: 'weekly-report', description: 'Reports' })).toBe(false)
+    expect(skillDraftReady('write', { ...draft, name: 'weekly-report', description: 'Reports', body: 'Steps' })).toBe(true)
+  })
+
+  test('turning an agent on or off keeps each agent once', () => {
+    expect(skillAgents(['default'], 'bot-1', true)).toEqual(['default', 'bot-1'])
+    expect(skillAgents(['default', 'bot-1'], 'bot-1', true)).toEqual(['default', 'bot-1'])
+    expect(skillAgents(['default', 'bot-1'], 'default', false)).toEqual(['bot-1'])
+  })
 })
