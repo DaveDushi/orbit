@@ -14,6 +14,8 @@ import {
   enableTotp,
   getNotificationPreferences,
   getTwoFactor,
+  listPasskeys,
+  deletePasskey,
   getWorkspaceBucket,
   getWorkspaceStorage,
   listInvitations,
@@ -36,6 +38,7 @@ import {
   uploadWorkspaceLogo,
 } from '@orbit/api/generated/sdk.gen'
 import type {
+  PasskeyRecord,
   AuthOptions,
   AuthProblem,
   OwnedWorkspace,
@@ -64,6 +67,7 @@ export const accountKeys = {
   notificationPrefs: ['account', 'notification-prefs'] as const,
   sessions: ['account', 'sessions'] as const,
   twoFactor: ['account', 'two-factor'] as const,
+  passkeys: ['account', 'passkeys'] as const,
   oauthConnections: ['account', 'oauth-connections'] as const,
   /** Under the `members` prefix, so the workspace events socket refreshes it with the members. */
   invitations: (workspaceId: string) => ['members', workspaceId, 'invitations'] as const,
@@ -146,6 +150,15 @@ export async function setStatus(client: OrbitClient, status: UserStatus): Promis
 
 export async function twoFactor(client: OrbitClient): Promise<TwoFactorStatus> {
   return (await getTwoFactor({ client, throwOnError: true })).data
+}
+
+/** The account's passkeys. Adding one needs the browser's passkey prompt; removing one does not. */
+export async function passkeys(client: OrbitClient): Promise<PasskeyRecord[]> {
+  return (await listPasskeys({ client, throwOnError: true })).data
+}
+
+export async function removePasskey(client: OrbitClient, id: string): Promise<void> {
+  await deletePasskey({ client, path: { id }, throwOnError: true })
 }
 
 export async function startTotpSetup(client: OrbitClient, password: string): Promise<TotpSetup> {

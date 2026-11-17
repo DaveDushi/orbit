@@ -157,6 +157,20 @@ export function useTwoFactor() {
   return useQuery({ queryKey: account.accountKeys.twoFactor, queryFn: () => account.twoFactor(client) })
 }
 
+export function usePasskeys() {
+  const { client } = useOrbit()
+  return useQuery({ queryKey: account.accountKeys.passkeys, queryFn: () => account.passkeys(client) })
+}
+
+export function useRemovePasskey() {
+  const { client } = useOrbit()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => account.removePasskey(client, id),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: account.accountKeys.passkeys }),
+  })
+}
+
 /** The password-confirmed two-factor writes: each refreshes the status. */
 export function useTwoFactorWrites() {
   const { client } = useOrbit()
