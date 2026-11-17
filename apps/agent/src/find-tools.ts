@@ -14,7 +14,9 @@ import type { Context } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
 import { defineDoc, defineTool, type ToolExecutionApi } from "@earendil-works/pi-durable";
 
-import { CODEMODE_TOOL, REPAIR_SCRIPT_TOOL, RUN_SCRIPT_TOOL } from "./codemode.ts";
+import type { CodemodeSandboxBase } from "@earendil-works/pi-codemode";
+
+import { CODEMODE_TOOL, readOnlySandbox, REPAIR_SCRIPT_TOOL, RUN_SCRIPT_TOOL } from "./codemode.ts";
 import { ThreadDoc } from "./docs.ts";
 import { untrusted } from "./files.ts";
 import type { IntegrationTool } from "./integrations.ts";
@@ -167,14 +169,47 @@ export function foundText(query: string, found: readonly string[], orbit: readon
 	return [...own, ...(outside.length ? [untrusted("tools of connected services", outside.join("\n\n"))] : [])].join("\n\n");
 }
 
+/** One tool as a `find_tools` script sees it in `catalog`. `approval`: `null` for Orbit tools (Orbit decides per call). */
+export type CatalogEntry = { name: string; description: string; input_schema: unknown; integration: string | null; approval: IntegrationTool["approval"] | null; call: string };
+
+export function catalogOf(orbit: readonly OrbitTool[], services: readonly IntegrationTool[]): CatalogEntry[] {
+	return [
+		...orbit.map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.parameters ?? {}, integration: null, approval: null, call: `await tools.${tool.name}({…})` })),
+		...services.map((tool) => ({
+			name: tool.name,
+			description: tool.description,
+			input_schema: tool.input_schema ?? {},
+			integration: tool.integration,
+			approval: tool.approval,
+			call: `await tools.use_integration({ tool: "${tool.name}", arguments: {…} })`,
+		})),
+	];
+}
+
+/**
+ * Runs a model's read-only script over `entries` (the global `catalog`) in a sandbox without tools or globals: it can
+ * filter and return, nothing else (no tool calls, no network, no files, no writes; `store()` is dropped). The result is
+ * fenced as data: it can hold the services' text.
+ */
+export async function catalogScript(code: string, entries: readonly CatalogEntry[], sandbox: CodemodeSandboxBase = readOnlySandbox()): Promise<{ text: string; isError: boolean }> {
+	// The catalog is JSON, so it is a valid JavaScript literal; the script runs right after it.
+	const result = await sandbox.execute(`const catalog = ${JSON.stringify(entries)};\n${code}`);
+	if (!result.ok) return { text: untrusted("find_tools script error", `${result.error.kind}: ${result.error.message}`.slice(0, 2_000)), isError: true };
+	const printed = result.output.flatMap((item) => (item.type === "text" ? [item.text] : [])).join("\n");
+	const value = result.value === undefined ? printed : typeof result.value === "string" ? result.value : (JSON.stringify(result.value, null, 1) ?? "");
+	return { text: untrusted("tool catalog", value || "(the script returned nothing)"), isError: false };
+}
+
 export const FIND_TOOLS = defineTool({
 	name: FIND_TOOLS_TOOL,
 	callers: ["model"],
-	description: `Find the tools you call from codemode by words, such as "drive trash", "routine" or "tiktok campaign budget": their names, descriptions, how to call them and their arguments (JSON Schema). Searches your Orbit tools and the tools of connected services. At most ${LIMIT} tools.`,
+	description: `Find the tools you call from codemode. Either by words (query), such as "drive trash", "routine" or "tiktok campaign budget": at most ${LIMIT} tools with their names, descriptions, how to call them and their arguments (JSON Schema). Or with a read-only JavaScript script (code) over the global \`catalog\`, an array of { name, description, input_schema, integration (null: an Orbit tool), approval ("never", "always", "writes"; null: Orbit decides), call }; return what you need, for example \`return catalog.filter((t) => t.integration === "TikTok Ads" && t.approval === "never").map((t) => t.name)\`. A script here cannot call tools. Searches your Orbit tools and the tools of connected services.`,
 	parameters: Type.Object({
-		query: Type.String({ minLength: 1, maxLength: 200, description: "Words for what you want to do" }),
+		query: Type.Optional(Type.String({ minLength: 1, maxLength: 200, description: "Words for what you want to do" })),
+		code: Type.Optional(Type.String({ minLength: 1, maxLength: 10_000, description: "Read-only JavaScript over `catalog`; return the matches" })),
 	}),
-	execute: async (args: { query: string }, api: ToolExecutionApi, context: Context) => {
+	execute: async (args: { query?: string; code?: string }, api: ToolExecutionApi, context: Context) => {
+		if (Boolean(args.query) === Boolean(args.code)) return { output: [{ type: "text", text: "Give either query (words) or code (a script over catalog)." }], isError: true };
 		const state = await api.snapshot(ThreadDoc, api.conversationId, context);
 		const allowed = (name: string) => !state?.allowedTools || state.allowedTools.includes(name);
 		// The run's callable tools are the agent's own (`configure`); its list is checked again here.
@@ -182,7 +217,11 @@ export const FIND_TOOLS = defineTool({
 		const callable = all.filter((tool) => !MODEL_TOOLS.includes(tool.name) && ![RUN_SCRIPT_TOOL, REPAIR_SCRIPT_TOOL, INTEGRATION_TOOL].includes(tool.name) && allowed(tool.name));
 		const integrations = all.some((tool) => tool.name === INTEGRATION_TOOL) && allowed(INTEGRATION_TOOL);
 		const services = integrations ? ((await api.snapshot(IntegrationToolsDoc, api.conversationId, context))?.tools ?? []) : [];
-		const found = rank(args.query, [...callable.map(orbitEntry), ...services.map(integrationEntry)]);
-		return { output: [{ type: "text", text: foundText(args.query, found, callable, services) }] };
+		if (args.code) {
+			const { text, isError } = await catalogScript(args.code, catalogOf(callable, services));
+			return { output: [{ type: "text", text }], ...(isError ? { isError } : {}) };
+		}
+		const found = rank(args.query!, [...callable.map(orbitEntry), ...services.map(integrationEntry)]);
+		return { output: [{ type: "text", text: foundText(args.query!, found, callable, services) }] };
 	},
 });

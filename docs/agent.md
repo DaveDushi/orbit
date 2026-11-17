@@ -290,7 +290,9 @@ dropped `agent_preferences`.
   images would not reach the model), `ask_teammate`, `load_skill` and `read_skill_file`. Every other tool is called
   from a script. `find_tools` searches the run's callable Orbit tools and the driver's tools of connected services by
   words (BM25 on name and description) and returns at most 8, with how to call them and their JSON Schema; it reads no
-  Orbit data. The services' tools (read with `GET /agent-tools` at the start of a run, only when the agent has
+  Orbit data. Instead of words it also takes a read-only script (`code`) over the global `catalog` (name, description,
+  input schema, integration, approval, call), as in Cloudflare's Code Mode search: it runs in its own QuickJS sandbox
+  with code mode's limits and no tools or globals, so it cannot call tools, reach the network or keep anything. The services' tools (read with `GET /agent-tools` at the start of a run, only when the agent has
   `use_integration`) are kept in the conversation's `orbit.integration-tools` document, never in the prompt: the
   prompt names only each service and its tool count, so an agent can have hundreds of service tools. Scripts call them
   as `tools.use_integration({ tool, arguments })`, with the same checks as before. The `codemode` prompt section

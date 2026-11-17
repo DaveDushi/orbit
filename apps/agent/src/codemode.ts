@@ -39,6 +39,16 @@ const MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
 const TIMEOUT_MS = 5 * 60 * 1000;
 
 let sandbox: CodemodeSandbox | undefined;
+let catalogSandbox: CodemodeSandbox | undefined;
+
+/**
+ * The sandbox of `find_tools` scripts (./find-tools.ts): the same limits as code mode, and no tools and no globals, so
+ * such a script can only read the catalog it is given. Its `store()` writes are dropped.
+ */
+export function readOnlySandbox(): CodemodeSandbox {
+	catalogSandbox ??= new CodemodeSandbox({ memoryLimitBytes: MEMORY_LIMIT_BYTES, timeoutMs: TIMEOUT_MS, tools: [], globals: [] });
+	return catalogSandbox;
+}
 
 /** One sandbox (a worker) for the process, made on first use. */
 function options(): CodemodeToolOptions {
@@ -120,6 +130,7 @@ export function codemodeWith(globals: readonly CodemodeGlobal[]) {
 
 /** Closes the sandbox's worker, when one was made. */
 export async function closeCodemode(): Promise<void> {
-	await sandbox?.close();
+	await Promise.all([sandbox?.close(), catalogSandbox?.close()]);
 	sandbox = undefined;
+	catalogSandbox = undefined;
 }

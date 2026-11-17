@@ -241,6 +241,37 @@ test("a prompt injection in a service's result cannot make writes: it is fenced 
 	}
 });
 
+test("a find_tools script reads only the agent's catalog: no tool call, no Orbit request, no write, no approval", async () => {
+	const seen: string[] = [];
+	const probe = 'const names = catalog.map((t) => t.name);\nlet trash = "no call";\ntry { await tools.drive_trash({ node_ids: ["x"] }); trash = "called"; } catch (error) { trash = "refused"; }\nreturn { names, services: catalog.filter((t) => t.integration).length, trash, fetch: typeof fetch };';
+	const ctx = await start([() => call("find_tools", { code: probe }), keep(seen, call("find_tools", { code: probe })), keep(seen, answer())], { services: true });
+	try {
+		const before = ctx.orbit.calls.length;
+		await ctx.run("Which tools do you have?", ANN, "instruction", card(["search_tasks", "drive_search"]));
+		const result = JSON.parse(seen[0].split("\n").slice(1, -1).join("\n")) as { names: string[]; services: number; trash: string; fetch: string };
+		assert.deepEqual(result.names.sort(), ["drive_search", "search_tasks"]);
+		assert.equal(result.services, 0, "no service tools without use_integration");
+		assert.equal(result.trash, "refused");
+		assert.equal(result.fetch, "undefined");
+		// The run's own reads at its start only (memory, skills): the scripts reached nothing.
+		assert.ok(ctx.orbit.calls.slice(before).every((made) => made.method === "GET" && made.path !== "/agent-tools"), JSON.stringify(ctx.orbit.calls.slice(before)));
+		assert.equal(questions(ctx.orbit).length, 0);
+	} finally {
+		await ctx.stop();
+	}
+	// With use_integration, the catalog has the services' tools with their approval, for the script to filter.
+	const found: string[] = [];
+	const withServices = await start([() => call("find_tools", { code: 'return catalog.filter((t) => t.integration === "Cloudflare" && t.approval === "always").map((t) => t.name);' }), keep(found, answer())], { services: true });
+	try {
+		await withServices.run("Which Cloudflare tools need my yes?");
+		assert.match(found[0], /"cloudflare__purge_cache"/);
+		assert.doesNotMatch(found[0], /"cloudflare__list_zones"/);
+		assert.ok(!withServices.orbit.calls.some((made) => made.path === "/agent-tools/call"));
+	} finally {
+		await withServices.stop();
+	}
+});
+
 test("without a media sandbox, find_tools and scripts do not show or reach the media tools", async () => {
 	const found: string[] = [];
 	const ctx = await start([() => call("find_tools", { query: "image shell media work drive" }), keep(found, answer())], { sandbox: false });
