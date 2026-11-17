@@ -28,6 +28,7 @@ mod overlay;
 mod route;
 mod settings;
 mod shell;
+mod speech;
 mod signin;
 
 fn main() {

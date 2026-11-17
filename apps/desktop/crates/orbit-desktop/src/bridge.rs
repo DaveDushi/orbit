@@ -4,6 +4,8 @@
 
 use serde::Deserialize;
 
+use crate::speech;
+
 const BRIDGE_JS: &str = include_str!("../assets/bridge.js");
 
 /// The bridge script for `origin` (`https://host[:port]`).
@@ -11,6 +13,8 @@ pub fn script(origin: &str) -> String {
     BRIDGE_JS
         .replace("__ORBIT_ORIGIN__", &serde_json::to_string(origin).expect("a string serializes"))
         .replace("__ORBIT_APP_VERSION__", &serde_json::to_string(env!("CARGO_PKG_VERSION")).expect("a string serializes"))
+        // Windows: the page's `SpeechRecognition` runs on Windows' own recognizer (`speech.rs`).
+        .replace("__ORBIT_NATIVE_SPEECH__", if cfg!(windows) { "true" } else { "false" })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -26,6 +30,8 @@ pub enum Message {
     Server(String),
     /// A line for the diagnostics log (the web app's voice input errors).
     Log(String),
+    /// Voice input on Windows' own recognizer.
+    Speech(speech::Command),
 }
 
 /// What the web app put on its badge (`navigator.setAppBadge`).
@@ -62,6 +68,12 @@ enum Wire {
     Log {
         text: String,
     },
+    Speech {
+        action: String,
+        id: u64,
+        #[serde(default)]
+        lang: String,
+    },
 }
 
 const MAX_TITLE: usize = 200;
@@ -87,6 +99,13 @@ pub fn parse(text: &str) -> Option<Message> {
         Wire::Latest { json } if json.len() <= MAX_LATEST => Message::Latest(json),
         Wire::Server { url } if url.len() <= MAX_URL => Message::Server(url),
         Wire::Log { text } => Message::Log(clip(text.trim(), MAX_BODY)),
+        Wire::Speech { action, id, lang } => Message::Speech(match action.as_str() {
+            // A language tag only (`de-CH`): it goes to Windows and the log.
+            "start" => speech::Command::Start { id, lang: if lang.len() <= 35 && lang.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') { lang } else { String::new() } },
+            "stop" => speech::Command::Stop { id },
+            "abort" => speech::Command::Abort { id },
+            _ => return None,
+        }),
         Wire::Open { .. } | Wire::Latest { .. } | Wire::Server { .. } => return None,
     })
 }
@@ -177,6 +196,10 @@ mod tests {
         assert_eq!(parse(r#"{"kind":"latest","json":"{\"version\":\"0.2.0\"}"}"#), Some(Message::Latest(r#"{"version":"0.2.0"}"#.into())));
         assert_eq!(parse(r#"{"kind":"server","url":"orbit.example.com"}"#), Some(Message::Server("orbit.example.com".into())));
         assert_eq!(parse(r#"{"kind":"log","text":" voice: denied "}"#), Some(Message::Log("voice: denied".into())));
+        assert_eq!(parse(r#"{"kind":"speech","action":"start","id":2,"lang":"de-CH"}"#), Some(Message::Speech(speech::Command::Start { id: 2, lang: "de-CH".into() })));
+        assert_eq!(parse(r#"{"kind":"speech","action":"start","id":2,"lang":"x; del *"}"#), Some(Message::Speech(speech::Command::Start { id: 2, lang: String::new() })));
+        assert_eq!(parse(r#"{"kind":"speech","action":"stop","id":2}"#), Some(Message::Speech(speech::Command::Stop { id: 2 })));
+        assert_eq!(parse(r#"{"kind":"speech","action":"eval","id":2}"#), None);
         assert_eq!(parse(&format!(r#"{{"kind":"open","url":"https://x/{}"}}"#, "a".repeat(MAX_URL))), None);
         for junk in ["", "null", "[]", r#"{"kind":"eval","code":"rm -rf"}"#, r#"{"title":"no kind"}"#, "{broken"] {
             assert_eq!(parse(junk), None, "{junk}");
