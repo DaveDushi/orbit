@@ -4,7 +4,9 @@ import { router } from 'expo-router'
 import { type ComponentRef, memo, useEffect, useMemo, useRef, useState } from 'react'
 import { type LayoutChangeEvent, Linking, type NativeScrollEvent, type NativeSyntheticEvent, type ScrollView } from 'react-native'
 
-import { collabTicket, fileDataUrl, fileDeleted } from '../../data/docs-api'
+import { collabTicket, fileDataUrl, fileDeleted, resolveDriveFile } from '../../data/docs-api'
+import { downloadUrl } from '../../data/drive'
+import { openFile } from '../tasks/files'
 import { type FormatState, whileMounted } from '../../data/page-editor'
 import { usePageTrash } from '../../hooks/docs'
 import { useOrbit } from '../../orbit-context'
@@ -64,6 +66,10 @@ export const EditorView = memo(function EditorView({ ref, kind, docId, epoch, ge
       loadFile: whileMounted(mounted, (url: string) => fileDataUrl(session.server, session.token, url)),
       fileDeleted: whileMounted(mounted, (url: string) => fileDeleted(session.server, session.token, url)),
       openPage: whileMounted(mounted, async (target: string) => router.push(`/docs/${target}`)),
+      resolveDriveFile: whileMounted(mounted, (workspace: string, node: string) => resolveDriveFile(client, workspaceId, docId, workspace, node)),
+      openDriveFile: whileMounted(mounted, async (workspace: string, node: string, name: string) => {
+        await openFile(await downloadUrl(client, workspace, node), name).catch(() => {})
+      }),
       // the editor already filters links; the app checks again before it hands one to the OS
       openUrl: whileMounted(mounted, async (url: string) => {
         if (isSafeLinkHref(url)) void Linking.openURL(url).catch(() => {})
@@ -74,7 +80,7 @@ export const EditorView = memo(function EditorView({ ref, kind, docId, epoch, ge
       onFormat: whileMounted(mounted, async (state: FormatState) => latest.current.onFormat(state)),
       onHeight: whileMounted(mounted, async (next: number) => setHeight(next)),
     }),
-    [client, kind, docId, session.server, session.token],
+    [client, workspaceId, kind, docId, session.server, session.token],
   )
   const dom = useMemo(() => ({ scrollEnabled: false, style: { height } }), [height])
 

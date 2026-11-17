@@ -22,6 +22,7 @@ import {
   listPageTrash,
   moveTeamspace,
   purgePage,
+  resolvePageDriveFiles,
   reopenPageThread,
   resolvePageThread,
   removePageFavorite,
@@ -84,6 +85,18 @@ export async function collabTicket(client: OrbitClient, id: string, kind: 'page'
     const status = (error as { status?: unknown }).status
     return { ok: false, status: typeof status === 'number' ? status : 0 }
   }
+}
+
+/** A Drive file block's name and status for this reader (the server checks the page and the file). */
+export async function resolveDriveFile(client: OrbitClient, workspaceId: string, pageId: string, fileWorkspaceId: string, nodeId: string): Promise<{ name: string | null; status: string }> {
+  const { data } = await resolvePageDriveFiles({
+    client,
+    path: { workspace_id: workspaceId, page_id: pageId },
+    body: { references: [{ workspace_id: fileWorkspaceId, node_id: nodeId }] },
+    throwOnError: true,
+  })
+  const item = data.items[0]
+  return { name: item?.file?.name ?? null, status: item?.status ?? 'unavailable' }
 }
 
 /** An Orbit file (`/api/…`) an admin deleted: the server answers 410. */

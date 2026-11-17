@@ -18,7 +18,7 @@ import { watchDeletedFiles } from '@orbit/editor/deletedFiles'
 import { isSafeLinkHref } from '@orbit/editor/links'
 import { CALLOUT_DEFAULT_EMOJI, createEditorSchemas, type PageEditorInstance } from '@orbit/editor/schema'
 import { type DOMImperativeFactory, useDOMImperativeHandle } from 'expo/dom'
-import { createContext, type CSSProperties, type Ref, use, useEffect, useRef, useState } from 'react'
+import { createContext, type CSSProperties, type Ref, use, useEffect, useMemo, useRef, useState } from 'react'
 import { WebsocketProvider } from 'y-websocket'
 import * as Y from 'yjs'
 
@@ -75,6 +75,10 @@ export interface PageEditorProps {
   /** An Orbit file an admin deleted (it answers 410): its file block says "Deleted file". */
   fileDeleted: (url: string) => Promise<boolean>
   openPage: (pageId: string) => Promise<void>
+  /** A Drive file block's name and whether the reader may open it (the server checks Drive access on every read). */
+  resolveDriveFile: (workspaceId: string, nodeId: string) => Promise<DriveFileInfo>
+  /** Opens a Drive file block's file in the app's file preview. */
+  openDriveFile: (workspaceId: string, nodeId: string, name: string) => Promise<void>
   openUrl: (url: string) => Promise<void>
   onStatus: (state: CollabState) => Promise<void>
   onProblem: (problem: CollabProblem) => Promise<void>
@@ -87,14 +91,29 @@ export interface PageEditorProps {
   dom?: import('expo/dom').DOMProps
 }
 
+/** What a Drive file block shows: the file's name, or why it cannot be opened. */
+export interface DriveFileInfo {
+  name: string | null
+  /** `available`, `locked` (no access to it) or `unavailable` (gone). */
+  status: string
+}
+
 interface Lookups {
   pages: Record<string, PageCardInfo>
   members: Record<string, string>
   openPage: (pageId: string) => void
+  resolveDriveFile: (workspaceId: string, nodeId: string) => Promise<DriveFileInfo>
+  openDriveFile: (workspaceId: string, nodeId: string, name: string) => void
 }
 
 // Node views render through portals inside the editor view, so they see this provider.
-const LookupsContext = createContext<Lookups>({ pages: {}, members: {}, openPage: () => {} })
+const LookupsContext = createContext<Lookups>({
+  pages: {},
+  members: {},
+  openPage: () => {},
+  resolveDriveFile: async () => ({ name: null, status: 'unavailable' }),
+  openDriveFile: () => {},
+})
 
 function PageCard({ block }: { block: { props: { pageId: string } } }) {
   const { pages, openPage } = use(LookupsContext)
@@ -119,16 +138,37 @@ function PageCard({ block }: { block: { props: { pageId: string } } }) {
 }
 
 /**
- * A Drive file block (web: "Insert from Drive"). The app has no Drive yet, so it shows a plain card without the file's
- * name (the web app asks the server, which checks the reader's Drive access on every read).
+ * A Drive file block (web: "Insert from Drive"): the file's name from the server, which checks the reader's Drive
+ * access on every read; a tap opens the file in the app's preview.
  */
-function DriveFileCard() {
+function DriveFileCard({ block }: { block: { props: { workspaceId: string; nodeId: string } } }) {
+  const { resolveDriveFile, openDriveFile } = use(LookupsContext)
+  const { workspaceId, nodeId } = block.props
+  const [info, setInfo] = useState<DriveFileInfo | null>(null)
+  useEffect(() => {
+    let live = true
+    if (nodeId) void resolveDriveFile(workspaceId, nodeId).then((next) => live && setInfo(next), () => live && setInfo({ name: null, status: 'unavailable' }))
+    return () => {
+      live = false
+    }
+  }, [resolveDriveFile, workspaceId, nodeId])
+  const available = info?.status === 'available' && info.name !== null
   return (
-    <div contentEditable={false} className="orbit-page-card" data-state="drive-file">
+    <button
+      type="button"
+      contentEditable={false}
+      className="orbit-page-card"
+      data-state={available ? 'ok' : 'drive-file'}
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.preventDefault()
+        if (available) openDriveFile(workspaceId, nodeId, info.name!)
+      }}
+    >
       <span className="orbit-page-card-icon">📎</span>
-      <span className="orbit-page-card-title">Drive file</span>
-      <span className="orbit-page-card-note">Open on the web</span>
-    </div>
+      <span className="orbit-page-card-title">{info?.name ?? 'Drive file'}</span>
+      {info && !available ? <span className="orbit-page-card-note">{info.status === 'locked' ? 'No access' : 'Not available'}</span> : null}
+    </button>
   )
 }
 
@@ -243,11 +283,21 @@ export default function PageEditor(props: PageEditorProps) {
     '--orbit-primary': colors.primary,
   } as CSSProperties
 
+  const lookups = useMemo<Lookups>(
+    () => ({
+      pages,
+      members,
+      openPage: (id) => void actions.current.openPage(id),
+      resolveDriveFile: (workspace, node) => actions.current.resolveDriveFile(workspace, node),
+      openDriveFile: (workspace, node, name) => void actions.current.openDriveFile(workspace, node, name),
+    }),
+    [pages, members],
+  )
   const state = session?.state ?? CONNECTING
   return (
     <div ref={rootRef} className="orbit-page-editor" data-theme={theme} style={style}>
       {session && state.ready ? (
-        <LookupsContext value={{ pages, members, openPage: (id) => void actions.current.openPage(id) }}>
+        <LookupsContext value={lookups}>
           <Editor
             key={`${kind}:${docId}:${epoch}:${generation}`}
             kind={kind}
