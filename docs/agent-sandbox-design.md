@@ -1,9 +1,10 @@
 # Agent sandboxes: design
 
-Status: **approved design, phase 1 spike done** (2026-11-16, branch `agent-sandbox-design`, from `main` c62e383c).
-The owner approved the design and the recommended answers to all open questions, with one change: **one sandbox per
-chat thread** (question 1, section 5). The spike results are in section 13. Nothing runs in production. Each later
-phase needs its own "yes" before production.
+Status: **approved design; phases 1–4 done on test copies** (phase 3 and 4: 2026-11-17, branch
+`agent-sandbox-design`). The owner approved the design and the recommended answers to all open questions, with one
+change: **one sandbox per chat thread** (question 1, section 5). Results: section 13 (spike), section 14 (phases 3
+and 4). Production has only the phase 2 host guards; no broker, proxy or migration runs there. Each later phase
+needs its own "yes" before production.
 
 ## Goal and fixed decisions
 
@@ -271,7 +272,7 @@ One **thread sandbox** per agent, thread and driver (decision of the owner, ques
 |---|---|
 | Create | An admin ticks `sandbox_shell` for the agent. Orbit records the agent's sandbox settings (limits, image digest, idle time). Nothing runs yet. |
 | First call in a thread | The broker makes the thread's disk image (sparse ext4, 4 GiB) under `/var/lib/orbit-sandbox/<agent>/work/<work-id>.img`, its netns and veth, and starts the thread sandbox (`runsc run --detach`, init as PID 1). Then it runs the call. |
-| Each call | New ticket and call token, then `runsc exec` into the live sandbox (~9 ms). The call is its own process group; at 15 min the broker kills that group, not the sandbox. Processes that the call started in the background (`setsid`, `nohup`, a dev server) stay alive for later calls of the thread. |
+| Each call | New ticket and call token, then `runsc exec` into the live sandbox (~9 ms). The call is its own process group; at 15 min the broker kills that group, not the sandbox. At the end of each call (and at the timeout) the broker kills what is left in that group; processes started with `setsid` (a dev server) stay alive for later calls of the thread (section 14). |
 | 4th sandbox needed | Max **3 live thread sandboxes** in `orbit-agents.slice`. The broker deletes the one **quiet the longest** (no call running, oldest last call end). When all 3 have a running call, the new call waits up to 30 s for a free place, then fails with "all sandboxes busy, try again". |
 | Idle delete | **30 min** without a call: the broker deletes the sandbox (all processes). Admins may set 5–120 min per agent (`idle_minutes`). |
 | Max life | **4 h** after start the sandbox is deleted, also when a call runs (the call is reported as interrupted: "sandbox reached its 4 h limit"). Fixed in the pilot. The next call starts a fresh sandbox on the same `/work`. |
@@ -431,8 +432,8 @@ Approved by the owner on 2026-11-16: the recommended answers to questions 2–13
 | 0 | Owner approves this design and the open-question answers. | **Done** 2026-11-16 (section 11). |
 | 1 | **Spike on a test copy**: pinned `runsc`; thread sandbox with systrap; cgroup limits; start time, idle RAM, syscall cost; `runsc exec` per call; idle delete and eviction with a prototype broker; stub proxy; basic escape checks. | **Done** 2026-11-16 (section 13). |
 | 2 | **Host guards**: `orbit.slice` cap, `orbit-agents.slice`, `orbit.service` OOM protection; `vm-health` checks. | Production unchanged in behavior; `systemctl show` values match. |
-| 3 | **Broker v2 on a test copy** (new, from the spike): `deploy/agent-sandbox/broker.py` with thread sandboxes (state file, per-thread lock, eviction, idle and max-life `gc` timer, `stop_agent`/`stop_all`, start-up cleanup), `--systemd-cgroup` scopes, `tini` init, `RLIMIT_NPROC`, per-thread netns/veth/nft, ext4 disk image per thread; the agent image (Ubuntu 24.04 rootfs by digest). Escape and limit tests in `apps/agent/test/`. | Broker and escape tests pass on a test copy; idle RAM rechecked with the Ubuntu image. |
-| 4 | **Orbit data + routes**: migration (sandbox settings incl. idle minutes, rules, egress requests, egress log, calls, usage) for SQLite and Postgres; ticket and call-token issue; `calls/{id}/end`; `egress/check`. | Route tests on both databases. |
+| 3 | **Done** 2026-11-17 (section 14). **Broker v2 on a test copy** (new, from the spike): `deploy/agent-sandbox/broker.py` with thread sandboxes (state file, per-thread lock, eviction, idle and max-life `gc` timer, `stop_agent`/`stop_all`, start-up cleanup), `--systemd-cgroup` scopes, `tini` init, `RLIMIT_NPROC`, per-thread netns/veth/nft, ext4 disk image per thread; the agent image (Ubuntu 24.04 rootfs by digest). Escape and limit tests in `apps/agent/test/`. | Broker and escape tests pass on a test copy; idle RAM rechecked with the Ubuntu image. |
+| 4 | **Done** 2026-11-17 (section 14). **Orbit data + routes**: migration (sandbox settings incl. idle minutes, rules, egress requests, egress log, calls, usage) for SQLite and Postgres; ticket and call-token issue; `calls/{id}/end`; `egress/check`. | Route tests on both databases. |
 | 5 | **Egress proxy**: `orbit egress-proxy` with per-call passwords; broker passes them per call. | Proxy tests and network escape tests pass. |
 | 6 | **Sidecar tool**: `sandbox_shell`, catalog row and `route_need`, interrupted-call handling, card posting and waiting. | `profiles.test.ts`, mock-model run end to end on a test instance. |
 | 7 | **UI**: agent card toggle and limits; Internet access page (rules, pending, log); egress card buttons on **web and mobile**. | Browser check on web; iOS bundle builds; `tsc` and tests in both apps. |
@@ -553,3 +554,78 @@ separate yes, as before. Without it, phase 3 can start on a test copy: broker v2
 rules above, the ext4 image per thread, a real netns/nft setup per thread sandbox, the Ubuntu 24.04 agent image with
 `tini`, and the escape, limit, eviction and off-switch tests as code in `apps/agent/test/`. It runs in a test slice,
 so it does not need phase 2.
+
+## 14. Phase 3 and 4 results (2026-11-17)
+
+Done on test copies only: broker `orbit-sbx-test` (slice `orbit-sbx-test.slice`, scopes `orbit-sbx-test-*`, netns
+`sbt-*`, veth `sbth*`/`sbtp*`, 10.202.0.0/16, nft table `orbit_sbx_test`, `/var/lib/orbit-sbx-test`,
+`/etc/orbit-sbx-test`), image `orbit-sbx-test-image:p3`, Postgres container `orbit-sbx-test-pg` (port 15533, tmpfs).
+No production service, data, unit or port was touched; all of it was removed after the tests.
+
+### Phase 3: broker v2 (`deploy/agent-sandbox/`)
+
+| File | What |
+|---|---|
+| `broker.py` | Socket-activated root broker (one copy per connection). Thread sandbox per `work` id (agent + thread + driver, signed by Orbit). Signed ticket (HMAC) with sealed call token and proxy password; replays refused. State file under a global lock; one `flock` per thread for the whole call. Eviction of the quietest sandbox without a running call; 30 s wait, then "all sandboxes are busy". `gc` (timer, every minute): idle (per-agent `idle_minutes`), 4 h max life (also busy; the call ends as `interrupted`), images unused for 72 h. `stop_agent` / `stop_all`. Cleanup at socket start and stop: runsc state, scopes, mounts, netns, veth, nft table, the `null-netns` mount. Reports each call end to Orbit and passes on waiting egress requests. |
+| `setup.sh` | Installs a named copy: gVisor `release-20261109.0` (SHA-512 pinned), rootfs export by image id, broker key, socket + broker + gc units, parent slice for test names, per-agent slice drop-in `<prefix>-.slice.d` (CPU 100 %, 1536M, 1536 tasks). `--uninstall` removes it all. |
+| `Dockerfile` | Ubuntu 24.04 by digest + tini, python3, node, git, curl, jq, ripgrep; setuid bits removed. Media tools come with the `media_shell` merge (phase 11). |
+
+**Escape and limit tests** (`apps/agent/test/agent-sandbox.test.ts`, 17 tests, all pass, ~100 s): user, kernel, limits
+and environment of a call (PID 1 without call secrets); every gVisor process in the thread's scope in the agent slice;
+no host files, keys or sockets, read-only system, no mount, ptrace, raw sockets or sysctl, no setuid files; egress only
+TCP to the proxy port of its own /30 (host ports 22/53/8000, 1.1.1.1, 169.254.169.254, Docker bridge, another /30,
+DNS, UDP and IPv6 all fail); no access between threads (files, `/tmp`, processes, proxy password), new token per
+call; tickets (wrong key, expired, replay, changed limits); fork bomb; memory; disk; call timeout; zombies; call-end
+report; eviction (quietest, never busy; all busy → wait, then busy); gc (idle, max life, `/work` kept); off switch
+(`stop_agent`, `stop_all`: nothing left); broker restart.
+
+**Changes this made in the design:**
+
+1. **Memory: the Sentry must have `oomScoreAdj` -900** (spec `process.oomScoreAdj`; runsc gives it to the Sentry
+   and the gofer, new systrap stubs stay at 0). Without it, a memory bomb in the Ubuntu image made the kernel kill the
+   **Sentry** (the whole sandbox): app memory lives in the Sentry's memfd, not in the stubs' RSS. With it, only the
+   greedy process dies (exit 137), the sandbox and its other processes live, memory goes back to ~13 MiB. gVisor
+   does not stop the guest at its own `--total-memory`; the host memcg limit is the real limit.
+2. **At every call end the broker kills the call's process group** (not only at the timeout). Only processes
+   started with `setsid` stay for later calls (`nohup … &` does not). Else a fork bomb that the call's shell left
+   behind blocks every later call with EAGAIN.
+3. The group kill runs as **root in the sandbox with only `CAP_KILL`**: the sandbox user may be at its
+   `RLIMIT_NPROC` and could not start `kill`. It uses the bash builtin (`/bin/kill` is util-linux in Ubuntu and
+   refuses `--`).
+4. `runsc run --detach` and every helper command get no pipes and `/dev/null` as stdin: the sandbox keeps its stdio
+   open for its whole life, and `runsc exec` forwards and closes an inherited client socket.
+5. Known gap: a `setsid` fork bomb fills the thread sandbox's own `RLIMIT_NPROC` until idle delete or the off
+   switch. Nothing outside that sandbox is affected (host tasks stay far below the slice backstop).
+
+**Idle RAM (Ubuntu image):** broker 0 when idle (socket activation; ~15 MiB PSS for one copy during a call); one idle
+thread sandbox **9.8 MiB** `memory.current` new and **14 MiB** after use (python3, node, git), 27–32 host tasks, PSS
+46–51 MiB (most of it the shared runsc binary). Cold start of a new thread sandbox (image already made): ~0.4 s.
+
+### Phase 4: Orbit data and routes
+
+Migration `20261117142900_agent_sandbox` (SQLite and Postgres): `agent_sandbox_settings` (enabled, `idle_minutes`
+5–120, monthly CPU-minutes, egress bytes, model tokens), `agent_sandbox_calls`, `agent_egress_rules`,
+`agent_egress_requests`, `agent_egress_log`, `agent_sandbox_usage` (per agent and UTC month), and
+`agent_sessions.sandbox_call_id`. New tables only; no backup needed.
+
+Code: `apps/server/src/agent/sandbox.rs`. Key: `ORBIT_AGENT_SANDBOX_KEY_FILE` (the broker key); without it, or with
+`ORBIT_AGENT_SANDBOX=off`, every route answers `sandbox_off`. Keys derived from the one file: ticket MAC, seal
+(HMAC-SHA256 counter stream, encrypt-then-MAC, because the broker is Python without crypto packages), and the
+service bearer of the broker and the proxy.
+
+| Route | Who | What |
+|---|---|---|
+| `POST /api/internal/agent/sandbox/calls` | sidecar secret | Checks: active non-guest driver, live custom agent of the workspace with `sandbox_shell`, settings enabled, thread `running` for this agent and driver, month's CPU budget. Closes lost calls. Issues the call token (agent session bound to the call, life = timeout + 60 s, dry flag copied) and the ticket (5 min). Token and proxy password are sealed in the ticket; Orbit stores only their SHA-256. |
+| `POST /api/internal/agent/sandbox/calls/{id}/end` | broker (service bearer) | Once per call (also when ends race): token deleted, CPU time added to the month; returns pending egress requests. A late end of a `lost` call changes nothing. |
+| `POST /api/internal/agent/egress/check` | proxy (service bearer) + the call's proxy password | Section 4 order: off/budget → deny; deny rule or Deny in this thread → deny; risky → ask unless Allowed once here; allow rule → allow; Allowed once → allow; else ask (one pending request per thread, driver, host, port). IP literals, `orbit.internal`, Orbit's own host and bad ports: deny. Every decision logged (host and port only). |
+
+**Route tests** (`apps/server/tests/agent_sandbox.rs`, 6 tests, plus 4 unit tests for host rules): all pass on
+SQLite and on Postgres 18. A ticket made by the Rust code was also opened by the Python broker (`verify_ticket`),
+and a changed one refused.
+
+**Still open (later phases):** the egress proxy and its byte counts (phase 5); the `sandbox_shell` catalog row,
+sidecar client and `route_need` (phase 6; tests tick the tool in the database); a scheduler job that closes lost
+calls without a new ticket (today: at the next ticket; the token dies at its own expiry anyway); binding the call
+token to its thread for approvals; the card buttons (Allow once / always / Deny) and admin rule validation with the
+Public Suffix List (phase 7); budgets' notices and the off switch calling `stop_agent` (phase 8).
+
