@@ -8,7 +8,8 @@
 // - The update check: `/downloads/desktop/latest.json`, read with the page's own gateway cookies, at the start and
 //   every 6 hours (the app often runs for days).
 // - `__orbitDesktop.app` (the app's version) and `.log(text)` (a line in the diagnostics log), for voice input reports.
-// - Windows: `SpeechRecognition` runs on Windows' own recognizer in the app (src/speech.rs); WebView2's refuses.
+// - Windows: `SpeechRecognition` records in the app and transcribes with a local Whisper model (src/speech.rs);
+//   WebView2's recognizer refuses. A small status shows the model's one-time download and the transcription.
 // - The app's state and menu (`getState`, `action`, the `orbit-desktop` event): the web app's account menu shows the
 //   tray's items, because Windows 11 hides new tray icons. A banner says when an update is ready (no web deploy needed).
 (() => {
@@ -71,8 +72,8 @@
       location.assign(url)
     }
   }
-  // The part of the Web Speech API that the web app's voice input uses (`continuous`, `interimResults`): the app
-  // sends `partial` and `final` words, `error` (a Web Speech error code and a text) and `end` for each `id`.
+  // The part of the Web Speech API that the web app's voice input uses: the app sends `progress` (the model's
+  // download, the transcription), the `final` text, `error` (a Web Speech error code and a text) and `end` per `id`.
   const dictations = new Map()
   let nextDictation = 1
   class DesktopSpeechRecognition {
@@ -97,15 +98,17 @@
       this._end()
     }
     _end() {
+      voiceStatus('')
       dictations.delete(this._id)
       this._id = 0
       if (typeof this.onend === 'function') this.onend()
     }
     _event(event) {
-      if (event.type === 'final' || event.type === 'partial') {
-        if (event.type === 'final') this._finals.push(event.text)
+      if (event.type === 'progress') {
+        voiceStatus(event.phase === 'download' ? `Downloading the speech model (60 MB, only once)… ${event.percent}%` : 'Transcribing…')
+      } else if (event.type === 'final') {
+        this._finals.push(event.text)
         const results = this._finals.map((transcript) => ({ isFinal: true, length: 1, 0: { transcript } }))
-        if (event.type === 'partial' && this.interimResults) results.push({ isFinal: false, length: 1, 0: { transcript: event.text } })
         if (typeof this.onresult === 'function') this.onresult({ resultIndex: 0, results })
       } else if (event.type === 'error') {
         if (typeof this.onerror === 'function') this.onerror({ error: event.error, message: event.message || '' })
@@ -113,6 +116,26 @@
         this._end()
       }
     }
+  }
+
+  // The voice status, in a shadow root so the page's styles do not reach it; empty text hides it.
+  let voiceHost = null
+  const voiceStatus = (text) => {
+    if (!text || !document.body) {
+      if (voiceHost) voiceHost.remove()
+      voiceHost = null
+      return
+    }
+    if (!voiceHost) {
+      voiceHost = document.createElement('orbit-desktop-voice')
+      voiceHost.attachShadow({ mode: 'open' }).innerHTML = `<style>
+        :host { all: initial; position: fixed; left: 50%; bottom: 88px; transform: translateX(-50%); z-index: 2147483647; }
+        div { padding: 8px 14px; border-radius: 999px; font: 13px/1.3 system-ui, "Segoe UI", sans-serif;
+          background: #18181b; color: #fafafa; box-shadow: 0 8px 24px #0004; }
+      </style><div role="status" aria-live="polite"></div>`
+      document.body.append(voiceHost)
+    }
+    voiceHost.shadowRoot.querySelector('div').textContent = text
   }
   const speech = (event) => {
     const dictation = event && dictations.get(event.id)

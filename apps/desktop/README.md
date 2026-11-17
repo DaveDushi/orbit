@@ -77,13 +77,18 @@ Orbit pins 1.97.1), `Cargo.lock` and `target/`.
   app. Up to 0.1.4 it failed with `network` (runtime 153+ sends speech to a service that answers 403,
   [WebView2Feedback#5724](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5724); 0.1.5 turned that off with
   `signin::WEBVIEW2_ARGS`). On a Windows 11 PC with 0.1.6 it still gave `not-allowed` without any WebView2
-  permission request and without opening the microphone. So since 0.1.7 the bridge script replaces the page's
-  `SpeechRecognition`/`webkitSpeechRecognition` with a class that runs on Windows' own recognizer
-  (`src/speech.rs`, `Windows.Media.SpeechRecognition`: dictation, continuous, live partial results, the page's
-  language or the nearest one Windows has). The web app's code stays the same. Windows' dictation needs Settings →
-  Privacy & security → Speech → "Online speech recognition". Without it, Windows refuses with `0x80045509`, and the
-  page says where to turn it on (the `message` of a `service-not-allowed` error). Every step (language, compile and
-  end status, Windows errors, never the words) goes to the diagnostics log. The app still saves "allow" for the
+  permission request and without opening the microphone. 0.1.7/0.1.8 used Windows' own dictation
+  (`Windows.Media.SpeechRecognition`), which needs Settings → Privacy & security → Speech → "Online speech
+  recognition" (`0x80045509` without it). Since 0.1.9 the bridge script replaces the page's
+  `SpeechRecognition`/`webkitSpeechRecognition` with a class that runs in the app (`src/speech.rs`): start records
+  the default microphone (cpal, WASAPI), stop transcribes it with whisper.cpp (`whisper-rs`) on the computer and
+  sends the text as one final result (no live words). No cloud, no key, no Windows setting. The model is Whisper
+  base, multilingual, 5-bit (`ggml-base-q5_1.bin`, 59.7 MB), downloaded at the first use from a pinned Hugging Face
+  commit into `<local app data>/orbit-desktop/models/`, checked against its SHA-256 (`speech::MODEL`); it records
+  meanwhile, and a small status in the page shows the download and "Transcribing…". The page's language picks
+  Whisper's (`en-US` → `en`). `.cargo/config.toml` builds ggml for AVX2 (not the CI runner's CPU) and links the C
+  runtime statically (no Visual C++ Redistributable). Every step (recording device and rate, download, transcribe
+  time, errors, never the words) goes to the diagnostics log. The app still saves "allow" for the
   microphone of the server's origin in WebView2 (`src/microphone.rs`), for `getUserMedia`. When the recognizer says
   `not-allowed`, the web app checks the microphone itself (`getUserMedia`) and tries once more, and the toast names
   the cause, the error text and the app version (`__orbitDesktop.app`). macOS: WKWebView uses Apple's speech

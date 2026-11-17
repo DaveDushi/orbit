@@ -1,0 +1,15 @@
+# whisper.cpp (voice input, `crates/orbit-desktop/src/speech.rs`) is built by CMake. Without these, ggml tunes itself
+# for the build machine's CPU (a CI runner with AVX-512), and Orbit.exe crashes on a PC without those instructions.
+# AVX2/FMA/F16C: every x86-64 PC since 2013-2015.
+[env]
+GGML_NATIVE = "OFF"
+GGML_AVX = "ON"
+GGML_AVX2 = "ON"
+GGML_FMA = "ON"
+GGML_F16C = "ON"
+GGML_AVX512 = "OFF"
+# One C runtime inside Orbit.exe (whisper.cpp is C++): no Visual C++ Redistributable needed on the PC.
+CMAKE_MSVC_RUNTIME_LIBRARY = "MultiThreaded"
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
