@@ -17,9 +17,7 @@ import { NewProjectSheet } from './NewProjectSheet'
 import { CreateWorkspaceDialog, JoinWorkspaceDialog } from './WorkspaceDialogs'
 import { WorkspaceLogo } from './WorkspaceLogo'
 import { DRAWER_AREA_TITLES, type DrawerArea, drawerAreaOf, drawerSections, TASK_PRESETS, tasksHref } from './drawerAreas'
-import { ACCOUNT_NAV, ADMIN_NAV, allowedNav, WORKSPACE_NAV } from './settings/Shell'
-import { useAgentEnabled } from '../hooks/agent'
-import { useImprovementsEnabled } from '../hooks/improvements'
+import { ACCOUNT_NAV, ADMIN_NAV, allowedNav, useNavFlags, WORKSPACE_NAV } from './settings/Shell'
 import { isGuestRole } from '../data/guest'
 
 const DrawerContext = createContext<(() => void) | null>(null)
@@ -207,8 +205,7 @@ function Drawer({
 function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: number; onClose: () => void }) {
   const { colors, scheme } = useTheme()
   const { user, workspace, workspaces, selectWorkspace } = useOrbit()
-  const agentEnabled = useAgentEnabled()
-  const improvementsEnabled = useImprovementsEnabled()
+  const navFlags = useNavFlags()
   const insets = useSafeAreaInsets()
   const pathname = usePathname()
   const { view, project } = useGlobalSearchParams<{ view?: string; project?: string }>()
@@ -305,7 +302,7 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
           ) : area ? (
             <>
               <BackRow label={DRAWER_AREA_TITLES[area]} onPress={() => setMainMenuFor(area)} />
-              {drawerSections(area, allowedNav(navs[area], workspace.permissions, agentEnabled, guest, improvementsEnabled)).map((section) => (
+              {drawerSections(area, allowedNav(navs[area], workspace.permissions, navFlags, guest)).map((section) => (
                 <Fragment key={section.label}>
                   <Section label={section.label} />
                   {section.items.map((item) => (

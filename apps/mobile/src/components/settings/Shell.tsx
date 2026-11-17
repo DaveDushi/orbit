@@ -1,76 +1,24 @@
-import { type Href, router, useNavigation, usePathname } from 'expo-router'
-import type { Permission } from '@orbit/api/generated/types.gen'
+import { router, useNavigation, usePathname } from 'expo-router'
 import { type ReactNode, useState } from 'react'
 import { Pressable, RefreshControl, ScrollView, Switch, View } from 'react-native'
 
-import { guestMayOpen, isGuestRole } from '../../data/guest'
+import { isGuestRole } from '../../data/guest'
+import { ACCOUNT_NAV, ADMIN_NAV, allowedNav, type NavFlags, type SettingsNavItem, WORKSPACE_NAV } from '../../data/settings-nav'
 import { useAgentEnabled } from '../../hooks/agent'
+import { useAuthOptions } from '../../hooks/account'
 import { useImprovementsEnabled } from '../../hooks/improvements'
 import { useOrbit } from '../../orbit-context'
 import { alpha, cssColors, setSchemePreference, useLayout, useTheme } from '../../theme'
 import { Icon, IconButton, type IconName, KeyboardView, PaneHeader, PickerSheet, SafeAreaView, Spinner, Text } from '../../ui'
 import { MenuButton } from '../Drawer'
 
-export interface SettingsNavItem {
-  href: Href & string
-  label: string
-  icon: IconName
-  /** Shown only to roles that hold this permission. */
-  permission?: Permission
-  /** Shown only when the server runs the team agent. */
-  agent?: boolean
-  /** Shown only while Suggest a change is on (Admin → General). */
-  improvements?: boolean
+export { ACCOUNT_NAV, ADMIN_NAV, allowedNav, WORKSPACE_NAV }
+export type { NavFlags, SettingsNavItem }
+
+/** The server's switches the settings links follow: the team agent, Suggest a change and billing. */
+export function useNavFlags(): NavFlags {
+  return { agent: useAgentEnabled(), improvements: useImprovementsEnabled(), cloud: useAuthOptions().data?.billing_enabled ?? false }
 }
-
-
-/**
- * The web's settings areas at phone size. Keyboard shortcuts and Storage (this browser's chat cache) have no phone
- * counterpart, so they are left out.
- */
-export const WORKSPACE_NAV: readonly SettingsNavItem[] = [
-  { href: '/settings', label: 'General', icon: 'settings' },
-  { href: '/settings/members', label: 'Members', icon: 'people' },
-  { href: '/settings/emoji', label: 'Emoji', icon: 'emojiHappy', permission: 'chat.manage' },
-  { href: '/settings/stickers', label: 'Stickers', icon: 'sticker', permission: 'chat.manage' },
-  { href: '/settings/file-storage', label: 'File storage', icon: 'cloudConnection' },
-  { href: '/settings/github', label: 'GitHub', icon: 'link2' },
-  { href: '/settings/workspace-agentic', label: 'Agentic', icon: 'magicStar' },
-  { href: '/settings/api-tokens', label: 'API tokens', icon: 'key', permission: 'api_tokens.manage' },
-  { href: '/settings/apps', label: 'Apps', icon: 'category', permission: 'apps.manage' },
-  { href: '/settings/export', label: 'Export', icon: 'documentDownload', permission: 'workspace.export' },
-  { href: '/settings/danger-zone', label: 'Danger zone', icon: 'danger', permission: 'workspace.delete' },
-]
-
-/**
- * The links of `nav` this workspace role may open: the agent's page only when the server runs the agent, Feedback &
- * fixes only while Suggest a change is on, and for a guest only its own settings (`guestMayOpen`).
- */
-export function allowedNav<T extends SettingsNavItem>(nav: readonly T[], permissions: readonly Permission[], agent = false, guest = false, improvements = false): T[] {
-  return nav.filter((item) => (!item.permission || permissions.includes(item.permission)) && (!item.agent || agent) && (!item.improvements || improvements) && (!guest || guestMayOpen(item.href)))
-}
-
-export const ACCOUNT_NAV: readonly SettingsNavItem[] = [
-  { href: '/settings/profile', label: 'Profile', icon: 'user' },
-  { href: '/settings/security', label: 'Security', icon: 'lock' },
-  { href: '/settings/sessions', label: 'Sessions', icon: 'shield' },
-  { href: '/settings/appearance', label: 'Appearance', icon: 'brush' },
-  { href: '/settings/notifications', label: 'Notifications', icon: 'bell' },
-  { href: '/settings/agentic', label: 'Agentic', icon: 'magicStar' },
-]
-
-/** The web's Admin pages in its order; General is the area's first page, as `/admin` is on the web. */
-export const ADMIN_NAV: readonly SettingsNavItem[] = [
-  { href: '/settings/admin', label: 'General', icon: 'settings' },
-  { href: '/settings/admin/users', label: 'Users', icon: 'people' },
-  { href: '/settings/admin/email', label: 'Email', icon: 'mail' },
-  { href: '/settings/admin/limits', label: 'Limits', icon: 'chart' },
-  { href: '/settings/admin/feedback', label: 'Feedback & fixes', icon: 'lampOn', improvements: true },
-  { href: '/settings/admin/storage', label: 'Storage', icon: 'cloudConnection' },
-  { href: '/settings/admin/backups', label: 'Backups', icon: 'archiveBox' },
-  { href: '/settings/admin/audit', label: 'Audit log', icon: 'clipboardText' },
-  { href: '/settings/admin/jobs', label: 'Background jobs', icon: 'cpu' },
-]
 
 /**
  * The web's `SettingsShell` on a phone: the topbar, the two-column sub-navigation between hairlines, then the cards.
@@ -83,8 +31,7 @@ export function SettingsShell({ title, nav, children, refreshing, onRefresh }: {
   const pathname = usePathname()
   const newUi = useLayout() === 'new'
   const { workspace } = useOrbit()
-  const agent = useAgentEnabled()
-  const improvements = useImprovementsEnabled()
+  const flags = useNavFlags()
   const guest = isGuestRole(workspace.role)
   const muted = alpha(colors.mutedForeground, 0.7)
   return (
@@ -109,7 +56,7 @@ export function SettingsShell({ title, nav, children, refreshing, onRefresh }: {
         >
           {newUi || nav.length === 0 ? null : (
             <View accessibilityRole="tablist" accessibilityLabel={title} className="flex-row flex-wrap gap-0.5 py-3 border-t border-b border-border">
-              {allowedNav(nav, workspace.permissions, agent, guest, improvements).map((item) => {
+              {allowedNav(nav, workspace.permissions, flags, guest).map((item) => {
                 const active = pathname === item.href
                 return (
                   <Pressable

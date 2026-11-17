@@ -36,7 +36,7 @@ export default function GeneralScreen() {
       {guest ? null : <AppsCard />}
 
       <SettingsCard title="Account" description={`${user.email} on ${session.server}`} flush>
-        {allowedNav(ACCOUNT_NAV, workspace.permissions, true, guest).map((item, index) => (
+        {allowedNav(ACCOUNT_NAV, workspace.permissions, { agent: true }, guest).map((item, index) => (
           <SettingsRow key={item.href} first={index === 0} label={item.label} onPress={() => router.push(item.href)}>
             <RowIcon icon={item.icon} />
             <RowText title={item.label} />
