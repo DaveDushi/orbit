@@ -95,7 +95,7 @@ Core files: `TasksPage.tsx`, `components/TaskList.tsx`, `components/TaskBoard.ts
   read-only previews (`/tasks-trash/task/:id`, `/tasks-trash/project/:id`; `GET tasks/trash/{id}`, `projects/trash/{id}`
   and `projects/trash/{id}/tasks`) with who trashed the item (from the audit log), when, and when it is purged. Owners and
   admins (`can_purge_task`) delete forever (`DELETE tasks/{id}/permanent`, `projects/{id}/permanent`) or empty the trash
-  (`POST tasks/trash/empty`); a project is purged 200 tasks per write transaction. Mobile trash screens are not ported yet.
+  (`POST tasks/trash/empty`); a project is purged 200 tasks per write transaction. The iPhone trash lists, restores and purges (no preview yet: `.ai/iphone-audit.md`).
 - Recurring tasks (migration 20261113100000, `task_recurrences`; `repositories/task_recurrences.rs`): a rule per series
   (daily/weekly/monthly/yearly, interval, weekdays for weekly rules from the due date, base `due` or `completion`),
   anchored on the due date in the time zone of the member who set it. Completing an occurrence creates the next one in
@@ -269,7 +269,7 @@ favorites through `/pages/favorites` (list), `/pages/{page_id}/favorite` (PUT/DE
   block pasted from another workspace: no name, no URL), `unavailable` ("File not available": trash, deleted, folder).
   Drive has no rights per file: access = non-guest membership of the file's workspace. Markdown export and the token
   API write `[name](/drive/<folder>)`, `*Locked Drive file*` or `*File not available*` per reader. Task editors drop
-  the block; mobile shows a plain "Drive file" card. Orbit has no public share of Docs pages.
+  the block; the iPhone shows the file's name from the same resolve call and opens the file in its preview. Orbit has no public share of Docs pages.
   Image and File blocks (slash menu, file panel, paste and drop) upload to the page; video/audio blocks stay off. Image/file
   block URLs are limited to page-file paths, http(s) or empty (anything else is blanked on load and before saving).
 - Page files: `POST /pages/{page_id}/files` (multipart, one `file` field) → `PageFile` with a same-origin `url`
@@ -691,15 +691,15 @@ turns its routes, navigation and shortcuts off.
   `chat/<channel>.json` (public channels plus private channels/DMs the requester is in), `files/<blob>/<name>` and
   `README.txt`, streamed to a temp file, then stored at `exports/{ws}/{id}.zip` in the attachment tier (workspace
   bucket, installation bucket, or `<backups>/exports/`). Retention deletes it 7 days after it is ready. Layout:
-  `docs/operations.md` → Workspace export. Mobile has no export screen.
+  `docs/operations.md` → Workspace export. The iPhone has Settings → Export too.
 - Admin → General → Suggest a change (off by default; `docs/improvements.md`): installation admins send change
   requests from the account menu (dialog, at most 4,000 characters, with page path, window size and build revision)
   and follow them on Admin → Feedback & fixes (`/admin/feedback`, `features/improvements/`), where a `new` one can be
   withdrawn. Routes `/api/v1/admin/improvements*` (`apps/server/src/improvements.rs`, not in the OpenAPI contract;
   client `packages/api/src/improvements.ts`): admins only, agent sessions and tokens refused, sending answers 404
   `improvements_disabled` while off. An agent on the host reads and updates them with `orbit improvements list|update`
-  (statuses `new`, `building`, `review`, `live`, `declined`). The text is untrusted and shown as plain text only. Web
-  only; mobile has neither the menu item nor the page.
+  (statuses `new`, `building`, `review`, `live`, `declined`). The text is untrusted and shown as plain text only. The
+  iPhone has the page (Admin → Feedback & fixes) and Suggest a change in the account menu.
 
 ## Drive
 
@@ -715,7 +715,7 @@ list/grid, sort, "Load more" paging, multi-select (Ctrl/Cmd, Shift), drag-and-dr
 the computer, search with type and date filters, trash (delete forever only with `drive.purge`). Upload queue
 (`uploads.ts`): 2 files at a time, 4 parts at a time, the server's one part size per file, retries, resume after a
 reload by picking the same file. Folder ZIP in the browser with `client-zip` (streamed to disk where the browser can).
-Shared logic in `packages/api/src/drive.ts`. Mobile has no Drive screen yet.
+Shared logic in `packages/api/src/drive.ts`. The iPhone's Drive is in the dock; what it lacks is in `.ai/iphone-audit.md`.
 Media (M4): thumbnails (480 px, WebP) and video posters (1280 px) are made in the browser (`features/drive/media.ts`):
 from the local file after an upload, and for older files the first time they show in the grid (one at a time, once
 per tab). `POST .../nodes/{id}/media` records width/height/duration and returns PUT URLs; `.../media/complete` keeps

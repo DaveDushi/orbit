@@ -106,18 +106,23 @@ export interface ProblemResponse {
 
 const quiet: ProblemResponse = { notice: null, refetch: false, reconnect: false, readOnly: false, stop: false }
 
-export const PROBLEM_RESPONSES: Record<CollabProblem, ProblemResponse> = {
-  // the server's document was reset (new epoch) or the page was locked or unlocked
-  reset: { ...quiet, refetch: true, reconnect: true },
-  'read-only': { ...quiet, notice: 'This workspace is read-only.', refetch: true, reconnect: true, readOnly: true },
-  forbidden: { ...quiet, notice: 'You no longer have access to this page.', stop: true },
-  gone: { ...quiet, notice: 'This page was moved to the trash or deleted.', refetch: true, stop: true },
-  session: { ...quiet, notice: 'Your session ended. Sign in again.', refetch: true, stop: true },
-  'too-large': { ...quiet, notice: 'This page is too large to edit here. New changes are not saved.', readOnly: true },
-  protocol: { ...quiet, notice: 'This app version cannot edit this page. Update the app.', readOnly: true },
-  // the session reconnects by itself
-  'rate-limited': quiet,
+/** What the screen does about each problem of the editor of a docs page or of a task's description. */
+export function problemResponses(noun: 'page' | 'task'): Record<CollabProblem, ProblemResponse> {
+  return {
+    // the server's document was reset (new epoch) or the page was locked or unlocked
+    reset: { ...quiet, refetch: true, reconnect: true },
+    'read-only': { ...quiet, notice: 'This workspace is read-only.', refetch: true, reconnect: true, readOnly: true },
+    forbidden: { ...quiet, notice: `You no longer have access to this ${noun}.`, stop: true },
+    gone: { ...quiet, notice: `This ${noun} was moved to the trash or deleted.`, refetch: true, stop: true },
+    session: { ...quiet, notice: 'Your session ended. Sign in again.', refetch: true, stop: true },
+    'too-large': { ...quiet, notice: `This ${noun} is too large to edit here. New changes are not saved.`, readOnly: true },
+    protocol: { ...quiet, notice: `This app version cannot edit this ${noun}. Update the app.`, readOnly: true },
+    // the session reconnects by itself
+    'rate-limited': quiet,
+  }
 }
+
+export const PROBLEM_RESPONSES = problemResponses('page')
 
 const DOCS_LINK = /^\/docs\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[?#].*)?$/i
 

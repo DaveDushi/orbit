@@ -5,6 +5,17 @@
  */
 import {
   addChatMembers,
+  getChatLinkPreview,
+  createChatWebhook,
+  deleteChatWebhook,
+  getChatWebhookSigningSecret,
+  listChatWebhookDeliveries,
+  listChatWebhooks,
+  rotateChatWebhook,
+  rotateChatWebhookSigningSecret,
+  setChatWebhookInteractivity,
+  setChatWebhookRead,
+  updateChatWebhook,
   addChatReaction,
   archiveChatChannel,
   clickChatAction,
@@ -41,6 +52,7 @@ import {
   updateChatState,
   uploadChatFile,
 } from '@orbit/api/generated/sdk.gen'
+import type { ChatWebhookWithUrl, DeliveryRecord, LinkPreview, WebhookRecord } from '@orbit/api/generated/types.gen'
 import type { CardValues, SentAction } from './agent-card'
 import type { PageContext } from './ask-donna'
 import type {
@@ -375,4 +387,71 @@ export function serverHeaders(server: string, url: string, token: string): Recor
   }
   const own = origin(server)
   return own !== null && origin(url) === own ? { Authorization: `Bearer ${token}` } : {}
+}
+
+// ---- incoming webhooks (the web's Edit channel → Integrations): channel creator, workspace owners and admins
+
+export type { ChatWebhookWithUrl, DeliveryRecord as WebhookDelivery, WebhookRecord }
+
+const hook = (client: OrbitClient, workspaceId: string, conversationId: string, webhookId: string) => ({
+  client,
+  path: { workspace_id: workspaceId, conversation_id: conversationId, webhook_id: webhookId },
+  throwOnError: true as const,
+})
+
+export async function webhooks(client: OrbitClient, workspaceId: string, conversationId: string): Promise<WebhookRecord[]> {
+  return (await listChatWebhooks({ client, path: { workspace_id: workspaceId, conversation_id: conversationId }, throwOnError: true })).data
+}
+
+/** A new webhook and its secret URL, which the server shows only this once. */
+export async function createWebhook(client: OrbitClient, workspaceId: string, conversationId: string, name: string, iconUrl: string | null): Promise<ChatWebhookWithUrl> {
+  return (await createChatWebhook({ client, path: { workspace_id: workspaceId, conversation_id: conversationId }, body: { name, icon_url: iconUrl }, throwOnError: true })).data
+}
+
+/** What a webhook write changes. `rotate` makes a new URL (the old one stops); the answer then has the new URL. */
+export type WebhookWrite =
+  | { kind: 'update'; name: string; iconUrl: string | null }
+  | { kind: 'rotate' }
+  | { kind: 'read'; canRead: boolean }
+  | { kind: 'interactivity'; requestUrl: string | null; events: boolean }
+  | { kind: 'delete' }
+
+export async function writeWebhook(client: OrbitClient, workspaceId: string, conversationId: string, webhookId: string, write: WebhookWrite): Promise<ChatWebhookWithUrl | null> {
+  const ids = hook(client, workspaceId, conversationId, webhookId)
+  switch (write.kind) {
+    case 'update':
+      await updateChatWebhook({ ...ids, body: { name: write.name, icon_url: write.iconUrl } })
+      return null
+    case 'rotate':
+      return (await rotateChatWebhook(ids)).data
+    case 'read':
+      await setChatWebhookRead({ ...ids, body: { can_read: write.canRead } })
+      return null
+    case 'interactivity':
+      await setChatWebhookInteractivity({ ...ids, body: { request_url: write.requestUrl, events: write.requestUrl !== null && write.events } })
+      return null
+    case 'delete':
+      await deleteChatWebhook(ids)
+      return null
+  }
+}
+
+/** The secret that signs clicks to the request URL; `rotate` makes a new one first. */
+export async function webhookSigningSecret(client: OrbitClient, workspaceId: string, conversationId: string, webhookId: string, rotate: boolean): Promise<string> {
+  const ids = hook(client, workspaceId, conversationId, webhookId)
+  return (await (rotate ? rotateChatWebhookSigningSecret(ids) : getChatWebhookSigningSecret(ids))).data.signing_secret
+}
+
+export async function webhookDeliveries(client: OrbitClient, workspaceId: string, conversationId: string, webhookId: string): Promise<DeliveryRecord[]> {
+  return (await listChatWebhookDeliveries(hook(client, workspaceId, conversationId, webhookId))).data
+}
+
+/** The web's "Try it": a curl command that posts a message to the webhook URL. */
+export const curlExample = (url: string) => `curl -X POST -H 'Content-Type: application/json' \\\n  -d '{"text": "Deploy **finished** :rocket:"}' \\\n  '${url}'`
+
+export type { LinkPreview }
+
+/** The preview card of another site's URL (the server reads the page); `null` when it has none. */
+export async function linkPreview(client: OrbitClient, workspaceId: string, url: string): Promise<LinkPreview | null> {
+  return (await getChatLinkPreview({ client, path: { workspace_id: workspaceId }, query: { url }, throwOnError: true })).data.preview ?? null
 }

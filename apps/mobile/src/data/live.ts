@@ -25,7 +25,7 @@ export interface WorkspaceEvent {
   workspaces_changed?: boolean
   /** The signed-in person's profile changed (name, avatar). */
   profile_changed?: boolean
-  /** Every change since the last event is a saved view of the web: the app has none, so nothing to refresh. */
+  /** Every change since the last event is a saved view: only the views refresh. */
   views_only?: boolean
 }
 
@@ -46,7 +46,7 @@ export const workspaceEventChangesProfile = (event: WorkspaceEvent) => event.kin
 
 /** The queries a workspace event makes stale. A resync, or a change to the workspace list, also refreshes the list. */
 export function workspaceEventKeys(event: WorkspaceEvent, workspaceId: string): QueryKey[] {
-  if (event.kind !== 'resync_required' && event.views_only === true) return []
+  if (event.kind !== 'resync_required' && event.views_only === true) return [keys.views(workspaceId)]
   const list = event.kind === 'resync_required' || event.workspaces_changed === true ? [keys.workspaces] : []
   return [...workspaceDataKeys(workspaceId), ...list]
 }
@@ -83,8 +83,8 @@ export type ChatAction =
 
 /**
  * Messages and read states are patched in place: they arrive whole. A new message also moves its conversation in the
- * DM order, so the conversation list refetches. Conversations, categories and custom emoji refetch; the rest
- * (stickers, ephemeral answers) the app does not show. Threads are patched in `chat-cache.ts`.
+ * DM order, so the conversation list refetches. Conversations, categories, custom emoji and stickers refetch; the rest
+ * (ephemeral answers) the app does not show. Threads are patched in `chat-cache.ts`.
  */
 export function chatActions(event: ChatEvent, workspaceId: string): ChatAction[] {
   switch (event.type) {
@@ -108,6 +108,8 @@ export function chatActions(event: ChatEvent, workspaceId: string): ChatAction[]
       return [{ kind: 'invalidate', keys: [keys.chatCategories(workspaceId)] }]
     case 'emoji.changed':
       return [{ kind: 'invalidate', keys: [keys.chatEmoji(workspaceId)] }]
+    case 'stickers.changed':
+      return [{ kind: 'invalidate', keys: [['chat-stickers', workspaceId], ['custom-stickers', workspaceId]] }]
     default:
       return []
   }

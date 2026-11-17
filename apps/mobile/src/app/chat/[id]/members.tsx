@@ -1,9 +1,10 @@
-import { router, useLocalSearchParams } from 'expo-router'
+import { useLocalSearchParams } from 'expo-router'
 import { useState } from 'react'
 import { Pressable, ScrollView, View } from 'react-native'
 
 import { AddPeopleSheet } from '../../../components/chat/ChannelSheets'
 import { ChatPane } from '../../../components/chat/Pane'
+import { useOpenProfile } from '../../../components/ProfileSheet'
 import { Badge } from '../../../components/settings/Shell'
 import { conversationPermissions, conversationTitle } from '../../../data/chat'
 import * as chat from '../../../data/chat-api'
@@ -42,10 +43,7 @@ function MembersScreenContent() {
     .flatMap((userId) => members.data?.find((member) => member.user_id === userId) ?? [])
     .sort((a, b) => a.display_name.localeCompare(b.display_name))
 
-  const message = async (userId: string) => {
-    const dm = await run('Could not open the conversation', (client, workspaceId) => chat.openDm(client, workspaceId, userId === user.id ? [] : [userId]))
-    if (dm) router.push(`/chat/${dm.id}`)
-  }
+  const openProfile = useOpenProfile()
   const remove = async (userId: string, name: string) => {
     if (!conversation || !(await confirmAction(`Remove ${name}?`, `${name} leaves #${conversation.name} and needs an invitation to come back.`, 'Remove'))) return
     await run(`Could not remove ${name}`, (client, workspaceId) => chat.removeMember(client, workspaceId, conversation.id, userId))
@@ -68,8 +66,8 @@ function MembersScreenContent() {
             <View key={member.user_id} className="flex-row items-center gap-1">
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={member.user_id === user.id ? 'Message yourself' : `Message ${member.display_name}`}
-                onPress={() => void message(member.user_id)}
+                accessibilityLabel={`Profile of ${member.display_name}`}
+                onPress={() => openProfile(member.user_id, member.display_name)}
                 className="flex-1 h-12 flex-row items-center gap-3 px-2 rounded-md active:bg-muted/80"
               >
                 <Avatar id={member.user_id} name={member.display_name} size={32} />

@@ -91,3 +91,21 @@ export function useProjectMemberWrites(projectId: string) {
     remove: useMutation({ mutationFn: (userId: string) => project.removeMember(client, workspaceId, projectId, userId), onSettled: refresh }),
   }
 }
+
+/** Under the `projects` prefix, so the workspace events socket refreshes the rules with the projects. */
+const labelRulesKey = (workspaceId: string, projectId: string) => ['projects', workspaceId, projectId, 'label-rules'] as const
+
+/** The project's label rules; only owners and admins (`label_rules.manage`) may read them. */
+export function useLabelRules(projectId: string, enabled: boolean) {
+  const { client, workspaceId } = useOrbit()
+  return useQuery({ queryKey: labelRulesKey(workspaceId, projectId), queryFn: () => project.labelRules(client, workspaceId, projectId), enabled })
+}
+
+export function useLabelRuleWrite(projectId: string) {
+  const { client, workspaceId } = useOrbit()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (write: project.RuleWrite) => project.writeLabelRule(client, workspaceId, projectId, write),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: labelRulesKey(workspaceId, projectId) }),
+  })
+}

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { absoluteUrl, blockId, blockLines, descendantsOf, docSpaces, favoritePages, iconOf, pageTitle, paragraphBlocks, spaceMove, spaceRequest, trashPrompt, validCoverUrl, visibleThreads } from './docs'
+import { absoluteUrl, blockId, canChangeComment, canDeleteThread, blockLines, descendantsOf, docSpaces, favoritePages, iconOf, pageTitle, paragraphBlocks, spaceMove, spaceRequest, trashPrompt, validCoverUrl, visibleThreads } from './docs'
 import type { PageSummary, Teamspace } from './orbit'
 
 const page = (id: string, fields: Partial<PageSummary>): PageSummary => ({
@@ -124,4 +124,14 @@ test('a version preview reads the text of nested blocks and tables', () => {
   ]
   expect(blockLines(blocks)).toEqual(['Plan', 'Ship it', 'nested', 'A | B'])
   expect(blockLines(blocks, 2)).toEqual(['Plan', 'Ship it'])
+})
+
+test('authors change their own live comments; a creator deletes a thread nobody else has a live comment in', () => {
+  const mine = { author_id: 'me', deleted_at: null }
+  const theirs = { author_id: 'you', deleted_at: null }
+  expect([canChangeComment(mine, 'me'), canChangeComment(theirs, 'me'), canChangeComment({ ...mine, deleted_at: '2026-11-17T00:00:00Z' }, 'me')]).toEqual([true, false, false])
+  expect(canDeleteThread({ created_by: 'me', comments: [mine] }, 'me')).toBe(true)
+  expect(canDeleteThread({ created_by: 'me', comments: [mine, theirs] }, 'me')).toBe(false)
+  expect(canDeleteThread({ created_by: 'me', comments: [mine, { ...theirs, deleted_at: '2026-11-17T00:00:00Z' }] }, 'me')).toBe(true)
+  expect(canDeleteThread({ created_by: 'you', comments: [mine] }, 'me')).toBe(false)
 })

@@ -1,8 +1,9 @@
 'use dom'
 
-// The page body editor: BlockNote with Orbit's schema (`@orbit/editor`), bound to the page's Y.Doc over the collab
-// socket, so it co-edits the same document as the web. It runs in a web view; the screen around it is native and
-// talks to it through props, native actions (async functions) and `run` (the toolbar's commands).
+// The page body editor (and a task's description): BlockNote with Orbit's schema (`@orbit/editor`), bound to the
+// document's Y.Doc over the collab socket, so it co-edits the same document as the web. It runs in a web view; the
+// screen around it is native and talks to it through props, native actions (async functions) and `run` (the
+// toolbar's commands).
 import '@blocknote/react/style.css'
 import './PageEditor.css'
 
@@ -11,13 +12,13 @@ import { BlockNoteViewRaw, useCreateBlockNote } from '@blocknote/react'
 import { setEditableInPlace } from '@orbit/editor/editable'
 import { commentMarks } from '@orbit/editor/commentMarks'
 import { CollabSession, type CollabProblem, type CollabState } from '@orbit/editor/collab/session'
-import { collabSocket, COLLAB_FRAGMENT } from '@orbit/editor/collab/target'
+import { type CollabKind, collabSocket, COLLAB_FRAGMENT } from '@orbit/editor/collab/target'
 import { ticketWebSocket, type TicketResult } from '@orbit/editor/collab/ticketSocket'
 import { watchDeletedFiles } from '@orbit/editor/deletedFiles'
 import { isSafeLinkHref } from '@orbit/editor/links'
 import { CALLOUT_DEFAULT_EMOJI, createEditorSchemas, type PageEditorInstance } from '@orbit/editor/schema'
 import { type DOMImperativeFactory, useDOMImperativeHandle } from 'expo/dom'
-import { createContext, type CSSProperties, type Ref, use, useEffect, useRef, useState } from 'react'
+import { createContext, type CSSProperties, type Ref, use, useEffect, useMemo, useRef, useState } from 'react'
 import { WebsocketProvider } from 'y-websocket'
 import * as Y from 'yjs'
 
@@ -51,8 +52,11 @@ export interface PageEditorProps {
   /** The Orbit server, `https://…` (the socket opens on the same host). */
   server: string
   workspaceId: string
-  pageId: string
-  /** `Page.collab_epoch`. */
+  /** A docs page, or a task's description (the task schema: no page cards, no Drive files). */
+  kind: CollabKind
+  /** The page or task id. */
+  docId: string
+  /** `Page.collab_epoch` / `Task.collab_epoch`. */
   epoch: string
   /** Bump to drop the document and connect again (after a reset). */
   generation: number
@@ -71,6 +75,10 @@ export interface PageEditorProps {
   /** An Orbit file an admin deleted (it answers 410): its file block says "Deleted file". */
   fileDeleted: (url: string) => Promise<boolean>
   openPage: (pageId: string) => Promise<void>
+  /** A Drive file block's name and whether the reader may open it (the server checks Drive access on every read). */
+  resolveDriveFile: (workspaceId: string, nodeId: string) => Promise<DriveFileInfo>
+  /** Opens a Drive file block's file in the app's file preview. */
+  openDriveFile: (workspaceId: string, nodeId: string, name: string) => Promise<void>
   openUrl: (url: string) => Promise<void>
   onStatus: (state: CollabState) => Promise<void>
   onProblem: (problem: CollabProblem) => Promise<void>
@@ -83,14 +91,29 @@ export interface PageEditorProps {
   dom?: import('expo/dom').DOMProps
 }
 
+/** What a Drive file block shows: the file's name, or why it cannot be opened. */
+export interface DriveFileInfo {
+  name: string | null
+  /** `available`, `locked` (no access to it) or `unavailable` (gone). */
+  status: string
+}
+
 interface Lookups {
   pages: Record<string, PageCardInfo>
   members: Record<string, string>
   openPage: (pageId: string) => void
+  resolveDriveFile: (workspaceId: string, nodeId: string) => Promise<DriveFileInfo>
+  openDriveFile: (workspaceId: string, nodeId: string, name: string) => void
 }
 
 // Node views render through portals inside the editor view, so they see this provider.
-const LookupsContext = createContext<Lookups>({ pages: {}, members: {}, openPage: () => {} })
+const LookupsContext = createContext<Lookups>({
+  pages: {},
+  members: {},
+  openPage: () => {},
+  resolveDriveFile: async () => ({ name: null, status: 'unavailable' }),
+  openDriveFile: () => {},
+})
 
 function PageCard({ block }: { block: { props: { pageId: string } } }) {
   const { pages, openPage } = use(LookupsContext)
@@ -115,16 +138,37 @@ function PageCard({ block }: { block: { props: { pageId: string } } }) {
 }
 
 /**
- * A Drive file block (web: "Insert from Drive"). The app has no Drive yet, so it shows a plain card without the file's
- * name (the web app asks the server, which checks the reader's Drive access on every read).
+ * A Drive file block (web: "Insert from Drive"): the file's name from the server, which checks the reader's Drive
+ * access on every read; a tap opens the file in the app's preview.
  */
-function DriveFileCard() {
+function DriveFileCard({ block }: { block: { props: { workspaceId: string; nodeId: string } } }) {
+  const { resolveDriveFile, openDriveFile } = use(LookupsContext)
+  const { workspaceId, nodeId } = block.props
+  const [info, setInfo] = useState<DriveFileInfo | null>(null)
+  useEffect(() => {
+    let live = true
+    if (nodeId) void resolveDriveFile(workspaceId, nodeId).then((next) => live && setInfo(next), () => live && setInfo({ name: null, status: 'unavailable' }))
+    return () => {
+      live = false
+    }
+  }, [resolveDriveFile, workspaceId, nodeId])
+  const available = info?.status === 'available' && info.name !== null
   return (
-    <div contentEditable={false} className="orbit-page-card" data-state="drive-file">
+    <button
+      type="button"
+      contentEditable={false}
+      className="orbit-page-card"
+      data-state={available ? 'ok' : 'drive-file'}
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.preventDefault()
+        if (available) openDriveFile(workspaceId, nodeId, info.name!)
+      }}
+    >
       <span className="orbit-page-card-icon">📎</span>
-      <span className="orbit-page-card-title">Drive file</span>
-      <span className="orbit-page-card-note">Open on the web</span>
-    </div>
+      <span className="orbit-page-card-title">{info?.name ?? 'Drive file'}</span>
+      {info && !available ? <span className="orbit-page-card-note">{info.status === 'locked' ? 'No access' : 'Not available'}</span> : null}
+    </button>
   )
 }
 
@@ -151,7 +195,7 @@ function Mention({ inlineContent }: { inlineContent: { props: { userId: string; 
 
 const COLORED_TOKENS = new Set(['keyword', 'string', 'comment', 'class', 'property', 'entity', 'jsxliterals'])
 
-const { pageEditorSchema } = createEditorSchemas({
+const { pageEditorSchema, taskEditorSchema } = createEditorSchemas({
   page: { render: PageCard },
   driveFile: { render: DriveFileCard },
   callout: { render: Callout },
@@ -168,7 +212,7 @@ interface Connection {
 const CONNECTING: CollabState = { status: 'connecting', problem: null, ready: false }
 
 export default function PageEditor(props: PageEditorProps) {
-  const { server, workspaceId, pageId, epoch, generation, editable, theme, colors, pages, members } = props
+  const { server, workspaceId, kind, docId, epoch, generation, editable, theme, colors, pages, members } = props
   // Native actions arrive as new functions with every prop update; the socket and the editor read the latest.
   const actions = useRef(props)
   useEffect(() => {
@@ -191,7 +235,7 @@ export default function PageEditor(props: PageEditorProps) {
 
   useEffect(() => {
     const doc = new Y.Doc()
-    const { serverUrl, room, params } = collabSocket(server, { workspaceId, kind: 'pages', id: pageId, epoch })
+    const { serverUrl, room, params } = collabSocket(server, { workspaceId, kind, id: docId, epoch })
     const provider = new WebsocketProvider(serverUrl, room, doc, {
       params,
       disableBc: true,
@@ -214,7 +258,7 @@ export default function PageEditor(props: PageEditorProps) {
       current.destroy()
       setSession(null)
     }
-  }, [server, workspaceId, pageId, epoch, generation])
+  }, [server, workspaceId, kind, docId, epoch, generation])
 
   useEffect(() => {
     const root = rootRef.current
@@ -239,13 +283,24 @@ export default function PageEditor(props: PageEditorProps) {
     '--orbit-primary': colors.primary,
   } as CSSProperties
 
+  const lookups = useMemo<Lookups>(
+    () => ({
+      pages,
+      members,
+      openPage: (id) => void actions.current.openPage(id),
+      resolveDriveFile: (workspace, node) => actions.current.resolveDriveFile(workspace, node),
+      openDriveFile: (workspace, node, name) => void actions.current.openDriveFile(workspace, node, name),
+    }),
+    [pages, members],
+  )
   const state = session?.state ?? CONNECTING
   return (
     <div ref={rootRef} className="orbit-page-editor" data-theme={theme} style={style}>
       {session && state.ready ? (
-        <LookupsContext value={{ pages, members, openPage: (id) => void actions.current.openPage(id) }}>
+        <LookupsContext value={lookups}>
           <Editor
-            key={`${pageId}:${epoch}:${generation}`}
+            key={`${kind}:${docId}:${epoch}:${generation}`}
+            kind={kind}
             connection={session.connection}
             editable={editable && state.problem !== 'read-only'}
             theme={theme}
@@ -255,7 +310,7 @@ export default function PageEditor(props: PageEditorProps) {
           />
         </LookupsContext>
       ) : (
-        <div className="orbit-page-editor-loading" aria-label="Loading the page">
+        <div className="orbit-page-editor-loading" aria-label={kind === 'tasks' ? 'Loading the description' : 'Loading the page'}>
           <span />
           <span />
           <span />
@@ -266,6 +321,7 @@ export default function PageEditor(props: PageEditorProps) {
 }
 
 interface EditorProps {
+  kind: CollabKind
   connection: Connection
   editable: boolean
   theme: 'light' | 'dark'
@@ -274,13 +330,14 @@ interface EditorProps {
   editorRef: { current: PageEditorInstance | null }
 }
 
-function Editor({ connection, editable, theme, server, actions, editorRef }: EditorProps) {
+function Editor({ kind, connection, editable, theme, server, actions, editorRef }: EditorProps) {
   const [files] = useState(() => new Map<string, Promise<string>>())
   const rootRef = useRef<HTMLDivElement>(null)
   const editor: PageEditorInstance = useCreateBlockNote(
     // The server initializes every document, so there is no initial content: the fragment is the page.
     withCollaboration({
-      schema: pageEditorSchema,
+      // a task's description has the task schema: the page schema would keep blocks the server's sanitizer drops
+      schema: (kind === 'tasks' ? taskEditorSchema : pageEditorSchema) as typeof pageEditorSchema,
       // Without the comment mark, y-prosemirror would drop the text of anchored comments for everyone.
       extensions: [commentMarks()],
       collaboration: {

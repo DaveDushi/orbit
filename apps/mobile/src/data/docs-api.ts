@@ -9,6 +9,8 @@ import {
   createPageThread,
   createTeamspace,
   deletePage,
+  deletePageComment,
+  deletePageThread,
   deleteTeamspace,
   duplicatePage,
   emptyPageTrash,
@@ -20,12 +22,16 @@ import {
   listPageTrash,
   moveTeamspace,
   purgePage,
+  resolvePageDriveFiles,
+  reopenPageThread,
+  resolvePageThread,
   removePageFavorite,
   restorePage,
   restorePageVersion,
   setPageLock,
   socketTicket,
   updatePage,
+  updatePageComment,
   updateTeamspace,
   uploadPageFile,
 } from '@orbit/api/generated/sdk.gen'
@@ -69,16 +75,28 @@ export async function uploadPageImage(client: OrbitClient, workspaceId: string, 
 }
 
 /**
- * A one-time ticket for the page editor's socket (`…/collab?ticket=`), which cannot send the bearer token. It opens
- * only the socket of `pageId`.
+ * A one-time ticket for the editor's socket (`…/collab?ticket=`), which cannot send the bearer token. It opens only
+ * the socket of that page, or of that task's description.
  */
-export async function collabTicket(client: OrbitClient, pageId: string): Promise<TicketResult> {
+export async function collabTicket(client: OrbitClient, id: string, kind: 'page' | 'task' = 'page'): Promise<TicketResult> {
   try {
-    return { ok: true, ticket: (await socketTicket({ client, body: { kind: 'page', id: pageId }, throwOnError: true })).data.ticket }
+    return { ok: true, ticket: (await socketTicket({ client, body: { kind, id }, throwOnError: true })).data.ticket }
   } catch (error) {
     const status = (error as { status?: unknown }).status
     return { ok: false, status: typeof status === 'number' ? status : 0 }
   }
+}
+
+/** A Drive file block's name and status for this reader (the server checks the page and the file). */
+export async function resolveDriveFile(client: OrbitClient, workspaceId: string, pageId: string, fileWorkspaceId: string, nodeId: string): Promise<{ name: string | null; status: string }> {
+  const { data } = await resolvePageDriveFiles({
+    client,
+    path: { workspace_id: workspaceId, page_id: pageId },
+    body: { references: [{ workspace_id: fileWorkspaceId, node_id: nodeId }] },
+    throwOnError: true,
+  })
+  const item = data.items[0]
+  return { name: item?.file?.name ?? null, status: item?.status ?? 'unavailable' }
 }
 
 /** An Orbit file (`/api/…`) an admin deleted: the server answers 410. */
@@ -177,6 +195,32 @@ export async function commentOnPage(client: OrbitClient, workspaceId: string, pa
 /** A plain-text reply: one comment paragraph per line, as the web's comment editor writes them. */
 export async function replyToThread(client: OrbitClient, workspaceId: string, pageId: string, threadId: string, body: Record<string, unknown>[]): Promise<void> {
   await createPageComment({ client, path: { ...pagePath(workspaceId, pageId), thread_id: threadId }, body: { body }, throwOnError: true })
+}
+
+/** What a reader does to a comment thread (the web's thread buttons; `docs.ts` has who may). */
+export type ThreadAction =
+  | { kind: 'resolve' | 'reopen' | 'delete-thread'; threadId: string }
+  | { kind: 'edit'; threadId: string; commentId: string; body: Record<string, unknown>[] }
+  | { kind: 'delete-comment'; threadId: string; commentId: string }
+
+export async function threadAction(client: OrbitClient, workspaceId: string, pageId: string, action: ThreadAction): Promise<void> {
+  const thread = { ...pagePath(workspaceId, pageId), thread_id: action.threadId }
+  switch (action.kind) {
+    case 'resolve':
+      await resolvePageThread({ client, path: thread, throwOnError: true })
+      return
+    case 'reopen':
+      await reopenPageThread({ client, path: thread, throwOnError: true })
+      return
+    case 'delete-thread':
+      await deletePageThread({ client, path: thread, throwOnError: true })
+      return
+    case 'edit':
+      await updatePageComment({ client, path: { ...thread, comment_id: action.commentId }, body: { body: action.body }, throwOnError: true })
+      return
+    case 'delete-comment':
+      await deletePageComment({ client, path: { ...thread, comment_id: action.commentId }, throwOnError: true })
+  }
 }
 
 export type { PageVersion, PageVersionSummary }

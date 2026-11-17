@@ -7,7 +7,10 @@ import { type ReactNode, useState } from 'react'
 import { Platform, Pressable, View } from 'react-native'
 
 import type { Person } from '../../data/chat'
-import type { LabelRecord, StatusRecord, TaskRecord } from '../../data/orbit'
+import type { TaskRecurrence, TaskRecurrenceBase } from '@orbit/api/generated/types.gen'
+import { DEFAULT_RECURRENCE, MAX_RECURRENCE_INTERVAL, normalizeRecurrence, RECURRENCE_FREQUENCIES, RECURRENCE_WEEKDAYS, recurrenceUnit } from '@orbit/api/recurrence'
+
+import type { LabelRecord, ProjectRecord, StatusRecord, TaskRecord } from '../../data/orbit'
 import {
   cycleDates,
   cycleLabel,
@@ -352,6 +355,105 @@ export function SourceForm({ value, onSave }: { value: string | null | undefined
         <Button label="Save" onPress={() => onSave(sourceValue(draft))} />
       </View>
     </View>
+  )
+}
+
+/**
+ * The web's Repeat popover: every N days, weeks, months or years, the weekdays of a weekly rule counted from the due
+ * date, and whether the next date counts from the due date or from completion. Save sends it; Stop repeating removes it.
+ */
+export function RecurrenceForm({ value, onSave }: { value: TaskRecurrence | null | undefined; onSave: (rule: TaskRecurrence | null) => void }) {
+  const [draft, setDraft] = useState<TaskRecurrence>(value ?? DEFAULT_RECURRENCE)
+  const [intervalText, setIntervalText] = useState(String(draft.interval))
+  const update = (changes: Partial<TaskRecurrence>) => setDraft((current) => normalizeRecurrence({ ...current, ...changes }))
+  const showsWeekdays = draft.frequency === 'weekly' && draft.base === 'due'
+  return (
+    <View className="px-4 pb-2 gap-4">
+      <View className="flex-row items-end gap-2">
+        <View className="w-20">
+          <Input
+            label="Every"
+            keyboardType="number-pad"
+            value={intervalText}
+            maxLength={String(MAX_RECURRENCE_INTERVAL).length}
+            onChangeText={(text) => {
+              setIntervalText(text)
+              const count = Number(text)
+              if (Number.isInteger(count) && count >= 1) update({ interval: count })
+            }}
+            onBlur={() => setIntervalText(String(draft.interval))}
+          />
+        </View>
+        <Toggles
+          label="Frequency"
+          options={RECURRENCE_FREQUENCIES.map((frequency) => ({ value: frequency, label: recurrenceUnit(frequency, draft.interval) }))}
+          selected={[draft.frequency]}
+          onToggle={(frequency) => update({ frequency })}
+        />
+      </View>
+      {showsWeekdays ? (
+        <Toggles
+          label="On"
+          options={RECURRENCE_WEEKDAYS.map((day) => ({ value: day.value, label: day.letter, accessibilityLabel: day.label }))}
+          selected={draft.weekdays}
+          onToggle={(day) => update({ weekdays: draft.weekdays.includes(day) ? draft.weekdays.filter((item) => item !== day) : [...draft.weekdays, day] })}
+        />
+      ) : null}
+      <Toggles<TaskRecurrenceBase>
+        label="Next date from"
+        options={[
+          { value: 'due', label: 'Due date' },
+          { value: 'completion', label: 'Completion date' },
+        ]}
+        selected={[draft.base]}
+        onToggle={(base) => update({ base })}
+      />
+      <Text className="text-[12px] leading-[17px] text-muted-foreground">
+        Due date: a fixed calendar, such as every Monday. Completing late skips the missed dates. Completion date: the next due date counts from the day you complete the task.
+      </Text>
+      <View className="flex-row justify-end gap-2">
+        {value ? <Button label="Stop repeating" variant="ghost" onPress={() => onSave(null)} /> : null}
+        <Button label={value ? 'Save' : 'Repeat'} onPress={() => onSave(draft)} />
+      </View>
+    </View>
+  )
+}
+
+/** A row of toggle buttons (the web's toggle groups). */
+function Toggles<V extends string>({ label, options, selected, onToggle }: { label: string; options: readonly { value: V; label: string; accessibilityLabel?: string }[]; selected: readonly V[]; onToggle: (value: V) => void }) {
+  return (
+    <View className="gap-1.5 flex-1">
+      <Text className="font-noto-medium text-[12px] text-muted-foreground">{label}</Text>
+      <View accessibilityRole="radiogroup" accessibilityLabel={label} className="flex-row flex-wrap gap-1">
+        {options.map((option) => {
+          const on = selected.includes(option.value)
+          return (
+            <Pressable
+              key={option.value}
+              accessibilityRole="button"
+              accessibilityLabel={option.accessibilityLabel ?? option.label}
+              accessibilityState={{ selected: on }}
+              onPress={() => onToggle(option.value)}
+              className={`h-8 min-w-8 px-2.5 items-center justify-center rounded-md border ${on ? 'bg-primary border-primary' : 'border-border active:bg-muted'}`}
+            >
+              <Text className={`text-[13px] ${on ? 'text-primary-foreground' : 'text-foreground'}`}>{option.label}</Text>
+            </Pressable>
+          )
+        })}
+      </View>
+    </View>
+  )
+}
+
+/** The projects the task can move to (the web's "Move to project"); the current one has a check. */
+export function ProjectChoices({ value, onSelect }: { value: string; onSelect: (project: ProjectRecord) => void }) {
+  const projects = useProjects()
+  return (
+    <SheetList>
+      {(projects.data ?? []).map((project) => (
+        <SheetRow key={project.id} label={project.name} leading={<Dot color={project.color} />} checked={project.id === value} onPress={() => onSelect(project)} />
+      ))}
+    </SheetList>
   )
 }
 

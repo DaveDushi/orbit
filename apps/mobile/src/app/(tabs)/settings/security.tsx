@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { Image, Linking, Share, View } from 'react-native'
 
-import { Dialog, PromptDialog, type PromptRequest } from '../../../components/settings/Dialog'
+import { ConfirmDialog, type ConfirmRequest, Dialog, PromptDialog, type PromptRequest } from '../../../components/settings/Dialog'
 import { ACCOUNT_NAV, Badge, Note, RowIcon, RowText, SettingsCard, SettingsRow, SettingsShell } from '../../../components/settings/Shell'
 import { type TotpSetup, twoFactorSummary } from '../../../data/account-api'
-import { useTwoFactor, useTwoFactorWrites } from '../../../hooks/account'
+import { usePasskeys, useRemovePasskey, useTwoFactor, useTwoFactorWrites } from '../../../hooks/account'
 import { errorMessage } from '../../../session-context'
 import { Button, Input, Text } from '../../../ui'
 
@@ -72,9 +72,7 @@ export default function SecurityScreen() {
         ) : null}
       </SettingsCard>
 
-      <SettingsCard title="Passkeys" description="Sign in with your fingerprint, face or device screen lock instead of a password.">
-        <Note>Add and remove passkeys in Orbit in a browser: creating one needs the browser's passkey prompt.</Note>
-      </SettingsCard>
+      <PasskeysCard />
 
       <PromptDialog request={prompt} onClose={() => setPrompt(null)} />
       <SetupDialog
@@ -166,5 +164,46 @@ function CopyValue({ label, value }: { label: string; value: string }) {
         <Button label="Share" variant="outline" size="sm" onPress={() => void Share.share({ message: value })} />
       </View>
     </View>
+  )
+}
+
+/** The web's Passkeys card: every passkey with its last use, and Remove. Adding one needs a browser's passkey prompt. */
+function PasskeysCard() {
+  const passkeys = usePasskeys()
+  const remove = useRemovePasskey()
+  const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
+  const list = passkeys.data ?? []
+  const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+  return (
+    <SettingsCard title="Passkeys" description="Sign in with your fingerprint, face or device screen lock instead of a password." flush>
+      {passkeys.isPending ? <View className="p-4"><Note loading>Loading passkeys…</Note></View> : null}
+      {passkeys.isError ? <View className="p-4"><Note error>Passkeys could not be loaded. {errorMessage(passkeys.error)}</Note></View> : null}
+      {list.map((passkey, index) => (
+        <SettingsRow key={passkey.id} first={index === 0}>
+          <RowIcon icon="key" />
+          <RowText title={passkey.name} subtitle={`Added ${day(passkey.created_at)} · ${passkey.last_used_at ? `last used ${day(passkey.last_used_at)}` : 'never used'}`} />
+          <Button
+            label="Remove"
+            size="sm"
+            variant="outline"
+            disabled={remove.isPending}
+            onPress={() =>
+              setConfirm({
+                title: `Remove ${passkey.name}?`,
+                description: 'You can no longer sign in with this passkey.',
+                confirmLabel: 'Remove',
+                danger: true,
+                onConfirm: () => remove.mutate(passkey.id),
+              })
+            }
+          />
+        </SettingsRow>
+      ))}
+      <View className={`p-4 gap-2 ${list.length > 0 ? 'border-t border-border' : ''}`}>
+        {remove.isError ? <Note error>The passkey could not be removed. {errorMessage(remove.error)}</Note> : null}
+        <Note>{list.length === 0 && passkeys.isSuccess ? 'No passkeys yet. ' : ''}To add a passkey, open Orbit in a browser: creating one needs the browser's passkey prompt.</Note>
+      </View>
+      <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />
+    </SettingsCard>
   )
 }

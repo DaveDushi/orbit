@@ -131,6 +131,13 @@ interface ThreadLike {
   comments: readonly { deleted_at?: string | null }[]
 }
 
+/** The server's rules (the web's `OrbitThreadStoreAuth`): authors edit and delete their own live comments. */
+export const canChangeComment = (comment: { author_id: string; deleted_at?: string | null }, userId: string) => !comment.deleted_at && comment.author_id === userId
+
+/** A thread's creator deletes it while nobody else has a live comment in it (the server refuses it then). */
+export const canDeleteThread = (thread: { created_by: string; comments: readonly { author_id: string; deleted_at?: string | null }[] }, userId: string) =>
+  thread.created_by === userId && thread.comments.every((comment) => comment.deleted_at || comment.author_id === userId)
+
 /** Threads with a comment left, open ones first, the latest first. */
 export function visibleThreads<T extends ThreadLike>(threads: readonly T[]): T[] {
   return threads

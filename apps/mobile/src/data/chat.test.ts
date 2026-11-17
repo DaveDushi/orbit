@@ -38,6 +38,7 @@ import {
   unreadThreadCount,
   upsertMessage,
   upsertThreadMessage,
+  linkCardUrls,
 } from './chat'
 import type { ChatFileRecord, EmojibaseData, FollowedThreadRecord, ThreadPage } from './chat-api'
 import type { ConversationRecord, ConversationStateRecord, MemberRecord, MessageRecord } from './orbit'
@@ -186,8 +187,8 @@ test('row and header sheets follow the web menu: a member of a private channel t
   const channel = conversation('secret', { kind: 'private', member_ids: ['me', 'ada'] })
   const permissions = conversationPermissions(channel, 'me', false)
   expect(permissions).toEqual({ canManage: true, canArchive: true, canLeave: true, canAddPeople: true, canRemovePeople: true })
-  expect(conversationActions('row', state('secret', { unread_count: 2 }), permissions)).toEqual(['mark-read', 'favorite', 'notify', 'edit', 'leave', 'archive'])
-  expect(conversationActions('header', state('secret', {}), permissions)).toEqual(['threads', 'pins', 'files', 'members', 'favorite', 'notify', 'edit', 'leave', 'archive'])
+  expect(conversationActions('row', state('secret', { unread_count: 2 }), permissions)).toEqual(['mark-read', 'favorite', 'notify', 'edit', 'integrations', 'leave', 'archive'])
+  expect(conversationActions('header', state('secret', {}), permissions)).toEqual(['threads', 'pins', 'files', 'members', 'favorite', 'notify', 'edit', 'integrations', 'leave', 'archive'])
 })
 
 test('#general: an admin edits it but cannot archive it or add people; a plain member only stars and mutes', () => {
@@ -438,4 +439,11 @@ test('a bot\'s icon emoji is found by its shortcode, in any case', () => {
   expect(emojiNamed(groups, 'rocket')).toBe('🚀')
   expect(emojiNamed(groups, 'Ghost')).toBe('👻')
   expect(emojiNamed(groups, 'nope')).toBeNull()
+})
+
+test('link cards: other sites only, outside code and angle brackets, without trailing punctuation, once, at most 3', () => {
+  const server = 'https://orbit.example.com'
+  expect(linkCardUrls('See https://a.com/x. And https://a.com/x, again', server)).toEqual(['https://a.com/x'])
+  expect(linkCardUrls('`https://code.com` <https://quiet.com> https://orbit.example.com/tasks/1 https://b.com', server)).toEqual(['https://b.com'])
+  expect(linkCardUrls('https://1.com https://2.com https://3.com https://4.com', server)).toEqual(['https://1.com', 'https://2.com', 'https://3.com'])
 })
