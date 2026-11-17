@@ -11,6 +11,7 @@ import { router, usePathname } from 'expo-router'
 import { useEffect, useState } from 'react'
 import { Keyboard, Linking, Platform } from 'react-native'
 
+import { chatQueryKeys } from './chat-cache'
 import { keys } from './data/keys'
 import type { OrbitClient } from './data/orbit'
 import { appBadge, appPathOf, isOpenOnScreen, notificationUrl, PUSH_OFF_KEY, registerDevice, shouldRegister, thisDeviceState, type ThisDevice, unregisterDevice, workspaceOf } from './data/push'
@@ -73,6 +74,7 @@ export function usePushNotifications(client: OrbitClient) {
   // A tap opens its screen in the push's workspace: when that is not the open one, the app switches first, and opens
   // the screen once the switch is done.
   const { workspaceId, workspaces, selectWorkspace } = useOrbit()
+  const queryClient = useQueryClient()
   const [tapped, setTapped] = useState<{ path: string; workspaceId: string | null } | null>(null)
   const response = Notifications.useLastNotificationResponse()
   useEffect(() => {
@@ -91,6 +93,12 @@ export function usePushNotifications(client: OrbitClient) {
     // The keyboard of the screen that was open closes. A conversation or thread opens over the Chat tab, so Back
     // goes to the chat list.
     Keyboard.dismiss()
+    // The list opens at its newest message: a copy from the disk cache that is not yet stale (the app killed less
+    // than 30 s before the tap) does not have the new message, so it loads again.
+    const thread = /^\/chat\/thread\/([\w-]+)$/.exec(tapped.path)?.[1]
+    const conversation = /^\/chat\/([\w-]+)$/.exec(tapped.path)?.[1]
+    if (thread) void queryClient.invalidateQueries({ queryKey: chatQueryKeys.thread(workspaceId, thread) })
+    else if (conversation) void queryClient.invalidateQueries({ queryKey: keys.messages(workspaceId, conversation) })
     if (tapped.path.startsWith('/chat/')) {
       router.navigate('/chat')
       router.push(tapped.path as never)
