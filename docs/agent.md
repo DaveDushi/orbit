@@ -285,6 +285,19 @@ dropped `agent_preferences`.
   fenced as data) reaches the model. All whole-file reads of a run together parse at most 32 MiB; past that, the read
   stops with a message the agent passes on. The model cannot use `all: true` directly. The prompt tells it to read
   large files this way (a 20,000-row CSV: about 2 seconds).
+- **Code mode is how every agent works** (`apps/agent/src/find-tools.ts`). The model is offered only `find_tools`
+  and `codemode`, plus the tools a script cannot stand in for: `view_image` (a script gets only a result's text, so
+  images would not reach the model), `ask_teammate`, `load_skill` and `read_skill_file`. Every other tool is called
+  from a script. `find_tools` searches the run's callable Orbit tools and the driver's tools of connected services by
+  words (BM25 on name and description) and returns at most 8, with how to call them and their JSON Schema; it reads no
+  Orbit data. The services' tools (read with `GET /agent-tools` at the start of a run, only when the agent has
+  `use_integration`) are kept in the conversation's `orbit.integration-tools` document, never in the prompt: the
+  prompt names only each service and its tool count, so an agent can have hundreds of service tools. Scripts call them
+  as `tools.use_integration({ tool, arguments })`, with the same checks as before. The `codemode` prompt section
+  declares only the most used tools (`DECLARED_TOOLS` in `codemode.ts`) and names the others. When a script's call
+  asks the driver for approval, the run ends after the script (an `afterTool` hook), and the script's later calls are
+  refused while the thread waits for the answer. Progress shows each call of a script as a step; `codemode` and
+  `find_tools` show none. Measurements: `evals/donna-codemode/README.md`.
 - **Saved scripts** (`agent_scripts`). The agent saves a script for the driver with `save_script` (name, code up to
   20,000 characters, description); saving under the same name (any case) replaces the code. No approval: saving runs
   nothing. At most 50 per person per workspace. Settings → Agentic → Routines has a **Scripts** card: the owner views,

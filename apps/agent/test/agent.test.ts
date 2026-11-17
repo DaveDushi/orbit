@@ -916,7 +916,7 @@ test("code mode: a script calls only the agent's own tools, as the driver", asyn
 	}
 });
 
-test("code mode: the codemode section does not repeat the offered tools, and a script still calls them", async () => {
+test("code mode: the codemode section declares the most used tools and names the others, and a script calls them", async () => {
 	const orbit = new RoutineOrbit();
 	current = orbit;
 	await orbit.listen();
@@ -932,11 +932,13 @@ test("code mode: the codemode section does not repeat the offered tools, and a s
 		await until("the prompt", () => orbit.messages.has(`agent:${shown}:1`));
 		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
 		const section = answerOf(orbit, shown).split("<codemode>")[1]?.split("</codemode>")[0] ?? "";
-		assert.match(section, /Scripts can call each tool offered to you/);
+		assert.match(section, /Scripts call your tools as/);
 		assert.match(section, /Not from a script: [^.]*\bask_teammate\b/);
-		// No declaration of a tool the model already has: before, ~2.9k tokens of them.
-		assert.doesNotMatch(section, /### `(search_tasks|create_task|read_page)`/);
-		assert.ok(section.length < 2_000, `codemode section: ${section.length} characters`);
+		// The most used tools are declared; the others only named, their arguments come from find_tools.
+		assert.match(section, /### `search_tasks`[\s\S]*### `read_page`/);
+		for (const name of ["drive_trash", "use_integration", "schedule_routine"]) assert.match(section, new RegExp(`Your other tools \\(arguments with find_tools\\): [^.]*\\b${name}\\b`));
+		assert.doesNotMatch(section, /### `drive_trash`/);
+		assert.ok(section.length < 9_000, `codemode section: ${section.length} characters`);
 
 		const run = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> run code:\nconst found = await tools.search_tasks({});\ntext("read " + found.length);` });
 		await until("the script's answer", () => progressOf(orbit, run).startsWith("Done (codemode)"));

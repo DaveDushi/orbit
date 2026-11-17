@@ -83,7 +83,7 @@ export type ThreadState = {
 	defaultAgentName?: string;
 	/** The memory section of the current run (the wake view read at its start), as the model sees it. */
 	memory?: string | null;
-	/** The integration tools section of the current run (the driver's tools, read at its start). */
+	/** The connected services section of the current run (names and tool counts, read at its start; the tools are in `IntegrationToolsDoc`). */
 	integrations?: string | null;
 	/** The skills section of the current run (names and descriptions of the agent's skills, read at its start). */
 	skills?: string | null;

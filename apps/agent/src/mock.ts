@@ -1,6 +1,7 @@
 /**
  * AGENT_MOCK=1: a scripted model for tests and demos without a ChatGPT account. It reads the newest instruction,
- * calls one real Orbit tool for it, and then reports the tool's result. Everything else (Pi Durable, the tools,
+ * calls one real Orbit tool for it, and then reports the tool's result. Like a real model in code mode, it calls the
+ * tools it is not offered from a codemode script with that one call. Everything else (Pi Durable, the tools,
  * Orbit's permissions, chat) is the real code path.
  *
  * Understood instructions (quotes required around titles and text):
@@ -56,10 +57,42 @@
 import { createModels, type AssistantMessage, type JsonObject, type Models } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 
+import { MODEL_TOOLS } from "./find-tools.ts";
 import { codexModels, PROVIDER } from "./models.ts";
 import { MEMORY_CHECK } from "./prompt.ts";
 
-type Message = { role: string; content?: unknown; toolName?: string; isError?: boolean; sections?: Record<string, string | null> };
+type Message = { role: string; content?: unknown; toolName?: string; toolCallId?: string; isError?: boolean; sections?: Record<string, string | null> };
+
+/** The tools the model calls itself; it calls every other tool from a one-call script (`toolCall`), as code mode asks. */
+const DIRECT = [...MODEL_TOOLS, "run_saved_script", "repair_routine_script"];
+const SCRIPT_CALL = /^\/\/ mock: (\w+)\nreturn await tools\.\w+\(([\s\S]*)\);$/;
+
+/** The model's call of `name`: direct for the model's own tools, else a script with that one call. */
+function toolCall(name: string, args: JsonObject | Record<string, unknown>): AssistantMessage {
+	const call = DIRECT.includes(name) ? fauxToolCall(name, args as JsonObject) : fauxToolCall("codemode", { code: `// mock: ${name}\nreturn await tools.${name}(${JSON.stringify(args)});` });
+	return fauxAssistantMessage(call, { stopReason: "toolUse" });
+}
+
+/**
+ * The transcript with each one-call script of `toolCall` as the call it makes, and its result as that tool's: the rules
+ * below read tool names, arguments and results as if the model had called the tool itself.
+ */
+function unwrapScripts(messages: readonly Message[]): Message[] {
+	const inner = new Map<string, string>();
+	return messages.map((message) => {
+		if (message.role === "assistant" && Array.isArray(message.content)) {
+			const content = (message.content as { type?: string; id?: string; name?: string; arguments?: { code?: string } }[]).map((part) => {
+				const match = part.type === "toolCall" && part.name === "codemode" ? SCRIPT_CALL.exec(part.arguments?.code ?? "") : null;
+				if (!match) return part;
+				if (part.id) inner.set(part.id, match[1]);
+				return { ...part, name: match[1], arguments: JSON.parse(match[2]) };
+			});
+			return { ...message, content };
+		}
+		const name = message.role === "toolResult" && message.toolCallId ? inner.get(message.toolCallId) : undefined;
+		return name ? { ...message, toolName: name } : message;
+	});
+}
 
 /** The lines of every memory block in the system prompt, newest section last. */
 function memoryLines(messages: readonly Message[]): string[] {
@@ -374,7 +407,8 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 }
 
 /** One scripted answer for the transcript so far. */
-export function respond(messages: readonly Message[], modelId = "mock", thinking?: string): AssistantMessage {
+export function respond(transcript: readonly Message[], modelId = "mock", thinking?: string): AssistantMessage {
+	const messages = unwrapScripts(transcript);
 	if (process.env.AGENT_MOCK_DEBUG) console.log("mock model sees", JSON.stringify(messages.map((m) => ({ role: m.role, tool: m.toolName, text: textOf(m.content).slice(0, 120), raw: JSON.stringify(m).slice(0, 700) }))));
 	// Pi's compaction asks for a summary of the older conversation: never act on what that conversation said.
 	if (messages[0]?.role === "system" && textOf(messages[0].content).startsWith("You are a context summarization assistant")) {
@@ -385,12 +419,12 @@ export function respond(messages: readonly Message[], modelId = "mock", thinking
 		const due = /Call memory_summarize with scope "(\w+)" and block "(\d+-\d+)"\.\n<orbit-data[^>]*>\n([\s\S]*?)\n<\/orbit-data>/.exec(textOf(last.content));
 		if (due) {
 			const summary = `Summary: ${due[3].split("\n").map((line) => line.replace(/^#\S+ (\([^)]*\) )?/, "")).join("; ")}`;
-			return fauxAssistantMessage(fauxToolCall("memory_summarize", { scope: due[1], block: due[2], text: Buffer.from(summary).subarray(0, 270).toString() }), { stopReason: "toolUse" });
+			return toolCall("memory_summarize", { scope: due[1], block: due[2], text: Buffer.from(summary).subarray(0, 270).toString() });
 		}
 		if (last.toolName === "read_chat_file") {
 			const instruction = newestInstruction(messages);
 			const next = plan(instruction, messages);
-			if (next) return fauxAssistantMessage(fauxToolCall(next.name, next.args as JsonObject), { stopReason: "toolUse" });
+			if (next) return toolCall(next.name, next.args as JsonObject);
 			const reads = messages.slice(lastUser(messages)).filter((message) => message.role === "toolResult" && message.toolName === "read_chat_file");
 			const parts = reads.map((message) => {
 				const text = textOf(message.content).replace(/<\/?orbit-data[^>]*>/g, "").trim();
@@ -402,11 +436,11 @@ export function respond(messages: readonly Message[], modelId = "mock", thinking
 		// A routine's failed script: the fix its instruction names, then the script again.
 		const fix = /fix it with:\s*([\s\S]+)$/i.exec(instruction);
 		if (fix && last.toolName === "run_saved_script" && last.isError && /call repair_routine_script/.test(textOf(last.content))) {
-			return fauxAssistantMessage(fauxToolCall("repair_routine_script", { code: fix[1].trim(), change: "Replaced the step that failed (mock fix)." }), { stopReason: "toolUse" });
+			return toolCall("repair_routine_script", { code: fix[1].trim(), change: "Replaced the step that failed (mock fix)." });
 		}
-		if (last.toolName === "repair_routine_script" && !last.isError) return fauxAssistantMessage(fauxToolCall("run_saved_script", {}), { stopReason: "toolUse" });
+		if (last.toolName === "repair_routine_script" && !last.isError) return toolCall("run_saved_script", {});
 		const media = mediaStep(instruction, messages);
-		if (media) return "text" in media ? fauxAssistantMessage(fauxText(media.text)) : fauxAssistantMessage(fauxToolCall(media.name, media.args as JsonObject), { stopReason: "toolUse" });
+		if (media) return "text" in media ? fauxAssistantMessage(fauxText(media.text)) : toolCall(media.name, media.args as JsonObject);
 		if (last.toolName === "view_image" && !last.isError) {
 			const parts = (last.content as { type?: string; mimeType?: string; data?: string }[]).filter((part) => part.type === "image");
 			const sizes = [...textOf(last.content).matchAll(/"format": "(\w+)",\s*"width": (\d+),\s*"height": (\d+)/g)].map((size) => `${size[1]} ${size[2]}×${size[3]}`);
@@ -440,10 +474,10 @@ export function respond(messages: readonly Message[], modelId = "mock", thinking
 		return fauxAssistantMessage(fauxText(found.length ? `From memory:\n${found.join("\n")}` : `I remember nothing about “${asked[1]}”.`));
 	}
 	const media = mediaStep(instruction, messages);
-	if (media && "name" in media) return fauxAssistantMessage(fauxToolCall(media.name, media.args as JsonObject), { stopReason: "toolUse" });
+	if (media && "name" in media) return toolCall(media.name, media.args as JsonObject);
 	const call = plan(instruction, messages);
 	if (!call) return fauxAssistantMessage(fauxText(`(mock model) I read: ${instruction.slice(0, 300)}`));
-	return fauxAssistantMessage(fauxToolCall(call.name, call.args as JsonObject), { stopReason: "toolUse" });
+	return toolCall(call.name, call.args as JsonObject);
 }
 
 /** A `Models` with scripted models under the ChatGPT provider's id: the conversation's and the compaction model. */
