@@ -18,7 +18,12 @@ export function AgentConnection() {
     <>
       {!agent ? (
         <SettingsCard title={TITLE}>
-          {status.isError ? <Note error>The agent settings are not available.</Note> : <Note>Loading the agent settings…</Note>}
+          {status.isError ? (
+            <View className="flex-row items-center gap-2">
+              <Note error>The agent settings are not available.</Note>
+              <Button label="Retry" variant="ghost" disabled={status.isFetching} onPress={() => void status.refetch()} />
+            </View>
+          ) : <Note loading>Loading the agent settings…</Note>}
         </SettingsCard>
       ) : !agent.enabled ? (
         <SettingsCard title={TITLE}>

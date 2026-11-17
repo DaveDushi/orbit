@@ -50,6 +50,9 @@
 - The origin policy refuses a write without `Origin` unless it carries `Authorization: Bearer` (and no cookie). A server-to-server caller (a sidecar, a script) sends its secret as a bearer token. Route tests that skip `HttpPlatformLayer` do not see this: check such callers against a running server; a route whose credential is in the path (incoming hooks, bot reply URLs) needs its prefix in `OriginPolicy::permits` (`crates/platform/src/http/security.rs`). React Native's WebSocket (iOS and Android) always sends an `Origin` made from the socket URL: an app on a second hostname of the server (`orbit-app.`) got 403 on both live sockets while its HTTP calls (no `Origin`) worked, and nothing showed it; a bearer socket with no cookie is now allowed from the `Origin` of its own `Host` (2026-11-16).
 - So the iPhone app cannot call the anonymous auth writes (sign-up and recovery requests, invitation preview and accept for a new account): only login and login/two-factor pass without a bearer. Signed in, preview and accept work with the bearer token. A native sign-up or new-account invitation flow needs a server change first (2026-11-17).
 
+## UI gated on a server flag
+- Hide a section or tab only when the server's answer says "off". While the flag loads or after its request fails, show it (it loads or says it failed, with Retry): the iPhone Agentic tabs keyed on `data?.enabled === true` and showed only "You" with no message (2026-11-17).
+
 ## Cron expressions
 - The `cron` crate (0.15) counts weekdays from Sunday = 1 (`1-5` is Sunday–Thursday), and wants a seconds field first. People and models write standard 5-field cron (0 or 7 = Sunday, `1-5` = Monday–Friday): translate the weekday field to names first, as `scheduled::schedule` does (2026-11-11).
 

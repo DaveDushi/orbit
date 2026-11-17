@@ -88,7 +88,12 @@ export function AgentMemory() {
           <Input placeholder="Search memories" accessibilityLabel="Search memories" autoCapitalize="none" autoCorrect={false} value={query} onChangeText={setQuery} />
         </View>
         {memories.isPending ? <View className="p-4"><Note>Loading memories…</Note></View> : null}
-        {memories.isError ? <View className="p-4"><Note error>Memories could not be loaded.</Note></View> : null}
+        {memories.isError ? (
+          <View className="flex-row items-center gap-2 p-4">
+            <Note error>Memories could not be loaded.</Note>
+            <Button label="Retry" variant="ghost" onPress={() => void memories.refetch()} />
+          </View>
+        ) : null}
         {memories.isSuccess && items.length === 0 ? (
           <View className="p-4"><Note>{query.trim() ? 'No memory matches this search.' : `Nothing yet. ${name} notes facts here while it works.`}</Note></View>
         ) : null}
