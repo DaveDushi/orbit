@@ -269,6 +269,26 @@ It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-ag
 
 ## Verification performed
 
+### November 17, 2026 iPhone build 19: Settings → Agentic shows the web's tabs (TestFlight internal; no server change)
+
+Branch `iphone-agentic-tabs` at `abef777e` (on `main` `fbc88d7a`; not merged, not pushed by the build session). Only
+`apps/mobile` changes: the Agentic tabs (Workspace, Agents, Routines, Skills) hide only when `/api/v1/agent` says
+`enabled: false`; before, a slow or failed answer left only "You" with no message, and build 17's Account → Agentic
+always forced "You". Skills shows for every role (members get the note, as on the web); Retry on the agent status and
+on memories; Connected apps say "All projects". Production was checked read-only: the agent is set up, the app gateway
+proxies `/api/v1/agent` (401 without a session), the sidecar answers.
+
+Checks: mobile `tsc --noEmit` clean, `bun test src` 336 pass (54 files), the iOS bundle builds on Metro; Expo web at
+390x844 on an isolated test instance with the agent on: all five tabs, and with `/api/v1/agent` failing the tabs stay
+and Retry loads the card. No new native module, but a full native build as for 18: `eas build --non-interactive
+--no-wait` from the worktree.
+
+EAS build `87141e30-3857-4a90-96a2-ad659c51388b`, build number 19 (version 1.0.0, commit `abef777e`, ~5 min).
+Submission `3b394d37-7ce5-490f-9500-125cb014910c` with the App Manager ASC key (~30 min in the submission queue;
+eas.json changed only for the run and restored; the temporary `AuthKey.p8` deleted). ASC build
+`6fe8a715-74d4-441e-8baa-915981b12615`: `VALID`, internal state `IN_BETA_TESTING`, external
+`READY_FOR_BETA_SUBMISSION` (not submitted). Scripts and logs: `/root/ops/iphone-build19/`.
+
 ### November 17, 2026 iPhone build 18: one Settings page, one Search screen (TestFlight internal; no server change)
 
 `main` from `c56fe1a3` to `a27c6a88`: `--no-ff` merges of `iphone-settings-b18` at `776dbdcf` (`1faa6adf`: one
