@@ -7,9 +7,9 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, commit c21ec383437d6690bcc5a0fe05ea8f7d3ca6544c on `main`
-  (Settings → Agentic MCP server card shows `ORBIT_PUBLIC_MCP_URL`, web mic fix of desktop 0.1.6; schema 20261115105242,
-  119 rows; November 17, 2026). `main` after it also has `03d57172` (desktop 0.1.7, small web toast change): not deployed.
+- Source: DaveDushi/orbit, commit b7c3122c3b22f281a0d6d75e143411b486ee23dc on `main`
+  (web parts of desktop 0.1.7-0.1.10: the mic in the Ask bar, the mic's recording states, the account menu's Desktop app
+  items; aboutOrbit and what's new; schema 20261115105242, 119 rows; November 17, 2026).
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
   f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
@@ -19,9 +19,9 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   MCP routes through the hooks gateway (`/etc/orbit-hooks-gateway/nginx.conf`, proposal `/tmp/mcpo/gateway/proposal.diff`).
   Binaries before d8d3eb4 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-d8d3eb4`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:c21ec38`); fork commits have no published upstream image.
-- Image ID: sha256:ce8197d59b52b44e51d93e2fcbe1621f04de8426143c4bf65d79871340c37e35
-- Team agent sidecar code (`/opt/orbit-agent`): commit c21ec38.
+  (`orbit:b7c3122`); fork commits have no published upstream image.
+- Image ID: sha256:b6101d5053c834fc9cd5bba78e2d8309ee14d3a81e58f165c6465848062aa254
+- Team agent sidecar code (`/opt/orbit-agent`): commit b7c3122.
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): on since November 15, 2026, 12:07 UTC (set by Ops, outside a
   deploy): `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID`, `ORBIT_APNS_TOPIC` and `ORBIT_APNS_SANDBOX`
   are in `/etc/orbit/orbit.env`; the journal shows `iPhone push (APNs) is on` (topic `com.easytomanage.orbit`, sandbox
@@ -268,6 +268,72 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 17, 2026 upgrade: the mic in the Ask bar, recording states, desktop 0.1.7-0.1.10 web parts (no migration)
+
+`main` from `c21ec383` to `b7c3122c` (deployed; 38 commits, all on `origin/main` `bf30e05c` except `b7c3122c`). Server-side
+the change is the embedded web app and the sidecar's `prompt.ts`/`whats-new.md`; no Rust server code, no migration, no
+env key, no new route. Web: `03d57172` (0.1.7: the recognizer's `message` in the toast), `74777d3a` (0.1.8: account
+menu → Desktop app with the tray items, Notifications page text in the app), `25e535d7` (0.1.9 text), `835fc734`
+(0.1.10: the mic in the small Ask bar; while it listens the mic is red with a stop square, a red timer, a level meter in
+the Orbit app and the placeholder "Listening… click the mic to stop"; "Transcribing…" after stop). The iPhone commits
+(`776dbdcf` … `77f1310e`) and `scripts/seed-review-demo.ts` do not change the server. `fc4a2428` and `2fdcc97d` were already
+live (in `c21ec383`). `b7c3122c` (this deploy): `aboutOrbit()` says the recording states show in every browser (they were
+only in the Windows-app text), names the mic of the small Ask box, and drops "this menu item shows after the server's
+next web update"; what's new 2026-11-17: the voice input line names the Ask box mic, the red timer, desktop 0.1.10 and the
+account menu. Checks: agent `tsc` clean, `prompt.test.ts` 5 pass (Node 24).
+
+Deploy id `20261117T152846Z-2658848`. `orbit:b7c3122` (image
+`sha256:b6101d5053c834fc9cd5bba78e2d8309ee14d3a81e58f165c6465848062aa254`, ~35 min); `deploy/smoke.sh` and
+`orbit config check` passed. No-migration check (hot copy, and in the switch on a copy of the stopped database): 0
+applied, schema 20261115105242 (119 rows), counts, names and checksums unchanged, quick-check ok, 0 foreign-key rows.
+Built-bundle check before the switch (`pre/run.sh`: seeded dev instance in a network namespace, port 18932; `GET
+/api/v1/agent` **stubbed** to "agent on, ChatGPT connected", because the seed has no agent; Chromium with a fake
+microphone and a **fake speech recognizer** that types "Hello Donna"): the Ask bar shows one mic (idle), a click gives the
+stop button, "Listening 0:01" with the level meter and the words in the box, a second click goes back to idle; the chat
+mic renders; Home, Tasks, Docs, Chat and Settings → Agentic with no page or console errors. Headless Chromium without the
+microphone permission shows the mic crossed out ("Microphone access is off"): expected.
+
+Switch: stopped both services at 16:08:20 UTC; snapshot `01a1ea44-329a-724e-a09e-a20d48520a49` with
+`/usr/local/bin/orbit-c21ec38`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-b7c3122.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-b7c3122.tgz`; sidecar code copied (old `/opt/orbit-agent.before-b7c3122`);
+no env change. `orbit` and `orbit-agent` ready 16:08:44 (24 s down). `vm-health.conf` (old copy `.before-b7c3122`):
+`PROD_TAG=b7c3122`, `ROLLBACK_TAG=c21ec38`, `ROLLBACK_BACKUP=01a1ea44-329a-724e-a09e-a20d48520a49`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) local and on
+`https://orbit-app.easytomanage.com/health/ready`; `/orbit-build.json` revision `b7c3122c…`; sidecar `/health` ok
+(sandbox true), `/opt/orbit-agent/src` = `main`; APNs on; `/`, `/chat`, `/tasks`, `/docs`, `/settings/agentic` 200,
+`/api/v1/agent` 401 without a session. Signed-in browser check on production (`ui-check.ts`, temporary session for
+David Dusi, writes blocked, logged out after: 204, row revoked; real agent status: on, online, ChatGPT connected; the
+same fake microphone and recognizer, nothing sent): the Ask bar mic idle, listening ("Listening 0:01", level meter,
+"Hello Donna" in the box) and back to idle; chat mic; the MCP card; Home, Chat, Tasks, Docs and Settings → Agentic with
+no page or console errors. Screenshots in
+`/root/.local/share/com.jean.desktop/pasted-images/server-deploy-20261117/` (`prod-ask-bar-mic-*.png`). Found: in the dark
+theme the listening mic's red fill turns gray while the pointer is on it (`dark:hover:bg-muted/50` of the ghost button
+wins over `data-[status=listening]:hover:bg-destructive/90`); red again when the pointer moves away; not fixed here.
+`vm-health`: nginx FAIL only from the switch window (76 connection-refused lines at 16:08, 0 5xx); OOM WARN = 7
+`gvisor_sentry` kills 14:28-14:36 UTC, before this deploy; docker WARN = other sessions' containers; git-owner fixed
+after (only files newer than this deploy). Desktop downloads not touched. Changelog posted to #orbit-updates as David
+Dusi (temporary session, logged out: 204; message `01a1ea47-5efb-76bb-9e95-5533a3433a1e`; text `/root/ops/ask-mic/changelog.md`).
+Scripts and logs: `/root/ops/ask-mic/`.
+
+Rollback to `c21ec38` (no schema change, no env change, so no data is lost):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo rm -rf /opt/orbit-agent/src && sudo cp -a /opt/orbit-agent.before-b7c3122/src /opt/orbit-agent/src
+sudo install -m 755 /usr/local/bin/orbit-c21ec38 /usr/local/bin/orbit
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/ask-mic/rollback.sh)
+# Way 2, only for a data problem (work after 16:08 UTC is lost), Orbit stopped: /usr/local/bin/orbit-c21ec38 backup verify +
+#   backup restore 01a1ea44-329a-724e-a09e-a20d48520a49 (as user orbit), then the lines above
+```
+
+After this rollback, set `PROD_TAG=c21ec38`, `ROLLBACK_TAG=1bfcece`,
+`ROLLBACK_BACKUP=01a1e95a-531b-70bf-9d43-5b9e46902c26` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-b7c3122`).
 
 ### November 17, 2026 iPhone build 20: iPhone full audit and the Agentic tabs (TestFlight internal; no server change)
 
