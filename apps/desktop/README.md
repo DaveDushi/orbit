@@ -61,9 +61,13 @@ Orbit pins 1.97.1), `Cargo.lock` and `target/`.
   which also clears a saved "Block" (up to 0.1.3 the app did not answer, a refused or missed WebView2 prompt stayed
   saved, and the page got `not-allowed`), and it allows the requests of the server's own pages; other origins keep
   WebView2's prompt. Windows' own switch (Settings → Privacy & security → Microphone → "Let desktop apps access your
-  microphone") still decides above it. WebView2 runtimes 153+ can fail with a `network` error in some
-  regions ([WebView2Feedback#5724](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5724)); the web app
-  then says the speech service could not be reached. macOS: WKWebView uses Apple's speech recognition and needs
+  microphone") still decides above it. WebView2 runtimes 153+ send speech to a new service that refuses it
+  (HTTP 403, the page gets `network`;
+  [WebView2Feedback#5724](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5724)): up to 0.1.4 voice input
+  never worked on Windows. Since 0.1.5 every web view starts with
+  `--disable-features=…,msSpeechRecognitionServiceUseCetoService` (`signin::WEBVIEW2_ARGS`, with wry's default
+  flags), so WebView2 uses the older Edge speech service. If Microsoft retires that one too, the web app says the
+  speech service could not be reached. macOS: WKWebView uses Apple's speech recognition and needs
   `NSMicrophoneUsageDescription` and `NSSpeechRecognitionUsageDescription` in `packaging/macos/Info.plist` (an
   older build without them gets `not-allowed`: the crossed-out mic); wry grants the media capture, macOS asks.
   Linux (WebKitGTK) has no recognizer: the mic shows "not available".

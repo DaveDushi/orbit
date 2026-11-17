@@ -295,6 +295,11 @@ fn build_webview(window: &Window, context: &mut WebContext, server: Option<&Serv
         .with_download_completed_handler(move |_url, path, ok| {
             let _ = downloaded.send_event(UserEvent::Downloaded { path, ok });
         });
+    #[cfg(windows)]
+    {
+        use wry::WebViewBuilderExtWindows;
+        builder = builder.with_additional_browser_args(signin::WEBVIEW2_ARGS);
+    }
     builder = match server {
         Some(server) => builder
             .with_initialization_script_for_main_only(bridge::script(server.origin()), true)

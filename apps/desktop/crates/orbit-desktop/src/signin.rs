@@ -81,6 +81,11 @@ pub fn run(server_arg: &str) -> ! {
         // The sign-in may pass through other https sites (an identity provider); nothing else.
         .with_navigation_handler(move |url| url.starts_with("https://") || url.starts_with(&origin) || url == "about:blank")
         .with_new_window_req_handler(|_, _| NewWindowResponse::Deny);
+    #[cfg(windows)]
+    let builder = {
+        use wry::WebViewBuilderExtWindows;
+        builder.with_additional_browser_args(WEBVIEW2_ARGS)
+    };
 
     #[cfg(not(target_os = "linux"))]
     let webview = builder.build(&window);
@@ -137,6 +142,15 @@ fn finish(server: &ServerUrl, outcome: HandOff) -> ! {
     let _ = stdout.flush();
     std::process::exit(0);
 }
+
+/// WebView2's browser arguments for every web view of the app: the main window and the sign-in window share a data
+/// directory, and WebView2 needs the same arguments for it. wry's own defaults (mini menu, PDF menu, SmartScreen off)
+/// and `msSpeechRecognitionServiceUseCetoService` off: since runtime 153, WebView2 sends `webkitSpeechRecognition`
+/// to a new speech service that refuses it (HTTP 403), so voice input only got a `network` error. Without this
+/// feature it uses the older Edge speech service, which works. One `--disable-features` only: Chromium keeps the last.
+/// <https://github.com/MicrosoftEdge/WebView2Feedback/issues/5724>
+#[cfg_attr(not(windows), allow(dead_code))]
+pub const WEBVIEW2_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,msSpeechRecognitionServiceUseCetoService";
 
 /// `<data dir>/orbit-desktop/gateway/<host_port>`.
 pub fn data_dir(server: &ServerUrl) -> Option<PathBuf> {

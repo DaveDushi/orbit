@@ -6,7 +6,7 @@
 //! each start (this also replaces a saved "block"), and answers the requests of the server's own pages. Other
 //! origins (frames of embedded apps, other sites) keep WebView2's own prompt.
 //! Windows' own switch (Settings → Privacy & security → Microphone → "Let desktop apps access your microphone")
-//! still decides above this.
+//! still decides above this. The speech service itself is chosen by the browser arguments (`signin::WEBVIEW2_ARGS`).
 
 use orbit_client::ServerUrl;
 use webview2_com::Microsoft::Web::WebView2::Win32::{
