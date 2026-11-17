@@ -70,6 +70,9 @@ impl ServerUrl {
             "http" => return Err(ServerUrlError::Insecure),
             _ => return Err(ServerUrlError::Invalid),
         };
+        // A page's origin leaves out the scheme's own port: `https://host:443` must match `https://host`.
+        let default_port = if secure { "443" } else { "80" };
+        let authority = if port == Some(default_port) { host.clone() } else { authority };
         Ok(ServerUrl { origin: format!("{scheme}://{authority}"), host, secure })
     }
 
@@ -120,6 +123,10 @@ mod tests {
         let local = ServerUrl::parse("http://127.0.0.1:18080").unwrap();
         assert_eq!(local.ws("/a"), "ws://127.0.0.1:18080/a");
         assert!(!local.is_secure());
+        // The page's origin (`location.origin`) has no default port: the bridge and the microphone match it.
+        assert_eq!(ServerUrl::parse("https://orbit.example.com:443").unwrap().origin(), "https://orbit.example.com");
+        assert_eq!(ServerUrl::parse("http://localhost:80").unwrap().origin(), "http://localhost");
+        assert_eq!(ServerUrl::parse("https://orbit.example.com:8443").unwrap().origin(), "https://orbit.example.com:8443");
     }
 
     #[test]

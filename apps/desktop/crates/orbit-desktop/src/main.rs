@@ -18,6 +18,7 @@ mod app_id;
 mod autostart;
 mod bridge;
 mod check;
+mod diagnostics;
 mod instance;
 #[cfg(windows)]
 mod microphone;

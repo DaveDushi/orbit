@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { createDictation, joinSpeech, speechRecognition, type Recognition, type VoiceNotice, type VoiceStatus } from './voiceInput'
+import { createDictation, joinSpeech, probeOutcome, speechRecognition, type MicProbe, type Recognition, type VoiceNotice, type VoiceStatus } from './voiceInput'
 
 /** A recognizer the test drives: `say` sends the results list, `fail` an error, `end` the end. */
 class FakeRecognition implements Recognition {
@@ -37,8 +37,8 @@ class FakeRecognition implements Recognition {
   }
 }
 
-function setup(text = '', Recognition: typeof FakeRecognition | null = FakeRecognition) {
-  const field = { text, statuses: [] as VoiceStatus[], notices: [] as VoiceNotice[] }
+function setup(text = '', Recognition: typeof FakeRecognition | null = FakeRecognition, probes: MicProbe[] = []) {
+  const field = { text, statuses: [] as VoiceStatus[], notices: [] as VoiceNotice[], details: [] as (string | undefined)[], probed: 0 }
   const dictation = createDictation(Recognition, {
     text: () => field.text,
     setText: (next) => {
@@ -46,7 +46,14 @@ function setup(text = '', Recognition: typeof FakeRecognition | null = FakeRecog
       dictation.edited(next)
     },
     status: (status) => field.statuses.push(status),
-    notice: (notice) => field.notices.push(notice),
+    notice: (notice, detail) => {
+      field.notices.push(notice)
+      field.details.push(detail)
+    },
+    probe: () => {
+      field.probed++
+      return Promise.resolve(probes.shift() ?? { state: 'blocked', detail: 'NotAllowedError: Permission denied' })
+    },
     lang: 'de-CH',
   })
   return { field, dictation, recognition: () => FakeRecognition.last! }
@@ -70,6 +77,18 @@ describe('speechRecognition', () => {
     expect(speechRecognition({ SpeechRecognition: FakeRecognition })).toBe(FakeRecognition)
     expect(speechRecognition({ webkitSpeechRecognition: FakeRecognition })).toBe(FakeRecognition)
     expect(speechRecognition({})).toBeNull()
+  })
+})
+
+describe('probeOutcome', () => {
+  test('tells the OS, the site, a missing and a busy microphone apart', () => {
+    const error = (name: string, message: string) => Object.assign(new Error(message), { name })
+    expect(probeOutcome(null).state).toBe('works')
+    expect(probeOutcome(error('NotAllowedError', 'Permission denied by system'))).toEqual({ state: 'system', detail: 'NotAllowedError: Permission denied by system' })
+    expect(probeOutcome(error('NotAllowedError', 'Permission denied')).state).toBe('blocked')
+    expect(probeOutcome(error('NotFoundError', 'Requested device not found')).state).toBe('none')
+    expect(probeOutcome(error('NotReadableError', 'Could not start audio source')).state).toBe('busy')
+    expect(probeOutcome('odd').state).toBe('unknown')
   })
 })
 
@@ -115,14 +134,63 @@ describe('createDictation', () => {
     expect(field.statuses).toEqual(['listening', 'idle'])
   })
 
-  test('a refused microphone shows "denied" and explains; the next tap asks again', () => {
+  test('a refused microphone shows "denied" and explains with the microphone check; the next tap asks again', async () => {
     const { field, dictation, recognition } = setup()
     dictation.toggle()
     recognition().fail('not-allowed')
+    expect(field.statuses).toEqual(['listening'])
+    await Promise.resolve()
     expect(field.statuses).toEqual(['listening', 'denied'])
     expect(field.notices).toEqual(['denied'])
+    expect(field.details).toEqual(['speech: not-allowed; microphone: NotAllowedError: Permission denied'])
     dictation.toggle()
     expect(field.statuses.at(-1)).toBe('listening')
+  })
+
+  // The Windows app (WebView2): the recognizer said `not-allowed`, but the microphone check allowed it.
+  test('when the microphone works after a refusal, it tries once more, and says so if the recognizer still refuses', async () => {
+    const works: MicProbe = { state: 'works', detail: 'works' }
+    const { field, dictation, recognition } = setup('', FakeRecognition, [works, works])
+    dictation.toggle()
+    const first = recognition()
+    first.fail('not-allowed')
+    expect(first.aborted).toBe(true)
+    await Promise.resolve()
+    const second = recognition()
+    expect(second).not.toBe(first)
+    expect(second.started).toBe(true)
+    second.say(['hello', true])
+    expect(field.text).toBe('hello')
+    second.fail('not-allowed')
+    await Promise.resolve()
+    expect(recognition()).toBe(second)
+    expect(field.probed).toBe(2)
+    expect(field.notices).toEqual(['speech-refused'])
+    expect(field.statuses.at(-1)).toBe('denied')
+  })
+
+  test('an OS block and a missing microphone are told apart', async () => {
+    const { field, dictation, recognition } = setup('', FakeRecognition, [
+      { state: 'system', detail: 'NotAllowedError: Permission denied by system' },
+      { state: 'none', detail: 'NotFoundError: Requested device not found' },
+    ])
+    dictation.toggle()
+    recognition().fail('not-allowed')
+    await Promise.resolve()
+    dictation.toggle()
+    recognition().fail('not-allowed')
+    await Promise.resolve()
+    expect(field.notices).toEqual(['denied-system', 'no-microphone'])
+    expect(field.statuses).toEqual(['listening', 'denied', 'listening', 'idle'])
+  })
+
+  test('a tap or a dispose while the microphone is checked drops the late answer', async () => {
+    const { field, dictation, recognition } = setup()
+    dictation.toggle()
+    recognition().fail('not-allowed')
+    dictation.dispose()
+    await Promise.resolve()
+    expect(field.notices).toEqual([])
   })
 
   test('a blocked microphone (Permissions API) shows "denied" before a tap', () => {

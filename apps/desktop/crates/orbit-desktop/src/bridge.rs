@@ -8,7 +8,9 @@ const BRIDGE_JS: &str = include_str!("../assets/bridge.js");
 
 /// The bridge script for `origin` (`https://host[:port]`).
 pub fn script(origin: &str) -> String {
-    BRIDGE_JS.replace("__ORBIT_ORIGIN__", &serde_json::to_string(origin).expect("a string serializes"))
+    BRIDGE_JS
+        .replace("__ORBIT_ORIGIN__", &serde_json::to_string(origin).expect("a string serializes"))
+        .replace("__ORBIT_APP_VERSION__", &serde_json::to_string(env!("CARGO_PKG_VERSION")).expect("a string serializes"))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -22,6 +24,8 @@ pub enum Message {
     Latest(String),
     /// The server picked on the app's own start page.
     Server(String),
+    /// A line for the diagnostics log (the web app's voice input errors).
+    Log(String),
 }
 
 /// What the web app put on its badge (`navigator.setAppBadge`).
@@ -55,6 +59,9 @@ enum Wire {
     Server {
         url: String,
     },
+    Log {
+        text: String,
+    },
 }
 
 const MAX_TITLE: usize = 200;
@@ -79,6 +86,7 @@ pub fn parse(text: &str) -> Option<Message> {
         Wire::Open { url } if url.len() <= MAX_URL => Message::Open(url),
         Wire::Latest { json } if json.len() <= MAX_LATEST => Message::Latest(json),
         Wire::Server { url } if url.len() <= MAX_URL => Message::Server(url),
+        Wire::Log { text } => Message::Log(clip(text.trim(), MAX_BODY)),
         Wire::Open { .. } | Wire::Latest { .. } | Wire::Server { .. } => return None,
     })
 }
@@ -168,6 +176,7 @@ mod tests {
         assert_eq!(parse(r#"{"kind":"open","url":"https://github.com"}"#), Some(Message::Open("https://github.com".into())));
         assert_eq!(parse(r#"{"kind":"latest","json":"{\"version\":\"0.2.0\"}"}"#), Some(Message::Latest(r#"{"version":"0.2.0"}"#.into())));
         assert_eq!(parse(r#"{"kind":"server","url":"orbit.example.com"}"#), Some(Message::Server("orbit.example.com".into())));
+        assert_eq!(parse(r#"{"kind":"log","text":" voice: denied "}"#), Some(Message::Log("voice: denied".into())));
         assert_eq!(parse(&format!(r#"{{"kind":"open","url":"https://x/{}"}}"#, "a".repeat(MAX_URL))), None);
         for junk in ["", "null", "[]", r#"{"kind":"eval","code":"rm -rf"}"#, r#"{"title":"no kind"}"#, "{broken"] {
             assert_eq!(parse(junk), None, "{junk}");
@@ -208,5 +217,6 @@ mod tests {
         let js = script("https://orbit.example.com");
         assert!(js.contains(r#"const ORIGIN = "https://orbit.example.com""#));
         assert!(!js.contains("__ORBIT_ORIGIN__"));
+        assert!(js.contains(&format!(r#"const APP = "{}""#, env!("CARGO_PKG_VERSION"))), "the page can show the app's version");
     }
 }

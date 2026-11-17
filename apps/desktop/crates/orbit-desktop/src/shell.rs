@@ -26,7 +26,7 @@ use crate::bridge::{self, Message, Unread};
 use crate::instance::Instance;
 use crate::route::{self, Route};
 use crate::settings::{Area, MIN_HEIGHT, MIN_WIDTH, Settings, WindowState};
-use crate::{autostart, signin};
+use crate::{autostart, diagnostics, signin};
 
 const ICON_PNG: &[u8] = include_bytes!("../assets/orbit-64.png");
 const PICK_HTML: &str = include_str!("../assets/pick.html");
@@ -50,6 +50,7 @@ struct TrayMenu {
     autostart: CheckMenuItem,
     update: MenuItem,
     server: MenuItem,
+    diagnostics: MenuItem,
     quit: MenuItem,
 }
 
@@ -58,6 +59,7 @@ struct TrayMenu {
 pub fn run(hidden: bool, mut instance: Option<Instance>) -> ! {
     let mut settings = Settings::load();
     let server = settings.server.as_deref().and_then(|s| ServerUrl::parse(s).ok());
+    diagnostics::log(&format!("start: Orbit {} on {}, server {}", env!("CARGO_PKG_VERSION"), std::env::consts::OS, server.as_ref().map_or("none", |s| s.origin())));
     if settings.start_with_os
         && let Err(e) = autostart::set(true)
     {
@@ -118,6 +120,7 @@ pub fn run(hidden: bool, mut instance: Option<Instance>) -> ! {
         autostart: CheckMenuItem::new(autostart::label(), true, settings.start_with_os, None),
         update: MenuItem::new("Update available", false, None),
         server: MenuItem::new("Change server…", true, None),
+        diagnostics: MenuItem::new("Open diagnostics log", true, None),
         quit: MenuItem::new("Quit Orbit", true, None),
     };
     let mut tray: Option<TrayIcon> = None;
@@ -191,6 +194,13 @@ pub fn run(hidden: bool, mut instance: Option<Instance>) -> ! {
                     if let Some(url) = &update_url {
                         open_outside(url);
                     }
+                } else if id == menu.diagnostics.id() {
+                    if let Some(path) = diagnostics::path() {
+                        diagnostics::log("diagnostics log opened");
+                        if let Err(e) = open::that_detached(&path) {
+                            eprintln!("orbit-desktop: cannot open {}: {e}", path.display());
+                        }
+                    }
                 } else if id == menu.server.id() {
                     let _ = webview.load_html(&pick_page(server.as_ref()));
                     picking = true;
@@ -224,9 +234,10 @@ pub fn run(hidden: bool, mut instance: Option<Instance>) -> ! {
                     Message::Open(url) => follow(server.as_ref(), &webview, &url),
                     Message::Latest(json) => {
                         let latest = serde_json::from_str::<Latest>(&json).ok();
-                        if update_url.is_none()
-                            && let Some(latest) = latest.as_ref().and_then(|l| newer(env!("CARGO_PKG_VERSION"), l))
+                        // The check runs every 6 hours: tell once per new version.
+                        if let Some(latest) = latest.as_ref().and_then(|l| newer(env!("CARGO_PKG_VERSION"), l))
                             && let Some(url) = latest.download()
+                            && update_url.as_deref() != Some(url)
                         {
                             update_url = Some(url.to_owned());
                             menu.update.set_text(format!("Download Orbit {}", latest.version));
@@ -234,6 +245,7 @@ pub fn run(hidden: bool, mut instance: Option<Instance>) -> ! {
                             notify("Orbit update available".into(), format!("Version {} is ready. Use the tray menu to download it.", latest.version), None, &proxy);
                         }
                     }
+                    Message::Log(text) => diagnostics::log(&format!("page: {text}")),
                     Message::Server(_) => {}
                 }
             }
@@ -327,7 +339,7 @@ fn build_webview(window: &Window, context: &mut WebContext, server: Option<&Serv
 fn build_tray(menu: &TrayMenu, rgba: &[u8], size: u32) -> Option<TrayIcon> {
     let items = Menu::new();
     let separator = PredefinedMenuItem::separator();
-    let added = items.append_items(&[&menu.open, &separator, &menu.autostart, &menu.update, &menu.server, &PredefinedMenuItem::separator(), &menu.quit]);
+    let added = items.append_items(&[&menu.open, &separator, &menu.autostart, &menu.update, &menu.server, &menu.diagnostics, &PredefinedMenuItem::separator(), &menu.quit]);
     let icon = tray_icon::Icon::from_rgba(rgba.to_vec(), size, size).ok()?;
     let built = added.map_err(|e| e.to_string()).and_then(|()| {
         TrayIconBuilder::new()

@@ -67,7 +67,15 @@ Orbit pins 1.97.1), `Cargo.lock` and `target/`.
   never worked on Windows. Since 0.1.5 every web view starts with
   `--disable-features=…,msSpeechRecognitionServiceUseCetoService` (`signin::WEBVIEW2_ARGS`, with wry's default
   flags), so WebView2 uses the older Edge speech service. If Microsoft retires that one too, the web app says the
-  speech service could not be reached. macOS: WKWebView uses Apple's speech recognition and needs
+  speech service could not be reached.
+  When the recognizer says `not-allowed`, the web app asks for the microphone itself (`getUserMedia`). This raises
+  WebView2's normal microphone request, which the app allows and saves. If the microphone works, it tries once more.
+  If not, the toast names the cause (system block, app/browser block, no microphone, or a speech refusal), the error
+  text and the app version (`__orbitDesktop.app`; an app before 0.1.6 gives none).
+- **Diagnostics log** (tray → "Open diagnostics log", `<local app data>/orbit-desktop/diagnostics.log`, 64 KB max):
+  start lines (version, server), the WebView2 runtime version, the saved microphone permission, every WebView2
+  permission request (kind, page, answer) and the page's voice input errors (`__orbitDesktop.log`). No message text
+  and no cookies. The update check runs at the start and every 6 hours (before 0.1.6: at the start only). macOS: WKWebView uses Apple's speech recognition and needs
   `NSMicrophoneUsageDescription` and `NSSpeechRecognitionUsageDescription` in `packaging/macos/Info.plist` (an
   older build without them gets `not-allowed`: the crossed-out mic); wry grants the media capture, macOS asks.
   Linux (WebKitGTK) has no recognizer: the mic shows "not available".
