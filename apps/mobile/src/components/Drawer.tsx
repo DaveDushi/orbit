@@ -19,6 +19,8 @@ import { DRAWER_AREA_TITLES, type DrawerArea, drawerAreaOf, drawerSections, TASK
 import { ACCOUNT_NAV, ADMIN_NAV, allowedNav, WORKSPACE_NAV } from './settings/Shell'
 import { useAgentEnabled } from '../hooks/agent'
 import { isGuestRole } from '../data/guest'
+import { useOpenWorkspaceApp, useWorkspaceApps } from '../hooks/apps'
+import { appIconName } from '../data/apps'
 
 const DrawerContext = createContext<(() => void) | null>(null)
 
@@ -205,6 +207,9 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
   // a guest has Chat and its account settings only: no Activity, Search, tasks or workspace settings
   const guest = isGuestRole(workspace.role)
   const inboxUnread = (useUnreadNotifications(!guest).data?.length ?? 0) > 0
+  // the workspace's own web apps this member may open (guests have none)
+  const apps = useWorkspaceApps(!guest).data ?? []
+  const openApp = useOpenWorkspaceApp()
   const [switching, setSwitching] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
   const newUi = useLayout() === 'new'
@@ -324,6 +329,9 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
               <NavRow link={{ label: 'Docs', icon: 'docs', href: '/docs', active: pathname.startsWith('/docs') }} onPress={() => go('/docs')} />
               <NavRow link={{ label: 'Chat', icon: 'chat', href: '/chat', active: pathname.startsWith('/chat'), badge: chatBadge.count, dot: chatBadge.unread }} onPress={() => go('/chat')} />
               <NavRow link={{ label: 'Drive', icon: 'folder', href: '/drive', active: pathname.startsWith('/drive') }} onPress={() => go('/drive')} />
+              {apps.map((app) => (
+                <NavRow key={app.slug} link={{ label: app.name, icon: appIconName(app.icon), href: app.url, active: false }} onPress={() => void openApp(app)} />
+              ))}
               {personal.length > 0 ? <Section label="Personal" /> : null}
               {personal.map((link) => (
                 <NavRow key={link.label} link={link} onPress={() => go(link.href)} />
