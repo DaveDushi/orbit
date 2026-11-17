@@ -1,4 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
+import { router } from 'expo-router'
 import { applyChatActions, applyChatEvents, chatQueryKeys } from '../../chat-cache'
 import * as DocumentPicker from 'expo-document-picker'
 import { requireOptionalNativeModule } from 'expo'
@@ -15,13 +16,16 @@ import { encodeMentions, insertMention, type MentionQuery, mentionQueryAt, menti
 import type { MessageRecord } from '../../data/orbit'
 import { confirmAction, showError } from '../../hooks/chat'
 
-import { useOrbit } from '../../orbit-context'
+import { canScheduleFrom } from '../../data/scheduled'
+import { useScheduleMessage } from '../../hooks/scheduled'
+import { useIsGuest, useOrbit } from '../../orbit-context'
 import { useConversations, useMembers } from '../../queries'
 import { useTheme } from '../../theme'
 import { Avatar, Icon, IconButton, Spinner, Text } from '../../ui'
 import { uploadPart } from '../../upload-part'
 import { EmojiPicker } from './EmojiPicker'
 import { MicButton } from './MicButton'
+import { ScheduledBar, SendLaterSheet } from './SendLater'
 import { ActionSheet } from './Sheet'
 
 /** A picked file: it uploads at once, and the message names it once it is there. */
@@ -87,6 +91,9 @@ export function useComposer(conversationId: string, threadRootId: string | null,
   const [mode, setMode] = useState<Mode>({ kind: 'new', replyTo: null })
   const [alsoInChannel, setAlsoInChannel] = useState(false)
   const [pending, setPending] = useState<PendingMessage[]>([])
+  const guest = useIsGuest()
+  const scheduling = useScheduleMessage()
+  const schedulingHere = threadRootId === null && pageContext === undefined && !guest
 
   const upload = (key: string, picked: { uri: string; name: string; width?: number; height?: number }) =>
     uploadPart(picked.uri, picked.name)
@@ -175,6 +182,7 @@ export function useComposer(conversationId: string, threadRootId: string | null,
     removeFile: (key: string) => setFiles((list) => list.filter((item) => item.key !== key)),
     addFiles,
     mode,
+    conversationId,
     reply: (message: MessageRecord) => setMode({ kind: 'new', replyTo: message }),
     edit: (message: MessageRecord) => {
       setMode({ kind: 'edit', message })
@@ -192,6 +200,23 @@ export function useComposer(conversationId: string, threadRootId: string | null,
     send: () => void send(),
     /** Who `@` and `#` offer in this conversation; `@channel` and `@here` only outside a thread. */
     mentions: { people: mentionable, channels, everyone: threadRootId === null },
+    /** Send later is offered here (the main list of a conversation, not Ask Donna, not for a guest). */
+    schedulingHere,
+    canSchedule: canScheduleFrom({ text: draft, files: files.length, editing: mode.kind === 'edit', inThread: threadRootId !== null, askDonna: pageContext !== undefined, guest }),
+    schedulePending: scheduling.isPending,
+    /** Schedules the text and empties the composer; a quoted message stays out, as on the web. */
+    scheduleAt: (at: Date, done: () => void) =>
+      scheduling.mutate(
+        { conversationId, body: encodeMentions(draft.trim(), everybody, channels), sendAt: at },
+        {
+          onSuccess: () => {
+            setDraft('')
+            setMode({ kind: 'new', replyTo: null })
+            done()
+          },
+          onError: (error) => showError('The message could not be scheduled', error),
+        },
+      ),
   }
 }
 
@@ -205,6 +230,8 @@ export function Composer({ state, placeholder, nameOf, alsoSendTo }: { state: Co
   const { colors, scheme } = useTheme()
   const [focused, setFocused] = useState(false)
   const [attachOpen, setAttachOpen] = useState(false)
+  const [sendMenu, setSendMenu] = useState(false)
+  const [laterOpen, setLaterOpen] = useState(false)
   const [emojiOpen, setEmojiOpen] = useState(false)
   const [cursor, setCursor] = useState<number | null>(null)
   const { draft, setDraft, mode } = state
@@ -257,6 +284,7 @@ export function Composer({ state, placeholder, nameOf, alsoSendTo }: { state: Co
   const banner = mode.kind === 'edit' ? 'Editing message' : mode.replyTo ? `Replying to ${authorName(mode.replyTo, nameOf)}` : null
   return (
     <View className="m-2 gap-1.5">
+      {state.schedulingHere ? <ScheduledBar conversationId={state.conversationId} /> : null}
       {banner ? (
         <View className="flex-row items-center gap-1.5 pl-2.5">
           <Icon name={mode.kind === 'edit' ? 'edit' : 'reply'} size={14} color={colors.mutedForeground} />
@@ -339,6 +367,13 @@ export function Composer({ state, placeholder, nameOf, alsoSendTo }: { state: Co
             accessibilityState={{ disabled: !state.canSend }}
             disabled={!state.canSend}
             onPress={state.send}
+            // like iMessage: hold Send for more ways to send
+            onLongPress={state.schedulingHere && mode.kind === 'new' ? () => setSendMenu(true) : undefined}
+            accessibilityHint={state.schedulingHere && mode.kind === 'new' ? 'Hold for Send later' : undefined}
+            accessibilityActions={state.schedulingHere && mode.kind === 'new' ? [{ name: 'longpress', label: 'Send later' }] : undefined}
+            onAccessibilityAction={(event) => {
+              if (event.nativeEvent.actionName === 'longpress') setSendMenu(true)
+            }}
             hitSlop={4}
             className={`size-8 rounded-lg items-center justify-center active:bg-muted ${state.canSend ? 'opacity-100' : 'opacity-50'}`}
           >
@@ -359,6 +394,15 @@ export function Composer({ state, placeholder, nameOf, alsoSendTo }: { state: Co
           <Text className="text-[12px] text-muted-foreground">Also send to {alsoSendTo}</Text>
         </Pressable>
       ) : null}
+      <ActionSheet
+        visible={sendMenu}
+        items={[
+          { key: 'later', label: 'Send later…', icon: 'clock', disabled: !state.canSchedule, onPress: () => setLaterOpen(true) },
+          { key: 'list', label: 'Scheduled messages', icon: 'list', onPress: () => router.push('/chat/scheduled') },
+        ]}
+        onClose={() => setSendMenu(false)}
+      />
+      {laterOpen ? <SendLaterSheet pending={state.schedulePending} onPick={(at) => state.scheduleAt(at, () => setLaterOpen(false))} onClose={() => setLaterOpen(false)} /> : null}
       <ActionSheet
         visible={attachOpen}
         title="Attach"
