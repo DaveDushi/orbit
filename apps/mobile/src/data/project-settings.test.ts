@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { ProjectRecord, StatusRecord } from '@orbit/api/generated/types.gen'
 
-import { canDeleteStatus, categoryStatuses, draftChanged, moveStatus, projectKey, projectUpdate } from './project-settings'
+import { canDeleteStatus, categoryStatuses, draftChanged, moveStatus, ownerName, projectKey, projectUpdate } from './project-settings'
 
 const project = { id: 'p', name: 'Web', key: 'WEB', color: '#8b5cf6', version: 7, private: false, auto_close_parent: true, auto_close_sub_issues: true } as ProjectRecord
 const status = (id: string, category: string, position: number): StatusRecord => ({ id, category, position, project_id: 'p', version: position + 10, name: id, color: '#000', description: '', workspace_id: 'w' })
@@ -57,4 +57,11 @@ describe('canDeleteStatus', () => {
     expect(canDeleteStatus(only, [duplicate, only])).toBe(false)
     expect(canDeleteStatus(only, [duplicate, only, status('s', 'started', 0)])).toBe(true)
   })
+})
+
+test('owner:<name> labels give the name in any case, trimmed; other labels none', () => {
+  expect(ownerName('owner:raymond')).toBe('raymond')
+  expect(ownerName('OWNER: Ray ')).toBe('Ray')
+  expect(ownerName('owner:')).toBe(undefined)
+  expect(ownerName('design')).toBe(undefined)
 })

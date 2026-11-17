@@ -4,6 +4,11 @@
  */
 import {
   addProjectMember,
+  createLabelRule,
+  deleteLabelRule,
+  listLabelRules,
+  putLabelRuleSettings,
+  updateLabelRule,
   createLabel,
   createStatus,
   deleteLabel,
@@ -16,7 +21,7 @@ import {
   updateProject,
   updateStatus,
 } from '@orbit/api/generated/sdk.gen'
-import type { LabelRecord, ProjectMemberRecord, ProjectRecord, ProjectUpdateBody, ReorderItem, StatusRecord } from '@orbit/api/generated/types.gen'
+import type { LabelRecord, LabelRuleBody, LabelRulePatchBody, LabelRuleRecord, LabelRuleSettings, ProjectMemberRecord, ProjectRecord, ProjectUpdateBody, ReorderItem, StatusRecord } from '@orbit/api/generated/types.gen'
 
 import type { OrbitClient } from './orbit'
 
@@ -124,4 +129,35 @@ export async function saveLabel(client: OrbitClient, workspaceId: string, label:
 
 export async function removeLabel(client: OrbitClient, workspaceId: string, label: LabelRecord): Promise<void> {
   await deleteLabel({ client, path: { workspace_id: workspaceId, project_id: label.project_id, label_id: label.id }, query: { expected_version: label.version }, throwOnError: true })
+}
+
+// ---- label rules (the web's ProjectRulesCard): a label assigns people; owners and admins manage them
+
+export type { LabelRuleRecord, LabelRuleSettings }
+
+/** `<name>` of a label `owner:<name>` (any case), trimmed, like the server's `owner_name`. */
+export function ownerName(label: string): string | undefined {
+  if (label.slice(0, 6).toLowerCase() !== 'owner:') return undefined
+  return label.slice(6).trim() || undefined
+}
+
+const rulesPath = (workspaceId: string, projectId: string) => ({ workspace_id: workspaceId, project_id: projectId })
+
+export async function labelRules(client: OrbitClient, workspaceId: string, projectId: string): Promise<LabelRuleSettings> {
+  return (await listLabelRules({ client, path: rulesPath(workspaceId, projectId), throwOnError: true })).data
+}
+
+/** What a rules write does: add, change (label, person or on/off), delete, or the owner:<name> switch. */
+export type RuleWrite =
+  | { kind: 'add'; body: LabelRuleBody }
+  | { kind: 'change'; ruleId: string; body: LabelRulePatchBody }
+  | { kind: 'delete'; ruleId: string }
+  | { kind: 'owner-labels'; on: boolean }
+
+export async function writeLabelRule(client: OrbitClient, workspaceId: string, projectId: string, write: RuleWrite): Promise<void> {
+  const path = rulesPath(workspaceId, projectId)
+  if (write.kind === 'add') await createLabelRule({ client, path, body: write.body, throwOnError: true })
+  else if (write.kind === 'change') await updateLabelRule({ client, path: { ...path, rule_id: write.ruleId }, body: write.body, throwOnError: true })
+  else if (write.kind === 'delete') await deleteLabelRule({ client, path: { ...path, rule_id: write.ruleId }, throwOnError: true })
+  else await putLabelRuleSettings({ client, path, body: { owner_labels: write.on }, throwOnError: true })
 }

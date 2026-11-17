@@ -8,6 +8,7 @@ import { ConfirmDialog, type ConfirmRequest } from '../../../../components/setti
 import { CheckRow, ColorSwatches, WebSetupRow } from '../../../../components/settings/Fields'
 import { ProfilePicture } from '../../../../components/settings/ProfilePicture'
 import { ProjectDocsCard } from '../../../../components/tasks/ProjectDocsCard'
+import { ProjectRulesCard } from '../../../../components/tasks/ProjectRulesCard'
 import { FieldLabel, Note, OptionHint, OptionText, RowIcon, RowText, SettingsCard, SettingsRow, SettingsShell, Toggle } from '../../../../components/settings/Shell'
 import {
   CATEGORY_LABEL,
@@ -69,9 +70,10 @@ export default function ProjectSettingsScreen() {
           <ProjectDocsCard project={project} />
           <AccessCard project={project} />
           <LabelsCard project={project} />
+          <ProjectRulesCard projectId={project.id} />
           <SubIssuesCard project={project} />
           <SettingsCard title="In the web app" description="These open the web app in this app. Sign in there if it asks." flush>
-            <WebSetupRow first path={`/tasks/projects/${project.id}/settings`} label="GitHub and label rules" description="Connect a GitHub repository, and assign tasks by label." icon="link2" />
+            <WebSetupRow first path={`/tasks/projects/${project.id}/settings/github`} label="GitHub" description="Connect a GitHub repository: GitHub's install pages work in a browser." icon="link2" />
           </SettingsCard>
           <DangerZone project={project} />
         </>
