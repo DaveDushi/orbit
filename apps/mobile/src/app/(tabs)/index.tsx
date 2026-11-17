@@ -88,7 +88,7 @@ export default function HomeScreen() {
         <MenuButton />
         <HeaderTitle size={14}>Home</HeaderTitle>
         <View className="flex-1" />
-        {guest ? null : <IconButton icon="search" label="Search" onPress={() => router.navigate('/tasks?search=1')} />}
+        {guest ? null : <IconButton icon="search" label="Search" onPress={() => router.navigate('/search')} />}
       </PaneHeader>
       <ScrollView
         contentContainerClassName="px-4 pt-8 pb-6 gap-6"

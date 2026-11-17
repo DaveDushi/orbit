@@ -43,8 +43,8 @@ export function SettingsShell({ title, nav, children, refreshing, onRefresh }: {
           {title}
         </Text>
         <View className="flex-row gap-1.5">
-          {/* a guest has no tasks to search */}
-          {guest ? null : <IconButton icon="search" label="Search" color={muted} onPress={() => router.navigate('/tasks?search=1')} />}
+          {/* a guest has no Search */}
+          {guest ? null : <IconButton icon="search" label="Search" color={muted} onPress={() => router.navigate('/search')} />}
           <IconButton icon={scheme === 'dark' ? 'sun' : 'moon'} label="Toggle theme" iconSize={15} color={muted} onPress={() => setSchemePreference(scheme === 'dark' ? 'light' : 'dark')} />
         </View>
       </PaneHeader>

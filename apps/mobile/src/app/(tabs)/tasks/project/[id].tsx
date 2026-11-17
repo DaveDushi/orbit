@@ -7,7 +7,8 @@ import { ChoiceGroup, FormSheet } from '../../../../components/chat/Sheet'
 import { ConfirmDialog, type ConfirmRequest } from '../../../../components/settings/Dialog'
 import { CheckRow, ColorSwatches, WebSetupRow } from '../../../../components/settings/Fields'
 import { ProfilePicture } from '../../../../components/settings/ProfilePicture'
-import { FieldLabel, Note, OptionHint, OptionText, RowText, SettingsCard, SettingsRow, SettingsShell, Toggle } from '../../../../components/settings/Shell'
+import { ProjectDocsCard } from '../../../../components/tasks/ProjectDocsCard'
+import { FieldLabel, Note, OptionHint, OptionText, RowIcon, RowText, SettingsCard, SettingsRow, SettingsShell, Toggle } from '../../../../components/settings/Shell'
 import {
   CATEGORY_LABEL,
   CATEGORY_ORDER,
@@ -30,11 +31,26 @@ import { useOrbit } from '../../../../orbit-context'
 import { useLabels, useMembers, useProjects, useStatuses, useTasks } from '../../../../queries'
 import { errorMessage } from '../../../../session-context'
 import { useTheme } from '../../../../theme'
-import { Button, IconButton, Input, StatusIcon, Text } from '../../../../ui'
+import { Button, Icon, IconButton, Input, StatusIcon, Text } from '../../../../ui'
+
+/** The project's milestones and cycles have their own page: one row here leads to it. */
+function PlanningCard({ project }: { project: ProjectRecord }) {
+  const { colors } = useTheme()
+  return (
+    <SettingsCard title="Planning" flush>
+      <SettingsRow first label="Milestones and cycles" onPress={() => router.push(`/tasks/settings/${project.id}`)}>
+        <RowIcon icon="flag" />
+        <RowText title="Milestones and cycles" subtitle="Steps toward the project's goal, and its work periods." />
+        <Icon name="chevronRight" size={14} color={colors.mutedForeground} />
+      </SettingsRow>
+    </SettingsCard>
+  )
+}
 
 /**
- * The web's project settings on one page: General, Statuses, Access, Labels, Sub-issues and Danger zone. Every member
- * may change a project, as on the web (the server decides). GitHub and the label rules open the web app in this app.
+ * The web's project settings on one page: General, Statuses, Planning (a link to the milestones and cycles), Docs,
+ * Access, Labels, Sub-issues and Danger zone. Every member may change a project, as on the web (the server decides).
+ * GitHub and the label rules open the web app in this app.
  */
 export default function ProjectSettingsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
@@ -49,6 +65,8 @@ export default function ProjectSettingsScreen() {
         <>
           <GeneralCard key={`${project.id}:${project.name}:${project.key}:${project.color}`} project={project} />
           <StatusesCard project={project} />
+          <PlanningCard project={project} />
+          <ProjectDocsCard project={project} />
           <AccessCard project={project} />
           <LabelsCard project={project} />
           <SubIssuesCard project={project} />

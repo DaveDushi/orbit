@@ -122,20 +122,16 @@ export default function DocsScreen() {
       <PaneHeader>
         <MenuButton />
         <View className="flex-1">
-          <HeaderTitle>Documents</HeaderTitle>
+          <HeaderTitle>Docs</HeaderTitle>
         </View>
-        {/* the web's menu has Import from Notion, a desktop upload: the app offers the other docs actions */}
+        {/* New teamspace is the + of Teamspaces and Trash the row at the bottom: the menu keeps what has no other place */}
         <IconButton
           icon="more"
-          label="Documents options"
+          label="Docs options"
           onPress={() =>
             setMenu({
-              title: 'Documents',
-              actions: [
-                { label: 'New teamspace', icon: 'people', onPress: newTeamspace },
-                { label: 'Trash', icon: 'trash', onPress: () => router.push('/docs/trash') },
-                { label: 'Import from Notion', icon: 'import', onPress: () => router.push('/docs/import') },
-              ],
+              title: 'Docs',
+              actions: [{ label: 'Import from Notion', icon: 'import', onPress: () => router.push('/docs/import') }],
             })
           }
         />

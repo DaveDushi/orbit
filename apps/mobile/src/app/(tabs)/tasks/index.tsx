@@ -7,6 +7,7 @@ import { MenuButton } from '../../../components/Drawer'
 import { NewTaskDialog, type NewTaskDefaults } from '../../../components/NewTaskDialog'
 import { TaskList } from '../../../components/tasks/TaskList'
 import { DisplaySheet, FilterSheet, ViewDialog, type ViewDialogRequest } from '../../../components/tasks/ViewControls'
+import { TASK_PRESETS } from '../../../components/drawerAreas'
 import { groupTasksByStatus } from '../../../data/tasks'
 import { DEFAULT_DISPLAY, defaultViewState, EMPTY_QUICK, type FilterNode, filterFromQuick, groupViewTasks, PRESET_FILTERS, type QuickFilter, quickCount, type TaskSection, type ViewState } from '../../../data/views'
 import { useViewTasks, useViewWrites } from '../../../hooks/views'
@@ -24,16 +25,17 @@ const PRESET_TITLE: Record<string, string> = {
   my_week: 'My week',
 }
 
-type Sheet = 'project' | 'filter' | 'display'
+type Sheet = 'view' | 'project' | 'filter' | 'display'
 
-/** The project sheet's last row: the selected project's settings. */
-const PROJECT_SETTINGS = 'project-settings'
+/** The view menu's rows after the presets: the saved views and the trash, so the drawer is not the only way there. */
+const SAVED_VIEWS = 'saved-views'
+const TRASH = 'trash'
 
 const isDefaultDisplay = (display: ViewState['display']) =>
   display.layout === DEFAULT_DISPLAY.layout && display.group_by === DEFAULT_DISPLAY.group_by && display.order_by === DEFAULT_DISPLAY.order_by && display.order_direction === DEFAULT_DISPLAY.order_direction && display.show_completed === DEFAULT_DISPLAY.show_completed
 
 export default function TasksScreen() {
-  const { view: viewParam, search: searchParam, project: projectParam } = useLocalSearchParams<{ view?: string; search?: string; project?: string }>()
+  const { view: viewParam, project: projectParam } = useLocalSearchParams<{ view?: string; project?: string }>()
   const view = viewParam && viewParam in PRESET_TITLE ? viewParam : undefined
   const { user } = useOrbit()
   const { colors } = useTheme()
@@ -93,38 +95,48 @@ export default function TasksScreen() {
       <MenuButton />
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Select project"
-        onPress={() => setSheet('project')}
-        className="h-8 max-w-[30%] flex-row items-center gap-[7px] px-[7px] rounded-lg active:bg-muted"
+        accessibilityLabel="Select view"
+        accessibilityValue={{ text: view ? PRESET_TITLE[view] : 'All tasks' }}
+        onPress={() => setSheet('view')}
+        className="h-8 flex-1 min-w-0 flex-row items-center gap-1 px-1 rounded-lg active:bg-muted"
       >
-        {project ? <View className="size-2 rounded-full" style={{ backgroundColor: project.color }} /> : null}
-        <Text numberOfLines={1} className="text-[14px] leading-[20px] shrink text-muted-foreground">
-          {project?.name ?? 'All projects'}
-        </Text>
+        <HeaderTitle>{view ? PRESET_TITLE[view] : 'All tasks'}</HeaderTitle>
         <Icon name="chevronDown" size={14} color={colors.mutedForeground} />
       </Pressable>
-      <View className="flex-1 min-w-0">
-        <HeaderTitle>{view ? PRESET_TITLE[view] : 'All tasks'}</HeaderTitle>
-      </View>
       <IconButton icon="filter" label={filters > 0 ? `Filter, ${filters} set` : 'Filter'} size={32} onPress={() => setSheet('filter')} color={filters > 0 ? colors.primary : undefined} />
       <IconButton icon="display" label="Display" size={32} onPress={() => setSheet('display')} color={isDefaultDisplay(display) ? undefined : colors.primary} />
-      {project ? <IconButton icon="settings" label={`${project.name} settings`} size={32} onPress={() => router.push(`/tasks/settings/${project.id}`)} /> : null}
+      {project ? <IconButton icon="settings" label={`${project.name} settings`} size={32} onPress={() => router.push(`/tasks/project/${project.id}`)} /> : null}
       <IconButton icon="plus" label="New task" size={32} variant="primary" onPress={() => newTask()} />
-      <View className="h-8.5 mt-1 basis-full flex-row items-center border border-input rounded-lg bg-input/30">
-        <View className="w-5.5 items-end">
-          <Icon name="search" size={14} color={colors.mutedForeground} />
+      {/* the project beside the search, so the title keeps its room */}
+      <View className="mt-1 basis-full flex-row items-center gap-2">
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Select project"
+          accessibilityValue={{ text: project?.name ?? 'All projects' }}
+          onPress={() => setSheet('project')}
+          className="h-8.5 max-w-[45%] flex-row items-center gap-[7px] px-2.5 rounded-lg border border-input active:bg-muted"
+        >
+          {project ? <View className="size-2 rounded-full" style={{ backgroundColor: project.color }} /> : null}
+          <Text numberOfLines={1} className="text-[14px] leading-[20px] shrink text-muted-foreground">
+            {project?.name ?? 'All projects'}
+          </Text>
+          <Icon name="chevronDown" size={14} color={colors.mutedForeground} />
+        </Pressable>
+        <View className="h-8.5 flex-1 flex-row items-center border border-input rounded-lg bg-input/30">
+          <View className="w-5.5 items-end">
+            <Icon name="search" size={14} color={colors.mutedForeground} />
+          </View>
+          <TextInput
+            accessibilityLabel="Search tasks"
+            placeholder="Search tasks"
+            placeholderTextColor={colors.mutedForeground}
+            selectionColor={colors.primary}
+            value={search}
+            onChangeText={setSearch}
+            returnKeyType="search"
+            className="flex-1 h-8 pl-2 pr-2.5 font-noto text-[16px] text-foreground"
+          />
         </View>
-        <TextInput
-          accessibilityLabel="Search tasks"
-          placeholder="Search tasks"
-          placeholderTextColor={colors.mutedForeground}
-          selectionColor={colors.primary}
-          autoFocus={searchParam === '1'}
-          value={search}
-          onChangeText={setSearch}
-          returnKeyType="search"
-          className="flex-1 h-8 pl-2 pr-2.5 font-noto text-[16px] text-foreground"
-        />
       </View>
       {changed ? (
         <View className="basis-full flex-row items-center gap-2 mt-1">
@@ -148,7 +160,13 @@ export default function TasksScreen() {
     </PaneHeader>
   )
 
-  const projectOptions = [{ key: 'all', label: 'All projects', selected: projectId === null }, ...(projects.data ?? []).map((item) => ({ key: item.id, label: item.name, selected: item.id === projectId, leading: <View className="size-2 rounded-full" style={{ backgroundColor: item.color }} /> })), ...(project ? [{ key: PROJECT_SETTINGS, label: `${project.name} settings`, leading: <Icon name="settings" size={14} color={colors.mutedForeground} /> }] : [])]
+  const viewOptions = [
+    { key: 'all', label: 'All tasks', selected: !view, leading: <Icon name="tasks" size={16} color={colors.mutedForeground} /> },
+    ...TASK_PRESETS.map((preset) => ({ key: preset.view, label: preset.label, selected: view === preset.view, leading: <Icon name={preset.icon} size={16} color={colors.mutedForeground} /> })),
+    { key: SAVED_VIEWS, label: 'Saved views', leading: <Icon name="layer" size={16} color={colors.mutedForeground} /> },
+    { key: TRASH, label: 'Trash', leading: <Icon name="trash" size={16} color={colors.mutedForeground} /> },
+  ]
+  const projectOptions = [{ key: 'all', label: 'All projects', selected: projectId === null }, ...(projects.data ?? []).map((item) => ({ key: item.id, label: item.name, selected: item.id === projectId, leading: <View className="size-2 rounded-full" style={{ backgroundColor: item.color }} /> }))]
 
   return (
     <SafeAreaView edges={['top', 'left', 'right']} className="flex-1 bg-background">
@@ -172,14 +190,24 @@ export default function TasksScreen() {
       )}
       {creating ? <NewTaskDialog defaults={creating} onClose={() => setCreating(null)} /> : null}
       <PickerSheet
+        visible={sheet === 'view'}
+        title="View"
+        options={viewOptions}
+        onSelect={(key) => {
+          setSheet(null)
+          if (key === SAVED_VIEWS) router.push('/tasks/views')
+          else if (key === TRASH) router.push('/tasks/trash')
+          else router.setParams({ view: key === 'all' ? undefined : key })
+        }}
+        onClose={() => setSheet(null)}
+      />
+      <PickerSheet
         visible={sheet === 'project'}
         title="Project"
         options={projectOptions}
         onSelect={(key) => {
           setSheet(null)
-          // the web's gear beside each project: its settings
-          if (key === PROJECT_SETTINGS && project) router.push(`/tasks/project/${project.id}`)
-          else setProjectId(key === 'all' ? null : key)
+          setProjectId(key === 'all' ? null : key)
         }}
         onClose={() => setSheet(null)}
       />

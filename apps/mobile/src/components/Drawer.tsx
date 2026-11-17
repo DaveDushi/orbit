@@ -54,7 +54,7 @@ export function MenuButton() {
 }
 
 /** The tab roots: on a pushed screen the same edge swipe is iOS's back gesture. */
-const SWIPE_ROOTS = new Set(['/', '/tasks', '/docs', '/chat', '/drive', '/settings', '/activity'])
+const SWIPE_ROOTS = new Set(['/', '/tasks', '/docs', '/chat', '/drive', '/settings', '/activity', '/search'])
 /** A swipe opens the drawer only when it starts this close to the left edge. */
 const EDGE = 24
 
@@ -294,7 +294,7 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Search"
-          onPress={() => go('/tasks?search=1')}
+          onPress={() => go('/search')}
           className="h-8 flex-row items-center gap-2.5 rounded-md bg-neutral-100 pr-1.5 pl-2.5 active:bg-neutral-200 dark:border dark:border-sidebar-tint/10 dark:bg-sidebar-tint/6 dark:active:bg-sidebar-tint/10"
         >
           <Icon name="search" size={16} color={alpha(colors.mutedForeground, 0.9)} />

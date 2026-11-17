@@ -44,8 +44,10 @@ export default function TabsLayout() {
         <Tabs.Screen name="chat" />
         <Tabs.Screen name="drive" />
         <Tabs.Screen name="settings" />
-        {/* reached from the drawer, like the web's Activity: no dock item */}
+        {/* reached from the bell of every tab header, like the web's Activity: no dock item */}
         <Tabs.Screen name="activity" />
+        {/* reached from the search button of Home, Settings and the drawer: no dock item */}
+        <Tabs.Screen name="search" />
       </Tabs>
     </DrawerProvider>
   )

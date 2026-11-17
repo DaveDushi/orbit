@@ -204,7 +204,6 @@ export function DriveFolder({ folderId }: { folderId: string | null }) {
           }}
         />
         <IconButton icon="display" label={`Sort: ${sorting.label}`} size={32} onPress={() => setSortOpen(true)} />
-        {folderId === null ? <IconButton icon="trash" label="Drive trash" size={32} onPress={() => router.push('/drive/trash')} /> : null}
         <IconButton icon="plus" label="Add to Drive" size={32} variant="primary" disabled={uploading !== null} onPress={newMenu} />
       </PaneHeader>
       {searching ? (
@@ -286,6 +285,13 @@ export function DriveFolder({ folderId }: { folderId: string | null }) {
           )}
         />
       )}
+      {/* the trash as a row at the bottom of the top level, as in Docs */}
+      {folderId === null ? (
+        <Pressable accessibilityRole="link" accessibilityLabel="Trash" onPress={() => router.push('/drive/trash')} className="h-[49px] flex-row items-center gap-2.5 px-4 border-t border-border active:bg-muted">
+          <Icon name="trash" size={15} color={colors.mutedForeground} />
+          <Text className="font-noto-medium text-[13px] text-foreground">Trash</Text>
+        </Pressable>
+      ) : null}
 
       <ActionSheet visible={menu !== null} title={menu?.title} actions={menu?.actions ?? []} onClose={() => setMenu(null)} />
       <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />
