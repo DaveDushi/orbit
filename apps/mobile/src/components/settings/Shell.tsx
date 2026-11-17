@@ -34,6 +34,7 @@ export const WORKSPACE_NAV: readonly SettingsNavItem[] = [
   { href: '/settings/emoji', label: 'Emoji', icon: 'emojiHappy', permission: 'chat.manage' },
   { href: '/settings/stickers', label: 'Stickers', icon: 'sticker', permission: 'chat.manage' },
   { href: '/settings/file-storage', label: 'File storage', icon: 'cloudConnection' },
+  { href: '/settings/github', label: 'GitHub', icon: 'link2' },
   { href: '/settings/workspace-agentic', label: 'Agentic', icon: 'magicStar' },
   { href: '/settings/api-tokens', label: 'API tokens', icon: 'key', permission: 'api_tokens.manage' },
   { href: '/settings/apps', label: 'Apps', icon: 'category', permission: 'apps.manage' },
