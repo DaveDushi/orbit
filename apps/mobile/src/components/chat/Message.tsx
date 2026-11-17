@@ -14,6 +14,7 @@ import { showError, useServerImage } from '../../hooks/chat'
 import { useOrbit } from '../../orbit-context'
 import { cssColors, useTheme } from '../../theme'
 import { Avatar, Icon, IconButton, Spinner, Text } from '../../ui'
+import { useOpenProfile } from '../ProfileSheet'
 import { ProfilePicture } from '../settings/ProfilePicture'
 import { AgentCard } from './AgentCard'
 import { BotAvatar, BotBadge } from './BotAvatar'
@@ -65,6 +66,7 @@ function MessageTable({ table }: { table: Extract<TextPart, { kind: 'table' }> }
 export function MessageItem({ message, groupStart, highlighted = false, handlers }: { message: MessageRecord; groupStart: boolean; highlighted?: boolean; handlers: MessageHandlers }) {
   const { colors } = useTheme()
   const { user } = useOrbit()
+  const openProfile = useOpenProfile()
   // An integration's message shows the integration, not the member who set it up (its `author_id`).
   const author = authorName(message, handlers.nameOf)
 
@@ -88,11 +90,21 @@ export function MessageItem({ message, groupStart, highlighted = false, handlers
     >
       {message.reply_to ? <Quote author={authorName(message.reply_to, handlers.nameOf)} body={message.reply_to.sticker && !message.reply_to.body ? 'Sticker' : handlers.text(message.reply_to.body)} /> : null}
       <View className={`flex-row gap-2 px-3 pb-0.5 ${groupStart ? 'pt-1' : 'pt-0.5'}`}>
-        <View className="w-7.5 pt-0.5">{groupStart ? message.bot ? <BotAvatar bot={message.bot} size={30} /> : <ProfilePicture id={message.author_id} name={author} url={handlers.pictureOf(message.author_id)} size={30} /> : null}</View>
+        <View className="w-7.5 pt-0.5">
+          {groupStart ? (
+            message.bot ? (
+              <BotAvatar bot={message.bot} size={30} />
+            ) : (
+              <Pressable accessibilityRole="button" accessibilityLabel={`Profile of ${author}`} onPress={() => openProfile(message.author_id, author)}>
+                <ProfilePicture id={message.author_id} name={author} url={handlers.pictureOf(message.author_id)} size={30} />
+              </Pressable>
+            )
+          ) : null}
+        </View>
         <View className="flex-1 min-w-0">
           {groupStart ? (
             <View className="flex-row items-baseline gap-2">
-              <Text numberOfLines={1} className="font-noto-medium text-[14px] leading-[20px] shrink">
+              <Text numberOfLines={1} onPress={message.bot ? undefined : () => openProfile(message.author_id, author)} className="font-noto-medium text-[14px] leading-[20px] shrink">
                 {author}
               </Text>
               {message.bot ? <BotBadge /> : null}

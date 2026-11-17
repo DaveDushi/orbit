@@ -15,6 +15,7 @@ import { AppState, View } from 'react-native'
 import { NoWorkspace } from '../components/NoWorkspace'
 import { CACHE_MAX_AGE } from '../data/persist'
 import { OrbitProvider } from '../orbit-context'
+import { ProfileSheetProvider } from '../components/ProfileSheet'
 import { PersistedCache } from '../query-cache'
 import { SessionProvider, useSession } from '../session-context'
 import { fonts, loadAppearance, palettes, type Theme, useTheme } from '../theme'
@@ -144,7 +145,9 @@ function RootNavigator({ fontsReady }: { fontsReady: boolean }) {
         <StatusBar style={theme.scheme === 'dark' ? 'light' : 'dark'} />
         {state.status === 'offline' ? <SessionOffline server={state.session.server} /> : state.status === 'signed_in' ? (
           <PersistedCache server={state.session.server} userId={state.user.id}>
-            <OrbitProvider noWorkspace={<NoWorkspace />}>{stack}</OrbitProvider>
+            <OrbitProvider noWorkspace={<NoWorkspace />}>
+              <ProfileSheetProvider>{stack}</ProfileSheetProvider>
+            </OrbitProvider>
           </PersistedCache>
         ) : (
           stack
