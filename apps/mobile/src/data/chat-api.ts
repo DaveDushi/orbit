@@ -5,6 +5,7 @@
  */
 import {
   addChatMembers,
+  getChatLinkPreview,
   createChatWebhook,
   deleteChatWebhook,
   getChatWebhookSigningSecret,
@@ -51,7 +52,7 @@ import {
   updateChatState,
   uploadChatFile,
 } from '@orbit/api/generated/sdk.gen'
-import type { ChatWebhookWithUrl, DeliveryRecord, WebhookRecord } from '@orbit/api/generated/types.gen'
+import type { ChatWebhookWithUrl, DeliveryRecord, LinkPreview, WebhookRecord } from '@orbit/api/generated/types.gen'
 import type { CardValues, SentAction } from './agent-card'
 import type { PageContext } from './ask-donna'
 import type {
@@ -447,3 +448,10 @@ export async function webhookDeliveries(client: OrbitClient, workspaceId: string
 
 /** The web's "Try it": a curl command that posts a message to the webhook URL. */
 export const curlExample = (url: string) => `curl -X POST -H 'Content-Type: application/json' \\\n  -d '{"text": "Deploy **finished** :rocket:"}' \\\n  '${url}'`
+
+export type { LinkPreview }
+
+/** The preview card of another site's URL (the server reads the page); `null` when it has none. */
+export async function linkPreview(client: OrbitClient, workspaceId: string, url: string): Promise<LinkPreview | null> {
+  return (await getChatLinkPreview({ client, path: { workspace_id: workspaceId }, query: { url }, throwOnError: true })).data.preview ?? null
+}

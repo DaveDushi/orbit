@@ -109,7 +109,7 @@ counterpart on purpose. "Fixed" in the fix column means fixed in this branch; sc
 | C07 | `/chat` | New channel, browse, join, leave, archive, edit, categories | Same | OK | — |
 | C08 | `/chat/:id` menu | Notifications level, star, mark read, copy link | Same | OK | — |
 | C09 | `/chat/:id` agent | Agent cards, approvals | Same (approval by "yes", as on the web) | OK | — |
-| C10 | `/chat/:id` | Link previews | — | missing | Open |
+| C10 | `/chat/:id` | Link previews | — | missing | Fixed: preview cards under a message (other sites' URLs, as the web picks them; tested) |
 | C11 | `/chat/:id` | Attach a Drive file; large files go to Drive | — | missing | Open |
 | C12 | Edit channel → Integrations | Incoming webhooks (create, URL once, edit, new URL, reading, buttons/events, delete) | Nothing | missing | Fixed: Integrations screen from the conversation menu (channel managers) |
 | C13 | `/chat/:id` | Tap a person → profile card | Tap did nothing (members list opened a DM) | missing | Fixed: see G08 |
@@ -171,7 +171,7 @@ counterpart on purpose. "Fixed" in the fix column means fixed in this branch; sc
 | missing | 26 |
 | broken | 2 |
 | hidden | 3 |
-| **fixed in this branch** | **15**: G02, G07, G08, T02, T03, T04, T05, T06, T09, T11, D06, D07, C12, C13, S13 |
+| **fixed in this branch** | **16**: G02, G07, G08, T02, T03, T04, T05, T06, T09, T11, D06, D07, C10, C12, C13, S13 |
 | fixed in `iphone-agentic-tabs` | 1: S07 |
 
-Open (not fixed here, 15): P01, T12, T15, T17, T18, T19, T20, D04, D08, D09, D10, C10, C11, C14, R03.
+Open (not fixed here, 14): P01, T12, T15, T17, T18, T19, T20, D04, D08, D09, D10, C11, C14, R03.

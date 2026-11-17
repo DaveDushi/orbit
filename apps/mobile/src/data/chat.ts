@@ -630,3 +630,25 @@ export function emojiNamed(groups: readonly EmojiGroup[], name: string): string 
 }
 
 export const BUILT_IN_EMOJI: EmojiGroup[] = [{ key: 'common', title: 'Common', emojis: BUILT_IN.split(' ').map((emoji) => ({ emoji, names: [] })) }]
+
+/** Fenced and inline code: a URL inside it is text. */
+const CODE = /```[\s\S]*?```|`[^`\n]+`/g
+const LINK = /https?:\/\/[^\s<>]+/g
+/** A URL in angle brackets (`<https://…>`) is a link without a card, as in Discord. After a backslash the bracket is text. */
+const WRAPPED_LINK = /(?<!\\)<https?:\/\/[^\s<>]+>/g
+
+/**
+ * The web's `extractLinkUrls` for the preview cards under a message: other sites' URLs outside code and angle brackets,
+ * without trailing punctuation, each once, at most `limit`. The Orbit server's own links have no preview.
+ */
+export function linkCardUrls(body: string, server: string, limit = 3): string[] {
+  const own = server.replace(/\/+$/, '')
+  const urls: string[] = []
+  for (const match of body.replace(CODE, ' ').replace(WRAPPED_LINK, ' ').matchAll(LINK)) {
+    const url = match[0].replace(/[.,!?;:)}\]'"]+$/, '')
+    if (!url || urls.includes(url) || url === own || url.startsWith(`${own}/`)) continue
+    urls.push(url)
+    if (urls.length === limit) break
+  }
+  return urls
+}
