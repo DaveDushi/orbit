@@ -32,6 +32,7 @@ export const WORKSPACE_NAV: readonly SettingsNavItem[] = [
   { href: '/settings/workspace-agentic', label: 'Agentic', icon: 'magicStar' },
   { href: '/settings/members', label: 'Members', icon: 'people' },
   { href: '/settings/emoji', label: 'Emoji', icon: 'emojiHappy', permission: 'chat.manage' },
+  { href: '/settings/api-tokens', label: 'API tokens', icon: 'key', permission: 'api_tokens.manage' },
 ]
 
 /**

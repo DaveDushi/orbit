@@ -46,10 +46,9 @@ describe('webSetupLinks', () => {
     expect(webSetupLinks([], true)).toEqual([])
   })
 
-  test('each page needs its own permission, agent tools also the agent', () => {
-    expect(webSetupLinks(['integrations.manage', 'api_tokens.manage'], true).map((link) => link.label)).toEqual(['Agent tools', 'API tokens'])
-    expect(webSetupLinks(['integrations.manage', 'api_tokens.manage'], false).map((link) => link.label)).toEqual(['API tokens'])
-    expect(webSetupLinks(['api_tokens.manage'], true).map((link) => link.label)).toEqual(['API tokens'])
+  test('agent tools need their permission and the agent', () => {
+    expect(webSetupLinks(['integrations.manage', 'api_tokens.manage'], true).map((link) => link.label)).toEqual(['Agent tools'])
+    expect(webSetupLinks(['integrations.manage'], false)).toEqual([])
   })
 })
 

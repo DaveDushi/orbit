@@ -42,14 +42,13 @@ export interface WebSetupLink {
 
 /**
  * The rare admin pages the app does not rebuild, with the web's own access rules: agent tools for
- * `integrations.manage`, API tokens for `api_tokens.manage`. Bots are on their own tab.
+ * `integrations.manage`. API tokens have their own screen. Bots are on their own tab.
  */
 export function webSetupLinks(permissions: readonly Permission[], agent: boolean): WebSetupLink[] {
   return [
     ...(agent && permissions.includes('integrations.manage')
       ? [{ path: '/settings/agentic/workspace', label: 'Agent tools', description: 'Connect MCP servers and HTTP APIs that agents may use.' }]
       : []),
-    ...(permissions.includes('api_tokens.manage') ? [{ path: '/settings/api-tokens', label: 'API tokens', description: 'Tokens for scripts and AI clients that cannot sign in with OAuth.' }] : []),
   ]
 }
 
