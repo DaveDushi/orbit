@@ -79,6 +79,9 @@ function sheetTitle(sheet: DialogSheet | null): string {
 export interface NewTaskDefaults {
   projectId?: string
   statusId?: string
+  /** A task made from a chat message starts with its text and a link back. */
+  title?: string
+  description?: string
 }
 
 /**
@@ -96,8 +99,8 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
   const labels = useLabels()
   const people = usePeople()
   const sheets = useSheet<DialogSheet>()
-  const [title, setTitle] = useState('')
-  const [description, setDescription] = useState('')
+  const [title, setTitle] = useState(defaults.title ?? '')
+  const [description, setDescription] = useState(defaults.description ?? '')
   const [projectId, setProjectId] = useState<string | null>(defaults.projectId ?? null)
   const [statusId, setStatusId] = useState<string | null>(defaults.statusId ?? null)
   const [priority, setPriority] = useState<Priority>('none')

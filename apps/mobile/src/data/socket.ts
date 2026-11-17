@@ -13,6 +13,13 @@ export interface ReconnectingSocketOptions {
   onMessage: (data: unknown) => void
   /** The server closed with 4401 or 4403: the session ended or access is gone. No retry follows. */
   onEnded?: () => void
+  /**
+   * The connection is open. `resumed` is true after an earlier one: events may have been missed in the gap, so what
+   * the app shows is fetched again.
+   */
+  onOpen?: (resumed: boolean) => void
+  /** An open connection was lost, or closed for the background. */
+  onDrop?: () => void
   /** The first retry delay; it doubles up to 30 times this. Default 1000. */
   retryMs?: number
   /** Taken as lost when nothing arrives for this long (the server pings the live socket every 25 seconds). Off by default. */
@@ -34,6 +41,8 @@ export function reconnectingSocket(options: ReconnectingSocketOptions): Reconnec
   let socket: SocketLike | null = null
   let attempt = 0
   let stopped = false
+  /** A connection was open once: the next open resumes after a gap. */
+  let wasOpen = false
   let retry: ReturnType<typeof setTimeout> | undefined
   let silence: ReturnType<typeof setTimeout> | undefined
 
@@ -52,6 +61,7 @@ export function reconnectingSocket(options: ReconnectingSocketOptions): Reconnec
     if (!current) return
     current.onopen = current.onmessage = current.onclose = null
     current.close()
+    options.onDrop?.()
   }
 
   function connect() {
@@ -61,6 +71,8 @@ export function reconnectingSocket(options: ReconnectingSocketOptions): Reconnec
     current.onopen = () => {
       attempt = 0
       watch()
+      options.onOpen?.(wasOpen)
+      wasOpen = true
     }
     current.onmessage = (event) => {
       watch()
@@ -70,6 +82,7 @@ export function reconnectingSocket(options: ReconnectingSocketOptions): Reconnec
       if (socket !== current) return
       socket = null
       clearTimeout(silence)
+      options.onDrop?.()
       if (TERMINAL_CODES.has(event.code)) {
         stopped = true
         options.onEnded?.()

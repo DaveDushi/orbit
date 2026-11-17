@@ -11,11 +11,14 @@ import { markdownToText } from '../../data/markdown'
 import type { MessageRecord } from '../../data/orbit'
 import { confirmAction, showError, useChatWrite, useIsChatAdmin } from '../../hooks/chat'
 
-import { useOrbit } from '../../orbit-context'
+import { messageLink, taskTitleFromMessage } from '../../data/forward'
+import { useIsGuest, useOrbit } from '../../orbit-context'
 import { useConversations, useMembers, usePeople } from '../../queries'
 import { type IconName, Spinner, Text } from '../../ui'
+import { NewTaskDialog, type NewTaskDefaults } from '../NewTaskDialog'
 import type { ComposerState, PendingMessage } from './Composer'
 import { Emoji, EmojiPicker } from './EmojiPicker'
+import { ForwardSheet } from './ForwardSheet'
 import { type MessageHandlers, MessageItem } from './Message'
 import { ActionSheet, type SheetItem } from './Sheet'
 
@@ -40,6 +43,9 @@ export function useMessageText() {
 const ACTION_LOOK: Record<MessageAction, { label: string; icon: IconName; destructive?: boolean }> = {
   reply: { label: 'Reply', icon: 'reply' },
   thread: { label: 'Reply in thread', icon: 'messages2' },
+  forward: { label: 'Forward', icon: 'forward' },
+  link: { label: Platform.OS === 'web' ? 'Copy link' : 'Share link', icon: 'link2' },
+  task: { label: 'Create task', icon: 'tasks' },
   copy: { label: Platform.OS === 'web' ? 'Copy text' : 'Copy or share text', icon: 'copy' },
   pin: { label: 'Pin', icon: 'pin' },
   unpin: { label: 'Unpin', icon: 'pinOff' },
@@ -53,8 +59,9 @@ const ACTION_LOOK: Record<MessageAction, { label: string; icon: IconName; destru
  * show at once and roll back when the server refuses them.
  */
 export function useMessageSheet({ inThread, composer, loaded, onMarkedUnread }: { inThread: boolean; composer: ComposerState | null; loaded: readonly MessageRecord[]; onMarkedUnread?: () => void }) {
-  const { user, workspaceId, client } = useOrbit()
+  const { user, workspaceId, client, session } = useOrbit()
   const queryClient = useQueryClient()
+  const guest = useIsGuest()
   const moderator = useIsChatAdmin()
   const run = useChatWrite()
   const words = useMessageText()
@@ -65,6 +72,8 @@ export function useMessageSheet({ inThread, composer, loaded, onMarkedUnread }: 
     return conversation !== undefined && conversation.kind !== 'dm' && conversation.created_by === user.id
   }
   const [picking, setPicking] = useState<MessageRecord | null>(null)
+  const [forwarding, setForwarding] = useState<MessageRecord | null>(null)
+  const [newTask, setNewTask] = useState<NewTaskDefaults | null>(null)
 
   const put = (message: MessageRecord) => {
     applyChatActions(queryClient, workspaceId, [{ kind: 'upsert-message', conversationId: message.conversation_id, message }])
@@ -92,10 +101,17 @@ export function useMessageSheet({ inThread, composer, loaded, onMarkedUnread }: 
     if (confirmed) await run('Could not delete the message', (client, workspaceId) => chat.deleteMessage(client, workspaceId, message.id))
   }
 
-  const copy = (message: MessageRecord) => {
-    const text = words.text(message.body)
+  const copy = (message: MessageRecord) => share(words.text(message.body))
+  const share = (text: string) => {
     if (Platform.OS === 'web') void navigator.clipboard.writeText(text)
     else void Share.share({ message: text })
+  }
+
+  /** The web's "Create task": the first line as the title, a link back to the message in the description. */
+  const createTask = (message: MessageRecord) => {
+    const source = conversations?.find((item) => item.id === message.conversation_id)
+    const where = source && source.kind !== 'dm' ? `a message in #${source.name}` : 'a direct message'
+    setNewTask({ title: taskTitleFromMessage(words.text(message.body)), description: `Created from [${where}](${messageLink(session.server, message)}).` })
   }
 
   const runAction = (action: MessageAction, message: MessageRecord) => {
@@ -104,6 +120,12 @@ export function useMessageSheet({ inThread, composer, loaded, onMarkedUnread }: 
         return composer?.reply(message)
       case 'thread':
         return router.push(`/chat/thread/${message.thread_root_id ?? message.id}`)
+      case 'forward':
+        return setForwarding(message)
+      case 'link':
+        return share(messageLink(session.server, message))
+      case 'task':
+        return createTask(message)
       case 'copy':
         return copy(message)
       case 'pin':
@@ -120,7 +142,7 @@ export function useMessageSheet({ inThread, composer, loaded, onMarkedUnread }: 
   }
 
   const items: SheetItem[] = selected
-    ? messageActions(selected, user.id, moderator, { inThread, canWrite: composer !== null, channelCreator: channelCreator(selected) }).map((action) => ({ key: action, ...ACTION_LOOK[action], onPress: () => runAction(action, selected) }))
+    ? messageActions(selected, user.id, moderator, { inThread, canWrite: composer !== null, channelCreator: channelCreator(selected), canCreateTask: !guest }).map((action) => ({ key: action, ...ACTION_LOOK[action], onPress: () => runAction(action, selected) }))
     : []
   const quick = quickReactions(loaded, user.id, 5)
 
@@ -147,6 +169,8 @@ export function useMessageSheet({ inThread, composer, loaded, onMarkedUnread }: 
         }
       />
       <EmojiPicker visible={picking !== null} onPick={(emoji) => picking && react(picking, emoji)} onClose={() => setPicking(null)} />
+      {forwarding ? <ForwardSheet message={forwarding} preview={words.text(forwarding.body)} onClose={() => setForwarding(null)} /> : null}
+      {newTask ? <NewTaskDialog defaults={newTask} onClose={() => setNewTask(null)} /> : null}
     </>
   )
 

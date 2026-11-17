@@ -134,6 +134,7 @@ export default function DocsScreen() {
               actions: [
                 { label: 'New teamspace', icon: 'people', onPress: newTeamspace },
                 { label: 'Trash', icon: 'trash', onPress: () => router.push('/docs/trash') },
+                { label: 'Import from Notion', icon: 'import', onPress: () => router.push('/docs/import') },
               ],
             })
           }

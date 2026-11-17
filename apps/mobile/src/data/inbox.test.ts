@@ -15,7 +15,8 @@ const notification = (fields: Partial<NotificationRecord>): NotificationRecord =
 
 test('a notification leads to its conversation, page or task', () => {
   expect(notificationTarget(notification({ task_id: 't1' }))).toBe('/tasks/t1')
-  expect(notificationTarget(notification({ kind: 'chat_mentioned', chat_conversation_id: 'c1', chat_message_id: 'm1' }))).toBe('/chat/c1')
+  expect(notificationTarget(notification({ kind: 'chat_mentioned', chat_conversation_id: 'c1', chat_message_id: 'm1' }))).toBe('/chat/c1?message=m1')
+  expect(notificationTarget(notification({ kind: 'chat_mentioned', chat_conversation_id: 'c1', chat_message_id: null }))).toBe('/chat/c1')
   expect(notificationTarget(notification({ kind: 'page_mentioned', page_id: 'p1' }))).toBe('/docs/p1')
   expect(notificationTarget(notification({}))).toBe(null)
 })

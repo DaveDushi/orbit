@@ -6,12 +6,15 @@ import { Alert, FlatList, Pressable, RefreshControl, View } from 'react-native'
 import { MenuButton } from '../../components/Drawer'
 import { relativeTime } from '../../data/format'
 import { isMention, notificationActor, notificationCopy, notificationTarget } from '../../data/inbox'
+import { keys } from '../../data/keys'
 import * as api from '../../data/orbit'
+import type { NotificationRecord } from '../../data/orbit'
+import { ActionSheet } from '../../components/chat/Sheet'
 import { useOrbit } from '../../orbit-context'
 import { useNotifications, usePages, usePeople } from '../../queries'
 import { errorMessage } from '../../session-context'
 import { useTheme } from '../../theme'
-import { Button, CountBadge, EmptyState, ErrorView, HeaderTitle, LoadingView, PaneHeader, SafeAreaView, Text } from '../../ui'
+import { Avatar, Button, CountBadge, EmptyState, ErrorView, HeaderTitle, LoadingView, PaneHeader, SafeAreaView, Text } from '../../ui'
 
 type Tab = 'all' | 'unread' | 'mentions'
 const TABS: { value: Tab; label: string }[] = [
@@ -32,8 +35,21 @@ export default function ActivityScreen() {
   // both the list and the unread list live under this prefix
   const refreshInbox = () => queryClient.invalidateQueries({ queryKey: ['notifications', workspaceId] })
 
+  const [menuFor, setMenuFor] = useState<NotificationRecord | null>(null)
+  // the row turns read at once and comes back if the server refuses
   const markRead = useMutation({
     mutationFn: (id: string) => api.markNotificationRead(client, workspaceId, id),
+    onMutate: async (id: string) => {
+      await queryClient.cancelQueries({ queryKey: keys.notifications(workspaceId) })
+      const before = queryClient.getQueriesData<NotificationRecord[]>({ queryKey: keys.notifications(workspaceId) })
+      const now = new Date().toISOString()
+      queryClient.setQueriesData<NotificationRecord[]>({ queryKey: keys.notifications(workspaceId) }, (list) => (Array.isArray(list) ? list.map((item) => (item.id === id ? { ...item, read_at: now } : item)) : list))
+      return { before }
+    },
+    onError: (error, _id, context) => {
+      for (const [key, data] of context?.before ?? []) queryClient.setQueryData(key, data)
+      Alert.alert('Could not mark as read', errorMessage(error))
+    },
     onSettled: refreshInbox,
   })
   const markAll = useMutation({
@@ -98,12 +114,22 @@ export default function ActivityScreen() {
                   const target = notificationTarget(item)
                   if (target) router.push(target as Href)
                 }}
+                // the web's hover "Mark as read": a long press on a phone
+                onLongPress={unread ? () => setMenuFor(item) : undefined}
+                accessibilityActions={unread ? [{ name: 'markRead', label: 'Mark as read' }] : undefined}
+                onAccessibilityAction={(event) => {
+                  if (event.nativeEvent.actionName === 'markRead') markRead.mutate(item.id)
+                }}
                 className="min-h-14 flex-row items-center gap-2.5 px-3 py-1.5 border-b border-border active:bg-muted"
               >
                 <View className="w-2 items-center">{unread ? <View accessibilityLabel="Unread" className="size-2 rounded-full bg-primary" /> : null}</View>
-                <View className="size-7 rounded-full items-center justify-center bg-muted">
-                  <Text className="text-[14px] leading-[20px] text-muted-foreground">{(actor?.name ?? '?').charAt(0).toUpperCase()}</Text>
-                </View>
+                {actor?.id ? (
+                  <Avatar id={actor.id} name={actor.name} size={28} />
+                ) : (
+                  <View className="size-7 rounded-full items-center justify-center bg-muted">
+                    <Text className="text-[14px] leading-[20px] text-muted-foreground">{(actor?.name ?? '?').charAt(0).toUpperCase()}</Text>
+                  </View>
+                )}
                 <View className="flex-1 min-w-0 gap-0.5">
                   <Text numberOfLines={1} className={`text-[13px] leading-[18.5px] ${unread ? 'font-noto-semibold' : ''}`}>
                     {copy.title}
@@ -118,6 +144,11 @@ export default function ActivityScreen() {
           }}
         />
       )}
+      <ActionSheet
+        visible={menuFor !== null}
+        items={menuFor ? [{ key: 'read', label: 'Mark as read', icon: 'check', onPress: () => markRead.mutate(menuFor.id) }] : []}
+        onClose={() => setMenuFor(null)}
+      />
     </SafeAreaView>
   )
 }

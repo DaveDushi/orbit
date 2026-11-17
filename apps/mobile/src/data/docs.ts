@@ -137,3 +137,43 @@ export function visibleThreads<T extends ThreadLike>(threads: readonly T[]): T[]
     .filter((thread) => thread.comments.some((comment) => !comment.deleted_at))
     .sort((a, b) => Number(a.resolved) - Number(b.resolved) || b.updated_at.localeCompare(a.updated_at))
 }
+
+/** The page's space: `private` or `teamspace:<id>`, as `docSpaces` keys it. */
+export const spaceKeyOf = (page: Pick<PageSummary, 'private' | 'teamspace_id'>) => (page.private || !page.teamspace_id ? 'private' : `teamspace:${page.teamspace_id}`)
+
+/**
+ * The web's "Move to" a space: the page (with its sub-pages) goes last among the space's top pages. `null` when it is
+ * a top page of that space already.
+ */
+export function spaceMove(pages: readonly PageSummary[], page: PageSummary, space: string): { parent_id: null; position: number; teamspace_id?: string; private?: boolean } | null {
+  if (page.parent_id === null && spaceKeyOf(page) === space) return null
+  const roots = pages.filter((item) => item.parent_id === null && item.id !== page.id && spaceKeyOf(item) === space)
+  return { parent_id: null, position: roots.length, ...(spaceKeyOf(page) === space ? {} : space === 'private' ? { private: true } : { teamspace_id: space.replace(/^teamspace:/, '') }) }
+}
+
+/** The text of BlockNote blocks, one line per block with text, for a version's preview. */
+export function blockLines(blocks: readonly unknown[], limit = 200): string[] {
+  const lines: string[] = []
+  const textOf = (value: unknown): string => {
+    if (typeof value === 'string') return value
+    if (Array.isArray(value)) return value.map(textOf).join('')
+    if (value && typeof value === 'object') {
+      const node = value as { text?: unknown; content?: unknown; rows?: unknown; cells?: unknown }
+      if (typeof node.text === 'string') return node.text
+      if (node.rows) return (node.rows as { cells?: unknown[] }[]).map((row) => (row.cells ?? []).map(textOf).join(' | ')).join('\n')
+      return textOf(node.content)
+    }
+    return ''
+  }
+  const walk = (list: readonly unknown[]) => {
+    for (const block of list) {
+      if (lines.length >= limit || !block || typeof block !== 'object') continue
+      const text = textOf((block as { content?: unknown }).content).trim()
+      if (text) lines.push(...text.split('\n'))
+      const children = (block as { children?: unknown }).children
+      if (Array.isArray(children)) walk(children)
+    }
+  }
+  walk(blocks)
+  return lines.slice(0, limit)
+}

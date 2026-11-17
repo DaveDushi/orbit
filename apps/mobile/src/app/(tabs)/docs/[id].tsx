@@ -1,27 +1,29 @@
 import { collabStatusLabel, type CollabProblem, type CollabState } from '@orbit/editor/collab/session'
 import { isSafeLinkHref } from '@orbit/editor/links'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { router, useLocalSearchParams } from 'expo-router'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Image, Linking, RefreshControl, ScrollView, View } from 'react-native'
 import { TextInput } from '../../../ui/scaled'
 
 import { CommentsSheet } from '../../../components/docs/Comments'
+import { HistorySheet } from '../../../components/docs/HistorySheet'
+import { openFile } from '../../../components/tasks/files'
 import { LinkedTasksSection } from '../../../components/tasks/sections'
 import { EditorToolbar } from '../../../components/docs/EditorToolbar'
 import { IconDialog } from '../../../components/docs/IconDialog'
 import PageEditor, { type PageCardInfo, type PageEditorProps, type PageEditorRef } from '../../../components/docs/PageEditor.dom'
 import { ActionSheet, ConfirmDialog, type ConfirmRequest, PromptDialog, type PromptRequest, type SheetAction } from '../../../components/settings/Dialog'
-import { absoluteUrl, pageTitle, trashPrompt, validCoverUrl, visibleThreads } from '../../../data/docs'
-import { collabTicket, fileDataUrl, fileDeleted } from '../../../data/docs-api'
+import { absoluteUrl, descendantsOf, pageTitle, spaceKeyOf, spaceMove, trashPrompt, validCoverUrl, visibleThreads } from '../../../data/docs'
+import { collabTicket, exportUrl, fileDataUrl, fileDeleted, lockPage, moveDocPage, restoreVersion } from '../../../data/docs-api'
 import { keys } from '../../../data/keys'
 import * as api from '../../../data/orbit'
 import { BLOCK_KINDS, type BlockKind, type EditorCommand, type FormatState, IDLE_FORMAT, PROBLEM_RESPONSES, type ProblemResponse, whileMounted } from '../../../data/page-editor'
 import { pickImage } from '../../../hooks/account'
 import { useLinkedTasks } from '../../../hooks/tasks'
-import { useFavorites, usePageThreads, usePageTrash, useSavePage, useToggleFavorite, useTrashPage, useUploadPageImage } from '../../../hooks/docs'
+import { useDuplicatePage, useFavorites, usePageThreads, usePageTrash, useSavePage, useToggleFavorite, useTrashPage, useUploadPageImage } from '../../../hooks/docs'
 import { useOrbit } from '../../../orbit-context'
-import { useMembers, usePages, useStatuses } from '../../../queries'
+import { useMembers, usePages, useStatuses, useTeamspaces } from '../../../queries'
 import { usePublishPageItem } from '../../../components/AskDonna'
 import { errorMessage } from '../../../session-context'
 import { alpha, useTheme } from '../../../theme'
@@ -49,6 +51,11 @@ export default function DocScreen() {
   const uploadImage = useUploadPageImage(id)
   const toggleFavorite = useToggleFavorite()
   const trash = useTrashPage()
+  const duplicate = useDuplicatePage()
+  const teamspaces = useTeamspaces()
+  const queryClient = useQueryClient()
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
   const [title, setTitle] = useState<string | null>(null)
   const [menu, setMenu] = useState<SheetAction[] | null>(null)
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
@@ -154,10 +161,62 @@ export default function DocScreen() {
     },
     ...(page.data?.cover_url ? [{ label: 'Remove cover', icon: 'trash' as const, destructive: true, onPress: () => save.mutate({ cover_url: null }, { onError: failed('Could not remove the cover.') }) }] : []),
   ]
+  /** A page write that changes the body or who may edit it: the editor reconnects to the saved page. */
+  const reload = async (write: () => Promise<unknown>, what: string) => {
+    setBusy(true)
+    setNotice(null)
+    try {
+      await write()
+      await page.refetch()
+      void queryClient.invalidateQueries({ queryKey: keys.pages(workspaceId) })
+      setGeneration((value) => value + 1)
+    } catch (error) {
+      failed(what)(error)
+      throw error
+    } finally {
+      setBusy(false)
+    }
+  }
+  const spaces = [...(teamspaces.data ?? [])].sort((a, b) => a.position - b.position).map((item) => ({ key: `teamspace:${item.id}`, name: item.name, icon: 'people' as const }))
+  const moveMenu = (): SheetAction[] =>
+    page.data
+      ? [...spaces, { key: 'private', name: 'Private', icon: 'lock' as const }].map((space) => {
+          const move = page.data ? spaceMove(pages.data ?? [], page.data, space.key) : null
+          return {
+            label: space.name,
+            icon: space.icon,
+            detail: page.data && spaceKeyOf(page.data) === space.key ? (move ? 'Move to the top of this space' : 'Here now') : undefined,
+            disabled: !move,
+            onPress: () => page.data && move && void reload(() => moveDocPage(client, workspaceId, page.data!, move), 'Could not move the page.').catch(() => undefined),
+          }
+        })
+      : []
+  const exportMenu = (): SheetAction[] => {
+    const name = page.data ? pageTitle(page.data) : 'page'
+    const run = (withChildren: boolean) =>
+      void openFile(exportUrl(session.server, workspaceId, id, withChildren), `${name.replace(/[^\p{L}\p{N} ._-]/gu, '').trim() || 'page'}.zip`, session.token).catch(failed('Could not export the page.'))
+    return [
+      { label: 'Markdown', icon: 'documentDownload', onPress: () => run(false) },
+      ...(hasChildren ? [{ label: 'Markdown with sub-pages', icon: 'documentDownload' as const, onPress: () => run(true) }] : []),
+    ]
+  }
+  const hasChildren = descendantsOf(pages.data ?? [], id).length > 0
   const pageMenu = (): SheetAction[] =>
     page.data
       ? [
           { label: favorite ? 'Remove from favorites' : 'Add to favorites', icon: 'star', onPress: () => toggleFavorite.mutate({ pageId: id, favorite: !favorite }) },
+          { label: 'Move to…', icon: 'folder', detail: page.data ? spaces.find((space) => space.key === spaceKeyOf(page.data!))?.name ?? 'Private' : undefined, disabled: busy, onPress: () => setMenu(moveMenu()) },
+          { label: locked ? 'Unlock page' : 'Lock page', icon: locked ? 'unlock' : 'lock', detail: locked ? undefined : 'Nobody can edit it until it is unlocked', disabled: busy, onPress: () => void reload(() => lockPage(client, workspaceId, id, !locked), locked ? 'Could not unlock the page.' : 'Could not lock the page.').catch(() => undefined) },
+          { label: 'Version history', icon: 'history', onPress: () => setHistoryOpen(true) },
+          {
+            label: 'Duplicate',
+            icon: 'copy',
+            onPress: () => duplicate.mutate({ pageId: id, withChildren: false }, { onSuccess: (copy) => router.push(`/docs/${copy.id}`), onError: failed('Could not duplicate the page.') }),
+          },
+          ...(hasChildren
+            ? [{ label: 'Duplicate with sub-pages', icon: 'copy' as const, onPress: () => duplicate.mutate({ pageId: id, withChildren: true }, { onSuccess: (copy) => router.push(`/docs/${copy.id}`), onError: failed('Could not duplicate the page.') }) }]
+            : []),
+          { label: 'Export', icon: 'download', onPress: () => setMenu(exportMenu()) },
           { label: page.data.icon ? 'Change icon' : 'Add icon', icon: 'emojiHappy', disabled: locked, onPress: () => setChoosingIcon(true) },
           { label: page.data.cover_url ? 'Change cover' : 'Add cover', icon: 'sticker', disabled: locked, onPress: () => setMenu(coverActions()) },
           {
@@ -290,6 +349,12 @@ export default function DocScreen() {
       <ActionSheet visible={menu !== null} actions={menu ?? []} onClose={() => setMenu(null)} />
       <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />
       <PromptDialog request={prompt} onClose={() => setPrompt(null)} />
+      <HistorySheet
+        pageId={historyOpen ? id : null}
+        locked={locked}
+        onRestore={(version) => (page.data ? reload(() => restoreVersion(client, workspaceId, page.data!, version.id), 'Could not restore the version.') : Promise.resolve())}
+        onClose={() => setHistoryOpen(false)}
+      />
       <ActionSheet
         visible={choosingBlock}
         title="Turn into"

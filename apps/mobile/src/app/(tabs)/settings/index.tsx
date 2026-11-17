@@ -1,16 +1,12 @@
 import { router } from 'expo-router'
-import { readApps } from '@orbit/api/apps'
-import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Linking, View } from 'react-native'
+import { View } from 'react-native'
 
 import { ConfirmDialog, type ConfirmRequest } from '../../../components/settings/Dialog'
-import { WebSetupRow } from '../../../components/settings/Fields'
 import { ACCOUNT_NAV, allowedNav, Note, RowIcon, RowText, SettingsCard, SettingsRow, SettingsShell, WORKSPACE_NAV } from '../../../components/settings/Shell'
 import { WorkspaceLogo } from '../../../components/WorkspaceLogo'
-import { webSetupLinks } from '../../../data/agentic'
+import { useOpenWorkspaceApp, useWorkspaceApps } from '../../../hooks/apps'
 import { pickImage, useAuthOptions, useMemberWrites, useRenameWorkspace, useSetWorkspaceLogo } from '../../../hooks/account'
-import { useAgentEnabled } from '../../../hooks/agent'
 import { useIsGuest, useOrbit } from '../../../orbit-context'
 import { useMembers } from '../../../queries'
 import { errorMessage } from '../../../session-context'
@@ -38,10 +34,8 @@ export default function GeneralScreen() {
 
       {guest ? null : <AppsCard />}
 
-      {guest ? null : <WebSetupCard />}
-
       <SettingsCard title="Account" description={`${user.email} on ${session.server}`} flush>
-        {allowedNav(ACCOUNT_NAV, workspace.permissions, true, guest).map((item, index) => (
+        {allowedNav(ACCOUNT_NAV, workspace.permissions, { agent: true }, guest).map((item, index) => (
           <SettingsRow key={item.href} first={index === 0} label={item.label} onPress={() => router.push(item.href)}>
             <RowIcon icon={item.icon} />
             <RowText title={item.label} />
@@ -122,31 +116,19 @@ function LogoField() {
 
 /** The workspace's custom web apps this person may open. On a phone they open in the browser, not in a frame. */
 function AppsCard() {
-  const { client, workspaceId } = useOrbit()
   const { colors } = useTheme()
-  const apps = useQuery({ queryKey: ['apps', workspaceId], queryFn: () => readApps(client, workspaceId) })
+  const apps = useWorkspaceApps()
+  const openApp = useOpenWorkspaceApp()
   if (!apps.data?.length) return null
   return (
     <SettingsCard title="Apps" description="Open in your browser." flush>
       {apps.data.map((app, index) => (
-        <SettingsRow key={app.slug} first={index === 0} label={`Open ${app.name}`} onPress={() => void Linking.openURL(app.url)}>
+        <SettingsRow key={app.slug} first={index === 0} label={`Open ${app.name}`} onPress={() => void openApp(app)}>
           <RowIcon icon="category" />
           <RowText title={app.name} />
           <Icon name="chevronRight" size={14} color={colors.mutedForeground} />
         </SettingsRow>
       ))}
-    </SettingsCard>
-  )
-}
-
-/** The rare admin pages that stay on the web (agent tools, API tokens), for the roles the web shows them to. */
-function WebSetupCard() {
-  const { workspace } = useOrbit()
-  const links = webSetupLinks(workspace.permissions, useAgentEnabled())
-  if (links.length === 0) return null
-  return (
-    <SettingsCard title="Set up in the web app" description="These open the web app in this app. Sign in there if it asks." flush>
-      {links.map((link, index) => <WebSetupRow key={link.path} first={index === 0} {...link} icon={link.path.endsWith('api-tokens') ? 'key' : 'cpu'} />)}
     </SettingsCard>
   )
 }

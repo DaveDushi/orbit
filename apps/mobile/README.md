@@ -22,7 +22,8 @@ Every action runs in the app; nothing opens the web.
 - `src/session-context.tsx`: the stored session and one API client per session. A 401 signs out.
 - `src/orbit-context.tsx`: `useOrbit()` gives the client, the user and the current workspace (the last one chosen, else the first).
 - `src/components/docs/PageEditor.dom.tsx`: the page editor, an Expo DOM component (`'use dom'`) running BlockNote with the web's schema from `@orbit/editor` (`packages/editor`). It connects to the page's collab socket with a one-time ticket (`getTicket` native action), and the screen (`src/app/(tabs)/docs/[id].tsx`) drives it through props, native actions and `ref.run(command)`. `src/data/page-editor.ts` holds the commands, the toolbar state and the answers to close codes.
-- `src/live.ts`: the workspace events socket (marks task, project and inbox queries stale) and the chat live socket (patches messages and read states). Both close in the background and reconnect in the foreground.
+- `src/live.ts`: the workspace events socket (marks task, project, inbox, docs, Drive and billing queries stale, through a queue that waits for the app's own writes) and the chat live socket (patches messages and read states). Both close in the background and reconnect in the foreground, when the phone is online again or changes network (`expo-network`), and fetch again what the screens show after any gap. No screen needs pull to refresh.
+- `src/query-cache.tsx` + `src/data/persist.ts`: the query cache on disk (the iOS cache folder, `src/cache-file.ts`), per server and person, with only workspace content (no settings with secrets). Lists open from it on the next start; sign-out deletes it, and a workspace switch drops the old workspace's queries.
 
 ## How the app talks to Orbit
 

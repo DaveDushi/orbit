@@ -14,11 +14,15 @@ import { ColorScope } from '../theme/ColorScope'
 import { Avatar, CountBadge, Icon, type IconName, IconButton, PickerSheet } from '../ui'
 import { AccountMenu } from './AccountMenu'
 import { NewProjectSheet } from './NewProjectSheet'
+import { CreateWorkspaceDialog, JoinWorkspaceDialog } from './WorkspaceDialogs'
 import { WorkspaceLogo } from './WorkspaceLogo'
 import { DRAWER_AREA_TITLES, type DrawerArea, drawerAreaOf, drawerSections, TASK_PRESETS, tasksHref } from './drawerAreas'
-import { ACCOUNT_NAV, ADMIN_NAV, allowedNav, WORKSPACE_NAV } from './settings/Shell'
-import { useAgentEnabled } from '../hooks/agent'
+import { ACCOUNT_NAV, ADMIN_NAV, allowedNav, useNavFlags, WORKSPACE_NAV } from './settings/Shell'
+import { useViews } from '../hooks/views'
+import { favoriteViews } from '../data/views'
 import { isGuestRole } from '../data/guest'
+import { useOpenWorkspaceApp, useWorkspaceApps } from '../hooks/apps'
+import { appIconName } from '../data/apps'
 
 const DrawerContext = createContext<(() => void) | null>(null)
 
@@ -146,6 +150,14 @@ interface NavLink {
  * The settings areas of the new UI's contextual drawer: the links of Shell.tsx's sub-navigation. A function, because
  * Shell.tsx imports this file: its arrays may not exist yet while this module loads.
  */
+/** The switcher's rows below the workspaces, as on the web; Join takes an invitation link pasted from the email. */
+const CREATE = '__create'
+const JOIN = '__join'
+const WORKSPACE_ACTIONS: readonly { key: typeof CREATE | typeof JOIN; label: string; icon: IconName }[] = [
+  { key: CREATE, label: 'Create workspace', icon: 'plus' },
+  { key: JOIN, label: 'Join with an invitation link', icon: 'link2' },
+]
+
 const areaNavs = () => ({ workspace: WORKSPACE_NAV, account: ACCOUNT_NAV, admin: ADMIN_NAV })
 
 /** The web's `SideSheet`: the scrim and the sliding panel around `DrawerPanel`. */
@@ -197,7 +209,7 @@ function Drawer({
 function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: number; onClose: () => void }) {
   const { colors, scheme } = useTheme()
   const { user, workspace, workspaces, selectWorkspace } = useOrbit()
-  const agentEnabled = useAgentEnabled()
+  const navFlags = useNavFlags()
   const insets = useSafeAreaInsets()
   const pathname = usePathname()
   const { view, project } = useGlobalSearchParams<{ view?: string; project?: string }>()
@@ -205,7 +217,11 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
   // a guest has Chat and its account settings only: no Activity, Search, tasks or workspace settings
   const guest = isGuestRole(workspace.role)
   const inboxUnread = (useUnreadNotifications(!guest).data?.length ?? 0) > 0
+  // the workspace's own web apps this member may open (guests have none)
+  const apps = useWorkspaceApps(!guest).data ?? []
+  const openApp = useOpenWorkspaceApp()
   const [switching, setSwitching] = useState(false)
+  const [workspaceDialog, setWorkspaceDialog] = useState<typeof CREATE | typeof JOIN | null>(null)
   const [accountOpen, setAccountOpen] = useState(false)
   const newUi = useLayout() === 'new'
   const reduceMotion = useReduceMotion()
@@ -289,11 +305,11 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
       <SlideIn key={content} from={reduceMotion ? null : enter}>
         <ScrollView className="-mx-1 flex-1" contentContainerClassName="grow gap-0.5 px-1 pb-2">
           {area === 'tasks' ? (
-            <TasksArea view={view} project={project} onTasks={pathname === '/tasks'} onBack={() => setMainMenuFor(area)} go={go} />
+            <TasksArea view={view} project={project} pathname={pathname} onBack={() => setMainMenuFor(area)} go={go} />
           ) : area ? (
             <>
               <BackRow label={DRAWER_AREA_TITLES[area]} onPress={() => setMainMenuFor(area)} />
-              {drawerSections(area, allowedNav(navs[area], workspace.permissions, agentEnabled, guest)).map((section) => (
+              {drawerSections(area, allowedNav(navs[area], workspace.permissions, navFlags, guest)).map((section) => (
                 <Fragment key={section.label}>
                   <Section label={section.label} />
                   {section.items.map((item) => (
@@ -320,10 +336,14 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
               {workspaceLinks.map((link) => (
                 <NavRow key={link.label} link={link} onPress={() => go(link.href)} />
               ))}
-              {newUi ? null : <SubRow label="Views" onPress={() => go('/tasks')} />}
+              {newUi ? null : <SubRow label="Views" a11yLabel="Task views" onPress={() => go('/tasks/views')} />}
+              {newUi ? null : <SubRow label="Trash" a11yLabel="Task trash" onPress={() => go('/tasks/trash')} />}
               <NavRow link={{ label: 'Docs', icon: 'docs', href: '/docs', active: pathname.startsWith('/docs') }} onPress={() => go('/docs')} />
               <NavRow link={{ label: 'Chat', icon: 'chat', href: '/chat', active: pathname.startsWith('/chat'), badge: chatBadge.count, dot: chatBadge.unread }} onPress={() => go('/chat')} />
               <NavRow link={{ label: 'Drive', icon: 'folder', href: '/drive', active: pathname.startsWith('/drive') }} onPress={() => go('/drive')} />
+              {apps.map((app) => (
+                <NavRow key={app.slug} link={{ label: app.name, icon: appIconName(app.icon), href: app.url, active: false }} onPress={() => void openApp(app)} />
+              ))}
               {personal.length > 0 ? <Section label="Personal" /> : null}
               {personal.map((link) => (
                 <NavRow key={link.label} link={link} onPress={() => go(link.href)} />
@@ -360,24 +380,35 @@ function DrawerPanel({ mounted, width, onClose }: { mounted: boolean; width: num
         visible={switching}
         title="Workspaces"
         surface={newUi ? 'sidebarPopover' : 'popover'}
-        options={workspaces.map((item) => ({ key: item.id, label: item.name, subtitle: item.role, selected: item.id === workspace.id, leading: <WorkspaceLogo workspace={item} size={24} /> }))}
+        options={[
+          ...workspaces.map((item) => ({ key: item.id, label: item.name, subtitle: item.role, selected: item.id === workspace.id, leading: <WorkspaceLogo workspace={item} size={24} /> })),
+          ...WORKSPACE_ACTIONS.map((action) => ({ ...action, leading: <Icon name={action.icon} size={18} color={colors.mutedForeground} /> })),
+        ]}
         onSelect={(id) => {
           setSwitching(false)
+          if (id === CREATE || id === JOIN) {
+            setWorkspaceDialog(id)
+            return
+          }
           onClose()
           selectWorkspace(id)
         }}
         onClose={() => setSwitching(false)}
       />
+      <CreateWorkspaceDialog visible={workspaceDialog === CREATE} onClose={() => setWorkspaceDialog(null)} onCreated={(created) => { onClose(); selectWorkspace(created.id) }} />
+      <JoinWorkspaceDialog visible={workspaceDialog === JOIN} onClose={() => setWorkspaceDialog(null)} onJoined={(id) => { onClose(); selectWorkspace(id) }} />
     </View>
   )
 }
 
 /**
  * The new UI's Tasks area (the web's `TasksAreaNav`): All tasks, Views, the task presets and the projects. A preset
- * keeps the project and a project keeps the preset. The web's Favorite views are left out: the app has no saved views.
+ * keeps the project and a project keeps the preset. Favorite views follow Views, and Trash comes last, as on the web.
  */
-function TasksArea({ view, project, onTasks, onBack, go }: { view?: string; project?: string; onTasks: boolean; onBack: () => void; go: (href: Href) => void }) {
+function TasksArea({ view, project, pathname, onBack, go }: { view?: string; project?: string; pathname: string; onBack: () => void; go: (href: Href) => void }) {
   const projects = useProjects().data ?? []
+  const favorites = favoriteViews(useViews().data ?? [])
+  const onTasks = pathname === '/tasks'
   const [creating, setCreating] = useState(false)
   const current = { view, project }
   const row = (link: NavLink) => <NavRow key={String(link.href)} link={link} onPress={() => go(link.href)} />
@@ -385,8 +416,9 @@ function TasksArea({ view, project, onTasks, onBack, go }: { view?: string; proj
     <>
       <BackRow label={DRAWER_AREA_TITLES.tasks} onPress={onBack} />
       {row({ label: 'All tasks', icon: 'tasks', href: tasksHref(current, { view: null }), active: onTasks && !view })}
-      {/* the app's task list is its views page, like the main menu's Views row */}
-      <NavRow link={{ label: 'Views', icon: 'layer', href: '/tasks', active: false }} onPress={() => go('/tasks')} />
+      {row({ label: 'Views', icon: 'layer', href: '/tasks/views', active: pathname === '/tasks/views' })}
+      {favorites.length > 0 ? <Section label="Favorites" /> : null}
+      {favorites.map((item) => row({ label: item.name, icon: 'star', href: `/tasks/views/${item.id}`, active: pathname === `/tasks/views/${item.id}` }))}
       <Section label="My work" />
       {TASK_PRESETS.map((preset) => row({ label: preset.label, icon: preset.icon, href: tasksHref(current, { view: preset.view }), active: onTasks && view === preset.view }))}
       {projects.length > 0 ? (
@@ -397,6 +429,7 @@ function TasksArea({ view, project, onTasks, onBack, go }: { view?: string; proj
         </>
       ) : <Section label="Projects" />}
       <NavRow link={{ label: 'New project', icon: 'plus', href: '/tasks', active: false }} onPress={() => setCreating(true)} />
+      {row({ label: 'Trash', icon: 'trash', href: '/tasks/trash', active: pathname.startsWith('/tasks/trash') })}
       <NewProjectSheet visible={creating} onClose={() => setCreating(false)} onCreated={(created) => {
         setCreating(false)
         go(tasksHref(current, { project: created.id }))
@@ -531,11 +564,11 @@ function Tile({ icon, active, pressed, tone }: { icon: IconName; active: boolean
   )
 }
 
-/** "Views" nested under Tasks behind a 1px guide line. */
-function SubRow({ label, onPress }: { label: string; onPress: () => void }) {
+/** "Views" and "Trash" nested under Tasks behind a 1px guide line. */
+function SubRow({ label, a11yLabel, onPress }: { label: string; a11yLabel: string; onPress: () => void }) {
   const dark = useTheme().scheme === 'dark'
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel="Task views" onPress={onPress} className={`ml-5 h-7 justify-center border-l pl-3 ${dark ? 'border-sidebar-tint/10' : 'border-black/8'}`}>
+    <Pressable accessibilityRole="button" accessibilityLabel={a11yLabel} onPress={onPress} className={`ml-5 h-7 justify-center border-l pl-3 ${dark ? 'border-sidebar-tint/10' : 'border-black/8'}`}>
       <RNText className="font-noto-medium text-[13px] text-sidebar-nav">{label}</RNText>
     </Pressable>
   )

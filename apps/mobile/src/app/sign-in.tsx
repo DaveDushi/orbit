@@ -1,3 +1,4 @@
+import * as WebBrowser from 'expo-web-browser'
 import { useEffect, useState } from 'react'
 import { Linking, ScrollView, View } from 'react-native'
 
@@ -93,6 +94,12 @@ export default function SignInScreen() {
                   </Text>
                 ) : null}
                 <Button label="Sign in" size="lg" block loading={busy} disabled={!server || !email || !password} onPress={submitCredentials} />
+                {server.trim() ? (
+                  // the sign-up link in the email opens the web app, so sign-up is done there; then sign in here
+                  <Text accessibilityRole="link" onPress={() => void WebBrowser.openBrowserAsync(`${normalizeServer(server)}/register`, { presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET })} className="self-center text-[13px] text-muted-foreground">
+                    No account? Create one
+                  </Text>
+                ) : null}
               </>
             ) : (
               <>

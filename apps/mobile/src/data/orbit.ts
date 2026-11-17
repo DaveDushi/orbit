@@ -143,7 +143,7 @@ export async function workspaces(client: OrbitClient): Promise<WorkspaceRecord[]
 }
 
 /** Follows `next_cursor` until the server has no more. */
-async function allPages<T>(page: (cursor: string | undefined) => Promise<{ items: T[]; next_cursor?: string | null }>): Promise<T[]> {
+export async function allPages<T>(page: (cursor: string | undefined) => Promise<{ items: T[]; next_cursor?: string | null }>): Promise<T[]> {
   const items: T[] = []
   let cursor: string | undefined
   do {

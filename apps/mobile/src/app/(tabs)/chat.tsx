@@ -18,6 +18,7 @@ import { useChatCategories, useChatStates, useChatBadge, useConversations, usePe
 import { useTheme } from '../../theme'
 import { Avatar, CountBadge, EmptyState, ErrorView, HeaderTitle, Icon, type IconName, IconButton, LoadingView, PaneHeader, SafeAreaView, Text } from '../../ui'
 import { ChatColorScope } from '../../components/chat/ChatColorScope'
+import { useScheduledMessages } from '../../hooks/scheduled'
 
 const PRESENCE_LABEL = { online: 'Online', idle: 'Idle', dnd: 'Do not disturb', invisible: 'Invisible' } as const
 
@@ -55,6 +56,8 @@ function ChatScreenContent() {
   const run = useChatWrite()
   const threads = useFollowedThreads()
   const unreads = useChatBadge().count
+  // a guest cannot schedule: the server refuses the list too
+  const scheduledCount = useScheduledMessages(!guest).data?.length ?? 0
   const close = () => setOverlay(null)
 
   const sections = useMemo(
@@ -77,6 +80,7 @@ function ChatScreenContent() {
         <View className="flex-1">
           <HeaderTitle>Chat</HeaderTitle>
         </View>
+        <IconButton icon="search" label="Search messages" size={32} iconSize={20} color={colors.mutedForeground} onPress={() => router.push('/chat/search')} />
         <IconButton icon="plus" label="New" size={32} iconSize={20} color={colors.mutedForeground} onPress={() => setOverlay({ kind: 'new' })} />
       </PaneHeader>
       {!conversations.data || !categories.data || !states.data ? (
@@ -90,6 +94,7 @@ function ChatScreenContent() {
           <View className="px-2 pt-2 gap-px">
             <PinnedRow icon="directInbox" name="Unreads" count={unreads} onPress={() => router.push('/chat/unreads')} />
             <PinnedRow icon="layer" name="Threads" count={unreadThreadCount(threads.data ?? [])} onPress={() => router.push('/chat/threads')} />
+            {scheduledCount > 0 ? <Row leading={<Glyph icon="clock" />} name="Scheduled" label={`Scheduled, ${scheduledCount}`} onPress={() => router.push('/chat/scheduled')} end={<Text className="text-[12px] text-muted-foreground">{scheduledCount}</Text>} /> : null}
           </View>
           <View className="p-2 pt-3 gap-3">
             {sections.length === 0 ? (
