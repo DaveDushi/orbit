@@ -4,6 +4,7 @@ import { createContext, type ReactNode, use, useEffect, useRef, useState } from 
 import { createClient, currentUser, type OrbitClient, signOut as endSession, type User } from './data/orbit'
 import { launchErrorEndsSession } from './data/session-launch'
 import { unregisterPush } from './push'
+import { queryStore } from './query-cache'
 import { clearSession, loadSession, saveSession, type StoredSession } from './session'
 
 export type SessionState =
@@ -36,6 +37,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const end = async (error?: string) => {
     current.current = null
     await clearSession()
+    // the saved lists go first, so no later save writes them back
+    await queryStore.forget().catch(() => undefined)
     queryClient.clear()
     setState({ status: 'signed_out', error })
   }

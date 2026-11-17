@@ -23,6 +23,10 @@ export interface WorkspaceEvent {
   kind: 'workspace.changed' | 'resync_required'
   sequence: string
   workspaces_changed?: boolean
+  /** The signed-in person's profile changed (name, avatar). */
+  profile_changed?: boolean
+  /** Every change since the last event is a saved view of the web: the app has none, so nothing to refresh. */
+  views_only?: boolean
 }
 
 export function parseWorkspaceEvent(raw: unknown): WorkspaceEvent | null {
@@ -37,8 +41,12 @@ export function parseWorkspaceEvent(raw: unknown): WorkspaceEvent | null {
   }
 }
 
+/** The person's own profile is fetched again (the app keeps it outside the query cache). */
+export const workspaceEventChangesProfile = (event: WorkspaceEvent) => event.kind === 'resync_required' || event.profile_changed === true
+
 /** The queries a workspace event makes stale. A resync, or a change to the workspace list, also refreshes the list. */
 export function workspaceEventKeys(event: WorkspaceEvent, workspaceId: string): QueryKey[] {
+  if (event.kind !== 'resync_required' && event.views_only === true) return []
   const list = event.kind === 'resync_required' || event.workspaces_changed === true ? [keys.workspaces] : []
   return [...workspaceDataKeys(workspaceId), ...list]
 }
@@ -75,8 +83,8 @@ export type ChatAction =
 
 /**
  * Messages and read states are patched in place: they arrive whole. A new message also moves its conversation in the
- * DM order, so the conversation list refetches. Conversations and categories refetch; the rest (threads, emoji,
- * stickers) the app does not show.
+ * DM order, so the conversation list refetches. Conversations, categories and custom emoji refetch; the rest
+ * (stickers, ephemeral answers) the app does not show. Threads are patched in `chat-cache.ts`.
  */
 export function chatActions(event: ChatEvent, workspaceId: string): ChatAction[] {
   switch (event.type) {
@@ -92,10 +100,14 @@ export function chatActions(event: ChatEvent, workspaceId: string): ChatAction[]
     case 'state.changed':
       return [{ kind: 'state', state: event.state }]
     case 'conversation.changed':
-    case 'conversation.removed':
       return [{ kind: 'invalidate', keys: [keys.conversations(workspaceId)] }]
+    case 'conversation.removed':
+      // its read state and its threads go with it
+      return [{ kind: 'invalidate', keys: [keys.conversations(workspaceId), keys.chatStates(workspaceId), ['messages', workspaceId]] }]
     case 'categories.changed':
       return [{ kind: 'invalidate', keys: [keys.chatCategories(workspaceId)] }]
+    case 'emoji.changed':
+      return [{ kind: 'invalidate', keys: [keys.chatEmoji(workspaceId)] }]
     default:
       return []
   }
@@ -127,5 +139,57 @@ export class LiveCursor {
     } else if (frame.seq !== null) {
       this.lastSeq = frame.seq
     }
+  }
+}
+
+// ---- Reconnecting
+
+/** What the app needs to know of the phone's network (`expo-network`'s state). */
+export interface NetworkSnapshot {
+  connected: boolean
+  type: string | undefined
+}
+
+/**
+ * The sockets connect again at once when the phone is back online or changed network (Wi-Fi ↔ cellular): an open
+ * socket on the old network can stay silent for minutes before the system reports it closed.
+ */
+export function networkReconnects(before: NetworkSnapshot | null, now: NetworkSnapshot): boolean {
+  if (!before || !now.connected) return false
+  return !before.connected || before.type !== now.type
+}
+
+export interface RefreshQueue {
+  add(keys: readonly QueryKey[]): void
+  dispose(): void
+}
+
+/**
+ * Collects the queries that events make stale and refetches them together a moment later, once no write of the app
+ * is on its way: a refetch then could put the old value back over a change the app shows before the server has it.
+ */
+export function createRefreshQueue({ invalidate, busy, delayMs = 100 }: { invalidate: (key: QueryKey) => void; busy: () => boolean; delayMs?: number }): RefreshQueue {
+  const pending = new Map<string, QueryKey>()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const flush = () => {
+    timer = undefined
+    if (busy()) {
+      timer = setTimeout(flush, delayMs)
+      return
+    }
+    const due = [...pending.values()]
+    pending.clear()
+    for (const key of due) invalidate(key)
+  }
+  return {
+    add(keys) {
+      for (const key of keys) pending.set(JSON.stringify(key), key)
+      if (pending.size > 0 && timer === undefined) timer = setTimeout(flush, delayMs)
+    },
+    dispose() {
+      clearTimeout(timer)
+      timer = undefined
+      pending.clear()
+    },
   }
 }

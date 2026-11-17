@@ -44,3 +44,19 @@ test('close stops retries; reconnect starts again at once', async () => {
   expect(opened.length).toBe(2)
   live.close()
 })
+
+test('an open after a gap is reported as resumed, so the app fetches again what it missed', async () => {
+  const { sockets, create } = fakes()
+  const log: string[] = []
+  const live = reconnectingSocket({ url: () => 'ws://x', create, onMessage: () => {}, onOpen: (resumed) => log.push(resumed ? 'resumed' : 'open'), onDrop: () => log.push('drop'), retryMs: 1 })
+  sockets[0]!.onopen?.()
+  sockets[0]!.onclose?.({ code: 1006 })
+  await wait(20)
+  sockets[1]!.onopen?.()
+  // back from the background
+  live.close()
+  live.reconnect()
+  sockets[2]!.onopen?.()
+  expect(log).toEqual(['open', 'drop', 'resumed', 'drop', 'resumed'])
+  live.close()
+})

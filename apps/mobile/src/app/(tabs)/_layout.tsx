@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 
 import { AskDonnaBar } from '../../components/AskDonna'
 import { BillingBanner } from '../../components/BillingBanner'
+import { ConnectionBanner } from '../../components/ConnectionBanner'
 import { Dock } from '../../components/Dock'
 import { DrawerProvider } from '../../components/Drawer'
 import { MailServerBanner } from '../../components/MailServerBanner'
@@ -16,7 +17,7 @@ import { useTheme } from '../../theme'
 
 export default function TabsLayout() {
   const { colors } = useTheme()
-  useLiveUpdates()
+  const live = useLiveUpdates()
   usePushNotifications(useOrbit().client)
   const guest = useIsGuest()
   const pathname = usePathname()
@@ -30,6 +31,7 @@ export default function TabsLayout() {
     <DrawerProvider>
       <Tabs tabBar={(props) => (
           <>
+            <ConnectionBanner status={live} />
             <AskDonnaBar />
             <MailServerBanner />
             <BillingBanner />
