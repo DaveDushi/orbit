@@ -1,6 +1,6 @@
 import { router } from 'expo-router'
 import { useState } from 'react'
-import { Linking, View } from 'react-native'
+import { Linking, Pressable, View } from 'react-native'
 
 import { AppRolesField, SecretOnce, SignInSwitch, useAppWrites, useManagedApps } from '../../../../components/settings/Apps'
 import { Dialog } from '../../../../components/settings/Dialog'
@@ -30,9 +30,12 @@ export default function AppsScreen() {
             {apps.isError ? <View className="p-4"><Note error>Apps could not be loaded.</Note></View> : null}
             {apps.data?.items.length === 0 ? <View className="p-4"><Note>No apps yet.</Note></View> : null}
             {apps.data?.items.map((app, index) => (
-              <SettingsRow key={app.id} first={index === 0} label={`Settings of ${app.name}`} onPress={() => router.push(`/settings/apps/${app.id}`)}>
-                <RowIcon icon={appIconName(app.icon)} />
-                <RowText title={app.name} subtitle={app.url} />
+              <SettingsRow key={app.id} first={index === 0}>
+                {/* the link and Open side by side: a button inside a button is not allowed */}
+                <Pressable accessibilityRole="link" accessibilityLabel={`Settings of ${app.name}`} onPress={() => router.push(`/settings/apps/${app.id}`)} className="flex-1 min-w-0 flex-row items-center gap-3 active:opacity-70">
+                  <RowIcon icon={appIconName(app.icon)} />
+                  <RowText title={app.name} subtitle={app.url} />
+                </Pressable>
                 <Button label="Open" variant="outline" size="sm" onPress={() => void Linking.openURL(app.url)} />
               </SettingsRow>
             ))}
