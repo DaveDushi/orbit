@@ -5,6 +5,7 @@ import { Pressable, RefreshControl, ScrollView, Switch, View } from 'react-nativ
 
 import { guestMayOpen, isGuestRole } from '../../data/guest'
 import { useAgentEnabled } from '../../hooks/agent'
+import { useImprovementsEnabled } from '../../hooks/improvements'
 import { useOrbit } from '../../orbit-context'
 import { alpha, cssColors, setSchemePreference, useLayout, useTheme } from '../../theme'
 import { Icon, IconButton, type IconName, KeyboardView, PaneHeader, PickerSheet, SafeAreaView, Spinner, Text } from '../../ui'
@@ -18,6 +19,8 @@ export interface SettingsNavItem {
   permission?: Permission
   /** Shown only when the server runs the team agent. */
   agent?: boolean
+  /** Shown only while Suggest a change is on (Admin → General). */
+  improvements?: boolean
 }
 
 
@@ -39,11 +42,11 @@ export const WORKSPACE_NAV: readonly SettingsNavItem[] = [
 ]
 
 /**
- * The links of `nav` this workspace role may open: the agent's page only when the server runs the agent, and for a
- * guest only its own settings (`guestMayOpen`).
+ * The links of `nav` this workspace role may open: the agent's page only when the server runs the agent, Feedback &
+ * fixes only while Suggest a change is on, and for a guest only its own settings (`guestMayOpen`).
  */
-export function allowedNav<T extends SettingsNavItem>(nav: readonly T[], permissions: readonly Permission[], agent = false, guest = false): T[] {
-  return nav.filter((item) => (!item.permission || permissions.includes(item.permission)) && (!item.agent || agent) && (!guest || guestMayOpen(item.href)))
+export function allowedNav<T extends SettingsNavItem>(nav: readonly T[], permissions: readonly Permission[], agent = false, guest = false, improvements = false): T[] {
+  return nav.filter((item) => (!item.permission || permissions.includes(item.permission)) && (!item.agent || agent) && (!item.improvements || improvements) && (!guest || guestMayOpen(item.href)))
 }
 
 export const ACCOUNT_NAV: readonly SettingsNavItem[] = [
@@ -61,6 +64,7 @@ export const ADMIN_NAV: readonly SettingsNavItem[] = [
   { href: '/settings/admin/users', label: 'Users', icon: 'people' },
   { href: '/settings/admin/email', label: 'Email', icon: 'mail' },
   { href: '/settings/admin/limits', label: 'Limits', icon: 'chart' },
+  { href: '/settings/admin/feedback', label: 'Feedback & fixes', icon: 'lampOn', improvements: true },
   { href: '/settings/admin/storage', label: 'Storage', icon: 'cloudConnection' },
   { href: '/settings/admin/backups', label: 'Backups', icon: 'archiveBox' },
   { href: '/settings/admin/audit', label: 'Audit log', icon: 'clipboardText' },
@@ -79,6 +83,7 @@ export function SettingsShell({ title, nav, children, refreshing, onRefresh }: {
   const newUi = useLayout() === 'new'
   const { workspace } = useOrbit()
   const agent = useAgentEnabled()
+  const improvements = useImprovementsEnabled()
   const guest = isGuestRole(workspace.role)
   const muted = alpha(colors.mutedForeground, 0.7)
   return (
@@ -103,7 +108,7 @@ export function SettingsShell({ title, nav, children, refreshing, onRefresh }: {
         >
           {newUi || nav.length === 0 ? null : (
             <View accessibilityRole="tablist" accessibilityLabel={title} className="flex-row flex-wrap gap-0.5 py-3 border-t border-b border-border">
-              {allowedNav(nav, workspace.permissions, agent, guest).map((item) => {
+              {allowedNav(nav, workspace.permissions, agent, guest, improvements).map((item) => {
                 const active = pathname === item.href
                 return (
                   <Pressable
