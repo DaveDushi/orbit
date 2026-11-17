@@ -8,6 +8,7 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 
 ## 2026-11-17
 - iPhone: open chats, tasks and lists update live again; no app update needed.
+- iPhone app (next update): every web settings page is in the app now: Billing, Stickers, GitHub, agent tools and Skills, API tokens, Apps, Export and Danger zone, plus Suggest a change for instance admins. Tap the workspace name to create a workspace or join one with the link from your invitation email.
 
 ## 2026-11-16
 - Voice input: tap the mic beside Send (chat, threads, Ask Donna) and speak. Your words show as you talk; you can edit them, and nothing is sent until you press Send. It works in the browser (not in Firefox), in the Windows app from Orbit desktop 0.1.4 (install it once by hand from the download page; it also fixes "Microphone access is off"), in the iPhone app from its next update, and in the Mac app later.
