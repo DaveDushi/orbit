@@ -1,4 +1,4 @@
-import { isCoarsePointer } from './environment'
+import { isTouchOnly } from './environment'
 
 const ATTEMPTS = 12
 
@@ -20,8 +20,8 @@ export function restoreFocusAfterThread(rootId: string) {
       requestAnimationFrame(tryFocus)
       return
     }
-    // On a touch screen focusing the composer would open the keyboard.
-    if (!isCoarsePointer()) view?.querySelector<HTMLElement>('[data-slot="composer"] textarea')?.focus()
+    // On a phone or tablet focusing the composer would open the keyboard.
+    if (!isTouchOnly()) view?.querySelector<HTMLElement>('[data-slot="composer"] textarea')?.focus()
   }
   requestAnimationFrame(tryFocus)
 }
