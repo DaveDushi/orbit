@@ -269,6 +269,24 @@ It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-ag
 
 ## Verification performed
 
+### November 18, 2026 iPhone build 21: a tapped push opens its conversation at the new message (TestFlight internal; no server change)
+
+`main` from `084374b5` to `52b95085`: `--no-ff` merge of `iphone-push-open-chat` at `f80fc831` (`8ca99c9e`: a tapped
+push opens a conversation you can write in; `f80fc831`: the conversation or thread opens at its newest message on a new
+screen and loads again, so the new message shows also after a cold start). No merge conflict, no server or URL change.
+`aboutOrbit()` already says how to get iPhone notifications; this is a fix of what a tap does, so no prompt change.
+Merged only after the 8b614cc server deploy was verified.
+
+Checks on the merged `main`: mobile `tsc --noEmit` clean, `bun test src/data/keyboard.test.ts` 4 pass (`push.ts` has no
+test file). No native change since build 20 (`app.json`, `package.json`, `eas.json`, `bun.lock` unchanged), so
+`eas build --non-interactive --no-wait` from the main checkout.
+
+EAS build `111dec9c-5ea3-4be6-9588-6297757195a5`, build number 21 (version 1.0.0, commit `52b95085`, ~6 min).
+Submission `79681107-dcf6-4dca-bd69-5c255061427d` with the App Manager ASC key (~1 min in the submission queue;
+eas.json changed only for the run and restored; the temporary `AuthKey.p8` deleted). ASC build
+`5f9020bc-2a63-47a9-870f-81c5d9bcf249`: `VALID` ~3 min after the submission, internal state `IN_BETA_TESTING`, external
+`READY_FOR_BETA_SUBMISSION` (not submitted, not in the external group). Scripts and logs: `/root/ops/iphone-build21/`.
+
 ### November 18, 2026 upgrade: one approval per agent job, whole large file read, dark-theme mic hover fix (1 migration)
 
 `main` from `ec747414` to `8b614cc4` (deployed): `921f237f` (fix: in the dark theme the listening mic of the Ask bar and
