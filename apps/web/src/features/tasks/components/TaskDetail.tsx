@@ -26,7 +26,7 @@ import { Pane, PaneHeader } from '@/components/common/Pane'
 import { PriorityIcon } from './PriorityIcon'
 import { TaskStatusIcon } from './TaskStatusIcon'
 import { dueDateLabel, PRIORITY_LABEL, PRIORITY_ORDER, projectLabels, projectStatuses } from '@/features/tasks/taskMeta'
-import { refIdentifier, type Project, type Task, type TaskViewState } from '@/features/tasks/api/models'
+import { githubSourceIssue, refIdentifier, type Project, type Task, type TaskViewState } from '@/features/tasks/api/models'
 import { cachedDescendantIds, type PageTaskRecord } from '@/features/tasks/api/optimistic'
 import { useProjectAudience, useProjects } from '@/features/tasks/api/projects'
 import { useCycles } from '@/features/tasks/api/cycles'
@@ -86,6 +86,7 @@ export function TaskDetail({ task, project, state, onClose, onOpenTask, onOpenPr
   // Orbit Cloud without a subscription: the description socket drops edits, so offer none.
   const contentReadOnly = githubContentReadOnly || workspaceReadOnly
   const githubSyncPaused = githubLinks.data?.some((link) => link.source && link.state === 'paused')
+  const githubIssue = githubSourceIssue(githubLinks.data)
   const githubPullRequests = githubLinks.data?.filter((link) => link.kind === 'pull_request' && !link.source) ?? []
   // the task is the GitHub issue or pull request it syncs from: the server refuses to move it to another project
   const githubIssueLinked = githubLinks.data?.some((link) => link.source) ?? false
@@ -236,6 +237,10 @@ export function TaskDetail({ task, project, state, onClose, onOpenTask, onOpenPr
               ) : null}
               <AddDocButton onClick={() => setDocPickerOpen(true)} />
             </div>
+            {githubIssue ? <a href={githubIssue.url} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1.5 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
+              <Link2 className="size-3.5 shrink-0" aria-hidden="true" />
+              {githubIssue.label}
+            </a> : null}
             {githubLinks.data?.some((link) => link.source) ? <p className="mt-2 text-xs text-muted-foreground">This task's title and description are read-only while it is linked to GitHub.</p> : null}
             {githubSyncPaused ? <p className="mt-2 text-xs text-muted-foreground">Add the project label to the GitHub issue or pull request again to resume updates.</p> : null}
             {updateTask.isError ? <p role="alert" className="text-xs text-destructive">Task update failed. <Button variant="ghost" onClick={() => updateTask.variables && updateTask.mutate(updateTask.variables)}>Retry</Button></p> : null}

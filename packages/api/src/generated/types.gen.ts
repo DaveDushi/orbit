@@ -1994,6 +1994,19 @@ export type ForwardedRecord = {
 
 export type GithubLink = {
     kind: string;
+    /**
+     * Its number (`source` only).
+     */
+    number?: number | null;
+    /**
+     * How many repositories the task's project syncs from, its connected one included
+     * (`source` only): the clients name the repository when there is more than one.
+     */
+    project_repositories?: number | null;
+    /**
+     * `owner/name` of the issue or pull request the task syncs from (`source` only).
+     */
+    repository?: string | null;
     source: boolean;
     state: string;
     title: string;

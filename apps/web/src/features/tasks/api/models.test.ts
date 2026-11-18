@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
-import type { AttachmentRecord, AuditEvent, CommentRecord, ProjectRecord, TaskRecord } from '@orbit/api/generated/types.gen'
-import { refIdentifier, taskFromRecord, taskIdentifier } from './models'
+import type { AttachmentRecord, AuditEvent, CommentRecord, GithubLink, ProjectRecord, TaskRecord } from '@orbit/api/generated/types.gen'
+import { githubSourceIssue, refIdentifier, taskFromRecord, taskIdentifier } from './models'
 import { buildFeed } from '../tasksLib'
 
 const project: ProjectRecord = {
@@ -225,4 +225,20 @@ test('an update event becomes one row per changed field; an event with nothing t
     { field: 'description' },
   ])
   expect(task.activity[0]!.statusId).toBe('done')
+})
+
+test('the GitHub issue line comes only from a valid stored source issue', () => {
+  const issue: GithubLink = { kind: 'issue', title: 'acme/api#12', url: 'https://github.com/acme/api/issues/12', state: 'active', source: true, repository: 'acme/api', number: 12, project_repositories: 1 }
+  const pull: GithubLink = { kind: 'pull_request', title: 'PR', url: 'https://github.com/acme/api/pull/3', state: 'open', source: false }
+  expect(githubSourceIssue([pull, issue])).toEqual({ label: 'GitHub issue #12', url: 'https://github.com/acme/api/issues/12' })
+  // More than one repository in the project: the line names it.
+  expect(githubSourceIssue([{ ...issue, project_repositories: 2 }])?.label).toBe('GitHub issue acme/api#12')
+  // A task synced from a pull request, a mention or no links: no line.
+  expect(githubSourceIssue([{ ...issue, kind: 'pull_request' }])).toBeNull()
+  expect(githubSourceIssue([pull])).toBeNull()
+  expect(githubSourceIssue(undefined)).toBeNull()
+  // The URL is built from the stored values only, never from a bad one (or the link's own `url`).
+  for (const repository of ['acme', 'acme/api/x', '../api', 'acme/..', 'evil.com/x?y', '-acme/api']) expect(githubSourceIssue([{ ...issue, repository }])).toBeNull()
+  for (const number of [0, -1, 1.5, null]) expect(githubSourceIssue([{ ...issue, number }])).toBeNull()
+  expect(githubSourceIssue([{ ...issue, url: 'https://evil.example/' }])?.url).toBe('https://github.com/acme/api/issues/12')
 })

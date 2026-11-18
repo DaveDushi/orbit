@@ -289,6 +289,23 @@ export async function githubLinks(client: OrbitClient, workspaceId: string, task
  */
 export const githubLocked = (links: readonly GithubLink[] | undefined) => !links || links.some((link) => link.source)
 
+/** `owner/name` as GitHub allows it (no `.` or `..` repository). */
+const GITHUB_REPOSITORY = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/(?!\.\.?$)[A-Za-z0-9._-]+$/
+
+/**
+ * As on the web: the GitHub issue a task syncs from: "GitHub issue #12" ("GitHub issue acme/api#12" when the project syncs from more
+ * than one repository) and its URL, built only from the stored repository and number. `null` for other tasks, a
+ * pull request source, or a value that is not a valid repository or number.
+ */
+export function githubSourceIssue(links: readonly GithubLink[] | undefined): { label: string; url: string } | null {
+  const link = links?.find((item) => item.source && item.kind === 'issue')
+  const repository = link?.repository
+  const number = link?.number
+  if (!repository || !GITHUB_REPOSITORY.test(repository) || !Number.isSafeInteger(number) || !number || number < 1) return null
+  const name = (link?.project_repositories ?? 1) > 1 ? `${repository}#${number}` : `#${number}`
+  return { label: `GitHub issue ${name}`, url: `https://github.com/${repository}/issues/${number}` }
+}
+
 /** Who follows the task (gets its new comments and status changes), and whether the caller does. */
 export async function followers(client: OrbitClient, workspaceId: string, taskId: string): Promise<TaskFollowers> {
   return (await listTaskFollowers(task(client, workspaceId, taskId))).data
