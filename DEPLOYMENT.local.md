@@ -7,8 +7,8 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, commit 42b5fc3f4b22635236a8dbf3c19a6c9155f43d6f on `main`
-  (removing a member lifts the suspension their workspace set; schema 20261118104258, 122 rows, unchanged;
+- Source: DaveDushi/orbit, commit 4fa8e8f2433e3360f1ef51f41fac1dd1ad8a138a on `main`
+  (one coherent navigation on the web; schema 20261118104258, 122 rows, unchanged;
   November 18, 2026).
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
@@ -19,9 +19,9 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   MCP routes through the hooks gateway (`/etc/orbit-hooks-gateway/nginx.conf`, proposal `/tmp/mcpo/gateway/proposal.diff`).
   Binaries before d8d3eb4 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-d8d3eb4`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:42b5fc3`); fork commits have no published upstream image.
-- Image ID: sha256:4572b7faedb218e73d21d61c632b88e94cdda9f182d679114418739d1f77d254
-- Team agent sidecar code (`/opt/orbit-agent`): commit 42b5fc3 (what's new and aboutOrbit: removing a suspended member lifts the suspension).
+  (`orbit:4fa8e8f`); fork commits have no published upstream image.
+- Image ID: sha256:c34227a3e4ad35963a9877f9be854a0617f5a743518845547fcf83b2e38a742b
+- Team agent sidecar code (`/opt/orbit-agent`): commit 4fa8e8f (what's new and aboutOrbit: the one navigation).
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): on since November 15, 2026, 12:07 UTC (set by Ops, outside a
   deploy): `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID`, `ORBIT_APNS_TOPIC` and `ORBIT_APNS_SANDBOX`
   are in `/etc/orbit/orbit.env`; the journal shows `iPhone push (APNs) is on` (topic `com.easytomanage.orbit`, sandbox
@@ -268,6 +268,65 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 18, 2026 upgrade: one coherent navigation on the web (no migration)
+
+`main` from `3de09ea3` to `4fa8e8f2`: `--no-ff` merge `b57cd48d` of `nav-sidebar-ux` at `f384b5d1` (web only: the
+Account settings → Appearance → Layout choice (Classic / New UI) and the classic code path with `ProjectRail` are gone,
+the old `orbit:layout` key is deleted; one saved, resizable width (220-480 px, `orbit:page_list_width`) for the open
+sidebar on every page; the Tasks sidebar has All tasks (no second "All projects" row), favourite views under Views,
+Back on top and Trash at the bottom; nav colours from sidebar tokens, so custom themes colour the whole app; visible
+keyboard focus on sidebar links). No merge conflict. `4fa8e8f2`: sidecar what's new 2026-11-18 line (the entry keeps 4
+lines: the imports and large-files lines are one now) and an aboutOrbit line on the one navigation; the prompt test's
+sidebar sentinel "All projects" became "All tasks" (the merge alone made `prompt.test.ts` fail). No migration, no env
+change, no server code change.
+
+Checks on the merged `main`: web `tsc -b` clean; web `bun test` of `src/app/shell`, `lib/theme`, `features/profile`,
+`features/settings`, `features/docs/components` and the touched task tests: 204 pass; `src/features/tasks` +
+chat sidebar: 404 pass, 2 fail: "bulk toolbar rejects more than 100 selected tasks" (known 80 s timeout, also fails on
+`main`) and "bulk due date picker schedules the selected tasks for this week" in the same `TaskList.test.tsx` (passes
+alone; the file is unchanged by the merge, so it follows the timeout). Agent `prompt.test.ts` 5 pass, agent `tsc` clean.
+
+Deploy id `20261118T142720Z-2978289`. `orbit:4fa8e8f` (image
+`sha256:c34227a3e4ad35963a9877f9be854a0617f5a743518845547fcf83b2e38a742b`, compile 38 min); `deploy/smoke.sh` and
+`orbit config check` passed.
+
+Switch: stopped both services at 15:10:05 UTC; snapshot `01a1ef35-3baf-75e3-a16b-a362f3ebf0c8` with
+`/usr/local/bin/orbit-42b5fc3`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-4fa8e8f.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-4fa8e8f.tgz`; sidecar code copied (old `/opt/orbit-agent.before-4fa8e8f`).
+`orbit` and `orbit-agent` ready 15:10:19 (14 s down). `vm-health.conf` (old copy `.before-4fa8e8f`):
+`PROD_TAG=4fa8e8f`, `ROLLBACK_TAG=42b5fc3`, `ROLLBACK_BACKUP=01a1ef35-3baf-75e3-a16b-a362f3ebf0c8`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) local and on
+`https://orbit-app.easytomanage.com/health/ready`; `/orbit-build.json` revision `4fa8e8f2…`; `/`, `/login`, `/tasks`,
+`/docs`, `/chat`, `/drive`, `/profile/appearance`, `/settings/general` 200, API without a session 401;
+`/opt/orbit-agent/src` = `main`; journal since the switch: no warnings. `vm-health`: nginx FAIL only from the two switch
+windows of this hour (80 "Connection refused" lines at 14:23-14:24 and 15:10, 0 5xx); docker WARN = other sessions'
+containers.
+
+Signed-in check of the served bundle as David Dusi (temporary session, logged out, revoked; socat TLS hop; every API
+write blocked: only chat read markers and page visits were tried), `ui-check.ts`, light and dark at 1440 and 1200 px,
+all pass: no `data-new-ui`, an old `orbit:layout=classic` is deleted; sidebar 260 px on `/`, `/tasks`, `/docs`, `/chat`,
+`/drive`, `/settings/general`; ArrowRight ×2 → 292 px, kept after a reload on `/docs`; drag +60 → 352, drag stops at
+480, double click → 260; Tab gives "All tasks" a solid 1 px outline; Tasks sidebar has All tasks, Views, My tasks,
+Projects, Trash and no "All projects"; Appearance has Color theme and no Layout / Classic / New UI; no console errors.
+Screenshots `/root/.local/share/com.jean.desktop/pasted-images/nav-sidebar-ux/prod-{light,dark}-{1440,1200}{,-appearance}.png`.
+Changelog posted to #orbit-updates as David (temporary session, logged out; message
+`01a1ef39-9310-73a3-8dca-a32d89fca329`; text `/root/ops/nav-sidebar/changelog.md`). Scripts and logs:
+`/root/ops/nav-sidebar/`.
+
+Rollback to `42b5fc3` (same schema, so only the binary and sidecar code; `/root/ops/nav-sidebar/rollback.sh`):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-42b5fc3 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-4fa8e8f /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+```
+
+After this rollback, copy `/root/ops/vm-health.conf.before-4fa8e8f` back to `/root/ops/vm-health.conf`.
 
 ### November 18, 2026 iPhone build 21: a tapped push opens its conversation at the new message (TestFlight internal; no server change)
 
