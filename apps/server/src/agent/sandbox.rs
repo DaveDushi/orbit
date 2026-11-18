@@ -8,11 +8,18 @@
 //!   call, agent, work id, limits and expiry. The call token and the call's proxy password are sealed inside, so the
 //!   sidecar never sees them; Orbit keeps only their hashes.
 //! - `POST /api/internal/agent/sandbox/calls/{id}/end` (broker): ends the call once (idempotent), deletes its token,
-//!   adds its CPU time to the month, and returns the egress requests that wait for a person's answer.
+//!   adds its CPU time to the month, and returns the egress requests that wait for a person's answer. The sidecar may
+//!   end a call too (secret), as interrupted, when it gave up on the broker (a stopped run, a broker that did not
+//!   answer): the token dies and the proxy denies the call's password at once.
 //! - `POST /api/internal/agent/egress/check` (egress proxy): with the call's proxy password, decides one
 //!   `host:port`: `allow`, `deny` or `ask` (section 4, decision order), and logs it.
 //! - `POST /api/internal/agent/egress/done` (egress proxy): an allowed connection's bytes, once, into its log row, the
 //!   call and the month; or `blocked` when the proxy refused it after the yes (`agent::egress_proxy`).
+//! - `POST /api/v1/workspaces/{id}/agents/egress-requests/{request}` (a person; agent sessions never reach `agents/`):
+//!   the answer to the egress card. Allow once: the driver only. Allow always: owners and admins, never a risky host.
+//!   Deny: the driver or an owner/admin (`always`: a deny rule, owners and admins). A request waits [`ASK_WAIT_MS`]; then
+//!   it is expired and the next call asks again. The answer queues an `action` input for the **original driver**, so
+//!   the run continues as theirs, whoever clicked.
 //!
 //! The broker and the proxy authenticate with a bearer derived from the broker key; the key file is
 //! `ORBIT_AGENT_SANDBOX_KEY_FILE`. Without it, or with `ORBIT_AGENT_SANDBOX=off`, every route answers `sandbox_off`.
@@ -25,6 +32,7 @@ use axum::{Json, Router};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use hmac::{Hmac, Mac};
+use orbit_domain::Permission;
 use orbit_platform::{Flag, Id, RequestId, Row, TimestampMillis, generate_opaque_token};
 use rand_core::{OsRng, RngCore};
 use serde::Deserialize;
@@ -35,7 +43,9 @@ use subtle::ConstantTimeEq;
 use super::AgentState;
 use super::routes::sidecar_only;
 use super::scope::TOKEN_PREFIX;
-use crate::task_routes::ApiError;
+use crate::audit::{self, AuditOutcome};
+use crate::repositories::membership;
+use crate::task_routes::{ApiError, authenticate_session, request_id_value};
 
 type RequestIdExtension = Option<Extension<RequestId>>;
 type HmacSha256 = Hmac<Sha256>;
@@ -52,6 +62,9 @@ const DISK_MB: i64 = 4096;
 const LOST_AFTER_MS: i64 = 5 * 60 * 1_000;
 /// An "Allow once" lasts this long (as write approvals).
 pub const ALLOW_ONCE_MS: i64 = 30 * 60 * 1_000;
+/// A card's question waits this long for an answer (as write approvals); later answers are refused and the next call
+/// asks again.
+pub const ASK_WAIT_MS: i64 = 30 * 60 * 1_000;
 
 /// Hosts that always ask, also with an "Allow always" rule: paste and file-drop sites, shorteners, request catchers
 /// and tunnels, personal and raw object storage, gist and upload endpoints. Each also covers its subdomains.
@@ -181,6 +194,10 @@ pub(crate) fn router(state: AgentState) -> Router {
         )
         .route("/api/internal/agent/egress/check", post(check_egress))
         .route("/api/internal/agent/egress/done", post(egress_done))
+        .route(
+            "/api/v1/workspaces/{workspace_id}/agents/egress-requests/{request_id}",
+            post(answer_egress),
+        )
         .with_state(state)
 }
 
@@ -528,9 +545,21 @@ async fn end_call(
     uri: Uri,
     request_id: RequestIdExtension,
     Path(call_id): Path<String>,
-    Json(body): Json<EndBody>,
+    Json(mut body): Json<EndBody>,
 ) -> Result<Response, ApiError> {
-    service_only(&state, &headers, &uri, &request_id)?;
+    // The sidecar ends a call only as interrupted: the broker alone knows its exit and CPU time.
+    if !keys(&state, &uri, &request_id)?.service_allows(&headers) {
+        sidecar_only(&state, &headers, &uri, &request_id)?;
+        body = EndBody {
+            exit: None,
+            timed_out: false,
+            interrupted: Some(
+                body.interrupted
+                    .unwrap_or_else(|| "the run stopped the call".to_owned()),
+            ),
+            cpu_ms: 0,
+        };
+    }
     let not_found = || {
         error(
             StatusCode::NOT_FOUND,
@@ -587,10 +616,11 @@ async fn end_call(
             .await?;
         }
         let pending = sqlx::query(
-            "SELECT id, host, port FROM agent_egress_requests WHERE call_id = $1 AND status = 'pending' \
-             ORDER BY created_at, id",
+            "SELECT id, host, port, expires_at FROM agent_egress_requests WHERE call_id = $1 AND status = 'pending' \
+             AND (expires_at IS NULL OR expires_at > $2) ORDER BY created_at, id",
         )
         .bind(call_id.to_string())
+        .bind(now)
         .fetch_all(&mut *tx)
         .await?
         .into_iter()
@@ -599,6 +629,7 @@ async fn end_call(
                 "id": row.get::<String, _>("id"),
                 "host": row.get::<String, _>("host"),
                 "port": row.get::<i64, _>("port"),
+                "expires_at": row.get::<Option<i64>, _>("expires_at"),
             })
         })
         .collect();
@@ -820,13 +851,15 @@ async fn decide(
     {
         let pending = sqlx::query_scalar::<_, String>(
             "SELECT id FROM agent_egress_requests WHERE agent_user_id = $1 AND thread_key = $2 \
-             AND driver_user_id = $3 AND host = $4 AND port = $5 AND status = 'pending'",
+             AND driver_user_id = $3 AND host = $4 AND port = $5 AND status = 'pending' \
+             AND (expires_at IS NULL OR expires_at > $6)",
         )
         .bind(&agent)
         .bind(&thread)
         .bind(&driver)
         .bind(host)
         .bind(port)
+        .bind(now)
         .fetch_optional(&mut *tx)
         .await?;
         let id = match pending {
@@ -842,7 +875,8 @@ async fn decide(
                 let id = Id::new_v7().to_string();
                 sqlx::query(
                     "INSERT INTO agent_egress_requests (id, workspace_id, agent_user_id, driver_user_id, thread_key, \
-                     call_id, host, port, status, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9)",
+                     call_id, host, port, status, created_at, expires_at) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9, $10)",
                 )
                 .bind(&id)
                 .bind(&workspace)
@@ -853,6 +887,7 @@ async fn decide(
                 .bind(host)
                 .bind(port)
                 .bind(now)
+                .bind(now + ASK_WAIT_MS)
                 .execute(&mut *tx)
                 .await?;
                 id
@@ -966,9 +1001,376 @@ async fn egress_done(
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// The card's answer.
+
+#[derive(Deserialize)]
+struct AnswerBody {
+    /// `allow_once`, `allow_always` or `deny`.
+    answer: String,
+    /// With `deny`: also a deny rule for this agent (owners and admins).
+    #[serde(default)]
+    always: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Answer {
+    Once,
+    Always,
+    Deny,
+}
+
+/// Why an answer is refused.
+#[derive(Debug, Eq, PartialEq)]
+enum AnswerRefused {
+    NotFound,
+    Answered,
+    Expired,
+    DriverOnly,
+    AdminOnly,
+    DriverOrAdmin,
+    Risky,
+}
+
+/// Who may give `answer` (section 4, the card): Allow once only the driver; Allow always and a deny rule only
+/// owners and admins, and never for a risky host; Deny the driver or an owner/admin.
+fn may_answer(
+    answer: Answer,
+    always: bool,
+    is_driver: bool,
+    is_admin: bool,
+    host: &str,
+) -> Result<(), AnswerRefused> {
+    match answer {
+        Answer::Once if !is_driver => Err(AnswerRefused::DriverOnly),
+        Answer::Always if !is_admin => Err(AnswerRefused::AdminOnly),
+        Answer::Always if is_risky(host) => Err(AnswerRefused::Risky),
+        Answer::Deny if !(is_driver || is_admin) => Err(AnswerRefused::DriverOrAdmin),
+        Answer::Deny if always && !is_admin => Err(AnswerRefused::AdminOnly),
+        _ => Ok(()),
+    }
+}
+
+async fn answer_egress(
+    State(state): State<AgentState>,
+    Path((workspace_id, egress_request)): Path<(String, String)>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+    Json(body): Json<AnswerBody>,
+) -> Result<Response, ApiError> {
+    keys(&state, &uri, &request_id)?;
+    let session = authenticate_session(
+        &state.identity,
+        state.cookie_mode,
+        &headers,
+        uri.path(),
+        request_id.as_ref(),
+    )
+    .await?;
+    let not_found = || {
+        error(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Not found.",
+            &uri,
+            &request_id,
+        )
+    };
+    let (Ok(workspace_id), Ok(egress_request)) =
+        (workspace_id.parse::<Id>(), egress_request.parse::<Id>())
+    else {
+        return Err(not_found());
+    };
+    let answer = match body.answer.as_str() {
+        "allow_once" => Answer::Once,
+        "allow_always" => Answer::Always,
+        "deny" => Answer::Deny,
+        _ => {
+            return Err(error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_answer",
+                "The answer is allow_once, allow_always or deny.",
+                &uri,
+                &request_id,
+            ));
+        }
+    };
+    let always = body.always && answer == Answer::Deny;
+    let audit_request = request_id_value(request_id.as_ref()).to_owned();
+    let result = answer_request(
+        &state,
+        workspace_id,
+        session.user.id,
+        egress_request,
+        answer,
+        always,
+        &audit_request,
+    )
+    .await;
+    let refused = |status, code, detail| Err(error(status, code, detail, &uri, &request_id));
+    match result {
+        Ok(Ok(view)) => Ok(Json(view).into_response()),
+        Ok(Err(AnswerRefused::NotFound)) => Err(not_found()),
+        Ok(Err(AnswerRefused::Answered)) => refused(
+            StatusCode::CONFLICT,
+            "egress_request_answered",
+            "This request already has an answer.",
+        ),
+        Ok(Err(AnswerRefused::Expired)) => refused(
+            StatusCode::GONE,
+            "egress_request_expired",
+            "This request waited too long. The agent asks again at its next try.",
+        ),
+        Ok(Err(AnswerRefused::DriverOnly)) => refused(
+            StatusCode::FORBIDDEN,
+            "egress_driver_only",
+            "Only the person the agent works for in this thread can allow once.",
+        ),
+        Ok(Err(AnswerRefused::AdminOnly)) => refused(
+            StatusCode::FORBIDDEN,
+            "egress_admin_only",
+            "Ask an admin: only workspace owners and admins can make a rule.",
+        ),
+        Ok(Err(AnswerRefused::DriverOrAdmin)) => refused(
+            StatusCode::FORBIDDEN,
+            "egress_driver_or_admin",
+            "Only the person the agent works for, or an admin, can deny.",
+        ),
+        Ok(Err(AnswerRefused::Risky)) => refused(
+            StatusCode::CONFLICT,
+            "egress_risky_host",
+            "This host always asks: it cannot be allowed always.",
+        ),
+        Err(failure) => Err(unavailable(&failure, &uri, &request_id)),
+    }
+}
+
+/// Records the answer, a rule when it makes one, the audit row, and the continuation for the original driver.
+async fn answer_request(
+    state: &AgentState,
+    workspace_id: Id,
+    user: Id,
+    egress_request: Id,
+    answer: Answer,
+    always: bool,
+    audit_request: &str,
+) -> Result<Result<Value, AnswerRefused>, sqlx::Error> {
+    let now = TimestampMillis::now();
+    let mut tx = state.database().immediate_transaction().await?;
+    // Guests and people outside the workspace see nothing here.
+    let Some(actor) = membership::actor(&mut *tx, workspace_id, user).await? else {
+        return Ok(Err(AnswerRefused::NotFound));
+    };
+    let Some(row) = sqlx::query(
+        "SELECT agent_user_id, driver_user_id, thread_key, host, port, status, expires_at \
+         FROM agent_egress_requests WHERE id = $1 AND workspace_id = $2",
+    )
+    .bind(egress_request.to_string())
+    .bind(workspace_id.to_string())
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Ok(Err(AnswerRefused::NotFound));
+    };
+    if row.get::<String, _>("status") != "pending" {
+        return Ok(Err(AnswerRefused::Answered));
+    }
+    if row
+        .get::<Option<i64>, _>("expires_at")
+        .is_some_and(|expires| expires <= now.as_millis())
+    {
+        return Ok(Err(AnswerRefused::Expired));
+    }
+    let agent: String = row.get("agent_user_id");
+    let driver: String = row.get("driver_user_id");
+    let thread_key: String = row.get("thread_key");
+    let host: String = row.get("host");
+    let port: i64 = row.get("port");
+    let is_driver = driver == user.to_string();
+    if let Err(refused) = may_answer(
+        answer,
+        always,
+        is_driver,
+        actor.can(Permission::WorkspaceUpdate),
+        &host,
+    ) {
+        return Ok(Err(refused));
+    }
+
+    // Allowed (once, or with the new rule) for this thread and driver for ALLOW_ONCE_MS; denied here for good.
+    let (status, expires_at) = match answer {
+        Answer::Once | Answer::Always => ("allowed", Some(now.as_millis() + ALLOW_ONCE_MS)),
+        Answer::Deny => ("denied", None),
+    };
+    sqlx::query(
+        "UPDATE agent_egress_requests SET status = $2, decided_by = $3, decided_at = $4, expires_at = $5 \
+         WHERE id = $1",
+    )
+    .bind(egress_request.to_string())
+    .bind(status)
+    .bind(user.to_string())
+    .bind(now.as_millis())
+    .bind(expires_at)
+    .execute(&mut *tx)
+    .await?;
+    let rule = match answer {
+        Answer::Always => Some("allow"),
+        Answer::Deny if always => Some("deny"),
+        _ => None,
+    };
+    if let Some(action) = rule {
+        sqlx::query(
+            "INSERT INTO agent_egress_rules (id, workspace_id, agent_user_id, host, port, action, created_by, \
+             created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (agent_user_id, host, port) \
+             DO UPDATE SET action = excluded.action, created_by = excluded.created_by, created_at = excluded.created_at",
+        )
+        .bind(Id::new_v7().to_string())
+        .bind(workspace_id.to_string())
+        .bind(&agent)
+        .bind(&host)
+        .bind(port)
+        .bind(action)
+        .bind(user.to_string())
+        .bind(now.as_millis())
+        .execute(&mut *tx)
+        .await?;
+    }
+    let event = match (answer, rule) {
+        (_, Some(_)) => "agent_egress.rule_create",
+        (Answer::Once, None) => "agent_egress.allow_once",
+        _ => "agent_egress.deny",
+    };
+    audit::record(
+        &mut tx,
+        workspace_id,
+        Some(user),
+        event,
+        AuditOutcome::Success,
+        "agent_egress_request",
+        Some(egress_request),
+        audit_request,
+        json!({ "agent_user_id": agent, "host": host, "port": port, "rule": rule }),
+        now,
+    )
+    .await?;
+
+    // The run goes on as the original driver's, whoever clicked (they never become the driver).
+    let thread = sqlx::query(
+        "SELECT conversation_id, root_message_id FROM agent_threads WHERE thread_key = $1 AND workspace_id = $2",
+    )
+    .bind(&thread_key)
+    .bind(workspace_id.to_string())
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some(thread) = thread {
+        let by: String = sqlx::query_scalar("SELECT display_name FROM users WHERE id = $1")
+            .bind(user.to_string())
+            .fetch_one(&mut *tx)
+            .await?;
+        let answer_name = match (answer, rule) {
+            (Answer::Once, _) => "allow_once",
+            (Answer::Always, _) => "allow_always",
+            (Answer::Deny, Some(_)) => "deny_always",
+            (Answer::Deny, None) => "deny",
+        };
+        let action = json!({
+            "type": "egress",
+            "answer": answer_name,
+            "host": host,
+            "port": port,
+            "by": by,
+            "by_driver": is_driver,
+            "request_id": egress_request.to_string(),
+        });
+        sqlx::query(
+            "INSERT INTO agent_inputs (message_id, workspace_id, conversation_id, thread_key, root_message_id, \
+             author_id, kind, created_at, action, agent_user_id) VALUES ($1, $2, $3, $4, $5, $6, 'action', $7, $8, $9)",
+        )
+        .bind(Id::new_v7().to_string())
+        .bind(workspace_id.to_string())
+        .bind(thread.get::<String, _>("conversation_id"))
+        .bind(&thread_key)
+        .bind(thread.get::<Option<String>, _>("root_message_id"))
+        .bind(&driver)
+        .bind(now.as_millis())
+        .bind(action.to_string())
+        .bind(&agent)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(Ok(json!({
+        "status": status,
+        "host": host,
+        "port": port,
+        "expires_at": expires_at,
+        "rule": rule,
+    })))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{SandboxKeys, is_risky, normalize_host, rule_matches};
+    use super::{
+        Answer, AnswerRefused, SandboxKeys, is_risky, may_answer, normalize_host, rule_matches,
+    };
+
+    #[test]
+    fn only_the_driver_allows_once_and_only_admins_make_rules() {
+        let host = "api.example.com";
+        // (answer, always, driver, admin) → result
+        let cases = [
+            (Answer::Once, false, true, false, Ok(())),
+            (
+                Answer::Once,
+                false,
+                false,
+                true,
+                Err(AnswerRefused::DriverOnly),
+            ),
+            (Answer::Always, false, false, true, Ok(())),
+            (
+                Answer::Always,
+                false,
+                true,
+                false,
+                Err(AnswerRefused::AdminOnly),
+            ),
+            (Answer::Deny, false, true, false, Ok(())),
+            (Answer::Deny, false, false, true, Ok(())),
+            (
+                Answer::Deny,
+                false,
+                false,
+                false,
+                Err(AnswerRefused::DriverOrAdmin),
+            ),
+            (
+                Answer::Deny,
+                true,
+                true,
+                false,
+                Err(AnswerRefused::AdminOnly),
+            ),
+            (Answer::Deny, true, false, true, Ok(())),
+        ];
+        for (answer, always, driver, admin, expected) in cases {
+            assert_eq!(
+                may_answer(answer, always, driver, admin, host),
+                expected,
+                "{answer:?} always={always} driver={driver} admin={admin}"
+            );
+        }
+        // A risky host never gets an allow rule, not even from an admin who drives; once is fine.
+        assert_eq!(
+            may_answer(Answer::Always, false, true, true, "x.ngrok.io"),
+            Err(AnswerRefused::Risky)
+        );
+        assert_eq!(
+            may_answer(Answer::Once, false, true, true, "x.ngrok.io"),
+            Ok(())
+        );
+    }
 
     #[test]
     fn hosts_are_normalized_and_ip_literals_refused() {

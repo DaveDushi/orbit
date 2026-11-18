@@ -5,17 +5,17 @@ import test from "node:test";
 import { ANSWER_LEVELS, frame, runModel } from "../src/agent.ts";
 import { codexModels } from "../src/models.ts";
 import { agentInstructionsBlock } from "../src/prompt.ts";
-import { blockedCall, MEDIA_TOOLS, ORBIT_TOOLS, toolRegistrations } from "../src/tools.ts";
+import { blockedCall, MEDIA_TOOLS, ORBIT_TOOLS, SANDBOX_TOOLS, toolRegistrations } from "../src/tools.ts";
 
 test("Orbit's tool catalog for agent profiles names exactly the sidecar's tools", () => {
 	const rust = readFileSync(new URL("../../server/src/agent/profiles.rs", import.meta.url), "utf8");
 	const catalog = rust.slice(rust.indexOf("pub const TOOL_CATALOG"), rust.indexOf("];", rust.indexOf("pub const TOOL_CATALOG")));
 	const server = [...catalog.matchAll(/\("([a-z_]+)", "/g)].map((match) => match[1]).sort();
-	const sidecar = [...ORBIT_TOOLS, ...MEDIA_TOOLS].map((tool) => tool.name).sort();
+	const sidecar = [...ORBIT_TOOLS, ...MEDIA_TOOLS, ...SANDBOX_TOOLS].map((tool) => tool.name).sort();
 	assert.deepEqual(server, sidecar);
 });
 
-test("a custom agent is offered only its own tools, the skill tools and code mode, media tools only with a sandbox", () => {
+test("a custom agent is offered only its own tools, the skill tools and code mode, media tools and sandbox_shell only with their sandbox", () => {
 	const always = ["load_skill", "read_skill_file", "codemode", "run_saved_script", "plan_job", "run_job"];
 	assert.deepEqual(
 		toolRegistrations(["read_page", "create_page", "view_image", "no_such_tool"], false).map((tool) => tool.name),
@@ -23,6 +23,10 @@ test("a custom agent is offered only its own tools, the skill tools and code mod
 	);
 	assert.deepEqual(toolRegistrations(["view_image"], true).map((tool) => tool.name), ["view_image", ...always]);
 	assert.deepEqual(toolRegistrations([], true).map((tool) => tool.name), always);
+	// sandbox_shell: only when ticked and the server has an agent sandbox broker.
+	assert.deepEqual(toolRegistrations(["sandbox_shell"], true).map((tool) => tool.name), always);
+	assert.deepEqual(toolRegistrations(["sandbox_shell"], false, true).map((tool) => tool.name), ["sandbox_shell", ...always]);
+	assert.deepEqual(toolRegistrations(["read_page"], false, true).map((tool) => tool.name), ["read_page", ...always]);
 	// A script can neither start a script nor end the run with a question.
 	for (const tool of [...toolRegistrations([], false), ORBIT_TOOLS.find((candidate) => candidate.name === "ask_teammate")!]) {
 		assert.deepEqual(tool.callers, ["model"], tool.name);

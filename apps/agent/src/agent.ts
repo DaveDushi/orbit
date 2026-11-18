@@ -32,7 +32,7 @@ import { withPageContext } from "./page.ts";
 import { DEFAULT_AGENT_NAME, MEMORY_CHECK } from "./prompt.ts";
 import { Sandbox } from "./sandbox.ts";
 import { groupSteps } from "./steps.ts";
-import { orbitExtension, REPAIR_SCRIPT, toolRegistrations } from "./tools.ts";
+import { orbitExtension, REPAIR_SCRIPT, SANDBOX_TOOLS, toolRegistrations } from "./tools.ts";
 import { actionText, cardTitle, finalCard, liveCard, splitAnswer, uiBlock } from "./ui.ts";
 import type { UiSpec } from "./ui-catalog.ts";
 
@@ -215,6 +215,7 @@ const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
 	memory_recall: (args) => `Searching memory for “${args.query}”`,
 	memory_zoom: () => "Reading older memory",
 	media_shell: () => "Running a media command",
+	sandbox_shell: () => "Running a command in the sandbox",
 	work_from_drive: () => "Copying a Drive file to the sandbox",
 	view_image: (args) => `Looking at ${[...((args.paths as unknown[]) ?? []), ...((args.node_ids as unknown[]) ?? []), ...((args.chat_file_ids as unknown[]) ?? [])].length || "an"} image(s)`,
 	work_to_drive: (args) => `Saving “${String(args.name ?? args.path).replaceAll("_", " ")}” to Drive`,
@@ -370,6 +371,7 @@ export class Agent {
 				botUserId: () => this.botUserId,
 				compactWith: this.#config.compactModel ? { model: this.#config.compactModel, thinking: this.#config.compactThinking } : undefined,
 				sandbox: this.#sandbox,
+				agentSandbox: this.#config.agentSandboxSocket,
 			}),
 		);
 		let models: Models;
@@ -685,7 +687,8 @@ export class Agent {
 			// saved script, whose calls reach the agent's tools; other runs never offer it.
 			await configure(tx, conversation.id, {
 				...this.#runModel(agent ?? input.default_agent ?? null, input.answer_level),
-				tools: agent ? toolRegistrations(agent.tools, Boolean(this.#sandbox)) : null,
+				// The default agent gets every tool but the agent sandbox's (custom agents only, for now).
+				tools: agent ? toolRegistrations(agent.tools, Boolean(this.#sandbox), Boolean(this.#config.agentSandboxSocket)) : { remove: SANDBOX_TOOLS },
 				modelTools: routine?.script ? (routine.test || (agent && !agent.tools.includes(REPAIR_SCRIPT.name)) ? [RUN_SCRIPT] : [RUN_SCRIPT, REPAIR_SCRIPT]) : { remove: [RUN_SCRIPT, REPAIR_SCRIPT] },
 			});
 		}, context);

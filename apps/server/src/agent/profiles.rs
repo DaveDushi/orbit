@@ -48,9 +48,9 @@ pub const MAX_INSTRUCTIONS_CHARS: usize = 8_000;
 pub const MAX_CHANNELS: usize = 100;
 
 /// The default agent's tools, by group, as the sidecar names them (`apps/agent/src/tools.ts`,
-/// `media.ts`; `apps/agent/test/profiles.test.ts` keeps both lists the same). `true`: the tool
+/// `media.ts`, `agent-sandbox.ts`; `apps/agent/test/profiles.test.ts` keeps both lists the same). `true`: the tool
 /// writes or posts.
-pub const TOOL_CATALOG: [(&str, &str, bool); 60] = [
+pub const TOOL_CATALOG: [(&str, &str, bool); 61] = [
     ("list_projects", "Tasks", false),
     ("search_tasks", "Tasks", false),
     ("get_task", "Tasks", false),
@@ -111,6 +111,9 @@ pub const TOOL_CATALOG: [(&str, &str, bool); 60] = [
     ("work_from_drive", "Media", false),
     ("view_image", "Media", false),
     ("work_to_drive", "Media", true),
+    // Custom agents only (for now): runs code in the agent's own gVisor sandbox (`super::sandbox`). No workspace route: the sidecar
+    // asks for a ticket on an internal route, and the call token reaches only the routes of the other tools.
+    ("sandbox_shell", "Sandbox", true),
 ];
 
 /// The catalog, in the order the settings show it.
@@ -1933,7 +1936,7 @@ mod tests {
         assert!(checked_tools(&tools(&["delete_everything"])).is_err());
         assert!(checked_tools(&tools(&[""])).is_err());
         assert_eq!(checked_tools(&[]), Ok(Vec::new()));
-        assert_eq!(tool_catalog().count(), 60);
+        assert_eq!(tool_catalog().count(), 61);
     }
 
     #[test]

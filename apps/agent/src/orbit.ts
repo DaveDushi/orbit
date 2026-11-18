@@ -123,13 +123,30 @@ export type RunReport = {
 };
 
 /** What Orbit stored for a click or form send on the agent's card: the card's own data, and the form values. */
-export type CardAction = {
-	readonly type: "button" | "form";
-	readonly label: string;
-	readonly params?: Record<string, unknown> | null;
-	readonly values?: Record<string, unknown>;
-	readonly card?: { readonly message_id: string; readonly title: string };
+export type CardAction =
+	| {
+			readonly type: "button" | "form";
+			readonly label: string;
+			readonly params?: Record<string, unknown> | null;
+			readonly values?: Record<string, unknown>;
+			readonly card?: { readonly message_id: string; readonly title: string };
+	  }
+	| EgressAnswer;
+
+/** A person's answer to the sandbox's internet access card (`agent-sandbox.ts`); Orbit queues it for the driver. */
+export type EgressAnswer = {
+	readonly type: "egress";
+	readonly answer: "allow_once" | "allow_always" | "deny" | "deny_always";
+	readonly host: string;
+	readonly port: number;
+	/** The name of who answered, and whether that was the driver (an owner or admin may answer too). */
+	readonly by: string;
+	readonly by_driver: boolean;
+	readonly request_id: string;
 };
+
+/** Orbit's answer to a sandbox call: the ticket for the broker (the call token is sealed inside). */
+export type SandboxTicket = { readonly call_id: string; readonly ticket: string; readonly dry_run: boolean; readonly limits: { readonly timeout_s: number } };
 
 export type PendingInputs = {
 	readonly bot_user_id: string;
@@ -233,6 +250,16 @@ export class OrbitClient {
 	 */
 	async editMessage(messageId: string, workspaceId: string, body: string, blocks?: readonly unknown[], agentUserId?: string | null, notify = false): Promise<void> {
 		await this.internal("PATCH", `/messages/${messageId}`, { workspace_id: workspaceId, body, ...(blocks ? { blocks } : {}), ...(agentUserId ? { agent_user_id: agentUserId } : {}), ...(notify ? { notify: true } : {}) });
+	}
+
+	/** A ticket for one call in the agent's thread sandbox; Orbit checks the driver, the agent, its sandbox and budget. */
+	async sandboxCall(call: { workspace_id: string; user_id: string; agent_user_id: string; thread_key: string; timeout_seconds: number; script_sha256: string }): Promise<SandboxTicket> {
+		return (await this.internal("POST", "/sandbox/calls", call)) as SandboxTicket;
+	}
+
+	/** Ends a call the broker did not answer for (the run stopped, the broker failed): its token and proxy password die. */
+	async endSandboxCall(callId: string, interrupted: string): Promise<void> {
+		await this.internal("POST", `/sandbox/calls/${callId}/end`, { interrupted });
 	}
 
 	async readCredential(userId: string): Promise<Record<string, unknown> | undefined> {

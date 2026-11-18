@@ -1,9 +1,9 @@
 # Agent sandboxes: design
 
-Status: **approved design; phases 1–5 done on test copies** (phase 3 and 4: 2026-11-17, phase 5: 2026-11-18, branch
-`agent-sandbox-design`). The owner approved the design and the recommended answers to all open questions, with one
+Status: **approved design; phases 1–6 done on test copies** (phase 3 and 4: 2026-11-17, phases 5 and 6: 2026-11-18,
+branch `agent-sandbox-design`). The owner approved the design and the recommended answers to all open questions, with one
 change: **one sandbox per chat thread** (question 1, section 5). Results: section 13 (spike), section 14 (phases 3
-and 4), section 15 (phase 5). Production has only the phase 2 host guards; no broker, proxy or migration runs there. Each later phase
+and 4), section 15 (phase 5), section 16 (phase 6). Production has only the phase 2 host guards; no broker, proxy or migration runs there. Each later phase
 needs its own "yes" before production.
 
 ## Goal and fixed decisions
@@ -435,7 +435,7 @@ Approved by the owner on 2026-11-16: the recommended answers to questions 2–13
 | 3 | **Done** 2026-11-17 (section 14). **Broker v2 on a test copy** (new, from the spike): `deploy/agent-sandbox/broker.py` with thread sandboxes (state file, per-thread lock, eviction, idle and max-life `gc` timer, `stop_agent`/`stop_all`, start-up cleanup), `--systemd-cgroup` scopes, `tini` init, `RLIMIT_NPROC`, per-thread netns/veth/nft, ext4 disk image per thread; the agent image (Ubuntu 24.04 rootfs by digest). Escape and limit tests in `apps/agent/test/`. | Broker and escape tests pass on a test copy; idle RAM rechecked with the Ubuntu image. |
 | 4 | **Done** 2026-11-17 (section 14). **Orbit data + routes**: migration (sandbox settings incl. idle minutes, rules, egress requests, egress log, calls, usage) for SQLite and Postgres; ticket and call-token issue; `calls/{id}/end`; `egress/check`. | Route tests on both databases. |
 | 5 | **Done** 2026-11-18 (section 15). **Egress proxy**: `orbit egress-proxy` with per-call passwords; broker passes them per call. | Proxy tests and network escape tests pass. |
-| 6 | **Sidecar tool**: `sandbox_shell`, catalog row and `route_need`, interrupted-call handling, card posting and waiting. | `profiles.test.ts`, mock-model run end to end on a test instance. |
+| 6 | **Done** 2026-11-18 (section 16). **Sidecar tool**: `sandbox_shell`, catalog row and `route_need`, interrupted-call handling, card posting and waiting. | `profiles.test.ts`, mock-model run end to end on a test instance. |
 | 7 | **UI**: agent card toggle and limits; Internet access page (rules, pending, log); egress card buttons on **web and mobile**. | Browser check on web; iOS bundle builds; `tsc` and tests in both apps. |
 | 8 | **Budgets and off switch**: counters, notices, kill path. | Tests for each level. |
 | 9 | **Quality & Security**: injection and escape suites on a test instance; review. | All pass; findings fixed. |
@@ -685,3 +685,53 @@ Phase 6 (sidecar tool `sandbox_shell`, catalog row, `route_need`, card posting),
 with the Public Suffix List), phase 8 (budget notices; the off switch calls `stop_agent`), phase 9 (Quality & Security
 on a test instance with a real Orbit), the scheduler job for lost calls. Known gap, as before: domain fronting through
 a shared CDN.
+
+## 16. Phase 6 results (2026-11-18)
+
+Done on test copies only: the phase 5 test names (broker `orbit-sbx-test`, 10.202.0.0/16, proxy port 13128, image
+`orbit-sbx-test-image:p6`), the Postgres container `orbit-sbx-test-pg` (port 15533, tmpfs), and a test Orbit
+(port 18610, own data dir, a fresh seeded SQLite database, own app key and agent secret) with a mock-model sidecar
+(port 18611). No production service, data, socket or port was touched; all of it was removed after the tests.
+
+### What was built
+
+| Part | What |
+|---|---|
+| Catalog (`agent/profiles.rs`) | Row `("sandbox_shell", "Sandbox", true)`. Admins tick it on a custom agent's card (the settings show the group from the catalog; web and mobile need no change). `route_need` is unchanged on purpose: the tool needs no workspace route (the sidecar asks for tickets on the internal route with its secret), and the call token reaches only the routes of the agent's other tools. |
+| Card answer (`agent/sandbox.rs`) | `POST /api/v1/workspaces/{ws}/agents/egress-requests/{id}` `{answer: allow_once \| allow_always \| deny, always}`. Under `agents/`, which the scope layer refuses to every agent session, so code in the sandbox cannot answer its own card. Allow once: the driver only. Allow always: owners and admins, never a risky host (409). Deny: the driver or an owner/admin; `always` (a deny rule) owners and admins. Guests and outsiders: 404. Each answer writes an audit row (`agent_egress.allow_once`, `.rule_create`, `.deny`) and queues an `action` input with `{type: "egress", …}` whose author is the **original driver**, so the run goes on as theirs, whoever clicked. |
+| Card wait | A pending request waits **30 minutes** (`ASK_WAIT_MS`, as write approvals; `expires_at` is set when it is made). After that the answer route says 410 `egress_request_expired`, the call end no longer lists it, and the next call that wants the host makes a new request (and a new card). The thread waits for the driver as for an approval; a late answer or a new message continues it. No schema change. |
+| Interrupted calls | `calls/{id}/end` also takes the sidecar secret, only as an interruption (no exit, no CPU time): the sidecar ends a call the broker did not answer for. The broker kills a call when its client hangs up (the run was stopped, the sidecar died), ends it as `the run stopped the call`, and reports the end also on SIGTERM. Either way Orbit deletes the call token, and the proxy denies the password (403 after the end in Orbit, 407 once the call file is gone). |
+| Sidecar (`apps/agent/src/agent-sandbox.ts`) | `sandbox_shell {command, timeout_seconds ≤ 900, purpose}`: ticket from Orbit → broker (`brokerRequest`, shared with the media sandbox) → result (exit, stdout, end of stderr, `interrupted`, `restarted`). Not `replay: "safe"`: Pi reports a call cut by a restart as "interrupted and may have partially run". The run's abort signal, or no answer within timeout + 60 s, closes the connection and ends the call in Orbit. With waiting egress requests it posts **one card per call** (nonce `egress:<call>`), sets the thread waiting for the driver and ends the run (in a job's script: an error, as approvals). Only custom agents with the tool ticked and a broker socket (`AGENT_SANDBOX_BROKER_SOCKET`) get it; the default agent's runs remove it (`tools: { remove }`). `actionText` turns the answer into the run's input; the mock model has `sandbox: <command>`. |
+
+The card is a plain message for now: "Arthur wants to connect to **host:443** (for: …). Allow once, Allow always
+(owners and admins) or Deny." The buttons come in phase 7; until then the answer route is the only way to answer.
+
+### Tests
+
+| Suite | Result |
+|---|---|
+| Rust unit (`agent::sandbox`, `agent::profiles`, `agent::scope`, `agent::egress_proxy`) | 16 pass. New: who may answer what (`may_answer`: 9 cases, plus the risky host); the catalog has 61 tools. |
+| Routes (`apps/server/tests/agent_sandbox.rs`, 13 tests) | All pass on **SQLite and Postgres 18**. New: the call token gets 403 on the answer route; guest 404; teammate and admin cannot allow once; the driver cannot allow always or make a deny rule; a bad answer 422; a second answer 409; Allow once lets the next call of the thread through; an admin's Allow always makes a rule and the continuation is still the driver's; a risky host never gets a rule; an owner's deny rule; audit rows; an expired card (410, no continuation, a new request at the next ask, only the new one in the call end); the sidecar's end is an interruption (no CPU time, token dead, proxy 'the call ended', the broker's later end changes nothing). The phase 5 test of the end route was changed: the sidecar secret is now allowed there, as an interruption only. |
+| Sidecar (`node --test test/*.test.ts`) | 112 pass, 0 fail (34 skipped: they need a real sandbox). New: the catalog test with `sandbox_shell`; it is offered only when ticked and with a broker; a fake-broker run: the ticket as the driver with the script's SHA-256, one card, the thread waiting for the driver, an admin's answer continues as the driver and runs the command again, a broker that goes away ends the call in Orbit as interrupted, Orbit's refusal reaches the model, the default agent never asks for a ticket. |
+| In gVisor (`apps/agent/test/agent-sandbox.test.ts`, 23 tests, real broker and proxy) | All pass. New: a client that hangs up stops its call (killed, reported as interrupted, call file gone, nothing left running). |
+
+### End to end (mock model, test instance)
+
+Arthur was made with the real admin route (`tools: ["sandbox_shell"]`), its sandbox setting turned on in the database
+(the toggle is phase 7). The driver (the seeded owner) wrote in #general.
+
+| Step | Result |
+|---|---|
+| `@Arthur sandbox: curl … https://example.com/` | Ticket as the driver → gVisor → proxy → Orbit `ask` (no rule) → curl exit 56 (403 from the proxy, no byte out). The call end listed the request; the sidecar posted one card; the thread was `waiting` for the driver. |
+| Code in the sandbox answers its own card with `$ORBIT_TOKEN` through `orbit.internal` | 403 (and 403 on `/tasks`: Arthur has no task tool). The request stayed pending. |
+| The driver answers `allow_once` on the route | 200 `allowed`; audit `agent_egress.allow_once`; an `action` input by the driver. The run went on and ran the command again: `HTTP 200, 577 bytes`, exit 0. Log row `allow` / "allowed once in this thread", 797 bytes up and 5,397 down, `done_at` set; the call and the month count 6,194 bytes. |
+| The sidecar is killed (SIGKILL) during `sleep 90` | Within 6 s: the call `done` / "the run stopped the call", token deleted, call file gone. After the restart Pi reported the call as interrupted; the next call in the thread saw `/work/long.txt` with "started" only, and no `sleep 90` left. |
+
+### Still open
+
+Phase 7: the card buttons on web and mobile (they call the answer route; the card needs the request ids, for example a
+pending list per thread), the agent card toggle and limits (today a row in `agent_sandbox_settings`), the Internet
+access page (rules, pending, log), admin rule checks with the Public Suffix List. Phase 8: budget notices at 80 %, the
+off switch calling `stop_agent`, model tokens per run. Also open: the scheduler job that closes lost calls without a new
+ticket; when the sidecar ends a call first and the broker reports later, that call's CPU time is not counted (rare: the
+broker did not answer within timeout + 60 s). Known gap, as before: domain fronting through a shared CDN.

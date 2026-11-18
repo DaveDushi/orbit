@@ -14,7 +14,9 @@ stays. At most MAX_LIVE sandboxes live; a new one evicts the one quiet the longe
 with a running call: a running call holds its thread lock). `gc` deletes idle and too-old sandboxes, and images
 unused for IMAGE_IDLE_HOURS. A delete keeps /work.
 
-Request: one JSON line, then `stdin` bytes.
+Request: one JSON line, then `stdin` bytes. The client keeps its side of the connection open until the answer: when it
+closes it during a `run` (the agent's run was stopped, the sidecar restarted), the broker kills the call and ends it as
+interrupted (Orbit deletes the call token; the proxy password dies with the call file).
   {"op": "run", "ticket": "v1.…", "script": "...", "args": [...], "stdin": 0, "stdout_max": 65536, "stderr_max": 65536}
   {"op": "stop_agent", "agent": "<id>"}   off switch for one agent: kill its live sandboxes (busy or idle)
   {"op": "stop_all"}                      off switch for all agents
@@ -469,13 +471,17 @@ def pump(source, kind: bytes, cap: int, result: dict, key: str) -> None:
     while chunk := source.read1(65536):
         room = cap - sent
         if room > 0:
-            frame(kind, chunk[:room])
+            try:
+                frame(kind, chunk[:room])
+            except OSError:  # The client is gone (the call is being stopped): keep draining the pipe.
+                pass
             sent += min(room, len(chunk))
         if len(chunk) > room:
             result[key] = True  # Keep reading so the program does not block on a full pipe.
 
 
-def feed(child, size: int, first: bytes) -> None:
+def feed(child, size: int, first: bytes, hung_up) -> None:
+    """Sends the client's stdin bytes to the call, then waits for the client to close: `hung_up()` stops the call."""
     try:
         left = size
         data = first[:left]
@@ -495,6 +501,12 @@ def feed(child, size: int, first: bytes) -> None:
             child.stdin.close()
         except OSError:
             pass
+    try:
+        while conn.recv(65536):
+            pass
+    except OSError:
+        pass
+    hung_up()
 
 
 def egress_dir() -> None:
@@ -647,15 +659,22 @@ def run(request: dict, rest: bytes) -> None:
                     os.unlink(calls_file)
                 except FileNotFoundError:
                     pass
+            report_end(call, {"interrupted": "the sandbox service stopped", "cpu_ms": 0})
             os._exit(143)
         signal.signal(signal.SIGTERM, terminated)
+        done = threading.Event()
+
+        def hung_up():
+            if not done.is_set():
+                result["interrupted"] = "the run stopped the call"
+                kill_call(work, pidfile)
         child = subprocess.Popen(
             runsc("exec", "--user", f"{UID}:{UID}", "--cwd", "/work", "--internal-pid-file", pidfile,
                   *(x for e in SANDBOX_ENV + env for x in ("--env", e)), work,
                   "/bin/bash", "--noprofile", "--norc", "-c", script, "sandbox", *args),
             env=SYS_ENV, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=True)
         # Daemon threads: a background process of the call may keep the pipes open for hours.
-        threads = [threading.Thread(target=feed, args=(child, stdin_size, rest), daemon=True),
+        threads = [threading.Thread(target=feed, args=(child, stdin_size, rest, hung_up), daemon=True),
                    threading.Thread(target=pump, args=(child.stdout, b"o", stdout_max, result, "stdout_truncated"),
                                     daemon=True),
                    threading.Thread(target=pump, args=(child.stderr, b"e", stderr_max, result, "stderr_truncated"),
@@ -672,6 +691,7 @@ def run(request: dict, rest: bytes) -> None:
             except subprocess.TimeoutExpired:
                 child.kill()
                 child.wait()
+        done.set()
         # What the call left in its group goes too (also a fork bomb's children); `setsid` keeps a process alive for
         # later calls of the thread.
         kill_call(work, pidfile)

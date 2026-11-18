@@ -47,7 +47,8 @@ export class Sandbox {
 	/** Runs `script` with bash in the conversation's /work. */
 	async run(work: string, script: string, options: RunOptions = {}): Promise<RunResult> {
 		const stdinSize = options.stdin ? (options.stdinSize ?? (Buffer.isBuffer(options.stdin) ? options.stdin.length : 0)) : 0;
-		const frames = await this.#request(
+		const frames = await brokerRequest(
+			this.socketPath,
 			{
 				op: "run",
 				work,
@@ -60,61 +61,79 @@ export class Sandbox {
 			},
 			options.stdin,
 		);
-		const stdout: Buffer[] = [];
-		const stderr: Buffer[] = [];
-		let end: Record<string, unknown> | undefined;
-		for (const [kind, payload] of frames) {
-			if (kind === "o") stdout.push(payload);
-			else if (kind === "e") stderr.push(payload);
-			else if (kind === "x") end = JSON.parse(payload.toString("utf8"));
-		}
-		if (!end) throw new SandboxError("The sandbox ended without an answer.");
-		if (typeof end.error === "string") throw new SandboxError(`The sandbox refused: ${end.error}`);
-		return {
-			exit: typeof end.exit === "number" ? end.exit : null,
-			signal: typeof end.signal === "number" ? end.signal : null,
-			timedOut: end.timed_out === true,
-			stdout: Buffer.concat(stdout),
-			stderr: Buffer.concat(stderr),
-			stdoutTruncated: end.stdout_truncated === true,
-			stderrTruncated: end.stderr_truncated === true,
-		};
+		return runResult(frames);
 	}
 
 	/** Deletes the /work of every conversation unused for `idleSeconds`. */
 	async gc(idleSeconds: number): Promise<number> {
-		const frames = await this.#request({ op: "gc", idle_seconds: idleSeconds });
+		const frames = await brokerRequest(this.socketPath, { op: "gc", idle_seconds: idleSeconds });
 		const end = frames.find(([kind]) => kind === "x");
 		return end ? Number(JSON.parse(end[1].toString("utf8")).removed ?? 0) : 0;
 	}
+}
 
-	#request(request: Record<string, unknown>, stdin?: Buffer | Readable): Promise<[string, Buffer][]> {
-		return new Promise((resolve, reject) => {
-			const socket = createConnection({ path: this.socketPath });
-			const frames: [string, Buffer][] = [];
-			let buffered: Buffer = Buffer.alloc(0);
-			socket.on("connect", () => {
-				socket.write(`${JSON.stringify(request)}\n`);
-				if (!stdin) return;
-				if (Buffer.isBuffer(stdin)) socket.write(stdin);
-				else stdin.pipe(socket, { end: false });
-			});
-			socket.on("data", (chunk: Buffer) => {
-				buffered = buffered.length ? Buffer.concat([buffered, chunk]) : chunk;
-				while (buffered.length >= 5) {
-					const length = buffered.readUInt32BE(1);
-					if (buffered.length < 5 + length) break;
-					frames.push([String.fromCharCode(buffered[0]), buffered.subarray(5, 5 + length)]);
-					buffered = buffered.subarray(5 + length);
-				}
-			});
-			socket.on("error", (error) => {
-				// A script that does not read all its stdin ends the connection while we still write: its answer counts.
-				if (frames.some(([kind]) => kind === "x")) resolve(frames);
-				else reject(new SandboxError(`The sandbox is not available (${error.message}).`));
-			});
-			socket.on("close", () => resolve(frames));
-			if (stdin && !Buffer.isBuffer(stdin)) stdin.on("error", (error) => socket.destroy(error));
+/**
+ * One request to a broker (the media one, or the agent sandbox's: `deploy/agent-sandbox/broker.py`): a JSON line, then
+ * `stdin`; the answer is frames of a type byte, a big-endian length and the payload. The connection stays open until the
+ * answer: `signal` closes it, which stops a running call (the broker kills it), and rejects with its reason.
+ */
+export function brokerRequest(socketPath: string, request: Record<string, unknown>, stdin?: Buffer | Readable, signal?: AbortSignal): Promise<[string, Buffer][]> {
+	return new Promise((resolve, reject) => {
+		const socket = createConnection({ path: socketPath });
+		const abort = () => {
+			socket.destroy();
+			reject(signal?.reason instanceof Error ? signal.reason : new SandboxError("The call was stopped."));
+		};
+		if (signal?.aborted) return abort();
+		signal?.addEventListener("abort", abort, { once: true });
+		socket.on("close", () => signal?.removeEventListener("abort", abort));
+		const frames: [string, Buffer][] = [];
+		let buffered: Buffer = Buffer.alloc(0);
+		socket.on("connect", () => {
+			socket.write(`${JSON.stringify(request)}\n`);
+			if (!stdin) return;
+			if (Buffer.isBuffer(stdin)) socket.write(stdin);
+			else stdin.pipe(socket, { end: false });
 		});
+		socket.on("data", (chunk: Buffer) => {
+			buffered = buffered.length ? Buffer.concat([buffered, chunk]) : chunk;
+			while (buffered.length >= 5) {
+				const length = buffered.readUInt32BE(1);
+				if (buffered.length < 5 + length) break;
+				frames.push([String.fromCharCode(buffered[0]), buffered.subarray(5, 5 + length)]);
+				buffered = buffered.subarray(5 + length);
+			}
+		});
+		socket.on("error", (error) => {
+			// A script that does not read all its stdin ends the connection while we still write: its answer counts.
+			if (frames.some(([kind]) => kind === "x")) resolve(frames);
+			else reject(new SandboxError(`The sandbox is not available (${error.message}).`));
+		});
+		socket.on("close", () => resolve(frames));
+		if (stdin && !Buffer.isBuffer(stdin)) stdin.on("error", (error) => socket.destroy(error));
+	});
+}
+
+/** A run's frames as its result; `end` is the broker's closing JSON object. */
+export function runResult(frames: readonly [string, Buffer][]): RunResult & { end: Record<string, unknown> } {
+	const stdout: Buffer[] = [];
+	const stderr: Buffer[] = [];
+	let end: Record<string, unknown> | undefined;
+	for (const [kind, payload] of frames) {
+		if (kind === "o") stdout.push(payload);
+		else if (kind === "e") stderr.push(payload);
+		else if (kind === "x") end = JSON.parse(payload.toString("utf8"));
 	}
+	if (!end) throw new SandboxError("The sandbox ended without an answer.");
+	if (typeof end.error === "string") throw new SandboxError(`The sandbox refused: ${end.error}`);
+	return {
+		exit: typeof end.exit === "number" ? end.exit : null,
+		signal: typeof end.signal === "number" ? end.signal : null,
+		timedOut: end.timed_out === true,
+		stdout: Buffer.concat(stdout),
+		stderr: Buffer.concat(stderr),
+		stdoutTruncated: end.stdout_truncated === true,
+		stderrTruncated: end.stderr_truncated === true,
+		end,
+	};
 }

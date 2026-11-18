@@ -481,6 +481,26 @@ test("the broker reports each call end to Orbit with the service key and passes 
 	assert.doesNotMatch(JSON.stringify(report.body), new RegExp(claims.token));
 });
 
+test("a client that hangs up stops its call: killed, reported as interrupted, its proxy file gone", { skip }, async () => {
+	const claims = claimsFor(newWork());
+	const socket = createConnection({ path: socketPath });
+	await new Promise((resolve) => socket.on("connect", resolve));
+	socket.write(`${JSON.stringify({ op: "run", ticket: ticket(claims), script: "echo started; sleep 120" })}\n`);
+	// The run is stopped (or the sidecar dies) once the call runs.
+	await new Promise((resolve) => socket.once("data", resolve));
+	socket.destroy();
+	const path = `/api/internal/agent/sandbox/calls/${claims.call}/end`;
+	const started = Date.now();
+	while (!ends.some((end) => end.path === path) && Date.now() - started < 20_000) await new Promise((resolve) => setTimeout(resolve, 200));
+	const report = ends.find((end) => end.path === path);
+	assert.ok(report, "the broker reported the call end");
+	assert.equal(report.body.interrupted, "the run stopped the call");
+	assert.ok(Date.now() - started < 15_000);
+	assert.equal(count("sh", ["-c", `ls ${run}/egress | grep -c ${claims.call}`]), "0");
+	const left = await call(claims.work, "ps -eo args= | grep -c '^sleep 120' || true");
+	assert.equal(left.stdout, "0\n");
+});
+
 test("eviction: a 4th sandbox deletes the one quiet the longest, never one with a running call; /work stays", { skip }, async () => {
 	await request({ op: "stop_all" });
 	const [a, b, c, d] = [newWork(), newWork(), newWork(), newWork()];

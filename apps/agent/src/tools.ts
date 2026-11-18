@@ -3,8 +3,9 @@
  * exactly what that person can do in the workspace, and nothing else. There is no delete operation (also not for memory:
  * only people delete memories, in the web app); Drive items, Docs pages and tasks only go to the trash, after the
  * driver's approval (./drive.ts, ./trash.ts). The only ways out of Orbit are `use_integration` and `drive_image_to_shopify`: Orbit calls the tools that
- * workspace admins set up (./integrations.ts). The only shell is the media sandbox (./media.ts), when the server has one: no network, no Orbit
- * access, and only the conversation's /work.
+ * workspace admins set up (./integrations.ts). The shells are the media sandbox (./media.ts), when the server has one: no network, no Orbit
+ * access, and only the conversation's /work; and a custom agent's own sandbox (./agent-sandbox.ts), whose internet access Orbit
+ * decides host by host.
  */
 
 import type { Context } from "@earendil-works/chord/context";
@@ -12,6 +13,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { defineExtension, defineTool, hook, section, ToolTask } from "@earendil-works/pi-durable";
 import type { PromptInput, ToolExecutionApi, ToolExecutionResult } from "@earendil-works/pi-durable";
 
+import { sandboxTools } from "./agent-sandbox.ts";
 import { blocksToMarkdown, markdownToBlocks, type Block } from "./blocks.ts";
 import { compactionHook, type CompactWith } from "./compaction.ts";
 import { driveTools } from "./drive.ts";
@@ -42,6 +44,8 @@ export type ToolDeps = {
 	readonly compactWith?: CompactWith;
 	/** The media sandbox; absent: no media tools. */
 	readonly sandbox?: Sandbox;
+	/** The agent sandbox broker's socket; absent: no `sandbox_shell`. */
+	readonly agentSandbox?: string;
 };
 
 type Api = ToolExecutionApi;
@@ -1024,6 +1028,8 @@ const driveImageToShopify = shopifyImageTool(asDriver, () => deps().orbit, untru
 const DRIVE_TOOLS = driveTools(asDriver, () => deps().orbit);
 const moveToTrash = trashTool(asDriver, () => deps().orbit);
 export const MEDIA_TOOLS = mediaTools(asDriver, () => deps().sandbox);
+/** `sandbox_shell`: only custom agents that have it ticked (Orbit checks it again), never the default agent for now. */
+export const SANDBOX_TOOLS = sandboxTools(asDriver, () => deps().orbit, () => deps().agentSandbox);
 const SCHEDULED_TOOLS = scheduledTools(asDriver, () => deps().orbit);
 /** `load_skill` and `read_skill_file`: every agent has them, like code mode (./skills.ts). */
 export const SKILL_TOOLS = skillTools(asDriver, () => deps().sandbox);
@@ -1075,10 +1081,11 @@ export const ORBIT_TOOLS = [
 
 /**
  * A custom agent's tools as Pi registrations, in Pi's order: the run offers only these (`configure`), and code mode,
- * whose scripts call only these. Unknown names and media tools without a sandbox are left out.
+ * whose scripts call only these. Unknown names, media tools without a media sandbox and `sandbox_shell` without an agent
+ * sandbox are left out.
  */
-export function toolRegistrations(names: readonly string[], media: boolean) {
-	const all = media ? [...ORBIT_TOOLS, ...MEDIA_TOOLS] : ORBIT_TOOLS;
+export function toolRegistrations(names: readonly string[], media: boolean, sandbox = false) {
+	const all = [...ORBIT_TOOLS, ...(media ? MEDIA_TOOLS : []), ...(sandbox ? SANDBOX_TOOLS : [])];
 	return [...all.filter((tool) => names.includes(tool.name)), ...SKILL_TOOLS, ...CODE_TOOLS, ...JOB_TOOLS];
 }
 
@@ -1146,7 +1153,7 @@ export function orbitExtension(toolDeps: ToolDeps) {
 	currentDeps = toolDeps;
 	return defineExtension({
 		name: "orbit",
-		tools: [...(toolDeps.sandbox ? [...ORBIT_TOOLS, ...MEDIA_TOOLS] : ORBIT_TOOLS), ...SKILL_TOOLS, ...CODE_TOOLS, ...JOB_TOOLS],
+		tools: [...ORBIT_TOOLS, ...(toolDeps.sandbox ? MEDIA_TOOLS : []), ...(toolDeps.agentSandbox ? SANDBOX_TOOLS : []), ...SKILL_TOOLS, ...CODE_TOOLS, ...JOB_TOOLS],
 		sections: [
 			// The tools scripts can call (`codemode.ts`); in this extension, so existing conversations get code mode too.
 			...CODEMODE_SECTIONS,

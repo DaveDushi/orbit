@@ -362,6 +362,72 @@ impl Fixture {
         .unwrap();
     }
 
+    /// A person's session token (a normal bearer, as the apps use).
+    async fn session(&self, user: Id) -> String {
+        let token = orbit_platform::generate_opaque_token();
+        let hash: [u8; 32] = Sha256::digest(token.as_bytes()).into();
+        let now = TimestampMillis::now().as_millis();
+        sqlx::query(
+            "INSERT INTO sessions (id, token_hash, user_id, created_at, last_activity_at, idle_expires_at, \
+             absolute_expires_at) VALUES ($1, $2, $3, $4, $4, $5, $5)",
+        )
+        .bind(Id::new_v7().to_string())
+        .bind(hash.to_vec())
+        .bind(user.to_string())
+        .bind(now)
+        .bind(now + 3_600_000)
+        .execute(self.database.pool())
+        .await
+        .unwrap();
+        token
+    }
+
+    async fn owner(&self) -> Id {
+        sqlx::query_scalar::<_, String>(
+            "SELECT user_id FROM memberships WHERE workspace_id = $1 AND role = 'owner'",
+        )
+        .bind(&self.workspace_id)
+        .fetch_one(self.database.pool())
+        .await
+        .unwrap()
+        .parse()
+        .unwrap()
+    }
+
+    /// A person's answer on the egress card's route.
+    async fn card(&self, token: &str, request: &str, answer: Value) -> (StatusCode, Value) {
+        self.request(
+            "POST",
+            &format!(
+                "/api/v1/workspaces/{}/agents/egress-requests/{request}",
+                self.workspace_id
+            ),
+            &format!("Bearer {token}"),
+            Some(answer),
+        )
+        .await
+    }
+
+    /// The continuation inputs of a thread: (author, action).
+    async fn continuations(&self, thread: &str) -> Vec<(String, Value)> {
+        sqlx::query(
+            "SELECT author_id, action FROM agent_inputs WHERE thread_key = $1 AND kind = 'action' \
+             ORDER BY message_id",
+        )
+        .bind(thread)
+        .fetch_all(self.database.pool())
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| {
+            (
+                row.get::<String, _>("author_id"),
+                serde_json::from_str(&row.get::<String, _>("action")).unwrap(),
+            )
+        })
+        .collect()
+    }
+
     async fn tasks_with(&self, token: &str) -> StatusCode {
         self.request(
             "GET",
@@ -565,18 +631,16 @@ async fn a_call_ends_once_even_when_ends_race_and_its_cpu_time_counts_once() {
     let thread = fixture.thread(agent, driver, "running").await;
     let (call, _, _) = fixture.call(driver, agent, &thread).await;
 
-    // The broker's key, not the sidecar's secret.
-    for auth in [format!("Bearer {SECRET}"), "Bearer wrong".to_owned()] {
-        let (status, _) = fixture
-            .request(
-                "POST",
-                &format!("/api/internal/agent/sandbox/calls/{call}/end"),
-                &auth,
-                Some(json!({ "cpu_ms": 1 })),
-            )
-            .await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED);
-    }
+    // The broker's key (the sidecar's secret only ends a call as interrupted: its own test).
+    let (status, _) = fixture
+        .request(
+            "POST",
+            &format!("/api/internal/agent/sandbox/calls/{call}/end"),
+            "Bearer wrong",
+            Some(json!({ "cpu_ms": 1 })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     let ends = (0..6).map(|_| fixture.end(&call, 2_000));
     for (status, value) in futures_util::future::join_all(ends).await {
         assert_eq!(status, StatusCode::OK, "{value}");
@@ -791,6 +855,270 @@ async fn egress_decisions_follow_the_order_and_stay_in_their_thread_and_driver()
 
 // ---------------------------------------------------------------------------------------------
 // The egress proxy (`agent::egress_proxy`) against these routes on a real port.
+
+#[tokio::test]
+async fn the_card_answer_follows_who_may_click_and_the_run_goes_on_as_the_driver() {
+    let fixture = Fixture::new().await;
+    let driver = fixture.add_user("driver", Some("member")).await;
+    let teammate = fixture.add_user("teammate", Some("member")).await;
+    let guest = fixture.add_user("guest", Some("guest")).await;
+    let admin = fixture.add_user("admin", Some("admin")).await;
+    let owner = fixture.owner().await;
+    let agent = fixture.add_agent(TOOLS, true).await;
+    let thread = fixture.thread(agent, driver, "running").await;
+    let (call, token, password) = fixture.call(driver, agent, &thread).await;
+    let asked = fixture
+        .check(&call, &password, "api.example.org", 443)
+        .await;
+    assert_eq!(asked["decision"], "ask");
+    let request = asked["request_id"].as_str().unwrap().to_owned();
+    let (driver_token, teammate_token, guest_token, admin_token, owner_token) = (
+        fixture.session(driver).await,
+        fixture.session(teammate).await,
+        fixture.session(guest).await,
+        fixture.session(admin).await,
+        fixture.session(owner).await,
+    );
+
+    // The sandbox's own call token (an agent session) never reaches the card route: it cannot answer itself.
+    let (status, _) = fixture
+        .card(&token, &request, json!({ "answer": "allow_once" }))
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    // The call's end lists the request, with when it stops waiting.
+    let (_, ended) = fixture.end(&call, 10).await;
+    assert_eq!(ended["egress_pending"][0]["id"], request.as_str());
+    assert!(ended["egress_pending"][0]["expires_at"].as_i64().unwrap() > 0);
+
+    // Who may click what.
+    let once = json!({ "answer": "allow_once" });
+    for (who, answer, status, code) in [
+        (&guest_token, &once, StatusCode::NOT_FOUND, "not_found"),
+        (
+            &teammate_token,
+            &once,
+            StatusCode::FORBIDDEN,
+            "egress_driver_only",
+        ),
+        (
+            &admin_token,
+            &once,
+            StatusCode::FORBIDDEN,
+            "egress_driver_only",
+        ),
+        (
+            &driver_token,
+            &json!({ "answer": "allow_always" }),
+            StatusCode::FORBIDDEN,
+            "egress_admin_only",
+        ),
+        (
+            &teammate_token,
+            &json!({ "answer": "deny" }),
+            StatusCode::FORBIDDEN,
+            "egress_driver_or_admin",
+        ),
+        (
+            &driver_token,
+            &json!({ "answer": "deny", "always": true }),
+            StatusCode::FORBIDDEN,
+            "egress_admin_only",
+        ),
+        (
+            &driver_token,
+            &json!({ "answer": "maybe" }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_answer",
+        ),
+    ] {
+        let (got, body) = fixture.card(who, &request, answer.clone()).await;
+        assert_eq!(
+            (got, body["code"].as_str()),
+            (status, Some(code)),
+            "{answer}"
+        );
+    }
+    assert!(fixture.continuations(&thread).await.is_empty());
+
+    // The driver allows once: the next call of this thread gets through, and the run goes on as theirs.
+    let (status, body) = fixture.card(&driver_token, &request, once.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "allowed");
+    let (status, body) = fixture.card(&driver_token, &request, once.clone()).await;
+    assert_eq!(
+        (status, body["code"].as_str()),
+        (StatusCode::CONFLICT, Some("egress_request_answered"))
+    );
+    let continued = fixture.continuations(&thread).await;
+    assert_eq!(continued.len(), 1);
+    assert_eq!(continued[0].0, driver.to_string());
+    assert_eq!(continued[0].1["type"], "egress");
+    assert_eq!(continued[0].1["answer"], "allow_once");
+    assert_eq!(continued[0].1["host"], "api.example.org");
+    let (call, _, password) = fixture.call(driver, agent, &thread).await;
+    let allowed = fixture
+        .check(&call, &password, "api.example.org", 443)
+        .await;
+    assert_eq!(allowed["decision"], "allow");
+    assert_eq!(allowed["reason"], "allowed once in this thread");
+
+    // An admin who is not the driver allows always: a rule, and the continuation is still the driver's.
+    let other = fixture
+        .check(&call, &password, "data.example.net", 443)
+        .await;
+    let (status, body) = fixture
+        .card(
+            &admin_token,
+            other["request_id"].as_str().unwrap(),
+            json!({ "answer": "allow_always" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["rule"], "allow");
+    let continued = fixture.continuations(&thread).await;
+    assert_eq!(continued.len(), 2);
+    assert_eq!(continued[1].0, driver.to_string());
+    assert_eq!(continued[1].1["by"], "admin");
+    assert_eq!(continued[1].1["by_driver"], false);
+    assert_eq!(
+        fixture
+            .check(&call, &password, "data.example.net", 443)
+            .await["reason"],
+        "an allow rule"
+    );
+
+    // A risky host never gets a rule; the owner's Deny for this agent always makes a deny rule.
+    let risky = fixture.check(&call, &password, "x.ngrok.io", 443).await;
+    let risky = risky["request_id"].as_str().unwrap();
+    let (status, body) = fixture
+        .card(&owner_token, risky, json!({ "answer": "allow_always" }))
+        .await;
+    assert_eq!(
+        (status, body["code"].as_str()),
+        (StatusCode::CONFLICT, Some("egress_risky_host"))
+    );
+    let (status, body) = fixture
+        .card(
+            &owner_token,
+            risky,
+            json!({ "answer": "deny", "always": true }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["rule"], "deny");
+    assert_eq!(
+        fixture.check(&call, &password, "x.ngrok.io", 443).await["reason"],
+        "a deny rule"
+    );
+
+    let events = sqlx::query_scalar::<_, String>(
+        "SELECT action FROM audit_events WHERE action LIKE 'agent_egress.%' ORDER BY id",
+    )
+    .fetch_all(fixture.database.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        events,
+        [
+            "agent_egress.allow_once",
+            "agent_egress.rule_create",
+            "agent_egress.rule_create"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn an_unanswered_card_expires_and_the_next_call_asks_again() {
+    let fixture = Fixture::new().await;
+    let driver = fixture.add_user("driver", Some("member")).await;
+    let agent = fixture.add_agent(TOOLS, true).await;
+    let thread = fixture.thread(agent, driver, "running").await;
+    let (call, _, password) = fixture.call(driver, agent, &thread).await;
+    let first = fixture
+        .check(&call, &password, "api.example.org", 443)
+        .await;
+    let request = first["request_id"].as_str().unwrap().to_owned();
+    // The wait (30 minutes) is over.
+    fixture
+        .exec(
+            "UPDATE agent_egress_requests SET expires_at = 1 WHERE id = $1",
+            &[&request],
+        )
+        .await;
+    let token = fixture.session(driver).await;
+    let (status, body) = fixture
+        .card(&token, &request, json!({ "answer": "allow_once" }))
+        .await;
+    assert_eq!(
+        (status, body["code"].as_str()),
+        (StatusCode::GONE, Some("egress_request_expired"))
+    );
+    assert!(fixture.continuations(&thread).await.is_empty());
+    // The call's end no longer lists it; a new ask makes a new request, which waits again.
+    let again = fixture
+        .check(&call, &password, "api.example.org", 443)
+        .await;
+    assert_eq!(again["decision"], "ask");
+    assert_ne!(again["request_id"], first["request_id"]);
+    let (_, ended) = fixture.end(&call, 0).await;
+    let pending = ended["egress_pending"].as_array().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0]["id"], again["request_id"]);
+}
+
+#[tokio::test]
+async fn the_sidecar_ends_an_interrupted_call_and_its_token_and_password_die() {
+    let fixture = Fixture::new().await;
+    let driver = fixture.add_user("driver", Some("member")).await;
+    let agent = fixture.add_agent(TOOLS, true).await;
+    let thread = fixture.thread(agent, driver, "running").await;
+    let (call, token, password) = fixture.call(driver, agent, &thread).await;
+    assert_eq!(fixture.tasks_with(&token).await, StatusCode::OK);
+    // Without a key: refused. The sidecar's end is an interruption, whatever it sends.
+    let path = format!("/api/internal/agent/sandbox/calls/{call}/end");
+    let (status, _) = fixture
+        .request("POST", &path, "Bearer nope", Some(json!({})))
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _) = fixture
+        .request(
+            "POST",
+            &path,
+            &format!("Bearer {SECRET}"),
+            Some(json!({ "exit": 0, "cpu_ms": 999_999, "interrupted": "the run was stopped" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let row = sqlx::query(
+        "SELECT status, interrupted, cpu_ms, exit_code FROM agent_sandbox_calls WHERE id = $1",
+    )
+    .bind(&call)
+    .fetch_one(fixture.database.pool())
+    .await
+    .unwrap();
+    assert_eq!(row.get::<String, _>("status"), "done");
+    assert_eq!(
+        row.get::<Option<String>, _>("interrupted").as_deref(),
+        Some("the run was stopped")
+    );
+    assert_eq!(row.get::<i64, _>("cpu_ms"), 0);
+    assert_eq!(row.get::<Option<i64>, _>("exit_code"), None);
+    assert_eq!(fixture.tasks_with(&token).await, StatusCode::UNAUTHORIZED);
+    let decided = fixture
+        .check(&call, &password, "api.example.org", 443)
+        .await;
+    assert_eq!(decided["decision"], "deny");
+    assert_eq!(decided["reason"], "the call ended");
+    // The broker's later end changes nothing.
+    let (status, _) = fixture.end(&call, 500).await;
+    assert_eq!(status, StatusCode::OK);
+    let cpu: i64 = sqlx::query_scalar("SELECT cpu_ms FROM agent_sandbox_calls WHERE id = $1")
+        .bind(&call)
+        .fetch_one(fixture.database.pool())
+        .await
+        .unwrap();
+    assert_eq!(cpu, 0);
+}
 
 mod proxy {
     use std::collections::HashMap;
