@@ -5,8 +5,7 @@
  * driver's approval (./drive.ts, ./trash.ts). The only ways out of Orbit are `use_integration` and `drive_image_to_shopify`: Orbit calls the tools that
  * workspace admins set up (./integrations.ts). The shells are the media sandbox (./media.ts), when the server has one: no network, no Orbit
  * access, and only the conversation's /work; and a custom agent's own sandbox (./agent-sandbox.ts), whose internet access Orbit
- * decides host by host. The model is offered only a few of these tools: it calls the others from code mode scripts and
- * finds them with `find_tools` (./find-tools.ts).
+ * decides host by host.
  */
 
 import type { Context } from "@earendil-works/chord/context";
