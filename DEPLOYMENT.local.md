@@ -7,8 +7,8 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, commit 4fa8e8f2433e3360f1ef51f41fac1dd1ad8a138a on `main`
-  (one coherent navigation on the web; schema 20261118104258, 122 rows, unchanged;
+- Source: DaveDushi/orbit, commit 1b62c91dbf0c843d472c281aadb7efae821e419c on `main`
+  (Enter sends on touch laptops, rules rows stack on phones; schema 20261118104258, 122 rows, unchanged;
   November 18, 2026).
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
@@ -19,9 +19,9 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   MCP routes through the hooks gateway (`/etc/orbit-hooks-gateway/nginx.conf`, proposal `/tmp/mcpo/gateway/proposal.diff`).
   Binaries before d8d3eb4 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-d8d3eb4`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:4fa8e8f`); fork commits have no published upstream image.
-- Image ID: sha256:c34227a3e4ad35963a9877f9be854a0617f5a743518845547fcf83b2e38a742b
-- Team agent sidecar code (`/opt/orbit-agent`): commit 4fa8e8f (what's new and aboutOrbit: the one navigation).
+  (`orbit:1b62c91`); fork commits have no published upstream image.
+- Image ID: sha256:f569e5e5112b5a159ce4fb3d8c507fb9dbe9009bf909d993a54b1bedc30d60a9
+- Team agent sidecar code (`/opt/orbit-agent`): commit 1b62c91 (what's new and aboutOrbit: Enter on touch laptops, rules rows on phones).
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): on since November 15, 2026, 12:07 UTC (set by Ops, outside a
   deploy): `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID`, `ORBIT_APNS_TOPIC` and `ORBIT_APNS_SANDBOX`
   are in `/etc/orbit/orbit.env`; the journal shows `iPhone push (APNs) is on` (topic `com.easytomanage.orbit`, sandbox
@@ -268,6 +268,61 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 18, 2026 upgrade: Enter sends on touch laptops, rules rows stack on phones (no migration)
+
+`main` from `c0b8f0e5` to `1b62c91d`: `--no-ff` merges `9d85734f` of `enter-sends-touch-laptop` at `edd7a857` (chat:
+a Windows touch laptop reports a coarse primary pointer, so the composer took it for a phone and Enter made a new line;
+a new touch-only check, `(hover: none) and (pointer: coarse)` with no `(any-pointer: fine)`, now decides Enter and
+autofocus in the composer, the message editor and the focus return; regression test `environment.test.ts`) and
+`85fe9cd3` of `owner-names-mobile` at `457a2040` (Project settings → Rules rows stack below `sm`; `ProjectRulesCard.tsx`
+only). No merge conflict. `1b62c91d`: sidecar what's new 2026-11-18 (both fixes added to the navigation line; the entry
+keeps 4 lines) and aboutOrbit (Enter / Shift+Enter in the message box, also on a touch laptop; rules rows on a phone).
+No migration, no env change, no server code change.
+
+Checks on the merged `main`: web `tsc -b` clean; web lint (oxlint) exit 0, 0 errors (50 old warnings, none in the
+touched files); `environment.test.ts` 3 pass; agent `tsc` clean, `prompt.test.ts` 5 pass.
+
+Deploy id `20261118T193153Z-3148058`. `orbit:1b62c91` (image
+`sha256:f569e5e5112b5a159ce4fb3d8c507fb9dbe9009bf909d993a54b1bedc30d60a9`; waited ~27 min for the `orbit-build` lock
+behind other worktrees, compile ~45 min); `deploy/smoke.sh` and `orbit config check` passed. Migration dry run on a hot
+copy: applied 0, counts, names and checksums unchanged, quick_check ok, 0 FK rows.
+
+Switch: stopped both services at 20:50:52 UTC; snapshot `01a1f06d-3be8-70c3-b867-f1261e023ad0` with
+`/usr/local/bin/orbit-4fa8e8f`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-1b62c91.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-1b62c91.tgz`; sidecar code copied (old `/opt/orbit-agent.before-1b62c91`).
+`orbit` and `orbit-agent` ready 20:51:12 (20 s down). `vm-health.conf` (old copy `.before-1b62c91`):
+`PROD_TAG=1b62c91`, `ROLLBACK_TAG=4fa8e8f`, `ROLLBACK_BACKUP=01a1f06d-3be8-70c3-b867-f1261e023ad0`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) local and on
+`https://orbit-app.easytomanage.com/health/ready`; `/orbit-build.json` revision `1b62c91d…`; `/`, `/login`, `/tasks`,
+`/docs`, `/chat`, `/drive` 200, API without a session 401; `/opt/orbit-agent/src` = `main`; journal since the switch: no
+warnings. `vm-health`: nginx FAIL only from the switch window (67 "Connection refused" lines at 20:50-20:51, 0 other
+lines, 0 5xx); OOM WARN = `gvisor_sentry` kills of other work before the deploy; docker WARN = other sessions' containers.
+
+Signed-in check of the served bundle as David Dusi (temporary sessions, logged out, revoked; socat TLS hop; every API
+write blocked, so a "sent" message is a caught and aborted `POST …/messages`; `ui-check.ts`), all pass: the loaded
+`shared~DrivePage~ChatPage~AskDonnaPanel-qp7pfXx5.js` has the touch-only check; in David's DM with Donna, desktop and
+touch laptop (matchMedia emulation: coarse primary + fine pointer): Shift+Enter a new line, Enter sends (1 caught POST,
+box empty); touch only: Enter a new line, no POST. Slate → Project settings → Rules (5 rows): at 390 px light and dark the
+label part takes the row (318 of 350 px), at 1280 px it shares the row (507 of 720 px); no console errors. Screenshots
+`/root/.local/share/com.jean.desktop/pasted-images/web-deploy-enter-rules/prod-rules-{light-390,dark-390,light-1280}.png`
+(with the branch screenshots). Changelog posted to #orbit-updates as David (temporary session, logged out; message
+`01a1f071-f6db-73f6-b8b9-1ebfd072648f`; text `/root/ops/enter-rules/changelog.md`). Scripts and logs:
+`/root/ops/enter-rules/`.
+
+Rollback to `4fa8e8f` (same schema, so only the binary and sidecar code; `/root/ops/enter-rules/rollback.sh`):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo install -m 755 /usr/local/bin/orbit-4fa8e8f /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-1b62c91 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+```
+
+After this rollback, copy `/root/ops/vm-health.conf.before-1b62c91` back to `/root/ops/vm-health.conf`.
 
 ### November 18, 2026 upgrade: one coherent navigation on the web (no migration)
 
