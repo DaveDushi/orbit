@@ -1340,21 +1340,7 @@ impl Authorized<'_> {
             .map_err(hidden_page)?;
         // An external agent: only the docs of its projects' teamspaces (`crate::agent_scope`).
         if p.agent.is_some() {
-            let allowed: HashSet<Id> = sqlx::query(
-                "SELECT id, project_id FROM teamspaces WHERE workspace_id = $1 AND project_id IS NOT NULL",
-            )
-            .bind(p.workspace_id.to_string())
-            .fetch_all(self.api.tasks.database().pool())
-            .await
-            .map_err(TaskError::from)?
-            .iter()
-            .filter(|row| {
-                row.get::<String, _>("project_id")
-                    .parse()
-                    .is_ok_and(|project| self.approved(project))
-            })
-            .filter_map(|row| row.get::<String, _>("id").parse().ok())
-            .collect();
+            let allowed = self.agent_teamspaces().await?;
             list.items
                 .retain(|page| page.teamspace_id.is_some_and(|id| allowed.contains(&id)));
         }
@@ -1378,6 +1364,26 @@ impl Authorized<'_> {
             page.version = revision(page.version, page.updated_at);
         }
         Ok(list)
+    }
+
+    /// The teamspaces whose docs an external agent may use: those linked to its card's projects
+    /// that its bot user sees (`crate::agent_scope`).
+    async fn agent_teamspaces(&self) -> Result<HashSet<Id>> {
+        Ok(sqlx::query(
+            "SELECT id, project_id FROM teamspaces WHERE workspace_id = $1 AND project_id IS NOT NULL",
+        )
+        .bind(self.principal.workspace_id.to_string())
+        .fetch_all(self.api.tasks.database().pool())
+        .await
+        .map_err(TaskError::from)?
+        .iter()
+        .filter(|row| {
+            row.get::<String, _>("project_id")
+                .parse()
+                .is_ok_and(|project| self.approved(project))
+        })
+        .filter_map(|row| row.get::<String, _>("id").parse().ok())
+        .collect())
     }
 
     pub async fn get_doc(&self, page_id: Id) -> Result<DocView> {
@@ -1432,26 +1438,45 @@ impl Authorized<'_> {
         Ok(DocView { page, markdown })
     }
 
-    /// `blocks` as Markdown, with links to the pages that the actor can see.
+    /// `blocks` as Markdown, with the links of [`Self::doc_links`].
     async fn markdown(&self, pages: &PageRepository, blocks: &[Value]) -> Result<String> {
+        let links = self.doc_links(pages, blocks).await?;
+        Ok(blocks_to_markdown(blocks, &links))
+    }
+
+    /// How the links of `blocks` show: the titles of the linked pages and the Drive files that
+    /// the actor can see. An external agent gets the intersection of its bot user's access and its
+    /// card (`crate::agent_scope`): only the titles of docs in its projects' teamspaces, and no
+    /// Drive names, as it has no Drive scope. Others show as "Untitled" and a locked file.
+    async fn doc_links(&self, pages: &PageRepository, blocks: &[Value]) -> Result<DocLinks> {
+        let p = self.principal;
         let mut linked = HashSet::new();
         linked_pages(blocks, &mut linked);
         let mut titles = HashMap::new();
         if !linked.is_empty() {
-            let p = self.principal;
+            let allowed = match p.agent {
+                Some(_) => Some(self.agent_teamspaces().await?),
+                None => None,
+            };
             let visible = pages
                 .pages(p.workspace_id, p.actor_id)
                 .await
                 .map_err(hidden_page)?;
             for summary in visible.items {
                 let id = summary.id.to_string();
-                if linked.contains(&id) {
+                let on_card = allowed.as_ref().is_none_or(|allowed| {
+                    summary.teamspace_id.is_some_and(|space| allowed.contains(&space))
+                });
+                if on_card && linked.contains(&id) {
                     titles.insert(id, summary.title);
                 }
             }
         }
-        let drive = self.drive_files(blocks).await?;
-        Ok(blocks_to_markdown(blocks, &DocLinks(titles, drive)))
+        let drive = match p.agent {
+            Some(_) => HashMap::new(),
+            None => self.drive_files(blocks).await?,
+        };
+        Ok(DocLinks(titles, drive))
     }
 
     /// What the actor may see of the Drive files of `content`.
@@ -1537,22 +1562,14 @@ impl Authorized<'_> {
             // Merged onto the current document with the links of `doc_view`, so the blocks the
             // Markdown leaves as read stay exactly as they are.
             Some(markdown) => {
-                let titles = pages
-                    .pages(p.workspace_id, p.actor_id)
-                    .await
-                    .map_err(hidden_page)?
-                    .items
-                    .into_iter()
-                    .map(|summary| (summary.id.to_string(), summary.title))
-                    .collect();
                 let members = members(self.api.tasks.database().pool(), p.workspace_id).await?;
-                // The Drive files of the current content, as `doc_view` shows them; the write
-                // checks the revision, so the read has the content the client saw.
+                // The links of the current content, as `doc_view` shows them; the write checks
+                // the revision, so the read has the content the client saw.
                 let current = pages
                     .get_page(p.workspace_id, page_id, p.actor_id)
                     .await
                     .map_err(hidden_page)?;
-                let drive = self.drive_files(&current.content).await?;
+                let links = self.doc_links(pages, &current.content).await?;
                 pages
                     .update_page_markdown_at_revision(
                         p.workspace_id,
@@ -1563,7 +1580,7 @@ impl Authorized<'_> {
                         MarkdownContent {
                             markdown,
                             members,
-                            links: Arc::new(DocLinks(titles, drive)),
+                            links: Arc::new(links),
                         },
                         self.request_id,
                         TimestampMillis::now(),

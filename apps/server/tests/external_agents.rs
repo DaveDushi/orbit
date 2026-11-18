@@ -768,6 +768,178 @@ async fn every_tool_family_keeps_to_the_card() {
 }
 
 #[tokio::test]
+async fn a_doc_on_the_card_shows_no_titles_or_drive_names_from_outside_it() {
+    let fixture = Fixture::new().await;
+    let other_project = fixture.project("Other", "OTH", false).await;
+    let agent = fixture
+        .create_external(json!({
+            "name": "Muse",
+            "project_ids": [fixture.project_id],
+            "scopes": ["docs:read", "docs:write"],
+        }))
+        .await;
+    let token = fixture.token(&agent).await;
+    let bot: Id = agent["user_id"].as_str().unwrap().parse().unwrap();
+    let now = TimestampMillis::now().as_millis();
+    let (linked, other_space) = (Id::new_v7(), Id::new_v7());
+    for (id, name, project, position) in [
+        (linked, "General docs", fixture.project_id, 10_i64),
+        (other_space, "Elsewhere", other_project, 11),
+    ] {
+        sqlx::query(
+            "INSERT INTO teamspaces (id, workspace_id, name, position, version, created_by, created_at, updated_at, project_id) \
+             VALUES ($1, $2, $3, $4, 0, $5, $6, $6, $7)",
+        )
+        .bind(id.to_string())
+        .bind(fixture.workspace_id.to_string())
+        .bind(name)
+        .bind(position)
+        .bind(fixture.owner.id.to_string())
+        .bind(now)
+        .bind(project.to_string())
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    }
+    // A Drive file of the workspace, which the bot user (a member) can see.
+    let (folder, file, blob) = (Id::new_v7(), Id::new_v7(), Id::new_v7());
+    sqlx::query(
+        "INSERT INTO drive_blobs (id, workspace_id, r2_key, size, mime, status, created_at, updated_at) \
+         VALUES ($1, $2, 'drive/salaries', 1, 'text/plain', 'ready', $3, $3)",
+    )
+    .bind(blob.to_string())
+    .bind(fixture.workspace_id.to_string())
+    .bind(now)
+    .execute(fixture.database.pool())
+    .await
+    .unwrap();
+    for (id, parent, kind, name, blob) in [
+        (folder, None, "folder", "HR", None),
+        (file, Some(folder), "file", "salaries-2026.xlsx", Some(blob)),
+    ] {
+        sqlx::query(
+            "INSERT INTO drive_nodes (id, workspace_id, parent_id, kind, name, name_lower, blob_id, created_at, \
+             updated_at) VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $7)",
+        )
+        .bind(id.to_string())
+        .bind(fixture.workspace_id.to_string())
+        .bind(parent.map(|id: Id| id.to_string()))
+        .bind(kind)
+        .bind(name)
+        .bind(blob.map(|id: Id| id.to_string()))
+        .bind(now)
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    }
+    let pages = PageRepository::new((*fixture.database).clone());
+    let doc = |space: Id, title: &str, content: Vec<Value>| {
+        let pages = &pages;
+        let title = title.to_owned();
+        async move {
+            pages
+                .create_page_with_content(
+                    fixture.workspace_id,
+                    fixture.owner.id,
+                    orbit_server::repositories::pages::CreatePage {
+                        parent_id: None,
+                        space: orbit_server::repositories::pages::SpaceRequest {
+                            teamspace_id: Some(space),
+                            private: None,
+                        },
+                        title,
+                        icon: None,
+                        position: None,
+                    },
+                    &content,
+                    "test",
+                    TimestampMillis::now(),
+                )
+                .await
+                .unwrap()
+                .id
+        }
+    };
+    let sibling = doc(linked, "Roadmap on the card", Vec::new()).await;
+    let secret = doc(other_space, "Layoff plan", Vec::new()).await;
+    let link = |id: Id, block: &str| {
+        json!({"id": block, "type": "page", "props": {"pageId": id.to_string()}, "content": [], "children": []})
+    };
+    let shared = doc(
+        linked,
+        "Shared notes",
+        vec![
+            link(sibling, "b1"),
+            link(secret, "b2"),
+            orbit_server::repositories::drive_refs::drive_file_block(fixture.workspace_id, file),
+        ],
+    )
+    .await;
+
+    // The bot user alone would see both titles and the file's name.
+    let visible = pages
+        .pages(fixture.workspace_id, bot)
+        .await
+        .unwrap()
+        .items
+        .into_iter()
+        .map(|page| page.title)
+        .collect::<Vec<_>>();
+    assert!(visible.contains(&"Layoff plan".to_owned()), "{visible:?}");
+    let mut conn = fixture.database.pool().acquire().await.unwrap();
+    let blocks = pages
+        .get_page(fixture.workspace_id, shared, bot)
+        .await
+        .unwrap()
+        .content;
+    let refs = orbit_server::repositories::drive_refs::drive_refs(&blocks);
+    let states = orbit_server::repositories::drive_refs::resolve_all(&mut conn, bot, &refs)
+        .await
+        .unwrap();
+    assert!(
+        states.values().all(|state| matches!(
+            state,
+            orbit_server::repositories::drive_refs::DriveRefState::Available(_)
+        )),
+        "{states:?}"
+    );
+    drop(conn);
+
+    // Through the card: the title on the card, not the one outside, no Drive name.
+    let read = fixture
+        .tool(&token, "get_doc", json!({"page_id": shared}))
+        .await;
+    let markdown = read["structuredContent"]["markdown"].as_str().unwrap();
+    assert!(markdown.contains("Roadmap on the card"), "{markdown}");
+    assert!(markdown.contains(&secret.to_string()), "{markdown}");
+    assert!(!markdown.contains("Layoff plan"), "{markdown}");
+    assert!(!markdown.contains("salaries"), "{markdown}");
+    assert!(!markdown.contains("HR"), "{markdown}");
+
+    // Writing back what it read keeps the link and the file block as they are.
+    let version = read["structuredContent"]["version"].clone();
+    let updated = fixture
+        .tool(
+            &token,
+            "update_doc",
+            json!({"page_id": shared, "expected_version": version, "markdown": format!("{markdown}\n\nOne more line.")}),
+        )
+        .await;
+    assert!(!not_available(&updated), "{updated}");
+    let after = pages
+        .get_page(fixture.workspace_id, shared, fixture.owner.id)
+        .await
+        .unwrap()
+        .content;
+    assert_eq!(
+        orbit_server::repositories::drive_refs::drive_refs(&after).len(),
+        1,
+        "{after:?}"
+    );
+    assert!(after.iter().any(|block| block["props"]["pageId"] == secret.to_string()));
+}
+
+#[tokio::test]
 async fn wait_for_messages_delivers_at_least_once_and_acks_only_its_own() {
     let fixture = Fixture::new().await;
     let channel = fixture.channel("ops", "public").await;
