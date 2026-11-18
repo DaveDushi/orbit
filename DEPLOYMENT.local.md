@@ -7,9 +7,9 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, commit 8b614cc48caed51d9e9c76ff7f44bebad06a67ad on `main`
-  (Donna: one approval per job of many writes, a whole large file read in one script call; the dark-theme hover fix of
-  the listening mic; schema 20261117133309, 120 rows; November 18, 2026).
+- Source: DaveDushi/orbit, commit 6122f46121bd4a6ad3febcd2be09ef4d8933c033 on `main`
+  (owners and admins suspend and resume a member; a label removed on GitHub unassigns the person its rule added; the
+  GitHub issue link of a synced task; schema 20261118104258, 122 rows; November 18, 2026).
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
   f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
@@ -19,9 +19,9 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   MCP routes through the hooks gateway (`/etc/orbit-hooks-gateway/nginx.conf`, proposal `/tmp/mcpo/gateway/proposal.diff`).
   Binaries before d8d3eb4 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-d8d3eb4`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:8b614cc`); fork commits have no published upstream image.
-- Image ID: sha256:2cfbd3d1a05409b46c11c3013354b4f4db6316674200988bf3aa111c1ff87d22
-- Team agent sidecar code (`/opt/orbit-agent`): commit b28ae38 (8b614cc + the what's new entry of 2026-11-18).
+  (`orbit:6122f46`); fork commits have no published upstream image.
+- Image ID: sha256:15b7a64ddb4be4eb5914ff9489e358f042bb45d262928a55ee5e79d7f2369ae2
+- Team agent sidecar code (`/opt/orbit-agent`): commit d150014 (6122f46 + what's new and aboutOrbit for the GitHub issue link).
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): on since November 15, 2026, 12:07 UTC (set by Ops, outside a
   deploy): `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID`, `ORBIT_APNS_TOPIC` and `ORBIT_APNS_SANDBOX`
   are in `/etc/orbit/orbit.env`; the journal shows `iPhone push (APNs) is on` (topic `com.easytomanage.orbit`, sandbox
@@ -286,6 +286,81 @@ Submission `79681107-dcf6-4dca-bd69-5c255061427d` with the App Manager ASC key (
 eas.json changed only for the run and restored; the temporary `AuthKey.p8` deleted). ASC build
 `5f9020bc-2a63-47a9-870f-81c5d9bcf249`: `VALID` ~3 min after the submission, internal state `IN_BETA_TESTING`, external
 `READY_FOR_BETA_SUBMISSION` (not submitted, not in the external group). Scripts and logs: `/root/ops/iphone-build21/`.
+
+### November 18, 2026 upgrade: suspend a member, label rule unassign on GitHub, GitHub issue link (2 migrations)
+
+`main` from `077e8de8` to `6122f461` (deployed): fast-forward to `adba522d` (`member-suspend`: owners and admins suspend
+and resume a member, `POST`/`DELETE /api/v1/workspaces/{id}/members/{membership_id}/suspension`, migration
+`20261118104258_workspace_member_suspension` (`users.suspended_workspace_id`, a nullable column only)), then merge
+`6122f461` of `label-unassign-fix` (`e136b320` a label removed on GitHub unassigns the person its rule added, migration
+`20261118090108_task_rule_assignees` (new table, backfill from the `task.assigned_by_rule` audit rows); `e55ba4e9` a
+synced task shows "GitHub issue #N"). Merge conflict only in what's new: the 2026-11-18 entry keeps 4 lines (suspend
+line; the label unassign fix, the issue link and the dark mic fix share one GitHub line); `aboutOrbit()` keeps both
+branches' texts. `d1500146` (sidecar only, after the image): what's new + one aboutOrbit sentence for the issue link.
+Mobile parts ship with iPhone build 22, not now.
+Checks on the merge: agent `tsc` + `npm test` 111 pass / 0 fail / 11 skipped; web build ok, web tests 18 pass; mobile
+`tsc` ok, `bun test src` 346 pass; server on SQLite AND Postgres: `member_suspension` 2, `label_rules_api` 13,
+`tasks_api` 100, `workspaces_api` 30, `openapi_contract` 19 pass (`target` removed after).
+
+Deploy id `20261118T120822Z-2915420`. `orbit:6122f46` (image
+`sha256:15b7a64ddb4be4eb5914ff9489e358f042bb45d262928a55ee5e79d7f2369ae2`, ~38 min, deps cached); `deploy/smoke.sh` and
+`orbit config check` passed. Migration dry run of BOTH migrations (fresh hot copy, and in the switch on a copy of the
+stopped database): applied 2 then 0, schema 20261118104258 (122 rows), counts, names and old checksums unchanged,
+`task_rule_assignees` 37 rows backfilled (37 rule audit rows), `suspended_workspace_id` present (0 non-null),
+quick-check ok, 0 foreign-key rows; the old binary refuses the new schema; `rollback-schema.sql` gives the exact old
+schema and counts, the old binary then starts (0 applied), and the new binary migrates again. Built-bundle check before
+the switch (`pre/run.sh`: seeded instance in a network namespace, release binary's embedded app): `/`, `/tasks`, `/docs`,
+`/chat`, `/settings/members` render with no errors; Manage → Suspend member on member@example.com: badge, its login 401
+(right password), Resume member: badge gone, login 200 (`pre/shots/`).
+
+Switch: stopped both services at 13:07:55 UTC; snapshot `01a1eec5-63a3-7059-a96c-c912d3263f00` with
+`/usr/local/bin/orbit-8b614cc`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-6122f46.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-6122f46.tgz`; sidecar code copied (old `/opt/orbit-agent.before-6122f46`);
+no env change. `orbit` ready 13:08:15, `orbit-agent` 13:08:16 (20 s down). `vm-health.conf` (old copy
+`.before-6122f46`): `PROD_TAG=6122f46`, `ROLLBACK_TAG=8b614cc`, `ROLLBACK_BACKUP=01a1eec5-63a3-7059-a96c-c912d3263f00`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) local and on
+`https://orbit-app.easytomanage.com/health/ready`; `/orbit-build.json` revision `6122f461…`; schema 20261118104258 (122
+rows); sidecar `/health` ok, `/opt/orbit-agent/src` = `main`. `ORBIT_VERIFY_SPA=1 verify-production.sh` passed (signed
+in and out, session logged out). Signed-in browser check (`ui-check.ts`, David Dusi, writes blocked, logged out 204):
+Wellrox `/`, `/tasks`, `/docs`, `/chat`, `/settings/members` render; a member's Manage menu shows Suspend member (not
+clicked); Slate task SLATE-9 shows "GitHub issue #33" → `https://github.com/easy2manage/crm-etm/issues/33`. Its only 2
+console errors are the 2 writes the script blocked itself (page visit, chat read). `vm-health`: nginx WARN only from
+the switch window (connection refused 13:08, 0 5xx); OOM WARN = 7 `gvisor_sentry` kills Nov 17, before this deploy;
+docker WARN = other sessions' containers; git-owner fixed after.
+
+After: Apple state checked first (ASC API): newest build 21, beta review `APPROVED` (build 20 too, 14-19 never
+submitted), App Store version 1.0 `PREPARE_FOR_SUBMISSION`: nothing waits for Apple review. So
+`apple-review@easytomanage.com` (member of Orbit Demo only) was suspended by David (Orbit Demo owner) in Settings →
+Members → Manage → Suspend member (`suspend-apple.ts`; only that POST allowed): 204, Suspended badge, audit
+`membership.suspended` 13:10:38 UTC, `suspended_workspace_id` = Orbit Demo, its 3 live sessions revoked (0 left). Login
+answers `invalid_credentials` for a suspended account even with the right password (pre-switch check); the reviewer's
+password is not stored here, so no login was tried on production. Changelog posted to #orbit-updates as David
+(temporary session, logged out; message `01a1eec7-fdfb-71ad-b3b9-75f1ed8d62e5`; text
+`/root/ops/suspend-labels/changelog.md`). Test instances :18475 (`/root/orbit-test/member-suspend`) and :18471
+(`/tmp/lu-e2e`) stopped and removed. Screenshots: `/root/.local/share/com.jean.desktop/pasted-images/suspend-labels-deploy/`.
+Scripts and logs: `/root/ops/suspend-labels/`.
+
+Rollback to `8b614cc` (undo both migrations first: lost are which workspace suspended an account (the suspension
+stays) and which assignees a rule added; the old binary refuses the new schema):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit sqlite3 "file:/var/lib/orbit/orbit.sqlite?mode=ro" ".backup '/var/backups/orbit/pre-migration/orbit-before-rollback-to-8b614cc.sqlite'"
+sudo -u orbit sqlite3 /var/lib/orbit/orbit.sqlite < /root/ops/suspend-labels/rollback-schema.sql   # DROP column + table, delete the 2 version rows
+sudo install -m 755 /usr/local/bin/orbit-8b614cc /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-6122f46 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/suspend-labels/rollback.sh)
+# Way 2, only for a data problem (work after 13:07 UTC is lost), Orbit stopped: /usr/local/bin/orbit-8b614cc backup verify +
+#   backup restore 01a1eec5-63a3-7059-a96c-c912d3263f00 (as user orbit), then the binary and sidecar lines above
+```
+
+After this rollback, set `PROD_TAG=8b614cc`, `ROLLBACK_TAG=b7c3122`,
+`ROLLBACK_BACKUP=01a1ee03-14bc-776e-b995-9b93566df092` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-6122f46`).
 
 ### November 18, 2026 upgrade: one approval per agent job, whole large file read, dark-theme mic hover fix (1 migration)
 
