@@ -603,7 +603,7 @@ thread sandbox **9.8 MiB** `memory.current` new and **14 MiB** after use (python
 
 ### Phase 4: Orbit data and routes
 
-Migration `20261117142900_agent_sandbox` (SQLite and Postgres): `agent_sandbox_settings` (enabled, `idle_minutes`
+Migration `20261118154559_agent_sandbox` (SQLite and Postgres): `agent_sandbox_settings` (enabled, `idle_minutes`
 5–120, monthly CPU-minutes, egress bytes, model tokens), `agent_sandbox_calls`, `agent_egress_rules`,
 `agent_egress_requests`, `agent_egress_log`, `agent_sandbox_usage` (per agent and UTC month), and
 `agent_sessions.sandbox_call_id`. New tables only; no backup needed.

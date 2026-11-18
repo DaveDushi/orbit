@@ -1,4 +1,4 @@
--- SQLite. Postgres: postgres/20261117142900_agent_sandbox.sql.
+-- SQLite. Postgres: postgres/20261118154559_agent_sandbox.sql.
 --
 -- Agent sandboxes (docs/agent-sandbox-design.md; `agent::sandbox`). Each custom agent may run code in its own
 -- gVisor sandbox per chat thread and driver. Orbit stays the judge: it signs a ticket per call (the broker checks it),
