@@ -6,7 +6,7 @@ import { MESSAGE_MAX_LENGTH, type Message } from '../../api/types'
 import { replaceEmoticons } from '../../lib/emoticons'
 import { decodeMentions, encodeMentions } from '../../lib/mentionTokens'
 import { useAutosize } from '../composer/useAutosize'
-import { isCoarsePointer } from './environment'
+import { isTouchOnly } from './environment'
 import { useMessageList } from './messageListContext'
 
 /** Edits a message in place. `Enter` saves, `Esc` cancels (and goes no further: it does not close the pane). */
@@ -42,7 +42,7 @@ export function MessageEditor({ message }: { message: Message }) {
       endEdit()
       return
     }
-    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !isCoarsePointer()) {
+    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && !isTouchOnly()) {
       event.preventDefault()
       save()
     }

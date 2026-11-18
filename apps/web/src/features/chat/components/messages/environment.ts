@@ -21,13 +21,31 @@ export function useIsPhone(): boolean {
   return useMediaQuery('(max-width: 899px)')
 }
 
-/** A touch screen is the main pointer: `Enter` makes a new line, and nothing takes focus on its own (it opens the keyboard). */
-export function useCoarsePointer(): boolean {
-  return useMediaQuery('(pointer: coarse)')
-}
-
+/** A touch screen is the main pointer. A touch laptop can say so too: for the keyboard, use `useTouchOnly`. */
 export function isCoarsePointer(): boolean {
   return matches('(pointer: coarse)')
+}
+
+const TOUCH_PRIMARY = '(hover: none) and (pointer: coarse)'
+const FINE_POINTER = '(any-pointer: fine)'
+
+/**
+ * A phone or a tablet: touch only, no mouse or trackpad, so most likely an on-screen keyboard. A Windows touch laptop
+ * (Surface) can report its touch screen as the main pointer, but it also has a fine pointer and a real keyboard.
+ */
+export function touchOnly(match: (query: string) => boolean): boolean {
+  return match(TOUCH_PRIMARY) && !match(FINE_POINTER)
+}
+
+/** On a touch-only device `Enter` makes a new line, and nothing takes focus on its own (it opens the keyboard). */
+export function useTouchOnly(): boolean {
+  const primary = useMediaQuery(TOUCH_PRIMARY)
+  const fine = useMediaQuery(FINE_POINTER)
+  return primary && !fine
+}
+
+export function isTouchOnly(): boolean {
+  return touchOnly(matches)
 }
 
 function subscribeWindowFocus(listener: () => void): () => void {
