@@ -79,7 +79,9 @@ CREATE TABLE agent_egress_requests (
 CREATE INDEX agent_egress_requests_thread ON agent_egress_requests (agent_user_id, thread_key, driver_user_id, host, port);
 CREATE INDEX agent_egress_requests_call ON agent_egress_requests (call_id, status);
 
--- Every egress decision and connection (host and port only: no URLs, paths or bodies). Kept 90 days.
+-- Every egress decision and connection (host and port only: no URLs, paths or bodies). Kept 90 days. The proxy
+-- reports an allowed connection's bytes once (`done_at`); `blocked`: allowed by the rules, then refused by the proxy
+-- (a non-public address, a TLS name that is not the host).
 CREATE TABLE agent_egress_log (
     id TEXT PRIMARY KEY,
     call_id TEXT NOT NULL,
@@ -88,12 +90,13 @@ CREATE TABLE agent_egress_log (
     driver_user_id TEXT NOT NULL,
     host TEXT NOT NULL,
     port BIGINT NOT NULL,
-    decision TEXT NOT NULL CHECK (decision IN ('allow', 'deny', 'ask')),
+    decision TEXT NOT NULL CHECK (decision IN ('allow', 'deny', 'ask', 'blocked')),
     reason TEXT NOT NULL,
     rule_id TEXT,
     bytes_up BIGINT NOT NULL DEFAULT 0,
     bytes_down BIGINT NOT NULL DEFAULT 0,
     duration_ms BIGINT NOT NULL DEFAULT 0,
+    done_at BIGINT,
     created_at BIGINT NOT NULL
 );
 CREATE INDEX agent_egress_log_agent ON agent_egress_log (agent_user_id, created_at);

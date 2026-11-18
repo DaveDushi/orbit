@@ -11,6 +11,8 @@
 //!   adds its CPU time to the month, and returns the egress requests that wait for a person's answer.
 //! - `POST /api/internal/agent/egress/check` (egress proxy): with the call's proxy password, decides one
 //!   `host:port`: `allow`, `deny` or `ask` (section 4, decision order), and logs it.
+//! - `POST /api/internal/agent/egress/done` (egress proxy): an allowed connection's bytes, once, into its log row, the
+//!   call and the month; or `blocked` when the proxy refused it after the yes (`agent::egress_proxy`).
 //!
 //! The broker and the proxy authenticate with a bearer derived from the broker key; the key file is
 //! `ORBIT_AGENT_SANDBOX_KEY_FILE`. Without it, or with `ORBIT_AGENT_SANDBOX=off`, every route answers `sandbox_off`.
@@ -178,6 +180,7 @@ pub(crate) fn router(state: AgentState) -> Router {
             post(end_call),
         )
         .route("/api/internal/agent/egress/check", post(check_egress))
+        .route("/api/internal/agent/egress/done", post(egress_done))
         .with_state(state)
 }
 
@@ -861,11 +864,12 @@ async fn decide(
     let logged_host = host
         .clone()
         .unwrap_or_else(|| body.host.chars().take(100).collect());
+    let log_id = Id::new_v7().to_string();
     sqlx::query(
         "INSERT INTO agent_egress_log (id, call_id, workspace_id, agent_user_id, driver_user_id, host, port, \
          decision, reason, rule_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
     )
-    .bind(Id::new_v7().to_string())
+    .bind(&log_id)
     .bind(body.call_id.to_string())
     .bind(&workspace)
     .bind(&agent)
@@ -885,7 +889,81 @@ async fn decide(
         "host": host,
         "rule_id": rule,
         "request_id": request_id,
+        "log_id": log_id,
     })))
+}
+
+#[derive(Deserialize)]
+struct DoneBody {
+    log_id: Id,
+    call_id: Id,
+    bytes_up: i64,
+    bytes_down: i64,
+    duration_ms: i64,
+    /// Why the proxy refused an allowed connection (a non-public address, a TLS name that is not the host).
+    #[serde(default)]
+    blocked: Option<String>,
+}
+
+/// The proxy's report of one allowed connection. Counts once per log row (a retry changes nothing): the bytes go into
+/// the row, the call and the agent's month.
+async fn egress_done(
+    State(state): State<AgentState>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+    Json(body): Json<DoneBody>,
+) -> Result<Response, ApiError> {
+    service_only(&state, &headers, &uri, &request_id)?;
+    let now = TimestampMillis::now().as_millis();
+    let bytes = body.bytes_up.max(0).saturating_add(body.bytes_down.max(0));
+    let blocked = body
+        .blocked
+        .map(|reason| reason.chars().take(200).collect::<String>());
+    let result: Result<bool, sqlx::Error> = async {
+        let mut tx = state.database().immediate_transaction().await?;
+        let Some(agent) = sqlx::query_scalar::<_, String>(
+            "UPDATE agent_egress_log SET bytes_up = $3, bytes_down = $4, duration_ms = $5, done_at = $6, \
+             decision = CASE WHEN $7 = 1 THEN 'blocked' ELSE decision END, reason = COALESCE($8, reason) \
+             WHERE id = $1 AND call_id = $2 AND decision = 'allow' AND done_at IS NULL RETURNING agent_user_id",
+        )
+        .bind(body.log_id.to_string())
+        .bind(body.call_id.to_string())
+        .bind(body.bytes_up.max(0))
+        .bind(body.bytes_down.max(0))
+        .bind(body.duration_ms.max(0))
+        .bind(now)
+        .bind(i64::from(blocked.is_some()))
+        .bind(blocked)
+        .fetch_optional(&mut *tx)
+        .await?
+        else {
+            return Ok(false);
+        };
+        sqlx::query(
+            "UPDATE agent_sandbox_calls SET egress_bytes = egress_bytes + $2 WHERE id = $1",
+        )
+        .bind(body.call_id.to_string())
+        .bind(bytes)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO agent_sandbox_usage (agent_user_id, month, egress_bytes) VALUES ($1, $2, $3) \
+             ON CONFLICT (agent_user_id, month) DO UPDATE SET egress_bytes = agent_sandbox_usage.egress_bytes + $3",
+        )
+        .bind(agent)
+        .bind(month(now))
+        .bind(bytes)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+    .await;
+    match result {
+        Ok(counted) => Ok(Json(json!({ "counted": counted })).into_response()),
+        Err(failure) => Err(unavailable(&failure, &uri, &request_id)),
+    }
 }
 
 #[cfg(test)]

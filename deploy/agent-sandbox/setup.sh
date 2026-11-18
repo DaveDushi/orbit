@@ -11,7 +11,9 @@
 # /var/lib/NAME/rootfs (exported from a local Docker image built from the Dockerfile here), the broker key, the socket
 # /run/NAME/sandbox.sock (root and --client-group), NAME@.service (one broker per connection), NAME-gc.timer (gc every
 # minute), and the per-agent slice limits (drop-in SLICE-.slice.d). With a test --slice-prefix it also makes the parent
-# slice with the limits of orbit-agents.slice. Starting or stopping the socket deletes every live sandbox.
+# slice with the limits of orbit-agents.slice. Starting or stopping the socket deletes every live sandbox. With
+# --egress-bin it also runs the egress proxy (`orbit egress-proxy`) as NAME-egress.service, user NAME-egress, on
+# --proxy-port; it gets the derived service token (CONF/egress.token), never the broker key.
 #
 # Options:
 #   --name NAME            units, folders, scopes, nft table (orbit-sandbox)
@@ -22,7 +24,9 @@
 #   --quota-mb N           /work size per thread (4096);  --min-free-mb N  refuse new images below (8192)
 #   --image REF            local Docker image of the Dockerfile here (orbit-agent-sandbox:latest)
 #   --client-group GROUP   who may connect (orbit-agent);  --key PATH  (/etc/orbit/sandbox-broker.key)
-#   --orbit-url URL        where call ends are reported (none)
+#   --orbit-url URL        where call ends are reported and egress is decided (none)
+#   --egress-bin PATH      an orbit binary with `egress-proxy`: copied to LIB/orbit and run as the proxy (none)
+#   --orbit-internal ADDR  where the proxy sends orbit.internal (host:port of --orbit-url)
 #   --tarball PATH         a local copy of the pinned gVisor tarball (else it is downloaded)
 #   --uninstall            removes all of it, /work images included (not the key under /etc/orbit)
 set -euo pipefail
@@ -31,7 +35,7 @@ GVISOR_VERSION=20261109.0
 GVISOR_SHA512=0a0041fd862f4ea3042a9db8d41c742f48a01f909699adc2a0256e46d85e53f97b82b9fd154b3dce636f62b8d557677639f91c77d13f3f875ff9fa535275393c
 NAME=orbit-sandbox SLICE_PREFIX=orbit-agents NET=10.201 NET_PREFIX=osb PROXY_PORT=3128 QUOTA_MB=4096
 MIN_FREE_MB=8192 IMAGE=orbit-agent-sandbox:latest CLIENT_GROUP=orbit-agent KEY=/etc/orbit/sandbox-broker.key
-ORBIT_URL="" TARBALL="" UNINSTALL=0
+ORBIT_URL="" TARBALL="" UNINSTALL=0 EGRESS_BIN="" ORBIT_INTERNAL=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--name) NAME=$2; shift 2 ;;
@@ -45,6 +49,8 @@ while [ $# -gt 0 ]; do
 	--client-group) CLIENT_GROUP=$2; shift 2 ;;
 	--key) KEY=$2; shift 2 ;;
 	--orbit-url) ORBIT_URL=$2; shift 2 ;;
+	--egress-bin) EGRESS_BIN=$2; shift 2 ;;
+	--orbit-internal) ORBIT_INTERNAL=$2; shift 2 ;;
 	--tarball) TARBALL=$2; shift 2 ;;
 	--uninstall) UNINSTALL=1; shift ;;
 	*) echo "unknown option $1" >&2; exit 2 ;;
@@ -62,11 +68,16 @@ STATE=/var/lib/$NAME
 CONF=/etc/$NAME
 UNITS=/etc/systemd/system
 DROPIN=$UNITS/$SLICE_PREFIX-.slice.d/50-agent.conf
+EGRESS_USER=$NAME-egress
 
 if [ "$UNINSTALL" = 1 ]; then
 	systemctl disable --now "$NAME-gc.timer" "$NAME.socket" 2>/dev/null || true  # the socket's stop deletes sandboxes
 	systemctl stop "$NAME@*.service" "$NAME-gc.service" 2>/dev/null || true
-	for f in "$NAME.socket" "$NAME@.service" "$NAME-gc.service" "$NAME-gc.timer"; do rm -f "$UNITS/$f"; done
+	systemctl disable --now "$NAME-egress.service" 2>/dev/null || true
+	for f in "$NAME.socket" "$NAME@.service" "$NAME-gc.service" "$NAME-gc.timer" "$NAME-egress.service"; do
+		rm -f "$UNITS/$f"
+	done
+	! getent passwd "$EGRESS_USER" >/dev/null || userdel "$EGRESS_USER"
 	rm -f "$DROPIN"; rmdir "$(dirname "$DROPIN")" 2>/dev/null || true
 	if [ -f "$CONF/made-parent-slice" ]; then
 		systemctl stop "$SLICE_PREFIX.slice" 2>/dev/null || true
@@ -85,6 +96,13 @@ for tool in /usr/sbin/mkfs.ext4 /usr/bin/python3 /usr/sbin/nft /usr/sbin/ip /usr
 	[ -x "$tool" ] || { echo "missing $tool" >&2; exit 1; }
 done
 getent group "$CLIENT_GROUP" >/dev/null || { echo "no group $CLIENT_GROUP" >&2; exit 1; }
+if [ -n "$EGRESS_BIN" ]; then
+	[ -n "$ORBIT_URL" ] || { echo "--egress-bin needs --orbit-url" >&2; exit 2; }
+	"$EGRESS_BIN" egress-proxy --help >/dev/null || { echo "$EGRESS_BIN has no egress-proxy" >&2; exit 1; }
+	[ -n "$ORBIT_INTERNAL" ] || { ORBIT_INTERNAL=${ORBIT_URL#*://}; ORBIT_INTERNAL=${ORBIT_INTERNAL%%/*}; }
+	getent passwd "$EGRESS_USER" >/dev/null ||
+		useradd --system --user-group --no-create-home --home-dir / --shell /usr/sbin/nologin "$EGRESS_USER"
+fi
 
 # gVisor: the whole release tarball (runsc alone no longer works), checked against the pinned SHA-512.
 if [ "$("$LIB/gvisor/runsc" --version 2>/dev/null | head -1)" != "runsc version release-$GVISOR_VERSION" ]; then
@@ -140,7 +158,8 @@ SBX_PROXY_PORT=$PROXY_PORT
 SBX_QUOTA_MB=$QUOTA_MB
 SBX_MIN_FREE_MB=$MIN_FREE_MB
 SBX_KEY_FILE=$KEY
-SBX_ORBIT_URL=$ORBIT_URL"
+SBX_ORBIT_URL=$ORBIT_URL
+SBX_EGRESS_GROUP=${EGRESS_BIN:+$EGRESS_USER}"
 
 if [ ! -f "$UNITS/$SLICE_PREFIX.slice" ]; then
 	put "$UNITS/$SLICE_PREFIX.slice" "# Made by deploy/agent-sandbox/setup.sh --name $NAME: the limits of orbit-agents.slice.
@@ -226,6 +245,43 @@ AccuracySec=5s
 [Install]
 WantedBy=timers.target"
 
+if [ -n "$EGRESS_BIN" ]; then
+	install -o root -g root -m 0755 "$EGRESS_BIN" "$LIB/orbit"
+	(umask 027; SBX_KEY_FILE=$KEY /usr/bin/python3 -I "$LIB/broker.py" service-token >"$CONF/egress.token")
+	chown "root:$EGRESS_USER" "$CONF/egress.token"
+	chmod 0640 "$CONF/egress.token"
+	chown "root:$EGRESS_USER" "$CONF"; chmod 0750 "$CONF"
+	put "$UNITS/$NAME-egress.service" "[Unit]
+Description=Agent sandbox egress proxy ($NAME)
+After=network-online.target $NAME.socket
+Wants=network-online.target
+
+[Service]
+ExecStart=$LIB/orbit egress-proxy --listen 0.0.0.0:$PROXY_PORT --orbit-url $ORBIT_URL --orbit-internal $ORBIT_INTERNAL --service-token-file $CONF/egress.token --calls-dir /run/$NAME/egress
+User=$EGRESS_USER
+Group=$EGRESS_USER
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=256M
+TasksMax=64
+LimitNOFILE=4096
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target"
+fi
+
 if [ "$changed" = 1 ]; then systemctl daemon-reload; fi
 systemctl enable --now "$NAME.socket" "$NAME-gc.timer" >/dev/null
+if [ -n "$EGRESS_BIN" ]; then systemctl enable "$NAME-egress.service" >/dev/null; systemctl restart "$NAME-egress.service"; fi
 echo "$NAME is ready: socket /run/$NAME/sandbox.sock, rootfs ${image_id:7:12}, key $KEY."

@@ -4,10 +4,13 @@
  *
  *   deploy/agent-sandbox/setup.sh --name orbit-sbx-test --slice-prefix orbit-sbx-test --net 10.202 --net-prefix sbt \
  *     --proxy-port 13128 --quota-mb 256 --min-free-mb 4096 --client-group root --image <agent image> \
- *     --key /etc/orbit-sbx-test/broker.key --orbit-url http://127.0.0.1:13129
+ *     --key /etc/orbit-sbx-test/broker.key --orbit-url http://127.0.0.1:13129 [--egress-bin <orbit binary>]
  *   AGENT_SBX_TEST_NAME=orbit-sbx-test node --test test/agent-sandbox.test.ts
  *
- * The tests stand in for Orbit: they sign tickets with the test key and answer the broker's call-end reports.
+ * The tests stand in for Orbit: they sign tickets with the test key and answer the broker's call-end reports. With
+ * --egress-bin the real egress proxy runs; the stand-in then also decides egress (allow example.com and *.nip.io, ask
+ * for the rest, deny IP literals), takes the byte reports, and answers for orbit.internal. The proxy tests need DNS
+ * and HTTPS from the host (example.com; 10.0.0.1.nip.io for a name that resolves to a private address).
  */
 
 import assert from "node:assert/strict";
@@ -28,6 +31,8 @@ const netPrefix: string = env.SBX_NET_PREFIX ?? "";
 const proxyPort = Number(env.SBX_PROXY_PORT);
 const orbitPort = Number(new URL(env.SBX_ORBIT_URL || "http://127.0.0.1:0").port);
 const quotaMb = Number(env.SBX_QUOTA_MB);
+const realProxy = Boolean(env.SBX_EGRESS_GROUP);
+const skipProxy = skip || (realProxy ? false : "the test copy runs no egress proxy (setup.sh --egress-bin)");
 const key = name ? readFileSync(env.SBX_KEY_FILE).toString("utf8").trim() : "";
 const derived = (label: string) => createHmac("sha256", key).update(label).digest();
 
@@ -37,7 +42,7 @@ const newWork = () => randomBytes(16).toString("hex");
 
 type Limits = { timeout_s?: number; memory_mb?: number; cpu?: number; idle_minutes?: number; disk_mb?: number };
 type Claims = { call: string; agent: string; work: string; exp: number; limits: Limits; token: string; proxy_password: string };
-type Result = { exit: number | null; timed_out: boolean; interrupted: string | null; error?: string; egress_pending?: unknown[]; cpu_ms?: number; stdout: string; stderr: string };
+type Result = { exit: number | null; timed_out: boolean; interrupted: string | null; restarted?: string | null; error?: string; egress_pending?: unknown[]; cpu_ms?: number; stdout: string; stderr: string };
 
 function seal(secrets: object): string {
 	const plain = Buffer.from(JSON.stringify(secrets));
@@ -58,9 +63,22 @@ function ticket(claims: Claims, macKey = derived("orbit-sandbox/ticket")): strin
 	return `v1.${payload}.${createHmac("sha256", macKey).update(`v1.${payload}`).digest("base64url")}`;
 }
 
+/** A call id as Orbit makes it (UUID v7; the egress proxy takes no other). */
+function uuidv7(): string {
+	const bytes = randomBytes(16);
+	bytes.writeUIntBE(Date.now(), 0, 6);
+	bytes[6] = (bytes[6] & 0x0f) | 0x70;
+	bytes[8] = (bytes[8] & 0x3f) | 0x80;
+	const hex = bytes.toString("hex");
+	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/** Every call's proxy password, for the stand-in's egress check. */
+const passwords = new Map<string, string>();
+
 function claimsFor(work: string, options: { agent?: string; limits?: Limits; exp?: number } = {}): Claims {
-	return {
-		call: randomUUID(),
+	const claims = {
+		call: uuidv7(),
 		agent: options.agent ?? AGENT,
 		work,
 		exp: options.exp ?? Date.now() + 300_000,
@@ -68,6 +86,8 @@ function claimsFor(work: string, options: { agent?: string; limits?: Limits; exp
 		token: `orbit-agent.${randomBytes(12).toString("base64url")}`,
 		proxy_password: randomBytes(12).toString("base64url"),
 	};
+	passwords.set(claims.call, claims.proxy_password);
+	return claims;
 }
 
 function request(body: object): Promise<Result> {
@@ -126,8 +146,13 @@ const netns = () => sh("ip", ["netns", "list"]).split("\n").filter((line) => lin
 const containers = () => sh(env.SBX_RUNSC || `/usr/local/lib/${name}/gvisor/runsc`, [`--root=${run}/runsc`, "list", "-quiet"]).trim();
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Stands in for Orbit's call-end route: records the reports and answers one waiting egress request.
+// Stands in for Orbit: the call-end route (records the reports and answers one waiting egress request), the egress
+// check and byte reports of the proxy, and any other path as orbit.internal (echoes what it got).
 const ends: { path: string; auth: string; body: Record<string, unknown> }[] = [];
+const checks: { call_id: string; host: string; port: number; decision: string }[] = [];
+const dones: { log_id: string; call_id: string; bytes_up: number; bytes_down: number; blocked: string | null }[] = [];
+const endedCalls = new Set<string>();
+const decide = (host: string) => (/^[\d.]+$|[:[]/.test(host) || host === "orbit.internal" ? "deny" : host === "example.com" || host.endsWith(".nip.io") ? "allow" : "ask");
 let orbit: HttpServer | undefined;
 before(async () => {
 	if (skip) return;
@@ -136,9 +161,31 @@ before(async () => {
 		let body = "";
 		req.on("data", (chunk) => (body += chunk));
 		req.on("end", () => {
-			ends.push({ path: req.url ?? "", auth: req.headers.authorization ?? "", body: JSON.parse(body || "{}") });
-			res.setHeader("content-type", "application/json");
-			res.end(JSON.stringify({ egress_pending: [{ host: "api.example.com", port: 443 }] }));
+			const path = req.url ?? "";
+			const json = (status: number, value: unknown) => {
+				res.writeHead(status, { "content-type": "application/json" });
+				res.end(JSON.stringify(value));
+			};
+			const service = req.headers.authorization === `Bearer ${derived("orbit-sandbox/service").toString("hex")}`;
+			if (path === "/api/internal/agent/egress/check") {
+				const asked = JSON.parse(body);
+				if (!service || passwords.get(asked.call_id) !== asked.proxy_password || endedCalls.has(asked.call_id)) return json(403, { error: "egress_call_unknown" });
+				const host = String(asked.host).toLowerCase().replace(/\.$/, "");
+				const decision = decide(host);
+				checks.push({ call_id: asked.call_id, host, port: asked.port, decision });
+				return json(200, { decision, reason: "stand-in", host: decision === "deny" ? null : host, log_id: randomUUID() });
+			}
+			if (path === "/api/internal/agent/egress/done") {
+				if (!service) return json(401, {});
+				dones.push(JSON.parse(body));
+				return json(200, { counted: true });
+			}
+			if (path.startsWith("/api/internal/agent/sandbox/calls/")) {
+				ends.push({ path, auth: req.headers.authorization ?? "", body: JSON.parse(body || "{}") });
+				endedCalls.add(path.split("/")[6]);
+				return json(200, { egress_pending: [{ host: "api.example.com", port: 443 }] });
+			}
+			json(200, { orbit_internal: true, method: req.method, path, headers: req.headers, body });
 		});
 	});
 	await new Promise<void>((resolve) => orbit?.listen(orbitPort, "127.0.0.1", resolve));
@@ -158,9 +205,9 @@ test("a call runs as the sandbox user, in gVisor, with its limits and only its o
 	assert.deepEqual(head.trim().split("\n").slice(0, 3), ["agent", "4.19.0-gvisor", "128"]);
 	assert.match(head, /MemTotal:\s+1048576 kB/);
 	const names = (text: string) => [...new Set(text.match(/^[A-Za-z_]+(?==)/gm) ?? [])].sort();
-	assert.deepEqual(names(callEnv), ["HOME", "HTTPS_PROXY", "LANG", "ORBIT_TOKEN", "ORBIT_URL", "PATH", "PWD", "PYTHONUSERBASE", "SHLVL", "TMPDIR", "_", "npm_config_prefix"]);
+	assert.deepEqual(names(callEnv), ["HOME", "HTTPS_PROXY", "HTTP_PROXY", "LANG", "ORBIT_TOKEN", "ORBIT_URL", "PATH", "PWD", "PYTHONUSERBASE", "SHLVL", "TMPDIR", "_", "http_proxy", "https_proxy", "npm_config_prefix"]);
 	assert.ok(callEnv.includes(`ORBIT_TOKEN=${claims.token}\n`));
-	assert.ok(callEnv.includes(`HTTPS_PROXY=http://call:${claims.proxy_password}@`));
+	assert.ok(callEnv.includes(`HTTPS_PROXY=http://${claims.call}:${claims.proxy_password}@`));
 	assert.deepEqual(names(pid1Env), ["HOME", "LANG", "PATH", "PYTHONUSERBASE", "TMPDIR", "npm_config_prefix"], "PID 1 has no call secrets");
 	assert.doesNotMatch(result.stdout, /canary|SECRET|APP_KEY|SBX_/);
 	assert.match(ps, /^\s*1 tini$/m);
@@ -203,9 +250,10 @@ test("egress: only TCP to the proxy port of its own /30; no DNS, no other host, 
 	const other = newWork();
 	await call(other, "true");
 	const otherHost = `${net}.${state().sandboxes[other].netidx}.1`;
+	// Without the real proxy, a stub on the proxy port answers 403; the real one wants the call's password (407).
 	const seen: string[] = [];
 	const proxy = createTcpServer((socket) => socket.once("data", (data) => (seen.push(data.toString("utf8").split("\r\n")[0]), socket.end("HTTP/1.1 403 Forbidden\r\n\r\n"))));
-	await new Promise<void>((resolve) => proxy.listen(proxyPort, hostSide, resolve));
+	if (!realProxy) await new Promise<void>((resolve) => proxy.listen(proxyPort, hostSide, resolve));
 	try {
 		const probe = `
 import socket
@@ -229,10 +277,11 @@ print("routes", len(open("/proc/net/route").read().strip().split("\\n")) - 1)
 		const lines = result.stdout.trim().split("\n");
 		assert.equal(lines[0], `${hostSide} ${proxyPort} open`, result.stdout + result.stderr);
 		for (const line of lines.slice(1, 10)) assert.match(line, / closed$/, line);
-		assert.deepEqual(lines.slice(10), ["dns fails", "udp fails", "ipv6 none", "routes 1", "HTTP/1.1 403 Forbidden"]);
-		assert.ok(seen.includes("CONNECT example.com:443 HTTP/1.1"), String(seen));
+		const answer = realProxy ? "HTTP/1.1 407 Proxy Authentication Required" : "HTTP/1.1 403 Forbidden";
+		assert.deepEqual(lines.slice(10), ["dns fails", "udp fails", "ipv6 none", "routes 1", answer]);
+		if (!realProxy) assert.ok(seen.includes("CONNECT example.com:443 HTTP/1.1"), String(seen));
 	} finally {
-		proxy.close();
+		if (!realProxy) proxy.close();
 	}
 });
 
@@ -282,6 +331,101 @@ test("a fork bomb stops at RLIMIT_NPROC; the sandbox lives and the next call wor
 	assert.ok(tasks < 1536, `host tasks ${tasks} stayed below the slice backstop`);
 	const next = await call(work, "pgrep -cf '^sleep 600'; echo ok", { limits: { timeout_s: 30 } });
 	assert.equal(next.stdout, "1\nok\n", next.stderr);
+});
+
+test("a setsid fork bomb fills RLIMIT_NPROC; the next call restarts the sandbox, keeps /work and works", { skip, timeout: 120_000 }, async () => {
+	const work = newWork();
+	const bomb = await call(work, "echo kept > /work/kept; setsid bash -c 'bomb() { bomb | bomb & }; bomb' >/dev/null 2>&1 & sleep 5; echo started", { limits: { timeout_s: 20 } });
+	assert.equal(bomb.restarted, null);
+	const { cgroup } = state().sandboxes[work];
+	assert.ok(Number(readFileSync(`/sys/fs/cgroup${cgroup}/pids.current`, "utf8")) >= 128, "the bomb outlived its call");
+	const next = await call(work, "cat /work/kept; ps -eo comm= | grep -c bash", { limits: { timeout_s: 30 } });
+	assert.equal(next.exit, 0, next.stderr);
+	assert.match(String(next.restarted), /process limit was full/);
+	assert.equal(next.stdout, "kept\n1\n");
+	const again = await call(work, "echo again");
+	assert.equal(again.restarted, null);
+	assert.equal(again.stdout, "again\n");
+});
+
+// --- The egress proxy (a test copy with --egress-bin). Every request runs inside the sandbox with curl.
+
+/** `curl` through the call's proxy: "<CONNECT status> <HTTP status> <exit>" per URL. */
+const curl = (urls: string[]) =>
+	urls.map((url) => `curl -s -o /dev/null --max-time 20 -w '%{http_connect} %{http_code} ' '${url}'; echo $?`).join("\n");
+
+test("proxy: an allowed host works and its bytes are reported; others are asked or denied before any DNS", { skip: skipProxy, timeout: 120_000 }, async () => {
+	const claims = claimsFor(newWork());
+	const result = await call(claims.work, curl(["https://example.com/", "https://api.unknown.test/", "https://1.1.1.1/", "https://169.254.169.254/", "https://[::1]/", "http://example.com/"]), { claims });
+	const lines = result.stdout.trim().split("\n");
+	assert.equal(lines[0], "200 200 0", result.stdout + result.stderr);
+	for (const line of lines.slice(1, 5)) assert.equal(line, "403 000 56", result.stdout);
+	assert.equal(lines[5], "000 405 0", "plain HTTP is refused");
+	const mine = checks.filter((check) => check.call_id === claims.call);
+	assert.deepEqual(mine.map((check) => `${check.host} ${check.decision}`), ["example.com allow", "api.unknown.test ask", "1.1.1.1 deny", "169.254.169.254 deny", "[::1] deny"]);
+	await sleep(500);
+	const done = dones.find((report) => report.call_id === claims.call);
+	assert.ok(done && done.bytes_down > 500 && done.bytes_up > 200 && done.blocked === null, JSON.stringify(dones));
+});
+
+test("proxy: names that resolve to private, loopback or metadata addresses are blocked after the yes (DNS rebinding)", { skip: skipProxy, timeout: 120_000 }, async () => {
+	const claims = claimsFor(newWork());
+	const hosts = ["10.0.0.1.nip.io", "127.0.0.1.nip.io", "169.254.169.254.nip.io", "192.168.1.1.nip.io", "172.16.0.1.nip.io"];
+	const result = await call(claims.work, curl(hosts.map((host) => `https://${host}/`)), { claims });
+	for (const line of result.stdout.trim().split("\n")) assert.equal(line, "403 000 56", result.stdout + result.stderr);
+	await sleep(500);
+	const blocked = dones.filter((report) => report.call_id === claims.call);
+	assert.equal(blocked.length, hosts.length);
+	for (const report of blocked) assert.match(String(report.blocked), /non-public/);
+});
+
+test("proxy: orbit.internal gets one request with the call token, the sandbox's address and no proxy password", { skip: skipProxy }, async () => {
+	const claims = claimsFor(newWork());
+	const script = `curl -s --max-time 10 -H "Authorization: Bearer $ORBIT_TOKEN" -H 'X-Forwarded-For: 1.2.3.4' -H 'X-Forwarded-Proto: http' --data '{"a":1}' "$ORBIT_URL/api/v1/me?x=1"; echo
+curl -s -o /dev/null --max-time 10 -w '%{http_connect}' -p "$ORBIT_URL/"; echo`;
+	const result = await call(claims.work, script, { claims });
+	const [first, tunnel] = result.stdout.trim().split("\n");
+	const seen = JSON.parse(first);
+	assert.equal(seen.path, "/api/v1/me?x=1");
+	assert.equal(seen.body, '{"a":1}');
+	assert.equal(seen.headers.authorization, `Bearer ${claims.token}`);
+	assert.equal(seen.headers["proxy-authorization"], undefined);
+	assert.equal(seen.headers["x-forwarded-for"], `${net}.${state().sandboxes[claims.work].netidx}.2`);
+	assert.equal(seen.headers["x-forwarded-proto"], "https");
+	assert.equal(seen.headers.connection, "close");
+	assert.equal(tunnel, "403", "a raw tunnel to Orbit is refused");
+});
+
+test("proxy: a password dies with its call (background processes too), and never works from another sandbox", { skip: skipProxy, timeout: 120_000 }, async () => {
+	const a = claimsFor(newWork());
+	// A background process holds a tunnel open past the call's end, then tries again.
+	const background = [
+		"import base64, os, socket, time, urllib.parse",
+		'proxy = urllib.parse.urlsplit(os.environ["HTTPS_PROXY"])',
+		'auth = base64.b64encode(f"{proxy.username}:{proxy.password}".encode()).decode()',
+		"def connect():",
+		"    s = socket.create_connection((proxy.hostname, proxy.port), timeout=30)",
+		'    s.sendall(f"CONNECT example.com:443 HTTP/1.1\\r\\nProxy-Authorization: Basic {auth}\\r\\n\\r\\n".encode())',
+		'    return s, s.recv(200).decode().split("\\r\\n")[0]',
+		'log = open("/work/bg.log", "a", buffering=1)',
+		's, status = connect(); log.write(status + "\\n")',
+		's.recv(1); log.write("closed\\n")',
+		'time.sleep(1); log.write(connect()[1] + "\\n")',
+	].join("\n");
+	const first = await call(a.work, `cat > /work/bg.py <<'PY'\n${background}\nPY\nsetsid python3 /work/bg.py >/dev/null 2>&1 < /dev/null & sleep 1`, { claims: a });
+	assert.equal(first.exit, 0, first.stderr);
+	await sleep(4000);
+	const later = await call(a.work, "cat /work/bg.log");
+	assert.equal(later.stdout, "HTTP/1.1 200 Connection established\nclosed\nHTTP/1.1 407 Proxy Authentication Required\n");
+
+	// While a call runs in one sandbox, another sandbox uses its password: 407.
+	const running = claimsFor(newWork());
+	const busy = call(running.work, "sleep 6", { claims: running });
+	await sleep(1500);
+	const b = claimsFor(newWork());
+	const stolen = await call(b.work, `curl -s -o /dev/null -w '%{http_connect}' --max-time 10 -x "http://${running.call}:${running.proxy_password}@$(echo "$HTTPS_PROXY" | cut -d@ -f2)" https://example.com/`, { claims: b });
+	assert.equal(stolen.stdout, "407");
+	await busy;
 });
 
 test("memory stops at 1 GiB: only the greedy process dies; the sandbox and its other processes live", { skip }, async () => {

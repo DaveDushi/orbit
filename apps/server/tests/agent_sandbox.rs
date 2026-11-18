@@ -21,6 +21,7 @@ use orbit_server::repositories::identity::{IdentityRepository, SetupRequest};
 use orbit_server::task_routes::{TaskState, task_router};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use tokio::io::AsyncWriteExt;
 use tower::ServiceExt;
 
 const SECRET: &str = "test-agent-secret-0123456789abcdef0123456789";
@@ -786,4 +787,605 @@ async fn egress_decisions_follow_the_order_and_stay_in_their_thread_and_driver()
     assert!(logged.contains(&("bucket.s3.amazonaws.com".to_owned(), "allow".to_owned())));
     assert!(logged.contains(&("1.1.1.1".to_owned(), "deny".to_owned())));
     assert!(logged.len() >= 15);
+}
+
+// ---------------------------------------------------------------------------------------------
+// The egress proxy (`agent::egress_proxy`) against these routes on a real port.
+
+mod proxy {
+    use std::collections::HashMap;
+    use std::io;
+    use std::net::{IpAddr, SocketAddr};
+    use std::path::Path;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD;
+    use futures_util::future::BoxFuture;
+    use orbit_server::agent::egress_proxy::{Dialer, ProxyConfig, serve};
+    use sha2::{Digest, Sha256};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpSocket, TcpStream};
+    use tokio_util::sync::CancellationToken;
+
+    use super::*;
+
+    /// Fake DNS (counts lookups) and a dialer that sends every connection to a local echo server.
+    pub struct FakeDialer {
+        pub answers: HashMap<&'static str, Vec<IpAddr>>,
+        pub resolved: Mutex<Vec<String>>,
+        pub connected: Mutex<Vec<SocketAddr>>,
+        pub echo: SocketAddr,
+    }
+
+    impl Dialer for FakeDialer {
+        fn resolve<'a>(
+            &'a self,
+            host: &'a str,
+            port: u16,
+        ) -> BoxFuture<'a, io::Result<Vec<SocketAddr>>> {
+            self.resolved.lock().unwrap().push(host.to_owned());
+            let found = self.answers.get(host).map(|ips| {
+                ips.iter()
+                    .map(|ip| SocketAddr::new(*ip, port))
+                    .collect::<Vec<_>>()
+            });
+            Box::pin(async move { found.ok_or_else(|| io::ErrorKind::NotFound.into()) })
+        }
+
+        fn connect(&self, address: SocketAddr) -> BoxFuture<'_, io::Result<TcpStream>> {
+            self.connected.lock().unwrap().push(address);
+            Box::pin(TcpStream::connect(self.echo))
+        }
+    }
+
+    async fn echo_server() -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let (mut read, mut write) = stream.split();
+                    let _ = tokio::io::copy(&mut read, &mut write).await;
+                });
+            }
+        });
+        address
+    }
+
+    pub struct Running {
+        pub address: SocketAddr,
+        pub dialer: Arc<FakeDialer>,
+        pub calls: tempfile::TempDir,
+        _stop: tokio_util::sync::DropGuard,
+    }
+
+    /// Orbit (the fixture's routes) on a port, and a proxy in front of it.
+    pub async fn start(fixture: &Fixture, max_bytes: u64, max_connections: usize) -> Running {
+        let orbit = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let orbit_address = orbit.local_addr().unwrap();
+        let app = fixture.app.clone();
+        tokio::spawn(async move { axum::serve(orbit, app).await });
+        let dialer = Arc::new(FakeDialer {
+            answers: HashMap::from([
+                ("api.example.com", vec!["93.184.215.14".parse().unwrap()]),
+                ("private.example.com", vec!["10.0.0.5".parse().unwrap()]),
+                (
+                    "rebind.example.com",
+                    vec![
+                        "93.184.215.14".parse().unwrap(),
+                        "127.0.0.1".parse().unwrap(),
+                    ],
+                ),
+                ("meta.example.com", vec!["169.254.169.254".parse().unwrap()]),
+                ("ula.example.com", vec!["fd00::1".parse().unwrap()]),
+            ]),
+            resolved: Mutex::default(),
+            connected: Mutex::default(),
+            echo: echo_server().await,
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let calls = tempfile::tempdir().unwrap();
+        let stop = CancellationToken::new();
+        let token = service_bearer().trim_start_matches("Bearer ").to_owned();
+        tokio::spawn(serve(
+            ProxyConfig {
+                orbit_url: format!("http://{orbit_address}"),
+                service_token: token,
+                calls_dir: calls.path().to_owned(),
+                orbit_internal: orbit_address,
+                call_max_bytes: max_bytes,
+                call_max_connections: max_connections,
+            },
+            Arc::clone(&dialer) as Arc<dyn Dialer>,
+            listener,
+            stop.clone(),
+        ));
+        Running {
+            address,
+            dialer,
+            calls,
+            _stop: stop.drop_guard(),
+        }
+    }
+
+    /// What the broker writes for a running call.
+    pub fn call_file(dir: &Path, call: &str, sandbox: &str, password: &str) {
+        let hash: String = Sha256::digest(password.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        std::fs::write(
+            dir.join(call),
+            json!({ "addr": sandbox, "password_sha256": hash }).to_string(),
+        )
+        .unwrap();
+    }
+
+    /// A request from `source` with `call:password`. The status, the JSON body (when not 200), and the open
+    /// stream after a 200.
+    pub async fn send(
+        proxy: SocketAddr,
+        source: &str,
+        credentials: (&str, &str),
+        line: &str,
+        extra: &str,
+    ) -> (u16, Value, TcpStream) {
+        let socket = TcpSocket::new_v4().unwrap();
+        socket
+            .bind(SocketAddr::new(source.parse().unwrap(), 0))
+            .unwrap();
+        let mut stream = socket.connect(proxy).await.unwrap();
+        let auth = STANDARD.encode(format!("{}:{}", credentials.0, credentials.1));
+        stream
+            .write_all(
+                format!("{line}\r\nHost: x\r\nProxy-Authorization: Basic {auth}\r\n{extra}\r\n")
+                    .as_bytes(),
+            )
+            .await
+            .unwrap();
+        let mut head = Vec::new();
+        while !head.ends_with(b"\r\n\r\n") {
+            let mut byte = [0_u8; 1];
+            if stream.read(&mut byte).await.unwrap() == 0 {
+                break;
+            }
+            head.push(byte[0]);
+        }
+        let head = String::from_utf8(head).unwrap();
+        let status: u16 = head
+            .split(' ')
+            .nth(1)
+            .and_then(|code| code.parse().ok())
+            .unwrap_or(0);
+        if status == 200 && line.starts_with("CONNECT") {
+            return (status, Value::Null, stream);
+        }
+        let mut body = Vec::new();
+        let _ = tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut body)).await;
+        (
+            status,
+            serde_json::from_slice(&body).unwrap_or(Value::Null),
+            stream,
+        )
+    }
+
+    /// A TLS ClientHello record that names `host`.
+    pub fn hello(host: &str) -> Vec<u8> {
+        let name = host.as_bytes();
+        let n = u16::try_from(name.len()).unwrap();
+        let mut sni = vec![0, 0];
+        sni.extend_from_slice(&(n + 5).to_be_bytes());
+        sni.extend_from_slice(&(n + 3).to_be_bytes());
+        sni.push(0);
+        sni.extend_from_slice(&n.to_be_bytes());
+        sni.extend_from_slice(name);
+        let mut body = vec![3, 3];
+        body.extend_from_slice(&[7; 32]);
+        body.extend_from_slice(&[0, 0, 2, 0x13, 0x01, 1, 0]);
+        body.extend_from_slice(&u16::try_from(sni.len()).unwrap().to_be_bytes());
+        body.extend_from_slice(&sni);
+        let mut record = vec![22, 3, 1];
+        record.extend_from_slice(&u16::try_from(body.len() + 4).unwrap().to_be_bytes());
+        record.extend_from_slice(&[1, 0]);
+        record.extend_from_slice(&u16::try_from(body.len()).unwrap().to_be_bytes());
+        record.extend_from_slice(&body);
+        record
+    }
+
+    /// Sends `payload` through an open tunnel and reads the echo back.
+    pub async fn round_trip(stream: &mut TcpStream, payload: &[u8]) -> io::Result<Vec<u8>> {
+        stream.write_all(payload).await?;
+        let mut back = vec![0_u8; payload.len()];
+        tokio::time::timeout(Duration::from_secs(5), stream.read_exact(&mut back))
+            .await
+            .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
+        Ok(back)
+    }
+
+    /// Whether the proxy closed the tunnel (EOF or reset) within `wait`.
+    pub async fn closed_within(stream: &mut TcpStream, wait: Duration) -> bool {
+        let mut byte = [0_u8; 1];
+        matches!(
+            tokio::time::timeout(wait, stream.read(&mut byte)).await,
+            Ok(Ok(0) | Err(_))
+        )
+    }
+}
+
+/// One log row of a call's connection to `host`, once the proxy reported it (or as it is after 5 s).
+async fn logged(fixture: &Fixture, call: &str, host: &str) -> (String, i64, i64, bool) {
+    for _ in 0..50 {
+        let row = sqlx::query(
+            "SELECT decision, bytes_up, bytes_down, done_at FROM agent_egress_log WHERE call_id = $1 AND host = $2 \
+             ORDER BY id DESC LIMIT 1",
+        )
+        .bind(call)
+        .bind(host)
+        .fetch_one(fixture.database.pool())
+        .await
+        .unwrap();
+        let done = row.get::<Option<i64>, _>("done_at").is_some();
+        if done || row.get::<String, _>("decision") != "allow" {
+            return (
+                row.get("decision"),
+                row.get("bytes_up"),
+                row.get("bytes_down"),
+                done,
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("the proxy did not report the connection to {host}");
+}
+
+#[tokio::test]
+async fn the_proxy_resolves_only_after_orbit_says_allow_reaches_only_public_addresses_and_counts_bytes()
+ {
+    let fixture = Fixture::new().await;
+    let driver = fixture.add_user("driver", Some("member")).await;
+    let agent = fixture.add_agent(TOOLS, true).await;
+    let thread = fixture.thread(agent, driver, "running").await;
+    let (call, _, password) = fixture.call(driver, agent, &thread).await;
+    fixture.rule(agent, "*.example.com", 443, "allow").await;
+    let running = proxy::start(&fixture, 100 * 1024 * 1024, 20).await;
+    proxy::call_file(running.calls.path(), &call, "127.0.0.1", &password);
+    let connect = |target: &str| {
+        let line = format!("CONNECT {target} HTTP/1.1");
+        let (address, call, password) = (running.address, call.clone(), password.clone());
+        async move { proxy::send(address, "127.0.0.1", (&call, &password), &line, "").await }
+    };
+
+    // No rule: Orbit asks; no IP literal; nothing resolved or dialed before a yes. Plain HTTP never.
+    let (status, body, _) = connect("api.other.net:443").await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (403, Some("egress_approval_required"))
+    );
+    for target in [
+        "1.1.1.1:443",
+        "[::1]:443",
+        "169.254.169.254:80",
+        "orbit.example.com:443",
+    ] {
+        let (status, body, _) = connect(target).await;
+        assert_eq!(
+            (status, body["error"].as_str()),
+            (403, Some("egress_denied")),
+            "{target}"
+        );
+    }
+    assert!(running.dialer.resolved.lock().unwrap().is_empty());
+    assert!(running.dialer.connected.lock().unwrap().is_empty());
+    let (status, body, _) = proxy::send(
+        running.address,
+        "127.0.0.1",
+        (&call, &password),
+        "GET http://api.example.com/ HTTP/1.1",
+        "",
+    )
+    .await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (405, Some("connect_only"))
+    );
+
+    // Allowed: resolved, dialed at the checked address, the ClientHello passes, bytes are counted once.
+    let (status, _, mut tunnel) = connect("API.Example.com:443").await;
+    assert_eq!(status, 200);
+    let hello = proxy::hello("api.example.com");
+    assert_eq!(proxy::round_trip(&mut tunnel, &hello).await.unwrap(), hello);
+    let payload = vec![b'x'; 5000];
+    assert_eq!(
+        proxy::round_trip(&mut tunnel, &payload).await.unwrap(),
+        payload
+    );
+    drop(tunnel);
+    let sent = i64::try_from(hello.len() + payload.len()).unwrap();
+    assert_eq!(
+        logged(&fixture, &call, "api.example.com").await,
+        ("allow".to_owned(), sent, sent, true)
+    );
+    assert_eq!(
+        *running.dialer.connected.lock().unwrap(),
+        vec!["93.184.215.14:443".parse::<std::net::SocketAddr>().unwrap()]
+    );
+    let counted = sqlx::query(
+        "SELECT c.egress_bytes, u.egress_bytes AS month FROM agent_sandbox_calls c \
+         JOIN agent_sandbox_usage u ON u.agent_user_id = c.agent_user_id WHERE c.id = $1",
+    )
+    .bind(&call)
+    .fetch_one(fixture.database.pool())
+    .await
+    .unwrap();
+    assert_eq!(counted.get::<i64, _>("egress_bytes"), 2 * sent);
+    assert_eq!(counted.get::<i64, _>("month"), 2 * sent);
+
+    // Allowed by the rules, but private, link-local, unique-local, or one private answer among public ones (DNS
+    // rebinding): blocked before any connect, and logged as blocked.
+    for host in [
+        "private.example.com",
+        "meta.example.com",
+        "ula.example.com",
+        "rebind.example.com",
+    ] {
+        let (status, body, _) = connect(&format!("{host}:443")).await;
+        assert_eq!(
+            (status, body["error"].as_str()),
+            (403, Some("egress_blocked")),
+            "{host}"
+        );
+        assert_eq!(logged(&fixture, &call, host).await.0, "blocked", "{host}");
+    }
+    assert_eq!(running.dialer.connected.lock().unwrap().len(), 1);
+
+    // A ClientHello for another name (or none): the tunnel closes; blocked.
+    let (status, _, mut tunnel) = connect("api.example.com:443").await;
+    assert_eq!(status, 200);
+    tunnel.write_all(&proxy::hello("evil.net")).await.unwrap();
+    assert!(proxy::closed_within(&mut tunnel, std::time::Duration::from_secs(5)).await);
+    assert_eq!(
+        logged(&fixture, &call, "api.example.com").await.0,
+        "blocked"
+    );
+    let (status, _, mut tunnel) = connect("api.example.com:443").await;
+    assert_eq!(status, 200);
+    tunnel.write_all(b"GET / HTTP/1.1\r\n\r\n").await.unwrap();
+    assert!(proxy::closed_within(&mut tunnel, std::time::Duration::from_secs(5)).await);
+
+    // A retried byte report counts nothing twice.
+    let log_id: String = sqlx::query_scalar(
+        "SELECT id FROM agent_egress_log WHERE call_id = $1 AND decision = 'allow' AND done_at IS NOT NULL",
+    )
+    .bind(&call)
+    .fetch_one(fixture.database.pool())
+    .await
+    .unwrap();
+    let (status, again) = fixture
+        .request(
+            "POST",
+            "/api/internal/agent/egress/done",
+            &service_bearer(),
+            Some(json!({ "log_id": log_id, "call_id": call, "bytes_up": 999, "bytes_down": 999, "duration_ms": 1 })),
+        )
+        .await;
+    assert_eq!(
+        (status, again["counted"].as_bool()),
+        (StatusCode::OK, Some(false))
+    );
+}
+
+#[tokio::test]
+async fn a_proxy_password_works_only_for_its_running_call_and_from_its_own_sandbox() {
+    let fixture = Fixture::new().await;
+    let driver = fixture.add_user("driver", Some("member")).await;
+    let teammate = fixture.add_user("teammate", Some("member")).await;
+    let agent = fixture.add_agent(TOOLS, true).await;
+    let thread = fixture.thread(agent, driver, "running").await;
+    let theirs = fixture.thread(agent, teammate, "running").await;
+    let (call, token, password) = fixture.call(driver, agent, &thread).await;
+    let (other, _, other_password) = fixture.call(teammate, agent, &theirs).await;
+    fixture.rule(agent, "api.example.com", 443, "allow").await;
+    let running = proxy::start(&fixture, 100 * 1024 * 1024, 20).await;
+    proxy::call_file(running.calls.path(), &call, "127.0.0.1", &password);
+    proxy::call_file(running.calls.path(), &other, "127.0.0.2", &other_password);
+    let line = "CONNECT api.example.com:443 HTTP/1.1";
+    let send = |source: &'static str, call: String, password: String| {
+        let address = running.address;
+        async move {
+            proxy::send(address, source, (&call, &password), line, "")
+                .await
+                .0
+        }
+    };
+
+    assert_eq!(
+        send("127.0.0.1", call.clone(), "wrong".to_owned()).await,
+        407
+    );
+    assert_eq!(
+        send("127.0.0.1", call.clone(), other_password.clone()).await,
+        407
+    );
+    // The other sandbox's own password, used from this sandbox's address.
+    assert_eq!(
+        send("127.0.0.1", other.clone(), other_password.clone()).await,
+        407
+    );
+    assert_eq!(
+        send("127.0.0.2", other.clone(), other_password.clone()).await,
+        200
+    );
+    assert_eq!(send("127.0.0.1", call.clone(), password.clone()).await, 200);
+
+    // orbit.internal reaches Orbit (no egress decision); the call token does the rest.
+    let tasks = format!(
+        "GET http://orbit.internal/api/v1/workspaces/{}/tasks HTTP/1.1",
+        fixture.workspace_id
+    );
+    let (status, body, _) = proxy::send(
+        running.address,
+        "127.0.0.1",
+        (&call, &password),
+        &tasks,
+        &format!("Authorization: Bearer {token}\r\n"),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    // One request per connection: a pipelined second request never reaches Orbit; a raw tunnel to Orbit is egress.
+    let mut stream = tokio::net::TcpStream::connect(running.address)
+        .await
+        .unwrap();
+    let auth = base64::engine::general_purpose::STANDARD.encode(format!("{call}:{password}"));
+    let one = format!(
+        "{tasks}\r\nHost: orbit.internal\r\nProxy-Authorization: Basic {auth}\r\nAuthorization: Bearer {token}\r\n\r\n"
+    );
+    stream
+        .write_all(format!("{one}{one}").as_bytes())
+        .await
+        .unwrap();
+    let mut answer = String::new();
+    tokio::io::AsyncReadExt::read_to_string(&mut stream, &mut answer)
+        .await
+        .unwrap();
+    assert_eq!(answer.matches("HTTP/1.1 ").count(), 1, "{answer}");
+    let (status, body, _) = proxy::send(
+        running.address,
+        "127.0.0.1",
+        (&call, &password),
+        "CONNECT orbit.internal:80 HTTP/1.1",
+        "",
+    )
+    .await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (403, Some("egress_denied"))
+    );
+
+    // The call ends in Orbit while the broker's file is still there: Orbit refuses.
+    let (_, _, mut relaying) =
+        proxy::send(running.address, "127.0.0.1", (&call, &password), line, "").await;
+    let hello = proxy::hello("api.example.com");
+    proxy::round_trip(&mut relaying, &hello).await.unwrap();
+    let (_, _, mut waiting) =
+        proxy::send(running.address, "127.0.0.1", (&call, &password), line, "").await;
+    fixture.end(&call, 0).await;
+    let (status, body, _) =
+        proxy::send(running.address, "127.0.0.1", (&call, &password), line, "").await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (403, Some("egress_denied"))
+    );
+    std::fs::remove_file(running.calls.path().join(&call)).unwrap();
+    // The broker deletes the file: the password is dead, and open tunnels close within the sweep.
+    assert!(proxy::closed_within(&mut relaying, std::time::Duration::from_secs(3)).await);
+    assert!(proxy::closed_within(&mut waiting, std::time::Duration::from_secs(1)).await);
+    assert_eq!(send("127.0.0.1", call.clone(), password.clone()).await, 407);
+    let (status, _, _) = proxy::send(
+        running.address,
+        "127.0.0.1",
+        (&call, &password),
+        &tasks,
+        &format!("Authorization: Bearer {token}\r\n"),
+    )
+    .await;
+    assert_eq!(status, 407);
+    // The other call is not affected.
+    assert_eq!(
+        send("127.0.0.2", other.clone(), other_password.clone()).await,
+        200
+    );
+}
+
+#[tokio::test]
+async fn a_call_gets_at_most_its_bytes_and_connections_through_the_proxy() {
+    let fixture = Fixture::new().await;
+    let driver = fixture.add_user("driver", Some("member")).await;
+    let agent = fixture.add_agent(TOOLS, true).await;
+    let thread = fixture.thread(agent, driver, "running").await;
+    let (call, _, password) = fixture.call(driver, agent, &thread).await;
+    fixture.rule(agent, "api.example.com", 443, "allow").await;
+    let running = proxy::start(&fixture, 4096, 2).await;
+    proxy::call_file(running.calls.path(), &call, "127.0.0.1", &password);
+    let connect = || {
+        let (address, call, password) = (running.address, call.clone(), password.clone());
+        async move {
+            proxy::send(
+                address,
+                "127.0.0.1",
+                (&call, &password),
+                "CONNECT api.example.com:443 HTTP/1.1",
+                "",
+            )
+            .await
+        }
+    };
+
+    let (_, _, mut first) = connect().await;
+    let (_, _, second) = connect().await;
+    let (status, body, _) = connect().await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (403, Some("egress_limit"))
+    );
+    drop(second);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // Past 4096 bytes up and down together, the tunnel is cut and no new one opens.
+    let hello = proxy::hello("api.example.com");
+    proxy::round_trip(&mut first, &hello).await.unwrap();
+    let _ = proxy::round_trip(&mut first, &[b'y'; 8000]).await;
+    assert!(proxy::closed_within(&mut first, std::time::Duration::from_secs(3)).await);
+    let (up, down) = {
+        let (_, up, down, _) = logged(&fixture, &call, "api.example.com").await;
+        (up, down)
+    };
+    assert!(up + down <= 4096 + 16 * 1024, "{up} + {down}");
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let (status, body, _) = connect().await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (403, Some("egress_limit"))
+    );
+}
+
+#[tokio::test]
+async fn the_sandbox_migration_runs_after_productions_newest_migration() {
+    // The catalog and its order are the same on Postgres; an own Postgres database here would stay behind.
+    if orbit_platform::testing_postgres() {
+        return;
+    }
+    // Production's newest migration when the sandbox migration was made (deployed 2026-11-18).
+    const PRODUCTION: i64 = 20_261_118_104_258;
+    const SANDBOX: i64 = 20_261_118_154_559;
+    let directory = tempfile::tempdir().unwrap();
+    let database = orbit_platform::Database::open(&orbit_platform::DatabaseConfig::new(
+        directory.path().join("orbit.sqlite"),
+    ))
+    .await
+    .unwrap();
+    orbit_platform::MigrationRunner::embedded_through("test", PRODUCTION)
+        .run(&database)
+        .await
+        .unwrap();
+    let runner = orbit_platform::MigrationRunner::embedded("test");
+    let pending: Vec<i64> = runner
+        .pending(&database)
+        .await
+        .unwrap()
+        .iter()
+        .map(|migration| migration.version)
+        .collect();
+    assert!(pending.contains(&SANDBOX), "{pending:?}");
+    assert!(
+        pending.iter().all(|version| *version > PRODUCTION),
+        "{pending:?}"
+    );
+    runner.run(&database).await.unwrap();
+    sqlx::query("SELECT bytes_up, done_at FROM agent_egress_log")
+        .fetch_all(database.pool())
+        .await
+        .unwrap();
 }

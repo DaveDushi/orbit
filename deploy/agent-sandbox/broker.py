@@ -7,7 +7,10 @@ A thread sandbox (key: agent + thread + driver, the `work` id Orbit signs into t
 first call and stays alive between calls. It is a `runsc --systemd-cgroup run --detach` in a scope of the agent's
 slice, with tini as PID 1, RLIMIT_NPROC, its own netns and veth (/30, only the proxy port open, nft), a read-only
 rootfs and /work from a sparse ext4 image (its size is the disk quota). Each call is one `runsc exec` with the call's
-own token and proxy password. At most MAX_LIVE sandboxes live; a new one evicts the one quiet the longest (never one
+own token and proxy password (proxy user = the call id). For the call's life a call file in RUN/egress tells the egress
+proxy (`orbit egress-proxy`) the sandbox's address and the password's SHA-256; the proxy refuses everything else. A
+sandbox whose user has no process left under RLIMIT_NPROC (a `setsid` fork bomb) restarts at the next call; /work
+stays. At most MAX_LIVE sandboxes live; a new one evicts the one quiet the longest (never one
 with a running call: a running call holds its thread lock). `gc` deletes idle and too-old sandboxes, and images
 unused for IMAGE_IDLE_HOURS. A delete keeps /work.
 
@@ -19,10 +22,12 @@ Request: one JSON line, then `stdin` bytes.
   {"op": "list"}
 Only `run` needs a ticket: the other ops only stop or delete, and the socket is open to root and the sidecar's group.
 Answer: frames of 1 type byte, 4 length bytes (big-endian) and the payload: b"o" stdout, b"e" stderr, and last b"x",
-a JSON object: {"exit", "signal", "timed_out", "interrupted": null | reason, "stdout_truncated", "stderr_truncated",
-"cpu_ms", "egress_pending": [...]} or {"error": "..."}.
+a JSON object: {"exit", "signal", "timed_out", "interrupted": null | reason, "restarted": null | reason,
+"stdout_truncated", "stderr_truncated", "cpu_ms", "egress_pending": [...]} or {"error": "..."}.
 
-CLI (root, from units): `broker.py cleanup` (socket ExecStartPre: kill everything a former broker left), `broker.py gc`.
+CLI (root, from units): `broker.py cleanup` (socket ExecStartPre: kill everything a former broker left), `broker.py gc`,
+`broker.py service-token` (prints the bearer that the broker and the egress proxy use with Orbit; setup.sh gives it to
+the proxy, which never gets the broker key).
 """
 
 import base64
@@ -54,6 +59,8 @@ SCOPE_PREFIX = ENV("SBX_SCOPE_PREFIX", NAME)  # scope: <prefix>-<work>.scope
 NET = ENV("SBX_NET", "10.201")  # thread /30: <NET>.<idx>.0/30; host .1, sandbox .2
 NET_PREFIX = ENV("SBX_NET_PREFIX", "osb")  # netns <prefix>-<work>, veth <prefix>h<idx> / <prefix>p<idx>
 PROXY_PORT = int(ENV("SBX_PROXY_PORT", "3128"))
+EGRESS_DIR = f"{RUN}/egress"  # call files for the egress proxy
+EGRESS_GROUP = ENV("SBX_EGRESS_GROUP", "")  # the proxy's group (may read the call files)
 ORBIT_URL = ENV("SBX_ORBIT_URL", "")  # where the broker reports call ends; empty: no report (test copies)
 MAX_LIVE = int(ENV("SBX_MAX_LIVE", "3"))
 MAX_LIFE_S = int(ENV("SBX_MAX_LIFE_S", "14400"))
@@ -181,12 +188,14 @@ def ensure_nft() -> None:
     table = NAME.replace("-", "_")
     if sh("nft", "list", "table", "inet", table, check=False).returncode == 0:
         return
-    # From a sandbox veth: only TCP to the proxy port on its own host address; nothing is forwarded.
+    # From a sandbox veth: only TCP to the proxy port on its own host address; nothing is forwarded. The proxy port
+    # takes nothing else (the host and the network do not reach it).
     rules = f"""table inet {table} {{
   chain input {{
     type filter hook input priority -10; policy accept;
     iifname "{NET_PREFIX}h*" ip daddr {NET}.0.0/16 tcp dport {PROXY_PORT} accept
     iifname "{NET_PREFIX}h*" counter drop
+    tcp dport {PROXY_PORT} counter drop
   }}
   chain forward {{
     type filter hook forward priority -10; policy accept;
@@ -421,6 +430,8 @@ def cleanup() -> None:
                 sh("systemctl", "stop", unit.split()[0], check=False)
         sh("nft", "delete", "table", "inet", NAME.replace("-", "_"), check=False)
         state["sandboxes"] = {}
+    shutil.rmtree(EGRESS_DIR, ignore_errors=True)  # no call runs now: every proxy password is dead
+    egress_dir()
     unmount(f"{RUN}/runsc/null-netns")  # runsc leaves this nsfs mount; the state folder cannot go without its umount
 
 
@@ -486,6 +497,69 @@ def feed(child, size: int, first: bytes) -> None:
             pass
 
 
+def egress_dir() -> None:
+    """RUN/egress: root writes, the proxy's group reads (setgid: new files get the group)."""
+    os.makedirs(EGRESS_DIR, exist_ok=True)
+    if EGRESS_GROUP:
+        import grp
+        os.chown(EGRESS_DIR, 0, grp.getgrnam(EGRESS_GROUP).gr_gid)
+    os.chmod(EGRESS_DIR, 0o2750)
+
+
+def call_file(call: str, work: str, idx: int, password: str) -> str:
+    """Tells the egress proxy that this call runs, from this sandbox's address, with this password."""
+    egress_dir()
+    path = f"{EGRESS_DIR}/{call}"
+    body = json.dumps({"addr": f"{NET}.{idx}.2", "work": work,
+                       "password_sha256": hashlib.sha256(password.encode()).hexdigest()}).encode()
+    fd = os.open(f"{path}.new", os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o640)
+    try:
+        os.fchmod(fd, 0o640)
+        os.write(fd, body)
+    finally:
+        os.close(fd)
+    os.replace(f"{path}.new", path)
+    return path
+
+
+def drop_call_files() -> None:
+    """Call files of calls that do not run (a broker copy that died): the proxy refuses their passwords."""
+    if not os.path.isdir(EGRESS_DIR):
+        return
+    for name in os.listdir(EGRESS_DIR):
+        path = f"{EGRESS_DIR}/{name}"
+        try:
+            with open(path) as file:
+                work = json.load(file).get("work", "")
+        except (OSError, ValueError):
+            work = ""
+        lock = thread_lock(work, block=False) if WORK_ID.match(work) else None
+        if lock or not WORK_ID.match(work):
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
+        if lock:
+            lock.close()
+
+
+def nproc_full(work: str, cgroup: str) -> bool:
+    """Whether the sandbox user has no process left under RLIMIT_NPROC (a `setsid` fork bomb of an earlier call).
+    Cheap first: below NPROC host tasks it cannot be full (each guest process costs about 2). Then it counts the
+    user's processes as root in the sandbox, with bash builtins only (no new process of that user is needed)."""
+    try:
+        with open(f"/sys/fs/cgroup{cgroup}/pids.current") as file:
+            if int(file.read()) < NPROC:
+                return False
+    except (OSError, ValueError):
+        pass
+    count = sh(*runsc("exec", "--user", "0:0", work, "/bin/bash", "--noprofile", "--norc", "-c",
+                      'n=0; for f in /proc/[0-9]*/status; do while read -r k v _; do '
+                      f'[ "$k" = Uid: ] && {{ [ "$v" = {UID} ] && n=$((n+1)); break; }}; done < "$f"; done 2>/dev/null; '
+                      'echo $n'), check=False).stdout.strip()
+    return count.isdigit() and int(count) >= NPROC - 2
+
+
 def cpu_usec(cgroup: str) -> int:
     try:
         with open(f"/sys/fs/cgroup{cgroup}/cpu.stat") as file:
@@ -530,6 +604,8 @@ def run(request: dict, rest: bytes) -> None:
         return finish({"error": "invalid request"})
     claims = verify_ticket(request.get("ticket"))
     work, agent, call, limits = claims["work"], claims["agent"], claims["call"], claims["limits"]
+    if not AGENT_ID.match(call) or not WORK_ID.match(work):
+        return finish({"error": "invalid request"})
     with Locked() as state:
         if call in state["used"]:
             raise PermissionError("the ticket was used")
@@ -539,18 +615,40 @@ def run(request: dict, rest: bytes) -> None:
     stdout_max = max(0, min(int(request.get("stdout_max", 65536)), 64 * 1024 * 1024))
     stderr_max = max(0, min(int(request.get("stderr_max", 65536)), 4 * 1024 * 1024))
     lock = thread_lock(work, block=True)  # calls of one thread take turns
+    calls_file = None
     try:
+        result = {"stdout_truncated": False, "stderr_truncated": False, "timed_out": False, "interrupted": None,
+                  "restarted": None}
         gen = place(work, agent, limits)
+        with Locked() as state:
+            cgroup = state["sandboxes"][work].get("cgroup", "")
+        if nproc_full(work, cgroup):
+            # What earlier calls left (`setsid`) holds every process slot: no call could start. A fresh sandbox.
+            with Locked() as state:
+                kill_sandbox(state, work, "the process limit was full")
+            gen = place(work, agent, limits)
+            result["restarted"] = "the process limit was full: background processes are gone; /work is kept"
         with Locked() as state:
             cgroup, idx = state["sandboxes"][work].get("cgroup", ""), state["sandboxes"][work]["netidx"]
         os.utime(image_path(agent, work))
+        proxy = f"http://{call}:{claims['proxy_password']}@{NET}.{idx}.1:{PROXY_PORT}"
+        # https: CONNECT to allowed hosts; http: only orbit.internal (the proxy refuses other plain requests).
         env = [f"ORBIT_TOKEN={claims['token']}", "ORBIT_URL=http://orbit.internal",
-               f"HTTPS_PROXY=http://call:{claims['proxy_password']}@{NET}.{idx}.1:{PROXY_PORT}"]
+               f"HTTPS_PROXY={proxy}", f"https_proxy={proxy}", f"HTTP_PROXY={proxy}", f"http_proxy={proxy}"]
+        calls_file = call_file(call, work, idx, claims["proxy_password"])
         pidfile = f"{RUN}/locks/{work}.pid"
-        result = {"stdout_truncated": False, "stderr_truncated": False, "timed_out": False, "interrupted": None}
         cpu_before = cpu_usec(cgroup)
-        # The unit's stop (RuntimeMaxSec, systemctl stop) kills this client, which alone stops nothing inside.
-        signal.signal(signal.SIGTERM, lambda *_: (kill_call(work, pidfile), os._exit(143)))
+
+        def terminated(*_):
+            # The unit's stop (RuntimeMaxSec, systemctl stop) kills this client, which alone stops nothing inside.
+            kill_call(work, pidfile)
+            if calls_file:
+                try:
+                    os.unlink(calls_file)
+                except FileNotFoundError:
+                    pass
+            os._exit(143)
+        signal.signal(signal.SIGTERM, terminated)
         child = subprocess.Popen(
             runsc("exec", "--user", f"{UID}:{UID}", "--cwd", "/work", "--internal-pid-file", pidfile,
                   *(x for e in SANDBOX_ENV + env for x in ("--env", e)), work,
@@ -577,6 +675,8 @@ def run(request: dict, rest: bytes) -> None:
         # What the call left in its group goes too (also a fork bomb's children); `setsid` keeps a process alive for
         # later calls of the thread.
         kill_call(work, pidfile)
+        os.unlink(calls_file)  # the proxy password dies now; the proxy closes the call's tunnels within a second
+        calls_file = None
         for thread in threads[1:]:
             thread.join(2)
         code = child.returncode
@@ -591,6 +691,11 @@ def run(request: dict, rest: bytes) -> None:
         result["egress_pending"] = report_end(call, result)
         finish(result)
     finally:
+        if calls_file:
+            try:
+                os.unlink(calls_file)
+            except FileNotFoundError:
+                pass
         lock.close()
 
 
@@ -621,6 +726,7 @@ def main() -> None:
         elif op == "gc":
             with Locked() as state:
                 gc(state)
+            drop_call_files()
             finish({"images_removed": gc_images()})
         elif op == "list":
             with Locked() as state:
@@ -644,6 +750,9 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1 and sys.argv[1] == "gc":
         with Locked() as state:
             gc(state)
+        drop_call_files()
         print(json.dumps({"images_removed": gc_images()}))
+    elif len(sys.argv) > 1 and sys.argv[1] == "service-token":
+        print(service_token())
     else:
         main()

@@ -1,9 +1,9 @@
 # Agent sandboxes: design
 
-Status: **approved design; phases 1–4 done on test copies** (phase 3 and 4: 2026-11-17, branch
+Status: **approved design; phases 1–5 done on test copies** (phase 3 and 4: 2026-11-17, phase 5: 2026-11-18, branch
 `agent-sandbox-design`). The owner approved the design and the recommended answers to all open questions, with one
 change: **one sandbox per chat thread** (question 1, section 5). Results: section 13 (spike), section 14 (phases 3
-and 4). Production has only the phase 2 host guards; no broker, proxy or migration runs there. Each later phase
+and 4), section 15 (phase 5). Production has only the phase 2 host guards; no broker, proxy or migration runs there. Each later phase
 needs its own "yes" before production.
 
 ## Goal and fixed decisions
@@ -180,11 +180,11 @@ checking resolver in `agent::outbound`).
 
 | Step | What happens |
 |---|---|
-| 1 | Code in the sandbox sends `CONNECT host:443` with `Proxy-Authorization` (per-call password). Proxy checks the source /30 matches the password's thread sandbox and the call is still running. |
+| 1 | Code in the sandbox sends `CONNECT host:443` with `Proxy-Authorization: Basic <call id>:<per-call password>`. The broker writes a **call file** per running call (sandbox address, password SHA-256) and deletes it at the call end; the proxy refuses (407) a password without a file or from another address, and closes the call's open tunnels within a second of the end. |
 | 2 | Proxy normalizes the host (lower case, punycode, no trailing dot). IP literals are **refused** (no rule can allow them). Port must be 443 unless a rule names another port. Plain HTTP (non-CONNECT) is refused. |
-| 3 | Proxy asks Orbit `POST /api/internal/agent/egress/check {call, host, port}` (decision cached for the call, 60 s). |
+| 3 | Proxy asks Orbit `POST /api/internal/agent/egress/check {call, password, host, port}` for **every** `CONNECT` (no cache: a call end or a new deny acts at once; each connection gets its own log row). |
 | 4 | Orbit answers `allow`, `deny` or `ask` (order below). |
-| 5 | `allow`: **only now** the proxy resolves the name, refuses any non-public address (same rule as integrations), connects to the checked address (no rebinding), answers `200`, then peeks the TLS ClientHello and refuses when SNI is missing or differs from the `CONNECT` host. Then it relays bytes and counts them. |
+| 5 | `allow`: **only now** the proxy resolves the name, refuses the host when **any** address is non-public (same rule as integrations), connects to a checked address (no rebinding), answers `200`, then reads the TLS ClientHello and refuses when SNI is missing or differs from the `CONNECT` host. Then it relays bytes, counts them (cap per call) and reports them to Orbit (`POST …/egress/done`: log row, call, month). A refusal after the yes is logged as `blocked`. |
 | 6 | `deny` or `ask`: proxy answers `403` with JSON `{"error":"egress_approval_required"|"egress_denied","host":…}`. No DNS lookup, no connect: **no byte leaves before the yes**. |
 
 **Decision order in Orbit:** (1) agent off or budget spent → deny. (2) Admin deny rule → deny. (3) Host on the
@@ -434,7 +434,7 @@ Approved by the owner on 2026-11-16: the recommended answers to questions 2–13
 | 2 | **Host guards**: `orbit.slice` cap, `orbit-agents.slice`, `orbit.service` OOM protection; `vm-health` checks. | Production unchanged in behavior; `systemctl show` values match. |
 | 3 | **Done** 2026-11-17 (section 14). **Broker v2 on a test copy** (new, from the spike): `deploy/agent-sandbox/broker.py` with thread sandboxes (state file, per-thread lock, eviction, idle and max-life `gc` timer, `stop_agent`/`stop_all`, start-up cleanup), `--systemd-cgroup` scopes, `tini` init, `RLIMIT_NPROC`, per-thread netns/veth/nft, ext4 disk image per thread; the agent image (Ubuntu 24.04 rootfs by digest). Escape and limit tests in `apps/agent/test/`. | Broker and escape tests pass on a test copy; idle RAM rechecked with the Ubuntu image. |
 | 4 | **Done** 2026-11-17 (section 14). **Orbit data + routes**: migration (sandbox settings incl. idle minutes, rules, egress requests, egress log, calls, usage) for SQLite and Postgres; ticket and call-token issue; `calls/{id}/end`; `egress/check`. | Route tests on both databases. |
-| 5 | **Egress proxy**: `orbit egress-proxy` with per-call passwords; broker passes them per call. | Proxy tests and network escape tests pass. |
+| 5 | **Done** 2026-11-18 (section 15). **Egress proxy**: `orbit egress-proxy` with per-call passwords; broker passes them per call. | Proxy tests and network escape tests pass. |
 | 6 | **Sidecar tool**: `sandbox_shell`, catalog row and `route_need`, interrupted-call handling, card posting and waiting. | `profiles.test.ts`, mock-model run end to end on a test instance. |
 | 7 | **UI**: agent card toggle and limits; Internet access page (rules, pending, log); egress card buttons on **web and mobile**. | Browser check on web; iOS bundle builds; `tsc` and tests in both apps. |
 | 8 | **Budgets and off switch**: counters, notices, kill path. | Tests for each level. |
@@ -594,8 +594,8 @@ report; eviction (quietest, never busy; all busy → wait, then busy); gc (idle,
    refuses `--`).
 4. `runsc run --detach` and every helper command get no pipes and `/dev/null` as stdin: the sandbox keeps its stdio
    open for its whole life, and `runsc exec` forwards and closes an inherited client socket.
-5. Known gap: a `setsid` fork bomb fills the thread sandbox's own `RLIMIT_NPROC` until idle delete or the off
-   switch. Nothing outside that sandbox is affected (host tasks stay far below the slice backstop).
+5. Known gap (closed in phase 5, section 15): a `setsid` fork bomb fills the thread sandbox's own `RLIMIT_NPROC`
+   until idle delete or the off switch. Nothing outside that sandbox is affected (host tasks stay far below the slice backstop).
 
 **Idle RAM (Ubuntu image):** broker 0 when idle (socket activation; ~15 MiB PSS for one copy during a call); one idle
 thread sandbox **9.8 MiB** `memory.current` new and **14 MiB** after use (python3, node, git), 27–32 host tasks, PSS
@@ -603,7 +603,8 @@ thread sandbox **9.8 MiB** `memory.current` new and **14 MiB** after use (python
 
 ### Phase 4: Orbit data and routes
 
-Migration `20261118154559_agent_sandbox` (SQLite and Postgres): `agent_sandbox_settings` (enabled, `idle_minutes`
+Migration `20261118154559_agent_sandbox` (SQLite and Postgres; first `20261117142900`, renamed in phase 5 to follow
+production's `20261118104258`): `agent_sandbox_settings` (enabled, `idle_minutes`
 5–120, monthly CPU-minutes, egress bytes, model tokens), `agent_sandbox_calls`, `agent_egress_rules`,
 `agent_egress_requests`, `agent_egress_log`, `agent_sandbox_usage` (per agent and UTC month), and
 `agent_sessions.sandbox_call_id`. New tables only; no backup needed.
@@ -623,9 +624,64 @@ service bearer of the broker and the proxy.
 SQLite and on Postgres 18. A ticket made by the Rust code was also opened by the Python broker (`verify_ticket`),
 and a changed one refused.
 
-**Still open (later phases):** the egress proxy and its byte counts (phase 5); the `sandbox_shell` catalog row,
+**Still open (later phases):** the `sandbox_shell` catalog row,
 sidecar client and `route_need` (phase 6; tests tick the tool in the database); a scheduler job that closes lost
 calls without a new ticket (today: at the next ticket; the token dies at its own expiry anyway); binding the call
 token to its thread for approvals; the card buttons (Allow once / always / Deny) and admin rule validation with the
 Public Suffix List (phase 7); budgets' notices and the off switch calling `stop_agent` (phase 8).
 
+## 15. Phase 5 results (2026-11-18)
+
+Done on test copies only: the phase 3 test names (broker `orbit-sbx-test`, 10.202.0.0/16, netns `sbt-*`) plus the
+proxy unit `orbit-sbx-test-egress.service` (user `orbit-sbx-test-egress`, port 13128), and the Postgres container
+`orbit-sbx-test-pg` (port 15533, tmpfs). The tests stood in for Orbit on 127.0.0.1:13129. No production service, data,
+socket or port was touched; all of it was removed after the tests. First the branch was rebased on `main` (`c0b8f0e5`)
+and the migration renamed to **`20261118154559_agent_sandbox`** (after production's `20261118104258`; nothing had
+applied the old version).
+
+### What was built
+
+| Part | What |
+|---|---|
+| `orbit egress-proxy` (`apps/server/src/agent/egress_proxy.rs`, `cli.rs`) | Tokio TCP proxy, no database. Section 4, steps 1–6. Limits: 100 MiB and 20 open connections per call, 512 connections in all, 10 s for the request head and for the ClientHello. `orbit.internal` (plain HTTP only) goes to Orbit's loopback without an egress decision, and it does not count as egress. Production Orbit trusts forwarding headers from loopback (`ORBIT_TRUSTED_PROXIES`), so the proxy is the trusted boundary there: it passes exactly one request per connection (the head, then `Content-Length` body bytes; pipelined bytes are dropped, chunked uploads get 411), removes the sandbox's `Proxy-*`, `Forwarded`, `X-Forwarded-*`, `X-Real-IP`, `X-Request-Id` and `Upgrade` headers, and sets `X-Forwarded-For: <sandbox address>`, `X-Forwarded-Proto: https` and `Connection: close`. Orbit's scope layer checks the call token of each request. A raw tunnel (`CONNECT orbit.internal:…`) is an egress request, and Orbit denies it. |
+| Orbit | `egress/check` answers a `log_id`. New `POST /api/internal/agent/egress/done` (proxy bearer): the bytes count once per log row (`done_at`) and go into the call and the agent's month; `blocked` with the reason when the proxy refused after the yes. Migration: `done_at` and the `blocked` decision in `agent_egress_log`. |
+| Broker | Proxy user = the call id. `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, `http_proxy` (plain HTTP reaches only `orbit.internal`). Call file `RUN/egress/<call>` (setgid folder of the proxy's group, `0640`, written atomically). It is deleted at the call end, on SIGTERM, by `gc` for calls that do not run, and at broker start. nft: the proxy port takes packets only from sandbox veths. New command `broker.py service-token`. |
+| `setup.sh --egress-bin` | Copies the orbit binary to `LIB/orbit`, makes the proxy user, writes `CONF/egress.token` (the derived service bearer, `0640`), and the unit (`ProtectSystem=strict`, no capabilities, `MemoryMax=256M`, `TasksMax=64`). The proxy never gets the broker key, so it cannot sign tickets. `--uninstall` removes all of it. |
+
+### The fork bomb gap is closed
+
+A cgroup `pids.max` per sandbox is **not** the fix: section 13 showed that a host task limit crashes the gVisor
+Sentry (the whole sandbox and its other processes). Instead, the broker checks before each call. When the scope has at
+least `NPROC` host tasks (a cheap file read; an idle sandbox has ~30), it counts the sandbox user's processes as root in
+the sandbox, with bash builtins only. When fewer than 2 slots are left, it deletes the thread sandbox and starts a new
+one (about 0.4 s; `/work` stays). The call result then has `restarted: "the process limit was full: …"`. Tested:
+without the restart, the next call fails (exit 128); with it, the next call works and sees `/work`.
+
+### Tests
+
+| Suite | Result |
+|---|---|
+| Rust unit (`agent::egress_proxy`, `agent::sandbox`) | 8 pass: ClientHello SNI parse (cut, missing, not TLS); only `CONNECT` and `http://orbit.internal` pass (no `@` or suffix tricks); a request to Orbit has only the proxy's forwarding headers; one plain body length (no chunked, no two lengths); the host rules as before. |
+| Routes and proxy (`apps/server/tests/agent_sandbox.rs`, 10 tests) | All pass on **SQLite and Postgres 18**. New: no DNS lookup and no dial before Orbit's allow (counted); IP literals, metadata and Orbit's own host denied and logged; a name with a private, link-local or unique-local answer, or one private answer among public ones (DNS rebinding), is blocked before any connect and logged as `blocked`; the dial goes only to the checked address; an SNI mismatch or no TLS closes the tunnel (`blocked`); bytes up and down count once into the log, the call and the month (a retried report counts nothing); a wrong password, another call's password, or a call's own password from another address → 407; after the call end in Orbit → 403; after the broker deletes the file → 407, and open tunnels (relaying, or waiting for the ClientHello) close within the sweep; `orbit.internal` with the call token reaches a real route, a pipelined second request never reaches Orbit, and `CONNECT orbit.internal:80` is denied; the per-call byte cap cuts the tunnel and refuses new ones; the connection cap; **migration order**: a database at production's `20261118104258` gets the sandbox migration as pending and newer (SQLite only: the catalog is the same on Postgres). |
+| In gVisor (`apps/agent/test/agent-sandbox.test.ts`, 22 tests, the real proxy binary) | All pass. New: the setsid fork bomb restart; through the proxy, `https://example.com` works and its bytes are reported; an unknown host is asked; `1.1.1.1`, `169.254.169.254` and `[::1]` are denied, all before any DNS; the `.nip.io` names of `10.0.0.1`, `127.0.0.1`, `169.254.169.254`, `192.168.1.1` and `172.16.0.1` are blocked after the yes; plain HTTP to the internet → 405; `orbit.internal` gets the call token, the body, the sandbox's address and `https` (a forged `X-Forwarded-For` is replaced) and no proxy password, and a raw tunnel to it gets 403; a `setsid` background process of an ended call loses its open tunnel and gets 407 when it tries again; a sandbox that uses another running call's password gets 407. The phase 3 tests still pass (direct TCP to `127.0.0.1:8000`, `169.254.169.254`, `1.1.1.1`, other /30s and host ports, DNS, UDP and IPv6 all fail). |
+
+**Idle RAM of the proxy** (debug build, 208 MB binary): after a fresh start, 6.3 MiB anonymous memory, cgroup
+`memory.current` 7.1 MiB, RSS 41 MiB (mostly shared pages of the binary file), 5 threads. After the test runs: 7.0–7.2 MiB
+anonymous, 9.5–9.6 MiB `memory.current`. A release build has fewer file pages; anonymous memory stays about the same.
+
+### Changes this made in the design
+
+1. No 60 s decision cache in the proxy: Orbit decides every `CONNECT` (section 4, step 3).
+2. The proxy knows a call from the broker's call file (address and password hash), not from Orbit alone. Both must
+   agree: a call that ended in Orbit gets 403, also while its file exists.
+3. A thread sandbox restarts when its user's process slots are full (the fork bomb gap is closed).
+4. `orbit.internal` is plain HTTP only, one request per connection, with the proxy's own forwarding headers (no raw
+   tunnel to Orbit): else sandbox code could fake its client IP (and get around Orbit's per-IP rate limits) through
+   Orbit's trust of loopback.
+
+### Still open
+
+Phase 6 (sidecar tool `sandbox_shell`, catalog row, `route_need`, card posting), phase 7 (card buttons; admin rules
+with the Public Suffix List), phase 8 (budget notices; the off switch calls `stop_agent`), phase 9 (Quality & Security
+on a test instance with a real Orbit), the scheduler job for lost calls. Known gap, as before: domain fronting through
+a shared CDN.

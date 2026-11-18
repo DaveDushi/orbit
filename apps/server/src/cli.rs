@@ -128,6 +128,27 @@ pub enum Command {
         #[command(subcommand)]
         command: PagesCommand,
     },
+    /// The egress proxy of agent sandboxes (docs/agent-sandbox-design.md, section 4). Needs no database.
+    EgressProxy {
+        #[arg(long, default_value = "0.0.0.0:3128")]
+        listen: std::net::SocketAddr,
+        /// Orbit's loopback URL, for the egress decisions and byte reports.
+        #[arg(long, default_value = "http://127.0.0.1:8000")]
+        orbit_url: String,
+        /// Where `orbit.internal` goes.
+        #[arg(long, default_value = "127.0.0.1:8000")]
+        orbit_internal: std::net::SocketAddr,
+        /// The sandbox service bearer (`broker.py service-token`), not the broker key.
+        #[arg(long)]
+        service_token_file: PathBuf,
+        /// The broker's call files.
+        #[arg(long, default_value = "/run/orbit-sandbox/egress")]
+        calls_dir: PathBuf,
+        #[arg(long, default_value_t = 100 * 1024 * 1024)]
+        call_max_bytes: u64,
+        #[arg(long, default_value_t = 20)]
+        call_max_connections: usize,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -278,6 +299,53 @@ pub async fn run(cli: Cli, env: BTreeMap<String, String>) -> Result<String, CliE
         Command::Improvements { command } => improvements(config()?, command).await,
         Command::Drive { command } => drive(config()?, command).await,
         Command::Pages { command } => pages(config()?, command).await,
+        Command::EgressProxy {
+            listen,
+            orbit_url,
+            orbit_internal,
+            service_token_file,
+            calls_dir,
+            call_max_bytes,
+            call_max_connections,
+        } => {
+            let service_token = std::fs::read_to_string(service_token_file)
+                .map_err(|error| {
+                    CliError::Operation(format!("{}: {error}", service_token_file.display()))
+                })?
+                .trim()
+                .to_owned();
+            if service_token.len() < 32 {
+                return Err(CliError::Operation(
+                    "the service token is too short".to_owned(),
+                ));
+            }
+            let listener = tokio::net::TcpListener::bind(*listen)
+                .await
+                .map_err(operation)?;
+            let shutdown = CancellationToken::new();
+            let signal = shutdown.clone();
+            tokio::spawn(async move {
+                shutdown_signal().await;
+                signal.cancel();
+            });
+            tracing::info!(%listen, "egress proxy listening");
+            orbit_server::agent::egress_proxy::serve(
+                orbit_server::agent::egress_proxy::ProxyConfig {
+                    orbit_url: orbit_url.trim_end_matches('/').to_owned(),
+                    service_token,
+                    calls_dir: calls_dir.clone(),
+                    orbit_internal: *orbit_internal,
+                    call_max_bytes: *call_max_bytes,
+                    call_max_connections: *call_max_connections,
+                },
+                std::sync::Arc::new(orbit_server::agent::egress_proxy::SystemDialer),
+                listener,
+                shutdown,
+            )
+            .await
+            .map_err(operation)?;
+            Ok(String::new())
+        }
     }
 }
 

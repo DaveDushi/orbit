@@ -6,6 +6,7 @@
 pub(crate) mod bot;
 pub(crate) mod credentials;
 mod drive;
+pub mod egress_proxy;
 mod graphql;
 pub mod inputs;
 pub(crate) mod integrations;
