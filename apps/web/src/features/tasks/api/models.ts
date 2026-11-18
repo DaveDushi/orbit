@@ -162,12 +162,16 @@ const ACTIVITY_TEXT: Record<string, string> = {
   'backup.item_restored': 'restored from a backup',
 }
 
-/** "Assigned by rule: bug → Raymond" for a label rule's assignment. */
+/**
+ * "Assigned by rule: bug → Raymond" for a label rule's assignment, "Unassigned by rule: …" when GitHub
+ * removed the label.
+ */
 function ruleActivity(action: string, metadata: Record<string, unknown>): Pick<TaskActivity, 'text' | 'system'> | null {
-  if (action !== 'task.assigned_by_rule') return null
+  const verb = action === 'task.assigned_by_rule' ? 'Assigned' : action === 'task.unassigned_by_rule' ? 'Unassigned' : null
+  if (!verb) return null
   const label = typeof metadata.label_name === 'string' ? metadata.label_name : 'a label'
   const person = typeof metadata.assignee_name === 'string' ? metadata.assignee_name : 'someone'
-  return { text: `Assigned by rule: ${label} → ${person}`, system: true }
+  return { text: `${verb} by rule: ${label} → ${person}`, system: true }
 }
 
 /**

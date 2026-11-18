@@ -1,5 +1,8 @@
-//! Label rules: "if a task has label X, assign person Y", per project. A rule only adds
-//! assignees: it never removes one, and a person already assigned gets nothing. With the
+//! Label rules: "if a task has label X, assign person Y", per project. A rule adds assignees, and a
+//! person already assigned gets nothing. The only removal: when GitHub takes a label off a synced
+//! task, the people that label's rule added (`task_rule_assignees`) leave too
+//! ([`unassign_removed_label`]), unless a label still on the task assigns them as well. A hand-set
+//! assignee is never removed (a person removed by hand and set again counts as hand-set). With the
 //! project's owner switch on, a label `owner:<name>` also assigns the member whose handle (the
 //! part of the email before `@`) or name is `<name>`, without regard to case. A rule of an
 //! `owner:` label is the name map entry of `<name>` (Rules card → owner names): it wins over that
@@ -98,12 +101,27 @@ async fn apply_label_rules(
     task_id: Id,
     label_id: &str,
 ) -> Result<(), TaskError> {
+    let Some((label_name, people)) = rule_people(tx, write.workspace_id, label_id).await? else {
+        return Ok(());
+    };
+    for user_id in people {
+        assign_by_rule(tx, write, task_id, label_id, &label_name, &user_id).await?;
+    }
+    Ok(())
+}
+
+/// The label's name and the people that its rules assign; `None` for a missing label.
+async fn rule_people(
+    tx: &mut Transaction<'_, Any>,
+    workspace_id: Id,
+    label_id: &str,
+) -> Result<Option<(String, Vec<String>)>, TaskError> {
     let Some(label) = sqlx::query("SELECT name, project_id FROM labels WHERE id = $1")
         .bind(label_id)
         .fetch_optional(&mut **tx)
         .await?
     else {
-        return Ok(());
+        return Ok(None);
     };
     let label_name: String = label.get("name");
     let project_id: String = label.get("project_id");
@@ -123,12 +141,101 @@ async fn apply_label_rules(
     if rules.is_empty()
         && let Some(name) = owner_name(&label_name)
         && owner_labels_in_tx(tx, &project_id).await?
-        && let Some(user_id) = owner_member(tx, write.workspace_id, name).await?
+        && let Some(user_id) = owner_member(tx, workspace_id, name).await?
     {
         people.push(user_id);
     }
+    Ok(Some((label_name, people)))
+}
+
+/// After GitHub took `label_id` off the task: removes the people that the label's rules
+/// assigned (`task_rule_assignees`). A person that a label still on the task assigns too stays,
+/// now on that label's account; a hand-set assignee has no row and stays.
+pub(super) async fn unassign_removed_label(
+    tx: &mut Transaction<'_, Any>,
+    write: &LabelWrite<'_>,
+    task_id: Id,
+    label_id: &str,
+) -> Result<(), TaskError> {
+    let people: Vec<String> = sqlx::query_scalar(
+        "SELECT user_id FROM task_rule_assignees WHERE task_id = $1 AND label_id = $2 ORDER BY user_id",
+    )
+    .bind(task_id.to_string())
+    .bind(label_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    if people.is_empty() {
+        return Ok(());
+    }
+    let labels: Vec<String> = sqlx::query_scalar(
+        "SELECT label_id FROM task_labels WHERE task_id = $1 AND label_id <> $2 ORDER BY label_id",
+    )
+    .bind(task_id.to_string())
+    .bind(label_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    let mut still_assigning = Vec::new();
+    for other in labels {
+        if let Some((_, assigned)) = rule_people(tx, write.workspace_id, &other).await? {
+            still_assigning.push((other, assigned));
+        }
+    }
+    let label_name: String = sqlx::query_scalar("SELECT name FROM labels WHERE id = $1")
+        .bind(label_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .unwrap_or_default();
     for user_id in people {
-        assign_by_rule(tx, write, task_id, &label_name, &user_id).await?;
+        if let Some((other, _)) = still_assigning
+            .iter()
+            .find(|(_, assigned)| assigned.contains(&user_id))
+        {
+            sqlx::query(
+                "UPDATE task_rule_assignees SET label_id = $1 WHERE task_id = $2 AND user_id = $3",
+            )
+            .bind(other)
+            .bind(task_id.to_string())
+            .bind(&user_id)
+            .execute(&mut **tx)
+            .await?;
+            continue;
+        }
+        sqlx::query("DELETE FROM task_rule_assignees WHERE task_id = $1 AND user_id = $2")
+            .bind(task_id.to_string())
+            .bind(&user_id)
+            .execute(&mut **tx)
+            .await?;
+        let removed = sqlx::query("DELETE FROM task_assignees WHERE task_id = $1 AND user_id = $2")
+            .bind(task_id.to_string())
+            .bind(&user_id)
+            .execute(&mut **tx)
+            .await?;
+        if removed.rows_affected() == 0 {
+            continue;
+        }
+        let assignee_name: String =
+            sqlx::query_scalar("SELECT display_name FROM users WHERE id = $1")
+                .bind(&user_id)
+                .fetch_one(&mut **tx)
+                .await?;
+        // As for the assignment, the rule is the actor: "Unassigned by rule: label → person".
+        audit::record(
+            tx,
+            write.workspace_id,
+            None,
+            "task.unassigned_by_rule",
+            AuditOutcome::Success,
+            "task",
+            Some(task_id),
+            write.request_id,
+            json!({
+                "label_name": label_name,
+                "assignee_id": user_id,
+                "assignee_name": assignee_name,
+            }),
+            write.now,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -166,6 +273,7 @@ async fn assign_by_rule(
     tx: &mut Transaction<'_, Any>,
     write: &LabelWrite<'_>,
     task_id: Id,
+    label_id: &str,
     label_name: &str,
     user_id: &str,
 ) -> Result<(), TaskError> {
@@ -194,6 +302,14 @@ async fn assign_by_rule(
     if added.rows_affected() == 0 {
         return Ok(());
     }
+    sqlx::query(
+        "INSERT INTO task_rule_assignees (task_id, user_id, label_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+    )
+    .bind(task_id.to_string())
+    .bind(user_id)
+    .bind(label_id)
+    .execute(&mut **tx)
+    .await?;
     let user: Id = user_id
         .parse()
         .map_err(|_| TaskError::Invalid { field: "user_id" })?;

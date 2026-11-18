@@ -519,7 +519,7 @@ const listLabelRules = defineTool({
 
 const createLabelRule = defineTool({
 	name: "create_label_rule",
-	description: "Add a label rule to a project: every task that gets the label (when it is created with it or when the label is added later) is assigned to the person too, and so are the open tasks that already have the label. Rules only add assignees. Only workspace owners and admins may do this.",
+	description: "Add a label rule to a project: every task that gets the label (when it is created with it or when the label is added later) is assigned to the person too, and so are the open tasks that already have the label. When GitHub removes the label from a synced task, the person that the rule added is removed again (not people assigned by hand). Only workspace owners and admins may do this.",
 	parameters: Type.Object({
 		project_id: Type.String({ description: "Project id, key or name" }),
 		label: Type.String({ description: "Name of a label of the project" }),

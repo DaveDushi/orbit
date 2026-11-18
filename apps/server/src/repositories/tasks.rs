@@ -4822,6 +4822,14 @@ async fn replace_assignees(
         .execute(&mut **tx)
         .await?;
     }
+    // A person removed by hand is no longer a rule's: set again by hand, they stay.
+    sqlx::query(
+        "DELETE FROM task_rule_assignees WHERE task_id = $1 \
+         AND user_id NOT IN (SELECT user_id FROM task_assignees WHERE task_id = $1)",
+    )
+    .bind(task_id.to_string())
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }
 
@@ -4861,8 +4869,9 @@ async fn replace_labels(
 
 /// Gives the task the GitHub labels in `labels` (one way, GitHub → Orbit). A name matches a project
 /// label case-insensitively; a missing label is created with the GitHub color. Only labels the sync
-/// added (`github_task_labels`) are removed when GitHub drops them; a label the task already had
-/// stays the person's. Returns the label ids added and removed.
+/// added (`github_task_labels`) are removed when GitHub drops them, with the assignees that their
+/// rules added; a label the task already had stays the person's. Returns the label ids added and
+/// removed.
 #[allow(clippy::too_many_arguments)]
 async fn sync_github_labels_in_tx(
     tx: &mut Transaction<'_, Any>,
@@ -4952,6 +4961,7 @@ async fn sync_github_labels_in_tx(
             .bind(id)
             .execute(&mut **tx)
             .await?;
+        label_rules::unassign_removed_label(tx, &write, task_id, id).await?;
         if current.contains(id) {
             removed.push(id.clone());
         }

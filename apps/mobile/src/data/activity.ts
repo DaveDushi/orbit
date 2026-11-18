@@ -163,10 +163,11 @@ function changeRows(metadata: Record<string, unknown>, context: ActivityContext)
   })
 }
 
-/** "Assigned by rule: bug → Raymond" for a label rule's assignment, as on the web. */
+/** "Assigned by rule: bug → Raymond" for a label rule's assignment ("Unassigned by rule: …" after GitHub removed the label), as on the web. */
 function ruleText(action: string, metadata: Record<string, unknown>): string | null {
-  if (action !== 'task.assigned_by_rule') return null
-  return `Assigned by rule: ${string(metadata.label_name) ?? 'a label'} → ${string(metadata.assignee_name) ?? 'someone'}`
+  const verb = action === 'task.assigned_by_rule' ? 'Assigned' : action === 'task.unassigned_by_rule' ? 'Unassigned' : null
+  if (!verb) return null
+  return `${verb} by rule: ${string(metadata.label_name) ?? 'a label'} → ${string(metadata.assignee_name) ?? 'someone'}`
 }
 
 const ACTIVITY_TEXT: Record<string, string> = {

@@ -15,7 +15,7 @@ import { SelectField } from '../settings/Fields'
 import { Note, RowText, SettingsCard, SettingsRow, Toggle } from '../settings/Shell'
 import { LabelPill } from './pickers'
 
-const DESCRIPTION = 'Assign people automatically when a task gets a label. Rules only add assignees; they never remove one.'
+const DESCRIPTION = 'Assign people automatically when a task gets a label. When GitHub removes the label, the person its rule added is removed too; people assigned by hand stay.'
 
 /** The web's project Rules card: label → person rules, on/off, edit and delete, and the owner:<name> switch and map. */
 export function ProjectRulesCard({ projectId }: { projectId: string }) {

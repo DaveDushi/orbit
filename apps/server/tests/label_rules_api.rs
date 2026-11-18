@@ -603,6 +603,120 @@ async fn github_sync_runs_the_rules_on_create_and_on_new_labels() {
     );
 }
 
+/// Syncs GitHub issue 7 with `labels` and returns the task.
+async fn sync_issue(fixture: &Fixture, labels: &[&str]) -> Value {
+    let task_id = TaskRepository::new((*fixture.database).clone())
+        .sync_github_work_item(
+            fixture.workspace_id.parse().unwrap(),
+            fixture.owner_id,
+            fixture.github_item(7, labels),
+            "github-test",
+            TimestampMillis::now(),
+        )
+        .await
+        .unwrap();
+    fixture.get_task(&task_id.to_string()).await
+}
+
+#[tokio::test]
+async fn a_label_removed_on_github_unassigns_only_the_person_its_rule_added() {
+    let fixture = Fixture::new().await;
+    let raymond = fixture
+        .person("raymond@example.com", "Raymond", "member")
+        .await;
+    let erol = fixture.person("erol@example.com", "Erol", "member").await;
+    let bug = fixture.label("bug").await;
+    fixture.rule(&bug, raymond.id).await;
+
+    // The rule adds Raymond; Erol is set by hand, and keeping Raymond in a hand edit keeps him
+    // the rule's.
+    let task = sync_issue(&fixture, &["bug"]).await;
+    assert_eq!(assignees(&task), ids(&[raymond.id]));
+    let both = [raymond.id.to_string(), erol.id.to_string()];
+    let task = fixture.update(&task, json!({ "assignee_ids": both })).await;
+    assert_eq!(assignees(&task), ids(&[raymond.id, erol.id]));
+
+    let task = sync_issue(&fixture, &[]).await;
+    assert_eq!(assignees(&task), ids(&[erol.id]));
+    let activity = fixture.activity(task["id"].as_str().unwrap()).await;
+    let event = activity
+        .iter()
+        .find(|event| event["action"] == "task.unassigned_by_rule")
+        .unwrap();
+    assert_eq!(event["metadata"]["label_name"], "bug");
+    assert_eq!(event["metadata"]["assignee_name"], "Raymond");
+
+    // Back on GitHub, the label assigns Raymond again.
+    let task = sync_issue(&fixture, &["bug"]).await;
+    assert_eq!(assignees(&task), ids(&[raymond.id, erol.id]));
+}
+
+#[tokio::test]
+async fn a_hand_set_assignee_stays_when_github_removes_the_label() {
+    let fixture = Fixture::new().await;
+    let raymond = fixture
+        .person("raymond@example.com", "Raymond", "member")
+        .await;
+    let bug = fixture.label("bug").await;
+    fixture.rule(&bug, raymond.id).await;
+
+    // Assigned by hand before the label: the rule added nobody.
+    let task = sync_issue(&fixture, &[]).await;
+    fixture
+        .update(&task, json!({ "assignee_ids": [raymond.id.to_string()] }))
+        .await;
+    sync_issue(&fixture, &["bug"]).await;
+    let task = sync_issue(&fixture, &[]).await;
+    assert_eq!(assignees(&task), ids(&[raymond.id]));
+
+    // Assigned by the rule, then removed and set again by hand: now the person's.
+    let task = fixture.update(&task, json!({ "assignee_ids": [] })).await;
+    assert!(assignees(&task).is_empty());
+    let task = sync_issue(&fixture, &["bug"]).await;
+    assert_eq!(assignees(&task), ids(&[raymond.id]));
+    let task = fixture.update(&task, json!({ "assignee_ids": [] })).await;
+    fixture
+        .update(&task, json!({ "assignee_ids": [raymond.id.to_string()] }))
+        .await;
+    let task = sync_issue(&fixture, &[]).await;
+    assert_eq!(assignees(&task), ids(&[raymond.id]));
+}
+
+#[tokio::test]
+async fn a_person_stays_while_another_label_on_the_issue_assigns_them() {
+    let fixture = Fixture::new().await;
+    let raymond = fixture
+        .person("raymond@example.com", "Raymond", "member")
+        .await;
+    let needs_input = fixture.label("needs-input:raymond").await;
+    fixture.rule(&needs_input, raymond.id).await;
+    fixture
+        .call(
+            "PUT",
+            &format!("/projects/{}/label-rule-settings", fixture.project_id),
+            &fixture.owner_cookie,
+            Some(json!({ "owner_labels": true })),
+        )
+        .await;
+
+    // owner:raymond (handle match) assigns him first; needs-input:raymond also names him.
+    let task = sync_issue(&fixture, &["owner:raymond", "needs-input:raymond"]).await;
+    assert_eq!(assignees(&task), ids(&[raymond.id]));
+    let task = sync_issue(&fixture, &["needs-input:raymond"]).await;
+    assert_eq!(assignees(&task), ids(&[raymond.id]));
+    // The last label that assigns him goes: so does he.
+    let task = sync_issue(&fixture, &[]).await;
+    assert!(assignees(&task).is_empty());
+
+    // Same with the labels the other way round.
+    let task = sync_issue(&fixture, &["needs-input:raymond", "owner:raymond"]).await;
+    assert_eq!(assignees(&task), ids(&[raymond.id]));
+    let task = sync_issue(&fixture, &["owner:raymond"]).await;
+    assert_eq!(assignees(&task), ids(&[raymond.id]));
+    let task = sync_issue(&fixture, &[]).await;
+    assert!(assignees(&task).is_empty());
+}
+
 #[tokio::test]
 async fn discord_tasks_run_the_rules_of_the_discord_label() {
     let fixture = Fixture::new().await;
