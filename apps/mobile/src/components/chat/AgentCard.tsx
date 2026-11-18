@@ -2,7 +2,7 @@ import { catalog, type UiSpec } from '@agent/ui-catalog'
 import { defineRegistry, JSONUIProvider, Renderer } from '@json-render/react-native'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { router } from 'expo-router'
-import { createContext, use, useState } from 'react'
+import { createContext, use, useState, type ReactNode } from 'react'
 import { Pressable, ScrollView, View } from 'react-native'
 import Svg, { Circle, G, Line, Path, Polyline, Text as SvgText } from 'react-native-svg'
 
@@ -308,6 +308,21 @@ function CardForm({ props }: { props: { fields: FormField[]; submit_label?: stri
   )
 }
 
+/** Closed until tapped, as the web's `<details>`: raw data the reader rarely needs. */
+function Details({ summary, children }: { summary: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false)
+  const { colors } = useTheme()
+  return (
+    <View className="rounded-md border border-border">
+      <Pressable accessibilityRole="button" accessibilityState={{ expanded: open }} onPress={() => setOpen(!open)} className="flex-row items-center gap-1.5 px-2.5 py-2 active:bg-muted">
+        <Icon name={open ? 'chevronDown' : 'chevronRight'} size={14} color={colors.mutedForeground} />
+        <Text className="text-[13px] leading-[18px] text-muted-foreground">{summary}</Text>
+      </Pressable>
+      {open ? <View className="gap-2 border-t border-border px-2.5 py-2">{children}</View> : null}
+    </View>
+  )
+}
+
 const TONES = { default: 'text-foreground/85', muted: 'text-muted-foreground', success: 'text-green-600', warning: 'text-amber-600', danger: 'text-destructive' } as const
 
 const { registry } = defineRegistry(catalog, {
@@ -323,6 +338,7 @@ const { registry } = defineRegistry(catalog, {
         {children}
       </View>
     ),
+    Details: ({ props, children }) => <Details summary={props.summary}>{children}</Details>,
     Stack: ({ props, children }) => <View className={props.direction === 'row' ? 'flex-row flex-wrap items-center gap-2' : 'gap-2'}>{children}</View>,
     Text: ({ props }) => <Text className={`text-[14px] leading-[21px] ${TONES[props.tone ?? 'default']}`}>{markdownToText(props.text)}</Text>,
     Table: ({ props }) => (

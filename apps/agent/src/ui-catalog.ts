@@ -53,6 +53,11 @@ export const catalog = defineCatalog(schema, {
 			slots: ["default"],
 			description: 'Lays out its children in a "column" (default) or a "row" (wraps on small screens).',
 		},
+		Details: {
+			props: z.object({ summary: text(100) }).strict(),
+			slots: ["default"],
+			description: "A section that stays closed until the reader opens it; its summary is the line they click. For raw data the reader rarely needs.",
+		},
 		Text: {
 			props: z.object({ text: z.string().min(1).max(2000), tone: z.enum(["default", "muted", "success", "warning", "danger"]).optional() }).strict(),
 			slots: [],
@@ -135,7 +140,7 @@ export const catalog = defineCatalog(schema, {
 	},
 });
 
-const PARENTS = new Set(["Card", "Stack"]);
+const PARENTS = new Set(["Card", "Stack", "Details"]);
 
 /** json-render reads `{"$state": …}` and the like as bindings: a card has none. */
 function hasDollarKey(value: unknown): boolean {

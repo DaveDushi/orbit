@@ -66,6 +66,8 @@ export type ThreadState = {
 	/** Set by `ask_teammate`: the run ends and the thread waits for an answer. */
 	waitingFor: string | null;
 	toolCalls: number;
+	/** Content the current run's whole-file reads parsed, in characters (`MAX_RUN_READ_BYTES`, ./files.ts). */
+	readBytes?: number;
 	/** The agent's name and the workspace's team instructions, read at the start of the current run. */
 	agentName?: string;
 	teamInstructions?: string;

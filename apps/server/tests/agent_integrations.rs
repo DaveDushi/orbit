@@ -2387,3 +2387,549 @@ async fn owners_and_admins_get_one_email_when_a_sign_in_ends_within_14_days() {
             == 2
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// Jobs: one approval for many writes (`agent::jobs`).
+
+const JOB_CODE: &str =
+    "for (const batch of chunks(records(), 100)) await tools.use_integration(batch);";
+
+/// A POST to a job route as the agent session `bearer`.
+async fn job_route(
+    fixture: &Fixture,
+    bearer: &str,
+    rest: &str,
+    body: Value,
+) -> (StatusCode, Value) {
+    fixture
+        .request(
+            "POST",
+            &format!(
+                "/api/v1/workspaces/{}/agent-tools/jobs{rest}",
+                fixture.workspace_id
+            ),
+            ("authorization", bearer),
+            Some(body),
+        )
+        .await
+}
+
+/// The import job of the bug report: customers to the shop's GraphQL path, in batches.
+fn import_plan((conversation, root): (&str, &str), max_calls: i64) -> Value {
+    json!({
+        "conversation_id": conversation,
+        "root_message_id": root,
+        "title": "Import 2,000 customers into Shop",
+        "summary": "Create every customer of customers.csv, 100 per request.",
+        "tool": "shop__api_request",
+        "method": "POST",
+        "path": "/graphql",
+        "mutations": ["customerCreate"],
+        "max_calls": max_calls,
+        "records": 2000,
+        "mapping": [
+            { "source": "Email", "target": "email" },
+            { "source": "Accepts Email Marketing", "target": "emailMarketingConsent (yes → SUBSCRIBED)" },
+        ],
+        "left_out": ["Notes: free text, not a Shopify field"],
+        "samples": ["ann@example.com, SUBSCRIBED <@everyone>"],
+        "code": JOB_CODE,
+    })
+}
+
+/// A write of 100 customers, as one GraphQL request with aliases.
+fn batch(index: usize, mutation: &str) -> Value {
+    let fields = (0..100)
+        .map(|n| format!("c{n}: {mutation}(input: $c{n}) {{ userErrors {{ message }} }}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    json!({
+        "method": "POST",
+        "path": "/graphql",
+        "body": { "query": format!("mutation Batch{index} {{ {fields} }}"), "variables": {} },
+    })
+}
+
+/// A call of `tool` with `arguments`, naming the job `job` and the hash of the code that runs.
+async fn job_call(
+    fixture: &Fixture,
+    bearer: &str,
+    (conversation, root): (&str, &str),
+    (tool, arguments): (&str, Value),
+    job: (&str, &str),
+) -> Value {
+    let (status, value) = fixture
+        .request(
+            "POST",
+            &format!(
+                "/api/v1/workspaces/{}/agent-tools/call",
+                fixture.workspace_id
+            ),
+            ("authorization", bearer),
+            Some(json!({
+                "tool": tool,
+                "arguments": arguments,
+                "conversation_id": conversation,
+                "root_message_id": root,
+                "job": { "id": job.0, "script_hash": job.1 },
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    value
+}
+
+async fn shop(fixture: &Fixture, name: &str, api: &str) -> String {
+    let (status, created) = fixture
+        .admin(
+            &fixture.owner,
+            "POST",
+            "",
+            Some(json!({
+                "kind": "http",
+                "name": name,
+                "url": api,
+                "auth_header": "X-Api-Key",
+                "secret": API_KEY,
+                "allowed_methods": ["GET", "POST", "PUT"],
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    created["id"].as_str().unwrap().to_owned()
+}
+
+/// Plans the import, says yes, and starts it: the job's id and its script's hash.
+async fn approved_import(
+    fixture: &Fixture,
+    bearer: &str,
+    thread: (&str, &str),
+    max_calls: i64,
+) -> (String, String) {
+    let (status, asked) = job_route(fixture, bearer, "", import_plan(thread, max_calls)).await;
+    assert_eq!(status, StatusCode::OK, "{asked}");
+    assert_eq!(asked["status"], "approval_required", "{asked}");
+    let job_id = asked["job_id"].as_str().unwrap().to_owned();
+    fixture
+        .send(&fixture.owner, thread.0, "yes", Some(thread.1))
+        .await;
+    let start = json!({ "conversation_id": thread.0, "root_message_id": thread.1 });
+    let (status, started) = job_route(fixture, bearer, &format!("/{job_id}/start"), start).await;
+    assert_eq!(status, StatusCode::OK, "{started}");
+    assert_eq!(started["status"], "ok", "{started}");
+    assert_eq!(
+        started["job"]["code"], JOB_CODE,
+        "the stored script, not the model's"
+    );
+    (
+        job_id,
+        started["job"]["script_hash"].as_str().unwrap().to_owned(),
+    )
+}
+
+async fn approvals(fixture: &Fixture) -> i64 {
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agent_integration_approvals")
+        .fetch_one(fixture.database.pool())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_2000_row_import_needs_exactly_one_approval() {
+    let fixture = Fixture::new(&["127.0.0.1"]).await;
+    let (api, seen) = fake_api().await;
+    shop(&fixture, "Shop", &api).await;
+    let (general, root, bearer) = fixture.run(&fixture.owner).await;
+    let thread = (general.as_str(), root.as_str());
+
+    // The question is Orbit's: the plan's facts, the mapping, and no mention from the data.
+    let (_, asked) = job_route(&fixture, &bearer, "", import_plan(thread, 20)).await;
+    assert_eq!(asked["status"], "approval_required", "{asked}");
+    let question = asked["action"].as_str().unwrap();
+    for part in [
+        "**Import 2,000 customers into Shop**",
+        "- **Service:** Shop, POST /graphql, only the GraphQL mutations customerCreate",
+        "2,000 records, at most 20 calls",
+        "Accepts Email Marketing → emailMarketingConsent (yes → SUBSCRIBED)",
+        "- **Left out:** Notes",
+    ] {
+        assert!(question.contains(part), "{part} in {question}");
+    }
+    assert!(!question.contains("<@everyone>"), "{question}");
+    assert!(asked["details"].as_str().unwrap().contains(JOB_CODE));
+    // Before the yes, the job's id runs nothing.
+    let early = job_call(
+        &fixture,
+        &bearer,
+        thread,
+        ("shop__api_request", batch(0, "customerCreate")),
+        (asked["job_id"].as_str().unwrap(), "any"),
+    )
+    .await;
+    assert_eq!(early["status"], "approval_required", "{early}");
+
+    let (job_id, script_hash) = approved_import(&fixture, &bearer, thread, 20).await;
+    for index in 0..20 {
+        let done = job_call(
+            &fixture,
+            &bearer,
+            thread,
+            ("shop__api_request", batch(index, "customerCreate")),
+            (&job_id, &script_hash),
+        )
+        .await;
+        assert_eq!(done["status"], "ok", "batch {index}: {done}");
+    }
+    assert_eq!(
+        calls_of(&seen, "POST").len(),
+        20,
+        "2,000 customers in 20 calls"
+    );
+    // The job's approval and the one per-request question asked before the yes: no more.
+    assert_eq!(approvals(&fixture).await, 2);
+    let over = job_call(
+        &fixture,
+        &bearer,
+        thread,
+        ("shop__api_request", batch(20, "customerCreate")),
+        (&job_id, &script_hash),
+    )
+    .await;
+    assert_eq!(over["status"], "refused", "{over}");
+    assert!(over["detail"].as_str().unwrap().contains("all of its 20"));
+    assert_eq!(calls_of(&seen, "POST").len(), 20);
+
+    // Every call is in the audit log with its job.
+    let logged = sqlx::query_scalar::<_, String>(
+        "SELECT metadata_json FROM audit_events WHERE action = 'agent_integration.call'",
+    )
+    .fetch_all(fixture.database.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        logged
+            .iter()
+            .filter(|line| line.contains(&format!("\"job_id\":\"{job_id}\"")))
+            .count(),
+        20
+    );
+    let (_, finished) = job_route(
+        &fixture,
+        &bearer,
+        &format!("/{job_id}/finish"),
+        json!({ "status": "done", "done": 2000, "total": 2000 }),
+    )
+    .await;
+    assert_eq!(finished["calls"], 20, "{finished}");
+}
+
+#[tokio::test]
+async fn a_job_runs_only_its_own_writes_until_it_ends() {
+    let fixture = Fixture::new(&["127.0.0.1"]).await;
+    let (api, seen) = fake_api().await;
+    shop(&fixture, "Shop", &api).await;
+    shop(&fixture, "Other", &api).await;
+    let member = fixture.add_user("member", Some("member")).await;
+    let (general, root, bearer) = fixture.run(&fixture.owner).await;
+    let thread = (general.as_str(), root.as_str());
+    let (job_id, hash) = approved_import(&fixture, &bearer, thread, 5).await;
+    let job = (job_id.as_str(), hash.as_str());
+    let create = || batch(0, "customerCreate");
+    let posts = || calls_of(&seen, "POST").len();
+
+    // Outside the job's scope: asked again, nothing sent.
+    let mut outside = vec![
+        ("other integration", "other__api_request", create()),
+        (
+            "other path",
+            "shop__api_request",
+            json!({ "method": "POST", "path": "/orders", "body": create()["body"] }),
+        ),
+        (
+            "other method",
+            "shop__api_request",
+            json!({ "method": "PUT", "path": "/graphql", "body": create()["body"] }),
+        ),
+        (
+            "other mutation",
+            "shop__api_request",
+            batch(0, "customerDelete"),
+        ),
+        (
+            "a query string",
+            "shop__api_request",
+            json!({ "method": "POST", "path": "/graphql", "query": { "x": "1" }, "body": create()["body"] }),
+        ),
+        (
+            "not GraphQL",
+            "shop__api_request",
+            json!({ "method": "POST", "path": "/graphql", "body": { "customer": {} } }),
+        ),
+    ];
+    for (why, tool, arguments) in outside.drain(..) {
+        let answer = job_call(&fixture, &bearer, thread, (tool, arguments), job).await;
+        assert_eq!(answer["status"], "approval_required", "{why}: {answer}");
+    }
+    // Another thread of the same driver, and another driver.
+    let (other_general, other_root, other_bearer) = fixture.run(&fixture.owner).await;
+    let answer = job_call(
+        &fixture,
+        &other_bearer,
+        (&other_general, &other_root),
+        ("shop__api_request", create()),
+        job,
+    )
+    .await;
+    assert_eq!(
+        answer["status"], "approval_required",
+        "other thread: {answer}"
+    );
+    let (member_general, member_root, member_bearer) = fixture.run(&member).await;
+    let answer = job_call(
+        &fixture,
+        &member_bearer,
+        (&member_general, &member_root),
+        ("shop__api_request", create()),
+        job,
+    )
+    .await;
+    assert_eq!(
+        answer["status"], "approval_required",
+        "other driver: {answer}"
+    );
+    let start = json!({ "conversation_id": member_general, "root_message_id": member_root });
+    let (status, _) = job_route(&fixture, &member_bearer, &format!("/{job_id}/start"), start).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "another driver cannot start the job"
+    );
+    assert_eq!(posts(), 0);
+
+    // A changed script is refused.
+    let answer = job_call(
+        &fixture,
+        &bearer,
+        thread,
+        ("shop__api_request", create()),
+        (&job_id, "0000"),
+    )
+    .await;
+    assert_eq!(answer["status"], "refused", "changed script: {answer}");
+    // Inside the scope it runs; a call without the job still asks, as always.
+    let answer = job_call(
+        &fixture,
+        &bearer,
+        thread,
+        ("shop__api_request", create()),
+        job,
+    )
+    .await;
+    assert_eq!(answer["status"], "ok", "{answer}");
+    let (_, asked) = fixture
+        .call(&bearer, thread, "shop__api_request", create())
+        .await;
+    assert_eq!(asked["status"], "approval_required", "per-request: {asked}");
+    assert_eq!(posts(), 1);
+
+    // Expired: refused.
+    sqlx::query("UPDATE agent_jobs SET expires_at = $1 WHERE id = $2")
+        .bind(TimestampMillis::now().as_millis() - 1)
+        .bind(&job_id)
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    let answer = job_call(
+        &fixture,
+        &bearer,
+        thread,
+        ("shop__api_request", create()),
+        job,
+    )
+    .await;
+    assert_eq!(answer["status"], "refused", "expired: {answer}");
+    assert!(
+        answer["detail"]
+            .as_str()
+            .unwrap()
+            .contains("ran out of time")
+    );
+
+    // Stopped: the driver writes stop in the thread.
+    let (job_id, hash) = approved_import(&fixture, &bearer, thread, 5).await;
+    let job = (job_id.as_str(), hash.as_str());
+    let answer = job_call(
+        &fixture,
+        &bearer,
+        thread,
+        ("shop__api_request", create()),
+        job,
+    )
+    .await;
+    assert_eq!(answer["status"], "ok", "{answer}");
+    fixture
+        .send(&fixture.owner, &general, "stop", Some(&root))
+        .await;
+    let answer = job_call(
+        &fixture,
+        &bearer,
+        thread,
+        ("shop__api_request", create()),
+        job,
+    )
+    .await;
+    assert_eq!(answer["status"], "refused", "stopped: {answer}");
+    assert!(answer["detail"].as_str().unwrap().contains("stopped"));
+    let reason = sqlx::query_scalar::<_, String>("SELECT end_reason FROM agent_jobs WHERE id = $1")
+        .bind(&job_id)
+        .fetch_one(fixture.database.pool())
+        .await
+        .unwrap();
+    assert_eq!(reason, "stopped");
+    assert_eq!(posts(), 2);
+
+    // Finished: refused, and it cannot start again.
+    let (job_id, hash) = approved_import(&fixture, &bearer, thread, 5).await;
+    let (_, _) = job_route(
+        &fixture,
+        &bearer,
+        &format!("/{job_id}/finish"),
+        json!({ "status": "failed", "done": 0, "total": 2000, "error": "boom" }),
+    )
+    .await;
+    let answer = job_call(
+        &fixture,
+        &bearer,
+        thread,
+        ("shop__api_request", create()),
+        (&job_id, &hash),
+    )
+    .await;
+    assert_eq!(answer["status"], "refused", "finished: {answer}");
+    let start = json!({ "conversation_id": general, "root_message_id": root });
+    let (_, again) = job_route(&fixture, &bearer, &format!("/{job_id}/start"), start).await;
+    assert_eq!(again["status"], "refused", "{again}");
+    assert_eq!(posts(), 2);
+}
+
+#[tokio::test]
+async fn a_job_plan_is_checked_before_anyone_is_asked() {
+    let fixture = Fixture::new(&["127.0.0.1"]).await;
+    let (api, _) = fake_api().await;
+    let id = shop(&fixture, "Shop", &api).await;
+    // The GraphQL path is the integration's: a job there must name its mutations.
+    let (status, _) = fixture
+        .admin(
+            &fixture.owner,
+            "PATCH",
+            &format!("/{id}"),
+            Some(json!({ "graphql_read_path": "/graphql" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (general, root, bearer) = fixture.run(&fixture.owner).await;
+    let thread = (general.as_str(), root.as_str());
+    let plan = import_plan(thread, 20);
+    let with = |key: &str, value: Value| {
+        let mut changed = plan.clone();
+        changed[key] = value;
+        changed
+    };
+    for (why, body) in [
+        (
+            "no mutations on the GraphQL path",
+            with("mutations", json!([])),
+        ),
+        ("a read", with("method", json!("GET"))),
+        (
+            "a method the API does not allow",
+            with("method", json!("DELETE")),
+        ),
+        (
+            "a path outside the base URL",
+            with("path", json!("/../admin")),
+        ),
+        (
+            "an unknown integration",
+            with("tool", json!("nope__api_request")),
+        ),
+        ("too many calls", with("max_calls", json!(1001))),
+        ("no script", with("code", json!(" "))),
+        ("four samples", with("samples", json!(["a", "b", "c", "d"]))),
+    ] {
+        let (status, answer) = job_route(&fixture, &bearer, "", body).await;
+        assert_eq!(status, StatusCode::OK, "{why}: {answer}");
+        assert_eq!(answer["status"], "refused", "{why}: {answer}");
+    }
+    assert_eq!(approvals(&fixture).await, 0, "nobody was asked");
+}
+
+#[tokio::test]
+async fn an_mcp_write_tool_runs_inside_its_job() {
+    let fixture = Fixture::new(&["127.0.0.1"]).await;
+    let (mcp, seen) = fake_mcp().await;
+    let (_, created) = fixture
+        .admin(
+            &fixture.owner,
+            "POST",
+            "",
+            Some(json!({ "kind": "mcp", "name": "Cloudflare", "url": mcp, "secret": API_KEY })),
+        )
+        .await;
+    let id = created["id"].as_str().unwrap().to_owned();
+    fixture
+        .admin(&fixture.owner, "POST", &format!("/{id}/test"), None)
+        .await;
+    fixture
+        .admin(
+            &fixture.owner,
+            "PATCH",
+            &format!("/{id}"),
+            Some(json!({ "enabled_tools": ["get_zone", "delete_record"] })),
+        )
+        .await;
+    let (general, root, bearer) = fixture.run(&fixture.owner).await;
+    let thread = (general.as_str(), root.as_str());
+    let plan = |tool: &str| {
+        json!({
+            "conversation_id": general, "root_message_id": root,
+            "title": "Delete old records", "summary": "Delete 3 DNS records.",
+            "tool": tool, "max_calls": 3, "code": "await tools.use_integration({});",
+        })
+    };
+    let (_, refused) = job_route(&fixture, &bearer, "", plan("cloudflare__get_zone")).await;
+    assert_eq!(
+        refused["status"], "refused",
+        "a read needs no job: {refused}"
+    );
+    let (_, asked) = job_route(&fixture, &bearer, "", plan("cloudflare__delete_record")).await;
+    assert_eq!(asked["status"], "approval_required", "{asked}");
+    let job_id = asked["job_id"].as_str().unwrap().to_owned();
+    fixture
+        .send(&fixture.owner, &general, "yes", Some(&root))
+        .await;
+    let start = json!({ "conversation_id": general, "root_message_id": root });
+    let (_, started) = job_route(&fixture, &bearer, &format!("/{job_id}/start"), start).await;
+    let hash = started["job"]["script_hash"].as_str().unwrap().to_owned();
+    for record in ["r1", "r2", "r3"] {
+        let done = job_call(
+            &fixture,
+            &bearer,
+            thread,
+            ("cloudflare__delete_record", json!({ "id": record })),
+            (&job_id, &hash),
+        )
+        .await;
+        assert_eq!(done["status"], "ok", "{done}");
+    }
+    let over = job_call(
+        &fixture,
+        &bearer,
+        thread,
+        ("cloudflare__delete_record", json!({ "id": "r4" })),
+        (&job_id, &hash),
+    )
+    .await;
+    assert_eq!(over["status"], "refused", "{over}");
+    assert_eq!(calls_of(&seen, "tools/call").len(), 3);
+}

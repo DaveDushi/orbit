@@ -20,7 +20,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { defineTool } from "@earendil-works/pi-durable";
 import type { PromptSection, ToolExecutionApi } from "@earendil-works/pi-durable";
-import { createCodemodeExtension, createCodemodeTool, type CodemodeToolOptions } from "@earendil-works/pi-durable/codemode";
+import { createCodemodeExtension, createCodemodeTool, type CodemodeGlobal, type CodemodeToolOptions } from "@earendil-works/pi-durable/codemode";
 
 import { ThreadDoc, type RoutineRunState } from "./docs.ts";
 
@@ -30,8 +30,11 @@ export const REPAIR_SCRIPT_TOOL = "repair_routine_script";
 /** Repairs of a routine's failed script in one run; then the run answers with the error. */
 export const MAX_SCRIPT_REPAIRS = 2;
 
-/** A script's heap; allocations beyond it fail inside the script. */
-const MEMORY_LIMIT_BYTES = 64 * 1024 * 1024;
+/**
+ * A script's heap; allocations beyond it fail inside the script. Whole-file reads (./files.ts) need it: a 50,000-row,
+ * 12-column CSV ran out of 64 MB, and 170,000 such rows (31 MB, near the run's 32 MB cap) parse in 256 MB.
+ */
+const MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
 /** A script's deadline, its tool calls included. */
 const TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -98,6 +101,11 @@ export const CODEMODE_SECTIONS: PromptSection[] = (createCodemodeExtension(lazyO
 		return rest ? `${direct}\n\n${rest}` : direct;
 	},
 }));
+
+/** A code mode tool whose scripts also get `globals` (a job's `records()` and `progress()`, ./jobs.ts). */
+export function codemodeWith(globals: readonly CodemodeGlobal[]) {
+	return createCodemodeTool(new Proxy({} as CodemodeToolOptions, { get: (_target, key) => (key === "globals" ? globals : lazyOptions[key as keyof CodemodeToolOptions]) }));
+}
 
 /** Closes the sandbox's worker, when one was made. */
 export async function closeCodemode(): Promise<void> {

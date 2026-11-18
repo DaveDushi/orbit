@@ -27,9 +27,11 @@ const TITLE_MAX_CHARS: usize = 150;
 
 /// The component types of catalog version 1, the props each may have, and whether it has
 /// children.
-const COMPONENTS: [(&str, &[&str], bool); 8] = [
+const COMPONENTS: [(&str, &[&str], bool); 9] = [
     ("Card", &["title", "description"], true),
     ("Stack", &["direction"], true),
+    // Collapsed until the reader opens it: the raw request under an approval question.
+    ("Details", &["summary"], true),
     ("Text", &["text", "tone"], false),
     ("Table", &["columns", "rows"], false),
     (

@@ -16,7 +16,7 @@ test("Orbit's tool catalog for agent profiles names exactly the sidecar's tools"
 });
 
 test("a custom agent is offered only its own tools, the skill tools and code mode, media tools only with a sandbox", () => {
-	const always = ["load_skill", "read_skill_file", "codemode", "run_saved_script"];
+	const always = ["load_skill", "read_skill_file", "codemode", "run_saved_script", "plan_job", "run_job"];
 	assert.deepEqual(
 		toolRegistrations(["read_page", "create_page", "view_image", "no_such_tool"], false).map((tool) => tool.name),
 		["read_page", "create_page", ...always],
@@ -36,8 +36,12 @@ test("scripts call only the agent's own tools; a script run offers the model onl
 	assert.match(blockedCall(custom, "create_task", true, 40)!, /does not have the tool create_task/);
 	assert.match(blockedCall(custom, "create_task", false, 40)!, /does not have the tool create_task/);
 	assert.equal(blockedCall(custom, "codemode", false, 40), undefined);
-	// The run's limit counts the script's calls too.
+	// The run's limit counts the script's calls too, except a job's: the job bounds them (Orbit checks).
 	assert.match(blockedCall({ ...custom, toolCalls: 40 }, "search_tasks", true, 40)!, /limit of 40/);
+	assert.equal(blockedCall({ ...custom, toolCalls: 40 }, "search_tasks", true, 40, true), undefined);
+	assert.match(blockedCall({ ...custom, toolCalls: 40 }, "search_tasks", false, 40, true)!, /limit of 40/);
+	assert.match(blockedCall({ ...custom, toolCalls: 0 }, "create_task", true, 40, true)!, /does not have the tool create_task/);
+	assert.equal(blockedCall(custom, "plan_job", false, 40), undefined);
 
 	const script = { name: "Digest", code: "text(1)", hash: "h" };
 	const scriptRun = { allowedTools: null, toolCalls: 0, routineRun: { runId: "r", routineName: "Digest", test: false, writes: "script", script, reported: false } };

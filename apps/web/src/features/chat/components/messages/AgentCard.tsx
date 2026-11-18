@@ -3,7 +3,7 @@ import { defineRegistry, JSONUIProvider, Renderer } from '@json-render/react'
 import { cn } from 'cn'
 import { createContext, useContext, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router'
-import { Check } from 'reicon-react'
+import { Check, ChevronRight } from 'reicon-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -324,6 +324,15 @@ const { registry } = defineRegistry(catalog, {
       <div data-slot="agent-card-stack" className={cn('flex min-w-0 gap-2', props.direction === 'row' ? 'flex-row flex-wrap items-center' : 'flex-col')}>
         {children}
       </div>
+    ),
+    Details: ({ props, children }) => (
+      <details data-slot="agent-card-details" className="group min-w-0 rounded-md border">
+        <summary className="flex cursor-pointer list-none items-center gap-1.5 px-2.5 py-1.5 text-sm text-muted-foreground select-none hover:text-foreground [&::-webkit-details-marker]:hidden">
+          <ChevronRight className="size-4 shrink-0 transition-transform group-open:rotate-90" aria-hidden="true" />
+          {props.summary}
+        </summary>
+        <div className="grid min-w-0 gap-2 border-t px-2.5 py-2 text-sm">{children}</div>
+      </details>
     ),
     Text: ({ props }) => (
       <Markdown text={props.text} id={idOf(props)} className={cn('leading-[1.5] wrap-anywhere text-foreground/85 [&_pre]:overflow-x-auto', TONES[props.tone ?? 'default'])} />

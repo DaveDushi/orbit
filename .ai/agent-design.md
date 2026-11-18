@@ -604,6 +604,49 @@ to the outside. Answers:
 - A role change of a member applies at the next call. A changed app key makes the credential unreadable: the test
   and the calls say so, and an admin enters it again.
 
+## Jobs
+
+Production, 2026-11-17: an import of 2,262 customers into Shopify asked for a "yes" for each GraphQL request of 100
+customers (12 questions in 11 minutes, each with the raw body), the 40-call run limit split it into runs, and the
+person gave up with 1,354 left. The question showed the raw request, not which columns went where. Design (`apps/server/src/agent/jobs.rs`, `apps/agent/src/jobs.ts`):
+
+- **One approval per job.** `plan_job` stores the plan (title, summary, records, mapping, left out, samples, source
+  file), the scope (integration or Drive, tool, method, path, GraphQL mutations, most calls) and the script. Orbit
+  builds the question from it (model text cannot mention anyone: `<`, `>` and backticks are replaced). The approval
+  (`approve`, tool `job`) is bound to the hash of all of it.
+- **The model cannot change the job.** `run_job` takes only the job's id; Orbit returns the stored script, which runs in
+  code mode with `records()` (the whole source file, read as the driver) and `progress()`. Each write sends
+  `job: {id, script_hash}`; `jobs::use_job` checks driver, thread, subject, tool, method, path, no query string,
+  mutation field names (`graphql::mutation_fields`, fail closed), the hash, the deadline (60 minutes after the yes),
+  "stop" from the driver in the thread, and the call count (one atomic `UPDATE … calls < max_calls`). Outside the
+  scope: the usual per-request question. A job that may not go on: refused.
+- **Long jobs.** A job's nested calls do not count against the run's tool-call limit (`blockedCall`, `asDriver`); the
+  job's most calls and its deadline bound it. The first error (an HTTP error, a GraphQL `userErrors` the script throws
+  on, a refusal) ends the script; the report says done / failed / left, and Orbit ends the job (`finish`).
+- **Prompt (`JOB_RULES`).** Plan one job when a write with approval would run more than about 3 times. How to map
+  columns (for example consent) is not a rule in code: the team tells the agent, and it keeps that in its memory. The
+  plan's mapping and left-out columns still show the driver what is sent.
+
+## Large file reads
+
+Donna must read a 10,000–50,000-row CSV or XLSX, or a long PDF or Word file, in one turn; paging by tool calls
+(1,000 rows a call) ran into `AGENT_MAX_TOOL_CALLS` (40). Design (`apps/agent/src/files.ts`):
+
+- **Only in a script.** `all: true` on `read_chat_file`, `read_file` and `drive_read` works only for a nested call (the
+  tools hook marks it, `wholeReadCalls`); the model's own call is refused, so whole files never land in the transcript
+  as tool results the model reads.
+- **One tool call.** The tool loops over every part (`readWhole`, at most 1,000 rows or 200,000 characters a request)
+  inside one `asDriver` call: the same routes and permission checks as a one-part read, counted once.
+- **The cap.** `ThreadDoc.readBytes` counts the parsed content (cells and text) of a run's whole-file reads (reset with
+  `toolCalls`); past 32 MiB the read stops with a clear message. The tools' `outputLimits` let the JSON through
+  (Pi cuts at 50 KB by default, and cut JSON cannot be parsed); the sandbox heap is 256 MiB (64 MiB ran out at
+  50,000 rows × 12 columns; 170,000 × 12, 31 MiB, parses in about 3 s).
+- **Data stays data.** The output of a script that read a whole file is fenced in `<orbit-data>` (`afterTool`), as
+  the file would be.
+- Known costs: each whole-file result is stored once in the agent's Pi journal (as every nested result is); the server
+  parses the file again for each part (fine for CSV; an XLSX of 50,000 rows parses 50 times). A job's `records()` keeps
+  its own 20,000-row limit.
+
 ## Skills
 
 Status: built on branch `agent-skills` (2026-11-14). Format: [Agent Skills](https://agentskills.io/specification);

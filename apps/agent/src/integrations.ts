@@ -11,7 +11,10 @@ import { defineTool } from "@earendil-works/pi-durable";
 import type { ToolExecutionApi, ToolExecutionResult } from "@earendil-works/pi-durable";
 
 import { ThreadDoc, type ThreadState } from "./docs.ts";
+import { inJob, jobRef } from "./jobs.ts";
 import type { OrbitClient } from "./orbit.ts";
+import { uiBlock } from "./ui.ts";
+import type { UiSpec } from "./ui-catalog.ts";
 
 export type As = (method: string, path: string, body?: unknown) => Promise<any>;
 
@@ -65,10 +68,32 @@ export function mcpText(result: { content?: McpContent[]; structuredContent?: un
 	return parts.join("\n");
 }
 
-/** The question that asks the driver to allow one write. */
-export function approvalQuestion(driverId: string, action: string, what = "to run this outside Orbit"): string {
+/**
+ * The question that asks the driver to allow one write. With `details` (the exact request, under "Details" in its card),
+ * `action` is only its one-line summary.
+ */
+export function approvalQuestion(driverId: string, action: string, what = "to run this outside Orbit", details = false): string {
 	const shown = action.length > 3_000 ? `${action.slice(0, 3_000)}…` : action;
-	return `<@${driverId}> I need your approval ${what}:\n\`\`\`\n${shown.replaceAll("```", "'''")}\n\`\`\`\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it.`;
+	const asked = details ? `**${shown.replaceAll("*", "\\*")}**\n(The exact request is under Details.)` : `\`\`\`\n${shown.replaceAll("```", "'''")}\n\`\`\``;
+	return `<@${driverId}> I need your approval ${what}:\n${asked}\nReply **yes** in this thread within 30 minutes to allow it once. Any other answer does not allow it.`;
+}
+
+/** The card under a question: the raw request in "Details", closed, in code blocks that fit the card's limits. */
+export function detailsCard(details: string): UiSpec {
+	const chunks: string[] = [];
+	const text = details.replaceAll("```", "'''");
+	for (let at = 0; at < text.length && chunks.length < 8; at += 1_900) chunks.push(text.slice(at, at + 1_900));
+	if (text.length > 8 * 1_900) chunks[chunks.length - 1] += "\n…";
+	const elements: UiSpec["elements"] = { details: { type: "Details", props: { summary: "Details" }, children: chunks.map((_, index) => `part${index}`) } };
+	for (const [index, chunk] of chunks.entries()) elements[`part${index}`] = { type: "Text", props: { text: `\`\`\`\n${chunk}\n\`\`\`` }, children: [] };
+	return { root: "details", elements };
+}
+
+/** A per-request question's one-line summary, and the exact request (Orbit's `describe`: its first line, then the JSON). */
+export function splitAction(action: string): { summary: string; details: string | undefined } {
+	const [first, ...rest] = action.split("\n");
+	if (!rest.length) return { summary: action, details: undefined };
+	return { summary: first.replace(/ with (body|arguments)$/, ""), details: action };
 }
 
 /** A GET of bytes from Orbit's public API as the driver (`OrbitClient.downloadAsUser`). */
@@ -85,26 +110,34 @@ export async function askForApproval(
 	context: Context,
 	orbit: OrbitClient,
 	state: ThreadState,
-	approval: { approval_id: string; action: string },
+	approval: { approval_id: string; action: string; details?: string },
 	what: string,
 	again: string,
+	question?: string,
 ): Promise<ToolExecutionResult> {
 	// `asDriver` refuses a run without a driver.
 	const driverId = state.driverId as string;
-	await orbit.postMessage({
+	const body = question ?? approvalQuestion(driverId, approval.action, what, approval.details !== undefined);
+	const messageId = await orbit.postMessage({
 		workspaceId: state.workspaceId,
 		conversationId: state.conversationId,
 		rootMessageId: state.rootMessageId,
-		body: approvalQuestion(driverId, approval.action, what),
+		body,
 		nonce: `approve:${approval.approval_id}`.slice(0, 64),
 		agentUserId: state.agentUserId ?? null,
 	});
+	if (approval.details) {
+		// The question stands without it: a card Orbit refuses only loses the details.
+		await orbit.editMessage(messageId, state.workspaceId, body, [uiBlock(detailsCard(approval.details))], state.agentUserId ?? null).catch((error: unknown) => console.warn("agent: the approval's details card failed", String(error)));
+	}
 	await api.commit(async (tx) => {
 		(await tx.doc(ThreadDoc, api.conversationId)).waitingFor = driverId;
 	}, context);
 	return {
 		output: [{ type: "text", text: `I asked the driver to approve this. Stop now. If they answer yes, ${again}; on any other answer, do not.` }],
 		control: { terminate: true },
+		// In a job's script a question ends the script there: the job stops at it.
+		...(inJob(api.conversationId) ? { isError: true } : {}),
 	};
 }
 
@@ -125,23 +158,27 @@ export function integrationTool(asDriver: Driver, orbit: () => OrbitClient, untr
 		}),
 		execute: (args, api, context) =>
 			asDriver(api, context, async (as, state) => {
+				const job = jobRef(api.conversationId);
 				const answer = (await as("POST", "/agent-tools/call", {
 					tool: args.tool,
 					arguments: args.arguments ?? {},
 					conversation_id: state.conversationId,
 					root_message_id: state.rootMessageId,
+					...(job ? { job } : {}),
 				})) as Answer;
 				const label = `integration ${args.tool}`;
 				switch (answer.status) {
 					case "ok": {
 						if (answer.response) {
 							const { status, body, truncated } = answer.response;
-							return { output: [{ type: "text", text: untrusted(label, { status, body, ...(truncated ? { truncated } : {}) }) }], isError: status >= 400 };
+							const response = { status, body, ...(truncated ? { truncated } : {}) };
+							// A job's script parses the whole answer; only the script's own output reaches the model, fenced.
+							return { output: [{ type: "text", text: job ? JSON.stringify(response) : untrusted(label, response) }], isError: status >= 400 };
 						}
 						return { output: [{ type: "text", text: untrusted(label, mcpText(answer.result)) }], isError: answer.result?.isError === true };
 					}
 					case "approval_required":
-						return askForApproval(api, context, orbit(), state, answer, "to run this outside Orbit", "call use_integration again with exactly the same tool and arguments");
+						return askForApproval(api, context, orbit(), state, { approval_id: answer.approval_id, action: splitAction(answer.action).summary, details: splitAction(answer.action).details }, "to run this outside Orbit", "call use_integration again with exactly the same tool and arguments");
 					default:
 						return { output: [{ type: "text", text: `${answer.status === "refused" ? "Refused" : "Failed"}: ${answer.detail}` }], isError: true };
 				}

@@ -657,6 +657,7 @@ export class Agent {
 			doc.driverName = driverName;
 			doc.waitingFor = null;
 			doc.toolCalls = 0;
+			doc.readBytes = 0;
 			doc.run = { inputId: input.message_id, submissionId: null, progressMessageId, startedAt: Date.now(), title: input.routine ? routineTitle(input.routine) : null };
 			doc.agentName = agent?.name || this.botName;
 			doc.defaultAgentName = this.botName;

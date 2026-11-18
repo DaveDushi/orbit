@@ -250,6 +250,9 @@ pub fn route_need(method: &Method, rest: &str) -> RouteNeed {
         ["agent-tools", "call"] if method == Method::POST => RouteNeed::Any(&["use_integration"]),
         ["agent-tools", "drive"] if method == Method::POST => RouteNeed::Any(DRIVE_ROUTE_TOOLS),
         ["agent-tools", "trash"] if method == Method::POST => RouteNeed::Any(&["move_to_trash"]),
+        // A job's tools are checked there (`super::jobs`): its writes need use_integration or the
+        // Drive tool, as each call of the job does.
+        ["agent-tools", "jobs", ..] if method == Method::POST => RouteNeed::Always,
         ["agent-tools", "shopify-image"] if method == Method::POST => {
             RouteNeed::Any(&["drive_image_to_shopify"])
         }

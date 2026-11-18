@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { blocksToMarkdown } from "../src/blocks.ts";
-import { fileReadText, READ_CHARS, untrusted, withMessageFiles, type FileContent } from "../src/files.ts";
+import { fileReadText, MAX_RUN_READ_BYTES, READ_CHARS, ReadCapError, readWhole, untrusted, wholeFileResult, wholeReadCalls, withMessageFiles, type FileContent } from "../src/files.ts";
 import { messageLines, orbitExtension, ORBIT_TOOLS } from "../src/tools.ts";
 import { OrbitError, type OrbitClient } from "../src/orbit.ts";
 
@@ -217,4 +217,68 @@ test("a Drive read pages like other files: rows from the offset, text with its n
 	const pdf = driveReadText({ file: { id: "d2", kind: "file", name: "Q1.pdf" }, sheets: [], sheet: null, rows: null, text: "Revenue", next_offset: null, no_text: false }, 0);
 	assert.ok(pdf.endsWith("\nRevenue"));
 	assert.match(driveReadText({ file: { id: "d3", kind: "file", name: "scan.pdf" }, sheets: [], rows: null, text: "", no_text: true }, 0), /No text was found/);
+});
+
+/** A file of `rows` rows read in parts of at most `per` rows, as Orbit's content routes answer. */
+function pages(rows: string[][], per: number) {
+	const asked: number[] = [];
+	const part = async (offset: number) => {
+		asked.push(offset);
+		const end = Math.min(rows.length, offset + per);
+		return content({ rows: rows.slice(offset, end), next_offset: end < rows.length ? end : null });
+	};
+	return { part, asked };
+}
+
+test("a whole-file read pages through every part and returns all rows", async () => {
+	const rows = [["Email", "Tag"], ...Array.from({ length: 20_000 }, (_, index) => [`c${index}@example.com`, index % 4 === 0 ? "vip" : ""])];
+	const { part, asked } = pages(rows, 1_000);
+	const read = { bytes: 0 };
+	const whole = await readWhole(part, MAX_RUN_READ_BYTES, read);
+	assert.equal(whole.rows?.length, 20_001);
+	assert.deepEqual(whole.rows?.[20_000], ["c19999@example.com", ""]);
+	assert.equal(asked.length, 21);
+	assert.equal(read.bytes, rows.reduce((size, row) => size + row.reduce((cells, cell) => cells + cell.length + 1, 0), 0));
+
+	const text = ["a".repeat(200_000), "b".repeat(200_000), "c".repeat(10)];
+	let at = 0;
+	const document = await readWhole(async (offset) => content({ text: text[at++], next_offset: at < text.length ? offset + text[at - 1].length : null }), MAX_RUN_READ_BYTES, { bytes: 0 });
+	assert.equal(document.text?.length, 400_010);
+	assert.equal(document.rows, null);
+});
+
+test("a whole-file read stops at the run's budget with a clear message, and counts what it read", async () => {
+	const rows = Array.from({ length: 5_000 }, () => ["x".repeat(99)]);
+	const { part, asked } = pages(rows, 1_000);
+	const read = { bytes: 0 };
+	await assert.rejects(readWhole(part, 250_000, read), (error: unknown) => error instanceof ReadCapError && /at most 32\.0 MB per run/.test(error.message) && /read before in this run/.test(error.message));
+	assert.equal(asked.length, 3, "it stops at the part that goes over");
+	assert.equal(read.bytes, 300_000);
+});
+
+test("only a script may read a whole file, and the run's earlier reads count against the cap", async () => {
+	const doc: { readBytes?: number } = { readBytes: MAX_RUN_READ_BYTES - 1_000 };
+	const api = {
+		callId: "run/c1",
+		conversationId: "conv",
+		snapshot: async () => doc,
+		commit: async (change: (tx: { doc: () => Promise<typeof doc> }) => Promise<void>) => change({ doc: async () => doc }),
+	} as unknown as Parameters<typeof wholeFileResult>[0];
+	const { part } = pages([["a", "b"], ["c", "d"]], 1_000);
+	const direct = await wholeFileResult(api, {} as never, part);
+	assert.equal(direct.isError, true);
+	assert.match((direct.output?.[0] as { text: string }).text, /only in a codemode script/);
+	assert.equal(doc.readBytes, MAX_RUN_READ_BYTES - 1_000, "a refused call reads nothing");
+
+	wholeReadCalls.add("run/c1");
+	const small = await wholeFileResult(api, {} as never, part);
+	assert.equal(small.isError, undefined);
+	assert.deepEqual(JSON.parse((small.output?.[0] as { text: string }).text).rows, [["a", "b"], ["c", "d"]]);
+	assert.equal(doc.readBytes, MAX_RUN_READ_BYTES - 1_000 + 8);
+
+	wholeReadCalls.add("run/c1");
+	const big = await wholeFileResult(api, {} as never, pages(Array.from({ length: 100 }, () => ["x".repeat(99)]), 1_000).part);
+	assert.equal(big.isError, true);
+	assert.match((big.output?.[0] as { text: string }).text, /^Stopped: whole-file reads may parse at most 32\.0 MB per run/);
+	assert.ok((doc.readBytes ?? 0) > MAX_RUN_READ_BYTES);
 });

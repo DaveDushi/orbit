@@ -25,8 +25,9 @@ use serde_json::{Map, Value, json};
 
 use super::AgentState;
 use super::integrations::{
-    Approval, Approves, approve, canonical, driver, hash, require_running, unavailable,
+    Approval, Approves, canonical, driver, hash, require_running, unavailable,
 };
+use super::jobs::approve_in_job;
 use crate::audit::{self, AuditOutcome};
 use crate::drive::{DOWNLOAD_URL_LIFETIME, DriveService, StartUpload};
 use crate::mcp_drive::{self, Outcome};
@@ -96,6 +97,20 @@ struct CallBody {
     /// The thread of the run: approvals belong to it.
     conversation_id: String,
     root_message_id: Option<String>,
+    /// A write of a job's script: it runs without a new "yes" inside that job (`super::jobs`).
+    #[serde(default)]
+    job: Option<super::jobs::JobRef>,
+}
+
+/// A Drive write, as a job is checked against it: only its tool counts.
+fn drive_call(tool: &str) -> super::jobs::JobCall<'_> {
+    super::jobs::JobCall {
+        tool,
+        method: None,
+        path: None,
+        query: false,
+        body: None,
+    }
 }
 
 #[derive(Deserialize)]
@@ -295,16 +310,21 @@ async fn call(
         ));
     }
     let workspace = workspace_id.to_string();
-    let approval = approve(
+    let approval = approve_in_job(
         database,
+        body.job.as_ref(),
         Approves::Drive(&workspace),
         user,
         thread,
-        tool,
+        drive_call(tool),
         &hash(&canonical(&raw)),
     )
     .await
     .map_err(unavailable(&uri, &request_id))?;
+    let approval = match approval {
+        Ok(approval) => approval,
+        Err(detail) => return Ok(refused(&detail)),
+    };
     let approval_id = match approval {
         Approval::Needed { id, expires_at } => {
             return Ok(Json(json!({
@@ -463,16 +483,21 @@ async fn trash(
         body.conversation_id.as_str(),
         body.root_message_id.as_deref(),
     );
-    let approval = approve(
+    let approval = match approve_in_job(
         database,
+        body.job.as_ref(),
         Approves::Drive(&workspace),
         user,
         thread,
-        "drive_trash",
+        drive_call("drive_trash"),
         &hash(&canonical(&raw)),
     )
     .await
-    .map_err(unavailable(uri, request_id))?;
+    .map_err(unavailable(uri, request_id))?
+    {
+        Ok(approval) => approval,
+        Err(detail) => return Ok(refused(&detail)),
+    };
     let approval_id = match approval {
         Approval::Needed { id, expires_at } => {
             let lines = items

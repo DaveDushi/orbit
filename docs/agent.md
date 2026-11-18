@@ -272,12 +272,19 @@ dropped `agent_preferences`.
 
 - **Code mode** (every agent, the default agent and custom ones). The `codemode` tool of Pi Durable
   (`@earendil-works/pi-durable/codemode` 1.4.0 with `@earendil-works/pi-codemode` 1.4.0, `apps/agent/src/codemode.ts`)
-  runs a short JavaScript the model writes, in a QuickJS sandbox: no network, no files, no timers, no modules, 64 MiB
+  runs a short JavaScript the model writes, in a QuickJS sandbox: no network, no files, no timers, no modules, 256 MiB
   heap, 5 minutes. The script's only power is `await tools.<name>(args)`: a nested call of one of **this agent's own
   tools**. Each nested call goes through the same hook as a call of the model (a custom agent's tool list, the run's
   `AGENT_MAX_TOOL_CALLS`) and the same Orbit checks (the driver's session and permissions, the agent's connected
   services, the driver's yes to a write; a write that needs a yes stops at the question). Scripts cannot call
   `codemode`, `run_saved_script` or `ask_teammate` (`callers: ["model"]`), and `models.*` is off.
+- **Large files in one call.** In a script, `read_chat_file`, `read_file` and `drive_read` take `all: true`: the tool
+  reads every part of the file through the same routes as a one-part read (the driver's permissions for that file; a
+  guest is never a driver) and gives the script the whole file as JSON (`rows` with the header row first, or `text`).
+  It counts as **one** tool call, the rows stay in the script, and only the script's output (cut to its token budget,
+  fenced as data) reaches the model. All whole-file reads of a run together parse at most 32 MiB; past that, the read
+  stops with a message the agent passes on. The model cannot use `all: true` directly. The prompt tells it to read
+  large files this way (a 20,000-row CSV: about 2 seconds).
 - **Saved scripts** (`agent_scripts`). The agent saves a script for the driver with `save_script` (name, code up to
   20,000 characters, description); saving under the same name (any case) replaces the code. No approval: saving runs
   nothing. At most 50 per person per workspace. Settings → Agentic → Routines has a **Scripts** card: the owner views,
@@ -509,6 +516,22 @@ Roles do not change: only the roles you chose can use the integration.
 or HEAD (except a GraphQL read with the setting above), runs only after the agent asked the driver in the thread with the exact action and arguments and the
 driver answered **yes**. Orbit checks this itself: the approval is bound to the driver, the thread, the tool and the
 arguments, works once, and ends after 30 minutes. A teammate's "yes" does not count.
+
+**Jobs: one approval for many writes.** For many writes of one kind (an import of a CSV of customers, a bulk
+update, many Drive items to the trash), the agent does not ask once per request. It plans a job (`plan_job`) and asks
+once. Orbit builds the question from the plan: the title and summary, the service and the one tool, method and path
+(for GraphQL, the mutations it may run), the number of records, the most calls, the field mapping (each source column
+→ its target field), the columns left out, and 2–3 samples. The exact scope and the script are under **Details**,
+closed. After your **yes**, the job (`run_job`) runs the stored script (never new code from the model) in code mode, in
+batches, and posts its progress in the thread ("870/2,000"). It stops at the first error and reports what was done,
+what failed and what is left. Orbit lets a write of the job run without a new yes only when it is the same driver
+and thread, the same integration (or Orbit Drive) and tool, the same method and path with no query string, only
+the approved GraphQL mutations (by field name, also behind aliases), the approved script (its hash), below the most
+calls (at most 1,000), and within 60 minutes after the yes. Any other write asks again. A job that ended, ran out of
+calls or time, or was stopped is refused: write **stop** (or cancel) in the thread to stop a job. Data in the file
+cannot change the scope: Orbit checks every call itself. The audit log keeps the approval (`agent_job.approved`), each
+call (`agent_integration.call` with `job_id`, Drive's approved actions with `job:<id>`) and the end
+(`agent_job.finished`). MCP write tools and Drive's `drive_trash` and `drive_share` work the same way.
 
 Limits: HTTPS only; Orbit refuses hosts that resolve to loopback, private, link-local or metadata addresses, follows
 no redirects, waits at most 30 seconds and reads at most 1 MiB of an answer. Every external call is in the audit log
