@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { Type } from "@earendil-works/pi-ai";
+import { defineTool } from "@earendil-works/pi-durable";
+
 import { ANSWER_LEVELS, frame, runModel, TOOL_LABELS } from "../src/agent.ts";
 import { codexModels } from "../src/models.ts";
 import { agentInstructionsBlock } from "../src/prompt.ts";
 import { offeredTools } from "../src/find-tools.ts";
-import { allRegistrations, blockedCall, MEDIA_TOOLS, ORBIT_TOOLS, SANDBOX_TOOLS, toolRegistrations } from "../src/tools.ts";
+import { allRegistrations, blockedCall, MEDIA_TOOLS, MODEL_REGISTRATIONS, ORBIT_TOOLS, SANDBOX_TOOLS, toolRegistrations } from "../src/tools.ts";
 
 test("Orbit's tool catalog for agent profiles names exactly the sidecar's tools", () => {
 	const rust = readFileSync(new URL("../../server/src/agent/profiles.rs", import.meta.url), "utf8");
@@ -34,11 +37,20 @@ test("a custom agent has only its own tools, the skill tools, code mode and jobs
 	}
 });
 
-test("the model is offered only find_tools, codemode and the tools a script cannot stand in for", () => {
-	assert.deepEqual(offeredTools(allRegistrations(false)).map((tool) => tool.name), ["ask_teammate", "load_skill", "read_skill_file", "codemode", "find_tools"]);
-	assert.deepEqual(offeredTools(allRegistrations(true)).map((tool) => tool.name), ["ask_teammate", "view_image", "load_skill", "read_skill_file", "codemode", "find_tools"]);
+test("the model is offered only find_tools, codemode, the jobs and the tools a script cannot stand in for", () => {
+	const always = ["load_skill", "read_skill_file", "codemode", "plan_job", "run_job", "find_tools"];
+	assert.deepEqual(offeredTools(allRegistrations(false)).map((tool) => tool.name), ["ask_teammate", ...always]);
+	assert.deepEqual(offeredTools(allRegistrations(true)).map((tool) => tool.name), ["ask_teammate", "view_image", ...always]);
 	// A custom agent: only what it has.
-	assert.deepEqual(offeredTools(toolRegistrations(["search_tasks", "use_integration"], true)).map((tool) => tool.name), ["load_skill", "read_skill_file", "codemode", "find_tools"]);
+	assert.deepEqual(offeredTools(toolRegistrations(["search_tasks", "use_integration"], true)).map((tool) => tool.name), always);
+	// An allow list: any other tool, also one another extension adds (a shell like sandbox_shell), and the services'
+	// tools (only through use_integration) reach the model only from a script.
+	const shell = defineTool({ name: "sandbox_shell", description: "bash", parameters: Type.Object({ command: Type.String() }), execute: async () => ({ output: [] }) });
+	const offered = offeredTools([...allRegistrations(true), shell]).map((tool) => tool.name);
+	for (const name of ["sandbox_shell", "search_tasks", "drive_trash", "use_integration", "media_shell"]) assert.ok(!offered.includes(name), name);
+	assert.deepEqual(MODEL_REGISTRATIONS.map((tool) => tool.name), offeredTools(allRegistrations(true)).map((tool) => tool.name));
+	// Such a tool stays callable from scripts.
+	assert.equal(shell.callers, undefined);
 });
 
 test("every tool has a progress label: code mode shows each call of a script as a step", () => {

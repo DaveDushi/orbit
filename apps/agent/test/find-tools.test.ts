@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 
+import type { Context } from "@earendil-works/chord/context";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
+import type { ToolExecutionApi } from "@earendil-works/pi-durable";
 
 import { closeCodemode } from "../src/codemode.ts";
-import { catalogOf, catalogScript, foundText, integrationEntry, orbitEntry, rank, schemaWords, terms } from "../src/find-tools.ts";
+import { ThreadDoc } from "../src/docs.ts";
+import { catalogOf, catalogScript, FIND_TOOLS, foundText, integrationEntry, orbitEntry, rank, schemaWords, terms } from "../src/find-tools.ts";
 import { servicesSection, type IntegrationTool } from "../src/integrations.ts";
 import { ORBIT_TOOLS } from "../src/tools.ts";
 
@@ -119,4 +122,31 @@ test("a service's text in a find_tools script result cannot close its fence", as
 	const { text } = await catalogScript("return catalog.map((t) => t.description).join(' ');", hostile);
 	assert.equal(text.match(/<\/orbit-data>/g)?.length, 1);
 	assert.ok(text.trimEnd().endsWith("</orbit-data>"));
+});
+
+/** `find_tools` as Pi runs it: the run's callable tools, the thread's tool list, and the services' tools of the run. */
+async function findWith(query: string, callable: readonly { name: string; description: string; parameters: unknown }[], allowedTools: string[] | null) {
+	const api = {
+		conversationId: "c-1",
+		agent: async () => ({ callable }),
+		snapshot: async (doc: unknown) => (doc === ThreadDoc ? { allowedTools } : { tools: ADS }),
+	} as unknown as ToolExecutionApi;
+	const result = await FIND_TOOLS.execute({ query }, api, {} as Context);
+	return result.output!.map((part) => (part.type === "text" ? part.text : "")).join("\n");
+}
+
+test("find_tools finds any tool scripts can call, a new one too, but not the model's own tools, and keeps to the agent's list", async () => {
+	const shell = { name: "sandbox_shell", description: "Run a bash command in your own sandbox, in /work.", parameters: { type: "object", properties: { command: {} } } };
+	const integration = ORBIT_TOOLS.find((tool) => tool.name === "use_integration")!;
+	const callable = [...ORBIT_TOOLS, shell];
+	assert.match(await findWith("bash command sandbox", callable, null), /^sandbox_shell: .*\ncall: await tools\.sandbox_shell\(\{…\}\)/);
+	assert.match(await findWith("campaign daily budget", callable, null), /call: await tools\.use_integration\(\{ tool: "tt_ads__update_campaign_budget"/);
+	// The model's own tools are not in the catalog.
+	assert.doesNotMatch(await findWith("ask a teammate question", callable, null), /^ask_teammate:/m);
+	// A custom agent: only its own tools, and the services' only with use_integration.
+	const own = await findWith("bash command sandbox drive trash campaign budget", callable, ["drive_trash"]);
+	assert.match(own, /^drive_trash:/);
+	assert.doesNotMatch(own, /sandbox_shell|tt_ads__/);
+	assert.match(await findWith("campaign daily budget", callable, ["use_integration"]), /tt_ads__update_campaign_budget/);
+	assert.doesNotMatch(await findWith("campaign daily budget", callable.filter((tool) => tool !== integration), null), /tt_ads__/);
 });
