@@ -77,7 +77,7 @@ export function MicButton({ voice, className = '' }: { voice: VoiceInput; classN
         aria-label={label}
         aria-pressed={listening}
         data-status={status}
-        className={`relative data-[status=denied]:text-muted-foreground data-[status=listening]:bg-destructive data-[status=listening]:text-white data-[status=listening]:hover:bg-destructive/90 data-[status=transcribing]:opacity-50 data-[status=unavailable]:text-muted-foreground ${className}`}
+        className={`relative data-[status=denied]:text-muted-foreground data-[status=listening]:bg-destructive data-[status=listening]:text-white data-[status=listening]:hover:bg-destructive/90 data-[status=listening]:dark:hover:bg-destructive/90 data-[status=transcribing]:opacity-50 data-[status=unavailable]:text-muted-foreground ${className}`}
         onClick={voice.toggle}
       >
         {listening ? (
