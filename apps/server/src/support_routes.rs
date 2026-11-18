@@ -24,6 +24,7 @@ use crate::repositories::support::{
     TicketView,
 };
 use crate::support::inbound::{self, MAX_RAW_BYTES, ParseError};
+use crate::support::outbound::SupportSender;
 use crate::task_routes::{
     ApiError, ApiJson, TaskState, parse_id, request_id_value, scope, task_problem,
 };
@@ -74,6 +75,10 @@ pub fn support_router(state: SupportState) -> Router {
         .route(
             "/api/v1/workspaces/{workspace_id}/projects/{project_id}/support-mailbox/rotate",
             post(rotate_support_mailbox),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/projects/{project_id}/support-mailbox/test",
+            post(test_support_mailbox),
         )
         .route(
             "/api/v1/workspaces/{workspace_id}/tasks/{task_id}/support",
@@ -381,6 +386,55 @@ pub(crate) async fn rotate_support_mailbox(
         .await
         .map(|rotated| Json(with_secret(rotated)))
         .map_err(|error| task_problem(error, instance, request_id.as_ref()))
+}
+
+/// The result of a connection test: `message` says what failed and how to fix it.
+#[derive(Serialize, ToSchema)]
+#[schema(as = SupportSmtpTest)]
+pub(crate) struct SmtpTestResponse {
+    ok: bool,
+    message: String,
+}
+
+/// Signs in to the mailbox's saved SMTP server and quits, without sending an email. Owners and
+/// admins. Answers 200 with `ok: false` and the reason when the server refuses (never the password).
+#[utoipa::path(post, path = "/api/v1/workspaces/{workspace_id}/projects/{project_id}/support-mailbox/test", params(("workspace_id" = String, Path), ("project_id" = String, Path)), responses((status = 200, body = SmtpTestResponse)))]
+pub(crate) async fn test_support_mailbox(
+    State(state): State<SupportState>,
+    Path((workspace, project)): Path<(String, String)>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+) -> Result<Json<SmtpTestResponse>, ApiError> {
+    let instance = format!("{}/test", mailbox_path(&workspace, &project));
+    let (workspace_id, actor_id) = scope(
+        &state.tasks,
+        &headers,
+        &workspace,
+        &instance,
+        request_id.as_ref(),
+    )
+    .await?;
+    let project_id = parse_id(&project, &instance, request_id.as_ref())?;
+    let settings = state
+        .repository()
+        .smtp_settings(workspace_id, project_id, actor_id)
+        .await
+        .map_err(|error| task_problem(error, &instance, request_id.as_ref()))?;
+    let sender = SupportSender::new(
+        state.tasks.identity.database().clone(),
+        state.app_key,
+        state.development,
+    );
+    Ok(Json(match sender.test_connection(&settings).await {
+        Ok(()) => SmtpTestResponse {
+            ok: true,
+            message: match settings.username.as_deref() {
+                Some(user) => format!("Signed in to {} as {user}.", settings.host),
+                None => format!("Connected to {} (no user name, no sign-in).", settings.host),
+            },
+        },
+        Err(message) => SmtpTestResponse { ok: false, message },
+    }))
 }
 
 /// The emails of a task and, for a support ticket, its customer and other tickets.

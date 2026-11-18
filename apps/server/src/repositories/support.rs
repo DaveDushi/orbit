@@ -17,7 +17,7 @@ use sqlx::{Any, Transaction};
 use subtle::ConstantTimeEq;
 use utoipa::ToSchema;
 
-use super::instance_settings::SmtpSecurity;
+use super::instance_settings::{SmtpSecurity, SmtpSettings};
 use super::membership;
 use super::project_access::{ProjectScope, user_sees_project, user_sees_task_sql};
 use super::tasks::{
@@ -116,6 +116,8 @@ pub struct InboundTarget {
     pub created_by: Id,
     pub open_status_id: String,
     pub default_assignee_id: Option<Id>,
+    /// The support address: a forward from its domain keeps the original customer.
+    pub address: String,
 }
 
 /// What happened to an inbound email.
@@ -432,6 +434,15 @@ fn clean_input(
             field: "smtp_username",
         });
     }
+    // Microsoft 365 and most providers sign in with the mailbox address.
+    let smtp_username = smtp_username.or_else(|| {
+        (smtp_host.is_some()
+            && input
+                .smtp_password
+                .as_deref()
+                .is_some_and(|p| !p.is_empty()))
+        .then(|| address.clone())
+    });
     let smtp_password = match input.smtp_password.as_deref() {
         None => None,
         Some("") => Some(None),
@@ -976,6 +987,47 @@ impl SupportRepository {
         Ok(mailbox)
     }
 
+    /// The saved SMTP server of the project's mailbox (the password still encrypted), for the
+    /// connection test. Owners and admins only; `Conflict` without an SMTP server.
+    pub async fn smtp_settings(
+        &self,
+        workspace_id: Id,
+        project_id: Id,
+        actor_id: Id,
+    ) -> Result<SmtpSettings, TaskError> {
+        let mut tx = self.database.pool().begin().await?;
+        require_manager(&mut tx, workspace_id, project_id, actor_id).await?;
+        let row = sqlx::query(
+            "SELECT address, smtp_host, smtp_port, smtp_security, smtp_username, smtp_password \
+             FROM support_mailboxes WHERE workspace_id = $1 AND project_id = $2",
+        )
+        .bind(workspace_id.to_string())
+        .bind(project_id.to_string())
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(TaskError::NotFound)?;
+        tx.commit().await?;
+        let (Some(host), Some(port), Some(security)) = (
+            row.get::<Option<String>, _>("smtp_host"),
+            row.get::<Option<i64>, _>("smtp_port")
+                .and_then(|port| u16::try_from(port).ok()),
+            row.get::<Option<String>, _>("smtp_security")
+                .as_deref()
+                .and_then(SmtpSecurity::parse),
+        ) else {
+            return Err(TaskError::Conflict);
+        };
+        Ok(SmtpSettings {
+            host,
+            port,
+            security,
+            username: row.get("smtp_username"),
+            password: row.get("smtp_password"),
+            from_address: row.get("address"),
+            from_name: None,
+        })
+    }
+
     /// A new inbound secret; the old URL stops working at once.
     pub async fn rotate_mailbox(
         &self,
@@ -1074,7 +1126,7 @@ impl SupportRepository {
         secret: &str,
     ) -> Result<Option<InboundTarget>, TaskError> {
         let row = sqlx::query(
-            "SELECT m.workspace_id, m.project_id, m.created_by, m.secret_hash, m.open_status_id, \
+            "SELECT m.workspace_id, m.project_id, m.created_by, m.secret_hash, m.open_status_id, m.address, \
              m.default_assignee_id FROM support_mailboxes m \
              JOIN workspaces w ON w.id = m.workspace_id JOIN projects p ON p.id = m.project_id \
              WHERE m.id = $1 AND w.deleted_at IS NULL AND p.deleted_at IS NULL",
@@ -1099,6 +1151,7 @@ impl SupportRepository {
             created_by: parse_id(row.get("created_by"))?,
             open_status_id: row.get("open_status_id"),
             default_assignee_id: optional_id(row.get("default_assignee_id"))?,
+            address: row.get("address"),
         }))
     }
 
@@ -1146,7 +1199,7 @@ impl SupportRepository {
             .bind(target.mailbox_id.to_string())
             .bind(&key)
             .bind(number)
-            .bind(&email.from_address)
+            .bind(email.requester(&target.address).0)
             .fetch_optional(&mut **tx)
             .await?
         {
@@ -1222,6 +1275,7 @@ impl SupportRepository {
             None => None,
         };
 
+        let (from_address, from_name) = email.requester(&target.address);
         let finalization = uploads.begin_finalization().await;
         let now = self.database.database_now().await?;
         let mut tx = self.database.immediate_transaction().await?;
@@ -1246,8 +1300,8 @@ impl SupportRepository {
         )
         .bind(Id::new_v7().to_string())
         .bind(target.workspace_id.to_string())
-        .bind(&email.from_address)
-        .bind(&email.from_name)
+        .bind(&from_address)
+        .bind(&from_name)
         .bind(now.as_millis())
         .execute(&mut *tx)
         .await?;
@@ -1255,7 +1309,7 @@ impl SupportRepository {
             "SELECT id FROM support_contacts WHERE workspace_id = $1 AND email = $2",
         )
         .bind(target.workspace_id.to_string())
-        .bind(&email.from_address)
+        .bind(&from_address)
         .fetch_one(&mut *tx)
         .await?;
 
@@ -1315,7 +1369,7 @@ impl SupportRepository {
                 };
                 let task_id = Id::new_v7();
                 let title = if email.subject.is_empty() {
-                    format!("Email from {}", email.from_address)
+                    format!("Email from {from_address}")
                 } else {
                     email.subject.clone()
                 };
@@ -1452,8 +1506,8 @@ impl SupportRepository {
         .bind(target.workspace_id.to_string())
         .bind(task_id.to_string())
         .bind(target.mailbox_id.to_string())
-        .bind(&email.from_address)
-        .bind(&email.from_name)
+        .bind(&from_address)
+        .bind(&from_name)
         .bind(email.to.join(","))
         .bind(email.cc.join(","))
         .bind(&email.subject)
@@ -1477,7 +1531,7 @@ impl SupportRepository {
             target.workspace_id,
             task_id,
             message_id,
-            &email.from_address,
+            &from_address,
             now,
         )
         .await?;
@@ -1636,6 +1690,11 @@ impl SupportRepository {
             return Err(TaskError::Invalid { field: "to" });
         }
         let address: String = row.get("address");
+        // A forward with no customer in it made the support address the "customer": a reply
+        // to it would loop.
+        if to == address {
+            return Err(TaskError::Invalid { field: "to" });
+        }
         let identifier = format!("{}-{}", row.get::<String, _>("project_key"), task.number);
         let subject = thread::reply_subject(&row.get::<String, _>("subject"), &identifier);
         let last_inbound = sqlx::query(

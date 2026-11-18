@@ -41,6 +41,34 @@ pub struct InboundEmail {
     pub automatic: bool,
     /// The provider's `Authentication-Results` say DMARC failed, or SPF failed without a DKIM pass.
     pub unverified: bool,
+    /// `Reply-To`, when it names one valid address: (address, name).
+    pub reply_to: Option<(String, String)>,
+    /// The sender of a forwarded email: `X-Original-From`, or the `From:` line of the forwarded
+    /// block in the text (Outlook "Forward", Gmail "Forwarded message").
+    pub forwarded_from: Option<(String, String)>,
+}
+
+impl InboundEmail {
+    /// The customer of this email. A redirect (Microsoft 365 "Redirect", a transport rule, a
+    /// provider's forwarding) keeps their `From`. A forward by someone of the support domain
+    /// (an Outlook "Forward" rule on the support mailbox or a colleague's mailbox) puts the
+    /// mailbox or the colleague in `From`: then the customer comes from the forwarded `From:` or
+    /// `Reply-To`, when that is outside the support domain. Otherwise `From` stays.
+    #[must_use]
+    pub fn requester(&self, mailbox_address: &str) -> (String, String) {
+        let domain = |address: &str| address.rsplit_once('@').map(|(_, d)| d.to_owned());
+        let ours = domain(mailbox_address);
+        let inside = |address: &str| address == mailbox_address || domain(address) == ours;
+        if inside(&self.from_address)
+            && let Some(original) = [&self.forwarded_from, &self.reply_to]
+                .into_iter()
+                .flatten()
+                .find(|(address, _)| !inside(address))
+        {
+            return original.clone();
+        }
+        (self.from_address.clone(), self.from_name.clone())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -90,7 +118,7 @@ pub fn parse(raw: &[u8]) -> Result<InboundEmail, ParseError> {
         .map(|(name, value)| (name.to_ascii_lowercase(), value.trim().to_owned()))
         .collect();
 
-    let text = message
+    let text: String = message
         .body_text(0)
         .map(|text| text.chars().take(MAX_TEXT_CHARS).collect())
         .unwrap_or_default();
@@ -142,6 +170,11 @@ pub fn parse(raw: &[u8]) -> Result<InboundEmail, ParseError> {
             format!("generated-{}@orbit.invalid", hex(&digest[..16]))
         });
     let automatic = is_automatic(&headers, &from_address, &message);
+    let forwarded_from = headers
+        .iter()
+        .find(|(name, _)| name == "x-original-from")
+        .and_then(|(_, value)| sender_in(value))
+        .or_else(|| forwarded_sender(&text));
     Ok(InboundEmail {
         to: addresses(message.to()),
         cc: addresses(message.cc()),
@@ -155,6 +188,15 @@ pub fn parse(raw: &[u8]) -> Result<InboundEmail, ParseError> {
         skipped_attachments,
         automatic,
         unverified: unverified(&headers),
+        reply_to: message
+            .reply_to()
+            .and_then(|list| list.first())
+            .and_then(|addr| {
+                let address = addr.address()?.trim().to_ascii_lowercase();
+                valid_address(&address)
+                    .then(|| (address, one_line(addr.name().unwrap_or(""), MAX_NAME_CHARS)))
+            }),
+        forwarded_from,
         from_address,
         from_name,
     })
@@ -244,6 +286,56 @@ pub(crate) fn bare_id(value: &str) -> String {
 #[must_use]
 pub fn valid_address(value: &str) -> bool {
     !value.contains(['\r', '\n']) && crate::mail::valid_address(value)
+}
+
+/// The `From:` line of the first forwarded block of a text body: a line such as
+/// `-----Original Message-----`, `---------- Forwarded message ---------`, `Begin forwarded
+/// message:` or Outlook's `________________________________`, then within 8 lines `From:` (also
+/// `Von:`, `De:`, `Van:`) with an address.
+fn forwarded_sender(text: &str) -> Option<(String, String)> {
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    let separator = |line: &str| {
+        let lower = line.to_ascii_lowercase();
+        lower.starts_with("-----")
+            || lower.starts_with("_____")
+            || lower.contains("forwarded message")
+            || lower.contains("original message")
+            || lower.starts_with("begin forwarded message")
+    };
+    let start = lines.iter().position(|line| separator(line))?;
+    lines[start + 1..].iter().take(8).find_map(|line| {
+        let (label, value) = line.split_once(':')?;
+        let label = label
+            .trim()
+            .trim_start_matches('*')
+            .trim_end_matches('*')
+            .to_ascii_lowercase();
+        matches!(label.as_str(), "from" | "von" | "de" | "van")
+            .then(|| sender_in(value.trim_start_matches('*')))
+            .flatten()
+    })
+}
+
+/// The address (and name) in `Name <a@b>`, `Name [mailto:a@b]` or a bare `a@b`.
+fn sender_in(value: &str) -> Option<(String, String)> {
+    let value = value.trim();
+    let (name, address) = if let Some((name, rest)) = value.split_once('<') {
+        (name, rest.split('>').next()?)
+    } else if let Some((name, rest)) = value.split_once("[mailto:") {
+        (name, rest.split(']').next()?)
+    } else {
+        (
+            "",
+            value.split_whitespace().find(|word| word.contains('@'))?,
+        )
+    };
+    let address = address.trim().to_ascii_lowercase();
+    valid_address(&address).then(|| {
+        (
+            address,
+            one_line(name.trim().trim_matches('"'), MAX_NAME_CHARS),
+        )
+    })
 }
 
 /// Text on one line: control characters become spaces, runs of spaces collapse, at most `max` chars.
@@ -425,6 +517,55 @@ Content-Type: multipart/alternative; boundary=\"alt\"\r\n\r\n\
             "spf=fail smtp.mailfrom=example.com; dkim=pass header.d=example.com"
         ));
         assert!(!check("spf=pass; dkim=pass; dmarc=pass"));
+    }
+
+    #[test]
+    fn a_forward_by_the_support_domain_keeps_the_original_customer() {
+        // Outlook "Forward" rule on the support mailbox: From is the mailbox itself.
+        let email = parse(&raw(
+            "From: Acme Support <support@acme.test>\r\nSubject: FW: Export broken",
+            "\r\n________________________________\r\nFrom: Ada Lovelace <ada@customer.test>\r\nSent: Monday\r\nSubject: Export broken\r\n\r\nHelp",
+        ))
+        .unwrap();
+        assert_eq!(
+            email.requester("support@acme.test"),
+            ("ada@customer.test".to_owned(), "Ada Lovelace".to_owned())
+        );
+        // a colleague of the same domain forwards with Gmail's marker and an old mailto form
+        let email = parse(&raw(
+            "From: jane@acme.test\r\nSubject: Fwd: x",
+            "---------- Forwarded message ---------\r\nFrom: Bob [mailto:bob@client.test]\r\n",
+        ))
+        .unwrap();
+        assert_eq!(email.requester("support@acme.test").0, "bob@client.test");
+        // only Reply-To names the customer
+        let email = parse(&raw(
+            "From: support@acme.test\r\nReply-To: Ada <ada@customer.test>",
+            "x",
+        ))
+        .unwrap();
+        assert_eq!(email.requester("support@acme.test").0, "ada@customer.test");
+    }
+
+    #[test]
+    fn a_redirect_or_a_customer_reply_to_keeps_from() {
+        // Redirect keeps the customer's From; a Reply-To of the support domain changes nothing
+        let email = parse(&raw(
+            "From: Ada <ada@customer.test>\r\nReply-To: support@acme.test\r\nResent-From: support@acme.test",
+            "x",
+        ))
+        .unwrap();
+        assert_eq!(email.requester("support@acme.test").0, "ada@customer.test");
+        // a customer quoting a forwarded block keeps being the requester
+        let email = parse(&raw(
+            "From: ada@customer.test",
+            "-----Original Message-----\r\nFrom: eve@other.test\r\n",
+        ))
+        .unwrap();
+        assert_eq!(email.requester("support@acme.test").0, "ada@customer.test");
+        // a forward with no customer anywhere stays with From
+        let email = parse(&raw("From: support@acme.test", "x")).unwrap();
+        assert_eq!(email.requester("support@acme.test").0, "support@acme.test");
     }
 
     #[test]

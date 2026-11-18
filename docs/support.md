@@ -60,6 +60,55 @@ handler reference: <https://developers.cloudflare.com/email-service/api/route-em
 Other providers work too when they can post the raw message (for example Postmark inbound with
 the raw email enabled). A Gmail or Microsoft 365 mailbox can forward to the Cloudflare address.
 
+### Microsoft 365 (an existing mailbox)
+
+A team that already has `support@` in Microsoft 365 (Exchange Online) keeps it. Microsoft 365
+cannot post to a URL, so its mail goes through the Cloudflare Worker above:
+
+1. Set up the Worker with the mailbox's inbound URL on an address of a domain (or subdomain) on
+   Cloudflare, for example `support-inbound@help.example.com`.
+2. **Exchange admin center → Mail flow → Rules → Add a rule**: *Apply this rule if* the recipient
+   is `support@example.com`, *Do the following* **Redirect the message to**
+   `support-inbound@help.example.com`. A redirect keeps the customer in `From`. The mailbox keeps
+   its copy only if you also choose "Deliver the message to … and redirect" (a BCC action); this
+   is optional.
+3. An **Outlook inbox rule** ("Forward to" or "Redirect to") on the mailbox works too, but needs
+   external forwarding on: **Microsoft Defender → Email & collaboration → Policies → Anti-spam →
+   Anti-spam outbound policy → Automatic forwarding rules → On** (for the organization, or a policy
+   for this mailbox). A mail flow rule (step 2) does not need it.
+4. Replies: in Project settings → Support email, SMTP server `smtp.office365.com`, port `587`,
+   STARTTLS (the defaults of a new mailbox), user name empty or the mailbox address, and the
+   mailbox's password. Turn on **Authenticated SMTP** for the mailbox: **Microsoft 365 admin center
+   → Users → Active users → the mailbox → Mail → Manage email apps → Authenticated SMTP**. If the
+   tenant turns SMTP AUTH off for everyone, also clear **Exchange admin center → Settings → Mail
+   flow → Turn off SMTP AUTH protocol for your organization**. Changes can take up to an hour.
+   Then select **Test connection**: it signs in and quits without sending.
+
+The mailbox settings show these steps under **Use an existing Microsoft 365 mailbox**.
+
+Errors the test and failed replies explain:
+
+| Answer | Meaning |
+|---|---|
+| `535 5.7.139 … SmtpClientAuthentication is disabled for the Mailbox` (or `… for the Tenant`) | Authenticated SMTP is off: step 4. |
+| `535 5.7.3` / other `535` | Wrong user name or password. The user name is the full mailbox address. |
+| `550 5.7.30 Basic authentication is not supported for Client Submission` | The tenant no longer allows a password for SMTP. |
+
+Microsoft retires password sign-in (Basic authentication) for SMTP AUTH: per Message Center
+MC786329 (updated January 2026) it is off by default for existing tenants from the end of
+December 2026, an admin can allow it again for a while, and the final date comes in 2027
+(<https://mc.merill.net/message/MC786329>). Orbit signs in with a password only (no OAuth yet);
+after that date use another SMTP server for replies (for example the provider of the support
+domain, or a relay such as SMTP2GO or Postmark) with the same From address, and keep the redirect
+of step 2 for incoming mail.
+
+**Forwarded mail keeps the customer.** When the mailbox itself or a colleague of the support domain
+forwards an email (Outlook "Forward"), `From` is that mailbox. Orbit then takes the customer from
+the forwarded block (`From:` under `-----Original Message-----`, Outlook's line, Gmail's
+"Forwarded message"; also `Von:`, `De:`, `Van:`), or from `Reply-To`, when that address is outside
+the support domain. A redirect keeps `From` as it is. A forward with no customer in it stays a
+ticket of the support address, and a reply to it is refused (it would loop).
+
 ## Tickets
 
 An inbound email finds its ticket in this order, only among the tickets of the same mailbox:
@@ -126,10 +175,11 @@ for each customer email.
 |---|---|
 | `GET/POST/PUT/DELETE /api/v1/workspaces/{id}/projects/{project_id}/support-mailbox` | The mailbox (owners and admins). |
 | `POST …/support-mailbox/rotate` | A new inbound URL. |
+| `POST …/support-mailbox/test` | Signs in to the SMTP server and quits (`{ ok, message }`); never sends. |
 | `GET /api/v1/workspaces/{id}/tasks/{task_id}/support` | The task's emails, customer and other tickets. |
 | `POST /api/v1/workspaces/{id}/tasks/{task_id}/support/replies` | Queues a reply (`{ "body": "…" }`). |
 | `POST /api/v1/workspaces/{id}/support/messages/{message_id}/retry` | Sends a failed reply again. |
 | `POST /api/v1/hooks/support/{mailbox_id}/{secret}` | Inbound email (raw MIME body). |
 
-Not yet: Donna tools for tickets, tickets in the iPhone app, IMAP polling, canned replies,
+Not yet: OAuth sign-in for Microsoft 365 SMTP, Donna tools for tickets, tickets in the iPhone app, IMAP polling, canned replies,
 signatures, auto-close, attachments on replies.

@@ -2,9 +2,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '@/api/client'
 import {
   createSupportMailbox, createSupportReply, deleteSupportMailbox, getSupportMailbox, getTaskSupport, retrySupportMessage, rotateSupportMailbox,
-  updateSupportMailbox,
+  testSupportMailbox, updateSupportMailbox,
 } from '@orbit/api/generated/sdk.gen'
-import type { SupportMailboxBody, SupportMailboxResponse, SupportMessage, SupportTicket } from '@orbit/api/generated/types.gen'
+import type { SupportMailboxBody, SupportMailboxResponse, SupportMessage, SupportSmtpTest, SupportTicket } from '@orbit/api/generated/types.gen'
 import { queryKeys } from '@/api/queryKeys'
 
 export type { SupportMailbox, SupportMessage, SupportTicket } from '@orbit/api/generated/types.gen'
@@ -110,5 +110,16 @@ export function useDeleteSupportMailbox(workspaceId: string, projectId: string) 
       await deleteSupportMailbox({ client: apiClient, path: { workspace_id: workspaceId, project_id: projectId }, throwOnError: true })
     },
     onSuccess: () => queryClient.setQueryData<SupportMailboxResponse>(mailboxKey(workspaceId, projectId), { mailbox: null }),
+  })
+}
+
+/** Signs in to the mailbox's saved SMTP server without sending: `ok`, or what failed and how to fix it. */
+export function useTestSupportMailbox(workspaceId: string, projectId: string) {
+  return useMutation({
+    mutationFn: async (): Promise<SupportSmtpTest> => {
+      const { data } = await testSupportMailbox({ client: apiClient, path: { workspace_id: workspaceId, project_id: projectId }, throwOnError: true })
+      if (!data) throw new Error('Test response was empty.')
+      return data
+    },
   })
 }

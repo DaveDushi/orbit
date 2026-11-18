@@ -236,6 +236,7 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::support_routes::update_support_mailbox,
         crate::support_routes::delete_support_mailbox,
         crate::support_routes::rotate_support_mailbox,
+        crate::support_routes::test_support_mailbox,
         crate::support_routes::get_task_support,
         crate::support_routes::create_support_reply,
         crate::support_routes::retry_support_message,

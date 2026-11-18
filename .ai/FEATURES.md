@@ -550,6 +550,12 @@ Design: `.ai/helpdesk-design.md`.
   A reply is queued in the transaction with the `support.send` job (5 attempts, 30 s–30 min backoff, lettre with the
   mailbox SMTP; permanent SMTP errors and the 500/24 h cap per mailbox in `email_sends` fail at once) and moves the ticket
   to Pending. Failed replies show Not sent + Retry (`POST support/messages/{id}/retry`).
+- Microsoft 365 mailboxes (docs/support.md): a mail flow rule redirects to the Cloudflare Worker address. A forward by the
+  support domain (From = the mailbox or a colleague) files the customer from the forwarded `From:` block or `Reply-To`
+  (`InboundEmail::requester`); a reply to the support address itself is refused (loop). New mailboxes default to
+  smtp.office365.com:587 STARTTLS; an empty SMTP user means the mailbox address. **Test connection**
+  (`POST …/support-mailbox/test`) signs in and quits. SMTP errors explain 535 5.7.139 (SMTP AUTH off, with the fix),
+  535 (wrong password) and 550 5.7.30 (Basic auth off), and never contain the password (`outbound::scrub`).
 - Customer card in the task side panel: name, email, the customer's other tickets the reader sees.
 - Notifications: each customer email notifies the ticket's assignees and followers (`task_commented`, external actor in
   `actor_github_login` = the email address; the Inbox and push say "New email from …").

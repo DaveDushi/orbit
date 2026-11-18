@@ -151,18 +151,86 @@ impl SupportSender {
         if !self.development {
             check_resolved_host(&settings.host, settings.port).await?;
         }
-        let transport = crate::mail::transport(&settings, self.app_key.as_ref())
-            .map_err(|error| SendFailure::permanent(&error.to_string()))?;
+        let password = self.password(&settings);
+        let transport =
+            crate::mail::transport(&settings, self.app_key.as_ref()).map_err(|error| {
+                SendFailure::permanent(&scrub(&error.to_string(), password.as_deref()))
+            })?;
         transport
             .send(message)
             .await
             .map(|_| ())
             .map_err(|error| SendFailure {
-                // The server's answer, never the message.
-                text: format!("The mail server refused the reply: {error}"),
+                // The server's answer, never the message or the password.
+                text: explain(&error.to_string(), password.as_deref()),
                 retry: !error.is_permanent(),
             })
     }
+
+    /// The saved SMTP password in plain text, only to remove it from error texts.
+    fn password(&self, settings: &SmtpSettings) -> Option<String> {
+        let sealed = settings.password.as_ref()?;
+        crate::secret_box::decrypt_secret(self.app_key.as_ref()?, sealed).ok()
+    }
+
+    /// Signs in to the mailbox's SMTP server and quits, without sending: the "Test connection"
+    /// of the mailbox settings. `Err` is the text to show (never containing the password).
+    pub async fn test_connection(&self, settings: &SmtpSettings) -> Result<(), String> {
+        if !self.development {
+            check_resolved_host(&settings.host, settings.port)
+                .await
+                .map_err(|failure| failure.text)?;
+        }
+        let password = self.password(settings);
+        let transport = crate::mail::transport(settings, self.app_key.as_ref())
+            .map_err(|error| scrub(&error.to_string(), password.as_deref()))?;
+        match transport.test_connection().await {
+            Ok(true) => Ok(()),
+            Ok(false) => Err("The SMTP server closed the connection.".to_owned()),
+            Err(error) => Err(explain(&error.to_string(), password.as_deref())),
+        }
+    }
+}
+
+/// Removes the password (and its base64 forms, as AUTH sends it) from a text.
+fn scrub(text: &str, password: Option<&str>) -> String {
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+    let Some(password) = password.filter(|password| !password.is_empty()) else {
+        return text.to_owned();
+    };
+    [password.to_owned(), STANDARD.encode(password)]
+        .iter()
+        .fold(text.to_owned(), |text, secret| {
+            text.replace(secret.as_str(), "•••")
+        })
+}
+
+/// What an SMTP failure means, with the fix for the common Microsoft 365 answers.
+pub(crate) fn explain(error: &str, password: Option<&str>) -> String {
+    let error = scrub(error, password);
+    if error.contains("5.7.139") {
+        return format!(
+            "Microsoft 365 refused the sign-in: SMTP AUTH is off for this mailbox or the whole tenant (535 5.7.139). \
+             Fix: Microsoft 365 admin center → Users → Active users → the mailbox → Mail → Manage email apps → turn on \
+             Authenticated SMTP; if the error says \"for the Tenant\", Exchange admin center → Settings → Mail flow → \
+             clear \"Turn off SMTP AUTH protocol for your organization\". Changes take up to an hour, then Test connection \
+             again. Server answer: {error}"
+        );
+    }
+    if error.contains("5.7.30") {
+        return format!(
+            "Microsoft 365 no longer accepts a password for SMTP in this tenant (550 5.7.30, Basic authentication is \
+             off). An admin can allow it again for now in Exchange Online; see docs/support.md. Server answer: {error}"
+        );
+    }
+    if error.contains("535") {
+        return format!(
+            "The SMTP server refused the user name or password (535). Check the SMTP user name (for Microsoft 365: the \
+             full mailbox address) and the password. Server answer: {error}"
+        );
+    }
+    format!("The mail server refused: {error}")
 }
 
 fn smtp_settings(outgoing: &Outgoing) -> Result<SmtpSettings, SendFailure> {
@@ -322,6 +390,29 @@ mod tests {
         );
         assert!(text.contains("To: ada@example.org"), "{text}");
         assert!(text.contains("Hello Ada"), "{text}");
+    }
+
+    #[test]
+    fn smtp_errors_explain_microsoft_answers_and_never_show_the_password() {
+        let text = explain(
+            "permanent error (535): 5.7.139 Authentication unsuccessful, SmtpClientAuthentication is disabled for the Mailbox. p@ss w0rd",
+            Some("p@ss w0rd"),
+        );
+        assert!(text.contains("Authenticated SMTP"), "{text}");
+        assert!(!text.contains("p@ss w0rd"), "{text}");
+        assert!(
+            explain(
+                "permanent error (550): 5.7.30 Basic authentication is not supported",
+                None
+            )
+            .contains("5.7.30")
+        );
+        let text = explain(
+            "permanent error (535): 5.7.3 Authentication unsuccessful cEBzcyB3MHJk",
+            Some("p@ss w0rd"),
+        );
+        assert!(text.contains("user name or password"), "{text}");
+        assert!(!text.contains("cEBzcyB3MHJk"), "{text}");
     }
 
     #[test]

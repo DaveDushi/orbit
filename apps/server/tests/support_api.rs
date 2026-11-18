@@ -1049,3 +1049,249 @@ async fn the_default_assignee_and_followers_are_notified_of_customer_email() {
         StatusCode::CONFLICT
     );
 }
+
+/// A writer that keeps every log line, to check what the server logs.
+#[derive(Clone, Default)]
+struct Logs(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Logs {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// An SMTP server that answers every sign-in as Microsoft 365 does when SMTP AUTH is off. It
+/// keeps the AUTH lines it got, so the test knows the password really went to the server.
+async fn smtp_auth_disabled() -> (u16, Arc<std::sync::Mutex<Vec<String>>>) {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let auth_lines = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = Arc::clone(&auth_lines);
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let seen = Arc::clone(&seen);
+            tokio::spawn(async move {
+                let (read, mut write) = stream.into_split();
+                let mut lines = BufReader::new(read).lines();
+                write
+                    .write_all(b"220 fake.outlook.test ESMTP\r\n")
+                    .await
+                    .unwrap();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    let upper = line.to_ascii_uppercase();
+                    let answer: &[u8] = if upper.starts_with("EHLO") || upper.starts_with("HELO") {
+                        b"250-fake.outlook.test\r\n250 AUTH PLAIN LOGIN\r\n"
+                    } else if upper.starts_with("AUTH") {
+                        seen.lock().unwrap().push(line.clone());
+                        b"535 5.7.139 Authentication unsuccessful, SmtpClientAuthentication is disabled for the Mailbox. Visit https://aka.ms/smtp_auth_disabled for more information.\r\n"
+                    } else if upper.starts_with("QUIT") {
+                        let _ = write.write_all(b"221 Bye\r\n").await;
+                        break;
+                    } else {
+                        b"250 OK\r\n"
+                    };
+                    if write.write_all(answer).await.is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+    });
+    (port, auth_lines)
+}
+
+#[tokio::test]
+async fn the_smtp_password_never_reaches_responses_logs_or_error_texts() {
+    const PASSWORD: &str = "Pa55-Secret-xyz!";
+    let logs = Logs::default();
+    let writer = logs.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_writer(move || writer.clone())
+        .finish();
+    let _logging = tracing::subscriber::set_default(subscriber);
+
+    let fixture = Fixture::new().await;
+    let (port, auth_lines) = smtp_auth_disabled().await;
+    let mailbox_path = format!("/projects/{}/support-mailbox", fixture.project_id);
+    let mut bodies = Vec::new();
+    let created = fixture
+        .ok(
+            &fixture.owner,
+            "POST",
+            &mailbox_path,
+            Some(json!({
+                "address": "support@acme.test",
+                "smtp_host": "127.0.0.1",
+                "smtp_port": port,
+                "smtp_security": "none",
+                "smtp_password": PASSWORD,
+            })),
+        )
+        .await;
+    // without a user name, the mailbox address signs in (Microsoft 365)
+    assert_eq!(created["mailbox"]["smtp_username"], "support@acme.test");
+    bodies.push(created.to_string());
+    bodies.push(
+        fixture
+            .ok(&fixture.owner, "GET", &mailbox_path, None)
+            .await
+            .to_string(),
+    );
+
+    // Test connection: refused with the fix steps
+    let tested = fixture
+        .ok(
+            &fixture.owner,
+            "POST",
+            &format!("{mailbox_path}/test"),
+            None,
+        )
+        .await;
+    assert_eq!(tested["ok"], false);
+    assert!(
+        tested["message"]
+            .as_str()
+            .unwrap()
+            .contains("Authenticated SMTP"),
+        "{tested}"
+    );
+    bodies.push(tested.to_string());
+    let member = fixture.person("member", "member").await;
+    assert_eq!(
+        fixture
+            .call(&member, "POST", &format!("{mailbox_path}/test"), None)
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+
+    // a reply that the server refuses: the reason, not the password
+    let hook = created["inbound_url"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("https://hooks.orbit.test")
+        .unwrap()
+        .to_owned();
+    fixture
+        .deliver(
+            &hook,
+            &email("ada@customer.test", "x", "pw1@customer.test", "", "x"),
+        )
+        .await;
+    let task_id = fixture.tickets().await.remove(0);
+    fixture
+        .ok(
+            &fixture.owner,
+            "POST",
+            &format!("/tasks/{task_id}/support/replies"),
+            Some(json!({ "body": "Hello" })),
+        )
+        .await;
+    let sender = SupportSender::new((*fixture.database).clone(), Some(KEY), true);
+    let queued: String =
+        sqlx::query_scalar("SELECT id FROM support_messages WHERE direction = 'out'")
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap();
+    let failure = sender
+        .deliver(queued.parse().unwrap(), true)
+        .await
+        .unwrap_err();
+    assert!(!failure.retry);
+    let view = fixture
+        .ok(
+            &fixture.owner,
+            "GET",
+            &format!("/tasks/{task_id}/support"),
+            None,
+        )
+        .await;
+    assert_eq!(view["messages"][1]["send_state"], "failed");
+    assert!(
+        view["messages"][1]["send_error"]
+            .as_str()
+            .unwrap()
+            .contains("5.7.139")
+    );
+    bodies.push(view.to_string());
+
+    // the password did reach the SMTP server (so the checks below mean something) ...
+    assert!(!auth_lines.lock().unwrap().is_empty());
+    // ... and nowhere else
+    let logged = String::from_utf8_lossy(&logs.0.lock().unwrap()).into_owned();
+    for text in bodies.iter().chain([&logged]) {
+        assert!(!text.contains(PASSWORD), "password in {text}");
+    }
+    let stored: Vec<u8> = sqlx::query_scalar("SELECT smtp_password FROM support_mailboxes")
+        .fetch_one(fixture.database.pool())
+        .await
+        .unwrap();
+    assert!(!String::from_utf8_lossy(&stored).contains(PASSWORD));
+}
+
+#[tokio::test]
+async fn a_forward_from_the_support_mailbox_files_the_original_customer() {
+    let fixture = Fixture::new().await;
+    let mailbox = fixture.connect(true).await;
+    // an Outlook "Forward" rule on the support mailbox: From is the mailbox
+    fixture
+        .deliver(
+            &mailbox.hook,
+            &email(
+                "Acme Support <support@acme.test>",
+                "FW: Export broken",
+                "fw1@acme.test",
+                "",
+                "\r\n________________________________\r\nFrom: Ada Lovelace <ada@customer.test>\r\nSent: Monday\r\nSubject: Export broken\r\n\r\nHelp",
+            ),
+        )
+        .await;
+    let task_id = fixture.tickets().await.remove(0);
+    let view = fixture
+        .ok(
+            &fixture.owner,
+            "GET",
+            &format!("/tasks/{task_id}/support"),
+            None,
+        )
+        .await;
+    assert_eq!(view["ticket"]["contact"]["email"], "ada@customer.test");
+    assert_eq!(view["ticket"]["contact"]["name"], "Ada Lovelace");
+    let reply = fixture
+        .ok(
+            &fixture.owner,
+            "POST",
+            &format!("/tasks/{task_id}/support/replies"),
+            Some(json!({ "body": "On it" })),
+        )
+        .await;
+    assert_eq!(reply["to"], json!(["ada@customer.test"]));
+
+    // a forward with no customer in it: no reply to the support address itself (a loop)
+    fixture
+        .deliver(
+            &mailbox.hook,
+            &email("support@acme.test", "FW: ?", "fw2@acme.test", "", "x"),
+        )
+        .await;
+    let looped = fixture.tickets().await.remove(0);
+    assert_ne!(looped, task_id);
+    assert_eq!(
+        fixture
+            .call(
+                &fixture.owner,
+                "POST",
+                &format!("/tasks/{looped}/support/replies"),
+                Some(json!({ "body": "x" }))
+            )
+            .await
+            .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+}

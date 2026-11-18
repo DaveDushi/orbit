@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { LoadingText } from '@/components/ui/spinner'
 import { SettingsRow } from '@/features/settings/components/SettingsParts'
-import { useDeleteSupportMailbox, useRotateSupportMailbox, useSaveSupportMailbox, useSupportMailbox } from '@/features/tasks/api/support'
+import { useDeleteSupportMailbox, useRotateSupportMailbox, useSaveSupportMailbox, useSupportMailbox, useTestSupportMailbox } from '@/features/tasks/api/support'
 import { useTeamMembers } from '@/features/workspaces/api'
 import { useCan } from '@/features/workspaces/permissions'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
@@ -64,6 +64,7 @@ function InboundUrl({ url, onDone }: { url: string; onDone: () => void }) {
         <Danger aria-hidden="true" className="mt-px size-4 shrink-0 text-amber-500" />
         Copy it now: Orbit shows this URL only once. Anyone who has it can put email into this project. Put it in your Cloudflare Email Worker (see docs/support.md).
       </p>
+      <Microsoft365Steps />
       <div className="grid gap-1.5">
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium">Try it with a saved email</span>
@@ -79,13 +80,32 @@ function InboundUrl({ url, onDone }: { url: string; onDone: () => void }) {
   )
 }
 
+/** How a Microsoft 365 mailbox that the team already uses sends its email here and its replies out. */
+function Microsoft365Steps({ address }: { address?: string }) {
+  const mailbox = address || 'the support mailbox'
+  return (
+    <details data-slot="m365-steps" className="group text-xs text-muted-foreground">
+      <summary className="cursor-pointer font-medium text-foreground outline-none select-none focus-visible:ring-2 focus-visible:ring-ring/50">Use an existing Microsoft 365 mailbox</summary>
+      <ol className="mt-2 ml-4 grid list-decimal gap-1.5">
+        <li>Microsoft 365 cannot post to a URL: set up the Cloudflare Email Worker (docs/support.md) with this inbound URL, on an address such as <code>support-inbound@help.your-domain</code>.</li>
+        <li>Exchange admin center → Mail flow → Rules → Add a rule → <em>Redirect the message to</em> that address, applied if <em>the recipient is</em> {mailbox}. A redirect keeps the customer as the sender. An Outlook “Forward” rule also works: Orbit takes the customer from the forwarded message.</li>
+        <li>An Outlook rule or mailbox forwarding (not a mail flow rule) also needs external forwarding on: Microsoft Defender → Policies → Anti-spam → Anti-spam outbound policy → Automatic forwarding rules → On.</li>
+        <li>Replies: SMTP server <code>smtp.office365.com</code>, port 587, STARTTLS, user {mailbox}, its password. Turn on Authenticated SMTP for it (Microsoft 365 admin center → Users → Active users → {mailbox} → Mail → Manage email apps), save, then Test connection.</li>
+      </ol>
+    </details>
+  )
+}
+
 function MailboxForm({ projectId, mailbox, onUrl }: { projectId: string; mailbox: SupportMailbox | null; onUrl: (url: string) => void }) {
   const { workspace } = useWorkspace()
   const members = useTeamMembers(workspace.id)
   const save = useSaveSupportMailbox(workspace.id, projectId, mailbox !== null)
+  // tests the saved settings: save first
+  const test = useTestSupportMailbox(workspace.id, projectId)
   const [address, setAddress] = useState(mailbox?.address ?? '')
   const [displayName, setDisplayName] = useState(mailbox?.display_name ?? '')
-  const [host, setHost] = useState(mailbox?.smtp_host ?? '')
+  // a new mailbox starts with Microsoft 365's SMTP server
+  const [host, setHost] = useState(mailbox ? (mailbox.smtp_host ?? '') : 'smtp.office365.com')
   const [port, setPort] = useState(String(mailbox?.smtp_port ?? 587))
   const [security, setSecurity] = useState(mailbox?.smtp_security ?? 'starttls')
   const [username, setUsername] = useState(mailbox?.smtp_username ?? '')
@@ -136,8 +156,8 @@ function MailboxForm({ projectId, mailbox, onUrl }: { projectId: string; mailbox
         </Field>
         <Field>
           <FieldLabel htmlFor={ids.host}>SMTP server</FieldLabel>
-          <Input id={ids.host} placeholder="smtp.example.com" value={host} onChange={(event) => setHost(event.target.value)} />
-          <FieldDescription>The server of your support domain sends the replies. Without one, the project only receives email.</FieldDescription>
+          <Input id={ids.host} placeholder="smtp.office365.com" value={host} onChange={(event) => setHost(event.target.value)} />
+          <FieldDescription>The server of your support domain sends the replies (Microsoft 365: smtp.office365.com, 587, STARTTLS). Empty: the project only receives email.</FieldDescription>
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field>
@@ -154,7 +174,8 @@ function MailboxForm({ projectId, mailbox, onUrl }: { projectId: string; mailbox
         </div>
         <Field>
           <FieldLabel htmlFor={ids.user}>SMTP user name</FieldLabel>
-          <Input id={ids.user} autoComplete="off" value={username} onChange={(event) => setUsername(event.target.value)} />
+          <Input id={ids.user} autoComplete="off" placeholder={address || 'The support address'} value={username} onChange={(event) => setUsername(event.target.value)} />
+          <FieldDescription>Empty: the support address signs in (as Microsoft 365 expects).</FieldDescription>
         </Field>
         <Field>
           <FieldLabel htmlFor={ids.password}>SMTP password</FieldLabel>
@@ -180,7 +201,18 @@ function MailboxForm({ projectId, mailbox, onUrl }: { projectId: string; mailbox
         </Select>
       </div>
       {save.isError ? <p role="alert" className="text-xs text-destructive">{saveError(save.error)}</p> : null}
-      <div className="flex justify-end">
+      {test.data ? (
+        <p role="status" data-ok={test.data.ok || undefined} className="m-0 rounded-md border border-destructive/40 bg-destructive/5 p-2.5 text-xs whitespace-pre-line text-destructive data-ok:border-emerald-500/40 data-ok:bg-emerald-500/5 data-ok:text-emerald-700 dark:data-ok:text-emerald-400">
+          {test.data.message}
+        </p>
+      ) : null}
+      {test.isError ? <p role="alert" className="text-xs text-destructive">The test could not run.</p> : null}
+      <div className="flex justify-end gap-2">
+        {mailbox?.smtp_host ? (
+          <Button type="button" variant="outline" disabled={test.isPending || save.isPending} onClick={() => test.mutate()}>
+            {test.isPending ? 'Testing…' : 'Test connection'}
+          </Button>
+        ) : null}
         <Button type="submit" disabled={save.isPending || !address.trim()}>{mailbox ? 'Save' : 'Connect mailbox'}</Button>
       </div>
     </form>
@@ -240,6 +272,7 @@ export function ProjectSupportCard({ projectId }: { projectId: string }) {
               </div>
             </SettingsRow>
             {rotate.isError || disconnect.isError ? <SettingsRow role="alert" className="text-xs text-destructive">The change could not be saved.</SettingsRow> : null}
+            <SettingsRow><Microsoft365Steps address={current.address} /></SettingsRow>
           </div>
         </SettingsCard>
       ) : null}
