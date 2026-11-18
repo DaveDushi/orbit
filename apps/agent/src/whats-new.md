@@ -7,10 +7,10 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 -->
 
 ## 2026-11-18
-- Imports with one yes: when you ask Donna to import a file (for example customers into Shopify) or to change many things at once, she shows one plan with the field mapping and samples, and runs all of it after one **yes**. The thread shows the progress; reply **stop** to end it.
-- Large files: Donna reads a whole spreadsheet or CSV of tens of thousands of rows, or a long PDF or Word file, in one go, and answers questions about it in one reply.
+- Imports with one yes: when you ask Donna to import a file (for example customers into Shopify) or to change many things at once, she shows one plan with the field mapping and samples, and runs all of it after one **yes**. The thread shows the progress; reply **stop** to end it. Large files: Donna reads a whole spreadsheet or CSV of tens of thousands of rows, or a long PDF or Word file, in one go, and answers questions about it in one reply.
 - Owners and admins can suspend a member (Settings → Members → Manage → Suspend member): they are signed out everywhere and cannot sign in until **Resume member**, with the same password. Their data stays. Removing a suspended member from the workspace also lifts that suspension, so their Orbit account is not locked.
 - GitHub: a synced task links to its issue ("GitHub issue #12"), and when you remove a label such as owner:<name> from the issue, the person that label's rule assigned leaves the task too (people assigned by hand stay). Fix: in the dark theme, the red mic of the Ask Donna box stays red under the pointer.
+- One navigation on the computer: the Classic / New UI choice in Appearance is gone. The sidebar changes with the area (Docs, Chat, Drive, Tasks, Settings) with Back on top, keeps one width on every page (drag its right edge to resize), and a custom theme colours the whole app.
 
 ## 2026-11-17
 - iPhone: open chats, tasks and lists update live again; no app update needed.
