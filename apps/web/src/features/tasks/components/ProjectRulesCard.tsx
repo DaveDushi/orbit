@@ -86,7 +86,7 @@ function RuleForm({ labels, people, initial, submitLabel, pending, onSubmit, onC
   )
 }
 
-/** Label rules: a label assigns people (only adds assignees). Owners and admins manage them. */
+/** Label rules: a label assigns people (GitHub removing the label removes them again). Owners and admins manage them. */
 export function ProjectRulesCard({ projectId }: { projectId: string }) {
   const { workspace } = useWorkspace()
   const canManage = useCan('label_rules.manage')
@@ -99,7 +99,7 @@ export function ProjectRulesCard({ projectId }: { projectId: string }) {
   const setOwnerLabels = useSetOwnerLabels(workspace.id, projectId)
   const [editingId, setEditingId] = useState<string>()
 
-  const description = 'Assign people automatically when a task gets a label. Rules only add assignees; they never remove one.'
+  const description = 'Assign people automatically when a task gets a label. When GitHub removes the label, the person its rule added is removed too; people assigned by hand stay.'
   if (!canManage) {
     return <SettingsCard title="Rules" description={description}><p className="text-sm text-muted-foreground">Only workspace owners and admins manage rules.</p></SettingsCard>
   }

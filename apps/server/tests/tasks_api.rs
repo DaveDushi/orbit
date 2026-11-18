@@ -146,7 +146,33 @@ async fn github_issue_link_reports_paused_sync_state() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(response_json(response).await[0]["state"], "active");
+    let link = response_json(response).await;
+    assert_eq!(link[0]["state"], "active");
+    assert_eq!(link[0]["repository"], "acme/repo");
+    assert_eq!(link[0]["number"], 12);
+    assert_eq!(link[0]["project_repositories"], 1);
+
+    // Another task of the project syncs from a second repository: the clients name the repository.
+    let other = fixture.create_task("Other GitHub task").await;
+    sqlx::query("INSERT INTO github_issue_links (workspace_id, repository, issue_number, task_id) VALUES ($1, 'acme/other', 3, $2)")
+        .bind(&fixture.workspace_id)
+        .bind(other["id"].as_str().unwrap())
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    let response = fixture
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&path)
+                .header(header::COOKIE, &fixture.owner_cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response_json(response).await[0]["project_repositories"], 2);
 }
 
 #[tokio::test]

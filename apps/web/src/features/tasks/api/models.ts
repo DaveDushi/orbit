@@ -1,6 +1,6 @@
 import type { User } from '@/features/workspaces/models'
 import { formatTaskIdentifier } from '@/lib/taskLinks'
-import type { AttachmentRecord, AuditEvent, CommentRecord, LabelRecord, ProjectRecord, TaskCycle, TaskMilestone, TaskRecord, TaskRecurrence } from '@orbit/api/generated/types.gen'
+import type { AttachmentRecord, AuditEvent, CommentRecord, GithubLink, LabelRecord, ProjectRecord, TaskCycle, TaskMilestone, TaskRecord, TaskRecurrence } from '@orbit/api/generated/types.gen'
 
 export type StatusCategory = 'unstarted' | 'started' | 'completed' | 'cancelled' | 'duplicate'
 export type TaskPriority = 'none' | 'low' | 'medium' | 'high' | 'urgent'
@@ -162,12 +162,16 @@ const ACTIVITY_TEXT: Record<string, string> = {
   'backup.item_restored': 'restored from a backup',
 }
 
-/** "Assigned by rule: bug → Raymond" for a label rule's assignment. */
+/**
+ * "Assigned by rule: bug → Raymond" for a label rule's assignment, "Unassigned by rule: …" when GitHub
+ * removed the label.
+ */
 function ruleActivity(action: string, metadata: Record<string, unknown>): Pick<TaskActivity, 'text' | 'system'> | null {
-  if (action !== 'task.assigned_by_rule') return null
+  const verb = action === 'task.assigned_by_rule' ? 'Assigned' : action === 'task.unassigned_by_rule' ? 'Unassigned' : null
+  if (!verb) return null
   const label = typeof metadata.label_name === 'string' ? metadata.label_name : 'a label'
   const person = typeof metadata.assignee_name === 'string' ? metadata.assignee_name : 'someone'
-  return { text: `Assigned by rule: ${label} → ${person}`, system: true }
+  return { text: `${verb} by rule: ${label} → ${person}`, system: true }
 }
 
 /**
@@ -417,4 +421,21 @@ export function taskFromRecord(
     ancestors: (wire.ancestors ?? []).map(keyRef),
     version: record.version,
   }
+}
+
+/** `owner/name` as GitHub allows it (no `.` or `..` repository). */
+const GITHUB_REPOSITORY = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/(?!\.\.?$)[A-Za-z0-9._-]+$/
+
+/**
+ * The GitHub issue a task syncs from: "GitHub issue #12" ("GitHub issue acme/api#12" when the project syncs from more
+ * than one repository) and its URL, built only from the stored repository and number. `null` for other tasks, a
+ * pull request source, or a value that is not a valid repository or number.
+ */
+export function githubSourceIssue(links: readonly GithubLink[] | undefined): { label: string; url: string } | null {
+  const link = links?.find((item) => item.source && item.kind === 'issue')
+  const repository = link?.repository
+  const number = link?.number
+  if (!repository || !GITHUB_REPOSITORY.test(repository) || !Number.isSafeInteger(number) || !number || number < 1) return null
+  const name = (link?.project_repositories ?? 1) > 1 ? `${repository}#${number}` : `#${number}`
+  return { label: `GitHub issue ${name}`, url: `https://github.com/${repository}/issues/${number}` }
 }

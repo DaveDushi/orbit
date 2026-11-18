@@ -58735,6 +58735,29 @@
           "kind": {
             "type": "string"
           },
+          "number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Its number (`source` only)."
+          },
+          "project_repositories": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "How many repositories the task's project syncs from, its connected one included\n(`source` only): the clients name the repository when there is more than one."
+          },
+          "repository": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`owner/name` of the issue or pull request the task syncs from (`source` only)."
+          },
           "source": {
             "type": "boolean"
           },

@@ -1926,6 +1926,13 @@ pub struct GithubLink {
     url: String,
     state: String,
     source: bool,
+    /// `owner/name` of the issue or pull request the task syncs from (`source` only).
+    repository: Option<String>,
+    /// Its number (`source` only).
+    number: Option<i64>,
+    /// How many repositories the task's project syncs from, its connected one included
+    /// (`source` only): the clients name the repository when there is more than one.
+    project_repositories: Option<i64>,
 }
 
 #[utoipa::path(get, path = "/api/v1/workspaces/{workspace_id}/tasks/{task_id}/github-links", params(("workspace_id" = String, Path), ("task_id" = String, Path)), responses((status = 200, body = Vec<GithubLink>)))]
@@ -1939,24 +1946,42 @@ pub(crate) async fn list_github_links(
     let (workspace_id, actor_id) =
         scope(&state, &headers, &workspace, &instance, request_id.as_ref()).await?;
     let task_id = parse_id(&task, &instance, request_id.as_ref())?;
-    state
+    let task = state
         .tasks
         .get_task(workspace_id, task_id, actor_id)
         .await
         .map_err(|error| task_problem(error, instance.clone(), request_id.as_ref()))?;
-    let rows = sqlx::query("SELECT kind, repository || '#' || issue_number AS title, 'https://github.com/' || repository || CASE kind WHEN 'pull_request' THEN '/pull/' ELSE '/issues/' END || issue_number AS url, CASE WHEN sync_paused = 1 THEN 'paused' WHEN kind = 'pull_request' THEN pull_state ELSE 'active' END AS state, 1 AS source FROM github_issue_links WHERE workspace_id = $1 AND task_id = $2 UNION ALL SELECT 'pull_request' AS kind, title, url, state, 0 AS source FROM github_pull_links WHERE workspace_id = $3 AND task_id = $4 ORDER BY kind, title")
+    let rows = sqlx::query("SELECT kind, repository || '#' || issue_number AS title, 'https://github.com/' || repository || CASE kind WHEN 'pull_request' THEN '/pull/' ELSE '/issues/' END || issue_number AS url, CASE WHEN sync_paused = 1 THEN 'paused' WHEN kind = 'pull_request' THEN pull_state ELSE 'active' END AS state, 1 AS source, repository, issue_number FROM github_issue_links WHERE workspace_id = $1 AND task_id = $2 UNION ALL SELECT 'pull_request' AS kind, title, url, state, 0 AS source, NULL AS repository, NULL AS issue_number FROM github_pull_links WHERE workspace_id = $3 AND task_id = $4 ORDER BY kind, title")
         .bind(workspace_id.to_string()).bind(task_id.to_string())
         .bind(workspace_id.to_string()).bind(task_id.to_string())
         .fetch_all(state.tasks.database().pool()).await
-        .map_err(|error| task_problem(TaskError::Unavailable(error), instance, request_id.as_ref()))?;
+        .map_err(|error| task_problem(TaskError::Unavailable(error), instance.clone(), request_id.as_ref()))?;
+    let project_repositories: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM (SELECT repository FROM github_project_connections WHERE workspace_id = $1 AND project_id = $2 \
+         UNION SELECT github_issue_links.repository FROM github_issue_links JOIN tasks ON tasks.id = github_issue_links.task_id \
+         WHERE github_issue_links.workspace_id = $3 AND tasks.project_id = $4) AS repositories",
+    )
+    .bind(workspace_id.to_string())
+    .bind(task.project_id.to_string())
+    .bind(workspace_id.to_string())
+    .bind(task.project_id.to_string())
+    .fetch_one(state.tasks.database().pool())
+    .await
+    .map_err(|error| task_problem(TaskError::Unavailable(error), instance, request_id.as_ref()))?;
     Ok(Json(
         rows.into_iter()
-            .map(|row| GithubLink {
-                kind: row.get("kind"),
-                title: row.get("title"),
-                url: row.get("url"),
-                state: row.get("state"),
-                source: row.get::<i64, _>("source") != 0,
+            .map(|row| {
+                let source = row.get::<i64, _>("source") != 0;
+                GithubLink {
+                    kind: row.get("kind"),
+                    title: row.get("title"),
+                    url: row.get("url"),
+                    state: row.get("state"),
+                    source,
+                    repository: row.get("repository"),
+                    number: row.get("issue_number"),
+                    project_repositories: source.then_some(project_repositories),
+                }
             })
             .collect(),
     ))

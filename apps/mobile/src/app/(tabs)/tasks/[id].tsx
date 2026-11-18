@@ -454,6 +454,7 @@ export default function TaskScreen() {
               {current.sub_issue_count === 0 && children.length === 0 && !composingSubIssue ? <QuietAction icon="subIssue" label="Add sub-issue" onPress={() => setComposingSubIssue(true)} /> : null}
               <QuietAction icon="docs" label="Add doc" onPress={() => sheets.open({ kind: 'pick-doc' })} />
             </View>
+            <GithubSourceIssue links={githubLinks.data} />
             <GithubPullRequests links={githubLinks.data ?? []} />
           </View>
 
@@ -828,6 +829,19 @@ export default function TaskScreen() {
 const TASK_PROBLEMS = problemResponses('task')
 /** The description editor's sync state: the task screen shows only its problems. */
 const ignoreStatus = (_state: CollabState) => {}
+
+/** "GitHub issue #12": the issue the task syncs from, opened in the system browser (as on the web). */
+function GithubSourceIssue({ links }: { links: readonly GithubLink[] | undefined }) {
+  const { colors } = useTheme()
+  const issue = taskApi.githubSourceIssue(links)
+  if (!issue) return null
+  return (
+    <Pressable accessibilityRole="link" onPress={() => void openURL(issue.url)} className="mt-2 flex-row items-center gap-1.5 self-start py-1 rounded-md active:bg-muted">
+      <Icon name="link2" size={14} color={colors.mutedForeground} />
+      <Text className="text-[12px] text-muted-foreground">{issue.label}</Text>
+    </Pressable>
+  )
+}
 
 /** The pull requests that mention the task (the web's "GitHub links"); the issue the task syncs from is not listed. */
 function GithubPullRequests({ links }: { links: readonly GithubLink[] }) {
