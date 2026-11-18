@@ -16,7 +16,7 @@ These routes use the production API and the database:
 - `/chat` (channels, DMs, threads); `/dm/*` redirects to `/chat`
 - `/activity` (`/inbox` redirects to it), `/profile`, `/settings`, and `/admin`
 
-Mail has no backend yet. Its UI in `features/mail` uses mock data, and `/mail` redirects to `/tasks`. `mail.rs` on the server sends only account email (invitations, registration, recovery).
+There is no Mail page: customer email is the helpdesk in Tasks (support mailboxes, `docs/support.md`), and `/mail` redirects to `/tasks`. `mail.rs` on the server sends account email (invitations, registration, recovery) through the instance SMTP server; support replies use each mailbox's own SMTP server (`support/outbound.rs`).
 
 AI: there is no built-in assistant yet. AI clients use tasks and docs, and read chat, through the scoped MCP endpoint (`/mcp`, see `docs/mcp.md`).
 

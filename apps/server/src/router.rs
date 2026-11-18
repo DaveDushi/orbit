@@ -53,6 +53,7 @@ pub struct ApiRoutes {
     pub integrations: IntegrationState,
     pub imports: ImportState,
     pub chat: ChatState,
+    pub support: crate::support_routes::SupportState,
     pub agent: crate::agent::AgentState,
     pub improvements: crate::improvements::ImprovementState,
 }
@@ -88,6 +89,7 @@ pub fn production_router(
         .merge(task_router(api.tasks))
         .merge(views)
         .merge(label_rules)
+        .merge(crate::support_routes::support_router(api.support))
         .merge(page_router(api.pages))
         .merge(page_file_router(api.page_files))
         .merge(crate::page_drive_routes::page_drive_router(

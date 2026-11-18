@@ -310,6 +310,7 @@ impl App {
             billing.clone(),
             mailer.clone(),
             app_key,
+            config.environment == orbit_platform::EnvironmentMode::Development,
             config.jobs.concurrency,
         )
         .await?;
@@ -495,6 +496,13 @@ impl App {
                 ),
                 imports: ImportState::new(Arc::clone(&identity), notion_imports, cookie_mode),
                 chat,
+                support: crate::support_routes::SupportState::new(
+                    TaskState::new(Arc::clone(&identity), cookie_mode),
+                    attachment_state.uploads.clone(),
+                    app_key,
+                    config.http.hooks_origin(),
+                    config.environment == orbit_platform::EnvironmentMode::Development,
+                ),
                 agent,
                 improvements: crate::improvements::ImprovementState::new(
                     Arc::clone(&identity),
@@ -986,6 +994,7 @@ async fn initialize_production_services(
     billing: Option<crate::billing::Billing>,
     mailer: Mailer,
     app_key: Option<[u8; 32]>,
+    development: bool,
     concurrency: usize,
 ) -> Result<ProductionServices, AppError> {
     let store = JobStore::new(database.clone());
@@ -1086,6 +1095,9 @@ async fn initialize_production_services(
         .and_then(|worker| crate::workspace_export::register_job(worker, workspace_exports))
         .and_then(|worker| crate::previews::register_jobs(worker, previews))
         .and_then(|worker| crate::github_comments::register_job(worker, database.clone(), app_key))
+        .and_then(|worker| {
+            crate::support::outbound::register_job(worker, database.clone(), app_key, development)
+        })
         .and_then(|worker| match billing {
             Some(billing) => crate::billing::register_jobs(worker, billing),
             None => Ok(worker),

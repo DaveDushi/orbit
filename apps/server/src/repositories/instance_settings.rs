@@ -23,7 +23,7 @@ pub enum SmtpSecurity {
 }
 
 impl SmtpSecurity {
-    const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Tls => "tls",
             Self::Starttls => "starttls",
@@ -31,7 +31,7 @@ impl SmtpSecurity {
         }
     }
 
-    fn parse(value: &str) -> Option<Self> {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
         match value {
             "tls" => Some(Self::Tls),
             "starttls" => Some(Self::Starttls),
@@ -69,7 +69,7 @@ pub enum BackupSchedule {
 }
 
 impl BackupSchedule {
-    const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Off => "off",
             Self::Hourly => "hourly",

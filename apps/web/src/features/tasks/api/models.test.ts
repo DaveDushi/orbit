@@ -214,6 +214,15 @@ test('the feed keeps the written order of one write, a label rule line after the
   expect(entry?.kind === 'activity' ? entry.items.map((item) => item.id) : []).toEqual(['0001', '0003:labels', '0002'])
 })
 
+test('a ticket\'s emails sit between the activity by time and split its runs', () => {
+  const task = taskFromRecord(record, project, [], [], [
+    { ...activity, id: '0002', action: 'task.updated', occurred_at: '2026-09-04T12:30:00Z', metadata: { changes: { priority: { from: 'none', to: 'high' } } } },
+    { ...activity, id: '0001', action: 'task.created', occurred_at: '2026-09-04T12:00:00Z' },
+  ])
+  const feed = buildFeed(task, [{ id: 'email-1', created_at: '2026-09-04T12:10:00Z' }])
+  expect(feed.map((entry) => entry.kind)).toEqual(['activity', 'message', 'activity'])
+})
+
 test('an update event becomes one row per changed field; an event with nothing to show is dropped', () => {
   const task = taskFromRecord(record, project, [], [], [
     relationEvent('task.updated', { changes: { status: { from: 'todo', to: 'done' }, labels: { added: ['label-1'], removed: [] }, description: true } }),

@@ -60,7 +60,16 @@ export function agoLabel(iso: string): string {
   return /^\d+[mhd]$/.test(label) ? `${label} ago` : label
 }
 
-export type FeedEntry = { kind: 'activity'; at: string; items: TaskActivity[] } | { kind: 'thread'; at: string; thread: CommentThread }
+/** A support email in the feed (the server's `SupportMessage`; only what the feed orders by). */
+export interface FeedMessage {
+  id: string
+  created_at: string
+}
+
+export type FeedEntry<M extends FeedMessage = FeedMessage> =
+  | { kind: 'activity'; at: string; items: TaskActivity[] }
+  | { kind: 'thread'; at: string; thread: CommentThread }
+  | { kind: 'message'; at: string; message: M }
 
 /**
  * Events of one write share a time: they keep the order they were written in (ids grow with it; the server lists newest
@@ -71,19 +80,25 @@ function activityOrder(a: Pick<TaskActivity, 'id' | 'createdAt' | 'system'>, b: 
   return a.createdAt.localeCompare(b.createdAt) || Number(Boolean(a.system)) - Number(Boolean(b.system)) || eventId(a).localeCompare(eventId(b))
 }
 
-/** Activity events and comment threads in one chronological list; consecutive events share a timeline block. */
-export function buildFeed(task: Task): FeedEntry[] {
+/**
+ * Activity events, comment threads and a ticket's emails in one chronological list; consecutive events share a
+ * timeline block.
+ */
+export function buildFeed<M extends FeedMessage = FeedMessage>(task: Task, messages: readonly M[] = []): FeedEntry<M>[] {
   const events = [...task.activity].sort(activityOrder)
   const threads = commentThreads(task)
-  const mixed: Array<{ at: string; event?: TaskActivity; thread?: CommentThread }> = [
+  const mixed: Array<{ at: string; event?: TaskActivity; thread?: CommentThread; message?: M }> = [
     ...events.map((event) => ({ at: event.createdAt, event })),
     ...threads.map((thread) => ({ at: thread.root.createdAt, thread })),
+    ...messages.map((message) => ({ at: message.created_at, message })),
   ].sort((a, b) => a.at.localeCompare(b.at))
 
-  const feed: FeedEntry[] = []
+  const feed: FeedEntry<M>[] = []
   for (const item of mixed) {
     if (item.thread) {
       feed.push({ kind: 'thread', at: item.at, thread: item.thread })
+    } else if (item.message) {
+      feed.push({ kind: 'message', at: item.at, message: item.message })
     } else if (item.event) {
       const last = feed[feed.length - 1]
       if (last && last.kind === 'activity') last.items.push(item.event)

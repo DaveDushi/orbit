@@ -49,7 +49,10 @@ impl HttpLimits {
         let page_file_save = request.method() == Method::PUT
             && request.uri().path().contains("/files/")
             && request.uri().path().ends_with("/content");
-        if multipart || page_file_save {
+        // An inbound support email is raw MIME with its attachments; its route caps it (36 MB).
+        let support_email = request.method() == Method::POST
+            && request.uri().path().starts_with("/api/v1/hooks/support/");
+        if multipart || page_file_save || support_email {
             self.max_body_bytes
         } else {
             self.max_other_body_bytes.min(self.max_body_bytes)
@@ -137,6 +140,13 @@ mod tests {
             .body(())
             .unwrap();
         assert_eq!(limits.body_limit(&task), limits.max_other_body_bytes);
+        let email = Request::builder()
+            .method("POST")
+            .uri("/api/v1/hooks/support/m/secret")
+            .header(CONTENT_TYPE, "message/rfc822")
+            .body(())
+            .unwrap();
+        assert_eq!(limits.body_limit(&email), limits.max_body_bytes);
     }
 
     #[test]

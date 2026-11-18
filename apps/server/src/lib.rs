@@ -49,6 +49,8 @@ pub mod scheduled;
 mod secret_box;
 pub mod socket_ticket;
 pub mod static_assets;
+pub mod support;
+pub mod support_routes;
 pub mod task_routes;
 pub mod teamspace_routes;
 pub mod token_api;

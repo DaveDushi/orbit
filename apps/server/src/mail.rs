@@ -170,7 +170,7 @@ fn message(smtp: &SmtpSettings, email: &OutgoingEmail) -> Result<Message, MailEr
         .map_err(|error| MailError::Smtp(error.to_string()))
 }
 
-fn transport(
+pub(crate) fn transport(
     smtp: &SmtpSettings,
     app_key: Option<&[u8; 32]>,
 ) -> Result<AsyncSmtpTransport<Tokio1Executor>, MailError> {

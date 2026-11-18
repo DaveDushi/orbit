@@ -11,6 +11,8 @@ import { useCreateTaskComment } from '@/features/tasks/api/tasks'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import { activityChangeText, agoLabel, buildFeed, type CommentThread } from '@/features/tasks/tasksLib'
 import { CommentItem } from './CommentItem'
+import { useTaskSupport } from '@/features/tasks/api/support'
+import { SupportMessageCard } from './TaskSupport'
 import { TaskCommentComposer } from './TaskCommentComposer'
 import { ProfileTrigger } from '@/components/common/ProfileTrigger'
 
@@ -61,7 +63,9 @@ export function ActivityFeed({ task, state, onOpenTask }: ActivityFeedProps) {
   const createComment = useCreateTaskComment(workspace.id, task.id)
   const planning = { milestones: useMilestones(workspace.id, task.projectId).data ?? [], cycles: useCycles(workspace.id, task.projectId).data ?? [] }
   const userById = (id: string) => state.users.find((u) => u.id === id)
-  const feed = buildFeed(task)
+  // a support ticket's emails sit between the comments by time
+  const support = useTaskSupport(workspace.id, task.id)
+  const feed = buildFeed(task, support.data?.messages ?? [])
 
   // A run of activity rows between two comments folds on its own: its first and latest rows stay, and
   // "Show N more" takes the place of the rows between them. Comments always show.
@@ -131,7 +135,11 @@ export function ActivityFeed({ task, state, onOpenTask }: ActivityFeedProps) {
         <h3 className="m-0 text-sm font-semibold text-foreground">Activity</h3>
       </div>
       {feed.map((entry) =>
-        entry.kind === 'activity' ? renderTimeline(entry.items) : renderThread(entry.thread),
+        entry.kind === 'activity'
+          ? renderTimeline(entry.items)
+          : entry.kind === 'message'
+            ? <SupportMessageCard key={entry.message.id} message={entry.message} workspaceId={workspace.id} users={state.users} />
+            : renderThread(entry.thread),
       )}
     </div>
   )

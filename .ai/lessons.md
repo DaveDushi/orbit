@@ -203,6 +203,7 @@
 
 ## Production CSP blocks injected `<style>` tags
 - Production CSP is `style-src 'self'` (`crates/platform/src/http/security.rs`). Libraries that inject a `<style>` tag at runtime (Tiptap/BlockNote `injectCSS`, sonner toasts) break silently in production but work in dev (Vite serves no CSP). Sonner: import `sonner/dist/styles.css` in `components/ui/sonner.tsx`. Verify against the Rust-served build (`include_dir!` embeds `apps/web/dist` at compile time: `bun run build`, then rebuild/run the server) and count `[data-…]` rules in `document.styleSheets`. Turn the injection off (`_tiptapOptions: { injectCSS: false }`) and copy the CSS into our stylesheet. `img-src` is `'self' data: blob: https:` since 2026-09-25: external https images (image blocks, cover URLs) load, plain http ones do not. Tradeoff: the image host sees every viewer's IP and user agent (tracking pixels work); uploaded page files stay same-origin.
+- A `srcdoc` iframe inherits the app's CSP, so `<style>` and `style=""` inside it are blocked in production too: link a stylesheet from `apps/web/public/` (`style-src 'self'`), and add a `<meta http-equiv="Content-Security-Policy">` to tighten it further (the support email frame, 2026-11-18).
 
 ## Bun + happy-dom: never let `expect(domNode)` fail inside `waitFor`
 - A failing `expect(node).toBeNull()` makes Bun format the whole happy-dom node (it links to the window) for the error. It costs ~40 ms alone and ~750 ms late in the full run, and `waitFor` repeats it on every poll, so tests time out only in the full suite (SessionsPage, 2026-09-25).

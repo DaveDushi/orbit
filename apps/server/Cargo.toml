@@ -24,6 +24,9 @@ apollo-parser = "0.8.7"
 clap = { version = "4", features = ["derive"] }
 futures-util = "0.3"
 hmac = "0.12"
+# Support mailboxes: inbound MIME parsing and the HTML clean-up of customer email.
+mail-parser = "0.11"
+ammonia = "4"
 lettre = { version = "0.11.23", default-features = false, features = ["builder", "hostname", "smtp-transport", "tokio1", "tokio1-rustls", "ring", "webpki-roots"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2"] }
 http-body-util = "0.1"

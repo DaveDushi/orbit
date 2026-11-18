@@ -144,12 +144,17 @@ export function isMention(notification: NotificationRecord): boolean {
   )
 }
 
-/** Who caused a notification: a member, or the GitHub author of a note from GitHub. */
+/** The name of an author who is not a member: a customer's email address (support email), or a GitHub login. */
+export function externalActorName(login: string): string {
+  return login.includes('@') ? login : `${login} (GitHub)`
+}
+
+/** Who caused a notification: a member, the GitHub author of a note from GitHub, or a customer who emailed. */
 export function notificationActor(
   notification: NotificationRecord,
   members: readonly { id: string; name: string }[] | undefined,
 ): { id?: string; name: string } | undefined {
-  if (notification.actor_github_login) return { name: `${notification.actor_github_login} (GitHub)` }
+  if (notification.actor_github_login) return { name: externalActorName(notification.actor_github_login) }
   return members?.find((member) => member.id === notification.actor_user_id)
 }
 
@@ -170,6 +175,9 @@ export function notificationCopy(notification: NotificationRecord, pageTitle?: s
   }
   if (notification.kind === 'description_mentioned') {
     return { title: 'You were mentioned', body: 'Someone mentioned you in a task description.' }
+  }
+  if (notification.kind === 'task_commented' && notification.actor_github_login?.includes('@')) {
+    return { title: `New email from ${notification.actor_github_login}`, body: 'Open the ticket to read it.' }
   }
   if (notification.kind === 'task_commented') {
     return { title: `${actorName ?? 'Someone'} commented on a task you follow`, body: 'Open the task to read the comment.' }
