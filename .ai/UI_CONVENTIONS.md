@@ -9,12 +9,13 @@
 - Styling rules (inline Tailwind, components, `data-slot`, no class variables or app CSS classes) are in `apps/web/README.md`.
 - Header alignment matters: first/second sidebars and pane headers use a 48px rhythm.
 - Navigation rows are compact (32px) with restrained 6–10px spacing.
+- Nav colours come from the sidebar tokens (`sidebar-foreground/N` for hover and fills, `sidebar-accent` for the selected row, `sidebar-nav*` for text), never `neutral-*`, `white`, `black` or literal colours, so the light, dark and custom themes all follow. Section labels are the same small Title Case in every theme. Every nav link shows a focus outline.
 - Inputs inside composite controls must suppress their own ring; the outer container receives `:focus-within`.
 
 ## Sidebars
 
 - First sidebar groups Workspace, Personal, Manage.
-- Content-aware (Coolify), only in the new UI (Account settings → Appearance → Layout; check `useNewUi()` or the `new-ui:` variant, and keep the classic layout as it was): in Tasks (`/tasks`, `/views`: All tasks, Views, My work, Projects, Favorite views), Settings, Account settings and Admin the first sidebar shows Back plus that area's links (`features/settings/settingsNav.ts`). On desktop with the sidebar open, Docs and Chat render their own list into it through `InAppSidebar`; collapsed or on phones the list stays beside the content. A change of area slides in (forward from the right, back from the left); the first load and moves inside an area do not animate. Do not add a second navigation column next to the first sidebar.
+- Content-aware (Coolify); there is one layout (the Classic layout and its setting were removed on 2026-11-18): in Tasks (`/tasks`, `/views`: All tasks, Views, Favorite views, My work, Projects; Back on top and Trash at the bottom stay while the links scroll; All tasks clears the view and the project, and is the only current row on plain `/tasks`), Settings, Account settings and Admin the first sidebar shows Back plus that area's links (`features/settings/settingsNav.ts`). On desktop with the sidebar open, Docs and Chat render their own list into it through `InAppSidebar`; collapsed or on phones the list stays beside the content. A change of area slides in (forward from the right, back from the left); the first load and moves inside an area do not animate. Do not add a second navigation column next to the first sidebar. The open sidebar has one saved width (`orbit:page_list_width`, drag to resize) on every page, so the content does not jump between areas.
 - Collapse control is at the bottom beside the user menu.
 - Collapsed state is a 56px icon rail with section separators.
 - Feature sidebars may be resizable from 220–420px; persist widths in local storage and hide resizers on mobile.

@@ -12,7 +12,7 @@ function storedWidth(): number {
   return width ? clampPageListWidth(width) : PAGE_LIST_WIDTH.default
 }
 
-/** The width of the desktop sidebar while it holds a page's own list (the page tree, the conversations). */
+/** The width of the open desktop sidebar, on every page (the key keeps its old name, so saved widths stay). */
 export function usePageListWidth() {
   const [width, setWidth] = useState(storedWidth)
   useEffect(() => {

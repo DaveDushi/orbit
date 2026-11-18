@@ -51,10 +51,10 @@ export function ActivityBell({ unread = false, topbar = false }: { unread?: bool
   const name = unread ? 'Activity, unread' : 'Activity'
   const tip = useShortcutTitle('nav.inbox', 'Activity')
   const className = cn(
-    'relative flex shrink-0 items-center justify-center rounded-md transition-colors outline-none focus-visible:outline-1 focus-visible:outline-primary',
+    'relative flex shrink-0 items-center justify-center rounded-md transition-colors outline-none focus-visible:outline-1 focus-visible:outline-solid focus-visible:outline-primary',
     topbar
       ? 'size-9 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground data-[active=true]:bg-muted data-[active=true]:text-foreground'
-      : 'size-8 text-sidebar-nav hover:bg-black/4 hover:text-sidebar-nav-active data-[active=true]:bg-black/4 data-[active=true]:text-sidebar-nav-active dark:hover:bg-white/5 dark:data-[active=true]:bg-white/5',
+      : 'size-8 text-sidebar-nav hover:bg-sidebar-foreground/5 hover:text-sidebar-nav-active data-[active=true]:bg-sidebar-foreground/5 data-[active=true]:text-sidebar-nav-active',
   )
   const content = (
     <>

@@ -1,13 +1,10 @@
 import { useContext } from 'react'
-import { Link, Navigate, NavLink, Outlet, useLocation } from 'react-router'
+import { Link, Navigate, Outlet, useLocation } from 'react-router'
 import { ArrowLeft, ChevronRight } from 'reicon-react'
-import { cn } from 'cn'
-import { buttonVariants } from '@/components/ui/button'
 import { Pane, PaneHeader, PaneTitle } from '@/components/common/Pane'
 import { useIsPhone } from '@/features/chat/pages/useChatViewport'
 import { WorkspaceContext } from '@/features/workspaces/workspaceContext'
 import { useIsInstallationAdmin } from '@/features/workspaces/permissions'
-import { useNewUi } from '@/lib/themeContext'
 import { phonePath, useSettingsArea, type SettingsAreaName, type SettingsNavSection } from '../settingsNav'
 
 /** The workspace's settings. */
@@ -27,9 +24,9 @@ export function AdminLayout() {
 }
 
 /**
- * Coolify `x-settings.layout`: sticky sub-navigation (210px) + content column. In the new UI the desktop app sidebar
- * and the mobile drawer show this area's links (`SidebarNav`), so there the page has no sub-navigation of its own.
- * On a phone the area's root is a menu of its pages, and each page has Back to that menu.
+ * A settings area's content column. The app sidebar and the mobile drawer show this area's links (`SidebarNav`, or
+ * `NoWorkspaceShell` with no workspace), so the page has no sub-navigation of its own. On a phone the area's root is a
+ * menu of its pages, and each page has Back to that menu.
  */
 function SettingsShell({ area }: { area: SettingsAreaName }) {
   // someone with no workspace who is not an operator may open only their profile
@@ -37,7 +34,6 @@ function SettingsShell({ area }: { area: SettingsAreaName }) {
   const operator = useIsInstallationAdmin()
   const profileOnly = area === 'profile' && !workspace && !operator
   const { title, icon: Icon, sections } = useSettingsArea(area, profileOnly)
-  const newUi = useNewUi()
   const { pathname } = useLocation()
   const items = sections.flatMap((section) => section.items)
   const root = items[0]?.to
@@ -49,9 +45,6 @@ function SettingsShell({ area }: { area: SettingsAreaName }) {
     : items
         .filter((item) => pathname === item.to || pathname === phonePath(item) || (!item.end && pathname.startsWith(`${item.to}/`)))
         .sort((a, b) => b.to.length - a.to.length)[0]
-  // the new UI's app sidebar shows these links (`SidebarNav`); the classic one does not, except on a phone (the menu)
-  // with no workspace, its sidebar and phone drawer always show them (`NoWorkspaceShell`)
-  const inAppShell = workspace === null || newUi || hasMenu
   return (
     <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
       <Pane className="relative">
@@ -72,40 +65,7 @@ function SettingsShell({ area }: { area: SettingsAreaName }) {
           ) : null}
         </PaneHeader>
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <section className={cn('grid w-full min-w-0 grid-cols-1 gap-6 px-5 pt-5 pb-8 min-[900px]:px-8 min-[900px]:pt-6 min-[900px]:pb-10 xl:gap-8 xl:px-10 xl:pt-7', !inAppShell && 'xl:grid-cols-[210px_minmax(0,1fr)]')}>
-            {inAppShell ? null : (
-              <aside className={cn('min-w-0 xl:sticky xl:top-7 xl:max-h-[calc(100dvh-5.5rem)] xl:self-start xl:overflow-x-hidden xl:overflow-y-auto xl:pr-1.5 xl:[overscroll-behavior:contain]')}>
-                <nav
-                  aria-label={title}
-                  className="grid grid-cols-2 gap-0.5 border-y py-3 min-[900px]:grid-cols-4 xl:grid-cols-1 xl:border-0 xl:py-0"
-                >
-                  {sections.map((section, index) => (
-                    <div key={section.label} className="contents">
-                      <div
-                        className={cn(
-                          'col-span-full px-2.5 py-1 text-[11px] font-medium text-sidebar-foreground/60 select-none max-xl:hidden',
-                          index > 0 && 'xl:mt-5 xl:border-t xl:pt-4',
-                        )}
-                      >
-                        {section.label}
-                      </div>
-                      {section.items.map((item) => (
-                        <NavLink
-                          key={item.to}
-                          to={item.to}
-                          end={item.end}
-                          // NavLink marks the current page with aria-current
-                          className={cn(buttonVariants({ variant: 'ghost' }), 'w-full min-w-0 justify-start gap-2.5 text-[13px] aria-[current=page]:bg-sidebar-accent aria-[current=page]:text-sidebar-accent-foreground')}
-                        >
-                          <item.icon className="size-4.5 opacity-90" />
-                          <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                        </NavLink>
-                      ))}
-                    </div>
-                  ))}
-                </nav>
-              </aside>
-            )}
+          <section className="grid w-full min-w-0 grid-cols-1 gap-6 px-5 pt-5 pb-8 min-[900px]:px-8 min-[900px]:pt-6 min-[900px]:pb-10 xl:gap-8 xl:px-10 xl:pt-7">
             <div className="flex min-w-0 flex-col gap-6">
               {showMenu ? <SettingsMenu sections={sections} /> : <Outlet />}
             </div>

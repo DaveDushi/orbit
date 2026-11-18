@@ -8,7 +8,7 @@ import { MemoryRouter } from 'react-router'
 import { WorkspaceSwitcher } from '@/app/shell/WorkspaceSwitcher'
 import { WorkspaceContext } from '@/features/workspaces/workspaceContext'
 import type { Task, TaskViewState } from '@/features/tasks/api/models'
-import { ProjectRail } from './ProjectRail'
+import { NewProjectModal } from './NewProjectModal'
 import { TaskDetail } from './TaskDetail'
 import { testWorkspace } from '@/test/workspace'
 
@@ -81,11 +81,10 @@ test('project creation retry selects the created project', async () => {
       created_at: '', updated_at: '', version: 0,
     }, { status: 201 })
   }) as unknown as typeof fetch
-  const onSelect = mock(() => {})
+  const onSelect = mock((_projectId: string) => {})
   const { Wrapper } = wrapper()
-  const view = render(<ProjectRail projects={[]} projectId={null} onSelect={onSelect} />, { wrapper: Wrapper })
+  const view = render(<NewProjectModal onClose={() => {}} onCreated={(project) => onSelect(project.id)} />, { wrapper: Wrapper })
 
-  await userEvent.click(view.getByRole('button', { name: 'New project' }))
   await userEvent.type(view.getByLabelText('Project name *'), 'Second')
   await userEvent.click(view.getByRole('button', { name: 'Create project' }))
   await view.findByRole('alert')

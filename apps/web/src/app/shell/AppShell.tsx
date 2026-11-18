@@ -38,7 +38,6 @@ import { ProfilePopoverProvider } from './ProfilePopover'
 import { NoWorkspaceShell } from './NoWorkspaceShell'
 import { useAppSidebarTheme } from '@/lib/customTheme'
 import { MenuSurfaceContext } from '@/components/ui/menuSurface'
-import { useNewUi } from '@/lib/themeContext'
 import { useSidebarMenuSurface } from './sidebarMenu'
 import { hostsPageList, SidebarSlotContext } from './sidebarSlot'
 import { AskDonnaBar } from '@/features/askDonna/AskDonnaBar'
@@ -102,18 +101,16 @@ function Shell() {
     setDrawerPage(pathname + search)
     setDrawerOpen(false)
   }
-  // only in the new UI (Account settings → Appearance → Layout)
-  const newUi = useNewUi()
-  const hostsList = newUi && desktop && !sidebarCollapsed && hostsPageList(pathname)
-  // a long page tree needs room: the sidebar that holds it can be dragged wider
-  const [pageListWidth, setPageListWidth] = usePageListWidth()
+  const hostsList = desktop && !sidebarCollapsed && hostsPageList(pathname)
+  // One width for the open sidebar on every page, so the content does not jump between areas. A long page tree needs
+  // room: the sidebar can be dragged wider.
+  const [sidebarWidth, setSidebarWidth] = usePageListWidth()
   const [resizing, setResizing] = useState(false)
   const [pageListSlot, setPageListSlot] = useState<HTMLElement | null>(null)
   // Account settings → Appearance → Custom colours the sidebar too, not only chat
   const sidebarTheme = useAppSidebarTheme()
-  // the new UI's sidebar menus share one look and the custom theme; the classic ones keep their own
-  const sidebarMenuSurface = useSidebarMenuSurface()
-  const menuSurface = newUi ? sidebarMenuSurface : null
+  // the sidebar's menus share one look and the custom theme
+  const menuSurface = useSidebarMenuSurface()
   // The Ask bar and its panel: on a computer, on every page but Chat (`pageContextFor`), never for a guest
   const askDonna = useAskDonna()
   const ask = desktop && askDonna?.context ? askDonna : null
@@ -173,13 +170,13 @@ function Shell() {
         className={cn(
           sidebarTheme.scheme,
           'relative flex shrink-0 flex-col overflow-hidden border-r border-sidebar-edge bg-sidebar bg-linear-to-b from-sidebar-wash to-transparent to-[520px] px-3 text-sidebar-foreground transition-[width,padding] duration-200 ease-out max-[899px]:hidden floating:rounded-lg floating:border',
-          sidebarCollapsed ? 'w-16' : !hostsList && 'w-56',
+          sidebarCollapsed && 'w-16',
           resizing && 'transition-none select-none',
         )}
         data-collapsed={sidebarCollapsed || undefined}
-        style={hostsList ? { ...sidebarTheme.style, width: pageListWidth } : sidebarTheme.style}
+        style={sidebarCollapsed ? sidebarTheme.style : { ...sidebarTheme.style, width: sidebarWidth }}
       >
-        {hostsList && <SidebarResizeHandle width={pageListWidth} onResize={setPageListWidth} onDragging={setResizing} />}
+        {sidebarCollapsed ? null : <SidebarResizeHandle width={sidebarWidth} onResize={setSidebarWidth} onDragging={setResizing} />}
         <MenuSurfaceContext value={menuSurface}>
           <div
             className={cn(
@@ -192,7 +189,7 @@ function Shell() {
             {/* a guest has no Activity page */}
             {guest ? null : <ActivityBell unread={inboxUnread} />}
           </div>
-          <SidebarNav contextual={newUi} collapsed={sidebarCollapsed} chatBadge={chatBadge} chatUnread={chatUnread} isRoot={isRoot} pageListRef={hostsList ? setPageListSlot : undefined} />
+          <SidebarNav collapsed={sidebarCollapsed} chatBadge={chatBadge} chatUnread={chatUnread} isRoot={isRoot} pageListRef={hostsList ? setPageListSlot : undefined} />
           <div
             className={cn(
               'flex shrink-0 items-center justify-between gap-1 py-2',
@@ -203,7 +200,7 @@ function Shell() {
             <Tip label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} side={sidebarCollapsed ? 'right' : undefined}>
               <button
                 type="button"
-                className="flex size-8 shrink-0 items-center justify-center rounded-md text-sidebar-nav transition-colors outline-none hover:bg-black/4 hover:text-sidebar-nav-active focus-visible:outline-1 focus-visible:outline-primary dark:hover:bg-white/5"
+                className="flex size-8 shrink-0 items-center justify-center rounded-md text-sidebar-nav transition-colors outline-none hover:bg-sidebar-foreground/5 hover:text-sidebar-nav-active focus-visible:outline-1 focus-visible:outline-solid focus-visible:outline-primary"
                 aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
                 onClick={toggleSidebar}
               >
@@ -249,7 +246,7 @@ function Shell() {
           style={sidebarTheme.style}
         >
           <MenuSurfaceContext value={menuSurface}>
-            <SidebarNav contextual={newUi} backShowsMenu onNavigate={() => setDrawerOpen(false)} chatBadge={chatBadge} chatUnread={chatUnread} isRoot={isRoot} />
+            <SidebarNav backShowsMenu onNavigate={() => setDrawerOpen(false)} chatBadge={chatBadge} chatUnread={chatUnread} isRoot={isRoot} />
           </MenuSurfaceContext>
         </SideSheetContent>
       </SideSheet>
