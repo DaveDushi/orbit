@@ -12,7 +12,11 @@ import {
   readAgentStatus,
   startChatgptLogin,
   createAgentProfile,
+  createAgentToken,
+  createExternalAgent,
   deleteAgentProfile,
+  revokeAgentCredential,
+  updateExternalAgent,
   readAgentProfiles,
   setAgentProfileAvatar,
   updateAgentProfile,
@@ -20,6 +24,7 @@ import {
   type AgentMemoryScope,
   type DefaultAgentInput,
   type AgentProfileInput,
+  type ExternalAgentInput,
 } from '@orbit/api/agent'
 import { apiClient } from '@/api/client'
 
@@ -168,4 +173,31 @@ export function useSaveDefaultAgent(workspaceId: string) {
 export function useDeleteAgentProfile(workspaceId: string) {
   const refresh = useRefreshAgents(workspaceId)
   return useMutation({ mutationFn: (id: string) => deleteAgentProfile(apiClient, workspaceId, id), onSettled: refresh })
+}
+
+/** An external agent (`New agent → External`); the avatar is uploaded after it is saved. */
+export function useSaveExternalAgent(workspaceId: string) {
+  const refresh = useRefreshAgents(workspaceId)
+  return useMutation({
+    mutationFn: async ({ id, input, avatar }: { id: string | null; input: ExternalAgentInput; avatar?: Blob | null }) => {
+      const saved = id ? await updateExternalAgent(apiClient, workspaceId, id, input) : await createExternalAgent(apiClient, workspaceId, input)
+      if (avatar !== undefined) await setAgentProfileAvatar(apiClient, workspaceId, saved.id, avatar)
+      return saved
+    },
+    onSettled: refresh,
+  })
+}
+
+/** A new agent token: the result holds the token, shown once. */
+export function useCreateAgentToken(workspaceId: string) {
+  const refresh = useRefreshAgents(workspaceId)
+  return useMutation({ mutationFn: ({ id, days }: { id: string; days: 30 | 90 | 365 }) => createAgentToken(apiClient, workspaceId, id, days), onSettled: refresh })
+}
+
+export function useRevokeAgentCredential(workspaceId: string) {
+  const refresh = useRefreshAgents(workspaceId)
+  return useMutation({
+    mutationFn: ({ id, kind, credentialId }: { id: string; kind: 'tokens' | 'connections'; credentialId: string }) => revokeAgentCredential(apiClient, workspaceId, id, kind, credentialId),
+    onSettled: refresh,
+  })
 }

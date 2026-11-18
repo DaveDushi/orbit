@@ -6,6 +6,7 @@
 pub(crate) mod bot;
 pub(crate) mod credentials;
 mod drive;
+pub(crate) mod external;
 mod graphql;
 pub mod inputs;
 pub(crate) mod integrations;
@@ -39,6 +40,7 @@ pub fn router(state: AgentState) -> axum::Router {
         .merge(drive::router(state.clone()))
         .merge(trash::router(state.clone()))
         .merge(profiles::router(state.clone()))
+        .merge(external::router(state.clone()))
         .merge(skills::router(state.clone()))
         .merge(crate::scheduled::router(state))
 }

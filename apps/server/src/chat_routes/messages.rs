@@ -477,6 +477,7 @@ pub(crate) async fn list_chat_search(
         threads_only: query.threads_only,
         oldest_first: matches!(query.sort, SearchSort::Oldest),
         query: query.query,
+        agent: None,
     };
     call.read(
         state

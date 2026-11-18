@@ -319,6 +319,15 @@ pub(crate) async fn record(
             None => return Ok(()),
         }
     };
+    // An external agent (`external`): DMs only when its card allows them, and it never joins a
+    // channel by a mention.
+    let external = match &profile {
+        Some(profile) => super::external::dms_allowed(conn, profile.user_id).await?,
+        None => None,
+    };
+    if is_dm && external == Some(false) {
+        return Ok(());
+    }
     let agent_column = profile.as_ref().map(|profile| profile.user_id);
     let (base_key, root) = thread_of(message, conversation_id, is_dm);
     let thread_key = agent_thread_key(agent_column, base_key);
@@ -347,7 +356,7 @@ pub(crate) async fn record(
     if refused && kind != InputKind::Instruction {
         return Ok(());
     }
-    if !refused && !members.contains(&agent) {
+    if !refused && external.is_none() && !members.contains(&agent) {
         // Mentioned in a private channel: a member brought the agent in. It joins with
         // everything read, the way a new member of a public channel does.
         sqlx::query(
@@ -523,7 +532,8 @@ pub(crate) async fn pending(
          LEFT JOIN tasks tt ON tt.id = tr.task_id \
          LEFT JOIN projects tp ON tp.id = tt.project_id \
          LEFT JOIN task_comments tc ON tc.id = tr.comment_id \
-         WHERE i.acked_at IS NULL ORDER BY i.message_id LIMIT $1",
+         WHERE i.acked_at IS NULL AND (p.kind IS NULL OR p.kind <> 'external' OR i.refused IS NOT NULL) \
+         ORDER BY i.message_id LIMIT $1",
     )
     .bind(limit)
     .fetch_all(database.pool())

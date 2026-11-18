@@ -39,7 +39,7 @@ use crate::audit::{self, AuditOutcome};
 use crate::repositories::membership;
 use crate::task_routes::{ApiError, ApiJson, authenticate_session, request_id_value};
 
-type RequestIdExtension = Option<Extension<RequestId>>;
+pub(super) type RequestIdExtension = Option<Extension<RequestId>>;
 
 /// Agents one workspace may have (deleted ones do not count).
 pub const MAX_AGENTS: i64 = 20;
@@ -603,7 +603,11 @@ fn problem(
     ApiError::new(status, code, title, detail, uri.path(), request_id.as_ref())
 }
 
-fn unavailable(error: &sqlx::Error, uri: &Uri, request_id: &RequestIdExtension) -> ApiError {
+pub(super) fn unavailable(
+    error: &sqlx::Error,
+    uri: &Uri,
+    request_id: &RequestIdExtension,
+) -> ApiError {
     tracing::warn!(%error, "agent profiles");
     problem(
         StatusCode::SERVICE_UNAVAILABLE,
@@ -614,7 +618,11 @@ fn unavailable(error: &sqlx::Error, uri: &Uri, request_id: &RequestIdExtension) 
     )
 }
 
-fn invalid(detail: &'static str, uri: &Uri, request_id: &RequestIdExtension) -> ApiError {
+pub(super) fn invalid(
+    detail: &'static str,
+    uri: &Uri,
+    request_id: &RequestIdExtension,
+) -> ApiError {
     problem(
         StatusCode::UNPROCESSABLE_ENTITY,
         "validation_failed",
@@ -624,7 +632,7 @@ fn invalid(detail: &'static str, uri: &Uri, request_id: &RequestIdExtension) -> 
     )
 }
 
-fn not_found(uri: &Uri, request_id: &RequestIdExtension) -> ApiError {
+pub(super) fn not_found(uri: &Uri, request_id: &RequestIdExtension) -> ApiError {
     problem(
         StatusCode::NOT_FOUND,
         "not_found",
@@ -680,7 +688,7 @@ async fn member(
 }
 
 /// The caller as an owner or admin of the workspace.
-async fn manager(
+pub(super) async fn manager(
     state: &AgentState,
     headers: &HeaderMap,
     workspace_id: &str,
@@ -718,6 +726,10 @@ struct AgentView {
     integration_ids: Vec<String>,
     created_at: i64,
     updated_at: i64,
+    /// `internal` (the sidecar runs it) or `external` (an outside client, `external`).
+    kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    external: Option<super::external::ExternalView>,
 }
 
 /// The default agent's card. Its name and avatar are its bot user's, the same in every workspace.
@@ -756,7 +768,7 @@ async fn agent_views(
 ) -> Result<Vec<AgentView>, sqlx::Error> {
     let mut query = SqlBuilder::new(
         "SELECT p.id, p.user_id, u.display_name, a.updated_at AS avatar_at, p.instructions, p.tools, \
-         p.model, p.thinking, p.answer_level, p.all_channels, p.created_at, p.updated_at FROM agent_profiles p \
+         p.model, p.thinking, p.answer_level, p.all_channels, p.created_at, p.updated_at, p.kind FROM agent_profiles p \
          JOIN users u ON u.id = p.user_id LEFT JOIN user_avatars a ON a.user_id = p.user_id \
          WHERE p.deleted_at IS NULL AND p.workspace_id = ",
     );
@@ -791,6 +803,10 @@ async fn agent_views(
         .bind(&id)
         .fetch_all(database.pool())
         .await?;
+        let external = {
+            let mut conn = database.pool().acquire().await?;
+            super::external::view(&mut conn, &id).await?
+        };
         views.push(AgentView {
             avatar_url: user_id.parse().ok().and_then(|user: Id| {
                 crate::auth_routes::avatar_url(user, row.get::<Option<i64>, _>("avatar_at"))
@@ -808,6 +824,8 @@ async fn agent_views(
             integration_ids,
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
+            kind: row.get("kind"),
+            external,
         });
     }
     Ok(views)
@@ -823,10 +841,20 @@ async fn list_agents(
     request_id: RequestIdExtension,
 ) -> Result<Json<Value>, ApiError> {
     let (workspace_id, actor) = member(&state, &headers, &workspace_id, &uri, &request_id).await?;
-    let agents = agent_views(state.database(), workspace_id, None)
+    let mut agents = agent_views(state.database(), workspace_id, None)
         .await
         .map_err(|error| unavailable(&error, &uri, &request_id))?;
     let can_manage = actor.can(Permission::WorkspaceUpdate);
+    // An external agent's credentials are for owners and admins only.
+    for external in agents
+        .iter_mut()
+        .filter_map(|agent| agent.external.as_mut())
+    {
+        if !can_manage {
+            external.tokens.clear();
+            external.connections.clear();
+        }
+    }
     let can_rename = state
         .identity
         .is_installation_admin(actor.user_id)
@@ -905,7 +933,7 @@ mod double_option {
     }
 }
 
-enum SaveError {
+pub(super) enum SaveError {
     Invalid(&'static str),
     Taken,
     NotFound,
@@ -922,7 +950,11 @@ impl From<sqlx::Error> for SaveError {
     }
 }
 
-fn save_failure(error: SaveError, uri: &Uri, request_id: &RequestIdExtension) -> ApiError {
+pub(super) fn save_failure(
+    error: SaveError,
+    uri: &Uri,
+    request_id: &RequestIdExtension,
+) -> ApiError {
     match error {
         SaveError::Invalid(detail) => invalid(detail, uri, request_id),
         SaveError::Taken => problem(
@@ -1014,7 +1046,7 @@ pub(crate) async fn name_taken(
 
 /// Joins the agent's bot user to the listed channels and takes it out of channels it left. The
 /// channels must be in the workspace, and a private one must have the caller in it.
-async fn set_channels(
+pub(super) async fn set_channels(
     conn: &mut AnyConnection,
     workspace_id: Id,
     actor: Id,
@@ -1230,7 +1262,7 @@ async fn create_agent(
     one(&state, workspace_id, created, &uri, &request_id).await
 }
 
-async fn one(
+pub(super) async fn one(
     state: &AgentState,
     workspace_id: Id,
     profile_id: Id,
@@ -1247,7 +1279,7 @@ async fn one(
 }
 
 /// The live profile `agent_id` of the workspace, in a write transaction.
-async fn load_live(
+pub(super) async fn load_live(
     conn: &mut AnyConnection,
     workspace_id: Id,
     agent_id: Id,
@@ -1314,6 +1346,9 @@ async fn update_agent(
             return Err(SaveError::Forbidden);
         }
         let mut agent = load_live(&mut tx, workspace_id, agent_id).await?;
+        if super::external::is_external(&mut tx, agent_id).await? {
+            return Err(SaveError::Invalid("Edit an external agent with its own form."));
+        }
         let now = TimestampMillis::now();
         if let Some(name) = &name {
             if name_taken(&mut tx, Some(agent.user_id), name).await? {
@@ -1414,6 +1449,7 @@ async fn delete_agent(
         }
         let agent = load_live(&mut tx, workspace_id, agent_id).await?;
         let now = TimestampMillis::now();
+        super::external::revoke_all(&mut tx, agent_id, now).await?;
         sqlx::query("UPDATE agent_profiles SET deleted_at = $1, updated_at = $1 WHERE id = $2")
             .bind(now.as_millis())
             .bind(agent_id.to_string())

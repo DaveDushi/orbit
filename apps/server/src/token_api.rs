@@ -1338,6 +1338,26 @@ impl Authorized<'_> {
             .pages(p.workspace_id, p.actor_id)
             .await
             .map_err(hidden_page)?;
+        // An external agent: only the docs of its projects' teamspaces (`crate::agent_scope`).
+        if p.agent.is_some() {
+            let allowed: HashSet<Id> = sqlx::query(
+                "SELECT id, project_id FROM teamspaces WHERE workspace_id = $1 AND project_id IS NOT NULL",
+            )
+            .bind(p.workspace_id.to_string())
+            .fetch_all(self.api.tasks.database().pool())
+            .await
+            .map_err(TaskError::from)?
+            .iter()
+            .filter(|row| {
+                row.get::<String, _>("project_id")
+                    .parse()
+                    .is_ok_and(|project| self.approved(project))
+            })
+            .filter_map(|row| row.get::<String, _>("id").parse().ok())
+            .collect();
+            list.items
+                .retain(|page| page.teamspace_id.is_some_and(|id| allowed.contains(&id)));
+        }
         if let Some(project_id) = project_id {
             let other: HashSet<Id> = sqlx::query_scalar::<_, String>(
                 "SELECT id FROM teamspaces WHERE workspace_id = $1 AND project_id IS NOT NULL \
@@ -1367,7 +1387,43 @@ impl Authorized<'_> {
             .get_page(p.workspace_id, page_id, p.actor_id)
             .await
             .map_err(hidden_page)?;
+        self.teamspace_allowed(page.teamspace_id).await?;
         self.doc_view(pages, page).await
+    }
+
+    /// For an external agent, refuses (as "not available") a doc space outside its projects'
+    /// teamspaces (`crate::agent_scope`); allows everything for others.
+    async fn teamspace_allowed(&self, teamspace_id: Option<Id>) -> Result<()> {
+        let p = self.principal;
+        if p.agent.is_none() {
+            return Ok(());
+        }
+        let mut conn = self.api.tasks.database().pool().acquire().await?;
+        if crate::agent_scope::teamspace_allowed(
+            &mut conn,
+            p.agent.as_ref(),
+            &p.project_ids,
+            teamspace_id,
+        )
+        .await?
+        {
+            Ok(())
+        } else {
+            Err(TokenApiError::NotAvailable)
+        }
+    }
+
+    /// [`Self::teamspace_allowed`] of an existing doc.
+    async fn doc_allowed(&self, pages: &PageRepository, page_id: Id) -> Result<()> {
+        let p = self.principal;
+        if p.agent.is_none() {
+            return Ok(());
+        }
+        let page = pages
+            .get_page(p.workspace_id, page_id, p.actor_id)
+            .await
+            .map_err(hidden_page)?;
+        self.teamspace_allowed(page.teamspace_id).await
     }
 
     async fn doc_view(&self, pages: &PageRepository, mut page: PageRecord) -> Result<DocView> {
@@ -1426,6 +1482,15 @@ impl Authorized<'_> {
             return Err(PageError::TooLarge.into());
         }
         let p = self.principal;
+        // An external agent writes only in its projects' teamspaces: under a doc there, or at the
+        // root of one; never private or in the default space.
+        if p.agent.is_some() {
+            match input.parent_id {
+                Some(parent) => self.doc_allowed(pages, parent).await?,
+                None if input.private == Some(true) => return Err(TokenApiError::NotAvailable),
+                None => self.teamspace_allowed(input.teamspace_id).await?,
+            }
+        }
         let page = pages
             .create_page_with_content(
                 p.workspace_id,
@@ -1461,6 +1526,7 @@ impl Authorized<'_> {
             patch.icon.as_ref().and_then(Option::as_deref),
             patch.markdown.as_deref(),
         )?;
+        self.doc_allowed(pages, page_id).await?;
         let p = self.principal;
         let changes = PageChanges {
             title: patch.title,
@@ -1609,7 +1675,7 @@ impl Authorized<'_> {
     pub async fn conversations(&self) -> Result<Vec<ConversationRecord>> {
         let chat = self.content(ApiTokenScope::ChatRead, &self.api.chat)?;
         let p = self.principal;
-        chat.list_conversations(p.workspace_id, p.actor_id)
+        chat.list_conversations_for(p.workspace_id, p.actor_id, p.agent.as_ref())
             .await
             .map_err(hidden_chat)
     }
@@ -1622,6 +1688,13 @@ impl Authorized<'_> {
     ) -> Result<MessagePage> {
         let chat = self.content(ApiTokenScope::ChatRead, &self.api.chat)?;
         let p = self.principal;
+        let mut conn = self.api.tasks.database().pool().acquire().await?;
+        if !crate::agent_scope::conversation_allowed(&mut conn, p.agent.as_ref(), conversation_id)
+            .await?
+        {
+            return Err(TokenApiError::NotAvailable);
+        }
+        drop(conn);
         chat.list_messages(
             p.workspace_id,
             p.actor_id,
@@ -1640,6 +1713,11 @@ impl Authorized<'_> {
     ) -> Result<ThreadPage> {
         let chat = self.content(ApiTokenScope::ChatRead, &self.api.chat)?;
         let p = self.principal;
+        let mut conn = self.api.tasks.database().pool().acquire().await?;
+        if !crate::agent_scope::message_allowed(&mut conn, p.agent.as_ref(), message_id).await? {
+            return Err(TokenApiError::NotAvailable);
+        }
+        drop(conn);
         chat.get_thread(
             p.workspace_id,
             p.actor_id,
@@ -1656,6 +1734,24 @@ impl Authorized<'_> {
             return Err(TokenApiError::Invalid("Invalid query length"));
         }
         let p = self.principal;
+        // An external agent searches only the conversations on its card, in SQL; one outside
+        // answers like an unknown conversation.
+        if let Some(conversation_id) = input.conversation_id {
+            let mut conn = self.api.tasks.database().pool().acquire().await?;
+            if !crate::agent_scope::conversation_allowed(
+                &mut conn,
+                p.agent.as_ref(),
+                conversation_id,
+            )
+            .await?
+            {
+                return Err(TokenApiError::NotAvailable);
+            }
+        }
+        let input = SearchInput {
+            agent: p.agent.clone(),
+            ..input
+        };
         chat.search_messages(p.workspace_id, p.actor_id, input)
             .await
             .map_err(hidden_chat)

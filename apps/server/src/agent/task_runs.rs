@@ -491,6 +491,29 @@ pub(crate) async fn start_queued(state: &AgentState) -> Result<usize, sqlx::Erro
     Ok(started)
 }
 
+/// [`start_queued`] for one agent's runs only: an external agent's poll (`external`) starts its own
+/// runs, also while the sidecar is off.
+pub(crate) async fn start_queued_for(state: &AgentState, agent: Id) -> Result<usize, sqlx::Error> {
+    let now = TimestampMillis::now();
+    let ids = sqlx::query_scalar::<_, String>(
+        "SELECT q.id FROM agent_task_runs q WHERE q.agent_user_id = $2 AND ((q.status = 'queued' AND NOT EXISTS \
+         (SELECT 1 FROM agent_task_runs o WHERE o.task_id = q.task_id AND o.status = 'running')) \
+         OR (q.status = 'running' AND q.thread_key IS NULL AND q.started_at < $1)) \
+         ORDER BY q.created_at, q.id LIMIT 20",
+    )
+    .bind(now.as_millis() - POST_RETRY_MS)
+    .bind(agent.to_string())
+    .fetch_all(state.database().pool())
+    .await?;
+    let mut started = 0;
+    for id in ids.iter().filter_map(|id| id.parse::<Id>().ok()) {
+        if start(state, id, now).await? {
+            started += 1;
+        }
+    }
+    Ok(started)
+}
+
 /// Why a queued run cannot start any more, or `None`.
 async fn problem(
     conn: &mut AnyConnection,
@@ -514,6 +537,19 @@ async fn problem(
     }
     if !user_sees_task(&mut *conn, task_id, agent).await? {
         return Ok(Some("the agent cannot see the task"));
+    }
+    // An external agent works only in the projects on its card (`crate::agent_scope`).
+    let Flag(outside) = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM agent_profiles p JOIN tasks t ON t.id = $2 WHERE p.user_id = $1 \
+         AND p.kind = 'external' AND NOT EXISTS (SELECT 1 FROM agent_profile_projects a \
+         WHERE a.agent_id = p.id AND a.project_id = t.project_id))",
+    )
+    .bind(agent.to_string())
+    .bind(task_id.to_string())
+    .fetch_one(&mut *conn)
+    .await?;
+    if outside {
+        return Ok(Some("the task's project is not on the agent's card"));
     }
     if row.get::<String, _>("cause") != Cause::Mentioned.as_str() {
         let assigned = sqlx::query_scalar::<_, Flag>(

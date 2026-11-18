@@ -217,6 +217,44 @@ export interface AgentProfile {
   integration_ids: string[]
   created_at: number
   updated_at: number
+  /** `external`: an outside client (Claude Code, Codex, a server) runs it through MCP; absent on older servers. */
+  kind?: 'internal' | 'external'
+  /** Only for an external agent. */
+  external?: ExternalAgentCard
+}
+
+/** The permissions an external agent can have. `tasks:read` is always on; Drive is not offered. */
+export const EXTERNAL_AGENT_SCOPES = ['tasks:read', 'tasks:write', 'docs:read', 'docs:write', 'chat:read', 'chat:write'] as const
+export type ExternalAgentScope = (typeof EXTERNAL_AGENT_SCOPES)[number]
+
+/** What an external agent's card adds: its limits and, for owners and admins, its credentials. */
+export interface ExternalAgentCard {
+  scopes: ExternalAgentScope[]
+  allow_dms: boolean
+  projects: { id: string; name: string }[]
+  /** Its last MCP call (to the minute), or `null`. */
+  last_seen_at: number | null
+  /** Live agent tokens: only the prefix is shown. Empty for members. */
+  tokens: { id: string; prefix: string; created_at: number; expires_at: number; last_used_at: number | null }[]
+  /** OAuth connections made "as agent" on the consent page. Empty for members. */
+  connections: { id: string; client_name: string; approved_by: string | null; created_at: number }[]
+}
+
+export interface ExternalAgentInput {
+  name?: string
+  channel_ids?: string[]
+  project_ids?: string[]
+  scopes?: ExternalAgentScope[]
+  allow_dms?: boolean
+}
+
+/** A new agent token: `token` is shown this once. */
+export interface IssuedAgentToken {
+  id: string
+  token: string
+  prefix: string
+  created_at: number
+  expires_at: number
 }
 
 /** The default agent's card: its name and avatar are the installation's; the rest is this workspace's. */
@@ -302,6 +340,28 @@ export async function createAgentProfile(client: Client, workspaceId: string, in
 export async function updateAgentProfile(client: Client, workspaceId: string, id: string, input: AgentProfileInput): Promise<AgentProfile> {
   const { data } = await client.patch({ url: `${agentsUrl(workspaceId)}/${id}`, body: input, headers: { 'Content-Type': 'application/json' }, throwOnError: true })
   return data as AgentProfile
+}
+
+/** An external agent: its channels only (never every channel), DMs when allowed. 409 `agent_name_taken`. */
+export async function createExternalAgent(client: Client, workspaceId: string, input: ExternalAgentInput): Promise<AgentProfile> {
+  const { data } = await client.post({ url: `${agentsUrl(workspaceId)}/external`, body: input, headers: { 'Content-Type': 'application/json' }, throwOnError: true })
+  return data as AgentProfile
+}
+
+export async function updateExternalAgent(client: Client, workspaceId: string, id: string, input: ExternalAgentInput): Promise<AgentProfile> {
+  const { data } = await client.patch({ url: `${agentsUrl(workspaceId)}/${id}/external`, body: input, headers: { 'Content-Type': 'application/json' }, throwOnError: true })
+  return data as AgentProfile
+}
+
+/** A new `orb_agent_…` token for the agent, valid for 30, 90 or 365 days. */
+export async function createAgentToken(client: Client, workspaceId: string, id: string, expiresInDays: 30 | 90 | 365): Promise<IssuedAgentToken> {
+  const { data } = await client.post({ url: `${agentsUrl(workspaceId)}/${id}/tokens`, body: { expires_in_days: expiresInDays }, headers: { 'Content-Type': 'application/json' }, throwOnError: true })
+  return data as IssuedAgentToken
+}
+
+/** Revokes an agent token (`tokens`) or disconnects an OAuth connection (`connections`) of the agent. */
+export async function revokeAgentCredential(client: Client, workspaceId: string, id: string, kind: 'tokens' | 'connections', credentialId: string): Promise<void> {
+  await client.delete({ url: `${agentsUrl(workspaceId)}/${id}/${kind}/${credentialId}`, throwOnError: true })
 }
 
 /** The default agent cannot be deleted. 409 `agent_name_taken` when an account already has the name. */

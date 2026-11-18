@@ -395,7 +395,8 @@ impl App {
                         )),
                     )
                     .with_oauth(oauth.clone())
-                    .with_drive(drive.clone()),
+                    .with_drive(drive.clone())
+                    .with_agents(agent.clone()),
                     &config.http.public_origin,
                 ),
                 public_api: crate::public_api::router(

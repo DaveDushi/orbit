@@ -375,6 +375,26 @@ async fn refuse(state: &AgentState, input: &inputs::PendingInput) {
         }
         return;
     };
+    refuse_mention(
+        state,
+        workspace_id,
+        author,
+        message_id,
+        agent,
+        &input.conversation_name,
+    )
+    .await;
+}
+
+/// [`refuse`] for one mention: also used by an external agent's own poll (`external`).
+pub(crate) async fn refuse_mention(
+    state: &AgentState,
+    workspace_id: Id,
+    author: Id,
+    message_id: Id,
+    agent: Id,
+    conversation_name: &str,
+) {
     let chat = &state.chat;
     let answered = async {
         let channels = {
@@ -409,7 +429,7 @@ async fn refuse(state: &AgentState, input: &inputs::PendingInput) {
         };
         let body = format!(
             "I can't help in #{}: I work {list}. Ask me here, or ask an owner or admin to add that channel in Settings → Agentic → Agents.",
-            input.conversation_name
+            conversation_name
         );
         let send = SendInput {
             conversation_id: dm,

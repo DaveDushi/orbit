@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { DialogClose, DialogFooter } from '@/components/ui/dialog'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -21,9 +22,11 @@ import { avatarImage } from '@/features/profile/avatarImage'
 import { FieldGrid } from '@/features/settings/components/SettingsParts'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import { useAgentProfiles, useDeleteAgentProfile, useSaveAgentProfile, useSaveDefaultAgent } from './api'
+import { ExternalAgentDialog } from './ExternalAgentDialog'
+import { lastSeenLabel, scopesLabel } from './externalAgent'
 
-/** What the dialog edits: the default agent, a custom agent, or a new one. */
-type Editing = { kind: 'default'; agent: DefaultAgent } | { kind: 'custom'; agent: AgentProfile | null }
+/** What the dialog edits: the default agent, a custom agent, an external agent, or a new one. */
+type Editing = { kind: 'default'; agent: DefaultAgent } | { kind: 'custom'; agent: AgentProfile | null } | { kind: 'external'; agent: AgentProfile | null }
 
 /** Settings → Agentic → Agents: the default agent first, then the workspace's other agents. Owners and admins manage them. */
 export function AgentsPage() {
@@ -41,7 +44,15 @@ export function AgentsPage() {
     <SettingsCard
       title="Agents"
       description={`${defaultName} and the workspace's other agents, each with its own name, instructions, tools, connected services, model and channels. People @mention one in its channels or send it a direct message. It works with their permissions only and asks for their yes before changes.`}
-      actions={data?.can_manage ? <Button size="sm" disabled={agents.length >= data.max_agents} onClick={() => setEditing({ kind: 'custom', agent: null })}>New agent</Button> : null}
+      actions={data?.can_manage ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button size="sm" disabled={agents.length >= data.max_agents} />}>New agent</DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-auto min-w-56">
+            <DropdownMenuItem onClick={() => setEditing({ kind: 'custom', agent: null })}>Agent run by Orbit</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setEditing({ kind: 'external', agent: null })}>External agent (Claude Code, Codex, a server)</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
     >
       {profiles.isPending ? null : profiles.isError || !data || !main ? (
         <p role="alert" className="text-sm text-destructive">The agents could not be loaded.</p>
@@ -69,18 +80,31 @@ export function AgentsPage() {
             <li key={agent.id} data-slot="agent-profile" className="flex items-start gap-3 rounded-md px-2 py-3 not-last:border-b not-last:border-border">
               <UserAvatar user={{ name: agent.name, color: 'var(--primary)', avatarUrl: agent.avatar_url }} size={36} />
               <div className="flex min-w-0 flex-1 flex-col gap-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-medium text-foreground">{agent.name}</span>
-                  <Badge variant="secondary">{agent.tools.length} tools</Badge>
-                  {agent.model ? <Badge variant="outline">{agent.model}</Badge> : null}
-                  <Badge variant="outline">{answerLevelLabel(agent.answer_level)} answers</Badge>
-                </div>
-                <p className="text-xs text-muted-foreground">{channelsLabel(agent)} · {servicesLabel(data, agent.integration_ids)}</p>
-                {agent.instructions ? <p className="line-clamp-2 text-sm text-muted-foreground">{agent.instructions}</p> : null}
+                {agent.kind === 'external' && agent.external ? (
+                  <>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium text-foreground">{agent.name}</span>
+                      <Badge variant="secondary">External</Badge>
+                      <Badge variant="outline">{scopesLabel(agent.external.scopes)}</Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground">{externalChannelsLabel(agent)} · {lastSeenLabel(agent.external.last_seen_at)}</p>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium text-foreground">{agent.name}</span>
+                      <Badge variant="secondary">{agent.tools.length} tools</Badge>
+                      {agent.model ? <Badge variant="outline">{agent.model}</Badge> : null}
+                      <Badge variant="outline">{answerLevelLabel(agent.answer_level)} answers</Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground">{channelsLabel(agent)} · {servicesLabel(data, agent.integration_ids)}</p>
+                    {agent.instructions ? <p className="line-clamp-2 text-sm text-muted-foreground">{agent.instructions}</p> : null}
+                  </>
+                )}
               </div>
               {data?.can_manage ? (
                 <div className="flex shrink-0 gap-1">
-                  <Button size="sm" variant="ghost" onClick={() => setEditing({ kind: 'custom', agent })}>Edit</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setEditing({ kind: agent.kind === 'external' ? 'external' : 'custom', agent })}>Edit</Button>
                   <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setDeleting(agent)}>Delete</Button>
                 </div>
               ) : null}
@@ -89,7 +113,9 @@ export function AgentsPage() {
           {agents.length === 0 && data.can_manage ? <li className="px-2 py-3 text-sm text-muted-foreground">No other agents yet. Create one for a job, for example a blog writer that drafts Docs pages.</li> : null}
         </ul>
       )}
-      {editing && data ? <AgentDialog profiles={data} editing={editing} onClose={() => setEditing(null)} /> : null}
+      {editing?.kind === 'external' ? (
+        <ExternalAgentDialog key={editing.agent?.id ?? 'new'} agent={editing.agent} onSaved={(agent) => setEditing({ kind: 'external', agent })} onClose={() => setEditing(null)} />
+      ) : editing && data ? <AgentDialog profiles={data} editing={editing} onClose={() => setEditing(null)} /> : null}
       {deleting ? (
         <ConfirmDeleteModal
           title={`Delete ${deleting.name}?`}
@@ -105,6 +131,12 @@ export function AgentsPage() {
       ) : null}
     </SettingsCard>
   )
+}
+
+function externalChannelsLabel(agent: AgentProfile): string {
+  const dms = agent.external?.allow_dms ? ' and direct messages' : ''
+  if (agent.channels.length === 0) return dms ? 'Direct messages only' : 'No channels'
+  return `${agent.channels.map((channel) => `#${channel.name}`).join(', ')}${dms}`
 }
 
 const answerLevelLabel = (level: AnswerLevel) => ANSWER_LEVELS.find((option) => option.value === level)?.label ?? 'Normal'
@@ -136,7 +168,7 @@ function toolGroups(profiles: AgentProfiles) {
 }
 
 /** Create or edit one agent, or edit the default agent. The avatar is uploaded after the agent is saved. */
-function AgentDialog({ profiles, editing, onClose }: { profiles: AgentProfiles; editing: Editing; onClose: () => void }) {
+function AgentDialog({ profiles, editing, onClose }: { profiles: AgentProfiles; editing: Exclude<Editing, { kind: 'external' }>; onClose: () => void }) {
   const { workspace } = useWorkspace()
   const saveCustom = useSaveAgentProfile(workspace.id)
   const saveDefault = useSaveDefaultAgent(workspace.id)

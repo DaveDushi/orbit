@@ -2,7 +2,9 @@ import { useQuery } from '@tanstack/react-query'
 import type { OAuthConnections } from '@orbit/api/mcp'
 
 export type ConsentProject = { id: string; name: string; workspace_id: string; workspace_name: string }
-export type OAuthConsent = { client_name: string; redirect_to: string; scope: string; csrf_token: string; workspaces: { id: string; name: string; logo_url?: string | null }[]; projects: ConsentProject[] }
+/** An external agent that an owner or admin may connect the client as; its card is read only here. */
+export type ConsentAgent = { id: string; name: string; avatar_url: string | null; workspace_id: string; workspace_name: string; scopes: string[]; allow_dms: boolean; channels: string[]; projects: string[] }
+export type OAuthConsent = { client_name: string; redirect_to: string; scope: string; csrf_token: string; workspaces: { id: string; name: string; logo_url?: string | null }[]; projects: ConsentProject[]; agents?: ConsentAgent[] }
 
 export async function oauthRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, { credentials: 'same-origin', ...init })

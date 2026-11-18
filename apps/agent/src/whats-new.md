@@ -11,6 +11,7 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 - Owners and admins can suspend a member (Settings → Members → Manage → Suspend member): they are signed out everywhere and cannot sign in until **Resume member**, with the same password. Their data stays. Removing a suspended member from the workspace also lifts that suspension, so their Orbit account is not locked.
 - GitHub: a synced task links to its issue ("GitHub issue #12"), and when you remove a label such as owner:<name> from the issue, the person that label's rule assigned leaves the task too (people assigned by hand stay). Fix: in the dark theme, the red mic of the Ask Donna box stays red under the pointer.
 - One navigation on the computer: the Classic / New UI choice in Appearance is gone. The sidebar changes with the area (Docs, Chat, Drive, Tasks, Settings) with Back on top, keeps one width on every page (drag its right edge to resize), and a custom theme colours the whole app.
+- External agents: owners and admins can add an agent that runs outside Orbit (Settings → Agentic → Agents → New agent → External agent), for example Claude Code, Codex or your own server. People @mention it in its channels or DM it, and it answers in the thread. It does only what its card allows (its channels, projects and permissions); connect it with "Connect as" on the sign-in page, or with an agent token.
 
 ## 2026-11-17
 - iPhone: open chats, tasks and lists update live again; no app update needed.
