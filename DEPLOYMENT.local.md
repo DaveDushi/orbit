@@ -7,9 +7,9 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, commit b7c3122c3b22f281a0d6d75e143411b486ee23dc on `main`
-  (web parts of desktop 0.1.7-0.1.10: the mic in the Ask bar, the mic's recording states, the account menu's Desktop app
-  items; aboutOrbit and what's new; schema 20261115105242, 119 rows; November 17, 2026).
+- Source: DaveDushi/orbit, commit 8b614cc48caed51d9e9c76ff7f44bebad06a67ad on `main`
+  (Donna: one approval per job of many writes, a whole large file read in one script call; the dark-theme hover fix of
+  the listening mic; schema 20261117133309, 120 rows; November 18, 2026).
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
   f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
@@ -19,9 +19,9 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   MCP routes through the hooks gateway (`/etc/orbit-hooks-gateway/nginx.conf`, proposal `/tmp/mcpo/gateway/proposal.diff`).
   Binaries before d8d3eb4 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-d8d3eb4`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:b7c3122`); fork commits have no published upstream image.
-- Image ID: sha256:b6101d5053c834fc9cd5bba78e2d8309ee14d3a81e58f165c6465848062aa254
-- Team agent sidecar code (`/opt/orbit-agent`): commit b7c3122.
+  (`orbit:8b614cc`); fork commits have no published upstream image.
+- Image ID: sha256:2cfbd3d1a05409b46c11c3013354b4f4db6316674200988bf3aa111c1ff87d22
+- Team agent sidecar code (`/opt/orbit-agent`): commit b28ae38 (8b614cc + the what's new entry of 2026-11-18).
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): on since November 15, 2026, 12:07 UTC (set by Ops, outside a
   deploy): `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID`, `ORBIT_APNS_TOPIC` and `ORBIT_APNS_SANDBOX`
   are in `/etc/orbit/orbit.env`; the journal shows `iPhone push (APNs) is on` (topic `com.easytomanage.orbit`, sandbox
@@ -268,6 +268,78 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 18, 2026 upgrade: one approval per agent job, whole large file read, dark-theme mic hover fix (1 migration)
+
+`main` from `ec747414` to `8b614cc4` (deployed): `921f237f` (fix: in the dark theme the listening mic of the Ask bar and
+the composer turned gray under the pointer, found in the b7c3122 check; `data-[status=listening]:dark:hover:bg-destructive/90`
+now wins over the ghost button's `dark:hover:bg-muted/50`; CSS only, no test), merge `8b614cc4` of `agent-batch-approval`
+(`c0e68a73` one approval per job: `plan_job`/`run_job`, new routes `POST /api/v1/workspaces/{id}/agent-tools/jobs`,
+`…/jobs/{job_id}/start`, `…/jobs/{job_id}/finish`, migration `20261117133309_agent_jobs` (new table + index only),
+`Details` card component; `5f9550ea` job prompt; `277aee32` whole large file read in one script call). `aboutOrbit()`
+already had both features (Jobs and Large files lines, the "What you can do" list). `b28ae38d` (sidecar only, after the
+image): what's new moved the two lines to a `## 2026-11-18` entry with the mic fix, oldest entry (2026-11-10) dropped
+(8 kept). No env key, no new sidecar package. As the user asked, NO real-model `plan_job`/token check was run.
+Checks: agent `tsc` clean, `npm test` 111 pass / 0 fail / 11 skipped, `prompt.test.ts` 5 pass (after `b28ae38d`); web
+`tsc -b` + build ok; mobile `tsc` ok; server `--lib agent::` 60 pass, `agent_drive` 8, `agent_integrations` 25,
+`openapi_contract` 19 pass. Chromium on the built CSS: before the fix, dark hover `oklab(0.269 0 0 / 0.5)` (gray); after,
+dark and light hover red.
+
+Deploy id `20261118T085421Z-2833304`. `orbit:8b614cc` (image
+`sha256:2cfbd3d1a05409b46c11c3013354b4f4db6316674200988bf3aa111c1ff87d22`, ~40 min, deps cached); `deploy/smoke.sh` and
+`orbit config check` passed. Migration dry run (hot copy, and in the switch on a copy of the stopped database): applied
+1 then 0, schema 20261117133309 (120 rows), counts, names and old checksums unchanged, `agent_jobs` + index present (0
+rows), quick-check ok, 0 foreign-key rows; the old binary refuses the new schema; `rollback-schema.sql` gives the exact old
+schema and counts, the old binary then starts (0 applied), and the new binary migrates again. Built-bundle check before
+the switch (`pre/run.sh`: seeded instance in a network namespace, `GET /api/v1/agent` **stubbed**, fake microphone and
+**fake recognizer**): Ask bar mic idle → listening → idle, hovered stop button red in the dark AND light theme; chat mic;
+Home, Tasks, Docs, Chat, Settings → Agentic with no errors. New routes before the switch: 404.
+
+Switch: stopped both services at 09:35:41 UTC; snapshot `01a1ee03-14bc-776e-b995-9b93566df092` with
+`/usr/local/bin/orbit-b7c3122`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-8b614cc.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-8b614cc.tgz`; sidecar code copied (old `/opt/orbit-agent.before-8b614cc`);
+no env change. `orbit` and `orbit-agent` ready 09:36:06 (25 s down). `vm-health.conf` (old copy `.before-8b614cc`):
+`PROD_TAG=8b614cc`, `ROLLBACK_TAG=b7c3122`, `ROLLBACK_BACKUP=01a1ee03-14bc-776e-b995-9b93566df092`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) local and on
+`https://orbit-app.easytomanage.com/health/ready`; `/orbit-build.json` revision `8b614cc4…`; schema 20261117133309 (120
+rows); sidecar `/health` ok (sandbox true), `/opt/orbit-agent/src` = `main`; APNs on; `/`, `/chat`, `/tasks`, `/docs`,
+`/settings/agentic` 200, `/api/v1/agent` 401 without a session; the 3 job routes 401 with a wrong secret and a valid body
+(422 with an empty body, as the existing `agent-tools/call`), an unknown `agent-tools` path 404. Signed-in browser check
+on production (`ui-check.ts`, temporary sessions for David Dusi, writes blocked, each logged out: 204, rows revoked;
+real agent status: on, online, ChatGPT connected): Ask bar mic listening and hovered: red in the dark
+(`oklab(0.704 0.177 0.072 / 0.9)`) and the light theme; Home, Chat, Tasks, Docs and Settings → Agentic render. Job
+approval card: David's DM with Donna with ONE **stubbed** message added to the real messages GET (the question and
+Details card as Orbit's `question()`/`details()` and the sidecar's `askForApproval` make them; nothing written): the
+question, field mapping, left out, samples and a closed Details that opens on the scope and script. Its only console
+error is the 404 of `GET …/messages/<stubbed id>/actions` (the message does not exist on the server): expected. The first
+two runs failed on the stub itself (`route.fetch()` skips Chromium's resolver rule; a ui block needs `block_id`).
+Screenshots in `/root/.local/share/com.jean.desktop/pasted-images/batch-approval-deploy/`
+(`prod-ask-bar-mic-listening-hover-dark.png`, `prod-job-approval-card*.png`). `vm-health`: nginx FAIL only from the switch
+window (50 connection-refused lines 09:35-09:36, 0 5xx); OOM WARN = 7 `gvisor_sentry` kills Nov 17 14:28-14:36, before
+this deploy; docker WARN = other sessions' containers; git-owner fixed after. Changelog posted to #orbit-updates as David
+Dusi (temporary session, logged out: 204; message `01a1ee08-358d-70b2-8fe9-cc12360b92c5`; text
+`/root/ops/batch-approval/changelog.md`). Scripts and logs: `/root/ops/batch-approval/`.
+
+Rollback to `b7c3122` (undo the migration first: only the agent jobs are lost; the old binary refuses the new schema):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit sqlite3 "file:/var/lib/orbit/orbit.sqlite?mode=ro" ".backup '/var/backups/orbit/pre-migration/orbit-before-rollback-to-b7c3122.sqlite'"
+sudo -u orbit sqlite3 /var/lib/orbit/orbit.sqlite < /root/ops/batch-approval/rollback-schema.sql   # DROP agent_jobs + index, delete the 20261117133309 row
+sudo install -m 755 /usr/local/bin/orbit-b7c3122 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-8b614cc /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/batch-approval/rollback.sh)
+# Way 2, only for a data problem (work after 09:35 UTC is lost), Orbit stopped: /usr/local/bin/orbit-b7c3122 backup verify +
+#   backup restore 01a1ee03-14bc-776e-b995-9b93566df092 (as user orbit), then the binary and sidecar lines above
+```
+
+After this rollback, set `PROD_TAG=b7c3122`, `ROLLBACK_TAG=c21ec38`,
+`ROLLBACK_BACKUP=01a1ea44-329a-724e-a09e-a20d48520a49` in `/root/ops/vm-health.conf` (copy
+`/root/ops/vm-health.conf.before-8b614cc`).
 
 ### November 17, 2026 upgrade: the mic in the Ask bar, recording states, desktop 0.1.7-0.1.10 web parts (no migration)
 
