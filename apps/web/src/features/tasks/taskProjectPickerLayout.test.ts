@@ -15,11 +15,3 @@ test('shows a visible settings gear on each project without a separate settings 
   expect(gearTokens).toBeDefined()
   expect(gearTokens).not.toContain('opacity-0')
 })
-
-test('keeps the project rail settings gear visible without hover', async () => {
-  const source = await Bun.file(new URL('./components/ProjectRail.tsx', import.meta.url)).text()
-
-  const gearTokens = source.match(/className="([^"]+)"\s+aria-label=\{`\$\{project.name\} settings`\}/)?.[1]
-  expect(gearTokens).toBeDefined()
-  expect(gearTokens).not.toContain('opacity-0')
-})

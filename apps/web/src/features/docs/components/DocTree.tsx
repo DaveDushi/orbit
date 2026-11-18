@@ -555,11 +555,12 @@ export function DocTree({
         </SidebarListHeader>
       ) : (
         <PaneHeader className="max-[899px]:min-h-11 max-[899px]:px-2 max-[899px]:py-1.5">
-          <PaneTitle>Documents</PaneTitle>
+          {/* the same name and plain buttons as Chat and Drive beside the content */}
+          <PaneTitle>Docs</PaneTitle>
           <span className="flex-1" />
           {optionsMenu(<Button type="button" variant="ghost" size="icon-sm" aria-label="Documents options" />)}
           <Tip label="New page" side="bottom">
-            <Button type="button" size="icon" aria-label="New page" disabled={createPage.isPending} onClick={() => handleCreate(null)}>
+            <Button type="button" variant="ghost" size="icon" className="text-muted-foreground" aria-label="New page" disabled={createPage.isPending} onClick={() => handleCreate(null)}>
               <Plus className="size-4" />
             </Button>
           </Tip>
