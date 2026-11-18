@@ -10,18 +10,18 @@ Run everything with one command (Node 22.19+; it runs `npm ci` in `apps/agent` w
 ./evals/donna-codemode/run.sh     # security tests, then the eval → evals/donna-codemode/results.json
 ```
 
-The old mode is the real sidecar of `BASELINE` (default `25e535d7`, the branch base): `run.sh` unpacks its
+The old mode is the real sidecar of `BASELINE` (default `25e535d7`, the first branch base; the 2026-11-18 numbers below use `BASELINE=main`, `1b62c91d`, with jobs): `run.sh` unpacks its
 `apps/agent/src` into `.baseline/` (`git archive`, ignored by git). The new mode is this branch's sidecar.
 
 ## 1. What code mode by default means (`apps/agent/src/find-tools.ts`)
 
 | Part | Old (direct) | New (code mode) |
 | --- | --- | --- |
-| Offered to the model | ~62 tools (every Orbit tool, `codemode`, skill tools) | `find_tools`, `codemode`, and the tools a script cannot stand in for: `view_image` (images must reach the model), `ask_teammate` (ends the run with a question), `load_skill`, `read_skill_file`. A script run still offers only `run_saved_script` (+ `repair_routine_script`). |
+| Offered to the model | ~64 tools (every Orbit tool, `codemode`, the jobs, skill tools) | An allow list (`MODEL_TOOLS`): `find_tools`, `codemode`, the jobs (`plan_job`, `run_job`: a job runs up to 60 minutes, longer than a script), and the tools a script cannot stand in for: `view_image` (images must reach the model), `ask_teammate` (ends the run with a question), `load_skill`, `read_skill_file`. A script run still offers only `run_saved_script` (+ `repair_routine_script`). |
 | Connected services | Every service tool with its JSON Schema in an "integration tools" prompt section, cut at 16,000 characters | Prompt: only each service's name and tool count. The tools are in a Pi document (`orbit.integration-tools`) and found with `find_tools`. Scripts call them as `tools.use_integration({ tool, arguments })` |
 | `codemode` section | Declares the callable tools that are not offered | Declares the 10 most used tools (`DECLARED_TOOLS`), names the others ("arguments with find_tools") |
 | Finding a tool | — | `find_tools(code)`: a read-only script over the global `catalog` (name, description, input schema, integration, approval, call) in a QuickJS sandbox with code mode's limits and no tools. Or `find_tools(query)`: BM25 on name (double weight) and description + schema property names, weighted by the share of query words found; at most 8 results with name, description, the call to write, and the JSON Schema (cut at 2,000 characters). Service text is fenced as `<orbit-data>`. A custom agent sees only its own tools, and service tools only with `use_integration` |
-| Approvals from a script | — | `afterTool`: a top-level script after which the thread waits for the driver ends the run (a nested call's `terminate` would not). `beforeTool`: while the thread waits, every further call is refused, so a script cannot go on after the question |
+| Approvals from a script | — | `afterTool`: a nested call that asks the driver (sets `waitingFor` and ends the run: an approval, a sandbox host card) fails in its script, so the script stops there; a top-level script after which the thread waits ends the run (a nested call's `terminate` would not). `beforeTool`: while the thread waits, every further call is refused, also after the script catches the error. One yes for many writes is a job |
 | Progress | One line per top-level call | One line per call of a script ("Searching tasks"); `codemode` and `find_tools` show nothing |
 | Limits and permissions | Unchanged: the agent's tool list (`blockedCall`, also for nested calls), the 40-call limit counted in `asDriver` (nested calls too), Orbit's checks of the driver's session, permissions and yes | Same |
 
@@ -46,43 +46,42 @@ No setting switches back. A rollback is a revert of the commit.
   request, 10k uncached input tokens/s, 60 output tokens/s, see `results.json` → `modeledLatency`).
 - No real-model run: the sidecar's provider needs a person's ChatGPT (Codex) sign-in.
 
-## 3. Results (`results.json`, 2026-11-17)
+## 3. Results (`results.json`, 2026-11-18, before = `main` 1b62c91d)
 
 No connected services (35 cases):
 
-| Metric | Old (direct) | Code mode | Delta |
+| Metric | Old (direct, main) | Code mode | Delta |
 | --- | --- | --- | --- |
 | Success | 35/35 | 35/35 | 0 |
-| Tools offered per request | 62 | 6 | −90% |
-| Tool-definition tokens per request | 8,875 | 1,313 | −85% |
-| Input tokens per request | 28,991 | 23,344 | −19.5% |
+| Tools offered per request | 64 | 8 | −88% |
+| Tool-definition tokens per request | 9,970 | 2,224 | −78% (`plan_job`'s long description is ~900 of them) |
+| Input tokens per request | 31,637 | 25,814 | −18.4% |
 | Model requests (turns), total | 92 | 96 | +4.3% (2.63 → 2.74 per case) |
-| Input tokens, total | 2,667,195 | 2,240,982 | −16.0% |
-| Uncached input tokens, total | 1,017,015 | 826,045 | −18.8% |
+| Input tokens, total | 2,910,627 | 2,478,155 | −14.9% |
+| Uncached input tokens, total | 1,109,625 | 912,696 | −17.7% |
 | Output tokens, total | 1,343 | 3,848 | +187% (scripts are longer than calls) |
-| Total tokens | 2,668,538 | 2,244,830 | −15.9% |
-| Sidecar latency, median per case | 116 ms | 212 ms | +96 ms (QuickJS) |
-| Modeled latency per case | 5.78 s | 6.60 s | +14% |
+| Total tokens | 2,911,970 | 2,482,003 | −14.8% |
+| Sidecar latency, median per case | 99 ms | 195 ms | +96 ms (QuickJS) |
+| Modeled latency per case | 6.03 s | 6.83 s | +13% |
 
 105 service tools (43 cases):
 
-| Metric | Old (direct) | Code mode | Delta |
+| Metric | Old (direct, main) | Code mode | Delta |
 | --- | --- | --- | --- |
 | Success | **41/43** | **43/43** | the old prompt section is cut at 16,000 characters: the Shopify and Cloudflare tools are not listed, so c39 and c43 fail |
-| Input tokens per request | 33,003 | 23,476 | −28.9% |
+| Input tokens per request | 35,649 | 25,944 | −27.2% |
 | Model requests, total | 111 | 123 | +10.8% (2.58 → 2.86 per case) |
-| Input tokens, total | 3,663,379 | 2,887,509 | −21.2% |
-| Uncached input tokens, total | 1,421,838 | 1,021,452 | −28.2% |
-| Total tokens | 3,665,145 | 2,892,724 | −21.1% |
-| Sidecar latency, median per case | 75 ms | 206 ms | +131 ms |
-| Modeled latency per case | 6.14 s | 6.94 s | +13% |
-| Service cases only (8) | 6/8, 2.38 requests, 6.18 s | 8/8, 3.38 requests, 8.29 s | one `find_tools` turn each |
+| Input tokens, total | 3,957,085 | 3,191,114 | −19.4% |
+| Uncached input tokens, total | 1,535,616 | 1,127,808 | −26.6% |
+| Total tokens | 3,958,851 | 3,196,329 | −19.3% |
+| Sidecar latency, median per case | 94 ms | 197 ms | +103 ms |
+| Modeled latency per case | 6.43 s | 7.16 s | +11% |
 
-With 105 service tools, code mode's input per request stays the same (23.3k → 23.5k tokens). The old mode's input
+With 105 service tools, code mode's input per request stays the same (25.8k → 25.9k tokens). The old mode's input
 grows by 4k tokens for every request, and the section would be cut further with more tools.
 
 `find_tools` search over all 165 tools (60 Orbit + 105 service tools), 36 requests in people's words
-(`run.ts` → `SEARCHES`): the right tool is **1st in 81%**, in the top 3 in 92%, in the 8 results in **100%**.
+(`run.ts` → `SEARCHES`): the right tool is **1st in 81%** (29/36), in the top 3 in 92%, in the 8 results in **100%** (unchanged).
 
 Where the turns come from: one `find_tools` turn when the `codemode` section does not declare a tool (list_projects,
 list_members, remind_me, drive_search, schedule_routine, every service tool). Saved: two script steps share one turn
@@ -94,11 +93,11 @@ some steps changed: tools without a label showed their raw name ("drive trash"),
 every tool ("Moving to the Drive trash"; a test checks it). The bulk case (c20) shows "Searching tasks" instead of
 "Running a script".
 
-## 4. Security tests (`security.test.ts`, 10/10 pass)
+## 4. Security tests (`security.test.ts`, 10/10 pass, 2026-11-18)
 
 | # | Test | Result |
 | --- | --- | --- |
-| 1 | The model is offered exactly `ask_teammate`, `codemode`, `find_tools`, `load_skill`, `read_skill_file`, `view_image`; with 105 service tools the prompt names only the 4 services and counts, no tool names or schemas | pass |
+| 1 | The model is offered exactly `ask_teammate`, `codemode`, `find_tools`, `load_skill`, `plan_job`, `read_skill_file`, `run_job`, `view_image`; with 105 service tools the prompt names only the 4 services and counts, no tool names or schemas | pass |
 | 2 | A script's `drive_trash`: one question, nothing trashed before the yes, the script's later calls (`create_task`, `list_members`) never reach Orbit, the run ends at the question (no extra model turn); after the yes it runs once, as the driver | pass; **fails without the `afterTool` and the waiting block** |
 | 3 | A script acts with the driver's permissions: Orbit's 403 for Bob stays a refusal, no task made | pass |
 | 4 | Custom agent (`search_tasks`, `drive_search`): offered set, `find_tools` results, the script's `tools` object and its calls stay inside the list; no service tools without `use_integration`, even when services are connected; with `use_integration` it finds and calls them | pass |

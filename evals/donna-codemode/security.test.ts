@@ -88,12 +88,12 @@ async function start(replies: Reply[], options: { sandbox?: boolean; maxToolCall
 const card = (tools: string[]): InputAgent => ({ user_id: "0199c3a0-0000-7000-8000-0000000000c1", name: "Reader", instructions: "", tools, model: null, thinking: null }) as InputAgent;
 const questions = (orbit: FakeOrbit) => [...orbit.messages.entries()].filter(([key]) => key.startsWith("approve:"));
 
-test("the model is offered only find_tools, codemode and the tools a script cannot stand in for; no service tool is in the prompt", async () => {
+test("the model is offered only find_tools, codemode, the jobs and the tools a script cannot stand in for; no service tool is in the prompt", async () => {
 	const ctx = await start([answer], { services: true });
 	try {
 		await ctx.run("hello");
 		const { offered, prompt } = ctx.requests[0];
-		assert.deepEqual([...offered].sort(), ["ask_teammate", "codemode", "find_tools", "load_skill", "read_skill_file", "view_image"]);
+		assert.deepEqual([...offered].sort(), ["ask_teammate", "codemode", "find_tools", "load_skill", "plan_job", "read_skill_file", "run_job", "view_image"]);
 		assert.match(prompt, /- TikTok Ads: 40 tools\n- TikTok: 15 tools\n- Shopify: 25 tools\n- Cloudflare: 25 tools/);
 		assert.doesNotMatch(prompt, /tt_ads__|advertiser_id|cloudflare__purge_cache/);
 	} finally {
@@ -153,7 +153,7 @@ test("a custom agent: the model, scripts and find_tools reach only the agent's o
 	);
 	try {
 		await ctx.run("What can you do?", ANN, "instruction", card(["search_tasks", "drive_search"]));
-		assert.deepEqual([...ctx.requests[0].offered].sort(), ["codemode", "find_tools", "load_skill", "read_skill_file"]);
+		assert.deepEqual([...ctx.requests[0].offered].sort(), ["codemode", "find_tools", "load_skill", "plan_job", "read_skill_file", "run_job"]);
 		const [found, none, ran] = results;
 		assert.match(found, /drive_search/);
 		assert.doesNotMatch(found, /drive_trash|drive_share|create_task|schedule_routine|view_image|media_shell|tt_ads__/);
