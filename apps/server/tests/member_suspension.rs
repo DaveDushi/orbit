@@ -656,3 +656,151 @@ async fn only_owners_and_admins_suspend_and_never_the_owner_themselves_or_anothe
     assert_eq!(status, StatusCode::NO_CONTENT);
     assert!(!f.suspended(&target).await);
 }
+
+impl Fixture {
+    async fn remove(&self, actor: &Person, membership: &str) -> StatusCode {
+        let version: i64 = sqlx::query_scalar("SELECT version FROM memberships WHERE id = $1")
+            .bind(membership)
+            .fetch_one(self.db.pool())
+            .await
+            .unwrap();
+        self.send(
+            "DELETE",
+            &format!(
+                "/api/v1/workspaces/{}/members/{membership}?expected_version={version}",
+                self.workspace
+            ),
+            Some(&actor.cookie),
+            Value::Null,
+        )
+        .await
+        .0
+    }
+}
+
+#[tokio::test]
+async fn removing_a_member_lifts_this_workspaces_suspension_so_they_sign_in_again() {
+    let f = Fixture::new().await;
+    let workspace = f.workspace.clone();
+    let member = f
+        .person("member@example.com", Some((&workspace, "member")))
+        .await;
+    assert_eq!(
+        f.suspend(&f.owner, &workspace, &member.membership, true)
+            .await
+            .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(f.login(&member).await, StatusCode::UNAUTHORIZED);
+
+    assert_eq!(
+        f.remove(&f.owner, &member.membership).await,
+        StatusCode::NO_CONTENT
+    );
+    assert!(!f.suspended(&member).await);
+    let workspace_of_suspension: Option<String> =
+        sqlx::query_scalar("SELECT suspended_workspace_id FROM users WHERE id = $1")
+            .bind(member.id.to_string())
+            .fetch_one(f.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(workspace_of_suspension, None);
+    // The same password signs in (as the iPhone app does, with a bearer token), and the session reaches the API.
+    let call = |request: Request<Body>| async {
+        let response = f.app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        (status, serde_json::from_slice::<Value>(&bytes).unwrap())
+    };
+    let (status, login) = call(
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/auth/login")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"email": member.email, "password": PASSWORD}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{login}");
+    let token = login["session_token"].as_str().unwrap();
+    let (status, me) = call(
+        Request::builder()
+            .uri("/api/v1/auth/me")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    let removed = f.audit("membership.removed", &f.owner).await;
+    assert_eq!(removed.len(), 1);
+    assert_eq!(removed[0]["metadata"]["suspension_lifted"], true);
+}
+
+#[tokio::test]
+async fn removing_a_member_keeps_an_instance_admins_suspension() {
+    let f = Fixture::new().await;
+    let workspace = f.workspace.clone();
+    let member = f
+        .person("member@example.com", Some((&workspace, "member")))
+        .await;
+    let (status, _) = f
+        .send(
+            "POST",
+            &format!("/api/v1/admin/users/{}/suspension", member.id),
+            Some(&f.owner.cookie),
+            json!({"suspended": true}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    assert_eq!(
+        f.remove(&f.owner, &member.membership).await,
+        StatusCode::NO_CONTENT
+    );
+    assert!(f.suspended(&member).await);
+    assert_eq!(f.login(&member).await, StatusCode::UNAUTHORIZED);
+    let removed = f.audit("membership.removed", &f.owner).await;
+    assert_eq!(removed[0]["metadata"]["suspension_lifted"], false);
+}
+
+#[tokio::test]
+async fn removing_a_member_keeps_another_workspaces_suspension() {
+    let f = Fixture::new().await;
+    let workspace = f.workspace.clone();
+    // A second workspace suspends its only-workspace member, who then joins this workspace too.
+    let other_owner = f.person("other-owner@example.com", None).await;
+    let (status, second) = f
+        .send(
+            "POST",
+            "/api/v1/workspaces",
+            Some(&other_owner.cookie),
+            json!({"name": "Second"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{second}");
+    let second = second["id"].as_str().unwrap().to_owned();
+    let member = f
+        .person("member@example.com", Some((&second, "member")))
+        .await;
+    assert_eq!(
+        f.suspend(&other_owner, &second, &member.membership, true)
+            .await
+            .0,
+        StatusCode::NO_CONTENT
+    );
+    let here = f.join(member.id, &workspace, "member").await;
+
+    assert_eq!(f.remove(&f.owner, &here).await, StatusCode::NO_CONTENT);
+    assert!(f.suspended(&member).await);
+    let workspace_of_suspension: Option<String> =
+        sqlx::query_scalar("SELECT suspended_workspace_id FROM users WHERE id = $1")
+            .bind(member.id.to_string())
+            .fetch_one(f.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(workspace_of_suspension, Some(second));
+    assert_eq!(f.login(&member).await, StatusCode::UNAUTHORIZED);
+}

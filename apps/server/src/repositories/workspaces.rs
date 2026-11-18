@@ -1827,6 +1827,19 @@ impl WorkspaceRepository {
             .bind(expected_version as i64)
             .execute(&mut *transaction)
             .await?;
+        // A suspension that this workspace set ends with the membership: it must not lock the person out of
+        // their whole account. A suspension by an instance admin or another workspace stays.
+        let suspension_lifted = sqlx::query(
+            "UPDATE users SET suspended_at = NULL, suspended_workspace_id = NULL, version = version + 1, \
+             updated_at = $1 WHERE id = $2 AND suspended_workspace_id = $3 AND suspended_at IS NOT NULL",
+        )
+        .bind(now.as_millis())
+        .bind(target.user_id.to_string())
+        .bind(workspace_id.to_string())
+        .execute(&mut *transaction)
+        .await?
+        .rows_affected()
+            > 0;
         // Their private agent memory here is about them alone.
         crate::agent::memory::drop_private(&mut transaction, workspace_id, target.user_id).await?;
         // Their sign-ins to the workspace's apps end here.
@@ -1867,7 +1880,7 @@ impl WorkspaceRepository {
             "membership",
             Some(membership_id),
             request_id,
-            json!({}),
+            json!({"suspension_lifted": suspension_lifted}),
             now,
         )
         .await?;
