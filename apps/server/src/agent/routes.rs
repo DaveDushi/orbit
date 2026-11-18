@@ -324,6 +324,9 @@ async fn list_inputs(
         let stops = task_runs::stopping(database)
             .await
             .map_err(|_| unavailable(&uri, &request_id))?;
+        let sandbox_stops = super::sandbox::pending_stops(database)
+            .await
+            .map_err(|_| unavailable(&uri, &request_id))?;
         let (refused, pending): (Vec<_>, Vec<_>) = inputs::pending(database, 50)
             .await
             .map_err(|_| unavailable(&uri, &request_id))?
@@ -332,7 +335,11 @@ async fn list_inputs(
         for input in &refused {
             refuse(&state, input).await;
         }
-        if !pending.is_empty() || !stops.is_empty() || tokio::time::Instant::now() >= deadline {
+        if !pending.is_empty()
+            || !stops.is_empty()
+            || !sandbox_stops.is_empty()
+            || tokio::time::Instant::now() >= deadline
+        {
             let mut conn = database
                 .pool()
                 .acquire()
@@ -351,6 +358,10 @@ async fn list_inputs(
                 "thinking": thinking,
                 "inputs": pending,
                 "stops": stops,
+                // The agent sandboxes' kill path: stop these agents' thread sandboxes now (`sandbox::switch_off`),
+                // and all of them while sandboxes are off on this server.
+                "sandbox_stops": sandbox_stops,
+                "agent_sandbox": state.sandbox.is_some(),
             })));
         }
         tokio::time::sleep(Duration::from_millis(250)).await;

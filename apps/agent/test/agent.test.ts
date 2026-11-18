@@ -1194,10 +1194,30 @@ test("a task run that Orbit cancels is aborted, says why in its comment, and is 
 class SandboxOrbit extends FakeOrbit {
 	readonly tickets: Record<string, unknown>[] = [];
 	readonly ends: { call: string; body: Record<string, unknown> }[] = [];
+	readonly usages: { run: string; body: Record<string, unknown> }[] = [];
+	sandboxStops: { id: string; agent_user_id: string; reason: string }[] = [];
+	readonly stopsDone: string[] = [];
+	agentSandbox = true;
 	refuse = false;
 
 	async route(method: string, url: string, headers: Record<string, unknown>, body: any): Promise<[number, unknown]> {
 		const path = url.split("?")[0];
+		const secret = headers.authorization === `Bearer ${SECRET}`;
+		if (path === "/api/internal/agent/inputs" && secret) {
+			const [status, value] = await super.route(method, url, headers, body);
+			return [status, { ...(value as object), sandbox_stops: this.sandboxStops, agent_sandbox: this.agentSandbox }];
+		}
+		const usage = /^\/api\/internal\/agent\/runs\/([^/]+)\/usage$/.exec(path);
+		if (usage && secret) {
+			this.usages.push({ run: usage[1], body });
+			return [200, { counted: true }];
+		}
+		const done = /^\/api\/internal\/agent\/sandbox\/stops\/([^/]+)\/done$/.exec(path);
+		if (done && secret) {
+			this.stopsDone.push(done[1]);
+			this.sandboxStops = this.sandboxStops.filter((stop) => stop.id !== done[1]);
+			return [204, undefined];
+		}
 		if (path === "/api/internal/agent/sandbox/calls" && headers.authorization === `Bearer ${SECRET}`) {
 			if (this.refuse) return [403, { code: "sandbox_off", detail: "The sandbox is off for this agent." }];
 			this.tickets.push(body);
@@ -1308,6 +1328,71 @@ test("sandbox_shell: a custom agent's call asks the driver for a host once, an a
 		const donna = orbit.add({ thread_key: id(), author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> sandbox: ls` });
 		await until("the default agent's answer", () => progressOf(orbit, donna).startsWith("I could not do that"));
 		assert.equal(orbit.tickets.length, 3);
+	} finally {
+		await agent.stop();
+		closeBroker();
+		orbit.server.close();
+	}
+});
+
+test("budgets and off switch: a custom agent's run reports its tokens once; a spent agent tells the driver and does not run; Orbit's stops reach the broker", async () => {
+	const ARTHUR = "0199c3a0-0000-7000-8000-0000000000a2";
+	const orbit = new SandboxOrbit();
+	current = orbit;
+	await orbit.listen();
+	const dir = mkdtempSync(join(tmpdir(), "agent-"));
+	const socketPath = join(dir, "broker.sock");
+	const brokered: Record<string, unknown>[] = [];
+	const closeBroker = fakeBroker(socketPath, (request, socket) => {
+		brokered.push(request);
+		socket.end(frameOf("x", JSON.stringify({ stopped: 1 })));
+	});
+	const settings = { ...config(orbit, join(dir, "data")), agentSandboxSocket: socketPath };
+	const agent = new Agent(settings, new OrbitClient(settings));
+	await agent.open();
+	await agent.start();
+	const arthur = { user_id: ARTHUR, name: "Arthur", instructions: "", tools: ["sandbox_shell"], model: null, thinking: null };
+	try {
+		// Each run of a custom agent: its own tokens, once, under its input's id. The default agent has no limit.
+		const thread = id();
+		const first = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${ARTHUR}> show model`, agent: arthur });
+		await until("the first report", () => orbit.usages.length === 1);
+		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
+		const second = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${ARTHUR}> show model`, agent: arthur });
+		await until("the second report", () => orbit.usages.length === 2);
+		assert.deepEqual(orbit.usages.map((usage) => usage.run), [first, second]);
+		for (const usage of orbit.usages) {
+			assert.equal(usage.body.agent_user_id, ARTHUR);
+			assert.ok(Number(usage.body.tokens) > 0, `tokens: ${usage.body.tokens}`);
+		}
+		const donna = orbit.add({ thread_key: id(), author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> show model` });
+		await until("the default agent's answer", () => !progressOf(orbit, donna).startsWith("⏳") && progressOf(orbit, donna) !== "");
+		await sleep(300);
+		assert.equal(orbit.usages.length, 2);
+
+		// Past its monthly tokens (Orbit's flag): the driver is told, nothing runs, nothing is counted.
+		const spentThread = id();
+		const spent = orbit.add({ thread_key: spentThread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${ARTHUR}> show model`, agent: { ...arthur, model_tokens_spent: true } });
+		await until("the refusal", () => progressOf(orbit, spent) !== "");
+		assert.match(progressOf(orbit, spent), new RegExp(`^<@${ANN}> Arthur used its model tokens for this month, so it cannot start new runs`));
+		await until("the idle thread", () => orbit.threads.get(spentThread)?.status === "idle");
+		assert.equal(orbit.usages.length, 2);
+
+		// A stop from Orbit (the switch went off): the broker stops the agent's sandboxes with Orbit's reason; then done.
+		orbit.sandboxStops = [{ id: "stop-1", agent_user_id: ARTHUR, reason: "the sandbox was switched off" }];
+		await until("the stop confirmed", () => orbit.stopsDone.includes("stop-1"));
+		assert.deepEqual(brokered, [{ op: "stop_agent", agent: ARTHUR, reason: "the sandbox was switched off" }]);
+
+		// Sandboxes off on the server: every sandbox stops, once, however many polls say so; again after a new "off".
+		orbit.agentSandbox = false;
+		await until("stop_all", () => brokered.length === 2);
+		await sleep(500);
+		assert.deepEqual(brokered.slice(1), [{ op: "stop_all", reason: "agent sandboxes are off on this server" }]);
+		orbit.agentSandbox = true;
+		await sleep(300);
+		orbit.agentSandbox = false;
+		await until("a second stop_all", () => brokered.length === 3);
+		assert.equal(brokered[2].op, "stop_all");
 	} finally {
 		await agent.stop();
 		closeBroker();

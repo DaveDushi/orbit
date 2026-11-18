@@ -441,6 +441,9 @@ pub struct InputAgent {
     /// `None`: the installation's choice.
     pub model: Option<String>,
     pub thinking: Option<String>,
+    /// The agent used its model tokens for this month (`agent_sandbox_settings`): the sidecar tells the driver and
+    /// does not run.
+    pub model_tokens_spent: bool,
 }
 
 /// The default agent's card in one workspace. `None` model and thinking: the installation's choice.
@@ -508,7 +511,7 @@ pub(crate) async fn pending(
          dp.model AS default_model, dp.thinking AS default_thinking, \
          tr.id AS task_run_id, tr.task_id AS task_run_task, tr.cause AS task_run_cause, \
          tr.comment_id AS task_run_comment, tt.title AS task_title, tt.number AS task_number, \
-         tp.project_key AS task_project_key \
+         tp.project_key AS task_project_key, ss.model_tokens_month, COALESCE(su.model_tokens, 0) AS model_tokens \
          FROM agent_inputs i \
          LEFT JOIN chat_messages m ON m.id = i.message_id \
          LEFT JOIN agent_routines r ON r.id = i.routine_id \
@@ -523,9 +526,12 @@ pub(crate) async fn pending(
          LEFT JOIN tasks tt ON tt.id = tr.task_id \
          LEFT JOIN projects tp ON tp.id = tt.project_id \
          LEFT JOIN task_comments tc ON tc.id = tr.comment_id \
+         LEFT JOIN agent_sandbox_settings ss ON ss.agent_user_id = i.agent_user_id \
+         LEFT JOIN agent_sandbox_usage su ON su.agent_user_id = i.agent_user_id AND su.month = $2 \
          WHERE i.acked_at IS NULL ORDER BY i.message_id LIMIT $1",
     )
     .bind(limit)
+    .bind(super::sandbox::month(TimestampMillis::now().as_millis()))
     .fetch_all(database.pool())
     .await?;
     let mut inputs: Vec<PendingInput> = rows
@@ -621,6 +627,9 @@ pub(crate) async fn pending(
                         .unwrap_or_default(),
                     model: row.get("agent_model"),
                     thinking: row.get("agent_thinking"),
+                    model_tokens_spent: row
+                        .get::<Option<i64>, _>("model_tokens_month")
+                        .is_some_and(|limit| row.get::<i64, _>("model_tokens") >= limit),
                 }),
             default_agent: row
                 .get::<Option<String>, _>("default_set")

@@ -33,6 +33,7 @@ const BROKER_GRACE_SECONDS = 60;
 const OUTPUT_MAX = 64 * 1024;
 
 type EgressPending = { id: string; host: string; port: number };
+type EgressDenied = { host: string; port: number; reason: string };
 
 const fail = (text: string): ToolExecutionResult => ({ output: [{ type: "text", text }], isError: true });
 
@@ -40,7 +41,7 @@ const fail = (text: string): ToolExecutionResult => ({ output: [{ type: "text", 
 export function egressQuestion(driverId: string, agentName: string, pending: readonly EgressPending[], purpose: string | undefined): string {
 	const hosts = pending.map((request) => `**${request.host}:${request.port}**`).join(", ");
 	const why = purpose?.replace(/\s+/g, " ").replace(/[<>]/g, "").trim().slice(0, 200);
-	return `<@${driverId}> ${agentName} wants to connect to ${hosts}${why ? ` (for: ${why})` : ""}. Allow once, Allow always (owners and admins) or Deny. The question waits 30 minutes; after that I ask again at the next try.`;
+	return `<@${driverId}> ${agentName} wants to connect to ${hosts}${why ? ` (for: ${why})` : ""}. The question waits 30 minutes; after that I ask again at the next try.`;
 }
 
 /** The tool; `socket` is the agent sandbox broker's socket (absent: no tool). */
@@ -100,9 +101,12 @@ export function sandboxTools(asDriver: Driver, orbit: () => OrbitClient, socket:
 
 				const end = result.end;
 				const interrupted = typeof end.interrupted === "string" ? end.interrupted : null;
+				// In the sandbox a refused host is only a 403 (curl: exit 56); Orbit's reason comes with the call's end.
+				const denied = (Array.isArray(end.egress_denied) ? end.egress_denied : []) as EgressDenied[];
 				const text = untrusted("sandbox shell", {
 					result: interrupted ? `interrupted: ${interrupted} (it may have partly run: check /work before you run it again)` : ending(result, timeout),
 					...(typeof end.restarted === "string" ? { sandbox_restarted: end.restarted } : {}),
+					...(denied.length ? { internet_refused: denied.map((refused) => `${refused.host}:${refused.port} (${refused.reason})`).join("; ") } : {}),
 					stdout: shown(result.stdout, 8_000, "start", result.stdoutTruncated),
 					stderr: shown(result.stderr, 3_000, "end", result.stderrTruncated),
 				});

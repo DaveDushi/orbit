@@ -1,9 +1,9 @@
 # Agent sandboxes: design
 
-Status: **approved design; phases 1–7 done on test copies** (phase 3 and 4: 2026-11-17, phases 5 to 7: 2026-11-18,
+Status: **approved design; phases 1–8 done on test copies** (phase 3 and 4: 2026-11-17, phases 5 to 8: 2026-11-18,
 branch `agent-sandbox-design`). The owner approved the design and the recommended answers to all open questions, with one
 change: **one sandbox per chat thread** (question 1, section 5). Results: section 13 (spike), section 14 (phases 3
-and 4), section 15 (phase 5), section 16 (phase 6), section 17 (phase 7). Production has only the phase 2 host guards; no broker, proxy or migration runs there. Each later phase
+and 4), section 15 (phase 5), section 16 (phase 6), section 17 (phase 7), section 18 (phase 8). Production has only the phase 2 host guards; no broker, proxy or migration runs there. Each later phase
 needs its own "yes" before production.
 
 ## Goal and fixed decisions
@@ -437,7 +437,7 @@ Approved by the owner on 2026-11-16: the recommended answers to questions 2–13
 | 5 | **Done** 2026-11-18 (section 15). **Egress proxy**: `orbit egress-proxy` with per-call passwords; broker passes them per call. | Proxy tests and network escape tests pass. |
 | 6 | **Done** 2026-11-18 (section 16). **Sidecar tool**: `sandbox_shell`, catalog row and `route_need`, interrupted-call handling, card posting and waiting. | `profiles.test.ts`, mock-model run end to end on a test instance. |
 | 7 | **Done** 2026-11-18 (section 17). **UI**: agent card toggle and limits; Internet access page (rules, pending, log); egress card buttons on **web and mobile**. | Browser check on web; iOS bundle builds; `tsc` and tests in both apps. |
-| 8 | **Budgets and off switch**: counters, notices, kill path. | Tests for each level. |
+| 8 | **Done** 2026-11-18 (section 18). **Budgets and off switch**: counters, notices, kill path. | Tests for each level. |
 | 9 | **Quality & Security**: injection and escape suites on a test instance; review. | All pass; findings fixed. |
 | 10 | **Pilot Arthur** on production (with the yes); watch for 2–4 weeks. | Exit criteria in section 8. |
 | 11 | **Donna**, then merge `media_shell` onto the new broker. | Old bwrap path removed. |
@@ -776,3 +776,75 @@ egress at once, but a live thread sandbox lives until its idle delete), and **mo
 and shown, but nothing counts tokens yet). Also open: the scheduler job for lost calls; the package registries preset
 button; the sidecar's card text still names all three answers (the buttons now say who may use them); an iOS bundle check
 when iPhone builds resume. Known gap, as before: domain fronting through a shared CDN.
+
+## 18. Phase 8 results (2026-11-18)
+
+Done on test copies only: the phase 3 test names (broker `orbit-sbx-test`, 10.202.0.0/16, netns `sbt-*`, proxy port
+13128, image `orbit-sbx-test-image:p8`), a test Orbit (port 18810, own data dir, a fresh SQLite database, own app
+key, agent secret and sandbox key, an owner made with the setup flow and a generated password), a mock-model sidecar
+(port 18811), and a Postgres 18 container `orbit-sbx8-pg` (port 15535, tmpfs) for the route tests. No production
+service, data, socket or port was touched; all of it was removed after the tests.
+
+### What was built
+
+| Part | What |
+|---|---|
+| Migration `20261118205820_agent_sandbox_budgets` | `agent_sandbox_calls.cpu_counted`; `agent_sandbox_notices` (key: agent, month, counter, level: a notice once per period); `agent_run_usage` (key: run id: a run's tokens count once); `agent_sandbox_stops` (the kill path's queue for the sidecar). New table and column only; no backup needed. |
+| Counters (`agent/sandbox.rs`) | **CPU**: the broker's report counts **once per call** (`cpu_counted`), also when the sidecar, the off switch or the lost-call job ended the call first (the case left open in phase 6). **Traffic**: per allowed connection, as in phase 5. **Model tokens**: new `POST /api/internal/agent/runs/{run}/usage` (sidecar secret): the sidecar sends each custom agent run's tokens at the run's end (Pi's `pi.usage` of the thread at the end minus at the start, all model calls, nested ones included; `totalTokens` = input, output and cache); one row per run id, so a retried report adds nothing. The default agent has no limit and is not counted. |
+| Limits | **CPU** at 100 %: no ticket; the model reads "This agent used its sandbox CPU time for this month (600 of 600 CPU minutes): sandbox commands are refused until 1 December 2026 (UTC). Chat tools still work. …". **Traffic** at 100 %: the proxy denies, with its own reason (`the agent's internet traffic for this month is spent`, or the CPU one). The call end now also returns `egress_denied` (host, port, Orbit's reason): the sidecar adds `internet_refused` to the tool result, because in the sandbox a refusal is only a 403 (curl exit 56). **Tokens** at 100 %: the inputs poll flags the agent (`model_tokens_spent`); the sidecar does not run and tells the driver in the thread (as for a missing ChatGPT connection: a routine run ends as failed with the reason). A run already going finishes. Months are UTC (`YYYY-MM`); a new month starts at 0. |
+| Notices | After each count: the level reached (80 or 100 %, `notice_level`), one row per agent, month, counter and level (`ON CONFLICT DO NOTHING`), and only a new row sends a DM **from the agent to each owner and admin** of its workspace (not suspended). A jump past 100 % marks 80 % as sent and sends only the 100 % notice. A limit of 0 sends none. Text: "Heads-up: I used 80 % of my sandbox CPU time for November 2026 (480 of 600 CPU minutes). At 100 %, my sandbox commands are refused until 1 December 2026 (UTC). Owners and admins can change the limit in Settings → Agentic → Agents → Arthur." A DM that fails after its row is written is not sent again (no spam; the agent card shows the use). |
+| Kill path | Turning the agent's switch off, unticking `sandbox_shell`, or deleting the agent: in the same transaction Orbit ends the agent's running calls (interrupted with the reason, tokens deleted, the proxy denies their passwords) and, when a call ran within a sandbox's longest life (4 h), queues a stop. The sidecar gets the stops in its inputs long poll (like task-run stops; it answers at once when one is waiting), calls the broker's `stop_agent` with the reason, then confirms (`POST /api/internal/agent/sandbox/stops/{id}/done`, sidecar secret only). The broker kills the agent's thread sandboxes (running calls and background processes), **removes their call files at once** (the proxy drops their tunnels within a second), and a cut call reports the reason (`the sandbox was switched off`) and its CPU time **until the kill** (kept from the scope before the delete; before, it was 0). Installation off (no key or `ORBIT_AGENT_SANDBOX=off`): the poll says `agent_sandbox: false`, the sidecar calls `stop_all` once, and the lost-call job ends every running call in Orbit. |
+| Lost-call job (`sandbox::sweep`) | In the routines scheduler's round (every 10 s, on every server): a cheap read first, the write transaction only when a call is due. Closes calls without an end after timeout + 5 min as `lost` (token deleted; the proxy denies; the broker's `gc` drops a call file whose call does not run). Idempotent: a closed call is not running. A late broker report still counts the CPU time once. |
+| Sidecar | Card text without the answers the buttons explain ("… wants to connect to **host:443** (for: …). The question waits 30 minutes; after that I ask again at the next try."). |
+
+Not done (left open): the package registries preset button (it needs UI on web and mobile; admins still add the three
+hosts as rules); an installation switch in Admin → AI agent (today only `ORBIT_AGENT_SANDBOX=off` and a restart).
+
+### Tests
+
+| Suite | Result |
+|---|---|
+| Routes (`apps/server/tests/agent_sandbox.rs`, 24 tests) | All pass on **SQLite and Postgres 18**. New: notice levels at exactly 80 % and 100 % (odd limits, 0, overflow); UTC months and the year end; CPU at 100 % refuses the ticket with the numbers, last month's use does not count; traffic at 100 %: the proxy denies with its reason and the call end lists it; notices once per level and month, only to owners and admins, a jump past 100 % sends one, last month's rows do not stop this month's; tokens once per run id (retry, wrong key, the broker's key, not a custom agent), the inputs flag at 100 %; the switch off ends the running call (token dead, proxy denies), queues one stop that only the sidecar may confirm, the broker's later end still counts the CPU time, no stop without a recent call; unticking the tool and deleting the agent do the same; the lost-call job: nothing due → nothing, lost once, idempotent, a late end counts once, with sandboxes off every running call ends. Changed: a late broker end of a lost or sidecar-ended call now counts its CPU time (once). |
+| Sidecar (`node --test test/*.test.ts`) | 113 pass, 0 fail (34 skipped: they need a real sandbox). New: a custom agent's run reports its tokens once under its input id (none for the default agent); a spent agent tells the driver and runs nothing; a stop from Orbit reaches the broker with its reason and is confirmed; `agent_sandbox: false` sends `stop_all` once per off period. |
+| In gVisor (`apps/agent/test/agent-sandbox.test.ts`, 23 tests, real broker and proxy) | All pass. Changed: `stop_agent` with a reason; the busy call's proxy file is gone at the stop; the cut call reports the reason and its CPU time until the stop (≥ 2 s of a 3 s busy loop). |
+
+### End to end (mock model, test instance, real broker and proxy)
+
+Arthur was made with the real admin route (`tools: ["sandbox_shell"]`) and switched on with the settings route; the
+owner (the driver) wrote in #general.
+
+| Step | Result |
+|---|---|
+| `sandbox: echo …` | exit 0; the call `done`, CPU counted once (`cpu_counted` 1); the run's tokens reported once (68,161, the mock's estimate). |
+| CPU: limit 1 minute, use set to 77.5 %, then a 3 s busy loop | 3,000 ms counted; one 80 % DM to the owner. Use set to 97.5 %, again 3 s: one 100 % DM. The next `sandbox: echo` → the model reads "This agent used its sandbox CPU time for this month (1 of 1 CPU minutes): sandbox commands are refused until 1 December 2026 (UTC). Chat tools still work. …"; no ticket. |
+| Traffic: allow rule `example.com`, limit 10,000 bytes, three `curl https://example.com/` in one call | `HTTP 200`, `HTTP 200` (6,194 + 6,173 bytes), then curl exit 56; the tool result has `internet_refused: example.com:443 (the agent's internet traffic for this month is spent)`. 62 % → 124 %: one 100 % notice. |
+| Unknown host | The card reads "… wants to connect to **www.iana.org:443** (for: …). The question waits 30 minutes; …" (no list of answers); the thread waits for the driver. |
+| Off switch during `sleep 300` (3 live thread sandboxes of Arthur, one busy) | The settings route answered in 12 ms; the call was `done` / "the sandbox was switched off" at once; all 3 sandboxes (scopes, broker state) were gone **0.64 s** after the switch; no call file left; the stop was confirmed. The model got "interrupted: the sandbox was switched off (it may have partly run: check /work …)", and the next call "Orbit refused the sandbox: The sandbox is off for this agent." The broker's late end still counted the call's CPU time. |
+| Token limit set to the use so far | The next mention: "Arthur used its model tokens for this month, so it cannot start new runs until the 1st of next month (UTC). …" in the thread; nothing ran. |
+| Lost call (a ticket the broker never got, started 7 min ago) | Closed as `lost` by the scheduler 1.8 s later (one 10 s tick); its token session deleted. Two late broker ends: 200 both, 1,234 ms CPU counted once. |
+
+Found and fixed in the e2e: a CPU notice with a small limit read "0 of 1 CPU minutes"; under 10 minutes it now shows one
+decimal ("0.8 of 1 CPU minutes").
+
+### Idle RAM (test copy, debug build of the proxy)
+
+| Part | Idle |
+|---|---|
+| Broker | **0** (socket activation: no process between requests). |
+| Egress proxy (`orbit-sbx-test-egress.service`) | cgroup `memory.current` **8.9 MiB** (anonymous 7.2 MiB, file 1.1 MiB), RSS 55 MiB (shared pages of the 200 MB debug binary), PSS 53 MiB, 5 threads. |
+| One idle thread sandbox, new (one `true`) | `memory.current` **9.6 MiB** (anonymous 7.5 MiB, file 0.7 MiB), 27 host tasks. |
+| One idle thread sandbox after python3, node and git | `memory.current` **123 MiB**, of it anonymous **8.5 MiB** and file **112.5 MiB**: page cache of the rootfs files it read first (node alone is ~100 MB). Page cache is charged to the first reader's cgroup and is reclaimed under pressure; PSS 48 MiB, 33 host tasks. |
+
+So the steady cost is about 9 MiB anonymous per idle sandbox plus ~9 MiB for the proxy; the agents slice's
+`memory.current` can still show 100+ MiB of reclaimable rootfs cache per sandbox, which counts toward `MemoryHigh`
+(2 GiB) and is reclaimed there first.
+
+### Still open (for phase 9 and the pilot)
+
+- An admin who lowers a limit below the use gets no notice (notices come only with a count); the card shows the use.
+- The installation switch has no Admin page yet (`ORBIT_AGENT_SANDBOX=off` and a restart); then the sidecar's
+  `stop_all` and the job do the rest.
+- Package registries preset button; logs' 90-day retention job (calls, egress log, run usage) is not built yet.
+- Delete agent: the sandboxes stop, but its `/work` images stay until the image idle time (72 h), not dropped at once.
+- Model tokens: `totalTokens` counts cached input too (Pi's sum); the ChatGPT plans' own caps may count differently.
+- Known gap, as before: domain fronting through a shared CDN.

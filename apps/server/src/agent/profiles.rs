@@ -1361,6 +1361,18 @@ async fn update_agent(
         update.push(" WHERE id = ");
         update.push_bind(agent_id.to_string());
         update.build().execute(&mut *tx).await?;
+        if tools
+            .as_ref()
+            .is_some_and(|tools| !tools.iter().any(|tool| tool == super::sandbox::TOOL))
+        {
+            super::sandbox::switch_off(
+                &mut tx,
+                agent.user_id,
+                "the sandbox tool was turned off for this agent",
+                now.as_millis(),
+            )
+            .await?;
+        }
         if let Some(channel_ids) = &body.channel_ids {
             set_channels(&mut tx, workspace_id, actor.user_id, &agent, channel_ids, now).await?;
         }
@@ -1458,6 +1470,13 @@ async fn delete_agent(
         .bind(now.as_millis())
         .bind(agent.user_id.to_string())
         .execute(&mut *tx)
+        .await?;
+        super::sandbox::switch_off(
+            &mut tx,
+            agent.user_id,
+            "the agent was deleted",
+            now.as_millis(),
+        )
         .await?;
         // Its sessions end now: a run that is going cannot act any more.
         sqlx::query(

@@ -81,6 +81,7 @@ struct Fixture {
     _root: tempfile::TempDir,
     database: TestDatabase,
     app: axum::Router,
+    agent: AgentState,
     workspace_id: String,
     conversation: String,
 }
@@ -138,7 +139,7 @@ impl Fixture {
         .with_public_origin("https://orbit.example.com")
         .with_sandbox(keys);
         let app = task_router(TaskState::new(Arc::clone(&identity), CookieMode::secure()))
-            .merge(orbit_server::agent::router(agent))
+            .merge(orbit_server::agent::router(agent.clone()))
             .layer(axum::middleware::from_fn_with_state(
                 (*database).clone(),
                 orbit_server::agent::scope::layer,
@@ -155,9 +156,96 @@ impl Fixture {
             _root: root,
             database,
             app,
+            agent,
             workspace_id,
             conversation,
         }
+    }
+
+    /// This month's use of an agent: (CPU ms, egress bytes, model tokens).
+    async fn usage(&self, agent: Id) -> (i64, i64, i64) {
+        sqlx::query(
+            "SELECT cpu_ms, egress_bytes, model_tokens FROM agent_sandbox_usage WHERE agent_user_id = $1 AND month = $2",
+        )
+        .bind(agent.to_string())
+        .bind(this_month())
+        .fetch_optional(self.database.pool())
+        .await
+        .unwrap()
+        .map_or((0, 0, 0), |row| {
+            (row.get("cpu_ms"), row.get("egress_bytes"), row.get("model_tokens"))
+        })
+    }
+
+    async fn set_usage(&self, agent: Id, month: &str, cpu_ms: i64, egress_bytes: i64, tokens: i64) {
+        sqlx::query(
+            "INSERT INTO agent_sandbox_usage (agent_user_id, month, cpu_ms, egress_bytes, model_tokens) \
+             VALUES ($1, $2, $3, $4, $5) ON CONFLICT (agent_user_id, month) DO UPDATE SET cpu_ms = excluded.cpu_ms, \
+             egress_bytes = excluded.egress_bytes, model_tokens = excluded.model_tokens",
+        )
+        .bind(agent.to_string())
+        .bind(month)
+        .bind(cpu_ms)
+        .bind(egress_bytes)
+        .bind(tokens)
+        .execute(self.database.pool())
+        .await
+        .unwrap();
+    }
+
+    /// The agent's monthly limits: CPU minutes, egress bytes, model tokens.
+    async fn limits(&self, agent: Id, cpu_minutes: i64, egress_bytes: i64, tokens: i64) {
+        sqlx::query(
+            "UPDATE agent_sandbox_settings SET cpu_minutes_month = $2, egress_bytes_month = $3, \
+             model_tokens_month = $4 WHERE agent_user_id = $1",
+        )
+        .bind(agent.to_string())
+        .bind(cpu_minutes)
+        .bind(egress_bytes)
+        .bind(tokens)
+        .execute(self.database.pool())
+        .await
+        .unwrap();
+    }
+
+    /// The budget notices the agent sent: (nonce, recipients' count, one body).
+    async fn notices(&self, agent: Id) -> Vec<(String, i64, String)> {
+        sqlx::query(
+            "SELECT nonce, COUNT(*) AS sent, MIN(body) AS body FROM chat_messages \
+             WHERE author_id = $1 AND nonce LIKE 'budget:%' GROUP BY nonce ORDER BY MIN(id)",
+        )
+        .bind(agent.to_string())
+        .fetch_all(self.database.pool())
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| (row.get("nonce"), row.get("sent"), row.get("body")))
+        .collect()
+    }
+
+    async fn call_row(&self, call: &str) -> (String, Option<String>, i64) {
+        let row = sqlx::query(
+            "SELECT status, interrupted, cpu_ms FROM agent_sandbox_calls WHERE id = $1",
+        )
+        .bind(call)
+        .fetch_one(self.database.pool())
+        .await
+        .unwrap();
+        (row.get("status"), row.get("interrupted"), row.get("cpu_ms"))
+    }
+
+    /// The sidecar's long poll, without waiting.
+    async fn poll(&self) -> Value {
+        let (status, value) = self
+            .request(
+                "GET",
+                "/api/internal/agent/inputs?wait=0",
+                &format!("Bearer {SECRET}"),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{value}");
+        value
     }
 
     async fn exec(&self, sql: &'static str, binds: &[&str]) {
@@ -201,10 +289,11 @@ impl Fixture {
 
     /// A custom agent with `tools`, and its sandbox settings (`enabled`).
     async fn add_agent(&self, tools: &str, enabled: bool) -> Id {
+        // A member of the workspace, as `profiles` makes a custom agent's bot user.
         let bot = self
             .add_user(
                 &format!("bot{}", Id::new_v7().to_string().replace('-', "")),
-                None,
+                Some("member"),
             )
             .await;
         let now = TimestampMillis::now().as_millis();
@@ -442,6 +531,22 @@ impl Fixture {
 
 const TOOLS: &str = r#"["search_tasks", "sandbox_shell"]"#;
 
+fn this_month() -> String {
+    jiff::Timestamp::now().strftime("%Y-%m").to_string()
+}
+
+fn last_month() -> String {
+    let today = jiff::Timestamp::now()
+        .to_zoned(jiff::tz::TimeZone::UTC)
+        .date();
+    today
+        .first_of_month()
+        .checked_sub(jiff::Span::new().days(1))
+        .unwrap()
+        .strftime("%Y-%m")
+        .to_string()
+}
+
 #[tokio::test]
 async fn a_ticket_carries_a_sealed_call_token_that_dies_at_the_call_end() {
     let fixture = Fixture::new().await;
@@ -621,6 +726,8 @@ async fn without_the_broker_key_the_sandbox_is_off() {
     let (status, value) = fixture.issue(driver, agent, &thread).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(value["code"], "sandbox_off");
+    // The sidecar learns it with its inputs, and stops every thread sandbox.
+    assert_eq!(fixture.poll().await["agent_sandbox"], false);
 }
 
 #[tokio::test]
@@ -688,15 +795,14 @@ async fn a_call_without_an_end_becomes_lost_and_its_token_dies() {
         .unwrap();
     assert_eq!(status, "lost");
     assert_eq!(fixture.tasks_with(&token).await, StatusCode::UNAUTHORIZED);
-    // A late end changes nothing and counts nothing.
+    // A late end of the broker keeps the call lost, but its CPU time counts, once.
     assert_eq!(fixture.end(&call, 9_999).await.0, StatusCode::OK);
-    let used: Option<i64> =
-        sqlx::query_scalar("SELECT cpu_ms FROM agent_sandbox_usage WHERE agent_user_id = $1")
-            .bind(agent.to_string())
-            .fetch_optional(fixture.database.pool())
-            .await
-            .unwrap();
-    assert_eq!(used, None);
+    assert_eq!(fixture.end(&call, 9_999).await.0, StatusCode::OK);
+    assert_eq!(
+        fixture.call_row(&call).await,
+        ("lost".to_owned(), None, 9_999)
+    );
+    assert_eq!(fixture.usage(agent).await.0, 9_999);
 }
 
 #[tokio::test]
@@ -1109,15 +1215,20 @@ async fn the_sidecar_ends_an_interrupted_call_and_its_token_and_password_die() {
         .await;
     assert_eq!(decided["decision"], "deny");
     assert_eq!(decided["reason"], "the call ended");
-    // The broker's later end changes nothing.
-    let (status, _) = fixture.end(&call, 500).await;
-    assert_eq!(status, StatusCode::OK);
-    let cpu: i64 = sqlx::query_scalar("SELECT cpu_ms FROM agent_sandbox_calls WHERE id = $1")
-        .bind(&call)
-        .fetch_one(fixture.database.pool())
-        .await
-        .unwrap();
-    assert_eq!(cpu, 0);
+    // The broker's later end keeps the sidecar's end, but its CPU time counts, once (a retry adds nothing).
+    for _ in 0..2 {
+        let (status, _) = fixture.end(&call, 500).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    assert_eq!(
+        fixture.call_row(&call).await,
+        (
+            "done".to_owned(),
+            Some("the run was stopped".to_owned()),
+            500
+        )
+    );
+    assert_eq!(fixture.usage(agent).await.0, 500);
 }
 
 mod proxy {
@@ -2056,5 +2167,560 @@ async fn only_owners_and_admins_manage_the_sandbox_and_its_rules_are_checked() {
             "agent_egress.rule_create",
             "agent_egress.rule_delete"
         ]
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Phase 8: budgets, notices, the kill path and the lost-call job.
+
+use orbit_server::agent::sandbox::{month, next_month_text, notice_level, usage_text};
+
+#[test]
+fn notices_start_at_exactly_80_and_100_percent() {
+    let limit = 600 * 60_000;
+    assert_eq!(notice_level(0, limit), None);
+    assert_eq!(notice_level(limit * 8 / 10 - 1, limit), None);
+    assert_eq!(notice_level(limit * 8 / 10, limit), Some(80));
+    assert_eq!(notice_level(limit - 1, limit), Some(80));
+    assert_eq!(notice_level(limit, limit), Some(100));
+    assert_eq!(notice_level(limit * 3, limit), Some(100));
+    // Odd limits round up: 80 % of 7 is 5.6, so 5 is under and 6 is over.
+    assert_eq!(notice_level(5, 7), None);
+    assert_eq!(notice_level(6, 7), Some(80));
+    // A limit of 0 stops the counter without notices; huge values do not overflow.
+    assert_eq!(notice_level(5, 0), None);
+    assert_eq!(notice_level(i64::MAX, i64::MAX), Some(100));
+    assert_eq!(notice_level(i64::MAX / 2, i64::MAX), None);
+}
+
+#[test]
+fn months_are_utc_and_roll_over_at_the_year_end() {
+    let at = |text: &str| text.parse::<jiff::Timestamp>().unwrap().as_millisecond();
+    assert_eq!(month(at("2026-11-30T23:59:59.999Z")), "2026-11");
+    assert_eq!(month(at("2026-12-01T00:00:00Z")), "2026-12");
+    // 23:30 on 30 November in New York is already December in UTC.
+    assert_eq!(month(at("2026-11-30T23:30:00-05:00")), "2026-12");
+    assert_eq!(
+        next_month_text(at("2026-11-18T12:00:00Z")),
+        "1 December 2026"
+    );
+    assert_eq!(
+        next_month_text(at("2026-12-31T23:59:59Z")),
+        "1 January 2027"
+    );
+    assert_eq!(
+        usage_text("cpu", 482 * 60_000 + 59_999, 600 * 60_000),
+        "482 of 600 CPU minutes"
+    );
+    assert_eq!(usage_text("cpu", 49_500, 60_000), "0.8 of 1 CPU minutes");
+    assert_eq!(
+        usage_text("egress", 1_610_612_736, 2_147_483_648),
+        "1.5 GiB of 2.0 GiB"
+    );
+    assert_eq!(
+        usage_text("egress", 5 * 1024 * 1024, 2_147_483_648),
+        "5 MiB of 2.0 GiB"
+    );
+}
+
+#[tokio::test]
+async fn the_cpu_limit_refuses_tickets_at_100_percent_and_a_new_month_starts_again() {
+    let fixture = Fixture::new().await;
+    let driver = fixture.add_user("driver", Some("member")).await;
+    let agent = fixture.add_agent(TOOLS, true).await;
+    let thread = fixture.thread(agent, driver, "running").await;
+    fixture.limits(agent, 10, 1_000_000, 1_000_000).await;
+    // One millisecond under the limit: a ticket. Its end reaches the limit: the next call is refused, with the numbers.
+    fixture
+        .set_usage(agent, &this_month(), 10 * 60_000 - 1, 0, 0)
+        .await;
+    let (call, _, _) = fixture.call(driver, agent, &thread).await;
+    assert_eq!(fixture.end(&call, 1).await.0, StatusCode::OK);
+    assert_eq!(fixture.usage(agent).await.0, 10 * 60_000);
+    let (status, refused) = fixture.issue(driver, agent, &thread).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(refused["code"], "sandbox_budget_spent");
+    let detail = refused["detail"].as_str().unwrap();
+    assert!(detail.contains("(10 of 10 CPU minutes)"), "{detail}");
+    assert!(detail.contains("Chat tools still work"), "{detail}");
+    // Last month's use does not count this month.
+    sqlx::query("UPDATE agent_sandbox_usage SET month = $2 WHERE agent_user_id = $1")
+        .bind(agent.to_string())
+        .bind(last_month())
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture.issue(driver, agent, &thread).await.0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn the_traffic_limit_makes_the_proxy_deny_and_the_call_end_says_why() {
+    let fixture = Fixture::new().await;
+    let driver = fixture.add_user("driver", Some("member")).await;
+    let agent = fixture.add_agent(TOOLS, true).await;
+    let thread = fixture.thread(agent, driver, "running").await;
+    fixture.rule(agent, "api.example.org", 443, "allow").await;
+    fixture.limits(agent, 600, 1_000, 1_000_000).await;
+    fixture.set_usage(agent, &this_month(), 0, 999, 0).await;
+    let (call, _, password) = fixture.call(driver, agent, &thread).await;
+    let allowed = fixture
+        .check(&call, &password, "api.example.org", 443)
+        .await;
+    assert_eq!(allowed["decision"], "allow");
+    let (status, _) = fixture
+        .request(
+            "POST",
+            "/api/internal/agent/egress/done",
+            &service_bearer(),
+            Some(json!({ "log_id": allowed["log_id"], "call_id": call, "bytes_up": 1, "bytes_down": 0, "duration_ms": 5 })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(fixture.usage(agent).await.1, 1_000);
+    let denied = fixture
+        .check(&call, &password, "api.example.org", 443)
+        .await;
+    assert_eq!(denied["decision"], "deny");
+    assert_eq!(
+        denied["reason"],
+        "the agent's internet traffic for this month is spent"
+    );
+    // The model learns why (in the sandbox it saw only a 403).
+    let (_, ended) = fixture.end(&call, 10).await;
+    assert_eq!(
+        ended["egress_denied"],
+        json!([{ "host": "api.example.org", "port": 443, "reason": "the agent's internet traffic for this month is spent" }])
+    );
+    // The sandbox itself still runs (only the internet is off).
+    assert_eq!(
+        fixture.issue(driver, agent, &thread).await.0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn budget_notices_go_once_per_level_and_month_to_owners_and_admins_only() {
+    let fixture = Fixture::new().await;
+    let driver = fixture.add_user("driver", Some("member")).await;
+    fixture.add_user("admin", Some("admin")).await;
+    let agent = fixture.add_agent(TOOLS, true).await;
+    let thread = fixture.thread(agent, driver, "running").await;
+    fixture.limits(agent, 10, 1_000_000, 1_000_000).await;
+    let end = |cpu_ms: i64| {
+        let fixture = &fixture;
+        let thread = thread.clone();
+        async move {
+            let (call, _, _) = fixture.call(driver, agent, &thread).await;
+            assert_eq!(fixture.end(&call, cpu_ms).await.0, StatusCode::OK);
+        }
+    };
+    let month = this_month();
+    // 79.99 %: nothing. 80 %: one notice to the owner and the admin (not the member). More under 100 %: nothing new.
+    end(8 * 60_000 - 1).await;
+    assert!(fixture.notices(agent).await.is_empty());
+    end(1).await;
+    let sent = fixture.notices(agent).await;
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0].0, format!("budget:{month}:cpu:80"));
+    assert_eq!(sent[0].1, 2, "the owner and the admin");
+    assert!(
+        sent[0]
+            .2
+            .starts_with("Heads-up: I used 80 % of my sandbox CPU time"),
+        "{}",
+        sent[0].2
+    );
+    assert!(sent[0].2.contains("(8 of 10 CPU minutes)"), "{}", sent[0].2);
+    end(60_000).await;
+    assert_eq!(fixture.notices(agent).await.len(), 1);
+    // 100 %: one more, once (two calls that started under the limit end past it).
+    let (first, _, _) = fixture.call(driver, agent, &thread).await;
+    let (second, _, _) = fixture.call(driver, agent, &thread).await;
+    fixture.end(&first, 60_000).await;
+    fixture.end(&second, 60_000).await;
+    assert_eq!(fixture.usage(agent).await.0, 11 * 60_000);
+    let sent = fixture.notices(agent).await;
+    assert_eq!(sent.len(), 2, "{sent:?}");
+    assert_eq!(sent[1].0, format!("budget:{month}:cpu:100"));
+    assert_eq!(sent[1].1, 2);
+    assert!(
+        sent[1].2.starts_with("I used all of my sandbox CPU time"),
+        "{}",
+        sent[1].2
+    );
+    let members: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT cm.user_id FROM chat_messages m JOIN chat_members cm ON cm.conversation_id = m.conversation_id \
+         WHERE m.author_id = $1 AND m.nonce LIKE 'budget:%' AND cm.user_id <> $1",
+    )
+    .bind(agent.to_string())
+    .fetch_all(fixture.database.pool())
+    .await
+    .unwrap();
+    assert_eq!(members.len(), 2);
+    assert!(!members.contains(&driver.to_string()));
+
+    // A jump straight past 100 % (traffic) sends only the 100 % notice, and marks 80 % as sent.
+    let other = fixture.add_agent(TOOLS, true).await;
+    fixture.limits(other, 600, 1_000, 1_000_000).await;
+    fixture.rule(other, "api.example.org", 443, "allow").await;
+    let other_thread = fixture.thread(other, driver, "running").await;
+    let (call, _, password) = fixture.call(driver, other, &other_thread).await;
+    let allowed = fixture
+        .check(&call, &password, "api.example.org", 443)
+        .await;
+    fixture
+        .request(
+            "POST",
+            "/api/internal/agent/egress/done",
+            &service_bearer(),
+            Some(json!({ "log_id": allowed["log_id"], "call_id": call, "bytes_up": 600, "bytes_down": 600, "duration_ms": 5 })),
+        )
+        .await;
+    let sent = fixture.notices(other).await;
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0].0, format!("budget:{month}:egress:100"));
+    let levels: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM agent_sandbox_notices WHERE agent_user_id = $1 AND counter = 'egress'",
+    )
+    .bind(other.to_string())
+    .fetch_one(fixture.database.pool())
+    .await
+    .unwrap();
+    assert_eq!(levels, 2);
+
+    // Last month's notices do not stop this month's.
+    let third = fixture.add_agent(TOOLS, true).await;
+    fixture.limits(third, 10, 1_000_000, 1_000_000).await;
+    sqlx::query(
+        "INSERT INTO agent_sandbox_notices (agent_user_id, month, counter, level, sent_at) VALUES ($1, $2, 'cpu', 80, 0)",
+    )
+    .bind(third.to_string())
+    .bind(last_month())
+    .execute(fixture.database.pool())
+    .await
+    .unwrap();
+    let third_thread = fixture.thread(third, driver, "running").await;
+    let (call, _, _) = fixture.call(driver, third, &third_thread).await;
+    fixture.end(&call, 8 * 60_000).await;
+    assert_eq!(fixture.notices(third).await.len(), 1);
+}
+
+#[tokio::test]
+async fn model_tokens_count_once_per_run_and_flag_the_agents_inputs_at_the_limit() {
+    let fixture = Fixture::new().await;
+    let agent = fixture.add_agent(TOOLS, true).await;
+    fixture.limits(agent, 600, 1_000_000, 1_000).await;
+    let report = |run: String, tokens: i64, auth: String| {
+        let fixture = &fixture;
+        async move {
+            fixture
+                .request(
+                    "POST",
+                    &format!("/api/internal/agent/runs/{run}/usage"),
+                    &auth,
+                    Some(json!({ "agent_user_id": agent.to_string(), "tokens": tokens })),
+                )
+                .await
+        }
+    };
+    let sidecar = format!("Bearer {SECRET}");
+    let run = Id::new_v7().to_string();
+    assert_eq!(
+        report(run.clone(), 900, "Bearer nope".to_owned()).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        report(run.clone(), 900, service_bearer()).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (status, first) = report(run.clone(), 900, sidecar.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(first["counted"], true);
+    let (_, again) = report(run.clone(), 900, sidecar.clone()).await;
+    assert_eq!(again["counted"], false);
+    assert_eq!(fixture.usage(agent).await.2, 900);
+    // Not a custom agent (the default agent has no limit).
+    let (status, _) = fixture
+        .request(
+            "POST",
+            &format!("/api/internal/agent/runs/{}/usage", Id::new_v7()),
+            &sidecar,
+            Some(json!({ "agent_user_id": fixture.owner().await.to_string(), "tokens": 5 })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // An input for the agent: not flagged at 90 %, flagged at 100 %.
+    let owner = fixture.owner().await;
+    let message = Id::new_v7().to_string();
+    sqlx::query(
+        "INSERT INTO agent_inputs (message_id, workspace_id, conversation_id, thread_key, author_id, kind, created_at, \
+         agent_user_id) VALUES ($1, $2, $3, $4, $5, 'instruction', $6, $7)",
+    )
+    .bind(&message)
+    .bind(&fixture.workspace_id)
+    .bind(&fixture.conversation)
+    .bind(Id::new_v7().to_string())
+    .bind(owner.to_string())
+    .bind(TimestampMillis::now().as_millis())
+    .bind(agent.to_string())
+    .execute(fixture.database.pool())
+    .await
+    .unwrap();
+    let flag = |polled: Value| {
+        polled["inputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|input| input["message_id"] == message.as_str())
+            .map(|input| input["agent"]["model_tokens_spent"].clone())
+    };
+    assert_eq!(flag(fixture.poll().await), Some(json!(false)));
+    report(Id::new_v7().to_string(), 100, sidecar.clone()).await;
+    assert_eq!(fixture.usage(agent).await.2, 1_000);
+    assert_eq!(flag(fixture.poll().await), Some(json!(true)));
+    // 900 of 1,000 sent the 80 % notice; the run that reached 1,000 sent the 100 % one.
+    let sent = fixture.notices(agent).await;
+    assert_eq!(
+        sent.iter()
+            .map(|notice| notice.0.clone())
+            .collect::<Vec<_>>(),
+        [
+            format!("budget:{}:tokens:80", this_month()),
+            format!("budget:{}:tokens:100", this_month())
+        ]
+    );
+}
+
+#[tokio::test]
+async fn switching_off_ends_running_calls_and_queues_a_stop_that_only_the_sidecar_confirms() {
+    let fixture = Fixture::new().await;
+    let driver = fixture.add_user("driver", Some("member")).await;
+    let agent = fixture.add_agent(TOOLS, true).await;
+    let thread = fixture.thread(agent, driver, "running").await;
+    let (call, token, password) = fixture.call(driver, agent, &thread).await;
+    assert_eq!(fixture.tasks_with(&token).await, StatusCode::OK);
+    let polled = fixture.poll().await;
+    assert_eq!(polled["sandbox_stops"], json!([]));
+    assert_eq!(polled["agent_sandbox"], true);
+
+    let owner = fixture.session(fixture.owner().await).await;
+    let profile = profile_of(&fixture, agent).await;
+    let path = format!(
+        "/api/v1/workspaces/{}/agents/{profile}/sandbox",
+        fixture.workspace_id
+    );
+    let off = json!({ "enabled": false, "idle_minutes": 30, "cpu_minutes_month": 600,
+        "egress_bytes_month": 2_147_483_648_i64, "model_tokens_month": 20_000_000 });
+    // A member cannot switch it off (and nothing stops).
+    let member = fixture.session(driver).await;
+    let (status, _) = fixture
+        .request("PUT", &path, &format!("Bearer {member}"), Some(off.clone()))
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(fixture.call_row(&call).await.0, "running");
+
+    let (status, _) = fixture
+        .request("PUT", &path, &format!("Bearer {owner}"), Some(off))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    // The call ended at once: its token is dead and the proxy denies its password.
+    assert_eq!(
+        fixture.call_row(&call).await,
+        (
+            "done".to_owned(),
+            Some("the sandbox was switched off".to_owned()),
+            0
+        )
+    );
+    assert_eq!(fixture.tasks_with(&token).await, StatusCode::UNAUTHORIZED);
+    let decided = fixture
+        .check(&call, &password, "api.example.org", 443)
+        .await;
+    assert_eq!(decided["decision"], "deny");
+    // One stop for the sidecar, with the reason the model reads.
+    let stops = fixture.poll().await["sandbox_stops"].clone();
+    assert_eq!(stops.as_array().unwrap().len(), 1, "{stops}");
+    assert_eq!(stops[0]["agent_user_id"], agent.to_string());
+    assert_eq!(stops[0]["reason"], "the sandbox was switched off");
+    // Only the sidecar confirms it.
+    let done = format!(
+        "/api/internal/agent/sandbox/stops/{}/done",
+        stops[0]["id"].as_str().unwrap()
+    );
+    for auth in [
+        "Bearer nope".to_owned(),
+        service_bearer(),
+        format!("Bearer {owner}"),
+    ] {
+        let (status, _) = fixture.request("POST", &done, &auth, None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{auth}");
+    }
+    let (status, _) = fixture
+        .request("POST", &done, &format!("Bearer {SECRET}"), None)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(fixture.poll().await["sandbox_stops"], json!([]));
+    // The broker's end comes later: the CPU time until the kill still counts.
+    assert_eq!(fixture.end(&call, 1_234).await.0, StatusCode::OK);
+    assert_eq!(fixture.usage(agent).await.0, 1_234);
+    assert_eq!(fixture.call_row(&call).await.2, 1_234);
+
+    // An agent without a call in a sandbox's life has no live sandbox: switching it off queues no stop.
+    let quiet = fixture.add_agent(TOOLS, true).await;
+    let (status, _) = fixture
+        .request(
+            "PUT",
+            &format!(
+                "/api/v1/workspaces/{}/agents/{}/sandbox",
+                fixture.workspace_id,
+                profile_of(&fixture, quiet).await
+            ),
+            &format!("Bearer {owner}"),
+            Some(
+                json!({ "enabled": false, "idle_minutes": 30, "cpu_minutes_month": 600,
+                "egress_bytes_month": 1_000, "model_tokens_month": 1_000 }),
+            ),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(fixture.poll().await["sandbox_stops"], json!([]));
+}
+
+#[tokio::test]
+async fn unticking_the_sandbox_tool_or_deleting_the_agent_stops_its_sandboxes() {
+    let fixture = Fixture::new().await;
+    let driver = fixture.add_user("driver", Some("member")).await;
+    let owner = fixture.session(fixture.owner().await).await;
+    for delete in [false, true] {
+        let agent = fixture.add_agent(TOOLS, true).await;
+        let thread = fixture.thread(agent, driver, "running").await;
+        let (call, token, _) = fixture.call(driver, agent, &thread).await;
+        let path = format!(
+            "/api/v1/workspaces/{}/agents/{}",
+            fixture.workspace_id,
+            profile_of(&fixture, agent).await
+        );
+        // Another change that keeps the tool stops nothing.
+        let (status, value) = fixture
+            .request(
+                "PATCH",
+                &path,
+                &format!("Bearer {owner}"),
+                Some(json!({ "tools": ["sandbox_shell"] })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{value}");
+        assert_eq!(fixture.call_row(&call).await.0, "running");
+        let (status, value) = if delete {
+            fixture
+                .request("DELETE", &path, &format!("Bearer {owner}"), None)
+                .await
+        } else {
+            fixture
+                .request(
+                    "PATCH",
+                    &path,
+                    &format!("Bearer {owner}"),
+                    Some(json!({ "tools": ["search_tasks"] })),
+                )
+                .await
+        };
+        assert!(status.is_success(), "{status} {value}");
+        let reason = if delete {
+            "the agent was deleted"
+        } else {
+            "the sandbox tool was turned off for this agent"
+        };
+        assert_eq!(
+            fixture.call_row(&call).await,
+            ("done".to_owned(), Some(reason.to_owned()), 0)
+        );
+        assert_eq!(fixture.tasks_with(&token).await, StatusCode::UNAUTHORIZED);
+        let stops = fixture.poll().await["sandbox_stops"].clone();
+        assert_eq!(stops.as_array().unwrap().len(), 1, "{stops}");
+        assert_eq!(stops[0]["agent_user_id"], agent.to_string());
+        assert_eq!(stops[0]["reason"], reason);
+        let done = format!(
+            "/api/internal/agent/sandbox/stops/{}/done",
+            stops[0]["id"].as_str().unwrap()
+        );
+        fixture
+            .request("POST", &done, &format!("Bearer {SECRET}"), None)
+            .await;
+    }
+}
+
+#[tokio::test]
+async fn the_lost_call_job_closes_calls_once_and_ends_every_call_while_sandboxes_are_off() {
+    use orbit_server::agent::sandbox::{Sweep, sweep};
+    let fixture = Fixture::new().await;
+    let driver = fixture.add_user("driver", Some("member")).await;
+    let agent = fixture.add_agent(TOOLS, true).await;
+    let thread = fixture.thread(agent, driver, "running").await;
+    let (lost, lost_token, lost_password) = fixture.call(driver, agent, &thread).await;
+    let (fresh, fresh_token, _) = fixture.call(driver, agent, &thread).await;
+    let now = TimestampMillis::now().as_millis();
+    // Nothing is due: nothing changes.
+    assert_eq!(sweep(&fixture.agent, now).await.unwrap(), Sweep::default());
+    // Past its 120 s timeout and the 5 minutes of grace: lost, once.
+    sqlx::query("UPDATE agent_sandbox_calls SET started_at = $2 WHERE id = $1")
+        .bind(&lost)
+        .bind(now - 8 * 60 * 1000)
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        sweep(&fixture.agent, now).await.unwrap(),
+        Sweep {
+            lost: 1,
+            interrupted: 0
+        }
+    );
+    assert_eq!(sweep(&fixture.agent, now).await.unwrap(), Sweep::default());
+    assert_eq!(fixture.call_row(&lost).await.0, "lost");
+    assert_eq!(
+        fixture.tasks_with(&lost_token).await,
+        StatusCode::UNAUTHORIZED
+    );
+    let decided = fixture
+        .check(&lost, &lost_password, "api.example.org", 443)
+        .await;
+    assert_eq!(decided["decision"], "deny");
+    assert_eq!(fixture.call_row(&fresh).await.0, "running");
+    assert_eq!(fixture.tasks_with(&fresh_token).await, StatusCode::OK);
+    // The broker reports late: the CPU time counts once, the call stays lost.
+    fixture.end(&lost, 700).await;
+    fixture.end(&lost, 700).await;
+    assert_eq!(fixture.usage(agent).await.0, 700);
+    assert_eq!(
+        fixture.call_row(&lost).await,
+        ("lost".to_owned(), None, 700)
+    );
+
+    // Sandboxes off on this server (no broker key): every running call ends, once; the sidecar is told to stop all.
+    let off = fixture.agent.clone().with_sandbox(None);
+    assert_eq!(
+        sweep(&off, now).await.unwrap(),
+        Sweep {
+            lost: 0,
+            interrupted: 1
+        }
+    );
+    assert_eq!(sweep(&off, now).await.unwrap(), Sweep::default());
+    assert_eq!(
+        fixture.call_row(&fresh).await,
+        (
+            "done".to_owned(),
+            Some("agent sandboxes are off on this server".to_owned()),
+            0
+        )
+    );
+    assert_eq!(
+        fixture.tasks_with(&fresh_token).await,
+        StatusCode::UNAUTHORIZED
     );
 }

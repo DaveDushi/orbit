@@ -28,6 +28,16 @@
 //!   access page (rules, pending requests, the connection log). A rule may not be an IP, `*`, a wildcard on a public
 //!   suffix (Public Suffix List), Orbit's own host, or an allow rule for a risky host.
 //!
+//! - `POST /api/internal/agent/runs/{run}/usage` (sidecar secret): the model tokens of one agent run, counted once
+//!   into the agent's month. Inputs of an agent past its monthly tokens are flagged (`inputs`), and the sidecar tells
+//!   the driver instead of running.
+//! - `POST /api/internal/agent/sandbox/stops/{id}/done` (sidecar secret): the sidecar asked the broker to stop an
+//!   agent's thread sandboxes ([`switch_off`]; the stops come with its inputs).
+//!
+//! Budgets (section 5): CPU time refuses new tickets, internet traffic makes the proxy deny, model tokens refuse new
+//! runs. At 80 % and at 100 % of a monthly limit the agent sends its workspace's owners and admins one DM each, once
+//! per month ([`send_budget_notices`]). Calls without an end are closed by the scheduler ([`sweep`]).
+//!
 //! The broker and the proxy authenticate with a bearer derived from the broker key; the key file is
 //! `ORBIT_AGENT_SANDBOX_KEY_FILE`. Without it, or with `ORBIT_AGENT_SANDBOX=off`, every route answers `sandbox_off`.
 
@@ -67,6 +77,10 @@ const MEMORY_MB: i64 = 1024;
 const DISK_MB: i64 = 4096;
 /// A call without an end after its timeout and this long is closed as `lost`.
 const LOST_AFTER_MS: i64 = 5 * 60 * 1_000;
+/// A thread sandbox's longest life (the broker's `MAX_LIFE_S`): without a call since, none can be alive.
+const SANDBOX_LIFE_MS: i64 = 4 * 60 * 60 * 1_000;
+/// Budget notices go out at these shares of a monthly limit (percent).
+const NOTICE_LEVELS: [i64; 2] = [80, 100];
 /// An "Allow once" lasts this long (as write approvals).
 pub const ALLOW_ONCE_MS: i64 = 30 * 60 * 1_000;
 /// A card's question waits this long for an answer (as write approvals); later answers are refused and the next call
@@ -201,6 +215,11 @@ pub(crate) fn router(state: AgentState) -> Router {
         )
         .route("/api/internal/agent/egress/check", post(check_egress))
         .route("/api/internal/agent/egress/done", post(egress_done))
+        .route("/api/internal/agent/runs/{run_id}/usage", post(run_usage))
+        .route(
+            "/api/internal/agent/sandbox/stops/{stop_id}/done",
+            post(stop_done),
+        )
         .route(
             "/api/v1/workspaces/{workspace_id}/agents/egress-requests",
             get(conversation_requests),
@@ -283,7 +302,9 @@ fn service_only<'a>(
     }
 }
 
-fn month(now: i64) -> String {
+/// The month a use counts in (UTC, `YYYY-MM`): the key of the monthly limits.
+#[must_use]
+pub fn month(now: i64) -> String {
     jiff::Timestamp::from_millisecond(now)
         .map(|time| time.strftime("%Y-%m").to_string())
         .unwrap_or_default()
@@ -295,8 +316,27 @@ fn work_id(agent: Id, thread_key: &str, driver: Id) -> String {
     hex(&digest[..16])
 }
 
-/// Calls without an end long after their timeout become `lost`; their tokens go.
-pub async fn close_lost_calls(conn: &mut sqlx::AnyConnection, now: i64) -> Result<(), sqlx::Error> {
+/// The month after `now`'s, as people read it ("1 December 2026"): when the monthly limits start again (UTC).
+#[must_use]
+pub fn next_month_text(now: i64) -> String {
+    jiff::Timestamp::from_millisecond(now)
+        .ok()
+        .map(|time| {
+            time.to_zoned(jiff::tz::TimeZone::UTC)
+                .date()
+                .first_of_month()
+        })
+        .and_then(|first| first.checked_add(jiff::Span::new().months(1)).ok())
+        .map(|next| next.strftime("1 %B %Y").to_string())
+        .unwrap_or_default()
+}
+
+/// Calls without an end long after their timeout become `lost`; their tokens go (the proxy denies a call that does not
+/// run). The broker's late end report still counts the call's CPU time ([`end_call`]). Returns how many it closed.
+pub async fn close_lost_calls(
+    conn: &mut sqlx::AnyConnection,
+    now: i64,
+) -> Result<u64, sqlx::Error> {
     sqlx::query(
         "DELETE FROM sessions WHERE id IN (SELECT session_id FROM agent_sandbox_calls \
          WHERE status = 'running' AND started_at + timeout_seconds * 1000 + $1 < $2)",
@@ -305,14 +345,376 @@ pub async fn close_lost_calls(conn: &mut sqlx::AnyConnection, now: i64) -> Resul
     .bind(now)
     .execute(&mut *conn)
     .await?;
-    sqlx::query(
+    Ok(sqlx::query(
         "UPDATE agent_sandbox_calls SET status = 'lost', ended_at = $2, session_id = NULL \
          WHERE status = 'running' AND started_at + timeout_seconds * 1000 + $1 < $2",
     )
     .bind(LOST_AFTER_MS)
     .bind(now)
     .execute(&mut *conn)
+    .await?
+    .rows_affected())
+}
+
+/// Ends running calls now, as interrupted with `reason` (`agent`: only that agent's): their tokens die, and the proxy
+/// denies their passwords at the next connection.
+async fn interrupt_calls(
+    conn: &mut sqlx::AnyConnection,
+    agent: Option<&str>,
+    reason: &str,
+    now: i64,
+) -> Result<u64, sqlx::Error> {
+    sqlx::query(
+        "DELETE FROM sessions WHERE id IN (SELECT session_id FROM agent_sandbox_calls \
+         WHERE status = 'running' AND ($1 IS NULL OR agent_user_id = $1))",
+    )
+    .bind(agent)
+    .execute(&mut *conn)
     .await?;
+    Ok(sqlx::query(
+        "UPDATE agent_sandbox_calls SET status = 'done', ended_at = $2, session_id = NULL, interrupted = $3 \
+         WHERE status = 'running' AND ($1 IS NULL OR agent_user_id = $1)",
+    )
+    .bind(agent)
+    .bind(now)
+    .bind(reason)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected())
+}
+
+/// The kill path (section 5, off switch), in the caller's transaction: the agent's running calls end now, and when a
+/// thread sandbox of the agent may still live (a call within a sandbox's longest life), a stop for the broker is
+/// queued. The sidecar takes it with its inputs and calls the broker's `stop_agent`, which kills the agent's thread
+/// sandboxes (running calls and background processes) and removes the calls' proxy files, so the proxy drops their
+/// tunnels. The model reads `reason` as the call's interruption. The broker's end reports come later and still count
+/// the calls' CPU time.
+pub(crate) async fn switch_off(
+    conn: &mut sqlx::AnyConnection,
+    agent: Id,
+    reason: &str,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    let agent = agent.to_string();
+    interrupt_calls(conn, Some(&agent), reason, now).await?;
+    let recent = sqlx::query_scalar::<_, Flag>(
+        "SELECT EXISTS (SELECT 1 FROM agent_sandbox_calls WHERE agent_user_id = $1 AND started_at > $2)",
+    )
+    .bind(&agent)
+    .bind(now - SANDBOX_LIFE_MS)
+    .fetch_one(&mut *conn)
+    .await?;
+    if recent.0 {
+        sqlx::query(
+            "INSERT INTO agent_sandbox_stops (id, agent_user_id, reason, created_at) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(Id::new_v7().to_string())
+        .bind(&agent)
+        .bind(reason)
+        .bind(now)
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(())
+}
+
+/// The stops the sidecar has not done yet (oldest first), for its inputs poll.
+pub(crate) async fn pending_stops(
+    database: &orbit_platform::Database,
+) -> Result<Vec<Value>, sqlx::Error> {
+    Ok(sqlx::query(
+        "SELECT id, agent_user_id, reason FROM agent_sandbox_stops ORDER BY created_at, id LIMIT 50",
+    )
+    .fetch_all(database.pool())
+    .await?
+    .iter()
+    .map(|row| {
+        json!({
+            "id": row.get::<String, _>("id"),
+            "agent_user_id": row.get::<String, _>("agent_user_id"),
+            "reason": row.get::<String, _>("reason"),
+        })
+    })
+    .collect())
+}
+
+async fn stop_done(
+    State(state): State<AgentState>,
+    Path(stop_id): Path<String>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+) -> Result<StatusCode, ApiError> {
+    sidecar_only(&state, &headers, &uri, &request_id)?;
+    sqlx::query("DELETE FROM agent_sandbox_stops WHERE id = $1")
+        .bind(stop_id)
+        .execute(state.database().pool())
+        .await
+        .map_err(|failure| unavailable(&failure, &uri, &request_id))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// What one [`sweep`] did.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Sweep {
+    /// Calls without an end after their timeout and grace, now `lost`.
+    pub lost: u64,
+    /// Running calls ended because agent sandboxes are off on this server.
+    pub interrupted: u64,
+}
+
+/// The scheduler's job (every round of `scheduled::run_due`, on every server): closes lost calls, and with agent
+/// sandboxes off on this server (no broker key, `ORBIT_AGENT_SANDBOX=off`) ends every running call. A cheap read
+/// first: the write transaction holds every writer, so it runs only when there is work. Idempotent: a closed call is
+/// not running any more, and its CPU time is counted only by the broker's report.
+pub async fn sweep(state: &AgentState, now: i64) -> Result<Sweep, sqlx::Error> {
+    let off = state.sandbox.is_none();
+    let due = sqlx::query_scalar::<_, Flag>(
+        "SELECT EXISTS (SELECT 1 FROM agent_sandbox_calls WHERE status = 'running' \
+         AND ($3 = 1 OR started_at + timeout_seconds * 1000 + $1 < $2))",
+    )
+    .bind(LOST_AFTER_MS)
+    .bind(now)
+    .bind(i64::from(off))
+    .fetch_one(state.database().pool())
+    .await?;
+    if !due.0 {
+        return Ok(Sweep::default());
+    }
+    let mut tx = state.database().immediate_transaction().await?;
+    let lost = close_lost_calls(&mut tx, now).await?;
+    let interrupted = if off {
+        interrupt_calls(&mut tx, None, "agent sandboxes are off on this server", now).await?
+    } else {
+        0
+    };
+    tx.commit().await?;
+    Ok(Sweep { lost, interrupted })
+}
+
+/// The highest notice level (80 or 100 %) that `used` has reached of `limit`. A limit of 0 sends none: an admin set
+/// it to stop the counter, not to be warned.
+#[must_use]
+pub fn notice_level(used: i64, limit: i64) -> Option<i64> {
+    if limit <= 0 {
+        return None;
+    }
+    NOTICE_LEVELS
+        .iter()
+        .rev()
+        .copied()
+        .find(|level| i128::from(used) * 100 >= i128::from(limit) * i128::from(*level))
+}
+
+/// A byte count as people read it.
+fn bytes_text(bytes: i64) -> String {
+    const MIB: f64 = 1024.0 * 1024.0;
+    #[allow(clippy::cast_precision_loss)]
+    let mib = bytes as f64 / MIB;
+    if mib >= 1024.0 {
+        format!("{:.1} GiB", mib / 1024.0)
+    } else {
+        format!("{mib:.0} MiB")
+    }
+}
+
+/// CPU time in minutes: whole minutes, with one decimal under 10 (a small limit would read "0 of 1").
+fn minutes_text(ms: i64) -> String {
+    if ms < 600_000 && ms % 60_000 != 0 {
+        #[allow(clippy::cast_precision_loss)]
+        let minutes = ms as f64 / 60_000.0;
+        format!("{minutes:.1}")
+    } else {
+        (ms / 60_000).to_string()
+    }
+}
+
+/// A counter's use and limit, as the notice says them.
+#[must_use]
+pub fn usage_text(counter: &str, used: i64, limit: i64) -> String {
+    match counter {
+        "cpu" => format!(
+            "{} of {} CPU minutes",
+            minutes_text(used),
+            minutes_text(limit)
+        ),
+        "egress" => format!("{} of {}", bytes_text(used), bytes_text(limit)),
+        _ => format!("{used} of {limit} tokens"),
+    }
+}
+
+/// The text of one budget notice.
+fn notice_text(
+    agent_name: &str,
+    counter: &str,
+    level: i64,
+    used: i64,
+    limit: i64,
+    now: i64,
+) -> String {
+    let (what, effect) = match counter {
+        "cpu" => ("sandbox CPU time", "my sandbox commands are refused"),
+        "egress" => ("internet traffic", "my sandbox cannot reach the internet"),
+        _ => ("model tokens", "I cannot start new runs"),
+    };
+    let month = jiff::Timestamp::from_millisecond(now)
+        .map(|time| time.strftime("%B %Y").to_string())
+        .unwrap_or_default();
+    let usage = usage_text(counter, used, limit);
+    let next = next_month_text(now);
+    let change = format!(
+        "Owners and admins can change the limit in Settings → Agentic → Agents → {agent_name}."
+    );
+    if level >= 100 {
+        format!(
+            "I used all of my {what} for {month} ({usage}): {effect} until {next} (UTC). {change}"
+        )
+    } else {
+        format!(
+            "Heads-up: I used {level} % of my {what} for {month} ({usage}). At 100 %, {effect} until {next} (UTC). {change}"
+        )
+    }
+}
+
+/// After a counter of `agent` grew: the notices it reached this month, each once (the notices table's key), as a DM
+/// from the agent to each owner and admin of its workspace. Never fails the count: errors are logged. A notice whose
+/// row was written but whose DM failed is not sent again (no spam; the agent card shows the use).
+pub(crate) async fn send_budget_notices(state: &AgentState, agent: &str, now: i64) {
+    if let Err(error) = budget_notices(state, agent, now).await {
+        tracing::warn!(%error, "agent sandbox budget notice");
+    }
+}
+
+async fn budget_notices(state: &AgentState, agent: &str, now: i64) -> Result<(), sqlx::Error> {
+    let month = month(now);
+    let Some(row) = sqlx::query(
+        "SELECT s.workspace_id, s.cpu_minutes_month, s.egress_bytes_month, s.model_tokens_month, \
+         COALESCE(u.cpu_ms, 0) AS cpu_ms, COALESCE(u.egress_bytes, 0) AS egress_bytes, \
+         COALESCE(u.model_tokens, 0) AS model_tokens, a.display_name \
+         FROM agent_sandbox_settings s JOIN users a ON a.id = s.agent_user_id \
+         JOIN agent_profiles p ON p.user_id = s.agent_user_id AND p.deleted_at IS NULL \
+         LEFT JOIN agent_sandbox_usage u ON u.agent_user_id = s.agent_user_id AND u.month = $2 \
+         WHERE s.agent_user_id = $1",
+    )
+    .bind(agent)
+    .bind(&month)
+    .fetch_optional(state.database().pool())
+    .await?
+    else {
+        return Ok(());
+    };
+    let counters = [
+        (
+            "cpu",
+            row.get::<i64, _>("cpu_ms"),
+            row.get::<i64, _>("cpu_minutes_month")
+                .saturating_mul(60_000),
+        ),
+        (
+            "egress",
+            row.get::<i64, _>("egress_bytes"),
+            row.get::<i64, _>("egress_bytes_month"),
+        ),
+        (
+            "tokens",
+            row.get::<i64, _>("model_tokens"),
+            row.get::<i64, _>("model_tokens_month"),
+        ),
+    ];
+    let reached: Vec<_> = counters
+        .into_iter()
+        .filter_map(|(counter, used, limit)| {
+            notice_level(used, limit).map(|level| (counter, level, used, limit))
+        })
+        .collect();
+    if reached.is_empty() {
+        return Ok(());
+    }
+    // A jump past 100 % marks 80 % as sent too; only the highest new level is sent.
+    let mut due = Vec::new();
+    let mut tx = state.database().immediate_transaction().await?;
+    for &(counter, level, used, limit) in &reached {
+        let mut highest_new = false;
+        for notice in NOTICE_LEVELS.into_iter().filter(|notice| *notice <= level) {
+            let written = sqlx::query(
+                "INSERT INTO agent_sandbox_notices (agent_user_id, month, counter, level, sent_at) \
+                 VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING",
+            )
+            .bind(agent)
+            .bind(&month)
+            .bind(counter)
+            .bind(notice)
+            .bind(now)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            highest_new = written == 1 && notice == level;
+        }
+        if highest_new {
+            due.push((counter, level, used, limit));
+        }
+    }
+    let admins: Vec<String> = sqlx::query_scalar(
+        "SELECT m.user_id FROM memberships m JOIN users u ON u.id = m.user_id \
+         WHERE m.workspace_id = $1 AND m.role IN ('owner', 'admin') AND u.suspended_at IS NULL ORDER BY m.user_id",
+    )
+    .bind(row.get::<String, _>("workspace_id"))
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    let (Ok(workspace_id), Ok(agent_id)) = (
+        row.get::<String, _>("workspace_id").parse::<Id>(),
+        agent.parse::<Id>(),
+    ) else {
+        return Ok(());
+    };
+    let name: String = row.get("display_name");
+    let chat = &state.chat;
+    for (counter, level, used, limit) in due {
+        let body = notice_text(&name, counter, level, used, limit, now);
+        for admin in admins.iter().filter_map(|admin| admin.parse::<Id>().ok()) {
+            let dm = match chat
+                .publish(
+                    workspace_id,
+                    agent_id,
+                    chat.chat.open_dm(workspace_id, agent_id, vec![admin]),
+                )
+                .await
+            {
+                Ok((written, _)) => written.value.id,
+                Err(error) => {
+                    tracing::warn!(%error, "agent sandbox budget notice DM");
+                    continue;
+                }
+            };
+            let send = crate::repositories::chat::SendInput {
+                conversation_id: dm,
+                thread_root_id: None,
+                reply_to_id: None,
+                body: body.clone(),
+                sticker_id: None,
+                file_ids: Vec::new(),
+                online: chat.hub.online(workspace_id),
+                also_in_channel: false,
+                nonce: format!("budget:{month}:{counter}:{level}"),
+                page_context: None,
+            };
+            match chat
+                .publish(
+                    workspace_id,
+                    agent_id,
+                    chat.chat.send_message(workspace_id, agent_id, send),
+                )
+                .await
+            {
+                Ok((written, _)) => {
+                    crate::push::PushService::of(state.database()).chat_message(&written.value);
+                }
+                Err(error) => tracing::warn!(%error, "agent sandbox budget notice"),
+            }
+        }
+    }
     Ok(())
 }
 
@@ -335,7 +737,8 @@ struct CallBody {
 enum Refused {
     Off,
     NotAllowed,
-    Budget,
+    /// The month's CPU time is spent: (used ms, limit ms).
+    Budget(i64, i64),
 }
 
 async fn issue_call(
@@ -374,13 +777,22 @@ async fn issue_call(
             &uri,
             &request_id,
         )),
-        Ok(Err(Refused::Budget)) => Err(error(
-            StatusCode::FORBIDDEN,
-            "sandbox_budget_spent",
-            "This agent used its sandbox time for this month.",
-            &uri,
-            &request_id,
-        )),
+        Ok(Err(Refused::Budget(used, limit))) => {
+            let now = TimestampMillis::now().as_millis();
+            Err(error(
+                StatusCode::FORBIDDEN,
+                "sandbox_budget_spent",
+                "This agent used its sandbox time for this month.",
+                &uri,
+                &request_id,
+            )
+            .with_detail(format!(
+                "This agent used its sandbox CPU time for this month ({}): sandbox commands are refused until {} \
+                 (UTC). Chat tools still work. Owners and admins can raise the limit on the agent's card.",
+                usage_text("cpu", used, limit),
+                next_month_text(now),
+            )))
+        }
         Ok(Err(Refused::NotAllowed)) => Err(error(
             StatusCode::FORBIDDEN,
             "sandbox_refused",
@@ -458,8 +870,14 @@ async fn issue(
     let Some(settings) = settings else {
         return Ok(Err(Refused::Off));
     };
-    if settings.get::<i64, _>("cpu_ms") >= settings.get::<i64, _>("cpu_minutes_month") * 60_000 {
-        return Ok(Err(Refused::Budget));
+    let (used, limit) = (
+        settings.get::<i64, _>("cpu_ms"),
+        settings
+            .get::<i64, _>("cpu_minutes_month")
+            .saturating_mul(60_000),
+    );
+    if used >= limit {
+        return Ok(Err(Refused::Budget(used, limit)));
     }
 
     // The call token: an agent session that the scope layer judges like any other, bound to this call.
@@ -571,7 +989,8 @@ async fn end_call(
     Json(mut body): Json<EndBody>,
 ) -> Result<Response, ApiError> {
     // The sidecar ends a call only as interrupted: the broker alone knows its exit and CPU time.
-    if !keys(&state, &uri, &request_id)?.service_allows(&headers) {
+    let broker = keys(&state, &uri, &request_id)?.service_allows(&headers);
+    if !broker {
         sidecar_only(&state, &headers, &uri, &request_id)?;
         body = EndBody {
             exit: None,
@@ -597,10 +1016,11 @@ async fn end_call(
     let interrupted = body
         .interrupted
         .map(|reason| reason.chars().take(200).collect::<String>());
-    let result: Result<Option<Vec<Value>>, sqlx::Error> = async {
+    let cpu_ms = body.cpu_ms.max(0);
+    let result: Result<Option<(Value, Option<String>)>, sqlx::Error> = async {
         let mut tx = state.database().immediate_transaction().await?;
         let Some(call) = sqlx::query(
-            "SELECT agent_user_id, session_id, status FROM agent_sandbox_calls WHERE id = $1",
+            "SELECT agent_user_id, session_id, status, cpu_counted FROM agent_sandbox_calls WHERE id = $1",
         )
         .bind(call_id.to_string())
         .fetch_optional(&mut *tx)
@@ -608,7 +1028,8 @@ async fn end_call(
         else {
             return Ok(None);
         };
-        // Only the first end counts (the broker may retry; a lost call stays lost).
+        let agent: String = call.get("agent_user_id");
+        // Only the first end ends the call (the broker may retry; a lost or interrupted call stays as it is).
         if call.get::<String, _>("status") == "running" {
             if let Some(session) = call.get::<Option<String>, _>("session_id") {
                 sqlx::query("DELETE FROM sessions WHERE id = $1")
@@ -618,27 +1039,37 @@ async fn end_call(
             }
             sqlx::query(
                 "UPDATE agent_sandbox_calls SET status = 'done', session_id = NULL, ended_at = $2, exit_code = $3, \
-                 timed_out = $4, interrupted = $5, cpu_ms = $6 WHERE id = $1",
+                 timed_out = $4, interrupted = $5 WHERE id = $1",
             )
             .bind(call_id.to_string())
             .bind(now)
             .bind(body.exit)
             .bind(i64::from(body.timed_out))
             .bind(interrupted)
-            .bind(body.cpu_ms.max(0))
             .execute(&mut *tx)
             .await?;
+        }
+        // The broker's CPU time counts once, also when the sidecar, the off switch or the lost-call job ended the
+        // call first.
+        let mut counted = None;
+        if broker && call.get::<i64, _>("cpu_counted") == 0 {
+            sqlx::query("UPDATE agent_sandbox_calls SET cpu_ms = $2, cpu_counted = 1 WHERE id = $1")
+                .bind(call_id.to_string())
+                .bind(cpu_ms)
+                .execute(&mut *tx)
+                .await?;
             sqlx::query(
                 "INSERT INTO agent_sandbox_usage (agent_user_id, month, cpu_ms) VALUES ($1, $2, $3) \
                  ON CONFLICT (agent_user_id, month) DO UPDATE SET cpu_ms = agent_sandbox_usage.cpu_ms + $3",
             )
-            .bind(call.get::<String, _>("agent_user_id"))
+            .bind(&agent)
             .bind(month(now))
-            .bind(body.cpu_ms.max(0))
+            .bind(cpu_ms)
             .execute(&mut *tx)
             .await?;
+            counted = Some(agent);
         }
-        let pending = sqlx::query(
+        let pending: Vec<Value> = sqlx::query(
             "SELECT id, host, port, expires_at FROM agent_egress_requests WHERE call_id = $1 AND status = 'pending' \
              AND (expires_at IS NULL OR expires_at > $2) ORDER BY created_at, id",
         )
@@ -656,12 +1087,34 @@ async fn end_call(
             })
         })
         .collect();
+        // What the proxy refused, with Orbit's reason: in the sandbox a refusal is only "403" (or curl's exit 56).
+        let denied: Vec<Value> = sqlx::query(
+            "SELECT host, port, MIN(reason) AS reason FROM agent_egress_log WHERE call_id = $1 \
+             AND decision IN ('deny', 'blocked') GROUP BY host, port ORDER BY host, port LIMIT 10",
+        )
+        .bind(call_id.to_string())
+        .fetch_all(&mut *tx)
+        .await?
+        .into_iter()
+        .map(|row| {
+            json!({
+                "host": row.get::<String, _>("host"),
+                "port": row.get::<i64, _>("port"),
+                "reason": row.get::<String, _>("reason"),
+            })
+        })
+        .collect();
         tx.commit().await?;
-        Ok(Some(pending))
+        Ok(Some((json!({ "egress_pending": pending, "egress_denied": denied }), counted)))
     }
     .await;
     match result {
-        Ok(Some(pending)) => Ok(Json(json!({ "egress_pending": pending })).into_response()),
+        Ok(Some((answer, counted))) => {
+            if let Some(agent) = counted {
+                send_budget_notices(&state, &agent, now).await;
+            }
+            Ok(Json(answer).into_response())
+        }
         Ok(None) => Err(not_found()),
         Err(failure) => Err(unavailable(&failure, &uri, &request_id)),
     }
@@ -791,13 +1244,19 @@ async fn decide(
             break 'decision deny("the sandbox is off for this agent");
         }
         let cpu_spent = call.get::<i64, _>("cpu_ms")
-            >= call.get::<Option<i64>, _>("cpu_minutes_month").unwrap_or(0) * 60_000;
+            >= call
+                .get::<Option<i64>, _>("cpu_minutes_month")
+                .unwrap_or(0)
+                .saturating_mul(60_000);
         let egress_spent = call.get::<i64, _>("egress_bytes")
             >= call
                 .get::<Option<i64>, _>("egress_bytes_month")
                 .unwrap_or(0);
-        if cpu_spent || egress_spent {
-            break 'decision deny("the agent's monthly budget is spent");
+        if egress_spent {
+            break 'decision deny("the agent's internet traffic for this month is spent");
+        }
+        if cpu_spent {
+            break 'decision deny("the agent's sandbox CPU time for this month is spent");
         }
         let Some(host) = host.as_deref() else {
             break 'decision deny("not a host name (IP addresses are never allowed)");
@@ -978,7 +1437,7 @@ async fn egress_done(
     let blocked = body
         .blocked
         .map(|reason| reason.chars().take(200).collect::<String>());
-    let result: Result<bool, sqlx::Error> = async {
+    let result: Result<Option<String>, sqlx::Error> = async {
         let mut tx = state.database().immediate_transaction().await?;
         let Some(agent) = sqlx::query_scalar::<_, String>(
             "UPDATE agent_egress_log SET bytes_up = $3, bytes_down = $4, duration_ms = $5, done_at = $6, \
@@ -996,7 +1455,7 @@ async fn egress_done(
         .fetch_optional(&mut *tx)
         .await?
         else {
-            return Ok(false);
+            return Ok(None);
         };
         sqlx::query(
             "UPDATE agent_sandbox_calls SET egress_bytes = egress_bytes + $2 WHERE id = $1",
@@ -1009,17 +1468,107 @@ async fn egress_done(
             "INSERT INTO agent_sandbox_usage (agent_user_id, month, egress_bytes) VALUES ($1, $2, $3) \
              ON CONFLICT (agent_user_id, month) DO UPDATE SET egress_bytes = agent_sandbox_usage.egress_bytes + $3",
         )
-        .bind(agent)
+        .bind(&agent)
         .bind(month(now))
         .bind(bytes)
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
-        Ok(true)
+        Ok(Some(agent))
     }
     .await;
     match result {
-        Ok(counted) => Ok(Json(json!({ "counted": counted })).into_response()),
+        Ok(counted) => {
+            if let Some(agent) = &counted {
+                send_budget_notices(&state, agent, now).await;
+            }
+            Ok(Json(json!({ "counted": counted.is_some() })).into_response())
+        }
+        Err(failure) => Err(unavailable(&failure, &uri, &request_id)),
+    }
+}
+
+#[derive(Deserialize)]
+struct UsageBody {
+    agent_user_id: Id,
+    tokens: i64,
+}
+
+/// The sidecar's report of one agent run's model tokens (input and output, from Pi's usage). Counts once per run id (a
+/// retry changes nothing) into the agent's month; only custom agents have a limit.
+async fn run_usage(
+    State(state): State<AgentState>,
+    Path(run_id): Path<String>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+    Json(body): Json<UsageBody>,
+) -> Result<Response, ApiError> {
+    sidecar_only(&state, &headers, &uri, &request_id)?;
+    let run_id: Id = run_id.parse().map_err(|_| {
+        error(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Not found.",
+            &uri,
+            &request_id,
+        )
+    })?;
+    let now = TimestampMillis::now().as_millis();
+    let agent = body.agent_user_id.to_string();
+    let tokens = body.tokens.max(0);
+    let result: Result<Option<bool>, sqlx::Error> = async {
+        let mut tx = state.database().immediate_transaction().await?;
+        let custom = sqlx::query_scalar::<_, Flag>(
+            "SELECT EXISTS (SELECT 1 FROM agent_profiles WHERE user_id = $1)",
+        )
+        .bind(&agent)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !custom.0 {
+            return Ok(None);
+        }
+        let written = sqlx::query(
+            "INSERT INTO agent_run_usage (run_id, agent_user_id, month, tokens, created_at) VALUES ($1, $2, $3, $4, $5) \
+             ON CONFLICT (run_id) DO NOTHING",
+        )
+        .bind(run_id.to_string())
+        .bind(&agent)
+        .bind(month(now))
+        .bind(tokens)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if written == 1 {
+            sqlx::query(
+                "INSERT INTO agent_sandbox_usage (agent_user_id, month, model_tokens) VALUES ($1, $2, $3) \
+                 ON CONFLICT (agent_user_id, month) DO UPDATE SET model_tokens = agent_sandbox_usage.model_tokens + $3",
+            )
+            .bind(&agent)
+            .bind(month(now))
+            .bind(tokens)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(Some(written == 1))
+    }
+    .await;
+    match result {
+        Ok(Some(counted)) => {
+            if counted {
+                send_budget_notices(&state, &agent, now).await;
+            }
+            Ok(Json(json!({ "counted": counted })).into_response())
+        }
+        Ok(None) => Err(error(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "No such custom agent.",
+            &uri,
+            &request_id,
+        )),
         Err(failure) => Err(unavailable(&failure, &uri, &request_id)),
     }
 }
@@ -1796,6 +2345,11 @@ async fn save_sandbox(
         .bind(now.as_millis())
         .execute(&mut *tx)
         .await?;
+        if !body.enabled
+            && let Ok(agent_id) = agent_user.parse::<Id>()
+        {
+            switch_off(&mut tx, agent_id, "the sandbox was switched off", now.as_millis()).await?;
+        }
         audit::record(
             &mut tx,
             workspace_id,

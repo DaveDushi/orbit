@@ -18,14 +18,16 @@ Request: one JSON line, then `stdin` bytes. The client keeps its side of the con
 closes it during a `run` (the agent's run was stopped, the sidecar restarted), the broker kills the call and ends it as
 interrupted (Orbit deletes the call token; the proxy password dies with the call file).
   {"op": "run", "ticket": "v1.…", "script": "...", "args": [...], "stdin": 0, "stdout_max": 65536, "stderr_max": 65536}
-  {"op": "stop_agent", "agent": "<id>"}   off switch for one agent: kill its live sandboxes (busy or idle)
-  {"op": "stop_all"}                      off switch for all agents
+  {"op": "stop_agent", "agent": "<id>", "reason": "..."}   off switch for one agent: kill its live sandboxes (busy or
+                                          idle) and remove their call files (the proxy drops their tunnels at once);
+                                          a running call ends as interrupted with `reason`
+  {"op": "stop_all", "reason": "..."}     off switch for all agents
   {"op": "gc"}                            idle / max life / image idle
   {"op": "list"}
 Only `run` needs a ticket: the other ops only stop or delete, and the socket is open to root and the sidecar's group.
 Answer: frames of 1 type byte, 4 length bytes (big-endian) and the payload: b"o" stdout, b"e" stderr, and last b"x",
 a JSON object: {"exit", "signal", "timed_out", "interrupted": null | reason, "restarted": null | reason,
-"stdout_truncated", "stderr_truncated", "cpu_ms", "egress_pending": [...]} or {"error": "..."}.
+"stdout_truncated", "stderr_truncated", "cpu_ms", "egress_pending": [...], "egress_denied": [...]} or {"error": "..."}.
 
 CLI (root, from units): `broker.py cleanup` (socket ExecStartPre: kill everything a former broker left), `broker.py gc`,
 `broker.py service-token` (prints the bearer that the broker and the egress proxy use with Orbit; setup.sh gives it to
@@ -239,8 +241,10 @@ def unmount(path: str) -> None:
 
 
 def kill_sandbox(state: dict, work: str, reason: str) -> None:
-    """Deletes a thread sandbox (all its processes, scope, netns, mount); /work's image stays."""
+    """Deletes a thread sandbox (all its processes, scope, netns, mount); /work's image stays. Its CPU time so far is
+    kept with the reason, so a call it cuts still reports it."""
     info = state["sandboxes"].pop(work, None) or {}
+    cpu = cpu_usec(info["cgroup"]) if info.get("cgroup") else 0
     sh(*runsc("kill", "--all", work, "KILL"), check=False)
     sh(*runsc("delete", "--force", work), check=False)
     sh("systemctl", "stop", f"{SCOPE_PREFIX}-{work}.scope", check=False)
@@ -248,7 +252,7 @@ def kill_sandbox(state: dict, work: str, reason: str) -> None:
     net_down(work, info.get("netidx"))
     shutil.rmtree(f"{RUN}/bundles/{work}", ignore_errors=True)
     if info.get("gen"):
-        state["ended"][info["gen"]] = {"reason": reason, "at": time.time()}
+        state["ended"][info["gen"]] = {"reason": reason, "at": time.time(), "cpu_usec": cpu}
     log(f"deleted sandbox {work[:8]} ({reason})")
 
 
@@ -534,8 +538,9 @@ def call_file(call: str, work: str, idx: int, password: str) -> str:
     return path
 
 
-def drop_call_files() -> None:
-    """Call files of calls that do not run (a broker copy that died): the proxy refuses their passwords."""
+def drop_call_files(works: set | None = None) -> None:
+    """Call files of calls that do not run (a broker copy that died), or of the thread sandboxes in `works` (just
+    stopped, their calls may still be ending): the proxy refuses their passwords and closes their tunnels."""
     if not os.path.isdir(EGRESS_DIR):
         return
     for name in os.listdir(EGRESS_DIR):
@@ -545,6 +550,13 @@ def drop_call_files() -> None:
                 work = json.load(file).get("work", "")
         except (OSError, ValueError):
             work = ""
+        if works is not None:
+            if work in works:
+                try:
+                    os.unlink(path)
+                except FileNotFoundError:
+                    pass
+            continue
         lock = thread_lock(work, block=False) if WORK_ID.match(work) else None
         if lock or not WORK_ID.match(work):
             try:
@@ -593,20 +605,22 @@ def kill_call(work: str, pidfile: str) -> None:
         pass
 
 
-def report_end(call: str, result: dict) -> list:
-    """Tells Orbit the call ended (it deletes the call token); returns the egress requests waiting for a yes."""
+def report_end(call: str, result: dict) -> dict:
+    """Tells Orbit the call ended (it deletes the call token, counts the CPU time once); returns the egress requests
+    waiting for a yes (`egress_pending`) and the hosts the proxy refused, with Orbit's reason (`egress_denied`)."""
     if not ORBIT_URL:
-        return []
+        return {}
     body = {k: result.get(k) for k in ("exit", "signal", "timed_out", "interrupted", "cpu_ms")}
     request = urllib.request.Request(
         f"{ORBIT_URL}/api/internal/agent/sandbox/calls/{call}/end", data=json.dumps(body).encode(), method="POST",
         headers={"Authorization": f"Bearer {service_token()}", "Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
-            return json.load(response).get("egress_pending", [])
+            answer = json.load(response)
+            return answer if isinstance(answer, dict) else {}
     except Exception as error:  # Orbit closes a call without an end as lost; the token dies then.
         log(f"call end report failed: {type(error).__name__}")
-        return []
+        return {}
 
 
 def run(request: dict, rest: bytes) -> None:
@@ -700,15 +714,20 @@ def run(request: dict, rest: bytes) -> None:
         for thread in threads[1:]:
             thread.join(2)
         code = child.returncode
-        result.update(exit=code if code >= 0 else None, signal=-code if code < 0 else None,
-                      cpu_ms=max(0, cpu_usec(cgroup) - cpu_before) // 1000)
         with Locked() as state:
             live = state["sandboxes"].get(work)
             if live and live["gen"] == gen:
                 live["last_call"] = time.time()
-            else:
-                result["interrupted"] = state["ended"].get(gen, {}).get("reason", "the sandbox was deleted")
-        result["egress_pending"] = report_end(call, result)
+                cpu_after = cpu_usec(cgroup)
+            else:  # deleted during the call (off switch, max life, eviction): its CPU time until the delete
+                ended = state["ended"].get(gen, {})
+                result["interrupted"] = ended.get("reason", "the sandbox was deleted")
+                cpu_after = ended.get("cpu_usec", 0)
+        result.update(exit=code if code >= 0 else None, signal=-code if code < 0 else None,
+                      cpu_ms=max(0, cpu_after - cpu_before) // 1000)
+        answer = report_end(call, result)
+        result["egress_pending"] = answer.get("egress_pending", [])
+        result["egress_denied"] = answer.get("egress_denied", [])
         finish(result)
     finally:
         if calls_file:
@@ -719,12 +738,19 @@ def run(request: dict, rest: bytes) -> None:
         lock.close()
 
 
-def stop(match) -> int:
+def stop(match, reason: str) -> int:
     with Locked() as state:
         works = [w for w, info in state["sandboxes"].items() if match(info)]
         for work in works:
-            kill_sandbox(state, work, "off switch")
+            kill_sandbox(state, work, reason)
+    drop_call_files(set(works))
     return len(works)
+
+
+def stop_reason(request: dict) -> str:
+    """Why a stop came (Orbit's words, for the model: "the sandbox was switched off"), one short line."""
+    reason = request.get("reason")
+    return " ".join(reason.split())[:120] if isinstance(reason, str) and reason.strip() else "off switch"
 
 
 def main() -> None:
@@ -740,9 +766,9 @@ def main() -> None:
             agent = str(request.get("agent", ""))
             if not AGENT_ID.match(agent):
                 return finish({"error": "invalid request"})
-            finish({"stopped": stop(lambda info: info.get("agent") == agent)})
+            finish({"stopped": stop(lambda info: info.get("agent") == agent, stop_reason(request))})
         elif op == "stop_all":
-            finish({"stopped": stop(lambda info: True)})
+            finish({"stopped": stop(lambda info: True, stop_reason(request))})
         elif op == "gc":
             with Locked() as state:
                 gc(state)

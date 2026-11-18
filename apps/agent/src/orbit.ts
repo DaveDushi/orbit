@@ -86,6 +86,8 @@ export type InputAgent = {
 	/** `null`: the installation's choice. */
 	readonly model: string | null;
 	readonly thinking: string | null;
+	/** The agent used its model tokens for this month (Orbit's sandbox limits): tell the driver, do not run. */
+	readonly model_tokens_spent?: boolean;
 };
 
 /** The default agent's own instructions and model in one workspace (Settings → Agentic → Agents). */
@@ -157,7 +159,14 @@ export type PendingInputs = {
 	readonly inputs: PendingInput[];
 	/** Task runs to stop; absent from an older Orbit. */
 	readonly stops?: readonly TaskRunStop[];
+	/** Agents whose thread sandboxes must stop now (switched off, sandbox tool unticked, agent deleted). */
+	readonly sandbox_stops?: readonly SandboxStop[];
+	/** `false`: agent sandboxes are off on this server, so every thread sandbox stops; absent from an older Orbit. */
+	readonly agent_sandbox?: boolean;
 };
+
+/** One stop of an agent's thread sandboxes; `reason` is what the model reads as its call's interruption. */
+export type SandboxStop = { readonly id: string; readonly agent_user_id: string; readonly reason: string };
 
 export type ThreadUpdate = {
 	readonly workspace_id: string;
@@ -260,6 +269,14 @@ export class OrbitClient {
 	/** Ends a call the broker did not answer for (the run stopped, the broker failed): its token and proxy password die. */
 	async endSandboxCall(callId: string, interrupted: string): Promise<void> {
 		await this.internal("POST", `/sandbox/calls/${callId}/end`, { interrupted });
+	}
+	/** The broker was asked to stop the agent's thread sandboxes (`PendingInputs.sandbox_stops`). */
+	async sandboxStopDone(stopId: string): Promise<void> {
+		await this.internal("POST", `/sandbox/stops/${stopId}/done`);
+	}
+	/** A custom agent's run used `tokens` model tokens; Orbit counts each run once, against the agent's monthly limit. */
+	async runUsage(runId: string, agentUserId: string, tokens: number): Promise<void> {
+		await this.internal("POST", `/runs/${runId}/usage`, { agent_user_id: agentUserId, tokens });
 	}
 
 	async readCredential(userId: string): Promise<Record<string, unknown> | undefined> {

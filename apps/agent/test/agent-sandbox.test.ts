@@ -16,7 +16,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createServer, type Server as HttpServer } from "node:http";
 import { createConnection, createServer as createTcpServer } from "node:net";
 import { after, before, test } from "node:test";
@@ -549,15 +549,24 @@ test("off switch: stop_agent kills one agent's sandboxes (busy and idle); stop_a
 	await request({ op: "stop_all" });
 	const [mine, mineBusy, theirs] = [newWork(), newWork(), newWork()];
 	await call(mine, "echo kept > /work/k.txt; setsid sleep 600 >/dev/null 2>&1 &");
-	const busy = call(mineBusy, "sleep 30", { limits: { timeout_s: 60 } });
+	// About 3 s of CPU, then a long wait: the stop cuts it, and its CPU time until then still counts.
+	const busyClaims = claimsFor(mineBusy, { limits: { timeout_s: 60 } });
+	const busy = call(mineBusy, "timeout 3 sh -c 'while :; do :; done'; sleep 30", { claims: busyClaims });
 	await call(theirs, "true", { agent: OTHER_AGENT });
-	await sleep(1000);
+	await sleep(4000);
+	assert.ok(existsSync(`${run}/egress/${busyClaims.call}`), "the running call has its proxy file");
 	const started = Date.now();
-	const stopped = await request({ op: "stop_agent", agent: AGENT });
+	const stopped = await request({ op: "stop_agent", agent: AGENT, reason: "the sandbox was switched off" });
 	assert.ok(Date.now() - started < 5000);
 	assert.equal((stopped as unknown as { stopped: number }).stopped, 2);
 	assert.deepEqual(live(), [theirs]);
-	assert.equal((await busy).interrupted, "off switch");
+	assert.ok(!existsSync(`${run}/egress/${busyClaims.call}`), "gone with the stop: the proxy drops the call's tunnels");
+	const cut = await busy;
+	assert.equal(cut.interrupted, "the sandbox was switched off");
+	assert.ok((cut.cpu_ms ?? 0) >= 2000, `the CPU time until the stop counts (${cut.cpu_ms} ms)`);
+	const reported = ends.find((end) => end.path.includes(busyClaims.call));
+	assert.equal(reported?.body.interrupted, "the sandbox was switched off");
+	assert.equal(reported?.body.cpu_ms, cut.cpu_ms);
 	await request({ op: "stop_all" });
 	assert.deepEqual(live(), []);
 	assert.equal(scopes(), "");
