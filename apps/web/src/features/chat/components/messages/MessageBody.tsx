@@ -1,4 +1,5 @@
 import { Fragment, useContext, useState, type ReactNode } from 'react'
+import { isEgressCard } from '@orbit/api/agentSandbox'
 import { Attachments } from '@/components/common/Attachments'
 import { Button } from '@/components/ui/button'
 import { CustomEmojiContext } from '@/lib/customEmojiContext'
@@ -10,6 +11,7 @@ import { useChatHost } from '../../chatHost'
 import { agentCardOf } from '../../lib/agentCard'
 import { decodeMentions } from '../../lib/mentionTokens'
 import { AgentCard } from './AgentCard'
+import { EgressCard } from './EgressCard'
 import { LinkEmbed } from './LinkEmbed'
 import { MessageBlocks } from './MessageBlocks'
 import { extractLinkUrls, isJumboEmoji, isLongMessage, standaloneLinkUrls } from './messageText'
@@ -147,6 +149,7 @@ export function MessageBody({ message }: { message: Message }) {
       ) : card ? (
         <AgentCard card={card} messageId={message.id} />
       ) : null}
+      {isEgressCard(message.nonce) ? <EgressCard conversationId={message.conversationId} messageId={message.id} /> : null}
       <Attachments attachments={message.attachments} hasTextContent={text !== ''} previews />
       <LinkCards body={linkBody} />
     </div>

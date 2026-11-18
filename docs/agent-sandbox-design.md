@@ -1,9 +1,9 @@
 # Agent sandboxes: design
 
-Status: **approved design; phases 1–6 done on test copies** (phase 3 and 4: 2026-11-17, phases 5 and 6: 2026-11-18,
+Status: **approved design; phases 1–7 done on test copies** (phase 3 and 4: 2026-11-17, phases 5 to 7: 2026-11-18,
 branch `agent-sandbox-design`). The owner approved the design and the recommended answers to all open questions, with one
 change: **one sandbox per chat thread** (question 1, section 5). Results: section 13 (spike), section 14 (phases 3
-and 4), section 15 (phase 5), section 16 (phase 6). Production has only the phase 2 host guards; no broker, proxy or migration runs there. Each later phase
+and 4), section 15 (phase 5), section 16 (phase 6), section 17 (phase 7). Production has only the phase 2 host guards; no broker, proxy or migration runs there. Each later phase
 needs its own "yes" before production.
 
 ## Goal and fixed decisions
@@ -436,7 +436,7 @@ Approved by the owner on 2026-11-16: the recommended answers to questions 2–13
 | 4 | **Done** 2026-11-17 (section 14). **Orbit data + routes**: migration (sandbox settings incl. idle minutes, rules, egress requests, egress log, calls, usage) for SQLite and Postgres; ticket and call-token issue; `calls/{id}/end`; `egress/check`. | Route tests on both databases. |
 | 5 | **Done** 2026-11-18 (section 15). **Egress proxy**: `orbit egress-proxy` with per-call passwords; broker passes them per call. | Proxy tests and network escape tests pass. |
 | 6 | **Done** 2026-11-18 (section 16). **Sidecar tool**: `sandbox_shell`, catalog row and `route_need`, interrupted-call handling, card posting and waiting. | `profiles.test.ts`, mock-model run end to end on a test instance. |
-| 7 | **UI**: agent card toggle and limits; Internet access page (rules, pending, log); egress card buttons on **web and mobile**. | Browser check on web; iOS bundle builds; `tsc` and tests in both apps. |
+| 7 | **Done** 2026-11-18 (section 17). **UI**: agent card toggle and limits; Internet access page (rules, pending, log); egress card buttons on **web and mobile**. | Browser check on web; iOS bundle builds; `tsc` and tests in both apps. |
 | 8 | **Budgets and off switch**: counters, notices, kill path. | Tests for each level. |
 | 9 | **Quality & Security**: injection and escape suites on a test instance; review. | All pass; findings fixed. |
 | 10 | **Pilot Arthur** on production (with the yes); watch for 2–4 weeks. | Exit criteria in section 8. |
@@ -735,3 +735,44 @@ access page (rules, pending, log), admin rule checks with the Public Suffix List
 off switch calling `stop_agent`, model tokens per run. Also open: the scheduler job that closes lost calls without a new
 ticket; when the sidecar ends a call first and the broker reports later, that call's CPU time is not counted (rare: the
 broker did not answer within timeout + 60 s). Known gap, as before: domain fronting through a shared CDN.
+
+## 17. Phase 7 results (2026-11-18)
+
+Done on test copies only: a test Orbit (port 18741, own data dir, a fresh SQLite database, own app key, agent secret
+and sandbox key; a `vite preview` of the new web build on 18742 in front of it), and a Postgres 18 container
+`orbit-sbx7-pg` (port 15534, tmpfs) for the route tests. No broker or sidecar ran: the screenshots' data went through
+the real routes (ticket, `egress/check`, `egress/done`, call end, the sidecar's card post). No production service, data,
+socket or port was touched; all of it was removed after the tests. No migration: the phase 4 tables were enough.
+
+### What was built
+
+| Part | What |
+|---|---|
+| Card data (`agent/sandbox.rs`) | `GET /api/v1/workspaces/{ws}/agents/egress-requests?conversation_id=…`: the cards of one conversation for members who can read it (guests and outsiders 404). A request finds its card message by the nonce the sidecar already uses (`egress:<call>`; a later call that asks the same host takes the request over, so the newest card shows it). Each row has its state (`pending`, `expired`, `allowed`, `denied`), who answered, the agent's current rule for the host, and the viewer's `can_allow_once` / `can_allow_always` / `can_deny` from the same `may_answer` as the answer route. No sidecar change. |
+| Settings and rules | `GET\|PUT …/agents/{profile}/sandbox` (switch, idle minutes, CPU minutes, traffic and model tokens per month, this month's use, rules, pending requests, the latest 100 log rows) and `POST\|DELETE …/agents/{profile}/egress-rules[/{rule}]`. Owners and admins only (members 403, guests 404, also for a rule that is not valid). Audit: `agent_sandbox.settings_update`, `agent_egress.rule_create`, `.rule_delete`. Rule check (`check_rule_host`): `*` or a `*` not at the start, IP literals, names without a dot, `orbit.internal` and Orbit's own host (also under a wildcard), a public suffix or a wildcard on one (crate `psl` 2.1, the compiled Public Suffix List with its private part: `*.co.uk`, `*.github.io`, `*.githubusercontent.com` are refused), an allow rule for a risky host. |
+| Web | Agent card (Settings → Agentic → Agents → Edit): a **Sandbox** section when `sandbox_shell` is ticked (switch, limits, this month's use; a new agent: "create the agent first"). The agent's row: a "Sandbox on/off" badge and an **Internet access** button. The Internet access page is `/settings/agentic/agents/{profile}/internet`, under the Agents tab (no new nav item): rules (add, remove; who added, last use), pending requests (answer buttons), connection log (host, answer, bytes sent and received, for whom, when; the reason as tooltip). The egress card: under each message with an `egress:` nonce, one row per host with its state and only the buttons the viewer may use. It reloads every 15 s while a row waits and turns "expired" on its own at `expires_at`. |
+| Mobile | The same: the Sandbox fields on the agent sheet, the badge and Internet access button on the agent row (`?tab=agents&agent=<profile>` opens the page on the Agents tab), and the card under the message. Card logic (`egressCardView`, `cardRequests`, `sandboxInput`) is shared in `packages/api/src/agentSandbox.ts`. |
+
+Decisions: the card shows only the buttons the viewer may use (a driver who is not an admin reads "Only owners and
+admins can allow always"; a risky host reads "This host always asks"); other members see the state and whom it waits
+for. "Deny always" (a deny rule) is not on the card: admins add deny rules on the Internet access page. The package
+registries preset (question 6) is not a button yet: admins add the three hosts as rules.
+
+### Tests
+
+| Suite | Result |
+|---|---|
+| Rust unit (`agent::sandbox`) | 7 pass. New: rule checks with the Public Suffix List (ICANN and private suffixes, IDN in punycode, Orbit's host under a wildcard, risky allow vs deny); the buttons per viewer and the expired state. |
+| Routes (`apps/server/tests/agent_sandbox.rs`, 15 tests) | All pass on **SQLite and Postgres 18**. New: the card list per viewer (driver: once + deny; admin: always + deny; the risky host: no always; a member: none; guest and outsider 404; expired; after an admin's Allow always every viewer sees "allowed", the rule and who answered); settings and rules (guests 404 and members 403 on every route, also for an invalid rule; another agent id 404; idle out of range 422; nine refused rules; a deny rule on a risky host is fine; an allow rule takes effect at the next check and gets `last_used_at`; removed, the host asks again; the audit rows). |
+| Shared (`packages/api`, `bun test src/agentSandbox.test.ts`) | 6 pass: buttons per role, notes, expiry, answered texts, the limits' conversion and refusals. |
+| Web | `tsc -b` clean; `bun test` of agent, settings and chat: 285 pass (new: a page below an Agentic tab keeps its tab); oxlint: no errors. |
+| Mobile | `tsc --noEmit` clean; `bun test src`: 346 pass. No iOS bundle or EAS build (iPhone builds are on hold). |
+| Browser (Playwright, light and dark) | Agents list, agent card, Internet access page, the thread card before an answer, after the driver's Allow once (row "Allowed once by Dana Owner", the risky host still waiting), and the page after it. The click queued one `action` input whose author is the driver and wrote `agent_egress.allow_once`. No page errors, no failed agent requests. |
+
+### Still open
+
+Phase 8: budget notices at 80 %, the off switch calling `stop_agent` (turning the switch off today stops new tickets and
+egress at once, but a live thread sandbox lives until its idle delete), and **model tokens** per run (the limit is saved
+and shown, but nothing counts tokens yet). Also open: the scheduler job for lost calls; the package registries preset
+button; the sidecar's card text still names all three answers (the buttons now say who may use them); an iOS bundle check
+when iPhone builds resume. Known gap, as before: domain fronting through a shared CDN.

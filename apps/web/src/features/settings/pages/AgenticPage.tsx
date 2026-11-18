@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AgentPage } from '@/features/agent/AgentPage'
 import { AgentsPage } from '@/features/agent/AgentsPage'
 import { DefaultModelCard } from '@/features/agent/DefaultModelCard'
+import { InternetAccessPage } from '@/features/agent/InternetAccessPage'
 import { MemoryPage } from '@/features/agent/MemoryPage'
 import { RoutinesPage } from '@/features/agent/RoutinesPage'
 import { SkillsPage } from '@/features/agent/SkillsPage'
@@ -71,6 +72,11 @@ export function AgenticAgents() {
       <DefaultModelCard />
     </>
   )
+}
+
+/** One agent's Internet access (rules, pending requests, log): opened from its row on the Agents tab. */
+export function AgenticInternetAccess() {
+  return useAgentStatus().data?.enabled === true ? <InternetAccessPage /> : null
 }
 
 /** Routines: the person's own, and every routine of the workspace for owners and admins. */

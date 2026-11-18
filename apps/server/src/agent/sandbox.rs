@@ -20,14 +20,21 @@
 //!   Deny: the driver or an owner/admin (`always`: a deny rule, owners and admins). A request waits [`ASK_WAIT_MS`]; then
 //!   it is expired and the next call asks again. The answer queues an `action` input for the **original driver**, so
 //!   the run continues as theirs, whoever clicked.
+//! - `GET /api/v1/workspaces/{id}/agents/egress-requests?conversation_id=…` (members who can read the conversation):
+//!   the egress cards of one conversation, each with its card message (the sidecar's nonce `egress:<call>`), its
+//!   state, and what the viewer may answer. Web and mobile draw the buttons from it.
+//! - `GET|PUT /api/v1/workspaces/{id}/agents/{agent}/sandbox`, `POST …/egress-rules`, `DELETE …/egress-rules/{rule}`
+//!   (owners and admins; `agent` is the profile id): the agent card's sandbox switch and limits, and the Internet
+//!   access page (rules, pending requests, the connection log). A rule may not be an IP, `*`, a wildcard on a public
+//!   suffix (Public Suffix List), Orbit's own host, or an allow rule for a risky host.
 //!
 //! The broker and the proxy authenticate with a bearer derived from the broker key; the key file is
 //! `ORBIT_AGENT_SANDBOX_KEY_FILE`. Without it, or with `ORBIT_AGENT_SANDBOX=off`, every route answers `sandbox_off`.
 
-use axum::extract::{Extension, Path, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -195,8 +202,24 @@ pub(crate) fn router(state: AgentState) -> Router {
         .route("/api/internal/agent/egress/check", post(check_egress))
         .route("/api/internal/agent/egress/done", post(egress_done))
         .route(
+            "/api/v1/workspaces/{workspace_id}/agents/egress-requests",
+            get(conversation_requests),
+        )
+        .route(
             "/api/v1/workspaces/{workspace_id}/agents/egress-requests/{request_id}",
             post(answer_egress),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/agents/{agent_id}/sandbox",
+            get(read_sandbox).put(save_sandbox),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/agents/{agent_id}/egress-rules",
+            post(add_rule),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/agents/{agent_id}/egress-rules/{rule_id}",
+            delete(delete_rule),
         )
         .with_state(state)
 }
@@ -1309,10 +1332,725 @@ async fn answer_request(
     })))
 }
 
+// ---------------------------------------------------------------------------------------------
+// Cards in a conversation.
+
+/// What the viewer may answer on a pending card: Allow once, Allow always, Deny (the same rules as [`may_answer`]).
+fn viewer_may(is_driver: bool, is_admin: bool, host: &str) -> (bool, bool, bool) {
+    let may = |answer| may_answer(answer, false, is_driver, is_admin, host).is_ok();
+    (may(Answer::Once), may(Answer::Always), may(Answer::Deny))
+}
+
+/// A request's state as people see it: `pending`, `expired` (nobody answered in time), `allowed` or `denied`.
+fn shown_status(status: &str, expires_at: Option<i64>, now: i64) -> &str {
+    match status {
+        "pending" if expires_at.is_some_and(|expires| expires <= now) => "expired",
+        other => other,
+    }
+}
+
+#[derive(Deserialize)]
+struct ConversationQuery {
+    conversation_id: String,
+}
+
+/// The caller as a member of the workspace (guests and outsiders: `None`) and whether they are an owner or admin.
+async fn member_of(
+    state: &AgentState,
+    workspace_id: Id,
+    user: Id,
+) -> Result<Option<bool>, sqlx::Error> {
+    let mut conn = state.database().pool().acquire().await?;
+    Ok(membership::actor(&mut *conn, workspace_id, user)
+        .await?
+        .map(|actor| actor.can(Permission::WorkspaceUpdate)))
+}
+
+async fn conversation_requests(
+    State(state): State<AgentState>,
+    Path(workspace_id): Path<String>,
+    Query(query): Query<ConversationQuery>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+) -> Result<Response, ApiError> {
+    keys(&state, &uri, &request_id)?;
+    let session = authenticate_session(
+        &state.identity,
+        state.cookie_mode,
+        &headers,
+        uri.path(),
+        request_id.as_ref(),
+    )
+    .await?;
+    let not_found = || {
+        error(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Not found.",
+            &uri,
+            &request_id,
+        )
+    };
+    let (Ok(workspace_id), Ok(conversation_id)) = (
+        workspace_id.parse::<Id>(),
+        query.conversation_id.parse::<Id>(),
+    ) else {
+        return Err(not_found());
+    };
+    let user = session.user.id;
+    let result: Result<Option<Vec<Value>>, sqlx::Error> = async {
+        let Some(is_admin) = member_of(&state, workspace_id, user).await? else {
+            return Ok(None);
+        };
+        let Flag(readable) = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT EXISTS (SELECT 1 FROM chat_conversations c WHERE c.id = $1 AND c.workspace_id = $2 \
+             AND (c.kind = 'public' OR EXISTS (SELECT 1 FROM chat_members cm WHERE cm.conversation_id = c.id \
+             AND cm.user_id = $3)) AND {})",
+            crate::repositories::chat::reachable_dm()
+        )))
+        .bind(conversation_id.to_string())
+        .bind(workspace_id.to_string())
+        .bind(user.to_string())
+        .fetch_one(state.database().pool())
+        .await?;
+        if !readable {
+            return Ok(None);
+        }
+        let now = TimestampMillis::now().as_millis();
+        // A request belongs to the card of its latest call (a later call that asks the same host takes it over).
+        let rows = sqlx::query(
+            "SELECT r.id, r.host, r.port, r.status, r.driver_user_id, r.expires_at, r.decided_at, \
+             m.id AS message_id, driver.display_name AS driver_name, decider.display_name AS decided_by_name, \
+             (SELECT ru.action FROM agent_egress_rules ru WHERE ru.agent_user_id = r.agent_user_id \
+              AND ru.host = r.host AND ru.port = r.port) AS rule \
+             FROM agent_egress_requests r \
+             JOIN agent_threads t ON t.thread_key = r.thread_key \
+             JOIN chat_messages m ON m.conversation_id = t.conversation_id AND m.author_id = r.agent_user_id \
+              AND m.nonce IS NOT NULL AND m.nonce = 'egress:' || r.call_id \
+             JOIN users driver ON driver.id = r.driver_user_id \
+             LEFT JOIN users decider ON decider.id = r.decided_by \
+             WHERE r.workspace_id = $1 AND t.conversation_id = $2 \
+             ORDER BY r.created_at DESC, r.id LIMIT 200",
+        )
+        .bind(workspace_id.to_string())
+        .bind(conversation_id.to_string())
+        .fetch_all(state.database().pool())
+        .await?;
+        Ok(Some(
+            rows.iter()
+                .map(|row| {
+                    let host: String = row.get("host");
+                    let expires_at: Option<i64> = row.get("expires_at");
+                    let status = shown_status(&row.get::<String, _>("status"), expires_at, now)
+                        .to_owned();
+                    let is_driver = row.get::<String, _>("driver_user_id") == user.to_string();
+                    let (once, always, deny) = if status == "pending" {
+                        viewer_may(is_driver, is_admin, &host)
+                    } else {
+                        (false, false, false)
+                    };
+                    json!({
+                        "id": row.get::<String, _>("id"),
+                        "message_id": row.get::<String, _>("message_id"),
+                        "risky": is_risky(&host),
+                        "host": host,
+                        "port": row.get::<i64, _>("port"),
+                        "status": status,
+                        "expires_at": expires_at,
+                        "driver_id": row.get::<String, _>("driver_user_id"),
+                        "driver_name": row.get::<String, _>("driver_name"),
+                        "decided_by_name": row.get::<Option<String>, _>("decided_by_name"),
+                        "decided_at": row.get::<Option<i64>, _>("decided_at"),
+                        "rule": row.get::<Option<String>, _>("rule"),
+                        "can_allow_once": once,
+                        "can_allow_always": always,
+                        "can_deny": deny,
+                    })
+                })
+                .collect(),
+        ))
+    }
+    .await;
+    match result {
+        Ok(Some(requests)) => Ok(Json(json!({ "requests": requests })).into_response()),
+        Ok(None) => Err(not_found()),
+        Err(failure) => Err(unavailable(&failure, &uri, &request_id)),
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The agent card's sandbox settings and the Internet access page (owners and admins).
+
+/// Defaults of a settings row (the migration's), for an agent that has none yet.
+const DEFAULT_IDLE_MINUTES: i64 = 30;
+const DEFAULT_CPU_MINUTES: i64 = 600;
+const DEFAULT_EGRESS_BYTES: i64 = 2 * 1024 * 1024 * 1024;
+const DEFAULT_MODEL_TOKENS: i64 = 20_000_000;
+/// Upper bounds an admin may set (a typo should not give a sandbox the whole host for a month).
+const MAX_CPU_MINUTES: i64 = 100_000;
+const MAX_EGRESS_BYTES: i64 = 1024 * 1024 * 1024 * 1024;
+const MAX_MODEL_TOKENS: i64 = 10_000_000_000;
+const LOG_ROWS: i64 = 100;
+
+/// Why a manager route refuses.
+enum ManageRefused {
+    NotFound,
+    Forbidden,
+}
+
+/// The agent's user id when the caller is an owner or admin of the workspace and `agent` is one of its live custom
+/// agents (by profile id). Guests and outsiders: not found; members: forbidden.
+async fn managed_agent(
+    conn: &mut sqlx::AnyConnection,
+    workspace_id: Id,
+    user: Id,
+    agent: &str,
+) -> Result<Result<String, ManageRefused>, sqlx::Error> {
+    let Some(actor) = membership::actor(&mut *conn, workspace_id, user).await? else {
+        return Ok(Err(ManageRefused::NotFound));
+    };
+    let Some(agent_user) = sqlx::query_scalar::<_, String>(
+        "SELECT user_id FROM agent_profiles WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL",
+    )
+    .bind(agent)
+    .bind(workspace_id.to_string())
+    .fetch_optional(&mut *conn)
+    .await?
+    else {
+        return Ok(Err(ManageRefused::NotFound));
+    };
+    if !actor.can(Permission::WorkspaceUpdate) {
+        return Ok(Err(ManageRefused::Forbidden));
+    }
+    Ok(Ok(agent_user))
+}
+
+fn manage_refused(refused: &ManageRefused, uri: &Uri, request_id: &RequestIdExtension) -> ApiError {
+    match refused {
+        ManageRefused::NotFound => error(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Not found.",
+            uri,
+            request_id,
+        ),
+        ManageRefused::Forbidden => error(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "Only owners and admins can manage an agent's sandbox.",
+            uri,
+            request_id,
+        ),
+    }
+}
+
+/// The settings, this month's use, the rules, the pending requests and the latest connections of one agent.
+async fn sandbox_view(
+    conn: &mut sqlx::AnyConnection,
+    agent_user: &str,
+    viewer: Id,
+) -> Result<Value, sqlx::Error> {
+    let now = TimestampMillis::now().as_millis();
+    let settings = sqlx::query(
+        "SELECT enabled, idle_minutes, cpu_minutes_month, egress_bytes_month, model_tokens_month, updated_at \
+         FROM agent_sandbox_settings WHERE agent_user_id = $1",
+    )
+    .bind(agent_user)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let settings = match settings {
+        Some(row) => json!({
+            "enabled": row.get::<i64, _>("enabled") == 1,
+            "idle_minutes": row.get::<i64, _>("idle_minutes"),
+            "cpu_minutes_month": row.get::<i64, _>("cpu_minutes_month"),
+            "egress_bytes_month": row.get::<i64, _>("egress_bytes_month"),
+            "model_tokens_month": row.get::<i64, _>("model_tokens_month"),
+            "updated_at": row.get::<i64, _>("updated_at"),
+        }),
+        None => json!({
+            "enabled": false,
+            "idle_minutes": DEFAULT_IDLE_MINUTES,
+            "cpu_minutes_month": DEFAULT_CPU_MINUTES,
+            "egress_bytes_month": DEFAULT_EGRESS_BYTES,
+            "model_tokens_month": DEFAULT_MODEL_TOKENS,
+            "updated_at": null,
+        }),
+    };
+    let month = month(now);
+    let usage = sqlx::query(
+        "SELECT cpu_ms, egress_bytes, model_tokens FROM agent_sandbox_usage WHERE agent_user_id = $1 AND month = $2",
+    )
+    .bind(agent_user)
+    .bind(&month)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let used = |column: &str| usage.as_ref().map_or(0, |row| row.get::<i64, _>(column));
+    let rules: Vec<Value> = sqlx::query(
+        "SELECT r.id, r.host, r.port, r.action, r.created_at, r.last_used_at, u.display_name AS created_by_name \
+         FROM agent_egress_rules r LEFT JOIN users u ON u.id = r.created_by \
+         WHERE r.agent_user_id = $1 ORDER BY r.host, r.port",
+    )
+    .bind(agent_user)
+    .fetch_all(&mut *conn)
+    .await?
+    .iter()
+    .map(|row| {
+        json!({
+            "id": row.get::<String, _>("id"),
+            "host": row.get::<String, _>("host"),
+            "port": row.get::<i64, _>("port"),
+            "action": row.get::<String, _>("action"),
+            "created_by_name": row.get::<Option<String>, _>("created_by_name"),
+            "created_at": row.get::<i64, _>("created_at"),
+            "last_used_at": row.get::<Option<i64>, _>("last_used_at"),
+        })
+    })
+    .collect();
+    let pending: Vec<Value> = sqlx::query(
+        "SELECT r.id, r.host, r.port, r.driver_user_id, r.created_at, r.expires_at, u.display_name AS driver_name \
+         FROM agent_egress_requests r JOIN users u ON u.id = r.driver_user_id \
+         WHERE r.agent_user_id = $1 AND r.status = 'pending' AND (r.expires_at IS NULL OR r.expires_at > $2) \
+         ORDER BY r.created_at DESC, r.id",
+    )
+    .bind(agent_user)
+    .bind(now)
+    .fetch_all(&mut *conn)
+    .await?
+    .iter()
+    .map(|row| {
+        let host: String = row.get("host");
+        let is_driver = row.get::<String, _>("driver_user_id") == viewer.to_string();
+        let (once, always, deny) = viewer_may(is_driver, true, &host);
+        json!({
+            "id": row.get::<String, _>("id"),
+            "risky": is_risky(&host),
+            "host": host,
+            "port": row.get::<i64, _>("port"),
+            "driver_name": row.get::<String, _>("driver_name"),
+            "created_at": row.get::<i64, _>("created_at"),
+            "expires_at": row.get::<Option<i64>, _>("expires_at"),
+            "can_allow_once": once,
+            "can_allow_always": always,
+            "can_deny": deny,
+        })
+    })
+    .collect();
+    let log: Vec<Value> = sqlx::query(
+        "SELECT l.id, l.host, l.port, l.decision, l.reason, l.bytes_up, l.bytes_down, l.created_at, \
+         u.display_name AS driver_name FROM agent_egress_log l LEFT JOIN users u ON u.id = l.driver_user_id \
+         WHERE l.agent_user_id = $1 ORDER BY l.created_at DESC, l.id DESC LIMIT $2",
+    )
+    .bind(agent_user)
+    .bind(LOG_ROWS)
+    .fetch_all(&mut *conn)
+    .await?
+    .iter()
+    .map(|row| {
+        json!({
+            "id": row.get::<String, _>("id"),
+            "host": row.get::<String, _>("host"),
+            "port": row.get::<i64, _>("port"),
+            "decision": row.get::<String, _>("decision"),
+            "reason": row.get::<String, _>("reason"),
+            "bytes_up": row.get::<i64, _>("bytes_up"),
+            "bytes_down": row.get::<i64, _>("bytes_down"),
+            "driver_name": row.get::<Option<String>, _>("driver_name"),
+            "created_at": row.get::<i64, _>("created_at"),
+        })
+    })
+    .collect();
+    Ok(json!({
+        "settings": settings,
+        "usage": {
+            "month": month,
+            "cpu_ms": used("cpu_ms"),
+            "egress_bytes": used("egress_bytes"),
+            "model_tokens": used("model_tokens"),
+        },
+        "rules": rules,
+        "pending": pending,
+        "log": log,
+    }))
+}
+
+async fn read_sandbox(
+    State(state): State<AgentState>,
+    Path((workspace_id, agent)): Path<(String, String)>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+) -> Result<Response, ApiError> {
+    keys(&state, &uri, &request_id)?;
+    let session = authenticate_session(
+        &state.identity,
+        state.cookie_mode,
+        &headers,
+        uri.path(),
+        request_id.as_ref(),
+    )
+    .await?;
+    let workspace_id: Id = workspace_id
+        .parse()
+        .map_err(|_| manage_refused(&ManageRefused::NotFound, &uri, &request_id))?;
+    let result: Result<Result<Value, ManageRefused>, sqlx::Error> = async {
+        let mut conn = state.database().pool().acquire().await?;
+        let agent_user =
+            match managed_agent(&mut conn, workspace_id, session.user.id, &agent).await? {
+                Ok(agent_user) => agent_user,
+                Err(refused) => return Ok(Err(refused)),
+            };
+        Ok(Ok(
+            sandbox_view(&mut conn, &agent_user, session.user.id).await?
+        ))
+    }
+    .await;
+    match result {
+        Ok(Ok(view)) => Ok(Json(view).into_response()),
+        Ok(Err(refused)) => Err(manage_refused(&refused, &uri, &request_id)),
+        Err(failure) => Err(unavailable(&failure, &uri, &request_id)),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SettingsBody {
+    enabled: bool,
+    idle_minutes: i64,
+    cpu_minutes_month: i64,
+    egress_bytes_month: i64,
+    model_tokens_month: i64,
+}
+
+/// The settings' limits, or what is wrong with them.
+fn check_settings(body: &SettingsBody) -> Result<(), &'static str> {
+    if !(5..=120).contains(&body.idle_minutes) {
+        return Err("The idle time must be 5 to 120 minutes.");
+    }
+    if !(0..=MAX_CPU_MINUTES).contains(&body.cpu_minutes_month) {
+        return Err("The CPU minutes per month must be 0 to 100,000.");
+    }
+    if !(0..=MAX_EGRESS_BYTES).contains(&body.egress_bytes_month) {
+        return Err("The internet traffic per month must be 0 to 1 TiB.");
+    }
+    if !(0..=MAX_MODEL_TOKENS).contains(&body.model_tokens_month) {
+        return Err("The model tokens per month must be 0 to 10 billion.");
+    }
+    Ok(())
+}
+
+async fn save_sandbox(
+    State(state): State<AgentState>,
+    Path((workspace_id, agent)): Path<(String, String)>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+    Json(body): Json<SettingsBody>,
+) -> Result<Response, ApiError> {
+    keys(&state, &uri, &request_id)?;
+    let session = authenticate_session(
+        &state.identity,
+        state.cookie_mode,
+        &headers,
+        uri.path(),
+        request_id.as_ref(),
+    )
+    .await?;
+    let workspace_id: Id = workspace_id
+        .parse()
+        .map_err(|_| manage_refused(&ManageRefused::NotFound, &uri, &request_id))?;
+    if let Err(detail) = check_settings(&body) {
+        return Err(error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation_failed",
+            detail,
+            &uri,
+            &request_id,
+        ));
+    }
+    let user = session.user.id;
+    let audit_request = request_id_value(request_id.as_ref()).to_owned();
+    let result: Result<Result<Value, ManageRefused>, sqlx::Error> = async {
+        let now = TimestampMillis::now();
+        let mut tx = state.database().immediate_transaction().await?;
+        let agent_user = match managed_agent(&mut tx, workspace_id, user, &agent).await? {
+            Ok(agent_user) => agent_user,
+            Err(refused) => return Ok(Err(refused)),
+        };
+        sqlx::query(
+            "INSERT INTO agent_sandbox_settings (agent_user_id, workspace_id, enabled, idle_minutes, cpu_minutes_month, \
+             egress_bytes_month, model_tokens_month, updated_by, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+             ON CONFLICT (agent_user_id) DO UPDATE SET enabled = excluded.enabled, idle_minutes = excluded.idle_minutes, \
+             cpu_minutes_month = excluded.cpu_minutes_month, egress_bytes_month = excluded.egress_bytes_month, \
+             model_tokens_month = excluded.model_tokens_month, updated_by = excluded.updated_by, \
+             updated_at = excluded.updated_at",
+        )
+        .bind(&agent_user)
+        .bind(workspace_id.to_string())
+        .bind(i64::from(body.enabled))
+        .bind(body.idle_minutes)
+        .bind(body.cpu_minutes_month)
+        .bind(body.egress_bytes_month)
+        .bind(body.model_tokens_month)
+        .bind(user.to_string())
+        .bind(now.as_millis())
+        .execute(&mut *tx)
+        .await?;
+        audit::record(
+            &mut tx,
+            workspace_id,
+            Some(user),
+            "agent_sandbox.settings_update",
+            AuditOutcome::Success,
+            "agent",
+            agent_user.parse().ok(),
+            &audit_request,
+            json!({
+                "enabled": body.enabled,
+                "idle_minutes": body.idle_minutes,
+                "cpu_minutes_month": body.cpu_minutes_month,
+                "egress_bytes_month": body.egress_bytes_month,
+                "model_tokens_month": body.model_tokens_month,
+            }),
+            now,
+        )
+        .await?;
+        let view = sandbox_view(&mut tx, &agent_user, user).await?;
+        tx.commit().await?;
+        Ok(Ok(view))
+    }
+    .await;
+    match result {
+        Ok(Ok(view)) => Ok(Json(view).into_response()),
+        Ok(Err(refused)) => Err(manage_refused(&refused, &uri, &request_id)),
+        Err(failure) => Err(unavailable(&failure, &uri, &request_id)),
+    }
+}
+
+/// A rule's host as stored (`api.example.com` or `*.example.com`), or why it is refused (section 4, the rules):
+/// `*`, IP literals, `orbit.internal`, Orbit's own host (also under a wildcard), a public suffix or a wildcard on one
+/// (the Public Suffix List, private part included: `*.co.uk`, `*.github.io`), and allow rules for risky hosts.
+pub fn check_rule_host(
+    raw: &str,
+    allow: bool,
+    own_host: Option<&str>,
+) -> Result<String, &'static str> {
+    let raw = raw.trim().to_ascii_lowercase();
+    let (wildcard, base) = match raw.strip_prefix("*.") {
+        Some(base) => (true, base),
+        None => (false, raw.as_str()),
+    };
+    if base.contains('*') || raw == "*" {
+        return Err("A wildcard is only allowed as `*.` at the start, for example *.example.com.");
+    }
+    let Some(base) = normalize_host(base) else {
+        return Err("Not a host name. IP addresses are never allowed.");
+    };
+    let rule = if wildcard {
+        format!("*.{base}")
+    } else {
+        base.clone()
+    };
+    let orbit = |host: &str| host == base || rule_matches(&rule, host);
+    if orbit("orbit.internal") || own_host.is_some_and(orbit) {
+        return Err("Orbit is reached through orbit.internal only: no rule can name it.");
+    }
+    if psl::suffix_str(&base).is_none_or(|suffix| suffix == base) {
+        return Err(
+            "This is a public suffix (like com, co.uk or github.io): name a host or domain under it.",
+        );
+    }
+    if allow && (is_risky(&base) || (wildcard && is_risky(&format!("x.{base}")))) {
+        return Err("This host always asks: it cannot be allowed always.");
+    }
+    Ok(rule)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuleBody {
+    host: String,
+    #[serde(default = "https_port")]
+    port: i64,
+    /// `allow` or `deny`.
+    action: String,
+}
+
+const fn https_port() -> i64 {
+    443
+}
+
+async fn add_rule(
+    State(state): State<AgentState>,
+    Path((workspace_id, agent)): Path<(String, String)>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+    Json(body): Json<RuleBody>,
+) -> Result<Response, ApiError> {
+    keys(&state, &uri, &request_id)?;
+    let session = authenticate_session(
+        &state.identity,
+        state.cookie_mode,
+        &headers,
+        uri.path(),
+        request_id.as_ref(),
+    )
+    .await?;
+    let workspace_id: Id = workspace_id
+        .parse()
+        .map_err(|_| manage_refused(&ManageRefused::NotFound, &uri, &request_id))?;
+    let invalid = |detail| {
+        error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation_failed",
+            detail,
+            &uri,
+            &request_id,
+        )
+    };
+    let allow = match body.action.as_str() {
+        "allow" => true,
+        "deny" => false,
+        _ => return Err(invalid("The action is allow or deny.")),
+    };
+    if !(1..=65_535).contains(&body.port) {
+        return Err(invalid("The port must be 1 to 65535."));
+    }
+    let own_host = state
+        .public_origin
+        .as_deref()
+        .and_then(|origin| url::Url::parse(origin).ok())
+        .and_then(|origin| origin.host_str().map(str::to_owned));
+    // Check the rule only for people who may make one: a member learns nothing from the answer.
+    let checked = check_rule_host(&body.host, allow, own_host.as_deref());
+    let user = session.user.id;
+    let audit_request = request_id_value(request_id.as_ref()).to_owned();
+    let result: Result<Result<Result<Value, &'static str>, ManageRefused>, sqlx::Error> = async {
+        let now = TimestampMillis::now();
+        let mut tx = state.database().immediate_transaction().await?;
+        let agent_user = match managed_agent(&mut tx, workspace_id, user, &agent).await? {
+            Ok(agent_user) => agent_user,
+            Err(refused) => return Ok(Err(refused)),
+        };
+        let host = match checked {
+            Ok(host) => host,
+            Err(detail) => return Ok(Ok(Err(detail))),
+        };
+        sqlx::query(
+            "INSERT INTO agent_egress_rules (id, workspace_id, agent_user_id, host, port, action, created_by, \
+             created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (agent_user_id, host, port) \
+             DO UPDATE SET action = excluded.action, created_by = excluded.created_by, created_at = excluded.created_at",
+        )
+        .bind(Id::new_v7().to_string())
+        .bind(workspace_id.to_string())
+        .bind(&agent_user)
+        .bind(&host)
+        .bind(body.port)
+        .bind(&body.action)
+        .bind(user.to_string())
+        .bind(now.as_millis())
+        .execute(&mut *tx)
+        .await?;
+        audit::record(
+            &mut tx,
+            workspace_id,
+            Some(user),
+            "agent_egress.rule_create",
+            AuditOutcome::Success,
+            "agent",
+            agent_user.parse().ok(),
+            &audit_request,
+            json!({ "agent_user_id": agent_user, "host": host, "port": body.port, "rule": body.action }),
+            now,
+        )
+        .await?;
+        let view = sandbox_view(&mut tx, &agent_user, user).await?;
+        tx.commit().await?;
+        Ok(Ok(Ok(view)))
+    }
+    .await;
+    match result {
+        Ok(Ok(Ok(view))) => Ok((StatusCode::CREATED, Json(view)).into_response()),
+        Ok(Ok(Err(detail))) => Err(invalid(detail)),
+        Ok(Err(refused)) => Err(manage_refused(&refused, &uri, &request_id)),
+        Err(failure) => Err(unavailable(&failure, &uri, &request_id)),
+    }
+}
+
+async fn delete_rule(
+    State(state): State<AgentState>,
+    Path((workspace_id, agent, rule)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    uri: Uri,
+    request_id: RequestIdExtension,
+) -> Result<Response, ApiError> {
+    keys(&state, &uri, &request_id)?;
+    let session = authenticate_session(
+        &state.identity,
+        state.cookie_mode,
+        &headers,
+        uri.path(),
+        request_id.as_ref(),
+    )
+    .await?;
+    let workspace_id: Id = workspace_id
+        .parse()
+        .map_err(|_| manage_refused(&ManageRefused::NotFound, &uri, &request_id))?;
+    let user = session.user.id;
+    let audit_request = request_id_value(request_id.as_ref()).to_owned();
+    let result: Result<Result<Value, ManageRefused>, sqlx::Error> = async {
+        let now = TimestampMillis::now();
+        let mut tx = state.database().immediate_transaction().await?;
+        let agent_user = match managed_agent(&mut tx, workspace_id, user, &agent).await? {
+            Ok(agent_user) => agent_user,
+            Err(refused) => return Ok(Err(refused)),
+        };
+        let Some(removed) = sqlx::query(
+            "DELETE FROM agent_egress_rules WHERE id = $1 AND agent_user_id = $2 RETURNING host, port, action",
+        )
+        .bind(&rule)
+        .bind(&agent_user)
+        .fetch_optional(&mut *tx)
+        .await?
+        else {
+            return Ok(Err(ManageRefused::NotFound));
+        };
+        audit::record(
+            &mut tx,
+            workspace_id,
+            Some(user),
+            "agent_egress.rule_delete",
+            AuditOutcome::Success,
+            "agent",
+            agent_user.parse().ok(),
+            &audit_request,
+            json!({
+                "agent_user_id": agent_user,
+                "host": removed.get::<String, _>("host"),
+                "port": removed.get::<i64, _>("port"),
+                "rule": removed.get::<String, _>("action"),
+            }),
+            now,
+        )
+        .await?;
+        let view = sandbox_view(&mut tx, &agent_user, user).await?;
+        tx.commit().await?;
+        Ok(Ok(view))
+    }
+    .await;
+    match result {
+        Ok(Ok(view)) => Ok(Json(view).into_response()),
+        Ok(Err(refused)) => Err(manage_refused(&refused, &uri, &request_id)),
+        Err(failure) => Err(unavailable(&failure, &uri, &request_id)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        Answer, AnswerRefused, SandboxKeys, is_risky, may_answer, normalize_host, rule_matches,
+        Answer, AnswerRefused, SandboxKeys, check_rule_host, is_risky, may_answer, normalize_host,
+        rule_matches, shown_status, viewer_may,
     };
 
     #[test]
@@ -1421,5 +2159,82 @@ mod tests {
         assert!(SandboxKeys::new(b"short").is_err());
         let keys = SandboxKeys::new(b"0123456789abcdef0123456789abcdef\n").unwrap();
         assert_eq!(format!("{keys:?}"), "SandboxKeys([REDACTED])");
+    }
+
+    #[test]
+    fn rules_refuse_ips_public_suffix_wildcards_orbit_and_risky_allows() {
+        let own = Some("orbit.example.com");
+        let ok = |raw: &str, allow: bool| check_rule_host(raw, allow, own);
+        assert_eq!(
+            ok(" API.Example.org. ", true).as_deref(),
+            Ok("api.example.org")
+        );
+        assert_eq!(ok("*.example.org", true).as_deref(), Ok("*.example.org"));
+        assert_eq!(ok("*.bücher.de", true).as_deref(), Ok("*.xn--bcher-kva.de"));
+        assert_eq!(
+            ok("*.user.github.io", true).as_deref(),
+            Ok("*.user.github.io")
+        );
+        // Public suffixes (ICANN and private parts of the list), and wildcards on them.
+        for refused in [
+            "*.com",
+            "*.co.uk",
+            "*.github.io",
+            "*.s3.amazonaws.com",
+            "co.uk",
+            "github.io",
+        ] {
+            assert!(ok(refused, false).is_err(), "{refused}");
+        }
+        // No `*` alone or inside, no IPs, no Orbit (also under a wildcard).
+        for refused in [
+            "*",
+            "*.",
+            "a.*.example.org",
+            "api*.example.org",
+            "1.2.3.4",
+            "[::1]",
+            "localhost",
+        ] {
+            assert!(ok(refused, false).is_err(), "{refused}");
+        }
+        for refused in [
+            "orbit.internal",
+            "*.internal",
+            "orbit.example.com",
+            "*.example.com",
+        ] {
+            assert!(ok(refused, false).is_err(), "{refused}");
+        }
+        // A risky host never gets an allow rule (also by a wildcard over it), but may be denied.
+        assert!(ok("webhook.site", true).is_err());
+        assert!(ok("*.ngrok-free.app", true).is_err());
+        assert!(ok("x.webhook.site", true).is_err());
+        assert_eq!(ok("webhook.site", false).as_deref(), Ok("webhook.site"));
+    }
+
+    #[test]
+    fn a_card_shows_each_viewer_only_the_answers_they_may_give() {
+        // (allow once, allow always, deny)
+        assert_eq!(
+            viewer_may(true, false, "api.example.com"),
+            (true, false, true)
+        );
+        assert_eq!(
+            viewer_may(false, true, "api.example.com"),
+            (false, true, true)
+        );
+        assert_eq!(
+            viewer_may(true, true, "api.example.com"),
+            (true, true, true)
+        );
+        assert_eq!(
+            viewer_may(false, false, "api.example.com"),
+            (false, false, false)
+        );
+        assert_eq!(viewer_may(true, true, "webhook.site"), (true, false, true));
+        assert_eq!(shown_status("pending", Some(10), 10), "expired");
+        assert_eq!(shown_status("pending", Some(11), 10), "pending");
+        assert_eq!(shown_status("allowed", Some(5), 10), "allowed");
     }
 }

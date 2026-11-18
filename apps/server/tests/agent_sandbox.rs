@@ -1717,3 +1717,344 @@ async fn the_sandbox_migration_runs_after_productions_newest_migration() {
         .await
         .unwrap();
 }
+
+/// The agent's profile id (the settings routes take it, as the agent card does).
+async fn profile_of(fixture: &Fixture, agent: Id) -> String {
+    sqlx::query_scalar::<_, String>("SELECT id FROM agent_profiles WHERE user_id = $1")
+        .bind(agent.to_string())
+        .fetch_one(fixture.database.pool())
+        .await
+        .unwrap()
+}
+
+/// The sidecar's card message for a call (nonce `egress:<call>`, by the agent, in the thread's conversation).
+async fn card_message(fixture: &Fixture, agent: Id, call: &str) -> String {
+    let id = Id::new_v7().to_string();
+    sqlx::query(
+        "INSERT INTO chat_messages (id, conversation_id, kind, author_id, body, nonce, created_at) \
+         VALUES ($1, $2, 'message', $3, 'wants to connect', $4, $5)",
+    )
+    .bind(&id)
+    .bind(&fixture.conversation)
+    .bind(agent.to_string())
+    .bind(format!("egress:{call}"))
+    .bind(TimestampMillis::now().as_millis())
+    .execute(fixture.database.pool())
+    .await
+    .unwrap();
+    id
+}
+
+#[tokio::test]
+async fn the_thread_card_shows_each_viewer_only_the_answers_they_may_give() {
+    let fixture = Fixture::new().await;
+    let driver = fixture.add_user("driver", Some("member")).await;
+    let teammate = fixture.add_user("teammate", Some("member")).await;
+    let guest = fixture.add_user("guest", Some("guest")).await;
+    let outsider = fixture.add_user("outsider", None).await;
+    let admin = fixture.add_user("admin", Some("admin")).await;
+    let agent = fixture.add_agent(TOOLS, true).await;
+    let thread = fixture.thread(agent, driver, "running").await;
+    let (call, _, password) = fixture.call(driver, agent, &thread).await;
+    for host in ["api.example.org", "old.example.org", "webhook.site"] {
+        assert_eq!(
+            fixture.check(&call, &password, host, 443).await["decision"],
+            "ask"
+        );
+    }
+    fixture.end(&call, 10).await;
+    let message = card_message(&fixture, agent, &call).await;
+    fixture
+        .exec(
+            "UPDATE agent_egress_requests SET expires_at = 1 WHERE host = $1",
+            &["old.example.org"],
+        )
+        .await;
+    let list = |token: String| {
+        let fixture = &fixture;
+        async move {
+            fixture
+                .request(
+                    "GET",
+                    &format!(
+                        "/api/v1/workspaces/{}/agents/egress-requests?conversation_id={}",
+                        fixture.workspace_id, fixture.conversation
+                    ),
+                    &format!("Bearer {token}"),
+                    None,
+                )
+                .await
+        }
+    };
+    let flags = |view: &Value, host: &str| {
+        let row = view["requests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["host"] == host)
+            .unwrap()
+            .clone();
+        assert_eq!(row["message_id"], message.as_str());
+        (
+            row["status"].as_str().unwrap().to_owned(),
+            row["can_allow_once"].as_bool().unwrap(),
+            row["can_allow_always"].as_bool().unwrap(),
+            row["can_deny"].as_bool().unwrap(),
+        )
+    };
+    let pending = |once, always, deny| ("pending".to_owned(), once, always, deny);
+    let expired = ("expired".to_owned(), false, false, false);
+
+    let (status, view) = list(fixture.session(driver).await).await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    assert_eq!(view["requests"].as_array().unwrap().len(), 3);
+    assert_eq!(flags(&view, "api.example.org"), pending(true, false, true));
+    assert_eq!(flags(&view, "webhook.site"), pending(true, false, true));
+    assert_eq!(flags(&view, "old.example.org"), expired);
+    let (_, view) = list(fixture.session(admin).await).await;
+    assert_eq!(flags(&view, "api.example.org"), pending(false, true, true));
+    // A risky host never offers Allow always, also to admins.
+    assert_eq!(flags(&view, "webhook.site"), pending(false, false, true));
+    let teammate_token = fixture.session(teammate).await;
+    let (_, view) = list(teammate_token.clone()).await;
+    assert_eq!(
+        flags(&view, "api.example.org"),
+        pending(false, false, false)
+    );
+    assert_eq!(view["requests"][0]["driver_name"], "driver");
+    // Guests and people outside the workspace see nothing.
+    for user in [guest, outsider] {
+        assert_eq!(
+            list(fixture.session(user).await).await.0,
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    // After an admin's Allow always, every viewer sees the answer, who gave it and the rule; no buttons.
+    let request = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM agent_egress_requests WHERE host = 'api.example.org'",
+    )
+    .fetch_one(fixture.database.pool())
+    .await
+    .unwrap();
+    let admin_token = fixture.session(admin).await;
+    let (status, _) = fixture
+        .card(&admin_token, &request, json!({ "answer": "allow_always" }))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, view) = list(teammate_token).await;
+    let row = view["requests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == request.as_str())
+        .unwrap();
+    assert_eq!(row["status"], "allowed");
+    assert_eq!(row["rule"], "allow");
+    assert_eq!(row["decided_by_name"], "admin");
+    assert_eq!(
+        flags(&view, "api.example.org"),
+        ("allowed".to_owned(), false, false, false)
+    );
+}
+
+#[tokio::test]
+async fn only_owners_and_admins_manage_the_sandbox_and_its_rules_are_checked() {
+    let fixture = Fixture::new().await;
+    let driver = fixture.add_user("driver", Some("member")).await;
+    let guest = fixture.add_user("guest", Some("guest")).await;
+    let admin = fixture.add_user("admin", Some("admin")).await;
+    let agent = fixture.add_agent(TOOLS, true).await;
+    let profile = profile_of(&fixture, agent).await;
+    let base = format!(
+        "/api/v1/workspaces/{}/agents/{profile}",
+        fixture.workspace_id
+    );
+    let (member_token, guest_token, admin_token) = (
+        format!("Bearer {}", fixture.session(driver).await),
+        format!("Bearer {}", fixture.session(guest).await),
+        format!("Bearer {}", fixture.session(admin).await),
+    );
+    let settings = json!({ "enabled": true, "idle_minutes": 45, "cpu_minutes_month": 60, "egress_bytes_month": 1_000_000, "model_tokens_month": 5 });
+    let rule = |host: &str, action: &str| json!({ "host": host, "port": 443, "action": action });
+
+    // Guests: 404 everywhere; members: 403 (also for a rule that is not valid: they learn nothing about it).
+    let sandbox = format!("{base}/sandbox");
+    let rules = format!("{base}/egress-rules");
+    for (token, status) in [
+        (&guest_token, StatusCode::NOT_FOUND),
+        (&member_token, StatusCode::FORBIDDEN),
+    ] {
+        assert_eq!(
+            fixture.request("GET", &sandbox, token, None).await.0,
+            status
+        );
+        assert_eq!(
+            fixture
+                .request("PUT", &sandbox, token, Some(settings.clone()))
+                .await
+                .0,
+            status
+        );
+        assert_eq!(
+            fixture
+                .request(
+                    "POST",
+                    &rules,
+                    token,
+                    Some(rule("api.example.org", "allow"))
+                )
+                .await
+                .0,
+            status
+        );
+        assert_eq!(
+            fixture
+                .request("POST", &rules, token, Some(rule("*.com", "allow")))
+                .await
+                .0,
+            status
+        );
+    }
+    // Another workspace's (or no) agent: 404, also for admins.
+    let other = format!(
+        "/api/v1/workspaces/{}/agents/{}/sandbox",
+        fixture.workspace_id,
+        Id::new_v7()
+    );
+    assert_eq!(
+        fixture.request("GET", &other, &admin_token, None).await.0,
+        StatusCode::NOT_FOUND
+    );
+
+    // The card's switch and limits.
+    let (status, view) = fixture
+        .request("PUT", &sandbox, &admin_token, Some(settings.clone()))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    assert_eq!(view["settings"]["idle_minutes"], 45);
+    assert_eq!(view["settings"]["egress_bytes_month"], 1_000_000);
+    let mut bad = settings.clone();
+    bad["idle_minutes"] = json!(4);
+    assert_eq!(
+        fixture
+            .request("PUT", &sandbox, &admin_token, Some(bad))
+            .await
+            .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+
+    // Rules: the Public Suffix List, IPs, Orbit's own host and risky allows are refused.
+    for (host, action) in [
+        ("*.com", "allow"),
+        ("*.co.uk", "allow"),
+        ("*.github.io", "deny"),
+        ("1.2.3.4", "allow"),
+        ("*", "allow"),
+        ("orbit.internal", "allow"),
+        ("orbit.example.com", "allow"),
+        ("*.example.com", "allow"),
+        ("webhook.site", "allow"),
+    ] {
+        let (status, body) = fixture
+            .request("POST", &rules, &admin_token, Some(rule(host, action)))
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{host}: {body}");
+    }
+    let (status, _) = fixture
+        .request(
+            "POST",
+            &rules,
+            &admin_token,
+            Some(rule("webhook.site", "deny")),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, view) = fixture
+        .request(
+            "POST",
+            &rules,
+            &admin_token,
+            Some(rule("*.Example.org", "allow")),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let allow = view["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["host"] == "*.example.org")
+        .unwrap()
+        .clone();
+    assert_eq!(allow["created_by_name"], "admin");
+
+    // The rule takes effect, and the page shows the connection log.
+    let thread = fixture.thread(agent, driver, "running").await;
+    let (call, _, password) = fixture.call(driver, agent, &thread).await;
+    assert_eq!(
+        fixture
+            .check(&call, &password, "api.example.org", 443)
+            .await["decision"],
+        "allow"
+    );
+    let (_, view) = fixture.request("GET", &sandbox, &admin_token, None).await;
+    assert_eq!(view["log"][0]["host"], "api.example.org");
+    assert_eq!(view["log"][0]["decision"], "allow");
+    assert!(
+        view["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["host"] == "*.example.org" && row["last_used_at"].is_i64())
+    );
+
+    // Removing: members cannot; admins can, and the host asks again.
+    let rule_url = format!("{rules}/{}", allow["id"].as_str().unwrap());
+    assert_eq!(
+        fixture
+            .request("DELETE", &rule_url, &member_token, None)
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        fixture
+            .request("DELETE", &rule_url, &admin_token, None)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        fixture
+            .request("DELETE", &rule_url, &admin_token, None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        fixture
+            .check(&call, &password, "api.example.org", 443)
+            .await["decision"],
+        "ask"
+    );
+    let (_, view) = fixture.request("GET", &sandbox, &admin_token, None).await;
+    assert_eq!(view["pending"][0]["host"], "api.example.org");
+    assert_eq!(view["pending"][0]["can_allow_always"], true);
+    assert_eq!(view["pending"][0]["can_allow_once"], false);
+
+    let events: Vec<String> = sqlx::query_scalar(
+        "SELECT action FROM audit_events WHERE action LIKE 'agent_%' ORDER BY id",
+    )
+    .fetch_all(fixture.database.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        events,
+        [
+            "agent_sandbox.settings_update",
+            "agent_egress.rule_create",
+            "agent_egress.rule_create",
+            "agent_egress.rule_delete"
+        ]
+    );
+}

@@ -12,6 +12,12 @@ test('every section shows and stays on its address', () => {
   }
 })
 
+test("an agent's Internet access page is on the Agents tab", () => {
+  const view = agenticTabsView(AGENTIC_TABS, true, '/settings/agentic/agents/a1/internet')
+  expect(view.current?.label).toBe('Agents')
+  expect(view.redirect).toBeNull()
+})
+
 test('the old Admin tab goes to Agents and the old Bots tab to You; another unknown address to the first section', () => {
   for (const agent of [true, false]) {
     expect(agenticTabsView(AGENTIC_TABS, agent, '/settings/agentic/admin').redirect).toBe('/settings/agentic/agents')

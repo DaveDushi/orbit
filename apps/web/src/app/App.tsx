@@ -65,6 +65,7 @@ const AgenticWorkspace = lazy(() => loadSettings().then((module) => ({ default: 
 const AgenticRoutines = lazy(() => loadSettings().then((module) => ({ default: module.AgenticRoutines })))
 const AgenticSkills = lazy(() => loadSettings().then((module) => ({ default: module.AgenticSkills })))
 const AgenticAgents = lazy(() => loadSettings().then((module) => ({ default: module.AgenticAgents })))
+const AgenticInternetAccess = lazy(() => loadSettings().then((module) => ({ default: module.AgenticInternetAccess })))
 const AgenticYou = lazy(() => loadSettings().then((module) => ({ default: module.AgenticYou })))
 const ShortcutsPage = lazy(() => loadSettings().then((module) => ({ default: module.ShortcutsPage })))
 const StickersPage = lazy(() => loadSettings().then((module) => ({ default: module.StickersPage })))
@@ -208,6 +209,7 @@ export default function App() {
                     <Route index element={<AgenticYou />} />
                     <Route path="workspace" element={<AgenticWorkspace />} />
                     <Route path="agents" element={<AgenticAgents />} />
+                    <Route path="agents/:agentId/internet" element={<AgenticInternetAccess />} />
                     <Route path="routines" element={<AgenticRoutines />} />
                     <Route path="skills" element={<AgenticSkills />} />
                     {/* the Admin tab's default model is on the Agents tab now */}

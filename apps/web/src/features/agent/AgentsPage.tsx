@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router'
 import { toast } from 'sonner'
 import { AGENT_DEFAULT_CHOICE as DEFAULT, ANSWER_LEVELS, type AgentProfile, type AgentProfiles, type AnswerLevel, type DefaultAgent } from '@orbit/api/agent'
 import { ApiProblem } from '@orbit/api/problem'
@@ -21,6 +22,9 @@ import { avatarImage } from '@/features/profile/avatarImage'
 import { FieldGrid } from '@/features/settings/components/SettingsParts'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import { useAgentProfiles, useDeleteAgentProfile, useSaveAgentProfile, useSaveDefaultAgent } from './api'
+import { sandboxDraft, sandboxInput, type SandboxDraft } from '@orbit/api/agentSandbox'
+import { SandboxFields } from './SandboxFields'
+import { SANDBOX_TOOL, sandboxOff, useAgentSandbox, useSaveAgentSandbox } from './sandboxApi'
 
 /** What the dialog edits: the default agent, a custom agent, or a new one. */
 type Editing = { kind: 'default'; agent: DefaultAgent } | { kind: 'custom'; agent: AgentProfile | null }
@@ -74,12 +78,14 @@ export function AgentsPage() {
                   <Badge variant="secondary">{agent.tools.length} tools</Badge>
                   {agent.model ? <Badge variant="outline">{agent.model}</Badge> : null}
                   <Badge variant="outline">{answerLevelLabel(agent.answer_level)} answers</Badge>
+                  {data.can_manage && agent.tools.includes(SANDBOX_TOOL) ? <SandboxBadge agentId={agent.id} /> : null}
                 </div>
                 <p className="text-xs text-muted-foreground">{channelsLabel(agent)} · {servicesLabel(data, agent.integration_ids)}</p>
                 {agent.instructions ? <p className="line-clamp-2 text-sm text-muted-foreground">{agent.instructions}</p> : null}
               </div>
               {data?.can_manage ? (
                 <div className="flex shrink-0 gap-1">
+                  {agent.tools.includes(SANDBOX_TOOL) ? <Button size="sm" variant="ghost" render={<Link to={`/settings/agentic/agents/${agent.id}/internet`} />} nativeButton={false}>Internet access</Button> : null}
                   <Button size="sm" variant="ghost" onClick={() => setEditing({ kind: 'custom', agent })}>Edit</Button>
                   <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setDeleting(agent)}>Delete</Button>
                 </div>
@@ -105,6 +111,14 @@ export function AgentsPage() {
       ) : null}
     </SettingsCard>
   )
+}
+
+/** "Sandbox on" or "off" beside an agent that has the sandbox tool; nothing when the server has no sandbox. */
+function SandboxBadge({ agentId }: { agentId: string }) {
+  const { workspace } = useWorkspace()
+  const sandbox = useAgentSandbox(workspace.id, agentId)
+  if (!sandbox.data) return null
+  return <Badge variant={sandbox.data.settings.enabled ? 'secondary' : 'outline'}>{sandbox.data.settings.enabled ? 'Sandbox on' : 'Sandbox off'}</Badge>
 }
 
 const answerLevelLabel = (level: AnswerLevel) => ANSWER_LEVELS.find((option) => option.value === level)?.label ?? 'Normal'
@@ -140,6 +154,7 @@ function AgentDialog({ profiles, editing, onClose }: { profiles: AgentProfiles; 
   const { workspace } = useWorkspace()
   const saveCustom = useSaveAgentProfile(workspace.id)
   const saveDefault = useSaveDefaultAgent(workspace.id)
+  const saveSandbox = useSaveAgentSandbox(workspace.id, editing.kind === 'custom' ? (editing.agent?.id ?? '') : '')
   const save = editing.kind === 'default' ? saveDefault : saveCustom
   const channels = (useConversations().data ?? []).filter((conversation) => conversation.kind !== 'dm' && !conversation.archived && (conversation.kind === 'public' || conversation.isMember))
   const isDefault = editing.kind === 'default'
@@ -162,6 +177,11 @@ function AgentDialog({ profiles, editing, onClose }: { profiles: AgentProfiles; 
   const levels = [{ value: DEFAULT, label: 'Default' }, ...profiles.thinking_levels.map((level) => ({ value: level, label: level }))]
   const toggle = (list: string[], item: string, on: boolean) => (on ? [...list, item] : list.filter((own) => own !== item))
   const avatarUrl = avatar === undefined ? agent?.avatar_url : (avatar?.url ?? null)
+  // The sandbox settings of a saved custom agent; `sandboxEdit` is null until they change.
+  const sandbox = useAgentSandbox(workspace.id, custom?.id ?? null)
+  const [sandboxEdit, setSandboxEdit] = useState<SandboxDraft | null>(null)
+  const sandboxShown = tools.includes(SANDBOX_TOOL) && !(sandbox.isError && sandboxOff(sandbox.error))
+  const sandboxValues = sandboxEdit && sandboxShown ? sandboxInput(sandboxEdit) : undefined
 
   async function pickAvatar(file: File | undefined) {
     if (!file) return
@@ -177,6 +197,7 @@ function AgentDialog({ profiles, editing, onClose }: { profiles: AgentProfiles; 
     event.preventDefault()
     const choice = { instructions, model: model === DEFAULT ? null : model, thinking: thinking === DEFAULT ? null : thinking, answer_level: answerLevel, integration_ids: services }
     const done = { onSuccess: (saved: { name: string }) => { toast(`${saved.name} saved`); onClose() } }
+    if (sandboxValues === null) return
     const newAvatar = avatar === undefined ? undefined : (avatar?.blob ?? null)
     if (editing.kind === 'default') {
       const renamed = name.trim() !== editing.agent.name
@@ -195,7 +216,15 @@ function AgentDialog({ profiles, editing, onClose }: { profiles: AgentProfiles; 
         },
         avatar: newAvatar,
       },
-      done,
+      {
+        onSuccess: (saved) => {
+          if (!sandboxValues) return done.onSuccess(saved)
+          saveSandbox.mutate(sandboxValues, {
+            onSuccess: () => done.onSuccess(saved),
+            onError: (error) => toast.error(error instanceof ApiProblem ? error.detail : 'The sandbox settings could not be saved.'),
+          })
+        },
+      },
     )
   }
 
@@ -247,6 +276,19 @@ function AgentDialog({ profiles, editing, onClose }: { profiles: AgentProfiles; 
             ))}
           </div>
         </fieldset>}
+        {sandboxShown ? (
+          !custom ? (
+            <p className="text-xs text-muted-foreground">Sandbox: create the agent first, then turn its sandbox on here.</p>
+          ) : sandbox.data ? (
+            <SandboxFields agentId={custom.id} sandbox={sandbox.data} draft={sandboxEdit ?? sandboxDraft(sandbox.data)} onChange={setSandboxEdit} />
+          ) : sandbox.isError ? (
+            <p role="alert" className="text-sm text-destructive">
+              The sandbox settings could not be loaded.{' '}
+              <Button type="button" variant="link" size="xs" className="h-auto px-0" onClick={() => void sandbox.refetch()}>Retry</Button>
+            </p>
+          ) : null
+        ) : null}
+        {sandboxValues === null ? <p role="alert" className="text-sm text-destructive">Check the sandbox limits: whole minutes, 5 to 120 to stop, no negative numbers.</p> : null}
         <fieldset className="flex flex-col gap-2">
           <legend className="mb-1 text-sm font-medium text-foreground">Connected services</legend>
           {profiles.integrations.length === 0 ? (
@@ -327,7 +369,7 @@ function AgentDialog({ profiles, editing, onClose }: { profiles: AgentProfiles; 
       </form>
       <DialogFooter>
         <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
-        <Button type="submit" form="agent-profile-form" disabled={save.isPending || name.trim().length < 2}>{save.isPending ? 'Saving…' : agent ? 'Save' : 'Create agent'}</Button>
+        <Button type="submit" form="agent-profile-form" disabled={save.isPending || saveSandbox.isPending || name.trim().length < 2 || sandboxValues === null}>{save.isPending || saveSandbox.isPending ? 'Saving…' : agent ? 'Save' : 'Create agent'}</Button>
       </DialogFooter>
     </Modal>
   )

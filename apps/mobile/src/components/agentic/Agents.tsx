@@ -1,6 +1,8 @@
+import { router } from 'expo-router'
 import { useState } from 'react'
 import { Image, View } from 'react-native'
 import { AGENT_DEFAULT_CHOICE as DEFAULT, ANSWER_LEVELS, type AgentProfile, type AgentProfiles, type AnswerLevel } from '@orbit/api/agent'
+import { sandboxDraft, sandboxInput, type SandboxDraft } from '@orbit/api/agentSandbox'
 
 import { ConfirmDialog, type ConfirmRequest } from '../settings/Dialog'
 import { CheckRow, SelectField } from '../settings/Fields'
@@ -11,6 +13,8 @@ import { agentChannelChoices, agentFormOf, agentNameValid, answerLevelLabel, cha
 import type { UploadFile } from '../../data/account-api'
 import { pickImage } from '../../hooks/account'
 import { useAgentProfiles, useDeleteAgentProfile, useSaveAgentProfile, useSaveDefaultAgent } from '../../hooks/agent'
+import { SANDBOX_TOOL, sandboxOff, useAgentSandbox, useSaveAgentSandbox } from '../../hooks/agentSandbox'
+import { SandboxFields } from './AgentSandbox'
 import { useOrbit } from '../../orbit-context'
 import { useConversations } from '../../queries'
 import { errorMessage } from '../../session-context'
@@ -52,7 +56,9 @@ export function AgentsCard() {
           {agents.map((agent) => (
             <AgentRow key={agent.id} id={agent.user_id} name={agent.name} avatarUrl={agent.avatar_url} badges={[{ label: `${agent.tools.length} tools`, secondary: true }, ...(agent.model ? [{ label: agent.model, outline: true }] : []), { label: `${answerLevelLabel(agent.answer_level)} answers`, outline: true }]} line={`${channelsLabel(agent)} · ${servicesLabel(data, agent.integration_ids)}`} instructions={agent.instructions}>
               {data.can_manage ? (
-                <View className="flex-row">
+                <View className="flex-row flex-wrap justify-end">
+                  {agent.tools.includes(SANDBOX_TOOL) ? <SandboxBadge agentId={agent.id} /> : null}
+                  {agent.tools.includes(SANDBOX_TOOL) ? <Button label="Internet access" variant="ghost" size="sm" onPress={() => openInternet(agent.id)} /> : null}
                   <Button label="Edit" variant="ghost" size="sm" onPress={() => setEditing({ kind: 'custom', agent })} />
                   <Button
                     label="Delete"
@@ -83,6 +89,20 @@ export function AgentsCard() {
       {editing && data ? <AgentSheet profiles={data} editing={editing} onClose={() => setEditing(null)} /> : null}
       <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />
     </SettingsCard>
+  )
+}
+
+/** On the Agents tab: the agent's Internet access (rules, pending requests, log). */
+const openInternet = (agentId: string) => router.setParams({ tab: 'agents', agent: agentId })
+
+/** "Sandbox on" or "off" in front of an agent's buttons; nothing when the server has no sandbox. */
+function SandboxBadge({ agentId }: { agentId: string }) {
+  const sandbox = useAgentSandbox(agentId)
+  if (!sandbox.data) return null
+  return (
+    <View className="justify-center pr-1">
+      <Badge label={sandbox.data.settings.enabled ? 'Sandbox on' : 'Sandbox off'} tone={sandbox.data.settings.enabled ? 'secondary' : 'outline'} />
+    </View>
   )
 }
 
@@ -133,6 +153,13 @@ function AgentSheet({ profiles, editing, onClose }: { profiles: AgentProfiles; e
   if (form.model !== DEFAULT && !models.some((option) => option.value === form.model)) models.push({ value: form.model, label: form.model })
   const levels = [{ value: DEFAULT, label: 'Default' }, ...profiles.thinking_levels.map((level) => ({ value: level, label: level }))]
   const title = isDefault ? `Edit ${main.name}` : custom ? `Edit ${custom.name}` : 'New agent'
+  // The sandbox settings of a saved custom agent; `sandboxEdit` stays null until they change.
+  const sandbox = useAgentSandbox(custom?.id ?? null)
+  const saveSandbox = useSaveAgentSandbox(custom?.id ?? '')
+  const [sandboxEdit, setSandboxEdit] = useState<SandboxDraft | null>(null)
+  const sandboxShown = !isDefault && form.tools.includes(SANDBOX_TOOL) && !(sandbox.isError && sandboxOff(sandbox.error))
+  const sandboxValues = sandboxEdit && sandboxShown ? sandboxInput(sandboxEdit) : undefined
+  const busy = save.isPending || saveSandbox.isPending
 
   const chooseAvatar = () => {
     setAvatarError(null)
@@ -144,11 +171,11 @@ function AgentSheet({ profiles, editing, onClose }: { profiles: AgentProfiles; e
   const submit = () => {
     const done = { onSuccess: onClose }
     if (isDefault) saveDefault.mutate({ input: defaultAgentInput(form, main.name), avatar }, done)
-    else saveCustom.mutate({ id: custom?.id ?? null, input: customAgentInput(form), avatar }, done)
+    else saveCustom.mutate({ id: custom?.id ?? null, input: customAgentInput(form), avatar }, { onSuccess: () => (sandboxValues ? saveSandbox.mutate(sandboxValues, done) : onClose()) })
   }
 
   return (
-    <FormSheet visible title={title} submitLabel={custom || isDefault ? 'Save' : 'Create'} canSubmit={agentNameValid(form.name) && !save.isPending} busy={save.isPending} onSubmit={submit} onClose={onClose}>
+    <FormSheet visible title={title} submitLabel={custom || isDefault ? 'Save' : 'Create'} canSubmit={agentNameValid(form.name) && !busy && sandboxValues !== null} busy={busy} onSubmit={submit} onClose={onClose}>
       <View className="flex-row items-center gap-3">
         {localUri ? <Image accessibilityLabel="New avatar" source={{ uri: localUri }} className="rounded-full" style={{ width: 48, height: 48 }} /> : <ProfilePicture id={isDefault ? main.user_id : (custom?.user_id ?? 'new')} name={form.name || '?'} url={avatar === null ? null : savedAvatar} size={48} />}
         {canRename ? (
@@ -188,6 +215,28 @@ function AgentSheet({ profiles, editing, onClose }: { profiles: AgentProfiles; e
           ))}
         </View>
       )}
+      {sandboxShown ? (
+        !custom ? (
+          <OptionHint>Sandbox: create the agent first, then turn its sandbox on here.</OptionHint>
+        ) : sandbox.data ? (
+          <SandboxFields
+            sandbox={sandbox.data}
+            draft={sandboxEdit ?? sandboxDraft(sandbox.data)}
+            onChange={setSandboxEdit}
+            onOpenInternet={() => {
+              onClose()
+              openInternet(custom.id)
+            }}
+          />
+        ) : sandbox.isError ? (
+          <View className="gap-2 items-start">
+            <Note error>The sandbox settings could not be loaded.</Note>
+            <Button label="Retry" variant="ghost" size="sm" onPress={() => void sandbox.refetch()} />
+          </View>
+        ) : null
+      ) : null}
+      {sandboxValues === null ? <Note error>Check the sandbox limits: whole minutes, 5 to 120 to stop, no negative numbers.</Note> : null}
+      {saveSandbox.isError ? <Note error>{problemDetail(saveSandbox.error, 'The sandbox settings could not be saved.')}</Note> : null}
       <View className="gap-2">
         <FieldLabel>Connected services</FieldLabel>
         {profiles.integrations.length === 0 ? (
