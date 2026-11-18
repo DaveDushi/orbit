@@ -13,6 +13,7 @@ const member = (id: string, fields: Partial<MemberRecord>): MemberRecord => ({
   can_change_role: false,
   can_remove: false,
   can_transfer_ownership: false,
+  can_suspend: false,
   created_at: '2026-10-01T10:00:00Z',
   version: 1,
   ...fields,
@@ -24,6 +25,12 @@ test('the Manage menu: no actions on your own row, the other role, transfer, the
   expect(memberActions({ ...ada, user_id: 'me' }, 'me')).toEqual([])
   expect(memberActions(member('bob', { can_change_role: true }), 'me')).toEqual([{ kind: 'role', role: 'admin' }])
   expect(memberActions(member('eve', {}), 'me')).toEqual([])
+})
+
+test('the Manage menu offers Suspend, or Resume on a suspended member, when the server allows it', () => {
+  expect(memberActions(member('bob', { can_suspend: true, can_remove: true }), 'me')).toEqual([{ kind: 'suspend' }, { kind: 'remove' }])
+  expect(memberActions(member('bob', { can_suspend: true, suspended_at: '2026-11-18T10:00:00Z' }), 'me')).toEqual([{ kind: 'resume' }])
+  expect(memberActions(member('bob', { suspended_at: '2026-11-18T10:00:00Z' }), 'me')).toEqual([])
 })
 
 test('members are searched by name, email and role, and listed by name', () => {

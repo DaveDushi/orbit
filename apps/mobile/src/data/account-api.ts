@@ -25,6 +25,7 @@ import {
   regenerateRecoveryCodes,
   removeAvatar,
   removeMember,
+  setMemberSuspension,
   removeWorkspaceBucket,
   removeWorkspaceLogo,
   renameWorkspace as renameWorkspaceRequest,
@@ -313,7 +314,7 @@ export async function authOptions(client: OrbitClient): Promise<AuthOptions> {
 
 export const roleLabel = (role: WorkspaceRole | string) => role.charAt(0).toUpperCase() + role.slice(1)
 
-export type MemberAction = { kind: 'role'; role: 'admin' | 'member' } | { kind: 'transfer' } | { kind: 'remove' }
+export type MemberAction = { kind: 'role'; role: 'admin' | 'member' } | { kind: 'transfer' } | { kind: 'suspend' } | { kind: 'resume' } | { kind: 'remove' }
 
 /**
  * What the Manage menu offers on a member's row: none on your own row; the server decides the rest. A guest can only
@@ -326,6 +327,7 @@ export function memberActions(member: MemberRecord, myUserId: string): MemberAct
   return [
     ...roles.map((role): MemberAction => ({ kind: 'role', role })),
     ...(member.can_transfer_ownership ? [{ kind: 'transfer' } as const] : []),
+    ...(member.can_suspend ? [{ kind: member.suspended_at ? 'resume' : 'suspend' } as const] : []),
     ...(member.can_remove ? [{ kind: 'remove' } as const] : []),
   ]
 }
@@ -345,6 +347,11 @@ export async function changeRole(client: OrbitClient, workspaceId: string, membe
 /** Removes a member; on your own membership, leaves the workspace. */
 export async function removeMembership(client: OrbitClient, workspaceId: string, member: Pick<MemberRecord, 'id' | 'version'>): Promise<void> {
   await removeMember({ client, path: { workspace_id: workspaceId, membership_id: member.id }, query: { expected_version: member.version }, throwOnError: true })
+}
+
+/** Suspends or resumes a member (owners and admins): a suspended member cannot sign in until resumed. */
+export async function setMemberSuspended(client: OrbitClient, workspaceId: string, member: Pick<MemberRecord, 'id'>, suspended: boolean): Promise<void> {
+  await setMemberSuspension({ client, path: { workspace_id: workspaceId, membership_id: member.id }, body: { suspended }, throwOnError: true })
 }
 
 export async function transferOwnership(client: OrbitClient, workspace: Pick<WorkspaceRecord, 'id' | 'version'>, member: MemberRecord): Promise<void> {

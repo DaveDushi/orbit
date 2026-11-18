@@ -18,7 +18,7 @@ import { Input } from '@/components/ui/input'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useAuthOptions, useCurrentUser } from '@/features/auth/api'
-import { useChangeMemberRole, useCreateInvitation, useInvitations, useMembers, useRemoveMember, useRevokeInvitation, useTransferOwnership } from '@/features/workspaces/api'
+import { useChangeMemberRole, useCreateInvitation, useInvitations, useMembers, useRemoveMember, useRevokeInvitation, useSetMemberSuspension, useTransferOwnership } from '@/features/workspaces/api'
 import { useCan } from '@/features/workspaces/permissions'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import type { User } from '@/features/workspaces/models'
@@ -66,7 +66,8 @@ export function MembersPage() {
   const changeRole = useChangeMemberRole(workspace.id)
   const removeMember = useRemoveMember(workspace.id)
   const transferOwnership = useTransferOwnership(workspace.id)
-  const memberSaving = useSlowPending(changeRole.isPending || removeMember.isPending || transferOwnership.isPending)
+  const suspension = useSetMemberSuspension(workspace.id)
+  const memberSaving = useSlowPending(changeRole.isPending || removeMember.isPending || transferOwnership.isPending || suspension.isPending)
   const users = membersQuery.data ?? EMPTY_USERS
   const pendingInvitations = invitations.data?.items.filter((invitation) => invitation.status === 'pending') ?? []
 
@@ -141,6 +142,26 @@ export function MembersPage() {
     } catch {
       // Mutation feedback remains visible in the form.
     }
+  }
+
+  const setSuspended = async (user: User, suspended: boolean) => {
+    const confirmed = await confirmAction(suspended
+      ? {
+          title: `Suspend ${user.name}?`,
+          description: 'They are signed out at once on the web, desktop and iPhone, and cannot sign in until you resume them. Their API tokens, MCP connections and push notifications end. Their data and password stay.',
+          confirmLabel: 'Suspend member',
+          danger: true,
+        }
+      : {
+          title: `Resume ${user.name}?`,
+          description: 'They can sign in again with the same password. Their old sessions and API tokens stay ended.',
+          confirmLabel: 'Resume member',
+        })
+    if (!confirmed) return
+    suspension.mutate({ membershipId: user.membershipId, suspended }, {
+      onSuccess: () => toast(suspended ? `${user.name} is suspended` : `${user.name} is resumed`),
+      onError: (error) => toast.error(error instanceof ApiProblem ? error.detail : suspended ? 'The member could not be suspended.' : 'The member could not be resumed.'),
+    })
   }
 
   const copyLink = async () => {
@@ -252,6 +273,7 @@ export function MembersPage() {
                         You
                       </Badge>
                     ) : null}
+                    {user.suspended ? <Badge variant="destructive">Suspended</Badge> : null}
                   </div>
                   <div className="truncate text-xs text-muted-foreground">{user.email}</div>
                   <div>
@@ -259,7 +281,7 @@ export function MembersPage() {
                   </div>
                   <div className="flex justify-end">
                     {/* Your own row has no menu; the abilities themselves come from the server. */}
-                    {currentUser.data && user.id !== currentUser.data.id && (user.can.changeRole || user.can.remove) ? (
+                    {currentUser.data && user.id !== currentUser.data.id && (user.can.changeRole || user.can.remove || user.can.suspend) ? (
                       <DropdownMenu>
                         <DropdownMenuTrigger
                           render={<Button variant="outline" size="sm" className="text-[11px]" />}
@@ -288,9 +310,24 @@ export function MembersPage() {
                               }
                             }}>Transfer ownership</DropdownMenuItem>
                           ) : null}
-                          {user.can.remove ? (
+                          {user.can.suspend && user.suspended ? (
+                            <DropdownMenuItem onClick={() => void setSuspended(user, false)}>Resume member</DropdownMenuItem>
+                          ) : null}
+                          {user.can.suspend && !user.suspended ? (
                             <>
                               <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                className="text-destructive focus:bg-destructive/10 focus:text-destructive focus:**:text-destructive"
+                                data-danger="true"
+                                onClick={() => void setSuspended(user, true)}
+                              >
+                                Suspend member
+                              </DropdownMenuItem>
+                            </>
+                          ) : null}
+                          {user.can.remove ? (
+                            <>
+                              {user.can.suspend && !user.suspended ? null : <DropdownMenuSeparator />}
                               {/* data-danger (not variant="destructive"): the menu popup forces destructive items to the accent colour */}
                               <DropdownMenuItem
                                 className="text-destructive focus:bg-destructive/10 focus:text-destructive focus:**:text-destructive"

@@ -10,6 +10,7 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 - Imports with one yes: when you ask Donna to import a file (for example customers into Shopify) or to change many things at once, she shows one plan with the field mapping and samples, and runs all of it after one **yes**. The thread shows the progress; reply **stop** to end it.
 - Large files: Donna reads a whole spreadsheet or CSV of tens of thousands of rows, or a long PDF or Word file, in one go, and answers questions about it in one reply.
 - Fix: in the dark theme, the red mic of the Ask Donna box stays red while the pointer is on it.
+- Owners and admins can suspend a member (Settings → Members → Manage → Suspend member): they are signed out everywhere and cannot sign in until **Resume member**, with the same password. Their data stays.
 
 ## 2026-11-17
 - iPhone: open chats, tasks and lists update live again; no app update needed.

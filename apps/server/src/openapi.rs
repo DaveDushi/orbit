@@ -90,6 +90,7 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::workspace_routes::put_home_layout,
         crate::workspace_routes::change_member_role,
         crate::workspace_routes::remove_member,
+        crate::workspace_routes::set_member_suspension,
         crate::workspace_routes::transfer_ownership,
         crate::workspace_routes::create_invitation,
         crate::workspace_routes::list_invitations,
@@ -971,6 +972,13 @@ fn problem_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             add_code(&mut responses, "403", "workspace_action_forbidden");
             add_code(&mut responses, "404", "workspace_resource_not_found");
         }
+        "set_member_suspension" => {
+            add_code(&mut responses, "403", "workspace_action_forbidden");
+            add_code(&mut responses, "404", "workspace_resource_not_found");
+            add_code(&mut responses, "409", "installation_admin");
+            add_code(&mut responses, "409", "member_elsewhere");
+            add_code(&mut responses, "409", "suspended_by_admin");
+        }
         "set_account_suspension" => {
             add_code(&mut responses, "403", "installation_admin_required");
             add_code(&mut responses, "404", "workspace_resource_not_found");
@@ -1192,6 +1200,7 @@ fn invalid_request_operation(operation_id: &str) -> bool {
             | "put_member_note"
             | "change_member_role"
             | "remove_member"
+            | "set_member_suspension"
             | "transfer_ownership"
             | "create_invitation"
             | "list_invitations"

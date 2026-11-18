@@ -32228,6 +32228,142 @@
         ]
       }
     },
+    "/api/v1/workspaces/{workspace_id}/members/{membership_id}/suspension": {
+      "post": {
+        "tags": [
+          "crate::workspace_routes"
+        ],
+        "summary": "Suspends or resumes a member (owners and admins). A suspended member cannot sign in or use any token, and\nkeeps their data and password.",
+        "operationId": "set_member_suspension",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "membership_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Orbit-Contract",
+            "in": "header",
+            "description": "Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuspensionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "400": {
+            "description": "invalid_proxy_headers, invalid_request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "authentication_required",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "origin_forbidden, workspace_action_forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "workspace_resource_not_found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "contract_mismatch, installation_admin, member_elsewhere, suspended_by_admin",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "request_too_large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "internal_error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "internal_error or another documented stable code",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceProblem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/workspaces/{workspace_id}/notifications": {
       "get": {
         "tags": [
@@ -60641,6 +60777,7 @@
           "can_change_role",
           "can_remove",
           "can_transfer_ownership",
+          "can_suspend",
           "version",
           "created_at"
         ],
@@ -60659,6 +60796,10 @@
           "can_remove": {
             "type": "boolean",
             "description": "Whether the caller may remove this member (for the caller's own row: leave)."
+          },
+          "can_suspend": {
+            "type": "boolean",
+            "description": "Whether the caller may suspend this member, or resume them when this workspace suspended them."
           },
           "can_transfer_ownership": {
             "type": "boolean",
@@ -63418,6 +63559,7 @@
                 "can_change_role",
                 "can_remove",
                 "can_transfer_ownership",
+                "can_suspend",
                 "version",
                 "created_at"
               ],
@@ -63436,6 +63578,10 @@
                 "can_remove": {
                   "type": "boolean",
                   "description": "Whether the caller may remove this member (for the caller's own row: leave)."
+                },
+                "can_suspend": {
+                  "type": "boolean",
+                  "description": "Whether the caller may suspend this member, or resume them when this workspace suspended them."
                 },
                 "can_transfer_ownership": {
                   "type": "boolean",

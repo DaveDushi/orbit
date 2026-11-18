@@ -100,6 +100,8 @@ pub struct MemberRecord {
     pub can_remove: bool,
     /// Whether the caller may hand the workspace over to this member.
     pub can_transfer_ownership: bool,
+    /// Whether the caller may suspend this member, or resume them when this workspace suspended them.
+    pub can_suspend: bool,
     pub version: u64,
     #[schema(value_type = String, format = DateTime)]
     pub created_at: TimestampMillis,
@@ -289,6 +291,9 @@ pub enum WorkspaceError {
     RegistrationRequiresSignIn,
     #[error("workspace operation conflicts with current state")]
     Conflict,
+    /// Settings → Members cannot suspend or resume this account (the reason is the problem code).
+    #[error("the member cannot be suspended or resumed here: {0}")]
+    SuspensionRefused(&'static str),
     /// A guest invitation needs open private channels that the inviter manages; other roles
     /// take none.
     #[error("the invitation's channels are invalid")]
@@ -843,6 +848,9 @@ impl WorkspaceRepository {
         let rows = sqlx::query(
             "SELECT memberships.id, memberships.user_id, memberships.role, memberships.version, \
              memberships.created_at, users.email, users.display_name, users.suspended_at, \
+             users.suspended_workspace_id, users.installation_admin, \
+             (SELECT COUNT(*) FROM memberships other WHERE other.user_id = memberships.user_id \
+              AND other.workspace_id <> $1) AS elsewhere, \
              user_avatars.updated_at AS avatar_updated_at \
              FROM memberships \
              JOIN users ON users.id = memberships.user_id \
@@ -866,7 +874,7 @@ impl WorkspaceRepository {
         .await?;
         let transfer_available = !crate::repositories::billing::enabled(&self.database);
         page(rows, limit, |row| {
-            member_from_row(row, actor, transfer_available)
+            member_from_row(row, workspace_id, actor, transfer_available)
         })
     }
 
@@ -1867,6 +1875,182 @@ impl WorkspaceRepository {
         Ok(())
     }
 
+    /// Suspends or resumes a member's account from Settings → Members. It reuses the account suspension of Admin
+    /// → Users (`users.suspended_at`), which every sign-in, token and socket already checks, so it only works for
+    /// an account that is a member of no other workspace: one workspace must not lock someone out of another.
+    /// `users.suspended_workspace_id` records the workspace, and only that workspace resumes the account.
+    pub async fn set_member_suspended(
+        &self,
+        workspace_id: Id,
+        membership_id: Id,
+        actor_id: Id,
+        suspended: bool,
+        request_id: &str,
+        now: TimestampMillis,
+    ) -> Result<(), WorkspaceError> {
+        let result = self
+            .set_member_suspended_unchecked(
+                workspace_id,
+                membership_id,
+                actor_id,
+                suspended,
+                request_id,
+                now,
+            )
+            .await;
+        // Open live and co-editing sockets re-check their access right away.
+        crate::collab::CollabHub::revalidate_database(&self.database, Some(workspace_id));
+        result
+    }
+
+    async fn set_member_suspended_unchecked(
+        &self,
+        workspace_id: Id,
+        membership_id: Id,
+        actor_id: Id,
+        suspended: bool,
+        request_id: &str,
+        now: TimestampMillis,
+    ) -> Result<(), WorkspaceError> {
+        let mut transaction = self.database.immediate_transaction().await?;
+        let actor = require_actor(&mut *transaction, workspace_id, actor_id).await?;
+        // The membership is looked up in this workspace only, so a member of another workspace is not found.
+        let target = target_membership(&mut transaction, workspace_id, membership_id).await?;
+        let account = sqlx::query(
+            "SELECT installation_admin, suspended_at, suspended_workspace_id, \
+             (SELECT COUNT(*) FROM memberships other WHERE other.user_id = users.id \
+              AND other.workspace_id <> $1) AS elsewhere \
+             FROM users WHERE id = $2",
+        )
+        .bind(workspace_id.to_string())
+        .bind(target.user_id.to_string())
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or(WorkspaceError::NotFound)?;
+        let suspended_here = account.get::<Option<i64>, _>("suspended_at").is_some()
+            && account.get::<Option<String>, _>("suspended_workspace_id")
+                == Some(workspace_id.to_string());
+        let refusal = match actor.suspend_member(target.user_id, target.role) {
+            Err(MembershipDenied::RoleForbidden) => Some("role_forbidden"),
+            Err(_) if target.user_id == actor_id => Some("own_account"),
+            Err(_) => Some("owner_protected"),
+            // A workspace does not lock out an instance admin, or someone who also works in another workspace.
+            Ok(()) if suspended && account.get::<i64, _>("installation_admin") != 0 => {
+                Some("installation_admin")
+            }
+            Ok(()) if suspended && account.get::<i64, _>("elsewhere") != 0 => {
+                Some("member_elsewhere")
+            }
+            // An instance admin suspended the account: only Admin → Users reinstates it.
+            Ok(())
+                if account.get::<Option<i64>, _>("suspended_at").is_some() && !suspended_here =>
+            {
+                Some("suspended_by_admin")
+            }
+            Ok(()) => None,
+        };
+        if let Some(reason) = refusal {
+            audit::record(
+                &mut transaction,
+                workspace_id,
+                Some(actor_id),
+                "membership.suspension_denied",
+                AuditOutcome::Failure,
+                "membership",
+                Some(membership_id),
+                request_id,
+                json!({"reason": reason, "suspended": suspended}),
+                now,
+            )
+            .await?;
+            transaction.commit().await?;
+            return Err(match reason {
+                "role_forbidden" | "own_account" | "owner_protected" => WorkspaceError::Forbidden,
+                reason => WorkspaceError::SuspensionRefused(reason),
+            });
+        }
+        if suspended == suspended_here {
+            return Ok(());
+        }
+        let user_id = target.user_id.to_string();
+        if suspended {
+            sqlx::query(
+                "UPDATE users SET suspended_at = $1, suspended_workspace_id = $2, version = version + 1, \
+                 updated_at = $1 WHERE id = $3 AND suspended_at IS NULL",
+            )
+            .bind(now.as_millis())
+            .bind(workspace_id.to_string())
+            .bind(&user_id)
+            .execute(&mut *transaction)
+            .await?;
+            // Every way in ends now: sessions (web, desktop, iPhone), the member's own API tokens, MCP grants,
+            // sign-ins to the workspace's apps and push registrations. The checks on `suspended_at` already
+            // refuse them; revoking them keeps them dead after a resume, so the member signs in again.
+            sqlx::query(
+                "UPDATE sessions SET revoked_at = $1 WHERE user_id = $2 AND revoked_at IS NULL",
+            )
+            .bind(now.as_millis())
+            .bind(&user_id)
+            .execute(&mut *transaction)
+            .await?;
+            sqlx::query(
+                "UPDATE api_tokens SET revoked_at = $1 WHERE workspace_id = $2 AND created_by = $3 \
+                 AND service_account_id IS NULL AND revoked_at IS NULL",
+            )
+            .bind(now.as_millis())
+            .bind(workspace_id.to_string())
+            .bind(&user_id)
+            .execute(&mut *transaction)
+            .await?;
+            sqlx::query(
+                "UPDATE oauth_grants SET revoked_at = $1 WHERE workspace_id = $2 AND user_id = $3 \
+                 AND revoked_at IS NULL",
+            )
+            .bind(now.as_millis())
+            .bind(workspace_id.to_string())
+            .bind(&user_id)
+            .execute(&mut *transaction)
+            .await?;
+            crate::apps::revoke_member(&mut transaction, workspace_id, target.user_id).await?;
+            for table in ["push_subscriptions", "push_devices"] {
+                sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "DELETE FROM {table} WHERE user_id = $1"
+                )))
+                .bind(&user_id)
+                .execute(&mut *transaction)
+                .await?;
+            }
+        } else {
+            sqlx::query(
+                "UPDATE users SET suspended_at = NULL, suspended_workspace_id = NULL, version = version + 1, \
+                 updated_at = $1 WHERE id = $2",
+            )
+            .bind(now.as_millis())
+            .bind(&user_id)
+            .execute(&mut *transaction)
+            .await?;
+        }
+        audit::record(
+            &mut transaction,
+            workspace_id,
+            Some(actor_id),
+            if suspended {
+                "membership.suspended"
+            } else {
+                "membership.resumed"
+            },
+            AuditOutcome::Success,
+            "membership",
+            Some(membership_id),
+            request_id,
+            json!({"user_id": user_id}),
+            now,
+        )
+        .await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn transfer_ownership(
         &self,
@@ -2675,11 +2859,26 @@ fn workspace_from_row(row: sqlx::any::AnyRow) -> Result<WorkspaceRecord, Workspa
 
 fn member_from_row(
     row: sqlx::any::AnyRow,
+    workspace_id: Id,
     actor: Actor,
     transfer_available: bool,
 ) -> Result<MemberRecord, WorkspaceError> {
     let user_id = parse_id(row.get("user_id"))?;
     let role = parse_role(&row.get::<String, _>("role"))?;
+    let suspended_at = row
+        .get::<Option<i64>, _>("suspended_at")
+        .map(TimestampMillis::from_millis);
+    // The same rules as `set_member_suspended`, so the menu offers only what the server allows.
+    let can_suspend = actor.suspend_member(user_id, role).is_ok()
+        && match suspended_at {
+            Some(_) => {
+                row.get::<Option<String>, _>("suspended_workspace_id")
+                    == Some(workspace_id.to_string())
+            }
+            None => {
+                row.get::<i64, _>("installation_admin") == 0 && row.get::<i64, _>("elsewhere") == 0
+            }
+        };
     Ok(MemberRecord {
         id: parse_id(row.get("id"))?,
         user_id,
@@ -2697,12 +2896,11 @@ fn member_from_row(
             .is_ok(),
         can_remove: actor.remove_member(user_id, role).is_ok(),
         can_transfer_ownership: transfer_available && actor.can_transfer_ownership_to(user_id),
+        can_suspend,
         version: u64::try_from(row.get::<i64, _>("version"))
             .map_err(|_| WorkspaceError::Conflict)?,
         created_at: TimestampMillis::from_millis(row.get("created_at")),
-        suspended_at: row
-            .get::<Option<i64>, _>("suspended_at")
-            .map(TimestampMillis::from_millis),
+        suspended_at,
     })
 }
 

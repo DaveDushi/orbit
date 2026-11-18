@@ -290,6 +290,22 @@ impl Actor {
         self.admin_protected(target_role)
     }
 
+    /// Suspending (or resuming) a member takes `MembersManage`, as removing one does, and an admin
+    /// needs the owner. Nobody suspends the owner or themselves: that would lock them out.
+    pub fn suspend_member(
+        self,
+        target_user_id: Id,
+        target_role: WorkspaceRole,
+    ) -> Result<(), MembershipDenied> {
+        if !self.can(Permission::MembersManage) {
+            return Err(MembershipDenied::RoleForbidden);
+        }
+        if target_role == WorkspaceRole::Owner || self.user_id == target_user_id {
+            return Err(MembershipDenied::OwnerProtected);
+        }
+        self.admin_protected(target_role)
+    }
+
     /// Only the owner changes or removes an admin's membership.
     fn admin_protected(self, target_role: WorkspaceRole) -> Result<(), MembershipDenied> {
         if target_role == WorkspaceRole::Admin && self.role != WorkspaceRole::Owner {

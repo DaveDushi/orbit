@@ -2740,6 +2740,10 @@ export type MemberRecord = {
      */
     can_remove: boolean;
     /**
+     * Whether the caller may suspend this member, or resume them when this workspace suspended them.
+     */
+    can_suspend: boolean;
+    /**
      * Whether the caller may hand the workspace over to this member.
      */
     can_transfer_ownership: boolean;
@@ -3794,6 +3798,10 @@ export type PageMemberRecord = {
          * Whether the caller may remove this member (for the caller's own row: leave).
          */
         can_remove: boolean;
+        /**
+         * Whether the caller may suspend this member, or resume them when this workspace suspended them.
+         */
+        can_suspend: boolean;
         /**
          * Whether the caller may hand the workspace over to this member.
          */
@@ -20856,6 +20864,65 @@ export type ChangeMemberRoleResponses = {
 };
 
 export type ChangeMemberRoleResponse = ChangeMemberRoleResponses[keyof ChangeMemberRoleResponses];
+
+export type SetMemberSuspensionData = {
+    body: SuspensionBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        membership_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/members/{membership_id}/suspension';
+};
+
+export type SetMemberSuspensionErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden, workspace_action_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * workspace_resource_not_found
+     */
+    404: WorkspaceProblem;
+    /**
+     * contract_mismatch, installation_admin, member_elsewhere, suspended_by_admin
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type SetMemberSuspensionError = SetMemberSuspensionErrors[keyof SetMemberSuspensionErrors];
+
+export type SetMemberSuspensionResponses = {
+    204: void;
+};
+
+export type SetMemberSuspensionResponse = SetMemberSuspensionResponses[keyof SetMemberSuspensionResponses];
 
 export type ListNotificationsData = {
     body?: never;

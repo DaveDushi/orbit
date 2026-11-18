@@ -15,6 +15,7 @@ import {
   getWorkspaceStorage,
   removeWorkspaceBucket,
   saveWorkspaceBucket,
+  setMemberSuspension,
   listInvitations,
   listMembers,
   listWorkspaces,
@@ -68,7 +69,7 @@ export function memberFromRecord(member: MemberRecord): User {
     title: '',
     roleIds: [],
     version: member.version,
-    can: { changeRole: member.can_change_role, remove: member.can_remove, transferOwnership: member.can_transfer_ownership },
+    can: { changeRole: member.can_change_role, remove: member.can_remove, transferOwnership: member.can_transfer_ownership, suspend: member.can_suspend },
     suspended: Boolean(member.suspended_at),
   }
 }
@@ -239,6 +240,22 @@ export function useRemoveMember(workspaceId: string) {
         client: apiClient,
         path: { workspace_id: workspaceId, membership_id: input.membershipId },
         query: { expected_version: input.version },
+        throwOnError: true,
+      })
+    },
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.members(workspaceId) }),
+  })
+}
+
+/** Suspends or resumes a member (owners and admins): a suspended member cannot sign in until resumed. */
+export function useSetMemberSuspension(workspaceId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: { membershipId: string; suspended: boolean }) => {
+      await setMemberSuspension({
+        client: apiClient,
+        path: { workspace_id: workspaceId, membership_id: input.membershipId },
+        body: { suspended: input.suspended },
         throwOnError: true,
       })
     },

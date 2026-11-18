@@ -693,8 +693,8 @@ impl IdentityRepository {
         Self::may_manage(&mut transaction, actor_id, user_id).await?;
         let changed = if suspended {
             sqlx::query(
-                "UPDATE users SET suspended_at = COALESCE(suspended_at, $1), version = version + 1, \
-                 updated_at = $2 WHERE id = $3",
+                "UPDATE users SET suspended_at = COALESCE(suspended_at, $1), suspended_workspace_id = NULL, \
+                 version = version + 1, updated_at = $2 WHERE id = $3",
             )
             .bind(now.as_millis())
             .bind(now.as_millis())
@@ -704,7 +704,8 @@ impl IdentityRepository {
             .rows_affected()
         } else {
             sqlx::query(
-                "UPDATE users SET suspended_at = NULL, version = version + 1, updated_at = $1 WHERE id = $2",
+                "UPDATE users SET suspended_at = NULL, suspended_workspace_id = NULL, version = version + 1, \
+                 updated_at = $1 WHERE id = $2",
             )
             .bind(now.as_millis())
             .bind(user_id.to_string())
@@ -1068,7 +1069,8 @@ impl IdentityRepository {
         .fetch_one(&mut *transaction)
         .await?;
         sqlx::query(
-            "UPDATE users SET installation_admin = 1, suspended_at = NULL, version = version + 1, updated_at = $1 \
+            "UPDATE users SET installation_admin = 1, suspended_at = NULL, suspended_workspace_id = NULL, \
+             version = version + 1, updated_at = $1 \
              WHERE id = $2",
         )
         .bind(now.as_millis())

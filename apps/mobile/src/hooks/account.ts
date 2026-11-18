@@ -264,6 +264,7 @@ export function useMemberWrites() {
   return {
     changeRole: useMutation({ mutationFn: ({ member, role }: { member: MemberRecord; role: 'admin' | 'member' }) => account.changeRole(client, workspaceId, member, role), onSettled }),
     remove: useMutation({ mutationFn: (member: MemberRecord) => account.removeMembership(client, workspaceId, member), onSettled }),
+    suspension: useMutation({ mutationFn: ({ member, suspended }: { member: MemberRecord; suspended: boolean }) => account.setMemberSuspended(client, workspaceId, member, suspended), onSettled }),
     transfer: useMutation({ mutationFn: (member: MemberRecord) => account.transferOwnership(client, workspace, member), onSettled: workspaceChanged }),
     invite: useMutation({
       mutationFn: ({ email, role, channelIds, delivery }: { email: string; role: account.InviteRole; channelIds: readonly string[]; delivery: 'manual' | 'smtp' }) =>

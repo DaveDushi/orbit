@@ -21,6 +21,9 @@ const INVITE_ROLES = [
   { value: 'guest', label: 'Guest' },
 ] as const
 
+const ACTION_LABELS: Record<Exclude<MemberAction['kind'], 'role'>, string> = { transfer: 'Transfer ownership', suspend: 'Suspend member', resume: 'Resume member', remove: 'Remove member' }
+const ACTION_ICONS = { role: 'userEdit', transfer: 'crown', suspend: 'lock', resume: 'unlock', remove: 'trash' } as const
+
 /** The web's Members page: search, the members with their roles and Manage menu, then invitations. */
 export default function MembersScreen() {
   const { workspace, user } = useOrbit()
@@ -32,19 +35,34 @@ export default function MembersScreen() {
   const [managing, setManaging] = useState<MemberRecord | null>(null)
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
   const list = filterMembers(members.data ?? [], search)
-  const writeError = [writes.changeRole, writes.remove, writes.transfer].find((write) => write.isError)?.error
+  const writeError = [writes.changeRole, writes.remove, writes.transfer, writes.suspension].find((write) => write.isError)?.error
 
   const run = (member: MemberRecord, action: MemberAction) => {
     if (action.kind === 'role') writes.changeRole.mutate({ member, role: action.role })
     else if (action.kind === 'transfer')
       setConfirm({ title: `Transfer ownership of ${workspace.name} to ${member.display_name}?`, confirmLabel: 'Transfer ownership', danger: true, onConfirm: () => writes.transfer.mutate(member) })
+    else if (action.kind === 'suspend')
+      setConfirm({
+        title: `Suspend ${member.display_name}?`,
+        description: 'They are signed out at once on the web, desktop and iPhone, and cannot sign in until you resume them. Their API tokens, MCP connections and push notifications end. Their data and password stay.',
+        confirmLabel: 'Suspend member',
+        danger: true,
+        onConfirm: () => writes.suspension.mutate({ member, suspended: true }),
+      })
+    else if (action.kind === 'resume')
+      setConfirm({
+        title: `Resume ${member.display_name}?`,
+        description: 'They can sign in again with the same password. Their old sessions and API tokens stay ended.',
+        confirmLabel: 'Resume member',
+        onConfirm: () => writes.suspension.mutate({ member, suspended: false }),
+      })
     else setConfirm({ title: `Remove ${member.display_name}?`, description: 'They lose access to this workspace.', confirmLabel: 'Remove member', danger: true, onConfirm: () => writes.remove.mutate(member) })
   }
   const sheet: SheetAction[] = managing
     ? memberActions(managing, user.id).map((action) => ({
-        label: action.kind === 'role' ? (managing.role === 'guest' ? 'Convert to member' : `Make ${action.role}`) : action.kind === 'transfer' ? 'Transfer ownership' : 'Remove member',
-        icon: action.kind === 'role' ? 'userEdit' : action.kind === 'transfer' ? 'crown' : 'trash',
-        destructive: action.kind === 'remove',
+        label: action.kind === 'role' ? (managing.role === 'guest' ? 'Convert to member' : `Make ${action.role}`) : ACTION_LABELS[action.kind],
+        icon: ACTION_ICONS[action.kind],
+        destructive: action.kind === 'remove' || action.kind === 'suspend',
         onPress: () => run(managing, action),
       }))
     : []

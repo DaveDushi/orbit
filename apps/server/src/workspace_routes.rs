@@ -242,6 +242,10 @@ pub fn workspace_router(state: WorkspaceState) -> Router {
             patch(change_member_role).delete(remove_member),
         )
         .route(
+            "/api/v1/workspaces/{workspace_id}/members/{membership_id}/suspension",
+            post(set_member_suspension),
+        )
+        .route(
             "/api/v1/workspaces/{workspace_id}/transfer-ownership",
             post(transfer_ownership),
         )
@@ -1093,6 +1097,35 @@ async fn remove_member(
             membership_id,
             session.user.id,
             mutation.expected_version,
+            request_id_value(request_id.as_ref()),
+            TimestampMillis::now(),
+        )
+        .await
+        .map_err(|error| workspace_problem(error, instance, request_id.as_ref()))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Suspends or resumes a member (owners and admins). A suspended member cannot sign in or use any token, and
+/// keeps their data and password.
+#[utoipa::path(post, path = "/api/v1/workspaces/{workspace_id}/members/{membership_id}/suspension", params(("workspace_id" = String, Path), ("membership_id" = String, Path)), request_body = SuspensionBody, responses((status = 204)))]
+async fn set_member_suspension(
+    State(state): State<WorkspaceState>,
+    Path((workspace_id, membership_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    request_id: Option<Extension<RequestId>>,
+    ApiJson(body): ApiJson<SuspensionBody>,
+) -> Result<StatusCode, ApiError> {
+    let instance = format!("/api/v1/workspaces/{workspace_id}/members/{membership_id}/suspension");
+    let session = authenticate(&state, &headers, &instance, request_id.as_ref()).await?;
+    let workspace_id = parse_id(&workspace_id, &instance, request_id.as_ref())?;
+    let membership_id = parse_id(&membership_id, &instance, request_id.as_ref())?;
+    state
+        .workspaces
+        .set_member_suspended(
+            workspace_id,
+            membership_id,
+            session.user.id,
+            body.suspended,
             request_id_value(request_id.as_ref()),
             TimestampMillis::now(),
         )
@@ -3825,6 +3858,22 @@ fn workspace_problem(
             "invalid_guest_channels",
             "Invalid guest channels",
             "A guest needs one or more open private channels that you manage; other roles take none.",
+            instance,
+            request_id,
+        ),
+        WorkspaceError::SuspensionRefused(code) => ApiError::new(
+            StatusCode::CONFLICT,
+            code,
+            "Member cannot be suspended or resumed",
+            match code {
+                "installation_admin" => "An instance admin cannot be suspended from a workspace.",
+                "member_elsewhere" => {
+                    "This person is also a member of another workspace. Remove them instead, or ask an instance admin."
+                }
+                _ => {
+                    "An instance admin suspended this account. Only an instance admin can reinstate it."
+                }
+            },
             instance,
             request_id,
         ),

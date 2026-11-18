@@ -2,10 +2,12 @@ export interface MemberAbilities {
   changeRole: boolean
   remove: boolean
   transferOwnership: boolean
+  /** Suspend the member, or resume them when this workspace suspended them. */
+  suspend: boolean
 }
 
 /** For members built outside the members list (mocks, fixtures): no ability. */
-export const NO_MEMBER_ABILITIES: MemberAbilities = { changeRole: false, remove: false, transferOwnership: false }
+export const NO_MEMBER_ABILITIES: MemberAbilities = { changeRole: false, remove: false, transferOwnership: false, suspend: false }
 
 /** A workspace member. Shared by every feature that shows people. */
 export interface User {
