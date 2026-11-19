@@ -17,13 +17,14 @@ import {
   deleteAgentProfile,
   updateAgentProfile,
   updateDefaultAgent,
+  updateExternalAgent,
   type AgentMemoryScope,
-  type AgentProfileInput,
+  type AgentProfile,
   type DefaultAgentInput,
 } from '@orbit/api/agent'
 import { deleteRoutine, deleteScript, listRoutineRuns, listRoutines, listScripts, testRoutine, updateRoutine, updateScript, type RoutineChange, type ScriptChange } from '@orbit/api/scheduled'
 
-import { setAgentAvatar } from '../data/agentic'
+import { agentSave, setAgentAvatar, type AgentForm } from '../data/agentic'
 import { keys } from '../data/keys'
 import { useOrbit } from '../orbit-context'
 
@@ -154,8 +155,13 @@ export function useSaveAgentProfile() {
   const { client, workspaceId } = useOrbit()
   const refresh = useRefreshAgents()
   return useMutation({
-    mutationFn: async ({ id, input, avatar }: { id: string | null; input: AgentProfileInput; avatar?: Blob | null }) => {
-      const saved = id ? await updateAgentProfile(client, workspaceId, id, input) : await createAgentProfile(client, workspaceId, input)
+    mutationFn: async ({ agent, form, avatar }: { agent: AgentProfile | null; form: AgentForm; avatar?: Blob | null }) => {
+      const save = agentSave(agent, form)
+      const saved = save.external
+        ? await updateExternalAgent(client, workspaceId, agent?.id ?? '', save.input)
+        : agent
+          ? await updateAgentProfile(client, workspaceId, agent.id, save.input)
+          : await createAgentProfile(client, workspaceId, save.input)
       if (avatar !== undefined) await setAgentAvatar(client, workspaceId, saved.id, avatar)
       return saved
     },

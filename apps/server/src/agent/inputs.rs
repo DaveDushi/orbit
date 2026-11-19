@@ -302,7 +302,9 @@ pub(crate) async fn record(
             let agent = match current {
                 Some(Some(agent)) => agent.parse().ok(),
                 Some(None) => donna,
-                None => None,
+                // No agent works in the thread: an external agent that posted in it gets the
+                // reply without a new mention (it has no "waiting" state of its own).
+                None => external_in_thread(conn, conversation_id, root).await?,
             };
             match agent.filter(|agent| live(agent)) {
                 Some(agent) => (agent, false),
@@ -344,7 +346,11 @@ pub(crate) async fn record(
                         .and_then(|id| id.parse().ok()),
                 })
             });
-    let Some(kind) = classify(addressed, thread, message.author_id) else {
+    // An external agent gets every reply in a thread it was found for, not only its driver's.
+    let follow_up = !addressed && external.is_some() && message.thread_root_id.is_some();
+    let Some(kind) =
+        classify(addressed, thread, message.author_id).or(follow_up.then_some(InputKind::Answer))
+    else {
         return Ok(());
     };
     // A custom agent works only in its channels: a mention elsewhere gets a refusal in the
@@ -396,6 +402,25 @@ pub(crate) async fn record(
     .execute(&mut *conn)
     .await?;
     Ok(())
+}
+
+/// The live external agent that last posted in the thread of `root` (or posted the root).
+async fn external_in_thread(
+    conn: &mut AnyConnection,
+    conversation_id: Id,
+    root: Id,
+) -> Result<Option<Id>, sqlx::Error> {
+    let author = sqlx::query_scalar::<_, String>(
+        "SELECT m.author_id FROM chat_messages m \
+         JOIN agent_profiles p ON p.user_id = m.author_id AND p.kind = 'external' AND p.deleted_at IS NULL \
+         WHERE m.conversation_id = $1 AND (m.thread_root_id = $2 OR m.id = $2) \
+         ORDER BY m.id DESC LIMIT 1",
+    )
+    .bind(conversation_id.to_string())
+    .bind(root.to_string())
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(author.and_then(|id| id.parse().ok()))
 }
 
 /// One queued message, with what the sidecar needs to read it.

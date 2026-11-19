@@ -662,8 +662,9 @@ just agent-test   # its tests and typecheck
 An **external agent** is an agent profile that an outside client runs instead of Orbit's agent service: Claude Code,
 Codex, or your own server. It is a bot user like the other agents (its `@handle`, avatar, channels, DMs, task
 assignment), so people reach it in the same way. The client connects to Orbit's MCP **as the agent's bot user**, gets
-its inputs with `wait_for_messages` and answers with `send_message` ([Orbit MCP](mcp.md#external-agents)). Design:
-`.ai/external-agents-design.md` (phase 1: pull and identity; no push URL yet).
+its inputs with `wait_for_messages` (pull) or gets them on its **Push URL** (push), and answers with `send_message`
+([Orbit MCP](mcp.md#external-agents)). Design: `.ai/external-agents-design.md` (phase 1: pull and identity; phase 2:
+push).
 
 **Settings → Agentic → Agents → New agent → External agent** (owners and admins; `POST …/agents/external`,
 `PATCH …/agents/{id}/external`). The card has:
@@ -675,6 +676,7 @@ its inputs with `wait_for_messages` and answers with `send_message` ([Orbit MCP]
 | Allow direct messages | On by default. Off: DMs with it start nothing and its MCP tools cannot read or post in DMs. |
 | Projects | Its tasks, and the docs of these projects' teamspaces. A private project also needs the agent on the project's member list. |
 | Permissions | `tasks:read` always; `tasks:write`, `docs:read`, `docs:write`, `chat:read`, `chat:write`. A new agent has `chat:read chat:write`. No Drive permission: Drive has no rights per folder, so nothing could keep it to the card. |
+| Push (for a server) | **Push URL** (https on a public host), the signing secret (**Reveal**, **Rotate**), the push state and the last 20 tries. Owners and admins only; members see none of it. See [Push](#push). |
 | Connection | The OAuth command, **Agent token** (create: 30, 90 or 365 days, shown once; revoke), the OAuth connections (**Disconnect**) and "Seen …" (its last MCP call). |
 
 - **What it reaches.** Every MCP call checks both the bot user's own access (it is a normal member) and the card
@@ -687,15 +689,51 @@ its inputs with `wait_for_messages` and answers with `send_message` ([Orbit MCP]
   answers in the person's DM with the agent and names its channels (the agent service's poll answers it; without one,
   the agent's own `wait_for_messages` after 3 seconds).
 - **What reaches it.** A mention in one of its channels (it answers in the thread under the message), a DM (when
-  allowed), and its task runs. A reply in a thread reaches it only when it mentions the agent again.
+  allowed), and its task runs. After it posted in a thread, every member's reply in that thread reaches it without a
+  new mention (as `message`); in a thread where it did not post, only a new mention does.
 - **No loops.** Its messages start no agent (also not itself), and its task writes start no task run.
 - **Tasks.** Assigning a task to it, or mentioning it in a task comment, queues a run as for the other agents: the
   header goes to the driver's DM with the agent (so it needs **Allow direct messages**), and the event reaches
   `wait_for_messages` with the task. Acknowledging that event ends the run. A task of a project that is not on its card
   never starts.
-- **Delete** suspends the bot user (as for every agent), revokes its OAuth grants and agent tokens, and drops its
-  waiting inputs: every connection stops at once.
+- **Delete** suspends the bot user (as for every agent), revokes its OAuth grants and agent tokens, clears its Push URL
+  and signing secret, and drops its waiting inputs: every connection stops at once.
 - The agent service never takes an external agent's inputs (its poll skips them, except refusals).
 - Data: `agent_profiles.kind/scopes/allow_dms/last_seen_at`, `agent_profile_projects`, `agent_tokens` (SHA-256 hash and
   a prefix only), `oauth_grants.agent_profile_id/approved_by`, `agent_inputs.delivered_at/delivery_attempts`; migration
-  `20261118180902_external_agents`.
+  `20261118180902_external_agents`. Push: `agent_profiles.push_url/push_secret/push_since`,
+  `agent_inputs.push_attempts/push_next_at`, `agent_push_deliveries`; migration `20261119125533_external_agent_push`.
+
+### Push
+
+With a **Push URL** on its card, Orbit sends each input of the agent to that URL at once (`agent/external_push.rs`, a
+loop every 2 seconds on each server), so a server agent needs no `wait_for_messages` loop. It answers with
+`send_message` over MCP (an agent token), not in the HTTP answer, so a slow model never hits the 3-second limit.
+
+- **Request.** `POST`, `Content-Type: application/json`, signed exactly like [chat webhook events](chat-webhooks.md):
+  `X-Orbit-Signature` and `X-Slack-Signature` are `v0=` and the hex HMAC-SHA256 of `v0:{timestamp}:{body}` with the
+  signing secret; the timestamp is in `X-Orbit-Request-Timestamp` and `X-Slack-Request-Timestamp`. The receiver
+  compares in constant time and refuses a timestamp older than 5 minutes. The body is a Slack `event_callback`:
+  `team_id` (workspace), `api_app_id` (the agent's id), `event_id` (`Ev<id>`, the same on every try: drop repeats),
+  `event_time`, and `event` with `type` (`app_mention`, `message`, `task_assigned`, `task_mentioned`, `task_comment`),
+  `channel`, `channel_name`, `channel_type` (`channel`, `group` for a private channel, `im`), `user`, `user_profile`,
+  `text`, `ts`, `thread_ts` (where to answer) and, for tasks, `task`.
+- **Tries.** A 2xx answer delivers it: Orbit sets `delivered_at` and acknowledges the input. Any other answer, a
+  redirect (never followed), no answer in 3 seconds or a refused address is a failed try. Orbit tries again after
+  10 s, 60 s and 5 min (4 sends in all). After the last one the input stays for `wait_for_messages`, and the card shows
+  **Push failing** until a later push works. A failed try ends that agent's round, so a receiver that is down costs one
+  timeout per round. Each try is claimed with one `UPDATE`, so several servers never send the same try twice.
+- **Only new inputs.** A new or changed Push URL pushes inputs from then on (`push_since`); older ones wait for pull.
+  An input that pull returned first is not pushed.
+- **Addresses.** https on a public host only, checked when the URL is saved (the webhook rule: no IP of a private,
+  loopback, link-local or IPv6-mapped local range, no `localhost`, `.local`, `.internal`, `.lan`, `.home.arpa`) and
+  again on every send: the push client keeps no connections, so each send resolves the name again through the
+  public-address resolver (a name that later points at a local address is refused, `unreachable`), an IP in the URL is
+  checked (`blocked_address`), and no proxy is used.
+- **Signing secret.** Made with the first Push URL, sealed with `ORBIT_APP_KEY` (`secret_box`); **Reveal** shows it,
+  **Rotate** replaces it at once (audit `agent_profile.push_secret_rotate`). Both are for owners and admins
+  (`GET …/agents/{id}/push-secret`, `POST …/agents/{id}/push-secret/rotate`). It is never in the card, the logs or the
+  audit details; the audit log of a card change says only whether push is on (`push`), not the URL.
+- **Local receivers (development only).** `ORBIT_AGENT_PUSH_ALLOW_LOCAL=1` lets the Push URL be http and local, for a
+  receiver on the developer's machine. It works only with `ORBIT_ENV=development` (a server bound to loopback); in any
+  other mode the server refuses to start with it set to 1.

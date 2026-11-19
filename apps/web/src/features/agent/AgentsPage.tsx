@@ -90,6 +90,7 @@ export function AgentsPage() {
                       <span className="text-sm font-medium text-foreground">{agent.name}</span>
                       <Badge variant="secondary">External</Badge>
                       <Badge variant="outline">{scopesLabel(agent.external.scopes)}</Badge>
+                      {agent.external.push_state === 'failing' ? <Badge variant="destructive">Push failing</Badge> : null}
                     </div>
                     <p className="text-xs text-muted-foreground">{externalChannelsLabel(agent)} · {lastSeenLabel(agent.external.last_seen_at)}</p>
                   </>

@@ -24,6 +24,7 @@ mod state;
 mod stickers;
 mod ui;
 mod webhooks;
+pub(crate) use webhooks::clean_request_url;
 
 use std::collections::HashMap;
 

@@ -2,7 +2,7 @@
  * The Agentic settings' rules without React, so Bun tests check them: which tabs and web links a person sees, and how
  * the agent and routine forms become the API's bodies (the web's `AgentsPage` and `RoutinesPage`).
  */
-import { AGENT_DEFAULT_CHOICE as DEFAULT, ANSWER_LEVELS, type AgentProfile, type AgentProfileInput, type AgentProfiles, type AnswerLevel, type DefaultAgentInput } from '@orbit/api/agent'
+import { AGENT_DEFAULT_CHOICE as DEFAULT, ANSWER_LEVELS, type AgentProfile, type AgentProfileInput, type AgentProfiles, type AnswerLevel, type DefaultAgentInput, type ExternalAgentInput } from '@orbit/api/agent'
 import type { AgentSkill } from '@orbit/api/agentSkills'
 import { ApiProblem } from '@orbit/api/problem'
 import type { Routine, RoutineChange, Script } from '@orbit/api/scheduled'
@@ -74,6 +74,8 @@ export interface AgentForm {
   answerLevel: AnswerLevel
   allChannels: boolean
   channelIds: string[]
+  /** An external agent's "Allow direct messages". */
+  allowDms: boolean
 }
 
 export function agentFormOf(agent: AgentProfile | null, defaultAgent?: AgentProfiles['default_agent']): AgentForm {
@@ -88,6 +90,7 @@ export function agentFormOf(agent: AgentProfile | null, defaultAgent?: AgentProf
     answerLevel: source?.answer_level ?? 'normal',
     allChannels: agent?.all_channels ?? false,
     channelIds: agent?.channels.map((channel) => channel.id) ?? [],
+    allowDms: agent?.external?.allow_dms ?? true,
   }
 }
 
@@ -108,6 +111,15 @@ export function customAgentInput(form: AgentForm): AgentProfileInput {
     all_channels: form.allChannels,
     channel_ids: form.channelIds,
   }
+}
+
+/**
+ * The save call of a custom agent's sheet. An external agent has its own route and fields (the custom route answers
+ * 422 for it), so it sends only what this sheet shows for it: name, channels and direct messages.
+ */
+export function agentSave(agent: AgentProfile | null, form: AgentForm): { external: false; input: AgentProfileInput } | { external: true; input: ExternalAgentInput } {
+  if (agent?.kind === 'external') return { external: true, input: { name: form.name.trim(), channel_ids: form.channelIds, allow_dms: form.allowDms } }
+  return { external: false, input: customAgentInput(form) }
 }
 
 /** The default agent's body: the name only when it changed, since a rename needs an installation admin. */
