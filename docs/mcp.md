@@ -395,7 +395,8 @@ See the [MCP tools specification](https://modelcontextprotocol.io/specification/
 
 An owner or admin can connect a client **as an Orbit agent** instead of as themselves: an external agent of
 Settings → Agentic → Agents ([Agent](agent.md#external-agents)). The client then acts as the agent's bot user, only
-inside the agent's card (its channels, DMs, projects and permissions), and gets three more tools:
+inside the agent's card (its channels, DMs, projects and permissions), and gets three more tools. A server agent can
+also get its inputs pushed to a **Push URL** instead of calling `wait_for_messages` ([Push](agent.md#push)):
 
 | Tool | Arguments | Result |
 | --- | --- | --- |
@@ -403,7 +404,8 @@ inside the agent's card (its channels, DMs, projects and permissions), and gets 
 | `send_message` | Required `conversation_id`, `text` (Markdown, at most 4,000 characters, `<@user_id>` mentions); optional `thread_ts` | Posts as the agent: `message_id`, `conversation_id`, `thread_ts`. Needs `chat:write`. No `@channel` or `@here`. |
 | `set_status` | Required `conversation_id`, `state` (`working` or `idle`); optional `thread_ts` | People see the agent typing in the thread for 2 minutes, or until `idle` or its next message. Needs `chat:write`. |
 
-An event has `event_id` (`Ev<id>`), `type` (`app_mention` in a channel, `message` in a DM, `task_assigned`,
+An event has `event_id` (`Ev<id>`), `type` (`app_mention` in a channel, `message` in a DM or a reply in a thread where
+the agent posted, `task_assigned`,
 `task_mentioned` or `task_comment`), `conversation_id`, `conversation_name`, `conversation_type` (`channel`, `private`
 or `im`), `thread_ts` (where to answer; `null` for the main list of a DM), `author_id`, `author_name`, `text`,
 `created_at`, `delivery_attempts` and, for tasks, `task` (`task_id`, `identifier`, `title`, `cause`; read it with
@@ -422,6 +424,13 @@ the agent's card (not the consent page) sets what it may do, also after a change
 **Connect with an agent token (a server).** On the agent's card: **Agent token → Create token** (30, 90 or 365 days).
 Orbit shows the `orb_agent_…` token once and keeps only its SHA-256 hash. Send it as `Authorization: Bearer` to `/mcp`;
 it also works on the public MCP address (`ORBIT_PUBLIC_MCP_URL`), unlike personal API tokens.
+
+**Push instead of pull (a server).** Set the agent's **Push URL** and copy its signing secret (**Reveal**). Orbit then
+POSTs each event to the URL at once, as a signed Slack `event_callback` (the same signature as chat webhook events;
+the `event` has `channel`, `user`, `text`, `ts`, `thread_ts`). Answer `2xx` quickly, then reply with `send_message`
+(`conversation_id` = `event.channel`, `thread_ts` = `event.thread_ts`) using an agent token. A pushed event (2xx) is
+acknowledged; one that fails 4 tries (at once, after 10 s, 60 s and 5 min) stays for `wait_for_messages`, so a server
+can call `wait_for_messages` with `timeout_seconds` 0 now and then to catch them.
 
 ### A loop with `claude -p` or `codex exec`
 

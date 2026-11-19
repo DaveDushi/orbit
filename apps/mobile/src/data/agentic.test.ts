@@ -6,6 +6,7 @@ import type { ConversationRecord } from '@orbit/api/generated/types.gen'
 import {
   agentChannelChoices,
   agentFormOf,
+  agentSave,
   agenticTabs,
   customAgentInput,
   defaultAgentInput,
@@ -180,5 +181,22 @@ describe('skills', () => {
     expect(skillAgents(['default'], 'bot-1', true)).toEqual(['default', 'bot-1'])
     expect(skillAgents(['default', 'bot-1'], 'bot-1', true)).toEqual(['default', 'bot-1'])
     expect(skillAgents(['default', 'bot-1'], 'default', false)).toEqual(['bot-1'])
+  })
+})
+
+// Regression: Edit on an external agent sent the custom agent's body to `PATCH …/agents/{id}`, which answers 422
+// ("Edit an external agent with its own form").
+describe('agentSave', () => {
+  test('an external agent saves on its own route with only its own fields', () => {
+    const external = agent({ kind: 'external', external: { scopes: ['tasks:read'], allow_dms: false, projects: [], last_seen_at: null, tokens: [], connections: [] } })
+    const form = { ...agentFormOf(external), name: ' Muse ' }
+    expect(form.allowDms).toBe(false)
+    expect(agentSave(external, form)).toEqual({ external: true, input: { name: 'Muse', channel_ids: ['c1'], allow_dms: false } })
+  })
+
+  test('a custom agent and a new one keep the custom body', () => {
+    const form = agentFormOf(agent())
+    expect(agentSave(agent(), form)).toEqual({ external: false, input: customAgentInput(form) })
+    expect(agentSave(null, form).external).toBe(false)
   })
 })

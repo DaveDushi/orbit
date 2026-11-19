@@ -238,6 +238,23 @@ export interface ExternalAgentCard {
   tokens: { id: string; prefix: string; created_at: number; expires_at: number; last_used_at: number | null }[]
   /** OAuth connections made "as agent" on the consent page. Empty for members. */
   connections: { id: string; client_name: string; approved_by: string | null; created_at: number }[]
+  /** Where Orbit pushes its inputs (owners and admins only; `null`: no push). Absent on older servers. */
+  push_url?: string | null
+  /** After the newest push try: `failing` = the last try of an input failed, so it waits for `wait_for_messages`. */
+  push_state?: 'ok' | 'retrying' | 'failing' | null
+  /** The newest 20 push tries, newest first (owners and admins only). */
+  deliveries?: AgentPushDelivery[]
+}
+
+/** One push try: `status` is the receiver's HTTP status, `null` when it did not answer (`error` says why). */
+export interface AgentPushDelivery {
+  event_id: string
+  /** 1 to 4: at once, then after 10 s, 60 s and 5 min. */
+  attempt: number
+  status: number | null
+  error: string | null
+  duration_ms: number
+  created_at: number
 }
 
 export interface ExternalAgentInput {
@@ -246,6 +263,8 @@ export interface ExternalAgentInput {
   project_ids?: string[]
   scopes?: ExternalAgentScope[]
   allow_dms?: boolean
+  /** https on a public host; `''` turns push off. */
+  push_url?: string
 }
 
 /** A new agent token: `token` is shown this once. */
@@ -357,6 +376,13 @@ export async function updateExternalAgent(client: Client, workspaceId: string, i
 export async function createAgentToken(client: Client, workspaceId: string, id: string, expiresInDays: 30 | 90 | 365): Promise<IssuedAgentToken> {
   const { data } = await client.post({ url: `${agentsUrl(workspaceId)}/${id}/tokens`, body: { expires_in_days: expiresInDays }, headers: { 'Content-Type': 'application/json' }, throwOnError: true })
   return data as IssuedAgentToken
+}
+
+/** The signing secret of the agent's pushes (owners and admins); `rotate` makes a new one, used at once. */
+export async function agentPushSecret(client: Client, workspaceId: string, id: string, rotate = false): Promise<string> {
+  const url = `${agentsUrl(workspaceId)}/${id}/push-secret`
+  const { data } = rotate ? await client.post({ url: `${url}/rotate`, throwOnError: true }) : await client.get({ url, throwOnError: true })
+  return (data as { signing_secret: string }).signing_secret
 }
 
 /** Revokes an agent token (`tokens`) or disconnects an OAuth connection (`connections`) of the agent. */

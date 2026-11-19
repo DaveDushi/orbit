@@ -351,7 +351,13 @@ impl App {
         )
         .with_drive(drive.clone(), &config.http.public_origin)
         .with_public_origin(&config.http.public_origin)
-        .with_sandbox(crate::agent::sandbox::SandboxKeys::from_env().map_err(AppError::Config)?);
+        .with_sandbox(crate::agent::sandbox::SandboxKeys::from_env().map_err(AppError::Config)?)
+        .with_local_push(
+            crate::agent::external_push::allow_local_from_env(
+                config.environment == orbit_platform::EnvironmentMode::Development,
+            )
+            .map_err(AppError::Config)?,
+        );
         let scheduled = agent.clone();
         let chat = ChatState::new(
             Arc::clone(&identity),
@@ -685,6 +691,13 @@ impl App {
             &mut services,
             "routines and scheduled messages",
             crate::scheduled::run_service(agent, token),
+        );
+        let agent = self.agent.clone();
+        let token = service_shutdown.clone();
+        spawn_service(
+            &mut services,
+            "external agent push",
+            crate::agent::external_push::run_service(agent, token),
         );
         let attachments = self.attachments.clone();
         let token = service_shutdown.clone();

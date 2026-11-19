@@ -6,6 +6,7 @@ import { ApiProblem } from '@orbit/api/problem'
 import { CopyCodeButton } from '@/components/common/CopyCodeButton'
 import { Modal } from '@/components/common/Modal'
 import { UserAvatar } from '@/components/common/UserAvatar'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { DialogClose, DialogFooter } from '@/components/ui/dialog'
@@ -18,8 +19,8 @@ import { useConversations } from '@/features/chat/api/queries'
 import { avatarImage } from '@/features/profile/avatarImage'
 import { useProjects } from '@/features/tasks/api/projects'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
-import { useCreateAgentToken, useRevokeAgentCredential, useSaveExternalAgent } from './api'
-import { lastSeenLabel, SCOPE_ROWS } from './externalAgent'
+import { useAgentProfiles, useAgentPushSecret, useCreateAgentToken, useRevokeAgentCredential, useSaveExternalAgent } from './api'
+import { deliveryLabel, lastSeenLabel, PUSH_STATE_LABELS, SCOPE_ROWS } from './externalAgent'
 
 const DAYS = [30, 90, 365] as const
 const DEFAULT_SCOPES: ExternalAgentScope[] = ['tasks:read', 'chat:read', 'chat:write']
@@ -42,6 +43,7 @@ export function ExternalAgentDialog({ agent, onSaved, onClose }: { agent: AgentP
   const [projectIds, setProjectIds] = useState<string[]>(card?.projects.map((project) => project.id) ?? [])
   const [scopes, setScopes] = useState<ExternalAgentScope[]>(card?.scopes ?? DEFAULT_SCOPES)
   const [allowDms, setAllowDms] = useState(card?.allow_dms ?? true)
+  const [pushUrl, setPushUrl] = useState(card?.push_url ?? '')
   const [avatar, setAvatar] = useState<{ blob: Blob; url: string } | null | undefined>(undefined)
   const avatarUrl = avatar === undefined ? agent?.avatar_url : (avatar?.url ?? null)
   const toggle = <T,>(list: T[], item: T, on: boolean) => (on ? [...list, item] : list.filter((own) => own !== item))
@@ -70,7 +72,7 @@ export function ExternalAgentDialog({ agent, onSaved, onClose }: { agent: AgentP
     save.mutate(
       {
         id: agent?.id ?? null,
-        input: { name: name.trim(), channel_ids: channelIds, project_ids: projectIds, scopes: scopes.filter((scope) => scope !== 'tasks:read'), allow_dms: allowDms },
+        input: { name: name.trim(), channel_ids: channelIds, project_ids: projectIds, scopes: scopes.filter((scope) => scope !== 'tasks:read'), allow_dms: allowDms, push_url: pushUrl.trim() },
         avatar: avatar === undefined ? undefined : (avatar?.blob ?? null),
       },
       {
@@ -159,6 +161,15 @@ export function ExternalAgentDialog({ agent, onSaved, onClose }: { agent: AgentP
           ))}
           <p className="text-xs text-muted-foreground">Writes need no yes from a person: these ticks are the limit. Every write is in the audit log. No Drive access.</p>
         </fieldset>
+        <fieldset className="flex flex-col gap-2">
+          <legend className="mb-1 text-sm font-medium text-foreground">Push (for a server)</legend>
+          <Input id="external-agent-push-url" aria-label="Push URL" type="url" placeholder="https://agent.example.com/orbit/events" value={pushUrl} onChange={(event) => { save.reset(); setPushUrl(event.target.value) }} />
+          <p className="text-xs text-muted-foreground">
+            Orbit sends each message for the agent to this https address at once, signed like Slack events (X-Orbit-Signature). If it does not answer with 2xx, Orbit tries again after
+            10 s, 60 s and 5 min; then the message waits for wait_for_messages. Leave it empty to only pull.
+          </p>
+          {agent ? <Push agent={agent} /> : null}
+        </fieldset>
         {agent ? <Connection agent={agent} /> : null}
         {save.isError ? <p role="alert" className="text-sm text-destructive">{save.error instanceof ApiProblem ? save.error.detail : 'The agent could not be saved.'}</p> : null}
       </form>
@@ -167,6 +178,44 @@ export function ExternalAgentDialog({ agent, onSaved, onClose }: { agent: AgentP
         <Button type="submit" form="external-agent-form" disabled={save.isPending || name.trim().length < 2}>{save.isPending ? 'Saving…' : agent ? 'Save' : 'Create agent'}</Button>
       </DialogFooter>
     </Modal>
+  )
+}
+
+/** The push signing secret (Reveal, Rotate) and the newest push tries. */
+function Push({ agent }: { agent: AgentProfile }) {
+  const { workspace } = useWorkspace()
+  const secret = useAgentPushSecret(workspace.id)
+  // The card while the dialog is open: tries come in the background.
+  const card = (useAgentProfiles(workspace.id, true, 5_000).data?.agents.find((own) => own.id === agent.id) ?? agent).external
+  const deliveries = card?.deliveries ?? []
+  const failed = (error: unknown) => toast.error(error instanceof ApiProblem ? error.detail : 'That did not work. Try again.')
+
+  return (
+    <div data-slot="external-agent-push" className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[13px] font-medium text-foreground">Signing secret</span>
+        <Button type="button" size="sm" variant="outline" disabled={secret.isPending} onClick={() => secret.mutate({ id: agent.id, rotate: false }, { onError: failed })}>Reveal</Button>
+        <Button type="button" size="sm" variant="ghost" disabled={secret.isPending} onClick={() => secret.mutate({ id: agent.id, rotate: true }, { onSuccess: () => toast('New signing secret: pushes use it now.'), onError: failed })}>Rotate</Button>
+        {card?.push_state ? <Badge variant={card.push_state === 'failing' ? 'destructive' : card.push_state === 'retrying' ? 'outline' : 'secondary'}>{PUSH_STATE_LABELS[card.push_state]}</Badge> : null}
+      </div>
+      {secret.data ? <CodeBlock text={secret.data} /> : null}
+      <p className="text-xs text-muted-foreground">Check X-Orbit-Signature: v0= and the hex HMAC-SHA256 of v0:{'{timestamp}'}:{'{body}'} with this secret; refuse a timestamp older than 5 minutes. Use event_id to drop repeats.</p>
+      {deliveries.length ? (
+        <div className="flex flex-col gap-1">
+          <p className="text-[13px] font-medium text-foreground">Last pushes</p>
+          <ul data-slot="external-agent-deliveries" className="flex flex-col">
+            {deliveries.map((delivery) => (
+              <li key={`${delivery.event_id}-${delivery.attempt}`} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 py-1 text-xs not-last:border-b not-last:border-border">
+                <span className="text-muted-foreground">{new Date(delivery.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' })}</span>
+                <span className="font-mono text-foreground">{delivery.event_id}</span>
+                <span className={delivery.status !== null && delivery.status >= 200 && delivery.status < 300 ? 'text-foreground' : 'text-destructive'}>{deliveryLabel(delivery)}</span>
+                <span className="ml-auto text-muted-foreground">try {delivery.attempt} of 4</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
   )
 }
 

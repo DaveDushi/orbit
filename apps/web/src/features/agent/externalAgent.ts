@@ -1,4 +1,4 @@
-import type { ExternalAgentScope } from '@orbit/api/agent'
+import type { AgentPushDelivery, ExternalAgentScope } from '@orbit/api/agent'
 
 /** The permissions on an external agent's card, by area. `tasks:read` is always on. */
 export const SCOPE_ROWS: { label: string; read: ExternalAgentScope; write: ExternalAgentScope; hint: string }[] = [
@@ -19,4 +19,13 @@ export function lastSeenLabel(millis: number | null | undefined): string {
 export function scopesLabel(scopes: ExternalAgentScope[]): string {
   const areas = SCOPE_ROWS.flatMap((row) => (scopes.includes(row.write) ? [`${row.label} write`] : scopes.includes(row.read) && row.read !== 'tasks:read' ? [`${row.label} read`] : []))
   return areas.length ? areas.join(', ') : 'Task reads only'
+}
+
+export const PUSH_STATE_LABELS = { ok: 'Push working', retrying: 'Push retrying', failing: 'Push failing' } as const
+
+/** One push try in a few words: the HTTP status, or why there was none. */
+export function deliveryLabel(delivery: AgentPushDelivery): string {
+  if (delivery.status !== null) return delivery.status >= 200 && delivery.status < 300 ? `Delivered (${delivery.status})` : `HTTP ${delivery.status}`
+  const reasons: Record<string, string> = { timeout: 'No answer in 3 s', unreachable: 'Unreachable', blocked_address: 'Blocked address', invalid_url: 'Invalid URL' }
+  return reasons[delivery.error ?? ''] ?? 'Failed'
 }

@@ -41,6 +41,7 @@ struct Fixture {
     database: TestDatabase,
     identity: Arc<IdentityRepository>,
     tasks: TaskRepository,
+    agent: AgentState,
     app: axum::Router,
     workspace_id: Id,
     project_id: Id,
@@ -55,7 +56,17 @@ struct Member {
 }
 
 impl Fixture {
+    /// Pushes reach local receivers (http, loopback), as with `ORBIT_AGENT_PUSH_ALLOW_LOCAL`.
     async fn new() -> Self {
+        Self::build(true).await
+    }
+
+    /// Pushes reach https on public addresses only, as in production.
+    async fn public_only() -> Self {
+        Self::build(false).await
+    }
+
+    async fn build(local_push: bool) -> Self {
         let database = TestDatabase::new().await.unwrap();
         let identity = Arc::new(IdentityRepository::new((*database).clone()));
         let now = TimestampMillis::now();
@@ -100,7 +111,8 @@ impl Fixture {
             Arc::clone(&identity),
             CookieMode::secure(),
             Some([3; 32]),
-        );
+        )
+        .with_local_push(local_push);
         let oauth = OAuthState::new(Arc::clone(&identity), CookieMode::secure(), ORIGIN);
         let tasks = TaskRepository::new((*database).clone());
         let mcp = mcp_router(
@@ -121,7 +133,7 @@ impl Fixture {
                 Arc::clone(&identity),
                 CookieMode::secure(),
             )))
-            .merge(orbit_server::agent::router(agent))
+            .merge(orbit_server::agent::router(agent.clone()))
             .merge(oauth_router(oauth))
             .merge(mcp);
         Self {
@@ -129,6 +141,7 @@ impl Fixture {
             database,
             identity,
             tasks,
+            agent,
             app,
             workspace_id: setup.workspace_id,
             project_id: setup.project_id,
@@ -862,9 +875,7 @@ async fn a_doc_on_the_card_shows_no_titles_or_drive_names_from_outside_it() {
     };
     let sibling = doc(linked, "Roadmap on the card", Vec::new()).await;
     let secret = doc(other_space, "Layoff plan", Vec::new()).await;
-    let link = |id: Id, block: &str| {
-        json!({"id": block, "type": "page", "props": {"pageId": id.to_string()}, "content": [], "children": []})
-    };
+    let link = |id: Id, block: &str| json!({"id": block, "type": "page", "props": {"pageId": id.to_string()}, "content": [], "children": []});
     let shared = doc(
         linked,
         "Shared notes",
@@ -936,7 +947,11 @@ async fn a_doc_on_the_card_shows_no_titles_or_drive_names_from_outside_it() {
         1,
         "{after:?}"
     );
-    assert!(after.iter().any(|block| block["props"]["pageId"] == secret.to_string()));
+    assert!(
+        after
+            .iter()
+            .any(|block| block["props"]["pageId"] == secret.to_string())
+    );
 }
 
 #[tokio::test]
@@ -1402,4 +1417,532 @@ async fn owners_connect_a_client_as_the_agent_and_members_cannot() {
             .await
             .unwrap();
     assert!(revoked.is_some());
+}
+
+// ---------------------------------------------------------------------------------------------
+// Push (phase 2)
+
+/// A local receiver of pushes that checks the signature as an integration must: `v0=` and the
+/// hex HMAC-SHA256 of `v0:{ts}:{body}`, a timestamp within 5 minutes. `/events` answers `status`;
+/// `/redirect` answers 302 to `/events`.
+struct Receiver {
+    url: String,
+    status: Arc<std::sync::atomic::AtomicU16>,
+    hits: Arc<std::sync::Mutex<Vec<(axum::http::HeaderMap, String)>>>,
+}
+
+impl Receiver {
+    async fn start() -> Self {
+        use axum::response::IntoResponse;
+        let status = Arc::new(std::sync::atomic::AtomicU16::new(200));
+        let hits = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (answer, log) = (Arc::clone(&status), Arc::clone(&hits));
+        let app = axum::Router::new()
+            .route(
+                "/events",
+                axum::routing::post(move |headers: axum::http::HeaderMap, body: String| {
+                    let (answer, log) = (Arc::clone(&answer), Arc::clone(&log));
+                    async move {
+                        log.lock().unwrap().push((headers, body));
+                        StatusCode::from_u16(answer.load(Ordering::SeqCst)).unwrap()
+                    }
+                }),
+            )
+            .route(
+                "/redirect",
+                axum::routing::post(|| async {
+                    (StatusCode::FOUND, [(header::LOCATION, "/events")]).into_response()
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        Self {
+            url: format!("http://127.0.0.1:{port}"),
+            status,
+            hits,
+        }
+    }
+
+    fn count(&self) -> usize {
+        self.hits.lock().unwrap().len()
+    }
+
+    /// The body of push `index`, after its signature was checked with `secret`.
+    fn verified(&self, index: usize, secret: &str) -> Value {
+        use hmac::{Hmac, Mac};
+        let (headers, body) = self.hits.lock().unwrap()[index].clone();
+        let header = |name: &str| headers.get(name).unwrap().to_str().unwrap().to_owned();
+        let timestamp = header("x-orbit-request-timestamp");
+        let age = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .abs_diff(timestamp.parse().unwrap());
+        assert!(age < 300, "the timestamp is fresh");
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(format!("v0:{timestamp}:{body}").as_bytes());
+        let expected: String = mac
+            .finalize()
+            .into_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        assert_eq!(header("x-orbit-signature"), format!("v0={expected}"));
+        assert_eq!(header("x-slack-signature"), format!("v0={expected}"));
+        assert_eq!(header("x-slack-request-timestamp"), timestamp);
+        serde_json::from_str(&body).unwrap()
+    }
+}
+
+impl Fixture {
+    async fn set_push(&self, member: &Member, agent: &Value, url: &str) -> (StatusCode, Value) {
+        self.api(
+            member,
+            "PATCH",
+            &format!("/agents/{}/external", agent["id"].as_str().unwrap()),
+            Some(json!({ "push_url": url })),
+        )
+        .await
+    }
+
+    async fn push_secret(
+        &self,
+        member: &Member,
+        agent: &Value,
+        rotate: bool,
+    ) -> (StatusCode, Value) {
+        let path = format!("/agents/{}/push-secret", agent["id"].as_str().unwrap());
+        if rotate {
+            self.api(member, "POST", &format!("{path}/rotate"), None)
+                .await
+        } else {
+            self.api(member, "GET", &path, None).await
+        }
+    }
+
+    async fn push_round(&self) -> usize {
+        orbit_server::agent::external_push::run_round(&self.agent)
+            .await
+            .unwrap()
+    }
+
+    /// The external card of the workspace's first agent, as `member` sees it.
+    async fn card(&self, member: &Member) -> Value {
+        let (_, list) = self.api(member, "GET", "/agents", None).await;
+        list["agents"][0]["external"].clone()
+    }
+
+    async fn input(&self, message: &str) -> (i64, Option<i64>, Option<i64>, Option<i64>) {
+        let row: (i64, Option<i64>, Option<i64>, Option<i64>) = sqlx::query_as(
+            "SELECT push_attempts, push_next_at, delivered_at, acked_at FROM agent_inputs WHERE message_id = $1",
+        )
+        .bind(message)
+        .fetch_one(self.database.pool())
+        .await
+        .unwrap();
+        row
+    }
+
+    /// As if the next try's time had come.
+    async fn make_due(&self, message: &str) {
+        sqlx::query("UPDATE agent_inputs SET push_next_at = 1 WHERE message_id = $1 AND push_next_at IS NOT NULL")
+            .bind(message)
+            .execute(self.database.pool())
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn push_urls_are_https_on_public_addresses_and_checked_again_on_each_send() {
+    let fixture = Fixture::public_only().await;
+    let channel = fixture.channel("ops", "public").await;
+    let muse = fixture
+        .create_external(json!({ "name": "Muse", "channel_ids": [channel] }))
+        .await;
+    for url in [
+        "http://agent.example.com/events",
+        "https://127.0.0.1/events",
+        "https://10.1.2.3/events",
+        "https://169.254.169.254/latest",
+        "https://[::1]/events",
+        "https://[::ffff:127.0.0.1]/events",
+        "https://[fe80::1]/events",
+        "https://localhost/events",
+        "https://printer.local/events",
+        "ftp://agent.example.com/events",
+    ] {
+        let (status, _) = fixture.set_push(&fixture.owner, &muse, url).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{url}");
+    }
+    let (status, saved) = fixture
+        .set_push(&fixture.owner, &muse, "https://agent.example.com/events")
+        .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(
+        saved["external"]["push_url"],
+        "https://agent.example.com/events"
+    );
+
+    // A name that resolves to a local address when Orbit sends (DNS rebinding), and a local IP
+    // written behind the card's back: refused at send time, nothing reaches the receiver.
+    let receiver = Receiver::start().await;
+    let port = receiver.url.rsplit(':').next().unwrap().to_owned();
+    let muse_id = muse["user_id"].as_str().unwrap();
+    for (url, error) in [
+        (format!("https://localhost:{port}/events"), "unreachable"),
+        (
+            format!("https://127.0.0.1:{port}/events"),
+            "blocked_address",
+        ),
+        (format!("http://127.0.0.1:{port}/events"), "blocked_address"),
+    ] {
+        sqlx::query("UPDATE agent_profiles SET push_url = $1 WHERE id = $2")
+            .bind(&url)
+            .bind(muse["id"].as_str().unwrap())
+            .execute(fixture.database.pool())
+            .await
+            .unwrap();
+        let message = fixture
+            .send(&fixture.owner, &channel, &format!("<@{muse_id}> hi"))
+            .await;
+        assert_eq!(fixture.push_round().await, 0, "{url}");
+        let card = fixture.card(&fixture.owner).await;
+        assert_eq!(card["deliveries"][0]["error"], error, "{url}: {card}");
+        assert_eq!(card["deliveries"][0]["status"], Value::Null);
+        assert_eq!(fixture.input(&message).await.0, 1, "one try counted");
+    }
+    assert_eq!(receiver.count(), 0);
+}
+
+#[tokio::test]
+async fn pushes_are_signed_retried_and_then_left_for_pull() {
+    let fixture = Fixture::new().await;
+    let receiver = Receiver::start().await;
+    let channel = fixture.channel("ops", "public").await;
+    let muse = fixture
+        .create_external(json!({ "name": "Muse", "channel_ids": [channel] }))
+        .await;
+    let muse_id = muse["user_id"].as_str().unwrap();
+    let token = fixture.token(&muse).await;
+    // An input from before the Push URL is not pushed: it waits for pull.
+    let before = fixture
+        .send(&fixture.owner, &channel, &format!("<@{muse_id}> early"))
+        .await;
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    let (status, _) = fixture
+        .set_push(&fixture.owner, &muse, &format!("{}/events", receiver.url))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, revealed) = fixture.push_secret(&fixture.owner, &muse, false).await;
+    assert_eq!(status, StatusCode::OK);
+    let secret = revealed["signing_secret"].as_str().unwrap().to_owned();
+    let stored: Vec<u8> =
+        sqlx::query_scalar("SELECT push_secret FROM agent_profiles WHERE id = $1")
+            .bind(muse["id"].as_str().unwrap())
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&stored).contains(&secret),
+        "sealed, not plain"
+    );
+
+    // Delivered at once: signed, the webhook event shape, acknowledged.
+    let message = fixture
+        .send(&fixture.owner, &channel, &format!("<@{muse_id}> summarize"))
+        .await;
+    assert_eq!(fixture.push_round().await, 1);
+    assert_eq!(receiver.count(), 1, "only the input after the URL");
+    let event = receiver.verified(0, &secret);
+    assert_eq!(event["type"], "event_callback");
+    assert_eq!(event["api_app_id"], muse["id"]);
+    assert_eq!(event["event_id"], format!("Ev{message}"));
+    assert_eq!(event["event"]["type"], "app_mention");
+    assert_eq!(event["event"]["channel"], channel);
+    assert_eq!(event["event"]["thread_ts"], message);
+    let (attempts, next, delivered, acked) = fixture.input(&message).await;
+    assert_eq!((attempts, next), (1, None));
+    assert!(delivered.is_some() && acked.is_some());
+    assert_eq!(fixture.card(&fixture.owner).await["push_state"], "ok");
+    // Pull still has the early one, and not the pushed one.
+    let pulled = fixture.wait(&token, 0, &[]).await;
+    assert_eq!(pulled.len(), 1);
+    assert_eq!(pulled[0]["event_id"], format!("Ev{before}"));
+
+    // Rotate: the next push is signed with the new secret.
+    let (_, rotated) = fixture.push_secret(&fixture.owner, &muse, true).await;
+    let new_secret = rotated["signing_secret"].as_str().unwrap().to_owned();
+    assert_ne!(new_secret, secret);
+    fixture
+        .send(&fixture.owner, &channel, &format!("<@{muse_id}> again"))
+        .await;
+    assert_eq!(fixture.push_round().await, 1);
+    receiver.verified(1, &new_secret);
+
+    // The receiver fails: tries after 10 s, 60 s and 5 min, then "push failing".
+    receiver.status.store(500, Ordering::SeqCst);
+    let failing = fixture
+        .send(&fixture.owner, &channel, &format!("<@{muse_id}> fail"))
+        .await;
+    let started = TimestampMillis::now().as_millis();
+    assert_eq!(fixture.push_round().await, 0);
+    let (attempts, next, delivered, acked) = fixture.input(&failing).await;
+    assert_eq!(attempts, 1);
+    let next = next.unwrap();
+    assert!(
+        next >= started + 10_000 && next < started + 15_000,
+        "{next}"
+    );
+    assert!(delivered.is_none() && acked.is_none());
+    assert_eq!(fixture.card(&fixture.owner).await["push_state"], "retrying");
+    // Not due yet: no send.
+    fixture.push_round().await;
+    assert_eq!(receiver.count(), 3);
+    for (attempt, delay) in [(2, 60_000), (3, 300_000)] {
+        fixture.make_due(&failing).await;
+        let now = TimestampMillis::now().as_millis();
+        fixture.push_round().await;
+        let (attempts, next, _, _) = fixture.input(&failing).await;
+        assert_eq!(attempts, attempt);
+        assert!(next.unwrap() >= now + delay, "try {attempt}");
+    }
+    fixture.make_due(&failing).await;
+    fixture.push_round().await;
+    let (attempts, next, delivered, acked) = fixture.input(&failing).await;
+    assert_eq!((attempts, next, delivered, acked), (4, None, None, None));
+    assert_eq!(receiver.count(), 6, "1 + 3 retries");
+    let card = fixture.card(&fixture.owner).await;
+    assert_eq!(card["push_state"], "failing");
+    let tries: Vec<(i64, Value)> = card["deliveries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|delivery| {
+            (
+                delivery["attempt"].as_i64().unwrap(),
+                delivery["status"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        &tries[..4],
+        &[
+            (4, json!(500)),
+            (3, json!(500)),
+            (2, json!(500)),
+            (1, json!(500))
+        ]
+    );
+    // No more tries; pull gets it.
+    fixture.make_due(&failing).await;
+    fixture.push_round().await;
+    assert_eq!(receiver.count(), 6);
+    let pulled = fixture.wait(&token, 0, &[&format!("Ev{before}")]).await;
+    assert_eq!(pulled.len(), 1);
+    assert_eq!(pulled[0]["event_id"], format!("Ev{failing}"));
+
+    // A redirect is not followed: it is a failed try.
+    receiver.status.store(200, Ordering::SeqCst);
+    fixture
+        .set_push(&fixture.owner, &muse, &format!("{}/redirect", receiver.url))
+        .await;
+    fixture
+        .send(&fixture.owner, &channel, &format!("<@{muse_id}> moved"))
+        .await;
+    assert_eq!(fixture.push_round().await, 0);
+    assert_eq!(receiver.count(), 6, "the redirect target got nothing");
+    let card = fixture.card(&fixture.owner).await;
+    assert_eq!(card["deliveries"][0]["status"], 302);
+    assert_eq!(card["push_state"], "retrying");
+
+    // Delete: the URL and secret go.
+    let (status, _) = fixture
+        .api(
+            &fixture.owner,
+            "DELETE",
+            &format!("/agents/{}", muse["id"].as_str().unwrap()),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let cleared: (Option<String>, Option<Vec<u8>>) =
+        sqlx::query_as("SELECT push_url, push_secret FROM agent_profiles WHERE id = $1")
+            .bind(muse["id"].as_str().unwrap())
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap();
+    assert_eq!(cleared, (None, None));
+}
+
+#[tokio::test]
+async fn only_owners_and_admins_see_and_change_push() {
+    let fixture = Fixture::new().await;
+    let receiver = Receiver::start().await;
+    let channel = fixture.channel("ops", "public").await;
+    let muse = fixture
+        .create_external(json!({ "name": "Muse", "channel_ids": [channel] }))
+        .await;
+    let member = fixture.add_person("Mia", "member").await;
+    let admin = fixture.add_person("Ada", "admin").await;
+    let url = format!("{}/events", receiver.url);
+    assert_eq!(
+        fixture.set_push(&member, &muse, &url).await.0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        fixture.push_secret(&member, &muse, false).await.0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        fixture.push_secret(&member, &muse, true).await.0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        fixture.set_push(&admin, &muse, &url).await.0,
+        StatusCode::OK
+    );
+    let (status, secret) = fixture.push_secret(&admin, &muse, false).await;
+    assert_eq!(status, StatusCode::OK);
+    let secret = secret["signing_secret"].as_str().unwrap().to_owned();
+    fixture
+        .send(
+            &fixture.owner,
+            &channel,
+            &format!("<@{}> hi", muse["user_id"].as_str().unwrap()),
+        )
+        .await;
+    assert_eq!(fixture.push_round().await, 1);
+    // Members see neither the URL nor the tries; the secret is never in the card.
+    let card = fixture.card(&member).await;
+    assert_eq!(card["push_url"], Value::Null);
+    assert_eq!(card["push_state"], Value::Null);
+    assert!(card["deliveries"].as_array().unwrap().is_empty());
+    let card = fixture.card(&admin).await;
+    assert_eq!(card["push_url"], url.as_str());
+    assert_eq!(card["deliveries"].as_array().unwrap().len(), 1);
+    let (_, list) = fixture.api(&admin, "GET", "/agents", None).await;
+    assert!(!list.to_string().contains(&secret));
+
+    // Another workspace's owner, and agents that are not this workspace's external ones: not found.
+    let outsider = Id::new_v7();
+    let now = TimestampMillis::now().as_millis();
+    sqlx::query(
+        "INSERT INTO users (id, email, normalized_email, display_name, password_hash, created_at, updated_at) \
+         VALUES ($1, 'out@example.com', 'out@example.com', 'Out', 'unused', $2, $2)",
+    )
+    .bind(outsider.to_string())
+    .bind(now)
+    .execute(fixture.database.pool())
+    .await
+    .unwrap();
+    let session = fixture
+        .identity
+        .create_session(
+            &AuthenticatedUser {
+                id: outsider,
+                email: "out@example.com".into(),
+                display_name: "Out".into(),
+            },
+            TimestampMillis::now(),
+        )
+        .await
+        .unwrap();
+    let outsider = Member {
+        id: outsider,
+        cookie: format!("__Host-orbit_session={}", session.token),
+    };
+    let (status, _) = fixture.push_secret(&outsider, &muse, false).await;
+    assert!(
+        matches!(status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND),
+        "{status}"
+    );
+    let internal = fixture
+        .api(
+            &fixture.owner,
+            "POST",
+            "/agents",
+            Some(json!({ "name": "Writer" })),
+        )
+        .await
+        .1;
+    for id in [
+        internal["id"].as_str().unwrap().to_owned(),
+        Id::new_v7().to_string(),
+    ] {
+        let (status, _) = fixture
+            .api(
+                &fixture.owner,
+                "GET",
+                &format!("/agents/{id}/push-secret"),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{id}");
+    }
+}
+
+#[tokio::test]
+async fn thread_replies_reach_the_external_agent_that_answered_without_a_mention() {
+    let fixture = Fixture::new().await;
+    let channel = fixture.channel("ops", "public").await;
+    let muse = fixture
+        .create_external(json!({ "name": "Muse", "channel_ids": [channel] }))
+        .await;
+    let token = fixture.token(&muse).await;
+    let member = fixture.add_person("Mia", "member").await;
+    fixture
+        .chat(
+            &member,
+            "POST",
+            &format!("/conversations/{channel}/join"),
+            None,
+        )
+        .await;
+    let root = fixture
+        .send(
+            &fixture.owner,
+            &channel,
+            &format!("<@{}> plan the launch", muse["user_id"].as_str().unwrap()),
+        )
+        .await;
+    let event = fixture.wait(&token, 0, &[]).await.remove(0);
+    // Before the agent answered, a plain reply is not for it.
+    fixture
+        .reply(&member, &channel, "any news?", Some(&root))
+        .await;
+    assert!(
+        fixture
+            .wait(&token, 0, &[event["event_id"].as_str().unwrap()])
+            .await
+            .is_empty()
+    );
+    fixture
+        .tool(
+            &token,
+            "send_message",
+            json!({"conversation_id": channel, "text": "On it.", "thread_ts": root}),
+        )
+        .await;
+    // After it answered: every member's reply in that thread reaches it, as `message`.
+    let reply = fixture
+        .reply(&member, &channel, "add the budget too", Some(&root))
+        .await;
+    let events = fixture.wait(&token, 0, &[]).await;
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0]["event_id"], format!("Ev{reply}"));
+    assert_eq!(events[0]["type"], "message");
+    assert_eq!(events[0]["thread_ts"], root);
+    // Another thread in the channel is not for it.
+    let other = fixture.send(&fixture.owner, &channel, "unrelated").await;
+    fixture
+        .reply(&member, &channel, "reply", Some(&other))
+        .await;
+    assert!(
+        fixture
+            .wait(&token, 0, &[&format!("Ev{reply}")])
+            .await
+            .is_empty()
+    );
 }

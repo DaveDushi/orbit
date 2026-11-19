@@ -856,6 +856,9 @@ async fn list_agents(
         if !can_manage {
             external.tokens.clear();
             external.connections.clear();
+            external.push_url = None;
+            external.push_state = None;
+            external.deliveries.clear();
         }
     }
     let can_rename = state
