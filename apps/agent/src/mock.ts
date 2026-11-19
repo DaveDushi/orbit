@@ -44,8 +44,8 @@
  *   edit video "clip.mp4" and image "photo.jpg" (media tools: finds both in Drive, copies the video to the sandbox,
  *     makes a contact sheet, looks at it and at the Drive image, trims and scales the video, halves the image, saves
  *     both as new Drive files, then reports what reached it, image blocks included)
- *   sandbox: <bash command> (sandbox_shell, a custom agent's own sandbox; when the answer to its internet access card
- *     allows a host, the newest command that names the host runs again)
+ *   sandbox: <bash command> [then send <file>] (sandbox_shell, a custom agent's own sandbox, `send_files` with the file;
+ *     when the answer to its internet access card allows a host, the newest command that names the host runs again)
  * AGENT_MOCK_TOKENS_PER_SECOND slows the streamed text (default 400), to watch a card build.
  *
  * A "yes" to an approval question (an answer, or the driver's next message in a DM) calls the last integration,
@@ -313,7 +313,8 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 		const again = lastCall(messages, ["sandbox_shell"], (args) => String(args.command).includes(allowedHost));
 		if (again) return again;
 	}
-	if ((code = /\bsandbox:\s*([\s\S]+)$/i.exec(instruction))) return { name: "sandbox_shell", args: { command: code[1].trim(), purpose: "the driver's command" } };
+	if ((code = /\bsandbox:\s*([\s\S]+?)(?:\s+then send ([^\s]+))?$/i.exec(instruction)))
+		return { name: "sandbox_shell", args: { command: code[1].trim(), purpose: "the driver's command", ...(code[2] ? { send_files: [code[2]] } : {}) } };
 	const target = (value: string, kind: "task" | "page" | "drive"): string => (/^(it|that|this)$/i.test(value) ? (lastId(messages, kind) ?? fromPage(kind)) : value) ?? value;
 	let match: RegExpExecArray | null;
 	if (/what is (?:this|open|here)/i.test(instruction) && open) {

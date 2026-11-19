@@ -477,6 +477,48 @@ test("phase 9: CPU time of background processes between calls counts at the next
 	assert.ok((third.cpu_ms ?? 0) < 1000, `counted once: ${third.cpu_ms} ms`);
 });
 
+test("phase 10: the call token, proxy password and script never stand in a host command line or environment", { skip, timeout: 60_000 }, async () => {
+	const claims = claimsFor(newWork());
+	const marker = `script-${randomBytes(6).toString("hex")}`;
+	// Every host process, as root and as nobody (any host user), while the call runs.
+	const secrets = [claims.token, claims.proxy_password, marker];
+	const scan = (asNobody: boolean) => {
+		const read = "for f in /proc/[0-9]*/cmdline /proc/[0-9]*/environ; do cat \"$f\" 2>/dev/null; echo; done; ps -eo args= 2>/dev/null";
+		return asNobody ? sh("runuser", ["-u", "nobody", "--", "bash", "-c", read]) : sh("bash", ["-c", read]);
+	};
+	const specs = () => sh("bash", ["-c", `ls -A ${run}/locks | grep -c 'process.json$' || true`]).trim();
+	const running = call(claims.work, `echo ${marker} >/dev/null; sleep 4; echo "$ORBIT_TOKEN"`, { claims });
+	await sleep(2000);
+	assert.equal(specs(), "0", "the spec file is gone once the call runs");
+	for (const asNobody of [true, false]) {
+		const seen = scan(asNobody);
+		assert.ok(seen.includes("runsc"), "the scan sees the broker's runsc processes");
+		for (const secret of secrets) assert.ok(!seen.includes(secret), `${asNobody ? "nobody" : "root"} saw a call secret in /proc`);
+	}
+	const result = await running;
+	assert.equal(result.stdout.trim(), claims.token, "the call still gets its token");
+	assert.equal(specs(), "0");
+	// The file itself: root only, made new (never through a planted file or link).
+	const made = sh("python3", ["-I", "-c", `import importlib.util,os,sys,tempfile
+spec = importlib.util.spec_from_file_location("broker", "/usr/local/lib/${name}/broker.py"); broker = importlib.util.module_from_spec(spec); spec.loader.exec_module(broker)
+d = tempfile.mkdtemp(); path = broker.process_file(d + "/x.process.json", broker.process(["/bin/true"], ["ORBIT_TOKEN=t"]))
+st = os.stat(path); print(oct(st.st_mode & 0o777), st.st_uid)
+os.symlink("/tmp/nowhere", d + "/l.process.json")
+try: broker.process_file(d + "/l.process.json", {}); print("followed")
+except OSError: print("refused")`]);
+	assert.deepEqual(made.trim().split("\n"), ["0o600 0", "refused"]);
+});
+
+test("phase 10: a call through the spec file keeps the sandbox user, its limits and no capabilities", { skip }, async () => {
+	const result = await call(newWork(), "id -u; id -g; ulimit -u; ulimit -n; ulimit -c; grep -E '^Cap(Eff|Prm|Bnd)' /proc/self/status; pwd; grep NoNewPrivs /proc/self/status");
+	assert.equal(result.exit, 0, result.stderr);
+	const lines = result.stdout.trim().split("\n");
+	assert.deepEqual(lines.slice(0, 5), ["1000", "1000", "128", "1024", "0"]);
+	assert.match(result.stdout, /CapEff:\s+0+\n/);
+	assert.match(result.stdout, /CapPrm:\s+0+\n/);
+	assert.match(result.stdout, /^\/work$/m);
+});
+
 test("phase 9: the broker's and the proxy's calls to Orbit say https (production Orbit refuses plain loopback calls)", { skip: skipProxy }, async () => {
 	const claims = claimsFor(newWork());
 	const before = serviceProtos.length;

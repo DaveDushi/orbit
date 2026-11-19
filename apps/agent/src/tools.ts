@@ -1180,7 +1180,7 @@ export function orbitExtension(toolDeps: ToolDeps) {
 			// The name and the team instructions are read at the start of each run (`Agent.#startRun`).
 			section("orbit", async (input, context) => PROMPT(await agentName(input, context), Boolean(toolDeps.sandbox)), { tag: false }),
 			section("orbit-ui", async () => uiPrompt(), { tag: false }),
-			section("orbit-about", async (input, context) => aboutOrbit(await agentName(input, context), Boolean(toolDeps.sandbox)), { tag: false }),
+			section("orbit-about", async (input, context) => aboutOrbit(await agentName(input, context), Boolean(toolDeps.sandbox), Boolean(toolDeps.agentSandbox)), { tag: false }),
 			section("orbit-version", async () => versionBlock(await orbitRevision(deps().orbit)), { tag: false }),
 			section("orbit-team", async (input, context) => teamInstructionsBlock((await input.read.snapshot(ThreadDoc, input.conversationId, context))?.teamInstructions), { tag: false }),
 			// The agent's card: a custom agent's instructions and tools, or the default agent's instructions, after the fixed rules and About Orbit.

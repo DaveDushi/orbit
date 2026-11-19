@@ -240,6 +240,8 @@ export class OrbitClient {
 		agentUserId?: string | null;
 		/** No push: a run's "Working on it" message, which its answer replaces (an edit with `notify`). */
 		silent?: boolean;
+		/** Files staged by `uploadAgentFile` for the same poster. */
+		fileIds?: readonly string[];
 	}): Promise<string> {
 		const result = (await this.internal("POST", "/messages", {
 			workspace_id: message.workspaceId,
@@ -249,8 +251,29 @@ export class OrbitClient {
 			nonce: message.nonce,
 			...(message.agentUserId ? { agent_user_id: message.agentUserId } : {}),
 			...(message.silent ? { silent: true } : {}),
+			...(message.fileIds?.length ? { file_ids: message.fileIds } : {}),
 		})) as { id: string };
 		return result.id;
+	}
+
+	/** Stages a file as the agent's own chat upload, for `fileIds` of its next message; returns the file's id. */
+	async uploadAgentFile(workspaceId: string, agentUserId: string | null, name: string, bytes: Buffer): Promise<string> {
+		const form = new FormData();
+		form.append("file", new Blob([new Uint8Array(bytes)]), name);
+		const query = new URLSearchParams({ workspace_id: workspaceId, ...(agentUserId ? { agent_user_id: agentUserId } : {}) });
+		const response = await fetch(`${this.#config.orbitUrl}/api/internal/agent/files?${query}`, {
+			method: "POST",
+			headers: {
+				authorization: `Bearer ${this.#config.secret}`,
+				...(this.#config.forwardedProto ? { "x-forwarded-proto": this.#config.forwardedProto } : {}),
+			},
+			body: form,
+			signal: AbortSignal.timeout(120_000),
+		});
+		const text = await response.text();
+		const parsed = text ? safeJson(text) : undefined;
+		if (!response.ok) throw new OrbitError(response.status, parsed as OrbitError["problem"], "POST /files");
+		return String((parsed as { id: string }).id);
 	}
 
 	/**

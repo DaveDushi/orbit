@@ -24,6 +24,7 @@
 #   --quota-mb N           /work size per thread (4096);  --min-free-mb N  refuse new images below (8192)
 #   --image REF            local Docker image of the Dockerfile here (orbit-agent-sandbox:latest)
 #   --client-group GROUP   who may connect (orbit-agent);  --key PATH  (/etc/orbit/sandbox-broker.key)
+#   --key-group GROUP      Orbit's group: may read the key (ORBIT_AGENT_SANDBOX_KEY_FILE), mode 0640 (none: root, 0600)
 #   --orbit-url URL        where call ends are reported and egress is decided (none)
 #   --egress-bin PATH      an orbit binary with `egress-proxy`: copied to LIB/orbit and run as the proxy (none)
 #   --orbit-internal ADDR  where the proxy sends orbit.internal (host:port of --orbit-url)
@@ -35,7 +36,7 @@ GVISOR_VERSION=20261109.0
 GVISOR_SHA512=0a0041fd862f4ea3042a9db8d41c742f48a01f909699adc2a0256e46d85e53f97b82b9fd154b3dce636f62b8d557677639f91c77d13f3f875ff9fa535275393c
 NAME=orbit-sandbox SLICE_PREFIX=orbit-agents NET=10.201 NET_PREFIX=osb PROXY_PORT=3128 QUOTA_MB=4096
 MIN_FREE_MB=8192 IMAGE=orbit-agent-sandbox:latest CLIENT_GROUP=orbit-agent KEY=/etc/orbit/sandbox-broker.key
-ORBIT_URL="" TARBALL="" UNINSTALL=0 EGRESS_BIN="" ORBIT_INTERNAL=""
+ORBIT_URL="" TARBALL="" UNINSTALL=0 EGRESS_BIN="" ORBIT_INTERNAL="" KEY_GROUP=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--name) NAME=$2; shift 2 ;;
@@ -48,6 +49,7 @@ while [ $# -gt 0 ]; do
 	--image) IMAGE=$2; shift 2 ;;
 	--client-group) CLIENT_GROUP=$2; shift 2 ;;
 	--key) KEY=$2; shift 2 ;;
+	--key-group) KEY_GROUP=$2; shift 2 ;;
 	--orbit-url) ORBIT_URL=$2; shift 2 ;;
 	--egress-bin) EGRESS_BIN=$2; shift 2 ;;
 	--orbit-internal) ORBIT_INTERNAL=$2; shift 2 ;;
@@ -96,6 +98,7 @@ for tool in /usr/sbin/mkfs.ext4 /usr/bin/python3 /usr/sbin/nft /usr/sbin/ip /usr
 	[ -x "$tool" ] || { echo "missing $tool" >&2; exit 1; }
 done
 getent group "$CLIENT_GROUP" >/dev/null || { echo "no group $CLIENT_GROUP" >&2; exit 1; }
+[ -z "$KEY_GROUP" ] || getent group "$KEY_GROUP" >/dev/null || { echo "no group $KEY_GROUP" >&2; exit 1; }
 if [ -n "$EGRESS_BIN" ]; then
 	[ -n "$ORBIT_URL" ] || { echo "--egress-bin needs --orbit-url" >&2; exit 2; }
 	"$EGRESS_BIN" egress-proxy --help >/dev/null || { echo "$EGRESS_BIN has no egress-proxy" >&2; exit 1; }
@@ -125,7 +128,7 @@ install -d -o root -g root -m 0700 "$STATE" "$STATE/agents" "$STATE/rootfs" "$CO
 if [ ! -s "$KEY" ]; then
 	(umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' >"$KEY")
 fi
-chmod 0600 "$KEY"
+if [ -n "$KEY_GROUP" ]; then chown "root:$KEY_GROUP" "$KEY"; chmod 0640 "$KEY"; else chown root:root "$KEY"; chmod 0600 "$KEY"; fi
 
 # The rootfs: exported once per image id; `current` points to the pinned one.
 image_id=$(docker image inspect --format '{{.Id}}' "$IMAGE")

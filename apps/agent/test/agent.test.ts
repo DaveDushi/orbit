@@ -33,7 +33,7 @@ const id = () => `0199c3a0-0000-7000-8000-${String(++next).padStart(12, "0")}`;
 /** Just enough of Orbit for the agent: the internal API and a few public routes. */
 class FakeOrbit {
 	readonly queue: (PendingInput & { acked?: boolean })[] = [];
-	readonly messages = new Map<string, { id: string; body: string; root: string | null; blocks?: any[]; silent?: boolean }>();
+	readonly messages = new Map<string, { id: string; body: string; root: string | null; blocks?: any[]; silent?: boolean; fileIds?: string[] }>();
 	readonly threads = new Map<string, { status: string; driver_user_id: string | null; waiting_for_user_id: string | null }>();
 	/** Every edit of a message, in order. */
 	readonly edits: { id: string; body: string; blocks?: any[]; notify?: boolean }[] = [];
@@ -56,7 +56,7 @@ class FakeOrbit {
 			let raw = "";
 			request.on("data", (chunk) => (raw += chunk));
 			request.on("end", async () => {
-				const body = raw ? JSON.parse(raw) : undefined;
+				const body = raw && String(request.headers["content-type"]).includes("json") ? JSON.parse(raw) : raw || undefined;
 				const [status, value] = await this.route(request.method!, request.url!, request.headers, body);
 				response.writeHead(status, { "content-type": "application/json" });
 				response.end(value === undefined ? "" : JSON.stringify(value));
@@ -113,7 +113,7 @@ class FakeOrbit {
 			if (rest === "/messages" && method === "POST") {
 				const existing = this.messages.get(body.nonce);
 				if (existing) return [200, { id: existing.id }];
-				const message = { id: id(), body: body.body, root: body.root_message_id, silent: body.silent };
+				const message = { id: id(), body: body.body, root: body.root_message_id, silent: body.silent, fileIds: body.file_ids };
 				this.messages.set(body.nonce, message);
 				return [200, { id: message.id }];
 			}
@@ -1227,6 +1227,8 @@ class SandboxOrbit extends FakeOrbit {
 	readonly stopsDone: string[] = [];
 	agentSandbox = true;
 	refuse = false;
+	/** The sidecar's file uploads: the query and the multipart body. */
+	readonly uploads: { query: string; body: string }[] = [];
 
 	async route(method: string, url: string, headers: Record<string, unknown>, body: any): Promise<[number, unknown]> {
 		const path = url.split("?")[0];
@@ -1234,6 +1236,10 @@ class SandboxOrbit extends FakeOrbit {
 		if (path === "/api/internal/agent/inputs" && secret) {
 			const [status, value] = await super.route(method, url, headers, body);
 			return [status, { ...(value as object), sandbox_stops: this.sandboxStops, agent_sandbox: this.agentSandbox }];
+		}
+		if (path === "/api/internal/agent/files" && secret) {
+			this.uploads.push({ query: url.split("?")[1] ?? "", body: String(body) });
+			return [201, { id: `file-${this.uploads.length}` }];
 		}
 		const usage = /^\/api\/internal\/agent\/runs\/([^/]+)\/usage$/.exec(path);
 		if (usage && secret) {
@@ -1356,6 +1362,62 @@ test("sandbox_shell: a custom agent's call asks the driver for a host once, an a
 		const donna = orbit.add({ thread_key: id(), author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> sandbox: ls` });
 		await until("the default agent's answer", () => progressOf(orbit, donna).startsWith("I could not do that"));
 		assert.equal(orbit.tickets.length, 3);
+	} finally {
+		await agent.stop();
+		closeBroker();
+		orbit.server.close();
+	}
+});
+
+test("sandbox_shell send_files: each file is read in a call of its own and posted in the thread as the agent's file; a failed read posts nothing", async () => {
+	const ARTHUR = "0199c3a0-0000-7000-8000-0000000000a3";
+	const orbit = new SandboxOrbit();
+	current = orbit;
+	await orbit.listen();
+	const dir = mkdtempSync(join(tmpdir(), "agent-"));
+	const socketPath = join(dir, "broker.sock");
+	const runs: Record<string, unknown>[] = [];
+	const closeBroker = fakeBroker(socketPath, (request, socket) => {
+		runs.push(request);
+		const read = Array.isArray(request.args);
+		if (read && String((request.args as string[])[0]).endsWith("missing.png")) {
+			socket.write(frameOf("e", "not a file"));
+			return void socket.end(frameOf("x", JSON.stringify({ exit: 3, timed_out: false, interrupted: null, egress_pending: [] })));
+		}
+		socket.write(frameOf("o", read ? "PNG-BYTES-of-chart" : "made chart.png"));
+		socket.end(frameOf("x", JSON.stringify({ exit: 0, timed_out: false, interrupted: null, egress_pending: [] })));
+	});
+	const settings = { ...config(orbit, join(dir, "data")), agentSandboxSocket: socketPath };
+	const agent = new Agent(settings, new OrbitClient(settings));
+	await agent.open();
+	await agent.start();
+	const arthur = { user_id: ARTHUR, name: "Arthur", instructions: "", tools: ["sandbox_shell"], model: null, thinking: null };
+	try {
+		const thread = id();
+		const sent = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${ARTHUR}> sandbox: python3 chart.py then send chart.png`, agent: arthur });
+		await until("the answer", () => progressOf(orbit, sent).startsWith("Done (sandbox_shell)"));
+		// The command, then the read: a new ticket as the driver, the path as an argument (never in the script).
+		assert.equal(orbit.tickets.length, 2);
+		assert.equal(orbit.tickets[1].user_id, ANN);
+		assert.deepEqual(runs[1].args, ["/work/chart.png", String(20 * 1024 * 1024)]);
+		assert.ok(!String(runs[1].script).includes("chart.png"));
+		assert.equal(orbit.uploads.length, 1);
+		assert.match(orbit.uploads[0].query, new RegExp(`agent_user_id=${ARTHUR}`));
+		assert.match(orbit.uploads[0].body, /filename="chart\.png"[\s\S]*PNG-BYTES-of-chart/);
+		const posted = orbit.messages.get("files:file-1");
+		assert.ok(posted, "one message with the file");
+		assert.deepEqual(posted.fileIds, ["file-1"]);
+		assert.equal(posted.root, thread);
+		assert.match(progressOf(orbit, sent), /Posted in the thread: chart\.png/);
+		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
+
+		// A file that is not there: nothing is uploaded or posted, the model is told why.
+		const missing = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${ARTHUR}> sandbox: true then send missing.png`, agent: arthur });
+		await until("the failure", () => progressOf(orbit, missing).startsWith("I could not do that"));
+		assert.match(progressOf(orbit, missing), /Not sent: missing\.png: not a file/);
+		assert.equal(orbit.uploads.length, 1);
+		assert.equal([...orbit.messages.keys()].filter((key) => key.startsWith("files:")).length, 1);
+		assert.deepEqual(orbit.ends.map((end) => end.body), [{ interrupted: "the file read stopped" }]);
 	} finally {
 		await agent.stop();
 		closeBroker();
