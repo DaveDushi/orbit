@@ -12,6 +12,7 @@ import {
   readAgentStatus,
   startChatgptLogin,
   createAgentProfile,
+  agentPushSecret,
   createAgentToken,
   createExternalAgent,
   deleteAgentProfile,
@@ -127,8 +128,8 @@ export function useSaveTeamInstructions(workspaceId: string) {
 const profilesKey = (workspaceId: string) => ['agent', 'profiles', workspaceId] as const
 
 /** Agentic → Agents: the workspace's agents besides the default one. Every member reads them; owners and admins change them. */
-export function useAgentProfiles(workspaceId: string, enabled = true) {
-  return useQuery({ queryKey: profilesKey(workspaceId), queryFn: () => readAgentProfiles(apiClient, workspaceId), enabled })
+export function useAgentProfiles(workspaceId: string, enabled = true, refetchInterval?: number) {
+  return useQuery({ queryKey: profilesKey(workspaceId), queryFn: () => readAgentProfiles(apiClient, workspaceId), enabled, refetchInterval })
 }
 
 /** An agent's name and avatar are in the member lists too. */
@@ -192,6 +193,12 @@ export function useSaveExternalAgent(workspaceId: string) {
 export function useCreateAgentToken(workspaceId: string) {
   const refresh = useRefreshAgents(workspaceId)
   return useMutation({ mutationFn: ({ id, days }: { id: string; days: 30 | 90 | 365 }) => createAgentToken(apiClient, workspaceId, id, days), onSettled: refresh })
+}
+
+/** Reveals (or with `rotate`, replaces) the signing secret of an external agent's pushes. */
+export function useAgentPushSecret(workspaceId: string) {
+  const refresh = useRefreshAgents(workspaceId)
+  return useMutation({ mutationFn: ({ id, rotate }: { id: string; rotate: boolean }) => agentPushSecret(apiClient, workspaceId, id, rotate), onSettled: refresh })
 }
 
 export function useRevokeAgentCredential(workspaceId: string) {

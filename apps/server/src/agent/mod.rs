@@ -8,6 +8,7 @@ pub(crate) mod credentials;
 mod drive;
 pub mod egress_proxy;
 pub(crate) mod external;
+pub mod external_push;
 mod graphql;
 pub mod handle;
 pub mod inputs;
@@ -44,6 +45,7 @@ pub fn router(state: AgentState) -> axum::Router {
         .merge(trash::router(state.clone()))
         .merge(profiles::router(state.clone()))
         .merge(external::router(state.clone()))
+        .merge(external_push::router(state.clone()))
         .merge(skills::router(state.clone()))
         .merge(sandbox::router(state.clone()))
         .merge(crate::scheduled::router(state))
@@ -130,6 +132,8 @@ pub struct AgentState {
     pub(crate) skill_sources: skill_package::SkillSources,
     /// The agent sandbox broker key (`sandbox`); absent: sandboxes are off.
     pub(crate) sandbox: Option<sandbox::SandboxKeys>,
+    /// Sends external agents' pushes (`external_push`).
+    pub(crate) push: Arc<crate::chat_routes::interactions::ClickSender>,
 }
 
 impl AgentState {
@@ -158,7 +162,16 @@ impl AgentState {
             drive: None,
             skill_sources: skill_package::SkillSources::from_env(),
             sandbox: None,
+            push: Arc::new(crate::chat_routes::interactions::ClickSender::for_agent_push(false)),
         }
+    }
+
+    /// Lets external agents' pushes reach http and local URLs: development and tests only
+    /// (`external_push::allow_local_from_env`).
+    #[must_use]
+    pub fn with_local_push(mut self, allow: bool) -> Self {
+        self.push = Arc::new(crate::chat_routes::interactions::ClickSender::for_agent_push(allow));
+        self
     }
 
     /// Turns on the agent's Drive tools; share links start with `public_origin`.

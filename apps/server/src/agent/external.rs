@@ -90,6 +90,8 @@ pub(super) struct ExternalBody {
     project_ids: Option<Vec<Id>>,
     scopes: Option<Vec<String>>,
     allow_dms: Option<bool>,
+    /// Where Orbit pushes the agent's inputs (https, public host); empty turns push off.
+    push_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -132,6 +134,11 @@ pub(super) struct ExternalView {
     pub(super) last_seen_at: Option<i64>,
     pub(super) tokens: Vec<TokenView>,
     pub(super) connections: Vec<ConnectionView>,
+    /// Push (`external_push`), for owners and admins only: the URL, `ok` / `retrying` /
+    /// `failing` after the newest try, and the newest 20 tries.
+    pub(super) push_url: Option<String>,
+    pub(super) push_state: Option<&'static str>,
+    pub(super) deliveries: Vec<super::external_push::DeliveryView>,
 }
 
 pub fn router(state: AgentState) -> Router {
@@ -259,6 +266,8 @@ async fn create_external(
         }
         None => DEFAULT_SCOPES.to_owned(),
     };
+    let push_url = super::external_push::checked_push_url(&state, body.push_url.as_deref())
+        .map_err(|detail| invalid(detail, &uri, &request_id))?;
     // The hash of a random secret that is thrown away: no password signs in as the agent.
     let password_hash = PasswordService::default()
         .hash(&generate_opaque_token())
@@ -338,6 +347,10 @@ async fn create_external(
         set_channels(&mut tx, workspace_id, actor.user_id, &agent, channels, now).await?;
         let projects = body.project_ids.as_deref().unwrap_or_default();
         set_projects(&mut tx, workspace_id, actor.user_id, profile_id, projects).await?;
+        if let Some(url) = &push_url {
+            super::external_push::set_push_url(&mut tx, &state, profile_id, url.as_deref(), now)
+                .await?;
+        }
         audit::record(
             &mut tx,
             workspace_id,
@@ -347,7 +360,8 @@ async fn create_external(
             "agent_profile",
             Some(profile_id),
             &request,
-            json!({ "name": name, "kind": "external", "scopes": scopes, "channels": channels.len(), "projects": projects.len() }),
+            json!({ "name": name, "kind": "external", "scopes": scopes, "channels": channels.len(), "projects": projects.len(),
+                "push": push_url.as_ref().is_some_and(Option::is_some) }),
             now,
         )
         .await?;
@@ -360,7 +374,7 @@ async fn create_external(
 }
 
 /// The live external agent `agent_id` of the workspace, in a write transaction.
-async fn load_external(
+pub(super) async fn load_external(
     conn: &mut AnyConnection,
     workspace_id: Id,
     agent_id: Id,
@@ -393,6 +407,8 @@ async fn update_external(
         .as_deref()
         .map(checked_scopes)
         .transpose()
+        .map_err(|detail| invalid(detail, &uri, &request_id))?;
+    let push_url = super::external_push::checked_push_url(&state, body.push_url.as_deref())
         .map_err(|detail| invalid(detail, &uri, &request_id))?;
     let database = state.database();
     let request = request_id_value(request_id.as_ref()).to_owned();
@@ -436,6 +452,10 @@ async fn update_external(
         if let Some(project_ids) = &body.project_ids {
             set_projects(&mut tx, workspace_id, actor.user_id, agent_id, project_ids).await?;
         }
+        if let Some(url) = &push_url {
+            super::external_push::set_push_url(&mut tx, &state, agent_id, url.as_deref(), now)
+                .await?;
+        }
         audit::record(
             &mut tx,
             workspace_id,
@@ -446,7 +466,9 @@ async fn update_external(
             Some(agent_id),
             &request,
             json!({ "name": name, "kind": "external", "scopes": scopes, "allow_dms": body.allow_dms,
-                "channels": body.channel_ids.as_ref().map(Vec::len), "projects": body.project_ids.as_ref().map(Vec::len) }),
+                "channels": body.channel_ids.as_ref().map(Vec::len), "projects": body.project_ids.as_ref().map(Vec::len),
+                // Never the URL itself: its path can be a credential.
+                "push": push_url.as_ref().map(Option::is_some) }),
             now,
         )
         .await?;
@@ -635,7 +657,7 @@ pub(super) async fn view(
     profile_id: &str,
 ) -> Result<Option<ExternalView>, sqlx::Error> {
     let Some(row) = sqlx::query(
-        "SELECT scopes, allow_dms, last_seen_at FROM agent_profiles WHERE id = $1 AND kind = 'external'",
+        "SELECT scopes, allow_dms, last_seen_at, push_url FROM agent_profiles WHERE id = $1 AND kind = 'external'",
     )
     .bind(profile_id)
     .fetch_optional(&mut *conn)
@@ -691,6 +713,7 @@ pub(super) async fn view(
         created_at: row.get("created_at"),
     })
     .collect();
+    let deliveries = super::external_push::deliveries(conn, profile_id).await?;
     Ok(Some(ExternalView {
         scopes: row
             .get::<String, _>("scopes")
@@ -702,6 +725,9 @@ pub(super) async fn view(
         last_seen_at: row.get("last_seen_at"),
         tokens,
         connections,
+        push_url: row.get("push_url"),
+        push_state: super::external_push::push_state(&deliveries),
+        deliveries,
     }))
 }
 
@@ -726,6 +752,10 @@ pub(super) async fn revoke_all(
     .bind(profile_id.to_string())
     .execute(&mut *conn)
     .await?;
+    sqlx::query("UPDATE agent_profiles SET push_url = NULL, push_secret = NULL WHERE id = $1")
+        .bind(profile_id.to_string())
+        .execute(&mut *conn)
+        .await?;
     Ok(())
 }
 
@@ -736,6 +766,29 @@ pub(super) async fn revoke_all(
 /// token or grant), built from its card now, so a change on the card counts at once. `None` when
 /// the agent was deleted, its bot user is suspended or no member (or a guest) any more.
 pub(crate) async fn principal(
+    database: &orbit_platform::Database,
+    profile_id: Id,
+    credential_id: Id,
+) -> Result<Option<ApiTokenPrincipal>, sqlx::Error> {
+    let principal = principal_of(database, profile_id, credential_id).await?;
+    if principal.is_some() {
+        let now = TimestampMillis::now().as_millis();
+        // At most one write a minute: every MCP call comes here.
+        sqlx::query(
+            "UPDATE agent_profiles SET last_seen_at = $1 WHERE id = $2 \
+             AND (last_seen_at IS NULL OR last_seen_at < $3)",
+        )
+        .bind(now)
+        .bind(profile_id.to_string())
+        .bind(now - 60_000)
+        .execute(database.pool())
+        .await?;
+    }
+    Ok(principal)
+}
+
+/// [`principal`] without "last seen": the push loop reads the card this way, as the agent.
+pub(super) async fn principal_of(
     database: &orbit_platform::Database,
     profile_id: Id,
     credential_id: Id,
@@ -776,17 +829,6 @@ pub(crate) async fn principal(
     .filter_map(|id| id.parse().ok())
     .collect();
     let scopes: String = row.get("scopes");
-    let now = TimestampMillis::now().as_millis();
-    // At most one write a minute: every MCP call comes here.
-    sqlx::query(
-        "UPDATE agent_profiles SET last_seen_at = $1 WHERE id = $2 \
-         AND (last_seen_at IS NULL OR last_seen_at < $3)",
-    )
-    .bind(now)
-    .bind(profile_id.to_string())
-    .bind(now - 60_000)
-    .execute(database.pool())
-    .await?;
     Ok(Some(ApiTokenPrincipal {
         token_id: credential_id,
         workspace_id,
@@ -1173,26 +1215,29 @@ pub(crate) async fn call(
 
 /// One input as `wait_for_messages` returns it.
 #[derive(Serialize)]
-struct Event {
-    event_id: String,
-    /// `app_mention` (a mention in a channel), `message` (a DM), `task_assigned`, `task_mentioned`
-    /// or `task_comment`.
+pub(super) struct Event {
+    pub(super) event_id: String,
+    /// `app_mention` (a mention in a channel), `message` (a DM, or a reply without a mention in a
+    /// thread where it answered), `task_assigned`, `task_mentioned` or `task_comment`.
     #[serde(rename = "type")]
-    kind: String,
-    conversation_id: String,
-    conversation_name: String,
+    pub(super) kind: String,
+    pub(super) conversation_id: String,
+    pub(super) conversation_name: String,
     /// `channel`, `private` or `im`.
-    conversation_type: String,
+    pub(super) conversation_type: String,
     /// Where to answer: pass it to send_message. `null`: the main list of a DM.
-    thread_ts: Option<String>,
-    author_id: String,
-    author_name: String,
+    pub(super) thread_ts: Option<String>,
+    pub(super) author_id: String,
+    pub(super) author_name: String,
     /// Markdown; people appear as <@user_id>.
-    text: String,
-    created_at: i64,
+    pub(super) text: String,
+    pub(super) created_at: i64,
     /// How often it was returned before, unacknowledged.
     delivery_attempts: i64,
-    task: Option<Value>,
+    pub(super) task: Option<Value>,
+    /// Push tries so far (`external_push`); not shown to the agent.
+    #[serde(skip)]
+    pub(super) push_attempts: i64,
 }
 
 /// Acknowledges `ack` (the agent's own inputs only), then returns the pending inputs or waits.
@@ -1220,7 +1265,7 @@ async fn wait(
             tracing::warn!(%error, "external agent task runs");
         }
         answer_refusals(state, limits).await?;
-        let events = pending(database, principal, limits).await?;
+        let events = pending(database, principal, limits, None).await?;
         if !events.is_empty() || tokio::time::Instant::now() >= deadline {
             if !events.is_empty() {
                 let mut query = orbit_platform::SqlBuilder::new(
@@ -1243,7 +1288,7 @@ async fn wait(
 
 /// Acknowledges one of the agent's inputs; another agent's input or an unknown id changes nothing.
 /// A task run ends with its input.
-async fn acknowledge(
+pub(super) async fn acknowledge(
     database: &orbit_platform::Database,
     agent: Id,
     message_id: Id,
@@ -1308,15 +1353,31 @@ async fn answer_refusals(state: &AgentState, limits: &AgentLimits) -> Result<(),
     Ok(())
 }
 
-/// The agent's pending inputs in conversations that are still on its card, oldest first.
-async fn pending(
+/// Which pending inputs the push loop sends: not delivered, made after `since` (when the Push URL
+/// was set), fewer than `max_attempts` tries, and the next try due at `now`.
+pub(super) struct PushDue {
+    pub(super) since: i64,
+    pub(super) max_attempts: i64,
+    pub(super) now: i64,
+}
+
+/// The agent's pending inputs in conversations that are still on its card, oldest first; with
+/// `push`, only those due for a push.
+pub(super) async fn pending(
     database: &orbit_platform::Database,
     principal: &ApiTokenPrincipal,
     limits: &AgentLimits,
+    push: Option<PushDue>,
 ) -> Result<Vec<Event>, sqlx::Error> {
-    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+    let push_sql = if push.is_some() {
+        "AND i.delivered_at IS NULL AND i.created_at >= $4 AND i.push_attempts < $5 \
+         AND (i.push_next_at IS NULL OR i.push_next_at <= $6)"
+    } else {
+        ""
+    };
+    let query = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT i.message_id, i.conversation_id, i.root_message_id, i.author_id, i.created_at, \
-         i.delivery_attempts, c.kind AS conversation_kind, c.name AS conversation_name, \
+         i.delivery_attempts, i.push_attempts, i.kind AS input_kind, c.kind AS conversation_kind, c.name AS conversation_name, \
          u.display_name AS author_name, COALESCE(m.body, tc.body, '') AS body, \
          tr.task_id, tr.cause, tt.title AS task_title, tt.number AS task_number, tp.project_key, \
          tt.project_id AS task_project \
@@ -1325,14 +1386,17 @@ async fn pending(
          LEFT JOIN agent_task_runs tr ON tr.id = i.message_id LEFT JOIN tasks tt ON tt.id = tr.task_id \
          LEFT JOIN projects tp ON tp.id = tt.project_id LEFT JOIN task_comments tc ON tc.id = tr.comment_id \
          WHERE i.agent_user_id = $1 AND i.workspace_id = $2 AND i.acked_at IS NULL AND i.refused IS NULL \
-         AND {} ORDER BY i.message_id LIMIT $3",
+         AND {} {push_sql} ORDER BY i.message_id LIMIT $3",
         limits.conversation_sql("c")
     )))
     .bind(limits.user_id.to_string())
     .bind(principal.workspace_id.to_string())
-    .bind(MAX_EVENTS)
-    .fetch_all(database.pool())
-    .await?;
+    .bind(MAX_EVENTS);
+    let query = match push {
+        Some(due) => query.bind(due.since).bind(due.max_attempts).bind(due.now),
+        None => query,
+    };
+    let rows = query.fetch_all(database.pool()).await?;
     Ok(rows
         .iter()
         .filter_map(|row| {
@@ -1366,6 +1430,8 @@ async fn pending(
                     _ => "task_comment",
                 },
                 (None, "dm") => "message",
+                // A reply in a thread where it answered, without a mention (`inputs::record`).
+                (None, _) if row.get::<String, _>("input_kind") == "answer" => "message",
                 (None, _) => "app_mention",
             };
             Some(Event {
@@ -1386,6 +1452,7 @@ async fn pending(
                 created_at: row.get("created_at"),
                 delivery_attempts: row.get("delivery_attempts"),
                 task,
+                push_attempts: row.get("push_attempts"),
             })
         })
         .collect())

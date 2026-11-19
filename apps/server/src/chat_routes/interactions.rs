@@ -37,7 +37,23 @@ pub struct ClickSender {
 impl ClickSender {
     #[must_use]
     pub fn new(development: bool) -> Self {
-        let mut builder = reqwest::Client::builder()
+        Self::build(reqwest::Client::builder(), development)
+    }
+
+    /// The sender of external agents' pushes (`agent::external_push`): the same rules, and no
+    /// kept connections, so each push resolves the host again through [`PublicResolver`] (a
+    /// name that now points at a local address is refused). `allow_local` lets URLs be http and
+    /// local, for a receiver on the developer's machine (development only).
+    #[must_use]
+    pub fn for_agent_push(allow_local: bool) -> Self {
+        Self::build(
+            reqwest::Client::builder().pool_max_idle_per_host(0),
+            allow_local,
+        )
+    }
+
+    fn build(builder: reqwest::ClientBuilder, development: bool) -> Self {
+        let mut builder = builder
             .user_agent(USER_AGENT)
             .timeout(TIMEOUT)
             .connect_timeout(TIMEOUT)
@@ -51,6 +67,12 @@ impl ClickSender {
             sends: Semaphore::new(MAX_SENDS),
             development,
         }
+    }
+
+    /// Whether this sender also reaches http and local URLs (development, tests).
+    #[must_use]
+    pub(crate) fn allows_local(&self) -> bool {
+        self.development
     }
 
     fn allowed(&self, url: &Url) -> bool {
