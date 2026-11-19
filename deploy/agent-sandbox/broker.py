@@ -7,7 +7,8 @@ A thread sandbox (key: agent + thread + driver, the `work` id Orbit signs into t
 first call and stays alive between calls. It is a `runsc --systemd-cgroup run --detach` in a scope of the agent's
 slice, with tini as PID 1, RLIMIT_NPROC, its own netns and veth (/30, only the proxy port open, nft), a read-only
 rootfs and /work from a sparse ext4 image (its size is the disk quota). Each call is one `runsc exec` with the call's
-own token and proxy password (proxy user = the call id). For the call's life a call file in RUN/egress tells the egress
+own token and proxy password (proxy user = the call id), given in a root-only process spec file (`--process`, deleted
+once runsc read it), never on a command line. For the call's life a call file in RUN/egress tells the egress
 proxy (`orbit egress-proxy`) the sandbox's address and the password's SHA-256; the proxy refuses everything else. A
 sandbox whose user has no process left under RLIMIT_NPROC (a `setsid` fork bomb) restarts at the next call; /work
 stays. At most MAX_LIVE sandboxes live; a new one evicts the one quiet the longest (never one
@@ -277,26 +278,43 @@ def make_image(path: str, quota_mb: int) -> None:
     os.replace(path + ".new", path)
 
 
+def process(args: list[str], env: list[str]) -> dict:
+    """The OCI process of the sandbox's init and of each call: the sandbox user, no capabilities, the limits."""
+    fsize = QUOTA_MB * 1024 * 1024
+    return {
+        "user": {"uid": UID, "gid": UID},
+        "args": args,
+        "env": env,
+        "cwd": "/work",
+        "capabilities": {k: [] for k in ("bounding", "effective", "inheritable", "permitted", "ambient")},
+        "noNewPrivileges": True,
+        "rlimits": [{"type": "RLIMIT_NPROC", "hard": NPROC, "soft": NPROC},
+                    {"type": "RLIMIT_NOFILE", "hard": 1024, "soft": 1024},
+                    {"type": "RLIMIT_FSIZE", "hard": fsize, "soft": fsize},
+                    {"type": "RLIMIT_CORE", "hard": 0, "soft": 0}],
+    }
+
+
+def process_file(path: str, spec: dict) -> str:
+    """A call's process spec for `runsc exec --process`: root only (0600, in the 0700 RUN/locks), so the call token, the
+    proxy password and the script never stand in a host command line (/proc/<pid>/cmdline is readable by every host
+    user). The caller deletes it as soon as runsc has read it."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        os.write(fd, json.dumps(spec).encode())
+    finally:
+        os.close(fd)
+    return path
+
+
 def bundle(work: str, netns: str, rootfs: str, agent: str, limits: dict) -> str:
     path = f"{RUN}/bundles/{work}"
     os.makedirs(path, mode=0o700, exist_ok=True)
     memory = min(int(limits.get("memory_mb", MAX_MEMORY_MB)), MAX_MEMORY_MB) * 1024 * 1024
-    fsize = QUOTA_MB * 1024 * 1024
     config = {
         "ociVersion": "1.0.0",
-        "process": {
-            "user": {"uid": UID, "gid": UID},
-            "args": ["/usr/bin/tini", "--", "/bin/sleep", "infinity"],
-            "env": SANDBOX_ENV,
-            "cwd": "/work",
-            "capabilities": {k: [] for k in ("bounding", "effective", "inheritable", "permitted", "ambient")},
-            "noNewPrivileges": True,
-            "oomScoreAdj": -900,
-            "rlimits": [{"type": "RLIMIT_NPROC", "hard": NPROC, "soft": NPROC},
-                        {"type": "RLIMIT_NOFILE", "hard": 1024, "soft": 1024},
-                        {"type": "RLIMIT_FSIZE", "hard": fsize, "soft": fsize},
-                        {"type": "RLIMIT_CORE", "hard": 0, "soft": 0}],
-        },
+        "process": {**process(["/usr/bin/tini", "--", "/bin/sleep", "infinity"], SANDBOX_ENV), "oomScoreAdj": -900},
         "root": {"path": rootfs, "readonly": True},
         "hostname": "sandbox",
         "mounts": [
@@ -437,6 +455,9 @@ def cleanup() -> None:
         sh("nft", "delete", "table", "inet", NAME.replace("-", "_"), check=False)
         state["sandboxes"] = {}
     shutil.rmtree(EGRESS_DIR, ignore_errors=True)  # no call runs now: every proxy password is dead
+    for name in os.listdir(f"{RUN}/locks"):  # a killed broker's spec files (call secrets)
+        if name.endswith(".process.json"):
+            os.unlink(f"{RUN}/locks/{name}")
     egress_dir()
     unmount(f"{RUN}/runsc/null-netns")  # runsc leaves this nsfs mount; the state folder cannot go without its umount
 
@@ -643,7 +664,7 @@ def run(request: dict, rest: bytes) -> None:
     stdout_max = max(0, min(int(request.get("stdout_max", 65536)), 64 * 1024 * 1024))
     stderr_max = max(0, min(int(request.get("stderr_max", 65536)), 4 * 1024 * 1024))
     lock = thread_lock(work, block=True)  # calls of one thread take turns
-    calls_file = None
+    calls_file = spec_file = None
     try:
         result = {"stdout_truncated": False, "stderr_truncated": False, "timed_out": False, "interrupted": None,
                   "restarted": None}
@@ -668,15 +689,22 @@ def run(request: dict, rest: bytes) -> None:
                f"HTTPS_PROXY={proxy}", f"https_proxy={proxy}", f"HTTP_PROXY={proxy}", f"http_proxy={proxy}"]
         calls_file = call_file(call, work, idx, claims["proxy_password"])
         pidfile = f"{RUN}/locks/{work}.pid"
+        try:
+            os.unlink(pidfile)  # an earlier call's: the wait below and kill_call must see only this call's
+        except FileNotFoundError:
+            pass
+        spec_file = process_file(f"{RUN}/locks/{call}.process.json", process(
+            ["/bin/bash", "--noprofile", "--norc", "-c", script, "sandbox", *args], SANDBOX_ENV + env))
 
         def terminated(*_):
             # The unit's stop (RuntimeMaxSec, systemctl stop) kills this client, which alone stops nothing inside.
             kill_call(work, pidfile)
-            if calls_file:
-                try:
-                    os.unlink(calls_file)
-                except FileNotFoundError:
-                    pass
+            for path in (calls_file, spec_file):
+                if path:
+                    try:
+                        os.unlink(path)
+                    except FileNotFoundError:
+                        pass
             report_end(call, {"interrupted": "the sandbox service stopped", "cpu_ms": 0})
             os._exit(143)
         signal.signal(signal.SIGTERM, terminated)
@@ -686,10 +714,9 @@ def run(request: dict, rest: bytes) -> None:
             if not done.is_set():
                 result["interrupted"] = "the run stopped the call"
                 kill_call(work, pidfile)
+        # The secrets and the script go in the spec file, never in argv (phase 9, finding 7).
         child = subprocess.Popen(
-            runsc("exec", "--user", f"{UID}:{UID}", "--cwd", "/work", "--internal-pid-file", pidfile,
-                  *(x for e in SANDBOX_ENV + env for x in ("--env", e)), work,
-                  "/bin/bash", "--noprofile", "--norc", "-c", script, "sandbox", *args),
+            runsc("exec", "--internal-pid-file", pidfile, "--process", spec_file, work),
             env=SYS_ENV, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=True)
         # Daemon threads: a background process of the call may keep the pipes open for hours.
         threads = [threading.Thread(target=feed, args=(child, stdin_size, rest, hung_up), daemon=True),
@@ -699,6 +726,12 @@ def run(request: dict, rest: bytes) -> None:
                                     daemon=True)]
         for thread in threads:
             thread.start()
+        # runsc reads the spec before it starts the process, and writes the pid file after: then the file goes.
+        started = time.monotonic()
+        while not os.path.exists(pidfile) and child.poll() is None and time.monotonic() - started < 10:
+            time.sleep(0.005)
+        os.unlink(spec_file)
+        spec_file = None
         try:
             child.wait(timeout)
         except subprocess.TimeoutExpired:
@@ -734,11 +767,12 @@ def run(request: dict, rest: bytes) -> None:
         result["egress_denied"] = answer.get("egress_denied", [])
         finish(result)
     finally:
-        if calls_file:
-            try:
-                os.unlink(calls_file)
-            except FileNotFoundError:
-                pass
+        for path in (calls_file, spec_file):
+            if path:
+                try:
+                    os.unlink(path)
+                except FileNotFoundError:
+                    pass
         lock.close()
 
 
