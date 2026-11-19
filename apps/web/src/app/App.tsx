@@ -17,6 +17,7 @@ import { RegisterPage } from '@/features/auth/pages/RegisterPage'
 import { SetupPage } from '@/features/auth/pages/SetupPage'
 import { WorkspaceProvider } from '@/features/workspaces/WorkspaceProvider'
 import { PublicSharePage } from '@/features/drive/pages/PublicSharePage'
+import { LegalPage } from '@/features/legal/LegalPage'
 import { GuestWorkspaceGate } from '@/features/workspaces/GuestWorkspaceGate'
 
 // The signed-in app loads on first use, one chunk per area, so the sign-in pages load only what they need.
@@ -91,7 +92,7 @@ const startAreas: Record<string, () => Promise<unknown>> = {
   '': loadHome, tasks: loadTasks, 'tasks-trash': loadTasks, views: loadTasks, docs: loadDocs, drive: loadDrive, chat: loadChat, apps: loadApps,
   activity: loadInbox, onboarding: loadOnboarding, profile: loadSettings, admin: loadSettings, settings: loadSettings,
 }
-const signedInStart = !/^\/(setup|login|recovery|register|oauth|accept-invitation|confirm-email|s)(\/|$)/.test(startPath)
+const signedInStart = !/^\/(setup|login|recovery|register|oauth|accept-invitation|confirm-email|s|terms|privacy)(\/|$)/.test(startPath)
 const startPage = signedInStart ? startAreas[startPath.split('/')[1]]?.() : undefined
 if (signedInStart) void loadShell()
 const AppShell = lazy(async () => {
@@ -130,6 +131,9 @@ export default function App() {
         <Route path="confirm-email" element={<ConfirmEmailPage />} />
         {/* A public Drive link: no account, no session. */}
         <Route path="s/:token" element={<PublicSharePage />} />
+        {/* Terms and privacy: public for everyone, signed in or not (the apps link here). */}
+        <Route path="terms" element={<LegalPage page="terms" />} />
+        <Route path="privacy" element={<LegalPage page="privacy" />} />
         <Route element={<AuthGate />}>
           <Route path="onboarding" element={<OnboardingPage />} />
           <Route element={<WorkspaceProvider><Outlet /></WorkspaceProvider>}>

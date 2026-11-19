@@ -25,6 +25,7 @@ import { useOwnStatus } from '@/features/realtime/useOwnStatus'
 import { useImprovementsEnabled } from '@/features/improvements/api'
 import { SuggestChangeDialog } from '@/features/improvements/SuggestChangeDialog'
 import { desktopAction, inDesktopApp, useDesktopApp } from '@/lib/desktopApp'
+import { LegalLinks } from '@/features/legal/LegalPage'
 
 /** The desktop app's download page (deploy/desktop-downloads.sh): Windows only for now, and not inside the app itself. */
 const DESKTOP_DOWNLOADS = '/downloads/desktop/'
@@ -141,6 +142,7 @@ export function UserMenu({ collapsed = false, topbar = false }: { collapsed?: bo
               Suggest a change
             </DropdownMenuItem>
           ) : null}
+          <LegalLinks className="px-2 py-1 text-[11px] text-muted-foreground" />
           <DropdownMenuSeparator />
           {/* data-danger, not variant="destructive": the preset menu popup forces destructive items to the accent color */}
           <DropdownMenuItem

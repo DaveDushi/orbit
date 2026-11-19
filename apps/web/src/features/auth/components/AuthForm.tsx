@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input'
 import { PasswordInput } from '@/components/ui/password-input'
 import { Label } from '@/components/ui/label'
 import { cn } from 'cn'
+import { LegalLinks } from '@/features/legal/LegalPage'
 
 export function AuthInput({ label, value, onChange, type = 'text', required = true }: { label: string; value: string; onChange?: (value: string) => void; type?: string; required?: boolean }) {
   const id = useId()
@@ -16,7 +17,10 @@ export function AuthInput({ label, value, onChange, type = 'text', required = tr
 export function AuthCard({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
     <main className="grid min-h-screen place-items-center bg-background bg-[radial-gradient(ellipse_60%_45%_at_50%_0%,color-mix(in_oklch,var(--primary)_14%,transparent),transparent)] p-6">
-      <section data-slot="auth-card" className={cn('w-[min(100%,460px)] rounded-xl border bg-card p-6 shadow-lg', className)}>{children}</section>
+      <div className="grid w-[min(100%,460px)] gap-3">
+        <section data-slot="auth-card" className={cn('rounded-xl border bg-card p-6 shadow-lg', className)}>{children}</section>
+        <LegalLinks className="text-center text-[12px] text-muted-foreground" />
+      </div>
     </main>
   )
 }
