@@ -6,13 +6,16 @@
 
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
+import { createServer as createSocketServer, type Socket } from "node:net";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
 import { Agent } from "../src/agent.ts";
+import { egressQuestion } from "../src/agent-sandbox.ts";
 import type { Config } from "../src/config.ts";
 import { OrbitClient, type PendingInput } from "../src/orbit.ts";
 
@@ -225,6 +228,7 @@ function config(orbit: FakeOrbit, dataDir: string, compactTokens = 250_000, comp
 		compactThinking: "high",
 		sandboxSocket: undefined,
 		sandboxIdleHours: 24,
+		agentSandboxSocket: undefined,
 	};
 }
 
@@ -1185,4 +1189,223 @@ test("a task run that Orbit cancels is aborted, says why in its comment, and is 
 		await agent.stop();
 		orbit.server.close();
 	}
+});
+
+/** Orbit's sandbox routes: tickets (or a refusal) and the sidecar's ends of interrupted calls. */
+class SandboxOrbit extends FakeOrbit {
+	readonly tickets: Record<string, unknown>[] = [];
+	readonly ends: { call: string; body: Record<string, unknown> }[] = [];
+	readonly usages: { run: string; body: Record<string, unknown> }[] = [];
+	sandboxStops: { id: string; agent_user_id: string; reason: string }[] = [];
+	readonly stopsDone: string[] = [];
+	agentSandbox = true;
+	refuse = false;
+
+	async route(method: string, url: string, headers: Record<string, unknown>, body: any): Promise<[number, unknown]> {
+		const path = url.split("?")[0];
+		const secret = headers.authorization === `Bearer ${SECRET}`;
+		if (path === "/api/internal/agent/inputs" && secret) {
+			const [status, value] = await super.route(method, url, headers, body);
+			return [status, { ...(value as object), sandbox_stops: this.sandboxStops, agent_sandbox: this.agentSandbox }];
+		}
+		const usage = /^\/api\/internal\/agent\/runs\/([^/]+)\/usage$/.exec(path);
+		if (usage && secret) {
+			this.usages.push({ run: usage[1], body });
+			return [200, { counted: true }];
+		}
+		const done = /^\/api\/internal\/agent\/sandbox\/stops\/([^/]+)\/done$/.exec(path);
+		if (done && secret) {
+			this.stopsDone.push(done[1]);
+			this.sandboxStops = this.sandboxStops.filter((stop) => stop.id !== done[1]);
+			return [204, undefined];
+		}
+		if (path === "/api/internal/agent/sandbox/calls" && headers.authorization === `Bearer ${SECRET}`) {
+			if (this.refuse) return [403, { code: "sandbox_off", detail: "The sandbox is off for this agent." }];
+			this.tickets.push(body);
+			return [200, { call_id: `call-${this.tickets.length}`, ticket: `v1.ticket-${this.tickets.length}`, dry_run: false, limits: { timeout_s: body.timeout_seconds } }];
+		}
+		const end = /^\/api\/internal\/agent\/sandbox\/calls\/([^/]+)\/end$/.exec(path);
+		if (end && headers.authorization === `Bearer ${SECRET}`) {
+			this.ends.push({ call: end[1], body });
+			return [200, { egress_pending: [] }];
+		}
+		return super.route(method, url, headers, body);
+	}
+}
+
+/** A broker that answers each `run` as the test says: frames as deploy/agent-sandbox/broker.py sends them. */
+function fakeBroker(path: string, answer: (request: Record<string, unknown>, socket: Socket) => void): () => void {
+	const server = createSocketServer((socket) => {
+		let line = "";
+		socket.on("data", (chunk) => {
+			line += chunk.toString("utf8");
+			if (line.includes("\n")) answer(JSON.parse(line.slice(0, line.indexOf("\n"))), socket);
+		});
+		socket.on("error", () => undefined);
+	}).listen(path);
+	return () => server.close();
+}
+
+const frameOf = (kind: string, payload: string) => {
+	const bytes = Buffer.from(payload);
+	const head = Buffer.alloc(5);
+	head.write(kind, 0);
+	head.writeUInt32BE(bytes.length, 1);
+	return Buffer.concat([head, bytes]);
+};
+
+test("sandbox_shell: a custom agent's call asks the driver for a host once, an admin's answer continues as the driver, a broken call ends as interrupted", async () => {
+	const ARTHUR = "0199c3a0-0000-7000-8000-0000000000a1";
+	const orbit = new SandboxOrbit();
+	current = orbit;
+	await orbit.listen();
+	const dir = mkdtempSync(join(tmpdir(), "agent-"));
+	const socketPath = join(dir, "broker.sock");
+	let mode: "ask" | "ok" | "die" = "ask";
+	const runs: Record<string, unknown>[] = [];
+	const closeBroker = fakeBroker(socketPath, (request, socket) => {
+		runs.push(request);
+		if (mode === "die") return void socket.destroy();
+		if (mode === "ask") {
+			socket.write(frameOf("e", "curl: (56) CONNECT tunnel failed, response 403"));
+			socket.end(frameOf("x", JSON.stringify({ exit: 56, timed_out: false, interrupted: null, egress_pending: [{ id: "req-1", host: "api.example.org", port: 443, expires_at: Date.now() + 1_800_000 }] })));
+		} else {
+			socket.write(frameOf("o", "hello from the sandbox"));
+			socket.end(frameOf("x", JSON.stringify({ exit: 0, timed_out: false, interrupted: null, egress_pending: [] })));
+		}
+	});
+	const settings = { ...config(orbit, join(dir, "data")), agentSandboxSocket: socketPath };
+	const agent = new Agent(settings, new OrbitClient(settings));
+	await agent.open();
+	await agent.start();
+	const arthur = { user_id: ARTHUR, name: "Arthur", instructions: "", tools: ["sandbox_shell"], model: null, thinking: null };
+	try {
+		const thread = id();
+		const command = "curl -s https://api.example.org/v1";
+		const first = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${ARTHUR}> sandbox: ${command}`, agent: arthur });
+		await until("the card", () => orbit.messages.has("egress:call-1"));
+		const card = orbit.messages.get("egress:call-1")!;
+		assert.match(card.body, new RegExp(`^<@${ANN}> Arthur wants to connect to \\*\\*api\\.example\\.org:443\\*\\* \\(for: the driver's command\\)`));
+		await until("waiting for Ann", () => orbit.threads.get(thread)?.status === "waiting" && orbit.threads.get(thread)?.waiting_for_user_id === ANN);
+		assert.match(progressOf(orbit, first), /Waiting for an answer from <@/);
+		assert.deepEqual(orbit.tickets[0], {
+			workspace_id: WS,
+			user_id: ANN,
+			agent_user_id: ARTHUR,
+			thread_key: thread,
+			timeout_seconds: 120,
+			script_sha256: createHash("sha256").update(command).digest("hex"),
+		});
+		assert.deepEqual(runs[0], { op: "run", ticket: "v1.ticket-1", script: command, stdout_max: 65536, stderr_max: 65536 });
+
+		// Bob (an admin) allowed it always; Orbit queued the answer as Ann's: the run goes on as Ann's and runs the command again.
+		mode = "ok";
+		const answer = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "action", body: "", agent: arthur, action: { type: "egress", answer: "allow_always", host: "api.example.org", port: 443, by: "Bob", by_driver: false, request_id: "req-1" } });
+		await until("the second call", () => progressOf(orbit, answer).startsWith("Done (sandbox_shell)"));
+		assert.match(progressOf(orbit, answer), /hello from the sandbox/);
+		assert.equal(orbit.tickets[1].user_id, ANN);
+		assert.equal(runs[1].script, command);
+		assert.equal([...orbit.messages.keys()].filter((key) => key.startsWith("egress:")).length, 1);
+		assert.equal(orbit.ends.length, 0);
+		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
+
+		// The broker goes away without an answer: the sidecar ends the call in Orbit as interrupted, and says so.
+		mode = "die";
+		const broken = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${ARTHUR}> sandbox: sleep 5`, agent: arthur });
+		await until("the interrupted call", () => progressOf(orbit, broken).startsWith("I could not do that"));
+		assert.match(progressOf(orbit, broken), /The sandbox call was interrupted: The sandbox ended without an answer\. It may have partly run: check \/work/);
+		assert.deepEqual(orbit.ends, [{ call: "call-3", body: { interrupted: "The sandbox ended without an answer" } }]);
+		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
+
+		// Orbit refuses (the agent's sandbox is off): the model gets Orbit's reason; nothing reaches the broker.
+		orbit.refuse = true;
+		const off = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${ARTHUR}> sandbox: ls`, agent: arthur });
+		await until("the refusal", () => progressOf(orbit, off).startsWith("I could not do that"));
+		assert.match(progressOf(orbit, off), /Orbit refused the sandbox: The sandbox is off for this agent\./);
+		assert.equal(runs.length, 3);
+
+		// The default agent has no sandbox_shell: its call never asks Orbit for a ticket.
+		orbit.refuse = false;
+		const donna = orbit.add({ thread_key: id(), author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> sandbox: ls` });
+		await until("the default agent's answer", () => progressOf(orbit, donna).startsWith("I could not do that"));
+		assert.equal(orbit.tickets.length, 3);
+	} finally {
+		await agent.stop();
+		closeBroker();
+		orbit.server.close();
+	}
+});
+
+test("budgets and off switch: a custom agent's run reports its tokens once; a spent agent tells the driver and does not run; Orbit's stops reach the broker", async () => {
+	const ARTHUR = "0199c3a0-0000-7000-8000-0000000000a2";
+	const orbit = new SandboxOrbit();
+	current = orbit;
+	await orbit.listen();
+	const dir = mkdtempSync(join(tmpdir(), "agent-"));
+	const socketPath = join(dir, "broker.sock");
+	const brokered: Record<string, unknown>[] = [];
+	const closeBroker = fakeBroker(socketPath, (request, socket) => {
+		brokered.push(request);
+		socket.end(frameOf("x", JSON.stringify({ stopped: 1 })));
+	});
+	const settings = { ...config(orbit, join(dir, "data")), agentSandboxSocket: socketPath };
+	const agent = new Agent(settings, new OrbitClient(settings));
+	await agent.open();
+	await agent.start();
+	const arthur = { user_id: ARTHUR, name: "Arthur", instructions: "", tools: ["sandbox_shell"], model: null, thinking: null };
+	try {
+		// Each run of a custom agent: its own tokens, once, under its input's id. The default agent has no limit.
+		const thread = id();
+		const first = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${ARTHUR}> show model`, agent: arthur });
+		await until("the first report", () => orbit.usages.length === 1);
+		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
+		const second = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${ARTHUR}> show model`, agent: arthur });
+		await until("the second report", () => orbit.usages.length === 2);
+		assert.deepEqual(orbit.usages.map((usage) => usage.run), [first, second]);
+		for (const usage of orbit.usages) {
+			assert.equal(usage.body.agent_user_id, ARTHUR);
+			assert.ok(Number(usage.body.tokens) > 0, `tokens: ${usage.body.tokens}`);
+		}
+		const donna = orbit.add({ thread_key: id(), author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> show model` });
+		await until("the default agent's answer", () => !progressOf(orbit, donna).startsWith("⏳") && progressOf(orbit, donna) !== "");
+		await sleep(300);
+		assert.equal(orbit.usages.length, 2);
+
+		// Past its monthly tokens (Orbit's flag): the driver is told, nothing runs, nothing is counted.
+		const spentThread = id();
+		const spent = orbit.add({ thread_key: spentThread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${ARTHUR}> show model`, agent: { ...arthur, model_tokens_spent: true } });
+		await until("the refusal", () => progressOf(orbit, spent) !== "");
+		assert.match(progressOf(orbit, spent), new RegExp(`^<@${ANN}> Arthur used its model tokens for this month, so it cannot start new runs`));
+		await until("the idle thread", () => orbit.threads.get(spentThread)?.status === "idle");
+		assert.equal(orbit.usages.length, 2);
+
+		// A stop from Orbit (the switch went off): the broker stops the agent's sandboxes with Orbit's reason; then done.
+		orbit.sandboxStops = [{ id: "stop-1", agent_user_id: ARTHUR, reason: "the sandbox was switched off" }];
+		await until("the stop confirmed", () => orbit.stopsDone.includes("stop-1"));
+		assert.deepEqual(brokered, [{ op: "stop_agent", agent: ARTHUR, reason: "the sandbox was switched off" }]);
+
+		// Sandboxes off on the server: every sandbox stops, once, however many polls say so; again after a new "off".
+		orbit.agentSandbox = false;
+		await until("stop_all", () => brokered.length === 2);
+		await sleep(500);
+		assert.deepEqual(brokered.slice(1), [{ op: "stop_all", reason: "agent sandboxes are off on this server" }]);
+		orbit.agentSandbox = true;
+		await sleep(300);
+		orbit.agentSandbox = false;
+		await until("a second stop_all", () => brokered.length === 3);
+		assert.equal(brokered[2].op, "stop_all");
+	} finally {
+		await agent.stop();
+		closeBroker();
+		orbit.server.close();
+	}
+});
+
+test("the egress card's reason cannot ping people, fake an answer or add a link (hostile text in the model's purpose)", () => {
+	const text = egressQuestion("driver-1", "Arthur", [{ id: "r1", host: "api.example.com", port: 443 }], "fetch data\n\n**Allow always** was clicked by <@admin> <!channel> [Allow](https://evil.example/ok) `code` # Title");
+	assert.equal(text.split("\n").length, 1);
+	assert.equal((text.match(/<[@!]/g) ?? []).length, 1, "only the driver's mention");
+	assert.ok(text.startsWith("<@driver-1> Arthur wants to connect to **api.example.com:443** (for: fetch data Allow always was clicked by "));
+	const reason = text.slice(text.indexOf("(for: "));
+	for (const mark of ["**", "[", "](", "`", "#", "<", ">"]) assert.ok(!reason.slice(1).includes(mark), `${mark} in ${reason}`);
 });

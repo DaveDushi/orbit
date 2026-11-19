@@ -6,6 +6,7 @@
 pub(crate) mod bot;
 pub(crate) mod credentials;
 mod drive;
+pub mod egress_proxy;
 pub(crate) mod external;
 mod graphql;
 pub mod inputs;
@@ -18,6 +19,7 @@ mod oauth;
 mod outbound;
 pub mod profiles;
 pub(crate) mod routes;
+pub mod sandbox;
 pub mod scope;
 pub(crate) mod sessions;
 pub mod settings;
@@ -42,6 +44,7 @@ pub fn router(state: AgentState) -> axum::Router {
         .merge(profiles::router(state.clone()))
         .merge(external::router(state.clone()))
         .merge(skills::router(state.clone()))
+        .merge(sandbox::router(state.clone()))
         .merge(crate::scheduled::router(state))
 }
 
@@ -124,6 +127,8 @@ pub struct AgentState {
     pub(crate) drive: Option<drive::AgentDrive>,
     /// Where agent skills are downloaded from (`skills`): GitHub, or a local server in tests.
     pub(crate) skill_sources: skill_package::SkillSources,
+    /// The agent sandbox broker key (`sandbox`); absent: sandboxes are off.
+    pub(crate) sandbox: Option<sandbox::SandboxKeys>,
 }
 
 impl AgentState {
@@ -151,6 +156,7 @@ impl AgentState {
             public_origin: None,
             drive: None,
             skill_sources: skill_package::SkillSources::from_env(),
+            sandbox: None,
         }
     }
 
@@ -162,6 +168,13 @@ impl AgentState {
             reader: crate::file_content::FileReader::new(),
             public_origin: public_origin.to_owned(),
         });
+        self
+    }
+
+    /// Turns agent sandboxes on with the broker key (`sandbox::SandboxKeys`); `None` keeps them off.
+    #[must_use]
+    pub fn with_sandbox(mut self, keys: Option<sandbox::SandboxKeys>) -> Self {
+        self.sandbox = keys;
         self
     }
 

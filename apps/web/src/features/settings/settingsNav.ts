@@ -173,12 +173,13 @@ const AGENTIC_MOVED: Readonly<Record<string, string>> = {
 }
 
 /**
- * The Agentic page's tabs, and where an address that is not a tab goes: its new section, else the first one. With the
+ * The Agentic page's tabs (a page below a tab is that tab's), and where an address that is not a tab goes: its new section, else the first one. With the
  * agent off its tabs hide, but a direct link still opens: the section answers for itself, as these pages always did.
  */
 export function agenticTabsView(tabs: readonly AgenticTab[], agent: boolean, pathname: string) {
   const path = pathname.replace(/\/+$/, '')
-  const current = tabs.find((tab) => tab.to === path)
+  // A page inside a section (an agent's Internet access) keeps its section's tab.
+  const current = tabs.find((tab) => tab.to === path) ?? tabs.slice(1).find((tab) => path.startsWith(`${tab.to}/`))
   return { tabs: tabs.filter((tab) => !tab.agent || agent), current, redirect: current ? null : (AGENTIC_MOVED[path] ?? tabs[0].to) }
 }
 

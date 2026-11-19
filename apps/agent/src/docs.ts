@@ -9,6 +9,9 @@ export type RunState = {
 	startedAt: number;
 	/** A line above the progress and the answer, such as a routine's name; absent: none. */
 	title?: string | null;
+	/** The thread's model tokens (Pi's `pi.usage`) when the run started: the run's own are the rest. Absent: a run
+	 * from before the count, which is not reported. */
+	tokensAtStart?: number;
 };
 
 /** A routine run (Orbit's `agent_routine_runs`): what it may write, and the saved script it runs. */

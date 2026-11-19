@@ -11,7 +11,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels, type Models } from "@earendil-works/pi-ai";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
-import { configure, createRegistry, Harness, ProviderDoc, watchEvents, type AgentEvent, type Conversation, type ConversationId, type SettledSubmissionRecord, type SubmissionId } from "@earendil-works/pi-durable";
+import { configure, createRegistry, Harness, ProviderDoc, UsageDoc, watchEvents, type UsageState, type AgentEvent, type Conversation, type ConversationId, type SettledSubmissionRecord, type SubmissionId } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 
 import { compactionSettings } from "./compaction.ts";
@@ -27,12 +27,12 @@ import { loadWake } from "./memory.ts";
 import { namesToTokens, splitBody, tokensToNames, type Person } from "./mentions.ts";
 import { mockModels } from "./mock.ts";
 import { codexModels, PROVIDER, PeopleModels, routedModels } from "./models.ts";
-import { OrbitError, type InputAgent, type OrbitClient, type PendingInput, type RoutineRun, type TaskRunInput, type TaskRunStop } from "./orbit.ts";
+import { OrbitError, type InputAgent, type OrbitClient, type PendingInput, type PendingInputs, type RoutineRun, type TaskRunInput, type TaskRunStop } from "./orbit.ts";
 import { withPageContext } from "./page.ts";
 import { DEFAULT_AGENT_NAME, MEMORY_CHECK } from "./prompt.ts";
-import { Sandbox } from "./sandbox.ts";
+import { brokerRequest, Sandbox } from "./sandbox.ts";
 import { groupSteps } from "./steps.ts";
-import { orbitExtension, REPAIR_SCRIPT, toolRegistrations } from "./tools.ts";
+import { orbitExtension, REPAIR_SCRIPT, SANDBOX_TOOLS, toolRegistrations } from "./tools.ts";
 import { actionText, cardTitle, finalCard, liveCard, splitAnswer, uiBlock } from "./ui.ts";
 import type { UiSpec } from "./ui-catalog.ts";
 
@@ -215,6 +215,7 @@ const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
 	memory_recall: (args) => `Searching memory for “${args.query}”`,
 	memory_zoom: () => "Reading older memory",
 	media_shell: () => "Running a media command",
+	sandbox_shell: () => "Running a command in the sandbox",
 	work_from_drive: () => "Copying a Drive file to the sandbox",
 	view_image: (args) => `Looking at ${[...((args.paths as unknown[]) ?? []), ...((args.node_ids as unknown[]) ?? []), ...((args.chat_file_ids as unknown[]) ?? [])].length || "an"} image(s)`,
 	work_to_drive: (args) => `Saving “${String(args.name ?? args.path).replaceAll("_", " ")}” to Drive`,
@@ -332,6 +333,8 @@ export class Agent {
 	/** The media sandbox, when AGENT_SANDBOX_SOCKET names one. */
 	readonly #sandbox: Sandbox | undefined;
 	#sandboxSweep: NodeJS.Timeout | undefined;
+	/** Orbit said agent sandboxes are off, and all were stopped. */
+	#sandboxesOff = false;
 	readonly #threads = new Map<string, ConversationId>();
 	readonly #watching = new Map<string, Promise<void>>();
 	readonly #running = new Map<string, string>();
@@ -370,6 +373,7 @@ export class Agent {
 				botUserId: () => this.botUserId,
 				compactWith: this.#config.compactModel ? { model: this.#config.compactModel, thinking: this.#config.compactThinking } : undefined,
 				sandbox: this.#sandbox,
+				agentSandbox: this.#config.agentSandboxSocket,
 			}),
 		);
 		let models: Models;
@@ -459,6 +463,7 @@ export class Agent {
 			for (const stop of response.stops ?? []) {
 				await this.#stop(stop).catch((error: unknown) => console.warn(`agent: stopping the task run ${stop.run_id} failed`, String(error)));
 			}
+			await this.#stopSandboxes(response);
 			const blocked = new Set<string>();
 			let progressed = false;
 			for (const input of response.inputs) {
@@ -601,10 +606,13 @@ export class Agent {
 		}
 		if ([...this.#running.values()].filter((id) => id === driverId).length >= this.#config.maxRunsPerUser) return "defer";
 
-		const credential = await this.#orbit.readCredential(driverId);
+		// An agent past its model tokens for this month (Orbit decides) does not run; the driver is told, as below.
+		const spent = input.agent?.model_tokens_spent ? input.agent.name : null;
+		const credential = spent ? undefined : await this.#orbit.readCredential(driverId);
 		if (!credential) {
-			const body =
-				kind === "answer"
+			const body = spent
+				? `<@${driverId}> ${spent} used its model tokens for this month, so it cannot start new runs until the 1st of next month (UTC). Owners and admins can raise the limit in Settings → Agentic → Agents → ${spent}.`
+				: kind === "answer"
 					? `<@${driverId}> I need your ChatGPT connection to continue. Connect it in [Agentic](${this.#config.publicUrl}/profile/agentic), then mention me again.`
 					: `<@${driverId}> To use me, connect your ChatGPT account first: [Agentic](${this.#config.publicUrl}/profile/agentic). Then mention me again.`;
 			const agentUserId = input.agent?.user_id ?? null;
@@ -612,7 +620,7 @@ export class Agent {
 			// A routine's run already has its message (Orbit posted it with this nonce): say it there, and end the run.
 			if (input.routine) {
 				await this.#orbit.editMessage(messageId, input.workspace_id, `${routineTitle(input.routine)}\n\n${body}`, undefined, agentUserId);
-				await this.#orbit.finishRoutineRun(input.message_id, { status: "failed", error: "Not run: its creator has no ChatGPT connection.", tool_calls: [] });
+				await this.#orbit.finishRoutineRun(input.message_id, { status: "failed", error: spent ? "Not run: the agent used its model tokens for this month." : "Not run: its creator has no ChatGPT connection.", tool_calls: [] });
 			}
 			// A task run's header too (Orbit posted it with this nonce); the task gets no comment.
 			if (input.task) await this.#orbit.editMessage(messageId, input.workspace_id, `📋 ${input.task.identifier} ${input.task.title}\n\n${body}`, undefined, agentUserId);
@@ -658,7 +666,7 @@ export class Agent {
 			doc.waitingFor = null;
 			doc.toolCalls = 0;
 			doc.readBytes = 0;
-			doc.run = { inputId: input.message_id, submissionId: null, progressMessageId, startedAt: Date.now(), title: input.routine ? routineTitle(input.routine) : null };
+			doc.run = { inputId: input.message_id, submissionId: null, progressMessageId, startedAt: Date.now(), title: input.routine ? routineTitle(input.routine) : null, tokensAtStart: totalTokens(await tx.doc(UsageDoc, conversation.id)) };
 			doc.agentName = agent?.name || this.botName;
 			doc.defaultAgentName = this.botName;
 			doc.agentInstructions = agent?.instructions ?? input.default_agent?.instructions ?? "";
@@ -685,7 +693,8 @@ export class Agent {
 			// saved script, whose calls reach the agent's tools; other runs never offer it.
 			await configure(tx, conversation.id, {
 				...this.#runModel(agent ?? input.default_agent ?? null, input.answer_level),
-				tools: agent ? toolRegistrations(agent.tools, Boolean(this.#sandbox)) : null,
+				// The default agent gets every tool but the agent sandbox's (custom agents only, for now).
+				tools: agent ? toolRegistrations(agent.tools, Boolean(this.#sandbox), Boolean(this.#config.agentSandboxSocket)) : { remove: SANDBOX_TOOLS },
 				modelTools: routine?.script ? (routine.test || (agent && !agent.tools.includes(REPAIR_SCRIPT.name)) ? [RUN_SCRIPT] : [RUN_SCRIPT, REPAIR_SCRIPT]) : { remove: [RUN_SCRIPT, REPAIR_SCRIPT] },
 			});
 		}, context);
@@ -780,6 +789,11 @@ export class Agent {
 			await progress.stop();
 		}
 		const after = ((await this.#harness.snapshot(ThreadDoc, conversationId, context)) as ThreadState | undefined) ?? state;
+		// A custom agent's model tokens of this run, against its monthly limit (Orbit counts each run once).
+		if (agentUserId && run.tokensAtStart !== undefined) {
+			const tokens = totalTokens(await this.#harness.snapshot(UsageDoc, conversationId, context)) - run.tokensAtStart;
+			await this.#orbit.runUsage(run.inputId, agentUserId, Math.max(0, tokens)).catch((error: unknown) => console.warn("agent: reporting the run's tokens failed", String(error)));
+		}
 		const people = await this.peopleOf(state.workspaceId);
 		const answer = await this.#answer(conversation, settled, after, progress.steps, people);
 		const routine = after.routineRun?.reported === false ? after.routineRun : null;
@@ -853,6 +867,33 @@ export class Agent {
 		await this.#orbit.taskRunStopped(stop.run_id);
 	}
 
+	/**
+	 * The agent sandboxes' kill path. Orbit queues a stop when an agent's sandbox is switched off (or its sandbox tool
+	 * or the agent goes): the broker kills that agent's thread sandboxes at once, with their calls, background processes
+	 * and proxy tunnels; a cut call ends with `reason`. While Orbit has agent sandboxes off, all of them stop, once.
+	 */
+	async #stopSandboxes(response: PendingInputs): Promise<void> {
+		const socket = this.#config.agentSandboxSocket;
+		const stop = async (request: Record<string, unknown>) => {
+			if (!socket) return;
+			await brokerRequest(socket, request, undefined, AbortSignal.timeout(30_000)).catch((error: unknown) => console.warn(`agent: ${String(request.op)} failed`, String(error)));
+		};
+		if (response.agent_sandbox === false && !this.#sandboxesOff) {
+			this.#sandboxesOff = true;
+			await stop({ op: "stop_all", reason: "agent sandboxes are off on this server" });
+		} else if (response.agent_sandbox) {
+			this.#sandboxesOff = false;
+		}
+		for (const request of response.sandbox_stops ?? []) {
+			await stop({ op: "stop_agent", agent: request.agent_user_id, reason: request.reason });
+			// A stop that is not confirmed comes back at once with the next poll: wait a little, not in a tight loop.
+			await this.#orbit.sandboxStopDone(request.id).catch(async (error: unknown) => {
+				console.warn("agent: confirming a sandbox stop failed", String(error));
+				await sleep(3_000);
+			});
+		}
+	}
+
 	/** Reports the end of a routine run to Orbit, for its history; its script's `store()` values go with it. */
 	async #reportRun(conversationId: ConversationId, runId: string, settled: SettledSubmissionRecord, body: string, state: ThreadState): Promise<void> {
 		const failed = settled.status !== "done" || settled.type !== "input";
@@ -897,4 +938,10 @@ export class Agent {
 		const main = [waiting, answer].filter(Boolean).join("\n\n").trim();
 		return { body: `${main || "Done."}${footer}`, card };
 	}
+}
+
+/** A thread's model tokens so far (input and output of every model call, nested ones in tools included). */
+export function totalTokens(usage: Readonly<UsageState> | undefined): number {
+	if (!usage) return 0;
+	return [...Object.values(usage.models ?? {}), ...Object.values(usage.tools ?? {})].reduce((sum, entry) => sum + (Number(entry?.totalTokens) || 0), 0);
 }

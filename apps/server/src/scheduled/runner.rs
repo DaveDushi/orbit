@@ -38,6 +38,8 @@ pub struct Round {
     pub routines_paused: usize,
     /// Runs that never ended, failed now (`runs::fail_stale`).
     pub runs_failed_stale: u64,
+    /// Agent sandbox calls closed: lost, or ended while sandboxes are off (`agent::sandbox::sweep`).
+    pub sandbox_calls: crate::agent::sandbox::Sweep,
 }
 
 pub async fn run_service(state: AgentState, token: CancellationToken) -> Result<(), String> {
@@ -67,6 +69,7 @@ pub async fn run_due(state: &AgentState, now: TimestampMillis) -> Result<Round, 
     if state.config.is_some() {
         run_due_routines(state, now, &mut round).await?;
     }
+    round.sandbox_calls = crate::agent::sandbox::sweep(state, now.as_millis()).await?;
     Ok(round)
 }
 

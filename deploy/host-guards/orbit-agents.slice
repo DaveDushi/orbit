@@ -1,0 +1,13 @@
+# All Orbit agent sandboxes (gVisor). docs/agent-sandbox-design.md section 6.
+[Unit]
+Description=Orbit agent sandboxes (all together)
+
+[Slice]
+CPUQuota=150%
+CPUWeight=20
+MemoryAccounting=yes
+MemoryHigh=2G
+MemoryMax=2560M
+MemorySwapMax=0
+TasksMax=1536
+IOWeight=20

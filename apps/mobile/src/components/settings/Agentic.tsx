@@ -9,6 +9,7 @@ import { AgentConnection } from '../agentic/AgentConnection'
 import { AgentToolsCard } from '../agentic/AgentTools'
 import { AgentMemory } from '../agentic/AgentMemory'
 import { AgentsCard } from '../agentic/Agents'
+import { InternetAccess } from '../agentic/AgentSandbox'
 import { DefaultModelCard } from '../agentic/DefaultModel'
 import { RoutinesSection } from '../agentic/Routines'
 import { SkillsCard } from '../agentic/Skills'
@@ -25,13 +26,14 @@ import { Button, Text } from '../../ui'
 /**
  * The one Agentic page, the web's with its tabs: You, and with the team agent Workspace, Agents, Routines and Skills
  * (`agenticTabs`). Each tab keeps its own access check; the installation's default model is on Agents, as on the web
- * (there is no Admin tab). `?tab=routines` opens a tab. Until the server says the agent is off, its tabs and cards show
+ * (there is no Admin tab). `?tab=routines` opens a tab; `?tab=agents&agent=<id>` an agent's Internet access. Until the server says the agent is off, its tabs and cards show
  * (they load, or say they failed, with Retry).
  */
 export function AgenticScreen() {
   const agent = useAgentStatus().data?.enabled ?? null
   const connections = useOAuthConnections()
-  const { tab } = useLocalSearchParams<{ tab?: string }>()
+  // `agent`: on the Agents tab, that agent's Internet access.
+  const { tab, agent: internetOf } = useLocalSearchParams<{ tab?: string; agent?: string }>()
   const tabs = agenticTabs(agent)
   const section = pickedTab(tabs, tab)
 
@@ -51,7 +53,8 @@ export function AgenticScreen() {
           <AgentToolsCard />
         </>
       ) : null}
-      {section === 'agents' ? (
+      {section === 'agents' && internetOf ? <InternetAccess agentId={internetOf} onBack={() => router.setParams({ agent: undefined })} /> : null}
+      {section === 'agents' && !internetOf ? (
         <>
           <AgentsCard />
           <DefaultModelCard />

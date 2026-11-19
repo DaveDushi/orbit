@@ -61,7 +61,7 @@ export function mimeOf(name: string): string {
 	return MIME[/\.([a-z0-9]{1,5})$/i.exec(name)?.[1]?.toLowerCase() ?? ""] ?? "application/octet-stream";
 }
 
-function shown(buffer: Buffer, max: number, from: "start" | "end", truncated: boolean): string {
+export function shown(buffer: Buffer, max: number, from: "start" | "end", truncated: boolean): string {
 	const text = buffer.toString("utf8");
 	if (text.length <= max) return truncated ? `${text}\n… (cut)` : text;
 	return from === "start" ? `${text.slice(0, max)}\n… (cut)` : `… (cut)\n${text.slice(-max)}`;

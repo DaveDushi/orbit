@@ -98,6 +98,21 @@ pub fn allows(workspace_id: &str, method: &Method, path: &str) -> bool {
     true
 }
 
+/// The largest tool request a sandbox call's token may send (the platform layer caps every body before this).
+const SANDBOX_BODY_MAX: usize = 32 * 1024 * 1024;
+
+/// The thread a tool request names: its `conversation_id` and `root_message_id` (`None`: not a JSON object with a
+/// conversation).
+fn body_thread(body: &[u8]) -> Option<(String, Option<String>)> {
+    let value: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let conversation = value.get("conversation_id")?.as_str()?.to_owned();
+    let root = match value.get("root_message_id") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(root) => Some(root.as_str()?.to_owned()),
+    };
+    Some((conversation, root))
+}
+
 /// A dry run's session (a routine's test run, or a script changed since its approval): set on the
 /// request by [`layer`], so the agent tool routes answer a write with what it would do.
 #[derive(Clone, Copy, Debug)]
@@ -144,6 +159,22 @@ pub fn custom_allows(workspace_id: &str, tools: &[String], method: &Method, path
 /// The layer: checks agent tokens, leaves every other request alone. A custom agent's session
 /// also passes only for the routes of its tools, and carries them for the Drive route.
 pub async fn layer(State(database): State<Database>, mut request: Request, next: Next) -> Response {
+    // The session path reads a cookie before the bearer, so an agent token sent as a cookie would act as the person
+    // with none of the checks below. People's cookies never hold one (their tokens have no `.`); code in an agent
+    // sandbox has its call token and may send any header.
+    if request
+        .headers()
+        .get_all(header::COOKIE)
+        .iter()
+        .any(|cookie| String::from_utf8_lossy(cookie.as_bytes()).contains(TOKEN_PREFIX))
+    {
+        return refuse(
+            &request,
+            StatusCode::UNAUTHORIZED,
+            "authentication_required",
+            "An agent session is sent as a bearer token only.",
+        );
+    }
     let Some(token) = orbit_platform::bearer_token(request.headers())
         .filter(|token| token.starts_with(TOKEN_PREFIX))
         .map(str::to_owned)
@@ -152,9 +183,12 @@ pub async fn layer(State(database): State<Database>, mut request: Request, next:
     };
     let hash: [u8; 32] = Sha256::digest(token.as_bytes()).into();
     let row = sqlx::query(
-        "SELECT agent_sessions.workspace_id, agent_sessions.agent_user_id, agent_sessions.dry_run, p.tools, p.deleted_at \
+        "SELECT agent_sessions.workspace_id, agent_sessions.agent_user_id, agent_sessions.dry_run, p.tools, p.deleted_at, \
+         agent_sessions.sandbox_call_id, t.conversation_id AS call_conversation, t.root_message_id AS call_root \
          FROM sessions JOIN agent_sessions ON agent_sessions.session_id = sessions.id \
          LEFT JOIN agent_profiles p ON p.user_id = agent_sessions.agent_user_id \
+         LEFT JOIN agent_sandbox_calls c ON c.id = agent_sessions.sandbox_call_id \
+         LEFT JOIN agent_threads t ON t.thread_key = c.thread_key \
          WHERE sessions.token_hash = $1 AND sessions.revoked_at IS NULL",
     )
     .bind(hash.to_vec())
@@ -220,6 +254,34 @@ pub async fn layer(State(database): State<Database>, mut request: Request, next:
     }
     if dry {
         request.extensions_mut().insert(DryRun);
+    }
+    // A sandbox call's token (code in the agent's sandbox holds it) acts only in the call's own thread: the tool routes
+    // find the driver's "yes" by the thread in the body, so another thread's yes must not count.
+    if row.get::<Option<String>, _>("sandbox_call_id").is_some()
+        && method == Method::POST
+        && path.contains("/agent-tools/")
+    {
+        let thread = row
+            .get::<Option<String>, _>("call_conversation")
+            .map(|conversation| (conversation, row.get::<Option<String>, _>("call_root")));
+        let (parts, body) = request.into_parts();
+        let Ok(bytes) = axum::body::to_bytes(body, SANDBOX_BODY_MAX).await else {
+            return refuse(
+                &Request::from_parts(parts, Body::empty()),
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "payload_too_large",
+                "The request body is too large.",
+            );
+        };
+        request = Request::from_parts(parts, Body::from(bytes.clone()));
+        if thread.is_none() || body_thread(&bytes) != thread {
+            return refuse(
+                &request,
+                StatusCode::FORBIDDEN,
+                "agent_scope",
+                "A sandbox command acts only in its own thread.",
+            );
+        }
     }
     request
         .extensions_mut()

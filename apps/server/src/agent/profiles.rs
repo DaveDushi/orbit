@@ -48,9 +48,9 @@ pub const MAX_INSTRUCTIONS_CHARS: usize = 8_000;
 pub const MAX_CHANNELS: usize = 100;
 
 /// The default agent's tools, by group, as the sidecar names them (`apps/agent/src/tools.ts`,
-/// `media.ts`; `apps/agent/test/profiles.test.ts` keeps both lists the same). `true`: the tool
+/// `media.ts`, `agent-sandbox.ts`; `apps/agent/test/profiles.test.ts` keeps both lists the same). `true`: the tool
 /// writes or posts.
-pub const TOOL_CATALOG: [(&str, &str, bool); 60] = [
+pub const TOOL_CATALOG: [(&str, &str, bool); 61] = [
     ("list_projects", "Tasks", false),
     ("search_tasks", "Tasks", false),
     ("get_task", "Tasks", false),
@@ -111,6 +111,9 @@ pub const TOOL_CATALOG: [(&str, &str, bool); 60] = [
     ("work_from_drive", "Media", false),
     ("view_image", "Media", false),
     ("work_to_drive", "Media", true),
+    // Custom agents only (for now): runs code in the agent's own gVisor sandbox (`super::sandbox`). No workspace route: the sidecar
+    // asks for a ticket on an internal route, and the call token reaches only the routes of the other tools.
+    ("sandbox_shell", "Sandbox", true),
 ];
 
 /// The catalog, in the order the settings show it.
@@ -1393,6 +1396,18 @@ async fn update_agent(
         update.push(" WHERE id = ");
         update.push_bind(agent_id.to_string());
         update.build().execute(&mut *tx).await?;
+        if tools
+            .as_ref()
+            .is_some_and(|tools| !tools.iter().any(|tool| tool == super::sandbox::TOOL))
+        {
+            super::sandbox::switch_off(
+                &mut tx,
+                agent.user_id,
+                "the sandbox tool was turned off for this agent",
+                now.as_millis(),
+            )
+            .await?;
+        }
         if let Some(channel_ids) = &body.channel_ids {
             set_channels(&mut tx, workspace_id, actor.user_id, &agent, channel_ids, now).await?;
         }
@@ -1491,6 +1506,13 @@ async fn delete_agent(
         .bind(now.as_millis())
         .bind(agent.user_id.to_string())
         .execute(&mut *tx)
+        .await?;
+        super::sandbox::switch_off(
+            &mut tx,
+            agent.user_id,
+            "the agent was deleted",
+            now.as_millis(),
+        )
         .await?;
         // Its sessions end now: a run that is going cannot act any more.
         sqlx::query(
@@ -1969,7 +1991,7 @@ mod tests {
         assert!(checked_tools(&tools(&["delete_everything"])).is_err());
         assert!(checked_tools(&tools(&[""])).is_err());
         assert_eq!(checked_tools(&[]), Ok(Vec::new()));
-        assert_eq!(tool_catalog().count(), 60);
+        assert_eq!(tool_catalog().count(), 61);
     }
 
     #[test]

@@ -35,6 +35,8 @@ export type Config = {
 	readonly sandboxSocket: string | undefined;
 	/** A conversation's /work is deleted after this many hours without a run. */
 	readonly sandboxIdleHours: number;
+	/** The agent sandbox broker's socket (deploy/agent-sandbox, gVisor per thread); `undefined`: no `sandbox_shell`. */
+	readonly agentSandboxSocket: string | undefined;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -68,5 +70,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 		compactThinking,
 		sandboxSocket: env.AGENT_SANDBOX_SOCKET?.trim() || undefined,
 		sandboxIdleHours: Number(env.AGENT_SANDBOX_IDLE_HOURS || 24),
+		agentSandboxSocket: env.AGENT_SANDBOX_BROKER_SOCKET?.trim() || undefined,
 	};
 }

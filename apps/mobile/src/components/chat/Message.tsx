@@ -1,3 +1,4 @@
+import { isEgressCard } from '@orbit/api/agentSandbox'
 import { getDriveDownload } from '@orbit/api/generated/sdk.gen'
 import { File, Paths } from 'expo-file-system'
 import { useState } from 'react'
@@ -17,6 +18,7 @@ import { Avatar, Icon, IconButton, Spinner, Text } from '../../ui'
 import { useOpenProfile } from '../ProfileSheet'
 import { ProfilePicture } from '../settings/ProfilePicture'
 import { AgentCard } from './AgentCard'
+import { EgressCard } from './EgressCard'
 import { LinkPreviews } from './LinkPreviews'
 import { BotAvatar, BotBadge } from './BotAvatar'
 import { Emoji } from './EmojiPicker'
@@ -135,6 +137,7 @@ export function MessageItem({ message, groupStart, highlighted = false, handlers
           ) : card ? (
             <AgentCard card={card} messageId={message.id} />
           ) : null}
+          {!message.deleted && isEgressCard(message.nonce) ? <EgressCard conversationId={message.conversation_id} messageId={message.id} /> : null}
           {message.sticker ? <Sticker url={message.sticker.url} name={message.sticker.name} /> : message.sticker_id && !message.deleted ? <Text className="text-[12px] text-muted-foreground">Sticker was deleted</Text> : null}
           {!message.deleted && message.attachments.length > 0 ? <Attachments files={message.attachments} hasText={body !== ''} /> : null}
           {!message.deleted && !card ? <LinkPreviews body={message.body} /> : null}

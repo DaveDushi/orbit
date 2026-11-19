@@ -9,7 +9,7 @@
 import { applySpecStreamPatch, parseSpecStreamLine } from "@json-render/core";
 
 import { untrusted } from "./files.ts";
-import type { PendingInput } from "./orbit.ts";
+import type { EgressAnswer, PendingInput } from "./orbit.ts";
 import { checkUiSpec, UI_VERSION, type UiSpec } from "./ui-catalog.ts";
 
 const FENCE_OPEN = "```spec";
@@ -107,10 +107,28 @@ export function finalCard(written: string): { text: string; card: UiSpec | "inva
 export function actionText(input: PendingInput): string {
 	const action = input.action;
 	if (!action) return input.body;
+	if (action.type === "egress") return egressAnswerText(action, input.author_name);
 	const card = `your card “${action.card?.title ?? "card"}”`;
 	if (action.type === "form") {
 		return `Action from ${input.author_name} (the driver of this run): they sent the form “${action.label}” on ${card}. The values are what they typed:\n${untrusted("form values", action.values ?? {})}`;
 	}
 	const params = action.params && Object.keys(action.params).length ? ` with params ${JSON.stringify(action.params)}` : "";
 	return `Action from ${input.author_name} (the driver of this run): they clicked “${action.label}” on ${card}${params}. Do what that button offered.`;
+}
+
+const EGRESS_ANSWERS = {
+	allow_once: "allowed it once, for this thread (30 minutes)",
+	allow_always: "allowed it always, for you in this workspace",
+	deny: "denied it in this thread",
+	deny_always: "denied it always, for you in this workspace",
+} as const;
+
+/** The answer to the sandbox's internet access card: Orbit queued it for the driver, whoever clicked. */
+function egressAnswerText(action: EgressAnswer, driverName: string): string {
+	const who = action.by_driver ? `${driverName} (the driver of this run)` : `${action.by} (a workspace admin)`;
+	const allowed = action.answer === "allow_once" || action.answer === "allow_always";
+	const next = allowed
+		? `Run the sandbox_shell command that needed ${action.host} again, then go on with ${driverName}'s task.`
+		: `Do not try ${action.host} again. Tell ${driverName} what you could not do without it.`;
+	return `Internet access answer for ${action.host}:${action.port}: ${who} ${EGRESS_ANSWERS[action.answer]}. ${next}`;
 }
