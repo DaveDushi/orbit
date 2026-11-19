@@ -27,8 +27,9 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
 - Binary extracted from the image built locally on this VM from that commit
   (`orbit:cf290c9`); fork commits have no published upstream image.
 - Image ID: sha256:b553dab223fa0efe0401b11377c9498515f86a649f00022f7a149a1d266c2252
-- Team agent sidecar code (`/opt/orbit-agent`): commit cf290c9 (what's new 2026-11-19: external agents, support email,
-  agent sandbox built and off; aboutOrbit: support email in Tasks).
+- Team agent sidecar code (`/opt/orbit-agent`): commit d443958 (code mode for every agent; what's new 2026-11-19: external
+  agents, support email, agent sandbox built and off, code mode; aboutOrbit: support email in Tasks, how agents work in
+  code mode). Orbit's binary stays cf290c9, so `/orbit-build.json` (Donna's revision) says cf290c9.
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): on since November 15, 2026, 12:07 UTC (set by Ops, outside a
   deploy): `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID`, `ORBIT_APNS_TOPIC` and `ORBIT_APNS_SANDBOX`
   are in `/etc/orbit/orbit.env`; the journal shows `iPhone push (APNs) is on` (topic `com.easytomanage.orbit`, sandbox
@@ -275,6 +276,61 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 19, 2026 upgrade: code mode for every agent (sidecar only, no migration)
+
+`main` from `1d896df1` to `d443958c`: `--no-ff` merge of `agent-codemode-2tools` at `776b5076` (7 commits, rebased on
+`1d896df1`). Every agent (Donna and custom agents) is offered only `MODEL_TOOLS`: `find_tools` (finds a tool among the
+agent's Orbit and integration tools by words, or by a read-only script over the catalog), `codemode`, `plan_job` and
+`run_job` (direct: a job runs up to 60 min, a script 5 min), and `view_image`, `ask_teammate`, `load_skill`,
+`read_skill_file` when the run has them. Every other tool, `sandbox_shell` included, is called from a `codemode` script.
+A script call that asks for approval (or a waiting egress card) ends the script and the run; later calls are refused
+while the run waits. Each script call shows a progress label in the agent's message. It changes only `apps/agent`,
+`evals/donna-codemode` and docs: Orbit's binary (`orbit:cf290c9`), its database, nginx and the env files did not change;
+no image was built. What's new: "code mode" line added to the 2026-11-19 entry (8 entries kept); aboutOrbit: the "How
+agents work (code mode)" line names the direct tools.
+
+Rebase on `1d896df1`: conflicts with the agent sandbox merge in `agent.ts` (import; `tools:` keeps main's sandbox line,
+`modelTools` is `MODEL_REGISTRATIONS` for non-script runs), `tools.ts` (header kept as on main; `toolRegistrations` and
+the extension list keep `SANDBOX_TOOLS` and add `FIND_TOOLS`), `profiles.test.ts` (imports; `find_tools` in the
+`always` list) and `whats-new.md` (both lines kept). `find-tools.ts`, `codemode.ts` and `find-tools.test.ts` are
+byte-equal to the tested branch.
+
+Checks on the rebased branch (tree equal to the merge): agent `tsc` clean; agent tests 128 pass, 0 fail, 38 skipped
+(27 agent-sandbox broker and 11 media-sandbox tests that need a live socket); `evals/donna-codemode/security.test.ts`
+10/10. Browser check (built `apps/web/dist` embedded in the production binary `orbit-cf290c9`, test instance
+`/root/orbit-test-codemode`, mock model, sidecar from the rebased worktree; `scripts/e2e-deploy.mjs`): a script with 4
+reads shows its 4 progress labels; `plan_job` shows one approval card for 2 Drive trash calls; after **yes** the job
+ran 2/2 and both files are in the trash; a script whose write asks for approval stops there (`Q3 budget.csv` not
+trashed, 0 "Must not exist" tasks). Screenshots
+`/root/.local/share/com.jean.desktop/pasted-images/codemode/0{1..4}-*-2-result.png`.
+
+Deploy id `20261119T113701Z-3530459`. Before: production `cf290c9`, schema 20261119094300 (126 rows), sidecar code equal
+to `main` `1d896df1`. DB backup (online `.backup`, Orbit kept running since its binary does not change):
+`/var/backups/orbit/pre-migration/orbit-before-d443958.sqlite` (quick_check ok, schema 126 rows, sha256 `96ac2d08…`).
+Migration dry run (installed binary on a copy, under `unshare -n`): applied 0, schema, counts and checksums unchanged,
+quick_check ok, 0 FK rows. Switch: `package.json`, `package-lock.json`, `tsconfig.json` unchanged, so the installed
+`node_modules` stays; stopped `orbit-agent` 11:37:39 UTC, data `/var/backups/orbit-agent/orbit-agent-before-d443958.tgz`,
+old code `/opt/orbit-agent.before-d443958`, started 11:37:41, healthy 11:37:42 (3 s down; Orbit stayed up).
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) local and on
+`https://orbit-app.easytomanage.com/health/ready` (200); sidecar `/health` `mock: false`, `/opt/orbit-agent/src` =
+`d443958c`; schema 20261119094300 (126 rows); journal since the switch: only the known start lines; 0 nginx error lines
+since the switch. `vm-health`: WARN oom (9 `gvisor_sentry` kills of the 2026-11-18 spike), WARN nginx (45 lines from the
+11:02 switch), WARN docker (`orbit-codemode-s3` of the test instance, `orbit-mailpit`), WARN git-owner (root-owned
+`.git` files of the rebase, given back to exedev). `vm-health.conf` unchanged (`PROD_TAG=cf290c9`,
+`ROLLBACK_TAG=d7f0473`: the binary did not change). Not tested: a real-model run on production (needs a signed-in
+person and their ChatGPT account). Scripts and logs: `/root/ops/codemode/`.
+
+Rollback to cf290c9's sidecar code (Orbit, binary and DB stay):
+
+```sh
+sudo systemctl stop orbit-agent
+sudo mv /opt/orbit-agent /opt/orbit-agent.d443958 && sudo mv /opt/orbit-agent.before-d443958 /opt/orbit-agent
+sudo systemctl start orbit-agent && curl -fsS http://127.0.0.1:8790/health
+# (the same as /root/ops/codemode/rollback.sh; only for a data problem also restore
+#  /var/backups/orbit-agent/orbit-agent-before-d443958.tgz into /var/lib)
+```
 
 ### November 19, 2026 upgrade: agent sandbox phases 1-9, installed OFF (2 migrations)
 
