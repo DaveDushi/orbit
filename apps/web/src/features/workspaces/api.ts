@@ -27,6 +27,7 @@ import {
   transferOwnership,
 } from '@orbit/api/generated/sdk.gen'
 import { STORAGE_FILES_PAGE } from '@orbit/api/storage'
+import { memberHandle, visibleEmail } from '@orbit/api/members'
 import type { AcceptBody, InvitationBody, MemberRecord, RoleBody, S3Body, WorkspaceBucketView, WorkspaceRecord } from '@orbit/api/generated/types.gen'
 import type { User } from './models'
 
@@ -60,9 +61,9 @@ export function memberFromRecord(member: MemberRecord): User {
     id: member.user_id,
     membershipId: member.id,
     name: member.display_name,
-    // a guest gets no address of the others: their handle is their name then
-    handle: member.email.split('@')[0] || member.display_name,
-    email: member.email,
+    // a guest gets no address of the others: their handle is their name then; an agent's address is a placeholder
+    handle: memberHandle(member.email, member.display_name),
+    email: visibleEmail(member.email),
     role: ROLE_LABELS[member.role],
     color: userColor(member.user_id),
     avatarUrl: member.avatar_url ?? null,

@@ -10,12 +10,12 @@ const labels = (items: readonly { label: string }[]) => items.map((item) => item
 
 describe('workspace settings links', () => {
   test('an owner sees every page, Billing only in Orbit Cloud', () => {
-    expect(labels(allowedNav(WORKSPACE_NAV, OWNER, { cloud: true }))).toEqual(['General', 'Members', 'Billing', 'Emoji', 'Stickers', 'File storage', 'GitHub', 'Agentic', 'API tokens', 'Apps', 'Export', 'Danger zone'])
+    expect(labels(allowedNav(WORKSPACE_NAV, OWNER, { cloud: true }))).toEqual(['General', 'Members', 'Billing', 'Emoji', 'Stickers', 'Reports', 'File storage', 'GitHub', 'Agentic', 'API tokens', 'Apps', 'Export', 'Danger zone'])
     expect(labels(allowedNav(WORKSPACE_NAV, OWNER))).not.toContain('Billing')
   })
 
   test('an admin has no Danger zone', () => {
-    expect(labels(allowedNav(WORKSPACE_NAV, ADMIN))).toEqual(['General', 'Members', 'Emoji', 'Stickers', 'File storage', 'GitHub', 'Agentic', 'API tokens', 'Apps', 'Export'])
+    expect(labels(allowedNav(WORKSPACE_NAV, ADMIN))).toEqual(['General', 'Members', 'Emoji', 'Stickers', 'Reports', 'File storage', 'GitHub', 'Agentic', 'API tokens', 'Apps', 'Export'])
   })
 
   test('a member sees no admin pages', () => {
@@ -34,11 +34,11 @@ test('Feedback & fixes shows only while Suggest a change is on', () => {
 
 describe('the Settings page sections', () => {
   const view = (sections: ReturnType<typeof settingsSections>) => Object.fromEntries(sections.map((section) => [section.title, labels(section.items)]))
-  const ACCOUNT = ['Profile', 'Security', 'Sessions', 'Appearance', 'Notifications']
+  const ACCOUNT = ['Profile', 'Security', 'Sessions', 'Blocked people', 'Appearance', 'Notifications']
 
   test('an instance admin who owns the workspace sees Workspace, Account and Admin, without General in Workspace', () => {
     expect(view(settingsSections(OWNER, { agent: true }, false, true))).toEqual({
-      Workspace: ['Members', 'Emoji', 'Stickers', 'File storage', 'GitHub', 'Agentic', 'API tokens', 'Apps', 'Export', 'Danger zone'],
+      Workspace: ['Members', 'Emoji', 'Stickers', 'Reports', 'File storage', 'GitHub', 'Agentic', 'API tokens', 'Apps', 'Export', 'Danger zone'],
       Account: ACCOUNT,
       Admin: ['General', 'Users', 'Email', 'Limits', 'Storage', 'Backups', 'Audit log', 'Background jobs'],
     })

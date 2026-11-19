@@ -69,6 +69,8 @@ const AgenticInternetAccess = lazy(() => loadSettings().then((module) => ({ defa
 const AgenticYou = lazy(() => loadSettings().then((module) => ({ default: module.AgenticYou })))
 const ShortcutsPage = lazy(() => loadSettings().then((module) => ({ default: module.ShortcutsPage })))
 const StickersPage = lazy(() => loadSettings().then((module) => ({ default: module.StickersPage })))
+const BlockedPeoplePage = lazy(() => loadSettings().then((module) => ({ default: module.BlockedPeoplePage })))
+const ReportsPage = lazy(() => loadSettings().then((module) => ({ default: module.ReportsPage })))
 const StoragePage = lazy(() => loadSettings().then((module) => ({ default: module.StoragePage })))
 const NotificationsPage = lazy(() => loadSettings().then((module) => ({ default: module.NotificationsPage })))
 const ApiTokensPage = lazy(() => loadSettings().then((module) => ({ default: module.ApiTokensPage })))
@@ -177,6 +179,7 @@ export default function App() {
                   <Route path="notifications" element={<NotificationsPage />} />
                   <Route path="security" element={<SecurityPage />} />
                   <Route path="sessions" element={<SessionsPage />} />
+                  <Route path="blocked" element={<BlockedPeoplePage />} />
                   <Route path="agentic" element={<AgenticYou />} />
                   <Route path="shortcuts" element={<ShortcutsPage />} />
                   <Route path="storage" element={<StoragePage />} />
@@ -204,6 +207,7 @@ export default function App() {
                   <Route path="labels" element={<Navigate to="/tasks" replace />} />
                   <Route path="emoji" element={<EmojiPage />} />
                   <Route path="stickers" element={<StickersPage />} />
+                  <Route path="reports" element={<ReportsPage />} />
                   <Route path="github" element={<GithubPage />} />
                   <Route path="agentic" element={<AgenticTabs />}>
                     <Route index element={<AgenticYou />} />

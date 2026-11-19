@@ -9,6 +9,7 @@ mod drive;
 pub mod egress_proxy;
 pub(crate) mod external;
 mod graphql;
+pub mod handle;
 pub mod inputs;
 pub(crate) mod integrations;
 mod jobs;

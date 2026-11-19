@@ -208,20 +208,21 @@ test('an integration message shows the integration, is nobody\'s own, and groups
   const rows = buildMessageRows([message('m1', { author_id: 'me' }), posted, message('m3', { author_id: 'me', created_at: '2026-10-23T10:02:00Z' })])
   expect(rows.flatMap((row) => (row.type === 'message' ? [row.groupStart] : []))).toEqual([true, true, true])
   // Its creator cannot edit it, and deletes it only as a moderator or the channel's creator, as the server allows.
-  expect(messageActions(posted, 'me', false, { inThread: false, canWrite: true })).toEqual(['reply', 'thread', 'forward', 'link', 'copy', 'pin', 'unread'])
-  expect(messageActions(posted, 'me', false, { inThread: false, canWrite: true, channelCreator: true })).toContain('delete')
+  // It can be reported, but never blocked: blocking it would block the member who set it up.
+  expect(messageActions(posted, 'me', false, { inThread: false, canWrite: true, authorBlocked: false })).toEqual(['reply', 'thread', 'forward', 'link', 'copy', 'pin', 'unread', 'report'])
+  expect(messageActions(posted, 'me', false, { inThread: false, canWrite: true, channelCreator: true, authorBlocked: false })).toContain('delete')
   expect(unreadMessages([posted], null, 'me').map((item) => item.id)).toEqual(['m2'])
 })
 
 test('message sheet: own text gets edit and delete, another author only for a moderator, a deleted one keeps the thread', () => {
   const own = message('m1', { author_id: 'me', pinned: false, sticker_id: null, body: 'hi' })
-  expect(messageActions(own, 'me', false, { inThread: false, canWrite: true, canCreateTask: true })).toEqual(['reply', 'thread', 'forward', 'link', 'copy', 'task', 'pin', 'unread', 'edit', 'delete'])
+  expect(messageActions(own, 'me', false, { inThread: false, canWrite: true, canCreateTask: true, authorBlocked: false })).toEqual(['reply', 'thread', 'forward', 'link', 'copy', 'task', 'pin', 'unread', 'edit', 'delete'])
   const theirs = message('m2', { author_id: 'ada', pinned: true, sticker_id: null, body: 'hi' })
-  expect(messageActions(theirs, 'me', false, { inThread: true, canWrite: true })).toEqual(['reply', 'forward', 'link', 'copy', 'unpin', 'unread'])
-  // a guest (no tasks) who cannot write here still forwards, copies and marks unread
-  expect(messageActions(theirs, 'me', true, { inThread: true, canWrite: false })).toEqual(['forward', 'link', 'copy', 'unpin', 'unread', 'delete'])
-  expect(messageActions(message('m3', { deleted: true }), 'me', true, { inThread: false, canWrite: true })).toEqual(['thread', 'link'])
-  expect(messageActions(message('m4', { kind: 'join' }), 'me', true, { inThread: false, canWrite: true })).toEqual([])
+  expect(messageActions(theirs, 'me', false, { inThread: true, canWrite: true, authorBlocked: false })).toEqual(['reply', 'forward', 'link', 'copy', 'unpin', 'unread', 'report', 'block'])
+  // a guest (no tasks) who cannot write here still forwards, copies, marks unread, reports and unblocks
+  expect(messageActions(theirs, 'me', true, { inThread: true, canWrite: false, authorBlocked: true })).toEqual(['forward', 'link', 'copy', 'unpin', 'unread', 'report', 'unblock', 'delete'])
+  expect(messageActions(message('m3', { deleted: true }), 'me', true, { inThread: false, canWrite: true, authorBlocked: false })).toEqual(['thread', 'link'])
+  expect(messageActions(message('m4', { kind: 'join' }), 'me', true, { inThread: false, canWrite: true, authorBlocked: false })).toEqual([])
 })
 
 test('channel names are typed lowercase with hyphens, and sent without a trailing one', () => {

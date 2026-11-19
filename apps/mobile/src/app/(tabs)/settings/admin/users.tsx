@@ -1,3 +1,4 @@
+import { emailLine } from '@orbit/api/members'
 import { useEffect, useState } from 'react'
 import { Share, View } from 'react-native'
 import { TextInput } from '../../../../ui/scaled'
@@ -145,7 +146,7 @@ export default function AdminUsersScreen() {
             <RowText
               title={user.display_name}
               // a deleted account's email is a placeholder that frees the address
-              subtitle={`${user.deleted ? 'Anonymized. It can never sign in again.' : user.email}\n${user.workspace_count} ${user.workspace_count === 1 ? 'workspace' : 'workspaces'} · ${user.last_active_at ? `Active ${shortDate(user.last_active_at)}` : 'Never signed in'}`}
+              subtitle={`${user.deleted ? 'Anonymized. It can never sign in again.' : emailLine(user.email, user.display_name)}\n${user.workspace_count} ${user.workspace_count === 1 ? 'workspace' : 'workspaces'} · ${user.last_active_at ? `Active ${shortDate(user.last_active_at)}` : 'Never signed in'}`}
               badges={adminBadges(user).map((badge) => <Badge key={badge} label={badge} tone={BADGE_TONE[badge]} />)}
             />
             {adminActions(user, viewer).length > 0 ? <Button label="Manage" size="sm" variant="outline" onPress={() => setManaging(user)} /> : null}

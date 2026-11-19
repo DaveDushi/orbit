@@ -119,8 +119,9 @@ export function useMarkAllNotificationsRead(workspaceId: string) {
   })
 }
 
-/** Where a notification leads: the task, the page with the comment thread open, the page at the mention, or the chat message. */
+/** Where a notification leads: the task, the page with the comment thread open, the page at the mention, the chat message, or the chat reports. */
 export function notificationTarget(notification: NotificationRecord): string | null {
+  if (notification.kind === 'chat_reported') return '/settings/reports'
   if (notification.kind === 'chat_mentioned' && notification.chat_conversation_id) {
     const message = notification.chat_message_id ? `?m=${encodeURIComponent(notification.chat_message_id)}` : ''
     return `/chat/${notification.chat_conversation_id}${message}`
@@ -161,6 +162,9 @@ export function notificationActor(
 export function notificationCopy(notification: NotificationRecord, pageTitle?: string, actorName?: string): { title: string; body: string } {
   if (notification.kind === 'chat_mentioned') {
     return { title: `${actorName ?? 'Someone'} mentioned you in chat`, body: 'Open the conversation to see the message.' }
+  }
+  if (notification.kind === 'chat_reported') {
+    return { title: `${actorName ?? 'Someone'} reported a chat message`, body: 'Open the reports to see the message.' }
   }
   if (notification.kind === 'page_mentioned') {
     const page = pageTitle === undefined ? 'a page' : `“${pageTitle.trim() || 'Untitled'}”`

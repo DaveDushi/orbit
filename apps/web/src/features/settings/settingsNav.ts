@@ -1,5 +1,5 @@
 import { useContext, type ComponentType } from 'react'
-import { ArchiveBox, Brush, DocumentDownload, Category, Card, Chart, ClipboardText, CloudConnection, Cpu, SecurityUser, Driver, Key, Keyboard, LampCharge, Link2, Lock, MagicStar, Notification as Bell, Setting2 as Settings, ShieldTick as ShieldCheck, SmileCircle, Sms as Mail, Sticker, Danger as TriangleAlert, User, People as Users } from 'reicon-react'
+import { ArchiveBox, Flag, UserBlock, Brush, DocumentDownload, Category, Card, Chart, ClipboardText, CloudConnection, Cpu, SecurityUser, Driver, Key, Keyboard, LampCharge, Link2, Lock, MagicStar, Notification as Bell, Setting2 as Settings, ShieldTick as ShieldCheck, SmileCircle, Sms as Mail, Sticker, Danger as TriangleAlert, User, People as Users } from 'reicon-react'
 import type { Permission } from '@orbit/api/generated/types.gen'
 import { WorkspaceContext } from '@/features/workspaces/workspaceContext'
 import { useBillingEnabled } from '@/features/workspaces/billing'
@@ -51,6 +51,7 @@ const AREAS: Record<SettingsAreaName, SettingsArea> = {
         items: [
           { to: '/settings/emoji', label: 'Emoji', icon: SmileCircle, permission: 'chat.manage' },
           { to: '/settings/stickers', label: 'Stickers', icon: Sticker, permission: 'chat.manage' },
+          { to: '/settings/reports', label: 'Reports', icon: Flag, permission: 'chat.manage' },
         ],
       },
       {
@@ -83,6 +84,7 @@ const AREAS: Record<SettingsAreaName, SettingsArea> = {
           { to: '/profile', label: 'Profile', icon: User, end: true },
           { to: '/profile/security', label: 'Security', icon: Lock },
           { to: '/profile/sessions', label: 'Sessions', icon: ShieldCheck },
+          { to: '/profile/blocked', label: 'Blocked people', icon: UserBlock },
         ],
       },
       {
