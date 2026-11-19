@@ -7,11 +7,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, commit 5b0d980345ef1e6bd25ba89c4825afe4675b72d9 on `main`
-  (report messages and block people, agent @handles from their names; schema 20261119120000, 127 rows; November 19, 2026).
-- Agent sandbox: OFF for every agent (no `ORBIT_AGENT_SANDBOX*` key in `/etc/orbit/orbit.env`, no
-  `AGENT_SANDBOX_BROKER_SOCKET` for the sidecar, host guards not applied); every sandbox route answers 404 `sandbox_off`.
-  Turning it on (the Arthur pilot) is a separate step with its own yes.
+- Source: DaveDushi/orbit, commit 8e437f7e60fa62960f64a038c0123a7feb0b5a52 on local `main`, not pushed
+  (Arthur pilot Part A; schema 20261119125533, 128 rows; November 19, 2026).
+- Agent sandbox: installed for the Arthur pilot (Part A, 2026-11-19): broker + egress proxy, `ORBIT_AGENT_SANDBOX_KEY_FILE`
+  in `/etc/orbit/orbit.env`, `AGENT_SANDBOX_BROKER_SOCKET` for the sidecar. Host guards live since 2026-11-16
+  (`deploy/host-guards/README.md`). No agent has `sandbox_shell` ticked and no host is allowed: nothing runs until the
+  owner does Part B (`deploy/agent-sandbox/PILOT.md` step 7).
 - Support email (`docs/support.md`): inbound email is `POST /api/v1/hooks/support/{mailbox_id}/{secret}` on
   `ORBIT_PUBLIC_HOOKS_URL`. No mailbox is connected, and the hooks gateway does not let `/api/v1/hooks/support/` through
   yet: both are a separate Ops step (with its own yes), with the DNS/MX or Cloudflare Email Worker change. Mailbox SMTP
@@ -277,6 +278,59 @@ It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-ag
 
 ## Verification performed
 
+### November 19, 2026 upgrade: Arthur pilot Part A, agent sandbox installed, no agent ticked (no migration)
+
+`main` from `9aec0e06` to `8e437f7e`: `--no-ff` merge of `sandbox-arthur-pilot` at `1d8e6c48` (no conflict; the branch
+already had `faba3a4c`, so the merged tree differs from the tested branch only by the `9aec0e06` docs). Code: the broker
+puts the call token, the proxy password and the script in a root-only `--process` spec file, never on a command line
+(phase 9, finding 7); `send_files` posts result files in the thread (`POST /api/internal/agent/files`, sidecar secret);
+`setup.sh --key-group`; aboutOrbit follows the sidecar's broker socket ("Agent sandbox (pilot)"). No migration, no
+what's new (Part B adds it). Branch checks: session 2c618d23.
+
+Deploy id `20261119T180921Z-3751892`. `orbit:8e437f7` (image
+`sha256:1146e888475789bb2ee69dc6636efb6612f9d3928a2f3a9b75a75dcfa4d172b8`, label = the full merge commit; 18:10 to 18:55
+UTC); `deploy/smoke.sh` passed. Code switch (`/root/ops/sandbox-pilot/switch.sh`): stopped 19:02:15 UTC; snapshot
+`01a1f530-2504-72a4-9772-746f9fc3cafd` with `/usr/local/bin/orbit-faba3a4`, verified, `backup-rehearsal.sh` passed; plain
+copy `/var/backups/orbit/pre-migration/orbit-before-8e437f7.sqlite` (sha256 `426044948dbfd66d…`); the new binary on a
+copy of it: applied 0, schema and checksums unchanged, quick_check ok; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-8e437f7.tgz`, old code `/opt/orbit-agent.before-8e437f7` (`package.json` and
+lock unchanged); ready 19:02:35 (20 s down). `vm-health.conf`: `PROD_TAG=8e437f7`, `ROLLBACK_TAG=faba3a4`,
+`ROLLBACK_BACKUP=01a1f530-…`.
+
+Pilot Part A (`PILOT.md` steps 2-6, `/root/ops/sandbox-pilot/pilot.sh`): host guards checked, all values as in step 2
+(not changed). `orbit-agent-sandbox:8e437f7` built with `orbit-limited`, `setup.sh --client-group orbit-agent --key-group
+orbit --image orbit-agent-sandbox:8e437f7 --orbit-url http://127.0.0.1:8080 --egress-bin /usr/local/bin/orbit`; rootfs id
+`sha256:b457d2caee2dc3c6ecf212541b1141f1ca22ad94fc736500dd329137036d36d7` (the image is removed). `ProtectProc=invisible`
+drop-ins (`protect-proc.conf`) on `orbit`, `orbit-agent`, `orbit-sandbox-egress`; `ORBIT_AGENT_SANDBOX_KEY_FILE` added
+(old file `/etc/orbit/orbit.env.before-sandbox-pilot`); `orbit-agent.service.d/orbit-sandbox.conf` with
+`AGENT_SANDBOX_BROKER_SOCKET`. Orbit restarted 19:03:23, ready 19:03:37. The nft table `inet orbit_sandbox` is made by the
+broker only at the first sandbox start, so the step 3 check found none: made at once with the broker's own
+`ensure_nft()` (env `/etc/orbit-sandbox/broker.env`), 2 `dport 3128` rules. After a reboot it is gone again until the
+first sandbox: the proxy then listens on `0.0.0.0:3128` with no drop rule (it still needs a per-call password).
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-sandbox.socket`, `orbit-sandbox-gc.timer`, `orbit-sandbox-egress` active,
+0 restarts, `ProtectProc=invisible` on the 3; readiness (all 6 checks) local, nginx and
+`https://orbit-app.easytomanage.com/health/ready` (200); revision `8e437f7e…`; schema 20261119125533 (128 rows); runsc
+`release-20261109.0`; key `-rw-r----- root:orbit`; socket `srw-rw---- root:orbit-agent`; the proxy binary = the orbit
+binary; sidecar `/health` `sandbox: true`, its env has both sandbox sockets; aboutOrbit from `/opt/orbit-agent/src` with
+the sidecar's env: "Agent sandbox (pilot)"; no secret (broker key, egress token, the secrets and key files of
+`orbit.env` and `agent.env`) in any `/proc/*/cmdline`; `routes.sh`: was 404 `sandbox_off`, now 401/422, never 200;
+0 sandbox settings, 0 egress rules, 0 calls, no agent with `sandbox_shell`; journal: no warning other than the known
+start warnings. `vm-health`: nginx FAIL = 55 "Connection refused" lines of the two restarts (19:02, 19:03), 0 5xx; OOM
+WARN = known; docker WARN = `orbit-mailpit`; git-owner WARN fixed with chown. Not done: Part B (the owner ticks Sandbox on
+Arthur, first call), a signed-in check. Scripts and logs: `/root/ops/sandbox-pilot/`. After each later Orbit deploy, run
+`setup.sh` again with the same options (the proxy's copy of the binary).
+
+Rollback: the pilot alone (keeps 8e437f7) `sudo bash /root/ops/sandbox-pilot/pilot-undo.sh` (key line, sidecar drop-in,
+`protect-proc.conf` removed; socket and proxy stopped; restarts). The code to `faba3a4` (no data step: no schema change):
+
+```sh
+sudo bash /root/ops/sandbox-pilot/rollback.sh
+# = stop orbit-agent orbit; the pilot lines above; then the binary:
+install -m 755 /usr/local/bin/orbit-faba3a4 /usr/local/bin/orbit
+#   /opt/orbit-agent.before-8e437f7 back; start orbit, orbit-agent; vm-health.conf.before-8e437f7 back
+```
+
 ### November 19, 2026 upgrade: external agents, phase 2: push (1 migration)
 
 `main` from `86cc6251` to `faba3a4c`: `--no-ff` merge of `external-agents-push` at `4d531973` (1 commit, rebased on
@@ -484,8 +538,8 @@ internal `…/agent/sandbox/calls`, `…/calls/{id}/end`, `…/egress/check`, `�
 2026-11-19 entry.
 
 **OFF for every agent.** No env change, no host change: `/etc/orbit/orbit.env` has no `ORBIT_AGENT_SANDBOX*` key and the
-sidecar has no `AGENT_SANDBOX_BROKER_SOCKET` (`switch.sh` refuses to run otherwise). The phase 2 host-guard scripts in the
-repo were NOT applied. Every sandbox route answers 404 `sandbox_off`. 0 sandbox rows; no agent has `sandbox_shell` ticked.
+sidecar has no `AGENT_SANDBOX_BROKER_SOCKET` (`switch.sh` refuses to run otherwise). The phase 2 host guards
+(`deploy/host-guards/`) were already live since 2026-11-16; this deploy did not change them. Every sandbox route answers 404 `sandbox_off`. 0 sandbox rows; no agent has `sandbox_shell` ticked.
 The Arthur pilot needs its own yes.
 
 Checks before the switch: server suites of the branch pass (`tests.log`, `tests2.log` in `/root/ops/agent-sandbox/`);
@@ -523,7 +577,8 @@ server."; GET sandbox 404 `sandbox_off`; no console errors. After: 0 sandbox set
 (the `01-…`–`06-…` files there are from the test copies, not production). Changelog not posted (text
 `/root/ops/agent-sandbox/changelog.md`). Scripts and logs: `/root/ops/agent-sandbox/`.
 
-Open (each with its own yes): the Arthur pilot (sandbox key, broker socket, host guards, ticking `sandbox_shell`).
+Open (each with its own yes): the Arthur pilot (sandbox key, broker socket, ticking `sandbox_shell`; Part A done in the
+8e437f7 upgrade above).
 
 Rollback to `d7f0473` (undo both migrations first: lost are only custom agents' model-token counts, since sandboxes were
 OFF; the old binary refuses the new schema):

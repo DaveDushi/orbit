@@ -64,9 +64,17 @@ Check:
 stat -c '%A %U:%G' /etc/orbit/sandbox-broker.key                     # -rw-r----- root:orbit
 stat -c '%A %U:%G' /run/orbit-sandbox/sandbox.sock                   # srw-rw---- root:orbit-agent
 systemctl is-active orbit-sandbox.socket orbit-sandbox-gc.timer orbit-sandbox-egress.service
-nft list table inet orbit_sandbox | grep -c 'dport 3128'             # 2
+nft list table inet orbit_sandbox | grep -c 'dport 3128'             # 2 (see below if the table is missing)
 cat /var/lib/orbit-sandbox/rootfs/current.id                         # the image id: write it in the deploy note
 docker image rm orbit-agent-sandbox:$REV                             # the rootfs is exported; the image is not needed
+```
+
+The broker makes the nft table only when the first sandbox starts, so on a new install (and after each reboot) it is
+missing and the proxy port has no drop rule. Make it with the broker's own rules, then check again:
+
+```sh
+sudo bash -c 'set -a; . /etc/orbit-sandbox/broker.env; set +a; cd /usr/local/lib/orbit-sandbox &&
+  python3 -c "import sys; sys.path.insert(0, \".\"); import broker; broker.ensure_nft()"'
 ```
 
 `setup.sh` copies the orbit binary for the proxy (`/usr/local/lib/orbit-sandbox/orbit`): after each later Orbit deploy,
