@@ -278,6 +278,45 @@ It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-ag
 
 ## Verification performed
 
+### November 19, 2026 upgrade: public Terms of Service and Privacy Policy pages (no migration)
+
+`main` from `824db0ae` to `15a4db47`: fast-forward to `legal-pages` (rebased on `824db0ae`). Code: public routes
+`/terms` and `/privacy` (`features/legal/*`, effective 2026-11-19, no Draft banner), "Terms · Privacy" links under the
+sign-in form and in the account menu; `15a4db47`: aboutOrbit names the pages and the links, what's new 2026-11-19 (added
+to the 4th line, the entry keeps 4 lines). Web and sidecar text only: no migration, no env change, no server code change.
+
+Checks on `main`: web `tsc -b` clean; `legalRoutes.test.ts` 1 pass; agent `tsc` clean, `prompt.test.ts` 5 pass (Node 24).
+
+Deploy id `20261119T191233Z-3782385`. `orbit:15a4db4` (image
+`sha256:b09ae1d52c3be74ce6b34ae570bb7519409a7c06dc385d11b207395b3970c505`, label = the full commit; 19:13 to 20:02 UTC);
+`deploy/smoke.sh` passed. Switch (`/root/ops/legal-pages/switch.sh`): stopped 20:02:51 UTC; snapshot
+`01a1f567-a0a4-7155-ba7f-22a04434c9ea` with `/usr/local/bin/orbit-8e437f7`, verified, `backup-rehearsal.sh` passed; plain
+copy `/var/backups/orbit/pre-migration/orbit-before-15a4db4.sqlite`; the new binary on a copy: applied 0, schema
+unchanged, quick_check ok; sidecar data `/var/backups/orbit-agent/orbit-agent-before-15a4db4.tgz`, old code
+`/opt/orbit-agent.before-15a4db4`; ready 20:03:10 (19 s down). Sandbox egress proxy: the new binary copied to
+`/usr/local/lib/orbit-sandbox/orbit` and `orbit-sandbox-egress` restarted (the binary step of `setup.sh`; all of
+`setup.sh` needs `orbit-agent-sandbox:8e437f7`, which is removed). `vm-health.conf`: `PROD_TAG=15a4db4`,
+`ROLLBACK_TAG=8e437f7`, `ROLLBACK_BACKUP=01a1f567-…`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-sandbox.socket`, `orbit-sandbox-egress` active, 0 restarts; readiness
+local and `https://orbit-app.easytomanage.com/health/ready` 200; revision `15a4db47…`; `/terms`, `/privacy`, `/login`, `/`
+200; proxy binary = orbit binary; `/opt/orbit-agent/src` = `main`; journal since the switch: no warnings. Browser
+without a session (`ui-check.ts`, all pass): `https://orbit-app.easytomanage.com/terms` and `/privacy`, light and dark,
+200, no sign-in redirect, no Draft banner, "Effective: 2026-11-19", no console errors; `/login` shows the Terms and
+Privacy links. Screenshots `/root/.local/share/com.jean.desktop/pasted-images/legal-pages/{terms,privacy}-{light,dark}.png`,
+`login-links.png`. `vm-health`: nginx WARN = the switch window, 0 5xx; OOM WARN = known; docker WARN = `orbit-mailpit`.
+Not done: a signed-in check of the account-menu link. Scripts and logs: `/root/ops/legal-pages/`.
+
+Rollback to `8e437f7` (same schema, so only the binary, the proxy copy and sidecar code):
+
+```sh
+sudo bash /root/ops/legal-pages/rollback.sh
+# = stop orbit-agent orbit; then:
+install -m 755 /usr/local/bin/orbit-8e437f7 /usr/local/bin/orbit
+# also the proxy copy, /opt/orbit-agent.before-15a4db4 back; start orbit, orbit-agent; restart orbit-sandbox-egress;
+#   vm-health.conf.before-15a4db4 back
+```
+
 ### November 19, 2026 upgrade: Arthur pilot Part A, agent sandbox installed, no agent ticked (no migration)
 
 `main` from `9aec0e06` to `8e437f7e`: `--no-ff` merge of `sandbox-arthur-pilot` at `1d8e6c48` (no conflict; the branch
