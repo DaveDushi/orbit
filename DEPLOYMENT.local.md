@@ -7,8 +7,8 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, commit 8e437f7e60fa62960f64a038c0123a7feb0b5a52 on local `main`, not pushed
-  (Arthur pilot Part A; schema 20261119125533, 128 rows; November 19, 2026).
+- Source: DaveDushi/orbit, commit 6e7d2949c1be775beb188db7f66d5fec9fc0b40a on local `main`, not pushed
+  (agent tool update_routine; schema 20261119125533, 128 rows; November 19, 2026).
 - Agent sandbox: installed for the Arthur pilot (Part A, 2026-11-19): broker + egress proxy, `ORBIT_AGENT_SANDBOX_KEY_FILE`
   in `/etc/orbit/orbit.env`, `AGENT_SANDBOX_BROKER_SOCKET` for the sidecar. Host guards live since 2026-11-16
   (`deploy/host-guards/README.md`). No agent has `sandbox_shell` ticked and no host is allowed: nothing runs until the
@@ -26,11 +26,11 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   MCP routes through the hooks gateway (`/etc/orbit-hooks-gateway/nginx.conf`, proposal `/tmp/mcpo/gateway/proposal.diff`).
   Binaries before d8d3eb4 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-d8d3eb4`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:5b0d980`); fork commits have no published upstream image.
-- Image ID: sha256:17dc020fe26a6200e335835110b2847eaba9c4b77093cee5d8df1933831e653e
-- Team agent sidecar code (`/opt/orbit-agent`): commit 5b0d980 (what's new 2026-11-19: external agents, support email,
-  code mode with the agent sandbox built and off, report and block with agent @handles; aboutOrbit: report and block,
-  agent @handles).
+  (`orbit:6e7d294`); fork commits have no published upstream image.
+- Image ID: sha256:b6f30492173780ba624e02f380a6bc8f425339abf8fce9b2bead94cec8c94da2
+- Team agent sidecar code (`/opt/orbit-agent`): commit 6e7d294 (what's new 2026-11-19: external agents with Push URL,
+  support email, code mode with the agent sandbox built and off plus routine edits in chat, report and block with agent
+  @handles and the /terms and /privacy pages; aboutOrbit: update_routine, the legal pages, report and block, @handles).
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): on since November 15, 2026, 12:07 UTC (set by Ops, outside a
   deploy): `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID`, `ORBIT_APNS_TOPIC` and `ORBIT_APNS_SANDBOX`
   are in `/etc/orbit/orbit.env`; the journal shows `iPhone push (APNs) is on` (topic `com.easytomanage.orbit`, sandbox
@@ -277,6 +277,47 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 19, 2026 upgrade: agents change, pause, resume and delete routines from chat (no migration)
+
+`main` from `41c926e4` to `6e7d2949`: fast-forward to `routine-edit` (2 commits, rebased on `41c926e4`). New agent tool
+`update_routine` (`apps/agent/src/scheduled.ts`; `TOOL_CATALOG` 62, `route_need`): an agent edits (instruction, schedule,
+time zone, channel, name), pauses, resumes or deletes a routine through `/agent-tools/scheduled`
+(`scheduled/routes.rs`, `scheduled/store.rs`) only after the driver's yes in the thread, with an old → new card (for a
+delete: which routine). Same rules as Settings: only the creator edits or resumes; owners and admins may also pause or
+delete anyone's; guests never. No migration, no env change. aboutOrbit (rule #76) names `update_routine` and who may do
+what (it was in the branch). What's new: the rebase had no conflict; the branch's `## 2026-11-20` placeholder was removed
+and its text joined to the 3rd line of the 2026-11-19 entry (still 4 lines, 8 entries; `6e7d2949`).
+
+Checks on the rebased branch: agent `tsc` clean, agent tests 129 pass, 0 fail (40 skipped; Node 24); `scheduled_api`
+13/13 on SQLite and on Postgres; `agent::profiles` 4/4. No browser check in this deploy (the e2e screenshots
+`pasted-images/routine-edit/1-4` are from the test instance).
+
+Deploy id `20261119T202614Z-3811883`. `orbit:6e7d294` (image
+`sha256:b6f30492173780ba624e02f380a6bc8f425339abf8fce9b2bead94cec8c94da2`, label = the full commit; 20:27 to 21:10 UTC);
+`deploy/smoke.sh` passed. Switch (`/root/ops/routine-edit/switch.sh`): stopped 21:12:15 UTC; snapshot
+`01a1f5a7-2ae3-7092-a17e-76771504cc13` with `/usr/local/bin/orbit-15a4db4`, verified, `backup-rehearsal.sh` passed;
+plain copy `/var/backups/orbit/pre-migration/orbit-before-6e7d294.sqlite`; the new binary on a copy: applied 0, schema
+unchanged, quick_check ok; sidecar data `/var/backups/orbit-agent/orbit-agent-before-6e7d294.tgz`, old code
+`/opt/orbit-agent.before-6e7d294`; ready 21:12:36 (21 s down). Sandbox egress proxy: the new binary copied to
+`/usr/local/lib/orbit-sandbox/orbit` and `orbit-sandbox-egress` restarted. `vm-health.conf`: `PROD_TAG=6e7d294`,
+`ROLLBACK_TAG=15a4db4`, `ROLLBACK_BACKUP=01a1f5a7-…`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-sandbox.socket`, `orbit-sandbox-egress` active, 0 restarts; readiness
+local and `https://orbit-app.easytomanage.com/health/ready` 200; `/orbit-build.json` revision `6e7d2949…`; schema
+20261119125533 (128 rows); proxy binary = orbit binary; `/opt/orbit-agent/src` = `main`; sidecar `/health` ok
+(`mock: false`); journal since the switch: no warnings. `vm-health`: nginx FAIL = the switch window only (21:12,
+connection refused, 0 5xx); OOM WARN = known; docker WARN = `orbit-mailpit`. Scripts and logs: `/root/ops/routine-edit/`.
+
+Rollback to `15a4db4` (same schema, so only the binary, the proxy copy and sidecar code):
+
+```sh
+sudo bash /root/ops/routine-edit/rollback.sh
+# = stop orbit-agent orbit; then:
+install -m 755 /usr/local/bin/orbit-15a4db4 /usr/local/bin/orbit
+# also the proxy copy, /opt/orbit-agent.before-6e7d294 back; start orbit, orbit-agent; restart orbit-sandbox-egress;
+#   vm-health.conf.before-6e7d294 back
+```
 
 ### November 19, 2026 upgrade: public Terms of Service and Privacy Policy pages (no migration)
 
