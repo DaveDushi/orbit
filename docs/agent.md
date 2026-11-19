@@ -124,7 +124,7 @@ agent has:
 
 | Field | Notes |
 |---|---|
-| Name | Its `@handle`, the same rules as the default agent's name; no other account may have it. |
+| Name | The same rules as the default agent's name; no other account may have it. People `@mention` it by name or by its handle: the name in lowercase with hyphens (`Research Bot` → `@research-bot`, `-2` on a clash in the workspace), kept in sync on a rename. The handle is the part before `@` of the bot user's email `<handle>@agents.orbit.invalid` (never shown; `apps/server/src/agent/handle.rs`). External agents get one the same way. |
 | Avatar | PNG, JPEG or WebP, at most 512 KiB (the form makes a 256 px square). |
 | Instructions | At most 8,000 characters. They go into the system prompt in an `<agent-instructions>` block after the fixed rules and About Orbit, and cannot change the rules or the approvals. |
 | Tools | A subset of the default agent's tools. **Orbit enforces it**: an agent session of this agent reaches only the routes its tools need (`agent::profiles::route_need`, checked in `agent::scope`; any other route is refused), the Drive route checks the exact tool, and the sidecar offers the model only these tools and blocks any other call. |

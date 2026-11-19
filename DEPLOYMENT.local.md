@@ -7,8 +7,8 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, commit cf290c9973562ea4f7e6f880e9ba5622fb4e1d32 on `main`
-  (agent sandbox phases 1-9, installed OFF; schema 20261119094300, 126 rows; November 19, 2026).
+- Source: DaveDushi/orbit, commit 5b0d980345ef1e6bd25ba89c4825afe4675b72d9 on `main`
+  (report messages and block people, agent @handles from their names; schema 20261119120000, 127 rows; November 19, 2026).
 - Agent sandbox: OFF for every agent (no `ORBIT_AGENT_SANDBOX*` key in `/etc/orbit/orbit.env`, no
   `AGENT_SANDBOX_BROKER_SOCKET` for the sidecar, host guards not applied); every sandbox route answers 404 `sandbox_off`.
   Turning it on (the Arthur pilot) is a separate step with its own yes.
@@ -25,11 +25,11 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   MCP routes through the hooks gateway (`/etc/orbit-hooks-gateway/nginx.conf`, proposal `/tmp/mcpo/gateway/proposal.diff`).
   Binaries before d8d3eb4 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-d8d3eb4`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:cf290c9`); fork commits have no published upstream image.
-- Image ID: sha256:b553dab223fa0efe0401b11377c9498515f86a649f00022f7a149a1d266c2252
-- Team agent sidecar code (`/opt/orbit-agent`): commit d443958 (code mode for every agent; what's new 2026-11-19: external
-  agents, support email, agent sandbox built and off, code mode; aboutOrbit: support email in Tasks, how agents work in
-  code mode). Orbit's binary stays cf290c9, so `/orbit-build.json` (Donna's revision) says cf290c9.
+  (`orbit:5b0d980`); fork commits have no published upstream image.
+- Image ID: sha256:17dc020fe26a6200e335835110b2847eaba9c4b77093cee5d8df1933831e653e
+- Team agent sidecar code (`/opt/orbit-agent`): commit 5b0d980 (what's new 2026-11-19: external agents, support email,
+  code mode with the agent sandbox built and off, report and block with agent @handles; aboutOrbit: report and block,
+  agent @handles).
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): on since November 15, 2026, 12:07 UTC (set by Ops, outside a
   deploy): `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID`, `ORBIT_APNS_TOPIC` and `ORBIT_APNS_SANDBOX`
   are in `/etc/orbit/orbit.env`; the journal shows `iPhone push (APNs) is on` (topic `com.easytomanage.orbit`, sandbox
@@ -276,6 +276,80 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 19, 2026 upgrade: report messages and block people, agent @handles from their names (1 migration)
+
+`main` from `ebc3aaa8` to `5b0d9803`: `--no-ff` merge of `upstream-mobile-1119` at `60497db3` (6 commits, rebased on
+`ebc3aaa8`: `712c2598` report messages and block people (upstream port; web and iPhone), `9eb92f76` iPhone terms of
+service and privacy links (the iPhone app only; they ship with the next iPhone build, no EAS build now), `0093742e`
+tests, `6e44fc5d` lessons, `ba3f1e9b` agent @handles, `60497db3` what's new and aboutOrbit). Migration
+`20261119120000_chat_reports_and_blocks`: new tables `chat_message_reports`, `user_blocks`; `notifications` rebuilt for
+the kind `chat_reported` and the column `chat_report_id` (every old row kept). New routes: `POST …/chat/messages/{id}/report`,
+`GET …/chat/reports`, `DELETE …/chat/reports/{id}/message`, `GET/PUT/DELETE /api/v1/chat/blocks[/{user_id}]`; pages
+Settings → Reports (`chat.manage`) and Account → Blocked people.
+
+Agent @handles: an agent bot user's email was `agent-<user id>@orbit.invalid`, so web, iPhone and desktop showed
+`agent-<uuid>` as its handle (the part before `@`) and the `.invalid` address in member lists. It is now
+`<handle>@agents.orbit.invalid`, the handle from the agent's name (unique in the workspace and across agents, `-2` on a
+clash), kept in sync on rename (internal and external agents; `apps/server/src/agent/handle.rs`). A backfill at each
+start changes the old emails (idempotent); on production it changed 2: Arthur → `@arthur`, Muse → `@muse`. User ids do
+not change, so `<@user_id>` mentions, DMs and MCP are unchanged. Web and iPhone also hide any `*.invalid` address
+(`@handle` instead) and turn an old `agent-<uuid>` handle into the name's handle (`packages/api/src/members.ts`); the
+iPhone part ships with its next build. The default agent keeps `agent@orbit.invalid` (handle `@agent`).
+What's new: report/block and @handles line in the 2026-11-19 entry (the sandbox line merged into the code mode line,
+so the entry keeps 4 lines); aboutOrbit: report and block, agent @handles.
+
+Rebase on `ebc3aaa8`: conflicts only in `openapi_contract.rs` (counts 315 paths, 410 operations) and the generated SDK
+(made again from the merged `openapi.json`). Checks on the rebased branch: `agent_profiles` 10/10 (with the new handle
+test: clash suffix, rename sync, mention by user id after a rename, backfill twice), `external_agents` 8/8 and
+`chat_safety` 4/4 on SQLite and Postgres; `openapi_contract` 19/19; `handle::tests` slug unit test; `packages/api`
+members helpers 4/4; mobile `tsc` clean, `bun test src` 347 pass, iOS bundle exported (`expo export --platform ios`;
+no Metro ran); web `tsc`, build, lint (0 errors); agent prompt tests 12/12, agent `tsc` clean. `cargo clippy -p
+orbit-server --lib --tests -D warnings`: 6 errors, all in files on `main` this merge does not touch (jobs.rs,
+page_markdown_repair.rs, instance_settings.rs, tasks.rs, workspaces.rs, scheduled/runner.rs; a newer clippy). Browser
+check of the built `dist` (test instance in `/tmp`, port 18741, strong password, stopped and deleted after): BEFORE with
+the production binary `orbit-cf290c9` (2 agents + 1 external agent show `agent-<uuid>` in the @ list and
+`agent-…@orbit.invalid` in Settings → Members; on a phone the handle hides the agent's name), AFTER with the branch
+binary on the same data (backfill changed 3: `@donna`, `@research-bot`, `@claude-code`; Members shows `@handle`).
+Screenshots `/root/.local/share/com.jean.desktop/pasted-images/agent-names/{before,after}-{mentions,members}-{light,dark}-{desktop,phone}.png`.
+
+Deploy id `20261119T141917Z-3595582`. `orbit:5b0d980` (image
+`sha256:17dc020fe26a6200e335835110b2847eaba9c4b77093cee5d8df1933831e653e`, label = the full merge commit; 14:20 to 15:46
+UTC); `deploy/smoke.sh` passed. Migration dry run (hot copy, and in the switch on a copy of the stopped database;
+`/root/ops/agent-handles/dryrun.sh`): applied 1 then 0, schema 20261119120000 (127 rows), counts, names and old checksums
+unchanged, quick_check ok, 0 FK rows; `serve` on the copy under `unshare -n` ran the backfill (0 old emails left, 0
+duplicate emails); the old binary refuses the new schema; `rollback-schema.sql` gives the exact old schema and counts,
+the old binary then starts (0 applied), and the new binary migrates again to the same schema.
+
+Switch (`switch.sh`): stopped both services 15:47:59 UTC; snapshot `01a1f47e-4bc6-75cb-a467-64ab87c5fd1c` with
+`/usr/local/bin/orbit-cf290c9`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-5b0d980.sqlite` (sha256 `a8ea4dbc1cfd5f23…`); sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-5b0d980.tgz`; sidecar code copied (old `/opt/orbit-agent.before-5b0d980`;
+`package.json` and the lock file unchanged). `orbit` and `orbit-agent` ready 15:48:44 (45 s down). `vm-health.conf` (old
+copy `.before-5b0d980`): `PROD_TAG=5b0d980`, `ROLLBACK_TAG=cf290c9`, `ROLLBACK_BACKUP=01a1f47e-4bc6-75cb-a467-64ab87c5fd1c`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) local and on
+`https://orbit-app.easytomanage.com/health/ready` (200); `/orbit-build.json` revision `5b0d9803…`; schema 20261119120000
+(127 rows), quick_check ok; journal: `agent bot users got an @handle from their name changed=2`, then only the known
+start lines; sidecar `/health` ok (`mock: false`), `/opt/orbit-agent/src` = `main`. New routes with no session
+(`routes.sh`; before the switch 404 `route_not_found`): 401 `authentication_required`, the report POST 400
+`invalid_request` (body checked first), never 200; `/settings/reports`, `/profile/blocked` 200. `verify-spa.ts` (not
+signed in, socat TLS hop) passed. `vm-health`: nginx FAIL = 90 "Connection refused" lines of the switch window, 0 5xx;
+OOM WARN = the 9 known `gvisor_sentry` kills; docker WARN = `orbit-mailpit`. Not done: a signed-in check on production
+(needs a temporary session for a person, its own yes). Scripts and logs: `/root/ops/agent-handles/`.
+
+Rollback to `cf290c9` (undo the migration first: lost are reports, blocks and their inbox notices; agent @handle emails
+stay, the old binary ignores them; the old binary refuses the new schema):
+
+```sh
+sudo bash /root/ops/agent-handles/rollback.sh
+# = stop orbit-agent orbit; .backup to /var/backups/orbit/pre-migration/orbit-before-rollback-to-cf290c9.sqlite;
+#   sqlite3 /var/lib/orbit/orbit.sqlite < /root/ops/agent-handles/rollback-schema.sql;
+#   install -m 755 /usr/local/bin/orbit-cf290c9 /usr/local/bin/orbit; /opt/orbit-agent.before-5b0d980 back;
+#   start orbit, orbit-agent; vm-health.conf.before-5b0d980 back
+# Way 2, only for a data problem (work after 15:47 UTC is lost), Orbit stopped: /usr/local/bin/orbit-cf290c9 backup verify +
+#   backup restore 01a1f47e-4bc6-75cb-a467-64ab87c5fd1c (as user orbit), then the binary and sidecar lines above
+```
 
 ### November 19, 2026 upgrade: code mode for every agent (sidecar only, no migration)
 
