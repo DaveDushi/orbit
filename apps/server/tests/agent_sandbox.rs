@@ -1818,7 +1818,8 @@ async fn the_sandbox_migration_runs_after_productions_newest_migration() {
         .iter()
         .map(|migration| migration.version)
         .collect();
-    assert_eq!(pending, [SANDBOX, BUDGETS]);
+    // Later migrations (other features) may follow them.
+    assert_eq!(pending[..2], [SANDBOX, BUDGETS], "{pending:?}");
     assert!(
         pending.iter().all(|version| *version > PRODUCTION),
         "{pending:?}"

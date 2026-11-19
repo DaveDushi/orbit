@@ -1,11 +1,13 @@
 # Agent sandboxes: design
 
-Status: **approved design; phases 1–9 done on test copies** (phase 3 and 4: 2026-11-17, phases 5 to 8: 2026-11-18,
-phase 9: 2026-11-19, branch `agent-sandbox-design`). The owner approved the design and the recommended answers to all
+Status: **approved design; phases 1–9 done on test copies and installed OFF on production (2026-11-19); phase 10 Part A
+(pilot readiness) done on a test copy** (phase 3 and 4: 2026-11-17, phases 5 to 8: 2026-11-18, phase 9: 2026-11-19,
+branch `agent-sandbox-design`; phase 10: 2026-11-19, branch `sandbox-arthur-pilot`). The owner approved the design and the recommended answers to all
 open questions, with one change: **one sandbox per chat thread** (question 1, section 5). Results: section 13 (spike),
 section 14 (phases 3 and 4), section 15 (phase 5), section 16 (phase 6), section 17 (phase 7), section 18 (phase 8),
-section 19 (phase 9: security suites, review and fixes). Production has only the phase 2 host guards; no broker, proxy or migration runs there. Each later phase
-needs its own "yes" before production.
+section 19 (phase 9: security suites, review and fixes), section 20 (phase 10 Part A: finding 7, files to the thread,
+the pilot's test copy, production steps). Production has the phase 2 host guards and the phase 1–9 code with sandboxes
+off; no broker or proxy runs there. The Arthur pilot (Part B, `deploy/agent-sandbox/PILOT.md`) needs its own "yes".
 
 ## Goal and fixed decisions
 
@@ -440,7 +442,7 @@ Approved by the owner on 2026-11-16: the recommended answers to questions 2–13
 | 7 | **Done** 2026-11-18 (section 17). **UI**: agent card toggle and limits; Internet access page (rules, pending, log); egress card buttons on **web and mobile**. | Browser check on web; iOS bundle builds; `tsc` and tests in both apps. |
 | 8 | **Done** 2026-11-18 (section 18). **Budgets and off switch**: counters, notices, kill path. | Tests for each level. |
 | 9 | **Quality & Security**: injection and escape suites on a test instance; review. | All pass; findings fixed. |
-| 10 | **Pilot Arthur** on production (with the yes); watch for 2–4 weeks. | Exit criteria in section 8. |
+| 10 | **Pilot Arthur** on production (with the yes); watch for 2–4 weeks. Part A (**done** 2026-11-19, section 20): finding 7, files to the thread, the pilot's set-up on a test copy, production steps. Part B: the switch-on (`deploy/agent-sandbox/PILOT.md`). | Exit criteria in section 8. |
 | 11 | **Donna**, then merge `media_shell` onto the new broker. | Old bwrap path removed. |
 | 12 | (Optional) **Separate host**: broker and proxy move; private link to Orbit; larger limits; maybe Firecracker. | Same tests pass across hosts. |
 
@@ -918,11 +920,70 @@ layer (the route then said `agent_run_required` only because no run was going th
 
 ### Residual risks for the Arthur pilot
 
-- Finding 7 (token in the host's process list): fix or mitigate (`hidepid`) before the pilot.
+- Finding 7 (token in the host's process list): **fixed in phase 10** (section 20).
 - Domain fronting / ECH (finding 11): allow only narrow hosts; review the Internet access page's log during the pilot.
 - Findings 9, 10, 12–15: small, bounded; watch the call log (`interrupted`, `lost`) and the monthly use.
 - Not tested with a real model: the blocks do not depend on the model, but the pilot should watch what Arthur asks
   for (cards, `internet_refused`) in its first weeks.
 - Still open from phase 8: no admin notice when a limit is lowered below the use, no installation switch page, no
   retention job, a deleted agent's images stay 72 h.
+
+## 20. Phase 10 Part A results (2026-11-19)
+
+Pilot readiness for Arthur, on a test copy only. Production unchanged: no sandbox setting, key, socket, unit or agent
+change there (`sandbox_shell` stays unticked; the switch-on is Part B, `deploy/agent-sandbox/PILOT.md`).
+
+### What was built
+
+| Part | What |
+|---|---|
+| Finding 7 (`broker.py`) | Each call's process (user 1000, the environment with the call token and proxy password, the script and its arguments, no capabilities, the init's rlimits) goes to `runsc exec --process RUN/locks/<call>.process.json`: root, 0600, `O_EXCL`, `O_NOFOLLOW`, in the 0700 locks folder. The broker deletes it as soon as runsc wrote the pid file (runsc reads the spec first); SIGTERM and the broker start remove left files. The host command line shows only `--internal-pid-file` and `--process <path>`. The script is no longer on a command line either. |
+| Files to the thread | A pilot gap: the sandbox had no way to give the driver a file. `sandbox_shell` takes `send_files` (at most 4, 20 MB each). After a command with exit 0, the sidecar reads each file in a call of its own (a new ticket as the driver; the path is an argument, never script text), stages it on the new internal route `POST /api/internal/agent/files` (sidecar secret only; the agent's own chat upload, with the chat upload checks and limits), and posts one message of the agent in the run's thread with `file_ids` (`post_message` takes them; only the poster's own unsent uploads attach). Web and mobile already show attachments: no app change. No new catalog row and no migration. |
+| `setup.sh --key-group` | Production Orbit (user `orbit`) reads the broker key at start; `setup.sh` made it root 0600 at every run. `--key-group orbit` makes it root:orbit 0640 (as `/etc/orbit` itself, root:orbit 0750). |
+| aboutOrbit | The agent sandbox line follows the server: "pilot" text when the sidecar has `AGENT_SANDBOX_BROKER_SOCKET`, else "built, off" as before. No what's-new line now (nothing changes for people until Part B; `PILOT.md` has the line for that deploy). |
+| Production steps | `deploy/agent-sandbox/PILOT.md`: code deploy (no migration), host guard checks (live since 2026-11-16), image and `setup.sh`, the key for Orbit, the socket for the sidecar, optional `ProtectProc=invisible` per service (not a global `hidepid` mount: polkit, logind and monitoring need `/proc`), the switch-on in the app, what to watch, rollback per level. |
+
+Finding 3 and `X-Forwarded-Proto: https` were already in `main` (phase 9, `571e7c40`): the broker's call ends, the
+proxy's egress checks and byte reports, and the proxy's `orbit.internal` requests send it; the sidecar sends
+`ORBIT_FORWARDED_PROTO` (production: `https`). The test copy confirmed it end to end against a production-mode Orbit.
+
+### Test copy
+
+Broker `orbit-sbx-test` (gVisor `release-20261109.0`, SHA-512 checked), 10.202.0.0/16, netns `sbt-*`, proxy port 13128,
+image `orbit-sbx-test-image:p10`; a production-mode Orbit (`ORBIT_ENV=production`, debug build of this branch with the
+web embedded) on `127.0.0.1:18920` as its own user `orbit-sbx10` (data `/var/lib/orbit-sbx10`, own app key, agent
+secret and broker key `/etc/orbit-sbx10/broker.key` root:orbit-sbx10 0640, `ORBIT_TRUSTED_PROXIES=127.0.0.1/32,::1/128`);
+the sidecar from this branch with the **mock model** on 18921 (same user; socket group `orbit-sbx10`); its own nginx
+process (not the nginx service) for TLS on `127.0.0.1:18922` with `X-Forwarded-Proto: https`. Set-up through the real
+routes: owner, Arthur with `sandbox_shell`, its sandbox on with the pilot limits. No real model: a test copy has no
+ChatGPT account, and these checks do not depend on the model.
+
+| # | Browser check (Playwright, mock model) | Result |
+|---|---|---|
+| a | "Python chart of 1..10 squared, send me the image" | The script ran (stdout `squares: [1, 4, …, 100]`); the PNG arrived in the thread as Arthur's image; the step "Running a command in the sandbox" shows. |
+| b | "download example.com and count the words" | Card for `example.com:443`; Allow once → the run went on as the driver and ran the command again: 38 words. Log row `allow`, 797 bytes up, 5,397 down. |
+| c | The same, Deny | Card "Denied by Dana Owner in this thread"; the run went on with "do not try example.com again". A next call: `/work` has no `page.html`, the proxy answers 403, `internet_refused: example.com:443 (denied in this thread)`, no new card; log rows `ask`/`deny`, 0 bytes. |
+| d | A second thread | Its own sandbox: `/work` has 0 files (only `lost+found`); the other threads' `squares.png` and `page.html` are not there. |
+| e | Untick `sandbox_shell` (e1), or the Sandbox switch off (e2), during a 300 s call | The call stopped about 1.5 s after Save: "interrupted: the sandbox tool was turned off for this agent" (e1), "interrupted: the sandbox was switched off" (e2). |
+| f | The egress card at 390 px (web app, iPhone size) | Host, state and the three buttons on one row; no overflow. The native iPhone app was not built (its card code is from phase 7). |
+
+### Suites
+
+| Suite | Result |
+|---|---|
+| Escape, in gVisor (`apps/agent/test/agent-sandbox.test.ts`, real broker and proxy) | 29 of 29 pass (2 new for finding 7: no call secret in any host `/proc/*/cmdline`, `/proc/*/environ` or `ps`, as root and as `nobody`, during a call; the spec file is gone while the call runs; it is 0600 root and never follows a link; the call keeps uid 1000, `RLIMIT_NPROC` 128, `NOFILE` 1024, no core, no capabilities). With the broker of `main`, the new test fails ("nobody saw a call secret in /proc"). |
+| Finding 7 on the full chain | During a real call from the chat, `nobody`, the test Orbit's user and root found 0 lines with a call token or proxy password in `/proc/*/cmdline`, `/proc/*/environ` and `ps`; 0 spec files left. |
+| Hostile code in Arthur's sandbox (full chain) | With `$ORBIT_TOKEN`: card list 403, own limits 403, an allow rule 403, the token as a cookie 401, the new internal file route 403, registration 401; Orbit's port on the /30 host side without the proxy: timeout; the metadata IP 403 (denied in Orbit's log); no DNS; the environment has only the expected names. |
+| Routes (`apps/server/tests/agent_sandbox.rs`) | 1 new: only the sidecar stages a file (the broker key, a call token or nothing: 401/403); the agent is the uploader; another agent cannot attach it; a sent file is not sent again; an unknown agent is refused. All pass on **SQLite and Postgres** (the migration-order test is changed: `main` added a later migration, `20261119120000`, so it checks that the two sandbox migrations come first, after production's newest of that day). |
+| Sidecar (`node --test test/*.test.ts`) | 129 pass, 0 fail (40 skipped: they need a live sandbox). New: `send_files` reads each file in its own call, uploads it as the agent's file and posts one message; a missing file posts nothing and ends its call. |
+
+### Still open
+
+- Part B (the owner's yes): `deploy/agent-sandbox/PILOT.md`.
+- The image has no plotting library: a real model will `pip install --user matplotlib`, which asks for `pypi.org` and
+  `files.pythonhosted.org` (two cards), or draws as the test did. Option: add `python3-matplotlib` to the image
+  (about 100 MB) or allow the two package hosts for Arthur at the start of the pilot.
+- `/work` shows `lost+found` (ext4); harmless.
+- From phase 9: findings 9, 10, 12–15 and 11 (domain fronting) as listed there; from phase 8: no notice when a limit is
+  lowered below the use, no installation switch page, no retention job, a deleted agent's images stay 72 h.
 
