@@ -1,9 +1,10 @@
 # Agent sandboxes: design
 
-Status: **approved design; phases 1–8 done on test copies** (phase 3 and 4: 2026-11-17, phases 5 to 8: 2026-11-18,
-branch `agent-sandbox-design`). The owner approved the design and the recommended answers to all open questions, with one
-change: **one sandbox per chat thread** (question 1, section 5). Results: section 13 (spike), section 14 (phases 3
-and 4), section 15 (phase 5), section 16 (phase 6), section 17 (phase 7), section 18 (phase 8). Production has only the phase 2 host guards; no broker, proxy or migration runs there. Each later phase
+Status: **approved design; phases 1–9 done on test copies** (phase 3 and 4: 2026-11-17, phases 5 to 8: 2026-11-18,
+phase 9: 2026-11-19, branch `agent-sandbox-design`). The owner approved the design and the recommended answers to all
+open questions, with one change: **one sandbox per chat thread** (question 1, section 5). Results: section 13 (spike),
+section 14 (phases 3 and 4), section 15 (phase 5), section 16 (phase 6), section 17 (phase 7), section 18 (phase 8),
+section 19 (phase 9: security suites, review and fixes). Production has only the phase 2 host guards; no broker, proxy or migration runs there. Each later phase
 needs its own "yes" before production.
 
 ## Goal and fixed decisions
@@ -848,3 +849,80 @@ So the steady cost is about 9 MiB anonymous per idle sandbox plus ~9 MiB for the
 - Delete agent: the sandboxes stop, but its `/work` images stay until the image idle time (72 h), not dropped at once.
 - Model tokens: `totalTokens` counts cached input too (Pi's sum); the ChatGPT plans' own caps may count differently.
 - Known gap, as before: domain fronting through a shared CDN.
+
+## 19. Phase 9 results (2026-11-19)
+
+Quality & Security: a prompt-injection suite, an escape suite on the real test broker and proxy, and a review of
+`c0b8f0e5..HEAD` (authz/IDOR, SSRF, header trust, CSRF, secrets in logs). Done on test copies only: the phase 3 test
+names (broker `orbit-sbx-test`, 10.202.0.0/16, netns `sbt-*`, proxy port 13128, image `orbit-sbx-test-image:p9`), a test
+Orbit in **production mode** (port 18910, own data dir, a fresh SQLite database, own app key, agent secret, owner password
+and the test broker key; `ORBIT_TRUSTED_PROXIES=127.0.0.1/32`, as production), and a Postgres 18 container
+`orbit-sbx9-pg` (port 15536, tmpfs) for the route tests. No production service, data, socket or port was touched; all of
+it was removed after the tests.
+
+### Findings
+
+Fixes and their tests: commit `571e7c40`.
+
+| # | Finding | Severity | Fixed |
+|---|---|---|---|
+| 1 | **The call token as a cookie skipped the scope layer.** `scope::layer` judged only `Authorization: Bearer orbit-agent.…`, but the session path reads a cookie first, and the call token is a normal `sessions` row of the driver. Sandbox code (`$ORBIT_TOKEN`, any header it likes through `orbit.internal`, a matching `Origin` for writes) acted with **all the driver's rights**: it could answer its own egress card (Allow once; with an owner driver Allow always and rules), change the sandbox settings and budgets, read other workspaces and admin routes. | CRITICAL | Yes: the scope layer refuses any request with an agent token in a cookie (401), and the proxy drops `Cookie` on `orbit.internal`. |
+| 2 | **A "yes" from another thread.** The approval of a gated write (integrations, Drive trash and share, Trash, routines, Shopify, jobs) is found by the `conversation_id` / `root_message_id` in the request body. The sidecar names its run's thread, but sandbox code chooses the body. The routes accept only a thread that the driver runs now (`require_running`, any agent), so sandbox code could use the driver's **other running thread** (another agent's, or another of Arthur's): its write waits there, and the driver's next "yes" in that thread (meant for that run) approves it too. | MEDIUM | Yes: a sandbox call's token passes `POST …/agent-tools/*` only when the body names the call's own thread (403 `agent_scope` otherwise). The sidecar's own agent sessions are unchanged. |
+| 3 | **Production Orbit refused the proxy and the broker.** Their calls on loopback had no `X-Forwarded-Proto: https`, so Orbit answered `400 https_required` (seen on the production-mode test Orbit): no egress at all, no call end in Orbit (**CPU time never counted**, the CPU budget not enforced, no egress card, tokens alive until their expiry), no byte reports. Phases 5–8 used a stand-in or a development-mode Orbit. | HIGH (pilot blocker, budget bypass) | Yes: both send the header (as the sidecar's `forwardedProto`). |
+| 4 | `orbit.internal` reached Orbit's routes **without a session**: registration and password reset (a mail to any address: a way out past the allowlist when registration is open), sign-in guesses, OAuth client registration. | MEDIUM | Yes: the proxy passes a request to `orbit.internal` only with an agent bearer (else 401 `agent_token_required`); Orbit's scope layer then keeps it in its workspace. |
+| 5 | A bare LF or CR in a request head to `orbit.internal` passed the proxy's cleanup, and Orbit's parser ends a line there too: sandbox code could add headers the proxy never saw (a second `X-Forwarded-For`: harmless, Orbit takes the right-most untrusted address; `Transfer-Encoding`: request smuggling). | MEDIUM | Yes: the proxy closes a head with any control byte inside a line. |
+| 6 | CPU time of background (`setsid`) processes between calls was never counted: only the time during a call. A sandbox could mine for up to its idle time (30 min) after each call, or its 4 h life with regular calls, outside the budget. | MEDIUM | Yes: the broker counts the sandbox's CPU since its last count (the next call pays for the time between). |
+| 7 | **The call token is in the host's process list** while a call runs: `runsc exec --env ORBIT_TOKEN=…` (and the proxy password) in `/proc/<pid>/cmdline`; `/proc` has no `hidepid`. The test read it as `nobody`. Any host user (the Orbit service user, build users) can use it against Orbit's loopback port within the agent's scope until the call ends. | MEDIUM | No. Fix before the pilot: give `runsc exec` the environment in a `--process` spec file (root, 0600; check that `RLIMIT_NPROC` and the user still apply), or mount `/proc` with `hidepid=invisible`. |
+| 8 | The card's reason (`purpose`, the model's words, maybe written by hostile content) kept markdown: a fake bold "**Allow always**" or a link in the agent's message. No buttons (they come only from Orbit's request rows), but a misleading card. | LOW | Yes: mention and markdown characters are removed. |
+| 9 | A ticket issued just before the off switch still runs once after it (the broker does not ask Orbit): a new thread sandbox starts and runs the script up to its timeout. No Orbit access (token deleted), no internet (the call ended in Orbit), CPU counted. | LOW | No. Option: the broker checks the call with Orbit before it starts a sandbox. |
+| 10 | The `setsid` fork-bomb restart (phase 5) counts processes before the call starts; a bomb that is still growing can fill the last slots after the count. That one call fails with `fork: Resource temporarily unavailable`; the next one restarts the sandbox (1 failure in 4 runs of the test, under load). | LOW | No. |
+| 11 | Domain fronting through a shared CDN (allowed SNI, another `Host` inside TLS), and ECH (the outer SNI must still be an allowed host): the proxy cannot see inside TLS. | Known gap | No (by design, section 4). Admins allow narrow hosts, never a CDN's shared name. |
+| 12 | Traffic is checked per `CONNECT`: an open tunnel may run on to the per-call cap (100 MiB) after the month's limit is reached. | LOW | No. |
+| 13 | CPU after a thread's last call until its idle delete is not counted (at most the idle time of one CPU per sandbox). | LOW | No. |
+| 14 | The VM's own public addresses count as public: an allowed name that points at the VM reaches its public listeners (TLS with the same SNI only). | LOW | No. Do not allow names that point at the VM. |
+| 15 | Through `orbit.internal`, sandbox code reaches what the agent's tools allow and so can write what teammates read (pages, tasks) or call allowed integrations (writes still need the driver's yes); and there is no rate limit of its own (20 open connections per call). | LOW (by design) | No. |
+
+Reviewed without findings: every new person-facing route (card answer and list, sandbox settings, rules) checks the
+caller against the id's workspace (guests and outsiders 404, members 403, an owner of another workspace 404 with either
+workspace id; no IDOR); CSRF on the answer route is covered by the platform's `Origin` policy (a cookie POST needs the
+instance's `Origin`); the proxy decides only after Orbit's yes, resolves once and dials the checked address
+(`is_public_ip` also covers mapped, NAT64, 6to4 and compatible IPv6), and refuses a missing or other SNI before a byte
+goes up; Orbit trusts forwarding headers only from loopback, and the proxy sets its own; no token, password or script text
+in Orbit's, the proxy's or the broker's logs; tickets, ends, byte and token reports count once.
+
+### Suites
+
+| Suite | Result |
+|---|---|
+| Prompt injection, routes and proxy (`apps/server/tests/agent_sandbox.rs`, 4 new tests; 28 in all) | All pass on **SQLite and Postgres 18**. With the call token (owner as driver, the worst case): its card cannot be answered or listed (bearer 403, cookie 401, cookie next to a bearer 401), no rule, no settings or budget change, no integrations, skills, audit, `/api/v1/me`, another workspace or Orbit's internal routes; nothing changed (card pending, no rule, no continuation, no audit row). A sandbox call acts only in its own thread (another conversation, another root, no thread: 403; its own thread passes; the sidecar's session is not bound). Exfiltration: DNS-tunnel names, `metadata.google.internal`, risky hosts in any spelling (also with a hand-made allow rule) and a homoglyph of an allowed host ask, never resolved; IP literals (metadata, mapped IPv6, ULA, decimal and hex forms) and Orbit's names denied; through `orbit.internal` a bare LF closes the connection, a cookie or no bearer gets 401, registration and sign-in are unreachable. Two workspaces: an owner of another one gets 404 on every route with either workspace id. |
+| Rust unit (`agent::`) | 73 pass (new: a bare line break cannot add a header; only agent bearers reach Orbit, without cookies). |
+| Sidecar (`node --test test/*.test.ts`) | 114 pass, 0 fail (37 skipped: they need a real sandbox). New: the card's reason cannot ping people, fake an answer or add a link. |
+| Escape, in gVisor (`apps/agent/test/agent-sandbox.test.ts`, 27 tests, real broker and proxy) | All pass (the `setsid` fork bomb test once failed under load: finding 10; it passed 3 of 3 alone). New: a bare LF to `orbit.internal` never reaches Orbit, and without the bearer the proxy answers 401; an SNI other than the `CONNECT` host is blocked with 0 bytes up; background CPU between calls counts at the next call, once; the broker's and the proxy's calls to Orbit say `https`. Still covered: private ranges, `169.254.169.254`, IPv6, DNS and UDP fail; DNS rebinding (`*.nip.io`) blocked after the yes; other threads' `/work`, `/tmp`, processes and passwords unreachable; host paths, keys and sockets invisible; fork bombs (also `setsid`), memory, disk, timeout, eviction, gc, off switch, broker restart. |
+| End to end (production-mode Orbit, real proxy and broker; scripted hostile code in Arthur's sandbox) | 30 of 30 checks. The attacks of the route suite again through the real chain (`curl` in gVisor → proxy → Orbit), plus: no direct path to Orbit's port or the /30's host side; metadata by IP denied in Orbit's log; a tunnel name with token bytes logged as `ask` only; the old token dead in the next call; limits unchanged; the driver's own answer still works. Off-switch race: a ticket used after the switch ran (finding 9) with Orbit 401 and the internet 403; its CPU counted once. Host check: `nobody` read the call token from a process's command line (finding 7). |
+
+Proof that the tests catch the bugs: built with `scope.rs` and `egress_proxy.rs` of `fb03a64b`, the 3 injection tests
+fail: the call token as a cookie answered its own card (`200`, `allowed`); a body naming another thread passed the scope
+layer (the route then said `agent_run_required` only because no run was going there); a head with a bare LF reached Orbit
+(`200`).
+
+### Changes this made in the design
+
+1. Section 3: the call token is a bearer only. Orbit refuses an agent token in a cookie; the proxy drops cookies and
+   passes a request to `orbit.internal` only with an agent bearer, so no route without a session is reachable from a
+   sandbox.
+2. Section 3 (approvals): a sandbox call's token acts only in the call's own thread on the tool routes; the driver's
+   "yes" in another thread never counts for it.
+3. Section 5 (budgets): CPU counts per sandbox since its last count, so background processes pay at the next call.
+4. Section 5 (ops): every local client of production Orbit (sidecar, broker, proxy) sends
+   `X-Forwarded-Proto: https`. Test the pilot's set-up against a production-mode Orbit, not a development one.
+
+### Residual risks for the Arthur pilot
+
+- Finding 7 (token in the host's process list): fix or mitigate (`hidepid`) before the pilot.
+- Domain fronting / ECH (finding 11): allow only narrow hosts; review the Internet access page's log during the pilot.
+- Findings 9, 10, 12–15: small, bounded; watch the call log (`interrupted`, `lost`) and the monthly use.
+- Not tested with a real model: the blocks do not depend on the model, but the pilot should watch what Arthur asks
+  for (cards, `internet_refused`) in its first weeks.
+- Still open from phase 8: no admin notice when a limit is lowered below the use, no installation switch page, no
+  retention job, a deleted agent's images stay 72 h.
+
