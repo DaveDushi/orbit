@@ -215,6 +215,57 @@ impl Fixture {
         .await
     }
 
+    /// Adds `member` to `workspace` with `role`.
+    async fn join(&self, member: &Member, workspace: &str, role: &str) {
+        let now = TimestampMillis::now().as_millis();
+        sqlx::query(
+            "INSERT INTO memberships (id, workspace_id, user_id, role, version, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, 0, $5, $6)",
+        )
+        .bind(Id::new_v7().to_string())
+        .bind(workspace)
+        .bind(member.id.to_string())
+        .bind(role)
+        .bind(now)
+        .bind(now)
+        .execute(self.database.pool())
+        .await
+        .unwrap();
+    }
+
+    /// Another workspace, owned by `owner`. The workspace and its owner membership name each
+    /// other, so both go in one transaction.
+    async fn other_workspace(&self, owner: &Member) -> String {
+        let (id, membership) = (Id::new_v7().to_string(), Id::new_v7().to_string());
+        let now = TimestampMillis::now().as_millis();
+        let mut tx = self.database.pool().begin().await.unwrap();
+        sqlx::query(
+            "INSERT INTO workspaces (id, name, owner_membership_id, created_at, updated_at) \
+             VALUES ($1, 'Other', $2, $3, $4)",
+        )
+        .bind(&id)
+        .bind(&membership)
+        .bind(now)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO memberships (id, workspace_id, user_id, role, version, created_at, updated_at) \
+             VALUES ($1, $2, $3, 'owner', 0, $4, $5)",
+        )
+        .bind(&membership)
+        .bind(&id)
+        .bind(owner.id.to_string())
+        .bind(now)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        id
+    }
+
     async fn report_notifications(&self, recipient: Id) -> Vec<String> {
         sqlx::query_scalar(
             "SELECT chat_report_id FROM notifications WHERE recipient_user_id = $1 \
@@ -432,4 +483,122 @@ async fn a_blocked_person_cannot_open_or_write_a_dm_with_the_blocker() {
     assert_eq!(status, StatusCode::OK);
     let (status, _) = fixture.dm(&bob, &ada).await;
     assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_report_needs_a_message_the_caller_can_read_in_that_workspace() {
+    let fixture = Fixture::new().await;
+    let ada = fixture.user("ada", true).await;
+    let bob = fixture.user("bob", true).await;
+    let guest = fixture.user("guest", false).await;
+    fixture.join(&guest, &fixture.workspace_id, "guest").await;
+    // Carol owns another workspace: she manages chat there, not here.
+    let carol = fixture.user("carol", false).await;
+    let other = fixture.other_workspace(&carol).await;
+    let in_other = |path: &str| format!("/workspaces/{other}/chat{path}");
+
+    let general = fixture.general().await;
+    let (_, sent) = fixture.send(&fixture.owner, &general, "Public words").await;
+    let public = sent["result"]["id"].as_str().unwrap().to_owned();
+    let (status, created) = fixture
+        .call(
+            &fixture.owner,
+            "POST",
+            &fixture.chat("/conversations"),
+            Some(json!({ "name": "secret", "kind": "private", "member_ids": [bob.id] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let secret = created["result"]["id"].as_str().unwrap().to_owned();
+    let (_, sent) = fixture.send(&fixture.owner, &secret, "Private words").await;
+    let private = sent["result"]["id"].as_str().unwrap().to_owned();
+
+    // A private channel the caller is not in, a public channel for a guest who is not in it, and
+    // any message for a member of another workspace, through either workspace's path.
+    let reason = json!({ "reason": "spam" });
+    for (member, target) in [(&ada, &private), (&guest, &public), (&carol, &public)] {
+        let (status, problem) = fixture.report(member, target, reason.clone()).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{problem}");
+    }
+    let (status, problem) = fixture
+        .call(
+            &carol,
+            "POST",
+            &in_other(&format!("/messages/{public}/report")),
+            Some(reason.clone()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{problem}");
+    // A member of the private channel may report it.
+    let (status, _) = fixture.report(&bob, &private, reason.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Carol cannot reach this workspace's reports from hers, nor read them here.
+    let (status, report) = fixture.report(&ada, &public, reason).await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    let report_id = report["id"].as_str().unwrap().to_owned();
+    let (status, problem) = fixture
+        .call(
+            &carol,
+            "DELETE",
+            &in_other(&format!("/reports/{report_id}/message")),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{problem}");
+    let (status, listed) = fixture.call(&carol, "GET", &in_other("/reports"), None).await;
+    assert_eq!((status, listed), (StatusCode::OK, json!([])));
+    let (status, _) = fixture.call(&carol, "GET", &fixture.chat("/reports"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(fixture.report_notifications(carol.id).await.is_empty());
+    let (_, page) = fixture
+        .call(
+            &ada,
+            "GET",
+            &fixture.chat(&format!("/conversations/{general}/messages")),
+            None,
+        )
+        .await;
+    assert_eq!(page["items"].as_array().unwrap().len(), 1, "{page}");
+}
+
+#[tokio::test]
+async fn a_block_needs_a_live_shared_workspace_and_changes_only_the_callers_list() {
+    let fixture = Fixture::new().await;
+    let ada = fixture.user("ada", true).await;
+    let bob = fixture.user("bob", true).await;
+    let carol = fixture.user("carol", false).await;
+    let other = fixture.other_workspace(&carol).await;
+    let block = |target: &Member| format!("/chat/blocks/{}", target.id);
+
+    // Carol shares no workspace with Ada; then only a trashed one.
+    let (status, _) = fixture.call(&ada, "PUT", &block(&carol), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    fixture.join(&ada, &other, "member").await;
+    sqlx::query("UPDATE workspaces SET deleted_at = $1 WHERE id = $2")
+        .bind(TimestampMillis::now().as_millis())
+        .bind(&other)
+        .execute(fixture.database.pool())
+        .await
+        .unwrap();
+    let (status, _) = fixture.call(&ada, "PUT", &block(&carol), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = fixture.call(&ada, "PUT", "/chat/blocks/not-an-id", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, _) = fixture.call(&ada, "PUT", &block(&bob), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    // Bob cannot lift Ada's block, nor can the owner: a DELETE only removes the caller's own.
+    for member in [&bob, &fixture.owner] {
+        let (status, _) = fixture.call(member, "DELETE", &block(&ada), None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (status, _) = fixture.call(member, "DELETE", &block(&bob), None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (_, own) = fixture.call(member, "GET", "/chat/blocks", None).await;
+        assert_eq!(own, json!([]));
+    }
+    let (_, listed) = fixture.call(&ada, "GET", "/chat/blocks", None).await;
+    assert_eq!(listed.as_array().unwrap().len(), 1, "{listed}");
+    let (status, _) = fixture.dm(&bob, &ada).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
 }
