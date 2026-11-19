@@ -12,8 +12,10 @@ export type LegalBlock = string | string[]
 export type LegalSection = { title: string; body: LegalBlock[] }
 export type LegalDocument = { title: string; intro: string; sections: LegalSection[] }
 
-const operator = 'EasyToManage ([Address])'
+const operator = 'EasyToManage'
 const contact = 'info@easytomanage.com'
+/** Add the state in this one place. */
+const governingLaw = 'the laws of the United States of America and of the State of [State]'
 
 export const TERMS: LegalDocument = {
   title: 'Terms of Service',
@@ -32,7 +34,7 @@ export const TERMS: LegalDocument = {
           'Give a correct name and email address, and keep your password and two-factor codes secret.',
           'You are responsible for what is done with your account, also through API tokens, AI clients and apps that you connect.',
           'Tell us at once if you think that somebody else uses your account.',
-          'You must be at least [Minimum age] years old to use Orbit.',
+          'You must be at least 16 years old to use Orbit.',
         ],
       ],
     },
@@ -87,7 +89,7 @@ export const TERMS: LegalDocument = {
     },
     {
       title: '10. Law',
-      body: ['These terms are governed by the law of [Governing law / country].'],
+      body: [`These terms are governed by ${governingLaw}.`],
     },
     {
       title: '11. Changes to these terms',
@@ -135,12 +137,11 @@ export const PRIVACY: LegalDocument = {
       title: '4. Other services that get data',
       body: [
         [
-          'Email: account emails (invitations, sign-up confirmation, password recovery, email changes) go through the mail provider that we configure ([Email provider]).',
+          'Email: account emails (invitations, sign-up confirmation, password recovery, email changes) are sent through Cloudflare\'s email service, from info@orbit.easytomanage.com.',
           'Push notifications: a short text (for example who wrote and the start of a message) goes through Apple Push Notification service for the iPhone app, or through your browser vendor\'s push service (for example Google, Mozilla or Apple) for browser notifications.',
           'Integrations that a workspace turns on: GitHub (issues, pull requests and comments are synced in both directions), Notion (for an import), outgoing webhooks and chat bots (message content goes to the address that an admin sets), and services that admins connect to the AI assistant (for example Shopify).',
           'Link previews: when a message contains a link, the Orbit server reads that page (an X post through the FxTwitter service, a YouTube video through YouTube) to show a preview. Your browser can then load the preview image or a video from that site.',
-          'Payments: if paid plans are turned on for this server, Stripe processes them. [Remove this point if billing is off.]',
-          'Hosting: the server, its files and its backups are stored at [Hosting provider and location].',
+          'Hosting: Orbit runs on a virtual server from exe.dev in a Latitude.sh data center in New York, USA. Chat messages and Drive files stay on this server. Traffic to Orbit passes through Cloudflare (Cloudflare Tunnel), and backups are stored in Cloudflare R2. Your data is therefore stored and processed in the United States.',
         ],
       ],
     },
@@ -153,14 +154,14 @@ export const PRIVACY: LegalDocument = {
     {
       title: '6. Logs, cookies and local storage',
       body: [
-        'The Orbit server logs requests (method, path, result and errors) to operate and fix the service. The web server in front of Orbit can also log IP addresses and browser information; we keep these logs for [Log retention period].',
+        'The Orbit server logs requests (method, path, result and errors) to operate and fix the service. The services in front of Orbit (Cloudflare and the web server) can also log IP addresses and browser information. We keep the logs on our server for 30 days; Cloudflare keeps its own logs under its own terms.',
         'Orbit uses one cookie to keep you signed in, and your browser\'s local storage for settings such as the theme. They are necessary for the service; there are no tracking cookies.',
       ],
     },
     {
       title: '7. Backups and retention',
       body: [
-        'We keep your data while your account or workspace exists. Deleted tasks, projects, docs and Drive files go to the trash first and are deleted permanently after 30 days. Backups of the database and files are made regularly and kept for [Backup retention period], so deleted data can stay in a backup until that backup is removed. After an account ends, we keep its data for [Retention period after an account ends].',
+        'We keep your data while your account or workspace exists. Deleted tasks, projects, docs and Drive files go to the trash first and are deleted permanently after 30 days. Backups of the database and files are made regularly and kept for 30 days, so deleted data can stay in a backup until that backup is removed. After an account ends, we keep its data for 30 days and then delete it, except where the law requires us to keep it longer.',
       ],
     },
     {
@@ -180,4 +181,5 @@ export const PRIVACY: LegalDocument = {
   ],
 }
 
-export const LEGAL_EFFECTIVE_DATE = '[Effective date]'
+/** The day the text takes effect. The deploy session sets it to the deploy day. */
+export const LEGAL_EFFECTIVE_DATE = '2026-11-19'
