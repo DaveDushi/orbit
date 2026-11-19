@@ -7,8 +7,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, commit b2b7e800ff74ef0336ae4ead413c04a0025add71 on `main`
-  (external agents, phase 1; schema 20261118180902, 123 rows; November 19, 2026).
+- Source: DaveDushi/orbit, commit d7f0473d602b3dff9368b721433072dc3a2c31fe on `main`
+  (helpdesk phase 1: support email as tickets in Tasks; schema 20261119075838, 124 rows; November 19, 2026).
+- Support email (`docs/support.md`): inbound email is `POST /api/v1/hooks/support/{mailbox_id}/{secret}` on
+  `ORBIT_PUBLIC_HOOKS_URL`. No mailbox is connected, and the hooks gateway does not let `/api/v1/hooks/support/` through
+  yet: both are a separate Ops step (with its own yes), with the DNS/MX or Cloudflare Email Worker change. Mailbox SMTP
+  passwords are encrypted with the existing app key (`ORBIT_APP_KEY_FILE`); no new env key.
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
   f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
@@ -18,9 +22,10 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   MCP routes through the hooks gateway (`/etc/orbit-hooks-gateway/nginx.conf`, proposal `/tmp/mcpo/gateway/proposal.diff`).
   Binaries before d8d3eb4 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-d8d3eb4`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:b2b7e80`); fork commits have no published upstream image.
-- Image ID: sha256:f9689e1ce8cb5c0153d712c1d6bcece4e53a2b65957dff77dc5a5091451842e6
-- Team agent sidecar code (`/opt/orbit-agent`): commit b2b7e80 (what's new 2026-11-19 and aboutOrbit: external agents).
+  (`orbit:d7f0473`); fork commits have no published upstream image.
+- Image ID: sha256:41b53b92825c50cf5274c71507ccad0fd4ce7661d57a569b5a15459aae4e1960
+- Team agent sidecar code (`/opt/orbit-agent`): commit d7f0473 (what's new 2026-11-19: external agents, support email;
+  aboutOrbit: support email in Tasks).
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): on since November 15, 2026, 12:07 UTC (set by Ops, outside a
   deploy): `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID`, `ORBIT_APNS_TOPIC` and `ORBIT_APNS_SANDBOX`
   are in `/etc/orbit/orbit.env`; the journal shows `iPhone push (APNs) is on` (topic `com.easytomanage.orbit`, sandbox
@@ -267,6 +272,85 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 19, 2026 upgrade: helpdesk phase 1, support email as tickets in Tasks (1 migration)
+
+`main` from `384aa68f` to `d7f0473d`: `--no-ff` merge of `helpdesk-mvp` at `64c33ad5` (`4a0bb5d6` remove the mock Mail
+page and its seed; `46c943c3` feat: support email as tickets in Tasks: owners and admins connect a mailbox to a project
+(Project settings → Support email), each inbound email becomes or joins a ticket task, Reply to customer sends by the
+mailbox's SMTP (job `support.send`) and moves the ticket to Pending, Internal note stays a comment; `64c33ad5` Microsoft 365
+mailboxes, Test connection, original requester on forwards). New routes `GET/POST/PUT/DELETE …/projects/{id}/support-mailbox`,
+`POST …/support-mailbox/rotate`, `POST …/support-mailbox/test`, `GET …/tasks/{id}/support`, `POST …/tasks/{id}/support/replies`,
+`POST …/support/messages/{id}/retry`, and the inbound hook `POST /api/v1/hooks/support/{mailbox_id}/{secret}` (raw MIME,
+up to the upload body limit, rate-limited per mailbox, no Origin check). OpenAPI contract changed (310 paths, 404
+operations): `openapi.json` and the SDK regenerated from the merged server (`orbit openapi`), equal to the branch's files.
+Migration: the branch's `20261118180413_support_desk` (SQLite and Postgres) was older than production's 20261118180902, so
+the merge renamed it to `20261119075838_support_desk` (nothing named the old file except `.ai/FEATURES.md`, updated). It
+is additive: new tables `support_mailboxes`, `support_contacts`, `support_tickets`, `support_messages`, 6 indexes. Merge
+with no conflicts; what's new: the branch's line moved from 2026-11-18 to the 2026-11-19 entry, with "This team's support
+mailbox is not connected yet." (8 entries kept); aboutOrbit came from the branch ("Support email (helpdesk) is built into
+Tasks"). No env change: `orbit config check` passed with the current `/etc/orbit/orbit.env` (SMTP passwords use the
+existing `ORBIT_APP_KEY_FILE`; inbound URLs use `ORBIT_PUBLIC_HOOKS_URL`). No mailbox added, no DNS/MX/gateway change.
+
+Checks on the merge: server `--test support_api` 12 pass and `--test openapi_contract` 19 pass (SQLite; `target` removed
+after); web `tsc -b`, `packages/api` and agent `tsc` clean; web `productNavigation.test.ts`, `tasks/api/models.test.ts`,
+`supportEmail.test.ts` 24 pass. Not run: the `orbit-platform` unit tests of the hook body limit and rate limit.
+
+Deploy id `20261119T075830Z-3411958`. `orbit:d7f0473` (image
+`sha256:41b53b92825c50cf5274c71507ccad0fd4ce7661d57a569b5a15459aae4e1960`; release compile 35m54s, after a wait for the
+`orbit-build` lock of two other worktrees); `deploy/smoke.sh` and `orbit config check` passed. Migration dry run (hot copy,
+and in the switch on a copy of the stopped database): applied 1 then 0, schema 20261119075838 (124 rows), counts, names and
+old checksums unchanged, 4 new tables, 6 indexes, 0 support rows, quick_check ok, 0 FK rows; the old binary refuses the new
+schema; `rollback-schema.sql` gives the exact old schema and counts, the old binary then starts (0 applied), and the new
+binary migrates again.
+
+Switch: stopped both services at 09:33:47 UTC; snapshot `01a1f327-b1e3-70d5-ab72-a543be00661b`
+(`/var/backups/orbit/downloads/01a1f327-…`) with `/usr/local/bin/orbit-b2b7e80`, verified, `backup-rehearsal.sh` passed;
+plain copy `/var/backups/orbit/pre-migration/orbit-before-d7f0473.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-d7f0473.tgz`; sidecar code copied (old `/opt/orbit-agent.before-d7f0473`).
+`orbit` and `orbit-agent` ready 09:34:04 (17 s down). `vm-health.conf` (old copy `.before-d7f0473`): `PROD_TAG=d7f0473`,
+`ROLLBACK_TAG=b2b7e80`, `ROLLBACK_BACKUP=01a1f327-b1e3-70d5-ab72-a543be00661b`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) local and on
+`https://orbit-app.easytomanage.com/health/ready` (200); `/orbit-build.json` revision `d7f0473d…`; schema 20261119075838
+(124 rows); sidecar `/health` ok, `/opt/orbit-agent/src` = `main`; `/`, `/login`, `/tasks`, `/chat`,
+`/settings/agentic/agents` 200. New routes with no session (`routes.sh`): 401 (before the switch 404); `POST`/`PUT
+support-mailbox` and `POST …/support/replies` with an empty body 400 (body checked before the session), with a valid body
+401. Inbound hook (before the switch 403 `origin_forbidden`): unknown mailbox with a fake secret 404
+`support_mailbox_not_found` (also with `Host: orbit-hooks…`), malformed id 404, no secret 404 `route_not_found`, `GET` 405;
+nothing accepted. Journal since the switch: only the 2 known start lines (orbit "allowed origin without a port", agent
+node SQLite ExperimentalWarning, the same at the 07:51 start). `vm-health`: nginx WARN only from the switch (40 "Connection
+refused" lines, 0 other, 0 5xx); OOM WARN = `gvisor_sentry` kills before the deploy; docker WARN = other sessions'
+containers; git-owner WARN = 33 `.git/worktrees/*` files of other worktrees (2026-11-18); the deploy's root-owned files in
+the checkout were given back to exedev. Signed-in check as David Dusi (1 temporary session, logged out and revoked; socat TLS
+hop; every API write blocked, 0 writes; `ui-check.ts`): Wellrox → General → Project settings → Support email shows the
+empty "Connect mailbox" form (GET support-mailbox 200), light and dark, 1440 px and 390 px phone; no console errors; no
+mailbox created (0 rows). There is no "Support" project on production; none was created. Screenshots
+`/root/.local/share/com.jean.desktop/pasted-images/helpdesk/support-settings-{desktop,phone}-{light,dark}.png`.
+Changelog not posted (text `/root/ops/helpdesk/changelog.md`). Scripts and logs: `/root/ops/helpdesk/`.
+
+Open (Ops, with its own yes): connect the real support mailbox (Project settings → Support email), let
+`POST /api/v1/hooks/support/` through the hooks gateway (`/etc/orbit-hooks-gateway/nginx.conf`), and the DNS/MX or
+Cloudflare Email Worker change (`docs/support.md`, `docs/support/cloudflare-email-worker.js`).
+
+Rollback to `b2b7e80` (undo the migration first: lost are support mailboxes, customer contacts, the ticket links and the
+emails of tickets, and pending reply sends; ticket tasks, comments and attachments stay as plain tasks; the old binary
+refuses the new schema):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit sqlite3 "file:/var/lib/orbit/orbit.sqlite?mode=ro" ".backup '/var/backups/orbit/pre-migration/orbit-before-rollback-to-b2b7e80.sqlite'"
+sudo -u orbit sqlite3 /var/lib/orbit/orbit.sqlite < /root/ops/helpdesk/rollback-schema.sql   # DELETE support.send jobs, DROP 4 tables, delete the version row
+sudo install -m 755 /usr/local/bin/orbit-b2b7e80 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-d7f0473 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/helpdesk/rollback.sh)
+# Way 2, only for a data problem (work after 09:33 UTC is lost), Orbit stopped: /usr/local/bin/orbit-b2b7e80 backup verify +
+#   backup restore 01a1f327-b1e3-70d5-ab72-a543be00661b (as user orbit), then the binary and sidecar lines above
+```
+
+After this rollback, copy `/root/ops/vm-health.conf.before-d7f0473` back to `/root/ops/vm-health.conf`.
 
 ### November 19, 2026 upgrade: external agents, phase 1 (1 migration)
 
