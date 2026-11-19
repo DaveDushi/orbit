@@ -51,12 +51,24 @@ impl ChatRepository {
         workspace_id: Id,
         actor_id: Id,
     ) -> Result<Vec<ConversationRecord>, ChatError> {
+        self.list_conversations_for(workspace_id, actor_id, None)
+            .await
+    }
+
+    /// [`Self::list_conversations`], for an external agent only the ones on its card (in SQL).
+    pub async fn list_conversations_for(
+        &self,
+        workspace_id: Id,
+        actor_id: Id,
+        agent: Option<&crate::agent_scope::AgentLimits>,
+    ) -> Result<Vec<ConversationRecord>, ChatError> {
         let visible = format!(
             "c.workspace_id = $1 AND c.archived_at IS NULL \
              AND ({} OR EXISTS (SELECT 1 FROM chat_members \
-                  WHERE chat_members.conversation_id = c.id AND chat_members.user_id = $2)) AND {}",
+                  WHERE chat_members.conversation_id = c.id AND chat_members.user_id = $2)) AND {} AND {}",
             public_for("$2"),
-            reachable_dm()
+            reachable_dm(),
+            agent.map_or_else(|| "1 = 1".to_owned(), |agent| agent.conversation_sql("c"))
         );
         let mut tx = self.database.pool().begin().await?;
         load_actor(&mut tx, workspace_id, actor_id).await?;

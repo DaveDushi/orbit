@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod agent_scope;
 pub mod app;
 pub mod apps;
 pub mod attachment_routes;

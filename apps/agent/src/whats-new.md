@@ -6,6 +6,9 @@ build: "## YYYY-MM-DD" (the deploy date), then 1-4 short "- " lines about what p
 members, not developers. Keep the 8 newest entries; the prompt shows the 5 newest.
 -->
 
+## 2026-11-19
+- External agents: owners and admins can add an agent that runs outside Orbit (Settings → Agentic → Agents → New agent → External agent), for example Claude Code, Codex or your own server. People @mention it in its channels or DM it, and it answers in the thread. It does only what its card allows (its channels, projects and permissions); connect it with "Connect as" on the sign-in page, or with an agent token.
+
 ## 2026-11-18
 - Imports with one yes: when you ask Donna to import a file (for example customers into Shopify) or to change many things at once, she shows one plan with the field mapping and samples, and runs all of it after one **yes**. The thread shows the progress; reply **stop** to end it. Large files: Donna reads a whole spreadsheet or CSV of tens of thousands of rows, or a long PDF or Word file, in one go, and answers questions about it in one reply.
 - Owners and admins can suspend a member (Settings → Members → Manage → Suspend member): they are signed out everywhere and cannot sign in until **Resume member**, with the same password. Their data stays. Removing a suspended member from the workspace also lifts that suspension, so their Orbit account is not locked.
@@ -59,14 +62,3 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 - Donna has her own card in Settings → Agentic → Agents, first and marked Default: owners and admins change her instructions and model for the workspace there, and installation admins her name and avatar (the default model is at the bottom of the Agents tab). Each agent card, Donna's too, ticks the connected services (for example TikTok or Shopify) that the agent may use; a new service is on for Donna and off for the other agents until ticked.
 - Chat search has new filters: Mentions me, Has link and Threads only (replies in threads), and you can sort by Newest or Oldest. Filters combine with each other and with This conversation, From and Has file. The matched words are marked in the results.
 - Recent searches: click the empty search field in a conversation to see your last 10 searches and run one again; Clear removes them. They are saved in your browser only (web and desktop app).
-
-## 2026-11-11
-- Insert from Drive in Docs: type "/" → Insert from Drive and pick a file. The page always shows the latest version from Drive (images and videos on the page, other files as a card that opens the preview). People without access to the file see a locked card. Ask Donna to add, change or remove a Drive file on a page, or which pages show a file.
-- More agents: owners and admins create agents next to Donna in Settings → Agentic → Agents, each with a name, avatar, instructions, tools, model and the channels where it works. @mention one in those channels or send it a direct message; it works with your permissions and asks for your yes before changes, like Donna.
-- Routines can use any agent: pick it when you edit the routine in Settings → Agentic → Routines.
-- Routines: ask Donna for a recurring job ("every weekday at 9, summarize yesterday in #support"). She does it as you, with your permissions, and posts the result where you chose. See, pause, edit and delete them in Settings → Agentic → Routines.
-- Reminders: "remind me at 5pm to call Ana" and Donna sends you a direct message then.
-- Send later: the arrow next to Send in chat → Send later…. Your message is posted as you at that time; edit or cancel it in Scheduled messages. Donna can schedule one for you too.
-- Follow tasks: you follow a task you created, are assigned to, comment on or are @mentioned in. Each new comment and status change shows in Activity and as a desktop or phone notification (not your own). The Followers field of a task lists who follows and has Follow / Unfollow. Turn it off in Account settings → Notifications → "Comments and status changes on tasks I follow".
-- Ask Donna from any page: a small "Ask Donna…" box at the bottom of Tasks, Docs, Drive, Activity, settings and the other pages (not in Chat; web and desktop app; it shows once your ChatGPT is connected in Account settings → Agentic). Press Enter and Donna answers in a panel on the right while you stay on the page. Close the panel and open it again: the conversation is still there.
-- Donna knows the page you asked from and the task, Docs page or Drive folder open on it, so "this" means that item. The conversation is your direct message with Donna, so "Open in Chat" shows it in Chat. Changes still ask for your yes, as in Chat.

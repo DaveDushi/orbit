@@ -35,6 +35,8 @@ pub struct SearchInput {
     pub oldest_first: bool,
     /// The `cursor` of the page before: messages after it in the chosen order.
     pub cursor: Option<Id>,
+    /// An external agent's card: only the conversations on it (`crate::agent_scope`).
+    pub agent: Option<crate::agent_scope::AgentLimits>,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -156,6 +158,9 @@ impl ChatRepository {
         }
         if input.threads_only {
             sql.push_str(" AND m.thread_root_id IS NOT NULL");
+        }
+        if let Some(agent) = &input.agent {
+            sql.push_str(&format!(" AND {}", agent.conversation_sql("c")));
         }
         let (direction, after) = if input.oldest_first {
             ("ASC", ">")

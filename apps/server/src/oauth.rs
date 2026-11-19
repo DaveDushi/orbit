@@ -178,10 +178,23 @@ impl OAuthState {
         resource: &str,
     ) -> Result<Option<Vec<ApiTokenPrincipal>>, OAuthError> {
         let now = TimestampMillis::now().as_millis();
-        let rows = sqlx::query("SELECT g.id, g.user_id, g.workspace_id, g.project_ids, g.all_projects, g.mcp_scopes FROM oauth_tokens t JOIN oauth_grants f ON f.id = t.grant_id JOIN oauth_grants g ON g.group_id = f.group_id JOIN users u ON u.id = g.user_id JOIN memberships m ON m.user_id = g.user_id AND m.workspace_id = g.workspace_id AND m.role <> 'guest' JOIN workspaces w ON w.id = g.workspace_id WHERE t.access_hash = $1 AND t.access_expires_at > $2 AND g.revoked_at IS NULL AND g.resource = $3 AND g.scope = 'tasks:read' AND u.suspended_at IS NULL AND w.deleted_at IS NULL ORDER BY g.created_at, g.id")
+        let rows = sqlx::query("SELECT g.id, g.user_id, g.workspace_id, g.project_ids, g.all_projects, g.mcp_scopes, g.agent_profile_id FROM oauth_tokens t JOIN oauth_grants f ON f.id = t.grant_id JOIN oauth_grants g ON g.group_id = f.group_id JOIN users u ON u.id = g.user_id JOIN memberships m ON m.user_id = g.user_id AND m.workspace_id = g.workspace_id AND m.role <> 'guest' JOIN workspaces w ON w.id = g.workspace_id WHERE t.access_hash = $1 AND t.access_expires_at > $2 AND g.revoked_at IS NULL AND g.resource = $3 AND g.scope = 'tasks:read' AND u.suspended_at IS NULL AND w.deleted_at IS NULL ORDER BY g.created_at, g.id")
             .bind(hash(token)).bind(now).bind(resource).fetch_all(self.database.pool()).await?;
         let mut principals = Vec::new();
         for row in rows {
+            // A connection "as agent": its card, read now, is what it may do.
+            if let Some(agent) = row.get::<Option<String>, _>("agent_profile_id") {
+                let (Ok(agent), Ok(grant)) = (agent.parse(), row.get::<String, _>("id").parse())
+                else {
+                    continue;
+                };
+                if let Some(principal) =
+                    crate::agent::external::principal(&self.database, agent, grant).await?
+                {
+                    principals.push(principal);
+                }
+                continue;
+            }
             let workspace_id: Id = row
                 .get::<String, _>("workspace_id")
                 .parse()
@@ -255,6 +268,7 @@ fn principal(
         actor_id: user_id,
         service_account: None,
         scopes: ApiTokenScope::parse_list(&granted_scopes(row.get("mcp_scopes"))),
+        agent: None,
     })
 }
 
@@ -709,8 +723,10 @@ async fn consent(
             .bind(&id)
             .fetch_one(&mut *tx)
             .await?;
+    // Owners and admins may connect the client as one of their workspace's external agents.
+    let agents = crate::agent::external::consent_agents(&mut tx, user).await?;
     tx.commit().await?;
-    Ok(([(header::CACHE_CONTROL, "no-store")], Json(json!({"client_name": client, "redirect_to": redirect_target(&redirect_uri), "scope": requested, "csrf_token": nonce, "workspaces": workspaces, "projects": projects}))).into_response())
+    Ok(([(header::CACHE_CONTROL, "no-store")], Json(json!({"client_name": client, "redirect_to": redirect_target(&redirect_uri), "scope": requested, "csrf_token": nonce, "workspaces": workspaces, "projects": projects, "agents": agents}))).into_response())
 }
 
 #[derive(Deserialize)]
@@ -723,6 +739,10 @@ struct Approval {
     workspaces: Vec<WorkspaceAccess>,
     #[serde(default)]
     scopes: Vec<String>,
+    /// Connect "as agent": the external agent the client acts as. Its card sets what it may do, so
+    /// `workspaces` and `scopes` are not used then.
+    #[serde(default)]
+    agent_id: Option<Id>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -751,7 +771,15 @@ async fn approve(
         .ok_or_else(|| OAuthError::invalid("invalid_request"))?;
     let mut callback =
         Url::parse(row.get("redirect_uri")).map_err(|error| OAuthError::server().cause(error))?;
-    if input.approved {
+    if input.approved
+        && let Some(agent) = input.agent_id
+    {
+        let group = approve_agent(&mut tx, user, agent, &row, now).await?;
+        let code = generate_opaque_token();
+        sqlx::query("UPDATE oauth_requests SET code_hash = $1, grant_id = $2, csrf_hash = NULL, expires_at = $3 WHERE id = $4")
+            .bind(hash(&code)).bind(group.to_string()).bind(now + 60_000).bind(&id).execute(&mut *tx).await?;
+        callback.query_pairs_mut().append_pair("code", &code);
+    } else if input.approved {
         if input.workspaces.is_empty() || input.workspaces.len() > MAX_WORKSPACES {
             return Err(OAuthError::invalid("invalid_request"));
         }
@@ -845,6 +873,42 @@ async fn approve(
     callback.query_pairs_mut().append_pair("iss", issuer);
     tx.commit().await?;
     Ok(Json(json!({"redirect_uri": callback.as_str()})))
+}
+
+/// The grant of a connection "as agent": `user_id` is the agent's bot user, `approved_by` the
+/// owner or admin who approves it now. Its scopes and projects come from the agent's card on each
+/// request (`agent::external::principal`), so it stores every scope (a client may ask for any at
+/// the token endpoint) and all projects (so a refresh never finds it without a project).
+async fn approve_agent(
+    tx: &mut Transaction<'_, Any>,
+    approver: Id,
+    agent: Id,
+    request: &sqlx::any::AnyRow,
+    now: i64,
+) -> Result<Id, OAuthError> {
+    let (workspace_id, bot) = crate::agent::external::approvable(tx, approver, agent)
+        .await?
+        .ok_or_else(|| OAuthError::invalid("invalid_request"))?;
+    let grant = Id::new_v7();
+    let extra = SCOPES[1..].join(" ");
+    sqlx::query("INSERT INTO oauth_grants (id, client_id, user_id, workspace_id, project_ids, resource, scope, created_at, mcp_scopes, all_projects, group_id, agent_profile_id, approved_by) VALUES ($1, $2, $3, $4, '[]', $5, 'tasks:read', $6, $7, 1, $1, $8, $9)")
+        .bind(grant.to_string()).bind(request.get::<String, _>("client_id")).bind(bot.to_string()).bind(workspace_id.to_string())
+        .bind(request.get::<String, _>("resource")).bind(now).bind(&extra).bind(agent.to_string()).bind(approver.to_string())
+        .execute(&mut **tx).await?;
+    audit::record(
+        tx,
+        workspace_id,
+        Some(approver),
+        "oauth.grant.created",
+        AuditOutcome::Success,
+        "oauth_grant",
+        Some(grant),
+        "oauth-consent",
+        json!({"agent_profile_id": agent}),
+        TimestampMillis::from_millis(now),
+    )
+    .await?;
+    Ok(grant)
 }
 
 #[derive(Deserialize)]

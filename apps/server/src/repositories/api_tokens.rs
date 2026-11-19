@@ -143,6 +143,9 @@ pub struct ApiTokenPrincipal {
     pub actor_id: Id,
     pub service_account: Option<ServiceAccount>,
     pub scopes: Vec<ApiTokenScope>,
+    /// An external agent's card (`crate::agent_scope`): the credential acts as its bot user and
+    /// only inside its lists. `None` for a person's or a service account's credential.
+    pub agent: Option<crate::agent_scope::AgentLimits>,
 }
 
 /// The non-login identity a token acts as; reads still use the creator's membership.
@@ -432,6 +435,7 @@ impl ApiTokenRepository {
             actor_id,
             service_account,
             scopes,
+            agent: None,
         };
         if required.is_some_and(|scope| !principal.allows(scope)) {
             return Err(ApiTokenError::Forbidden);

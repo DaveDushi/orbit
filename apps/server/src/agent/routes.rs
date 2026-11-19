@@ -375,14 +375,39 @@ async fn refuse(state: &AgentState, input: &inputs::PendingInput) {
         }
         return;
     };
+    refuse_mention(
+        state,
+        workspace_id,
+        author,
+        message_id,
+        agent,
+        &input.conversation_name,
+    )
+    .await;
+}
+
+/// [`refuse`] for one mention: also used by an external agent's own poll (`external`).
+pub(crate) async fn refuse_mention(
+    state: &AgentState,
+    workspace_id: Id,
+    author: Id,
+    message_id: Id,
+    agent: Id,
+    conversation_name: &str,
+) {
     let chat = &state.chat;
     let answered = async {
-        let channels = {
+        let (channels, dms) = {
             let mut conn = state.database().pool().acquire().await?;
-            match super::profiles::live_agent(&mut conn, workspace_id, agent).await? {
+            let channels = match super::profiles::live_agent(&mut conn, workspace_id, agent).await? {
                 Some(profile) => super::profiles::channel_names(&mut conn, &profile).await?,
                 None => return Ok(()),
-            }
+            };
+            // Only an external agent's card can turn DMs off.
+            let dms = super::external::dms_allowed(&mut conn, agent)
+                .await?
+                .unwrap_or(true);
+            (channels, dms)
         };
         let dm = match chat
             .publish(workspace_id, agent, chat.chat.open_dm(workspace_id, agent, vec![author]))
@@ -395,22 +420,7 @@ async fn refuse(state: &AgentState, input: &inputs::PendingInput) {
                 return Ok(());
             }
         };
-        let list = if channels.is_empty() {
-            "only in direct messages".to_owned()
-        } else {
-            format!(
-                "only in {} and in direct messages",
-                channels
-                    .iter()
-                    .map(|name| format!("#{name}"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        };
-        let body = format!(
-            "I can't help in #{}: I work {list}. Ask me here, or ask an owner or admin to add that channel in Settings → Agentic → Agents.",
-            input.conversation_name
-        );
+        let body = refusal_text(conversation_name, &channels, dms);
         let send = SendInput {
             conversation_id: dm,
             thread_root_id: None,
@@ -440,6 +450,26 @@ async fn refuse(state: &AgentState, input: &inputs::PendingInput) {
         return;
     }
     let _ = inputs::acknowledge(state.database(), message_id).await;
+}
+
+/// The refusal DM for a mention in `conversation_name`: where the agent works, from its card
+/// (`channels`, and direct messages when `dms`).
+fn refusal_text(conversation_name: &str, channels: &[String], dms: bool) -> String {
+    let channels = channels
+        .iter()
+        .map(|name| format!("#{name}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let works = match (channels.is_empty(), dms) {
+        (true, true) => "I work only in direct messages".to_owned(),
+        (true, false) => "I do not work in any channel yet".to_owned(),
+        (false, true) => format!("I work only in {channels} and in direct messages"),
+        (false, false) => format!("I work only in {channels}"),
+    };
+    let ask = if dms { "Ask me here, or ask" } else { "Ask" };
+    format!(
+        "I can't help in #{conversation_name}: {works}. {ask} an owner or admin to add that channel in Settings → Agentic → Agents."
+    )
 }
 
 /// The bot user that posts for the sidecar: a live custom agent of the workspace, or the default
@@ -890,4 +920,23 @@ async fn invalidate_credential(
         .await
         .map_err(|_| unavailable(&uri, &request_id))?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::refusal_text;
+
+    #[test]
+    fn the_refusal_names_direct_messages_only_when_the_card_allows_them() {
+        let channels = ["dev".to_owned(), "ops".to_owned()];
+        let with_dms = refusal_text("random", &channels, true);
+        assert!(with_dms.starts_with("I can't help in #random: I work only in #dev, #ops and in direct messages. Ask me here, or ask an owner"));
+        let without = refusal_text("random", &channels, false);
+        assert!(without.starts_with("I can't help in #random: I work only in #dev, #ops. Ask an owner"));
+        assert!(!without.contains("direct messages") && !without.contains("Ask me here"));
+        assert!(refusal_text("random", &[], true).contains("I work only in direct messages. Ask me here"));
+        let nowhere = refusal_text("random", &[], false);
+        assert!(nowhere.contains("I do not work in any channel yet. Ask an owner"));
+        assert!(!nowhere.contains("direct messages"));
+    }
 }

@@ -4,13 +4,14 @@ import { Navigate, useSearchParams } from 'react-router'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { LoadingScreen } from '@/components/common/LoadingScreen'
 import { WorkspaceLogo } from '@/components/common/WorkspaceLogo'
 import { AccessPicker, ProjectPicker, type ScopeResource } from '@/components/common/ScopeAccess'
 import { AuthBrand, AuthCard } from '@/features/auth/components/AuthForm'
 import { currentUserQueryOptions } from '@/features/auth/api'
 import { createApiClient } from '@/api/client'
-import { oauthRequest, type OAuthConsent } from '@/features/auth/oauth'
+import { oauthRequest, type ConsentAgent, type OAuthConsent } from '@/features/auth/oauth'
 import { LoadingText } from '@/components/ui/spinner'
 
 // Anonymous consent sessions must not trigger the app-wide /login redirect.
@@ -40,6 +41,8 @@ export function OAuthConsentPage() {
   // A workspace is in the connection when it has an entry here.
   const [picks, setPicks] = useState<Record<string, Pick>>({})
   const [scopes, setScopes] = useState<Scope[]>([])
+  // Connect "as agent": an external agent of a workspace the person manages. `me`: as the person.
+  const [agentId, setAgentId] = useState('me')
   const consent = useQuery({
     queryKey: ['oauth-consent', request, user.data?.id],
     queryFn: () => oauthRequest<OAuthConsent>(`/api/v1/oauth/consent/${encodeURIComponent(request)}`),
@@ -48,6 +51,8 @@ export function OAuthConsentPage() {
     refetchOnWindowFocus: false,
   })
   const workspaces = consent.data?.workspaces ?? []
+  const agents = consent.data?.agents ?? []
+  const agent = agents.find((item) => item.id === agentId) ?? null
   // A single workspace needs no picker.
   const chosen = workspaces.length === 1 ? workspaces : workspaces.filter(({ id }) => id in picks)
   const pickOf = (id: string) => picks[id] ?? NO_PICK
@@ -60,7 +65,7 @@ export function OAuthConsentPage() {
     mutationFn: async (approved: boolean) => {
       const result = await oauthRequest<{ redirect_uri: string }>(`/api/v1/oauth/consent/${encodeURIComponent(request)}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csrf_token: consent.data?.csrf_token, approved, workspaces: approved ? chosen.map(({ id }) => ({ workspace_id: id, project_ids: pickOf(id).all ? [] : pickOf(id).selected, all_projects: pickOf(id).all })) : [], scopes }),
+        body: JSON.stringify(agent && approved ? { csrf_token: consent.data?.csrf_token, approved, agent_id: agent.id } : { csrf_token: consent.data?.csrf_token, approved, workspaces: approved ? chosen.map(({ id }) => ({ workspace_id: id, project_ids: pickOf(id).all ? [] : pickOf(id).selected, all_projects: pickOf(id).all })) : [], scopes }),
       })
       if (remote) setCallback({ url: result.redirect_uri, approved })
       else window.location.assign(result.redirect_uri)
@@ -94,6 +99,18 @@ export function OAuthConsentPage() {
     {user.isError || consent.isError || !/^[A-Za-z0-9_-]{43}$/.test(request) ? <p role="alert">This request is not available. Restart the connection from your MCP client.</p> : consent.data ? <>
       <p><strong>{consent.data.client_name}</strong> wants to connect to the workspaces and projects you select.</p>
       <p className="text-sm text-muted-foreground">Signed in as {user.data?.display_name}.</p>
+      {agents.length ? <div className="grid gap-2">
+        <Label htmlFor="consent-as">Connect as</Label>
+        <Select items={[{ value: 'me', label: `Me (${user.data?.display_name ?? ''})` }, ...agents.map((item) => ({ value: item.id, label: `Agent ${item.name} · ${item.workspace_name}` }))]} value={agentId} onValueChange={(value) => setAgentId(value ?? 'me')}>
+          <SelectTrigger id="consent-as"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="me">Me ({user.data?.display_name})</SelectItem>
+            {agents.map((item) => <SelectItem key={item.id} value={item.id}>Agent {item.name} · {item.workspace_name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">As an agent, the client acts as that agent, never as you, and only within its card in Settings → Agentic → Agents.</p>
+      </div> : null}
+      {agent ? <AgentCard agent={agent} /> : <>
       {workspaces.length > 1 ? <div role="group" aria-labelledby="consent-workspaces" className="grid gap-3">
         <span id="consent-workspaces" className="text-sm font-medium">Workspaces</span>
         {workspaces.map((item) => <Label key={item.id} className="flex items-center gap-2">
@@ -111,6 +128,7 @@ export function OAuthConsentPage() {
           </div>
         }) : <p className="text-sm text-muted-foreground">Select a workspace to choose its projects.</p>}
       </div> } : resource)} scopes={scopes} onChange={setScopes} /> : null}
+      </>}
       {workspaces.length ? <div className="grid gap-2">
         <Label className="flex items-center gap-2">
           <Checkbox checked={remote} disabled={approve.isPending} onCheckedChange={(checked) => setRemote(Boolean(checked))} />
@@ -121,9 +139,21 @@ export function OAuthConsentPage() {
       {approve.isError ? <p role="alert" className="text-sm text-destructive">{approve.error.message}</p> : null}
       <div className="flex gap-3">
         <Button variant="outline" disabled={approve.isPending} onClick={() => approve.mutate(false)}>Deny</Button>
-        {workspaces.length ? <Button disabled={!complete || approve.isPending} onClick={() => approve.mutate(true)}>{scopes.length ? 'Allow selected access' : 'Allow read access'}</Button> : null}
+        {agent ? <Button disabled={approve.isPending} onClick={() => approve.mutate(true)}>Connect as {agent.name}</Button> : workspaces.length ? <Button disabled={!complete || approve.isPending} onClick={() => approve.mutate(true)}>{scopes.length ? 'Allow selected access' : 'Allow read access'}</Button> : null}
       </div>
       {workspaces.length ? <p className="text-xs text-muted-foreground">Allowing will redirect to <strong className="break-words font-medium text-foreground">{consent.data.redirect_to}</strong>.</p> : null}
     </> : <p><LoadingText>Loading connection…</LoadingText></p>}
   </div></AuthCard>
+}
+
+/** The card of the agent the client connects as: what it may do, read only (owners and admins change it in Settings). */
+function AgentCard({ agent }: { agent: ConsentAgent }) {
+  const list = (items: string[], empty: string) => (items.length ? items.join(', ') : empty)
+  return <dl data-slot="consent-agent" className="grid gap-2 rounded-md border border-border p-3 text-sm">
+    <div><dt className="text-xs text-muted-foreground">Workspace</dt><dd>{agent.workspace_name}</dd></div>
+    <div><dt className="text-xs text-muted-foreground">Channels</dt><dd>{list(agent.channels.map((name) => `#${name}`), 'None')}{agent.allow_dms ? ', and its direct messages' : ''}</dd></div>
+    <div><dt className="text-xs text-muted-foreground">Projects</dt><dd>{list(agent.projects, 'None')}</dd></div>
+    <div><dt className="text-xs text-muted-foreground">Permissions</dt><dd className="font-mono text-xs">{agent.scopes.join(' ')}</dd></div>
+    <p className="text-xs text-muted-foreground">Messages that mention {agent.name} in these channels, and its direct messages, go to this client.</p>
+  </dl>
 }

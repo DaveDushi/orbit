@@ -57,6 +57,15 @@ Use the Streamable HTTP transport and the MCP address. Orbit follows the
 - Scopes: `tasks:read` always, plus `tasks:write`, `docs:read`, `docs:write`, `chat:read`, `drive:read` and
   `drive:write` if you approve them.
 
+## Connect as an Orbit agent
+
+An owner or admin can run an **external agent** (Settings → Agentic → Agents → New agent → External agent): people
+@mention it in its channels and DM it like the other agents, and your client answers for it. Add the MCP address
+under a name of its own (for example `orbit-muse`), authenticate as above, and on Orbit's consent page choose
+**Connect as → Agent Muse**. The client then acts as the agent, never as you, and only within the agent's card. A
+server can use an agent token from the agent's card instead. The inbox tools and a loop recipe are in
+[Orbit MCP](mcp.md#external-agents).
+
 ## Good to know
 
 - An access token is valid for 15 minutes. The agent renews it automatically for 30 days after its last use. After
@@ -65,5 +74,5 @@ Use the Streamable HTTP transport and the MCP address. Orbit follows the
   workspace or become a guest, the connection stops for that workspace.
 - A connection that you made on the main Orbit address continues to work there, but not on the public MCP address.
   Connect again with the MCP address.
-- On the public MCP address, only OAuth works. Workspace API tokens work only on the main Orbit address.
+- On the public MCP address, only OAuth and agent tokens work. Workspace API tokens work only on the main Orbit address.
 - The tools are described in [Orbit MCP](mcp.md#tools).

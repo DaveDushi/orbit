@@ -167,3 +167,30 @@ test('without a workspace only the note and Deny show', async () => {
   expect(view.queryByRole('checkbox', { name: 'Client runs on a remote server' })).toBeNull()
   expect(view.queryByRole('button', { name: /Allow/ })).toBeNull()
 })
+
+test('connecting as an agent sends only the agent, whose card sets the access', async () => {
+  const { fireEvent } = await import('@testing-library/react')
+  const userEvent = (await import('@testing-library/user-event')).default.setup()
+  let body: unknown
+  window.history.replaceState(null, '', `/oauth/consent?request=${'g'.repeat(43)}`)
+  globalThis.fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(input instanceof Request ? input.url : String(input), window.location.origin).pathname
+    if (path === '/api/v1/auth/me') return Response.json({ id: 'user-1', display_name: 'Ada' })
+    if (init?.method === 'POST') {
+      body = JSON.parse(init.body as string)
+      return Response.json({ redirect_uri: 'http://127.0.0.1:9/cb?code=c' })
+    }
+    return Response.json({ client_name: 'Claude Code', redirect_to: '127.0.0.1', csrf_token: 'nonce', scope: 'tasks:read', workspaces: [{ id: 'workspace-1', name: 'Workspace One' }], projects: [], agents: [{ id: 'agent-1', name: 'Muse', avatar_url: null, workspace_id: 'workspace-1', workspace_name: 'Workspace One', scopes: ['tasks:read', 'chat:read', 'chat:write'], allow_dms: true, channels: ['marketing'], projects: [] }] })
+  }, { preconnect: originalFetch.preconnect })
+  const assign = window.location.assign
+  window.location.assign = () => {}
+  try {
+    const view = render(<Providers><OAuthConsentPage /></Providers>)
+    await view.findByText('Claude Code')
+    fireEvent.click(view.getByRole('combobox', { name: 'Connect as' }))
+    await userEvent.click(await view.findByRole('option', { name: 'Agent Muse · Workspace One' }))
+    await view.findByText((_, element) => element?.tagName === 'DD' && element.textContent === '#marketing, and its direct messages')
+    fireEvent.click(view.getByRole('button', { name: 'Connect as Muse' }))
+    await waitFor(() => expect(body).toEqual({ csrf_token: 'nonce', approved: true, agent_id: 'agent-1' }))
+  } finally { window.location.assign = assign }
+})

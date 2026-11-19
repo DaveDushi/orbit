@@ -638,3 +638,46 @@ docker compose -f deploy/compose.yaml --profile agent up -d --build
 just agent        # the agent with the mock model, against `just dev` (API on 8080)
 just agent-test   # its tests and typecheck
 ```
+
+## External agents
+
+An **external agent** is an agent profile that an outside client runs instead of Orbit's agent service: Claude Code,
+Codex, or your own server. It is a bot user like the other agents (its `@handle`, avatar, channels, DMs, task
+assignment), so people reach it in the same way. The client connects to Orbit's MCP **as the agent's bot user**, gets
+its inputs with `wait_for_messages` and answers with `send_message` ([Orbit MCP](mcp.md#external-agents)). Design:
+`.ai/external-agents-design.md` (phase 1: pull and identity; no push URL yet).
+
+**Settings → Agentic → Agents → New agent → External agent** (owners and admins; `POST …/agents/external`,
+`PATCH …/agents/{id}/external`). The card has:
+
+| Field | Notes |
+|---|---|
+| Name and avatar | The same rules as the other agents; it counts in the 20 agents of a workspace. |
+| Channels | Chosen channels only, never "every channel". A private channel only when an owner or admin who is in it ticks it. Orbit adds the bot user to the ticked channels. |
+| Allow direct messages | On by default. Off: DMs with it start nothing and its MCP tools cannot read or post in DMs. |
+| Projects | Its tasks, and the docs of these projects' teamspaces. A private project also needs the agent on the project's member list. |
+| Permissions | `tasks:read` always; `tasks:write`, `docs:read`, `docs:write`, `chat:read`, `chat:write`. A new agent has `chat:read chat:write`. No Drive permission: Drive has no rights per folder, so nothing could keep it to the card. |
+| Connection | The OAuth command, **Agent token** (create: 30, 90 or 365 days, shown once; revoke), the OAuth connections (**Disconnect**) and "Seen …" (its last MCP call). |
+
+- **What it reaches.** Every MCP call checks both the bot user's own access (it is a normal member) and the card
+  (`agent_scope.rs`): conversations on the card (and DMs when allowed), projects on the card that the bot sees, docs in
+  those projects' teamspaces. An ID outside the card answers exactly like an unknown ID. `list_conversations` and
+  `search_messages` filter in SQL. It never gets `delete_task` or `create_project`, and cannot post `@channel` or `@here`.
+- **Writes need no yes**: the card is the limit. Each write (message, task, comment, doc) is in the workspace audit log
+  as `external_agent.write`, with the tool and the IDs.
+- **No silent join.** A mention in a channel that is not on its card does not reach it and it does not join: Orbit
+  answers in the person's DM with the agent and names its channels (the agent service's poll answers it; without one,
+  the agent's own `wait_for_messages` after 3 seconds).
+- **What reaches it.** A mention in one of its channels (it answers in the thread under the message), a DM (when
+  allowed), and its task runs. A reply in a thread reaches it only when it mentions the agent again.
+- **No loops.** Its messages start no agent (also not itself), and its task writes start no task run.
+- **Tasks.** Assigning a task to it, or mentioning it in a task comment, queues a run as for the other agents: the
+  header goes to the driver's DM with the agent (so it needs **Allow direct messages**), and the event reaches
+  `wait_for_messages` with the task. Acknowledging that event ends the run. A task of a project that is not on its card
+  never starts.
+- **Delete** suspends the bot user (as for every agent), revokes its OAuth grants and agent tokens, and drops its
+  waiting inputs: every connection stops at once.
+- The agent service never takes an external agent's inputs (its poll skips them, except refusals).
+- Data: `agent_profiles.kind/scopes/allow_dms/last_seen_at`, `agent_profile_projects`, `agent_tokens` (SHA-256 hash and
+  a prefix only), `oauth_grants.agent_profile_id/approved_by`, `agent_inputs.delivered_at/delivery_attempts`; migration
+  `20261118180902_external_agents`.
