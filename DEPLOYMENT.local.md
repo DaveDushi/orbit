@@ -7,9 +7,8 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, commit 1b62c91dbf0c843d472c281aadb7efae821e419c on `main`
-  (Enter sends on touch laptops, rules rows stack on phones; schema 20261118104258, 122 rows, unchanged;
-  November 18, 2026).
+- Source: DaveDushi/orbit, commit b2b7e800ff74ef0336ae4ead413c04a0025add71 on `main`
+  (external agents, phase 1; schema 20261118180902, 123 rows; November 19, 2026).
 - Chat webhook URLs and the `response_url` of button clicks use `ORBIT_PUBLIC_HOOKS_URL=https://orbit-hooks.easytomanage.com`
   (in `/etc/orbit/orbit.env` since f14e780; Cloudflare tunnel → hooks gateway → Orbit, outside this VM). Binaries before
   f14e780 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-hooks`.
@@ -19,9 +18,9 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   MCP routes through the hooks gateway (`/etc/orbit-hooks-gateway/nginx.conf`, proposal `/tmp/mcpo/gateway/proposal.diff`).
   Binaries before d8d3eb4 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-d8d3eb4`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:1b62c91`); fork commits have no published upstream image.
-- Image ID: sha256:f569e5e5112b5a159ce4fb3d8c507fb9dbe9009bf909d993a54b1bedc30d60a9
-- Team agent sidecar code (`/opt/orbit-agent`): commit 1b62c91 (what's new and aboutOrbit: Enter on touch laptops, rules rows on phones).
+  (`orbit:b2b7e80`); fork commits have no published upstream image.
+- Image ID: sha256:f9689e1ce8cb5c0153d712c1d6bcece4e53a2b65957dff77dc5a5091451842e6
+- Team agent sidecar code (`/opt/orbit-agent`): commit b2b7e80 (what's new 2026-11-19 and aboutOrbit: external agents).
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): on since November 15, 2026, 12:07 UTC (set by Ops, outside a
   deploy): `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID`, `ORBIT_APNS_TOPIC` and `ORBIT_APNS_SANDBOX`
   are in `/etc/orbit/orbit.env`; the journal shows `iPhone push (APNs) is on` (topic `com.easytomanage.orbit`, sandbox
@@ -268,6 +267,70 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 19, 2026 upgrade: external agents, phase 1 (1 migration)
+
+`main` from `acfe6819` to `b2b7e800`: `--no-ff` merge of `external-agents` at `88f70a31` (`1fdfab1b` feat: external
+agents, phase 1 (pull + identity): owners and admins create an agent that an outside client (Claude Code, Codex, a
+server) runs through Orbit's MCP as the agent's bot user, by OAuth "Connect as" on the consent page or an `orb_agent_…`
+token; its card limits channels, projects and scopes; new routes `POST …/agents/external`, `PATCH …/agents/{id}/external`,
+`POST …/agents/{id}/tokens`, `DELETE …/agents/{id}/tokens/{id}`, `DELETE …/agents/{id}/connections/{id}`; `88f70a31` fix:
+doc reads keep to the card, refusal text follows Allow DMs). Migration `20261118180902_external_agents` (additive:
+`agent_profiles.kind/scopes/allow_dms/last_seen_at`, `oauth_grants.agent_profile_id/approved_by` + index,
+`agent_inputs.delivered_at/delivery_attempts`, new tables `agent_profile_projects`, `agent_tokens`). Merge conflict only
+in what's new: the branch's line moved to a new 2026-11-19 entry (the deploy date), 2026-11-11 dropped (8 kept);
+aboutOrbit (the branch's "External agents" line) merged clean. No env change; no OpenAPI contract change.
+
+Checks on the merge: web `tsc -b`, `packages/api` and agent `tsc` clean; `OAuthConsentPage.test.tsx` 8 pass; agent
+`prompt.test.ts` + `profiles.test.ts` 10 pass; server `--test external_agents` (SQLite) 8 pass (`target` removed after).
+
+Deploy id `20261119T065833Z-3377327`. `orbit:b2b7e80` (image
+`sha256:f9689e1ce8cb5c0153d712c1d6bcece4e53a2b65957dff77dc5a5091451842e6`, ~41 min); `deploy/smoke.sh` and `orbit config
+check` passed. Migration dry run (hot copy, and in the switch on a copy of the stopped database): applied 1 then 0, schema
+20261118180902 (123 rows), counts, names and old checksums unchanged, 2 new tables, 8/8 new columns, the 1 existing
+profile `internal` with `allow_dms` 1, quick_check ok, 0 FK rows; the old binary refuses the new schema;
+`rollback-schema.sql` gives the exact old schema and counts, the old binary then starts (0 applied), and the new binary
+migrates again.
+
+Switch: stopped both services at 07:51:09 UTC; snapshot `01a1f2c9-bc3f-76f6-8bda-055039ca7df7`
+(`/var/backups/orbit/downloads/01a1f2c9-…`) with `/usr/local/bin/orbit-1b62c91`, verified, `backup-rehearsal.sh` passed;
+plain copy `/var/backups/orbit/pre-migration/orbit-before-b2b7e80.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-b2b7e80.tgz`; sidecar code copied (old `/opt/orbit-agent.before-b2b7e80`).
+`orbit` and `orbit-agent` ready 07:51:31 (22 s down). `vm-health.conf` (old copy `.before-b2b7e80`): `PROD_TAG=b2b7e80`,
+`ROLLBACK_TAG=1b62c91`, `ROLLBACK_BACKUP=01a1f2c9-bc3f-76f6-8bda-055039ca7df7`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) local and on
+`https://orbit-app.easytomanage.com/health/ready`; `/orbit-build.json` revision `b2b7e800…`; schema 20261118180902 (123
+rows); sidecar `/health` ok, `/opt/orbit-agent/src` = `main`; `/`, `/login`, `/settings/agentic/agents`, `/tasks`, `/chat`
+200. New routes with no session (`routes.sh`): 401 (before the switch 404/405); `POST …/tokens` with an empty body 400
+`invalid_request` (body checked before the session; a valid body gives 401); MCP with a fake `orb_agent_` token 401.
+Journal since the switch: no warnings, no errors. `vm-health`: nginx WARN only from the switch (49 "Connection refused"
+at 07:51, 0 other lines, 0 5xx); OOM WARN = `gvisor_sentry` kills before the deploy; docker WARN = other sessions'
+containers. Signed-in check as David Dusi (2 temporary sessions, both logged out and revoked; socat TLS hop; every API
+write blocked, 0 writes; `ui-check.ts`): Wellrox Settings → Agentic → Agents loads (GET agents 200), New agent offers
+"Agent run by Orbit" and "External agent (Claude Code, Codex, a server)", the "New external agent" dialog opens (Name,
+warning, Channels, Allow direct messages, Projects, Permissions); nothing created; no console errors. Screenshots
+`/root/.local/share/com.jean.desktop/pasted-images/external-agents/{agents-page,agents-new-menu,external-agent-dialog}-{light,dark}.png`.
+Changelog not posted (text `/root/ops/external-agents/changelog.md`). Scripts and logs: `/root/ops/external-agents/`.
+
+Rollback to `1b62c91` (undo the migration first: lost are external agents' kind, scopes, projects and DM setting,
+agent tokens, the "as agent" link of OAuth grants and the pull-delivery counters; an external agent then stays as a
+plain agent profile; the old binary refuses the new schema):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit sqlite3 "file:/var/lib/orbit/orbit.sqlite?mode=ro" ".backup '/var/backups/orbit/pre-migration/orbit-before-rollback-to-1b62c91.sqlite'"
+sudo -u orbit sqlite3 /var/lib/orbit/orbit.sqlite < /root/ops/external-agents/rollback-schema.sql   # DROP 8 columns, 2 tables, 2 indexes, delete the version row
+sudo install -m 755 /usr/local/bin/orbit-1b62c91 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-b2b7e80 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/external-agents/rollback.sh)
+# Way 2, only for a data problem (work after 07:51 UTC is lost), Orbit stopped: /usr/local/bin/orbit-1b62c91 backup verify +
+#   backup restore 01a1f2c9-bc3f-76f6-8bda-055039ca7df7 (as user orbit), then the binary and sidecar lines above
+```
+
+After this rollback, copy `/root/ops/vm-health.conf.before-b2b7e80` back to `/root/ops/vm-health.conf`.
 
 ### November 18, 2026 upgrade: Enter sends on touch laptops, rules rows stack on phones (no migration)
 
