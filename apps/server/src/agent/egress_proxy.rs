@@ -14,8 +14,9 @@
 //! `orbit.internal` (plain HTTP only, `ORBIT_URL=http://orbit.internal`) goes to Orbit's internal address without an
 //! egress decision: Orbit checks the call token of each request itself, and it is not egress. The proxy is the trusted
 //! proxy boundary there (Orbit trusts loopback's forwarding headers): it passes exactly one request per connection
-//! (the head, then `Content-Length` body bytes; chunked uploads get 411), removes the sandbox's own forwarding headers,
-//! and sets `X-Forwarded-For` to the sandbox's address and `X-Forwarded-Proto: https`. A raw tunnel to Orbit
+//! (the head, then `Content-Length` body bytes; chunked uploads get 411), only with the call token as the bearer (so no
+//! route without a session is reachable), removes the sandbox's own forwarding headers and cookies, and sets
+//! `X-Forwarded-For` to the sandbox's address and `X-Forwarded-Proto: https`. A raw tunnel to Orbit
 //! (`CONNECT orbit.internal:…`) is refused like any other `orbit.internal` egress.
 
 use std::collections::HashMap;
@@ -55,7 +56,8 @@ const MAX_CONNECTIONS: usize = 512;
 const SWEEP: Duration = Duration::from_secs(1);
 
 pub struct ProxyConfig {
-    /// Orbit's loopback URL for the egress routes.
+    /// Orbit's loopback URL for the egress routes. The proxy's calls say `X-Forwarded-Proto: https`: production Orbit
+    /// refuses plain requests from its trusted loopback proxy (`https_required`).
     pub orbit_url: String,
     /// The service bearer derived from the broker key (not the key: the proxy cannot sign tickets).
     pub service_token: String,
@@ -174,6 +176,14 @@ impl Head {
 
 fn parse_head(raw: &[u8]) -> Option<Head> {
     let text = std::str::from_utf8(raw).ok()?;
+    // Only CRLF ends a line. Orbit's HTTP parser also ends one at a bare LF, so a bare CR or LF (or another control
+    // byte) inside a line could add headers that the cleanup below never saw.
+    if text
+        .split("\r\n")
+        .any(|line| line.chars().any(|c| c.is_control() && c != '\t'))
+    {
+        return None;
+    }
     let mut lines = text.split("\r\n");
     let mut first = lines.next()?.split(' ');
     let (method, target, version) = (first.next()?, first.next()?, first.next()?);
@@ -284,6 +294,8 @@ fn orbit_request(head: &Head, sandbox: IpAddr) -> Vec<u8> {
                 "forwarded",
                 "x-real-ip",
                 "x-request-id",
+                // The call token goes as a bearer only (Orbit refuses an agent token in a cookie, too).
+                "cookie",
             ]
             .contains(&lower.as_str())
         {
@@ -296,6 +308,18 @@ fn orbit_request(head: &Head, sandbox: IpAddr) -> Vec<u8> {
         sandbox.to_canonical()
     ));
     out.into_bytes()
+}
+
+/// Whether a request to Orbit carries an agent token (the call token) as its bearer. Orbit then judges it in its scope
+/// layer, which takes agent sessions only for their workspace's routes: sandbox code never reaches sign-in,
+/// registration, password reset or other routes without a session (a mail to any address would be a way out).
+fn agent_bearer(head: &Head) -> bool {
+    head.header("authorization")
+        .and_then(|value| value.split_once(' '))
+        .is_some_and(|(scheme, token)| {
+            scheme.eq_ignore_ascii_case("bearer")
+                && token.trim().starts_with(super::scope::TOKEN_PREFIX)
+        })
 }
 
 /// The body length of a request to Orbit: `Content-Length` (once) or none. `None`: chunked or invalid.
@@ -556,6 +580,10 @@ impl Proxy {
         call: &Call,
         sandbox: IpAddr,
     ) {
+        if !agent_bearer(head) {
+            let body = json!({ "error": "agent_token_required", "detail": "Send Authorization: Bearer $ORBIT_TOKEN." });
+            return reply(&mut client, "401 Unauthorized", &body).await;
+        }
         let Some(length) = body_length(head) else {
             let body = json!({ "error": "length_required", "detail": "Send a Content-Length body, not chunked." });
             return reply(&mut client, "411 Length Required", &body).await;
@@ -646,6 +674,7 @@ impl Proxy {
                 self.config.orbit_url
             ))
             .bearer_auth(&self.config.service_token)
+            .header("x-forwarded-proto", "https")
             .json(
                 &json!({ "call_id": call, "proxy_password": password, "host": host, "port": port }),
             )
@@ -752,6 +781,7 @@ impl Proxy {
                 self.config.orbit_url
             ))
             .bearer_auth(&self.config.service_token)
+            .header("x-forwarded-proto", "https")
             .json(&body)
             .send()
             .await;
@@ -812,7 +842,9 @@ async fn pump(
 
 #[cfg(test)]
 mod tests {
-    use super::{Target, body_length, client_hello_sni, orbit_request, parse_head, target};
+    use super::{
+        Target, agent_bearer, body_length, client_hello_sni, orbit_request, parse_head, target,
+    };
 
     /// A ClientHello record with the given SNI extension bytes (or none).
     fn hello(sni: Option<&str>) -> Vec<u8> {
@@ -924,5 +956,55 @@ mod tests {
         );
         assert_eq!(length("Content-Length: 10\r\nContent-Length: 10"), None);
         assert_eq!(length("Content-Length: -1"), None);
+    }
+
+    #[test]
+    fn only_requests_with_an_agent_bearer_go_to_orbit_and_without_cookies() {
+        let head = |headers: &str| {
+            parse_head(
+                format!("POST http://orbit.internal/api/v1/auth/register HTTP/1.1\r\n{headers}")
+                    .as_bytes(),
+            )
+            .unwrap()
+        };
+        assert!(agent_bearer(&head("Authorization: Bearer orbit-agent.abc")));
+        assert!(agent_bearer(&head("authorization: bearer orbit-agent.abc")));
+        for refused in [
+            "Host: x",
+            "Authorization: Bearer abc",
+            "Authorization: Basic b3JiaXQtYWdlbnQuYWJj",
+            "Cookie: __Host-orbit_session=orbit-agent.abc",
+            "Authorization: orbit-agent.abc",
+        ] {
+            assert!(!agent_bearer(&head(refused)), "{refused}");
+        }
+        let request = String::from_utf8(orbit_request(
+            &head("Authorization: Bearer orbit-agent.abc\r\nCookie: a=b"),
+            "10.201.3.2".parse().unwrap(),
+        ))
+        .unwrap();
+        assert!(
+            !request.to_ascii_lowercase().contains("cookie"),
+            "{request}"
+        );
+    }
+
+    #[test]
+    fn a_bare_line_break_cannot_smuggle_a_header_to_orbit() {
+        // Orbit's parser ends a line at a bare LF too: these would reach it as a second X-Forwarded-For or a
+        // Transfer-Encoding that the proxy never saw.
+        for raw in [
+            "GET http://orbit.internal/ HTTP/1.1\r\nHost: x\nX-Forwarded-For: 1.2.3.4",
+            "GET http://orbit.internal/ HTTP/1.1\r\nX-A: 1\nTransfer-Encoding: chunked\r\nHost: x",
+            "GET http://orbit.internal/ HTTP/1.1\r\nX-A: 1\rX-Forwarded-For: 1.2.3.4",
+            "GET http://orbit.internal/ HTTP/1.1\nX-Forwarded-For: 1.2.3.4\r\nHost: x",
+            "GET http://orbit.internal/ HTTP/1.1\r\nX-A: 1\0\r\nHost: x",
+        ] {
+            assert!(parse_head(raw.as_bytes()).is_none(), "{raw:?}");
+        }
+        assert!(
+            parse_head(b"GET http://orbit.internal/ HTTP/1.1\r\nUser-Agent: a\tb\r\nHost: x")
+                .is_some()
+        );
     }
 }

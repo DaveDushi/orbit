@@ -37,10 +37,12 @@ type EgressDenied = { host: string; port: number; reason: string };
 
 const fail = (text: string): ToolExecutionResult => ({ output: [{ type: "text", text }], isError: true });
 
-/** The card's question: the hosts, and the model's reason in one short line (its own words, so it is cut and flattened). */
+/** The card's question: the hosts, and the model's reason in one short line (its own words, which hostile content may
+ * have written: cut, flattened, and without mention or markdown characters, so it cannot ping people or fake a bold
+ * answer or a link). */
 export function egressQuestion(driverId: string, agentName: string, pending: readonly EgressPending[], purpose: string | undefined): string {
 	const hosts = pending.map((request) => `**${request.host}:${request.port}**`).join(", ");
-	const why = purpose?.replace(/\s+/g, " ").replace(/[<>]/g, "").trim().slice(0, 200);
+	const why = purpose?.replace(/\s+/g, " ").replace(/[<>[\]()*_`~|#\\]/g, "").trim().slice(0, 200);
 	return `<@${driverId}> ${agentName} wants to connect to ${hosts}${why ? ` (for: ${why})` : ""}. The question waits 30 minutes; after that I ask again at the next try.`;
 }
 

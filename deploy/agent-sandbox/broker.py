@@ -613,7 +613,9 @@ def report_end(call: str, result: dict) -> dict:
     body = {k: result.get(k) for k in ("exit", "signal", "timed_out", "interrupted", "cpu_ms")}
     request = urllib.request.Request(
         f"{ORBIT_URL}/api/internal/agent/sandbox/calls/{call}/end", data=json.dumps(body).encode(), method="POST",
-        headers={"Authorization": f"Bearer {service_token()}", "Content-Type": "application/json"})
+        # Production Orbit refuses plain requests from loopback, its trusted proxy (https_required).
+        headers={"Authorization": f"Bearer {service_token()}", "Content-Type": "application/json",
+                 "X-Forwarded-Proto": "https"})
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
             answer = json.load(response)
@@ -655,7 +657,10 @@ def run(request: dict, rest: bytes) -> None:
             gen = place(work, agent, limits)
             result["restarted"] = "the process limit was full: background processes are gone; /work is kept"
         with Locked() as state:
-            cgroup, idx = state["sandboxes"][work].get("cgroup", ""), state["sandboxes"][work]["netidx"]
+            live = state["sandboxes"][work]
+            # The CPU time since the last count of this sandbox (0: since its start): also what background processes
+            # (`setsid`) used between calls counts.
+            cgroup, idx, cpu_before = live.get("cgroup", ""), live["netidx"], live.get("cpu_mark", 0)
         os.utime(image_path(agent, work))
         proxy = f"http://{call}:{claims['proxy_password']}@{NET}.{idx}.1:{PROXY_PORT}"
         # https: CONNECT to allowed hosts; http: only orbit.internal (the proxy refuses other plain requests).
@@ -663,7 +668,6 @@ def run(request: dict, rest: bytes) -> None:
                f"HTTPS_PROXY={proxy}", f"https_proxy={proxy}", f"HTTP_PROXY={proxy}", f"http_proxy={proxy}"]
         calls_file = call_file(call, work, idx, claims["proxy_password"])
         pidfile = f"{RUN}/locks/{work}.pid"
-        cpu_before = cpu_usec(cgroup)
 
         def terminated(*_):
             # The unit's stop (RuntimeMaxSec, systemctl stop) kills this client, which alone stops nothing inside.
@@ -718,7 +722,7 @@ def run(request: dict, rest: bytes) -> None:
             live = state["sandboxes"].get(work)
             if live and live["gen"] == gen:
                 live["last_call"] = time.time()
-                cpu_after = cpu_usec(cgroup)
+                cpu_after = live["cpu_mark"] = cpu_usec(cgroup)
             else:  # deleted during the call (off switch, max life, eviction): its CPU time until the delete
                 ended = state["ended"].get(gen, {})
                 result["interrupted"] = ended.get("reason", "the sandbox was deleted")

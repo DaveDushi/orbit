@@ -152,6 +152,10 @@ const ends: { path: string; auth: string; body: Record<string, unknown> }[] = []
 const checks: { call_id: string; host: string; port: number; decision: string }[] = [];
 const dones: { log_id: string; call_id: string; bytes_up: number; bytes_down: number; blocked: string | null }[] = [];
 const endedCalls = new Set<string>();
+/** The service calls of the broker and the proxy, with their X-Forwarded-Proto (production Orbit wants https). */
+const serviceProtos: string[] = [];
+/** The paths that reached the stand-in as orbit.internal requests. */
+const seenPaths: string[] = [];
 const decide = (host: string) => (/^[\d.]+$|[:[]/.test(host) || host === "orbit.internal" ? "deny" : host === "example.com" || host.endsWith(".nip.io") ? "allow" : "ask");
 let orbit: HttpServer | undefined;
 before(async () => {
@@ -167,6 +171,7 @@ before(async () => {
 				res.end(JSON.stringify(value));
 			};
 			const service = req.headers.authorization === `Bearer ${derived("orbit-sandbox/service").toString("hex")}`;
+			if (path.startsWith("/api/internal/")) serviceProtos.push(`${path.split("/").slice(3, 5).join("/")} ${req.headers["x-forwarded-proto"]}`);
 			if (path === "/api/internal/agent/egress/check") {
 				const asked = JSON.parse(body);
 				if (!service || passwords.get(asked.call_id) !== asked.proxy_password || endedCalls.has(asked.call_id)) return json(403, { error: "egress_call_unknown" });
@@ -185,6 +190,7 @@ before(async () => {
 				endedCalls.add(path.split("/")[6]);
 				return json(200, { egress_pending: [{ host: "api.example.com", port: 443 }] });
 			}
+			seenPaths.push(path);
 			json(200, { orbit_internal: true, method: req.method, path, headers: req.headers, body });
 		});
 	});
@@ -426,6 +432,58 @@ test("proxy: a password dies with its call (background processes too), and never
 	const stolen = await call(b.work, `curl -s -o /dev/null -w '%{http_connect}' --max-time 10 -x "http://${running.call}:${running.proxy_password}@$(echo "$HTTPS_PROXY" | cut -d@ -f2)" https://example.com/`, { claims: b });
 	assert.equal(stolen.stdout, "407");
 	await busy;
+});
+
+test("phase 9: a bare LF in a request to orbit.internal never reaches Orbit (no smuggled header)", { skip: skipProxy }, async () => {
+	const claims = claimsFor(newWork());
+	const script = [
+		"import base64, os, socket, urllib.parse",
+		'proxy = urllib.parse.urlsplit(os.environ["HTTPS_PROXY"])',
+		'auth = base64.b64encode(f"{proxy.username}:{proxy.password}".encode()).decode()',
+		"for extra in ['X-A: 1\\nX-Forwarded-For: 1.2.3.4', 'X-A: 1\\nTransfer-Encoding: chunked', 'X-A: 1']:",
+		"    s = socket.create_connection((proxy.hostname, proxy.port), timeout=10)",
+		'    s.sendall(f"GET http://orbit.internal/phase9-lf HTTP/1.1\\r\\nHost: orbit.internal\\r\\nProxy-Authorization: Basic {auth}\\r\\nAuthorization: Bearer {os.environ[\'ORBIT_TOKEN\']}\\r\\n{extra}\\r\\n\\r\\n".encode())',
+		'    print(repr(s.recv(12)))',
+	].join("\n");
+	const before = seenPaths.length;
+	const result = await call(claims.work, `python3 - <<'PY'\n${script}\nPY`, { claims });
+	assert.equal(result.stdout, "b''\nb''\nb'HTTP/1.1 200'\n", result.stderr);
+	assert.deepEqual(seenPaths.slice(before), ["/phase9-lf"], "only the clean request reached Orbit");
+	// Without the call token as the bearer (sign-in, registration mails): the proxy answers, Orbit never sees it.
+	const bare = await call(claims.work, `curl -s -o /dev/null -w '%{http_code}' --max-time 10 -X POST -H "Cookie: s=$ORBIT_TOKEN" "$ORBIT_URL/phase9-register"`);
+	assert.equal(bare.stdout, "401");
+	assert.ok(!seenPaths.includes("/phase9-register"));
+});
+
+test("phase 9: a TLS name (SNI) other than the CONNECT host is blocked before a byte goes up", { skip: skipProxy, timeout: 60_000 }, async () => {
+	const claims = claimsFor(newWork());
+	// curl asks the proxy for example.com (allowed) but speaks TLS for www.iana.org (not allowed).
+	const result = await call(claims.work, "curl -s -o /dev/null -w '%{http_connect} %{http_code}' --max-time 15 --connect-to www.iana.org:443:example.com:443 https://www.iana.org/; echo \" $?\"", { claims });
+	assert.match(result.stdout.trim(), /^200 000 (35|56)$/, result.stdout + result.stderr);
+	await sleep(500);
+	const report = dones.find((done) => done.call_id === claims.call);
+	assert.ok(report && /SNI/.test(String(report.blocked)) && report.bytes_up === 0, JSON.stringify(report));
+});
+
+test("phase 9: CPU time of background processes between calls counts at the next call", { skip, timeout: 60_000 }, async () => {
+	const work = newWork();
+	const first = await call(work, "setsid -f bash -c 'end=$((SECONDS+3)); while [ $SECONDS -lt $end ]; do :; done' </dev/null >/dev/null 2>&1; true");
+	assert.equal(first.exit, 0, first.stderr);
+	assert.ok((first.cpu_ms ?? 0) < 1500, `first call ${first.cpu_ms} ms`);
+	await sleep(4500);
+	const next = await call(work, "true");
+	assert.ok((next.cpu_ms ?? 0) >= 2000, `the next call counted ${next.cpu_ms} ms`);
+	const third = await call(work, "true");
+	assert.ok((third.cpu_ms ?? 0) < 1000, `counted once: ${third.cpu_ms} ms`);
+});
+
+test("phase 9: the broker's and the proxy's calls to Orbit say https (production Orbit refuses plain loopback calls)", { skip: skipProxy }, async () => {
+	const claims = claimsFor(newWork());
+	const before = serviceProtos.length;
+	await call(claims.work, "curl -s -o /dev/null --max-time 15 https://example.com/ https://api.unknown.test/", { claims });
+	await sleep(500);
+	const seen = [...new Set(serviceProtos.slice(before))].sort();
+	assert.deepEqual(seen, ["agent/egress https", "agent/sandbox https"], JSON.stringify(serviceProtos.slice(before)));
 });
 
 test("memory stops at 1 GiB: only the greedy process dies; the sandbox and its other processes live", { skip }, async () => {

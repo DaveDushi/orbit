@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { Agent } from "../src/agent.ts";
+import { egressQuestion } from "../src/agent-sandbox.ts";
 import type { Config } from "../src/config.ts";
 import { OrbitClient, type PendingInput } from "../src/orbit.ts";
 
@@ -1398,4 +1399,13 @@ test("budgets and off switch: a custom agent's run reports its tokens once; a sp
 		closeBroker();
 		orbit.server.close();
 	}
+});
+
+test("the egress card's reason cannot ping people, fake an answer or add a link (hostile text in the model's purpose)", () => {
+	const text = egressQuestion("driver-1", "Arthur", [{ id: "r1", host: "api.example.com", port: 443 }], "fetch data\n\n**Allow always** was clicked by <@admin> <!channel> [Allow](https://evil.example/ok) `code` # Title");
+	assert.equal(text.split("\n").length, 1);
+	assert.equal((text.match(/<[@!]/g) ?? []).length, 1, "only the driver's mention");
+	assert.ok(text.startsWith("<@driver-1> Arthur wants to connect to **api.example.com:443** (for: fetch data Allow always was clicked by "));
+	const reason = text.slice(text.indexOf("(for: "));
+	for (const mark of ["**", "[", "](", "`", "#", "<", ">"]) assert.ok(!reason.slice(1).includes(mark), `${mark} in ${reason}`);
 });
