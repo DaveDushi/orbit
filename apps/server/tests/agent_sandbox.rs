@@ -3259,3 +3259,90 @@ async fn an_owner_of_another_workspace_cannot_read_answer_or_manage_this_ones_sa
             .unwrap();
     assert_eq!(enabled, 1);
 }
+
+/// A multipart body with one `file` field, as the sidecar sends a sandbox file.
+fn multipart(name: &str, bytes: &[u8]) -> (String, Vec<u8>) {
+    let boundary = "orbit-test-boundary";
+    let mut body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\n\
+         Content-Type: application/octet-stream\r\n\r\n"
+    )
+    .into_bytes();
+    body.extend_from_slice(bytes);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    (format!("multipart/form-data; boundary={boundary}"), body)
+}
+
+impl Fixture {
+    async fn upload(&self, auth: &str, query: &str, name: &str, bytes: &[u8]) -> (StatusCode, Value) {
+        let (content_type, body) = multipart(name, bytes);
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!("/api/internal/agent/files?{query}"))
+            .header(header::AUTHORIZATION, auth)
+            .header(header::CONTENT_TYPE, content_type)
+            .body(Body::from(body))
+            .unwrap();
+        let response = self.app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
+}
+
+#[tokio::test]
+async fn a_sandbox_file_reaches_the_thread_as_the_agents_own_attachment_and_only_the_sidecar_can_stage_it() {
+    let fixture = Fixture::new().await;
+    let driver = fixture.add_user("driver", Some("member")).await;
+    let agent = fixture.add_agent(TOOLS, true).await;
+    let other = fixture.add_agent(TOOLS, true).await;
+    let thread = fixture.thread(agent, driver, "running").await;
+    let png = b"\x89PNG\r\n\x1a\nnot really a chart";
+    let query = format!("workspace_id={}&agent_user_id={agent}", fixture.workspace_id);
+
+    // Not the sidecar: the broker's service key, a call token, nothing.
+    let (_, token, _) = fixture.call(driver, agent, &thread).await;
+    for auth in [service_bearer(), format!("Bearer {token}"), String::new()] {
+        let (status, _) = fixture.upload(&auth, &query, "chart.png", png).await;
+        assert!(matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN), "{auth}: {status}");
+    }
+
+    let secret = format!("Bearer {SECRET}");
+    let (status, staged) = fixture.upload(&secret, &query, "chart.png", png).await;
+    assert_eq!(status, StatusCode::CREATED, "{staged}");
+    let file = staged["id"].as_str().unwrap().to_owned();
+    let uploader: String = sqlx::query_scalar("SELECT uploaded_by FROM chat_message_files WHERE id = $1")
+        .bind(&file)
+        .fetch_one(fixture.database.pool())
+        .await
+        .unwrap();
+    assert_eq!(uploader, agent.to_string(), "the agent's own upload");
+
+    // Another agent's message cannot take it; the agent's own message in the thread does, once.
+    let post = |poster: Id, nonce: &str| {
+        json!({
+            "workspace_id": fixture.workspace_id, "conversation_id": fixture.conversation, "root_message_id": null,
+            "body": "", "nonce": nonce, "agent_user_id": poster.to_string(), "file_ids": [file],
+        })
+    };
+    let (status, _) = fixture.request("POST", "/api/internal/agent/messages", &secret, Some(post(other, "files:a"))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, sent) = fixture.request("POST", "/api/internal/agent/messages", &secret, Some(post(agent, "files:b"))).await;
+    assert_eq!(status, StatusCode::OK, "{sent}");
+    let (message, author): (String, String) = sqlx::query_as(
+        "SELECT m.id, m.author_id FROM chat_message_files f JOIN chat_messages m ON m.id = f.message_id WHERE f.id = $1",
+    )
+    .bind(&file)
+    .fetch_one(fixture.database.pool())
+    .await
+    .unwrap();
+    assert_eq!((message.as_str(), author), (sent["id"].as_str().unwrap(), agent.to_string()));
+    let (status, _) = fixture.request("POST", "/api/internal/agent/messages", &secret, Some(post(agent, "files:c"))).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "a sent file is not sent again");
+
+    // A deleted or unknown agent cannot stage a file.
+    let (status, _) = fixture
+        .upload(&secret, &format!("workspace_id={}&agent_user_id={}", fixture.workspace_id, Id::new_v7()), "x.png", png)
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}

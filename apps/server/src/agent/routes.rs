@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use axum::extract::{Extension, Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Extension, Path, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post, put};
@@ -18,6 +18,7 @@ use serde_json::{Value, json};
 
 use super::inputs::{self, ThreadUpdate};
 use super::{AgentState, bot, credentials, sessions, task_runs};
+use crate::attachment_routes::{StageFailure, stage_single_file};
 use crate::push::PushService;
 use crate::repositories::chat::{BlocksError, ChatError, SendInput, parse_agent_blocks};
 use crate::task_routes::{ApiError, authenticate_session};
@@ -44,6 +45,13 @@ pub fn router(state: AgentState) -> Router {
             put(update_thread),
         )
         .route("/api/internal/agent/messages", post(post_message))
+        .route(
+            "/api/internal/agent/files",
+            post(upload_file).layer(DefaultBodyLimit::max(
+                usize::try_from(state.chat.chat.uploads().limits().max_request_bytes())
+                    .unwrap_or(usize::MAX),
+            )),
+        )
         .route(
             "/api/internal/agent/messages/{message_id}",
             patch(edit_message),
@@ -618,6 +626,9 @@ struct PostMessageBody {
     /// `notify`). Absent: the members are notified, as of any message.
     #[serde(default)]
     silent: bool,
+    /// Files from [`upload_file`] by the same poster, not sent yet (a file from an agent's sandbox).
+    #[serde(default)]
+    file_ids: Vec<Id>,
 }
 
 /// Sends a message as the bot. Runs in a task of its own so a dropped request cannot stop it
@@ -640,7 +651,7 @@ async fn post_message(
             reply_to_id: None,
             body: body.body,
             sticker_id: None,
-            file_ids: Vec::new(),
+            file_ids: body.file_ids,
             online: chat.hub.online(body.workspace_id),
             also_in_channel: false,
             nonce: body.nonce,
@@ -673,6 +684,76 @@ async fn post_message(
             ))
         }
         Err(_) => Err(unavailable(&uri, &request_id)),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UploadFileQuery {
+    workspace_id: Id,
+    /// A custom agent's file; absent: the default agent's.
+    #[serde(default)]
+    agent_user_id: Option<Id>,
+}
+
+/// Stages one file (multipart field `file`) as the agent's own chat upload, for `file_ids` of its next message: a
+/// result from its sandbox (`sandbox_send_file`). The same checks and limits as a person's chat upload; an unsent file
+/// is removed after a day.
+async fn upload_file(
+    State(state): State<AgentState>,
+    request: Request,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    let uri = request.uri().clone();
+    let request_id: RequestIdExtension = request.extensions().get::<RequestId>().cloned().map(Extension);
+    sidecar_only(&state, request.headers(), &uri, &request_id)?;
+    let Ok(Query(query)) = Query::<UploadFileQuery>::try_from_uri(&uri) else {
+        return Err(error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation_failed",
+            "workspace_id is required.",
+            &uri,
+            &request_id,
+        ));
+    };
+    let refused = || {
+        error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "agent_file_refused",
+            "The file could not be staged for the agent's message.",
+            &uri,
+            &request_id,
+        )
+    };
+    let chat = state.chat.chat.clone();
+    let bot = poster(state.database(), query.workspace_id, query.agent_user_id)
+        .await
+        .map_err(|_| refused())?;
+    chat.authorize_upload(query.workspace_id, bot)
+        .await
+        .map_err(|_| refused())?;
+    let mut staged = stage_single_file(chat.uploads(), request, query.workspace_id, bot)
+        .await
+        .map_err(|failure| match failure {
+            StageFailure::TooLarge => error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "upload_too_large",
+                "The file is larger than chat uploads may be.",
+                &uri,
+                &request_id,
+            ),
+            StageFailure::InvalidMultipart | StageFailure::Upload(_) => refused(),
+        })?;
+    let upload = staged.upload().clone();
+    match chat.finalize_file(query.workspace_id, bot, &upload, None, None).await {
+        Ok(file) => {
+            staged.complete();
+            Ok((StatusCode::CREATED, Json(json!({ "id": file.id.to_string() }))))
+        }
+        Err(failure) => {
+            staged.discard().await;
+            tracing::warn!(error = %failure, "agent file");
+            Err(refused())
+        }
     }
 }
 
