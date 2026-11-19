@@ -2,10 +2,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { ANSWER_LEVELS, frame, runModel } from "../src/agent.ts";
+import { Type } from "@earendil-works/pi-ai";
+import { defineTool } from "@earendil-works/pi-durable";
+
+import { ANSWER_LEVELS, frame, runModel, TOOL_LABELS } from "../src/agent.ts";
 import { codexModels } from "../src/models.ts";
 import { agentInstructionsBlock } from "../src/prompt.ts";
-import { blockedCall, MEDIA_TOOLS, ORBIT_TOOLS, SANDBOX_TOOLS, toolRegistrations } from "../src/tools.ts";
+import { offeredTools } from "../src/find-tools.ts";
+import { allRegistrations, blockedCall, MEDIA_TOOLS, MODEL_REGISTRATIONS, ORBIT_TOOLS, SANDBOX_TOOLS, toolRegistrations } from "../src/tools.ts";
 
 test("Orbit's tool catalog for agent profiles names exactly the sidecar's tools", () => {
 	const rust = readFileSync(new URL("../../server/src/agent/profiles.rs", import.meta.url), "utf8");
@@ -15,8 +19,8 @@ test("Orbit's tool catalog for agent profiles names exactly the sidecar's tools"
 	assert.deepEqual(server, sidecar);
 });
 
-test("a custom agent is offered only its own tools, the skill tools and code mode, media tools and sandbox_shell only with their sandbox", () => {
-	const always = ["load_skill", "read_skill_file", "codemode", "run_saved_script", "plan_job", "run_job"];
+test("a custom agent has only its own tools, the skill tools, code mode and jobs, media tools and sandbox_shell only with their sandbox", () => {
+	const always = ["load_skill", "read_skill_file", "codemode", "run_saved_script", "plan_job", "run_job", "find_tools"];
 	assert.deepEqual(
 		toolRegistrations(["read_page", "create_page", "view_image", "no_such_tool"], false).map((tool) => tool.name),
 		["read_page", "create_page", ...always],
@@ -33,6 +37,27 @@ test("a custom agent is offered only its own tools, the skill tools and code mod
 	}
 });
 
+test("the model is offered only find_tools, codemode, the jobs and the tools a script cannot stand in for", () => {
+	const always = ["load_skill", "read_skill_file", "codemode", "plan_job", "run_job", "find_tools"];
+	assert.deepEqual(offeredTools(allRegistrations(false)).map((tool) => tool.name), ["ask_teammate", ...always]);
+	assert.deepEqual(offeredTools(allRegistrations(true)).map((tool) => tool.name), ["ask_teammate", "view_image", ...always]);
+	// A custom agent: only what it has.
+	assert.deepEqual(offeredTools(toolRegistrations(["search_tasks", "use_integration"], true)).map((tool) => tool.name), always);
+	// An allow list: any other tool, also one another extension adds (a shell like sandbox_shell), and the services'
+	// tools (only through use_integration) reach the model only from a script.
+	const shell = defineTool({ name: "sandbox_shell", description: "bash", parameters: Type.Object({ command: Type.String() }), execute: async () => ({ output: [] }) });
+	const offered = offeredTools([...allRegistrations(true), shell]).map((tool) => tool.name);
+	for (const name of ["sandbox_shell", "search_tasks", "drive_trash", "use_integration", "media_shell"]) assert.ok(!offered.includes(name), name);
+	assert.deepEqual(MODEL_REGISTRATIONS.map((tool) => tool.name), offeredTools(allRegistrations(true)).map((tool) => tool.name));
+	// Such a tool stays callable from scripts.
+	assert.equal(shell.callers, undefined);
+});
+
+test("every tool has a progress label: code mode shows each call of a script as a step", () => {
+	const missing = [...ORBIT_TOOLS, ...MEDIA_TOOLS].map((tool) => tool.name).filter((name) => !TOOL_LABELS[name]);
+	assert.deepEqual(missing, []);
+});
+
 test("scripts call only the agent's own tools; a script run offers the model only the saved script", () => {
 	const custom = { allowedTools: ["search_tasks"], agentName: "Reader", toolCalls: 0, routineRun: null };
 	// From the model or from a script (nested), the custom agent's list decides; code mode is always there.
@@ -46,6 +71,11 @@ test("scripts call only the agent's own tools; a script run offers the model onl
 	assert.match(blockedCall({ ...custom, toolCalls: 40 }, "search_tasks", false, 40, true)!, /limit of 40/);
 	assert.match(blockedCall({ ...custom, toolCalls: 0 }, "create_task", true, 40, true)!, /does not have the tool create_task/);
 	assert.equal(blockedCall(custom, "plan_job", false, 40), undefined);
+	// find_tools is every agent's; it shows only the agent's own tools.
+	assert.equal(blockedCall(custom, "find_tools", false, 40), undefined);
+	// After a call asked the driver for approval, the script's later calls do not run, reads included.
+	assert.match(blockedCall({ ...custom, waitingFor: "ann" }, "search_tasks", true, 40)!, /waits for an answer/);
+	assert.equal(blockedCall({ ...custom, waitingFor: null }, "search_tasks", true, 40), undefined);
 
 	const script = { name: "Digest", code: "text(1)", hash: "h" };
 	const scriptRun = { allowedTools: null, toolCalls: 0, routineRun: { runId: "r", routineName: "Digest", test: false, writes: "script", script, reported: false } };

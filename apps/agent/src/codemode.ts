@@ -39,6 +39,16 @@ const MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
 const TIMEOUT_MS = 5 * 60 * 1000;
 
 let sandbox: CodemodeSandbox | undefined;
+let catalogSandbox: CodemodeSandbox | undefined;
+
+/**
+ * The sandbox of `find_tools` scripts (./find-tools.ts): the same limits as code mode, and no tools and no globals, so
+ * such a script can only read the catalog it is given. Its `store()` writes are dropped.
+ */
+export function readOnlySandbox(): CodemodeSandbox {
+	catalogSandbox ??= new CodemodeSandbox({ memoryLimitBytes: MEMORY_LIMIT_BYTES, timeoutMs: TIMEOUT_MS, tools: [], globals: [] });
+	return catalogSandbox;
+}
 
 /** One sandbox (a worker) for the process, made on first use. */
 function options(): CodemodeToolOptions {
@@ -84,10 +94,15 @@ export const RUN_SCRIPT = runSavedScript;
 export const CODE_TOOLS = [codemode, runSavedScript];
 
 /**
- * The `codemode` prompt section: the tools scripts can call. Pi's section declares every callable tool (TypeScript, up
- * to ~3k tokens), but the model already has the definitions of those it is offered: so it declares only the callable
- * tools this request does not offer (all of them in a script run, which offers only `run_saved_script`) or whose call
- * resolves to an object, and names the offered tools that scripts cannot call. Which tools a script can call does not change.
+ * The tools whose declarations the `codemode` section shows, when the run has them: the ones most requests need. A
+ * script reaches every other callable tool too; the model finds its arguments with `find_tools`.
+ */
+export const DECLARED_TOOLS = ["search_tasks", "get_task", "create_task", "update_task", "comment_on_task", "search_pages", "read_page", "read_messages", "memory_note", "memory_recall"];
+
+/**
+ * The `codemode` prompt section: how scripts call tools, Pi's declarations of `DECLARED_TOOLS`, the names of the other
+ * callable tools (their arguments come from `find_tools`), and the offered tools scripts cannot call. It depends only
+ * on the agent's tools, so it stays the same from run to run.
  */
 export const CODEMODE_SECTIONS: PromptSection[] = (createCodemodeExtension(lazyOptions).sections ?? []).map((pi) => ({
 	...pi,
@@ -96,9 +111,15 @@ export const CODEMODE_SECTIONS: PromptSection[] = (createCodemodeExtension(lazyO
 		const scriptable = new Set(callable.map((tool) => tool.name));
 		const offered = new Set(tools.map((tool) => tool.name));
 		const modelOnly = tools.filter((tool) => !scriptable.has(tool.name)).map((tool) => tool.name);
-		const rest = await pi.render({ ...input, agent: { ...input.agent, callable: callable.filter((tool) => !offered.has(tool.name) || tool.structuredOutputSchema) } }, context);
-		const direct = `Scripts can call each tool offered to you, as \`await tools.<name>(args)\` with the same arguments; it resolves to the tool's text output${modelOnly.length ? `. Not from a script: ${modelOnly.join(", ")}` : ""}.`;
-		return rest ? `${direct}\n\n${rest}` : direct;
+		const declared = callable.filter((tool) => DECLARED_TOOLS.includes(tool.name));
+		const others = callable.filter((tool) => !offered.has(tool.name) && !DECLARED_TOOLS.includes(tool.name) && tool.name !== REPAIR_SCRIPT_TOOL).map((tool) => tool.name);
+		const rest = await pi.render({ ...input, agent: { ...input.agent, callable: declared } }, context);
+		const lines = [
+			"Scripts call your tools as `await tools.<name>(args)`; each call resolves to the tool's text output. Before a script calls a tool whose declaration is not below, look up its arguments with find_tools.",
+			...(others.length ? [`Your other tools (arguments with find_tools): ${others.join(", ")}.`] : []),
+			...(modelOnly.length ? [`Not from a script: ${modelOnly.join(", ")}.`] : []),
+		];
+		return rest ? `${lines.join("\n")}\n\n${rest}` : lines.join("\n");
 	},
 }));
 
@@ -109,6 +130,7 @@ export function codemodeWith(globals: readonly CodemodeGlobal[]) {
 
 /** Closes the sandbox's worker, when one was made. */
 export async function closeCodemode(): Promise<void> {
-	await sandbox?.close();
+	await Promise.all([sandbox?.close(), catalogSandbox?.close()]);
 	sandbox = undefined;
+	catalogSandbox = undefined;
 }

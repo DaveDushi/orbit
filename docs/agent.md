@@ -285,6 +285,24 @@ dropped `agent_preferences`.
   fenced as data) reaches the model. All whole-file reads of a run together parse at most 32 MiB; past that, the read
   stops with a message the agent passes on. The model cannot use `all: true` directly. The prompt tells it to read
   large files this way (a 20,000-row CSV: about 2 seconds).
+- **Code mode is how every agent works** (`apps/agent/src/find-tools.ts`). The model is offered only the tools named
+  in `MODEL_TOOLS` that the run has: `find_tools` and `codemode`; the jobs (`plan_job`, `run_job`: a job's script runs
+  up to 60 minutes, longer than a script may); and the tools a script cannot stand in for: `view_image` (a script gets
+  only a result's text, so images would not reach the model), `ask_teammate`, `load_skill` and `read_skill_file`. It is
+  an allow list: every other tool, also one a later feature adds (such as `sandbox_shell`), is called from a script
+  and found with `find_tools`, with no code of its own for that. `find_tools` searches the run's callable Orbit tools and the driver's tools of connected services by
+  words (BM25 on name and description) and returns at most 8, with how to call them and their JSON Schema; it reads no
+  Orbit data. Instead of words it also takes a read-only script (`code`) over the global `catalog` (name, description,
+  input schema, integration, approval, call), as in Cloudflare's Code Mode search: it runs in its own QuickJS sandbox
+  with code mode's limits and no tools or globals, so it cannot call tools, reach the network or keep anything. The services' tools (read with `GET /agent-tools` at the start of a run, only when the agent has
+  `use_integration`) are kept in the conversation's `orbit.integration-tools` document, never in the prompt: the
+  prompt names only each service and its tool count, so an agent can have hundreds of service tools. Scripts call them
+  as `tools.use_integration({ tool, arguments })`, with the same checks as before. The `codemode` prompt section
+  declares only the most used tools (`DECLARED_TOOLS` in `codemode.ts`) and names the others. Approvals: a script's call
+  that asks the driver (it sets `waitingFor` and ends the run: an approval, a sandbox host card) fails in the script,
+  so the script stops there; `blockedCall` refuses any later call while the thread waits (also one the script made
+  after catching the error), and the run ends after the script (`afterTool` hooks). One yes for many writes is a job. Progress shows each call of a script as a step; `codemode` and
+  `find_tools` show none. Measurements: `evals/donna-codemode/README.md`.
 - **Saved scripts** (`agent_scripts`). The agent saves a script for the driver with `save_script` (name, code up to
   20,000 characters, description); saving under the same name (any case) replaces the code. No approval: saving runs
   nothing. At most 50 per person per workspace. Settings → Agentic → Routines has a **Scripts** card: the owner views,

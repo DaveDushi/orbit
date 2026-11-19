@@ -43,6 +43,7 @@
 
 ## New agent tools
 - A new sidecar tool also needs its row in `TOOL_CATALOG` and its routes in `route_need` (`apps/server/src/agent/profiles.rs`): custom agents' sessions are refused every route that no tool names there (fail closed). `apps/agent/test/profiles.test.ts` fails when the catalog and the sidecar's tools differ (2026-11-11).
+- Pi code mode passes a nested call's result to the script as text only (images are dropped), and a nested call's `control.terminate` does not end the run: the script and the model go on. A tool that returns images or ends the run (approval question, `ask_teammate`) must stay a direct model call, or the host must end the run itself in `afterTool` (`evals/donna-codemode`, 2026-11-15).
 - A routine's test run is a dry run enforced by Orbit (`agent::scope::dry_allows`): a dry session reaches only reads and the agent tool routes (`/agent-tools/call`, `/drive`, `/scheduled`). A new agent route that writes on POST must be refused there, or check `Option<Extension<scope::DryRun>>` and answer `{"status": "dry_run", "action": …}` like those routes (2026-11-11).
 
 ## Guests (chat-only role)

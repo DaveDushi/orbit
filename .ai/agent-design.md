@@ -502,8 +502,10 @@ sidecar (driver's agent session) ──► /workspaces/{id}/agent-tools[/call] �
   prefix), URL, one credential (header name + value, sealed with `ORBIT_APP_KEY` in `secret_box`), the **roles**
   that may use it, and the MCP tools that are on (with a snapshot of the server's `tools/list`) or the HTTP methods
   that are allowed.
-- The agent sees `<slug>__<tool>` (MCP) or `<slug>__api_request` (HTTP) in a prompt section that the sidecar reads
-  as the driver at the start of each run, and calls them through **one** Pi tool, `use_integration(tool, arguments)`.
+- The agent finds `<slug>__<tool>` (MCP) or `<slug>__api_request` (HTTP) with `find_tools` (the sidecar reads the
+  driver's list at the start of each run and keeps it in a Pi document; the prompt names only the services, see
+  docs/agent.md, "Code mode is how every agent works"), and calls them from a code mode script through **one** Pi
+  tool, `use_integration(tool, arguments)`.
   Pi Durable's tools are a static registry stored by name in each conversation; one tool per external tool would
   need extensions installed at run time and present again before every resume, and the shared thread transcript
   would mix the tool sets of different drivers. One fixed tool plus a per-run section avoids both.

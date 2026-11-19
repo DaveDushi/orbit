@@ -21,7 +21,8 @@ import { CodemodeStoreDoc } from "@earendil-works/pi-durable/codemode";
 import { closeCodemode, RUN_SCRIPT } from "./codemode.ts";
 import { IndexDoc, ThreadDoc, type RoutineRunState, type RunCall, type TaskRunState, type ThreadState } from "./docs.ts";
 import { withMessageFiles } from "./files.ts";
-import { loadIntegrations } from "./integrations.ts";
+import { IntegrationToolsDoc } from "./find-tools.ts";
+import { loadIntegrations, servicesSection, type IntegrationTool } from "./integrations.ts";
 import { loadSkills } from "./skills.ts";
 import { loadWake } from "./memory.ts";
 import { namesToTokens, splitBody, tokensToNames, type Person } from "./mentions.ts";
@@ -32,7 +33,7 @@ import { withPageContext } from "./page.ts";
 import { DEFAULT_AGENT_NAME, MEMORY_CHECK } from "./prompt.ts";
 import { brokerRequest, Sandbox } from "./sandbox.ts";
 import { groupSteps } from "./steps.ts";
-import { orbitExtension, REPAIR_SCRIPT, SANDBOX_TOOLS, toolRegistrations } from "./tools.ts";
+import { MODEL_REGISTRATIONS, orbitExtension, REPAIR_SCRIPT, SANDBOX_TOOLS, toolRegistrations } from "./tools.ts";
 import { actionText, cardTitle, finalCard, liveCard, splitAnswer, uiBlock } from "./ui.ts";
 import type { UiSpec } from "./ui-catalog.ts";
 
@@ -175,7 +176,7 @@ export function frame(kind: "instruction" | "answer" | "steer" | "action" | "rou
 	}
 }
 
-const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
+export const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
 	list_projects: () => "Reading projects",
 	search_tasks: (args) => `Searching tasks${args.query ? ` for “${args.query}”` : ""}`,
 	get_task: () => "Reading a task",
@@ -222,7 +223,38 @@ const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
 	// The steps are shown in italics, where `_` would start or end the emphasis.
 	use_integration: (args) => `Using ${String(args.tool).replace("__", " → ").replaceAll("_", " ")}`,
 	drive_image_to_shopify: () => "Sending a Drive image to Shopify",
+	// Code mode shows each call of a script, so every tool has a label.
+	link_doc_to_task: () => "Linking a page to a task",
+	unlink_doc_from_task: () => "Unlinking a page from a task",
+	read_file: () => "Reading a file on a page",
+	write_file: () => "Changing a file on a page",
+	list_page_drive_files: () => "Reading the Drive files of a page",
+	find_drive_file_pages: () => "Finding the pages that show a Drive file",
+	insert_drive_file: () => "Adding a Drive file to a page",
+	replace_drive_file: () => "Replacing a Drive file on a page",
+	remove_drive_file: () => "Removing a Drive file from a page",
+	move_to_trash: () => "Moving to the Trash",
+	drive_list: () => "Reading a Drive folder",
+	drive_search: (args) => (args.query ? `Searching Drive for “${String(args.query).replaceAll("_", " ")}”` : "Searching Drive"),
+	drive_info: () => "Reading a Drive item",
+	drive_read: () => "Reading a Drive file",
+	drive_create_folder: (args) => `Creating the Drive folder “${String(args.name).replaceAll("_", " ")}”`,
+	drive_save_text: (args) => `Saving “${String(args.name).replaceAll("_", " ")}” to Drive`,
+	drive_move: () => "Moving a Drive item",
+	drive_rename: () => "Renaming a Drive item",
+	drive_trash: () => "Moving to the Drive trash",
+	drive_share: () => "Making a public link",
 };
+
+/**
+ * Whether a call that starts is a step people see: a script's calls are (code mode is how the agent works), the script
+ * and `find_tools` are not; a saved script's run is one step. `scripts` collects the ids of the run's `codemode` calls.
+ */
+function shownStep(event: { toolName: string; toolCallId: string; parentToolCallId?: string }, scripts: Set<string>): boolean {
+	if (event.parentToolCallId) return scripts.has(event.parentToolCallId);
+	if (event.toolName === "codemode") scripts.add(event.toolCallId);
+	return event.toolName !== "codemode" && event.toolName !== "find_tools";
+}
 
 /**
  * Edits the run's progress message at most every 1.5 s with the steps so far and the text being written; while the
@@ -230,6 +262,7 @@ const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => string> = {
  */
 class Progress {
 	readonly steps: string[] = [];
+	readonly #scripts = new Set<string>();
 	/** The text blocks of the message being written, by content index. */
 	#parts: string[] = [];
 	/** The last part of the card being written that passed the catalog. */
@@ -244,7 +277,7 @@ class Progress {
 
 	apply(events: readonly AgentEvent[]): void {
 		for (const event of events) {
-			if (event.type === "tool_execution_start" && !event.parentToolCallId) {
+			if (event.type === "tool_execution_start" && shownStep(event, this.#scripts)) {
 				this.steps.push((TOOL_LABELS[event.toolName] ?? (() => event.toolName.replaceAll("_", " ")))(event.args));
 				this.#parts = [];
 				this.#card = null;
@@ -689,25 +722,27 @@ export class Agent {
 			// A script run starts with the routine's `store()` values, kept from its last run.
 			if (routine?.script) (await tx.doc(CodemodeStoreDoc, conversation.id)).values = (routine.state ?? {}) as Record<string, never>;
 			// Each run takes the model chosen now and the driver's answer level; a run already going keeps its own.
-			// A custom agent is offered only its own tools (Orbit refuses the others too). A script run offers only the
-			// saved script, whose calls reach the agent's tools; other runs never offer it.
+			// A custom agent has only its own tools (Orbit refuses the others too). The model is offered only the tools named in
+			// `MODEL_TOOLS` that the run has (`find_tools`, `codemode`, the jobs and the few tools a script cannot stand in
+			// for); every other tool, whatever adds it, is called from a script (./find-tools.ts). A script run offers only
+			// the saved script, whose calls reach the agent's tools.
 			await configure(tx, conversation.id, {
 				...this.#runModel(agent ?? input.default_agent ?? null, input.answer_level),
 				// The default agent gets every tool but the agent sandbox's (custom agents only, for now).
 				tools: agent ? toolRegistrations(agent.tools, Boolean(this.#sandbox), Boolean(this.#config.agentSandboxSocket)) : { remove: SANDBOX_TOOLS },
-				modelTools: routine?.script ? (routine.test || (agent && !agent.tools.includes(REPAIR_SCRIPT.name)) ? [RUN_SCRIPT] : [RUN_SCRIPT, REPAIR_SCRIPT]) : { remove: [RUN_SCRIPT, REPAIR_SCRIPT] },
+				modelTools: routine?.script ? (routine.test || (agent && !agent.tools.includes(REPAIR_SCRIPT.name)) ? [RUN_SCRIPT] : [RUN_SCRIPT, REPAIR_SCRIPT]) : MODEL_REGISTRATIONS,
 			});
 		}, context);
 		// Orbit issues agent sessions only to the driver of a running thread: set it before any tool runs.
 		await this.#orbit.updateThread(input.thread_key, this.#threadUpdate(state, "running", driverId, null));
 		const allowed = (tool: string) => !agent || agent.tools.includes(tool);
 		const memory = hasMemory(agent?.tools) ? await this.#memoryFor({ ...state, conversationMembers: input.conversation_members, driverId, driverName }) : null;
-		const integrations = allowed("use_integration")
+		const integrations: IntegrationTool[] = allowed("use_integration")
 			? await loadIntegrations((method, path) => this.#orbit.asUser(driverId, state.workspaceId, method, path, undefined, state.agentUserId ?? null, state.threadKey || null)).catch((error: unknown) => {
 					console.warn("agent: reading integration tools failed", String(error));
-					return null;
+					return [];
 				})
-			: null;
+			: [];
 		const skills = await loadSkills((method, path) => this.#orbit.asUser(driverId, state.workspaceId, method, path, undefined, state.agentUserId ?? null, state.threadKey || null)).catch((error: unknown) => {
 			console.warn("agent: reading skills failed", String(error));
 			return null;
@@ -716,7 +751,9 @@ export class Agent {
 			const doc = await tx.doc(ThreadDoc, conversation.id);
 			doc.conversationMembers = input.conversation_members;
 			doc.memory = memory;
-			doc.integrations = integrations;
+			// The prompt names the services; `find_tools` searches their tools.
+			doc.integrations = servicesSection(integrations);
+			(await tx.doc(IntegrationToolsDoc, conversation.id)).tools = integrations;
 			doc.skills = skills;
 		}, context);
 		const submission = await conversation.submit({ type: "input", content, requestId: input.message_id }, context);

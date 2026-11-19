@@ -740,6 +740,31 @@ test("integrations: a write waits for the driver's yes and then runs the same ca
 	}
 });
 
+test("approvals in a script: a write that asks stops the script there, later calls are refused, and the run waits", async () => {
+	const orbit = new IntegrationOrbit();
+	current = orbit;
+	await orbit.listen();
+	const agent = new Agent(config(orbit, mkdtempSync(join(tmpdir(), "agent-"))), new OrbitClient(config(orbit, "")));
+	await agent.open();
+	await agent.start();
+	try {
+		const thread = id();
+		const call = (method: string, path: string) => `await tools.use_integration({ tool: "shop__api_request", arguments: { method: "${method}", path: "${path}" } });`;
+		// The script catches the question and goes on: its later calls still do not run.
+		const code = [call("GET", "/before"), `try { ${call("POST", "/orders")} } catch (error) { text("asked"); }`, call("GET", "/after"), call("POST", "/refunds"), 'text("the end");'].join("\n");
+		const run = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> run code: ${code}` });
+		await until("waiting for Ann", () => orbit.threads.get(thread)?.status === "waiting" && orbit.threads.get(thread)?.waiting_for_user_id === ANN);
+		assert.deepEqual(orbit.external.map((made) => (made.arguments as { path: string }).path), ["/before"]);
+		// One question, and the run ends at it: no answer after the question.
+		assert.deepEqual([...orbit.messages.keys()].filter((nonce) => nonce.startsWith("approve:")), ["approve:approval-1"]);
+		assert.match(progressOf(orbit, run), /Waiting for an answer from <@/);
+		assert.doesNotMatch(progressOf(orbit, run), /the end/);
+	} finally {
+		await agent.stop();
+		orbit.server.close();
+	}
+});
+
 /** Orbit's Drive image to Shopify route: it asks for a yes, then answers with the Shopify URL. */
 class ShopifyImageOrbit extends FakeOrbit {
 	readonly uploads: { arguments: unknown; as: string }[] = [];
@@ -916,7 +941,7 @@ test("code mode: a script calls only the agent's own tools, as the driver", asyn
 	}
 });
 
-test("code mode: the codemode section does not repeat the offered tools, and a script still calls them", async () => {
+test("code mode: the codemode section declares the most used tools and names the others, and a script calls them", async () => {
 	const orbit = new RoutineOrbit();
 	current = orbit;
 	await orbit.listen();
@@ -932,11 +957,13 @@ test("code mode: the codemode section does not repeat the offered tools, and a s
 		await until("the prompt", () => orbit.messages.has(`agent:${shown}:1`));
 		await until("the idle thread", () => orbit.threads.get(thread)?.status === "idle");
 		const section = answerOf(orbit, shown).split("<codemode>")[1]?.split("</codemode>")[0] ?? "";
-		assert.match(section, /Scripts can call each tool offered to you/);
+		assert.match(section, /Scripts call your tools as/);
 		assert.match(section, /Not from a script: [^.]*\bask_teammate\b/);
-		// No declaration of a tool the model already has: before, ~2.9k tokens of them.
-		assert.doesNotMatch(section, /### `(search_tasks|create_task|read_page)`/);
-		assert.ok(section.length < 2_000, `codemode section: ${section.length} characters`);
+		// The most used tools are declared; the others only named, their arguments come from find_tools.
+		assert.match(section, /### `search_tasks`[\s\S]*### `read_page`/);
+		for (const name of ["drive_trash", "use_integration", "schedule_routine"]) assert.match(section, new RegExp(`Your other tools \\(arguments with find_tools\\): [^.]*\\b${name}\\b`));
+		assert.doesNotMatch(section, /### `drive_trash`/);
+		assert.ok(section.length < 9_000, `codemode section: ${section.length} characters`);
 
 		const run = orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${BOT}> run code:\nconst found = await tools.search_tasks({});\ntext("read " + found.length);` });
 		await until("the script's answer", () => progressOf(orbit, run).startsWith("Done (codemode)"));

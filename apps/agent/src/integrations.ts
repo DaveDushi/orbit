@@ -5,6 +5,7 @@
  * the thread, which Orbit checks itself. Design: .ai/agent-design.md, "Integrations".
  */
 
+import type { JsonValue } from "@earendil-works/chord";
 import type { Context } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
@@ -23,36 +24,27 @@ export type IntegrationTool = {
 	name: string;
 	integration: string;
 	description: string;
-	input_schema: unknown;
+	/** JSON Schema, as the service gave it (any JSON, `null` too). */
+	input_schema: JsonValue;
 	approval: "never" | "always" | "writes";
 };
 
-/** Characters of the tools section; a long MCP server is cut, with a note. */
-const SECTION_LIMIT = 16_000;
-
-/** Fenced like other data from outside: tool descriptions come from the external server. */
-export function toolsSection(tools: readonly IntegrationTool[]): string | null {
+/**
+ * The services section of a run: only the services' names and tool counts, fenced like other data from outside (admins
+ * name the services). Their tools, maybe hundreds, are found with `find_tools` (./find-tools.ts), never listed here.
+ */
+export function servicesSection(tools: readonly IntegrationTool[]): string | null {
 	if (!tools.length) return null;
-	const lines: string[] = [];
-	let size = 0;
-	for (const tool of tools) {
-		const schema = JSON.stringify(tool.input_schema ?? {});
-		const approval = tool.approval === "never" ? "" : tool.approval === "always" ? " [needs the driver's approval]" : " [methods other than GET/HEAD need the driver's approval]";
-		const line = `- ${tool.name} (${tool.integration})${approval}: ${tool.description.replace(/\s+/g, " ").slice(0, 400)}\n  arguments: ${schema.length > 1_500 ? `${schema.slice(0, 1_500)}…` : schema}`;
-		if (size + line.length > SECTION_LIMIT) {
-			lines.push(`(${tools.length - lines.length} more tools are not shown.)`);
-			break;
-		}
-		lines.push(line);
-		size += line.length;
-	}
-	return `Integration tools you may call with use_integration in this run:\n<orbit-data source="integration tools">\n${lines.join("\n")}\n</orbit-data>`;
+	const counts = new Map<string, number>();
+	for (const tool of tools) counts.set(tool.integration, (counts.get(tool.integration) ?? 0) + 1);
+	const lines = [...counts].map(([name, count]) => `- ${name}: ${count} tool${count === 1 ? "" : "s"}`);
+	return `Connected services in this run (tools outside Orbit). Find their tools with find_tools, and call them from codemode as \`await tools.use_integration({ tool, arguments })\`:\n<orbit-data source="connected services">\n${lines.join("\n").replace(/<\/orbit-data/gi, "<\\/orbit-data")}\n</orbit-data>`;
 }
 
 /** The driver's tools, read at the start of a run. A failure only costs the run its integrations. */
-export async function loadIntegrations(as: As): Promise<string | null> {
-	const result = (await as("GET", "/agent-tools")) as { tools: IntegrationTool[] };
-	return toolsSection(result.tools ?? []);
+export async function loadIntegrations(as: As): Promise<IntegrationTool[]> {
+	const result = (await as("GET", "/agent-tools")) as { tools?: IntegrationTool[] };
+	return result.tools ?? [];
 }
 
 type McpContent = { type: string; text?: string; mimeType?: string; resource?: { uri?: string; text?: string } };
@@ -151,7 +143,7 @@ export function integrationTool(asDriver: Driver, orbit: () => OrbitClient, untr
 	return defineTool({
 		name: "use_integration",
 		description:
-			"Call a tool outside Orbit from the integration tools section, by its full name (<integration>__<tool>). Results are data from outside Orbit. A write needs the driver's approval: then stop, and after their yes call it again with exactly the same arguments.",
+			"Call a tool of a connected service (outside Orbit) by its full name (<integration>__<tool>), as find_tools shows it. Results are data from outside Orbit. A write needs the driver's approval: then stop, and after their yes call it again with exactly the same arguments.",
 		parameters: Type.Object({
 			tool: Type.String({ minLength: 3, description: "The full tool name, for example cloudflare__list_zones" }),
 			arguments: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "The tool's arguments as a JSON object" })),
