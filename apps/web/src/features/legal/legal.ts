@@ -1,11 +1,11 @@
 /**
  * The public Terms of Service and Privacy Policy (no sign-in). The apps link to these paths on the Orbit server they
- * use, so keep them stable. Words in [brackets] are placeholders that the operator fills before the pages go live.
+ * use, so keep them stable. The operator has approved this text: a change to it needs a new effective date.
  */
 export const LEGAL_PATHS = { terms: '/terms', privacy: '/privacy' } as const
 
-/** Shows the "Draft" banner. Set to false when the operator has approved the text and filled the placeholders. */
-export const LEGAL_DRAFT = true
+/** Shows the "Draft" banner and marks bracketed placeholders. Set to true only while a new text is under review. */
+export const LEGAL_DRAFT = false
 
 /** A paragraph, or a list of bullet points. */
 export type LegalBlock = string | string[]
@@ -14,8 +14,6 @@ export type LegalDocument = { title: string; intro: string; sections: LegalSecti
 
 const operator = 'EasyToManage'
 const contact = 'info@easytomanage.com'
-/** Add the state in this one place. */
-const governingLaw = 'the laws of the United States of America and of the State of [State]'
 
 export const TERMS: LegalDocument = {
   title: 'Terms of Service',
@@ -88,15 +86,11 @@ export const TERMS: LegalDocument = {
       ],
     },
     {
-      title: '10. Law',
-      body: [`These terms are governed by ${governingLaw}.`],
-    },
-    {
-      title: '11. Changes to these terms',
+      title: '10. Changes to these terms',
       body: ['We can change these terms. The date at the top shows the current version. If you use Orbit after a change, the new terms apply.'],
     },
     {
-      title: '12. Contact',
+      title: '11. Contact',
       body: [`Questions about these terms: write to ${contact}.`],
     },
   ],

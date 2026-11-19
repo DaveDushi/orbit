@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { Link } from 'react-router'
 import { LEGAL_DRAFT, LEGAL_EFFECTIVE_DATE, LEGAL_PATHS, PRIVACY, TERMS, type LegalDocument } from './legal'
 
-/** Marks the [placeholders] of a draft, so a reviewer sees every one. */
+/** Marks the bracketed placeholders of a draft, so a reviewer sees every one. */
 function Text({ children }: { children: string }) {
   return children.split(/(\[[^\]]+\])/).map((part, index) =>
     LEGAL_DRAFT && index % 2 === 1 ? <mark key={index} className="rounded-sm bg-primary/15 px-0.5 text-foreground">{part}</mark> : part,
