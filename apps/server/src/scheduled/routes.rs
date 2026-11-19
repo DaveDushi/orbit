@@ -450,7 +450,7 @@ async fn delete_scheduled(
 #[serde(deny_unknown_fields)]
 struct AgentCall {
     /// `schedule_routine`, `send_later`, `remind_me`, `save_script`, `test_routine`,
-    /// `approve_routine_script`, `set_routine_script` or `repair_routine_script`.
+    /// `approve_routine_script`, `set_routine_script`, `update_routine` or `repair_routine_script`.
     tool: String,
     #[serde(default)]
     arguments: Map<String, Value>,
@@ -490,6 +490,28 @@ struct RoutineScriptArgs {
     routine_id: Id,
     /// `null`: the routine runs no script any more.
     script_id: Option<Id>,
+}
+
+/// A change of an existing routine: only the fields given change; `delete` deletes it.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RoutineEditArgs {
+    routine_id: Id,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    prompt: Option<String>,
+    #[serde(default)]
+    schedule: Option<String>,
+    #[serde(default)]
+    time_zone: Option<String>,
+    #[serde(default)]
+    conversation_id: Option<Id>,
+    /// `active` or `paused`.
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    delete: bool,
 }
 
 #[derive(Deserialize)]
@@ -704,6 +726,80 @@ async fn agent_call(
                 .await
             {
                 Ok(record) => Ok(created("routine script changed", record)),
+                Err(error) => refusal(error, &uri, &request_id),
+            }
+        }
+        // A change, a pause, a resume or a deletion of an existing routine: after the driver's yes
+        // to exactly that change, which shows each changed field as old → new. Orbit checks it as for
+        // the same change in Settings (`Store::update_routine`, `Store::delete_routine`).
+        "update_routine" => {
+            let Ok(args) = serde_json::from_value::<RoutineEditArgs>(arguments) else {
+                return Ok(refused(
+                    "Give routine_id, and name, prompt, schedule, time_zone, conversation_id, status or delete.",
+                ));
+            };
+            let delete = args.delete;
+            let edits = args.name.is_some()
+                || args.prompt.is_some()
+                || args.schedule.is_some()
+                || args.time_zone.is_some()
+                || args.conversation_id.is_some()
+                || args.status.is_some();
+            if delete && edits {
+                return Ok(refused("Delete the routine, or change it: not both."));
+            }
+            let change = RoutineChange {
+                name: args.name,
+                prompt: args.prompt,
+                schedule: args.schedule,
+                time_zone: args.time_zone,
+                conversation_id: args.conversation_id,
+                status: args.status,
+                ..RoutineChange::default()
+            };
+            let preview = match store
+                .preview_routine_change(
+                    (workspace_id, user_id, args.routine_id),
+                    change,
+                    delete,
+                    now,
+                )
+                .await
+            {
+                Ok(preview) => preview,
+                Err(error) => return refusal(error, &uri, &request_id),
+            };
+            let input = json!({ "routine_id": args.routine_id, "change": &preview.input, "delete": delete });
+            if let Some(question) = approval_question(
+                &state,
+                caller,
+                thread,
+                "update_routine",
+                preview.action,
+                &input,
+                (&uri, &request_id),
+            )
+            .await?
+            {
+                return Ok(question);
+            }
+            if delete {
+                return match store
+                    .delete_routine(workspace_id, user_id, args.routine_id)
+                    .await
+                {
+                    Ok(()) => Ok(created(
+                        "routine deleted",
+                        json!({ "id": args.routine_id, "deleted": true }),
+                    )),
+                    Err(error) => refusal(error, &uri, &request_id),
+                };
+            }
+            match store
+                .update_routine(workspace_id, user_id, args.routine_id, preview.input, now)
+                .await
+            {
+                Ok(record) => Ok(created("routine changed", record)),
                 Err(error) => refusal(error, &uri, &request_id),
             }
         }

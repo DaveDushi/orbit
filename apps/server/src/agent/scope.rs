@@ -67,9 +67,9 @@ pub fn allows(workspace_id: &str, method: &Method, path: &str) -> bool {
     if segment == "members" {
         return method == Method::GET;
     }
-    // The agent lists routines, reminders and scheduled messages here, and makes them only through
-    // `/agent-tools/scheduled`, which asks the driver before anything posts as them
-    // (`crate::scheduled`); only people change, pause or delete them (Settings, the composer).
+    // The agent lists routines, reminders and scheduled messages here, and makes, changes, pauses
+    // and deletes routines only through `/agent-tools/scheduled`, which asks the driver first
+    // (`crate::scheduled`); only people change or cancel scheduled messages (the composer).
     // Saved scripts too: the agent saves them only through `/agent-tools/scheduled`.
     if segment == "routines" || segment == "scheduled-messages" || segment == "scripts" {
         return method == Method::GET;

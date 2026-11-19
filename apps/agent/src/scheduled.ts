@@ -1,10 +1,10 @@
 /**
  * Routines, reminders, send later, saved scripts and test runs (`apps/server/src/scheduled/`). The tools list and create, as the driver,
- * attach or detach a routine's saved script, and repair a routine's failed script in its own run; people change, pause
- * and delete in Settings → Agentic → Routines and in the chat composer (`agent::scope` refuses anything else from an
- * agent session). Creating goes to `/agent-tools/scheduled`: a routine or a message posted as
- * the driver is made only after the driver's "yes" in the thread to exactly that action (Orbit keeps and checks the
- * approval); a reminder, a DM to the driver only, needs none. A routine runs later as its creator, with the creator's
+ * change, pause, resume and delete a routine, attach or detach its saved script, and repair a routine's failed script in
+ * its own run; people also do all that in Settings → Agentic → Routines and in the chat composer (`agent::scope` refuses
+ * the direct routes from an agent session). Every write goes to `/agent-tools/scheduled`: a routine, a change of one or
+ * a message posted as the driver happens only after the driver's "yes" in the thread to exactly that action (Orbit
+ * keeps and checks the approval); a reminder, a DM to the driver only, needs none. A routine runs later as its creator, with the creator's
  * permissions only, and without a new approval.
  */
 
@@ -112,6 +112,7 @@ type Answer =
 const APPROVAL_PURPOSE: Record<string, string> = {
 	approve_routine_script: "to let this routine's script write",
 	set_routine_script: "to change this routine's script",
+	update_routine: "to change this routine",
 };
 
 /** The tools; `asDriver` and the client come from the Orbit tools. */
@@ -248,6 +249,33 @@ export function scheduledTools(asDriver: Driver, orbit: () => OrbitClient) {
 			)(api, context),
 	});
 
+	const updateRoutine = defineTool({
+		name: "update_routine",
+		description:
+			"Change one of the driver's existing routines (edit, pause, resume or delete it): its instruction, schedule, time zone, where it posts or name, or pause or resume it, or delete it. Give only what changes. Use it when the driver asks to edit, change, rename, move, pause, resume, stop or delete a routine; do it yourself, do not send them to Settings. Only the routine's creator changes or resumes it; an owner or admin may also pause or delete anyone's. It needs the driver's yes, which shows each change as old → new: then stop, and after their yes call it again with exactly the same arguments. The new instruction must be complete on its own.",
+		parameters: Type.Object({
+			routine: routineArg,
+			name: Type.Optional(Type.String({ minLength: 1, maxLength: 80, description: "A new name" })),
+			instruction: Type.Optional(Type.String({ minLength: 1, maxLength: 4000, description: "The whole new instruction (it replaces the old one), complete on its own" })),
+			cron: Type.Optional(Type.String({ description: "A new 5-field cron expression, at most every 15 minutes" })),
+			time_zone: Type.Optional(Type.String({ description: "A new IANA time zone, e.g. Europe/Berlin" })),
+			post_in: Type.Optional(Type.String({ description: 'Where it posts from now on: "here", a conversation id, or a channel name such as "#marketing"' })),
+			status: Type.Optional(Type.Union([Type.Literal("paused"), Type.Literal("active")], { description: '"paused" to pause it, "active" to resume it' })),
+			delete: Type.Optional(Type.Boolean({ description: "true to delete the routine (nothing else with it)" })),
+		}),
+		execute: (args, api, context) =>
+			create(
+				"update_routine",
+				async (as) => {
+					const routine = await routineFor(as, args.routine);
+					if (!routine) return `I found no routine named ${args.routine}.`;
+					return { routine_id: routine.id, name: args.name, prompt: args.instruction, schedule: args.cron, time_zone: args.time_zone, status: args.status, delete: args.delete || undefined };
+				},
+				(result) => (result.deleted ? { deleted: result.id } : { ...routineView(result), manage: "Settings → Agentic → Routines" }),
+				args.post_in,
+			)(api, context),
+	});
+
 	const repairRoutineScript = defineTool({
 		name: REPAIR_SCRIPT_TOOL,
 		description: `Only in a scheduled routine run whose saved script failed: save the fixed script as its new version, then call ${RUN_SCRIPT_TOOL} again. Give the whole script. At most ${MAX_SCRIPT_REPAIRS} repairs per run. The new version makes no writes until the driver approves it; reads and your answer in the routine's thread still work.`,
@@ -314,5 +342,5 @@ export function scheduledTools(asDriver: Driver, orbit: () => OrbitClient) {
 			)(api, context),
 	});
 
-	return [scheduleRoutine, listRoutines, remindMe, sendLater, listScripts, saveScript, testRoutine, approveRoutineScript, setRoutineScript, repairRoutineScript];
+	return [scheduleRoutine, listRoutines, remindMe, sendLater, listScripts, saveScript, testRoutine, approveRoutineScript, setRoutineScript, updateRoutine, repairRoutineScript];
 }

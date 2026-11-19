@@ -520,32 +520,36 @@ impl Fixture {
     async fn agent_run(&self) -> (String, String) {
         self.connect_chatgpt(&self.owner).await;
         let general = self.general().await;
-        // Orbit makes agent sessions only for the driver of a running thread.
-        let (status, value) = self
-            .request(
-                "PUT",
-                &format!("/api/internal/agent/threads/{general}"),
-                ("authorization", &format!("Bearer {SECRET}")),
-                Some(json!({
-                    "workspace_id": self.workspace_id, "conversation_id": general, "root_message_id": null,
-                    "status": "running", "driver_user_id": self.owner.id.to_string(), "waiting_for_user_id": null,
-                })),
-            )
-            .await;
-        assert_eq!(status, StatusCode::NO_CONTENT, "{value}");
-        let (status, value) = self
-            .request(
-                "POST",
-                "/api/internal/agent/sessions",
-                ("authorization", &format!("Bearer {SECRET}")),
-                Some(json!({ "user_id": self.owner.id.to_string(), "workspace_id": self.workspace_id })),
-            )
-            .await;
+        let (status, value) = self.agent_session(&self.owner, &general).await;
         assert_eq!(status, StatusCode::OK, "{value}");
         (
             format!("Bearer {}", value["token"].as_str().unwrap()),
             general,
         )
+    }
+
+    /// The sidecar asks for an agent session of `driver`, driving a running thread in
+    /// `conversation` (no thread root): Orbit makes one only for the driver of a running thread.
+    async fn agent_session(&self, driver: &Member, conversation: &str) -> (StatusCode, Value) {
+        let (status, value) = self
+            .request(
+                "PUT",
+                &format!("/api/internal/agent/threads/{conversation}"),
+                ("authorization", &format!("Bearer {SECRET}")),
+                Some(json!({
+                    "workspace_id": self.workspace_id, "conversation_id": conversation, "root_message_id": null,
+                    "status": "running", "driver_user_id": driver.id.to_string(), "waiting_for_user_id": null,
+                })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{value}");
+        self.request(
+            "POST",
+            "/api/internal/agent/sessions",
+            ("authorization", &format!("Bearer {SECRET}")),
+            Some(json!({ "user_id": driver.id.to_string(), "workspace_id": self.workspace_id })),
+        )
+        .await
     }
 
     /// The agent's call of a scheduling tool in the run's thread.
@@ -727,6 +731,234 @@ async fn a_routine_from_the_agent_needs_the_drivers_yes_to_exactly_it() {
         "the yes is used up: {next}"
     );
     assert_eq!(routines().await, 1);
+}
+
+#[tokio::test]
+async fn the_agent_changes_pauses_and_deletes_a_routine_only_after_a_yes_to_exactly_that() {
+    let fixture = Fixture::new().await;
+    let (bearer, general) = fixture.agent_run().await;
+    let routine = fixture
+        .routine(
+            &fixture.owner,
+            json!({ "name": "Standup", "prompt": "list projects", "schedule": "0 9 * * 1-5", "conversation_id": general }),
+        )
+        .await
+        .1;
+    let id = routine["id"].as_str().unwrap().to_owned();
+    let saved = || async {
+        fixture.ok(&fixture.owner, "GET", "/routines", None).await["routines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|routine| routine["id"] == id.as_str())
+            .cloned()
+    };
+    let args = json!({ "routine_id": id, "prompt": "list projects and blocked tasks", "schedule": "30 8 * * 1", "time_zone": "Europe/Berlin" });
+    let asked = fixture
+        .agent_tool(&bearer, &general, "update_routine", args.clone())
+        .await;
+    assert_eq!(asked["status"], "approval_required", "{asked}");
+    let action = asked["action"].as_str().unwrap();
+    for part in [
+        "\"Standup\"",
+        "Instruction, before:\nlist projects\nInstruction, after:\nlist projects and blocked tasks",
+        "`0 9 * * 1-5` (UTC) → `30 8 * * 1` (Europe/Berlin)",
+        "Next run:",
+    ] {
+        assert!(action.contains(part), "{part}: {action}");
+    }
+    assert!(!action.contains("Posts in"), "{action}");
+    // Nothing changes before the yes.
+    assert_eq!(saved().await.unwrap()["prompt"], "list projects");
+
+    // After the yes, other arguments need their own yes.
+    fixture.say(&fixture.owner, &general, "yes").await;
+    let mut other = args.clone();
+    other["prompt"] = json!("delete every task");
+    let again = fixture
+        .agent_tool(&bearer, &general, "update_routine", other)
+        .await;
+    assert_eq!(again["status"], "approval_required", "{again}");
+    assert_eq!(saved().await.unwrap()["prompt"], "list projects");
+
+    // The same arguments change it once.
+    let changed = fixture
+        .agent_tool(&bearer, &general, "update_routine", args.clone())
+        .await;
+    assert_eq!(changed["status"], "ok", "{changed}");
+    let now_saved = saved().await.unwrap();
+    assert_eq!(now_saved["prompt"], "list projects and blocked tasks");
+    assert_eq!(now_saved["schedule"], "30 8 * * 1");
+    assert_eq!(now_saved["time_zone"], "Europe/Berlin");
+    let used = fixture
+        .agent_tool(&bearer, &general, "update_routine", args.clone())
+        .await;
+    assert_eq!(used["status"], "refused", "nothing left to change: {used}");
+
+    // A test run now runs the new instruction.
+    let run = fixture
+        .agent_tool(
+            &bearer,
+            &general,
+            "test_routine",
+            json!({ "routine_id": id }),
+        )
+        .await;
+    assert_eq!(run["status"], "ok", "{run}");
+    let (status, queue) = fixture
+        .request(
+            "GET",
+            "/api/internal/agent/inputs",
+            ("authorization", &format!("Bearer {SECRET}")),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{queue}");
+    let queued = queue["inputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|input| input["message_id"] == run["result"]["id"])
+        .cloned()
+        .unwrap();
+    assert_eq!(queued["body"], "list projects and blocked tasks");
+
+    // Pause and resume, each after its own yes.
+    for (status, next) in [("paused", false), ("active", true)] {
+        let args = json!({ "routine_id": id, "status": status });
+        let asked = fixture
+            .agent_tool(&bearer, &general, "update_routine", args.clone())
+            .await;
+        assert_eq!(asked["status"], "approval_required", "{asked}");
+        assert!(
+            asked["action"].as_str().unwrap().contains("Status: "),
+            "{asked}"
+        );
+        assert_ne!(saved().await.unwrap()["status"], status);
+        fixture.say(&fixture.owner, &general, "yes").await;
+        let done = fixture
+            .agent_tool(&bearer, &general, "update_routine", args)
+            .await;
+        assert_eq!(done["status"], "ok", "{done}");
+        let row = saved().await.unwrap();
+        assert_eq!(row["status"], status);
+        assert_eq!(row["next_run_at"].is_i64(), next, "{row}");
+    }
+
+    // A delete with a change is refused; a delete needs a yes too.
+    let both = fixture
+        .agent_tool(
+            &bearer,
+            &general,
+            "update_routine",
+            json!({ "routine_id": id, "delete": true, "name": "x" }),
+        )
+        .await;
+    assert_eq!(both["status"], "refused", "{both}");
+    let delete = json!({ "routine_id": id, "delete": true });
+    let asked = fixture
+        .agent_tool(&bearer, &general, "update_routine", delete.clone())
+        .await;
+    assert_eq!(asked["status"], "approval_required", "{asked}");
+    assert!(
+        asked["action"]
+            .as_str()
+            .unwrap()
+            .starts_with("Delete the routine \"Standup\""),
+        "{asked}"
+    );
+    assert!(saved().await.is_some());
+    fixture.say(&fixture.owner, &general, "yes").await;
+    let deleted = fixture
+        .agent_tool(&bearer, &general, "update_routine", delete)
+        .await;
+    assert_eq!(deleted["status"], "ok", "{deleted}");
+    assert!(saved().await.is_none());
+}
+
+#[tokio::test]
+async fn in_chat_a_routine_changes_only_as_settings_allows() {
+    let fixture = Fixture::new().await;
+    let creator = fixture.add_person("creator", "member").await;
+    let teammate = fixture.add_person("teammate", "member").await;
+    let admin = fixture.add_person("admin", "admin").await;
+    let guest = fixture.add_person("guest", "guest").await;
+    let ops = fixture
+        .private_channel(
+            &fixture.owner,
+            "ops",
+            &[&creator, &teammate, &admin, &guest],
+        )
+        .await;
+    let routine = fixture
+        .routine(
+            &creator,
+            json!({ "name": "Mine", "prompt": "list projects", "schedule": "0 9 * * *", "conversation_id": ops }),
+        )
+        .await
+        .1["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let call = |driver: Member, arguments: Value| {
+        let fixture = &fixture;
+        let ops = ops.clone();
+        async move {
+            let (status, session) = fixture.agent_session(&driver, &ops).await;
+            assert_eq!(status, StatusCode::OK, "{session}");
+            let bearer = format!("Bearer {}", session["token"].as_str().unwrap());
+            fixture
+                .agent_tool(&bearer, &ops, "update_routine", arguments)
+                .await
+        }
+    };
+    for driver in [&creator, &teammate, &admin] {
+        fixture.connect_chatgpt(driver).await;
+    }
+    let edit = json!({ "routine_id": routine, "prompt": "list every task" });
+    let pause = json!({ "routine_id": routine, "status": "paused" });
+
+    // Another member does not even see it.
+    for arguments in [edit.clone(), pause.clone()] {
+        let answer = call(teammate.clone(), arguments).await;
+        assert_eq!(answer["status"], "refused", "{answer}");
+        assert_eq!(answer["detail"], "Not found.");
+    }
+    // An admin pauses or deletes, but does not edit: it runs with the creator's permissions.
+    let answer = call(admin.clone(), edit.clone()).await;
+    assert_eq!(answer["status"], "refused", "{answer}");
+    assert!(
+        answer["detail"]
+            .as_str()
+            .unwrap()
+            .contains("Only the person who made this routine"),
+        "{answer}"
+    );
+    for arguments in [
+        pause.clone(),
+        json!({ "routine_id": routine, "delete": true }),
+    ] {
+        let answer = call(admin.clone(), arguments).await;
+        assert_eq!(answer["status"], "approval_required", "{answer}");
+        assert!(
+            answer["action"].as_str().unwrap().contains("as creator"),
+            "the card says whose routine it is: {answer}"
+        );
+    }
+    fixture.say(&admin, &ops, "yes").await;
+    let answer = call(admin.clone(), pause.clone()).await;
+    assert_eq!(answer["status"], "ok", "{answer}");
+    assert_eq!(answer["result"]["status"], "paused");
+    // The creator edits.
+    let answer = call(creator.clone(), edit.clone()).await;
+    assert_eq!(answer["status"], "approval_required", "{answer}");
+    fixture.say(&creator, &ops, "yes").await;
+    let answer = call(creator.clone(), edit).await;
+    assert_eq!(answer["status"], "ok", "{answer}");
+    assert_eq!(answer["result"]["prompt"], "list every task");
+    // A guest gets no agent session at all.
+    let (status, _) = fixture.agent_session(&guest, &ops).await;
+    assert_ne!(status, StatusCode::OK);
 }
 
 #[tokio::test]

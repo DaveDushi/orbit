@@ -50,7 +50,7 @@ pub const MAX_CHANNELS: usize = 100;
 /// The default agent's tools, by group, as the sidecar names them (`apps/agent/src/tools.ts`,
 /// `media.ts`, `agent-sandbox.ts`; `apps/agent/test/profiles.test.ts` keeps both lists the same). `true`: the tool
 /// writes or posts.
-pub const TOOL_CATALOG: [(&str, &str, bool); 61] = [
+pub const TOOL_CATALOG: [(&str, &str, bool); 62] = [
     ("list_projects", "Tasks", false),
     ("search_tasks", "Tasks", false),
     ("get_task", "Tasks", false),
@@ -104,6 +104,7 @@ pub const TOOL_CATALOG: [(&str, &str, bool); 61] = [
     ("test_routine", "Routines and reminders", true),
     ("approve_routine_script", "Routines and reminders", true),
     ("set_routine_script", "Routines and reminders", true),
+    ("update_routine", "Routines and reminders", true),
     ("repair_routine_script", "Routines and reminders", true),
     ("use_integration", "Connected services", true),
     ("drive_image_to_shopify", "Connected services", true),
@@ -175,6 +176,7 @@ const CONVERSATION_LIST_TOOLS: &[&str] = &[
     "schedule_routine",
     "list_routines",
     "send_later",
+    "update_routine",
 ];
 /// The tools that create through `/agent-tools/scheduled` (each one is checked there).
 const SCHEDULED_ROUTE_TOOLS: &[&str] = &[
@@ -185,6 +187,7 @@ const SCHEDULED_ROUTE_TOOLS: &[&str] = &[
     "test_routine",
     "approve_routine_script",
     "set_routine_script",
+    "update_routine",
     "repair_routine_script",
 ];
 
@@ -271,6 +274,7 @@ pub fn route_need(method: &Method, rest: &str) -> RouteNeed {
             "test_routine",
             "approve_routine_script",
             "set_routine_script",
+            "update_routine",
         ]),
         ["scripts"] if get => RouteNeed::Any(&[
             "list_scripts",
@@ -1995,7 +1999,7 @@ mod tests {
         assert!(checked_tools(&tools(&["delete_everything"])).is_err());
         assert!(checked_tools(&tools(&[""])).is_err());
         assert_eq!(checked_tools(&[]), Ok(Vec::new()));
-        assert_eq!(tool_catalog().count(), 61);
+        assert_eq!(tool_catalog().count(), 62);
     }
 
     #[test]

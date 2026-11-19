@@ -246,6 +246,13 @@ dropped `agent_preferences`.
   creator does everything; owners and admins (`routines.manage`) see every routine of the workspace and may pause and
   delete, but not edit or resume someone else's. Agent sessions may only list, and create through
   `/agent-tools/scheduled` (`agent::scope`).
+- **Change a routine in chat.** `update_routine` (routine; any of name, instruction, cron, time zone, `post_in`;
+  `status` paused or active; or `delete`) goes to `/agent-tools/scheduled`. Orbit runs the change (or the delete) with
+  the checks of Settings (`Store::update_routine`, `Store::delete_routine`) in a transaction that it rolls back
+  (`Store::preview_routine_change`), so a change the driver may not make is refused before anyone is asked. Then the
+  driver's yes is bound to exactly that change; the question shows each changed field as old → new (the old
+  instruction cut at 600 characters, the new one in full), a delete names the routine. The direct `PATCH|DELETE
+  …/routines/{id}` stay refused to agent sessions.
 - **Pauses.** Before each run Orbit checks the creator: still an active member, not a guest, still in the target
   conversation, the channel not archived or deleted, the agent still in the workspace. If not, the routine pauses with
   that reason (no retry loop). Without a ChatGPT connection the run is skipped (`last_error`) and the next one waits.

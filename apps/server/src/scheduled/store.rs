@@ -473,6 +473,145 @@ async fn agent_target(
     Ok(())
 }
 
+/// A person's change of a routine (Settings, or the agent after the driver's yes), in a transaction.
+async fn change_routine(
+    conn: &mut AnyConnection,
+    (workspace_id, user_id, routine_id): (Id, Id, Id),
+    change: RoutineChange,
+    now: TimestampMillis,
+) -> Result<RoutineRecord, ScheduledError> {
+    let actor = member(&mut *conn, workspace_id, user_id).await?;
+    let current = load_routine(&mut *conn, workspace_id, routine_id, actor).await?;
+    let edits = change.name.is_some()
+        || change.prompt.is_some()
+        || change.schedule.is_some()
+        || change.time_zone.is_some()
+        || change.conversation_id.is_some()
+        || change.agent_user_id.is_some()
+        || change.script_id.is_some()
+        || change.approve_script_hash.is_some();
+    let pause = match change.status.as_deref() {
+        None => None,
+        Some("paused") => Some(true),
+        Some("active") => Some(false),
+        Some(_) => {
+            return Err(ScheduledError::Invalid(
+                "The status must be active or paused.",
+            ));
+        }
+    };
+    // Only the creator edits or resumes: the routine runs with the creator's permissions.
+    if (edits || pause == Some(false)) && !current.can_edit {
+        return Err(ScheduledError::Forbidden(
+            "Only the person who made this routine can change or resume it.",
+        ));
+    }
+    let creator: Id = current
+        .creator_id
+        .parse()
+        .map_err(|_| ScheduledError::NotFound)?;
+    let name = change
+        .name
+        .as_deref()
+        .map(clean_name)
+        .transpose()?
+        .unwrap_or(current.name);
+    let prompt = change
+        .prompt
+        .as_deref()
+        .map(clean_prompt)
+        .transpose()?
+        .unwrap_or(current.prompt);
+    let zone = change
+        .time_zone
+        .map(|zone| zone.trim().to_owned())
+        .unwrap_or(current.time_zone);
+    let (expression, schedule) = checked_schedule(
+        change.schedule.as_deref().unwrap_or(&current.schedule),
+        &zone,
+        now.as_millis(),
+    )?;
+    let conversation = change
+        .conversation_id
+        .map(|id| id.to_string())
+        .or(current.conversation_id);
+    let active = match pause {
+        Some(paused) => !paused,
+        None => current.status == "active",
+    };
+    let agent: Id = match change.agent_user_id {
+        Some(wanted) => routine_agent(&mut *conn, workspace_id, Some(wanted)).await?,
+        None => current
+            .agent_user_id
+            .parse()
+            .map_err(|_| ScheduledError::NotFound)?,
+    };
+    if active {
+        let Some(conversation) = conversation.as_deref().and_then(|id| id.parse().ok()) else {
+            return Err(ScheduledError::Invalid("Pick where the routine posts."));
+        };
+        if let Some(problem) =
+            target_problem(&mut *conn, workspace_id, creator, conversation, Some(agent)).await?
+        {
+            return Err(ScheduledError::Invalid(problem.detail()));
+        }
+        agent_target(&mut *conn, workspace_id, agent, conversation).await?;
+    }
+    // A new schedule, a resume or an edit of a waiting run starts counting from now.
+    let next = if active {
+        schedule.next_after(now.as_millis())
+    } else {
+        None
+    };
+    let status = if active { "active" } else { "paused" };
+    let (script, approved_hash) = routine_script_change(
+        &mut *conn,
+        (workspace_id, creator, routine_id),
+        change.script_id.as_deref(),
+        change.approve_script_hash.as_deref(),
+    )
+    .await?;
+    sqlx::query(
+            "UPDATE agent_routines SET name = $1, prompt = $2, schedule = $3, time_zone = $4, conversation_id = $5, \
+             status = $6, paused_reason = NULL, next_run_at = $7, updated_at = $8, agent_user_id = $10, \
+             script_id = $11, script_approved_hash = $12 WHERE id = $9",
+        )
+        .bind(&name)
+        .bind(&prompt)
+        .bind(&expression)
+        .bind(&zone)
+        .bind(conversation)
+        .bind(status)
+        .bind(next)
+        .bind(now.as_millis())
+        .bind(routine_id.to_string())
+        .bind(agent.to_string())
+        .bind(script)
+        .bind(approved_hash)
+        .execute(&mut *conn)
+        .await?;
+    load_routine(&mut *conn, workspace_id, routine_id, actor).await
+}
+
+/// Deletes a routine for a person who may stop it, in a transaction.
+async fn remove_routine(
+    conn: &mut AnyConnection,
+    (workspace_id, user_id, routine_id): (Id, Id, Id),
+) -> Result<(), ScheduledError> {
+    let actor = member(&mut *conn, workspace_id, user_id).await?;
+    load_routine(&mut *conn, workspace_id, routine_id, actor).await?;
+    // A run that the agent has not taken yet goes with it.
+    sqlx::query("DELETE FROM agent_inputs WHERE routine_id = $1 AND acked_at IS NULL")
+        .bind(routine_id.to_string())
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("DELETE FROM agent_routines WHERE id = $1")
+        .bind(routine_id.to_string())
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
 pub struct Store {
     pub(super) database: Database,
 }
@@ -669,119 +808,119 @@ impl Store {
         now: TimestampMillis,
     ) -> Result<RoutineRecord, ScheduledError> {
         let mut tx = self.database.immediate_transaction().await?;
-        let actor = member(&mut tx, workspace_id, user_id).await?;
-        let current = load_routine(&mut tx, workspace_id, routine_id, actor).await?;
-        let edits = change.name.is_some()
-            || change.prompt.is_some()
-            || change.schedule.is_some()
-            || change.time_zone.is_some()
-            || change.conversation_id.is_some()
-            || change.agent_user_id.is_some()
-            || change.script_id.is_some()
-            || change.approve_script_hash.is_some();
-        let pause = match change.status.as_deref() {
-            None => None,
-            Some("paused") => Some(true),
-            Some("active") => Some(false),
-            Some(_) => {
-                return Err(ScheduledError::Invalid(
-                    "The status must be active or paused.",
-                ));
-            }
-        };
-        // Only the creator edits or resumes: the routine runs with the creator's permissions.
-        if (edits || pause == Some(false)) && !current.can_edit {
-            return Err(ScheduledError::Forbidden(
-                "Only the person who made this routine can change or resume it.",
-            ));
-        }
-        let creator: Id = current
-            .creator_id
-            .parse()
-            .map_err(|_| ScheduledError::NotFound)?;
-        let name = change
-            .name
-            .as_deref()
-            .map(clean_name)
-            .transpose()?
-            .unwrap_or(current.name);
-        let prompt = change
-            .prompt
-            .as_deref()
-            .map(clean_prompt)
-            .transpose()?
-            .unwrap_or(current.prompt);
-        let zone = change
-            .time_zone
-            .map(|zone| zone.trim().to_owned())
-            .unwrap_or(current.time_zone);
-        let (expression, schedule) = checked_schedule(
-            change.schedule.as_deref().unwrap_or(&current.schedule),
-            &zone,
-            now.as_millis(),
-        )?;
-        let conversation = change
-            .conversation_id
-            .map(|id| id.to_string())
-            .or(current.conversation_id);
-        let active = match pause {
-            Some(paused) => !paused,
-            None => current.status == "active",
-        };
-        let agent: Id = match change.agent_user_id {
-            Some(wanted) => routine_agent(&mut tx, workspace_id, Some(wanted)).await?,
-            None => current
-                .agent_user_id
-                .parse()
-                .map_err(|_| ScheduledError::NotFound)?,
-        };
-        if active {
-            let Some(conversation) = conversation.as_deref().and_then(|id| id.parse().ok()) else {
-                return Err(ScheduledError::Invalid("Pick where the routine posts."));
-            };
-            if let Some(problem) =
-                target_problem(&mut tx, workspace_id, creator, conversation, Some(agent)).await?
-            {
-                return Err(ScheduledError::Invalid(problem.detail()));
-            }
-            agent_target(&mut tx, workspace_id, agent, conversation).await?;
-        }
-        // A new schedule, a resume or an edit of a waiting run starts counting from now.
-        let next = if active {
-            schedule.next_after(now.as_millis())
-        } else {
-            None
-        };
-        let status = if active { "active" } else { "paused" };
-        let (script, approved_hash) = routine_script_change(
-            &mut tx,
-            (workspace_id, creator, routine_id),
-            change.script_id.as_deref(),
-            change.approve_script_hash.as_deref(),
-        )
-        .await?;
-        sqlx::query(
-            "UPDATE agent_routines SET name = $1, prompt = $2, schedule = $3, time_zone = $4, conversation_id = $5, \
-             status = $6, paused_reason = NULL, next_run_at = $7, updated_at = $8, agent_user_id = $10, \
-             script_id = $11, script_approved_hash = $12 WHERE id = $9",
-        )
-        .bind(&name)
-        .bind(&prompt)
-        .bind(&expression)
-        .bind(&zone)
-        .bind(conversation)
-        .bind(status)
-        .bind(next)
-        .bind(now.as_millis())
-        .bind(routine_id.to_string())
-        .bind(agent.to_string())
-        .bind(script)
-        .bind(approved_hash)
-        .execute(&mut *tx)
-        .await?;
-        let routine = load_routine(&mut tx, workspace_id, routine_id, actor).await?;
+        let routine =
+            change_routine(&mut tx, (workspace_id, user_id, routine_id), change, now).await?;
         tx.commit().await?;
         Ok(routine)
+    }
+
+    /// What the driver approves before the agent changes, pauses, resumes or deletes a routine
+    /// (`delete`): each changed field as old → new, and the change as it will be saved. The change
+    /// runs here with the checks of [`Self::update_routine`] and [`Self::delete_routine`] (the same
+    /// as in Settings) and is rolled back, so a change that the driver may not make is refused
+    /// before they are asked.
+    pub async fn preview_routine_change(
+        &self,
+        (workspace_id, user_id, routine_id): (Id, Id, Id),
+        change: RoutineChange,
+        delete: bool,
+        now: TimestampMillis,
+    ) -> Result<Preview<RoutineChange>, ScheduledError> {
+        let mut tx = self.database.immediate_transaction().await?;
+        let actor = member(&mut tx, workspace_id, user_id).await?;
+        let before = load_routine(&mut tx, workspace_id, routine_id, actor).await?;
+        let where_before = match before
+            .conversation_id
+            .as_deref()
+            .and_then(|id| id.parse().ok())
+        {
+            Some(conversation) => place(&mut tx, user_id, conversation).await?,
+            None => "nowhere (its conversation was deleted)".to_owned(),
+        };
+        let runs_as = if before.creator_id == user_id.to_string() {
+            "you".to_owned()
+        } else {
+            before.creator_name.clone()
+        };
+        if delete {
+            remove_routine(&mut tx, (workspace_id, user_id, routine_id)).await?;
+            tx.rollback().await?;
+            return Ok(Preview {
+                action: format!(
+                    "Delete the routine \"{}\" (it runs as {runs_as}; `{}`, {}, posts in {where_before}). \
+                     It stops for good; its run history goes with it.",
+                    before.name, before.schedule, before.time_zone
+                ),
+                input: RoutineChange::default(),
+            });
+        }
+        let after =
+            change_routine(&mut tx, (workspace_id, user_id, routine_id), change, now).await?;
+        let where_after = match after
+            .conversation_id
+            .as_deref()
+            .and_then(|id| id.parse().ok())
+        {
+            Some(conversation) => place(&mut tx, user_id, conversation).await?,
+            None => where_before.clone(),
+        };
+        tx.rollback().await?;
+        let mut lines = Vec::new();
+        let mut input = RoutineChange::default();
+        if after.name != before.name {
+            lines.push(format!("Name: \"{}\" → \"{}\"", before.name, after.name));
+            input.name = Some(after.name.clone());
+        }
+        if after.prompt != before.prompt {
+            // The old text only for orientation; the new one in full, as it will run.
+            let old: String = before.prompt.chars().take(600).collect();
+            let cut = if old.len() < before.prompt.len() {
+                "…"
+            } else {
+                ""
+            };
+            lines.push(format!(
+                "Instruction, before:\n{old}{cut}\nInstruction, after:\n{}",
+                after.prompt
+            ));
+            input.prompt = Some(after.prompt.clone());
+        }
+        if after.schedule != before.schedule || after.time_zone != before.time_zone {
+            lines.push(format!(
+                "Schedule: `{}` ({}) → `{}` ({})",
+                before.schedule, before.time_zone, after.schedule, after.time_zone
+            ));
+            input.schedule = Some(after.schedule.clone());
+            input.time_zone = Some(after.time_zone.clone());
+        }
+        if after.conversation_id != before.conversation_id {
+            lines.push(format!("Posts in: {where_before} → {where_after}"));
+            input.conversation_id = after
+                .conversation_id
+                .as_deref()
+                .and_then(|id| id.parse().ok());
+        }
+        if after.status != before.status {
+            lines.push(format!("Status: {} → {}", before.status, after.status));
+            input.status = Some(after.status.clone());
+        }
+        if lines.is_empty() {
+            return Err(ScheduledError::Invalid(
+                "That is how the routine is already: nothing to change.",
+            ));
+        }
+        let next = after.next_run_at.map_or_else(
+            || "It does not run while paused.".to_owned(),
+            |next| format!("Next run: {}.", local_time(next, &after.time_zone)),
+        );
+        Ok(Preview {
+            action: format!(
+                "Change the routine \"{}\" (it runs as {runs_as}):\n{}\n{next}",
+                before.name,
+                lines.join("\n")
+            ),
+            input,
+        })
     }
 
     /// What the creator approves when a routine's script changed (or got one without approval): the
@@ -877,17 +1016,7 @@ impl Store {
         routine_id: Id,
     ) -> Result<(), ScheduledError> {
         let mut tx = self.database.immediate_transaction().await?;
-        let actor = member(&mut tx, workspace_id, user_id).await?;
-        load_routine(&mut tx, workspace_id, routine_id, actor).await?;
-        // A run that the agent has not taken yet goes with it.
-        sqlx::query("DELETE FROM agent_inputs WHERE routine_id = $1 AND acked_at IS NULL")
-            .bind(routine_id.to_string())
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM agent_routines WHERE id = $1")
-            .bind(routine_id.to_string())
-            .execute(&mut *tx)
-            .await?;
+        remove_routine(&mut tx, (workspace_id, user_id, routine_id)).await?;
         tx.commit().await?;
         Ok(())
     }

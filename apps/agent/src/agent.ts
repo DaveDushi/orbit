@@ -206,6 +206,7 @@ export const TOOL_LABELS: Record<string, (args: Record<string, unknown>) => stri
 	test_routine: (args) => `Starting a test run of “${args.routine}”`,
 	approve_routine_script: (args) => `Asking to approve the script of “${args.routine}”`,
 	set_routine_script: (args) => `Setting the script of “${args.routine}”`,
+	update_routine: (args) => (args.delete ? `Deleting the routine “${args.routine}”` : `Changing the routine “${args.routine}”`),
 	repair_routine_script: () => "Repairing the saved script",
 	codemode: () => "Running a script",
 	run_saved_script: () => "Running the saved script",

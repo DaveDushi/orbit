@@ -32,6 +32,7 @@
  *   schedule routine "Name" at "cron" to "Instruction" [with script "Script"] [in #channel]     list routines
  *   run code: <JavaScript>          save script "Name" with code: <JavaScript>          list scripts
  *   test routine "Name"            approve script of routine "Name"
+ *   change routine "Name" instruction to "Text"     pause routine "Name"     resume routine "Name"     delete routine "Name"
  *   (a routine run of a saved script calls run_saved_script; when the script fails and the run may repair it, a
  *     routine instruction that ends with "fix it with: <JavaScript>" saves that code with repair_routine_script and
  *     runs the script again)
@@ -49,7 +50,7 @@
  * AGENT_MOCK_TOKENS_PER_SECOND slows the streamed text (default 400), to watch a card build.
  *
  * A "yes" to an approval question (an answer, or the driver's next message in a DM) calls the last integration,
- * drive_image_to_shopify, drive_trash, drive_share, move_to_trash, schedule_routine or send_later tool again with the same arguments.
+ * drive_image_to_shopify, drive_trash, drive_share, move_to_trash, schedule_routine, update_routine or send_later tool again with the same arguments.
  * When a memory tool result asks for a summary, the mock writes one from the halves it was shown. A compaction gets a
  * short placeholder summary.
  */
@@ -363,6 +364,9 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 	if (/list (?:my )?routines/i.test(instruction)) return { name: "list_routines", args: {} };
 	if (/list (?:my )?(?:saved )?scripts/i.test(instruction)) return { name: "list_scripts", args: {} };
 	if ((match = /test (?:my )?routine "([^"]+)"/i.exec(instruction))) return { name: "test_routine", args: { routine: match[1] } };
+	if ((match = /change (?:my )?routine "([^"]+)" instruction to "([^"]+)"/i.exec(instruction))) return { name: "update_routine", args: { routine: match[1], instruction: match[2] } };
+	if ((match = /(pause|resume|delete) (?:my )?routine "([^"]+)"/i.exec(instruction)))
+		return { name: "update_routine", args: { routine: match[2], ...(match[1].toLowerCase() === "delete" ? { delete: true } : { status: match[1].toLowerCase() === "pause" ? "paused" : "active" }) } };
 	if ((match = /approve (?:the )?script of (?:my )?routine "([^"]+)"/i.exec(instruction))) return { name: "approve_routine_script", args: { routine: match[1] } };
 	if ((match = /remind me at (\S+) "([^"]+)"/i.exec(instruction))) return { name: "remind_me", args: { at: match[1], text: match[2] } };
 	if ((match = /send later at (\S+) "([^"]+)"(?: in (#[\w-]+(?:\([0-9a-f-]+\))?))?/i.exec(instruction)))
@@ -401,7 +405,7 @@ export function plan(message: string, messages: readonly Message[]): { name: str
 		const asked = messages.findLast((message) => message.role === "toolResult" && textOf(message.content).startsWith("I asked the driver to approve this."));
 		const job = /call run_job with job_id ([\w-]+)/.exec(textOf(asked?.content))?.[1];
 		if (job) return { name: "run_job", args: { job_id: job } };
-		const again = lastCall(messages, ["use_integration", "drive_image_to_shopify", "drive_trash", "drive_share", "move_to_trash", "schedule_routine", "send_later", "approve_routine_script"]);
+		const again = lastCall(messages, ["use_integration", "drive_image_to_shopify", "drive_trash", "drive_share", "move_to_trash", "schedule_routine", "update_routine", "send_later", "approve_routine_script"]);
 		if (again) return again;
 	}
 	return undefined;

@@ -43,6 +43,7 @@ test("search finds the right Orbit tool and the right tool of a service among ma
 	const top = (query: string) => rank(query, entries)[0];
 	assert.equal(top("drive trash"), "drive_trash");
 	assert.equal(top("schedule a routine"), "schedule_routine");
+	for (const query of ["edit routine instruction", "pause a routine", "delete routine"]) assert.equal(top(query), "update_routine", query);
 	assert.equal(top("remind me"), "remind_me");
 	assert.equal(top("campaign daily budget change"), "mcp:tt_ads__update_campaign_budget");
 	assert.equal(top("tiktok ads spend report"), "mcp:tt_ads__get_report");
