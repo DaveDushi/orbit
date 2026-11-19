@@ -25,3 +25,10 @@ test('a description mention is a mention that opens the task', () => {
   expect(notificationTarget(notification)).toBe('/tasks/task-1')
   expect(notificationCopy(notification).body).toBe('Someone mentioned you in a task description.')
 })
+
+test('a chat report opens the reports page and names the reporter', () => {
+  const report = { ...base, kind: 'chat_reported', chat_report_id: 'r1' } satisfies NotificationRecord
+  expect(notificationTarget(report)).toBe('/settings/reports')
+  expect(notificationCopy(report, undefined, 'Ada')).toEqual({ title: 'Ada reported a chat message', body: 'Open the reports to see the message.' })
+  expect(isMention(report)).toBe(false)
+})

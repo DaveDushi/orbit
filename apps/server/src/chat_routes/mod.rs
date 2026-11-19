@@ -10,6 +10,7 @@ mod images;
 pub(crate) mod interactions;
 pub(crate) mod links;
 pub(crate) mod messages;
+pub(crate) mod safety;
 pub(crate) mod state;
 pub(crate) mod stickers;
 
@@ -30,6 +31,7 @@ use crate::auth_routes::CookieMode;
 use crate::file_content::FileReader;
 use crate::link_preview::LinkPreviewer;
 use crate::live::{LiveHub, NewEvent, Recipients};
+use crate::mail::Mailer;
 use crate::repositories::chat::{
     ChatError, ChatEvent, ChatRepository, Emitted, Written, live_event,
 };
@@ -52,6 +54,8 @@ pub struct ChatState {
     pub(crate) clicks: Arc<interactions::ClickSender>,
     /// Where files larger than the chat limit go (the conversation's folder in Drive); `None`: they are refused.
     pub(crate) drive: Option<crate::drive::DriveService>,
+    /// Emails the installation admins about a reported message; `None` sends nothing.
+    pub(crate) mailer: Option<Mailer>,
 }
 
 impl ChatState {
@@ -72,6 +76,7 @@ impl ChatState {
             app_key: None,
             clicks: Arc::new(interactions::ClickSender::new(false)),
             drive: None,
+            mailer: None,
         }
     }
 
@@ -95,6 +100,12 @@ impl ChatState {
     pub fn with_interactivity(mut self, app_key: Option<[u8; 32]>, development: bool) -> Self {
         self.app_key = app_key;
         self.clicks = Arc::new(interactions::ClickSender::new(development));
+        self
+    }
+
+    #[must_use]
+    pub fn with_mailer(mut self, mailer: Mailer) -> Self {
+        self.mailer = Some(mailer);
         self
     }
 
@@ -290,6 +301,23 @@ fn json_router(state: ChatState) -> Router {
         .route(
             "/api/v1/hooks/chat/{webhook_id}/messages",
             get(events::read_hook_messages),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/chat/messages/{message_id}/report",
+            post(safety::report_chat_message),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/chat/reports",
+            get(safety::list_chat_reports),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/chat/reports/{report_id}/message",
+            delete(safety::delete_reported_chat_message),
+        )
+        .route("/api/v1/chat/blocks", get(safety::list_chat_blocks))
+        .route(
+            "/api/v1/chat/blocks/{user_id}",
+            put(safety::block_chat_user).delete(safety::unblock_chat_user),
         )
         .route(
             "/api/v1/workspaces/{workspace_id}/chat/messages/{message_id}/actions",

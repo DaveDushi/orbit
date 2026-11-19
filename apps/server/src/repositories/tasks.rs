@@ -283,7 +283,8 @@ pub struct NotificationRecord {
     /// `task_assigned`, `comment_mentioned` (task comment), `description_mentioned` (task
     /// description), `task_commented` (a new note on a followed task), `task_status_changed` (a
     /// followed task's new status), `page_comment_mentioned`, `page_mentioned` (an @mention in a
-    /// page body) or `chat_mentioned` (a chat message).
+    /// page body), `chat_mentioned` (a chat message) or `chat_reported` (a member reported a chat
+    /// message).
     pub kind: String,
     /// Set for task notifications.
     #[schema(value_type = Option<String>)]
@@ -306,6 +307,9 @@ pub struct NotificationRecord {
     pub chat_conversation_id: Option<Id>,
     #[schema(value_type = Option<String>)]
     pub chat_message_id: Option<Id>,
+    /// The report of a `chat_reported` notification (a member reported a chat message).
+    #[schema(value_type = Option<String>)]
+    pub chat_report_id: Option<Id>,
     #[schema(value_type = Option<String>, format = DateTime)]
     pub read_at: Option<TimestampMillis>,
     #[schema(value_type = String, format = DateTime)]
@@ -3615,7 +3619,7 @@ impl TaskRepository {
         let after = cursor_i64_pair(cursor, &fingerprint)?;
         let mut query = SqlBuilder::new(
             "SELECT id, workspace_id, recipient_user_id, actor_user_id, actor_github_login, kind, task_id, comment_id, page_id, \
-             page_thread_id, page_comment_id, page_block_id, chat_conversation_id, chat_message_id, read_at, created_at FROM notifications WHERE workspace_id = ",
+             page_thread_id, page_comment_id, page_block_id, chat_conversation_id, chat_message_id, chat_report_id, read_at, created_at FROM notifications WHERE workspace_id = ",
         );
         query
             .push_bind(workspace_id.to_string())
@@ -3680,7 +3684,7 @@ impl TaskRepository {
         .await?;
         let row = sqlx::query(
             "SELECT id, workspace_id, recipient_user_id, actor_user_id, actor_github_login, kind, task_id, comment_id, page_id, \
-             page_thread_id, page_comment_id, page_block_id, chat_conversation_id, chat_message_id, read_at, created_at FROM notifications WHERE id = $1 AND workspace_id = $2 AND recipient_user_id = $3",
+             page_thread_id, page_comment_id, page_block_id, chat_conversation_id, chat_message_id, chat_report_id, read_at, created_at FROM notifications WHERE id = $1 AND workspace_id = $2 AND recipient_user_id = $3",
         )
         .bind(notification_id.to_string())
         .bind(workspace_id.to_string())
@@ -5898,6 +5902,7 @@ fn notification_from_row(row: sqlx::any::AnyRow) -> Result<NotificationRecord, T
         page_block_id: row.get("page_block_id"),
         chat_conversation_id: optional_id(row.get("chat_conversation_id"))?,
         chat_message_id: optional_id(row.get("chat_message_id"))?,
+        chat_report_id: optional_id(row.get("chat_report_id"))?,
         read_at: row
             .get::<Option<i64>, _>("read_at")
             .map(TimestampMillis::from_millis),

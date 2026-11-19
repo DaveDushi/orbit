@@ -360,6 +360,7 @@ impl App {
         )
         .with_drive(drive.clone())
         .with_public_origin(config.http.hooks_origin())
+        .with_mailer(mailer.clone())
         .with_interactivity(
             app_key,
             config.environment == orbit_platform::EnvironmentMode::Development,

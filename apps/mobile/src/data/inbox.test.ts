@@ -33,3 +33,10 @@ test('mentions are every mention kind, not assignments', () => {
   expect(isMention(notification({ kind: 'page_mentioned' }))).toBe(true)
   expect(isMention(notification({ kind: 'task_assigned' }))).toBe(false)
 })
+
+test('a chat report opens the reports and names the reporter', () => {
+  const reported = notification({ kind: 'chat_reported', chat_report_id: 'r1' })
+  expect(notificationTarget(reported)).toBe('/settings/reports')
+  expect(notificationCopy(reported, undefined, 'Ada')).toEqual({ title: 'Ada reported a chat message', body: 'Open the reports to see the message.' })
+  expect(isMention(reported)).toBe(false)
+})

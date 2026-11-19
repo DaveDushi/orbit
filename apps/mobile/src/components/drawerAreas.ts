@@ -35,7 +35,7 @@ export function drawerAreaOf(pathname: string, areas: Record<SettingsArea, reado
 const SECTIONS: Record<SettingsArea, { label: string; hrefs?: readonly string[] }[]> = {
   workspace: [
     { label: 'Workspace' },
-    { label: 'Chat', hrefs: ['/settings/emoji', '/settings/stickers'] },
+    { label: 'Chat', hrefs: ['/settings/emoji', '/settings/stickers', '/settings/reports'] },
     { label: 'Integrations', hrefs: ['/settings/file-storage', '/settings/github', '/settings/agentic', '/settings/api-tokens', '/settings/apps'] },
     { label: 'Advanced', hrefs: ['/settings/export', '/settings/danger-zone'] },
   ],

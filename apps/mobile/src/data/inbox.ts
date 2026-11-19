@@ -1,11 +1,12 @@
 import type { NotificationRecord } from './orbit'
 
-/** Where a notification leads in the app: the chat message in its conversation, the page or the task, as on the web. */
+/** Where a notification leads in the app: the chat message in its conversation, the page, the task or the chat reports, as on the web. */
 export function notificationTarget(notification: NotificationRecord): string | null {
   if (notification.kind === 'chat_mentioned' && notification.chat_conversation_id) {
     const message = notification.chat_message_id ? `?message=${encodeURIComponent(notification.chat_message_id)}` : ''
     return `/chat/${notification.chat_conversation_id}${message}`
   }
+  if (notification.kind === 'chat_reported') return '/settings/reports'
   if (notification.page_id) return `/docs/${notification.page_id}`
   return notification.task_id ? `/tasks/${notification.task_id}` : null
 }
@@ -30,6 +31,8 @@ export function notificationCopy(notification: NotificationRecord, pageTitle: st
   switch (notification.kind) {
     case 'chat_mentioned':
       return { title: `${actor} mentioned you in chat`, body: 'Open the conversation to see the message.' }
+    case 'chat_reported':
+      return { title: `${actor} reported a chat message`, body: 'Open the reports to see the message.' }
     case 'page_mentioned':
       return { title: `${actor} mentioned you in ${page}`, body: 'Open the page to see where.' }
     case 'page_comment_mentioned':

@@ -6,7 +6,7 @@ import { Linking, Pressable, View } from 'react-native'
 
 import * as chat from '../data/chat-api'
 import { localTimeLabel, memberProfile, noteToSave, phoneHref, profileKey, roleLabel, saveMemberNote } from '../data/profiles'
-import { useChatWrite } from '../hooks/chat'
+import { useChatWrite, useIsBlocked, useSetBlocked } from '../hooks/chat'
 import { useOrbit } from '../orbit-context'
 import { useMembers } from '../queries'
 import { useTheme } from '../theme'
@@ -45,6 +45,8 @@ function ProfileCard({ userId, name, onClose }: { userId: string; name: string; 
   const own = userId === user.id
   const profile = useQuery({ queryKey: profileKey(workspaceId, userId), queryFn: () => memberProfile(client, workspaceId, userId), enabled: Boolean(member) })
   const run = useChatWrite()
+  const isBlocked = useIsBlocked()
+  const setBlocked = useSetBlocked()
   const [copied, setCopied] = useState(false)
 
   if (members.isPending) return <View className="h-24" />
@@ -104,6 +106,12 @@ function ProfileCard({ userId, name, onClose }: { userId: string; name: string; 
         />
       ) : (
         <Button label="Message" onPress={() => void message()} />
+      )}
+      {/* blocking hides their chat messages from you, and they cannot write you a DM */}
+      {own ? null : isBlocked(userId) ? (
+        <Button label="Unblock" variant="outline" onPress={() => void setBlocked({ id: userId, name: member.display_name || name }, false)} />
+      ) : (
+        <Button label="Block" variant="outline" onPress={() => void setBlocked({ id: userId, name: member.display_name || name }, true)} />
       )}
       {!own && profile.data ? <Note userId={userId} name={member.display_name} saved={profile.data.note ?? ''} /> : null}
     </View>

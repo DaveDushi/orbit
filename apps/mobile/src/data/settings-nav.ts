@@ -39,6 +39,7 @@ export const WORKSPACE_NAV: readonly SettingsNavItem[] = [
   { href: '/settings/billing', label: 'Billing', icon: 'card', cloud: true },
   { href: '/settings/emoji', label: 'Emoji', icon: 'emojiHappy', permission: 'chat.manage' },
   { href: '/settings/stickers', label: 'Stickers', icon: 'sticker', permission: 'chat.manage' },
+  { href: '/settings/reports', label: 'Reports', icon: 'flag', permission: 'chat.manage' },
   { href: '/settings/file-storage', label: 'File storage', icon: 'cloudConnection' },
   { href: '/settings/github', label: 'GitHub', icon: 'link2' },
   { href: '/settings/agentic', label: 'Agentic', icon: 'magicStar' },
@@ -68,6 +69,7 @@ export const ACCOUNT_NAV: readonly SettingsNavItem[] = [
   { href: '/settings/profile', label: 'Profile', icon: 'user' },
   { href: '/settings/security', label: 'Security', icon: 'lock' },
   { href: '/settings/sessions', label: 'Sessions', icon: 'shield' },
+  { href: '/settings/blocked-people', label: 'Blocked people', icon: 'shieldCross' },
   { href: '/settings/appearance', label: 'Appearance', icon: 'brush' },
   { href: '/settings/notifications', label: 'Notifications', icon: 'bell' },
 ]

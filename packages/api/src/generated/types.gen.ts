@@ -479,6 +479,13 @@ export type BlockText = {
     type: TextKind;
 };
 
+export type BlockedUserRecord = {
+    avatar_url?: string | null;
+    created_at: string;
+    display_name: string;
+    user_id: string;
+};
+
 /**
  * The integration that posted a message. `author_id` of such a message is the member who set the
  * integration up; show this name and icon instead.
@@ -853,6 +860,41 @@ export type ChatPlaceBody = {
      * The category to put the channel in; null for the channels without a category.
      */
     category_id?: string | null;
+};
+
+export type ChatReportBody = {
+    /**
+     * At most 500 characters.
+     */
+    note?: string;
+    reason: ChatReportReason;
+};
+
+export type ChatReportReason = 'spam' | 'harassment' | 'inappropriate' | 'other';
+
+export type ChatReportRecord = {
+    author_id: string;
+    author_name: string;
+    /**
+     * The message body when it was reported.
+     */
+    body: string;
+    conversation_id: string;
+    created_at: string;
+    id: string;
+    /**
+     * The message was deleted after the report.
+     */
+    message_deleted: boolean;
+    /**
+     * Null once the message is gone for good.
+     */
+    message_id: string | null;
+    note: string;
+    reason: ChatReportReason;
+    reporter_id: string;
+    reporter_name: string;
+    workspace_id: string;
 };
 
 /**
@@ -3001,6 +3043,10 @@ export type NotificationRecord = {
     chat_conversation_id?: string | null;
     chat_message_id?: string | null;
     /**
+     * The report of a `chat_reported` notification (a member reported a chat message).
+     */
+    chat_report_id?: string | null;
+    /**
      * The task comment of a `comment_mentioned` or `task_commented` notification.
      */
     comment_id?: string | null;
@@ -3010,7 +3056,8 @@ export type NotificationRecord = {
      * `task_assigned`, `comment_mentioned` (task comment), `description_mentioned` (task
      * description), `task_commented` (a new note on a followed task), `task_status_changed` (a
      * followed task's new status), `page_comment_mentioned`, `page_mentioned` (an @mention in a
-     * page body) or `chat_mentioned` (a chat message).
+     * page body), `chat_mentioned` (a chat message) or `chat_reported` (a member reported a chat
+     * message).
      */
     kind: string;
     /**
@@ -3850,6 +3897,10 @@ export type PageNotificationRecord = {
         chat_conversation_id?: string | null;
         chat_message_id?: string | null;
         /**
+         * The report of a `chat_reported` notification (a member reported a chat message).
+         */
+        chat_report_id?: string | null;
+        /**
          * The task comment of a `comment_mentioned` or `task_commented` notification.
          */
         comment_id?: string | null;
@@ -3859,7 +3910,8 @@ export type PageNotificationRecord = {
          * `task_assigned`, `comment_mentioned` (task comment), `description_mentioned` (task
          * description), `task_commented` (a new note on a followed task), `task_status_changed` (a
          * followed task's new status), `page_comment_mentioned`, `page_mentioned` (an @mention in a
-         * page body) or `chat_mentioned` (a chat message).
+         * page body), `chat_mentioned` (a chat message) or `chat_reported` (a member reported a chat
+         * message).
          */
         kind: string;
         /**
@@ -11837,6 +11889,182 @@ export type StripeWebhookResponses = {
     200: unknown;
 };
 
+export type ListChatBlocksData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/chat/blocks';
+};
+
+export type ListChatBlocksErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * chat_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type ListChatBlocksError = ListChatBlocksErrors[keyof ListChatBlocksErrors];
+
+export type ListChatBlocksResponses = {
+    200: Array<BlockedUserRecord>;
+};
+
+export type ListChatBlocksResponse = ListChatBlocksResponses[keyof ListChatBlocksResponses];
+
+export type UnblockChatUserData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        user_id: string;
+    };
+    query?: never;
+    url: '/api/v1/chat/blocks/{user_id}';
+};
+
+export type UnblockChatUserErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden, chat_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * chat_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * validation_failed
+     */
+    422: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type UnblockChatUserError = UnblockChatUserErrors[keyof UnblockChatUserErrors];
+
+export type UnblockChatUserResponses = {
+    204: void;
+};
+
+export type UnblockChatUserResponse = UnblockChatUserResponses[keyof UnblockChatUserResponses];
+
+export type BlockChatUserData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        user_id: string;
+    };
+    query?: never;
+    url: '/api/v1/chat/blocks/{user_id}';
+};
+
+export type BlockChatUserErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden, chat_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * chat_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * validation_failed
+     */
+    422: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type BlockChatUserError = BlockChatUserErrors[keyof BlockChatUserErrors];
+
+export type BlockChatUserResponses = {
+    204: void;
+};
+
+export type BlockChatUserResponse = BlockChatUserResponses[keyof BlockChatUserResponses];
+
 export type ReadHookMessagesData = {
     body?: never;
     headers?: {
@@ -17280,6 +17508,69 @@ export type AddChatReactionResponses = {
 
 export type AddChatReactionResponse = AddChatReactionResponses[keyof AddChatReactionResponses];
 
+export type ReportChatMessageData = {
+    body: ChatReportBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        message_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/chat/messages/{message_id}/report';
+};
+
+export type ReportChatMessageErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden, chat_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * chat_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * validation_failed
+     */
+    422: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type ReportChatMessageError = ReportChatMessageErrors[keyof ReportChatMessageErrors];
+
+export type ReportChatMessageResponses = {
+    200: ChatReportRecord;
+};
+
+export type ReportChatMessageResponse = ReportChatMessageResponses[keyof ReportChatMessageResponses];
+
 export type MarkChatMessageUnreadData = {
     body?: never;
     headers?: {
@@ -17528,6 +17819,123 @@ export type RestoreChatReadResponses = {
 };
 
 export type RestoreChatReadResponse = RestoreChatReadResponses[keyof RestoreChatReadResponses];
+
+export type ListChatReportsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/chat/reports';
+};
+
+export type ListChatReportsErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * chat_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type ListChatReportsError = ListChatReportsErrors[keyof ListChatReportsErrors];
+
+export type ListChatReportsResponses = {
+    200: Array<ChatReportRecord>;
+};
+
+export type ListChatReportsResponse = ListChatReportsResponses[keyof ListChatReportsResponses];
+
+export type DeleteReportedChatMessageData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        report_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/chat/reports/{report_id}/message';
+};
+
+export type DeleteReportedChatMessageErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden, chat_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * chat_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * validation_failed
+     */
+    422: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type DeleteReportedChatMessageError = DeleteReportedChatMessageErrors[keyof DeleteReportedChatMessageErrors];
+
+export type DeleteReportedChatMessageResponses = {
+    200: ChatEvents;
+};
+
+export type DeleteReportedChatMessageResponse = DeleteReportedChatMessageResponses[keyof DeleteReportedChatMessageResponses];
 
 export type ListChatSearchData = {
     body?: never;

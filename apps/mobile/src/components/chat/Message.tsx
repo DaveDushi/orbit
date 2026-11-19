@@ -35,6 +35,8 @@ export interface MessageHandlers {
   onAddReaction: (message: MessageRecord) => void
   /** Absent in a thread: its replies have no thread of their own. */
   onOpenThread?: (message: MessageRecord) => void
+  /** You blocked this person: their messages start collapsed. */
+  isBlocked: (userId: string) => boolean
 }
 
 /**
@@ -72,6 +74,7 @@ export function MessageItem({ message, groupStart, highlighted = false, handlers
   const openProfile = useOpenProfile()
   // An integration's message shows the integration, not the member who set it up (its `author_id`).
   const author = authorName(message, handlers.nameOf)
+  const [revealed, setRevealed] = useState(false)
 
   if (message.kind !== 'message') {
     const what = message.kind === 'join' ? 'joined' : message.kind === 'leave' ? 'left' : 'pinned a message'
@@ -79,6 +82,26 @@ export function MessageItem({ message, groupStart, highlighted = false, handlers
       <Text className="text-[12px] leading-[16px] px-3 py-1 text-muted-foreground">
         {author} {what} · {timeOfDay(message.created_at)}
       </Text>
+    )
+  }
+
+  if (!revealed && !message.bot && handlers.isBlocked(message.author_id)) {
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Message from a person you blocked"
+        accessibilityHint="Shows the message"
+        onPress={() => setRevealed(true)}
+        onLongPress={() => handlers.onLongPress(message)}
+        delayLongPress={350}
+        className={`flex-row items-center gap-2 px-3 py-1 active:bg-muted ${groupStart ? 'mt-2' : 'mt-0'}`}
+      >
+        <View className="w-7.5 items-center">
+          <Icon name="eyeSlash" size={16} color={colors.mutedForeground} />
+        </View>
+        <Text className="flex-1 text-[13px] leading-[20px] text-muted-foreground">Message from a person you blocked</Text>
+        <Text className="font-noto-medium text-[12px] leading-[16px] text-muted-foreground">Show</Text>
+      </Pressable>
     )
   }
 

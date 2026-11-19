@@ -9,7 +9,7 @@ import * as chat from '../../data/chat-api'
 import { dayLabel } from '../../data/format'
 import { markdownToText } from '../../data/markdown'
 import type { MessageRecord } from '../../data/orbit'
-import { confirmAction, showError, useChatWrite, useIsChatAdmin } from '../../hooks/chat'
+import { confirmAction, showError, useChatWrite, useIsBlocked, useIsChatAdmin, useSetBlocked } from '../../hooks/chat'
 
 import { messageLink, taskTitleFromMessage } from '../../data/forward'
 import { useIsGuest, useOrbit } from '../../orbit-context'
@@ -20,6 +20,7 @@ import type { ComposerState, PendingMessage } from './Composer'
 import { Emoji, EmojiPicker } from './EmojiPicker'
 import { ForwardSheet } from './ForwardSheet'
 import { type MessageHandlers, MessageItem } from './Message'
+import { ReportSheet } from './Safety'
 import { ActionSheet, type SheetItem } from './Sheet'
 
 export type ListRow = MessageRow | { type: 'pending'; key: string; pending: PendingMessage }
@@ -50,6 +51,9 @@ const ACTION_LOOK: Record<MessageAction, { label: string; icon: IconName; destru
   pin: { label: 'Pin', icon: 'pin' },
   unpin: { label: 'Unpin', icon: 'pinOff' },
   unread: { label: 'Mark as unread', icon: 'unread' },
+  report: { label: 'Report', icon: 'flag' },
+  block: { label: 'Block', icon: 'shieldCross', destructive: true },
+  unblock: { label: 'Unblock', icon: 'unlock' },
   edit: { label: 'Edit', icon: 'edit' },
   delete: { label: 'Delete', icon: 'trash', destructive: true },
 }
@@ -74,6 +78,9 @@ export function useMessageSheet({ inThread, composer, loaded, onMarkedUnread }: 
   const [picking, setPicking] = useState<MessageRecord | null>(null)
   const [forwarding, setForwarding] = useState<MessageRecord | null>(null)
   const [newTask, setNewTask] = useState<NewTaskDefaults | null>(null)
+  const [reporting, setReporting] = useState<MessageRecord | null>(null)
+  const isBlocked = useIsBlocked()
+  const setBlocked = useSetBlocked()
 
   const put = (message: MessageRecord) => {
     applyChatActions(queryClient, workspaceId, [{ kind: 'upsert-message', conversationId: message.conversation_id, message }])
@@ -134,6 +141,11 @@ export function useMessageSheet({ inThread, composer, loaded, onMarkedUnread }: 
       case 'unread':
         onMarkedUnread?.()
         return void run('Could not mark as unread', (client, workspaceId) => chat.markUnread(client, workspaceId, message.id))
+      case 'report':
+        return setReporting(message)
+      case 'block':
+      case 'unblock':
+        return void setBlocked({ id: message.author_id, name: words.nameOf(message.author_id) }, action === 'block')
       case 'edit':
         return composer?.edit(message)
       case 'delete':
@@ -142,7 +154,7 @@ export function useMessageSheet({ inThread, composer, loaded, onMarkedUnread }: 
   }
 
   const items: SheetItem[] = selected
-    ? messageActions(selected, user.id, moderator, { inThread, canWrite: composer !== null, channelCreator: channelCreator(selected), canCreateTask: !guest }).map((action) => ({ key: action, ...ACTION_LOOK[action], onPress: () => runAction(action, selected) }))
+    ? messageActions(selected, user.id, moderator, { inThread, canWrite: composer !== null, channelCreator: channelCreator(selected), canCreateTask: !guest, authorBlocked: isBlocked(selected.author_id) }).map((action) => ({ key: action, ...ACTION_LOOK[action], onPress: () => runAction(action, selected) }))
     : []
   const quick = quickReactions(loaded, user.id, 5)
 
@@ -171,6 +183,7 @@ export function useMessageSheet({ inThread, composer, loaded, onMarkedUnread }: 
       <EmojiPicker visible={picking !== null} onPick={(emoji) => picking && react(picking, emoji)} onClose={() => setPicking(null)} />
       {forwarding ? <ForwardSheet message={forwarding} preview={words.text(forwarding.body)} onClose={() => setForwarding(null)} /> : null}
       {newTask ? <NewTaskDialog defaults={newTask} onClose={() => setNewTask(null)} /> : null}
+      <ReportSheet message={reporting} onClose={() => setReporting(null)} />
     </>
   )
 
@@ -182,6 +195,7 @@ export function useMessageSheet({ inThread, composer, loaded, onMarkedUnread }: 
     onReact: react,
     onAddReaction: setPicking,
     onOpenThread: inThread ? undefined : (message) => router.push(`/chat/thread/${message.id}`),
+    isBlocked,
   }
 
   return { sheet, handlers }
