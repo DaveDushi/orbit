@@ -7,8 +7,11 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, commit d7f0473d602b3dff9368b721433072dc3a2c31fe on `main`
-  (helpdesk phase 1: support email as tickets in Tasks; schema 20261119075838, 124 rows; November 19, 2026).
+- Source: DaveDushi/orbit, commit cf290c9973562ea4f7e6f880e9ba5622fb4e1d32 on `main`
+  (agent sandbox phases 1-9, installed OFF; schema 20261119094300, 126 rows; November 19, 2026).
+- Agent sandbox: OFF for every agent (no `ORBIT_AGENT_SANDBOX*` key in `/etc/orbit/orbit.env`, no
+  `AGENT_SANDBOX_BROKER_SOCKET` for the sidecar, host guards not applied); every sandbox route answers 404 `sandbox_off`.
+  Turning it on (the Arthur pilot) is a separate step with its own yes.
 - Support email (`docs/support.md`): inbound email is `POST /api/v1/hooks/support/{mailbox_id}/{secret}` on
   `ORBIT_PUBLIC_HOOKS_URL`. No mailbox is connected, and the hooks gateway does not let `/api/v1/hooks/support/` through
   yet: both are a separate Ops step (with its own yes), with the DNS/MX or Cloudflare Email Worker change. Mailbox SMTP
@@ -22,10 +25,10 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   MCP routes through the hooks gateway (`/etc/orbit-hooks-gateway/nginx.conf`, proposal `/tmp/mcpo/gateway/proposal.diff`).
   Binaries before d8d3eb4 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-d8d3eb4`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:d7f0473`); fork commits have no published upstream image.
-- Image ID: sha256:41b53b92825c50cf5274c71507ccad0fd4ce7661d57a569b5a15459aae4e1960
-- Team agent sidecar code (`/opt/orbit-agent`): commit d7f0473 (what's new 2026-11-19: external agents, support email;
-  aboutOrbit: support email in Tasks).
+  (`orbit:cf290c9`); fork commits have no published upstream image.
+- Image ID: sha256:b553dab223fa0efe0401b11377c9498515f86a649f00022f7a149a1d266c2252
+- Team agent sidecar code (`/opt/orbit-agent`): commit cf290c9 (what's new 2026-11-19: external agents, support email,
+  agent sandbox built and off; aboutOrbit: support email in Tasks).
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): on since November 15, 2026, 12:07 UTC (set by Ops, outside a
   deploy): `ORBIT_APNS_KEY_FILE`, `ORBIT_APNS_KEY_ID`, `ORBIT_APNS_TEAM_ID`, `ORBIT_APNS_TOPIC` and `ORBIT_APNS_SANDBOX`
   are in `/etc/orbit/orbit.env`; the journal shows `iPhone push (APNs) is on` (topic `com.easytomanage.orbit`, sandbox
@@ -272,6 +275,78 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 19, 2026 upgrade: agent sandbox phases 1-9, installed OFF (2 migrations)
+
+`main` from `164cb65e` to `cf290c99`: `--no-ff` merge of `agent-sandbox-design` at `31145f79` (18 commits: design,
+gVisor spike, host-guard scripts, broker v2 with one sandbox per chat thread, Orbit data and routes for sandbox calls and
+egress, egress proxy with per-call passwords, the `sandbox_shell` tool and egress card, the Internet access page, budgets,
+notices, kill path and lost-call job, phase 9 security fixes). New routes `GET/PUT …/agents/{id}/sandbox`,
+`POST/DELETE …/agents/{id}/egress-rules`, `GET …/agents/egress-requests`, `POST …/agents/egress-requests/{id}` and the
+internal `…/agent/sandbox/calls`, `…/calls/{id}/end`, `…/egress/check`, `…/egress/done`, `…/runs/{id}/usage`,
+`…/sandbox/stops/{id}/done`. Migrations (additive): `20261119094200_agent_sandbox`, `20261119094300_agent_sandbox_budgets`
+(9 new tables, 6 indexes, column `agent_sessions.sandbox_call_id`). What's new: "Agent sandbox (built, off)" line in the
+2026-11-19 entry.
+
+**OFF for every agent.** No env change, no host change: `/etc/orbit/orbit.env` has no `ORBIT_AGENT_SANDBOX*` key and the
+sidecar has no `AGENT_SANDBOX_BROKER_SOCKET` (`switch.sh` refuses to run otherwise). The phase 2 host-guard scripts in the
+repo were NOT applied. Every sandbox route answers 404 `sandbox_off`. 0 sandbox rows; no agent has `sandbox_shell` ticked.
+The Arthur pilot needs its own yes.
+
+Checks before the switch: server suites of the branch pass (`tests.log`, `tests2.log` in `/root/ops/agent-sandbox/`);
+`offcheck.sh` on a migrated copy of the production DB in production mode under `unshare -n`: signed-in owner GET/PUT
+sandbox, POST egress rule, GET egress-requests and the sidecar's `sandbox/calls` all 404 `sandbox_off`, inputs poll
+`agent_sandbox=false`, 0 rows written. `orbit:cf290c9` (image
+`sha256:b553dab223fa0efe0401b11377c9498515f86a649f00022f7a149a1d266c2252`); `deploy/smoke.sh` passed. Migration dry run
+(hot copy, and in the switch on a copy of the stopped database): applied 2 then 0, schema 20261119094300 (126 rows),
+counts, names and old checksums unchanged, quick_check ok, 0 FK rows; the old binary refuses the new schema;
+`rollback-schema.sql` gives the exact old schema and counts, the old binary then starts (0 applied), and the new binary
+migrates again.
+
+Deploy id `20261119T110233Z-3521569`. Switch: stopped both services at 11:02:37 UTC; snapshot
+`01a1f379-075e-75ba-9027-4df4436a75e5` (`/var/backups/orbit/downloads/01a1f379-…`) with `/usr/local/bin/orbit-d7f0473`,
+verified, `backup-rehearsal.sh` passed; plain copy `/var/backups/orbit/pre-migration/orbit-before-cf290c9.sqlite`; sidecar
+data `/var/backups/orbit-agent/orbit-agent-before-cf290c9.tgz`; sidecar code copied (old `/opt/orbit-agent.before-cf290c9`).
+`orbit` and `orbit-agent` ready 11:02:57 (20 s down). `vm-health.conf` (old copy `.before-cf290c9`): `PROD_TAG=cf290c9`,
+`ROLLBACK_TAG=d7f0473`, `ROLLBACK_BACKUP=01a1f379-075e-75ba-9027-4df4436a75e5`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) local and on
+`https://orbit-app.easytomanage.com/health/ready` (200); `/orbit-build.json` revision `cf290c99…`; schema 20261119094300
+(126 rows), quick_check ok; sidecar `/health` ok, `/opt/orbit-agent/src` = `main`; `/`, `/login`, `/tasks`, `/chat`,
+`/settings/agentic/agents`, `…/agents/<id>/internet` 200. New routes with no session (`routes.sh`; before the switch 404
+`route_not_found`): 404 `sandbox_off`, 422 (body checked first) or 401, never 200; `sandbox/calls` with the sidecar
+secret 422 (refused before any write). Journal since the switch: only the known start lines (orbit "allowed origin
+without a port" ×2, agent node SQLite ExperimentalWarning). `vm-health`: nginx WARN only from the switch (45 "Connection
+refused" lines, 0 other, 0 5xx); OOM WARN = 9 `gvisor_sentry` kills from the 2026-11-18 sandbox spike, none since;
+docker WARN = other sessions' containers; git-owner WARN = root-owned `.git` files, given back to exedev. Signed-in check
+as David Dusi (1 temporary session, logged out and revoked; socat TLS hop; every API write aborted, 0 writes;
+`ui-check.ts`), light and dark, 1440 px and 390 px phone: Settings → Agentic → Agents shows Arthur with no sandbox badge
+and no Internet access button; Arthur's Edit dialog lists `sandbox_shell` unticked, and ticking it (local only, not
+saved) shows no sandbox fields; `/settings/agentic/agents/<Arthur>/internet` says "Agent sandboxes are off on this
+server."; GET sandbox 404 `sandbox_off`; no console errors. After: 0 sandbox settings, rules and calls; 0 agents with
+`sandbox_shell`. Screenshots `/root/.local/share/com.jean.desktop/pasted-images/agent-sandbox/{agents,agent-edit-sandbox-tool,internet-access-off}-{desktop,phone}-{light,dark}.png`
+(the `01-…`–`06-…` files there are from the test copies, not production). Changelog not posted (text
+`/root/ops/agent-sandbox/changelog.md`). Scripts and logs: `/root/ops/agent-sandbox/`.
+
+Open (each with its own yes): the Arthur pilot (sandbox key, broker socket, host guards, ticking `sandbox_shell`).
+
+Rollback to `d7f0473` (undo both migrations first: lost are only custom agents' model-token counts, since sandboxes were
+OFF; the old binary refuses the new schema):
+
+```sh
+sudo systemctl stop orbit-agent orbit
+sudo -u orbit sqlite3 "file:/var/lib/orbit/orbit.sqlite?mode=ro" ".backup '/var/backups/orbit/pre-migration/orbit-before-rollback-to-d7f0473.sqlite'"
+sudo -u orbit sqlite3 /var/lib/orbit/orbit.sqlite < /root/ops/agent-sandbox/rollback-schema.sql   # DROP 9 tables + the column, delete the 2 version rows
+sudo install -m 755 /usr/local/bin/orbit-d7f0473 /usr/local/bin/orbit
+sudo rm -rf /opt/orbit-agent && sudo mv /opt/orbit-agent.before-cf290c9 /opt/orbit-agent
+sudo systemctl start orbit && sleep 4 && sudo systemctl start orbit-agent
+curl -fsS -H 'Host: orbit.easytomanage.com' -H 'X-Forwarded-Proto: https' http://127.0.0.1:8000/health/ready
+# (the same as /root/ops/agent-sandbox/rollback.sh)
+# Way 2, only for a data problem (work after 11:02 UTC is lost), Orbit stopped: /usr/local/bin/orbit-d7f0473 backup verify +
+#   backup restore 01a1f379-075e-75ba-9027-4df4436a75e5 (as user orbit), then the binary and sidecar lines above
+```
+
+After this rollback, copy `/root/ops/vm-health.conf.before-cf290c9` back to `/root/ops/vm-health.conf`.
 
 ### November 19, 2026 upgrade: helpdesk phase 1, support email as tickets in Tasks (1 migration)
 
