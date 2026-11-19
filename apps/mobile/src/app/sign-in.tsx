@@ -2,6 +2,7 @@ import * as WebBrowser from 'expo-web-browser'
 import { useEffect, useState } from 'react'
 import { Linking, ScrollView, View } from 'react-native'
 
+import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from '../data/legal'
 import { createClient, DEFAULT_SERVER, normalizeServer, signIn as signInWithPassword, signInSecondFactor } from '../data/orbit'
 import { loadLastServer } from '../session'
 import { errorMessage, useSession } from '../session-context'
@@ -136,6 +137,23 @@ export default function SignInScreen() {
             )}
           </View>
         </View>
+        {TERMS_OF_SERVICE_URL || PRIVACY_POLICY_URL ? (
+          <Text className="mt-4 w-full max-w-115 self-center text-center text-[12px] leading-[18px] text-muted-foreground">
+            By signing in, you agree to the{' '}
+            {TERMS_OF_SERVICE_URL ? (
+              <Text accessibilityRole="link" onPress={() => void WebBrowser.openBrowserAsync(TERMS_OF_SERVICE_URL).catch(() => undefined)} className="text-[12px] leading-[18px] text-muted-foreground underline">
+                Terms of service
+              </Text>
+            ) : null}
+            {TERMS_OF_SERVICE_URL && PRIVACY_POLICY_URL ? ' and the ' : null}
+            {PRIVACY_POLICY_URL ? (
+              <Text accessibilityRole="link" onPress={() => void WebBrowser.openBrowserAsync(PRIVACY_POLICY_URL).catch(() => undefined)} className="text-[12px] leading-[18px] text-muted-foreground underline">
+                Privacy policy
+              </Text>
+            ) : null}
+            .
+          </Text>
+        ) : null}
       </ScrollView>
     </KeyboardView>
   )
