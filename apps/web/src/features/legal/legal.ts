@@ -12,7 +12,7 @@ export type LegalBlock = string | string[]
 export type LegalSection = { title: string; body: LegalBlock[] }
 export type LegalDocument = { title: string; intro: string; sections: LegalSection[] }
 
-const operator = 'Wellrox ([Company legal name], [Address])'
+const operator = 'EasyToManage ([Address])'
 const contact = 'info@easytomanage.com'
 
 export const TERMS: LegalDocument = {
