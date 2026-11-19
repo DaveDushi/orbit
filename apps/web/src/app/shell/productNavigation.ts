@@ -8,7 +8,7 @@ export const primaryProductPath = '/tasks'
 export const docsHidden = import.meta.env.VITE_HIDE_DOCS === '1'
 
 /** Products that show as "Coming soon". */
-export const disabledProductPathsFor = (chat: boolean): readonly string[] => (chat ? ['/mail'] : ['/mail', '/chat'])
+export const disabledProductPathsFor = (chat: boolean): readonly string[] => (chat ? [] : ['/chat'])
 /** The dock entries that are links; the others show disabled. Keep in sync with the sidebar's Workspace links. */
 export const mobileDockPathsFor = (chat: boolean): readonly string[] => (chat ? ['/', '/tasks', '/docs', '/chat', '/drive', '/settings'] : ['/', '/tasks', '/docs', '/drive', '/settings'])
 

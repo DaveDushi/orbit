@@ -1051,7 +1051,11 @@ impl PushService {
             if claimed == 0 || row.get::<i64, _>("visible") == 0 {
                 continue;
             }
-            let actor = match row.get::<Option<String>, _>("actor_github_login") {
+            // An external author: a GitHub login, or a customer's address (support email).
+            let external = row.get::<Option<String>, _>("actor_github_login");
+            let email = external.as_deref().is_some_and(|login| login.contains('@'));
+            let actor = match external {
+                Some(login) if email => login,
                 Some(login) => format!("{login} (GitHub)"),
                 None => row.get::<Option<String>, _>("actor").unwrap_or_default(),
             };
@@ -1074,6 +1078,11 @@ impl PushService {
                 "description_mentioned" => (
                     PushKind::Mentions,
                     format!("{actor} mentioned you in a task"),
+                    subject("task_title"),
+                ),
+                "task_commented" if email => (
+                    PushKind::FollowedTasks,
+                    format!("New email from {actor}"),
                     subject("task_title"),
                 ),
                 "task_commented" => (

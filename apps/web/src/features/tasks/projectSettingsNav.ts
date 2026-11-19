@@ -1,7 +1,7 @@
 import type { ComponentType } from 'react'
-import { Calendar, Category, Danger, DocumentText, Flag, Flash, Hierarchy, Link2, Lock, Setting2 as Settings, Tag } from 'reicon-react'
+import { Calendar, Category, Danger, DocumentText, Flag, Flash, Hierarchy, Link2, Lock, Setting2 as Settings, Sms, Tag } from 'reicon-react'
 
-export type ProjectSettingsSection = 'general' | 'access' | 'statuses' | 'labels' | 'rules' | 'sub-issues' | 'milestones' | 'cycles' | 'docs' | 'github' | 'danger-zone'
+export type ProjectSettingsSection = 'general' | 'access' | 'statuses' | 'labels' | 'rules' | 'sub-issues' | 'milestones' | 'cycles' | 'docs' | 'github' | 'support' | 'danger-zone'
 
 export interface ProjectSettingsGroup {
   label: string
@@ -38,6 +38,7 @@ export const PROJECT_SETTINGS_GROUPS: ProjectSettingsGroup[] = [
     items: [
       { section: 'docs', label: 'Docs', icon: DocumentText },
       { section: 'github', label: 'GitHub', icon: Link2 },
+      { section: 'support', label: 'Support email', icon: Sms },
     ],
   },
   {

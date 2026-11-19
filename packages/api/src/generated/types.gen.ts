@@ -5492,6 +5492,201 @@ export type SubIssuesDisplay = 'nested' | 'flat' | 'hidden';
  */
 export type SubscriptionStatus = 'incomplete' | 'incomplete_expired' | 'trialing' | 'active' | 'past_due' | 'canceled' | 'unpaid' | 'paused';
 
+export type SupportContact = {
+    email: string;
+    id: string;
+    name: string;
+};
+
+/**
+ * A project's mailbox, without its secrets.
+ */
+export type SupportMailbox = {
+    /**
+     * The support address customers write to; replies come from it.
+     */
+    address: string;
+    created_at: string;
+    /**
+     * New tickets are assigned to this member.
+     */
+    default_assignee_id?: string | null;
+    display_name: string;
+    id: string;
+    /**
+     * The URL of the inbound endpoint without its secret (`…/{secret}` is added to it).
+     */
+    inbound_url_base: string;
+    last_received_at?: string | null;
+    /**
+     * A reply moves the ticket to Pending.
+     */
+    move_to_pending: boolean;
+    project_id: string;
+    rotated_at?: string | null;
+    smtp_host?: string | null;
+    /**
+     * A password is saved (it is never returned).
+     */
+    smtp_password_set: boolean;
+    smtp_port?: number | null;
+    /**
+     * `tls`, `starttls` or `none`.
+     */
+    smtp_security?: string | null;
+    smtp_username?: string | null;
+    updated_at: string;
+};
+
+/**
+ * What an owner or admin sets for a mailbox.
+ */
+export type SupportMailboxBody = {
+    /**
+     * The support address customers write to (for example `support@example.com`).
+     */
+    address: string;
+    /**
+     * New tickets are assigned to this member.
+     */
+    default_assignee_id?: string | null;
+    /**
+     * The sender name of replies, for example `Acme Support`.
+     */
+    display_name?: string;
+    /**
+     * A reply moves the ticket to Pending (default `true`).
+     */
+    move_to_pending?: boolean | null;
+    /**
+     * The SMTP server replies are sent with; without one, the mailbox only receives.
+     */
+    smtp_host?: string | null;
+    /**
+     * Absent keeps the saved password; an empty string removes it.
+     */
+    smtp_password?: string | null;
+    smtp_port?: number | null;
+    /**
+     * `tls`, `starttls`, or `none` (development only).
+     */
+    smtp_security?: string | null;
+    smtp_username?: string | null;
+};
+
+/**
+ * A mailbox. `inbound_url` holds the secret and is returned only when the mailbox is made or
+ * its URL is rotated.
+ */
+export type SupportMailboxResponse = {
+    inbound_url?: string | null;
+    mailbox?: null | SupportMailbox;
+};
+
+export type SupportMessage = {
+    attachments: Array<SupportMessageAttachment>;
+    /**
+     * The member who wrote a reply.
+     */
+    author_id?: string | null;
+    /**
+     * Sanitized HTML of an inbound email; show it only in a sandboxed frame.
+     */
+    body_html?: string | null;
+    body_text: string;
+    cc: Array<string>;
+    created_at: string;
+    /**
+     * `in` from the customer, `out` a reply.
+     */
+    direction: string;
+    from_address: string;
+    from_name: string;
+    id: string;
+    /**
+     * Why the last send failed.
+     */
+    send_error?: string | null;
+    /**
+     * Replies: `queued`, `sent` or `failed`.
+     */
+    send_state?: string | null;
+    sent_at?: string | null;
+    /**
+     * Attachments left out by the size or count cap.
+     */
+    skipped_attachments: number;
+    subject: string;
+    task_id: string;
+    to: Array<string>;
+    /**
+     * The provider reported failed SPF/DKIM/DMARC checks.
+     */
+    unverified: boolean;
+};
+
+export type SupportMessageAttachment = {
+    /**
+     * A task attachment of the ticket (`…/tasks/{task_id}/attachments/{id}/download`).
+     */
+    id: string;
+    /**
+     * Shown inside the HTML body (`cid:`), not in the list.
+     */
+    inline: boolean;
+    media_type: string;
+    name: string;
+    size: number;
+};
+
+/**
+ * Another ticket of the same customer that the reader sees.
+ */
+export type SupportOtherTicket = {
+    created_at: string;
+    identifier: string;
+    project_id: string;
+    status_id: string;
+    task_id: string;
+    title: string;
+};
+
+export type SupportReplyBody = {
+    /**
+     * Plain text; it is emailed to the ticket's customer.
+     */
+    body: string;
+};
+
+/**
+ * The result of a connection test: `message` says what failed and how to fix it.
+ */
+export type SupportSmtpTest = {
+    message: string;
+    ok: boolean;
+};
+
+/**
+ * The emails of a task. `ticket` is `None` for a task that is no support ticket.
+ */
+export type SupportTicket = {
+    messages: Array<SupportMessage>;
+    ticket?: null | SupportTicketInfo;
+};
+
+export type SupportTicketInfo = {
+    /**
+     * A reply can be sent: the mailbox is connected and has an SMTP server.
+     */
+    can_reply: boolean;
+    contact: SupportContact;
+    /**
+     * The mailbox address replies come from; `None` once the mailbox is disconnected.
+     */
+    mailbox_address?: string | null;
+    other_tickets: Array<SupportOtherTicket>;
+};
+
 export type SuspensionBody = {
     suspended: boolean;
 };
@@ -11864,6 +12059,64 @@ export type PostIncomingWebhookResponses = {
 };
 
 export type PostIncomingWebhookResponse = PostIncomingWebhookResponses[keyof PostIncomingWebhookResponses];
+
+export type ReceiveSupportEmailData = {
+    body: string;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        mailbox_id: string;
+        secret: string;
+    };
+    query?: never;
+    url: '/api/v1/hooks/support/{mailbox_id}/{secret}';
+};
+
+export type ReceiveSupportEmailErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type ReceiveSupportEmailError = ReceiveSupportEmailErrors[keyof ReceiveSupportEmailErrors];
+
+export type ReceiveSupportEmailResponses = {
+    /**
+     * `ok` or `dropped`
+     */
+    200: string;
+};
+
+export type ReceiveSupportEmailResponse = ReceiveSupportEmailResponses[keyof ReceiveSupportEmailResponses];
 
 export type GithubManifestCallbackData = {
     body?: never;
@@ -26535,6 +26788,332 @@ export type UpdateStatusResponses = {
 
 export type UpdateStatusResponse = UpdateStatusResponses[keyof UpdateStatusResponses];
 
+export type DeleteSupportMailboxData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/projects/{project_id}/support-mailbox';
+};
+
+export type DeleteSupportMailboxErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type DeleteSupportMailboxError = DeleteSupportMailboxErrors[keyof DeleteSupportMailboxErrors];
+
+export type DeleteSupportMailboxResponses = {
+    204: void;
+};
+
+export type DeleteSupportMailboxResponse = DeleteSupportMailboxResponses[keyof DeleteSupportMailboxResponses];
+
+export type GetSupportMailboxData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/projects/{project_id}/support-mailbox';
+};
+
+export type GetSupportMailboxErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type GetSupportMailboxError = GetSupportMailboxErrors[keyof GetSupportMailboxErrors];
+
+export type GetSupportMailboxResponses = {
+    200: SupportMailboxResponse;
+};
+
+export type GetSupportMailboxResponse = GetSupportMailboxResponses[keyof GetSupportMailboxResponses];
+
+export type CreateSupportMailboxData = {
+    body: SupportMailboxBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/projects/{project_id}/support-mailbox';
+};
+
+export type CreateSupportMailboxErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type CreateSupportMailboxError = CreateSupportMailboxErrors[keyof CreateSupportMailboxErrors];
+
+export type CreateSupportMailboxResponses = {
+    201: SupportMailboxResponse;
+};
+
+export type CreateSupportMailboxResponse = CreateSupportMailboxResponses[keyof CreateSupportMailboxResponses];
+
+export type UpdateSupportMailboxData = {
+    body: SupportMailboxBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/projects/{project_id}/support-mailbox';
+};
+
+export type UpdateSupportMailboxErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type UpdateSupportMailboxError = UpdateSupportMailboxErrors[keyof UpdateSupportMailboxErrors];
+
+export type UpdateSupportMailboxResponses = {
+    200: SupportMailboxResponse;
+};
+
+export type UpdateSupportMailboxResponse = UpdateSupportMailboxResponses[keyof UpdateSupportMailboxResponses];
+
+export type RotateSupportMailboxData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/projects/{project_id}/support-mailbox/rotate';
+};
+
+export type RotateSupportMailboxErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type RotateSupportMailboxError = RotateSupportMailboxErrors[keyof RotateSupportMailboxErrors];
+
+export type RotateSupportMailboxResponses = {
+    200: SupportMailboxResponse;
+};
+
+export type RotateSupportMailboxResponse = RotateSupportMailboxResponses[keyof RotateSupportMailboxResponses];
+
+export type TestSupportMailboxData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/projects/{project_id}/support-mailbox/test';
+};
+
+export type TestSupportMailboxErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type TestSupportMailboxError = TestSupportMailboxErrors[keyof TestSupportMailboxErrors];
+
+export type TestSupportMailboxResponses = {
+    200: SupportSmtpTest;
+};
+
+export type TestSupportMailboxResponse = TestSupportMailboxResponses[keyof TestSupportMailboxResponses];
+
 export type RestoreWorkspaceData = {
     body: RestoreBody;
     headers?: {
@@ -26900,6 +27479,61 @@ export type DeleteStorageFileResponses = {
 };
 
 export type DeleteStorageFileResponse = DeleteStorageFileResponses[keyof DeleteStorageFileResponses];
+
+export type RetrySupportMessageData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        message_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/support/messages/{message_id}/retry';
+};
+
+export type RetrySupportMessageErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: WorkspaceProblem;
+    /**
+     * authentication_required
+     */
+    401: WorkspaceProblem;
+    /**
+     * origin_forbidden
+     */
+    403: WorkspaceProblem;
+    /**
+     * contract_mismatch
+     */
+    409: WorkspaceProblem;
+    /**
+     * request_too_large
+     */
+    413: WorkspaceProblem;
+    /**
+     * internal_error
+     */
+    500: WorkspaceProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: WorkspaceProblem;
+};
+
+export type RetrySupportMessageError = RetrySupportMessageErrors[keyof RetrySupportMessageErrors];
+
+export type RetrySupportMessageResponses = {
+    200: SupportMessage;
+};
+
+export type RetrySupportMessageResponse = RetrySupportMessageResponses[keyof RetrySupportMessageResponses];
 
 export type ListTasksData = {
     body?: never;
@@ -29129,6 +29763,112 @@ export type RestoreTaskResponses = {
 };
 
 export type RestoreTaskResponse = RestoreTaskResponses[keyof RestoreTaskResponses];
+
+export type GetTaskSupportData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        task_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/tasks/{task_id}/support';
+};
+
+export type GetTaskSupportErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type GetTaskSupportError = GetTaskSupportErrors[keyof GetTaskSupportErrors];
+
+export type GetTaskSupportResponses = {
+    200: SupportTicket;
+};
+
+export type GetTaskSupportResponse = GetTaskSupportResponses[keyof GetTaskSupportResponses];
+
+export type CreateSupportReplyData = {
+    body: SupportReplyBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        task_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/tasks/{task_id}/support/replies';
+};
+
+export type CreateSupportReplyErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type CreateSupportReplyError = CreateSupportReplyErrors[keyof CreateSupportReplyErrors];
+
+export type CreateSupportReplyResponses = {
+    201: SupportMessage;
+};
+
+export type CreateSupportReplyResponse = CreateSupportReplyResponses[keyof CreateSupportReplyResponses];
 
 export type ListTeamspacesData = {
     body?: never;

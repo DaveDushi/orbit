@@ -1,0 +1,18 @@
+/* The look of a customer email inside its sandboxed frame (TaskSupport.tsx). Loaded as a file: the
+   app's CSP, which the frame inherits, allows no inline styles. */
+html { color-scheme: light; }
+body {
+  margin: 0;
+  padding: 12px 14px;
+  background: #fff;
+  color: #1f2328;
+  font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  overflow-wrap: anywhere;
+}
+img { max-width: 100%; height: auto; }
+table { max-width: 100%; border-collapse: collapse; }
+blockquote { margin: 0 0 0 0.5em; padding-left: 0.75em; border-left: 3px solid #d0d7de; color: #57606a; }
+pre { white-space: pre-wrap; }
+a { color: #0969da; }
+p:first-child { margin-top: 0; }
+p:last-child { margin-bottom: 0; }

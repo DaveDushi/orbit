@@ -4,7 +4,7 @@ import type { NotificationRecord } from '@orbit/api/generated/types.gen'
 import { useWorkspace } from '@/features/workspaces/workspaceContext'
 import { useMembers } from '@/features/workspaces/api'
 import { usePageTree } from '@/features/docs/api/pages'
-import { notificationTarget, useMarkNotificationRead } from '@/features/inbox/api'
+import { externalActorName, notificationTarget, useMarkNotificationRead } from '@/features/inbox/api'
 
 /** What a row needs to show and open notifications: the actors, the page titles and the read mutation, loaded once for the list. */
 export function useNotificationRows(notifications: NotificationRecord[]) {
@@ -18,10 +18,10 @@ export function useNotificationRows(notifications: NotificationRecord[]) {
   const memberById = useMemo(() => new Map((members.data ?? []).map((member) => [member.id, member])), [members.data])
   const titleById = useMemo(() => new Map((pageTree.data ?? []).map((page) => [page.id, page.title])), [pageTree.data])
   return {
-    /** A member, or the GitHub author of a note from GitHub (as `notificationActor`). */
+    /** A member, or an author who is not one (as `notificationActor`). */
     actor: (notification: NotificationRecord): { id?: string; name: string } | undefined =>
       notification.actor_github_login
-        ? { name: `${notification.actor_github_login} (GitHub)` }
+        ? { name: externalActorName(notification.actor_github_login) }
         : memberById.get(notification.actor_user_id ?? ''),
     pageTitle: (notification: NotificationRecord) => (notification.page_id ? titleById.get(notification.page_id) : undefined),
     markRead: (notification: NotificationRecord) => {

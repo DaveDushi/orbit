@@ -386,9 +386,11 @@ fn workspace_in(path: &str) -> Option<&str> {
         .filter(|id| !id.is_empty())
 }
 
-/// The webhook ID of a `/api/v1/hooks/chat/{id}/{secret}` path.
+/// The webhook ID of a `/api/v1/hooks/chat/{id}/{secret}` path, or the mailbox ID of a
+/// `/api/v1/hooks/support/{id}/{secret}` path (inbound support email, limited per mailbox).
 fn webhook_in(path: &str) -> Option<&str> {
-    path.strip_prefix("/api/v1/hooks/chat/")?
+    path.strip_prefix("/api/v1/hooks/chat/")
+        .or_else(|| path.strip_prefix("/api/v1/hooks/support/"))?
         .split('/')
         .next()
         .filter(|id| !id.is_empty())
@@ -458,6 +460,17 @@ mod tests {
     use super::*;
 
     const TASKS: &str = "/api/v1/tasks";
+
+    #[test]
+    fn hooks_are_limited_per_webhook_and_per_mailbox() {
+        assert_eq!(webhook_in("/api/v1/hooks/chat/w1/secret"), Some("w1"));
+        assert_eq!(webhook_in("/api/v1/hooks/support/m1/secret"), Some("m1"));
+        assert_eq!(webhook_in("/api/v1/hooks/support/"), None);
+        assert_eq!(
+            endpoint_class(&Method::POST, "/api/v1/hooks/support/m1/secret"),
+            Some(EndpointClass::Webhook)
+        );
+    }
 
     #[test]
     fn the_public_openid_endpoints_are_limited() {

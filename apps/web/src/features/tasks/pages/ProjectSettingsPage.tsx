@@ -36,6 +36,7 @@ import { SettingsCard } from '@/components/common/SettingsCard'
 import { ColorSwatch, CustomColorSwatch } from '@/components/common/ColorSwatch'
 import { ProjectGithubCard, type PendingProjectSave } from '@/features/tasks/components/ProjectGithubCard'
 import { ProjectRulesCard } from '@/features/tasks/components/ProjectRulesCard'
+import { ProjectSupportCard } from '@/features/tasks/components/ProjectSupportCard'
 import { useSlowPending } from '@/lib/useDebouncedValue'
 import { loadFailed } from '@/lib/connection'
 import { useIsPhone } from '@/features/chat/pages/useChatViewport'
@@ -298,6 +299,8 @@ export function ProjectSettingsPage() {
               {section === 'github' ? <ProjectGithubCard workspaceId={workspace.id} projectId={project.id} onPendingChange={setGithubPending} /> : null}
 
               {section === 'rules' ? <ProjectRulesCard projectId={project.id} /> : null}
+
+              {section === 'support' ? <ProjectSupportCard projectId={project.id} /> : null}
 
               {section === 'sub-issues' ? <SubIssueSettingsCard project={project} /> : null}
 

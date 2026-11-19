@@ -56,6 +56,8 @@ import { useWorkspaceReadOnly } from '@/features/workspaces/billing'
 import { Attachments } from '@/components/common/Attachments'
 import { ActivityFeed } from './ActivityFeed'
 import { TaskCommentComposer } from './TaskCommentComposer'
+import { useTaskSupport } from '@/features/tasks/api/support'
+import { CustomerProperty, TicketComposer } from './TaskSupport'
 import { LabelPicker, LabelPill } from './TaskLabels'
 import { TaskDescriptionEditor, type TaskDescriptionHandle } from './TaskDescriptionEditor'
 import { TaskTextFields } from './TaskTextFields'
@@ -79,6 +81,8 @@ export function TaskDetail({ task, project, state, onClose, onOpenTask, onOpenPr
   const updateTask = useUpdateTask(workspace.id)
   const deleteAttachment = useDeleteTaskAttachment(workspace.id, task?.id ?? '')
   const createComment = useCreateTaskComment(workspace.id, task?.id ?? '')
+  // a task of a project with a support mailbox: its customer and the Reply to customer tab
+  const ticket = useTaskSupport(workspace.id, task?.id).data?.ticket ?? null
   const deleteTask = useDeleteTask(workspace.id)
   const githubLinks = useTaskGithubLinks(workspace.id, task?.id)
   const workspaceReadOnly = useWorkspaceReadOnly()
@@ -306,6 +310,11 @@ export function TaskDetail({ task, project, state, onClose, onOpenTask, onOpenPr
           </div>
 
           <aside className="min-[900px]:col-start-2 min-[900px]:[grid-row:1/span_2] min-[900px]:border-l min-[900px]:px-5 min-[900px]:pt-8 min-[900px]:pb-6 max-[899px]:grid max-[899px]:w-full max-[899px]:grid-cols-2 max-[899px]:gap-x-3 max-[899px]:gap-y-3.5 max-[899px]:border-y max-[899px]:py-3.5">
+            {ticket ? (
+              <PropertyGroup title="Customer" className="max-[899px]:col-span-full">
+                <CustomerProperty ticket={ticket} statuses={state.statuses} onOpenTask={onOpenTask} />
+              </PropertyGroup>
+            ) : null}
             <PropertyGroup title="Properties" className="max-[899px]:col-span-full max-[899px]:flex-row max-[899px]:flex-wrap max-[899px]:items-center max-[899px]:gap-1 max-[899px]:*:data-[slot=property-heading]:w-full">
               <DropdownMenu>
                 <DropdownMenuTrigger
@@ -578,7 +587,16 @@ export function TaskDetail({ task, project, state, onClose, onOpenTask, onOpenPr
 
             {/* the rich text comment field: blocks, @mentions, inline files (paste / drop / pick) */}
             <div className="mt-4 max-[899px]:mt-3">
-              <TaskCommentComposer workspaceId={workspace.id} taskId={task.id} pending={createComment.isPending} error={createComment.isError ? 'Comment failed.' : undefined} members={audience} onSend={(bodyJson) => createComment.mutateAsync({ bodyJson })} />
+              {ticket ? (
+                <TicketComposer
+                  ticket={ticket}
+                  workspaceId={workspace.id}
+                  taskId={task.id}
+                  note={<TaskCommentComposer workspaceId={workspace.id} taskId={task.id} pending={createComment.isPending} error={createComment.isError ? 'Note failed.' : undefined} members={audience} onSend={(bodyJson) => createComment.mutateAsync({ bodyJson })} />}
+                />
+              ) : (
+                <TaskCommentComposer workspaceId={workspace.id} taskId={task.id} pending={createComment.isPending} error={createComment.isError ? 'Comment failed.' : undefined} members={audience} onSend={(bodyJson) => createComment.mutateAsync({ bodyJson })} />
+              )}
             </div>
           </div>
           {picker ? (

@@ -8,7 +8,7 @@ Docs pages persist too (tree, content, trash, search; see Docs below).
 
 Chat persists too (channels, direct messages, threads, files, search; see Chat below).
 
-Home, Mail, Profile and webhooks still use isolated frontend seed data. Their routes show a `Mock data` badge in every build. SMTP sending, inbound SMTP and mailboxes are follow-up milestones.
+Home, Profile and webhooks still use isolated frontend seed data. Their routes show a `Mock data` badge in every build. Customer email is the helpdesk in Tasks (Support email below); the mock Mail page is removed and `/mail` redirects to `/tasks`.
 
 ## Global shell
 
@@ -519,20 +519,48 @@ Not supported yet: video and audio blocks, offline storage of co-edited content 
 tab while disconnected), presence dots in the page tree, teamspace membership or per-page sharing, comment reactions, templates, export and ZIP import. The production CSP allows external https images (`img-src 'self' data: blob: https:`), so external image
 blocks and cover URLs load; the image host then sees the viewer's IP. Plain http images stay blocked.
 
-## Mail
+## Support email (helpdesk)
 
-Core files: `MailPage.tsx`, `components/FolderRail.tsx`, `components/ThreadList.tsx`, `components/ThreadView.tsx`.
+Core files: server `support/` (`inbound.rs` MIME parse with `mail-parser`, `html.rs` ammonia clean-up, `thread.rs` signed
+Message-IDs and subject tags, `outbound.rs` the `support.send` job), `repositories/support.rs`, `support_routes.rs`;
+web `features/tasks/api/support.ts`, `components/TaskSupport.tsx`, `components/ProjectSupportCard.tsx`,
+`public/support-email.css`. Migration `20261119075838_support_desk.sql` (new tables `support_mailboxes`, `support_contacts`,
+`support_tickets`, `support_messages`). User docs and the Cloudflare Email Worker: `docs/support.md`, `docs/support/`.
+Design: `.ai/helpdesk-design.md`.
 
-This feature is mock-backed. No outbound or inbound SMTP service runs in milestone one.
-
-- Three-pane desktop layout: folders, thread list, reader.
-- Custom folders can be created inline.
-- Threads can be dragged onto system/custom folders with a compact drag ghost.
-- Reader toolbar supports star, unread, move-to-folder, archive, and trash.
-- Messages expand/collapse and offer Reply and Forward.
-- Forward opens compose with quoted sender/date/subject/body.
-- Reply composer is hidden until Reply is clicked; it is free-flow rather than boxed.
-- Replies support text, attachment-only sending, file picker, paste, drop, compact file chips, inline images, removal, discard, and Cmd/Ctrl+Enter.
+- A ticket is a task in a project with a connected mailbox (one per project). No inbox page: support lives in Tasks.
+- Setup: Project settings → Support email (owners and admins, `integrations.manage`): address, sender name, the
+  mailbox's own SMTP server (password encrypted with the app key; public hosts and ports 25/465/587/2525 only outside
+  development), Move to Pending after a reply, Assign new tickets to. Connecting adds Open/Pending/Solved/Closed statuses
+  (by name; categories unstarted/started/completed/cancelled) when missing. The inbound URL
+  `POST /api/v1/hooks/support/{mailbox_id}/{secret}` (hooks origin) is shown once; only its SHA-256 is stored; Make new
+  URL rotates it; Disconnect keeps the tickets. Needs `ORBIT_APP_KEY`.
+- Inbound: raw MIME (≤ 36 MB, 60 per minute per mailbox via the webhook rate limit, origin-exempt like chat hooks, body
+  limit raised for this path). The mailbox is found by id + secret only. Auto-replies and bounces are dropped (`200
+  dropped`); redeliveries (same Message-ID) are filed once. Threading (only tickets of this mailbox): HMAC-signed Orbit
+  Message-IDs in In-Reply-To/References (`orbit.<task>.<random>.<tag>@domain`), then earlier Message-IDs of the ticket,
+  then `[#KEY-12]` from the ticket's own customer. Closed (cancelled) or trashed → new ticket in Open (created by the
+  service account "Support email"); a customer email moves Solved (completed) or the Pending status back to Open.
+- Emails show in the task activity between comments (`buildFeed`), HTML cleaned on the server (ammonia allow list, cid:
+  images → task attachment URLs, links `_blank` + noopener) and shown in an iframe `sandbox="allow-same-origin
+  allow-popups allow-popups-to-escape-sandbox"` (no scripts or forms) with a meta CSP that blocks external images until
+  "Show images". Attachments (≤ 20 files, ≤ 25 MB) are task attachments of the ticket (`attachment_references`; same
+  quota, type detection and download rules). "Unverified sender" from failing DMARC, or SPF/DKIM without a DKIM pass.
+- Composer: Internal note (comment, default) / Reply to customer (blue, "Sends email to x", plain text, Cmd/Ctrl+Enter).
+  A reply is queued in the transaction with the `support.send` job (5 attempts, 30 s–30 min backoff, lettre with the
+  mailbox SMTP; permanent SMTP errors and the 500/24 h cap per mailbox in `email_sends` fail at once) and moves the ticket
+  to Pending. Failed replies show Not sent + Retry (`POST support/messages/{id}/retry`).
+- Microsoft 365 mailboxes (docs/support.md): a mail flow rule redirects to the Cloudflare Worker address. A forward by the
+  support domain (From = the mailbox or a colleague) files the customer from the forwarded `From:` block or `Reply-To`
+  (`InboundEmail::requester`); a reply to the support address itself is refused (loop). New mailboxes default to
+  smtp.office365.com:587 STARTTLS; an empty SMTP user means the mailbox address. **Test connection**
+  (`POST …/support-mailbox/test`) signs in and quits. SMTP errors explain 535 5.7.139 (SMTP AUTH off, with the fix),
+  535 (wrong password) and 550 5.7.30 (Basic auth off), and never contain the password (`outbound::scrub`).
+- Customer card in the task side panel: name, email, the customer's other tickets the reader sees.
+- Notifications: each customer email notifies the ticket's assignees and followers (`task_commented`, external actor in
+  `actor_github_login` = the email address; the Inbox and push say "New email from …").
+- Access: tickets follow task access (project visibility; guests never pass). Mailbox routes need `integrations.manage`.
+- Not yet: Donna tools, the iPhone app, IMAP, canned replies, signatures, auto-close, attachments on replies.
 
 ## Chat
 
@@ -742,7 +770,7 @@ Owners and admins add custom web apps in Workspace settings → Apps (`docs/apps
 
 ## Mobile presentation
 
-- Tasks, Docs, Mail, Chat, DMs, and Inbox use their own compact headers instead of the global topbar.
+- Tasks, Docs, Chat, DMs, and Inbox use their own compact headers instead of the global topbar.
 - Chat uses compact messages, avatars, attachment grids, date separators, and pinned system notices; header search is an icon that expands when used.
 - Docs drop BlockNote's side-menu gutter on phones; the page list and the page are separate screens.
 - The mobile app (`apps/mobile`) edits the page body with BlockNote in an Expo DOM component
