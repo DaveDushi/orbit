@@ -277,6 +277,71 @@ It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-ag
 
 ## Verification performed
 
+### November 19, 2026 upgrade: external agents, phase 2: push (1 migration)
+
+`main` from `86cc6251` to `faba3a4c`: `--no-ff` merge of `external-agents-push` at `4d531973` (1 commit, rebased on
+`86cc6251`). Orbit sends each input of an external agent that has a **Push URL** to that URL (`agent/external_push.rs`,
+a loop every 2 s), signed like chat webhook events (HMAC `v0:{ts}:{body}`, `X-Orbit-Signature` + `X-Slack-Signature`,
+https on public addresses only, no redirects, 3 s); tries at once, then after 10 s, 60 s and 5 min; after the last try
+the input stays for `wait_for_messages` and the card shows "Push failing". New routes `GET …/agents/{id}/push-secret`
+and `POST …/agents/{id}/push-secret/rotate` (owners and admins); `push_url` in `POST/PATCH …/external`. A reply in a
+thread where an external agent posted reaches it without a new @mention. Mobile: Edit on an external agent saves on
+`PATCH …/external` (was 422). Migration `20261119125533_external_agent_push` (additive): `agent_profiles.push_url`,
+`push_secret` (sealed with the app key), `push_since`; `agent_inputs.push_attempts`, `push_next_at` and the partial
+index `agent_inputs_push`; table `agent_push_deliveries`. `ORBIT_AGENT_PUSH_ALLOW_LOCAL` is not set in
+`/etc/orbit/orbit.env` (`switch.sh` refuses if it is; the server refuses it without `ORBIT_ENV=development`). No agent
+has a Push URL after the switch (0 rows): Muse and webhook `01a1debe` are unchanged; the Muse switch is a separate step
+(`.ai/muse-push-migration.md`). What's new: the push sentence added to the External agents line of the 2026-11-19 entry
+("A server agent can get each message at once at its **Push URL**, and replies in a thread where it answered reach it
+without a new @mention."); aboutOrbit: Push URL and thread follow-ups, next to the report/block and @handle text.
+
+Rebase on `86cc6251`: conflict only in `apps/agent/src/prompt.ts` (aboutOrbit: kept the @handle sentence of main and
+the push text of the branch). `external.rs` merged by itself and keeps `handle::email` on create and `handle::sync` on
+rename; `whats-new.md` merged by itself (push text made shorter); `openapi_contract` counts and the SDK did not
+conflict. Checks on the rebased branch: `external_agents` 12/12 and `agent_api` 22/22 on SQLite and Postgres;
+`openapi_contract` 19/19; web `tsc` clean; mobile `tsc` clean, `bun test src` 349 pass; agent tests (prompt, profiles,
+helpers, agent) 51/51, agent `tsc` clean. No browser check in this deploy.
+
+Deploy id `20261119T164518Z-3697528`. `orbit:faba3a4` (image
+`sha256:dd4a51f2678eb635b995f01a5f83d91e081da94133e25e70670ed7bff510b8d8`, label = the full merge commit; 16:46 to 17:35
+UTC); `deploy/smoke.sh` passed. Migration dry run (hot copy, and in the switch on a copy of the stopped database;
+`/root/ops/external-agents-push/dryrun.sh`): applied 1 then 0, schema 20261119125533 (128 rows), counts (13 users, 173
+tasks, 1595 chat messages, 3 agents, 427 agent inputs, 2 unacked) and old checksums unchanged, quick_check ok, 0 FK rows;
+`serve` on the copy under `unshare -n`: no error other than object storage (no network); the old binary refuses the new
+schema; `rollback-schema.sql` (drop the table, the index and the 5 columns) gives the exact old schema and counts, the
+old binary then starts (0 applied), and the new binary migrates again to the same schema.
+
+Switch (`switch.sh`): stopped both services 17:43:30 UTC; snapshot `01a1f4e8-0e28-7452-b376-64cfd158061f` with
+`/usr/local/bin/orbit-5b0d980`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-faba3a4.sqlite` (sha256 `28db47ca8750edc0…`); sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-faba3a4.tgz`; sidecar code copied (old `/opt/orbit-agent.before-faba3a4`;
+`package.json` and the lock file unchanged). `orbit` and `orbit-agent` ready 17:44:20 (50 s down). `vm-health.conf`
+(old copy `.before-faba3a4`): `PROD_TAG=faba3a4`, `ROLLBACK_TAG=5b0d980`,
+`ROLLBACK_BACKUP=01a1f4e8-0e28-7452-b376-64cfd158061f`.
+
+Verified: `orbit`, `orbit-agent`, nginx active, 0 restarts; readiness (all 6 checks) local and on
+`https://orbit-app.easytomanage.com/health/ready` (200); `/orbit-build.json` revision `faba3a4c…`; schema 20261119125533
+(128 rows), quick_check ok; journal: only the known start warnings; sidecar `/health` ok (`mock: false`),
+`/opt/orbit-agent/src` = `main`. New routes with no session (`routes.sh`; before the switch 404 `route_not_found`):
+`GET …/push-secret` and `POST …/push-secret/rotate` 401 `authentication_required`; `PATCH …/external` 401 before and
+after; `/`, `/settings/agentic` 200. `vm-health`: nginx FAIL = 60 "Connection refused" lines of the switch window
+(17:43-17:44), 0 5xx; OOM WARN = 5 known `gvisor_sentry` kills; docker WARN = `orbit-mailpit`; git-owner WARN (72 files
+in `.git` from root git runs) fixed with chown to exedev. Not done: a signed-in check on production and a real push to
+an outside URL (the Muse switch). Scripts and logs: `/root/ops/external-agents-push/`.
+
+Rollback to `5b0d980` (undo the migration first: lost are Push URLs, push secrets and push tries; inputs stay for
+`wait_for_messages`; the old binary refuses the new schema):
+
+```sh
+sudo bash /root/ops/external-agents-push/rollback.sh
+# = stop orbit-agent orbit; .backup to /var/backups/orbit/pre-migration/orbit-before-rollback-to-5b0d980.sqlite;
+#   sqlite3 /var/lib/orbit/orbit.sqlite < /root/ops/external-agents-push/rollback-schema.sql;
+#   install -m 755 /usr/local/bin/orbit-5b0d980 /usr/local/bin/orbit; /opt/orbit-agent.before-faba3a4 back;
+#   start orbit, orbit-agent; vm-health.conf.before-faba3a4 back
+# Way 2, only for a data problem (work after 17:43 UTC is lost), Orbit stopped: /usr/local/bin/orbit-5b0d980 backup verify +
+#   backup restore 01a1f4e8-0e28-7452-b376-64cfd158061f (as user orbit), then the binary and sidecar lines above
+```
+
 ### November 19, 2026 upgrade: report messages and block people, agent @handles from their names (1 migration)
 
 `main` from `ebc3aaa8` to `5b0d9803`: `--no-ff` merge of `upstream-mobile-1119` at `60497db3` (6 commits, rebased on
