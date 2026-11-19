@@ -1164,6 +1164,12 @@ async fn initialize_production_services(
     crate::previews::queue_backfill(database)
         .await
         .map_err(AppError::ProductionServices)?;
+    // agents made before @handles get one; a failure leaves their old handle and Orbit starts
+    match crate::agent::handle::backfill(database).await {
+        Ok(0) => {}
+        Ok(changed) => tracing::info!(changed, "agent bot users got an @handle from their name"),
+        Err(error) => tracing::warn!(%error, "agent @handle backfill failed"),
+    }
     scheduler
         .validate_enabled()
         .await

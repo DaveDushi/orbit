@@ -1183,7 +1183,7 @@ async fn create_agent(
         let now = TimestampMillis::now();
         let user_id = Id::new_v7();
         let profile_id = Id::new_v7();
-        let email = format!("agent-{user_id}@orbit.invalid");
+        let email = super::handle::email(&mut tx, workspace_id, user_id, &name).await?;
         sqlx::query(
             "INSERT INTO users (id, email, normalized_email, display_name, password_hash, created_at, updated_at) \
              VALUES ($1, $2, $2, $3, $4, $5, $5)",
@@ -1365,6 +1365,7 @@ async fn update_agent(
             .bind(agent.user_id.to_string())
             .execute(&mut *tx)
             .await?;
+            super::handle::sync(&mut tx, workspace_id, agent.user_id, name, now).await?;
         }
         let mut update = SqlBuilder::new("UPDATE agent_profiles SET updated_at = ");
         update.push_bind(now.as_millis());

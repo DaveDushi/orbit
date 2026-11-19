@@ -1,3 +1,4 @@
+import { visibleEmail } from '@orbit/api/members'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import * as Clipboard from 'expo-clipboard'
 import { router } from 'expo-router'
@@ -59,6 +60,8 @@ function ProfileCard({ userId, name, onClose }: { userId: string; name: string; 
   }
   const shown = own ? { title: user.title, phone: user.phone, timezone: user.timezone, bio: user.bio } : profile.data
   const localTime = localTimeLabel(shown?.timezone)
+  // an agent's address is a placeholder: never shown
+  const email = visibleEmail(member.email)
   const message = async () => {
     const dm = await run(`Could not open the conversation with ${member.display_name}`, (client, workspaceId) => chat.openDm(client, workspaceId, [userId]))
     if (!dm) return
@@ -78,13 +81,13 @@ function ProfileCard({ userId, name, onClose }: { userId: string; name: string; 
       <View className="gap-1.5">
         {localTime ? <Detail icon="clock">{localTime}</Detail> : null}
         {/* a guest does not see the addresses of the people in its channels: the server sends none */}
-        {member.email ? (
+        {email ? (
           <Detail
             icon="mail"
-            label={`Copy email address ${member.email}`}
-            onPress={() => void Clipboard.setStringAsync(member.email).then(() => setCopied(true))}
+            label={`Copy email address ${email}`}
+            onPress={() => void Clipboard.setStringAsync(email).then(() => setCopied(true))}
           >
-            {copied ? 'Email copied' : member.email}
+            {copied ? 'Email copied' : email}
           </Detail>
         ) : null}
         {shown?.phone ? (

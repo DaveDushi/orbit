@@ -299,7 +299,7 @@ async fn create_external(
              VALUES ($1, $2, $2, $3, $4, $5, $5)",
         )
         .bind(user_id.to_string())
-        .bind(format!("agent-{user_id}@orbit.invalid"))
+        .bind(super::handle::email(&mut tx, workspace_id, user_id, &name).await?)
         .bind(&name)
         .bind(&password_hash)
         .bind(now.as_millis())
@@ -418,6 +418,7 @@ async fn update_external(
             .bind(agent.user_id.to_string())
             .execute(&mut *tx)
             .await?;
+            super::handle::sync(&mut tx, workspace_id, agent.user_id, name, now).await?;
         }
         sqlx::query(
             "UPDATE agent_profiles SET updated_at = $1, scopes = COALESCE($2, scopes), \

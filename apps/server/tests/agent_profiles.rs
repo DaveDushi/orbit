@@ -1366,3 +1366,104 @@ async fn each_agent_has_its_own_memory_and_never_reaches_another_agents() {
         .await;
     assert_eq!(bodies(&page), ["Donna team fact"]);
 }
+
+#[tokio::test]
+async fn an_agents_handle_comes_from_its_name_stays_unique_and_follows_a_rename() {
+    let fixture = Fixture::new().await;
+    // a person whose email gives the handle `dot`
+    fixture.add_person("Dot", "member").await;
+    let blog = fixture.channel("blog", "public").await;
+    let email = |user_id: &Value| {
+        let user_id = user_id.as_str().unwrap().to_owned();
+        let pool = fixture.database.pool().clone();
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT email FROM users WHERE id = $1")
+                .bind(user_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+
+    let dot = fixture.create_agent(json!({ "name": "Dot." })).await;
+    assert_eq!(email(&dot["user_id"]).await, "dot-2@agents.orbit.invalid");
+    let research = fixture
+        .create_agent(json!({ "name": "Research Bot", "channel_ids": [blog] }))
+        .await;
+    assert_eq!(
+        email(&research["user_id"]).await,
+        "research-bot@agents.orbit.invalid"
+    );
+    let second = fixture
+        .create_agent(json!({ "name": "Research_Bot" }))
+        .await;
+    assert_eq!(
+        email(&second["user_id"]).await,
+        "research-bot-2@agents.orbit.invalid"
+    );
+
+    // a rename moves the handle and frees the old one
+    let (status, renamed) = fixture
+        .api(
+            &fixture.owner,
+            "PATCH",
+            &format!("/agents/{}", research["id"].as_str().unwrap()),
+            Some(json!({ "name": "Writer" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{renamed}");
+    assert_eq!(
+        email(&research["user_id"]).await,
+        "writer@agents.orbit.invalid"
+    );
+    let (status, _) = fixture
+        .api(
+            &fixture.owner,
+            "PATCH",
+            &format!("/agents/{}", second["id"].as_str().unwrap()),
+            Some(json!({ "name": "Research Bot" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        email(&second["user_id"]).await,
+        "research-bot@agents.orbit.invalid"
+    );
+
+    // a mention still reaches the renamed agent by its user id
+    let bot = research["user_id"].as_str().unwrap();
+    let mention = fixture
+        .send(&fixture.owner, &blog, &format!("<@{bot}> draft a post"))
+        .await;
+    let inputs = fixture.pending().await;
+    assert_eq!(inputs.len(), 1, "{inputs:?}");
+    assert_eq!(inputs[0]["message_id"], mention);
+    assert_eq!(inputs[0]["agent"]["user_id"], bot);
+    assert_eq!(inputs[0]["agent"]["name"], "Writer");
+
+    // agents made before handles get one at the next start, once
+    for agent in [&dot, &research] {
+        sqlx::query("UPDATE users SET email = $1, normalized_email = $1 WHERE id = $2")
+            .bind(format!(
+                "agent-{}@orbit.invalid",
+                agent["user_id"].as_str().unwrap()
+            ))
+            .bind(agent["user_id"].as_str().unwrap())
+            .execute(fixture.database.pool())
+            .await
+            .unwrap();
+    }
+    let changed = orbit_server::agent::handle::backfill(&fixture.database)
+        .await
+        .unwrap();
+    assert_eq!(changed, 2);
+    assert_eq!(email(&dot["user_id"]).await, "dot-2@agents.orbit.invalid");
+    assert_eq!(
+        email(&research["user_id"]).await,
+        "writer@agents.orbit.invalid"
+    );
+    let changed = orbit_server::agent::handle::backfill(&fixture.database)
+        .await
+        .unwrap();
+    assert_eq!(changed, 0);
+}

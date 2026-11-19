@@ -275,7 +275,7 @@ export function MembersPage() {
                     ) : null}
                     {user.suspended ? <Badge variant="destructive">Suspended</Badge> : null}
                   </div>
-                  <div className="truncate text-xs text-muted-foreground">{user.email}</div>
+                  <div className="truncate text-xs text-muted-foreground">{user.email || `@${user.handle}`}</div>
                   <div>
                     {user.role === 'Guest' ? <GuestBadge className="h-5 text-xs" /> : <Badge variant="secondary">{user.role}</Badge>}
                   </div>

@@ -1,3 +1,4 @@
+import { emailLine } from '@orbit/api/members'
 import { useState } from 'react'
 import { Pressable, Share, View } from 'react-native'
 import { TextInput } from '../../../ui/scaled'
@@ -96,7 +97,7 @@ export default function MembersScreen() {
               <ProfilePicture id={member.user_id} name={member.display_name} url={member.avatar_url} size={28} />
               <RowText
                 title={member.display_name}
-                subtitle={member.email}
+                subtitle={emailLine(member.email, member.display_name)}
                 badges={
                   <>
                     {member.user_id === user.id ? <Badge label="You" /> : null}

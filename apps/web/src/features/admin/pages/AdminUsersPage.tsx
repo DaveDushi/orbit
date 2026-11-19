@@ -18,6 +18,7 @@ import { useAuthOptions, useCurrentUser } from '@/features/auth/api'
 import { useIsRoot } from '@/features/workspaces/permissions'
 import { SettingsRow } from '@/features/settings/components/SettingsParts'
 import { useDebouncedValue } from '@/lib/useDebouncedValue'
+import { emailLine } from '@orbit/api/members'
 
 function failure(error: unknown, fallback: string) {
   return error instanceof ApiProblem ? error.problem.detail : fallback
@@ -141,7 +142,7 @@ export function AdminUsersPage() {
                   )}
                 </span>
                 {/* a deleted account's email is a placeholder that frees the address */}
-                <span className="truncate text-xs text-muted-foreground">{user.deleted ? 'Anonymized. It can never sign in again.' : user.email}</span>
+                <span className="truncate text-xs text-muted-foreground">{user.deleted ? 'Anonymized. It can never sign in again.' : emailLine(user.email, user.display_name)}</span>
               </div>
               <span className="text-xs text-muted-foreground/70 max-[899px]:hidden">
                 {user.workspace_count} {user.workspace_count === 1 ? 'workspace' : 'workspaces'} · {user.last_active_at ? `Active ${new Date(user.last_active_at).toLocaleDateString()}` : 'Never signed in'}
