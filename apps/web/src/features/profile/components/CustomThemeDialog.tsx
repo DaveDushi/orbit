@@ -35,7 +35,7 @@ const COLOR_FIELDS: readonly { key: keyof CustomTheme; label: string; hint: stri
 export function CustomThemeDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="overflow-y-auto sm:max-w-3xl">
+      <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Custom theme</DialogTitle>
           <DialogDescription>Colours of the whole app, in place of Light, System or Dark. Only you see them, and text stays readable on every colour.</DialogDescription>
