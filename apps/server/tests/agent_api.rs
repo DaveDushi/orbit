@@ -2490,3 +2490,53 @@ async fn an_agent_session_sees_only_the_private_projects_its_driver_sees() {
         .await;
     assert_eq!(status, StatusCode::OK);
 }
+
+#[tokio::test]
+async fn a_chat_send_that_queues_an_agent_input_takes_its_workspace_write_lock() {
+    if !orbit_platform::testing_postgres() {
+        return; // SQLite has one writer for every scope
+    }
+    let fixture = Fixture::new().await;
+    let (bot, _) = fixture.pending().await;
+    let general = fixture.general().await;
+    let workspace: Id = fixture.workspace_id.parse().unwrap();
+    let blocked = Duration::from_millis(300);
+
+    // Another workspace's writer does not hold up the send.
+    let other = fixture
+        .database
+        .workspace_transaction(Id::new_v7())
+        .await
+        .unwrap();
+    let first = fixture
+        .send(&fixture.owner, &general, &format!("<@{bot}> first"), None)
+        .await;
+    other.rollback().await.unwrap();
+
+    // A writer of the same workspace, or a global one, does: the send and its agent input wait.
+    for global in [false, true] {
+        let held = if global {
+            fixture.database.immediate_transaction().await.unwrap()
+        } else {
+            fixture
+                .database
+                .workspace_transaction(workspace)
+                .await
+                .unwrap()
+        };
+        let body = format!("<@{bot}> while held (global: {global})");
+        let mut send = std::pin::pin!(fixture.send(&fixture.owner, &general, &body, None));
+        assert!(
+            tokio::time::timeout(blocked, &mut send).await.is_err(),
+            "the send must wait for the held lock (global: {global})"
+        );
+        held.commit().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(10), send)
+            .await
+            .expect("the send must go on after the lock is released");
+    }
+
+    let (_, inputs) = fixture.pending().await;
+    assert_eq!(inputs.len(), 3, "{inputs:?}");
+    assert_eq!(inputs[0].0, first);
+}
