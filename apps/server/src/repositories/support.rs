@@ -1276,12 +1276,41 @@ impl SupportRepository {
         };
 
         let (from_address, from_name) = email.requester(&target.address);
+        const KNOWN: &str = "SELECT EXISTS(SELECT 1 FROM support_messages WHERE workspace_id = $1 AND mailbox_id = $2 AND message_id = $3)";
+        // A redelivery stores no bytes. The transaction checks again.
+        let Flag(known) = sqlx::query_scalar(KNOWN)
+            .bind(target.workspace_id.to_string())
+            .bind(target.mailbox_id.to_string())
+            .bind(&email.message_id)
+            .fetch_one(self.database.pool())
+            .await?;
+        if known {
+            return Ok(Received::Duplicate);
+        }
         let finalization = uploads.begin_finalization().await;
+        // The bytes go to the store before the write transaction: the store can be slow, and
+        // nothing may wait for it under the write lock. `None` is an attachment over the quota.
+        let mut blobs = Vec::with_capacity(email.attachments.len());
+        for attachment in &email.attachments {
+            match finalization
+                .prepare_bytes(target.workspace_id, &attachment.bytes)
+                .await
+            {
+                Ok(prepared) => blobs.push(Some(prepared)),
+                Err(orbit_platform::UploadError::StorageQuotaExceeded { .. }) => blobs.push(None),
+                Err(error) => {
+                    tracing::warn!(%error, "support attachment could not be stored");
+                    for prepared in blobs.iter().flatten() {
+                        finalization.abandon(prepared).await;
+                    }
+                    return Err(TaskError::Conflict);
+                }
+            }
+        }
+        let outcome = async {
         let now = self.database.database_now().await?;
         let mut tx = self.database.immediate_transaction().await?;
-        let Flag(known) = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM support_messages WHERE workspace_id = $1 AND mailbox_id = $2 AND message_id = $3)",
-        )
+        let Flag(known) = sqlx::query_scalar(KNOWN)
         .bind(target.workspace_id.to_string())
         .bind(target.mailbox_id.to_string())
         .bind(&email.message_id)
@@ -1434,18 +1463,19 @@ impl SupportRepository {
             items: Vec::new(),
             skipped: u32::try_from(email.skipped_attachments).unwrap_or(u32::MAX),
         };
-        for (index, (attachment, (media_type, inline_cid))) in
-            email.attachments.iter().zip(prepared).enumerate()
+        for (index, ((attachment, (media_type, inline_cid)), blob)) in email
+            .attachments
+            .iter()
+            .zip(prepared)
+            .zip(&blobs)
+            .enumerate()
         {
-            let blob = match finalization
-                .finalize_bytes_in_transaction(&mut tx, target.workspace_id, &attachment.bytes, now)
-                .await
-            {
+            let Some(blob) = blob else {
+                stored.skipped += 1;
+                continue;
+            };
+            let blob = match finalization.finalize_bytes_in_transaction(&mut tx, blob).await {
                 Ok(blob) => blob,
-                Err(orbit_platform::UploadError::StorageQuotaExceeded { .. }) => {
-                    stored.skipped += 1;
-                    continue;
-                }
                 Err(error) => {
                     tracing::warn!(%error, "support attachment could not be stored");
                     return Err(TaskError::Conflict);
@@ -1547,12 +1577,21 @@ impl SupportRepository {
         )
         .await?;
         tx.commit().await?;
-        drop(finalization);
         Ok(if created {
             Received::Created(task_id)
         } else {
             Received::Added(task_id)
         })
+        }
+        .await;
+        // Bytes that got no reference stop counting toward the storage now; a sender retries a
+        // refused mail with the same bytes.
+        if !matches!(outcome, Ok(Received::Created(_) | Received::Added(_))) {
+            for prepared in blobs.iter().flatten() {
+                finalization.abandon(prepared).await;
+            }
+        }
+        outcome
     }
 
     /// The emails of a task the actor sees, with its customer when it is a ticket.

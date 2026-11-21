@@ -1134,3 +1134,62 @@ async fn graceful_shutdown_requeues_without_spending_attempts() {
         assert_eq!(attempts, 0);
     }
 }
+
+#[tokio::test]
+async fn unreadable_job_rows_become_dead_and_the_worker_goes_on() {
+    let (database, store) = store().await;
+    let insert = "INSERT INTO jobs (id, kind, payload_json, state, priority, attempt_count, \
+                  max_attempts, available_at, created_at, updated_at) \
+                  VALUES ($1, 'unreadable', $2, 'queued', 'high', 0, 8, 0, 0, 0)";
+    // An id that is not a UUIDv7, then payload JSON that does not parse.
+    let bad_payload = orbit_platform::Id::new_v7().to_string();
+    for (id, payload) in [("not-a-uuid", "{}"), (bad_payload.as_str(), "{")] {
+        sqlx::query(insert)
+            .bind(id)
+            .bind(payload)
+            .execute(database.pool())
+            .await
+            .unwrap();
+    }
+    JobQueue::new(store.clone())
+        .enqueue(job("after-bad", JobPriority::Normal, 0))
+        .await
+        .unwrap();
+    let ran = Arc::new(Notify::new());
+    let handler_ran = ran.clone();
+    let worker = Worker::new(
+        store,
+        WorkerConfig::new(1)
+            .unwrap()
+            .with_poll_interval(Duration::from_millis(5)),
+    )
+    .with_handler(JobKind::new("unreadable"), |_| async { Ok(()) })
+    .unwrap()
+    .with_handler(JobKind::new("after-bad"), move |_| {
+        let ran = handler_ran.clone();
+        async move {
+            ran.notify_one();
+            Ok(())
+        }
+    })
+    .unwrap();
+    let shutdown = CancellationToken::new();
+    let task = tokio::spawn(worker.run(shutdown.clone()));
+
+    tokio::time::timeout(Duration::from_secs(5), ran.notified())
+        .await
+        .expect("the good job must run after the unreadable rows");
+    shutdown.cancel();
+    task.await.unwrap().unwrap();
+
+    let states: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, state FROM jobs WHERE kind = 'unreadable' ORDER BY id")
+            .fetch_all(database.pool())
+            .await
+            .unwrap();
+    assert_eq!(states.len(), 2);
+    assert!(
+        states.iter().all(|(_, state)| state == "dead"),
+        "{states:?}"
+    );
+}

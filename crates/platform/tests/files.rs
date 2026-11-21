@@ -293,7 +293,7 @@ async fn finalize_rehashes_staged_bytes_before_publication() {
 }
 
 #[tokio::test]
-async fn failed_attachment_write_rolls_back_blob_metadata_and_leaves_quarantined_bytes() {
+async fn failed_attachment_write_leaves_a_quarantined_blob_without_a_reference() {
     let fixture = Fixture::new().await;
     let workspace = Id::new_v7();
     let existing = fixture
@@ -326,6 +326,14 @@ async fn failed_attachment_write_rolls_back_blob_metadata_and_leaves_quarantined
         fixture
             .database
             .scalar::<i64>("SELECT COUNT(*) FROM attachment_blobs")
+            .await
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        fixture
+            .database
+            .scalar::<i64>("SELECT COUNT(*) FROM attachment_references")
             .await
             .unwrap(),
         1
@@ -689,17 +697,17 @@ async fn reconciliation_rechecks_an_orphan_that_is_finalized_after_the_file_scan
         listed: listed.clone(),
         resume: resume.clone(),
     };
-    let coordinator = AttachmentMutationCoordinator::default();
+    // Two servers: in one process the operation lock keeps uploads out of a reconcile.
     let finalizer = UploadService::new(
         (*database).clone(),
         Arc::new(local.clone()),
-        coordinator.clone(),
+        AttachmentMutationCoordinator::default(),
         UploadLimits::default(),
     );
     let reconciler = UploadService::new(
         (*database).clone(),
         Arc::new(pausing),
-        coordinator,
+        AttachmentMutationCoordinator::default(),
         UploadLimits::default(),
     );
 

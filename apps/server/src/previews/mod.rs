@@ -688,11 +688,12 @@ impl PreviewService {
                     Err(error) => return Err(error.into()),
                 };
                 let finalization = self.uploads.begin_finalization().await;
-                let now = self.database.database_now().await?;
                 let stored = async {
+                    let prepared = finalization.prepare(&staged).await?;
+                    let now = self.database.database_now().await?;
                     let mut transaction = self.database.immediate_transaction().await?;
                     let blob = finalization
-                        .finalize_blob_in_transaction(&mut transaction, &staged, now)
+                        .finalize_blob_in_transaction(&mut transaction, &prepared, now)
                         .await?;
                     sqlx::query(
                         "INSERT INTO file_preview_outputs (preview_id, role, blob_id, mime_type, size_bytes) \

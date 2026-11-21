@@ -23,8 +23,9 @@ pub use auth::{
     generate_opaque_token, normalize_email,
 };
 pub use backup::{
-    AttachmentMutationCoordinator, AttachmentMutationGuard, BackupError, BackupFile, BackupKind,
-    BackupManifest, BackupService, BackupSnapshot, SnapshotReader, SnapshotRow,
+    AttachmentMutationCoordinator, AttachmentMutationGuard, AttachmentOperationGuard, BackupError,
+    BackupFile, BackupKind, BackupManifest, BackupService, BackupSnapshot, SnapshotReader,
+    SnapshotRow,
 };
 pub use config::{
     AppKey, BillingConfig, Config, ConfigError, DataConfig, EnvironmentMode, HttpConfig,
@@ -33,9 +34,9 @@ pub use config::{
 };
 pub use db::{
     Access, Backend, Column, Database, DatabaseConfig, DatabaseError, Flag, GuardedMigrationError,
-    Migration, MigrationError, MigrationRunner, NotBool, PendingMigration, Row, Separated,
-    Singleton, SqlBuilder, TestDatabase, TestDatabaseError, is_transient_lock_error,
-    lock_database_ownership, run_guarded_migrations, testing_postgres,
+    Migration, MigrationError, MigrationRunner, NotBool, POSTGRES_WRITE_LOCK, PendingMigration,
+    Row, Separated, Singleton, SqlBuilder, TestDatabase, TestDatabaseError,
+    is_transient_lock_error, lock_database_ownership, run_guarded_migrations, testing_postgres,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use files::start_fake_s3;
@@ -43,11 +44,11 @@ pub use files::{
     AuthorizedAttachment, BLOB_REFERENCE_COUNT, BlobDownload, BlobFuture, BlobMoveStatus,
     BlobObject, BlobReader, BlobStore, BlobStoreError, ContentDisposition, DownloadMetadata,
     FinalizedAttachment, FinalizedBlob, INLINE_IMAGE_TYPES, LocalBlobStore, NewAttachmentReference,
-    ObjectStorage, ObjectStorageState, ReconcileResult, S3_DELETE_DELAY_MILLIS, S3_MAX_PARTS,
-    S3_MIN_PART_BYTES, S3Bucket, S3Config, S3Error, S3Object, S3Part, SHRINK_MIN_BYTES,
-    StagedUpload, StoredObject, TieredBlobStore, UploadError, UploadFinalization, UploadLimitError,
-    UploadLimits, UploadService, WORKSPACE_STORAGE_USED, WorkspaceBucket, detect_media_type,
-    shrink_image,
+    ObjectStorage, ObjectStorageState, PreparedBlob, PreparedUpload, ReconcileResult,
+    S3_DELETE_DELAY_MILLIS, S3_MAX_PARTS, S3_MIN_PART_BYTES, S3Bucket, S3Config, S3Error, S3Object,
+    S3Part, SHRINK_MIN_BYTES, StagedUpload, StoredObject, TieredBlobStore, UploadError,
+    UploadFinalization, UploadLimitError, UploadLimits, UploadService, WORKSPACE_STORAGE_USED,
+    WorkspaceBucket, detect_media_type, shrink_image,
 };
 pub use health::{HealthCheck, HealthCheckResult, HealthRegistry, ReadinessReport};
 pub use http::{

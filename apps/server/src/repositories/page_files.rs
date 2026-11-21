@@ -162,11 +162,15 @@ impl PageFileRepository {
             return Err(PageFileError::NotFound);
         }
         let finalization = self.uploads.begin_finalization().await;
+        // Checked again in the transaction; here it keeps a refused request from storing its bytes.
+        self.authorize_upload(workspace_id, page_id, actor_id)
+            .await?;
+        let prepared = finalization.prepare(upload).await?;
         let now = self.database.database_now().await?;
         let mut tx = self.database.immediate_transaction().await?;
         require_live_page(&mut tx, workspace_id, page_id, actor_id).await?;
         let blob = finalization
-            .finalize_blob_in_transaction(&mut tx, upload, now)
+            .finalize_blob_in_transaction(&mut tx, &prepared, now)
             .await?;
         let id = Id::new_v7();
         let size = i64::try_from(upload.size_bytes).map_err(|_| UploadError::SizeOverflow)?;
@@ -362,13 +366,15 @@ impl PageFileRepository {
         request_id: &str,
     ) -> Result<PageFile, PageFileError> {
         let finalization = self.uploads.begin_finalization().await;
+        // The bytes go to the store before the write transaction: the store can be slow.
+        let prepared = finalization.prepare(staged).await?;
         let now = self.database.database_now().await?;
         let mut tx = self.database.immediate_transaction().await?;
         // Access, the lock and the version again, in the transaction that serializes writers.
         let record = record_on(&mut tx, workspace_id, page_id, file_id, actor_id).await?;
         check_change(&record, expected_version)?;
         let blob = finalization
-            .finalize_blob_in_transaction(&mut tx, staged, now)
+            .finalize_blob_in_transaction(&mut tx, &prepared, now)
             .await?;
         if blob.id.to_string() == record.blob_id {
             tx.commit().await?;

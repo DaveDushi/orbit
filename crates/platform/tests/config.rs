@@ -594,3 +594,25 @@ fn trial_settings_without_cloud_mode_are_rejected() {
         );
     }
 }
+
+#[test]
+fn database_max_connections_defaults_by_backend_and_can_be_set() {
+    let pool =
+        |config: &Config| orbit_platform::DatabaseConfig::for_data(&config.data).max_connections;
+    let postgres_url = ("ORBIT_DATABASE_URL", "postgres://orbit@127.0.0.1/orbit");
+    assert_eq!(pool(&load([]).unwrap()), 5);
+    assert_eq!(pool(&load([postgres_url]).unwrap()), 20);
+
+    let set = load([postgres_url, ("ORBIT_DATABASE_MAX_CONNECTIONS", "40")]).unwrap();
+    assert_eq!(set.data.max_connections, Some(40));
+    assert_eq!(pool(&set), 40);
+    let sqlite = load([("ORBIT_DATABASE_MAX_CONNECTIONS", "8")]).unwrap();
+    assert_eq!(pool(&sqlite), 8);
+
+    for refused in ["0", "501", "-1", "many", ""] {
+        assert!(
+            load([("ORBIT_DATABASE_MAX_CONNECTIONS", refused)]).is_err(),
+            "{refused:?} must be refused"
+        );
+    }
+}

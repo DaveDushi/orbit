@@ -470,6 +470,22 @@ Content-Transfer-Encoding: base64\r\n\r\niVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAA
             .await,
         2
     );
+    // The bytes are stored before the write transaction; a redelivery stores none, and no blob
+    // row stays without a reference.
+    assert_eq!(fixture.deliver(&mailbox.hook, raw).await.0, StatusCode::OK);
+    let blobs = |sql: &'static str| fixture.scalar(sql, "");
+    assert_eq!(
+        blobs("SELECT COUNT(*) FROM attachment_blobs WHERE $1 = ''").await,
+        2
+    );
+    assert_eq!(
+        blobs(
+            "SELECT COUNT(*) FROM attachment_blobs WHERE $1 = '' AND id NOT IN \
+             (SELECT blob_id FROM attachment_references)"
+        )
+        .await,
+        0
+    );
 }
 
 #[tokio::test]

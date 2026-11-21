@@ -467,6 +467,20 @@ impl AttachmentRepository {
             return Err(AttachmentRepositoryError::NotFound);
         }
         let finalization = self.uploads.begin_finalization().await;
+        // Checked again in the transaction; here it keeps a refused request from storing its bytes.
+        let checked_at = self.database.database_now().await?.as_millis();
+        let access = task_access(
+            self.database.pool(),
+            session,
+            workspace_id,
+            task_id,
+            checked_at,
+        )
+        .await?;
+        if access != 1 {
+            return Err(AttachmentRepositoryError::NotFound);
+        }
+        let prepared = finalization.prepare(upload).await?;
         let mut transaction = self.database.immediate_transaction().await?;
         let now_query = match self.database.backend() {
             Backend::Sqlite => {
@@ -549,7 +563,7 @@ impl AttachmentRepository {
             ..NewAttachmentReference::new(task_id, target_comment_id)
         };
         let finalized = finalization
-            .finalize_in_transaction(&mut transaction, upload, reference, now)
+            .finalize_in_transaction(&mut transaction, &prepared, reference, now)
             .await?;
         transaction.commit().await?;
 
